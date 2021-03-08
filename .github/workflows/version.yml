@@ -1,0 +1,78 @@
+---
+name: version
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to cut
+  repository_dispatch:
+    types:
+      - version
+
+jobs:
+  release:
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          persist-credentials: false
+      - name: Setup Git config
+        env:
+          GH_USER: ${{ secrets.GH_USER }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GIT_USER_NAME: ${{ secrets.GIT_USER_NAME }}
+          GIT_USER_EMAIL: ${{ secrets.GIT_USER_EMAIL }}
+          GIT_COMMITTER_EMAIL: ${{ secrets.GIT_USER_EMAIL }}
+        run: |
+          git remote set-url --push origin "https://${GH_USER}:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git config user.name "$GIT_USER_NAME"
+          git config user.email "$GIT_USER_EMAIL"
+          npm config set sign-git-tag true
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v3
+        id: import_gpg
+        with:
+          git-user-signingkey: true
+          git-commit-gpgsign: true
+          git-committer-name: ${{ secrets.GIT_USER_NAME }}
+          git-committer-email: ${{ secrets.GIT_USER_EMAIL }}
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+      - name: Setup Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: '1.16'
+      - uses: actions/cache@v2
+        with:
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          restore-keys: |
+            ${{ runner.os }}-go-
+      - name: Test
+        run: make test
+      - name: Build
+        run: make
+      - name: Install Benthos to PATH
+        run: |
+          chmod 755 tmp/bin/benthos
+          echo "$(pwd)/tmp/bin" >> $GITHUB_PATH
+      - name: Setup Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+      - name: Cache npm packages
+        uses: actions/cache@v2
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+            ${{ runner.os }}-
+      - name: Install dependencies
+        run: npm ci
+      - name: Cut ${{ github.event.inputs.version }}${{ github.event.client_payload.version }} version
+        run: npm version ${{ github.event.inputs.version }}${{ github.event.client_payload.version }}

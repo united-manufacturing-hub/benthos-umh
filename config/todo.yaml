@@ -1,0 +1,12 @@
+---
+pipeline:
+  processors:
+    - bloblang: |
+        root.body = "{\"data\":\"TODO\"}"
+        root.statusCode = 200
+
+logger:
+  level: ${LOG_LEVEL:info}
+  static_fields:
+    functionName: ${AWS_LAMBDA_FUNCTION_NAME:''}
+    version: ${LOG_VERSION:''}

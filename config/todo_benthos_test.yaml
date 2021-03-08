@@ -1,0 +1,9 @@
+---
+tests:
+  - name: todo
+    target_processors: '/pipeline/processors'
+    input_batch:
+      - content: '{}'
+    output_batches:
+      - - bloblang: |
+            this.body == "{\"data\":\"TODO\"}" && this.statusCode == 200

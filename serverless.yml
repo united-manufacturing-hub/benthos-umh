@@ -1,0 +1,49 @@
+---
+service: benthos-plugin
+
+frameworkVersion: '^2.0.0'
+
+plugins:
+  - serverless-domain-manager
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: go1.x
+  region: ${env:AWS_DEFAULT_REGION, 'us-east-1'}
+  stage: ${opt:stage, env:SERVERLESS_STAGE, 'stg'}
+  logRetentionInDays: 30
+  apiGateway:
+    shouldStartNameWithService: true
+  lambdaHashingVersion: 20201221
+  environment:
+    LOG_LEVEL: ${env:LOG_LEVEL, 'info'}
+    LOG_VERSION: ${file(./package.json):version}
+
+custom:
+  domain: makenew.razorx.app
+  customDomain:
+    domainName: ${self:provider.stage}.${self:service}.${self:custom.domain}
+    endpointType: regional
+    createRoute53Record: true
+  serverless-offline:
+    useDocker: true
+
+package:
+  individually: true
+  exclude: ['*/**']
+  include: []
+
+functions:
+  todo:
+    handler: benthos-lambda
+    package:
+      artifact: dist/todo.zip
+      # UPSTREAM: https://github.com/serverless/serverless/issues/4720#issuecomment-681750260
+      individually: true
+      exclude: ['*/**']
+      include: []
+    events:
+      - http:
+          method: get
+          path: /todo
