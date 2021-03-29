@@ -23,6 +23,9 @@ target
 # Temporary development files
 tmp
 
+# Serverless Offline
+.serverless-offline
+
 # Yarn lockfile (only npm supported)
 yarn.lock
 
