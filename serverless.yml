@@ -3,6 +3,8 @@ service: benthos-plugin
 
 frameworkVersion: '^2.0.0'
 
+variablesResolutionMode: 20210219
+
 plugins:
   - serverless-domain-manager
   - serverless-offline
@@ -11,7 +13,7 @@ provider:
   name: aws
   runtime: go1.x
   region: ${env:AWS_DEFAULT_REGION, 'us-east-1'}
-  stage: ${opt:stage, env:SERVERLESS_STAGE, 'stg'}
+  stage: stg
   logRetentionInDays: 30
   apiGateway:
     shouldStartNameWithService: true
@@ -21,9 +23,10 @@ provider:
     LOG_VERSION: ${file(./package.json):version}
 
 custom:
+  stage: ${opt:stage, env:SERVERLESS_STAGE, self:provider.stage}
   domain: makenew.razorx.app
   customDomain:
-    domainName: ${self:provider.stage}.${self:service}.${self:custom.domain}
+    domainName: ${self:custom.stage}.${self:service}.${self:custom.domain}
     endpointType: regional
     createRoute53Record: true
   serverless-offline:
