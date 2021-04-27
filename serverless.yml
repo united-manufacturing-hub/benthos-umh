@@ -24,10 +24,9 @@ provider:
     LOG_VERSION: ${file(./package.json):version}
 
 custom:
-  stage: ${opt:stage, env:SERVERLESS_STAGE, self:provider.stage}
   domain: makenew.razorx.app
   customDomain:
-    domainName: ${self:custom.stage}.${self:service}.${self:custom.domain}
+    domainName: ${sls:stage}.${self:service}.${self:custom.domain}
     endpointType: regional
     createRoute53Record: true
   serverless-offline:
