@@ -1,6 +1,6 @@
 {
   "name": "@makenew/benthos-plugin",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "description": "Project skeleton for a Benthos plugin.",
   "private": true,
   "type": "module",
