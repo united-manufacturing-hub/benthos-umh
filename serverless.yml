@@ -35,6 +35,9 @@ custom:
   serverless-offline:
     useDocker: true
 
+package:
+  individually: true
+
 functions:
   todo:
     handler: benthos-lambda
