@@ -32,20 +32,11 @@ custom:
   serverless-offline:
     useDocker: true
 
-package:
-  individually: true
-  exclude: ['*/**']
-  include: []
-
 functions:
   todo:
     handler: benthos-lambda
     package:
       artifact: dist/todo.zip
-      # UPSTREAM: https://github.com/serverless/serverless/issues/4720#issuecomment-681750260
-      individually: true
-      exclude: ['*/**']
-      include: []
     events:
       - http:
           method: get
