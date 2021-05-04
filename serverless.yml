@@ -21,6 +21,8 @@ provider:
   logRetentionInDays: 30
   apiGateway:
     shouldStartNameWithService: true
+  eventBridge:
+    useCloudFormation: true
   lambdaHashingVersion: 20201221
   environment:
     LOG_LEVEL: ${env:LOG_LEVEL, 'info'}
