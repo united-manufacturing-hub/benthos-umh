@@ -63,11 +63,13 @@ jobs:
         with:
           name: benthos
           path: tmp/bin/benthos
+          retention-days: 2
       - name: Upload benthos-lambda artifact
         uses: actions/upload-artifact@v2
         with:
           name: benthos-lambda.zip
           path: tmp/benthos-lambda.zip
+          retention-days: 2
   test:
     needs: go-build
     runs-on: ubuntu-20.04
