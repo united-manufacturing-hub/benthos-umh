@@ -37,7 +37,7 @@
     "sls:offline": "serverless offline",
     "sls:invoke": "serverless invoke local -f",
     "deploy": "npm-run-all --serial deploy:domain deploy:stack",
-    "deploy:domain": "serverless create_domain",
+    "deploy:domain": "serverless create_domain --stage=$SERVERLESS_STAGE",
     "deploy:stack": "serverless deploy --aws-s3-accelerate --stage=$SERVERLESS_STAGE",
     "release:staging": "curl --fail -H \"Authorization: token $GITHUB_TOKEN\" -H 'Accept: application/vnd.github.v3+json' -d '{\"event_type\":\"release\",\"client_payload\":{\"environment\":\"staging\",\"ref\":\"v'$(jq -r .version < package.json)'\"}}' -X POST \"https://api.github.com/repos/$(jq -r .repository < package.json)/dispatches\"",
     "release:production": "curl --fail -H \"Authorization: token $GITHUB_TOKEN\" -H 'Accept: application/vnd.github.v3+json' -d '{\"event_type\":\"release\",\"client_payload\":{\"environment\":\"production\",\"ref\":\"v'$(jq -r .version < package.json)'\"}}' -X POST \"https://api.github.com/repos/$(jq -r .repository < package.json)/dispatches\"",
