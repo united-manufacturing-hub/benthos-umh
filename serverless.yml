@@ -19,6 +19,9 @@ provider:
   region: ${env:AWS_DEFAULT_REGION, 'us-east-1'}
   stage: stg
   logRetentionInDays: 30
+  httpApi:
+    payload: '2.0'
+    disableDefaultEndpoint: true
   apiGateway:
     shouldStartNameWithService: true
   eventBridge:
@@ -32,6 +35,7 @@ custom:
   domain: makenew.razorx.app
   customDomain:
     domainName: ${sls:stage}.${self:service}.${self:custom.domain}
+    apiType: http
     endpointType: regional
     createRoute53Record: true
   serverless-offline:
@@ -46,6 +50,6 @@ functions:
     package:
       artifact: dist/todo.zip
     events:
-      - http:
+      - httpApi:
           method: get
           path: /todo
