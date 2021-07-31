@@ -6,9 +6,6 @@ frameworkVersion: '^2.38.0'
 variablesResolutionMode: 20210219
 configValidationMode: error
 
-disabledDeprecations:
-  - CLI_OPTIONS_SCHEMA
-
 plugins:
   - serverless-domain-manager
   - serverless-offline
