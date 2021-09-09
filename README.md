@@ -15,6 +15,7 @@ Bootstrap a new Benthos plugin in five minutes or less.
 - Images pushed to [GitHub Container Registry].
 - Deploy [Benthos] with custom plugins to [AWS Lambda] under a
   [custom domain][serverless-domain-manager] with [Serverless].
+- Unlimited, modular, and testable configs packaged with [Blobpack].
 - [Node.js]'s [npm] package structure.
 - [Prettier] code.
 - Continuous testing and deployment with [GitHub Actions].
@@ -22,6 +23,7 @@ Bootstrap a new Benthos plugin in five minutes or less.
 - Consistent coding with [EditorConfig].
 
 [Benthos]: https://www.benthos.dev/
+[Blobpack]: https://github.com/razor-x/blobpack
 [AWS Lambda]: https://aws.amazon.com/lambda/
 [Docker]: https://www.docker.com/
 [EditorConfig]: https://editorconfig.org/
