@@ -1,0 +1,11 @@
+{
+  "name": "Benthos Plugin",
+  "extensions": [
+    "dbaeumer.vscode-eslint",
+    "EditorConfig.EditorConfig",
+    "esbenp.prettier-vscode"
+  ],
+  "postCreateCommand": "npm install",
+  "forwardPorts": [3000, 3002],
+  "remoteUser": "node"
+}
