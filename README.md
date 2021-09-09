@@ -16,7 +16,6 @@ Bootstrap a new Benthos plugin in five minutes or less.
 - Deploy [Benthos] with custom plugins to [AWS Lambda] under a
   [custom domain][serverless-domain-manager] with [Serverless].
 - [Node.js]'s [npm] package structure.
-- Linting with the [JavaScript Standard Style].
 - [Prettier] code.
 - Continuous testing and deployment with [GitHub Actions].
 - [Keep a CHANGELOG].
@@ -28,7 +27,6 @@ Bootstrap a new Benthos plugin in five minutes or less.
 [EditorConfig]: https://editorconfig.org/
 [GitHub Actions]: https://github.com/features/actions
 [GitHub Container Registry]: https://github.com/features/packages
-[JavaScript Standard Style]: https://standardjs.com/
 [Keep a CHANGELOG]: https://keepachangelog.com/
 [Node.js]: https://nodejs.org/
 [Prettier]: https://prettier.io/
