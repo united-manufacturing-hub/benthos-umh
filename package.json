@@ -25,11 +25,9 @@
   ],
   "scripts": {
     "test": "./tmp/bin/benthos test config",
-    "lint": "npm-run-all --parallel lint:*",
-    "lint:prettier": "prettier --check --ignore-path .gitignore '**/*.(json|yaml|yml)'",
-    "lint:js": "standard",
+    "lint": "prettier --check --ignore-path .gitignore '**/*.(json|yaml|yml)'",
     "clean": "del dist",
-    "build": "node build.js",
+    "build": "blobpack",
     "prebuild": "npm-run-all clean",
     "preversion": "npm-run-all --parallel lint test --serial build sls:package",
     "postversion": "git push --follow-tags",
@@ -41,9 +39,7 @@
     "deploy:stack": "serverless deploy --aws-s3-accelerate --stage=$SERVERLESS_STAGE",
     "release:staging": "curl --fail -H \"Authorization: token $GITHUB_TOKEN\" -H 'Accept: application/vnd.github.v3+json' -d '{\"event_type\":\"release\",\"client_payload\":{\"environment\":\"staging\",\"ref\":\"v'$(jq -r .version < package.json)'\"}}' -X POST \"https://api.github.com/repos/$(jq -r .repository < package.json)/dispatches\"",
     "release:production": "curl --fail -H \"Authorization: token $GITHUB_TOKEN\" -H 'Accept: application/vnd.github.v3+json' -d '{\"event_type\":\"release\",\"client_payload\":{\"environment\":\"production\",\"ref\":\"v'$(jq -r .version < package.json)'\"}}' -X POST \"https://api.github.com/repos/$(jq -r .repository < package.json)/dispatches\"",
-    "format": "npm-run-all --parallel format:*",
-    "preformat": "prettier --write --ignore-path .gitignore '**/*.(js|json|yaml|yml)'",
-    "format:js": "standard --fix"
+    "format": "prettier --write --ignore-path .gitignore '**/*.(js|json|yaml|yml)'"
   },
   "benthos": {
     "name": "benthos-lambda",
@@ -56,14 +52,12 @@
   },
   "dependencies": {},
   "devDependencies": {
+    "blobpack": "^1.0.0",
     "del-cli": "^4.0.1",
-    "download": "^8.0.0",
-    "mkdirp": "^1.0.4",
     "npm-run-all": "^4.1.2",
     "prettier": "^2.3.2",
     "serverless": "^2.52.1",
     "serverless-domain-manager": "^5.1.4",
-    "serverless-offline": "^8.0.0",
-    "standard": "^16.0.3"
+    "serverless-offline": "^8.0.0"
   }
 }
