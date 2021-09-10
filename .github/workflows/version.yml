@@ -31,14 +31,14 @@ jobs:
           git config user.email "$GIT_USER_EMAIL"
           npm config set sign-git-tag true
       - name: Import GPG key
-        uses: crazy-max/ghaction-import-gpg@v3
+        uses: crazy-max/ghaction-import-gpg@v4
         id: import_gpg
         with:
-          git-user-signingkey: true
-          git-commit-gpgsign: true
-          git-committer-name: ${{ secrets.GIT_USER_NAME }}
-          git-committer-email: ${{ secrets.GIT_USER_EMAIL }}
-          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+          git_committer_name: ${{ secrets.GIT_USER_NAME }}
+          git_committer_email: ${{ secrets.GIT_USER_EMAIL }}
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
       - name: Setup Go
         uses: actions/setup-go@v2
