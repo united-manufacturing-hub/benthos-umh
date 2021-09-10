@@ -160,7 +160,7 @@ jobs:
           cache-to: 'type=local,dest=/tmp/.buildx-cache'
           tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
       - name: Remove CI container image
-        uses: bots-house/ghcr-delete-image-action@v1.0.0
+        uses: bots-house/ghcr-delete-image-action@v1.0.1
         if: always()
         with:
           owner: ${{ github.repository_owner }}
