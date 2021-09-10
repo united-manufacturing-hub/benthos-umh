@@ -1,5 +1,12 @@
 {
   "name": "Benthos Plugin",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "NODE_VERSION": "14",
+      "VARIANT": "1"
+    }
+  },
   "extensions": [
     "dbaeumer.vscode-eslint",
     "EditorConfig.EditorConfig",
@@ -7,5 +14,5 @@
   ],
   "postCreateCommand": "npm install",
   "forwardPorts": [3000, 3002],
-  "remoteUser": "node"
+  "remoteUser": "vscode"
 }
