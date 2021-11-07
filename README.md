@@ -63,20 +63,16 @@ Bootstrap a new Benthos plugin in five minutes or less.
    $ git remote add origin git@github.com:<user>/<new-node-lib>.git
    $ git push -u origin master
    ```
-6. Ensure the GitHub action passes,
-   then publish the initial version of the package with
+6. Ensure a valid certificate exists in [AWS Certificate Manager]
+   that matches the custom deployment domains,
+   e.g., this project uses a wildcard certificate for
+   `*.benthos-plugin.makenew.razorx.app`.
+7. Ensure the GitHub action passes,
+   then release the initial version with
    ```
    $ nvm install
    $ npm install
    $ npm version patch
-   ```
-7. Ensure a valid certificate exists in [AWS Certificate Manager]
-   that matches the custom deployment domains,
-   e.g., this project uses a wildcard certificate for
-   `*.benthos-plugin.makenew.razorx.app`.
-   Then trigger a deploy to the stg stage with
-   ```
-   $ npm run release:staging
    ```
 
 [AWS Certificate Manager]: https://aws.amazon.com/certificate-manager/
@@ -207,18 +203,9 @@ To add a new Serverless function nameed, e.g., `foo`:
 
 Serverless deployment is triggered by a release repository_dispatch on GitHub Actions.
 
-Ensure a `GITHUB_TOKEN` is set in your environment and
-use `npm run release:<environment>` to do this automatically, e.g.,
-
-```
-$ npm run release:staging
-$ npm run release:production
-```
-
 Deployment may be triggered using on the web
 using a [release workflow_dispatch on GitHub Actions].
 
-[npm-version]: https://docs.npmjs.com/cli/version
 [release workflow_dispatch on GitHub Actions]: https://github.com/makenew/benthos-plugin/actions?query=workflow%3Arelease
 
 ## GitHub Actions
