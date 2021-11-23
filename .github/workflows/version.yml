@@ -32,7 +32,6 @@ jobs:
           npm config set sign-git-tag true
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@v4
-        id: import_gpg
         with:
           git_user_signingkey: true
           git_commit_gpgsign: true
