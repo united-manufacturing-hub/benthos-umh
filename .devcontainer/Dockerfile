@@ -2,7 +2,7 @@ ARG VARIANT="1"
 
 FROM mcr.microsoft.com/vscode/devcontainers/go:${VARIANT}
 
-ARG NODE_VERSION="14"
+ARG NODE_VERSION="16"
 
 # https://github.com/microsoft/vscode-dev-containers/blob/main/containers/go/.devcontainer/base.Dockerfile
 ENV USERNAME=vscode
