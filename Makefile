@@ -10,8 +10,8 @@ benthos:
 	go build -o tmp/bin/benthos cmd/benthos/main.go
 
 benthos-lambda:
-	go build -o tmp/bin/benthos-lambda cmd/benthos-lambda/main.go
-	zip -m -j tmp/benthos-lambda.zip ./tmp/bin/benthos-lambda
+	GOARCH=arm64 go build -o tmp/bin/bootstrap cmd/benthos-lambda/main.go
+	zip -m -j tmp/benthos-lambda.zip ./tmp/bin/bootstrap
 
 format:
 	@gofmt -s -w .
