@@ -12,7 +12,8 @@ plugins:
 
 provider:
   name: aws
-  runtime: go1.x
+  architecture: arm64
+  runtime: provided.al2
   region: ${env:AWS_DEFAULT_REGION, 'us-east-1'}
   stage: stg
   logRetentionInDays: 30
