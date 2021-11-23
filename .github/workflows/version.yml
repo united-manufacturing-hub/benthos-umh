@@ -62,18 +62,6 @@ jobs:
           chmod 755 tmp/bin/benthos
           echo "$(pwd)/tmp/bin" >> $GITHUB_PATH
       - name: Setup Node.js
-        uses: actions/setup-node@v2
-        with:
-          node-version: '16'
-      - name: Cache npm packages
-        uses: actions/cache@v2
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
-            ${{ runner.os }}-
-      - name: Install dependencies
-        run: npm ci
+        uses: ./.github/actions/setup-node
       - name: Cut ${{ github.event.inputs.version }}${{ github.event.client_payload.version }} version
         run: npm version ${{ github.event.inputs.version }}${{ github.event.client_payload.version }}
