@@ -10,6 +10,8 @@ jobs:
   registry:
     runs-on: ubuntu-20.04
     steps:
+      - name: Checkout
+        uses: actions/checkout@v2
       - name: Get tag
         uses: jungwinter/split@v1
         id: tag
@@ -22,24 +24,12 @@ jobs:
         with:
           msg: ${{ steps.tag.outputs._2 }}
           seperator: v
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v1
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
-      - name: Setup cache
-        uses: actions/cache@v2
-        id: cache
+      - name: Setup Docker
+        uses: ./.github/actions/setup-docker
         with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v1
-        with:
-          registry: ghcr.io
-          username: ${{ secrets.GH_USER }}
-          password: ${{ secrets.GH_TOKEN }}
+          registry_domain: ghcr.io
+          registry_username: ${{ secrets.GH_USER }}
+          registry_password: ${{ secrets.GH_TOKEN }}
       - name: Build and push ${{ github.repository }}:${{ steps.version.outputs._1 }}
         uses: docker/build-push-action@v2
         with:
