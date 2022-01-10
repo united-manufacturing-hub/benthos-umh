@@ -153,7 +153,6 @@ $ git clone git@github.com:makenew/benthos-plugin.git
 A [Go] version compatible with the one specified in `go.mod`.
 
 To build the [Serverless] artifacts you will need [Node.js] with [npm].
-Optionally, to use [Serverless Offline] you will need [Docker].
 
 Be sure that all commands run under the correct Node version, e.g.,
 if using [nvm], install the correct version with
@@ -175,12 +174,10 @@ $ npm install
 ```
 
 [Go]: https://golang.org/
-[Docker]: https://www.docker.com/
 [Node.js]: https://nodejs.org/
 [npm]: https://www.npmjs.com/
 [nvm]: https://github.com/creationix/nvm
 [Serverless]: https://serverless.com/
-[Serverless Offline]: https://www.serverless.com/plugins/serverless-offline
 
 ### Benthos Configuration and Testing
 
