@@ -3,7 +3,7 @@ module github.com/makenew/benthos-plugin/v1
 go 1.17
 
 require (
-	github.com/Jeffail/benthos/v3 v3.60.1
+	github.com/Jeffail/benthos/v3 v3.61.0
 	github.com/aws/aws-lambda-go v1.27.0
 	github.com/fnproject/fdk-go v0.0.13
 	github.com/tencentyun/scf-go-lib v0.0.0-20211123032342-f972dcd16ff6
@@ -112,7 +112,7 @@ require (
 	github.com/patrobinson/gokini v0.1.0 // indirect
 	github.com/pebbe/zmq4 v1.2.7 // indirect
 	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
-	github.com/pierrec/lz4/v4 v4.1.10 // indirect
+	github.com/pierrec/lz4/v4 v4.1.11 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pkg/sftp v1.13.4 // indirect
 	github.com/prometheus/client_golang v1.11.0 // indirect
@@ -127,6 +127,7 @@ require (
 	github.com/rickb777/plural v1.4.1 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
+	github.com/segmentio/ksuid v1.0.4 // indirect
 	github.com/sirupsen/logrus v1.8.1 // indirect
 	github.com/smira/go-statsd v1.3.2 // indirect
 	github.com/spf13/cast v1.4.1 // indirect
@@ -147,8 +148,8 @@ require (
 	go.nanomsg.org/mangos/v3 v3.3.0 // indirect
 	go.opencensus.io v0.23.0 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
-	golang.org/x/crypto v0.0.0-20210921155107-089bfa567519 // indirect
-	golang.org/x/net v0.0.0-20211105192438-b53810dc28af // indirect
+	golang.org/x/crypto v0.0.0-20211117183948-ae814b36b871 // indirect
+	golang.org/x/net v0.0.0-20211123203042-d83791d6bcd9 // indirect
 	golang.org/x/oauth2 v0.0.0-20211104180415-d3ed0bb246c8 // indirect
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c // indirect
 	golang.org/x/sys v0.0.0-20211107104306-e0b2ad06fe42 // indirect
