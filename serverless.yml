@@ -8,7 +8,6 @@ configValidationMode: error
 
 plugins:
   - serverless-domain-manager
-  - serverless-offline
 
 provider:
   name: aws
@@ -38,8 +37,6 @@ custom:
     apiType: http
     endpointType: regional
     createRoute53Record: true
-  serverless-offline:
-    useDocker: true
 
 package:
   individually: true
