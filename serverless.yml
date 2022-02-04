@@ -3,7 +3,6 @@ service: benthos-plugin
 
 frameworkVersion: '^3.0.0'
 
-variablesResolutionMode: 20210326
 configValidationMode: error
 
 plugins:
@@ -21,11 +20,8 @@ provider:
     disableDefaultEndpoint: true
   apiGateway:
     shouldStartNameWithService: true
-  eventBridge:
-    useCloudFormation: true
   deploymentBucket:
     blockPublicAccess: true
-  lambdaHashingVersion: 20201221
   environment:
     LOG_LEVEL: ${env:LOG_LEVEL, 'info'}
     LOG_VERSION: ${file(./package.json):version}
