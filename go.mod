@@ -1,6 +1,6 @@
 module github.com/makenew/benthos-plugin/v1
 
-go 1.17
+go 1.18
 
 require github.com/Jeffail/benthos/v3 v3.65.0
 
