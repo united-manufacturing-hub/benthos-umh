@@ -25,7 +25,7 @@
   ],
   "scripts": {
     "test": "./tmp/bin/benthos test config",
-    "lint": "prettier --check --ignore-path .gitignore '**/*.(json|yaml|yml)'",
+    "lint": "prettier --check --ignore-path .gitignore '**/*.(js|cjs|mjs|json|yaml|yml)'",
     "clean": "del dist",
     "build": "blobpack",
     "prebuild": "npm-run-all clean",
@@ -36,7 +36,7 @@
     "deploy": "npm-run-all --serial deploy:domain deploy:stack",
     "deploy:domain": "serverless create_domain --stage=$SERVERLESS_STAGE",
     "deploy:stack": "serverless deploy --aws-s3-accelerate --stage=$SERVERLESS_STAGE",
-    "format": "prettier --write --ignore-path .gitignore '**/*.(js|json|yaml|yml)'"
+    "format": "prettier --write --ignore-path .gitignore '**/*.(js|cjs|mjs|json|yaml|yml)'"
   },
   "blobpack": {
     "name": "benthos-lambda",
