@@ -4,7 +4,7 @@
     "dockerfile": "Dockerfile",
     "args": {
       "NODE_VERSION": "16",
-      "VARIANT": "1"
+      "VARIANT": "1.18"
     }
   },
   "extensions": [

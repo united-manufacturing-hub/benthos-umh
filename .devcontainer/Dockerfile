@@ -1,4 +1,4 @@
-ARG VARIANT="1"
+ARG VARIANT="1.18"
 
 FROM mcr.microsoft.com/vscode/devcontainers/go:${VARIANT}
 
