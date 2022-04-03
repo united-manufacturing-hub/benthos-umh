@@ -1,6 +1,6 @@
 # Parts of this file were adapted from
 # GitHub’s collection of .gitignore file templates
-# which are Copyright (c) 2021 GitHub, Inc.
+# which are Copyright (c) 2022 GitHub, Inc.
 # and released under the MIT License.
 # For more details, visit the project page:
 # https://github.com/github/gitignore
@@ -29,6 +29,9 @@ tmp
 # Yarn lockfile (only npm supported)
 yarn.lock
 
+# If you prefer the allow list template instead of the deny list, see community template:
+# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
+#
 # Binaries for programs and plugins
 *.exe
 *.exe~
@@ -43,7 +46,10 @@ yarn.lock
 *.out
 
 # Dependency directories (remove the comment below to include it)
-vendor/
+# vendor/
+
+# Go workspace file
+go.work
 
 # Logs
 logs
@@ -52,6 +58,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
+.pnpm-debug.log*
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
@@ -100,6 +107,9 @@ web_modules/
 # Optional eslint cache
 .eslintcache
 
+# Optional stylelint cache
+.stylelintcache
+
 # Microbundle cache
 .rpt2_cache/
 .rts2_cache_cjs/
@@ -115,9 +125,12 @@ web_modules/
 # Yarn Integrity file
 .yarn-integrity
 
-# dotenv environment variables file
+# dotenv environment variable files
 .env
-.env.test
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -139,6 +152,13 @@ dist
 
 # vuepress build output
 .vuepress/dist
+
+# vuepress v2.x temp and cache directory
+.temp
+.cache
+
+# Docusaurus cache and generated files
+.docusaurus
 
 # Serverless directories
 .serverless/
