@@ -1,16 +1,16 @@
 ---
 name: Setup Docker
-description: Setup Docker Buildx and container registry
+description: Setup Docker Buildx and container registry.
 
 inputs:
   registry_domain:
-    description: The Docker container registry domain
+    description: The Docker container registry domain.
     required: true
   registry_username:
-    description: The Docker container registry username
+    description: The Docker container registry username.
     required: true
   registry_password:
-    description: The Docker container registry password
+    description: The Docker container registry password.
     required: true
 
 runs:

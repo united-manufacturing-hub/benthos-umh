@@ -1,6 +1,6 @@
 ---
-name: Setup Go
-description: Setup Go
+name: Setup Go.
+description: Setup Go.
 
 inputs:
   go_version:

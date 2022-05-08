@@ -4,7 +4,7 @@ description: Setup Node.js and install dependencies.
 
 inputs:
   node_version:
-    description: The Node.js version
+    description: The Node.js version.
     required: false
     default: '16'
 
