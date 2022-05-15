@@ -1,7 +1,7 @@
 ---
 service: benthos-plugin
 
-frameworkVersion: '^3.0.0'
+frameworkVersion: '^3.17.0'
 
 configValidationMode: error
 
@@ -10,6 +10,7 @@ plugins:
 
 provider:
   name: aws
+  deploymentMethod: direct
   architecture: arm64
   runtime: provided.al2
   region: ${env:AWS_DEFAULT_REGION, 'us-east-1'}
