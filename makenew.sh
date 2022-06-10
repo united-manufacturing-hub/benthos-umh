@@ -57,9 +57,8 @@ makenew () {
   read -p '> GitHub user or organization name (my-user): ' mk_user
   read -p '> GitHub repository name (my-repo): ' mk_repo
   read -p '> Serverless stack name (my-stack): ' mk_stack
-  read -p '> Domain name (example.com): ' mk_domain
 
-  sed_delete README.md '9,104d'
+  sed_delete README.md '9,96d'
   sed_insert README.md '9i' 'TODO'
 
   find_replace "s/^  \"version\": \".*\"/  \"version\": \"0.0.0\"/g"
@@ -71,7 +70,6 @@ makenew () {
   find_replace "s|benthos-plugin|___benthos-plugin|g"
   find_replace "s|@makenew/___benthos-plugin|${mk_slug}|g"
   find_replace "s|makenew/___benthos-plugin|${mk_user}/${mk_repo}|g"
-  find_replace "s|makenew\.razorx\.app|${mk_domain}|g"
   find_replace "s|___benthos-plugin|${mk_stack}|g"
 
   echo
