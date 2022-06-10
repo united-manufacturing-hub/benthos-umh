@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/Jeffail/benthos/v3/lib/serverless/lambda"
-	_ "github.com/makenew/benthos-plugin/v1/plugin"
+	"github.com/benthosdev/benthos/v4/internal/serverless/lambda"
+	_ "github.com/makenew/benthos-plugin/v2/plugin"
 )
 
 func main() {
