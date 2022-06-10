@@ -5,9 +5,6 @@ frameworkVersion: '^3.17.0'
 
 configValidationMode: error
 
-plugins:
-  - serverless-domain-manager
-
 provider:
   name: aws
   deploymentMethod: direct
@@ -27,23 +24,12 @@ provider:
     LOG_LEVEL: ${env:LOG_LEVEL, 'info'}
     LOG_VERSION: ${file(./package.json):version}
 
-custom:
-  domain: makenew.razorx.app
-  customDomain:
-    domainName: ${sls:stage}.${self:service}.${self:custom.domain}
-    apiType: http
-    endpointType: regional
-    createRoute53Record: true
-
 package:
   individually: true
 
 functions:
   todo:
+    url: true
     handler: benthos-lambda
     package:
       artifact: dist/todo.zip
-    events:
-      - httpApi:
-          method: get
-          path: /todo
