@@ -1,10 +1,11 @@
 package main
 
 import (
-	"github.com/benthosdev/benthos/v4/internal/serverless/lambda"
+	"context"
+	"github.com/benthosdev/benthos/v4/public/components/aws"
 	_ "github.com/makenew/benthos-plugin/v2/plugin"
 )
 
 func main() {
-	lambda.Run()
+	service.RunLambda(context.Background())
 }
