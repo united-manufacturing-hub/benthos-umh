@@ -7,5 +7,5 @@ import (
 )
 
 func main() {
-	service.RunLambda(context.Background())
+	aws.RunLambda(context.Background())
 }
