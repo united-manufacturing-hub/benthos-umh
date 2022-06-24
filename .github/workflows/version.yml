@@ -41,14 +41,13 @@ jobs:
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
       - name: Setup Go
         uses: actions/setup-go@v2
-        with:
-          go-version: '1.18'
       - name: Setup Node.js
         uses: ./.github/actions/setup-node
       - name: Lint
-        run: |
-          gofmt -l .
-          test -z "$(gofmt -l .)"
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: v1.46
+          args: --timeout=30m
       - name: Test
         run: make test
       - name: Build
