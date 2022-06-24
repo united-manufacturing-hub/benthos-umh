@@ -13,8 +13,7 @@ Bootstrap a new Benthos plugin in five minutes or less.
 - Multi-stage [Docker] build for optimized production images.
 - Images tagged using package version and commit checksum.
 - Images pushed to [GitHub Container Registry].
-- Deploy [Benthos] with custom plugins to [AWS Lambda] under a
-  [custom domain][serverless-domain-manager] with [Serverless].
+- Deploy [Benthos] with custom plugins to [AWS Lambda] with [Serverless].
 - Unlimited, modular, and testable configs packaged with [Blobpack].
 - [Node.js]'s [npm] package structure.
 - [Prettier] code.
@@ -34,7 +33,6 @@ Bootstrap a new Benthos plugin in five minutes or less.
 [Prettier]: https://prettier.io/
 [Serverless]: https://serverless.com/
 [npm]: https://www.npmjs.com/
-[serverless-domain-manager]: https://github.com/amplify-education/serverless-domain-manager
 
 ### Bootstrapping a new project
 
@@ -63,19 +61,13 @@ Bootstrap a new Benthos plugin in five minutes or less.
    $ git remote add origin git@github.com:<user>/<new-node-lib>.git
    $ git push -u origin master
    ```
-6. Ensure a valid certificate exists in [AWS Certificate Manager]
-   that matches the custom deployment domains,
-   e.g., this project uses a wildcard certificate for
-   `*.benthos-plugin.makenew.razorx.app`.
-7. Ensure the GitHub action passes,
+6. Ensure the GitHub action passes,
    then release the initial version with
    ```
    $ nvm install
    $ npm install
    $ npm version patch
    ```
-
-[AWS Certificate Manager]: https://aws.amazon.com/certificate-manager/
 
 ### Updating from this skeleton
 
