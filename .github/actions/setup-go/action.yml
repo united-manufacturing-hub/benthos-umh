@@ -4,7 +4,7 @@ description: Setup Go.
 
 inputs:
   go_version:
-    description: The Go version
+    description: The Go version.
     required: false
     default: '1.18'
 
