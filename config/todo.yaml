@@ -2,7 +2,7 @@
 pipeline:
   processors:
     - bloblang: |
-        root.body = "{\"data\":\"TODO\"}"
+        root.body = "{\"data\":\"TODO\"}".todo()
         root.statusCode = 200
 
 logger:
