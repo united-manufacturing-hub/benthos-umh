@@ -16,6 +16,12 @@ RUN bash /tmp/library-scripts/node-debian.sh "${NVM_DIR}" "${NODE_VERSION}" "${U
  && apt-get clean -y && rm -rf /var/lib/apt/lists/* \
  && rm -rf /tmp/library-scripts
 
+RUN echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' \
+  | tee /etc/apt/sources.list.d/goreleaser.list
+RUN apt-get update \
+ && export DEBIAN_FRONTEND=noninteractive \
+ && apt-get -y install --no-install-recommends goreleaser
+
 USER vscode
 WORKDIR /home/vscode
 

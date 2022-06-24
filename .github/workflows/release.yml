@@ -41,10 +41,10 @@ jobs:
           aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
       - name: Setup Go
         uses: ./.github/actions/setup-go
-      - name: Build
-        run: make benthos-lambda
       - name: Setup Node.js
         uses: ./.github/actions/setup-node
+      - name: Build
+        run: make
       - name: Build
         run: npm run build
       - name: Serverless deploy to production from ${{ github.event.client_payload.ref }}${{ github.event.inputs.ref }}
