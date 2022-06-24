@@ -3,6 +3,7 @@ ARG VARIANT="1.18"
 FROM mcr.microsoft.com/vscode/devcontainers/go:${VARIANT}
 
 ARG NODE_VERSION="16"
+ARG GOLANGCI_LINT_VERSION="1.46.2"
 
 # https://github.com/microsoft/vscode-dev-containers/blob/main/containers/go/.devcontainer/base.Dockerfile
 ENV USERNAME=vscode
@@ -21,6 +22,9 @@ RUN echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' \
 RUN apt-get update \
  && export DEBIAN_FRONTEND=noninteractive \
  && apt-get -y install --no-install-recommends goreleaser
+
+RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+  | sh -s -- -b $(go env GOPATH)/bin v$GOLANGCI_LINT_VERSION
 
 USER vscode
 WORKDIR /home/vscode
