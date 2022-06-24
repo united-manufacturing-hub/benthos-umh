@@ -118,6 +118,7 @@ $ git clone https://github.com/makenew/benthos-plugin.git
 $ cd benthos-plugin
 $ nvm install
 $ npm install
+$ make
 $ npm test
 ```
 
