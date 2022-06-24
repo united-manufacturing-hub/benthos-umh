@@ -2,6 +2,12 @@ FROM golang:1.18 as build
 
 RUN useradd -u 10001 benthos
 
+RUN echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' \
+  | tee /etc/apt/sources.list.d/goreleaser.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends goreleaser \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /go/src/github.com/makenew/benthos-plugin
 
 COPY go.mod go.sum ./
@@ -9,11 +15,9 @@ RUN go mod download
 
 COPY ./cmd ./cmd
 COPY ./plugin ./plugin
-
-ENV CGO_ENABLED=0
-ENV GOOS=linux
-
-RUN go build cmd/benthos/main.go
+COPY .goreleaser.yml .
+RUN echo 'project_name: app' >> .goreleaser.yml
+RUN goreleaser build --single-target --snapshot --id benthos --output ./main
 
 FROM busybox as app
 

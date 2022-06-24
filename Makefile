@@ -1,19 +1,25 @@
-all: clean benthos benthos-lambda
+all: clean target
 
 clean:
-	@rm -f tmp/bin/benthos tmp/bin/benthos-lambda tmp/benthos-lambda.zip
+	@rm -rf target tmp/bin benthos-lambda_linux_amd64.zip benthos-lambda_linux_arm64.zip
+
+target:
+	@mkdir -p tmp/bin
+	@goreleaser build --single-target --snapshot --id benthos \
+		--output ./tmp/bin/benthos
+	@GOARCH=amd64 GOOS=linux \
+		goreleaser build --rm-dist --single-target --snapshot --id benthos-lambda-al2 \
+		--output ./tmp/bin/bootstrap
+	@zip -m -j tmp/benthos-lambda_linux_amd64.zip ./tmp/bin/bootstrap
+	@GOARCH=arm64 GOOS=linux \
+		goreleaser build --rm-dist --single-target --snapshot --id benthos-lambda-al2 \
+		--output ./tmp/bin/bootstrap
+	@zip -m -j tmp/benthos-lambda_linux_arm64.zip ./tmp/bin/bootstrap
 
 test:
-	go test ./...
-
-benthos:
-	go build -o tmp/bin/benthos cmd/benthos/main.go
-
-benthos-lambda:
-	GOARCH=arm64 go build -o tmp/bin/bootstrap cmd/benthos-lambda/main.go
-	zip -m -j tmp/benthos-lambda.zip ./tmp/bin/bootstrap
+	@go test ./...
 
 format:
 	@gofmt -s -w .
 
-.PHONY: test
+.PHONY: format test

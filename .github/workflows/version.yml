@@ -43,6 +43,8 @@ jobs:
         uses: actions/setup-go@v2
         with:
           go-version: '1.18'
+      - name: Setup Node.js
+        uses: ./.github/actions/setup-node
       - name: Lint
         run: |
           gofmt -l .
@@ -55,7 +57,5 @@ jobs:
         run: |
           chmod 755 tmp/bin/benthos
           echo "$(pwd)/tmp/bin" >> $GITHUB_PATH
-      - name: Setup Node.js
-        uses: ./.github/actions/setup-node
       - name: Cut ${{ github.event.inputs.version }}${{ github.event.client_payload.version }} version
         run: npm version --sign-git-tag=true ${{ github.event.inputs.version }}${{ github.event.client_payload.version }}

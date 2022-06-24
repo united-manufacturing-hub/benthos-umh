@@ -38,18 +38,31 @@ jobs:
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Build
-        run: make
-      - name: Upload benthos artifact
+        uses: goreleaser/goreleaser-action@v3
+        with:
+          args: release --skip-publish --skip-sign --snapshot --timeout=60m
+      - name: Read metadata
+        id: metadata
+        uses: juliangruber/read-file-action@v1
+        with:
+          path: target/dist/metadata.json
+      - name: Upload Benthos artifact
         uses: actions/upload-artifact@v2
         with:
           name: benthos
-          path: tmp/bin/benthos
+          path: target/dist/benthos_linux_amd64_v1/benthos
           retention-days: 2
-      - name: Upload benthos-lambda artifact
+      - name: Upload Benthos Lambda amd64 artifact
         uses: actions/upload-artifact@v2
         with:
-          name: benthos-lambda.zip
-          path: tmp/benthos-lambda.zip
+          name: benthos-lambda_linux_amd64.zip
+          path: target/dist/benthos-lambda-al2_${{ fromJSON(steps.metadata.outputs.content).version }}_linux_amd64.zip
+          retention-days: 2
+      - name: Upload Benthos Lambda arm64 artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: benthos-lambda_linux_arm64.zip
+          path: target/dist/benthos-lambda-al2_${{ fromJSON(steps.metadata.outputs.content).version }}_linux_arm64.zip
           retention-days: 2
   test:
     needs: go-build
@@ -65,10 +78,15 @@ jobs:
         with:
           name: benthos
           path: tmp/bin
-      - name: Download Benthos Lambda artifact
+      - name: Download Benthos Lambda amd64 artifact
         uses: actions/download-artifact@v2
         with:
-          name: benthos-lambda.zip
+          name: benthos-lambda_linux_amd64.zip
+          path: tmp
+      - name: Download Benthos Lambda arm64 artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: benthos-lambda_linux_arm64.zip
           path: tmp
       - name: Install Benthos to PATH
         run: |
@@ -129,6 +147,16 @@ jobs:
         uses: actions/download-artifact@v2
         with:
           name: benthos-lambda.zip
+          path: tmp
+      - name: Download Benthos Lambda amd64 artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: benthos-lambda_linux_amd64.zip
+          path: tmp
+      - name: Download Benthos Lambda arm64 artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: benthos-lambda_linux_arm64.zip
           path: tmp
       - name: Build
         run: npm run build
