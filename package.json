@@ -26,9 +26,8 @@
   "scripts": {
     "test": "./tmp/bin/benthos test config/...",
     "lint": "prettier --check --ignore-path .gitignore '**/*.(js|cjs|mjs|json|yaml|yml)'",
-    "clean": "del dist",
     "build": "blobpack",
-    "prebuild": "npm-run-all clean",
+    "prebuild": "del dist",
     "preversion": "npm-run-all --parallel lint test --serial build sls:package",
     "postversion": "git push --follow-tags",
     "sls:package": "serverless package",
