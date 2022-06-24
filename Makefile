@@ -19,7 +19,10 @@ target:
 test:
 	@go test ./...
 
-format:
-	@gofmt -s -w .
+lint:
+	@golangci-lint run
 
-.PHONY: format test
+format:
+	@golangci-lint run --fix
+
+.PHONY: format lint test

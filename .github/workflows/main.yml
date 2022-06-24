@@ -26,9 +26,10 @@ jobs:
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Lint
-        run: |
-          gofmt -l .
-          test -z "$(gofmt -l .)"
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: v1.46
+          args: --timeout=30m
   go-build:
     runs-on: ubuntu-20.04
     timeout-minutes: 60
