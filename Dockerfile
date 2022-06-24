@@ -7,13 +7,15 @@ WORKDIR /go/src/github.com/makenew/benthos-plugin
 COPY go.mod go.sum ./
 RUN go mod download
 
-COPY ./Makefile .
 COPY ./cmd ./cmd
 COPY ./plugin ./plugin
 
-RUN CGO_ENABLED=0 GOOS=linux go build cmd/benthos/main.go
+ENV CGO_ENABLED=0
+ENV GOOS=linux
 
-FROM busybox
+RUN go build cmd/benthos/main.go
+
+FROM busybox as app
 
 WORKDIR /
 
