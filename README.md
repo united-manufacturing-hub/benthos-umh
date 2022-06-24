@@ -143,7 +143,7 @@ $ git clone git@github.com:makenew/benthos-plugin.git
 
 ### Requirements
 
-A [Go] version compatible with the one specified in `go.mod`.
+A [Go] version compatible with the one specified in `go.mod` and [GoReleaser].
 
 To build the [Serverless] artifacts you will need [Node.js] with [npm].
 
@@ -167,6 +167,7 @@ $ npm install
 ```
 
 [Go]: https://golang.org/
+[GoReleaser]: https://goreleaser.com/
 [Node.js]: https://nodejs.org/
 [npm]: https://www.npmjs.com/
 [nvm]: https://github.com/creationix/nvm
