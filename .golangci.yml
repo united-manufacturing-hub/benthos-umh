@@ -1,4 +1,12 @@
 ---
+timeout: 30m
+
+skip-dirs:
+  - dist
+  - node_modules
+  - target
+  - tmp
+
 linters:
   enable:
     - gofmt
