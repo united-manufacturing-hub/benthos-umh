@@ -10,9 +10,11 @@ Bootstrap a new Benthos plugin in five minutes or less.
 
 ### Features
 
+- Multi-arch and multi-platform builds published to GitHub with [GoReleaser].
 - Multi-stage [Docker] build for optimized production images.
 - Images tagged using package version and commit checksum.
 - Images pushed to [GitHub Container Registry].
+- Linting with [golangci-lint].
 - Deploy [Benthos] with custom plugins to [AWS Lambda] with [Serverless].
 - Unlimited, modular, and testable configs packaged with [Blobpack].
 - [Node.js]'s [npm] package structure.
@@ -28,6 +30,8 @@ Bootstrap a new Benthos plugin in five minutes or less.
 [EditorConfig]: https://editorconfig.org/
 [GitHub Actions]: https://github.com/features/actions
 [GitHub Container Registry]: https://github.com/features/packages
+[golangci-lint]: https://golangci-lint.run/
+[GoReleaser]: https://goreleaser.com/
 [Keep a CHANGELOG]: https://keepachangelog.com/
 [Node.js]: https://nodejs.org/
 [Prettier]: https://prettier.io/
