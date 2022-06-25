@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           persist-credentials: false
       - name: Setup Git config
@@ -31,7 +31,7 @@ jobs:
           git config user.name "$GIT_USER_NAME"
           git config user.email "$GIT_USER_EMAIL"
       - name: Import GPG key
-        uses: crazy-max/ghaction-import-gpg@v4
+        uses: crazy-max/ghaction-import-gpg@v5
         with:
           git_user_signingkey: true
           git_commit_gpgsign: true
@@ -40,13 +40,13 @@ jobs:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
       - name: Setup Go
-        uses: actions/setup-go@v2
-        with:
-          go-version: '1.18'
+        uses: ./.github/actions/setup-go
+      - name: Setup Node.js
+        uses: ./.github/actions/setup-node
       - name: Lint
-        run: |
-          gofmt -l .
-          test -z "$(gofmt -l .)"
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: v1.46
       - name: Test
         run: make test
       - name: Build
@@ -55,7 +55,5 @@ jobs:
         run: |
           chmod 755 tmp/bin/benthos
           echo "$(pwd)/tmp/bin" >> $GITHUB_PATH
-      - name: Setup Node.js
-        uses: ./.github/actions/setup-node
       - name: Cut ${{ github.event.inputs.version }}${{ github.event.client_payload.version }} version
         run: npm version --sign-git-tag=true ${{ github.event.inputs.version }}${{ github.event.client_payload.version }}

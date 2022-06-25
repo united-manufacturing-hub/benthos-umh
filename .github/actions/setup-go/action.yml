@@ -12,15 +12,11 @@ runs:
   using: composite
   steps:
     - name: Setup Go
-      uses: actions/setup-go@v2
+      uses: actions/setup-go@v3
       with:
         go-version: ${{ inputs.go_version }}
-    - name: Cache Go modules
-      uses: actions/cache@v2
+        cache: true
+    - name: Setup GoReleaser
+      uses: goreleaser/goreleaser-action@v3
       with:
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        path: |
-          ~/.cache/go-build
-          ~/go/pkg/mod
-        restore-keys: |
-          ${{ runner.os }}-go-
+        install-only: true

@@ -7,12 +7,36 @@ on:
       - v*
 
 jobs:
+  github:
+    runs-on: ubuntu-20.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v5
+        with:
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+          git_committer_name: ${{ secrets.GIT_USER_NAME }}
+          git_committer_email: ${{ secrets.GIT_USER_EMAIL }}
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+      - name: Release
+        uses: goreleaser/goreleaser-action@v3
+        with:
+          args: release --timeout=60m
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
   registry:
     runs-on: ubuntu-20.04
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Get tag
         uses: jungwinter/split@v1
         id: tag
@@ -32,7 +56,7 @@ jobs:
           registry_username: ${{ secrets.GH_USER }}
           registry_password: ${{ secrets.GH_TOKEN }}
       - name: Build and push ${{ github.repository }}:${{ steps.version.outputs._1 }}
-        uses: docker/build-push-action@v2
+        uses: docker/build-push-action@v3
         with:
           push: true
           platforms: linux/amd64,linux/arm64

@@ -8,7 +8,7 @@ configValidationMode: error
 provider:
   name: aws
   deploymentMethod: direct
-  architecture: arm64
+  architecture: ${self:custom.architecture.${self:custom.platform}}
   runtime: provided.al2
   region: ${env:AWS_DEFAULT_REGION, 'us-east-1'}
   stage: stg
@@ -23,6 +23,12 @@ provider:
   environment:
     LOG_LEVEL: ${env:LOG_LEVEL, 'info'}
     LOG_VERSION: ${file(./package.json):version}
+
+custom:
+  platform: ${file(./package.json):blobpack.platform}
+  architecture:
+    linux_amd64: x86_64
+    linux_arm64: arm64
 
 package:
   individually: true
