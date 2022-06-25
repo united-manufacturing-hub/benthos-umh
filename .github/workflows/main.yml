@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Test
@@ -22,34 +22,55 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Lint
-        run: |
-          gofmt -l .
-          test -z "$(gofmt -l .)"
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: v1.46
   go-build:
     runs-on: ubuntu-20.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Build
-        run: make
-      - name: Upload benthos artifact
-        uses: actions/upload-artifact@v2
+        uses: goreleaser/goreleaser-action@v3
+        with:
+          args: release --skip-publish --skip-sign --snapshot --timeout=60m
+      - name: Read metadata
+        id: metadata
+        uses: juliangruber/read-file-action@v1
+        with:
+          path: target/dist/metadata.json
+      - name: Prepare artifacts
+        run: |
+          mkdir -p tmp/bin
+          cp target/dist/benthos_linux_amd64_v1/benthos tmp/bin/benthos
+          cp "target/dist/benthos-lambda-al2_${VERSION}_linux_amd64.zip" tmp/benthos-lambda-al2_linux_amd64.zip
+          cp "target/dist/benthos-lambda-al2_${VERSION}_linux_arm64.zip" tmp/benthos-lambda-al2_linux_arm64.zip
+        env:
+          VERSION: ${{ fromJSON(steps.metadata.outputs.content).version }}
+      - name: Upload Benthos artifacts
+        uses: actions/upload-artifact@v3
         with:
           name: benthos
           path: tmp/bin/benthos
           retention-days: 2
-      - name: Upload benthos-lambda artifact
-        uses: actions/upload-artifact@v2
+      - name: Upload Benthos Lambda amd64 artifact
+        uses: actions/upload-artifact@v3
         with:
-          name: benthos-lambda.zip
-          path: tmp/benthos-lambda.zip
+          name: benthos-lambda_linux_amd64.zip
+          path: tmp/benthos-lambda-al2_linux_amd64.zip
+          retention-days: 2
+      - name: Upload Benthos Lambda arm64 artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: benthos-lambda_linux_arm64.zip
+          path: tmp/benthos-lambda-al2_linux_arm64.zip
           retention-days: 2
   test:
     needs: go-build
@@ -57,25 +78,18 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Node.js
         uses: ./.github/actions/setup-node
       - name: Download Benthos artifact
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: benthos
           path: tmp/bin
-      - name: Download Benthos Lambda artifact
-        uses: actions/download-artifact@v2
-        with:
-          name: benthos-lambda.zip
-          path: tmp
       - name: Install Benthos to PATH
         run: |
           chmod 755 tmp/bin/benthos
           echo "$(pwd)/tmp/bin" >> $GITHUB_PATH
-      - name: Build
-        run: npm run build
       - name: Test
         run: npm test
   lint:
@@ -83,7 +97,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Node.js
         uses: ./.github/actions/setup-node
       - name: Lint
@@ -93,7 +107,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Docker
         uses: ./.github/actions/setup-docker
         with:
@@ -101,7 +115,7 @@ jobs:
           registry_username: ${{ secrets.GH_USER }}
           registry_password: ${{ secrets.GH_TOKEN }}
       - name: Build
-        uses: docker/build-push-action@v2
+        uses: docker/build-push-action@v3
         with:
           push: true
           platforms: linux/amd64,linux/arm64
@@ -122,13 +136,18 @@ jobs:
     needs: go-build
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Node.js
         uses: ./.github/actions/setup-node
-      - name: Download Benthos Lambda artifact
-        uses: actions/download-artifact@v2
+      - name: Download Benthos Lambda amd64 artifact
+        uses: actions/download-artifact@v3
         with:
-          name: benthos-lambda.zip
+          name: benthos-lambda_linux_amd64.zip
+          path: tmp
+      - name: Download Benthos Lambda arm64 artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: benthos-lambda_linux_arm64.zip
           path: tmp
       - name: Build
         run: npm run build

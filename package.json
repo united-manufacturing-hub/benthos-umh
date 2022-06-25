@@ -36,7 +36,8 @@
     "format": "prettier --write --ignore-path .gitignore '**/*.(js|cjs|mjs|json|yaml|yml)'"
   },
   "blobpack": {
-    "name": "benthos-lambda",
+    "name": "benthos-lambda-al2",
+    "platform": "linux_arm64",
     "artifacts": [
       "todo"
     ]

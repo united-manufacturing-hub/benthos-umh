@@ -4,15 +4,17 @@
     "dockerfile": "Dockerfile",
     "args": {
       "NODE_VERSION": "16",
-      "VARIANT": "1.18"
+      "VARIANT": "1.18",
+      "GOLANGCI_LINT_VERSION": "1.46.2"
     }
   },
   "extensions": [
+    "golang.Go",
     "ms-vsliveshare.vsliveshare",
     "dbaeumer.vscode-eslint",
     "EditorConfig.EditorConfig",
     "esbenp.prettier-vscode"
   ],
-  "postCreateCommand": "npm install",
+  "postCreateCommand": "go mod download && npm install",
   "remoteUser": "vscode"
 }

@@ -21,11 +21,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           ref: ${{ github.event.client_payload.ref }}${{ github.event.inputs.ref }}
       - name: Start deployment
-        uses: bobheadxi/deployments@v0.6.0
+        uses: bobheadxi/deployments@v1
         id: deployment
         with:
           step: start
@@ -41,11 +41,11 @@ jobs:
           aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
       - name: Setup Go
         uses: ./.github/actions/setup-go
-      - name: Build
-        run: make benthos-lambda
       - name: Setup Node.js
         uses: ./.github/actions/setup-node
-      - name: Build
+      - name: Build Benthos
+        run: make
+      - name: Build Artifacts
         run: npm run build
       - name: Serverless deploy to production from ${{ github.event.client_payload.ref }}${{ github.event.inputs.ref }}
         run: npm run deploy
@@ -58,10 +58,11 @@ jobs:
         env:
           SERVERLESS_STAGE: stg
       - name: Finish deployment
-        uses: bobheadxi/deployments@v0.6.0
+        uses: bobheadxi/deployments@v1
         if: always()
         with:
           step: finish
           status: ${{ job.status }}
           deployment_id: ${{ steps.deployment.outputs.deployment_id }}
           token: ${{ secrets.GITHUB_TOKEN }}
+          env: ${{ steps.deployment.outputs.env }}

@@ -10,9 +10,11 @@ Bootstrap a new Benthos plugin in five minutes or less.
 
 ### Features
 
+- Multi-arch and multi-platform builds published to GitHub with [GoReleaser].
 - Multi-stage [Docker] build for optimized production images.
 - Images tagged using package version and commit checksum.
 - Images pushed to [GitHub Container Registry].
+- Linting with [golangci-lint].
 - Deploy [Benthos] with custom plugins to [AWS Lambda] with [Serverless].
 - Unlimited, modular, and testable configs packaged with [Blobpack].
 - [Node.js]'s [npm] package structure.
@@ -28,6 +30,8 @@ Bootstrap a new Benthos plugin in five minutes or less.
 [EditorConfig]: https://editorconfig.org/
 [GitHub Actions]: https://github.com/features/actions
 [GitHub Container Registry]: https://github.com/features/packages
+[golangci-lint]: https://golangci-lint.run/
+[GoReleaser]: https://goreleaser.com/
 [Keep a CHANGELOG]: https://keepachangelog.com/
 [Node.js]: https://nodejs.org/
 [Prettier]: https://prettier.io/
@@ -118,6 +122,7 @@ $ git clone https://github.com/makenew/benthos-plugin.git
 $ cd benthos-plugin
 $ nvm install
 $ npm install
+$ make
 $ npm test
 ```
 
@@ -142,7 +147,7 @@ $ git clone git@github.com:makenew/benthos-plugin.git
 
 ### Requirements
 
-A [Go] version compatible with the one specified in `go.mod`.
+A [Go] version compatible with the one specified in `go.mod`, [GoReleaser], and [golangci-lint].
 
 To build the [Serverless] artifacts you will need [Node.js] with [npm].
 
@@ -166,6 +171,8 @@ $ npm install
 ```
 
 [Go]: https://golang.org/
+[golangci-lint]: https://golangci-lint.run/
+[GoReleaser]: https://goreleaser.com/
 [Node.js]: https://nodejs.org/
 [npm]: https://www.npmjs.com/
 [nvm]: https://github.com/creationix/nvm
@@ -208,6 +215,8 @@ The following repository secrets must be set on [GitHub Actions]:
 - `AWS_SECRET_ACCESS_KEY`: AWS secret access key.
 - `GH_USER`: The GitHub user's username to pull and push containers.
 - `GH_TOKEN`: A personal access token that can trigger workflows.
+- `GPG_PRIVATE_KEY`: The GitHub user's [GPG private key].
+- `GPG_PASSPHRASE`: The GitHub user's GPG passphrase.
 
 These must be set manually.
 
@@ -222,8 +231,6 @@ Set these additional secrets to enable the action:
 - `GH_TOKEN`: A personal access token for the user.
 - `GIT_USER_NAME`: The GitHub user's real name.
 - `GIT_USER_EMAIL`: The GitHub user's email.
-- `GPG_PRIVATE_KEY`: The GitHub user's [GPG private key].
-- `GPG_PASSPHRASE`: The GitHub user's GPG passphrase.
 
 [GitHub Actions]: https://github.com/features/actions
 [GPG private key]: https://github.com/marketplace/actions/import-gpg#prerequisites
