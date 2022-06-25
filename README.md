@@ -10,12 +10,12 @@ Bootstrap a new Benthos plugin in five minutes or less.
 
 ### Features
 
+- Deploy [Benthos] with custom plugins to [AWS Lambda] with [Serverless].
 - Multi-arch and multi-platform builds published to GitHub with [GoReleaser].
 - Multi-stage [Docker] build for optimized production images.
 - Images tagged using package version and commit checksum.
 - Images pushed to [GitHub Container Registry].
 - Linting with [golangci-lint].
-- Deploy [Benthos] with custom plugins to [AWS Lambda] with [Serverless].
 - Unlimited, modular, and testable configs packaged with [Blobpack].
 - [Node.js]'s [npm] package structure.
 - [Prettier] code.
