@@ -15,6 +15,6 @@
     "EditorConfig.EditorConfig",
     "esbenp.prettier-vscode"
   ],
-  "postCreateCommand": "npm install",
+  "postCreateCommand": "go mod download && npm install",
   "remoteUser": "vscode"
 }
