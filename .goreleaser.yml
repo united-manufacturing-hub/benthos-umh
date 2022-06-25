@@ -14,13 +14,8 @@ builds:
   - id: benthos
     main: cmd/benthos/main.go
     binary: benthos
-    goos: [windows, darwin, linux, freebsd, openbsd]
+    goos: [windows, darwin, linux]
     goarch: [amd64, arm64]
-    ignore:
-      - goos: windows
-        goarch: arm
-      - goos: darwin
-        goarch: arm
     env:
       - CGO_ENABLED=0
     ldflags: >
@@ -39,15 +34,9 @@ archives:
   - id: benthos
     builds: [benthos]
     format: tar.gz
-    files:
-      - README.md
-      - CHANGELOG.md
-      - LICENSE.txt
+    files: [README.md, CHANGELOG.md, LICENSE.txt]
   - id: benthos-lambda-al2
     builds: [benthos-lambda-al2]
     format: zip
-    files:
-      - README.md
-      - CHANGELOG.md
-      - LICENSE.txt
+    files: [README.md, CHANGELOG.md, LICENSE.txt]
     name_template: 'benthos-lambda-al2_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
