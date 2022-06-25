@@ -86,22 +86,10 @@ jobs:
         with:
           name: benthos
           path: tmp/bin
-      - name: Download Benthos Lambda amd64 artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: benthos-lambda_linux_amd64.zip
-          path: tmp
-      - name: Download Benthos Lambda arm64 artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: benthos-lambda_linux_arm64.zip
-          path: tmp
       - name: Install Benthos to PATH
         run: |
           chmod 755 tmp/bin/benthos
           echo "$(pwd)/tmp/bin" >> $GITHUB_PATH
-      - name: Build
-        run: npm run build
       - name: Test
         run: npm test
   lint:
