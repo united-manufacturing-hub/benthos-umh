@@ -16,3 +16,7 @@ runs:
       with:
         go-version: ${{ inputs.go_version }}
         cache: true
+    - name: Setup GoReleaser
+      uses: goreleaser/goreleaser-action@v3
+      with:
+        install-only: true
