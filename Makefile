@@ -1,7 +1,7 @@
 all: clean target
 
 clean:
-	@rm -rf target tmp/bin benthos-lambda_linux_amd64.zip benthos-lambda_linux_arm64.zip
+	@rm -rf target tmp/bin tmp/benthos-*.zip
 
 target:
 	@mkdir -p tmp/bin
@@ -10,11 +10,11 @@ target:
 	@GOARCH=amd64 GOOS=linux \
 		goreleaser build --rm-dist --single-target --snapshot --id benthos-lambda-al2 \
 		--output ./tmp/bin/bootstrap
-	@zip -m -j tmp/benthos-lambda_linux_amd64.zip ./tmp/bin/bootstrap
+	@zip -m -j tmp/benthos-lambda-al2_linux_amd64.zip ./tmp/bin/bootstrap
 	@GOARCH=arm64 GOOS=linux \
 		goreleaser build --rm-dist --single-target --snapshot --id benthos-lambda-al2 \
 		--output ./tmp/bin/bootstrap
-	@zip -m -j tmp/benthos-lambda_linux_arm64.zip ./tmp/bin/bootstrap
+	@zip -m -j tmp/benthos-lambda-al2_linux_arm64.zip ./tmp/bin/bootstrap
 
 test:
 	@go test ./...
@@ -25,4 +25,4 @@ lint:
 format:
 	@golangci-lint run --fix
 
-.PHONY: format lint test
+.PHONY: clean format lint test
