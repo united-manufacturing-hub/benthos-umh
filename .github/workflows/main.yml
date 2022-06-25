@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Test
@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Lint
@@ -34,7 +34,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Build
@@ -78,7 +78,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Node.js
         uses: ./.github/actions/setup-node
       - name: Download Benthos artifact
@@ -97,7 +97,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Node.js
         uses: ./.github/actions/setup-node
       - name: Lint
@@ -107,7 +107,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Docker
         uses: ./.github/actions/setup-docker
         with:
@@ -115,7 +115,7 @@ jobs:
           registry_username: ${{ secrets.GH_USER }}
           registry_password: ${{ secrets.GH_TOKEN }}
       - name: Build
-        uses: docker/build-push-action@v2
+        uses: docker/build-push-action@v3
         with:
           push: true
           platforms: linux/amd64,linux/arm64
@@ -136,7 +136,7 @@ jobs:
     needs: go-build
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Node.js
         uses: ./.github/actions/setup-node
       - name: Download Benthos Lambda amd64 artifact
