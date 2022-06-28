@@ -11,15 +11,9 @@ jobs:
     runs-on: ubuntu-20.04
     timeout-minutes: 30
     steps:
-      - name: Get tag
-        uses: jungwinter/split@v1
-        id: tag
-        with:
-          msg: ${{ github.ref }}
-          seperator: /
-      - name: Promote ${{ steps.tag.outputs._2 }} to staging
+      - name: Promote ${{ github.ref_name }} to staging
         uses: peter-evans/repository-dispatch@v2
         with:
           token: ${{ secrets.GH_TOKEN }}
           event-type: release
-          client-payload: '{"environment": "staging", "ref": "${{ steps.tag.outputs._2 }}"}'
+          client-payload: '{"environment": "staging", "ref": "${{ github.ref_name }}"}'
