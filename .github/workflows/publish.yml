@@ -37,27 +37,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-      - name: Get tag
-        uses: jungwinter/split@v1
-        id: tag
-        with:
-          msg: ${{ github.ref }}
-          seperator: /
       - name: Get version
-        uses: jungwinter/split@v1
+        uses: actions/github-script@v6
         id: version
         with:
-          msg: ${{ steps.tag.outputs._2 }}
-          seperator: v
+          result-encoding: string
+          script: return context.github.ref.substring(1)
       - name: Setup Docker
         uses: ./.github/actions/setup-docker
         with:
           registry_domain: ghcr.io
           registry_username: ${{ secrets.GH_USER }}
           registry_password: ${{ secrets.GH_TOKEN }}
-      - name: Build and push ${{ github.repository }}:${{ steps.version.outputs._1 }}
+      - name: Build and push ${{ github.repository }}:${{ steps.version.outputs.result }}
         uses: docker/build-push-action@v3
         with:
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ghcr.io/${{ github.repository }}:${{ steps.version.outputs._1 }}
+          tags: ghcr.io/${{ github.repository }}:${{ steps.version.outputs.result }}
