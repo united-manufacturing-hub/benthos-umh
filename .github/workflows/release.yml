@@ -64,5 +64,5 @@ jobs:
           step: finish
           status: ${{ job.status }}
           deployment_id: ${{ steps.deployment.outputs.deployment_id }}
-          token: ${{ secrets.GITHUB_TOKEN }}
           env: ${{ steps.deployment.outputs.env }}
+          token: ${{ secrets.GITHUB_TOKEN }}
