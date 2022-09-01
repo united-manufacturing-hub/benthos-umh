@@ -36,7 +36,7 @@ jobs:
       - name: Format Go
         uses: golangci/golangci-lint-action@v3
         with:
-          version: v1.46
+          version: v1.49
           args: --fix --timeout 30m
       - name: Format
         run: npm run format
