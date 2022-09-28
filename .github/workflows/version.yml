@@ -1,6 +1,8 @@
 ---
 name: version
 
+run-name: ${{ github.event.inputs.version }}${{ github.event.client_payload.version }}
+
 on:
   workflow_dispatch:
     inputs:

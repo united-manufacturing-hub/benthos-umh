@@ -1,6 +1,8 @@
 ---
 name: release
 
+run-name: Release ${{ github.event.client_payload.ref }}${{ github.event.inputs.ref }} to ${{ github.event.inputs.environment }}${{ github.event.client_payload.environment }}
+
 on:
   workflow_dispatch:
     inputs:
