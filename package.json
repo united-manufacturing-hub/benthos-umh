@@ -27,7 +27,6 @@
     "lint": "prettier --check --ignore-path .gitignore '**/*.(js|cjs|mjs|json|yaml|yml)'",
     "build": "blobpack",
     "prebuild": "del dist",
-    "preversion": "npm-run-all --parallel lint test --serial build sls:package",
     "postversion": "git push --follow-tags",
     "sls:package": "serverless package",
     "sls:invoke": "serverless invoke local -f",

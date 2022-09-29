@@ -41,22 +41,7 @@ jobs:
           git_committer_email: ${{ secrets.GIT_USER_EMAIL }}
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
-      - name: Setup Go
-        uses: ./.github/actions/setup-go
       - name: Setup Node.js
         uses: ./.github/actions/setup-node
-      - name: Lint
-        uses: golangci/golangci-lint-action@v3
-        with:
-          version: v1.49
-          args: --timeout 30m
-      - name: Test
-        run: make test
-      - name: Build
-        run: make
-      - name: Install Benthos to PATH
-        run: |
-          chmod 755 tmp/bin/benthos
-          echo "$(pwd)/tmp/bin" >> $GITHUB_PATH
       - name: Cut ${{ github.event.inputs.version }}${{ github.event.client_payload.version }} version
         run: npm version --sign-git-tag=true ${{ github.event.inputs.version }}${{ github.event.client_payload.version }}
