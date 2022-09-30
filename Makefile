@@ -25,4 +25,4 @@ lint:
 format:
 	@golangci-lint run --fix
 
-.PHONY: clean format lint test
+.PHONY: clean target test lint format
