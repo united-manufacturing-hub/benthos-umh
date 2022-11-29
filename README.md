@@ -199,8 +199,7 @@ To add a new Serverless function nameed, e.g., `foo`:
 
 Serverless deployment is triggered by a release repository_dispatch on GitHub Actions.
 
-Deployment may be triggered using on the web
-using a [release workflow_dispatch on GitHub Actions].
+Deployment may be triggered using using a [release workflow_dispatch on GitHub Actions].
 
 [release workflow_dispatch on GitHub Actions]: https://github.com/makenew/benthos-plugin/actions?query=workflow%3Arelease
 
