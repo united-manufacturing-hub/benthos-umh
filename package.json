@@ -1,7 +1,7 @@
 {
-  "name": "@makenew/benthos-plugin",
-  "version": "4.4.0",
-  "description": "Project skeleton for a Benthos plugin.",
+  "name": "united-manufacturing-hub/benthos-umh",
+  "version": "0.0.0",
+  "description": "This is the benthos version maintained by the United Manufacturing Hub",
   "private": true,
   "type": "module",
   "main": "index.js",
@@ -10,13 +10,13 @@
   "keywords": [
     "benthos"
   ],
-  "homepage": "https://github.com/makenew/benthos-plugin",
-  "bugs": "https://github.com/makenew/benthos-plugin/issues",
-  "repository": "makenew/benthos-plugin",
+  "homepage": "https://github.com/united-manufacturing-hub/benthos-umh",
+  "bugs": "https://github.com/united-manufacturing-hub/benthos-umh/issues",
+  "repository": "united-manufacturing-hub/benthos-umh",
   "license": "MIT",
   "author": {
-    "name": "Evan Sosenko",
-    "email": "razorx@evansosenko.com"
+    "name": "UMH Systems GmbH",
+    "email": "hello@umh.app"
   },
   "files": [
     "config",
