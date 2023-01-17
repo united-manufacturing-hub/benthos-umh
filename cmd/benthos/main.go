@@ -4,7 +4,7 @@ import (
 	"context"
 	_ "github.com/benthosdev/benthos/v4/public/components/all"
 	"github.com/benthosdev/benthos/v4/public/service"
-	_ "github.com/makenew/benthos-plugin/v2/plugin"
+	_ "github.com/united-manufacturing-hub/benthos-umh/v2/plugin"
 )
 
 func main() {

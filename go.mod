@@ -1,4 +1,4 @@
-module github.com/makenew/benthos-plugin/v2
+module github.com/united-manufacturing-hub/benthos-umh/v2
 
 go 1.19
 

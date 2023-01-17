@@ -1,103 +1,14 @@
-# Benthos Plugin Project Skeleton
+# benthos-umh
 
-[![GitHub Actions](https://github.com/makenew/benthos-plugin/workflows/main/badge.svg)](https://github.com/makenew/benthos-plugin/actions)
+[![GitHub Actions](https://github.com/united-manufacturing-hub/benthos-umh/workflows/main/badge.svg)](https://github.com/united-manufacturing-hub/benthos-umh/actions)
 
-Project skeleton for a Benthos plugin.
+This is the benthos version maintained by the United Manufacturing Hub
 
 ## Description
 
-Bootstrap a new Benthos plugin in five minutes or less.
+$
+TODO$
 
-### Features
-
-- Deploy [Benthos] with custom plugins to [AWS Lambda] with [Serverless].
-- Multi-arch and multi-platform builds published to GitHub with [GoReleaser].
-- Multi-stage [Docker] build for optimized production images.
-- Images tagged using package version and commit checksum.
-- Images pushed to [GitHub Container Registry].
-- Linting with [golangci-lint].
-- Unlimited, modular, and testable configs packaged with [Blobpack].
-- [Node.js]'s [npm] package structure.
-- [Prettier] code.
-- Continuous testing and deployment with [GitHub Actions].
-- [Keep a CHANGELOG].
-- Consistent coding with [EditorConfig].
-
-[Benthos]: https://www.benthos.dev/
-[Blobpack]: https://github.com/razor-x/blobpack
-[AWS Lambda]: https://aws.amazon.com/lambda/
-[Docker]: https://www.docker.com/
-[EditorConfig]: https://editorconfig.org/
-[GitHub Actions]: https://github.com/features/actions
-[GitHub Container Registry]: https://github.com/features/packages
-[golangci-lint]: https://golangci-lint.run/
-[GoReleaser]: https://goreleaser.com/
-[Keep a CHANGELOG]: https://keepachangelog.com/
-[Node.js]: https://nodejs.org/
-[Prettier]: https://prettier.io/
-[Serverless]: https://serverless.com/
-[npm]: https://www.npmjs.com/
-
-### Bootstrapping a new project
-
-1. Create an empty (**non-initialized**) repository on GitHub.
-2. Clone the master branch of this repository with
-   ```
-   $ git clone --single-branch git@github.com:makenew/benthos-plugin.git <new-blob-plugin>
-   $ cd <new-blob-plugin>
-   ```
-   Optionally, reset to the latest version with
-   ```
-   $ git reset --hard <version-tag>
-   ```
-3. Run
-   ```
-   $ ./makenew.sh
-   ```
-   This will replace the boilerplate, delete itself,
-   remove the git remote, remove upstream tags,
-   and stage changes for commit.
-4. Create the required GitHub repository secrets.
-5. Review, commit, and push the changes to GitHub with
-   ```
-   $ git diff --cached
-   $ git commit -m "Replace makenew boilerplate"
-   $ git remote add origin git@github.com:<user>/<new-blob-plugin>.git
-   $ git push -u origin master
-   ```
-6. Ensure the GitHub action passes,
-   then release the initial version with
-   ```
-   $ nvm install
-   $ npm install
-   $ npm version patch
-   ```
-
-### Updating from this skeleton
-
-If you want to pull in future updates from this skeleton,
-you can fetch and merge in changes from this repository.
-
-Add this as a new remote with
-
-```
-$ git remote add upstream git@github.com:makenew/benthos-plugin.git
-```
-
-You can then fetch and merge changes with
-
-```
-$ git fetch --no-tags upstream
-$ git merge upstream/master
-```
-
-#### Changelog for this skeleton
-
-Note that `CHANGELOG.md` is just a template for this skeleton.
-The actual changes for this project are documented in the commit history
-and summarized under [Releases].
-
-[Releases]: https://github.com/makenew/benthos-plugin/releases
 
 ## Usage
 
@@ -110,7 +21,7 @@ using the custom built Benthos binary.
 ```
 $ docker run --read-only --init --publish 4195:4195 \
   --volume "$(pwd)/benthos.yaml:/benthos.yaml" \
-  ghcr.io/makenew/benthos-plugin
+  ghcr.io/united-manufacturing-hub/benthos-umh
 ```
 
 ## Development and Testing
@@ -118,8 +29,8 @@ $ docker run --read-only --init --publish 4195:4195 \
 ### Quickstart
 
 ```
-$ git clone https://github.com/makenew/benthos-plugin.git
-$ cd benthos-plugin
+$ git clone https://github.com/united-manufacturing-hub/benthos-umh.git
+$ cd serverless-stack
 $ nvm install
 $ npm install
 $ make
@@ -140,10 +51,10 @@ The [source code] is hosted on GitHub.
 Clone the project with
 
 ```
-$ git clone git@github.com:makenew/benthos-plugin.git
+$ git clone git@github.com:united-manufacturing-hub/benthos-umh.git
 ```
 
-[source code]: https://github.com/makenew/benthos-plugin
+[source code]: https://github.com/united-manufacturing-hub/benthos-umh
 
 ### Requirements
 
@@ -201,7 +112,7 @@ Serverless deployment is triggered by a release repository_dispatch on GitHub Ac
 
 Deployment may be triggered using using a [release workflow_dispatch on GitHub Actions].
 
-[release workflow_dispatch on GitHub Actions]: https://github.com/makenew/benthos-plugin/actions?query=workflow%3Arelease
+[release workflow_dispatch on GitHub Actions]: https://github.com/united-manufacturing-hub/benthos-umh/actions?query=workflow%3Arelease
 
 ## GitHub Actions
 
@@ -239,7 +150,7 @@ Please submit and comment on bug reports and feature requests.
 
 To submit a patch:
 
-1. Fork it (https://github.com/makenew/benthos-plugin/fork).
+1. Fork it (https://github.com/united-manufacturing-hub/benthos-umh/fork).
 2. Create your feature branch (`git checkout -b my-new-feature`).
 3. Make changes.
 4. Commit your changes (`git commit -am 'Add some feature'`).
