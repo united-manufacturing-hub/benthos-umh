@@ -520,6 +520,8 @@ github.com/googleapis/gax-go/v2 v2.5.1 h1:kBRZU0PSuI7PspsSb/ChWoVResUcwNVIdpB049
 github.com/googleapis/gax-go/v2 v2.5.1/go.mod h1:h6B0KMMFNtI2ddbGJn3T3ZbwkeT6yqEF02fYlzkUCyo=
 github.com/googleapis/go-type-adapters v1.0.0/go.mod h1:zHW75FOG2aur7gAO2B+MLby+cLsWGBF62rFAi7WjWO4=
 github.com/googleinterns/cloud-operations-api-mock v0.0.0-20200709193332-a1e58c29bdd3 h1:eHv/jVY/JNop1xg2J9cBb4EzyMpWZoNCP1BslSAIkOI=
+github.com/gopcua/opcua v0.3.11 h1:bMGk0CIWdUmR65BGIsshbu9xFjFVrBm3pHrjA2FL7wI=
+github.com/gopcua/opcua v0.3.11/go.mod h1:iu1CGXH3P8E7oQIgnBIWs3Dv0dzAxak82a2kLUc0htI=
 github.com/gordonklaus/ineffassign v0.0.0-20200309095847-7953dde2c7bf/go.mod h1:cuNKsD1zp2v6XfE/orVX2QE1LC+i254ceGcVeDT3pTU=
 github.com/gorilla/css v1.0.0 h1:BQqNyPTi50JCFMTw/b67hByjMVXZRwGha6wxVGkeihY=
 github.com/gorilla/css v1.0.0/go.mod h1:Dn721qIggHpt4+EFCcTLTU/vk5ySda2ReITrtgBl60c=
