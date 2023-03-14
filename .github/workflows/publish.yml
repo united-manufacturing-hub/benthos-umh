@@ -5,6 +5,9 @@ on:
   push:
     tags:
       - v*
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   github:
@@ -47,8 +50,8 @@ jobs:
       - name: Setup Docker
         uses: ./.github/actions/setup-docker
         with:
-          registry_domain: ghcr.io
-          registry_username: ${{ secrets.GH_USER }}
+          registry_domain: ${{ env.REGISTRY }}
+          registry_username: ${{ github.actor }}
           registry_password: ${{ secrets.GH_TOKEN }}
       - name: Build and push ${{ github.repository }}:${{ steps.version.outputs.result }}
         uses: docker/build-push-action@v3
