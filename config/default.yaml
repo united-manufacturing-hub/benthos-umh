@@ -1,15 +1,8 @@
 ---
 input:
-  http_server: {}
+  opcua: 
+    endpoint: "opc.tcp://localhost:46010"
+    nodeID: "ns=2"
 
-pipeline:
-  processors:
-    - bloblang: |
-        root.body = "{\"data\":\"TODO\"}".todo()
-        root.statusCode = 200
-
-logger:
-  level: ${LOG_LEVEL:info}
-  static_fields:
-    functionName: ${AWS_LAMBDA_FUNCTION_NAME:''}
-    version: ${LOG_VERSION:''}
+output:
+  stdout: {}
