@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -165,7 +166,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int) ([]NodeD
 var OPCUAConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from OPC-UA servers.").
 	Field(service.NewStringField("endpoint").Default("opc.tcp://localhost:4840").Description("The OPC-UA endpoint to connect to.")).
-	Field(service.NewStringField("nodeID").Default("").Description("The OPC-UA node ID to start the browsing."))
+	Field(service.NewStringField("nodeID").Default("i=84").Description("The OPC-UA node ID to start the browsing."))
 
 func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
 	endpoint, err := conf.FieldString("endpoint")
@@ -278,7 +279,7 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 	// Create a message with the node's path as the metadata
 	msgs := service.MessageBatch{}
 
-	for i, _ := range g.nodeList {
+	for i, node := range g.nodeList {
 
 		b := make([]byte, 0)
 		switch v := resp.Results[i].Value.Value().(type) {
@@ -307,7 +308,12 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 		}
 
 		message := service.NewMessage(b)
-		// message = message.MetaSetMut("nodeID", node.NodeID)
+
+		opcuaPath := node.NodeID.String()
+		re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+		opcuaPath = re.ReplaceAllString(opcuaPath, "_")
+
+		message.MetaSet("opcua_path", opcuaPath)
 
 		msgs = append(msgs, message)
 	}
