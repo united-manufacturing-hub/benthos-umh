@@ -2,7 +2,7 @@
 input:
   opcua: 
     endpoint: "opc.tcp://localhost:46010"
-    nodeID: "ns=2"
+    nodeID: "ns=2;s=IoTSensors"
 
 output:
   stdout: {}
