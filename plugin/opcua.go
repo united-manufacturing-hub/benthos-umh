@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"time"
 
 	"github.com/benthosdev/benthos/v4/public/service"
 
@@ -166,7 +167,7 @@ var OPCUAConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringField("endpoint").Default("opc.tcp://localhost:4840").Description("The OPC-UA endpoint to connect to.")).
 	Field(service.NewStringField("nodeID").Default("").Description("The OPC-UA node ID to start the browsing."))
 
-func newOPCUAInput(conf *service.ParsedConfig) (service.Input, error) {
+func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
 	endpoint, err := conf.FieldString("endpoint")
 	if err != nil {
 		return nil, err
@@ -185,16 +186,17 @@ func newOPCUAInput(conf *service.ParsedConfig) (service.Input, error) {
 	m := &OPCUAInput{
 		endpoint: endpoint,
 		nodeID:   id,
+		log:      mgr.Logger(),
 	}
 
-	return service.AutoRetryNacks(m), nil
+	return service.AutoRetryNacksBatched(m), nil
 }
 
 func init() {
-	err := service.RegisterInput(
+	err := service.RegisterBatchInput(
 		"opcua", OPCUAConfigSpec,
-		func(conf *service.ParsedConfig, mgr *service.Resources) (service.Input, error) {
-			return newOPCUAInput(conf)
+		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
+			return newOPCUAInput(conf, mgr)
 		})
 	if err != nil {
 		panic(err)
@@ -206,8 +208,10 @@ func init() {
 type OPCUAInput struct {
 	endpoint string
 	nodeID   *ua.NodeID
+	nodeList []NodeDef
 
 	client *opcua.Client
+	log    *service.Logger
 }
 
 func (g *OPCUAInput) Connect(ctx context.Context) error {
@@ -221,12 +225,11 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		panic(err)
 	}
 
+	g.log.Infof("Connected to %s. Browsing %s", g.endpoint, g.nodeID.String())
+
 	g.client = c
 
-	return nil
-}
-
-func (g *OPCUAInput) Read(ctx context.Context) (*service.Message, service.AckFunc, error) {
+	// Browse the OPC-UA server's node tree and print the results.
 
 	nodeList, err := browse(ctx, g.client.Node(g.nodeID), "", 0)
 	if err != nil {
@@ -238,12 +241,91 @@ func (g *OPCUAInput) Read(ctx context.Context) (*service.Message, service.AckFun
 		panic(err)
 	}
 
-	return service.NewMessage(b), func(ctx context.Context, err error) error {
+	g.log.Infof("Detected nodes: %s", b)
+
+	g.nodeList = nodeList
+
+	return nil
+}
+
+func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+
+	// Read all values in NodeList and return each of them as a message with the node's path as the metadata
+
+	// Create first a list of all the values to read
+	var nodesToRead []*ua.ReadValueID
+
+	for _, node := range g.nodeList {
+		nodesToRead = append(nodesToRead, &ua.ReadValueID{
+			NodeID: node.NodeID,
+		})
+	}
+
+	req := &ua.ReadRequest{
+		MaxAge:             2000,
+		NodesToRead:        nodesToRead,
+		TimestampsToReturn: ua.TimestampsToReturnBoth,
+	}
+
+	resp, err := g.client.ReadWithContext(ctx, req)
+	if err != nil {
+		g.log.Errorf("Read failed: %s", err)
+	}
+	if resp.Results[0].Status != ua.StatusOK {
+		g.log.Errorf("Status not OK: %v", resp.Results[0].Status)
+	}
+
+	// Create a message with the node's path as the metadata
+	msgs := service.MessageBatch{}
+
+	for i, _ := range g.nodeList {
+
+		b := make([]byte, 0)
+		switch v := resp.Results[i].Value.Value().(type) {
+		case float64:
+			b = append(b, []byte(strconv.FormatFloat(v, 'f', -1, 64))...)
+		case string:
+			b = append(b, []byte(v)...)
+		case bool:
+			b = append(b, []byte(strconv.FormatBool(v))...)
+		case int:
+			b = append(b, []byte(strconv.Itoa(v))...)
+		case int32:
+			b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
+		case int64:
+			b = append(b, []byte(strconv.FormatInt(v, 10))...)
+		case uint:
+			b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
+		case uint32:
+			b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
+		case uint64:
+			b = append(b, []byte(strconv.FormatUint(v, 10))...)
+		case float32:
+			b = append(b, []byte(strconv.FormatFloat(float64(v), 'f', -1, 32))...)
+		default:
+			g.log.Errorf("Unknown type: %T", v)
+		}
+
+		message := service.NewMessage(b)
+		// message = message.MetaSetMut("nodeID", node.NodeID)
+
+		msgs = append(msgs, message)
+	}
+
+	// Wait for a second before returning a message.
+	time.Sleep(time.Second)
+
+	return msgs, func(ctx context.Context, err error) error {
 		// Nacks are retried automatically when we use service.AutoRetryNacks
 		return nil
 	}, nil
 }
 
 func (g *OPCUAInput) Close(ctx context.Context) error {
+	if g.client != nil {
+		g.client.Close()
+		g.client = nil
+	}
+
 	return nil
 }
