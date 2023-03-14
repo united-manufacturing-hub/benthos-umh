@@ -33,6 +33,10 @@ $ git clone https://github.com/united-manufacturing-hub/benthos-umh.git
 $ cd serverless-stack
 $ nvm install
 $ npm install
+$ sudo apt-get install zip 
+$ echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
+$ sudo apt update
+$ sudo apt install goreleaser
 $ make
 $ npm test
 ```
