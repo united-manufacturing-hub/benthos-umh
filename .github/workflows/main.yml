@@ -133,7 +133,7 @@ jobs:
           owner: ${{ github.repository_owner }}
           name: ${{ github.event.repository.name }}
           tag: ${{ github.sha }}
-          token: ${{ secrets.GH_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
   package:
     runs-on: ubuntu-latest
     timeout-minutes: 30
