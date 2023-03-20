@@ -1,0 +1,6 @@
+name: umh_processor
+type: processor
+status: experimental
+
+mapping: |
+  root = this

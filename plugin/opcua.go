@@ -164,7 +164,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int) ([]NodeD
 //------------------------------------------------------------------------------
 
 var OPCUAConfigSpec = service.NewConfigSpec().
-	Summary("Creates an input that reads data from OPC-UA servers.").
+	Summary("Creates an input that reads data from OPC-UA servers. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
 	Field(service.NewStringField("endpoint").Default("opc.tcp://localhost:4840").Description("The OPC-UA endpoint to connect to.")).
 	Field(service.NewStringField("nodeID").Default("i=84").Description("The OPC-UA node ID to start the browsing."))
 
@@ -194,9 +194,11 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 }
 
 func init() {
+
 	err := service.RegisterBatchInput(
 		"opcua", OPCUAConfigSpec,
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
+			mgr.Logger().Infof("Created & maintained by the United Manufacturing Hub. About us: www.umh.app")
 			return newOPCUAInput(conf, mgr)
 		})
 	if err != nil {

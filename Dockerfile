@@ -27,10 +27,11 @@ COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /etc/passwd /etc/passwd
 COPY --from=build /go/src/github.com/united-manufacturing-hub/benthos-umh/main benthos
 COPY ./config/default.yaml /benthos.yaml
+COPY ./templates /templates
 
 ENTRYPOINT ["/benthos"]
 
-CMD ["-c", "/benthos.yaml"]
+CMD ["-c", "/benthos.yaml", "-t", "/templates/*.yaml"]
 
 EXPOSE 4195
 

@@ -1,0 +1,16 @@
+name: umh_output
+type: output
+status: experimental
+
+fields: 
+  - name: topic
+    type: string
+  - name: microservice_name
+    type: string
+    default: benthos
+
+mapping: |
+  root.kafka.topic = this.topic
+  root.kafka.addresses = ["united-manufacturing-hub-kafka:9092"]
+  root.kafka.client_id = this.microservice_name
+  root.kafka.metadata.exclude_prefixes = ["kafka_"]

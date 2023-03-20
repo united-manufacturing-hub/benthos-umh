@@ -10,31 +10,6 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  github:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Import GPG key
-        id: gpg
-        uses: crazy-max/ghaction-import-gpg@v5
-        with:
-          git_user_signingkey: true
-          git_commit_gpgsign: true
-          git_committer_name: ${{ secrets.GIT_USER_NAME }}
-          git_committer_email: ${{ secrets.GIT_USER_EMAIL }}
-          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
-          passphrase: ${{ secrets.GPG_PASSPHRASE }}
-      - name: Setup Go
-        uses: ./.github/actions/setup-go
-      - name: Release
-        uses: goreleaser/goreleaser-action@v3
-        with:
-          args: release --timeout=60m
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GPG_FINGERPRINT: ${{ steps.gpg.outputs.fingerprint }}
   registry:
     runs-on: ubuntu-latest
     timeout-minutes: 30

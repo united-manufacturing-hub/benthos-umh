@@ -13,8 +13,4 @@ pipeline:
         }
 
 output:
-  mqtt:
-    urls:
-      - 'localhost:1883'
-    topic: 'ia/raw/opcuasimulator/${! meta("opcua_path") }'
-    client_id: benthos-umh
+  stdout: {}
