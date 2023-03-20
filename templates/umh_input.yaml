@@ -1,0 +1,16 @@
+name: umh_input
+type: input
+status: experimental
+
+fields: 
+  - name: topics
+    type: string
+    kind: list
+  - name: microservice_name
+    type: string
+    default: benthos
+
+mapping: |
+  root.kafka.topics = this.topics
+  root.kafka.addresses = ["united-manufacturing-hub-kafka:9092"]
+  root.kafka.consumer_group = this.microservice_name

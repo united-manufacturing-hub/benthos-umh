@@ -1,0 +1,15 @@
+---
+input:
+  umh_input_opcuasimulator: {}
+
+pipeline:
+  processors:
+    - bloblang: |
+        root = {
+          meta("opcua_path"): this,
+          "timestamp_unix": timestamp_unix()
+        }
+
+output:
+  umh_output: 
+    topic: 'ia.raw.${! meta("opcua_path") }'
