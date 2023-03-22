@@ -41,4 +41,4 @@ archives:
   - id: benthos
     builds: [benthos]
     format: tar.gz
-    files: [README.md, CHANGELOG.md, LICENSE.txt]
+    files: [README.md, LICENSE, NOTICE]
