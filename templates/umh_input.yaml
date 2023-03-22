@@ -16,7 +16,7 @@ name: umh_input
 type: input
 status: experimental
 
-fields: 
+fields:
   - name: topics
     type: string
     kind: list

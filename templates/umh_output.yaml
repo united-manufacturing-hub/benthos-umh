@@ -16,7 +16,7 @@ name: umh_output
 type: output
 status: experimental
 
-fields: 
+fields:
   - name: topic
     type: string
   - name: microservice_name
