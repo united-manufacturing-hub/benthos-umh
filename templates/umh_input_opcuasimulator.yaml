@@ -18,4 +18,4 @@ status: experimental
 
 mapping: |
   root.opcua.endpoint = "opc.tcp://united-manufacturing-hub-opcuasimulator-service:46010"
-  root.opcua.nodeID = ["ns=2;s=IoTSensors"]
+  root.opcua.nodeIDs = ["ns=2;s=IoTSensors"]
