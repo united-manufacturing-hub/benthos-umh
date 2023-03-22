@@ -29,7 +29,7 @@ To use benthos-umh in standalone mode with Docker, follow the instructions in th
     input:
       opcua:
         endpoint: 'opc.tcp://localhost:46010'
-        nodeID: 'ns=2;s=IoTSensors'
+        nodeIDs: ['ns=2;s=IoTSensors']
 
     pipeline:
       processors:
