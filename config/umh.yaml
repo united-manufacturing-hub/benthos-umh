@@ -25,5 +25,5 @@ pipeline:
         }
 
 output:
-  umh_output: 
+  umh_output:
     topic: 'ia.raw.${! meta("opcua_path") }'
