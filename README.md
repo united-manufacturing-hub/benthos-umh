@@ -6,7 +6,16 @@ Welcome to the benthos-umh repository! This is a version of benthos maintained b
 
 ## Description
 
-The benthos-umh Docker container is part of the United Manufacturing Hub project, which is designed to provide IT and OT engineers with a reliable and efficient solution for their production processes and infrastructure management. The container offers simple deployment, a wide range of output options, and full customization, along with integrating seamlessly with modern IT landscapes.
+`benthos-umh` is a Docker container designed to facilitate seamless OPC-UA integration with the Unified Namespace (MQTT/Kafka). It is part of the United Manufacturing Hub project and offers the following features:
+
+- Simple deployment in Docker, docker-compose, and Kubernetes
+- Connects to an OPC-UA server, browses selected nodes, and forwards all sub-nodes in 1-second intervals
+- Supports a wide range of outputs, from the Unified Namespace (MQTT and Kafka) to HTTP, AMQP, Redis, NATS, SQL, MongoDB, Cassandra, or AWS S3. Check out the official [benthos output library](https://benthos.dev/docs/components/outputs/about)
+- Fully customizable messages using the benthos processor library: implement Report-by-Exception (RBE) / message deduplication, modify payloads and add timestamps using bloblang, apply protobuf (and therefore SparkplugB), and explore many more options
+- Integrates with modern IT landscape, providing metrics, logging, tracing, versionable configuration, and more
+- Entirely open-source (Apache 2.0) and free-to-use
+
+We encourage you to try out `benthos-umh` and explore the broader [United Manufacturing Hub](https://www.umh.app) project for a comprehensive solution to your industrial data integration needs.
 
 ## Usage
 
