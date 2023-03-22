@@ -16,7 +16,8 @@
 input:
   opcua:
     endpoint: 'opc.tcp://localhost:46010'
-    nodeID: 'ns=2;s=IoTSensors'
+    # nodeIDs: ['ns=2;s=IoTSensors']
+    nodeIDs: ['ns=2;s=ConcentrationNH3', 'ns=2;s=ConcentrationN2']
 
 pipeline:
   processors:
@@ -28,3 +29,8 @@ pipeline:
 
 output:
   stdout: {}
+
+logger:
+  level: DEBUG
+  format: logfmt
+  add_timestamp: true

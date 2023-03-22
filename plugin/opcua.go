@@ -55,8 +55,8 @@ func join(a, b string) string {
 	return a + "." + b
 }
 
-func browse(ctx context.Context, n *opcua.Node, path string, level int) ([]NodeDef, error) {
-	// fmt.Printf("node:%s path:%q level:%d\n", n, path, level)
+func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *service.Logger) ([]NodeDef, error) {
+	logger.Debugf("node:%s path:%q level:%d\n", n, path, level)
 	if level > 10 {
 		return nil, nil
 	}
@@ -140,7 +140,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int) ([]NodeD
 	}
 
 	def.Path = join(path, def.BrowseName)
-	// fmt.Printf("%d: def.Path:%s def.NodeClass:%s\n", level, def.Path, def.NodeClass)
+	logger.Debugf("%d: def.Path:%s def.NodeClass:%s\n", level, def.Path, def.NodeClass)
 
 	var nodes []NodeDef
 	if def.NodeClass == ua.NodeClassVariable {
@@ -152,9 +152,9 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int) ([]NodeD
 		if err != nil {
 			return errors.Errorf("References: %d: %s", refType, err)
 		}
-		// fmt.Printf("found %d child refs\n", len(refs))
+		logger.Debugf("found %d child refs\n", len(refs))
 		for _, rn := range refs {
-			children, err := browse(ctx, rn, def.Path, level+1)
+			children, err := browse(ctx, rn, def.Path, level+1, logger)
 			if err != nil {
 				return errors.Errorf("browse children: %s", err)
 			}
@@ -179,8 +179,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int) ([]NodeD
 
 var OPCUAConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from OPC-UA servers. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
-	Field(service.NewStringField("endpoint").Default("opc.tcp://localhost:4840").Description("The OPC-UA endpoint to connect to.")).
-	Field(service.NewStringField("nodeID").Default("i=84").Description("The OPC-UA node ID to start the browsing."))
+	Field(service.NewStringField("endpoint").Description("The OPC-UA endpoint to connect to.")).
+	Field(service.NewStringListField("nodeIDs").Description("The OPC-UA node IDs to start the browsing."))
 
 func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
 	endpoint, err := conf.FieldString("endpoint")
@@ -188,19 +188,32 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		return nil, err
 	}
 
-	nodeID, err := conf.FieldString("nodeID")
+	nodeIDs, err := conf.FieldStringList("nodeIDs")
 	if err != nil {
 		return nil, err
 	}
 
-	id, err := ua.ParseNodeID(nodeID)
-	if err != nil {
-		return nil, err
+	// fail if no nodeIDs are provided
+	if len(nodeIDs) == 0 {
+		return nil, errors.New("no nodeIDs provided")
+	}
+
+	// Parse all nodeIDs to validate them.
+	// loop through all nodeIDs, parse them and put them into a slice
+	parsedNodeIDs := make([]*ua.NodeID, len(nodeIDs))
+
+	for _, id := range nodeIDs {
+		parsedNodeID, err := ua.ParseNodeID(id)
+		if err != nil {
+			return nil, err
+		}
+
+		parsedNodeIDs = append(parsedNodeIDs, parsedNodeID)
 	}
 
 	m := &OPCUAInput{
 		endpoint: endpoint,
-		nodeID:   id,
+		nodeIDs:  parsedNodeIDs,
 		log:      mgr.Logger(),
 	}
 
@@ -224,7 +237,7 @@ func init() {
 
 type OPCUAInput struct {
 	endpoint string
-	nodeID   *ua.NodeID
+	nodeIDs  []*ua.NodeID
 	nodeList []NodeDef
 
 	client *opcua.Client
@@ -242,15 +255,31 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		panic(err)
 	}
 
-	g.log.Infof("Connected to %s. Browsing %s", g.endpoint, g.nodeID.String())
+	g.log.Infof("Connected to %s", g.endpoint)
+	g.log.Infof("Please note that browsing large node trees can take a long time (around 5 nodes per second)")
 
 	g.client = c
 
-	// Browse the OPC-UA server's node tree and print the results.
+	// Create a slice to store the detected nodes
+	nodeList := make([]NodeDef, 0)
 
-	nodeList, err := browse(ctx, g.client.Node(g.nodeID), "", 0)
-	if err != nil {
-		panic(err)
+	// Print all nodeIDs that are being browsed
+	for _, id := range g.nodeIDs {
+		if id == nil {
+			continue
+		}
+
+		// Print id
+		g.log.Debugf("Browsing nodeID: %s", id.String())
+
+		// Browse the OPC-UA server's node tree and print the results.
+		nodes, err := browse(ctx, g.client.Node(id), "", 0, g.log)
+		if err != nil {
+			panic(err)
+		}
+
+		// Add the nodes to the nodeList
+		nodeList = append(nodeList, nodes...)
 	}
 
 	b, err := json.Marshal(nodeList)
