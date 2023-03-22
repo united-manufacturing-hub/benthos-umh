@@ -26,25 +26,30 @@ env:
 jobs:
   registry:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-      - name: Get version
-        uses: actions/github-script@v6
-        id: version
+-
+        name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v4
         with:
-          result-encoding: string
-          script: return context.ref.split('/')[2].substring(1)
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
       - name: Setup Docker
         uses: ./.github/actions/setup-docker
         with:
           registry_domain: ${{ env.REGISTRY }}
           registry_username: ${{ github.actor }}
           registry_password: ${{ secrets.GH_TOKEN }}
-      - name: Build and push ${{ github.repository }}:${{ steps.version.outputs.result }}
+      - name: Build and push ${{ github.repository }}:${{ steps.meta.outputs.tags }}
         uses: docker/build-push-action@v3
         with:
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ghcr.io/${{ github.repository }}:${{ steps.version.outputs.result }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
