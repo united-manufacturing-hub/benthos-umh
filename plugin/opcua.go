@@ -336,11 +336,15 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 			b = append(b, []byte(strconv.FormatBool(v))...)
 		case int:
 			b = append(b, []byte(strconv.Itoa(v))...)
+		case int16:
+			b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
 		case int32:
 			b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
 		case int64:
 			b = append(b, []byte(strconv.FormatInt(v, 10))...)
 		case uint:
+			b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
+		case uint16:
 			b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
 		case uint32:
 			b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
