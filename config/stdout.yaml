@@ -18,7 +18,6 @@ input:
     endpoint: 'opc.tcp://localhost:46010'
     # nodeIDs: ['ns=2;s=IoTSensors']
     nodeIDs: ['ns=2;s=ConcentrationNH3', 'ns=2;s=ConcentrationN2']
-
 pipeline:
   processors:
     - bloblang: |
