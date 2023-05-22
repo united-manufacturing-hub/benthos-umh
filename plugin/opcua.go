@@ -331,7 +331,7 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 		case float64:
 			b = append(b, []byte(strconv.FormatFloat(v, 'f', -1, 64))...)
 		case string:
-			b = append(b, []byte(v)...)
+			b = append(b, []byte(string(v))...)
 		case bool:
 			b = append(b, []byte(strconv.FormatBool(v))...)
 		case int:
