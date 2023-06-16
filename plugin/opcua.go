@@ -354,6 +354,7 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 			b = append(b, []byte(strconv.FormatFloat(float64(v), 'f', -1, 32))...)
 		default:
 			g.log.Errorf("Unknown type: %T", v)
+			continue
 		}
 
 		message := service.NewMessage(b)
