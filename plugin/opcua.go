@@ -316,6 +316,32 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 	resp, err := g.client.ReadWithContext(ctx, req)
 	if err != nil {
 		g.log.Errorf("Read failed: %s", err)
+		// if the error is StatusBadSessionIDInvalid, the session has been closed
+		// and we need to reconnect.
+		if err == ua.StatusBadSessionIDInvalid {
+			g.client.Close()
+			g.client = nil
+			return nil, nil, service.ErrNotConnected
+		} else if err == ua.StatusBadCommunicationError {
+			g.client.Close()
+			g.client = nil
+			return nil, nil, service.ErrNotConnected
+		} else if err == ua.StatusBadConnectionClosed {
+			g.client.Close()
+			g.client = nil
+			return nil, nil, service.ErrNotConnected
+		} else if err == ua.StatusBadTimeout {
+			g.client.Close()
+			g.client = nil
+			return nil, nil, service.ErrNotConnected
+		} else if err == ua.StatusBadConnectionRejected {
+			g.client.Close()
+			g.client = nil
+			return nil, nil, service.ErrNotConnected
+		}
+
+		// return error and stop executing this function.
+		return nil, nil, err
 	}
 	if resp.Results[0].Status != ua.StatusOK {
 		g.log.Errorf("Status not OK: %v", resp.Results[0].Status)
