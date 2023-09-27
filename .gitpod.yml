@@ -13,4 +13,4 @@ tasks:
       sudo apt update
       sudo apt install goreleaser --yes
       make
-    command: npm test
+    command: npm run lint && make test
