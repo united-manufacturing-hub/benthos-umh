@@ -28,7 +28,7 @@ builds:
   - id: benthos
     main: cmd/benthos/main.go
     binary: benthos
-    goos: [windows, darwin, linux]
+    goos: [linux]
     goarch: [amd64, arm64]
     env:
       - CGO_ENABLED=0
