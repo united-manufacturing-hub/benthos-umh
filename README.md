@@ -137,6 +137,20 @@ $ make
 $ npm test
 ```
 
+### Additional Checks and Commands
+
+#### For Go Code:
+
+1. **Linting**: Run `make lint` to check for linting errors. If any are found, you can automatically fix them by running `make format`.
+  
+2. **Unit Tests**: Run `make test` to execute all Go unit tests.
+
+#### For Other Code Types (Including Config Files):
+
+1. **Benthos Tests**: Use `npm run test` to run all Benthos tests for configuration files. Note: We currently do not have these tests. [Learn more](https://www.benthos.dev/docs/configuration/unit_testing/).
+
+2. **Linting**: Run `npm run lint` to check all files, including YAML files, for linting errors. To automatically fix these errors, run `npm run format`.
+
 ## License
 
 All source code is distributed under the APACHE LICENSE, VERSION 2.0. See LICENSE for more information.
