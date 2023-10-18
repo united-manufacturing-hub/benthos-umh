@@ -180,10 +180,22 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 var OPCUAConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from OPC-UA servers. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
 	Field(service.NewStringField("endpoint").Description("The OPC-UA endpoint to connect to.")).
+	Field(service.NewStringField("username").Description("The username to connect to the server. Defaults to none.")).
+	Field(service.NewStringField("password").Description("The password to connect to the server. Defaults to none.")).
 	Field(service.NewStringListField("nodeIDs").Description("The OPC-UA node IDs to start the browsing."))
 
 func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
 	endpoint, err := conf.FieldString("endpoint")
+	if err != nil {
+		return nil, err
+	}
+
+	username, err := conf.FieldString("username")
+	if err != nil {
+		return nil, err
+	}
+
+	password, err := conf.FieldString("password")
 	if err != nil {
 		return nil, err
 	}
@@ -213,6 +225,8 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 
 	m := &OPCUAInput{
 		endpoint: endpoint,
+		username: username,
+		password: password,
 		nodeIDs:  parsedNodeIDs,
 		log:      mgr.Logger(),
 	}
@@ -237,6 +251,8 @@ func init() {
 
 type OPCUAInput struct {
 	endpoint string
+	username string
+	password string
 	nodeIDs  []*ua.NodeID
 	nodeList []NodeDef
 
@@ -250,9 +266,18 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		return nil
 	}
 
-	c := opcua.NewClient(g.endpoint)
-	if err := c.Connect(ctx); err != nil {
-		panic(err)
+	var c *opcua.Client
+
+	if g.username != "" && g.password != "" { // if username and password are set
+		c = opcua.NewClient(g.endpoint, opcua.AuthUsername(g.username, g.password))
+		if err := c.Connect(ctx); err != nil {
+			panic(err)
+		}
+	} else {
+		c = opcua.NewClient(g.endpoint)
+		if err := c.Connect(ctx); err != nil {
+			panic(err)
+		}
 	}
 
 	g.log.Infof("Connected to %s", g.endpoint)
