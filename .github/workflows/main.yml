@@ -25,7 +25,7 @@ env:
 
 jobs:
   go-test:
-    runs-on: 
+    runs-on:
       group: large-runners
     timeout-minutes: 30
     steps:
@@ -36,7 +36,7 @@ jobs:
       - name: Test
         run: make test
   go-lint:
-    runs-on: 
+    runs-on:
       group: large-runners
     timeout-minutes: 30
     steps:
@@ -50,7 +50,7 @@ jobs:
           version: v1.49
           args: --timeout 30m
   go-build:
-    runs-on: 
+    runs-on:
       group: large-runners
     timeout-minutes: 30
     steps:
@@ -80,7 +80,7 @@ jobs:
           path: tmp/bin/benthos
           retention-days: 2
   lint:
-    runs-on: 
+    runs-on:
       group: large-runners
     timeout-minutes: 30
     steps:
@@ -91,7 +91,7 @@ jobs:
       - name: Lint
         run: npm run lint
   build:
-    runs-on: 
+    runs-on:
       group: large-runners
     timeout-minutes: 30
     steps:
