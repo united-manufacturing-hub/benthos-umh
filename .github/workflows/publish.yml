@@ -25,7 +25,7 @@ env:
 
 jobs:
   registry:
-    runs-on: 
+    runs-on:
       group: large-runners
     timeout-minutes: 45
     steps:
