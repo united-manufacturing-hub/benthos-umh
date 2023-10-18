@@ -25,7 +25,8 @@ env:
 
 jobs:
   registry:
-    runs-on: ubuntu-latest-m
+    runs-on: 
+      group: large-runners
     timeout-minutes: 45
     steps:
       - name: Checkout
