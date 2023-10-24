@@ -16,6 +16,8 @@ package plugin
 
 import (
 	"context"
+	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -29,6 +31,7 @@ import (
 	"github.com/gopcua/opcua/errors"
 	"github.com/gopcua/opcua/id"
 	"github.com/gopcua/opcua/ua"
+	"github.com/gopcua/opcua/uatest"
 )
 
 type NodeDef struct {
@@ -272,14 +275,13 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	var endpoints []*ua.EndpointDescription
 	var err error
 
-	// Step 1: Get all potential endpoints
+	// Step 1: Retrieve all available endpoints from the OPC UA server.
 	endpoints, err = opcua.GetEndpoints(ctx, g.endpoint)
 	if err != nil {
-		panic(err)
+		panic(err) // Stop execution if an error occurs
 	}
 
-	// Step 2: log all potential endpoints
-
+	// Step 2: Log details of each discovered endpoint for debugging.
 	for i, endpoint := range endpoints {
 		g.log.Infof("Endpoint %d:", i+1)
 		g.log.Infof("  EndpointURL: %s", endpoint.EndpointURL)
@@ -319,27 +321,74 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		}
 	}
 
-	if g.username != "" && g.password != "" { // if username and password are set
-		c, err = opcua.NewClient(g.endpoint, opcua.AuthUsername(g.username, g.password))
-		if err != nil {
-			panic(err)
-		}
-
-		if err := c.Connect(ctx); err != nil {
-			panic(err)
-		}
-	} else {
-		c, err = opcua.NewClient(g.endpoint)
-		if err != nil {
-			panic(err)
-		}
-
-		if err := c.Connect(ctx); err != nil {
-			panic(err)
-		}
+	// Step 3: Determine the authentication method to use.
+	// Default to Anonymous if neither username nor password is provided.
+	selectedAuthentication := ua.UserTokenTypeAnonymous
+	if g.username != "" && g.password != "" {
+		// Use UsernamePassword authentication if both username and password are available.
+		selectedAuthentication = ua.UserTokenTypeUserName
 	}
 
-	g.log.Infof("Connected to %s", g.endpoint)
+	// Step 3.1: Filter the endpoints based on the selected authentication method.
+	// This will eliminate endpoints that do not support the chosen method.
+	selectedEndpoint := g.getReasonableEndpoint(endpoints, selectedAuthentication)
+	if selectedEndpoint == nil {
+		g.log.Errorf("Could not select a suitable endpoint")
+		return err
+	}
+
+	// Step 4: Initialize OPC UA client options
+	opts := []opcua.Option{}
+	opts = append(opts, opcua.SecurityFromEndpoint(selectedEndpoint, selectedAuthentication))
+
+	// Set additional options based on the authentication method
+	switch selectedAuthentication {
+	case ua.UserTokenTypeAnonymous:
+		g.log.Infof("Using anonymous login")
+	case ua.UserTokenTypeUserName:
+		g.log.Infof("Using username/password login")
+		opts = append(opts, opcua.AuthUsername(g.username, g.password))
+	}
+
+	// Step 5: Generate Certificates, because this is really a step that can not happen in the background...
+
+	// Generate a new certificate in memory, no file read/write operations.
+	certPEM, keyPEM, err := uatest.GenerateCert("urn:benthos-umh:client", 2048, 24*time.Hour*365*10)
+	if err != nil {
+		g.log.Errorf("Failed to generate certificate: %v", err)
+		return err
+	}
+
+	// Convert PEM to X509 Certificate and RSA PrivateKey for in-memory use.
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		g.log.Errorf("Failed to parse certificate: %v", err)
+		return err
+	}
+
+	pk, ok := cert.PrivateKey.(*rsa.PrivateKey)
+	if !ok {
+		g.log.Errorf("Invalid private key type")
+		return err
+	}
+
+	// Append the certificate and private key to the client options
+	opts = append(opts, opcua.PrivateKey(pk), opcua.Certificate(cert.Certificate[0]))
+
+	// Step 6: Create and connect the OPC UA client
+	c, err = opcua.NewClient(selectedEndpoint.EndpointURL, opts...)
+	if err != nil {
+		g.log.Errorf("Failed to create a new client")
+		return err
+	}
+
+	// Connect to the selected endpoint
+	if err := c.Connect(ctx); err != nil {
+		g.log.Errorf("Failed to connect")
+		return err
+	}
+
+	g.log.Infof("Connected to %s", selectedEndpoint.EndpointURL)
 	g.log.Infof("Please note that browsing large node trees can take a long time (around 5 nodes per second)")
 
 	g.client = c
