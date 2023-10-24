@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestOPCUAInput_Connect(t *testing.T) {
+func TestGetEndpointsLoggingOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -81,7 +81,64 @@ func TestOPCUAInput_Connect(t *testing.T) {
 			t.Logf("    IssuerEndpointURL: %s", token.IssuerEndpointURL)
 		}
 	}
+}
 
+func TestOPCUAInput_ConnectAnonymous(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var err error
+
+	input := &OPCUAInput{
+		endpoint: "opc.tcp://localhost:46010",
+		username: "",
+		password: "",
+		nodeIDs:  nil,
+	}
+	// Attempt to connect
+	err = input.Connect(ctx)
+	assert.NoError(t, err)
+
+	// Close connection
+	if input.client != nil {
+		input.client.Close(ctx)
+	}
+}
+
+func TestOPCUAInput_ConnectusernamePasswordFail(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var err error
+
+	input := &OPCUAInput{
+		endpoint: "opc.tcp://localhost:46010",
+		username: "123", // bad user and password
+		password: "123",
+		nodeIDs:  nil,
+	}
+	// Attempt to connect
+	err = input.Connect(ctx)
+	assert.Error(t, err)
+
+	// Close connection
+	if input.client != nil {
+		input.client.Close(ctx)
+	}
+}
+
+func TestOPCUAInput_ConnectusernamePasswordSuccess(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var err error
+
+	input := &OPCUAInput{
+		endpoint: "opc.tcp://localhost:46010",
+		username: "root",
+		password: "secret",
+		nodeIDs:  nil,
+	}
 	// Attempt to connect
 	err = input.Connect(ctx)
 	assert.NoError(t, err)

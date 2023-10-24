@@ -26,6 +26,13 @@
     "HOST": "localhost",
     "CERTIFICATE":
     {
-      "Hosts" : ["localhost"]
-    }
+      "HOSTS" : ["localhost"],
+      "IPS" : []
+    },
+    "USERIDs": [
+      {
+          "Username" : "root",
+          "Password" : "secret"
+      }
+  ]
   }
