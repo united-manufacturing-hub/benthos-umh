@@ -353,7 +353,9 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	// Step 5: Generate Certificates, because this is really a step that can not happen in the background...
 
 	// Generate a new certificate in memory, no file read/write operations.
-	certPEM, keyPEM, err := uatest.GenerateCert("urn:benthos-umh:client", 2048, 24*time.Hour*365*10)
+	randomStr := randomString(8) // Generates an 8-character random string
+	clientName := "urn:benthos-umh:client-" + randomStr
+	certPEM, keyPEM, err := uatest.GenerateCert(clientName, 2048, 24*time.Hour*365*10)
 	if err != nil {
 		g.log.Errorf("Failed to generate certificate: %v", err)
 		return err

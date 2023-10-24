@@ -32,6 +32,10 @@
     {
       "Username": "root",
       "Password": "secret"
+    },
+    {
+      "Username": "root2",
+      "Password": "secret"
     }
   ]
 }
