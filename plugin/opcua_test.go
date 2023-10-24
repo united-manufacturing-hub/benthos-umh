@@ -106,6 +106,7 @@ func TestOPCUAInput_ConnectAnonymous(t *testing.T) {
 }
 
 func TestOPCUAInput_ConnectusernamePasswordFail(t *testing.T) {
+	t.Skip() // Needs to be skipped, the current OPC-UA simulator does only logging in once, after that it fails
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
