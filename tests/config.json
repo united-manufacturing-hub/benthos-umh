@@ -23,6 +23,7 @@
         "StandardDeviation" : 50.0
       }
     ],
+    "HOST": "localhost",
     "CERTIFICATE":
     {
       "Hosts" : ["localhost"]

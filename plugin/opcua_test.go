@@ -27,10 +27,10 @@ func TestOPCUAInput_Connect(t *testing.T) {
 	defer cancel()
 
 	input := &OPCUAInput{
-		endpoint: "opc.tcp://localhost:4840", // replace with your actual endpoint
-		username: "",                         
-		password: "",                         
-		nodeIDs:  nil,                        // add node IDs if you want to test the browsing
+		endpoint: "opc.tcp://localhost:46010",
+		username: "",
+		password: "",
+		nodeIDs:  nil,
 	}
 
 	// Attempt to connect
@@ -39,6 +39,6 @@ func TestOPCUAInput_Connect(t *testing.T) {
 
 	// Close connection
 	if input.client != nil {
-		input.client.Close()
+		input.client.Close(ctx)
 	}
 }

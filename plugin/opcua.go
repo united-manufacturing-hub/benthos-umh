@@ -61,7 +61,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		return nil, nil
 	}
 
-	attrs, err := n.AttributesWithContext(ctx, ua.AttributeIDNodeClass, ua.AttributeIDBrowseName, ua.AttributeIDDescription, ua.AttributeIDAccessLevel, ua.AttributeIDDataType)
+	attrs, err := n.Attributes(ctx, ua.AttributeIDNodeClass, ua.AttributeIDBrowseName, ua.AttributeIDDescription, ua.AttributeIDAccessLevel, ua.AttributeIDDataType)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +148,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	}
 
 	browseChildren := func(refType uint32) error {
-		refs, err := n.ReferencedNodesWithContext(ctx, refType, ua.BrowseDirectionForward, ua.NodeClassAll, true)
+		refs, err := n.ReferencedNodes(ctx, refType, ua.BrowseDirectionForward, ua.NodeClassAll, true)
 		if err != nil {
 			return errors.Errorf("References: %d: %s", refType, err)
 		}
@@ -267,14 +267,23 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	}
 
 	var c *opcua.Client
+	var err error
 
 	if g.username != "" && g.password != "" { // if username and password are set
-		c = opcua.NewClient(g.endpoint, opcua.AuthUsername(g.username, g.password))
+		c, err = opcua.NewClient(g.endpoint, opcua.AuthUsername(g.username, g.password))
+		if err != nil {
+			panic(err)
+		}
+
 		if err := c.Connect(ctx); err != nil {
 			panic(err)
 		}
 	} else {
-		c = opcua.NewClient(g.endpoint)
+		c, err = opcua.NewClient(g.endpoint)
+		if err != nil {
+			panic(err)
+		}
+
 		if err := c.Connect(ctx); err != nil {
 			panic(err)
 		}
@@ -338,29 +347,29 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 		TimestampsToReturn: ua.TimestampsToReturnBoth,
 	}
 
-	resp, err := g.client.ReadWithContext(ctx, req)
+	resp, err := g.client.Read(ctx, req)
 	if err != nil {
 		g.log.Errorf("Read failed: %s", err)
 		// if the error is StatusBadSessionIDInvalid, the session has been closed
 		// and we need to reconnect.
 		if err == ua.StatusBadSessionIDInvalid {
-			g.client.Close()
+			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
 		} else if err == ua.StatusBadCommunicationError {
-			g.client.Close()
+			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
 		} else if err == ua.StatusBadConnectionClosed {
-			g.client.Close()
+			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
 		} else if err == ua.StatusBadTimeout {
-			g.client.Close()
+			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
 		} else if err == ua.StatusBadConnectionRejected {
-			g.client.Close()
+			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
 		}
@@ -430,7 +439,7 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 
 func (g *OPCUAInput) Close(ctx context.Context) error {
 	if g.client != nil {
-		g.client.Close()
+		g.client.Close(ctx)
 		g.client = nil
 	}
 
