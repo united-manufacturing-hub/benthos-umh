@@ -16,7 +16,9 @@ package plugin
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"regexp"
 	"strconv"
 	"time"
@@ -267,7 +269,55 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	}
 
 	var c *opcua.Client
+	var endpoints []*ua.EndpointDescription
 	var err error
+
+	// Step 1: Get all potential endpoints
+	endpoints, err = opcua.GetEndpoints(ctx, g.endpoint)
+	if err != nil {
+		panic(err)
+	}
+
+	// Step 2: log all potential endpoints
+
+	for i, endpoint := range endpoints {
+		g.log.Infof("Endpoint %d:", i+1)
+		g.log.Infof("  EndpointURL: %s", endpoint.EndpointURL)
+		g.log.Infof("  SecurityMode: %v", endpoint.SecurityMode)
+		g.log.Infof("  SecurityPolicyURI: %s", endpoint.SecurityPolicyURI)
+		g.log.Infof("  TransportProfileURI: %s", endpoint.TransportProfileURI)
+		g.log.Infof("  SecurityLevel: %d", endpoint.SecurityLevel)
+
+		// If Server is not nil, log its details
+		if endpoint.Server != nil {
+			g.log.Infof("  Server ApplicationURI: %s", endpoint.Server.ApplicationURI)
+			g.log.Infof("  Server ProductURI: %s", endpoint.Server.ProductURI)
+			g.log.Infof("  Server ApplicationName: %s", endpoint.Server.ApplicationName.Text)
+			g.log.Infof("  Server ApplicationType: %v", endpoint.Server.ApplicationType)
+			g.log.Infof("  Server GatewayServerURI: %s", endpoint.Server.GatewayServerURI)
+			g.log.Infof("  Server DiscoveryProfileURI: %s", endpoint.Server.DiscoveryProfileURI)
+			g.log.Infof("  Server DiscoveryURLs: %v", endpoint.Server.DiscoveryURLs)
+		}
+
+		// Output the certificate
+		if len(endpoint.ServerCertificate) > 0 {
+			// Convert to PEM format first, then log the certificate information
+			pemCert := pem.EncodeToMemory(&pem.Block{
+				Type:  "CERTIFICATE",
+				Bytes: endpoint.ServerCertificate,
+			})
+			g.logCertificateInfo(pemCert)
+		}
+
+		// Loop through UserIdentityTokens
+		for j, token := range endpoint.UserIdentityTokens {
+			g.log.Infof("  UserIdentityToken %d:", j+1)
+			g.log.Infof("    PolicyID: %s", token.PolicyID)
+			g.log.Infof("    TokenType: %v", token.TokenType)
+			g.log.Infof("    IssuedTokenType: %s", token.IssuedTokenType)
+			g.log.Infof("    IssuerEndpointURL: %s", token.IssuerEndpointURL)
+		}
+	}
 
 	if g.username != "" && g.password != "" { // if username and password are set
 		c, err = opcua.NewClient(g.endpoint, opcua.AuthUsername(g.username, g.password))
@@ -444,4 +494,29 @@ func (g *OPCUAInput) Close(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (g *OPCUAInput) logCertificateInfo(certBytes []byte) {
+	g.log.Infof("  Server certificate:")
+
+	// Decode the certificate from base64 to DER format
+	block, _ := pem.Decode(certBytes)
+	if block == nil {
+		g.log.Errorf("Failed to decode certificate")
+		return
+	}
+
+	// Parse the DER-format certificate
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		g.log.Errorf("Failed to parse certificate:", err)
+		return
+	}
+
+	// Log the details
+	g.log.Infof("    Not Before:", cert.NotBefore)
+	g.log.Infof("    Not After:", cert.NotAfter)
+	g.log.Infof("    DNS Names:", cert.DNSNames)
+	g.log.Infof("    IP Addresses:", cert.IPAddresses)
+	g.log.Infof("    URIs:", cert.URIs)
 }

@@ -16,15 +16,22 @@ package plugin
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"testing"
 	"time"
 
+	"github.com/gopcua/opcua"
+	"github.com/gopcua/opcua/ua"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestOPCUAInput_Connect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	var endpoints []*ua.EndpointDescription
+	var err error
 
 	input := &OPCUAInput{
 		endpoint: "opc.tcp://localhost:46010",
@@ -33,12 +40,79 @@ func TestOPCUAInput_Connect(t *testing.T) {
 		nodeIDs:  nil,
 	}
 
+	endpoints, err = opcua.GetEndpoints(ctx, input.endpoint)
+	assert.NoError(t, err)
+
+	for i, endpoint := range endpoints {
+		t.Logf("Endpoint %d:", i+1)
+		t.Logf("  EndpointURL: %s", endpoint.EndpointURL)
+		t.Logf("  SecurityMode: %v", endpoint.SecurityMode)
+		t.Logf("  SecurityPolicyURI: %s", endpoint.SecurityPolicyURI)
+		t.Logf("  TransportProfileURI: %s", endpoint.TransportProfileURI)
+		t.Logf("  SecurityLevel: %d", endpoint.SecurityLevel)
+
+		// If Server is not nil, log its details
+		if endpoint.Server != nil {
+			t.Logf("  Server ApplicationURI: %s", endpoint.Server.ApplicationURI)
+			t.Logf("  Server ProductURI: %s", endpoint.Server.ProductURI)
+			t.Logf("  Server ApplicationName: %s", endpoint.Server.ApplicationName.Text)
+			t.Logf("  Server ApplicationType: %v", endpoint.Server.ApplicationType)
+			t.Logf("  Server GatewayServerURI: %s", endpoint.Server.GatewayServerURI)
+			t.Logf("  Server DiscoveryProfileURI: %s", endpoint.Server.DiscoveryProfileURI)
+			t.Logf("  Server DiscoveryURLs: %v", endpoint.Server.DiscoveryURLs)
+		}
+
+		// Output the certificate
+		if len(endpoint.ServerCertificate) > 0 {
+			// Convert to PEM format first, then log the certificate information
+			pemCert := pem.EncodeToMemory(&pem.Block{
+				Type:  "CERTIFICATE",
+				Bytes: endpoint.ServerCertificate,
+			})
+			logCertificateInfo(t, pemCert)
+		}
+
+		// Loop through UserIdentityTokens
+		for j, token := range endpoint.UserIdentityTokens {
+			t.Logf("  UserIdentityToken %d:", j+1)
+			t.Logf("    PolicyID: %s", token.PolicyID)
+			t.Logf("    TokenType: %v", token.TokenType)
+			t.Logf("    IssuedTokenType: %s", token.IssuedTokenType)
+			t.Logf("    IssuerEndpointURL: %s", token.IssuerEndpointURL)
+		}
+	}
+
 	// Attempt to connect
-	err := input.Connect(ctx)
+	err = input.Connect(ctx)
 	assert.NoError(t, err)
 
 	// Close connection
 	if input.client != nil {
 		input.client.Close(ctx)
 	}
+}
+
+func logCertificateInfo(t *testing.T, certBytes []byte) {
+	t.Logf("  Server certificate:")
+
+	// Decode the certificate from base64 to DER format
+	block, _ := pem.Decode(certBytes)
+	if block == nil {
+		t.Log("Failed to decode certificate")
+		return
+	}
+
+	// Parse the DER-format certificate
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Log("Failed to parse certificate:", err)
+		return
+	}
+
+	// Log the details
+	t.Log("    Not Before:", cert.NotBefore)
+	t.Log("    Not After:", cert.NotAfter)
+	t.Log("    DNS Names:", cert.DNSNames)
+	t.Log("    IP Addresses:", cert.IPAddresses)
+	t.Log("    URIs:", cert.URIs)
 }
