@@ -1,8 +1,12 @@
 module github.com/united-manufacturing-hub/benthos-umh/v2
 
-go 1.19
+go 1.21
 
-require github.com/benthosdev/benthos/v4 v4.7.0
+require (
+	github.com/benthosdev/benthos/v4 v4.7.0
+	github.com/gopcua/opcua v0.5.2
+	github.com/stretchr/testify v1.8.0
+)
 
 require (
 	cloud.google.com/go v0.104.0 // indirect
@@ -100,7 +104,6 @@ require (
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.1.0 // indirect
 	github.com/googleapis/gax-go/v2 v2.5.1 // indirect
-	github.com/gopcua/opcua v0.3.11 // indirect
 	github.com/gorilla/css v1.0.0 // indirect
 	github.com/gorilla/handlers v1.5.1 // indirect
 	github.com/gorilla/mux v1.8.0 // indirect
@@ -184,7 +187,6 @@ require (
 	github.com/sirupsen/logrus v1.8.1 // indirect
 	github.com/smira/go-statsd v1.3.2 // indirect
 	github.com/snowflakedb/gosnowflake v1.6.6 // indirect
-	github.com/stretchr/testify v1.8.0 // indirect
 	github.com/tilinna/z85 v1.0.0 // indirect
 	github.com/twmb/franz-go v1.3.1 // indirect
 	github.com/twmb/franz-go/pkg/kmsg v0.0.0-20220106200407-cfd3330d96f5 // indirect
@@ -217,14 +219,15 @@ require (
 	go.opentelemetry.io/proto/otlp v0.18.0 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.8.0 // indirect
-	golang.org/x/crypto v0.0.0-20220722155217-630584e8d5aa // indirect
-	golang.org/x/mod v0.6.0-dev.0.20220419223038-86c51ed26bb4 // indirect
-	golang.org/x/net v0.0.0-20220923203811-8be639271d50 // indirect
+	golang.org/x/crypto v0.1.0 // indirect
+	golang.org/x/exp v0.0.0-20230522175609-2e198f4a06a1 // indirect
+	golang.org/x/mod v0.6.0 // indirect
+	golang.org/x/net v0.1.0 // indirect
 	golang.org/x/oauth2 v0.0.0-20220909003341-f21342109be1 // indirect
 	golang.org/x/sync v0.0.0-20220923202941-7f9b1623fab7 // indirect
-	golang.org/x/sys v0.0.0-20220919091848-fb04ddd9f9c8 // indirect
-	golang.org/x/text v0.3.7 // indirect
-	golang.org/x/tools v0.1.12 // indirect
+	golang.org/x/sys v0.8.0 // indirect
+	golang.org/x/text v0.4.0 // indirect
+	golang.org/x/tools v0.2.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/api v0.97.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
