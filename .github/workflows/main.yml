@@ -36,6 +36,7 @@ jobs:
       - name: Startup simulator in background
         run: |
           docker-compose up &
+        working-directory: tests
       - name: Wait for port 46010 to be ready
         run: |
           while ! nc -z localhost 46010; do
