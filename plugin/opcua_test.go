@@ -14,7 +14,31 @@
 
 package plugin
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
 
-func TestTodo(t *testing.T) {
+	"github.com/stretchr/testify/assert"
+)
+
+func TestOPCUAInput_Connect(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	input := &OPCUAInput{
+		endpoint: "opc.tcp://localhost:4840", // replace with your actual endpoint
+		username: "",                         
+		password: "",                         
+		nodeIDs:  nil,                        // add node IDs if you want to test the browsing
+	}
+
+	// Attempt to connect
+	err := input.Connect(ctx)
+	assert.NoError(t, err)
+
+	// Close connection
+	if input.client != nil {
+		input.client.Close()
+	}
 }

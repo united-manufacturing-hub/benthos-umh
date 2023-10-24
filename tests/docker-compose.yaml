@@ -1,0 +1,11 @@
+version: "3.9"
+services:
+  ioTSensorsOPCUA:
+      image: ghcr.io/united-manufacturing-hub/opcuasimulator:0.1.0
+      restart: always
+      container_name: iot-sensors
+      hostname: ioTSensorsOPCUA
+      volumes:
+      - ./config.json:/configs/config.json
+      ports:
+        - 46010:46010
