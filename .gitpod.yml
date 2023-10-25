@@ -13,8 +13,6 @@ tasks:
       sudo apt update
       sudo apt install goreleaser --yes
       make
-    command:
-      npm run lint && make test
-  - command:
-      cd tests
+    command: npm run lint && make test
+  - command: cd tests
       docker-compose up
