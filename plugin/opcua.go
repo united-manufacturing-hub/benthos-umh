@@ -23,6 +23,7 @@ import (
 	"encoding/pem"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/benthosdev/benthos/v4/public/service"
@@ -276,6 +277,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	var err error
 
 	// Step 1: Retrieve all available endpoints from the OPC UA server.
+	g.log.Infof("Endpoint URI: %s", g.endpoint)
 	endpoints, err = opcua.GetEndpoints(ctx, g.endpoint)
 	if err != nil {
 		panic(err) // Stop execution if an error occurs
@@ -336,9 +338,13 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		g.log.Errorf("Could not select a suitable endpoint")
 		return err
 	}
+	if strings.HasPrefix(selectedEndpoint.EndpointURL, "opc.tcp://:") { // I omitted the port here, as it might change ?
+		selectedEndpoint.EndpointURL = g.endpoint
+	}
+	g.log.Infof("Selected endpoint: %v", selectedEndpoint)
 
 	// Step 4: Initialize OPC UA client options
-	opts := []opcua.Option{}
+	opts := make([]opcua.Option, 0)
 	opts = append(opts, opcua.SecurityFromEndpoint(selectedEndpoint, selectedAuthentication))
 
 	// Set additional options based on the authentication method
