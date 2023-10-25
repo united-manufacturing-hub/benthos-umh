@@ -120,6 +120,40 @@ spec:
             name: benthos-1-config
 ```
 
+### Authentication and Security
+
+In benthos-umh, security and authentication are designed to be as robust as possible while maintaining flexibility. The software automates the process of selecting the highest level of security offered by an OPC-UA server for the selected Authentication Method. 
+
+#### How It Works
+
+1. **Discover Endpoints**: Initially, benthos-umh discovers all available endpoints from the OPC-UA server.
+2. **Filter by Authentication**: Based on the provided authentication method, it filters the list of endpoints. It currently supports Anonymous and Username/Password methods. Certificate-based authentication is on the roadmap.
+3. **Select Endpoint**: The software then chooses the endpoint with the highest security level that matches the chosen authentication method.
+4. **Client Initialization**: Various client options are initialized, such as security policies, based on the selected endpoint.
+5. **Generate Certificates**: For secure communication, certificates are dynamically generated. However, this step is only essential for methods requiring it.
+6. **Final Connection**: Finally, it initiates a connection to the OPC-UA server using the chosen endpoint and authentication method.
+
+#### Supported Authentication Methods
+
+- **Anonymous**: No extra information is needed. The connection uses the highest security level available for anonymous connections.
+  
+- **Username and Password**: Specify the username and password in the configuration. The client opts for the highest security level that supports these credentials.
+  
+- **Certificate (Future Release)**: Certificate-based authentication is planned for future releases.
+
+#### Example: Configuration File
+
+Here is how you could specify authentication in `benthos.yaml`:
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDs: ['ns=2;s=IoTSensors']
+    username: 'your-username'  # optional
+    password: 'your-password'  # optional
+```
+
 ## Development and Testing
 
 ### Quickstart
