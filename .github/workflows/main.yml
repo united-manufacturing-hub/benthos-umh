@@ -63,7 +63,7 @@ jobs:
         uses: golangci/golangci-lint-action@v3
         with:
           version: v1.49
-          args: --timeout 30m
+          args: --timeout 30m -v
   go-build:
     runs-on:
       group: large-runners
