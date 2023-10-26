@@ -28,7 +28,6 @@ tasks:
       docker-compose up -d
       sleep 5
       gp sync-done docker
-  - command: npm run lint && make test
   - name: tailscaled
     command: |
         if [ -n "${TAILSCALE_STATE_MYPROJECT}" ]; then
