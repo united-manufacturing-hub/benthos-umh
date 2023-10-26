@@ -83,71 +83,74 @@ func TestGetEndpointsLoggingOnly(t *testing.T) {
 	}
 }
 
-func TestOPCUAInput_ConnectAnonymous(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+func TestAgainstSimulator(t *testing.T) {
+	t.Run("ConnectAnonymous", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
-	var err error
+		var err error
 
-	input := &OPCUAInput{
-		endpoint: "opc.tcp://localhost:46010",
-		username: "",
-		password: "",
-		nodeIDs:  nil,
-	}
-	// Attempt to connect
-	err = input.Connect(ctx)
-	assert.NoError(t, err)
+		input := &OPCUAInput{
+			endpoint: "opc.tcp://localhost:46010",
+			username: "",
+			password: "",
+			nodeIDs:  nil,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
 
-	// Close connection
-	if input.client != nil {
-		input.client.Close(ctx)
-	}
-}
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
 
-func TestOPCUAInput_ConnectusernamePasswordFail(t *testing.T) {
-	t.Skip() // Needs to be skipped, the current OPC-UA simulator does only logging in once, after that it fails
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	t.Run("Connect Username/Password fail", func(t *testing.T) {
+		t.Skip() // Needs to be skipped, the current OPC-UA simulator does only logging in once, after that it fails
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
-	var err error
+		var err error
 
-	input := &OPCUAInput{
-		endpoint: "opc.tcp://localhost:46010",
-		username: "123", // bad user and password
-		password: "123",
-		nodeIDs:  nil,
-	}
-	// Attempt to connect
-	err = input.Connect(ctx)
-	assert.Error(t, err)
+		input := &OPCUAInput{
+			endpoint: "opc.tcp://localhost:46010",
+			username: "123", // bad user and password
+			password: "123",
+			nodeIDs:  nil,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.Error(t, err)
 
-	// Close connection
-	if input.client != nil {
-		input.client.Close(ctx)
-	}
-}
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
 
-func TestOPCUAInput_ConnectusernamePasswordSuccess(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	t.Run("Connect Username/Password success", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
-	var err error
+		var err error
 
-	input := &OPCUAInput{
-		endpoint: "opc.tcp://localhost:46010",
-		username: "root",
-		password: "secret",
-		nodeIDs:  nil,
-	}
-	// Attempt to connect
-	err = input.Connect(ctx)
-	assert.NoError(t, err)
+		input := &OPCUAInput{
+			endpoint: "opc.tcp://localhost:46010",
+			username: "root",
+			password: "secret",
+			nodeIDs:  nil,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
 
-	// Close connection
-	if input.client != nil {
-		input.client.Close(ctx)
-	}
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
 }
 
 func logCertificateInfo(t *testing.T, certBytes []byte) {

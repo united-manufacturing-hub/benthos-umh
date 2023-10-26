@@ -19,11 +19,12 @@ tasks:
       sudo apt update
       sudo apt install goreleaser --yes
       make
-  - command:
+  - command: |
       gp sync-await docker
       npm run lint
       make test
-  - command: cd tests
+  - command: |
+      cd tests
       docker-compose up -d
       sleep 5
       gp sync-done docker
