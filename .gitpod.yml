@@ -5,6 +5,12 @@
 # Learn more from ready-to-use templates: https://www.gitpod.io/docs/introduction/getting-started/quickstart
 
 tasks:
+  - before: |
+      curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/focal.gpg | sudo apt-key add - \
+      && curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/focal.list | sudo tee /etc/apt/sources.list.d/tailscale.list \
+      && sudo apt-get update -q \
+      && sudo apt-get install -yq tailscale jq \
+      && sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-nft
   - init: |
       nvm install
       npm install
@@ -21,3 +27,21 @@ tasks:
       docker-compose up -d
       sleep 5
       gp sync-done docker
+    command: npm run lint && make test
+  - name: tailscaled
+    command: |
+        if [ -n "${TAILSCALE_STATE_MYPROJECT}" ]; then
+          # restore the tailscale state from gitpod user's env vars
+          sudo mkdir -p /var/lib/tailscale
+          echo "${TAILSCALE_STATE_MYPROJECT}" | sudo tee /var/lib/tailscale/tailscaled.state > /dev/null
+        fi
+        sudo tailscaled
+  - name: tailscale
+    command: |
+        if [ -n "${TAILSCALE_STATE_MYPROJECT}" ]; then
+          sudo -E tailscale up
+        else
+          sudo -E tailscale up --hostname "gitpod-${GITPOD_GIT_USER_NAME// /-}-$(echo ${GITPOD_WORKSPACE_CONTEXT} | jq -r .repository.name)"
+          # store the tailscale state into gitpod user
+          gp env TAILSCALE_STATE_MYPROJECT="$(sudo cat /var/lib/tailscale/tailscaled.state)"
+        fi
