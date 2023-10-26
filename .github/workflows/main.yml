@@ -48,6 +48,18 @@ jobs:
           done
       - name: Test
         run: make test
+  go-test-wago:
+    runs-on: hercules
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+        with:
+          go_version: ${{ env.GO_VERSION }}
+      - name: Test
+        run: TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI }} TEST_WAGO_USERNAME=${{ secrets.TEST_WAGO_USERNAME }} TEST_WAGO_PASSWORD=${{ secrets.TEST_WAGO_PASSWORD }} make test
   go-build:
     runs-on:
       group: large-runners
