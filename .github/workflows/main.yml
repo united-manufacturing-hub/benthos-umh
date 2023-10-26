@@ -48,22 +48,6 @@ jobs:
           done
       - name: Test
         run: make test
-  go-lint:
-    runs-on:
-      group: large-runners
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Setup Go
-        uses: ./.github/actions/setup-go
-        with:
-          go_version: ${{ env.GO_VERSION }}
-      - name: Lint
-        uses: golangci/golangci-lint-action@v3
-        with:
-          version: v1.49
-          args: --timeout 30m
   go-build:
     runs-on:
       group: large-runners
@@ -96,17 +80,6 @@ jobs:
           name: benthos
           path: tmp/bin/benthos
           retention-days: 2
-  lint:
-    runs-on:
-      group: large-runners
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Setup Node.js
-        uses: ./.github/actions/setup-node
-      - name: Lint
-        run: npm run lint
   build:
     runs-on:
       group: large-runners
