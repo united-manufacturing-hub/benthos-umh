@@ -190,6 +190,24 @@ var OPCUAConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringField("password").Description("The password to connect to the server. Defaults to none.").Default("")).
 	Field(service.NewStringListField("nodeIDs").Description("The OPC-UA node IDs to start the browsing."))
 
+func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
+
+	// Parse all nodeIDs to validate them.
+	// loop through all nodeIDs, parse them and put them into a slice
+	parsedNodeIDs := make([]*ua.NodeID, len(incomingNodes))
+
+	for _, id := range incomingNodes {
+		parsedNodeID, err := ua.ParseNodeID(id)
+		if err != nil {
+			return nil
+		}
+
+		parsedNodeIDs = append(parsedNodeIDs, parsedNodeID)
+	}
+
+	return parsedNodeIDs
+}
+
 func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
 	endpoint, err := conf.FieldString("endpoint")
 	if err != nil {
@@ -216,18 +234,7 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		return nil, errors.New("no nodeIDs provided")
 	}
 
-	// Parse all nodeIDs to validate them.
-	// loop through all nodeIDs, parse them and put them into a slice
-	parsedNodeIDs := make([]*ua.NodeID, len(nodeIDs))
-
-	for _, id := range nodeIDs {
-		parsedNodeID, err := ua.ParseNodeID(id)
-		if err != nil {
-			return nil, err
-		}
-
-		parsedNodeIDs = append(parsedNodeIDs, parsedNodeID)
-	}
+	parsedNodeIDs := ParseNodeIDs(nodeIDs)
 
 	m := &OPCUAInput{
 		endpoint: endpoint,
@@ -384,7 +391,8 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	opts = append(opts, opcua.PrivateKey(pk), opcua.Certificate(cert.Certificate[0]))
 
 	// Step 6: Create and connect the OPC UA client
-	c, err = opcua.NewClient(selectedEndpoint.EndpointURL, opts...)
+	// Note that we are not taking `selectedEndpoint.EndpointURL` here as the server can be misconfigured. We are taking instead the user input.
+	c, err = opcua.NewClient(g.endpoint, opts...)
 	if err != nil {
 		g.log.Errorf("Failed to create a new client")
 		return err
@@ -396,7 +404,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		return err
 	}
 
-	g.log.Infof("Connected to %s", selectedEndpoint.EndpointURL)
+	g.log.Infof("Connected to %s", g.endpoint)
 	g.log.Infof("Please note that browsing large node trees can take a long time (around 5 nodes per second)")
 
 	g.client = c

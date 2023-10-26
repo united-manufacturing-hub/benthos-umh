@@ -154,7 +154,16 @@ input:
     password: 'your-password'  # optional
 ```
 
-## Development and Testing
+## Testing
+
+We execute automated tests and verify that benthos-umh works:
+- (WAGO PFC100, 750-8101) Connect Anonymously
+- (WAGO PFC100, 750-8101) Connect Username / Password
+- (WAGO PFC100, 750-8101) Connect and get one float number
+
+These tests are executed with a local github runner called "hercules", which is connected to a isolated testing network.
+
+## Development
 
 ### Quickstart
 Follow the steps below to set up your development environment and run tests:
@@ -172,6 +181,11 @@ $ npm test
 ```
 
 ### Additional Checks and Commands
+
+#### Gitpod and Tailscale
+
+By default when opening the repo in Gitpod, everything that you need should start automatically. If you want to connect to our local PLCs in our office, you can use tailscale, which you will be prompted to install.
+See also: https://www.gitpod.io/docs/integrations/tailscale
 
 #### For Go Code:
 
