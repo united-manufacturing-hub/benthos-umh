@@ -161,6 +161,8 @@ We execute automated tests and verify that benthos-umh works:
 - (WAGO PFC100, 750-8101) Connect Username / Password
 - (WAGO PFC100, 750-8101) Connect and get one float number
 
+These tests are executed with a local github runner called "hercules", which is connected to a isolated testing network.
+
 ## Development
 
 ### Quickstart
