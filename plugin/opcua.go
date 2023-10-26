@@ -23,6 +23,7 @@ import (
 	"encoding/pem"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/benthosdev/benthos/v4/public/service"
@@ -185,8 +186,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 var OPCUAConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from OPC-UA servers. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
 	Field(service.NewStringField("endpoint").Description("The OPC-UA endpoint to connect to.")).
-	Field(service.NewStringField("username").Description("The username to connect to the server. Defaults to none.").Optional()).
-	Field(service.NewStringField("password").Description("The password to connect to the server. Defaults to none.").Optional()).
+	Field(service.NewStringField("username").Description("The username to connect to the server. Defaults to none.").Default("")).
+	Field(service.NewStringField("password").Description("The password to connect to the server. Defaults to none.").Default("")).
 	Field(service.NewStringListField("nodeIDs").Description("The OPC-UA node IDs to start the browsing."))
 
 func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
@@ -276,6 +277,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	var err error
 
 	// Step 1: Retrieve all available endpoints from the OPC UA server.
+	g.log.Infof("Endpoint URI: %s", g.endpoint)
 	endpoints, err = opcua.GetEndpoints(ctx, g.endpoint)
 	if err != nil {
 		panic(err) // Stop execution if an error occurs
@@ -336,9 +338,13 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		g.log.Errorf("Could not select a suitable endpoint")
 		return err
 	}
+	if strings.HasPrefix(selectedEndpoint.EndpointURL, "opc.tcp://:") { // I omitted the port here, as it might change ?
+		selectedEndpoint.EndpointURL = g.endpoint
+	}
+	g.log.Infof("Selected endpoint: %v", selectedEndpoint)
 
 	// Step 4: Initialize OPC UA client options
-	opts := []opcua.Option{}
+	opts := make([]opcua.Option, 0)
 	opts = append(opts, opcua.SecurityFromEndpoint(selectedEndpoint, selectedAuthentication))
 
 	// Set additional options based on the authentication method
