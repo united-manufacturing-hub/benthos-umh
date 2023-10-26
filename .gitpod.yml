@@ -39,7 +39,7 @@ tasks:
   - name: tailscale
     command: |
         if [ -n "${TAILSCALE_STATE_MYPROJECT}" ]; then
-          sudo -E tailscale up --accept-routes --hostname=gitpod-Jeremy-Theocharis-benthos-umh
+          sudo -E tailscale up --accept-routes --hostname "gitpod-${GITPOD_GIT_USER_NAME// /-}-$(echo ${GITPOD_WORKSPACE_CONTEXT} | jq -r .repository.name)"
         else
           sudo -E tailscale up --accept-routes --hostname "gitpod-${GITPOD_GIT_USER_NAME// /-}-$(echo ${GITPOD_WORKSPACE_CONTEXT} | jq -r .repository.name)"
           # store the tailscale state into gitpod user
