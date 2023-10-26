@@ -173,6 +173,11 @@ $ npm test
 
 ### Additional Checks and Commands
 
+#### Gitpod and Tailscale
+
+By default when opening the repo in Gitpod, everything that you need should start automatically. If you want to connect to our local PLCs in our office, you can use tailscale, which you will be prompted to install.
+See also: https://www.gitpod.io/docs/integrations/tailscale
+
 #### For Go Code:
 
 1. **Linting**: Run `make lint` to check for linting errors. If any are found, you can automatically fix them by running `make format`.
