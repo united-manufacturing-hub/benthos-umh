@@ -154,7 +154,14 @@ input:
     password: 'your-password'  # optional
 ```
 
-## Development and Testing
+## Testing
+
+We execute automated tests and verify that benthos-umh works:
+- (WAGO PFC100, 750-8101) Connect Anonymously
+- (WAGO PFC100, 750-8101) Connect Username / Password
+- (WAGO PFC100, 750-8101) Connect and get one float number
+
+## Development
 
 ### Quickstart
 Follow the steps below to set up your development environment and run tests:
