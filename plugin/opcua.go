@@ -124,8 +124,6 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 			def.DataType = "int32"
 		case id.Byte:
 			def.DataType = "byte"
-		case id.UInt8:
-			def.DataType = "uint8"
 		case id.UInt16:
 			def.DataType = "uint16"
 		case id.UInt32:
