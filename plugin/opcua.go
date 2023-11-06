@@ -124,6 +124,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 			def.DataType = "int32"
 		case id.Byte:
 			def.DataType = "byte"
+		case id.UInt8:
+			def.DataType = "uint8"
 		case id.UInt16:
 			def.DataType = "uint16"
 		case id.UInt32:
@@ -511,6 +513,8 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 			b = append(b, []byte(strconv.FormatBool(v))...)
 		case int:
 			b = append(b, []byte(strconv.Itoa(v))...)
+		case int8:
+			b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
 		case int16:
 			b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
 		case int32:
@@ -518,6 +522,8 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 		case int64:
 			b = append(b, []byte(strconv.FormatInt(v, 10))...)
 		case uint:
+			b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
+		case uint8:
 			b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
 		case uint16:
 			b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
