@@ -190,14 +190,17 @@ var OPCUAConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringField("password").Description("The password to connect to the server. Defaults to none.").Default("")).
 	Field(service.NewStringListField("nodeIDs").Description("The OPC-UA node IDs to start the browsing."))
 
-func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
+func ParseNodeIDs(incomingNodes []string) []*ua.ExpandedNodeID {
 
 	// Parse all nodeIDs to validate them.
 	// loop through all nodeIDs, parse them and put them into a slice
-	parsedNodeIDs := make([]*ua.NodeID, len(incomingNodes))
+	parsedNodeIDs := make([]*ua.ExpandedNodeID, len(incomingNodes))
+	// Get NamespaceArray from the server
+	// How do i do this?
+	namespaceArray := []string{"http://opcfoundation.org/UA/"}
 
 	for _, id := range incomingNodes {
-		parsedNodeID, err := ua.ParseNodeID(id)
+		parsedNodeID, err := ua.ParseExpandedNodeID(id, namespaceArray)
 		if err != nil {
 			return nil
 		}
@@ -266,7 +269,7 @@ type OPCUAInput struct {
 	endpoint string
 	username string
 	password string
-	nodeIDs  []*ua.NodeID
+	nodeIDs  []*ua.ExpandedNodeID
 	nodeList []NodeDef
 
 	client *opcua.Client
