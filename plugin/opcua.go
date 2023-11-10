@@ -186,6 +186,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 var OPCUAConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from OPC-UA servers. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
 	Field(service.NewStringField("endpoint").Description("The OPC-UA endpoint to connect to.")).
+	Field(service.NewStringField("securityMode").Description("The security mode to use.")).
+	Field(service.NewStringField("securityPolicy").Description("The security policy to use.")).
 	Field(service.NewStringField("username").Description("The username to connect to the server. Defaults to none.").Default("")).
 	Field(service.NewStringField("password").Description("The password to connect to the server. Defaults to none.").Default("")).
 	Field(service.NewStringListField("nodeIDs").Description("The OPC-UA node IDs to start the browsing."))
@@ -214,6 +216,16 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		return nil, err
 	}
 
+	securityMode, err := conf.FieldString("securityMode")
+	if err != nil {
+		return nil, err
+	}
+
+	securityPolicy, err := conf.FieldString("securityPolicy")
+	if err != nil {
+		return nil, err
+	}
+
 	username, err := conf.FieldString("username")
 	if err != nil {
 		return nil, err
@@ -237,11 +249,13 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 	parsedNodeIDs := ParseNodeIDs(nodeIDs)
 
 	m := &OPCUAInput{
-		endpoint: endpoint,
-		username: username,
-		password: password,
-		nodeIDs:  parsedNodeIDs,
-		log:      mgr.Logger(),
+		endpoint:       endpoint,
+		securityMode:   securityMode,
+		securityPolicy: securityPolicy,
+		username:       username,
+		password:       password,
+		nodeIDs:        parsedNodeIDs,
+		log:            mgr.Logger(),
 	}
 
 	return service.AutoRetryNacksBatched(m), nil
@@ -263,11 +277,13 @@ func init() {
 //------------------------------------------------------------------------------
 
 type OPCUAInput struct {
-	endpoint string
-	username string
-	password string
-	nodeIDs  []*ua.NodeID
-	nodeList []NodeDef
+	endpoint       string
+	securityMode   string
+	securityPolicy string
+	username       string
+	password       string
+	nodeIDs        []*ua.NodeID
+	nodeList       []NodeDef
 
 	client *opcua.Client
 	log    *service.Logger
@@ -353,6 +369,13 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	// Step 4: Initialize OPC UA client options
 	opts := make([]opcua.Option, 0)
 	opts = append(opts, opcua.SecurityFromEndpoint(selectedEndpoint, selectedAuthentication))
+	if g.securityMode != "" {
+		opts = append(opts, opcua.SecurityModeString(g.securityMode))
+	}
+
+	if g.securityPolicy != "" {
+		opts = append(opts, opcua.SecurityPolicy("http://opcfoundation.org/UA/SecurityPolicy#"+g.securityPolicy))
+	}
 
 	// Set additional options based on the authentication method
 	switch selectedAuthentication {
