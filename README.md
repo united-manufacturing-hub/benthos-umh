@@ -1,4 +1,5 @@
 # benthos-umh
+
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache2.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![GitHub Actions](https://github.com/united-manufacturing-hub/benthos-umh/workflows/main/badge.svg)](https://github.com/united-manufacturing-hub/benthos-umh/actions)
 
@@ -24,6 +25,7 @@ We encourage you to try out `benthos-umh` and explore the broader [United Manufa
 To use benthos-umh in standalone mode with Docker, follow the instructions in the main article provided.
 
 1. Create a new file called benthos.yaml with the provided content
+
     ```yaml
     ---
     input:
@@ -46,9 +48,10 @@ To use benthos-umh in standalone mode with Docker, follow the instructions in th
         topic: 'ia/raw/opcuasimulator/${! meta("opcua_path") }'
         client_id: 'benthos-umh'
     ```
+
 2. Execute the docker run command to start a new benthos-umh container
     `docker run --rm --network="host" -v '<absolute path to your file>/benthos.yaml:/benthos.yaml' ghcr.io/united-manufacturing-hub/benthos-umh:latest`
-        
+
 ### With the United Manufacturing Hub (Kubernetes & Kafka)
 
 To deploy benthos-umh with the United Manufacturing Hub and its OPC-UA simulator, use the provided Kubernetes manifests in UMHLens/OpenLens.
@@ -73,7 +76,7 @@ data:
               "timestamp_unix": timestamp_unix()
             }
     output:
-      umh_output: 
+      umh_output:
         topic: 'ia.raw.${! meta("opcua_path") }'
 ---
 apiVersion: apps/v1
@@ -122,7 +125,7 @@ spec:
 
 ### Authentication and Security
 
-In benthos-umh, security and authentication are designed to be as robust as possible while maintaining flexibility. The software automates the process of selecting the highest level of security offered by an OPC-UA server for the selected Authentication Method. 
+In benthos-umh, security and authentication are designed to be as robust as possible while maintaining flexibility. The software automates the process of selecting the highest level of security offered by an OPC-UA server for the selected Authentication Method.
 
 #### How It Works
 
@@ -136,9 +139,9 @@ In benthos-umh, security and authentication are designed to be as robust as poss
 #### Supported Authentication Methods
 
 - **Anonymous**: No extra information is needed. The connection uses the highest security level available for anonymous connections.
-  
+
 - **Username and Password**: Specify the username and password in the configuration. The client opts for the highest security level that supports these credentials.
-  
+
 - **Certificate (Future Release)**: Certificate-based authentication is planned for future releases.
 
 #### Example: Configuration File
@@ -150,6 +153,8 @@ input:
   opcua:
     endpoint: 'opc.tcp://localhost:46010'
     nodeIDs: ['ns=2;s=IoTSensors']
+    securityMode: None | Sign | SignAndEncrypt # optional
+    securityPolicy: None | Basic256Sha256 | Aes256_Sha256_RsaPss | Aes128_Sha256_RsaOaep # optional
     username: 'your-username'  # optional
     password: 'your-password'  # optional
 ```
@@ -157,6 +162,7 @@ input:
 ## Testing
 
 We execute automated tests and verify that benthos-umh works:
+
 - (WAGO PFC100, 750-8101) Connect Anonymously
 - (WAGO PFC100, 750-8101) Connect Username / Password
 - (WAGO PFC100, 750-8101) Connect and get one float number
@@ -166,18 +172,20 @@ These tests are executed with a local github runner called "hercules", which is 
 ## Development
 
 ### Quickstart
+
 Follow the steps below to set up your development environment and run tests:
+
 ```
-$ git clone https://github.com/united-manufacturing-hub/benthos-umh.git
-$ cd serverless-stack
-$ nvm install
-$ npm install
-$ sudo apt-get install zip 
-$ echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
-$ sudo apt update
-$ sudo apt install goreleaser
-$ make
-$ npm test
+git clone https://github.com/united-manufacturing-hub/benthos-umh.git
+cd serverless-stack
+nvm install
+npm install
+sudo apt-get install zip
+echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
+sudo apt update
+sudo apt install goreleaser
+make
+npm test
 ```
 
 ### Additional Checks and Commands
@@ -185,15 +193,15 @@ $ npm test
 #### Gitpod and Tailscale
 
 By default when opening the repo in Gitpod, everything that you need should start automatically. If you want to connect to our local PLCs in our office, you can use tailscale, which you will be prompted to install.
-See also: https://www.gitpod.io/docs/integrations/tailscale
+See also: <https://www.gitpod.io/docs/integrations/tailscale>
 
-#### For Go Code:
+#### For Go Code
 
 1. **Linting**: Run `make lint` to check for linting errors. If any are found, you can automatically fix them by running `make format`.
-  
+
 2. **Unit Tests**: Run `make test` to execute all Go unit tests.
 
-#### For Other Code Types (Including Config Files):
+#### For Other Code Types (Including Config Files)
 
 1. **Benthos Tests**: Use `npm run test` to run all Benthos tests for configuration files. Note: We currently do not have these tests. [Learn more](https://www.benthos.dev/docs/configuration/unit_testing/).
 
@@ -208,4 +216,3 @@ All source code is distributed under the APACHE LICENSE, VERSION 2.0. See LICENS
 Feel free to provide us feedback on our [Discord channel](https://discord.gg/F9mqkZnm9d).
 
 For more information about the United Manufacturing Hub, visit [UMH Systems GmbH](https://www.umh.app). If you haven't worked with the United Manufacturing Hub before, [give it a try](https://umh.docs.umh.app/docs/getstarted/installation/)! Setting it up takes only a matter of minutes.
-
