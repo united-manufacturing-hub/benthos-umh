@@ -372,31 +372,32 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	}
 
 	// Step 5: Generate Certificates, because this is really a step that can not happen in the background...
+	if !g.disableEncryption {
+		// Generate a new certificate in memory, no file read/write operations.
+		randomStr := randomString(8) // Generates an 8-character random string
+		clientName := "urn:benthos-umh:client-" + randomStr
+		certPEM, keyPEM, err := uatest.GenerateCert(clientName, 2048, 24*time.Hour*365*10)
+		if err != nil {
+			g.log.Errorf("Failed to generate certificate: %v", err)
+			return err
+		}
 
-	// Generate a new certificate in memory, no file read/write operations.
-	randomStr := randomString(8) // Generates an 8-character random string
-	clientName := "urn:benthos-umh:client-" + randomStr
-	certPEM, keyPEM, err := uatest.GenerateCert(clientName, 2048, 24*time.Hour*365*10)
-	if err != nil {
-		g.log.Errorf("Failed to generate certificate: %v", err)
-		return err
+		// Convert PEM to X509 Certificate and RSA PrivateKey for in-memory use.
+		cert, err := tls.X509KeyPair(certPEM, keyPEM)
+		if err != nil {
+			g.log.Errorf("Failed to parse certificate: %v", err)
+			return err
+		}
+
+		pk, ok := cert.PrivateKey.(*rsa.PrivateKey)
+		if !ok {
+			g.log.Errorf("Invalid private key type")
+			return err
+		}
+
+		// Append the certificate and private key to the client options
+		opts = append(opts, opcua.PrivateKey(pk), opcua.Certificate(cert.Certificate[0]))
 	}
-
-	// Convert PEM to X509 Certificate and RSA PrivateKey for in-memory use.
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		g.log.Errorf("Failed to parse certificate: %v", err)
-		return err
-	}
-
-	pk, ok := cert.PrivateKey.(*rsa.PrivateKey)
-	if !ok {
-		g.log.Errorf("Invalid private key type")
-		return err
-	}
-
-	// Append the certificate and private key to the client options
-	opts = append(opts, opcua.PrivateKey(pk), opcua.Certificate(cert.Certificate[0]))
 
 	// Step 6: Create and connect the OPC UA client
 	// Note that we are not taking `selectedEndpoint.EndpointURL` here as the server can be misconfigured. We are taking instead the user input.
