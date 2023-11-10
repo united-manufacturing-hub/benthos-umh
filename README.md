@@ -175,7 +175,7 @@ These tests are executed with a local github runner called "hercules", which is 
 
 Follow the steps below to set up your development environment and run tests:
 
-```
+```bash
 git clone https://github.com/united-manufacturing-hub/benthos-umh.git
 cd serverless-stack
 nvm install
