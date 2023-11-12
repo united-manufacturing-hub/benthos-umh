@@ -185,10 +185,11 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 
 var OPCUAConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from OPC-UA servers. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
-	Field(service.NewStringField("endpoint").Description("The OPC-UA endpoint to connect to.")).
-	Field(service.NewStringField("username").Description("The username to connect to the server. Defaults to none.").Default("")).
-	Field(service.NewStringField("password").Description("The password to connect to the server. Defaults to none.").Default("")).
-	Field(service.NewStringListField("nodeIDs").Description("The OPC-UA node IDs to start the browsing."))
+	Field(service.NewStringField("endpoint").Description("Address of the OPC-UA server to connect with.")).
+	Field(service.NewStringField("username").Description("Username for server access. If not set, no username is used.").Default("")).
+	Field(service.NewStringField("password").Description("Password for server access. If not set, no password is used.").Default("")).
+	Field(service.NewStringListField("nodeIDs").Description("List of OPC-UA node IDs to begin browsing.")).
+	Field(service.NewBoolField("disableEncryption").Description("Set to true to bypass secure connections, useful in case of SSL or certificate issues. Default is secure (false).").Default(false))
 
 func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 
@@ -224,6 +225,11 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		return nil, err
 	}
 
+	disableEncryption, err := conf.FieldBool("disableEncryption")
+	if err != nil {
+		return nil, err
+	}
+
 	nodeIDs, err := conf.FieldStringList("nodeIDs")
 	if err != nil {
 		return nil, err
@@ -237,11 +243,12 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 	parsedNodeIDs := ParseNodeIDs(nodeIDs)
 
 	m := &OPCUAInput{
-		endpoint: endpoint,
-		username: username,
-		password: password,
-		nodeIDs:  parsedNodeIDs,
-		log:      mgr.Logger(),
+		endpoint:          endpoint,
+		username:          username,
+		password:          password,
+		nodeIDs:           parsedNodeIDs,
+		log:               mgr.Logger(),
+		disableEncryption: disableEncryption,
 	}
 
 	return service.AutoRetryNacksBatched(m), nil
@@ -263,11 +270,12 @@ func init() {
 //------------------------------------------------------------------------------
 
 type OPCUAInput struct {
-	endpoint string
-	username string
-	password string
-	nodeIDs  []*ua.NodeID
-	nodeList []NodeDef
+	endpoint          string
+	username          string
+	password          string
+	nodeIDs           []*ua.NodeID
+	nodeList          []NodeDef
+	disableEncryption bool
 
 	client *opcua.Client
 	log    *service.Logger
@@ -340,7 +348,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 	// Step 3.1: Filter the endpoints based on the selected authentication method.
 	// This will eliminate endpoints that do not support the chosen method.
-	selectedEndpoint := g.getReasonableEndpoint(endpoints, selectedAuthentication)
+	selectedEndpoint := g.getReasonableEndpoint(endpoints, selectedAuthentication, g.disableEncryption)
 	if selectedEndpoint == nil {
 		g.log.Errorf("Could not select a suitable endpoint")
 		return err
@@ -364,31 +372,32 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	}
 
 	// Step 5: Generate Certificates, because this is really a step that can not happen in the background...
+	if !g.disableEncryption {
+		// Generate a new certificate in memory, no file read/write operations.
+		randomStr := randomString(8) // Generates an 8-character random string
+		clientName := "urn:benthos-umh:client-" + randomStr
+		certPEM, keyPEM, err := uatest.GenerateCert(clientName, 2048, 24*time.Hour*365*10)
+		if err != nil {
+			g.log.Errorf("Failed to generate certificate: %v", err)
+			return err
+		}
 
-	// Generate a new certificate in memory, no file read/write operations.
-	randomStr := randomString(8) // Generates an 8-character random string
-	clientName := "urn:benthos-umh:client-" + randomStr
-	certPEM, keyPEM, err := uatest.GenerateCert(clientName, 2048, 24*time.Hour*365*10)
-	if err != nil {
-		g.log.Errorf("Failed to generate certificate: %v", err)
-		return err
+		// Convert PEM to X509 Certificate and RSA PrivateKey for in-memory use.
+		cert, err := tls.X509KeyPair(certPEM, keyPEM)
+		if err != nil {
+			g.log.Errorf("Failed to parse certificate: %v", err)
+			return err
+		}
+
+		pk, ok := cert.PrivateKey.(*rsa.PrivateKey)
+		if !ok {
+			g.log.Errorf("Invalid private key type")
+			return err
+		}
+
+		// Append the certificate and private key to the client options
+		opts = append(opts, opcua.PrivateKey(pk), opcua.Certificate(cert.Certificate[0]))
 	}
-
-	// Convert PEM to X509 Certificate and RSA PrivateKey for in-memory use.
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		g.log.Errorf("Failed to parse certificate: %v", err)
-		return err
-	}
-
-	pk, ok := cert.PrivateKey.(*rsa.PrivateKey)
-	if !ok {
-		g.log.Errorf("Invalid private key type")
-		return err
-	}
-
-	// Append the certificate and private key to the client options
-	opts = append(opts, opcua.PrivateKey(pk), opcua.Certificate(cert.Certificate[0]))
 
 	// Step 6: Create and connect the OPC UA client
 	// Note that we are not taking `selectedEndpoint.EndpointURL` here as the server can be misconfigured. We are taking instead the user input.
