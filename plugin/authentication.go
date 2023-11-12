@@ -6,7 +6,7 @@ import (
 	"github.com/gopcua/opcua/ua"
 )
 
-func (g *OPCUAInput) getReasonableEndpoint(endpoints []*ua.EndpointDescription, selectedAuthentication ua.UserTokenType) *ua.EndpointDescription {
+func (g *OPCUAInput) getReasonableEndpoint(endpoints []*ua.EndpointDescription, selectedAuthentication ua.UserTokenType, disableEncryption bool) *ua.EndpointDescription {
 	if len(endpoints) == 0 {
 		return nil
 	}
@@ -18,8 +18,15 @@ func (g *OPCUAInput) getReasonableEndpoint(endpoints []*ua.EndpointDescription, 
 		for _, userIdentity := range p.UserIdentityTokens {
 
 			if selectedAuthentication == userIdentity.TokenType {
-				// We have a winner
-				return p
+
+				// Additionally check whether encryption is disabled
+				if disableEncryption && p.SecurityMode == ua.MessageSecurityModeFromString("None") {
+					return p
+				} else if !disableEncryption { // if encrpytion is not disabled, then take everything
+					return p
+				}
+				// otherwise, continue searching
+
 			}
 		}
 
