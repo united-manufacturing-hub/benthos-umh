@@ -198,11 +198,11 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		var err error
 
 		input := &OPCUAInput{
-			endpoint:          endpoint,
-			username:          "",
-			password:          "",
-			nodeIDs:           nil,
-			disableEncryption: true,
+			endpoint: endpoint,
+			username: "",
+			password: "",
+			nodeIDs:  nil,
+			insecure: true,
 		}
 
 		// Attempt to connect
@@ -328,6 +328,72 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 	})
 
+	t.Run("Subscribe", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL", "ns=4;s=|vprop|WAGO 750-8101 PFC100 CS 2ETH.Application.RevisionCounter"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         endpoint,
+			username:         username,
+			password:         password,
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: true,
+		}
+
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		t.Log("Connected!")
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// expect 2 messages for both nodes
+		assert.Equal(t, 2, len(messageBatch))
+
+		for _, message := range messageBatch {
+			message, err := message.AsStructuredMut()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var exampleNumber json.Number = "22.565684"
+			assert.IsType(t, exampleNumber, message) // it should be a number
+			t.Log("Received message: ", message)
+		}
+
+		messageBatch2, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// expect 1 message only as RevisionCounter will not change
+		assert.Equal(t, 1, len(messageBatch2))
+
+		for _, message := range messageBatch2 {
+			message, err := message.AsStructuredMut()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var exampleNumber json.Number = "22.565684"
+			assert.IsType(t, exampleNumber, message) // it should be a number
+			t.Log("Received message: ", message)
+		}
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
 }
 
 func MockGetEndpoints() []*ua.EndpointDescription {
@@ -390,17 +456,17 @@ func MockGetEndpoints() []*ua.EndpointDescription {
 	return []*ua.EndpointDescription{endpoint1, endpoint2}
 }
 
-func TestGetReasonableEndpoint_DisableEncryption(t *testing.T) {
+func TestGetReasonableEndpoint_Insecure(t *testing.T) {
 	input := &OPCUAInput{
-		endpoint:          "",
-		username:          "",
-		password:          "",
-		nodeIDs:           nil,
-		disableEncryption: true,
+		endpoint: "",
+		username: "",
+		password: "",
+		nodeIDs:  nil,
+		insecure: true,
 	}
 
 	endpoints := MockGetEndpoints()
-	selectedEndpoint := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input.disableEncryption)
+	selectedEndpoint := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input.insecure)
 
 	if selectedEndpoint != nil {
 		if selectedEndpoint.SecurityMode != ua.MessageSecurityModeFromString("None") {
@@ -411,14 +477,14 @@ func TestGetReasonableEndpoint_DisableEncryption(t *testing.T) {
 	}
 
 	input2 := &OPCUAInput{
-		endpoint:          "",
-		username:          "",
-		password:          "",
-		nodeIDs:           nil,
-		disableEncryption: false,
+		endpoint: "",
+		username: "",
+		password: "",
+		nodeIDs:  nil,
+		insecure: false,
 	}
 
-	selectedEndpoint2 := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input2.disableEncryption)
+	selectedEndpoint2 := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input2.insecure)
 
 	if selectedEndpoint2 != nil {
 		if selectedEndpoint2.SecurityMode != ua.MessageSecurityModeFromString("SignAndEncrypt") {
