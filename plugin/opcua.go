@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -185,12 +186,14 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 
 var OPCUAConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from OPC-UA servers. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
-	Field(service.NewStringField("endpoint").Description("The OPC-UA endpoint to connect to.")).
-	Field(service.NewStringField("securityMode").Description("The security mode to use.")).
-	Field(service.NewStringField("securityPolicy").Description("The security policy to use.")).
-	Field(service.NewStringField("username").Description("The username to connect to the server. Defaults to none.").Default("")).
-	Field(service.NewStringField("password").Description("The password to connect to the server. Defaults to none.").Default("")).
-	Field(service.NewStringListField("nodeIDs").Description("The OPC-UA node IDs to start the browsing."))
+	Field(service.NewStringField("endpoint").Description("Address of the OPC-UA server to connect with.")).
+	Field(service.NewStringField("username").Description("Username for server access. If not set, no username is used.").Default("")).
+	Field(service.NewStringField("password").Description("Password for server access. If not set, no password is used.").Default("")).
+	Field(service.NewStringListField("nodeIDs").Description("List of OPC-UA node IDs to begin browsing.")).
+	Field(service.NewStringField("securityMode").Description("Security mode to use. If not set, a reasonable security mode will be set depending on the discovered endpoints.")).
+	Field(service.NewStringField("securityPolicy").Description("The security policy to use.  If not set, a reasonable security policy will be set depending on the discovered endpoints.")).
+	Field(service.NewBoolField("insecure").Description("Set to true to bypass secure connections, useful in case of SSL or certificate issues. Default is secure (false).").Default(false)).
+	Field(service.NewBoolField("subscribeEnabled").Description("Set to true to subscribe to OPC-UA nodes instead of fetching them every seconds. Default is pulling messages every second (false).").Default(false))
 
 func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 
@@ -236,6 +239,16 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		return nil, err
 	}
 
+	insecure, err := conf.FieldBool("insecure")
+	if err != nil {
+		return nil, err
+	}
+
+	subscribeEnabled, err := conf.FieldBool("subscribeEnabled")
+	if err != nil {
+		return nil, err
+	}
+
 	nodeIDs, err := conf.FieldStringList("nodeIDs")
 	if err != nil {
 		return nil, err
@@ -249,13 +262,15 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 	parsedNodeIDs := ParseNodeIDs(nodeIDs)
 
 	m := &OPCUAInput{
-		endpoint:       endpoint,
-		securityMode:   securityMode,
-		securityPolicy: securityPolicy,
-		username:       username,
-		password:       password,
-		nodeIDs:        parsedNodeIDs,
-		log:            mgr.Logger(),
+		endpoint:         endpoint,
+		username:         username,
+		password:         password,
+		nodeIDs:          parsedNodeIDs,
+		log:              mgr.Logger(),
+    securityMode:     securityMode,
+		securityPolicy:   securityPolicy,
+		insecure:         insecure,
+		subscribeEnabled: subscribeEnabled,
 	}
 
 	return service.AutoRetryNacksBatched(m), nil
@@ -277,16 +292,19 @@ func init() {
 //------------------------------------------------------------------------------
 
 type OPCUAInput struct {
-	endpoint       string
-	securityMode   string
-	securityPolicy string
-	username       string
-	password       string
-	nodeIDs        []*ua.NodeID
-	nodeList       []NodeDef
-
-	client *opcua.Client
-	log    *service.Logger
+	endpoint          string
+	username          string
+	password          string
+	nodeIDs           []*ua.NodeID
+	nodeList          []NodeDef
+  securityMode      string
+	securityPolicy    string
+  insecure          bool
+  client            *opcua.Client
+	log               *service.Logger
+	// this is required for subscription
+	subscribeEnabled  bool
+	subNotifyChan     chan *opcua.PublishNotificationData
 }
 
 func (g *OPCUAInput) Connect(ctx context.Context) error {
@@ -356,7 +374,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 	// Step 3.1: Filter the endpoints based on the selected authentication method.
 	// This will eliminate endpoints that do not support the chosen method.
-	selectedEndpoint := g.getReasonableEndpoint(endpoints, selectedAuthentication)
+	selectedEndpoint := g.getReasonableEndpoint(endpoints, selectedAuthentication, g.insecure)
 	if selectedEndpoint == nil {
 		g.log.Errorf("Could not select a suitable endpoint")
 		return err
@@ -387,31 +405,32 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	}
 
 	// Step 5: Generate Certificates, because this is really a step that can not happen in the background...
+	if !g.insecure {
+		// Generate a new certificate in memory, no file read/write operations.
+		randomStr := randomString(8) // Generates an 8-character random string
+		clientName := "urn:benthos-umh:client-" + randomStr
+		certPEM, keyPEM, err := uatest.GenerateCert(clientName, 2048, 24*time.Hour*365*10)
+		if err != nil {
+			g.log.Errorf("Failed to generate certificate: %v", err)
+			return err
+		}
 
-	// Generate a new certificate in memory, no file read/write operations.
-	randomStr := randomString(8) // Generates an 8-character random string
-	clientName := "urn:benthos-umh:client-" + randomStr
-	certPEM, keyPEM, err := uatest.GenerateCert(clientName, 2048, 24*time.Hour*365*10)
-	if err != nil {
-		g.log.Errorf("Failed to generate certificate: %v", err)
-		return err
+		// Convert PEM to X509 Certificate and RSA PrivateKey for in-memory use.
+		cert, err := tls.X509KeyPair(certPEM, keyPEM)
+		if err != nil {
+			g.log.Errorf("Failed to parse certificate: %v", err)
+			return err
+		}
+
+		pk, ok := cert.PrivateKey.(*rsa.PrivateKey)
+		if !ok {
+			g.log.Errorf("Invalid private key type")
+			return err
+		}
+
+		// Append the certificate and private key to the client options
+		opts = append(opts, opcua.PrivateKey(pk), opcua.Certificate(cert.Certificate[0]))
 	}
-
-	// Convert PEM to X509 Certificate and RSA PrivateKey for in-memory use.
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		g.log.Errorf("Failed to parse certificate: %v", err)
-		return err
-	}
-
-	pk, ok := cert.PrivateKey.(*rsa.PrivateKey)
-	if !ok {
-		g.log.Errorf("Invalid private key type")
-		return err
-	}
-
-	// Append the certificate and private key to the client options
-	opts = append(opts, opcua.PrivateKey(pk), opcua.Certificate(cert.Certificate[0]))
 
 	// Step 6: Create and connect the OPC UA client
 	// Note that we are not taking `selectedEndpoint.EndpointURL` here as the server can be misconfigured. We are taking instead the user input.
@@ -463,11 +482,93 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 	g.nodeList = nodeList
 
+	// If subscription is enabled, start subscribing to the nodes
+	if g.subscribeEnabled {
+		g.log.Infof("Subscription is enabled, therefore start subscribing to the selected notes...")
+
+		g.subNotifyChan = make(chan *opcua.PublishNotificationData, 100)
+
+		sub, err := c.Subscribe(ctx, &opcua.SubscriptionParameters{
+			Interval: opcua.DefaultSubscriptionInterval,
+		}, g.subNotifyChan)
+		if err != nil {
+			panic(err)
+		}
+
+		monitoredRequests := make([]*ua.MonitoredItemCreateRequest, 0, len(nodeList))
+
+		for pos, id := range nodeList {
+			miCreateRequest := opcua.NewMonitoredItemCreateRequestWithDefaults(id.NodeID, ua.AttributeIDValue, uint32(pos))
+			monitoredRequests = append(monitoredRequests, miCreateRequest)
+		}
+
+		res, err := sub.Monitor(ctx, ua.TimestampsToReturnBoth, monitoredRequests...)
+		if err != nil {
+			panic(err)
+		}
+
+		// Assuming you want to check the status code of each result
+		for _, result := range res.Results {
+			if result.StatusCode != ua.StatusOK {
+				panic(fmt.Errorf("monitoring failed for node, status code: %v", result.StatusCode))
+			}
+		}
+
+		g.log.Infof("Subscribed to %d nodes!", len(res.Results))
+
+	}
+
 	return nil
 }
 
-func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+// TODO: adjust with TypeID in opcua.enums.go
+func (g *OPCUAInput) createMessageFromValue(value interface{}, nodeID string) *service.Message {
+	b := make([]byte, 0)
 
+	switch v := value.(type) {
+	case float64:
+		b = append(b, []byte(strconv.FormatFloat(v, 'f', -1, 64))...)
+	case string:
+		b = append(b, []byte(string(v))...)
+	case bool:
+		b = append(b, []byte(strconv.FormatBool(v))...)
+	case int:
+		b = append(b, []byte(strconv.Itoa(v))...)
+	case int8:
+		b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
+	case int16:
+		b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
+	case int32:
+		b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
+	case int64:
+		b = append(b, []byte(strconv.FormatInt(v, 10))...)
+	case uint:
+		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
+	case uint8:
+		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
+	case uint16:
+		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
+	case uint32:
+		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
+	case uint64:
+		b = append(b, []byte(strconv.FormatUint(v, 10))...)
+	case float32:
+		b = append(b, []byte(strconv.FormatFloat(float64(v), 'f', -1, 32))...)
+	default:
+		g.log.Errorf("Unknown type: %T", v)
+		return nil
+	}
+
+	message := service.NewMessage(b)
+
+	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+	opcuaPath := re.ReplaceAllString(nodeID, "_")
+	message.MetaSet("opcua_path", opcuaPath)
+
+	return message
+}
+
+func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
 	// Read all values in NodeList and return each of them as a message with the node's path as the metadata
 
 	// Create first a list of all the values to read
@@ -524,50 +625,10 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 
 	for i, node := range g.nodeList {
 
-		b := make([]byte, 0)
-		switch v := resp.Results[i].Value.Value().(type) {
-		case float64:
-			b = append(b, []byte(strconv.FormatFloat(v, 'f', -1, 64))...)
-		case string:
-			b = append(b, []byte(string(v))...)
-		case bool:
-			b = append(b, []byte(strconv.FormatBool(v))...)
-		case int:
-			b = append(b, []byte(strconv.Itoa(v))...)
-		case int8:
-			b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
-		case int16:
-			b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
-		case int32:
-			b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
-		case int64:
-			b = append(b, []byte(strconv.FormatInt(v, 10))...)
-		case uint:
-			b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
-		case uint8:
-			b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
-		case uint16:
-			b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
-		case uint32:
-			b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
-		case uint64:
-			b = append(b, []byte(strconv.FormatUint(v, 10))...)
-		case float32:
-			b = append(b, []byte(strconv.FormatFloat(float64(v), 'f', -1, 32))...)
-		default:
-			g.log.Errorf("Unknown type: %T", v)
-			continue
+		message := g.createMessageFromValue(resp.Results[i].Value.Value(), node.NodeID.String())
+		if message != nil {
+			msgs = append(msgs, message)
 		}
-
-		message := service.NewMessage(b)
-
-		opcuaPath := node.NodeID.String()
-		re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
-		opcuaPath = re.ReplaceAllString(opcuaPath, "_")
-
-		message.MetaSet("opcua_path", opcuaPath)
-
-		msgs = append(msgs, message)
 	}
 
 	// Wait for a second before returning a message.
@@ -577,6 +638,62 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 		// Nacks are retried automatically when we use service.AutoRetryNacks
 		return nil
 	}, nil
+}
+
+func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+	var res *opcua.PublishNotificationData
+
+	select {
+	case res = <-g.subNotifyChan:
+		// Received a result, check for error
+		if res.Error != nil {
+			g.log.Errorf("ReadBatchSubscribe error: %s", res.Error)
+			return nil, nil, res.Error
+		}
+
+		// Create a message with the node's path as the metadata
+		msgs := service.MessageBatch{}
+
+		switch x := res.Value.(type) {
+		case *ua.DataChangeNotification:
+			for _, item := range x.MonitoredItems {
+				if item == nil || item.Value == nil || item.Value.Value == nil {
+					g.log.Errorf("Received nil in item structure")
+					continue
+				}
+
+				// now get the handle id, which is the position in g.Nodelist
+				// see also NewMonitoredItemCreateRequestWithDefaults call in other functions
+				handleID := item.ClientHandle
+
+				if uint32(len(g.nodeList)) >= handleID {
+					message := g.createMessageFromValue(item.Value.Value.Value(), g.nodeList[handleID].NodeID.String())
+					if message != nil {
+						msgs = append(msgs, message)
+					}
+				}
+			}
+		default:
+			g.log.Errorf("Unknown publish result %T", res.Value)
+		}
+
+		return msgs, func(ctx context.Context, err error) error {
+			// Nacks are retried automatically when we use service.AutoRetryNacks
+			return nil
+		}, nil
+
+	case <-ctx.Done():
+		// Timeout occurred
+		g.log.Error("Timeout waiting for response from g.subNotifyChan")
+		return nil, nil, errors.New("timeout waiting for response")
+	}
+}
+
+func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+	if g.subscribeEnabled {
+		return g.ReadBatchSubscribe(ctx)
+	}
+	return g.ReadBatchPull(ctx)
 }
 
 func (g *OPCUAInput) Close(ctx context.Context) error {

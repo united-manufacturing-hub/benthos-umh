@@ -123,6 +123,36 @@ spec:
             name: benthos-1-config
 ```
 
+### Pull Every Second vs Subscribe
+
+#### Pull Method
+Advantages:
+- Provides real-time data visibility, e.g., in MQTT Explorer.
+- Clearly differentiates between 'no data received' and 'value did not change' scenarios, which can be crucial for documentation and proving the OPC-UA client's activity.
+
+Disadvantages:
+- Results in higher data throughput as it pulls all nodes every second, regardless of changes.
+
+#### Subscribe Method
+
+Advantages:
+- Data is sent only when there's a change in value, reducing unnecessary data transfer.
+Disadvantages:
+- Less visibility into real-time data status, and it's harder to differentiate between no data and unchanged values.
+
+
+#### Configuration
+
+If not specified otherwise, benthos will use the Pull Method as described above. To enable subscription mode, set subscribeEnabled: true in the configuration:
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDs: ['ns=2;s=IoTSensors']
+    subscribeEnabled: true
+```
+
 ### Authentication and Security
 
 In benthos-umh, security and authentication are designed to be as robust as possible while maintaining flexibility. The software automates the process of selecting the highest level of security offered by an OPC-UA server for the selected Authentication Method.
@@ -159,6 +189,18 @@ input:
     password: 'your-password'  # optional
 ```
 
+#### Troubleshooting
+
+If the most secure endpoint selected by benthos-umh is not working or the server's security implementation is lacking, you can bypass encryption by setting `insecure: true``.
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDs: ['ns=2;s=IoTSensors']
+    insecure: true
+```
+
 ## Testing
 
 We execute automated tests and verify that benthos-umh works:
@@ -166,6 +208,7 @@ We execute automated tests and verify that benthos-umh works:
 - (WAGO PFC100, 750-8101) Connect Anonymously
 - (WAGO PFC100, 750-8101) Connect Username / Password
 - (WAGO PFC100, 750-8101) Connect and get one float number
+- (WAGO PFC100, 750-8101) Connect and subscribe to two numbers (and verify that only data gets sent if it has changed)
 
 These tests are executed with a local github runner called "hercules", which is connected to a isolated testing network.
 
