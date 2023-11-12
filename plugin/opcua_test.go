@@ -191,6 +191,30 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 	})
 
+	t.Run("ConnectAnonymousWithNoEncryption", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		input := &OPCUAInput{
+			endpoint:          endpoint,
+			username:          "",
+			password:          "",
+			nodeIDs:           nil,
+			disableEncryption: true,
+		}
+
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
 	t.Run("Connect Username-Password fail", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -304,6 +328,105 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 	})
 
+}
+
+func MockGetEndpoints() []*ua.EndpointDescription {
+	// Define the mock endpoints with the desired properties
+	endpoint1 := &ua.EndpointDescription{
+		EndpointURL: "opc.tcp://example.com:4840", // Replace with your actual server URL
+		Server: &ua.ApplicationDescription{
+			ApplicationURI:  "urn:example:server", // Replace with your server's URI
+			ApplicationType: ua.ApplicationTypeServer,
+		},
+		ServerCertificate: []byte{},                                                    // Replace with your server certificate
+		SecurityMode:      ua.MessageSecurityModeFromString("SignAndEncrypt"),          // Use appropriate security mode
+		SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256", // Use appropriate security policy URI
+		UserIdentityTokens: []*ua.UserTokenPolicy{
+			{
+				PolicyID:          "anonymous",
+				TokenType:         ua.UserTokenTypeAnonymous,
+				IssuedTokenType:   "http://opcfoundation.org/UA/UserTokenPolicy#Anonymous",
+				SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#None",
+			},
+			{
+				PolicyID:          "username",
+				TokenType:         ua.UserTokenTypeUserName,
+				IssuedTokenType:   "http://opcfoundation.org/UA/UserTokenPolicy#UserName",
+				SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256",
+			},
+		},
+		TransportProfileURI: "http://opcfoundation.org/UA-Profile/Transport/uatcp-uasc-uabinary",
+		SecurityLevel:       3, // Use an appropriate security level
+	}
+
+	endpoint2 := &ua.EndpointDescription{
+		EndpointURL: "opc.tcp://example2.com:4840", // Replace with your actual server URL
+		Server: &ua.ApplicationDescription{
+			ApplicationURI:  "urn:example2:server", // Replace with your server's URI
+			ApplicationType: ua.ApplicationTypeServer,
+		},
+		ServerCertificate: []byte("mock_certificate_2"),                                // Replace with your server certificate
+		SecurityMode:      ua.MessageSecurityModeFromString("None"),                    // Use appropriate security mode
+		SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256", // Use appropriate security policy URI
+		UserIdentityTokens: []*ua.UserTokenPolicy{
+			{
+				PolicyID:          "anonymous",
+				TokenType:         ua.UserTokenTypeAnonymous,
+				IssuedTokenType:   "http://opcfoundation.org/UA/UserTokenPolicy#Anonymous",
+				SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#None",
+			},
+			{
+				PolicyID:          "username",
+				TokenType:         ua.UserTokenTypeUserName,
+				IssuedTokenType:   "http://opcfoundation.org/UA/UserTokenPolicy#UserName",
+				SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256",
+			},
+		},
+		TransportProfileURI: "http://opcfoundation.org/UA-Profile/Transport/uatcp-uasc-uabinary",
+		SecurityLevel:       0, // Use an appropriate security level
+	}
+
+	// Return the mock endpoints as a slice
+	return []*ua.EndpointDescription{endpoint1, endpoint2}
+}
+
+func TestGetReasonableEndpoint_DisableEncryption(t *testing.T) {
+	input := &OPCUAInput{
+		endpoint:          "",
+		username:          "",
+		password:          "",
+		nodeIDs:           nil,
+		disableEncryption: true,
+	}
+
+	endpoints := MockGetEndpoints()
+	selectedEndpoint := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input.disableEncryption)
+
+	if selectedEndpoint != nil {
+		if selectedEndpoint.SecurityMode != ua.MessageSecurityModeFromString("None") {
+			t.Errorf("Expected selected endpoint to have no encryption, but got %v", selectedEndpoint.SecurityMode)
+		}
+	} else {
+		t.Error("Expected a reasonable endpoint, but got nil")
+	}
+
+	input2 := &OPCUAInput{
+		endpoint:          "",
+		username:          "",
+		password:          "",
+		nodeIDs:           nil,
+		disableEncryption: false,
+	}
+
+	selectedEndpoint2 := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input2.disableEncryption)
+
+	if selectedEndpoint2 != nil {
+		if selectedEndpoint2.SecurityMode != ua.MessageSecurityModeFromString("SignAndEncrypt") {
+			t.Errorf("Expected selected endpoint to have encryption, but got %v", selectedEndpoint.SecurityMode)
+		}
+	} else {
+		t.Error("Expected a reasonable endpoint, but got nil")
+	}
 }
 
 func logCertificateInfo(t *testing.T, certBytes []byte) {
