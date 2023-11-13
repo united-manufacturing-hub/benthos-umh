@@ -18,6 +18,27 @@ Welcome to the benthos-umh repository! This is a version of benthos maintained b
 
 We encourage you to try out `benthos-umh` and explore the broader [United Manufacturing Hub](https://www.umh.app) project for a comprehensive solution to your industrial data integration needs.
 
+### Authentication and Security
+
+In benthos-umh, security and authentication are designed to be as robust as possible while maintaining flexibility. The software automates the process of selecting the highest level of security offered by an OPC-UA server for the selected Authentication Method.
+
+#### How It Works
+
+1. **Discover Endpoints**: Initially, benthos-umh discovers all available endpoints from the OPC-UA server.
+2. **Filter by Authentication**: Based on the provided authentication method, it filters the list of endpoints. It currently supports Anonymous and Username/Password methods. Certificate-based authentication is on the roadmap.
+3. **Select Endpoint**: The software then chooses the endpoint with the highest security level that matches the chosen authentication method.
+4. **Client Initialization**: Various client options are initialized, such as security policies, based on the selected endpoint.
+5. **Generate Certificates**: For secure communication, certificates are dynamically generated. However, this step is only essential for methods requiring it.
+6. **Final Connection**: Finally, it initiates a connection to the OPC-UA server using the chosen endpoint and authentication method.
+
+#### Supported Authentication Methods
+
+- **Anonymous**: No extra information is needed. The connection uses the highest security level available for anonymous connections.
+
+- **Username and Password**: Specify the username and password in the configuration. The client opts for the highest security level that supports these credentials.
+
+- **Certificate (Future Release)**: Certificate-based authentication is planned for future releases.
+
 ## Usage
 
 ### Standalone
@@ -123,73 +144,59 @@ spec:
             name: benthos-1-config
 ```
 
-### Pull Every Second vs Subscribe
+### Configuration Options
 
-#### Pull Method
-Advantages:
-- Provides real-time data visibility, e.g., in MQTT Explorer.
-- Clearly differentiates between 'no data received' and 'value did not change' scenarios, which can be crucial for documentation and proving the OPC-UA client's activity.
-
-Disadvantages:
-- Results in higher data throughput as it pulls all nodes every second, regardless of changes.
-
-#### Subscribe Method
-
-Advantages:
-- Data is sent only when there's a change in value, reducing unnecessary data transfer.
-Disadvantages:
-- Less visibility into real-time data status, and it's harder to differentiate between no data and unchanged values.
-
-
-#### Configuration
-
-If not specified otherwise, benthos will use the Pull Method as described above. To enable subscription mode, set subscribeEnabled: true in the configuration:
+The following options can be specified in the `benthos.yaml` configuration file:
 
 ```yaml
 input:
   opcua:
     endpoint: 'opc.tcp://localhost:46010'
     nodeIDs: ['ns=2;s=IoTSensors']
-    subscribeEnabled: true
+    username: 'your-username'  # optional (default: unset)
+    password: 'your-password'  # optional (default: unset)
+    insecure: false | true # optional (default: false)
+    securityMode: None | Sign | SignAndEncrypt # optional (default: unset)
+    securityPolicy: None | Basic256Sha256 | Aes256Sha256RsaPss | Aes128Sha256RsaOaep # optional (default: unset)
+    subscribeEnabled: false | true # optional (default: false)
 ```
 
-### Authentication and Security
+#### Endpoint
 
-In benthos-umh, security and authentication are designed to be as robust as possible while maintaining flexibility. The software automates the process of selecting the highest level of security offered by an OPC-UA server for the selected Authentication Method.
-
-#### How It Works
-
-1. **Discover Endpoints**: Initially, benthos-umh discovers all available endpoints from the OPC-UA server.
-2. **Filter by Authentication**: Based on the provided authentication method, it filters the list of endpoints. It currently supports Anonymous and Username/Password methods. Certificate-based authentication is on the roadmap.
-3. **Select Endpoint**: The software then chooses the endpoint with the highest security level that matches the chosen authentication method.
-4. **Client Initialization**: Various client options are initialized, such as security policies, based on the selected endpoint.
-5. **Generate Certificates**: For secure communication, certificates are dynamically generated. However, this step is only essential for methods requiring it.
-6. **Final Connection**: Finally, it initiates a connection to the OPC-UA server using the chosen endpoint and authentication method.
-
-#### Supported Authentication Methods
-
-- **Anonymous**: No extra information is needed. The connection uses the highest security level available for anonymous connections.
-
-- **Username and Password**: Specify the username and password in the configuration. The client opts for the highest security level that supports these credentials.
-
-- **Certificate (Future Release)**: Certificate-based authentication is planned for future releases.
-
-#### Example: Configuration File
-
-Here is how you could specify authentication in `benthos.yaml`:
+You can specify the endpoint in the configuration file. Node endpoints are automatically discovered and selected based on the authentication method.
 
 ```yaml
 input:
   opcua:
     endpoint: 'opc.tcp://localhost:46010'
     nodeIDs: ['ns=2;s=IoTSensors']
-    securityMode: None | Sign | SignAndEncrypt # optional
-    securityPolicy: None | Basic256Sha256 | Aes256_Sha256_RsaPss | Aes128_Sha256_RsaOaep # optional
-    username: 'your-username'  # optional
-    password: 'your-password'  # optional
 ```
 
-#### Troubleshooting
+#### Node IDs
+
+You can specify the node IDs in the configuration file (currently only namespaced node IDs are supported):
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDs: ['ns=2;s=IoTSensors']
+```
+
+#### Username and Password
+
+If you want to use username and password authentication, you can specify them in the configuration file:
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDs: ['ns=2;s=IoTSensors']
+    username: 'your-username'
+    password: 'your-password'
+```
+
+#### Insecure Mode
 
 If the most secure endpoint selected by benthos-umh is not working or the server's security implementation is lacking, you can bypass encryption by setting `insecure: true``.
 
@@ -201,6 +208,36 @@ input:
     insecure: true
 ```
 
+#### Security Mode and Security Policy
+
+The security mode and security policy are automatically selected based on the endpoint and authentication method. However, you can override the default behavior by specifying the security mode and security policy in the configuration file.
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDs: ['ns=2;s=IoTSensors']
+    securityMode: SignAndEncrypt
+    securityPolicy: Basic256Sha256
+```
+
+#### Pull and Subscribe Methods
+
+Benthus-umh supports two modes of operation: pull and subscribe. In pull mode, it pulls all nodes every second, regardless of changes. In subscribe mode, it only sends data when there's a change in value, reducing unnecessary data transfer.
+
+| Method | Advantages | Disadvantages |
+| --- | --- | --- |
+| Pull | - Provides real-time data visibility, e.g., in MQTT Explorer. <br> - Clearly differentiates between 'no data received' and 'value did not change' scenarios, which can be crucial for documentation and proving the OPC-UA client's activity. | - Results in higher data throughput as it pulls all nodes every second, regardless of changes. |
+| Subscribe | - Data is sent only when there's a change in value, reducing unnecessary data transfer. | - Less visibility into real-time data status, and it's harder to differentiate between no data and unchanged values. |
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDs: ['ns=2;s=IoTSensors']
+    subscribeEnabled: true
+```
+
 ## Testing
 
 We execute automated tests and verify that benthos-umh works:
@@ -208,7 +245,6 @@ We execute automated tests and verify that benthos-umh works:
 - (WAGO PFC100, 750-8101) Connect Anonymously
 - (WAGO PFC100, 750-8101) Connect Username / Password
 - (WAGO PFC100, 750-8101) Connect and get one float number
-- (WAGO PFC100, 750-8101) Connect and subscribe to two numbers (and verify that only data gets sent if it has changed)
 
 These tests are executed with a local github runner called "hercules", which is connected to a isolated testing network.
 
@@ -218,7 +254,7 @@ These tests are executed with a local github runner called "hercules", which is 
 
 Follow the steps below to set up your development environment and run tests:
 
-```bash
+```
 git clone https://github.com/united-manufacturing-hub/benthos-umh.git
 cd serverless-stack
 nvm install
