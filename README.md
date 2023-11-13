@@ -1,4 +1,5 @@
 # benthos-umh
+
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache2.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![GitHub Actions](https://github.com/united-manufacturing-hub/benthos-umh/workflows/main/badge.svg)](https://github.com/united-manufacturing-hub/benthos-umh/actions)
 
@@ -17,6 +18,27 @@ Welcome to the benthos-umh repository! This is a version of benthos maintained b
 
 We encourage you to try out `benthos-umh` and explore the broader [United Manufacturing Hub](https://www.umh.app) project for a comprehensive solution to your industrial data integration needs.
 
+### Authentication and Security
+
+In benthos-umh, security and authentication are designed to be as robust as possible while maintaining flexibility. The software automates the process of selecting the highest level of security offered by an OPC-UA server for the selected Authentication Method.
+
+#### How It Works
+
+1. **Discover Endpoints**: Initially, benthos-umh discovers all available endpoints from the OPC-UA server.
+2. **Filter by Authentication**: Based on the provided authentication method, it filters the list of endpoints. It currently supports Anonymous and Username/Password methods. Certificate-based authentication is on the roadmap.
+3. **Select Endpoint**: The software then chooses the endpoint with the highest security level that matches the chosen authentication method.
+4. **Client Initialization**: Various client options are initialized, such as security policies, based on the selected endpoint.
+5. **Generate Certificates**: For secure communication, certificates are dynamically generated. However, this step is only essential for methods requiring it.
+6. **Final Connection**: Finally, it initiates a connection to the OPC-UA server using the chosen endpoint and authentication method.
+
+#### Supported Authentication Methods
+
+- **Anonymous**: No extra information is needed. The connection uses the highest security level available for anonymous connections.
+
+- **Username and Password**: Specify the username and password in the configuration. The client opts for the highest security level that supports these credentials.
+
+- **Certificate (Future Release)**: Certificate-based authentication is planned for future releases.
+
 ## Usage
 
 ### Standalone
@@ -24,6 +46,7 @@ We encourage you to try out `benthos-umh` and explore the broader [United Manufa
 To use benthos-umh in standalone mode with Docker, follow the instructions in the main article provided.
 
 1. Create a new file called benthos.yaml with the provided content
+
     ```yaml
     ---
     input:
@@ -46,9 +69,10 @@ To use benthos-umh in standalone mode with Docker, follow the instructions in th
         topic: 'ia/raw/opcuasimulator/${! meta("opcua_path") }'
         client_id: 'benthos-umh'
     ```
+
 2. Execute the docker run command to start a new benthos-umh container
     `docker run --rm --network="host" -v '<absolute path to your file>/benthos.yaml:/benthos.yaml' ghcr.io/united-manufacturing-hub/benthos-umh:latest`
-        
+
 ### With the United Manufacturing Hub (Kubernetes & Kafka)
 
 To deploy benthos-umh with the United Manufacturing Hub and its OPC-UA simulator, use the provided Kubernetes manifests in UMHLens/OpenLens.
@@ -73,7 +97,7 @@ data:
               "timestamp_unix": timestamp_unix()
             }
     output:
-      umh_output: 
+      umh_output:
         topic: 'ia.raw.${! meta("opcua_path") }'
 ---
 apiVersion: apps/v1
@@ -120,43 +144,89 @@ spec:
             name: benthos-1-config
 ```
 
-### Authentication and Security
+### Configuration Options
 
-In benthos-umh, security and authentication are designed to be as robust as possible while maintaining flexibility. The software automates the process of selecting the highest level of security offered by an OPC-UA server for the selected Authentication Method. 
-
-#### How It Works
-
-1. **Discover Endpoints**: Initially, benthos-umh discovers all available endpoints from the OPC-UA server.
-2. **Filter by Authentication**: Based on the provided authentication method, it filters the list of endpoints. It currently supports Anonymous and Username/Password methods. Certificate-based authentication is on the roadmap.
-3. **Select Endpoint**: The software then chooses the endpoint with the highest security level that matches the chosen authentication method.
-4. **Client Initialization**: Various client options are initialized, such as security policies, based on the selected endpoint.
-5. **Generate Certificates**: For secure communication, certificates are dynamically generated. However, this step is only essential for methods requiring it.
-6. **Final Connection**: Finally, it initiates a connection to the OPC-UA server using the chosen endpoint and authentication method.
-
-#### Supported Authentication Methods
-
-- **Anonymous**: No extra information is needed. The connection uses the highest security level available for anonymous connections.
-  
-- **Username and Password**: Specify the username and password in the configuration. The client opts for the highest security level that supports these credentials.
-  
-- **Certificate (Future Release)**: Certificate-based authentication is planned for future releases.
-
-#### Example: Configuration File
-
-Here is how you could specify authentication in `benthos.yaml`:
+The following options can be specified in the `benthos.yaml` configuration file:
 
 ```yaml
 input:
   opcua:
     endpoint: 'opc.tcp://localhost:46010'
     nodeIDs: ['ns=2;s=IoTSensors']
-    username: 'your-username'  # optional
-    password: 'your-password'  # optional
+    username: 'your-username'  # optional (default: unset)
+    password: 'your-password'  # optional (default: unset)
+    insecure: false | true # optional (default: false)
+    subscribeEnabled: false | true # optional (default: false)
+```
+
+#### Endpoint
+
+You can specify the endpoint in the configuration file. Node endpoints are automatically discovered and selected based on the authentication method.
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDs: ['ns=2;s=IoTSensors']
+```
+
+#### Node IDs
+
+You can specify the node IDs in the configuration file (currently only namespaced node IDs are supported):
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDs: ['ns=2;s=IoTSensors']
+```
+
+#### Username and Password
+
+If you want to use username and password authentication, you can specify them in the configuration file:
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDs: ['ns=2;s=IoTSensors']
+    username: 'your-username'
+    password: 'your-password'
+```
+
+#### Insecure Mode
+
+If the most secure endpoint selected by benthos-umh is not working or the server's security implementation is lacking, you can bypass encryption by setting `insecure: true``.
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDs: ['ns=2;s=IoTSensors']
+    insecure: true
+```
+
+#### Pull and Subscribe Methods
+
+Benthus-umh supports two modes of operation: pull and subscribe. In pull mode, it pulls all nodes every second, regardless of changes. In subscribe mode, it only sends data when there's a change in value, reducing unnecessary data transfer.
+
+| Method | Advantages | Disadvantages |
+| --- | --- | --- |
+| Pull | - Provides real-time data visibility, e.g., in MQTT Explorer. <br> - Clearly differentiates between 'no data received' and 'value did not change' scenarios, which can be crucial for documentation and proving the OPC-UA client's activity. | - Results in higher data throughput as it pulls all nodes every second, regardless of changes. |
+| Subscribe | - Data is sent only when there's a change in value, reducing unnecessary data transfer. | - Less visibility into real-time data status, and it's harder to differentiate between no data and unchanged values. |
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDs: ['ns=2;s=IoTSensors']
+    subscribeEnabled: true
 ```
 
 ## Testing
 
 We execute automated tests and verify that benthos-umh works:
+
 - (WAGO PFC100, 750-8101) Connect Anonymously
 - (WAGO PFC100, 750-8101) Connect Username / Password
 - (WAGO PFC100, 750-8101) Connect and get one float number
@@ -166,18 +236,20 @@ These tests are executed with a local github runner called "hercules", which is 
 ## Development
 
 ### Quickstart
+
 Follow the steps below to set up your development environment and run tests:
+
 ```
-$ git clone https://github.com/united-manufacturing-hub/benthos-umh.git
-$ cd serverless-stack
-$ nvm install
-$ npm install
-$ sudo apt-get install zip 
-$ echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
-$ sudo apt update
-$ sudo apt install goreleaser
-$ make
-$ npm test
+git clone https://github.com/united-manufacturing-hub/benthos-umh.git
+cd serverless-stack
+nvm install
+npm install
+sudo apt-get install zip
+echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
+sudo apt update
+sudo apt install goreleaser
+make
+npm test
 ```
 
 ### Additional Checks and Commands
@@ -185,15 +257,15 @@ $ npm test
 #### Gitpod and Tailscale
 
 By default when opening the repo in Gitpod, everything that you need should start automatically. If you want to connect to our local PLCs in our office, you can use tailscale, which you will be prompted to install.
-See also: https://www.gitpod.io/docs/integrations/tailscale
+See also: <https://www.gitpod.io/docs/integrations/tailscale>
 
-#### For Go Code:
+#### For Go Code
 
 1. **Linting**: Run `make lint` to check for linting errors. If any are found, you can automatically fix them by running `make format`.
-  
+
 2. **Unit Tests**: Run `make test` to execute all Go unit tests.
 
-#### For Other Code Types (Including Config Files):
+#### For Other Code Types (Including Config Files)
 
 1. **Benthos Tests**: Use `npm run test` to run all Benthos tests for configuration files. Note: We currently do not have these tests. [Learn more](https://www.benthos.dev/docs/configuration/unit_testing/).
 
@@ -208,4 +280,3 @@ All source code is distributed under the APACHE LICENSE, VERSION 2.0. See LICENS
 Feel free to provide us feedback on our [Discord channel](https://discord.gg/F9mqkZnm9d).
 
 For more information about the United Manufacturing Hub, visit [UMH Systems GmbH](https://www.umh.app). If you haven't worked with the United Manufacturing Hub before, [give it a try](https://umh.docs.umh.app/docs/getstarted/installation/)! Setting it up takes only a matter of minutes.
-
