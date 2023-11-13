@@ -267,7 +267,7 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		password:         password,
 		nodeIDs:          parsedNodeIDs,
 		log:              mgr.Logger(),
-    securityMode:     securityMode,
+		securityMode:     securityMode,
 		securityPolicy:   securityPolicy,
 		insecure:         insecure,
 		subscribeEnabled: subscribeEnabled,
@@ -292,19 +292,19 @@ func init() {
 //------------------------------------------------------------------------------
 
 type OPCUAInput struct {
-	endpoint          string
-	username          string
-	password          string
-	nodeIDs           []*ua.NodeID
-	nodeList          []NodeDef
-  securityMode      string
-	securityPolicy    string
-  insecure          bool
-  client            *opcua.Client
-	log               *service.Logger
+	endpoint       string
+	username       string
+	password       string
+	nodeIDs        []*ua.NodeID
+	nodeList       []NodeDef
+	securityMode   string
+	securityPolicy string
+	insecure       bool
+	client         *opcua.Client
+	log            *service.Logger
 	// this is required for subscription
-	subscribeEnabled  bool
-	subNotifyChan     chan *opcua.PublishNotificationData
+	subscribeEnabled bool
+	subNotifyChan    chan *opcua.PublishNotificationData
 }
 
 func (g *OPCUAInput) Connect(ctx context.Context) error {
@@ -374,7 +374,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 	// Step 3.1: Filter the endpoints based on the selected authentication method.
 	// This will eliminate endpoints that do not support the chosen method.
-	selectedEndpoint := g.getReasonableEndpoint(endpoints, selectedAuthentication, g.insecure)
+	selectedEndpoint := g.getReasonableEndpoint(endpoints, selectedAuthentication, g.insecure, g.securityMode, g.securityPolicy,)
 	if selectedEndpoint == nil {
 		g.log.Errorf("Could not select a suitable endpoint")
 		return err
@@ -387,13 +387,6 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	// Step 4: Initialize OPC UA client options
 	opts := make([]opcua.Option, 0)
 	opts = append(opts, opcua.SecurityFromEndpoint(selectedEndpoint, selectedAuthentication))
-	if g.securityMode != "" {
-		opts = append(opts, opcua.SecurityModeString(g.securityMode))
-	}
-
-	if g.securityPolicy != "" {
-		opts = append(opts, opcua.SecurityPolicy("http://opcfoundation.org/UA/SecurityPolicy#"+g.securityPolicy))
-	}
 
 	// Set additional options based on the authentication method
 	switch selectedAuthentication {

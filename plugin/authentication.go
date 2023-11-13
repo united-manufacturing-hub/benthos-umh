@@ -6,7 +6,7 @@ import (
 	"github.com/gopcua/opcua/ua"
 )
 
-func (g *OPCUAInput) getReasonableEndpoint(endpoints []*ua.EndpointDescription, selectedAuthentication ua.UserTokenType, disableEncryption bool) *ua.EndpointDescription {
+func (g *OPCUAInput) getReasonableEndpoint(endpoints []*ua.EndpointDescription, selectedAuthentication ua.UserTokenType, disableEncryption bool, overwriteSecurityMode string, overwriteSecurityPolicy string,) *ua.EndpointDescription {
 	if len(endpoints) == 0 {
 		return nil
 	}
@@ -23,10 +23,16 @@ func (g *OPCUAInput) getReasonableEndpoint(endpoints []*ua.EndpointDescription, 
 				if disableEncryption && p.SecurityMode == ua.MessageSecurityModeFromString("None") {
 					return p
 				} else if !disableEncryption { // if encrpytion is not disabled, then take everything
+					if g.securityMode != "" {
+						p.SecurityMode = ua.MessageSecurityModeFromString(overwriteSecurityMode)
+					}
+
+					if g.securityPolicy != "" {
+						p.SecurityPolicyURI = "http://opcfoundation.org/UA/SecurityPolicy#" + overwriteSecurityPolicy
+					}
 					return p
 				}
 				// otherwise, continue searching
-
 			}
 		}
 

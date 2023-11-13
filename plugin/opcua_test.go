@@ -466,7 +466,7 @@ func TestGetReasonableEndpoint_Insecure(t *testing.T) {
 	}
 
 	endpoints := MockGetEndpoints()
-	selectedEndpoint := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input.insecure)
+	selectedEndpoint := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input.insecure, "", "")
 
 	if selectedEndpoint != nil {
 		if selectedEndpoint.SecurityMode != ua.MessageSecurityModeFromString("None") {
@@ -484,11 +484,34 @@ func TestGetReasonableEndpoint_Insecure(t *testing.T) {
 		insecure: false,
 	}
 
-	selectedEndpoint2 := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input2.insecure)
+	selectedEndpoint2 := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input2.insecure, "", "")
 
 	if selectedEndpoint2 != nil {
 		if selectedEndpoint2.SecurityMode != ua.MessageSecurityModeFromString("SignAndEncrypt") {
 			t.Errorf("Expected selected endpoint to have encryption, but got %v", selectedEndpoint.SecurityMode)
+		}
+	} else {
+		t.Error("Expected a reasonable endpoint, but got nil")
+	}
+}
+
+func TestGetReasonableEndpoint_SecurityModeAndPolicy(t *testing.T) {
+	input := &OPCUAInput{
+		endpoint:       "",
+		username:       "",
+		password:       "",
+		nodeIDs:        nil,
+		insecure:       true,
+		securityMode:   "SignAndEncrypt",
+		securityPolicy: "Basic256Sha256",
+	}
+
+	endpoints := MockGetEndpoints()
+	selectedEndpoint := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input.insecure, "", "")
+
+	if selectedEndpoint != nil {
+		if selectedEndpoint.SecurityMode != ua.MessageSecurityModeFromString(inpuy.securityMode) && selectedEndpoint.SecurityPolicyURI != "http://opcfoundation.org/UA/SecurityPolicy#"+input.securityPolicy {
+			t.Errorf("Expected selected endpoint to have encryption with security mode %v and policy %v, but got %v and %v", input.securityMode, input.securityPolicy, selectedEndpoint.SecurityMode, selectedEndpoint.SecurityPolicyURI)
 		}
 	} else {
 		t.Error("Expected a reasonable endpoint, but got nil")
