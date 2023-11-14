@@ -394,6 +394,96 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 	})
 
+	t.Run("ReadBatch_Insecure", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint: endpoint,
+			username: username,
+			password: password,
+			nodeIDs:  parsedNodeIDs,
+			insecure: true,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 1, len(messageBatch))
+
+		for _, message := range messageBatch {
+			message, err := message.AsStructuredMut()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var exampleNumber json.Number = "22.565684"
+			assert.IsType(t, exampleNumber, message) // it should be a number
+			t.Log("Received message: ", message)
+		}
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
+	t.Run("ReadBatch_SecurityMode_SecurityPolicy", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:       endpoint,
+			username:       username,
+			password:       password,
+			nodeIDs:        parsedNodeIDs,
+			insecure:       false,
+			securityMode:   "SignAndEncrypt",
+			securityPolicy: "Basic128Rsa15",
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 1, len(messageBatch))
+
+		for _, message := range messageBatch {
+			message, err := message.AsStructuredMut()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var exampleNumber json.Number = "22.565684"
+			assert.IsType(t, exampleNumber, message) // it should be a number
+			t.Log("Received message: ", message)
+		}
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
 }
 
 func MockGetEndpoints() []*ua.EndpointDescription {
