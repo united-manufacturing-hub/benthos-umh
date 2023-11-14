@@ -29,7 +29,7 @@ import (
 )
 
 func TestAgainstSimulator(t *testing.T) {
-	t.Skip("This test is flaky as it can run only once per `docker-compose up`. Probably need a new OPC-UA simulator.")
+
 	t.Run("Logging Endpoints", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -38,7 +38,7 @@ func TestAgainstSimulator(t *testing.T) {
 		var err error
 
 		input := &OPCUAInput{
-			endpoint: "opc.tcp://localhost:46010",
+			endpoint: "opc.tcp://localhost:50000",
 			username: "",
 			password: "",
 			nodeIDs:  nil,
@@ -85,6 +85,8 @@ func TestAgainstSimulator(t *testing.T) {
 				t.Logf("    IssuerEndpointURL: %s", token.IssuerEndpointURL)
 			}
 		}
+		selectedEndpoint := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input.insecure, "", "")
+		t.Logf("selected endpoint %v:", selectedEndpoint)
 	})
 
 	t.Run("ConnectAnonymous", func(t *testing.T) {
@@ -94,7 +96,7 @@ func TestAgainstSimulator(t *testing.T) {
 		var err error
 
 		input := &OPCUAInput{
-			endpoint: "opc.tcp://localhost:46010",
+			endpoint: "opc.tcp://localhost:50000",
 			username: "",
 			password: "",
 			nodeIDs:  nil,
@@ -117,9 +119,9 @@ func TestAgainstSimulator(t *testing.T) {
 		var err error
 
 		input := &OPCUAInput{
-			endpoint: "opc.tcp://localhost:46010",
-			username: "123", // bad user and password
-			password: "123",
+			endpoint: "opc.tcp://localhost:50000",
+			username: "sysadmin_bad", // bad user and password
+			password: "demo",
 			nodeIDs:  nil,
 		}
 		// Attempt to connect
@@ -139,9 +141,9 @@ func TestAgainstSimulator(t *testing.T) {
 		var err error
 
 		input := &OPCUAInput{
-			endpoint: "opc.tcp://localhost:46010",
-			username: "root",
-			password: "secret",
+			endpoint: "opc.tcp://localhost:50000",
+			username: "sysadmin",
+			password: "demo",
 			nodeIDs:  nil,
 		}
 		// Attempt to connect
