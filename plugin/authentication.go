@@ -9,7 +9,7 @@ import (
 // getReasonableEndpoint selects an appropriate OPC UA endpoint based on specified criteria.
 // It filters the endpoints based on the authentication method, security mode, and security policy.
 // If no suitable endpoint is found, it returns nil.
-// This can potentially be replaced by 
+// This can potentially be replaced by SelectEndpoint function in goopcua package
 func (g *OPCUAInput) getReasonableEndpoint(
 	endpoints []*ua.EndpointDescription,
 	selectedAuthentication ua.UserTokenType,
