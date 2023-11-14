@@ -190,6 +190,8 @@ var OPCUAConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringField("username").Description("Username for server access. If not set, no username is used.").Default("")).
 	Field(service.NewStringField("password").Description("Password for server access. If not set, no password is used.").Default("")).
 	Field(service.NewStringListField("nodeIDs").Description("List of OPC-UA node IDs to begin browsing.")).
+	Field(service.NewStringField("securityMode").Description("Security mode to use. If not set, a reasonable security mode will be set depending on the discovered endpoints.").Default("")).
+	Field(service.NewStringField("securityPolicy").Description("The security policy to use.  If not set, a reasonable security policy will be set depending on the discovered endpoints.").Default("")).
 	Field(service.NewBoolField("insecure").Description("Set to true to bypass secure connections, useful in case of SSL or certificate issues. Default is secure (false).").Default(false)).
 	Field(service.NewBoolField("subscribeEnabled").Description("Set to true to subscribe to OPC-UA nodes instead of fetching them every seconds. Default is pulling messages every second (false).").Default(false))
 
@@ -213,6 +215,16 @@ func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 
 func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
 	endpoint, err := conf.FieldString("endpoint")
+	if err != nil {
+		return nil, err
+	}
+
+	securityMode, err := conf.FieldString("securityMode")
+	if err != nil {
+		return nil, err
+	}
+
+	securityPolicy, err := conf.FieldString("securityPolicy")
 	if err != nil {
 		return nil, err
 	}
@@ -255,6 +267,8 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		password:         password,
 		nodeIDs:          parsedNodeIDs,
 		log:              mgr.Logger(),
+		securityMode:     securityMode,
+		securityPolicy:   securityPolicy,
 		insecure:         insecure,
 		subscribeEnabled: subscribeEnabled,
 	}
@@ -278,19 +292,19 @@ func init() {
 //------------------------------------------------------------------------------
 
 type OPCUAInput struct {
-	endpoint string
-	username string
-	password string
-	nodeIDs  []*ua.NodeID
-	nodeList []NodeDef
-	insecure bool
-
+	endpoint       string
+	username       string
+	password       string
+	nodeIDs        []*ua.NodeID
+	nodeList       []NodeDef
+	securityMode   string
+	securityPolicy string
+	insecure       bool
+	client         *opcua.Client
+	log            *service.Logger
 	// this is required for subscription
 	subscribeEnabled bool
 	subNotifyChan    chan *opcua.PublishNotificationData
-
-	client *opcua.Client
-	log    *service.Logger
 }
 
 func (g *OPCUAInput) Connect(ctx context.Context) error {
@@ -360,7 +374,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 	// Step 3.1: Filter the endpoints based on the selected authentication method.
 	// This will eliminate endpoints that do not support the chosen method.
-	selectedEndpoint := g.getReasonableEndpoint(endpoints, selectedAuthentication, g.insecure)
+	selectedEndpoint := g.getReasonableEndpoint(endpoints, selectedAuthentication, g.insecure, g.securityMode, g.securityPolicy,)
 	if selectedEndpoint == nil {
 		g.log.Errorf("Could not select a suitable endpoint")
 		return err
