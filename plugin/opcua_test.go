@@ -394,6 +394,96 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 	})
 
+	t.Run("ReadBatch_Insecure", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint: endpoint,
+			username: username,
+			password: password,
+			nodeIDs:  parsedNodeIDs,
+			insecure: true,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 1, len(messageBatch))
+
+		for _, message := range messageBatch {
+			message, err := message.AsStructuredMut()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var exampleNumber json.Number = "22.565684"
+			assert.IsType(t, exampleNumber, message) // it should be a number
+			t.Log("Received message: ", message)
+		}
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
+	t.Run("ReadBatch_SecurityMode_SecurityPolicy", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:       endpoint,
+			username:       username,
+			password:       password,
+			nodeIDs:        parsedNodeIDs,
+			insecure:       false,
+			securityMode:   "SignAndEncrypt",
+			securityPolicy: "Basic128Rsa15",
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 1, len(messageBatch))
+
+		for _, message := range messageBatch {
+			message, err := message.AsStructuredMut()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var exampleNumber json.Number = "22.565684"
+			assert.IsType(t, exampleNumber, message) // it should be a number
+			t.Log("Received message: ", message)
+		}
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
 }
 
 func MockGetEndpoints() []*ua.EndpointDescription {
@@ -412,7 +502,7 @@ func MockGetEndpoints() []*ua.EndpointDescription {
 				PolicyID:          "anonymous",
 				TokenType:         ua.UserTokenTypeAnonymous,
 				IssuedTokenType:   "http://opcfoundation.org/UA/UserTokenPolicy#Anonymous",
-				SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#None",
+				SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256",
 			},
 			{
 				PolicyID:          "username",
@@ -431,9 +521,9 @@ func MockGetEndpoints() []*ua.EndpointDescription {
 			ApplicationURI:  "urn:example2:server", // Replace with your server's URI
 			ApplicationType: ua.ApplicationTypeServer,
 		},
-		ServerCertificate: []byte("mock_certificate_2"),                                // Replace with your server certificate
-		SecurityMode:      ua.MessageSecurityModeFromString("None"),                    // Use appropriate security mode
-		SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256", // Use appropriate security policy URI
+		ServerCertificate: []byte("mock_certificate_2"),                      // Replace with your server certificate
+		SecurityMode:      ua.MessageSecurityModeFromString("None"),          // Use appropriate security mode
+		SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#None", // Use appropriate security policy URI
 		UserIdentityTokens: []*ua.UserTokenPolicy{
 			{
 				PolicyID:          "anonymous",
@@ -445,7 +535,34 @@ func MockGetEndpoints() []*ua.EndpointDescription {
 				PolicyID:          "username",
 				TokenType:         ua.UserTokenTypeUserName,
 				IssuedTokenType:   "http://opcfoundation.org/UA/UserTokenPolicy#UserName",
-				SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256",
+				SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#None",
+			},
+		},
+		TransportProfileURI: "http://opcfoundation.org/UA-Profile/Transport/uatcp-uasc-uabinary",
+		SecurityLevel:       0, // Use an appropriate security level
+	}
+
+	endpoint3 := &ua.EndpointDescription{
+		EndpointURL: "opc.tcp://example3.com:4840", // Replace with your actual server URL
+		Server: &ua.ApplicationDescription{
+			ApplicationURI:  "urn:example3:server", // Replace with your server's URI
+			ApplicationType: ua.ApplicationTypeServer,
+		},
+		ServerCertificate: []byte("mock_certificate_2"),                                    // Replace with your server certificate
+		SecurityMode:      ua.MessageSecurityModeFromString("SignAndEncrypt"),              // Use appropriate security mode
+		SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#Aes256Sha256RsaPss", // Use appropriate security policy URI
+		UserIdentityTokens: []*ua.UserTokenPolicy{
+			{
+				PolicyID:          "anonymous",
+				TokenType:         ua.UserTokenTypeAnonymous,
+				IssuedTokenType:   "http://opcfoundation.org/UA/UserTokenPolicy#Anonymous",
+				SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#Aes256Sha256RsaPss",
+			},
+			{
+				PolicyID:          "username",
+				TokenType:         ua.UserTokenTypeUserName,
+				IssuedTokenType:   "http://opcfoundation.org/UA/UserTokenPolicy#UserName",
+				SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#Aes256Sha256RsaPss",
 			},
 		},
 		TransportProfileURI: "http://opcfoundation.org/UA-Profile/Transport/uatcp-uasc-uabinary",
@@ -453,7 +570,7 @@ func MockGetEndpoints() []*ua.EndpointDescription {
 	}
 
 	// Return the mock endpoints as a slice
-	return []*ua.EndpointDescription{endpoint1, endpoint2}
+	return []*ua.EndpointDescription{endpoint1, endpoint2, endpoint3}
 }
 
 func TestGetReasonableEndpoint_Insecure(t *testing.T) {
@@ -466,7 +583,7 @@ func TestGetReasonableEndpoint_Insecure(t *testing.T) {
 	}
 
 	endpoints := MockGetEndpoints()
-	selectedEndpoint := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input.insecure)
+	selectedEndpoint := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input.insecure, "", "")
 
 	if selectedEndpoint != nil {
 		if selectedEndpoint.SecurityMode != ua.MessageSecurityModeFromString("None") {
@@ -484,11 +601,34 @@ func TestGetReasonableEndpoint_Insecure(t *testing.T) {
 		insecure: false,
 	}
 
-	selectedEndpoint2 := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input2.insecure)
+	selectedEndpoint2 := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input2.insecure, "", "")
 
 	if selectedEndpoint2 != nil {
 		if selectedEndpoint2.SecurityMode != ua.MessageSecurityModeFromString("SignAndEncrypt") {
 			t.Errorf("Expected selected endpoint to have encryption, but got %v", selectedEndpoint.SecurityMode)
+		}
+	} else {
+		t.Error("Expected a reasonable endpoint, but got nil")
+	}
+}
+
+func TestGetReasonableEndpoint_SecurityModeAndPolicy(t *testing.T) {
+	input := &OPCUAInput{
+		endpoint:       "",
+		username:       "123",
+		password:       "213",
+		nodeIDs:        nil,
+		insecure:       false,
+		securityMode:   "SignAndEncrypt",
+		securityPolicy: "Aes256Sha256RsaPss",
+	}
+
+	endpoints := MockGetEndpoints()
+	selectedEndpoint := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("UserName"), input.insecure, input.securityMode, input.securityPolicy)
+
+	if selectedEndpoint != nil {
+		if selectedEndpoint.SecurityMode != ua.MessageSecurityModeFromString(input.securityMode) && selectedEndpoint.SecurityPolicyURI != "http://opcfoundation.org/UA/SecurityPolicy#"+input.securityPolicy {
+			t.Errorf("Expected selected endpoint to have encryption with security mode %v and policy %v, but got %v and %v", input.securityMode, input.securityPolicy, selectedEndpoint.SecurityMode, selectedEndpoint.SecurityPolicyURI)
 		}
 	} else {
 		t.Error("Expected a reasonable endpoint, but got nil")
