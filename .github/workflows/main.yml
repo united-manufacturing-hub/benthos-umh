@@ -40,10 +40,10 @@ jobs:
         run: |
           docker-compose up &
         working-directory: tests
-      - name: Wait for port 46010 to be ready
+      - name: Wait for port 50000 to be ready
         run: |
-          while ! nc -z localhost 46010; do
-            echo "Waiting for port 46010 to be ready..."
+          while ! nc -z localhost 50000; do
+            echo "Waiting for port 50000 to be ready..."
             sleep 1
           done
       - name: Test
