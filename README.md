@@ -18,27 +18,6 @@ Welcome to the benthos-umh repository! This is a version of benthos maintained b
 
 We encourage you to try out `benthos-umh` and explore the broader [United Manufacturing Hub](https://www.umh.app) project for a comprehensive solution to your industrial data integration needs.
 
-### Authentication and Security
-
-In benthos-umh, security and authentication are designed to be as robust as possible while maintaining flexibility. The software automates the process of selecting the highest level of security offered by an OPC-UA server for the selected Authentication Method.
-
-#### How It Works
-
-1. **Discover Endpoints**: Initially, benthos-umh discovers all available endpoints from the OPC-UA server.
-2. **Filter by Authentication**: Based on the provided authentication method, it filters the list of endpoints. It currently supports Anonymous and Username/Password methods. Certificate-based authentication is on the roadmap.
-3. **Select Endpoint**: The software then chooses the endpoint with the highest security level that matches the chosen authentication method.
-4. **Client Initialization**: Various client options are initialized, such as security policies, based on the selected endpoint.
-5. **Generate Certificates**: For secure communication, certificates are dynamically generated. However, this step is only essential for methods requiring it.
-6. **Final Connection**: Finally, it initiates a connection to the OPC-UA server using the chosen endpoint and authentication method.
-
-#### Supported Authentication Methods
-
-- **Anonymous**: No extra information is needed. The connection uses the highest security level available for anonymous connections.
-
-- **Username and Password**: Specify the username and password in the configuration. The client opts for the highest security level that supports these credentials.
-
-- **Certificate (Future Release)**: Certificate-based authentication is planned for future releases.
-
 ## Usage
 
 ### Standalone
@@ -144,6 +123,16 @@ spec:
             name: benthos-1-config
 ```
 
+### Authentication and Security
+
+In benthos-umh, security and authentication are designed to be as robust as possible while maintaining flexibility. The software automates the process of selecting the highest level of security offered by an OPC-UA server for the selected Authentication Method, but the user can specify their own Security Policy / Security Mode if they want (see further below at Configuration options)
+
+#### Supported Authentication Methods
+
+- **Anonymous**: No extra information is needed. The connection uses the highest security level available for anonymous connections.
+- **Username and Password**: Specify the username and password in the configuration. The client opts for the highest security level that supports these credentials.
+- **Certificate (Future Release)**: Certificate-based authentication is planned for future releases.
+
 ### Configuration Options
 
 The following options can be specified in the `benthos.yaml` configuration file:
@@ -196,21 +185,16 @@ input:
     password: 'your-password'
 ```
 
-#### Insecure Mode
-
-If the most secure endpoint selected by benthos-umh is not working or the server's security implementation is lacking, you can bypass encryption by setting `insecure: true``.
-
-```yaml
-input:
-  opcua:
-    endpoint: 'opc.tcp://localhost:46010'
-    nodeIDs: ['ns=2;s=IoTSensors']
-    insecure: true
-```
-
 #### Security Mode and Security Policy
 
-The security mode and security policy are automatically selected based on the endpoint and authentication method. However, you can override the default behavior by specifying the security mode and security policy in the configuration file.
+Security Mode: This defines the level of security applied to the messages. The options are:
+- None: No security is applied; messages are neither signed nor encrypted.
+- Sign: Messages are signed for integrity and authenticity but not encrypted.
+- SignAndEncrypt: Provides the highest security level where messages are both signed and encrypted.
+
+Security Policy: Specifies the set of cryptographic algorithms used for securing messages. This includes algorithms for encryption, decryption, and signing of messages. Some common policies include Basic256Sha256, Aes256Sha256RsaPss, and Aes128Sha256RsaOaep.
+
+While the security mode and policy are automatically selected based on the endpoint and authentication method, you have the option to override this by specifying them in the configuration file:
 
 ```yaml
 input:
@@ -219,6 +203,20 @@ input:
     nodeIDs: ['ns=2;s=IoTSensors']
     securityMode: SignAndEncrypt
     securityPolicy: Basic256Sha256
+```
+
+#### Insecure Mode
+
+Setting this to true will overwrite any configured securityMode and securityPolicy!
+
+If the most secure endpoint selected by benthos-umh is not working or the server's security implementation is lacking, you can bypass encryption by setting `insecure: true`. This will use the Security Mode "None".
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDs: ['ns=2;s=IoTSensors']
+    insecure: true
 ```
 
 #### Pull and Subscribe Methods

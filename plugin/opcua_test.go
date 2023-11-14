@@ -412,7 +412,7 @@ func MockGetEndpoints() []*ua.EndpointDescription {
 				PolicyID:          "anonymous",
 				TokenType:         ua.UserTokenTypeAnonymous,
 				IssuedTokenType:   "http://opcfoundation.org/UA/UserTokenPolicy#Anonymous",
-				SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#None",
+				SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256",
 			},
 			{
 				PolicyID:          "username",
@@ -431,9 +431,9 @@ func MockGetEndpoints() []*ua.EndpointDescription {
 			ApplicationURI:  "urn:example2:server", // Replace with your server's URI
 			ApplicationType: ua.ApplicationTypeServer,
 		},
-		ServerCertificate: []byte("mock_certificate_2"),                                // Replace with your server certificate
-		SecurityMode:      ua.MessageSecurityModeFromString("None"),                    // Use appropriate security mode
-		SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256", // Use appropriate security policy URI
+		ServerCertificate: []byte("mock_certificate_2"),                      // Replace with your server certificate
+		SecurityMode:      ua.MessageSecurityModeFromString("None"),          // Use appropriate security mode
+		SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#None", // Use appropriate security policy URI
 		UserIdentityTokens: []*ua.UserTokenPolicy{
 			{
 				PolicyID:          "anonymous",
@@ -445,7 +445,34 @@ func MockGetEndpoints() []*ua.EndpointDescription {
 				PolicyID:          "username",
 				TokenType:         ua.UserTokenTypeUserName,
 				IssuedTokenType:   "http://opcfoundation.org/UA/UserTokenPolicy#UserName",
-				SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256",
+				SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#None",
+			},
+		},
+		TransportProfileURI: "http://opcfoundation.org/UA-Profile/Transport/uatcp-uasc-uabinary",
+		SecurityLevel:       0, // Use an appropriate security level
+	}
+
+	endpoint3 := &ua.EndpointDescription{
+		EndpointURL: "opc.tcp://example3.com:4840", // Replace with your actual server URL
+		Server: &ua.ApplicationDescription{
+			ApplicationURI:  "urn:example3:server", // Replace with your server's URI
+			ApplicationType: ua.ApplicationTypeServer,
+		},
+		ServerCertificate: []byte("mock_certificate_2"),                                    // Replace with your server certificate
+		SecurityMode:      ua.MessageSecurityModeFromString("SignAndEncrypt"),              // Use appropriate security mode
+		SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#Aes256Sha256RsaPss", // Use appropriate security policy URI
+		UserIdentityTokens: []*ua.UserTokenPolicy{
+			{
+				PolicyID:          "anonymous",
+				TokenType:         ua.UserTokenTypeAnonymous,
+				IssuedTokenType:   "http://opcfoundation.org/UA/UserTokenPolicy#Anonymous",
+				SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#Aes256Sha256RsaPss",
+			},
+			{
+				PolicyID:          "username",
+				TokenType:         ua.UserTokenTypeUserName,
+				IssuedTokenType:   "http://opcfoundation.org/UA/UserTokenPolicy#UserName",
+				SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#Aes256Sha256RsaPss",
 			},
 		},
 		TransportProfileURI: "http://opcfoundation.org/UA-Profile/Transport/uatcp-uasc-uabinary",
@@ -453,7 +480,7 @@ func MockGetEndpoints() []*ua.EndpointDescription {
 	}
 
 	// Return the mock endpoints as a slice
-	return []*ua.EndpointDescription{endpoint1, endpoint2}
+	return []*ua.EndpointDescription{endpoint1, endpoint2, endpoint3}
 }
 
 func TestGetReasonableEndpoint_Insecure(t *testing.T) {
@@ -498,19 +525,19 @@ func TestGetReasonableEndpoint_Insecure(t *testing.T) {
 func TestGetReasonableEndpoint_SecurityModeAndPolicy(t *testing.T) {
 	input := &OPCUAInput{
 		endpoint:       "",
-		username:       "",
-		password:       "",
+		username:       "123",
+		password:       "213",
 		nodeIDs:        nil,
-		insecure:       true,
+		insecure:       false,
 		securityMode:   "SignAndEncrypt",
-		securityPolicy: "Basic256Sha256",
+		securityPolicy: "Aes256Sha256RsaPss",
 	}
 
 	endpoints := MockGetEndpoints()
-	selectedEndpoint := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input.insecure, "", "")
+	selectedEndpoint := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("UserName"), input.insecure, input.securityMode, input.securityPolicy)
 
 	if selectedEndpoint != nil {
-		if selectedEndpoint.SecurityMode != ua.MessageSecurityModeFromString(inpuy.securityMode) && selectedEndpoint.SecurityPolicyURI != "http://opcfoundation.org/UA/SecurityPolicy#"+input.securityPolicy {
+		if selectedEndpoint.SecurityMode != ua.MessageSecurityModeFromString(input.securityMode) && selectedEndpoint.SecurityPolicyURI != "http://opcfoundation.org/UA/SecurityPolicy#"+input.securityPolicy {
 			t.Errorf("Expected selected endpoint to have encryption with security mode %v and policy %v, but got %v and %v", input.securityMode, input.securityPolicy, selectedEndpoint.SecurityMode, selectedEndpoint.SecurityPolicyURI)
 		}
 	} else {
