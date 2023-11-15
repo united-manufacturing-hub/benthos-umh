@@ -338,6 +338,24 @@ TODO:
 [10:05:21 INF] ChannelId 32: in Faulted state.
 
 
+
+This is what fails on the server:
+
+// verify signature.
+                if (!rsa.VerifyData(dataToVerify.Array, dataToVerify.Offset, dataToVerify.Count, signature, algorithm, padding))
+                {
+                    string messageType = Encoding.UTF8.GetString(dataToVerify.Array, dataToVerify.Offset, 4);
+                    int messageLength = BitConverter.ToInt32(dataToVerify.Array, dataToVerify.Offset + 4);
+                    string actualSignature = Utils.ToHexString(signature);
+                    Utils.LogError("Could not validate signature.");
+                    Utils.LogCertificate(LogLevel.Error, "Certificate: ", signingCertificate);
+                    Utils.LogError("MessageType ={0}, Length ={1}, ActualSignature={2}",
+                        messageType, messageLength, actualSignature);
+                    return false;
+                }
+
+rsa.VerifyData is System.Security.Cryptography.X509Certificates.X509Certificate2.VerifyData
+
 */
 
 func TestAgainstSimulator(t *testing.T) {
