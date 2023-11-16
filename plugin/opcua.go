@@ -467,23 +467,24 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 		g.log.Errorf("Read failed: %s", err)
 		// if the error is StatusBadSessionIDInvalid, the session has been closed
 		// and we need to reconnect.
-		if err == ua.StatusBadSessionIDInvalid {
+		switch err {
+		case ua.StatusBadSessionIDInvalid:
 			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
-		} else if err == ua.StatusBadCommunicationError {
+		case ua.StatusBadCommunicationError:
 			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
-		} else if err == ua.StatusBadConnectionClosed {
+		case ua.StatusBadConnectionClosed:
 			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
-		} else if err == ua.StatusBadTimeout {
+		case ua.StatusBadTimeout:
 			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
-		} else if err == ua.StatusBadConnectionRejected {
+		case ua.StatusBadConnectionRejected:
 			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
@@ -492,6 +493,7 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 		// return error and stop executing this function.
 		return nil, nil, err
 	}
+
 	if resp.Results[0].Status != ua.StatusOK {
 		g.log.Errorf("Status not OK: %v", resp.Results[0].Status)
 	}
@@ -502,35 +504,75 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 	for i, node := range g.nodeList {
 
 		b := make([]byte, 0)
-		switch v := resp.Results[i].Value.Value().(type) {
+		value := resp.Results[i].Value.Value()
+		if value == nil {
+			continue
+		}
+		switch v := value.(type) {
+		case float32:
+			b = append(b, []byte(strconv.FormatFloat(float64(v), 'f', -1, 32))...)
 		case float64:
 			b = append(b, []byte(strconv.FormatFloat(v, 'f', -1, 64))...)
+		case []float32:
+			for _, element := range v {
+				b = append(b, []byte(strconv.FormatFloat(float64(element), 'f', -1, 32))...)
+			}
+		case []float64:
+			for _, element := range v {
+				b = append(b, []byte(strconv.FormatFloat(element, 'f', -1, 64))...)
+			}
 		case string:
 			b = append(b, []byte(string(v))...)
+		case []string:
+			for _, element := range v {
+				b = append(b, []byte(string(element))...)
+			}
 		case bool:
 			b = append(b, []byte(strconv.FormatBool(v))...)
+		case []bool:
+			for _, element := range v {
+				b = append(b, []byte(strconv.FormatBool(element))...)
+			}
 		case int:
 			b = append(b, []byte(strconv.Itoa(v))...)
 		case int8:
-			b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
 		case int16:
-			b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
 		case int32:
 			b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
 		case int64:
 			b = append(b, []byte(strconv.FormatInt(v, 10))...)
+		case []int:
+			for _, element := range v {
+				b = append(b, []byte(strconv.Itoa(element))...)
+			}
+		case []int8:
+		case []int16:
+		case []int32:
+			for _, element := range v {
+				b = append(b, []byte(strconv.FormatInt(int64(element), 10))...)
+			}
+		case []int64:
+			for _, element := range v {
+				b = append(b, []byte(strconv.FormatInt(element, 10))...)
+			}
 		case uint:
-			b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
 		case uint8:
-			b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
 		case uint16:
-			b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
 		case uint32:
 			b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
 		case uint64:
 			b = append(b, []byte(strconv.FormatUint(v, 10))...)
-		case float32:
-			b = append(b, []byte(strconv.FormatFloat(float64(v), 'f', -1, 32))...)
+		case []uint8:
+		case []uint16:
+		case []uint32:
+			for _, element := range v {
+				b = append(b, []byte(strconv.FormatUint(uint64(element), 10))...)
+			}
+		case []uint64:
+			for _, element := range v {
+				b = append(b, []byte(strconv.FormatUint(element, 10))...)
+			}
+
 		default:
 			g.log.Errorf("Unknown type: %T", v)
 			continue
