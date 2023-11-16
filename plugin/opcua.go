@@ -677,7 +677,7 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 	for i, node := range g.nodeList {
 		value := resp.Results[i].Value
 		if value == nil {
-			g.log.Errorf("Received nil from node ‰s - skipping lost value", node.NodeID.String())
+			g.log.Errorf("Received nil from node: %s", node.NodeID.String())
 			continue
 		}
 		message := g.createMessageFromValue(value.Value(), node.NodeID.String())
