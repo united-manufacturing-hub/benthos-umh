@@ -516,9 +516,6 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 // TODO: adjust with TypeID in opcua.enums.go
 func (g *OPCUAInput) createMessageFromValue(value interface{}, nodeID string) *service.Message {
-	if value == nil {
-		return nil
-	}
 	b := make([]byte, 0)
 
 	switch v := value.(type) {
@@ -678,8 +675,12 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 	msgs := service.MessageBatch{}
 
 	for i, node := range g.nodeList {
-
-		message := g.createMessageFromValue(resp.Results[i].Value.Value(), node.NodeID.String())
+		value := resp.Results[i].Value
+		if value == nil {
+			g.log.Errorf("Received nil in response value")
+			continue
+		}
+		message := g.createMessageFromValue(value, node.NodeID.String())
 		if message != nil {
 			msgs = append(msgs, message)
 		}
