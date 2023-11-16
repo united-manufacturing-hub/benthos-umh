@@ -374,7 +374,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 	// Step 3.1: Filter the endpoints based on the selected authentication method.
 	// This will eliminate endpoints that do not support the chosen method.
-	selectedEndpoint := g.getReasonableEndpoint(endpoints, selectedAuthentication, g.insecure, g.securityMode, g.securityPolicy,)
+	selectedEndpoint := g.getReasonableEndpoint(endpoints, selectedAuthentication, g.insecure, g.securityMode, g.securityPolicy)
 	if selectedEndpoint == nil {
 		g.log.Errorf("Could not select a suitable endpoint")
 		return err
@@ -519,6 +519,8 @@ func (g *OPCUAInput) createMessageFromValue(value interface{}, nodeID string) *s
 	b := make([]byte, 0)
 
 	switch v := value.(type) {
+	case float32:
+		b = append(b, []byte(strconv.FormatFloat(float64(v), 'f', -1, 32))...)
 	case float64:
 		b = append(b, []byte(strconv.FormatFloat(v, 'f', -1, 64))...)
 	case string:
@@ -545,8 +547,62 @@ func (g *OPCUAInput) createMessageFromValue(value interface{}, nodeID string) *s
 		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
 	case uint64:
 		b = append(b, []byte(strconv.FormatUint(v, 10))...)
-	case float32:
-		b = append(b, []byte(strconv.FormatFloat(float64(v), 'f', -1, 32))...)
+	case []float32:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatFloat(float64(val), 'f', -1, 32))...)
+		}
+	case []float64:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatFloat(val, 'f', -1, 64))...)
+		}
+	case []string:
+		for _, val := range v {
+			b = append(b, []byte(string(val))...)
+		}
+	case []bool:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatBool(val))...)
+		}
+	case []int:
+		for _, val := range v {
+			b = append(b, []byte(strconv.Itoa(val))...)
+		}
+	case []int8:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatInt(int64(val), 10))...)
+		}
+	case []int16:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatInt(int64(val), 10))...)
+		}
+	case []int32:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatInt(int64(val), 10))...)
+		}
+	case []int64:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatInt(val, 10))...)
+		}
+	case []uint:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatUint(uint64(val), 10))...)
+		}
+	case []uint8:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatUint(uint64(val), 10))...)
+		}
+	case []uint16:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatUint(uint64(val), 10))...)
+		}
+	case []uint32:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatUint(uint64(val), 10))...)
+		}
+	case []uint64:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatUint(val, 10))...)
+		}
 	default:
 		g.log.Errorf("Unknown type: %T", v)
 		return nil
@@ -584,23 +640,24 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 		g.log.Errorf("Read failed: %s", err)
 		// if the error is StatusBadSessionIDInvalid, the session has been closed
 		// and we need to reconnect.
-		if err == ua.StatusBadSessionIDInvalid {
+		switch err {
+		case ua.StatusBadSessionIDInvalid:
 			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
-		} else if err == ua.StatusBadCommunicationError {
+		case ua.StatusBadCommunicationError:
 			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
-		} else if err == ua.StatusBadConnectionClosed {
+		case ua.StatusBadConnectionClosed:
 			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
-		} else if err == ua.StatusBadTimeout {
+		case ua.StatusBadTimeout:
 			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
-		} else if err == ua.StatusBadConnectionRejected {
+		case ua.StatusBadConnectionRejected:
 			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
@@ -609,6 +666,7 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 		// return error and stop executing this function.
 		return nil, nil, err
 	}
+
 	if resp.Results[0].Status != ua.StatusOK {
 		g.log.Errorf("Status not OK: %v", resp.Results[0].Status)
 	}
@@ -617,8 +675,12 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 	msgs := service.MessageBatch{}
 
 	for i, node := range g.nodeList {
-
-		message := g.createMessageFromValue(resp.Results[i].Value.Value(), node.NodeID.String())
+		value := resp.Results[i].Value
+		if value == nil {
+			g.log.Errorf("Received nil from node: %s", node.NodeID.String())
+			continue
+		}
+		message := g.createMessageFromValue(value.Value(), node.NodeID.String())
 		if message != nil {
 			msgs = append(msgs, message)
 		}
