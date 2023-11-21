@@ -321,7 +321,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	g.log.Infof("Endpoint URI: %s", g.endpoint)
 	endpoints, err = opcua.GetEndpoints(ctx, g.endpoint)
 	if err != nil {
-		panic(err) // Stop execution if an error occurs
+		g.log.Infof("GetEndpoints failed: %s", err)
 	}
 
 	// Step 2: Log details of each discovered endpoint for debugging.
@@ -438,6 +438,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		g.log.Errorf("Failed to connect")
 		return err
 	}
+	defer c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 
 	g.log.Infof("Connected to %s", g.endpoint)
 	g.log.Infof("Please note that browsing large node trees can take a long time (around 5 nodes per second)")
@@ -459,7 +460,8 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		// Browse the OPC-UA server's node tree and print the results.
 		nodes, err := browse(ctx, g.client.Node(id), "", 0, g.log)
 		if err != nil {
-			panic(err)
+			g.log.Errorf("Browsing failed: %s")
+			return err
 		}
 
 		// Add the nodes to the nodeList
@@ -468,7 +470,8 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 	b, err := json.Marshal(nodeList)
 	if err != nil {
-		panic(err)
+		g.log.Errorf("Unmarshalling failed: %s")
+		return err
 	}
 
 	g.log.Infof("Detected nodes: %s", b)
@@ -485,7 +488,8 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 			Interval: opcua.DefaultSubscriptionInterval,
 		}, g.subNotifyChan)
 		if err != nil {
-			panic(err)
+			g.log.Errorf("Subscribing failed: %s")
+			return err
 		}
 
 		monitoredRequests := make([]*ua.MonitoredItemCreateRequest, 0, len(nodeList))
@@ -497,13 +501,15 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 		res, err := sub.Monitor(ctx, ua.TimestampsToReturnBoth, monitoredRequests...)
 		if err != nil {
-			panic(err)
+			g.log.Errorf("Monitoring failed: %s")
+			return err
 		}
 
 		// Assuming you want to check the status code of each result
 		for _, result := range res.Results {
 			if result.StatusCode != ua.StatusOK {
-				panic(fmt.Errorf("monitoring failed for node, status code: %v", result.StatusCode))
+				g.log.Errorf("Monitoring failed with status code: %v", result.StatusCode)
+				return fmt.Errorf("monitoring failed for node, status code: %v", result.StatusCode)
 			}
 		}
 
