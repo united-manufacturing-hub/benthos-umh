@@ -170,15 +170,21 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		return nil
 	}
 
-	if err := browseChildren(id.HasComponent); err != nil {
-		return nil, err
-	}
+	/*
+		if err := browseChildren(id.HasComponent); err != nil {
+			return nil, err
+		}
+	*/
+	// only browse folders so far, don't browse the properties automatically
 	if err := browseChildren(id.Organizes); err != nil {
 		return nil, err
 	}
-	if err := browseChildren(id.HasProperty); err != nil {
-		return nil, err
-	}
+	// For hasProperty it makes sense to show it very close to the tag itself, e.g., use the tagName as tagGroup and then the properties as subparts of it
+	/*
+		if err := browseChildren(id.HasProperty); err != nil {
+			return nil, err
+		}
+	*/
 	return nodes, nil
 }
 
@@ -374,7 +380,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 	// Step 3.1: Filter the endpoints based on the selected authentication method.
 	// This will eliminate endpoints that do not support the chosen method.
-	selectedEndpoint := g.getReasonableEndpoint(endpoints, selectedAuthentication, g.insecure, g.securityMode, g.securityPolicy,)
+	selectedEndpoint := g.getReasonableEndpoint(endpoints, selectedAuthentication, g.insecure, g.securityMode, g.securityPolicy)
 	if selectedEndpoint == nil {
 		g.log.Errorf("Could not select a suitable endpoint")
 		return err
@@ -514,11 +520,17 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	return nil
 }
 
-// TODO: adjust with TypeID in opcua.enums.go
-func (g *OPCUAInput) createMessageFromValue(value interface{}, nodeID string) *service.Message {
+// createMessageFromValue creates a benthos messages from a given variant and nodeID
+// theoretically nodeID can be extracted from variant, but not in all cases (e.g., when subscribing), so it it left to the calling function
+func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeID string) *service.Message {
+	if variant == nil {
+		g.log.Errorf("Variant is nil")
+		return nil
+	}
+
 	b := make([]byte, 0)
 
-	switch v := value.(type) {
+	switch v := variant.Value().(type) {
 	case float64:
 		b = append(b, []byte(strconv.FormatFloat(v, 'f', -1, 64))...)
 	case string:
@@ -548,8 +560,13 @@ func (g *OPCUAInput) createMessageFromValue(value interface{}, nodeID string) *s
 	case float32:
 		b = append(b, []byte(strconv.FormatFloat(float64(v), 'f', -1, 32))...)
 	default:
-		g.log.Errorf("Unknown type: %T", v)
-		return nil
+		// Convert unknown types to JSON
+		jsonBytes, err := json.Marshal(v)
+		if err != nil {
+			g.log.Errorf("Error marshaling to JSON: %v", err)
+			return nil
+		}
+		b = append(b, jsonBytes...)
 	}
 
 	message := service.NewMessage(b)
@@ -617,8 +634,12 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 	msgs := service.MessageBatch{}
 
 	for i, node := range g.nodeList {
-
-		message := g.createMessageFromValue(resp.Results[i].Value.Value(), node.NodeID.String())
+		value := resp.Results[i].Value
+		if value == nil {
+			g.log.Errorf("Received nil from node: %s", node.NodeID.String())
+			continue
+		}
+		message := g.createMessageFromValue(value, node.NodeID.String())
 		if message != nil {
 			msgs = append(msgs, message)
 		}
@@ -660,7 +681,7 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 				handleID := item.ClientHandle
 
 				if uint32(len(g.nodeList)) >= handleID {
-					message := g.createMessageFromValue(item.Value.Value.Value(), g.nodeList[handleID].NodeID.String())
+					message := g.createMessageFromValue(item.Value.Value, g.nodeList[handleID].NodeID.String())
 					if message != nil {
 						msgs = append(msgs, message)
 					}
