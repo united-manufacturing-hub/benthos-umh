@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -177,6 +178,315 @@ func TestAgainstSimulator(t *testing.T) {
 		// Attempt to connect
 		err = input.Connect(ctx)
 		assert.NoError(t, err)
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
+	t.Run("Connect Subscribe", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=3;s=Fast"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: true,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 6, len(messageBatch))
+
+		for _, message := range messageBatch {
+			message, err := message.AsStructuredMut()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var exampleNumber json.Number = "22.565684"
+			assert.IsType(t, exampleNumber, message) // it should be a number
+			t.Log("Received message: ", message)
+		}
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
+	t.Run("Connect Subscribe Boolean With Properties", func(t *testing.T) {
+		// This test checks that properties are not browsed by default
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=6;s=DataAccess_AnalogType_Byte"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: true,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 1, len(messageBatch))
+
+		for _, message := range messageBatch {
+			message, err := message.AsStructuredMut()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var exampleNumber json.Number = "0"
+			assert.Equal(t, exampleNumber, message) // it should be 0
+			t.Log("Received message: ", message)
+		}
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
+	t.Run("Connect Subscribe AnalogTypes (simple datatypes)", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=6;s=DataAccess_AnalogType_Byte", "ns=6;s=DataAccess_AnalogType_Double", "ns=6;s=DataAccess_AnalogType_Float", "ns=6;s=DataAccess_AnalogType_Int16", "ns=6;s=DataAccess_AnalogType_Int32", "ns=6;s=DataAccess_AnalogType_Int64", "ns=6;s=DataAccess_AnalogType_SByte", "ns=6;s=DataAccess_AnalogType_UInt16", "ns=6;s=DataAccess_AnalogType_UInt32", "ns=6;s=DataAccess_AnalogType_UInt64"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: true,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 10, len(messageBatch))
+
+		for _, message := range messageBatch {
+			message, err := message.AsStructuredMut()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var exampleNumber json.Number = "22.565684"
+			assert.IsType(t, exampleNumber, message) // it should be a number
+			t.Log("Received message: ", message)
+		}
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
+	t.Run("Connect Subscribe DataItem", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=6;s=DataAccess_DataItem"} // it will subscribe to all values with data type that is non-null.
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: true,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 23, len(messageBatch))
+
+		for _, message := range messageBatch {
+			messageParsed, err := message.AsStructuredMut()
+			if err != nil {
+				t.Error(err)
+			}
+			opcuapath, found := message.MetaGet("opcua_path")
+			if found != true {
+				t.Fatal("Could not find opcua_path")
+			}
+
+			// Determine the data type from the OPC UA path
+			dataType := strings.Split(opcuapath, "_")[5] // This will extract the data type part of the OPC UA path
+
+			// Add checking based on the OPC UA path the resulting data type
+			switch dataType {
+			case "Boolean":
+				var expectedType bool
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received Boolean message: ", messageParsed)
+
+			case "Byte":
+				var expectedType json.Number
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received Byte message: ", messageParsed)
+
+			case "DateTime":
+				// Assuming DateTime is parsed as time.Time in Go
+				var expectedType time.Time
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received DateTime message: ", messageParsed)
+
+			case "Double":
+				var expectedType json.Number
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received Double message: ", messageParsed)
+
+			case "Enumeration":
+				// Enumeration type needs to be defined based on your application's specific enum types
+				// var expectedType YourEnumType
+				// assert.IsType(t, expectedType, messageParsed)
+				// t.Log("Received Enumeration message: ", messageParsed)
+
+			case "Float":
+				var expectedType json.Number
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received Float message: ", messageParsed)
+
+			case "Guid":
+				// Assuming GUID is a string in your parsed message
+				var expectedType string
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received GUID message: ", messageParsed)
+
+			case "Int16":
+				var expectedType json.Number
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received Int16 message: ", messageParsed)
+
+			case "Int32":
+				var expectedType json.Number
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received Int32 message: ", messageParsed)
+
+			case "Int64":
+				var expectedType json.Number
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received Int64 message: ", messageParsed)
+
+			case "Integer":
+				var expectedType json.Number
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received Integer message: ", messageParsed)
+
+			case "LocalizedText":
+				// LocalizedText usually is a string type
+				var expectedType string
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received LocalizedText message: ", messageParsed)
+
+			case "NodeId":
+				// NodeId type needs to be defined based on your implementation
+				// var expectedType NodeIdType
+				// assert.IsType(t, expectedType, messageParsed)
+				// t.Log("Received NodeId message: ", messageParsed)
+
+			case "Number":
+				// Number could be any numeric type; assuming float64 for general use
+				var expectedType json.Number
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received Number message: ", messageParsed)
+
+			case "QualifiedName":
+				// QualifiedName could be a struct or a string, depending on your implementation
+				// var expectedType QualifiedNameType
+				// assert.IsType(t, expectedType, messageParsed)
+				// t.Log("Received QualifiedName message: ", messageParsed)
+
+			case "SByte":
+				var expectedType json.Number
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received SByte message: ", messageParsed)
+
+			case "StatusCode":
+				// StatusCode is likely an integer or specifically defined type
+				// var expectedType StatusCodeType
+				// assert.IsType(t, expectedType, messageParsed)
+				// t.Log("Received StatusCode message: ", messageParsed)
+
+			case "String":
+				var expectedType string
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received String message: ", messageParsed)
+
+			case "UInt16":
+				var expectedType json.Number
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received UInt16 message: ", messageParsed)
+
+			case "UInt32":
+				var expectedType json.Number
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received UInt32 message: ", messageParsed)
+
+			case "UInt64":
+				var expectedType json.Number
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received UInt64 message: ", messageParsed)
+
+			case "UInteger":
+				var expectedType json.Number
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received UInteger message: ", messageParsed)
+
+			default:
+				t.Fatalf("Unsupported data type in OPC UA path: %s:%s", dataType, opcuapath)
+			}
+		}
 
 		// Close connection
 		if input.client != nil {
