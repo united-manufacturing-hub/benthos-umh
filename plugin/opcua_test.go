@@ -376,8 +376,7 @@ func TestAgainstSimulator(t *testing.T) {
 				t.Log("Received Byte message: ", messageParsed)
 
 			case "DateTime":
-				// Assuming DateTime is parsed as time.Time in Go
-				var expectedType time.Time
+				var expectedType string
 				assert.IsType(t, expectedType, messageParsed)
 				t.Log("Received DateTime message: ", messageParsed)
 
@@ -453,10 +452,9 @@ func TestAgainstSimulator(t *testing.T) {
 				t.Log("Received SByte message: ", messageParsed)
 
 			case "StatusCode":
-				// StatusCode is likely an integer or specifically defined type
-				// var expectedType StatusCodeType
-				// assert.IsType(t, expectedType, messageParsed)
-				// t.Log("Received StatusCode message: ", messageParsed)
+				var expectedType string
+				assert.IsType(t, expectedType, messageParsed)
+				t.Log("Received StatusCode message: ", messageParsed)
 
 			case "String":
 				var expectedType string
