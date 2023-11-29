@@ -473,7 +473,7 @@ func TestAgainstSimulator(t *testing.T) {
 					// Check if the messageParsed is of type slice (array)
 					messageParsedArray, ok := messageParsed.([]interface{})
 					if !ok {
-						t.Errorf("Expected messageParsed to be an array, but got %T: %s", messageParsed, opcuapath)
+						t.Errorf("Expected messageParsed to be an array, but got %T: %s : %s", messageParsed, opcuapath, messageParsed)
 					} else {
 						for _, item := range messageParsedArray {
 
