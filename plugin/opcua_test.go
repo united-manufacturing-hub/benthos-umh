@@ -496,6 +496,51 @@ func TestAgainstSimulator(t *testing.T) {
 		}
 	})
 
+	t.Run("TestForFailedNodeCrash", func(t *testing.T) {
+		// https://github.com/united-manufacturing-hub/MgmtIssues/issues/1088
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings = []string{
+			"ns=3;s=Fast",
+			"ns=3;s=Slow",
+		}
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000", // Important: ensure that the DNS name in the certificates of the server is also localhost (Hostname and DNS Name), as otherwise the server will refuse the connection
+			username:         "",
+			password:         "",
+			nodeIDs:          parsedNodeIDs,
+			insecure:         true,
+			subscribeEnabled: true,
+		}
+
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.NotEmpty(t, messageBatch)
+
+		for _, message := range messageBatch {
+			_, err := message.AsStructured()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		// Close connection
+		if input.client != nil {
+			_ = input.client.Close(ctx)
+		}
+	})
+
 }
 
 func TestAgainstRemoteInstance(t *testing.T) {
@@ -974,51 +1019,6 @@ func TestGetReasonableEndpoint_SecurityModeAndPolicy(t *testing.T) {
 		}
 	} else {
 		t.Error("Expected a reasonable endpoint, but got nil")
-	}
-}
-
-func TestReadBatchPullFromFolderContainingBrokenNode(t *testing.T) {
-	// https://github.com/united-manufacturing-hub/MgmtIssues/issues/1088
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	var err error
-
-	var nodeIDStrings = []string{
-		"ns=3;s=Fast",
-		"ns=3;s=Slow",
-	}
-	parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
-	input := &OPCUAInput{
-		endpoint:         "opc.tcp://localhost:50000", // Important: ensure that the DNS name in the certificates of the server is also localhost (Hostname and DNS Name), as otherwise the server will refuse the connection
-		username:         "",
-		password:         "",
-		nodeIDs:          parsedNodeIDs,
-		insecure:         true,
-		subscribeEnabled: true,
-	}
-
-	// Attempt to connect
-	err = input.Connect(ctx)
-	assert.NoError(t, err)
-
-	messageBatch, _, err := input.ReadBatch(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assert.NotEmpty(t, messageBatch)
-
-	for _, message := range messageBatch {
-		_, err := message.AsStructured()
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	// Close connection
-	if input.client != nil {
-		_ = input.client.Close(ctx)
 	}
 }
 
