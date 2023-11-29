@@ -589,62 +589,6 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeID string) 
 		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
 	case uint64:
 		b = append(b, []byte(strconv.FormatUint(v, 10))...)
-	case []float32:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatFloat(float64(val), 'f', -1, 32))...)
-		}
-	case []float64:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatFloat(val, 'f', -1, 64))...)
-		}
-	case []string:
-		for _, val := range v {
-			b = append(b, []byte(string(val))...)
-		}
-	case []bool:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatBool(val))...)
-		}
-	case []int:
-		for _, val := range v {
-			b = append(b, []byte(strconv.Itoa(val))...)
-		}
-	case []int8:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatInt(int64(val), 10))...)
-		}
-	case []int16:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatInt(int64(val), 10))...)
-		}
-	case []int32:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatInt(int64(val), 10))...)
-		}
-	case []int64:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatInt(val, 10))...)
-		}
-	case []uint:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatUint(uint64(val), 10))...)
-		}
-	case []uint8:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatUint(uint64(val), 10))...)
-		}
-	case []uint16:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatUint(uint64(val), 10))...)
-		}
-	case []uint32:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatUint(uint64(val), 10))...)
-		}
-	case []uint64:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatUint(val, 10))...)
-		}
 	default:
 		// Convert unknown types to JSON
 		jsonBytes, err := json.Marshal(v)
