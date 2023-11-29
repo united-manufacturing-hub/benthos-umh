@@ -724,65 +724,49 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
 	var res *opcua.PublishNotificationData
 
-	// Create a message with the node's path as the metadata
-	msgs := service.MessageBatch{}
+	select {
+	case res = <-g.subNotifyChan:
+		// Received a result, check for error
+		if res.Error != nil {
+			g.log.Errorf("ReadBatchSubscribe error: %s", res.Error)
+			return nil, nil, res.Error
+		}
 
-	if ctx == nil {
-		g.log.Errorf("Nil context is not valid for ReadBatchSubscribe")
-	}
-	doneChannel := ctx.Done()
-	if doneChannel == nil {
-		g.log.Errorf("emptyCtx is not valid for ReadBatchSubscribe")
-		return nil, nil, errors.New("emptyCtx is not valid for ReadBatchSubscribe")
-	} else {
-		select {
-		case res = <-g.subNotifyChan:
-			// Received a result, check for error
-			if res.Error != nil {
-				g.log.Errorf("ReadBatchSubscribe error: %s", res.Error)
-				return nil, nil, res.Error
-			}
+		// Create a message with the node's path as the metadata
+		msgs := service.MessageBatch{}
 
-			switch x := res.Value.(type) {
-			case *ua.DataChangeNotification:
-				for _, item := range x.MonitoredItems {
-					if item == nil || item.Value == nil || item.Value.Value == nil {
-						g.log.Errorf("Received nil in item structure")
-						continue
-					}
+		switch x := res.Value.(type) {
+		case *ua.DataChangeNotification:
+			for _, item := range x.MonitoredItems {
+				if item == nil || item.Value == nil || item.Value.Value == nil {
+					g.log.Errorf("Received nil in item structure")
+					continue
+				}
 
-					// now get the handle id, which is the position in g.Nodelist
-					// see also NewMonitoredItemCreateRequestWithDefaults call in other functions
-					handleID := item.ClientHandle
+				// now get the handle id, which is the position in g.Nodelist
+				// see also NewMonitoredItemCreateRequestWithDefaults call in other functions
+				handleID := item.ClientHandle
 
-					if uint32(len(g.nodeList)) >= handleID {
-						if g.nodeList != nil {
-							message := g.createMessageFromValue(item.Value.Value, g.nodeList[handleID].NodeID.String())
-							if message != nil {
-								msgs = append(msgs, message)
-							}
-						}
+				if uint32(len(g.nodeList)) >= handleID {
+					message := g.createMessageFromValue(item.Value.Value, g.nodeList[handleID].NodeID.String())
+					if message != nil {
+						msgs = append(msgs, message)
 					}
 				}
-			default:
-				g.log.Errorf("Unknown publish result %T", res.Value)
 			}
-
-			return msgs, func(ctx context.Context, err error) error {
-				// Nacks are retried automatically when we use service.AutoRetryNacks
-				return nil
-			}, nil
-
-		case _, ok := <-doneChannel:
-			if !ok {
-				g.log.Error("Timeout channel was closed unexpectedly")
-				return nil, nil, errors.New("timeout channel closed")
-			} else {
-				// Timeout occurred
-				g.log.Error("Timeout waiting for response from g.subNotifyChan")
-			}
-			return nil, nil, errors.New("timeout waiting for response")
+		default:
+			g.log.Errorf("Unknown publish result %T", res.Value)
 		}
+
+		return msgs, func(ctx context.Context, err error) error {
+			// Nacks are retried automatically when we use service.AutoRetryNacks
+			return nil
+		}, nil
+
+	case <-ctx.Done():
+		// Timeout occurred
+		g.log.Error("Timeout waiting for response from g.subNotifyChan")
+		return nil, nil, errors.New("timeout waiting for response")
 	}
 }
 
