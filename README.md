@@ -123,6 +123,51 @@ spec:
             name: benthos-1-config
 ```
 
+### Capabilities
+The plugin is designed to browse and subscribe to all child nodes within a folder for each configured NodeID, provided that the NodeID represents a folder. It features a recursion depth of up to 10 levels, enabling thorough exploration of nested folder structures. The browsing specifically targets nodes organized under the OPC UA 'Organizes' relationship type, intentionally excluding nodes under 'HasProperty' and 'HasComponent' relationships. Additionally, the plugin does not browse Objects represented by red, blue, or green cube icons in UAExpert.
+
+Subscriptions are selectively managed, with tags having a DataType of null being excluded from subscription. Also, by default, the plugin does not subscribe to the properties of a tag, such as minimum and maximum values.
+
+#### Datatypes
+The plugin has been rigorously tested with an array of datatypes, both as single values and as arrays. The following datatypes have been verified for compatibility:
+
+- `Boolean`
+- `Byte`
+- `DateTime`
+- `Double`
+- `Enumeration`
+- `ExpandedNodeId`
+- `Float`
+- `Guid`
+- `Int16`
+- `Int32`
+- `Int64`
+- `Integer`
+- `LocalizedText`
+- `NodeId`
+- `Number`
+- `QualifiedName`
+- `SByte`
+- `StatusCode`
+- `String`
+- `UInt16`
+- `UInt32`
+- `UInt64`
+- `UInteger`
+- `ByteArray`
+- `ByteString`
+- `Duration`
+- `LocaleId`
+- `UtcTime`
+- `Variant`
+- `XmlElement`
+
+There are specific datatypes which are currently not supported by the plugin and attempting to use them will result in errors. These include:
+
+- Two-dimensional arrays
+- UA Extension Objects
+
+
 ### Authentication and Security
 
 In benthos-umh, security and authentication are designed to be as robust as possible while maintaining flexibility. The software automates the process of selecting the highest level of security offered by an OPC-UA server for the selected Authentication Method, but the user can specify their own Security Policy / Security Mode if they want (see further below at Configuration options)
