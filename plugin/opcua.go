@@ -80,6 +80,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	switch err := attrs[0].Status; err {
 	case ua.StatusOK:
 		def.NodeClass = ua.NodeClass(attrs[0].Value.Int())
+	case ua.StatusBadSecurityModeInsufficient:
+		return nil, nil
 	default:
 		return nil, err
 	}
@@ -87,6 +89,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	switch err := attrs[1].Status; err {
 	case ua.StatusOK:
 		def.BrowseName = attrs[1].Value.String()
+	case ua.StatusBadSecurityModeInsufficient:
+		return nil, nil
 	default:
 		return nil, err
 	}
@@ -96,6 +100,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		def.Description = attrs[2].Value.String()
 	case ua.StatusBadAttributeIDInvalid:
 		// ignore
+	case ua.StatusBadSecurityModeInsufficient:
+		return nil, nil
 	default:
 		return nil, err
 	}
@@ -106,6 +112,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		def.Writable = def.AccessLevel&ua.AccessLevelTypeCurrentWrite == ua.AccessLevelTypeCurrentWrite
 	case ua.StatusBadAttributeIDInvalid:
 		// ignore
+	case ua.StatusBadSecurityModeInsufficient:
+		return nil, nil
 	default:
 		return nil, err
 	}
@@ -142,6 +150,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		}
 	case ua.StatusBadAttributeIDInvalid:
 		// ignore
+	case ua.StatusBadSecurityModeInsufficient:
+		return nil, nil
 	default:
 		return nil, err
 	}
@@ -507,6 +517,11 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 			monitoredRequests = append(monitoredRequests, miCreateRequest)
 		}
 
+		if len(nodeList) == 0 {
+			g.log.Errorf("Did not subscribe to any nodes. This can happen if the nodes that are selected are incompatible with this benthos version. Aborting...")
+			return fmt.Errorf("no valid nodes selected")
+		}
+
 		res, err := sub.Monitor(ctx, ua.TimestampsToReturnBoth, monitoredRequests...)
 		if err != nil {
 			g.log.Errorf("Monitoring failed: %s")
@@ -640,6 +655,11 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeID string) 
 		b = append(b, jsonBytes...)
 	}
 
+	if b == nil {
+		g.log.Errorf("Could not create benthos message as payload is empty for node %s: %v", nodeID, b)
+		return nil
+	}
+
 	message := service.NewMessage(b)
 
 	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
@@ -662,6 +682,10 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 		nodesToRead = append(nodesToRead, &ua.ReadValueID{
 			NodeID: node.NodeID,
 		})
+	}
+
+	if len(g.nodeList) > 100 {
+		g.log.Warnf("Reading more than 100 nodes with pull method. The request might fail as it can take too much time. Recommendation: use subscribeEnabled: true instead for better performance")
 	}
 
 	req := &ua.ReadRequest{
