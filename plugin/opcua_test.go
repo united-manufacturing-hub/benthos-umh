@@ -974,6 +974,7 @@ func TestGetReasonableEndpoint_SecurityModeAndPolicy(t *testing.T) {
 }
 
 func TestReadBatchPullFromFolderContainingBrokenNode(t *testing.T) {
+	// https://github.com/united-manufacturing-hub/MgmtIssues/issues/1088
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
