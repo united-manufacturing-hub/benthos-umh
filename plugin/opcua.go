@@ -506,7 +506,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 			panic(err)
 		}
 		if res == nil {
-			panic(fmt.Errorf("expected res to be not nil"))
+			return fmt.Errorf("expected res to be not nil")
 		}
 
 		// Assuming you want to check the status code of each result

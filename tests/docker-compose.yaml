@@ -9,7 +9,7 @@ services:
       - --sn=100
       - --sr=10
       - --st=uint
-      - --fn=5
+      - --fn=10
       - --fr=1
       - --ft=uint
       - --gn=5

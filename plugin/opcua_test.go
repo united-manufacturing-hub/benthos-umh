@@ -973,6 +973,51 @@ func TestGetReasonableEndpoint_SecurityModeAndPolicy(t *testing.T) {
 	}
 }
 
+func TestReadBatchPullFromFolderContainingBrokenNode(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var err error
+
+	var nodeIDStrings = []string{
+		"ns=3;s=Fast",
+		"ns=3;s=Slow",
+	}
+	parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+	input := &OPCUAInput{
+		endpoint:         "opc.tcp://localhost:50000", // Important: ensure that the DNS name in the certificates of the server is also localhost (Hostname and DNS Name), as otherwise the server will refuse the connection
+		username:         "",
+		password:         "",
+		nodeIDs:          parsedNodeIDs,
+		insecure:         true,
+		subscribeEnabled: true,
+	}
+
+	// Attempt to connect
+	err = input.Connect(ctx)
+	assert.NoError(t, err)
+
+	messageBatch, _, err := input.ReadBatch(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert.NotEmpty(t, messageBatch)
+
+	for _, message := range messageBatch {
+		message, err := message.AsStructured()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("%#v", message)
+	}
+
+	// Close connection
+	if input.client != nil {
+		input.client.Close(ctx)
+	}
+}
+
 func logCertificateInfo(t *testing.T, certBytes []byte) {
 	t.Logf("  Server certificate:")
 
