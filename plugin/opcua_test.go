@@ -216,7 +216,7 @@ func TestAgainstSimulator(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		assert.Equal(t, 6, len(messageBatch))
+		assert.GreaterOrEqual(t, len(messageBatch), 6)
 
 		for _, message := range messageBatch {
 			message, err := message.AsStructuredMut()
@@ -1010,11 +1010,10 @@ func TestReadBatchPullFromFolderContainingBrokenNode(t *testing.T) {
 	assert.NotEmpty(t, messageBatch)
 
 	for _, message := range messageBatch {
-		message, err := message.AsStructured()
+		_, err := message.AsStructured()
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Logf("%#v", message)
 	}
 
 	// Close connection

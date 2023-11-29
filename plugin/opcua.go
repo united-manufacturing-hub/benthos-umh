@@ -444,7 +444,6 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		g.log.Errorf("Failed to connect")
 		return err
 	}
-	defer c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 
 	g.log.Infof("Connected to %s", g.endpoint)
 	g.log.Infof("Please note that browsing large node trees can take a long time (around 5 nodes per second)")
@@ -467,6 +466,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		nodes, err := browse(ctx, g.client.Node(id), "", 0, g.log)
 		if err != nil {
 			g.log.Errorf("Browsing failed: %s")
+			c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return err
 		}
 
@@ -477,6 +477,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	b, err := json.Marshal(nodeList)
 	if err != nil {
 		g.log.Errorf("Unmarshalling failed: %s")
+		c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 		return err
 	}
 
@@ -495,6 +496,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		}, g.subNotifyChan)
 		if err != nil {
 			g.log.Errorf("Subscribing failed: %s")
+			c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return err
 		}
 
@@ -508,9 +510,12 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		res, err := sub.Monitor(ctx, ua.TimestampsToReturnBoth, monitoredRequests...)
 		if err != nil {
 			g.log.Errorf("Monitoring failed: %s")
+			c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return err
 		}
 		if res == nil {
+			g.log.Errorf("Expected res to not be nil, if there is no error")
+			c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return fmt.Errorf("expected res to be not nil")
 		}
 
@@ -518,6 +523,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		for _, result := range res.Results {
 			if !errors.Is(result.StatusCode, ua.StatusOK) {
 				g.log.Errorf("Monitoring failed with status code: %v", result.StatusCode)
+				c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 				return fmt.Errorf("monitoring failed for node, status code: %v", result.StatusCode)
 			}
 		}
