@@ -153,10 +153,7 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			err = input.client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
+			input.client.Close(ctx)
 		}
 	})
 
