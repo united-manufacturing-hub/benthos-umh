@@ -327,7 +327,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	g.log.Infof("Endpoint URI: %s", g.endpoint)
 	endpoints, err = opcua.GetEndpoints(ctx, g.endpoint)
 	if err != nil {
-		panic(err) // Stop execution if an error occurs
+		g.log.Infof("GetEndpoints failed: %s", err)
 	}
 
 	// Step 2: Log details of each discovered endpoint for debugging.
@@ -444,6 +444,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		g.log.Errorf("Failed to connect")
 		return err
 	}
+	defer c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 
 	g.log.Infof("Connected to %s", g.endpoint)
 	g.log.Infof("Please note that browsing large node trees can take a long time (around 5 nodes per second)")
@@ -465,7 +466,8 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		// Browse the OPC-UA server's node tree and print the results.
 		nodes, err := browse(ctx, g.client.Node(id), "", 0, g.log)
 		if err != nil {
-			panic(err)
+			g.log.Errorf("Browsing failed: %s")
+			return err
 		}
 
 		// Add the nodes to the nodeList
@@ -474,7 +476,8 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 	b, err := json.Marshal(nodeList)
 	if err != nil {
-		panic(err)
+		g.log.Errorf("Unmarshalling failed: %s")
+		return err
 	}
 
 	g.log.Infof("Detected nodes: %s", b)
@@ -491,7 +494,8 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 			Interval: opcua.DefaultSubscriptionInterval,
 		}, g.subNotifyChan)
 		if err != nil {
-			panic(err)
+			g.log.Errorf("Subscribing failed: %s")
+			return err
 		}
 
 		monitoredRequests := make([]*ua.MonitoredItemCreateRequest, 0, len(nodeList))
@@ -503,7 +507,8 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 		res, err := sub.Monitor(ctx, ua.TimestampsToReturnBoth, monitoredRequests...)
 		if err != nil {
-			panic(err)
+			g.log.Errorf("Monitoring failed: %s")
+			return err
 		}
 		if res == nil {
 			return fmt.Errorf("expected res to be not nil")
@@ -512,7 +517,8 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		// Assuming you want to check the status code of each result
 		for _, result := range res.Results {
 			if !errors.Is(result.StatusCode, ua.StatusOK) {
-				panic(fmt.Errorf("monitoring failed for node, status code: %v", result.StatusCode))
+				g.log.Errorf("Monitoring failed with status code: %v", result.StatusCode)
+				return fmt.Errorf("monitoring failed for node, status code: %v", result.StatusCode)
 			}
 		}
 
@@ -534,6 +540,8 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeID string) 
 	b := make([]byte, 0)
 
 	switch v := variant.Value().(type) {
+	case float32:
+		b = append(b, []byte(strconv.FormatFloat(float64(v), 'f', -1, 32))...)
 	case float64:
 		b = append(b, []byte(strconv.FormatFloat(v, 'f', -1, 64))...)
 	case string:
@@ -560,8 +568,62 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeID string) 
 		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
 	case uint64:
 		b = append(b, []byte(strconv.FormatUint(v, 10))...)
-	case float32:
-		b = append(b, []byte(strconv.FormatFloat(float64(v), 'f', -1, 32))...)
+	case []float32:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatFloat(float64(val), 'f', -1, 32))...)
+		}
+	case []float64:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatFloat(val, 'f', -1, 64))...)
+		}
+	case []string:
+		for _, val := range v {
+			b = append(b, []byte(string(val))...)
+		}
+	case []bool:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatBool(val))...)
+		}
+	case []int:
+		for _, val := range v {
+			b = append(b, []byte(strconv.Itoa(val))...)
+		}
+	case []int8:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatInt(int64(val), 10))...)
+		}
+	case []int16:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatInt(int64(val), 10))...)
+		}
+	case []int32:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatInt(int64(val), 10))...)
+		}
+	case []int64:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatInt(val, 10))...)
+		}
+	case []uint:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatUint(uint64(val), 10))...)
+		}
+	case []uint8:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatUint(uint64(val), 10))...)
+		}
+	case []uint16:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatUint(uint64(val), 10))...)
+		}
+	case []uint32:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatUint(uint64(val), 10))...)
+		}
+	case []uint64:
+		for _, val := range v {
+			b = append(b, []byte(strconv.FormatUint(val, 10))...)
+		}
 	default:
 		// Convert unknown types to JSON
 		jsonBytes, err := json.Marshal(v)
@@ -604,23 +666,24 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 		g.log.Errorf("Read failed: %s", err)
 		// if the error is StatusBadSessionIDInvalid, the session has been closed
 		// and we need to reconnect.
-		if err == ua.StatusBadSessionIDInvalid {
+		switch err {
+		case ua.StatusBadSessionIDInvalid:
 			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
-		} else if err == ua.StatusBadCommunicationError {
+		case ua.StatusBadCommunicationError:
 			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
-		} else if err == ua.StatusBadConnectionClosed {
+		case ua.StatusBadConnectionClosed:
 			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
-		} else if err == ua.StatusBadTimeout {
+		case ua.StatusBadTimeout:
 			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
-		} else if err == ua.StatusBadConnectionRejected {
+		case ua.StatusBadConnectionRejected:
 			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
@@ -629,6 +692,7 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 		// return error and stop executing this function.
 		return nil, nil, err
 	}
+
 	if resp.Results[0].Status != ua.StatusOK {
 		g.log.Errorf("Status not OK: %v", resp.Results[0].Status)
 	}
