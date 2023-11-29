@@ -38,28 +38,16 @@ jobs:
           go_version: ${{ env.GO_VERSION }}
       - name: Startup simulator in background
         run: |
-          docker-compose up &
+          docker-compose up -d
         working-directory: tests
-      - name: Wait for port 46010 to be ready
+      - name: Wait for port 50000 to be ready
         run: |
-          while ! nc -z localhost 46010; do
-            echo "Waiting for port 46010 to be ready..."
+          while ! nc -z localhost 50000; do
+            echo "Waiting for port 50000 to be ready..."
             sleep 1
           done
       - name: Test
         run: make test
-  go-test-wago:
-    runs-on: hercules
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Setup Go
-        uses: ./.github/actions/setup-go
-        with:
-          go_version: ${{ env.GO_VERSION }}
-      - name: Test
-        run: TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI }} TEST_WAGO_USERNAME=${{ secrets.TEST_WAGO_USERNAME }} TEST_WAGO_PASSWORD=${{ secrets.TEST_WAGO_PASSWORD }} make test
   go-build:
     runs-on:
       group: large-runners

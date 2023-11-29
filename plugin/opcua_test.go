@@ -19,7 +19,9 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,7 +31,16 @@ import (
 )
 
 func TestAgainstSimulator(t *testing.T) {
-	t.Skip("This test is flaky as it can run only once per `docker-compose up`. Probably need a new OPC-UA simulator.")
+	endpoint := os.Getenv("TEST_WAGO_ENDPOINT_URI")
+	username := os.Getenv("TEST_WAGO_USERNAME")
+	password := os.Getenv("TEST_WAGO_PASSWORD")
+
+	// Check if environment variables are set
+	if endpoint != "" || username != "" || password != "" {
+		t.Skip("Skipping test: environment variables are set")
+		return
+	}
+
 	t.Run("Logging Endpoints", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -38,10 +49,11 @@ func TestAgainstSimulator(t *testing.T) {
 		var err error
 
 		input := &OPCUAInput{
-			endpoint: "opc.tcp://localhost:46010",
+			endpoint: "opc.tcp://localhost:50000", // Important: ensure that the DNS name in the certificates of the server is also localhost (Hostname and DNS Name), as otherwise the server will refuse the connection
 			username: "",
 			password: "",
 			nodeIDs:  nil,
+			insecure: false,
 		}
 
 		endpoints, err = opcua.GetEndpoints(ctx, input.endpoint)
@@ -85,19 +97,55 @@ func TestAgainstSimulator(t *testing.T) {
 				t.Logf("    IssuerEndpointURL: %s", token.IssuerEndpointURL)
 			}
 		}
+		selectedEndpoint := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input.insecure, "SignAndEncrypt", "Basic256Sha256")
+		t.Logf("selected endpoint %v:", selectedEndpoint)
+		if input.client != nil {
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 	})
 
-	t.Run("ConnectAnonymous", func(t *testing.T) {
+	t.Run("ConnectAnonymousInsecure", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		var err error
 
 		input := &OPCUAInput{
-			endpoint: "opc.tcp://localhost:46010",
+			endpoint: "opc.tcp://localhost:50000",
 			username: "",
 			password: "",
 			nodeIDs:  nil,
+			insecure: true, // It only works when not using encryption
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		// Close connection
+		if input.client != nil {
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+
+	t.Run("ConnectAnonymousSecure", func(t *testing.T) {
+		t.Skip("Secure is currently not working, as the OPC UA simulator server aborts the connection to to certificate problems")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		input := &OPCUAInput{
+			endpoint: "opc.tcp://localhost:50000",
+			username: "",
+			password: "",
+			nodeIDs:  nil,
+			insecure: false,
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
@@ -109,7 +157,7 @@ func TestAgainstSimulator(t *testing.T) {
 		}
 	})
 
-	t.Run("Connect Username-Password fail", func(t *testing.T) {
+	t.Run("Connect Username-Password fail Insecure", func(t *testing.T) {
 		t.Skip() // Needs to be skipped, the current OPC-UA simulator does only logging in once, after that it fails
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -117,9 +165,10 @@ func TestAgainstSimulator(t *testing.T) {
 		var err error
 
 		input := &OPCUAInput{
-			endpoint: "opc.tcp://localhost:46010",
-			username: "123", // bad user and password
-			password: "123",
+			endpoint: "opc.tcp://localhost:50000",
+			username: "sysadmin_bad", // bad user and password
+			password: "demo",
+			insecure: true, // It only works when not using encryption
 			nodeIDs:  nil,
 		}
 		// Attempt to connect
@@ -128,20 +177,51 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
-	t.Run("Connect Username-Password success", func(t *testing.T) {
+	t.Run("Connect Anonymous Insecure", func(t *testing.T) {
+		t.Skip() // Needs to be skipped, the current OPC-UA simulator does only logging in once, after that it fails
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		var err error
 
 		input := &OPCUAInput{
-			endpoint: "opc.tcp://localhost:46010",
-			username: "root",
-			password: "secret",
+			endpoint: "opc.tcp://localhost:50000",
+			username: "",
+			password: "",
+			insecure: true, // It only works when not using encryption
+			nodeIDs:  nil,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.Error(t, err)
+
+		// Close connection
+		if input.client != nil {
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+
+	t.Run("Connect Username-Password success Insecure", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		input := &OPCUAInput{
+			endpoint: "opc.tcp://localhost:50000",
+			username: "sysadmin",
+			password: "demo",
+			insecure: true, // It only works when not using encryption
 			nodeIDs:  nil,
 		}
 		// Attempt to connect
@@ -150,10 +230,959 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+
+	t.Run("Connect Subscribe", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings = []string{"ns=3;s=Fast"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: true,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Logf("%+v", messageBatch)
+			t.Fatal(err)
+		}
+
+		assert.GreaterOrEqual(t, len(messageBatch), 6)
+
+		for _, message := range messageBatch {
+			message, err := message.AsStructuredMut()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var exampleNumber json.Number = "22.565684"
+			assert.IsType(t, exampleNumber, message) // it should be a number
+			t.Log("Received message: ", message)
+		}
+
+		// Close connection
+		if input.client != nil {
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+
+	t.Run("Connect Subscribe Boolean With Properties", func(t *testing.T) {
+		// This test checks that properties are not browsed by default
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings = []string{"ns=6;s=DataAccess_AnalogType_Byte"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: true,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 1, len(messageBatch))
+
+		for _, message := range messageBatch {
+			message, err := message.AsStructuredMut()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var exampleNumber json.Number = "0"
+			assert.Equal(t, exampleNumber, message) // it should be 0
+			t.Log("Received message: ", message)
+		}
+
+		// Close connection
+		if input.client != nil {
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+
+	t.Run("Connect Subscribe AnalogTypes (simple datatypes)", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings = []string{"ns=6;s=DataAccess_AnalogType_Byte", "ns=6;s=DataAccess_AnalogType_Double", "ns=6;s=DataAccess_AnalogType_Float", "ns=6;s=DataAccess_AnalogType_Int16", "ns=6;s=DataAccess_AnalogType_Int32", "ns=6;s=DataAccess_AnalogType_Int64", "ns=6;s=DataAccess_AnalogType_SByte", "ns=6;s=DataAccess_AnalogType_UInt16", "ns=6;s=DataAccess_AnalogType_UInt32", "ns=6;s=DataAccess_AnalogType_UInt64"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: true,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 10, len(messageBatch))
+
+		for _, message := range messageBatch {
+			message, err := message.AsStructuredMut()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var exampleNumber json.Number = "22.565684"
+			assert.IsType(t, exampleNumber, message) // it should be a number
+			t.Log("Received message: ", message)
+		}
+
+		// Close connection
+		if input.client != nil {
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+
+	t.Run("Connect Subscribe null", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=6;s=DataAccess_DataItem_Null"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: true,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 0, len(messageBatch)) // should never subscribe to null datatype
+
+		// Close connection
+		if input.client != nil {
 			input.client.Close(ctx)
 		}
 	})
 
+	t.Run("Connect Subscribe AnalogTypeArray", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=6;s=DataAccess_AnalogType_Array"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: true,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 26, len(messageBatch)) // Adjust the expected number of items as necessary
+
+		for _, message := range messageBatch {
+			messageParsed, err := message.AsStructuredMut()
+			if err != nil {
+				// This might happen if an empty string is returned from OPC-UA
+				continue
+			}
+
+			opcuapath, found := message.MetaGet("opcua_path")
+			if !found {
+				t.Fatal("Could not find opcua_path")
+			}
+
+			// Determine the data type from the OPC UA path
+			dataType := strings.Split(opcuapath, "_")[5] // This will extract the data type part of the OPC UA path
+			t.Log(dataType)
+
+			// Check if the data type is an array and handle accordingly
+			if strings.HasSuffix(dataType, "Array") {
+				dataTypeOfArray := strings.Split(opcuapath, "_")[6]
+				t.Log(dataTypeOfArray)
+				// Handle array data types
+				switch dataTypeOfArray {
+				case "Duration", "Guid", "LocaleId", "Boolean", "LocalizedText", "NodeId", "QualifiedName", "UtcTime", "DateTime", "Double", "Enumeration", "Float", "Int16", "Int32", "Int64", "Integer", "Number", "SByte", "StatusCode", "String", "UInt16", "UInt32", "UInt64", "UInteger", "Variant", "XmlElement", "ByteString":
+					// Check if the messageParsed is of type slice (array)
+					messageParsedArray, ok := messageParsed.([]interface{})
+					if !ok {
+						t.Errorf("Expected messageParsed to be an array, but got %T: %s : %s", messageParsed, opcuapath, messageParsed)
+					} else {
+						for _, item := range messageParsedArray {
+
+							// Add checking based on the OPC UA path the resulting data type
+							checkDatatypeOfOPCUATag(t, dataTypeOfArray, item, opcuapath)
+						}
+					}
+				case "Byte":
+					checkDatatypeOfOPCUATag(t, "ByteArray", messageParsed, opcuapath)
+				default:
+					t.Errorf("Unsupported array data type in OPC UA path: %s:%s", dataType, opcuapath)
+				}
+			} else {
+				t.Fatalf("Received non-array: %s", opcuapath)
+			}
+		}
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
+	t.Run("Connect Subscribe DataItem", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings = []string{"ns=6;s=DataAccess_DataItem"} // it will subscribe to all values with data type that is non-null.
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: true,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 23, len(messageBatch)) // these are theoretically >30, but most of them are null, so the browse function ignores them
+
+		for _, message := range messageBatch {
+			messageParsed, err := message.AsStructuredMut()
+			if err != nil {
+				// This might happen if an empty string is returned from OPC-UA
+				continue
+			}
+
+			opcuapath, found := message.MetaGet("opcua_path")
+			if found != true {
+				t.Fatal("Could not find opcua_path")
+			}
+
+			// Determine the data type from the OPC UA path
+			dataType := strings.Split(opcuapath, "_")[5] // This will extract the data type part of the OPC UA path
+
+			// Add checking based on the OPC UA path the resulting data type
+			checkDatatypeOfOPCUATag(t, dataType, messageParsed, opcuapath)
+		}
+
+		// Close connection
+		if input.client != nil {
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+
+	t.Run("TestForFailedNodeCrash", func(t *testing.T) {
+		// https://github.com/united-manufacturing-hub/MgmtIssues/issues/1088
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings = []string{
+			"ns=3;s=Fast",
+			"ns=3;s=Slow",
+		}
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000", // Important: ensure that the DNS name in the certificates of the server is also localhost (Hostname and DNS Name), as otherwise the server will refuse the connection
+			username:         "",
+			password:         "",
+			nodeIDs:          parsedNodeIDs,
+			insecure:         true,
+			subscribeEnabled: true,
+		}
+
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.NotEmpty(t, messageBatch)
+
+		for _, message := range messageBatch {
+			_, err := message.AsStructured()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		// Close connection
+		if input.client != nil {
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+
+	t.Run("Connect Subscribe Scalar Arrays", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=6;s=Scalar_Static_Arrays"} // it will subscribe to all values with data type that is non-null.
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: true,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 26, len(messageBatch))
+
+		for _, message := range messageBatch {
+			messageParsed, err := message.AsStructuredMut()
+			if err != nil {
+				// This might happen if an empty string is returned from OPC-UA
+				continue
+			}
+
+			opcuapath, found := message.MetaGet("opcua_path")
+			if found != true {
+				t.Fatal("Could not find opcua_path")
+			}
+
+			// Determine the data type from the OPC UA path
+			dataType := strings.Split(opcuapath, "_")[5] // This will extract the data type part of the OPC UA path
+			t.Log(dataType)
+
+			// Check if the data type is an array and handle accordingly
+			if strings.HasSuffix(dataType, "Arrays") {
+				dataTypeOfArray := strings.Split(opcuapath, "_")[6]
+				t.Log(dataTypeOfArray)
+				// Handle array data types
+				switch dataTypeOfArray {
+				case "Duration", "Guid", "LocaleId", "Boolean", "LocalizedText", "NodeId", "QualifiedName", "UtcTime", "DateTime", "Double", "Enumeration", "Float", "Int16", "Int32", "Int64", "SByte", "StatusCode", "String", "UInt16", "UInt32", "UInt64", "XmlElement", "ByteString":
+					// Check if the messageParsed is of type slice (array)
+					messageParsedArray, ok := messageParsed.([]interface{})
+					if !ok {
+						t.Errorf("Expected messageParsed to be an array, but got %T: %s : %s", messageParsed, opcuapath, messageParsed)
+					} else {
+						for _, item := range messageParsedArray {
+
+							// Add checking based on the OPC UA path the resulting data type
+							checkDatatypeOfOPCUATag(t, dataTypeOfArray, item, opcuapath)
+						}
+					}
+				case "Byte":
+					checkDatatypeOfOPCUATag(t, "ByteArray", messageParsed, opcuapath)
+				case "Integer", "Number", "Variant", "UInteger": // Variant Arrays are not supported by go upcua lib
+					t.Logf("Unsupported array data type in OPC UA path: %s:%s", dataType, opcuapath)
+				default:
+					t.Errorf("Unsupported array data type in OPC UA path: %s:%s", dataType, opcuapath)
+				}
+			} else {
+				t.Fatalf("Received non-array: %s", opcuapath)
+			}
+		}
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
+	t.Run("Connect Subscribe does not fail when subscribing to entire simulator", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=3;s=OpcPlc"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: false, // set to false because some values will change more often in a second resulting in too many messages
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.GreaterOrEqual(t, len(messageBatch), 125)
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
+	t.Run("Connect does not fail when subscribing to everything", func(t *testing.T) {
+		t.Skip("This might take too long...")
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"i=84"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: true,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 25, len(messageBatch))
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
+	t.Run("Connect Subscribe does not subscribe to objects", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=3;s=SimulatorConfiguration"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: true,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		if assert.Error(t, err) {
+			assert.Equal(t, fmt.Errorf("no valid nodes selected"), err)
+		}
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
+	t.Run("Connect Subscribe does not fail when subscribing to Anomaly", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=3;s=Anomaly"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: false, // disabling subscribe because messages change moreo ften than once in a second reuslting in to many messages
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 4, len(messageBatch))
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
+	t.Run("Connect Subscribe does not fail when subscribing to Basic", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=3;s=Basic"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: false, // disabling subscribe because messages change moreo ften than once in a second reuslting in to many messages
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 4, len(messageBatch))
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
+	t.Run("Connect Subscribe does not fail when subscribing to Deterministic GUID", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=3;s=Deterministic GUID"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: false,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 5, len(messageBatch))
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
+	t.Run("Connect Subscribe does not fail when subscribing to Fast", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=3;s=Fast"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: false,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 6, len(messageBatch))
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
+	t.Run("Connect Subscribe does not fail when subscribing to Slow", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=3;s=Slow"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: false,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.GreaterOrEqual(t, len(messageBatch), 100)
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
+	t.Run("Connect Subscribe does not fail when subscribing to Special", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings []string = []string{"ns=3;s=Special"}
+
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000",
+			username:         "",
+			password:         "",
+			insecure:         true, // It only works when not using encryption
+			nodeIDs:          parsedNodeIDs,
+			subscribeEnabled: false,
+		}
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, 7, len(messageBatch))
+
+		// Close connection
+		if input.client != nil {
+			input.client.Close(ctx)
+		}
+	})
+
+}
+
+func checkDatatypeOfOPCUATag(t *testing.T, dataType string, messageParsed any, opcuapath string) {
+	t.Logf("%s, %+v, %s", dataType, messageParsed, opcuapath)
+	switch dataType {
+	case "Boolean":
+		var expectedType bool
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received Boolean message: ", messageParsed)
+
+	case "Byte":
+		var expectedType json.Number
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received Byte message: ", messageParsed)
+
+	case "DateTime": //warning: there is a bug when the date is a lot in the future year 30828
+		var expectedType string
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received DateTime message: ", messageParsed)
+
+	case "Double":
+		var expectedType json.Number
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received Double message: ", messageParsed)
+
+	case "Enumeration":
+		var expectedType json.Number
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received Enumeration message: ", messageParsed)
+	case "ExpandedNodeId":
+		// Assert that messageParsed is of type map[string]interface{}
+		parsedMap, ok := messageParsed.(map[string]interface{})
+		if !ok {
+			t.Errorf("Expected messageParsed to be of type map[string]interface{}, but got %T", messageParsed)
+		} else {
+			// Check if the keys inside the map are correct
+			expectedKeys := []string{"NamespaceURI", "NodeID", "ServerIndex"}
+			for _, key := range expectedKeys {
+				if _, exists := parsedMap[key]; !exists {
+					t.Errorf("Expected key %s missing in messageParsed", key)
+				}
+			}
+
+			// Optionally, log the received message
+			t.Log("Received ExpandedNodeId message: ", messageParsed)
+		}
+	case "Float":
+		var expectedType json.Number
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received Float message: ", messageParsed)
+
+	case "Guid":
+		// Assert that messageParsed is of type map[string]interface{}
+		parsedMap, ok := messageParsed.(map[string]interface{})
+		if !ok {
+			t.Errorf("Expected messageParsed to be of type map[string]interface{}, but got %T", messageParsed)
+		} else {
+			// Check if the keys inside the map are correct
+			expectedKeys := []string{"Data1", "Data2", "Data3", "Data4"}
+			for _, key := range expectedKeys {
+				if _, exists := parsedMap[key]; !exists {
+					t.Errorf("Expected key %s missing in messageParsed", key)
+				}
+			}
+
+			// Optionally, log the received message
+			t.Log("Received GUID message: ", messageParsed)
+		}
+	case "Int16":
+		var expectedType json.Number
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received Int16 message: ", messageParsed)
+
+	case "Int32":
+		var expectedType json.Number
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received Int32 message: ", messageParsed)
+
+	case "Int64":
+		var expectedType json.Number
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received Int64 message: ", messageParsed)
+
+	case "Integer":
+		var expectedType json.Number
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received Integer message: ", messageParsed)
+
+	case "LocalizedText":
+		// Assert that messageParsed is of type map[string]interface{}
+		parsedMap, ok := messageParsed.(map[string]interface{})
+		if !ok {
+			t.Errorf("Expected messageParsed to be of type map[string]interface{}, but got %T", messageParsed)
+		} else {
+			// Check if the keys inside the map are correct
+			expectedKeys := []string{"EncodingMask", "Locale", "Text"}
+			for _, key := range expectedKeys {
+				if _, exists := parsedMap[key]; !exists {
+					t.Errorf("Expected key %s missing in messageParsed", key)
+				}
+			}
+
+			// Optionally, log the received message
+			t.Log("Received LocalizedText message: ", messageParsed)
+		}
+	case "NodeId":
+		var expectedType string
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received NodeId message: ", messageParsed)
+	case "Number":
+		var expectedType json.Number
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received Number message: ", messageParsed)
+	case "QualifiedName":
+		// Assert that messageParsed is of type map[string]interface{}
+		parsedMap, ok := messageParsed.(map[string]interface{})
+		if !ok {
+			t.Errorf("Expected messageParsed to be of type map[string]interface{}, but got %T", messageParsed)
+		} else {
+			// Define the keys expected in a QualifiedName message
+			expectedKeys := []string{"NamespaceIndex", "Name"}
+			for _, key := range expectedKeys {
+				if _, exists := parsedMap[key]; !exists {
+					t.Errorf("Expected key %s missing in messageParsed", key)
+				}
+			}
+
+			// Optionally, log the received message
+			t.Log("Received QualifiedName message: ", messageParsed)
+		}
+	case "SByte":
+		var expectedType json.Number
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received SByte message: ", messageParsed)
+	case "StatusCode":
+		var expectedType json.Number
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received StatusCode message: ", messageParsed)
+	case "String":
+		var expectedType string
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received String message: ", messageParsed)
+	case "UInt16":
+		var expectedType json.Number
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received UInt16 message: ", messageParsed)
+	case "UInt32":
+		var expectedType json.Number
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received UInt32 message: ", messageParsed)
+	case "UInt64":
+		var expectedType json.Number
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received UInt64 message: ", messageParsed)
+	case "UInteger":
+		var expectedType json.Number
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received UInteger message: ", messageParsed)
+	case "ByteArray": // case as an array of bytes is not a number, but a string
+		var expectedType string
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received ByteArray message: ", messageParsed)
+	case "ByteString":
+		var expectedType string
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received ByteString message: ", messageParsed)
+	case "Duration":
+		var expectedType json.Number
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received Duration message: ", messageParsed)
+	case "LocaleId":
+		var expectedType string
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received LocaleId message: ", messageParsed)
+	case "UtcTime":
+		var expectedType string
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received UtcTime message: ", messageParsed)
+	case "Variant":
+		var expectedType map[string]interface{}
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received Variant message: ", messageParsed)
+	case "XmlElement":
+		var expectedType string
+		assert.IsType(t, expectedType, messageParsed)
+		t.Log("Received XmlElement message: ", messageParsed)
+	default:
+		t.Errorf("Unsupported data type in OPC UA path: %s:%s", dataType, opcuapath)
+	}
 }
 
 func TestAgainstRemoteInstance(t *testing.T) {
@@ -187,7 +1216,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -211,7 +1243,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -233,7 +1268,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -255,7 +1293,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -265,7 +1306,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings []string = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
+		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -281,7 +1322,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -291,7 +1335,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings []string = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
+		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -324,7 +1368,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -334,7 +1381,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings []string = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL", "ns=4;s=|vprop|WAGO 750-8101 PFC100 CS 2ETH.Application.RevisionCounter"}
+		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL", "ns=4;s=|vprop|WAGO 750-8101 PFC100 CS 2ETH.Application.RevisionCounter"}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -390,7 +1437,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -400,7 +1450,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings []string = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
+		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -434,7 +1484,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -444,7 +1497,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings []string = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
+		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -480,7 +1533,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -590,7 +1646,7 @@ func TestGetReasonableEndpoint_Insecure(t *testing.T) {
 			t.Errorf("Expected selected endpoint to have no encryption, but got %v", selectedEndpoint.SecurityMode)
 		}
 	} else {
-		t.Error("Expected a reasonable endpoint, but got nil")
+		t.Fatalf("Expected a reasonable endpoint, but got nil") // This needs to be fatal, to prevent nil error in selectedEndpoint2 check
 	}
 
 	input2 := &OPCUAInput{

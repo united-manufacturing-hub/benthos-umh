@@ -80,6 +80,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	switch err := attrs[0].Status; err {
 	case ua.StatusOK:
 		def.NodeClass = ua.NodeClass(attrs[0].Value.Int())
+	case ua.StatusBadSecurityModeInsufficient:
+		return nil, nil
 	default:
 		return nil, err
 	}
@@ -87,6 +89,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	switch err := attrs[1].Status; err {
 	case ua.StatusOK:
 		def.BrowseName = attrs[1].Value.String()
+	case ua.StatusBadSecurityModeInsufficient:
+		return nil, nil
 	default:
 		return nil, err
 	}
@@ -96,6 +100,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		def.Description = attrs[2].Value.String()
 	case ua.StatusBadAttributeIDInvalid:
 		// ignore
+	case ua.StatusBadSecurityModeInsufficient:
+		return nil, nil
 	default:
 		return nil, err
 	}
@@ -106,6 +112,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		def.Writable = def.AccessLevel&ua.AccessLevelTypeCurrentWrite == ua.AccessLevelTypeCurrentWrite
 	case ua.StatusBadAttributeIDInvalid:
 		// ignore
+	case ua.StatusBadSecurityModeInsufficient:
+		return nil, nil
 	default:
 		return nil, err
 	}
@@ -142,6 +150,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		}
 	case ua.StatusBadAttributeIDInvalid:
 		// ignore
+	case ua.StatusBadSecurityModeInsufficient:
+		return nil, nil
 	default:
 		return nil, err
 	}
@@ -170,15 +180,21 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		return nil
 	}
 
-	if err := browseChildren(id.HasComponent); err != nil {
-		return nil, err
-	}
+	/*
+		if err := browseChildren(id.HasComponent); err != nil {
+			return nil, err
+		}
+	*/
+	// only browse folders so far, don't browse the properties automatically
 	if err := browseChildren(id.Organizes); err != nil {
 		return nil, err
 	}
-	if err := browseChildren(id.HasProperty); err != nil {
-		return nil, err
-	}
+	// For hasProperty it makes sense to show it very close to the tag itself, e.g., use the tagName as tagGroup and then the properties as subparts of it
+	/*
+		if err := browseChildren(id.HasProperty); err != nil {
+			return nil, err
+		}
+	*/
 	return nodes, nil
 }
 
@@ -438,7 +454,6 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		g.log.Errorf("Failed to connect")
 		return err
 	}
-	defer c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 
 	g.log.Infof("Connected to %s", g.endpoint)
 	g.log.Infof("Please note that browsing large node trees can take a long time (around 5 nodes per second)")
@@ -461,6 +476,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		nodes, err := browse(ctx, g.client.Node(id), "", 0, g.log)
 		if err != nil {
 			g.log.Errorf("Browsing failed: %s")
+			c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return err
 		}
 
@@ -471,6 +487,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	b, err := json.Marshal(nodeList)
 	if err != nil {
 		g.log.Errorf("Unmarshalling failed: %s")
+		c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 		return err
 	}
 
@@ -489,6 +506,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		}, g.subNotifyChan)
 		if err != nil {
 			g.log.Errorf("Subscribing failed: %s")
+			c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return err
 		}
 
@@ -499,16 +517,28 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 			monitoredRequests = append(monitoredRequests, miCreateRequest)
 		}
 
+		if len(nodeList) == 0 {
+			g.log.Errorf("Did not subscribe to any nodes. This can happen if the nodes that are selected are incompatible with this benthos version. Aborting...")
+			return fmt.Errorf("no valid nodes selected")
+		}
+
 		res, err := sub.Monitor(ctx, ua.TimestampsToReturnBoth, monitoredRequests...)
 		if err != nil {
 			g.log.Errorf("Monitoring failed: %s")
+			c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return err
+		}
+		if res == nil {
+			g.log.Errorf("Expected res to not be nil, if there is no error")
+			c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+			return fmt.Errorf("expected res to be not nil")
 		}
 
 		// Assuming you want to check the status code of each result
 		for _, result := range res.Results {
-			if result.StatusCode != ua.StatusOK {
+			if !errors.Is(result.StatusCode, ua.StatusOK) {
 				g.log.Errorf("Monitoring failed with status code: %v", result.StatusCode)
+				c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 				return fmt.Errorf("monitoring failed for node, status code: %v", result.StatusCode)
 			}
 		}
@@ -520,11 +550,17 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	return nil
 }
 
-// TODO: adjust with TypeID in opcua.enums.go
-func (g *OPCUAInput) createMessageFromValue(value interface{}, nodeID string) *service.Message {
+// createMessageFromValue creates a benthos messages from a given variant and nodeID
+// theoretically nodeID can be extracted from variant, but not in all cases (e.g., when subscribing), so it it left to the calling function
+func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeID string) *service.Message {
+	if variant == nil {
+		g.log.Errorf("Variant is nil")
+		return nil
+	}
+
 	b := make([]byte, 0)
 
-	switch v := value.(type) {
+	switch v := variant.Value().(type) {
 	case float32:
 		b = append(b, []byte(strconv.FormatFloat(float64(v), 'f', -1, 32))...)
 	case float64:
@@ -553,64 +589,18 @@ func (g *OPCUAInput) createMessageFromValue(value interface{}, nodeID string) *s
 		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
 	case uint64:
 		b = append(b, []byte(strconv.FormatUint(v, 10))...)
-	case []float32:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatFloat(float64(val), 'f', -1, 32))...)
-		}
-	case []float64:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatFloat(val, 'f', -1, 64))...)
-		}
-	case []string:
-		for _, val := range v {
-			b = append(b, []byte(string(val))...)
-		}
-	case []bool:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatBool(val))...)
-		}
-	case []int:
-		for _, val := range v {
-			b = append(b, []byte(strconv.Itoa(val))...)
-		}
-	case []int8:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatInt(int64(val), 10))...)
-		}
-	case []int16:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatInt(int64(val), 10))...)
-		}
-	case []int32:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatInt(int64(val), 10))...)
-		}
-	case []int64:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatInt(val, 10))...)
-		}
-	case []uint:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatUint(uint64(val), 10))...)
-		}
-	case []uint8:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatUint(uint64(val), 10))...)
-		}
-	case []uint16:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatUint(uint64(val), 10))...)
-		}
-	case []uint32:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatUint(uint64(val), 10))...)
-		}
-	case []uint64:
-		for _, val := range v {
-			b = append(b, []byte(strconv.FormatUint(val, 10))...)
-		}
 	default:
-		g.log.Errorf("Unknown type: %T", v)
+		// Convert unknown types to JSON
+		jsonBytes, err := json.Marshal(v)
+		if err != nil {
+			g.log.Errorf("Error marshaling to JSON: %v", err)
+			return nil
+		}
+		b = append(b, jsonBytes...)
+	}
+
+	if b == nil {
+		g.log.Errorf("Could not create benthos message as payload is empty for node %s: %v", nodeID, b)
 		return nil
 	}
 
@@ -624,6 +614,9 @@ func (g *OPCUAInput) createMessageFromValue(value interface{}, nodeID string) *s
 }
 
 func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+	if g.client == nil {
+		return nil, nil, errors.New("client is nil")
+	}
 	// Read all values in NodeList and return each of them as a message with the node's path as the metadata
 
 	// Create first a list of all the values to read
@@ -633,6 +626,10 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 		nodesToRead = append(nodesToRead, &ua.ReadValueID{
 			NodeID: node.NodeID,
 		})
+	}
+
+	if len(g.nodeList) > 100 {
+		g.log.Warnf("Reading more than 100 nodes with pull method. The request might fail as it can take too much time. Recommendation: use subscribeEnabled: true instead for better performance")
 	}
 
 	req := &ua.ReadRequest{
@@ -686,7 +683,7 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 			g.log.Errorf("Received nil from node: %s", node.NodeID.String())
 			continue
 		}
-		message := g.createMessageFromValue(value.Value(), node.NodeID.String())
+		message := g.createMessageFromValue(value, node.NodeID.String())
 		if message != nil {
 			msgs = append(msgs, message)
 		}
@@ -704,12 +701,20 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
 	var res *opcua.PublishNotificationData
 
+	if ctx == nil || ctx.Done() == nil {
+		return nil, nil, errors.New("emptyCtx is invalid for ReadBatchSubscribe")
+	}
 	select {
 	case res = <-g.subNotifyChan:
 		// Received a result, check for error
 		if res.Error != nil {
 			g.log.Errorf("ReadBatchSubscribe error: %s", res.Error)
 			return nil, nil, res.Error
+		}
+
+		if g.nodeList == nil {
+			g.log.Errorf("nodelist is nil")
+			return nil, nil, errors.New("nodelist empty")
 		}
 
 		// Create a message with the node's path as the metadata
@@ -728,7 +733,7 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 				handleID := item.ClientHandle
 
 				if uint32(len(g.nodeList)) >= handleID {
-					message := g.createMessageFromValue(item.Value.Value.Value(), g.nodeList[handleID].NodeID.String())
+					message := g.createMessageFromValue(item.Value.Value, g.nodeList[handleID].NodeID.String())
 					if message != nil {
 						msgs = append(msgs, message)
 					}
@@ -743,9 +748,13 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 			return nil
 		}, nil
 
-	case <-ctx.Done():
-		// Timeout occurred
-		g.log.Error("Timeout waiting for response from g.subNotifyChan")
+	case _, ok := <-ctx.Done():
+		if !ok {
+			g.log.Errorf("timeout channel was closed")
+		} else {
+			// Timeout occurred
+			g.log.Error("Timeout waiting for response from g.subNotifyChan")
+		}
 		return nil, nil, errors.New("timeout waiting for response")
 	}
 }
