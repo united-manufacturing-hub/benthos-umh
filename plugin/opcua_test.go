@@ -99,7 +99,10 @@ func TestAgainstSimulator(t *testing.T) {
 		selectedEndpoint := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input.insecure, "SignAndEncrypt", "Basic256Sha256")
 		t.Logf("selected endpoint %v:", selectedEndpoint)
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -122,7 +125,10 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -146,7 +152,10 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -170,7 +179,10 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -193,7 +205,10 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -239,7 +254,10 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -285,7 +303,10 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -330,7 +351,10 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -501,7 +525,10 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -546,7 +573,10 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -583,7 +613,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -607,7 +640,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -629,7 +665,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -651,7 +690,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -677,7 +719,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -720,7 +765,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -786,7 +834,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -830,7 +881,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -876,7 +930,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			_ = input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
