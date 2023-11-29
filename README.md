@@ -166,6 +166,7 @@ There are specific datatypes which are currently not supported by the plugin and
 
 - Two-dimensional arrays
 - UA Extension Objects
+- Variant arrays (Arrays with multiple different datatypes)
 
 
 ### Authentication and Security
