@@ -30,6 +30,15 @@ import (
 )
 
 func TestAgainstSimulator(t *testing.T) {
+	endpoint := os.Getenv("TEST_WAGO_ENDPOINT_URI")
+	username := os.Getenv("TEST_WAGO_USERNAME")
+	password := os.Getenv("TEST_WAGO_PASSWORD")
+
+	// Check if environment variables are set
+	if endpoint != "" || username != "" || password != "" {
+		t.Skip("Skipping test: environment variables are set")
+		return
+	}
 
 	t.Run("Logging Endpoints", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
