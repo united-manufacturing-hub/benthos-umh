@@ -650,6 +650,9 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeID string) 
 }
 
 func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+	if g.client == nil {
+		return nil, nil, errors.New("client is nil")
+	}
 	// Read all values in NodeList and return each of them as a message with the node's path as the metadata
 
 	// Create first a list of all the values to read
