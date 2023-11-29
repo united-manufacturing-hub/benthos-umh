@@ -1,9 +1,22 @@
-version: '3.8'
+version: "3.8"
 services:
   opcplc:
     image: mcr.microsoft.com/iotedge/opc-plc:2.9.11
-    command: ["--pn=50000", "--autoaccept", "--sph", "--sn=100", "--sr=10", "--st=uint", "--fn=5", "--fr=1", "--ft=uint", "--gn=5", "--certdnsnames=localhost", "--plchostname=localhost", "--unsecuretransport"]
     hostname: localhost
+    command:
+      - --pn=50000
+      - --autoaccept
+      - --sph
+      - --sn=100
+      - --sr=10
+      - --st=uint
+      - --fn=5
+      - --fr=1
+      - --ft=uint
+      - --gn=5
+      - --certdnsnames=localhost
+      - --plchostname=localhost
+      - --unsecuretransport
     ports:
       - "50000:50000"
       - "8080:8080"

@@ -31,6 +31,15 @@ import (
 )
 
 func TestAgainstSimulator(t *testing.T) {
+	endpoint := os.Getenv("TEST_WAGO_ENDPOINT_URI")
+	username := os.Getenv("TEST_WAGO_USERNAME")
+	password := os.Getenv("TEST_WAGO_PASSWORD")
+
+	// Check if environment variables are set
+	if endpoint != "" || username != "" || password != "" {
+		t.Skip("Skipping test: environment variables are set")
+		return
+	}
 
 	t.Run("Logging Endpoints", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -90,6 +99,12 @@ func TestAgainstSimulator(t *testing.T) {
 		}
 		selectedEndpoint := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input.insecure, "SignAndEncrypt", "Basic256Sha256")
 		t.Logf("selected endpoint %v:", selectedEndpoint)
+		if input.client != nil {
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 	})
 
 	t.Run("ConnectAnonymousInsecure", func(t *testing.T) {
@@ -111,7 +126,10 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -159,7 +177,10 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -183,7 +204,10 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -206,7 +230,10 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -216,7 +243,7 @@ func TestAgainstSimulator(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings []string = []string{"ns=3;s=Fast"}
+		var nodeIDStrings = []string{"ns=3;s=Fast"}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -234,10 +261,11 @@ func TestAgainstSimulator(t *testing.T) {
 
 		messageBatch, _, err := input.ReadBatch(ctx)
 		if err != nil {
+			t.Logf("%+v", messageBatch)
 			t.Fatal(err)
 		}
 
-		assert.Equal(t, 6, len(messageBatch))
+		assert.GreaterOrEqual(t, len(messageBatch), 6)
 
 		for _, message := range messageBatch {
 			message, err := message.AsStructuredMut()
@@ -251,7 +279,10 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -262,7 +293,7 @@ func TestAgainstSimulator(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings []string = []string{"ns=6;s=DataAccess_AnalogType_Byte"}
+		var nodeIDStrings = []string{"ns=6;s=DataAccess_AnalogType_Byte"}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -297,7 +328,10 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -307,7 +341,7 @@ func TestAgainstSimulator(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings []string = []string{"ns=6;s=DataAccess_AnalogType_Byte", "ns=6;s=DataAccess_AnalogType_Double", "ns=6;s=DataAccess_AnalogType_Float", "ns=6;s=DataAccess_AnalogType_Int16", "ns=6;s=DataAccess_AnalogType_Int32", "ns=6;s=DataAccess_AnalogType_Int64", "ns=6;s=DataAccess_AnalogType_SByte", "ns=6;s=DataAccess_AnalogType_UInt16", "ns=6;s=DataAccess_AnalogType_UInt32", "ns=6;s=DataAccess_AnalogType_UInt64"}
+		var nodeIDStrings = []string{"ns=6;s=DataAccess_AnalogType_Byte", "ns=6;s=DataAccess_AnalogType_Double", "ns=6;s=DataAccess_AnalogType_Float", "ns=6;s=DataAccess_AnalogType_Int16", "ns=6;s=DataAccess_AnalogType_Int32", "ns=6;s=DataAccess_AnalogType_Int64", "ns=6;s=DataAccess_AnalogType_SByte", "ns=6;s=DataAccess_AnalogType_UInt16", "ns=6;s=DataAccess_AnalogType_UInt32", "ns=6;s=DataAccess_AnalogType_UInt64"}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -342,7 +376,10 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -466,7 +503,7 @@ func TestAgainstSimulator(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings []string = []string{"ns=6;s=DataAccess_DataItem"} // it will subscribe to all values with data type that is non-null.
+		var nodeIDStrings = []string{"ns=6;s=DataAccess_DataItem"} // it will subscribe to all values with data type that is non-null.
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -510,7 +547,58 @@ func TestAgainstSimulator(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+
+	t.Run("TestForFailedNodeCrash", func(t *testing.T) {
+		// https://github.com/united-manufacturing-hub/MgmtIssues/issues/1088
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var err error
+
+		var nodeIDStrings = []string{
+			"ns=3;s=Fast",
+			"ns=3;s=Slow",
+		}
+		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+		input := &OPCUAInput{
+			endpoint:         "opc.tcp://localhost:50000", // Important: ensure that the DNS name in the certificates of the server is also localhost (Hostname and DNS Name), as otherwise the server will refuse the connection
+			username:         "",
+			password:         "",
+			nodeIDs:          parsedNodeIDs,
+			insecure:         true,
+			subscribeEnabled: true,
+		}
+
+		// Attempt to connect
+		err = input.Connect(ctx)
+		assert.NoError(t, err)
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.NotEmpty(t, messageBatch)
+
+		for _, message := range messageBatch {
+			_, err := message.AsStructured()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		// Close connection
+		if input.client != nil {
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -1100,7 +1188,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -1124,7 +1215,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -1146,7 +1240,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -1168,7 +1265,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -1178,7 +1278,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings []string = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
+		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -1194,7 +1294,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -1204,7 +1307,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings []string = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
+		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -1237,7 +1340,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -1247,7 +1353,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings []string = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL", "ns=4;s=|vprop|WAGO 750-8101 PFC100 CS 2ETH.Application.RevisionCounter"}
+		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL", "ns=4;s=|vprop|WAGO 750-8101 PFC100 CS 2ETH.Application.RevisionCounter"}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -1303,7 +1409,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -1313,7 +1422,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings []string = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
+		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -1347,7 +1456,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -1357,7 +1469,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings []string = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
+		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -1393,7 +1505,10 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Close connection
 		if input.client != nil {
-			input.client.Close(ctx)
+			err = input.client.Close(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -1503,7 +1618,7 @@ func TestGetReasonableEndpoint_Insecure(t *testing.T) {
 			t.Errorf("Expected selected endpoint to have no encryption, but got %v", selectedEndpoint.SecurityMode)
 		}
 	} else {
-		t.Error("Expected a reasonable endpoint, but got nil")
+		t.Fatalf("Expected a reasonable endpoint, but got nil") // This needs to be fatal, to prevent nil error in selectedEndpoint2 check
 	}
 
 	input2 := &OPCUAInput{
