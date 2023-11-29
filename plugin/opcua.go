@@ -775,7 +775,7 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 
 		case _, ok := <-doneChannel:
 			if !ok {
-				g.log.Errorf("Timeout channel was closed unexpectedly")
+				g.log.Error("Timeout channel was closed unexpectedly")
 				return nil, nil, errors.New("timeout channel closed")
 			} else {
 				// Timeout occurred

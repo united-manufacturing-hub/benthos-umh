@@ -16,6 +16,7 @@ services:
       - --certdnsnames=localhost
       - --plchostname=localhost
       - --unsecuretransport
+      - --loglevel=debug
     ports:
       - "50000:50000"
       - "8080:8080"

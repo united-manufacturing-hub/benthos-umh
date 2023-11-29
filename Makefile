@@ -22,7 +22,7 @@ target:
 	@goreleaser build --single-target --snapshot --id benthos \
 		--output ./tmp/bin/benthos
 test:
-	@go test ./...
+	@go test -v ./...
 
 lint:
 	@golangci-lint run
