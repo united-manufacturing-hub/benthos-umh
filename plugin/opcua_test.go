@@ -645,9 +645,34 @@ func TestAgainstSimulator(t *testing.T) {
 
 			// Determine the data type from the OPC UA path
 			dataType := strings.Split(opcuapath, "_")[5] // This will extract the data type part of the OPC UA path
+			t.Log(dataType)
 
-			// Add checking based on the OPC UA path the resulting data type
-			checkDatatypeOfOPCUATag(t, dataType, messageParsed, opcuapath)
+			// Check if the data type is an array and handle accordingly
+			if strings.HasSuffix(dataType, "Arrays") {
+				dataTypeOfArray := strings.Split(opcuapath, "_")[6]
+				t.Log(dataTypeOfArray)
+				// Handle array data types
+				switch dataTypeOfArray {
+				case "Duration", "Guid", "LocaleId", "Boolean", "LocalizedText", "NodeId", "QualifiedName", "UtcTime", "DateTime", "Double", "Enumeration", "Float", "Int16", "Int32", "Int64", "Integer", "Number", "SByte", "StatusCode", "String", "UInt16", "UInt32", "UInt64", "UInteger", "Variant", "XmlElement", "ByteString":
+					// Check if the messageParsed is of type slice (array)
+					messageParsedArray, ok := messageParsed.([]interface{})
+					if !ok {
+						t.Errorf("Expected messageParsed to be an array, but got %T: %s : %s", messageParsed, opcuapath, messageParsed)
+					} else {
+						for _, item := range messageParsedArray {
+
+							// Add checking based on the OPC UA path the resulting data type
+							checkDatatypeOfOPCUATag(t, dataTypeOfArray, item, opcuapath)
+						}
+					}
+				case "Byte":
+					checkDatatypeOfOPCUATag(t, "ByteArray", messageParsed, opcuapath)
+				default:
+					t.Errorf("Unsupported array data type in OPC UA path: %s:%s", dataType, opcuapath)
+				}
+			} else {
+				t.Fatalf("Received non-array: %s", opcuapath)
+			}
 		}
 
 		// Close connection
@@ -970,6 +995,7 @@ func TestAgainstSimulator(t *testing.T) {
 }
 
 func checkDatatypeOfOPCUATag(t *testing.T, dataType string, messageParsed any, opcuapath string) {
+	t.Logf("%s, %+v, %s", dataType, messageParsed, opcuapath)
 	switch dataType {
 	case "Boolean":
 		var expectedType bool
