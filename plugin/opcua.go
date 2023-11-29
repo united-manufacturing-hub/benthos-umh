@@ -730,12 +730,20 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
 	var res *opcua.PublishNotificationData
 
+	if ctx == nil || ctx.Done() == nil {
+		return nil, nil, errors.New("emptyCtx is invalid for ReadBatchSubscribe")
+	}
 	select {
 	case res = <-g.subNotifyChan:
 		// Received a result, check for error
 		if res.Error != nil {
 			g.log.Errorf("ReadBatchSubscribe error: %s", res.Error)
 			return nil, nil, res.Error
+		}
+
+		if g.nodeList == nil {
+			g.log.Errorf("nodelist is nil")
+			return nil, nil, errors.New("nodelist empty")
 		}
 
 		// Create a message with the node's path as the metadata
@@ -769,9 +777,13 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 			return nil
 		}, nil
 
-	case <-ctx.Done():
-		// Timeout occurred
-		g.log.Error("Timeout waiting for response from g.subNotifyChan")
+	case _, ok := <-ctx.Done():
+		if !ok {
+			g.log.Errorf("timeout channel was closed")
+		} else {
+			// Timeout occurred
+			g.log.Error("Timeout waiting for response from g.subNotifyChan")
+		}
 		return nil, nil, errors.New("timeout waiting for response")
 	}
 }
