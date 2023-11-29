@@ -984,7 +984,7 @@ func checkDatatypeOfOPCUATag(t *testing.T, dataType string, messageParsed any, o
 		assert.IsType(t, expectedType, messageParsed)
 		t.Log("Received Byte message: ", messageParsed)
 
-	case "DateTime":
+	case "DateTime": //warning: there is a bug when the date is a lot in the future year 30828
 		var expectedType string
 		assert.IsType(t, expectedType, messageParsed)
 		t.Log("Received DateTime message: ", messageParsed)
