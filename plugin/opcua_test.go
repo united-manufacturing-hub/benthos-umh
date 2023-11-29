@@ -928,7 +928,7 @@ func TestGetReasonableEndpoint_Insecure(t *testing.T) {
 			t.Errorf("Expected selected endpoint to have no encryption, but got %v", selectedEndpoint.SecurityMode)
 		}
 	} else {
-		t.Error("Expected a reasonable endpoint, but got nil")
+		t.Fatalf("Expected a reasonable endpoint, but got nil") // This needs to be fatal, to prevent nil error in selectedEndpoint2 check
 	}
 
 	input2 := &OPCUAInput{
