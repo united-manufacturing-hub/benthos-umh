@@ -38,7 +38,7 @@ jobs:
           go_version: ${{ env.GO_VERSION }}
       - name: Startup simulator in background
         run: |
-          docker-compose up &
+          docker-compose up -d
         working-directory: tests
       - name: Wait for port 50000 to be ready
         run: |
