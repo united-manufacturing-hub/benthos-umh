@@ -26,7 +26,8 @@ env:
 
 jobs:
   go-test:
-    runs-on: warp-ubuntu-latest-x64-16x
+    runs-on:
+      group: large-runners
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -48,7 +49,8 @@ jobs:
       - name: Test
         run: make test
   go-build:
-    runs-on: warp-ubuntu-latest-x64-16x
+    runs-on:
+      group: large-runners
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -79,7 +81,8 @@ jobs:
           path: tmp/bin/benthos
           retention-days: 2
   build:
-    runs-on: warp-ubuntu-latest-x64-16x
+    runs-on:
+      group: large-runners
     timeout-minutes: 30
     steps:
       - name: Checkout
