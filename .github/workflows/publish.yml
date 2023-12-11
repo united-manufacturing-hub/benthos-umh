@@ -25,7 +25,8 @@ env:
 
 jobs:
   registry:
-    runs-on: warp-ubuntu-latest-x64-16x
+    runs-on:
+      group: large-runners
     timeout-minutes: 45
     steps:
       - name: Checkout
