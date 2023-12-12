@@ -1422,6 +1422,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Attempt to connect
 		err = input.Connect(ctx)
+		defer input.client.Close(ctx)
 		assert.NoError(t, err)
 
 		t.Log("Connected!")
@@ -1460,14 +1461,6 @@ func TestAgainstRemoteInstance(t *testing.T) {
 			var exampleNumber json.Number = "22.565684"
 			assert.IsType(t, exampleNumber, message) // it should be a number
 			t.Log("Received message: ", message)
-		}
-
-		// Close connection
-		if input.client != nil {
-			err = input.client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
 		}
 	})
 
