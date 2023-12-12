@@ -1436,13 +1436,17 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		assert.Equal(t, 2, len(messageBatch))
 
 		for _, message := range messageBatch {
-			message, err := message.AsStructuredMut()
+			messageContent, err := message.AsStructuredMut()
 			if err != nil {
 				t.Fatal(err)
 			}
 			var exampleNumber json.Number = "22.565684"
-			assert.IsType(t, exampleNumber, message) // it should be a number
-			t.Log("Received message: ", message)
+			assert.IsType(t, exampleNumber, messageContent) // it should be a number
+			t.Log("Received message: ", messageContent)
+			metadata, ok := message.MetaGet("opcua_path")
+			if ok {
+				t.Log("Metadata: ", metadata)
+			}
 		}
 
 		messageBatch2, _, err := input.ReadBatch(ctx)
