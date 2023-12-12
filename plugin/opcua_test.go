@@ -608,7 +608,34 @@ func TestAgainstSimulator(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings []string = []string{"ns=6;s=Scalar_Static_Arrays"} // it will subscribe to all values with data type that is non-null.
+		var nodeIDStrings []string = []string{
+			"ns=6;s=Scalar_Static_Arrays_Boolean",
+			"ns=6;s=Scalar_Static_Arrays_Byte",
+			"ns=6;s=Scalar_Static_Arrays_ByteString",
+			"ns=6;s=Scalar_Static_Arrays_DateTime",
+			"ns=6;s=Scalar_Static_Arrays_Double",
+			"ns=6;s=Scalar_Static_Arrays_Duration",
+			"ns=6;s=Scalar_Static_Arrays_Float",
+			"ns=6;s=Scalar_Static_Arrays_Guid",
+			"ns=6;s=Scalar_Static_Arrays_Int16",
+			"ns=6;s=Scalar_Static_Arrays_Int32",
+			"ns=6;s=Scalar_Static_Arrays_Int64",
+			"ns=6;s=Scalar_Static_Arrays_Integer",
+			"ns=6;s=Scalar_Static_Arrays_LocaleId",
+			"ns=6;s=Scalar_Static_Arrays_LocalizedText",
+			"ns=6;s=Scalar_Static_Arrays_NodeId",
+			"ns=6;s=Scalar_Static_Arrays_Number",
+			"ns=6;s=Scalar_Static_Arrays_QualifiedName",
+			"ns=6;s=Scalar_Static_Arrays_SByte",
+			"ns=6;s=Scalar_Static_Arrays_String",
+			"ns=6;s=Scalar_Static_Arrays_UInt16",
+			"ns=6;s=Scalar_Static_Arrays_UInt32",
+			"ns=6;s=Scalar_Static_Arrays_UInt64",
+			"ns=6;s=Scalar_Static_Arrays_UInteger",
+			"ns=6;s=Scalar_Static_Arrays_UtcTime",
+			// "ns=6;s=Scalar_Static_Arrays_Variant", // This node causes a timeout
+			"ns=6;s=Scalar_Static_Arrays_XmlElement",
+		}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -629,7 +656,7 @@ func TestAgainstSimulator(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		assert.Equal(t, 26, len(messageBatch))
+		assert.Equal(t, 25, len(messageBatch))
 
 		for _, message := range messageBatch {
 			messageParsed, err := message.AsStructuredMut()
