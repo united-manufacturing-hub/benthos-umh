@@ -664,6 +664,10 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 			g.client.Close(ctx)
 			g.client = nil
 			return nil, nil, service.ErrNotConnected
+		case ua.StatusBadServerNotConnected:
+			g.client.Close(ctx)
+			g.client = nil
+			return nil, nil, service.ErrNotConnected
 		}
 
 		// return error and stop executing this function.
