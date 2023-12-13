@@ -19,7 +19,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
-	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -781,7 +780,7 @@ func TestAgainstSimulator(t *testing.T) {
 		}
 	})
 
-	t.Run("Connect Subscribe does not subscribe to objects", func(t *testing.T) {
+	t.Run("Connect Subscribe does subscribe to objects", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
@@ -801,9 +800,7 @@ func TestAgainstSimulator(t *testing.T) {
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
-		if assert.Error(t, err) {
-			assert.Equal(t, fmt.Errorf("no valid nodes selected"), err)
-		}
+		assert.NoError(t, err)
 
 		// Close connection
 		if input.client != nil {
