@@ -1327,7 +1327,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL.rTemp_DegC"}
+		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -1366,7 +1366,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL.rTemp_DegC", "ns=4;s=|vprop|WAGO 750-8101 PFC100 CS 2ETH.Application.RevisionCounter"}
+		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL", "ns=4;s=|vprop|WAGO 750-8101 PFC100 CS 2ETH.Application.RevisionCounter"}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -1428,7 +1428,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL.rTemp_DegC"}
+		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -1468,7 +1468,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		var err error
 
-		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL.rTemp_DegC"}
+		var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
 
 		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
