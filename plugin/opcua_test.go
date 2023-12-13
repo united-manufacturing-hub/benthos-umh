@@ -1239,15 +1239,12 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
-		assert.NoError(t, err)
-
-		// Close connection
-		if input.client != nil {
-			err = input.client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
+		defer func() {
+			if input.client != nil {
+				input.client.Close(ctx)
 			}
-		}
+		}()
+		assert.NoError(t, err)
 	})
 
 	t.Run("ConnectAnonymousWithNoEncryption", func(t *testing.T) {
@@ -1266,15 +1263,12 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Attempt to connect
 		err = input.Connect(ctx)
-		assert.NoError(t, err)
-
-		// Close connection
-		if input.client != nil {
-			err = input.client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
+		defer func() {
+			if input.client != nil {
+				input.client.Close(ctx)
 			}
-		}
+		}()
+		assert.NoError(t, err)
 	})
 
 	t.Run("Connect Username-Password fail", func(t *testing.T) {
@@ -1291,15 +1285,12 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
-		assert.Error(t, err)
-
-		// Close connection
-		if input.client != nil {
-			err = input.client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
+		defer func() {
+			if input.client != nil {
+				input.client.Close(ctx)
 			}
-		}
+		}()
+		assert.Error(t, err)
 	})
 
 	t.Run("Connect Username-Password success", func(t *testing.T) {
@@ -1316,15 +1307,12 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
-		assert.NoError(t, err)
-
-		// Close connection
-		if input.client != nil {
-			err = input.client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
+		defer func() {
+			if input.client != nil {
+				input.client.Close(ctx)
 			}
-		}
+		}()
+		assert.NoError(t, err)
 	})
 
 	t.Run("Parse nodes", func(t *testing.T) {
@@ -1345,15 +1333,12 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
-		assert.NoError(t, err)
-
-		// Close connection
-		if input.client != nil {
-			err = input.client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
+		defer func() {
+			if input.client != nil {
+				input.client.Close(ctx)
 			}
-		}
+		}()
+		assert.NoError(t, err)
 	})
 
 	t.Run("ReadBatch", func(t *testing.T) {
@@ -1374,6 +1359,11 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
+		defer func() {
+			if input.client != nil {
+				input.client.Close(ctx)
+			}
+		}()
 		assert.NoError(t, err)
 
 		messageBatch, _, err := input.ReadBatch(ctx)
@@ -1391,14 +1381,6 @@ func TestAgainstRemoteInstance(t *testing.T) {
 			var exampleNumber json.Number = "22.565684"
 			assert.IsType(t, exampleNumber, message) // it should be a number
 			t.Log("Received message: ", message)
-		}
-
-		// Close connection
-		if input.client != nil {
-			err = input.client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
 		}
 	})
 
@@ -1422,7 +1404,11 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Attempt to connect
 		err = input.Connect(ctx)
-		defer input.client.Close(ctx)
+		defer func() {
+			if input.client != nil {
+				input.client.Close(ctx)
+			}
+		}()
 		assert.NoError(t, err)
 
 		t.Log("Connected!")
@@ -1487,6 +1473,11 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
+		defer func() {
+			if input.client != nil {
+				input.client.Close(ctx)
+			}
+		}()
 		assert.NoError(t, err)
 
 		messageBatch, _, err := input.ReadBatch(ctx)
@@ -1504,14 +1495,6 @@ func TestAgainstRemoteInstance(t *testing.T) {
 			var exampleNumber json.Number = "22.565684"
 			assert.IsType(t, exampleNumber, message) // it should be a number
 			t.Log("Received message: ", message)
-		}
-
-		// Close connection
-		if input.client != nil {
-			err = input.client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
 		}
 	})
 
@@ -1536,6 +1519,11 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
+		defer func() {
+			if input.client != nil {
+				input.client.Close(ctx)
+			}
+		}()
 		assert.NoError(t, err)
 
 		messageBatch, _, err := input.ReadBatch(ctx)
@@ -1553,14 +1541,6 @@ func TestAgainstRemoteInstance(t *testing.T) {
 			var exampleNumber json.Number = "22.565684"
 			assert.IsType(t, exampleNumber, message) // it should be a number
 			t.Log("Received message: ", message)
-		}
-
-		// Close connection
-		if input.client != nil {
-			err = input.client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
 		}
 	})
 
