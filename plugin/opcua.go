@@ -162,6 +162,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	var nodes []NodeDef
 	if def.NodeClass == ua.NodeClassVariable {
 		nodes = append(nodes, def)
+		return nodes, nil
 	}
 
 	browseChildren := func(refType uint32) error {
@@ -180,25 +181,15 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		return nil
 	}
 
-	refs, err := n.References(ctx, id.HasTypeDefinition, ua.BrowseDirectionForward, ua.NodeClassObject, false)
-	if err != nil {
-		return nil, errors.Errorf("References: %s", err)
-	}
-	logger.Debugf("found %d type refs\n", len(refs))
-	hasTypeDefinitionFolderType := false
-	for _, ref := range refs {
-		if ref.DisplayName == ua.NewLocalizedText("FolderType") {
-			hasTypeDefinitionFolderType = true
-			break
-		}
-	}
-
-	if def.NodeClass == ua.NodeClassObject && hasTypeDefinitionFolderType {
+	if def.NodeClass == ua.NodeClassObject {
 		if err := browseChildren(id.HasComponent); err != nil {
 			return nil, err
 		}
 		// only browse folders so far, don't browse the properties automatically
 		if err := browseChildren(id.Organizes); err != nil {
+			return nil, err
+		}
+		if err := browseChildren(id.FolderType); err != nil {
 			return nil, err
 		}
 		// For hasProperty it makes sense to show it very close to the tag itself, e.g., use the tagName as tagGroup and then the properties as subparts of it
