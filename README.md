@@ -38,7 +38,7 @@ To use benthos-umh in standalone mode with Docker, follow the instructions in th
         - bloblang: |
             root = {
               meta("opcua_path"): this,
-              "timestamp_unix": timestamp_unix()
+              "timestamp_ms": (timestamp_unix_nano() / 1000000).floor()
             }
 
     output:
@@ -73,7 +73,7 @@ data:
         - bloblang: |
             root = {
               meta("opcua_path"): this,
-              "timestamp_unix": timestamp_unix()
+              "timestamp_ms": (timestamp_unix_nano() / 1000000).floor()
             }
     output:
       umh_output:
