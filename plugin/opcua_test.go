@@ -1239,11 +1239,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
-		defer func() {
-			if input.client != nil {
-				input.client.Close(ctx)
-			}
-		}()
+		defer input.Close(ctx)
 		assert.NoError(t, err)
 	})
 
@@ -1263,11 +1259,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Attempt to connect
 		err = input.Connect(ctx)
-		defer func() {
-			if input.client != nil {
-				input.client.Close(ctx)
-			}
-		}()
+		defer input.Close(ctx)
 		assert.NoError(t, err)
 	})
 
@@ -1285,11 +1277,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
-		defer func() {
-			if input.client != nil {
-				input.client.Close(ctx)
-			}
-		}()
+		defer input.Close(ctx)
 		assert.Error(t, err)
 	})
 
@@ -1307,11 +1295,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
-		defer func() {
-			if input.client != nil {
-				input.client.Close(ctx)
-			}
-		}()
+		defer input.Close(ctx)
 		assert.NoError(t, err)
 	})
 
@@ -1333,11 +1317,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
-		defer func() {
-			if input.client != nil {
-				input.client.Close(ctx)
-			}
-		}()
+		defer input.Close(ctx)
 		assert.NoError(t, err)
 	})
 
@@ -1359,11 +1339,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
-		defer func() {
-			if input.client != nil {
-				input.client.Close(ctx)
-			}
-		}()
+		defer input.Close(ctx)
 		assert.NoError(t, err)
 
 		messageBatch, _, err := input.ReadBatch(ctx)
@@ -1404,11 +1380,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 
 		// Attempt to connect
 		err = input.Connect(ctx)
-		defer func() {
-			if input.client != nil {
-				input.client.Close(ctx)
-			}
-		}()
+		defer input.Close(ctx)
 		assert.NoError(t, err)
 
 		t.Log("Connected!")
@@ -1469,11 +1441,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
-		defer func() {
-			if input.client != nil {
-				input.client.Close(ctx)
-			}
-		}()
+		defer input.Close(ctx)
 		assert.NoError(t, err)
 
 		messageBatch, _, err := input.ReadBatch(ctx)
@@ -1515,11 +1483,7 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
-		defer func() {
-			if input.client != nil {
-				input.client.Close(ctx)
-			}
-		}()
+		defer input.Close(ctx)
 		assert.NoError(t, err)
 
 		messageBatch, _, err := input.ReadBatch(ctx)
