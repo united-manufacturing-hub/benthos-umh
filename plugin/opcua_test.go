@@ -1429,10 +1429,6 @@ func TestAgainstRemoteInstance(t *testing.T) {
 			var exampleNumber json.Number = "22.565684"
 			assert.IsType(t, exampleNumber, messageContent) // it should be a number
 			t.Log("Received message: ", messageContent)
-			metadata, ok := message.MetaGet("opcua_path")
-			if ok {
-				t.Log("Metadata: ", metadata)
-			}
 		}
 
 		messageBatch2, _, err := input.ReadBatch(ctx)
