@@ -160,6 +160,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	logger.Debugf("%d: def.Path:%s def.NodeClass:%s\n", level, def.Path, def.NodeClass)
 
 	var nodes []NodeDef
+	// If a node has a Variable class, it probably means that it is a tag
+	// Therefore, no need to browse further
 	if def.NodeClass == ua.NodeClassVariable {
 		nodes = append(nodes, def)
 		return nodes, nil
@@ -181,11 +183,15 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		return nil
 	}
 
+	// If a node has an Object class, it probably means that it is a folder
+	// Therefore, browse its children
 	if def.NodeClass == ua.NodeClassObject {
+		// To determine if an Object is a folder, we need to check different references
+		// Add here all references that should be checked
+		
 		if err := browseChildren(id.HasComponent); err != nil {
 			return nil, err
 		}
-		// only browse folders so far, don't browse the properties automatically
 		if err := browseChildren(id.Organizes); err != nil {
 			return nil, err
 		}
