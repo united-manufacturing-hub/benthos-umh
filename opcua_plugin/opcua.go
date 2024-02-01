@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plugin
+package opcua_plugin
 
 import (
 	"context"
@@ -188,7 +188,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	if def.NodeClass == ua.NodeClassObject {
 		// To determine if an Object is a folder, we need to check different references
 		// Add here all references that should be checked
-		
+
 		if err := browseChildren(id.HasComponent); err != nil {
 			return nil, err
 		}

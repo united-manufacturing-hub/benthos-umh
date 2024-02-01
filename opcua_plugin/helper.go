@@ -1,4 +1,4 @@
-package plugin
+package opcua_plugin
 
 import (
 	"crypto/rand"
