@@ -31,6 +31,9 @@ concurrency:
 jobs:
   go-test-wago:
     runs-on: hercules
+    permissions:
+      packages: write
+      contents: read
     timeout-minutes: 30
     steps:
       - name: Checkout
