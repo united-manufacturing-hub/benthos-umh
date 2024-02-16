@@ -289,6 +289,10 @@ input:
 
 This input is tailored for the S7 communication protocol, facilitating a direct connection with S7-300, S7-400, S7-1200, and S7-1500 series PLCs.
 
+For more modern PLCs like the S7-1200 and S7-1500 the following two changes need to be done to use them:
+1. "Optimized block access" must be disabled for the DBs we want to access
+2. In the "Protection" section of the CPU Properties, enable the "Permit access with PUT/GET" checkbox
+
 #### Configuration
 ```yaml
 input:
