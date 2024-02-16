@@ -157,7 +157,6 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		return nil, err
 	}
 
-	def.Path = join(path, def.BrowseName)
 	logger.Debugf("%d: def.Path:%s def.NodeClass:%s\n", level, def.Path, def.NodeClass)
 	def.ParentNodeID = parentNodeId
 
@@ -165,6 +164,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	// If a node has a Variable class, it probably means that it is a tag
 	// Therefore, no need to browse further
 	if def.NodeClass == ua.NodeClassVariable {
+		def.Path = join(path, def.BrowseName)
 		nodes = append(nodes, def)
 		return nodes, nil
 	}
@@ -618,7 +618,7 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 	message := service.NewMessage(b)
 
 	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
-	opcuaPath := re.ReplaceAllString(nodeDef.NodeID.String(), "_")
+	opcuaPath := re.ReplaceAllString(nodeDef.Path, "_")
 	// In case the node is a child of a folder, we want to only keep the parent path
 	// opcuaPath = extractParentPath(opcuaPath, nodeDef.Path)
 	message.MetaSet("opcua_path", opcuaPath)
