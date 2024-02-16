@@ -618,18 +618,19 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 	message := service.NewMessage(b)
 
 	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+
+	// opcua_path is the sanitized nodeID
 	opcuaPath := re.ReplaceAllString(nodeDef.NodeID.String(), "_")
-	// In case the node is a child of a folder, we want to only keep the parent path
-	// opcuaPath = extractParentPath(opcuaPath, nodeDef.Path)
 	message.MetaSet("opcua_path", opcuaPath)
 
+	// opcua_parent_path is the sanitized parentNodeID, which is equal to the subscribed nodeID
 	parentPath := re.ReplaceAllString(nodeDef.ParentNodeID, "_")
 	message.MetaSet("opcua_parent_path", parentPath)
 
 	op, _ := message.MetaGet("opcua_path")
-	cp, _ := message.MetaGet("opcua_parent_path")
+	opp, _ := message.MetaGet("opcua_parent_path")
 	g.log.Debugf("Created message with opcua_path: %s", op)
-	g.log.Debugf("Created message with opcua_parent_path: %s", cp)
+	g.log.Debugf("Created message with opcua_parent_path: %s", opp)
 
 	return message
 }
