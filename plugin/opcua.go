@@ -628,9 +628,11 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 	message.MetaSet("opcua_parent_path", parentPath)
 
 	op, _ := message.MetaGet("opcua_path")
-	cp, _ := message.MetaGet("opcua_parent_path")
+	pp, _ := message.MetaGet("opcua_parent_path")
+	tp, _ := message.MetaGet("opcua_tag_path")
 	g.log.Debugf("Created message with opcua_path: %s", op)
-	g.log.Debugf("Created message with opcua_parent_path: %s", cp)
+	g.log.Debugf("Created message with opcua_parent_path: %s", pp)
+	g.log.Debugf("Created message with opcua_tag_path: %s", tp)
 
 	return message
 }
