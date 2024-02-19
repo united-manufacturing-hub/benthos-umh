@@ -72,6 +72,12 @@ func TestAgainstRemoteInstance(t *testing.T) {
 	rackStr := os.Getenv("TEST_S7_RACK")
 	slotStr := os.Getenv("TEST_S7_SLOT")
 
+	// Check if environment variables are set
+	if endpoint == "" || rackStr == "" || slotStr == "" {
+		t.Skip("Skipping test: environment variables not set")
+		return
+	}
+
 	rack, err := strconv.Atoi(rackStr)
 	if err != nil {
 		t.Errorf("Failed to convert rack to integer: %v", err)
@@ -84,12 +90,6 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		return
 	}
 	const batchMaxSize = 480 // default
-
-	// Check if environment variables are set
-	if endpoint == "" {
-		t.Skip("Skipping test: environment variables not set")
-		return
-	}
 
 	t.Run("Connect", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
