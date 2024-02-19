@@ -157,7 +157,6 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		return nil, err
 	}
 
-	def.Path = join(path, def.BrowseName)
 	logger.Debugf("%d: def.Path:%s def.NodeClass:%s\n", level, def.Path, def.NodeClass)
 	def.ParentNodeID = parentNodeId
 
@@ -165,6 +164,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	// If a node has a Variable class, it probably means that it is a tag
 	// Therefore, no need to browse further
 	if def.NodeClass == ua.NodeClassVariable {
+		def.Path = join(path, def.BrowseName)
 		nodes = append(nodes, def)
 		return nodes, nil
 	}
