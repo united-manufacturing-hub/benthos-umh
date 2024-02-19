@@ -27,6 +27,9 @@ jobs:
   registry:
     runs-on:
       group: large-runners
+    permissions:
+      packages: write
+      contents: read
     timeout-minutes: 45
     steps:
       - name: Checkout

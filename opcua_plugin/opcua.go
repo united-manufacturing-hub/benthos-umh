@@ -37,18 +37,19 @@ import (
 )
 
 type NodeDef struct {
-	NodeID      *ua.NodeID
-	NodeClass   ua.NodeClass
-	BrowseName  string
-	Description string
-	AccessLevel ua.AccessLevelType
-	Path        string
-	DataType    string
-	Writable    bool
-	Unit        string
-	Scale       string
-	Min         string
-	Max         string
+	NodeID       *ua.NodeID
+	NodeClass    ua.NodeClass
+	BrowseName   string
+	Description  string
+	AccessLevel  ua.AccessLevelType
+	ParentNodeID string
+	Path         string
+	DataType     string
+	Writable     bool
+	Unit         string
+	Scale        string
+	Min          string
+	Max          string
 }
 
 func (n NodeDef) Records() []string {
@@ -62,8 +63,8 @@ func join(a, b string) string {
 	return a + "." + b
 }
 
-func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *service.Logger) ([]NodeDef, error) {
-	logger.Debugf("node:%s path:%q level:%d\n", n, path, level)
+func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *service.Logger, parentNodeId string) ([]NodeDef, error) {
+	logger.Debugf("node:%s path:%q level:%d parentNodeId:%s\n", n, path, level, parentNodeId)
 	if level > 10 {
 		return nil, nil
 	}
@@ -156,13 +157,14 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		return nil, err
 	}
 
-	def.Path = join(path, def.BrowseName)
 	logger.Debugf("%d: def.Path:%s def.NodeClass:%s\n", level, def.Path, def.NodeClass)
+	def.ParentNodeID = parentNodeId
 
 	var nodes []NodeDef
 	// If a node has a Variable class, it probably means that it is a tag
 	// Therefore, no need to browse further
 	if def.NodeClass == ua.NodeClassVariable {
+		def.Path = join(path, def.BrowseName)
 		nodes = append(nodes, def)
 		return nodes, nil
 	}
@@ -174,7 +176,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		}
 		logger.Debugf("found %d child refs\n", len(refs))
 		for _, rn := range refs {
-			children, err := browse(ctx, rn, def.Path, level+1, logger)
+			children, err := browse(ctx, rn, def.Path, level+1, logger, parentNodeId)
 			if err != nil {
 				return errors.Errorf("browse children: %s", err)
 			}
@@ -483,7 +485,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		g.log.Debugf("Browsing nodeID: %s", id.String())
 
 		// Browse the OPC-UA server's node tree and print the results.
-		nodes, err := browse(ctx, g.client.Node(id), "", 0, g.log)
+		nodes, err := browse(ctx, g.client.Node(id), "", 0, g.log, id.String())
 		if err != nil {
 			g.log.Errorf("Browsing failed: %s")
 			c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
@@ -562,7 +564,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 // createMessageFromValue creates a benthos messages from a given variant and nodeID
 // theoretically nodeID can be extracted from variant, but not in all cases (e.g., when subscribing), so it it left to the calling function
-func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeID string) *service.Message {
+func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef) *service.Message {
 	if variant == nil {
 		g.log.Errorf("Variant is nil")
 		return nil
@@ -610,15 +612,28 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeID string) 
 	}
 
 	if b == nil {
-		g.log.Errorf("Could not create benthos message as payload is empty for node %s: %v", nodeID, b)
+		g.log.Errorf("Could not create benthos message as payload is empty for node %s: %v", nodeDef.NodeID.String(), b)
 		return nil
 	}
 
 	message := service.NewMessage(b)
 
 	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
-	opcuaPath := re.ReplaceAllString(nodeID, "_")
+	opcuaPath := re.ReplaceAllString(nodeDef.NodeID.String(), "_")
 	message.MetaSet("opcua_path", opcuaPath)
+
+	opcuaTagPath := re.ReplaceAllString(nodeDef.Path, "_")
+	message.MetaSet("opcua_tag_path", opcuaTagPath)
+
+	parentPath := re.ReplaceAllString(nodeDef.ParentNodeID, "_")
+	message.MetaSet("opcua_parent_path", parentPath)
+
+	op, _ := message.MetaGet("opcua_path")
+	pp, _ := message.MetaGet("opcua_parent_path")
+	tp, _ := message.MetaGet("opcua_tag_path")
+	g.log.Debugf("Created message with opcua_path: %s", op)
+	g.log.Debugf("Created message with opcua_parent_path: %s", pp)
+	g.log.Debugf("Created message with opcua_tag_path: %s", tp)
 
 	return message
 }
@@ -697,7 +712,7 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 			g.log.Errorf("Received nil from node: %s", node.NodeID.String())
 			continue
 		}
-		message := g.createMessageFromValue(value, node.NodeID.String())
+		message := g.createMessageFromValue(value, node)
 		if message != nil {
 			msgs = append(msgs, message)
 		}
@@ -747,7 +762,7 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 				handleID := item.ClientHandle
 
 				if uint32(len(g.nodeList)) >= handleID {
-					message := g.createMessageFromValue(item.Value.Value, g.nodeList[handleID].NodeID.String())
+					message := g.createMessageFromValue(item.Value.Value, g.nodeList[handleID])
 					if message != nil {
 						msgs = append(msgs, message)
 					}

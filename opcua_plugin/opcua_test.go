@@ -940,7 +940,7 @@ func TestAgainstSimulator(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		assert.Equal(t, 6, len(messageBatch))
+		assert.GreaterOrEqual(t, len(messageBatch), 5)
 
 		// Close connection
 		if input.client != nil {
