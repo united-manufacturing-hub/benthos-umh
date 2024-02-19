@@ -569,37 +569,37 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 		return nil
 	}
 
-	b := make([]byte, 0)
+	value := make([]byte, 0)
 
 	switch v := variant.Value().(type) {
 	case float32:
-		b = append(b, []byte(strconv.FormatFloat(float64(v), 'f', -1, 32))...)
+		value = append(value, []byte(strconv.FormatFloat(float64(v), 'f', -1, 32))...)
 	case float64:
-		b = append(b, []byte(strconv.FormatFloat(v, 'f', -1, 64))...)
+		value = append(value, []byte(strconv.FormatFloat(v, 'f', -1, 64))...)
 	case string:
-		b = append(b, []byte(string(v))...)
+		value = append(value, []byte(string(v))...)
 	case bool:
-		b = append(b, []byte(strconv.FormatBool(v))...)
+		value = append(value, []byte(strconv.FormatBool(v))...)
 	case int:
-		b = append(b, []byte(strconv.Itoa(v))...)
+		value = append(value, []byte(strconv.Itoa(v))...)
 	case int8:
-		b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
+		value = append(value, []byte(strconv.FormatInt(int64(v), 10))...)
 	case int16:
-		b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
+		value = append(value, []byte(strconv.FormatInt(int64(v), 10))...)
 	case int32:
-		b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
+		value = append(value, []byte(strconv.FormatInt(int64(v), 10))...)
 	case int64:
-		b = append(b, []byte(strconv.FormatInt(v, 10))...)
+		value = append(value, []byte(strconv.FormatInt(v, 10))...)
 	case uint:
-		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
+		value = append(value, []byte(strconv.FormatUint(uint64(v), 10))...)
 	case uint8:
-		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
+		value = append(value, []byte(strconv.FormatUint(uint64(v), 10))...)
 	case uint16:
-		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
+		value = append(value, []byte(strconv.FormatUint(uint64(v), 10))...)
 	case uint32:
-		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
+		value = append(value, []byte(strconv.FormatUint(uint64(v), 10))...)
 	case uint64:
-		b = append(b, []byte(strconv.FormatUint(v, 10))...)
+		value = append(value, []byte(strconv.FormatUint(v, 10))...)
 	default:
 		// Convert unknown types to JSON
 		jsonBytes, err := json.Marshal(v)
@@ -607,7 +607,40 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 			g.log.Errorf("Error marshaling to JSON: %v", err)
 			return nil
 		}
-		b = append(b, jsonBytes...)
+		value = append(value, jsonBytes...)
+	}
+
+	b := make([]byte, 0)
+
+	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+
+	// opcua_path is the sanitized nodeID
+	opcuaPath := re.ReplaceAllString(nodeDef.NodeID.String(), "_")
+	// opcua_parent_path is the sanitized parentNodeID, which is equal to the subscribed nodeID
+	parentPath := re.ReplaceAllString(nodeDef.ParentNodeID, "_")
+
+	if opcuaPath != parentPath {
+		// it means that nodeDef is a child of another node, therefore we need to
+		// build a json object out of the tree structure for the message value
+		// the nodeDef.Path is the full path of the node, e.g., "MyDevice.MyVariable"
+		// without the parentPath
+
+		// split the path into parts
+		parts := strings.Split(nodeDef.Path, ".")
+		// create a json object out of the parts
+		for i, part := range parts {
+			b = append(b, []byte("\""+part+"\":")...)
+			if i == len(parts)-1 {
+				b = append(b, []byte("\""+string(value)+"\"")...)
+			} else {
+				b = append(b, []byte("{")...)
+			}
+		}
+		for i := 0; i < len(parts)-1; i++ {
+			b = append(b, []byte("}")...)
+		}
+	} else {
+		b = value
 	}
 
 	if b == nil {
@@ -617,14 +650,7 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 
 	message := service.NewMessage(b)
 
-	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
-
-	// opcua_path is the sanitized nodeID
-	opcuaPath := re.ReplaceAllString(nodeDef.NodeID.String(), "_")
 	message.MetaSet("opcua_path", opcuaPath)
-
-	// opcua_parent_path is the sanitized parentNodeID, which is equal to the subscribed nodeID
-	parentPath := re.ReplaceAllString(nodeDef.ParentNodeID, "_")
 	message.MetaSet("opcua_parent_path", parentPath)
 
 	op, _ := message.MetaGet("opcua_path")
