@@ -55,21 +55,27 @@ var (
 	}
 )
 
+type S7DataItemWithAddressAndConverter struct {
+	Address       string
+	ConverterFunc converterFunc
+	Item          gos7.S7DataItem
+}
+
 //------------------------------------------------------------------------------
 
 // S7CommInput struct defines the structure for our custom Benthos input plugin.
 // It holds the configuration necessary to establish a connection with a Siemens S7 PLC,
 // along with the read requests to fetch data from the PLC.
 type S7CommInput struct {
-	tcpDevice    string                 // IP address of the S7 PLC.
-	rack         int                    // Rack number where the CPU resides. Identifies the physical location within the PLC rack.
-	slot         int                    // Slot number where the CPU resides. Identifies the CPU slot within the rack.
-	batchMaxSize int                    // Maximum count of addresses to be bundled in one batch-request. Affects PDU size.
-	timeout      time.Duration          // Time duration before a connection attempt or read request times out.
-	client       gos7.Client            // S7 client for communication.
-	handler      *gos7.TCPClientHandler // TCP handler to manage the connection.
-	log          *service.Logger        // Logger for logging plugin activity.
-	batches      [][]gos7.S7DataItem    // List of items to read from the PLC, grouped into batches with a maximum size.
+	tcpDevice    string                                // IP address of the S7 PLC.
+	rack         int                                   // Rack number where the CPU resides. Identifies the physical location within the PLC rack.
+	slot         int                                   // Slot number where the CPU resides. Identifies the CPU slot within the rack.
+	batchMaxSize int                                   // Maximum count of addresses to be bundled in one batch-request. Affects PDU size.
+	timeout      time.Duration                         // Time duration before a connection attempt or read request times out.
+	client       gos7.Client                           // S7 client for communication.
+	handler      *gos7.TCPClientHandler                // TCP handler to manage the connection.
+	log          *service.Logger                       // Logger for logging plugin activity.
+	batches      [][]S7DataItemWithAddressAndConverter // List of items to read from the PLC, grouped into batches with a maximum size.
 }
 
 type converterFunc func([]byte) interface{}
@@ -121,37 +127,10 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		return nil, err
 	}
 
-	parsedAddresses := make([]gos7.S7DataItem, len(addresses))
-
-	for _, address := range addresses {
-		item, _, err := handleFieldAddress(address)
-		if err != nil {
-			return nil, fmt.Errorf("address %q: %w", address, err)
-		}
-		parsedAddresses = append(parsedAddresses, *item)
-	}
-
-	// check for duplicates
-
-	for i, a := range parsedAddresses {
-		for j, b := range parsedAddresses {
-			if i == j {
-				continue
-			}
-			if a.Area == b.Area && a.DBNumber == b.DBNumber && a.Start == b.Start {
-				return nil, fmt.Errorf("duplicate address %v", a)
-			}
-		}
-	}
-
 	// Now split the addresses into batches based on the batchMaxSize
-	batches := make([][]gos7.S7DataItem, 0)
-	for i := 0; i < len(parsedAddresses); i += batchMaxSize {
-		end := i + batchMaxSize
-		if end > len(parsedAddresses) {
-			end = len(parsedAddresses)
-		}
-		batches = append(batches, parsedAddresses[i:end])
+	batches, err := parseAddresses(addresses, batchMaxSize)
+	if err != nil {
+		return nil, err
 	}
 
 	m := &S7CommInput{
@@ -165,6 +144,50 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	return service.AutoRetryNacksBatched(m), nil
+}
+
+func parseAddresses(addresses []string, batchMaxSize int) ([][]S7DataItemWithAddressAndConverter, error) {
+	parsedAddresses := make([]S7DataItemWithAddressAndConverter, 0, len(addresses))
+
+	for _, address := range addresses {
+		item, converterFunc, err := handleFieldAddress(address)
+		if err != nil {
+			return nil, fmt.Errorf("address %q: %w", address, err)
+		}
+
+		newS7DataItemWithAddressAndConverter := S7DataItemWithAddressAndConverter{
+			Address:       address,
+			ConverterFunc: converterFunc,
+			Item:          *item,
+		}
+
+		parsedAddresses = append(parsedAddresses, newS7DataItemWithAddressAndConverter)
+	}
+
+	// check for duplicates
+
+	for i, a := range parsedAddresses {
+		for j, b := range parsedAddresses {
+			if i == j {
+				continue
+			}
+			if a.Item.Area == b.Item.Area && a.Item.DBNumber == b.Item.DBNumber && a.Item.Start == b.Item.Start {
+				return nil, fmt.Errorf("duplicate address %v", a)
+			}
+		}
+	}
+
+	// Now split the addresses into batches based on the batchMaxSize
+	batches := make([][]S7DataItemWithAddressAndConverter, 0)
+	for i := 0; i < len(parsedAddresses); i += batchMaxSize {
+		end := i + batchMaxSize
+		if end > len(parsedAddresses) {
+			end = len(parsedAddresses)
+		}
+		batches = append(batches, parsedAddresses[i:end])
+	}
+
+	return batches, nil
 }
 
 //------------------------------------------------------------------------------
@@ -212,9 +235,15 @@ func (g *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 	msgs := make(service.MessageBatch, 0)
 	for i, b := range g.batches {
 
+		// Create a new batch to read
+		batchToRead := make([]gos7.S7DataItem, len(b))
+		for i, item := range b {
+			batchToRead[i] = item.Item
+		}
+
 		// Read the batch
 		g.log.Debugf("Reading batch %d...", i+1)
-		if err := g.client.AGReadMulti(b, len(b)); err != nil {
+		if err := g.client.AGReadMulti(batchToRead, len(batchToRead)); err != nil {
 			// Try to reconnect and skip this gather cycle to avoid hammering
 			// the network if the server is down or under load.
 			errMsg := fmt.Sprintf("Failed to read batch %d: %v. Reconnecting...", i+1, err)
@@ -223,11 +252,29 @@ func (g *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 			return nil, nil, errors.New(errMsg)
 		}
 
-		// Create a new message for each item in the batch
+		// Read the data from the batch and convert it using the converter function
 		buffer := make([]byte, 0)
+
 		for _, item := range b {
-			buffer = append(buffer, item.Data...)
+			// Execute the converter function to get the converted data
+			convertedData := item.ConverterFunc(item.Item.Data)
+
+			// Convert any type of convertedData to a string.
+			// The fmt.Sprintf function is used here for its ability to handle various types gracefully.
+			dataAsString := fmt.Sprintf("%v", convertedData)
+
+			// Convert the string representation to a []byte
+			dataAsBytes := []byte(dataAsString)
+
+			// Append the converted data as bytes to the buffer
+			buffer = append(buffer, dataAsBytes...)
+
+			// Create a new message with the current state of the buffer
+			// Note: Depending on your requirements, you may want to reset the buffer
+			// after creating each message or keep accumulating data in it.
 			msg := service.NewMessage(buffer)
+
+			// Append the new message to the msgs slice
 			msgs = append(msgs, msg)
 		}
 	}
