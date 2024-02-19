@@ -929,7 +929,7 @@ func TestAgainstSimulator(t *testing.T) {
 			password:         "",
 			insecure:         true, // It only works when not using encryption
 			nodeIDs:          parsedNodeIDs,
-			subscribeEnabled: false,
+			subscribeEnabled: true,
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
