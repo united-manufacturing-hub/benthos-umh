@@ -4,6 +4,8 @@
 
 # Learn more from ready-to-use templates: https://www.gitpod.io/docs/introduction/getting-started/quickstart
 
+golang.go
+
 tasks:
   - before: |
       curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/focal.gpg | sudo apt-key add - \
@@ -45,3 +47,8 @@ tasks:
           # store the tailscale state into gitpod user
           gp env TAILSCALE_STATE_MYPROJECT="$(sudo cat /var/lib/tailscale/tailscaled.state)"
         fi
+
+vscode:
+  extensions:
+    - golang.go
+    - GitHub.copilot
