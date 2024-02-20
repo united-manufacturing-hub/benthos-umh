@@ -4,14 +4,15 @@
 [![GitHub Actions](https://github.com/united-manufacturing-hub/benthos-umh/workflows/main/badge.svg)](https://github.com/united-manufacturing-hub/benthos-umh/actions)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Funited-manufacturing-hub%2Fbenthos-umh.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Funited-manufacturing-hub%2Fbenthos-umh?ref=badge_shield)
 
-Welcome to the benthos-umh repository! This is a version of benthos maintained by the United Manufacturing Hub (UMH) to provide seamless OPC-UA integration with the [Unified Namespace](https://learn.umh.app/lesson/introduction-into-it-ot-unified-namespace/) (MQTT/Kafka). Our goal is to enhance the integration of IT and OT tools for engineers while avoiding vendor lock-in and streamlining data management processes.
+Welcome to the benthos-umh repository! This is a version of benthos maintained by the United Manufacturing Hub (UMH) to provide seamless shopfloor integration with the [Unified Namespace](https://learn.umh.app/lesson/introduction-into-it-ot-unified-namespace/) (MQTT/Kafka). Our goal is to enhance the integration of IT and OT tools for engineers while avoiding vendor lock-in and streamlining data management processes.
 
 ## Description
 
-`benthos-umh` is a Docker container designed to facilitate seamless OPC-UA integration with the Unified Namespace (MQTT/Kafka). It is part of the United Manufacturing Hub project and offers the following features:
+`benthos-umh` is a Docker container designed to facilitate seamless shopfloor integration with the Unified Namespace (MQTT/Kafka). It is part of the United Manufacturing Hub project and offers the following features:
 
 - Simple deployment in Docker, docker-compose, and Kubernetes
-- Connects to an OPC-UA server, browses selected nodes, and forwards all sub-nodes in 1-second intervals
+- Can connect to an OPC-UA server, browses selected nodes, and forwards all sub-nodes in 1-second intervals
+- Can connect to an S7 server, and read pre-defined addresses from it
 - Supports a wide range of outputs, from the Unified Namespace (MQTT and Kafka) to HTTP, AMQP, Redis, NATS, SQL, MongoDB, Cassandra, or AWS S3. Check out the official [benthos output library](https://benthos.dev/docs/components/outputs/about)
 - Fully customizable messages using the benthos processor library: implement Report-by-Exception (RBE) / message deduplication, modify payloads and add timestamps using bloblang, apply protobuf (and therefore SparkplugB), and explore many more options
 - Integrates with modern IT landscape, providing metrics, logging, tracing, versionable configuration, and more
@@ -23,7 +24,7 @@ We encourage you to try out `benthos-umh` and explore the broader [United Manufa
 
 ### Standalone
 
-To use benthos-umh in standalone mode with Docker, follow the instructions in the main article provided.
+To use benthos-umh in standalone mode with Docker, follow the instructions below (using OPC UA as an exampke).
 
 1. Create a new file called benthos.yaml with the provided content
 
@@ -124,7 +125,8 @@ spec:
             name: benthos-1-config
 ```
 
-### Capabilities
+### OPC UA
+
 The plugin is designed to browse and subscribe to all child nodes within a folder for each configured NodeID, provided that the NodeID represents a folder. It features a recursion depth of up to 10 levels, enabling thorough exploration of nested folder structures. The browsing specifically targets nodes organized under the OPC UA 'Organizes' relationship type, intentionally excluding nodes under 'HasProperty' and 'HasComponent' relationships. Additionally, the plugin does not browse Objects represented by red, blue, or green cube icons in UAExpert.
 
 Subscriptions are selectively managed, with tags having a DataType of null being excluded from subscription. Also, by default, the plugin does not subscribe to the properties of a tag, such as minimum and maximum values.
@@ -170,11 +172,11 @@ There are specific datatypes which are currently not supported by the plugin and
 - Variant arrays (Arrays with multiple different datatypes)
 
 
-### Authentication and Security
+#### Authentication and Security
 
 In benthos-umh, security and authentication are designed to be as robust as possible while maintaining flexibility. The software automates the process of selecting the highest level of security offered by an OPC-UA server for the selected Authentication Method, but the user can specify their own Security Policy / Security Mode if they want (see further below at Configuration options)
 
-#### Supported Authentication Methods
+##### Supported Authentication Methods
 
 - **Anonymous**: No extra information is needed. The connection uses the highest security level available for anonymous connections.
 - **Username and Password**: Specify the username and password in the configuration. The client opts for the highest security level that supports these credentials.
@@ -230,7 +232,7 @@ input:
     subscribeEnabled: false | true # optional (default: false)
 ```
 
-#### Endpoint
+##### Endpoint
 
 You can specify the endpoint in the configuration file. Node endpoints are automatically discovered and selected based on the authentication method.
 
@@ -241,7 +243,7 @@ input:
     nodeIDs: ['ns=2;s=IoTSensors']
 ```
 
-#### Node IDs
+##### Node IDs
 
 You can specify the node IDs in the configuration file (currently only namespaced node IDs are supported):
 
@@ -252,7 +254,7 @@ input:
     nodeIDs: ['ns=2;s=IoTSensors']
 ```
 
-#### Username and Password
+##### Username and Password
 
 If you want to use username and password authentication, you can specify them in the configuration file:
 
@@ -265,7 +267,7 @@ input:
     password: 'your-password'
 ```
 
-#### Security Mode and Security Policy
+##### Security Mode and Security Policy
 
 Security Mode: This defines the level of security applied to the messages. The options are:
 - None: No security is applied; messages are neither signed nor encrypted.
@@ -285,7 +287,7 @@ input:
     securityPolicy: Basic256Sha256
 ```
 
-#### Insecure Mode
+##### Insecure Mode
 
 Setting this to true will overwrite any configured securityMode and securityPolicy!
 
@@ -299,9 +301,9 @@ input:
     insecure: true
 ```
 
-#### Pull and Subscribe Methods
+##### Pull and Subscribe Methods
 
-Benthus-umh supports two modes of operation: pull and subscribe. In pull mode, it pulls all nodes every second, regardless of changes. In subscribe mode, it only sends data when there's a change in value, reducing unnecessary data transfer.
+Benthos-umh supports two modes of operation: pull and subscribe. In pull mode, it pulls all nodes every second, regardless of changes. In subscribe mode, it only sends data when there's a change in value, reducing unnecessary data transfer.
 
 | Method | Advantages | Disadvantages |
 | --- | --- | --- |
@@ -316,13 +318,50 @@ input:
     subscribeEnabled: true
 ```
 
+### S7comm
+
+This input is tailored for the S7 communication protocol, facilitating a direct connection with S7-300, S7-400, S7-1200, and S7-1500 series PLCs.
+
+For more modern PLCs like the S7-1200 and S7-1500 the following two changes need to be done to use them:
+1. "Optimized block access" must be disabled for the DBs we want to access
+2. In the "Protection" section of the CPU Properties, enable the "Permit access with PUT/GET" checkbox
+
+#### Configuration
+```yaml
+input:
+  s7comm:
+    tcpDevice: '192.168.0.1' # IP address of the S7 PLC
+    rack: 0                  # Rack number of the PLC. Defaults to 0
+    slot: 1                  # Slot number of the PLC. Defaults to 1
+    batchMaxSize: 480         # Maximum number of addresses per batch request. Defaults to 480
+    timeout: 10             # Timeout in seconds for connections and requests. Default to 10
+    addresses:               # List of addresses to read from
+      - "DB1.DW20"     # Accesses a double word at location 20 in data block 1
+      - "DB1.S30.10"   # Accesses a 10-byte string at location 30 in data block 1
+```
+
+#### Configuration Parameters
+
+- **tcpDevice**: IP address of the Siemens S7 PLC.
+- **rack**: Identifies the physical location of the CPU within the PLC rack.
+- **slot**: Identifies the specific CPU slot within the rack.
+- **batchMaxSize**: Maximum count of addresses bundled in a single batch request. This affects the PDU size.
+- **timeout**: Timeout duration in milliseconds for connection attempts and read requests.
+- **addresses**: Specifies the list of addresses to read. The format for addresses is `<area>.<type><address>[.extra]`, where:
+  - `area`: Specifies the direct area access, e.g., "DB1" for data block one. Supported areas include inputs (`PE`), outputs (`PA`), Merkers (`MK`), DB (`DB`), counters (`C`), and timers (`T`).
+  - `type`: Indicates the data type, such as bit (`X`), byte (`B`), word (`W`), double word (`DW`), integer (`I`), double integer (`DI`), real (`R`), date-time (`DT`), and string (`S`). Some types require an 'extra' parameter, e.g., the bit number for `X` or the maximum length for `S`.
+
+#### Output
+
+Similar to the OPC UA input, this outputs for each address a single message with the payload being the value that was read. To distinguish messages, you can use meta("s7_address") in a following benthos bloblang processor.
+
 ## Testing
 
 We execute automated tests and verify that benthos-umh works:
 
-- (WAGO PFC100, 750-8101) Connect Anonymously
-- (WAGO PFC100, 750-8101) Connect Username / Password
-- (WAGO PFC100, 750-8101) Connect and get one float number
+- (WAGO PFC100, 750-8101, OPC UA) Connect Anonymously
+- (WAGO PFC100, 750-8101, OPC UA) Connect Username / Password
+- (WAGO PFC100, 750-8101, OPC UA) Connect and get one float number
 
 These tests are executed with a local github runner called "hercules", which is connected to a isolated testing network.
 
