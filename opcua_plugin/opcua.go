@@ -63,6 +63,11 @@ func join(a, b string) string {
 	return a + "." + b
 }
 
+func sanitize(s string) string {
+	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+	return re.ReplaceAllString(s, "_")
+}
+
 func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *service.Logger, parentNodeId string) ([]NodeDef, error) {
 	logger.Debugf("node:%s path:%q level:%d parentNodeId:%s\n", n, path, level, parentNodeId)
 	if level > 10 {
@@ -490,6 +495,31 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 			g.log.Errorf("Browsing failed: %s")
 			c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return err
+		}
+
+		// cycle through all nodes and check if two nodes have
+		// same Path but different NodeID. If so, update the Path
+		// to use the sanitized NodeID as the last part of the path
+		// instead of the node's BrowseName
+		for i, node := range nodes {
+			for j, otherNode := range nodes {
+				if i == j {
+					continue
+				}
+				if node.Path == otherNode.Path {
+					// update only the last element of the path, after the last dot
+					nodePathSplit := strings.Split(node.Path, ".")
+					nodePath := strings.Join(nodePathSplit[:len(nodePathSplit)-1], ".")
+					nodePath = nodePath + "." + sanitize(node.NodeID.String())
+
+					otherNodePathSplit := strings.Split(otherNode.Path, ".")
+					otherNodePath := strings.Join(otherNodePathSplit[:len(otherNodePathSplit)-1], ".")
+					otherNodePath = otherNodePath + "." + sanitize(otherNode.NodeID.String())
+
+					node.Path = nodePath
+					otherNode.Path = otherNodePath
+				}
+			}
 		}
 
 		// Add the nodes to the nodeList
