@@ -497,30 +497,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 			return err
 		}
 
-		// cycle through all nodes and check if two nodes have
-		// same Path but different NodeID. If so, update the Path
-		// to use the sanitized NodeID as the last part of the path
-		// instead of the node's BrowseName
-		for i, node := range nodes {
-			for j, otherNode := range nodes {
-				if i == j {
-					continue
-				}
-				if node.Path == otherNode.Path {
-					// update only the last element of the path, after the last dot
-					nodePathSplit := strings.Split(node.Path, ".")
-					nodePath := strings.Join(nodePathSplit[:len(nodePathSplit)-1], ".")
-					nodePath = nodePath + "." + sanitize(node.NodeID.String())
-
-					otherNodePathSplit := strings.Split(otherNode.Path, ".")
-					otherNodePath := strings.Join(otherNodePathSplit[:len(otherNodePathSplit)-1], ".")
-					otherNodePath = otherNodePath + "." + sanitize(otherNode.NodeID.String())
-
-					node.Path = nodePath
-					otherNode.Path = otherNodePath
-				}
-			}
-		}
+		updateNodePaths(nodes)
 
 		// Add the nodes to the nodeList
 		nodeList = append(nodeList, nodes...)
@@ -590,6 +567,30 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// updateNodePaths updates the node paths to use the nodeID instead of the browseName
+// if the browseName is not unique
+func updateNodePaths(nodes []NodeDef) {
+	for i, node := range nodes {
+		for j, otherNode := range nodes {
+			if i == j {
+				continue
+			}
+			if node.Path == otherNode.Path {
+				// update only the last element of the path, after the last dot
+				nodePathSplit := strings.Split(node.Path, ".")
+				nodePath := strings.Join(nodePathSplit[:len(nodePathSplit)-1], ".")
+				nodePath = nodePath + "." + sanitize(node.NodeID.String())
+				nodes[i].Path = nodePath
+
+				otherNodePathSplit := strings.Split(otherNode.Path, ".")
+				otherNodePath := strings.Join(otherNodePathSplit[:len(otherNodePathSplit)-1], ".")
+				otherNodePath = otherNodePath + "." + sanitize(otherNode.NodeID.String())
+				nodes[j].Path = otherNodePath
+			}
+		}
+	}
 }
 
 // createMessageFromValue creates a benthos messages from a given variant and nodeID
