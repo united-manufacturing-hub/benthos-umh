@@ -1676,3 +1676,47 @@ func logCertificateInfo(t *testing.T, certBytes []byte) {
 	t.Log("    IP Addresses:", cert.IPAddresses)
 	t.Log("    URIs:", cert.URIs)
 }
+
+func TestUpdateNodePaths(t *testing.T) {
+	tests := []struct {
+		name     string
+		nodes    []NodeDef
+		expected []NodeDef
+	}{
+		{
+			name: "no duplicates",
+			nodes: []NodeDef{
+				{Path: "Folder.Tag1", NodeID: ua.MustParseNodeID("ns=1;s=node1")},
+				{Path: "Folder.Tag2", NodeID: ua.MustParseNodeID("ns=1;s=node2")},
+				{Path: "Folder.Tag3", NodeID: ua.MustParseNodeID("ns=1;s=node3")},
+			},
+			expected: []NodeDef{
+				{Path: "Folder.Tag1", NodeID: ua.MustParseNodeID("ns=1;s=node1")},
+				{Path: "Folder.Tag2", NodeID: ua.MustParseNodeID("ns=1;s=node2")},
+				{Path: "Folder.Tag3", NodeID: ua.MustParseNodeID("ns=1;s=node3")},
+			},
+		},
+		{
+			name: "duplicates",
+			nodes: []NodeDef{
+				{Path: "Folder.Tag1", NodeID: ua.MustParseNodeID("ns=1;s=node1")},
+				{Path: "Folder.Tag1", NodeID: ua.MustParseNodeID("ns=1;s=node2")},
+				{Path: "Folder.Tag2", NodeID: ua.MustParseNodeID("ns=1;s=node3")},
+				{Path: "Folder.Tag3", NodeID: ua.MustParseNodeID("ns=1;s=node4")},
+			},
+			expected: []NodeDef{
+				{Path: "Folder.ns_1_s_node1", NodeID: ua.MustParseNodeID("ns=1;s=node1")},
+				{Path: "Folder.ns_1_s_node2", NodeID: ua.MustParseNodeID("ns=1;s=node2")},
+				{Path: "Folder.Tag2", NodeID: ua.MustParseNodeID("ns=1;s=node3")},
+				{Path: "Folder.Tag3", NodeID: ua.MustParseNodeID("ns=1;s=node4")},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			updateNodePaths(tt.nodes)
+			assert.Equal(t, tt.expected, tt.nodes)
+		})
+	}
+}
