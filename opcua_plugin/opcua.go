@@ -63,6 +63,11 @@ func join(a, b string) string {
 	return a + "." + b
 }
 
+func sanitize(s string) string {
+	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+	return re.ReplaceAllString(s, "_")
+}
+
 func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *service.Logger, parentNodeId string) ([]NodeDef, error) {
 	logger.Debugf("node:%s path:%q level:%d parentNodeId:%s\n", n, path, level, parentNodeId)
 	if level > 10 {
@@ -492,6 +497,8 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 			return err
 		}
 
+		updateNodePaths(nodes)
+
 		// Add the nodes to the nodeList
 		nodeList = append(nodeList, nodes...)
 	}
@@ -562,6 +569,30 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	return nil
 }
 
+// updateNodePaths updates the node paths to use the nodeID instead of the browseName
+// if the browseName is not unique
+func updateNodePaths(nodes []NodeDef) {
+	for i, node := range nodes {
+		for j, otherNode := range nodes {
+			if i == j {
+				continue
+			}
+			if node.Path == otherNode.Path {
+				// update only the last element of the path, after the last dot
+				nodePathSplit := strings.Split(node.Path, ".")
+				nodePath := strings.Join(nodePathSplit[:len(nodePathSplit)-1], ".")
+				nodePath = nodePath + "." + sanitize(node.NodeID.String())
+				nodes[i].Path = nodePath
+
+				otherNodePathSplit := strings.Split(otherNode.Path, ".")
+				otherNodePath := strings.Join(otherNodePathSplit[:len(otherNodePathSplit)-1], ".")
+				otherNodePath = otherNodePath + "." + sanitize(otherNode.NodeID.String())
+				nodes[j].Path = otherNodePath
+			}
+		}
+	}
+}
+
 // createMessageFromValue creates a benthos messages from a given variant and nodeID
 // theoretically nodeID can be extracted from variant, but not in all cases (e.g., when subscribing), so it it left to the calling function
 func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef) *service.Message {
@@ -618,15 +649,9 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 
 	message := service.NewMessage(b)
 
-	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
-	opcuaPath := re.ReplaceAllString(nodeDef.NodeID.String(), "_")
-	message.MetaSet("opcua_path", opcuaPath)
-
-	opcuaTagPath := re.ReplaceAllString(nodeDef.Path, "_")
-	message.MetaSet("opcua_tag_path", opcuaTagPath)
-
-	parentPath := re.ReplaceAllString(nodeDef.ParentNodeID, "_")
-	message.MetaSet("opcua_parent_path", parentPath)
+	message.MetaSet("opcua_path", sanitize(nodeDef.NodeID.String()))
+	message.MetaSet("opcua_tag_path", sanitize(nodeDef.Path))
+	message.MetaSet("opcua_parent_path", sanitize(nodeDef.ParentNodeID))
 
 	op, _ := message.MetaGet("opcua_path")
 	pp, _ := message.MetaGet("opcua_parent_path")
