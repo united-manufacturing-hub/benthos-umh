@@ -47,13 +47,14 @@ func (conn *Connection) send(data []byte) (response []byte, err error) {
 }
 
 func (conn *Connection) sendRequest(command CommandID, data []byte) (response []byte, err error) {
-	conn.waitGroup.Add(1)
-	defer conn.waitGroup.Done()
 	if conn == nil {
 		log.Error().
 			Msg("Failed to encode header, connection is nil pointer")
 		return
 	}
+	conn.waitGroup.Add(1)
+	defer conn.waitGroup.Done()
+
 	conn.activeRequestLock.Lock()
 	// First, request a new invoke id
 	id := conn.currentRequest.Inc()

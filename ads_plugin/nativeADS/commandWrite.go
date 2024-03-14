@@ -31,11 +31,6 @@ func (conn *Connection) Write(group uint32, offset uint32, data []byte) error {
 		return err
 	}
 	binary.Write(request, binary.LittleEndian, data)
-	if err != nil {
-		log.Error().
-			Msgf("binary.Write failed: %s", err)
-		return err
-	}
 
 	// Try to send the request
 	resp, err := conn.sendRequest(CommandIDWrite, request.Bytes())

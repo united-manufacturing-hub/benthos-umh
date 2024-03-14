@@ -169,13 +169,13 @@ func addSymbol(symbol symbolUploadSymbol, datatypes map[string]SymbolUploadDataT
 
 	dt, ok := datatypes[symbol.DataType]
 	if ok {
-		sym.Childs = dt.addOffset(sym, datatypes, sym.Group, sym.Offset)
+		sym.Childs = dt.addOffset(sym, datatypes, sym.Group)
 	}
 
 	return sym
 }
 
-func (data *SymbolUploadDataType) addOffset(parent *Symbol, datatypes map[string]SymbolUploadDataType, group uint32, offset uint32) (childs map[string]*Symbol) {
+func (data *SymbolUploadDataType) addOffset(parent *Symbol, datatypes map[string]SymbolUploadDataType, group uint32) (childs map[string]*Symbol) {
 	childs = map[string]*Symbol{}
 
 	var path string
@@ -209,7 +209,7 @@ func (data *SymbolUploadDataType) addOffset(parent *Symbol, datatypes map[string
 		}
 		if ok {
 			//log.Warn("Found sub ",segment.DataType);
-			child.Childs = dt.addOffset(&child, datatypes, child.Group, child.Offset)
+			child.Childs = dt.addOffset(&child, datatypes, child.Group)
 
 		}
 

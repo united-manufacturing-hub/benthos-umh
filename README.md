@@ -362,6 +362,8 @@ We execute automated tests and verify that benthos-umh works:
 - (WAGO PFC100, 750-8101, OPC UA) Connect Anonymously
 - (WAGO PFC100, 750-8101, OPC UA) Connect Username / Password
 - (WAGO PFC100, 750-8101, OPC UA) Connect and get one float number
+- (Siemens S7-1200, TODO, S7) Connect and get one word
+- (Beckhoff, CX8190, ADS) Connect and get 
 
 These tests are executed with a local github runner called "hercules", which is connected to a isolated testing network.
 
@@ -431,14 +433,6 @@ There are basically 2 ways for setting up the connection. One is to use the Twin
 #### Output
 
 Similar to the OPC UA input, this outputs for each address a single message with the payload being the value that was read. To distinguish messages, you can use meta("symbol_name") in a following benthos bloblang processor.
-
-## Testing
-
-We execute automated tests and verify that benthos-ads works:
-#### cx1020, Twincat 2
-- Read batches, Add notifications, different cycle times and max delay.
-- Different datatypes, INT, INT16, UINT, DINT, BOOL, STRUCT, and more
-
 
 ## Development
 

@@ -195,7 +195,7 @@ var parseableTypes = []string{
 	"STRING",
 }
 
-func (symbol *Symbol) writeToNode(value string, offset int, datatypes map[string]SymbolUploadDataType) (data []byte, err error) {
+func (symbol *Symbol) writeToNode(value string, datatypes map[string]SymbolUploadDataType) (data []byte, err error) {
 	if len(symbol.Childs) > 0 {
 		err = fmt.Errorf("cannot write to a whole struct at once")
 		return

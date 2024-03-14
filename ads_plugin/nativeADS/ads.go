@@ -57,7 +57,7 @@ func (conn *Connection) WriteToSymbol(symbolName string, value string) error {
 			Msg("error getting symbol")
 		return err
 	}
-	data, err := symbol.writeToNode(value, 0, conn.datatypes)
+	data, err := symbol.writeToNode(value, conn.datatypes)
 	if err != nil {
 		log.Error().
 			Err(err).
