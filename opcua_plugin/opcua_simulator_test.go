@@ -1,5 +1,7 @@
 package opcua_plugin_test
 
+// This package is used to test the OPC UA plugin against a Prosys OPC UA simulator and a Microsoft OPC UA simulator.
+
 import (
 	"context"
 	"encoding/json"
@@ -13,7 +15,7 @@ import (
 
 var _ = Describe("Test Against Prosys Simulator", func() {
 
-	FDescribe("Insecure Connect", func() {
+	Describe("Insecure Connect", func() {
 		It("should read data correctly", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
