@@ -340,6 +340,27 @@ type OPCUAInput struct {
 	SubNotifyChan    chan *opcua.PublishNotificationData
 }
 
+// OverwriteServerEndpointWithUserSpecifiedEndpoint replaces the server's endpoint with the user-specified one,
+// preserving the path and query from the server's endpoint.
+func (g *OPCUAInput) OverwriteServerEndpointWithUserSpecifiedEndpoint(ctx context.Context, serverEndpoint string) (newEndpoint string, err error) {
+	trimmedURL := strings.TrimPrefix(serverEndpoint, "opc.tcp://")
+
+	// Find the position of the first "/" to separate the address from the path.
+	firstSlashIndex := strings.Index(trimmedURL, "/")
+
+	if firstSlashIndex == -1 {
+		// If no "/" is found, log an error as the URL does not contain a path.
+		g.Log.Errorf("No path found in server endpoint URL: %s", serverEndpoint)
+		return "", errors.New("No path found in Discovery URL")
+	} else {
+		// Construct the new endpoint URL using the original address (g.Endpoint) and the discovered path.
+		serverEndpoint = g.Endpoint + string(trimmedURL[firstSlashIndex:])
+		g.Log.Infof("Using modified endpoint URL: %s", serverEndpoint)
+	}
+
+	return serverEndpoint, nil
+}
+
 func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 	if g.Client != nil {
@@ -386,30 +407,18 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 				return errors.New("No DiscoveryURLs available in the single endpoint.") // Exit the function early if there are no DiscoveryURLs.
 			}
 
-			// When the Discovery URL is not reachable, indicating server misconfiguration,
-			// use the original endpoint (g.Endpoint) and append the path from the Discovery URL.
-			trimmedURL := strings.TrimPrefix(singleEndpoint.Server.DiscoveryURLs[0], "opc.tcp://")
+			// Now here is the actual logic to overwrite the endpoint with the user-specified one.
+			newEndpointURL, err := g.OverwriteServerEndpointWithUserSpecifiedEndpoint(ctx, singleEndpoint.Server.DiscoveryURLs[0])
+			if err != nil {
+				g.Log.Errorf("Failed to overwrite endpoint: %s", err)
+				return err
+			}
 
-			// Find the position of the first "/" to separate the address from the path.
-			firstSlashIndex := strings.Index(trimmedURL, "/")
-
-			if firstSlashIndex == -1 {
-				// If no "/" is found, log an error as the URL does not contain a path.
-				g.Log.Errorf("No path found in Discovery URL: %s", singleEndpoint.Server.DiscoveryURLs[0])
-				return errors.New("No path found in Discovery URL")
-			} else {
-				// Construct the new endpoint URL using the original address (g.Endpoint) and the discovered path.
-				newEndpointURL := g.Endpoint + string(trimmedURL[firstSlashIndex:])
-
-				// Log the new endpoint URL. Replace this with your actual use of the new URL.
-				g.Log.Infof("Using modified endpoint URL: %s", newEndpointURL)
-
-				endpoints, err = opcua.GetEndpoints(ctx, newEndpointURL)
-				if err != nil {
-					// Log the error encountered during endpoint discovery.
-					g.Log.Infof("Failed to get endpoints: %s", err)
-					return err
-				}
+			endpoints, err = opcua.GetEndpoints(ctx, newEndpointURL)
+			if err != nil {
+				// Log the error encountered during endpoint discovery.
+				g.Log.Infof("Failed to get endpoints: %s", err)
+				return err
 			}
 
 		} else {
@@ -519,8 +528,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	}
 
 	// Step 6: Create and connect the OPC UA client
-	// Note that we are not taking `selectedEndpoint.EndpointURL` here as the server can be misconfigured. We are taking instead the user input.
-	c, err = opcua.NewClient(g.Endpoint, opts...)
+	c, err = opcua.NewClient(selectedEndpoint.EndpointURL, opts...)
 	if err != nil {
 		g.Log.Errorf("Failed to create a new client")
 		return err
@@ -529,7 +537,26 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	// Connect to the selected endpoint
 	if err := c.Connect(ctx); err != nil {
 		g.Log.Errorf("Failed to connect", err)
-		return err
+
+		// Trying fallback to the original endpoint with OverwriteServerEndpointWithUserSpecifiedEndpoint
+		newEndpoint, err2 := g.OverwriteServerEndpointWithUserSpecifiedEndpoint(ctx, selectedEndpoint.EndpointURL)
+		if err2 != nil {
+			g.Log.Errorf("Failed to overwrite endpoint: %s", err)
+			return err2
+		}
+
+		// Try to connect to the new endpoint
+		c, err2 = opcua.NewClient(newEndpoint, opts...)
+		if err2 != nil {
+			g.Log.Errorf("Failed to create a new client")
+			return err2
+		}
+
+		// Connect to the selected endpoint
+		if err2 := c.Connect(ctx); err2 != nil {
+			g.Log.Errorf("Failed to connect", err)
+			return err2
+		}
 	}
 
 	g.Log.Infof("Connected to %s", g.Endpoint)
