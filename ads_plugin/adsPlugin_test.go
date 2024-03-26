@@ -22,7 +22,7 @@ var _ = Describe("AdsPlugin", func() {
 	var hostPort int
 
 	// Before suite can be started, check if the env variables are set
-	BeforeSuite(
+	BeforeEach(
 		func() {
 			var err error
 
@@ -32,8 +32,8 @@ var _ = Describe("AdsPlugin", func() {
 			hostIPEnv := os.Getenv("TEST_HOST_IP")
 
 			// Check if environment variables are set
-			if ip != "" || port != "" {
-				Skip("Skipping test: environment variables are set")
+			if ip == "" || port == "" {
+				Skip("Skipping test: environment variables are not set")
 				return
 			}
 
