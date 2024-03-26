@@ -350,8 +350,8 @@ func (g *OPCUAInput) OverwriteServerEndpointWithUserSpecifiedEndpoint(ctx contex
 
 	if firstSlashIndex == -1 {
 		// If no "/" is found, log an error as the URL does not contain a path.
-		g.Log.Errorf("No path found in server endpoint URL: %s", serverEndpoint)
-		return "", errors.New("No path found in Discovery URL")
+		g.Log.Warnf("No path found in server endpoint URL: %s", serverEndpoint)
+		return g.Endpoint, nil
 	} else {
 		// Construct the new endpoint URL using the original address (g.Endpoint) and the discovered path.
 		serverEndpoint = g.Endpoint + string(trimmedURL[firstSlashIndex:])

@@ -5,6 +5,7 @@ package opcua_plugin_test
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"time"
 
 	. "github.com/united-manufacturing-hub/benthos-umh/v2/opcua_plugin"
@@ -16,6 +17,19 @@ import (
 var _ = Describe("Test Against Prosys Simulator", func() {
 
 	Describe("Insecure Connect", func() {
+
+		var endpoint string
+
+		BeforeEach(func() {
+			endpoint = os.Getenv("TEST_PROSYS_ENDPOINT_URI")
+
+			// Check if environment variables are set
+			if endpoint == "" {
+				Skip("Skipping test: environment variables not set")
+				return
+			}
+
+		})
 		It("should read data correctly", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -24,7 +38,7 @@ var _ = Describe("Test Against Prosys Simulator", func() {
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
-				Endpoint: "opc.tcp://10.13.37.19:53530", // "opc.tcp://JMT-Laptop:53530/OPCUA/SimulationServer"
+				Endpoint: endpoint,
 				Username: "",
 				Password: "",
 				NodeIDs:  parsedNodeIDs,
