@@ -229,7 +229,7 @@ func (g *S7CommInput) Connect(ctx context.Context) error {
 	if !g.disableCPUInfo {
 		cpuInfo, err := g.client.GetCPUInfo()
 		if err != nil {
-			g.log.Errorf("Failed to get CPU information: %v", err)
+			g.log.Warnf("Failed to get CPU information: %v", err)
 		} else {
 			g.log.Infof("CPU Information: %s", cpuInfo)
 		}
