@@ -274,7 +274,7 @@ Security Mode: This defines the level of security applied to the messages. The o
 - Sign: Messages are signed for integrity and authenticity but not encrypted.
 - SignAndEncrypt: Provides the highest security level where messages are both signed and encrypted.
 
-Security Policy: Specifies the set of cryptographic algorithms used for securing messages. This includes algorithms for encryption, decryption, and signing of messages. Some common policies include Basic256Sha256, Aes256Sha256RsaPss, and Aes128Sha256RsaOaep.
+Security Policy: Specifies the set of cryptographic algorithms used for securing messages. This includes algorithms for encryption, decryption, and signing of messages. Currently only  Basic256Sha256 is tested.
 
 While the security mode and policy are automatically selected based on the endpoint and authentication method, you have the option to override this by specifying them in the configuration file:
 
