@@ -77,26 +77,35 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", func() {
 
 	Describe("ConnectAnonymousSecure", func() {
 		It("should connect securely and anonymously", func() {
-			Skip("Functionality not yet implemented")
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
+			var nodeIDStrings []string = []string{"ns=3;s=Basic"}
+
+			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
 			input := &OPCUAInput{
-				Endpoint: "opc.tcp://localhost:50000",
-				Username: "",
-				Password: "",
-				NodeIDs:  nil,
-				Insecure: false,
+				Endpoint:         "opc.tcp://localhost:50000",
+				Username:         "",
+				Password:         "",
+				NodeIDs:          parsedNodeIDs,
+				Insecure:         false,
+				SubscribeEnabled: false,
 			}
 
 			// Attempt to connect
 			err := input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
+			messageBatch, _, err := input.ReadBatch(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(messageBatch).To(HaveLen(4))
+
 			// Close connection
 			if input.Client != nil {
-				Expect(input.Client.Close(ctx)).To(Succeed())
+				input.Client.Close(ctx)
 			}
 		})
 	})

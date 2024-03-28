@@ -228,7 +228,7 @@ input:
     password: 'your-password'  # optional (default: unset)
     insecure: false | true # optional (default: false)
     securityMode: None | Sign | SignAndEncrypt # optional (default: unset)
-    securityPolicy: None | Basic256Sha256 | Aes256Sha256RsaPss | Aes128Sha256RsaOaep # optional (default: unset)
+    securityPolicy: None | Basic256Sha256  # optional (default: unset)
     subscribeEnabled: false | true # optional (default: false)
 ```
 

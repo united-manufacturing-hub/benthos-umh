@@ -42,21 +42,30 @@ func (g *OPCUAInput) getReasonableEndpoint(
 				} else if !disableEncryption {
 					// Handle the case where encryption is not disabled.
 
-					// Check for a specific security mode if provided.
-					if securityMode != "" && endpoint.SecurityMode == ua.MessageSecurityModeFromString(securityMode) {
-
-						// Check for a specific security policy if provided.
-						if securityPolicy != "" && endpoint.SecurityPolicyURI == "http://opcfoundation.org/UA/SecurityPolicy#"+securityPolicy {
+					// Always try to use the security level SignAndEncrypt and Basic256Sha256
+					// because this is what works at the most servers
+					if securityMode == "" && securityPolicy == "" {
+						if endpoint.SecurityMode == ua.MessageSecurityModeFromString("SignAndEncrypt") && endpoint.SecurityPolicyURI == "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256" {
 							return endpoint
-						} else if securityPolicy == "" {
+						}
+					} else { // If security mode or security policy is specified, then try to match them
+						// Check for a specific security mode if provided.
+						if securityMode != "" && endpoint.SecurityMode == ua.MessageSecurityModeFromString(securityMode) {
+
+							// Check for a specific security policy if provided.
+							if securityPolicy != "" && endpoint.SecurityPolicyURI == "http://opcfoundation.org/UA/SecurityPolicy#"+securityPolicy {
+								return endpoint
+							} else if securityPolicy == "" {
+								// If no specific security policy is needed, return the endpoint.
+								return endpoint
+							}
+							// Continue searching if the security policy doesn't match.
+						} else if securityMode == "" {
 							// If no specific security policy is needed, return the endpoint.
 							return endpoint
 						}
-						// Continue searching if the security policy doesn't match.
-					} else if securityMode == "" {
-						// If no specific security policy is needed, return the endpoint.
-						return endpoint
 					}
+
 				}
 				// Continue searching if other conditions are not met.
 			}

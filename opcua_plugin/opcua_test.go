@@ -14,6 +14,8 @@
 
 package opcua_plugin
 
+// NOTE: future tests should be implemented in Ginkgo
+
 import (
 	"context"
 	"crypto/x509"

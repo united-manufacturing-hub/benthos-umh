@@ -33,7 +33,6 @@ import (
 	"github.com/gopcua/opcua/errors"
 	"github.com/gopcua/opcua/id"
 	"github.com/gopcua/opcua/ua"
-	"github.com/gopcua/opcua/uatest"
 )
 
 type NodeDef struct {
@@ -504,7 +503,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		// Generate a new certificate in memory, no file read/write operations.
 		randomStr := randomString(8) // Generates an 8-character random string
 		clientName := "urn:benthos-umh:client-" + randomStr
-		certPEM, keyPEM, err := uatest.GenerateCert(clientName, 2048, 24*time.Hour*365*10)
+		certPEM, keyPEM, err := GenerateCert(clientName, 2048, 24*time.Hour*365*10)
 		if err != nil {
 			g.Log.Errorf("Failed to generate certificate: %v", err)
 			return err
