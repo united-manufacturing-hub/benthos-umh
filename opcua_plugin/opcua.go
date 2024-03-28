@@ -690,6 +690,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 		// Connect to the selected endpoint
 		if err := c.Connect(ctx); err != nil {
+			c.Close(ctx)
 			g.Log.Errorf("Failed to connect", err)
 			return err
 		}
@@ -719,8 +720,18 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 			// If connection fails, then continue to the next endpoint
 			// Connect to the selected endpoint
 			if err := c.Connect(ctx); err != nil {
+				c.Close(ctx)
+
 				g.Log.Infof("Failed to connect", err)
+
+				// TODO: only continue if it is not something like password wrong or toomanysessions, etc.
+				if errors.Is(err, ua.StatusBadUserAccessDenied) || errors.Is(err, ua.StatusBadTooManySessions) {
+					return err
+				}
+
 				continue
+			} else {
+				break
 			}
 		}
 
