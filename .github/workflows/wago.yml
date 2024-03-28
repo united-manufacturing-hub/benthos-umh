@@ -25,11 +25,11 @@ env:
   GO_VERSION: '1.21.*'
 
 concurrency:
-  group: wago-test
+  group: wago-s7-test
   cancel-in-progress: true
 
 jobs:
-  go-test-wago:
+  go-test-wago-s7:
     runs-on: hercules
     permissions:
       packages: write
@@ -44,4 +44,4 @@ jobs:
           go_version: ${{ env.GO_VERSION }}
       - name: Test
         working-directory: opcua_plugin
-        run: TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI }} TEST_WAGO_USERNAME=${{ secrets.TEST_WAGO_USERNAME }} TEST_WAGO_PASSWORD=${{ secrets.TEST_WAGO_PASSWORD }}  go test ./...
+        run: TEST_S7_ENDPOINT_URI=${{ secrets.TEST_S7_ENDPOINT_URI }} TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI }} TEST_WAGO_USERNAME=${{ secrets.TEST_WAGO_USERNAME }} TEST_WAGO_PASSWORD=${{ secrets.TEST_WAGO_PASSWORD }}  go test ./...
