@@ -38,7 +38,7 @@ func TestAgainstSimulator(t *testing.T) {
 
 	// Check if environment variables are set
 	if endpoint != "" || username != "" || password != "" {
-		t.Skip("Skipping test: environment variables are set")
+		t.Skip("Skipping test: environment variables are set --> the wago test is running and we are not running a test against the simulator")
 		return
 	}
 

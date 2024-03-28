@@ -75,9 +75,20 @@ var _ = Describe("Test Against Prosys Simulator", func() {
 
 var _ = Describe("Test Against Microsoft OPC UA simulator", func() {
 
+	BeforeEach(func() {
+		endpoint := os.Getenv("TEST_WAGO_ENDPOINT_URI")
+		username := os.Getenv("TEST_WAGO_USERNAME")
+		password := os.Getenv("TEST_WAGO_PASSWORD")
+
+		// Check if environment variables are set
+		if endpoint != "" || username != "" || password != "" {
+			Skip("Skipping test: environment variables are set --> the wago test is running and we are not running a test against the simulator")
+			return
+		}
+	})
+
 	Describe("ConnectAnonymousSecure", func() {
 		It("should connect securely and anonymously", func() {
-
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
