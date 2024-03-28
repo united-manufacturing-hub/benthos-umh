@@ -339,322 +339,6 @@ type OPCUAInput struct {
 	SubNotifyChan    chan *opcua.PublishNotificationData
 }
 
-// OverwriteServerEndpointWithUserSpecifiedEndpoint replaces the server's endpoint with the user-specified one,
-// preserving the path and query from the server's endpoint.
-func (g *OPCUAInput) OverwriteServerEndpointWithUserSpecifiedEndpoint(ctx context.Context, serverEndpoint string) (newEndpoint string, err error) {
-	trimmedURL := strings.TrimPrefix(serverEndpoint, "opc.tcp://")
-
-	// Find the position of the first "/" to separate the address from the path.
-	firstSlashIndex := strings.Index(trimmedURL, "/")
-
-	if firstSlashIndex == -1 {
-		// If no "/" is found, log an error as the URL does not contain a path.
-		g.Log.Warnf("No path found in server endpoint URL: %s", serverEndpoint)
-		return g.Endpoint, nil
-	} else {
-		// Construct the new endpoint URL using the original address (g.Endpoint) and the discovered path.
-		serverEndpoint = g.Endpoint + string(trimmedURL[firstSlashIndex:])
-		g.Log.Infof("Using modified endpoint URL: %s", serverEndpoint)
-	}
-
-	return serverEndpoint, nil
-}
-
-func (g *OPCUAInput) Connect(ctx context.Context) error {
-
-	if g.Client != nil {
-		return nil
-	}
-
-	var c *opcua.Client
-	var endpoints []*ua.EndpointDescription
-	var err error
-
-	// Step 1: Retrieve all available endpoints from the OPC UA server.
-	g.Log.Infof("Endpoint URI: %s", g.Endpoint)
-	endpoints, err = opcua.GetEndpoints(ctx, g.Endpoint)
-	if err != nil {
-		g.Log.Infof("GetEndpoints failed: %s", err)
-	}
-
-	// Special case for the Prosys simulation server:
-	// Most OPC UA servers will always report back all available endpoints. However, the Prosys simulation server
-	// only reports back one endpoint, even though it has multiple endpoints available.
-	// In this case one needs to extract the Discovery URL from the endpoint and use it to get more endpoints.
-
-	if len(endpoints) == 1 {
-		// Only one endpoint is found. Attempt to discover more endpoints using the
-		// first (and only) endpoint's DiscoveryURLs.
-
-		newEndpoints, err := opcua.GetEndpoints(ctx, endpoints[0].Server.DiscoveryURLs[0])
-		if err != nil {
-			// Log the error encountered during endpoint discovery.
-			g.Log.Infof("Failed to get endpoints: %s", err)
-
-			singleEndpoint := endpoints[0]
-
-			// Check if singleEndpoint is nil or if Server is nil.
-			if singleEndpoint == nil || singleEndpoint.Server == nil {
-				g.Log.Errorf("The single endpoint or its server is nil.")
-				return errors.New("The single endpoint or its server is nil.")
-			}
-
-			// Attempt to discover more endpoints using the DiscoveryURL from the single returned endpoint.
-			// Ensure there's at least one DiscoveryURL.
-			if len(singleEndpoint.Server.DiscoveryURLs) == 0 {
-				g.Log.Errorf("No DiscoveryURLs available in the single endpoint.")
-				return errors.New("No DiscoveryURLs available in the single endpoint.") // Exit the function early if there are no DiscoveryURLs.
-			}
-
-			// Now here is the actual logic to overwrite the endpoint with the user-specified one.
-			newEndpointURL, err := g.OverwriteServerEndpointWithUserSpecifiedEndpoint(ctx, singleEndpoint.Server.DiscoveryURLs[0])
-			if err != nil {
-				g.Log.Errorf("Failed to overwrite endpoint: %s", err)
-				return err
-			}
-
-			endpoints, err = opcua.GetEndpoints(ctx, newEndpointURL)
-			if err != nil {
-				// Log the error encountered during endpoint discovery.
-				g.Log.Infof("Failed to get endpoints: %s", err)
-				return err
-			}
-
-		} else {
-			endpoints = newEndpoints
-		}
-	}
-
-	// Step 2: Log details of each discovered endpoint for debugging.
-	for i, endpoint := range endpoints {
-		g.Log.Infof("Endpoint %d:", i+1)
-		g.Log.Infof("  EndpointURL: %s", endpoint.EndpointURL)
-		g.Log.Infof("  SecurityMode: %v", endpoint.SecurityMode)
-		g.Log.Infof("  SecurityPolicyURI: %s", endpoint.SecurityPolicyURI)
-		g.Log.Infof("  TransportProfileURI: %s", endpoint.TransportProfileURI)
-		g.Log.Infof("  SecurityLevel: %d", endpoint.SecurityLevel)
-
-		// If Server is not nil, log its details
-		if endpoint.Server != nil {
-			g.Log.Infof("  Server ApplicationURI: %s", endpoint.Server.ApplicationURI)
-			g.Log.Infof("  Server ProductURI: %s", endpoint.Server.ProductURI)
-			g.Log.Infof("  Server ApplicationName: %s", endpoint.Server.ApplicationName.Text)
-			g.Log.Infof("  Server ApplicationType: %v", endpoint.Server.ApplicationType)
-			g.Log.Infof("  Server GatewayServerURI: %s", endpoint.Server.GatewayServerURI)
-			g.Log.Infof("  Server DiscoveryProfileURI: %s", endpoint.Server.DiscoveryProfileURI)
-			g.Log.Infof("  Server DiscoveryURLs: %v", endpoint.Server.DiscoveryURLs)
-		}
-
-		// Output the certificate
-		if len(endpoint.ServerCertificate) > 0 {
-			// Convert to PEM format first, then log the certificate information
-			pemCert := pem.EncodeToMemory(&pem.Block{
-				Type:  "CERTIFICATE",
-				Bytes: endpoint.ServerCertificate,
-			})
-			g.logCertificateInfo(pemCert)
-		}
-
-		// Loop through UserIdentityTokens
-		for j, token := range endpoint.UserIdentityTokens {
-			g.Log.Infof("  UserIdentityToken %d:", j+1)
-			g.Log.Infof("    PolicyID: %s", token.PolicyID)
-			g.Log.Infof("    TokenType: %v", token.TokenType)
-			g.Log.Infof("    IssuedTokenType: %s", token.IssuedTokenType)
-			g.Log.Infof("    IssuerEndpointURL: %s", token.IssuerEndpointURL)
-		}
-	}
-
-	// Step 3: Determine the authentication method to use.
-	// Default to Anonymous if neither username nor password is provided.
-	selectedAuthentication := ua.UserTokenTypeAnonymous
-	if g.Username != "" && g.Password != "" {
-		// Use UsernamePassword authentication if both username and password are available.
-		selectedAuthentication = ua.UserTokenTypeUserName
-	}
-
-	// Step 3.1: Filter the endpoints based on the selected authentication method.
-	// This will eliminate endpoints that do not support the chosen method.
-	selectedEndpoint := g.getReasonableEndpoint(endpoints, selectedAuthentication, g.Insecure, g.SecurityMode, g.SecurityPolicy)
-	if selectedEndpoint == nil {
-		g.Log.Errorf("Could not select a suitable endpoint")
-		return err
-	}
-	if strings.HasPrefix(selectedEndpoint.EndpointURL, "opc.tcp://:") { // I omitted the port here, as it might change ?
-		selectedEndpoint.EndpointURL = g.Endpoint
-	}
-	g.Log.Infof("Selected endpoint: %v", selectedEndpoint)
-
-	// Step 4: Initialize OPC UA client options
-	opts := make([]opcua.Option, 0)
-	opts = append(opts, opcua.SecurityFromEndpoint(selectedEndpoint, selectedAuthentication))
-
-	// Set additional options based on the authentication method
-	switch selectedAuthentication {
-	case ua.UserTokenTypeAnonymous:
-		g.Log.Infof("Using anonymous login")
-	case ua.UserTokenTypeUserName:
-		g.Log.Infof("Using username/password login")
-		opts = append(opts, opcua.AuthUsername(g.Username, g.Password))
-	}
-
-	// Step 5: Generate Certificates, because this is really a step that can not happen in the background...
-	if !g.Insecure {
-		// Generate a new certificate in memory, no file read/write operations.
-		randomStr := randomString(8) // Generates an 8-character random string
-		clientName := "urn:benthos-umh:client-" + randomStr
-		certPEM, keyPEM, err := GenerateCert(clientName, 2048, 24*time.Hour*365*10)
-		if err != nil {
-			g.Log.Errorf("Failed to generate certificate: %v", err)
-			return err
-		}
-
-		// Convert PEM to X509 Certificate and RSA PrivateKey for in-memory use.
-		cert, err := tls.X509KeyPair(certPEM, keyPEM)
-		if err != nil {
-			g.Log.Errorf("Failed to parse certificate: %v", err)
-			return err
-		}
-
-		pk, ok := cert.PrivateKey.(*rsa.PrivateKey)
-		if !ok {
-			g.Log.Errorf("Invalid private key type")
-			return err
-		}
-
-		// Append the certificate and private key to the client options
-		opts = append(opts, opcua.PrivateKey(pk), opcua.Certificate(cert.Certificate[0]))
-	}
-
-	// Step 6: Create and connect the OPC UA client
-	c, err = opcua.NewClient(selectedEndpoint.EndpointURL, opts...)
-	if err != nil {
-		g.Log.Errorf("Failed to create a new client")
-		return err
-	}
-
-	// Connect to the selected endpoint
-	if err := c.Connect(ctx); err != nil {
-		g.Log.Errorf("Failed to connect", err)
-
-		// Trying fallback to the original endpoint with OverwriteServerEndpointWithUserSpecifiedEndpoint
-		newEndpoint, err2 := g.OverwriteServerEndpointWithUserSpecifiedEndpoint(ctx, selectedEndpoint.EndpointURL)
-		if err2 != nil {
-			g.Log.Errorf("Failed to overwrite endpoint: %s", err)
-			return err2
-		}
-
-		// Try to connect to the new endpoint
-		c, err2 = opcua.NewClient(newEndpoint, opts...)
-		if err2 != nil {
-			g.Log.Errorf("Failed to create a new client")
-			return err2
-		}
-
-		// Connect to the selected endpoint
-		if err2 := c.Connect(ctx); err2 != nil {
-			g.Log.Errorf("Failed to connect", err)
-			return err2
-		}
-	}
-
-	g.Log.Infof("Connected to %s", g.Endpoint)
-	g.Log.Infof("Please note that browsing large node trees can take a long time (around 5 nodes per second)")
-
-	g.Client = c
-
-	// Create a slice to store the detected nodes
-	nodeList := make([]NodeDef, 0)
-
-	// Print all nodeIDs that are being browsed
-	for _, id := range g.NodeIDs {
-		if id == nil {
-			continue
-		}
-
-		// Print id
-		g.Log.Debugf("Browsing nodeID: %s", id.String())
-
-		// Browse the OPC-UA server's node tree and print the results.
-		nodes, err := browse(ctx, g.Client.Node(id), "", 0, g.Log, id.String())
-		if err != nil {
-			g.Log.Errorf("Browsing failed: %s")
-			c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
-			return err
-		}
-
-		updateNodePaths(nodes)
-
-		// Add the nodes to the nodeList
-		nodeList = append(nodeList, nodes...)
-	}
-
-	b, err := json.Marshal(nodeList)
-	if err != nil {
-		g.Log.Errorf("Unmarshalling failed: %s")
-		c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
-		return err
-	}
-
-	g.Log.Infof("Detected nodes: %s", b)
-
-	g.NodeList = nodeList
-
-	// If subscription is enabled, start subscribing to the nodes
-	if g.SubscribeEnabled {
-		g.Log.Infof("Subscription is enabled, therefore start subscribing to the selected notes...")
-
-		g.SubNotifyChan = make(chan *opcua.PublishNotificationData, 100)
-
-		sub, err := c.Subscribe(ctx, &opcua.SubscriptionParameters{
-			Interval: opcua.DefaultSubscriptionInterval,
-		}, g.SubNotifyChan)
-		if err != nil {
-			g.Log.Errorf("Subscribing failed: %s")
-			c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
-			return err
-		}
-
-		monitoredRequests := make([]*ua.MonitoredItemCreateRequest, 0, len(nodeList))
-
-		for pos, id := range nodeList {
-			miCreateRequest := opcua.NewMonitoredItemCreateRequestWithDefaults(id.NodeID, ua.AttributeIDValue, uint32(pos))
-			monitoredRequests = append(monitoredRequests, miCreateRequest)
-		}
-
-		if len(nodeList) == 0 {
-			g.Log.Errorf("Did not subscribe to any nodes. This can happen if the nodes that are selected are incompatible with this benthos version. Aborting...")
-			return fmt.Errorf("no valid nodes selected")
-		}
-
-		res, err := sub.Monitor(ctx, ua.TimestampsToReturnBoth, monitoredRequests...)
-		if err != nil {
-			g.Log.Errorf("Monitoring failed: %s")
-			c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
-			return err
-		}
-		if res == nil {
-			g.Log.Errorf("Expected res to not be nil, if there is no error")
-			c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
-			return fmt.Errorf("expected res to be not nil")
-		}
-
-		// Assuming you want to check the status code of each result
-		for _, result := range res.Results {
-			if !errors.Is(result.StatusCode, ua.StatusOK) {
-				g.Log.Errorf("Monitoring failed with status code: %v", result.StatusCode)
-				c.Close(ctx) // ensure that if something fails here, the connection is always safely closed
-				return fmt.Errorf("monitoring failed for node, status code: %v", result.StatusCode)
-			}
-		}
-
-		g.Log.Infof("Subscribed to %d nodes!", len(res.Results))
-
-	}
-
-	return nil
-}
-
 // updateNodePaths updates the node paths to use the nodeID instead of the browseName
 // if the browseName is not unique
 func updateNodePaths(nodes []NodeDef) {
@@ -938,4 +622,405 @@ func (g *OPCUAInput) logCertificateInfo(certBytes []byte) {
 	g.Log.Infof("    DNS Names:", cert.DNSNames)
 	g.Log.Infof("    IP Addresses:", cert.IPAddresses)
 	g.Log.Infof("    URIs:", cert.URIs)
+}
+
+// Connect connects to the OPC UA server
+// Because there are a lot of methods, security policies, potential endpoints, etc., this function is using the following behaviour
+// If the user selected a very concrete endpoint, security policy, and security mode, it will try to connect to this endpoint.
+// Otherwise, it will iterate until it finds a working combination
+// At the end, it will output the recommended connection details ala
+// "We have iterated various combinations, and found this one here working. To speed it up, please speicfy in your configuration"
+func (g *OPCUAInput) Connect(ctx context.Context) error {
+
+	if g.Client != nil {
+		return nil
+	}
+
+	var c *opcua.Client
+	var endpoints []*ua.EndpointDescription
+	var err error
+
+	// Step 1: Retrieve all available endpoints from the OPC UA server
+	// Iterate through DiscoveryURLs until we receive a list of all working endpoints including their potential security modes, etc.
+
+	endpoints, err = g.FetchAllEndpoints(ctx)
+	if err != nil {
+		g.Log.Errorf("Failed to fetch an endpoint: %s", err)
+		return err
+	}
+
+	// Step 2: Log details of each discovered endpoint for debugging
+	g.LogEndpoints(endpoints)
+
+	// Step 3: Determine the authentication method to use.
+	// Default to Anonymous if neither username nor password is provided.
+	selectedAuthentication := ua.UserTokenTypeAnonymous
+	if g.Username != "" && g.Password != "" {
+		// Use UsernamePassword authentication if both username and password are available.
+		selectedAuthentication = ua.UserTokenTypeUserName
+	}
+
+	// Step 4: Check if the user has specified a very concrete endpoint, security policy, and security mode
+	// Connect to this endpoint directly
+	// If connection fails, then return an error
+
+	if g.SecurityMode != "" && g.SecurityPolicy != "" {
+		foundEndpoint, err := g.getEndpointIfExists(endpoints, selectedAuthentication, g.SecurityMode, g.SecurityPolicy)
+		if err != nil {
+			g.Log.Errorf("Failed to get endpoint: %s", err)
+			return err
+		}
+
+		if foundEndpoint == nil {
+			g.Log.Errorf("No suitable endpoint found")
+			return errors.New("no suitable endpoint found")
+		}
+
+		opts, err := g.GetOPCUAClientOptions(foundEndpoint, selectedAuthentication)
+		if err != nil {
+			g.Log.Errorf("Failed to get OPC UA client options: %s", err)
+			return err
+		}
+
+		c, err = opcua.NewClient(foundEndpoint.EndpointURL, opts...)
+		if err != nil {
+			g.Log.Errorf("Failed to create a new client")
+			return err
+		}
+
+		// Connect to the selected endpoint
+		if err := c.Connect(ctx); err != nil {
+			g.Log.Errorf("Failed to connect", err)
+			return err
+		}
+
+	} else {
+		// Step 5: If the user has not specified a very concrete endpoint, security policy, and security mode
+		// Iterate through all available endpoints and try to connect to them
+
+		// Order the endpoints based on the expected success of the connection
+		orderedEndpoints := g.orderEndpoints(endpoints, selectedAuthentication)
+
+		for _, currentEndpoint := range orderedEndpoints {
+
+			opts, err := g.GetOPCUAClientOptions(currentEndpoint, selectedAuthentication)
+			if err != nil {
+				g.Log.Errorf("Failed to get OPC UA client options: %s", err)
+				return err
+			}
+
+			c, err = opcua.NewClient(currentEndpoint.EndpointURL, opts...)
+			if err != nil {
+				g.Log.Errorf("Failed to create a new client")
+				return err
+			}
+
+			// Connect to the endpoint
+			// If connection fails, then continue to the next endpoint
+			// Connect to the selected endpoint
+			if err := c.Connect(ctx); err != nil {
+				g.Log.Infof("Failed to connect", err)
+				continue
+			}
+		}
+
+		// If no connection was successful, return an error
+		if c == nil {
+			g.Log.Errorf("Failed to connect to any endpoint")
+			return errors.New("failed to connect to any endpoint")
+		}
+	}
+
+	g.Log.Infof("Connected to %s", g.Endpoint)
+	g.Log.Infof("Please note that browsing large node trees can take a long time (around 5 nodes per second)")
+
+	g.Client = c
+
+	// Browse and subscribe to the nodes if needed
+	if err := g.BrowseAndSubscribeIfNeeded(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
+
+	// Create a slice to store the detected nodes
+	nodeList := make([]NodeDef, 0)
+
+	// Print all nodeIDs that are being browsed
+	for _, id := range g.NodeIDs {
+		if id == nil {
+			continue
+		}
+
+		// Print id
+		g.Log.Debugf("Browsing nodeID: %s", id.String())
+
+		// Browse the OPC-UA server's node tree and print the results.
+		nodes, err := browse(ctx, g.Client.Node(id), "", 0, g.Log, id.String())
+		if err != nil {
+			g.Log.Errorf("Browsing failed: %s")
+			g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+			return err
+		}
+
+		updateNodePaths(nodes)
+
+		// Add the nodes to the nodeList
+		nodeList = append(nodeList, nodes...)
+	}
+
+	b, err := json.Marshal(nodeList)
+	if err != nil {
+		g.Log.Errorf("Unmarshalling failed: %s")
+		g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+		return err
+	}
+
+	g.Log.Infof("Detected nodes: %s", b)
+
+	g.NodeList = nodeList
+
+	// If subscription is enabled, start subscribing to the nodes
+	if g.SubscribeEnabled {
+		g.Log.Infof("Subscription is enabled, therefore start subscribing to the selected notes...")
+
+		g.SubNotifyChan = make(chan *opcua.PublishNotificationData, 100)
+
+		sub, err := g.Client.Subscribe(ctx, &opcua.SubscriptionParameters{
+			Interval: opcua.DefaultSubscriptionInterval,
+		}, g.SubNotifyChan)
+		if err != nil {
+			g.Log.Errorf("Subscribing failed: %s")
+			g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+			return err
+		}
+
+		monitoredRequests := make([]*ua.MonitoredItemCreateRequest, 0, len(nodeList))
+
+		for pos, id := range nodeList {
+			miCreateRequest := opcua.NewMonitoredItemCreateRequestWithDefaults(id.NodeID, ua.AttributeIDValue, uint32(pos))
+			monitoredRequests = append(monitoredRequests, miCreateRequest)
+		}
+
+		if len(nodeList) == 0 {
+			g.Log.Errorf("Did not subscribe to any nodes. This can happen if the nodes that are selected are incompatible with this benthos version. Aborting...")
+			return fmt.Errorf("no valid nodes selected")
+		}
+
+		res, err := sub.Monitor(ctx, ua.TimestampsToReturnBoth, monitoredRequests...)
+		if err != nil {
+			g.Log.Errorf("Monitoring failed: %s")
+			g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+			return err
+		}
+		if res == nil {
+			g.Log.Errorf("Expected res to not be nil, if there is no error")
+			g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+			return fmt.Errorf("expected res to be not nil")
+		}
+
+		// Assuming you want to check the status code of each result
+		for _, result := range res.Results {
+			if !errors.Is(result.StatusCode, ua.StatusOK) {
+				g.Log.Errorf("Monitoring failed with status code: %v", result.StatusCode)
+				g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+				return fmt.Errorf("monitoring failed for node, status code: %v", result.StatusCode)
+			}
+		}
+
+		g.Log.Infof("Subscribed to %d nodes!", len(res.Results))
+
+	}
+
+	return nil
+}
+
+func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescription, selectedAuthentication ua.UserTokenType) (opts []opcua.Option, err error) {
+	opts = append(opts, opcua.SecurityFromEndpoint(selectedEndpoint, selectedAuthentication))
+
+	// Set additional options based on the authentication method
+	switch selectedAuthentication {
+	case ua.UserTokenTypeAnonymous:
+		g.Log.Infof("Using anonymous login")
+	case ua.UserTokenTypeUserName:
+		g.Log.Infof("Using username/password login")
+		opts = append(opts, opcua.AuthUsername(g.Username, g.Password))
+	}
+
+	// Generate certificates if Basic256Sha256
+	if selectedEndpoint.SecurityPolicyURI == ua.SecurityPolicyURIBasic256Sha256 {
+		randomStr := randomString(8) // Generates an 8-character random string
+		clientName := "urn:benthos-umh:client-" + randomStr
+		certPEM, keyPEM, err := GenerateCert(clientName, 2048, 24*time.Hour*365*10)
+		if err != nil {
+			g.Log.Errorf("Failed to generate certificate: %v", err)
+			return nil, err
+		}
+
+		// Convert PEM to X509 Certificate and RSA PrivateKey for in-memory use.
+		cert, err := tls.X509KeyPair(certPEM, keyPEM)
+		if err != nil {
+			g.Log.Errorf("Failed to parse certificate: %v", err)
+			return nil, err
+		}
+
+		pk, ok := cert.PrivateKey.(*rsa.PrivateKey)
+		if !ok {
+			g.Log.Errorf("Invalid private key type")
+			return nil, err
+		}
+
+		// Append the certificate and private key to the client options
+		opts = append(opts, opcua.PrivateKey(pk), opcua.Certificate(cert.Certificate[0]))
+	}
+
+	return opts, nil
+}
+
+func (g *OPCUAInput) LogEndpoints(endpoints []*ua.EndpointDescription) {
+	for i, endpoint := range endpoints {
+		g.Log.Infof("Endpoint %d:", i+1)
+		g.Log.Infof("  EndpointURL: %s", endpoint.EndpointURL)
+		g.Log.Infof("  SecurityMode: %v", endpoint.SecurityMode)
+		g.Log.Infof("  SecurityPolicyURI: %s", endpoint.SecurityPolicyURI)
+		g.Log.Infof("  TransportProfileURI: %s", endpoint.TransportProfileURI)
+		g.Log.Infof("  SecurityLevel: %d", endpoint.SecurityLevel)
+
+		// If Server is not nil, log its details
+		if endpoint.Server != nil {
+			g.Log.Infof("  Server ApplicationURI: %s", endpoint.Server.ApplicationURI)
+			g.Log.Infof("  Server ProductURI: %s", endpoint.Server.ProductURI)
+			g.Log.Infof("  Server ApplicationName: %s", endpoint.Server.ApplicationName.Text)
+			g.Log.Infof("  Server ApplicationType: %v", endpoint.Server.ApplicationType)
+			g.Log.Infof("  Server GatewayServerURI: %s", endpoint.Server.GatewayServerURI)
+			g.Log.Infof("  Server DiscoveryProfileURI: %s", endpoint.Server.DiscoveryProfileURI)
+			g.Log.Infof("  Server DiscoveryURLs: %v", endpoint.Server.DiscoveryURLs)
+		}
+
+		// Output the certificate
+		if len(endpoint.ServerCertificate) > 0 {
+			// Convert to PEM format first, then log the certificate information
+			pemCert := pem.EncodeToMemory(&pem.Block{
+				Type:  "CERTIFICATE",
+				Bytes: endpoint.ServerCertificate,
+			})
+			g.logCertificateInfo(pemCert)
+		}
+
+		// Loop through UserIdentityTokens
+		for j, token := range endpoint.UserIdentityTokens {
+			g.Log.Infof("  UserIdentityToken %d:", j+1)
+			g.Log.Infof("    PolicyID: %s", token.PolicyID)
+			g.Log.Infof("    TokenType: %v", token.TokenType)
+			g.Log.Infof("    IssuedTokenType: %s", token.IssuedTokenType)
+			g.Log.Infof("    IssuerEndpointURL: %s", token.IssuerEndpointURL)
+		}
+	}
+}
+
+// FetchAllEndpoints retrieves all possible endpoints from an OPC UA server,
+// handling cases where only a Discovery URL is provided
+// and substituting server endpoints with user-specified ones if necessary.
+// This is important for addressing issues with servers that return only their DNS name.
+func (g *OPCUAInput) FetchAllEndpoints(ctx context.Context) ([]*ua.EndpointDescription, error) {
+	g.Log.Infof("Querying OPC UA server at: %s", g.Endpoint)
+
+	endpoints, err := opcua.GetEndpoints(ctx, g.Endpoint)
+	if err != nil {
+		g.Log.Errorf("Error fetching endpoints from: %s, error: %s", g.Endpoint, err)
+		return nil, err
+	}
+
+	g.Log.Infof("Retrieved %d initial endpoint(s).", len(endpoints))
+
+	// If only one endpoint is found, further discovery is attempted using the Discovery URL.
+	if len(endpoints) == 1 {
+		return g.handleSingleEndpointDiscovery(ctx, endpoints[0])
+	}
+
+	adjustedEndpoints, err := g.ReplaceHostInEndpoints(endpoints, g.Endpoint)
+	if err != nil {
+		g.Log.Errorf("Failed to adjust endpoint hosts: %s", err)
+		return nil, err
+	}
+
+	// For multiple endpoints, adjust their hosts as per user specification.
+	return adjustedEndpoints, nil
+}
+
+// handleSingleEndpointDiscovery processes a single discovered endpoint by attempting to discover more endpoints using its Discovery URL and applying user-specified host adjustments.
+func (g *OPCUAInput) handleSingleEndpointDiscovery(ctx context.Context, endpoint *ua.EndpointDescription) ([]*ua.EndpointDescription, error) {
+	if endpoint == nil || endpoint.Server == nil || len(endpoint.Server.DiscoveryURLs) == 0 {
+		g.Log.Errorf("Invalid or incomplete single endpoint data.")
+		return nil, errors.New("invalid endpoint configuration")
+	}
+
+	discoveryURL := endpoint.Server.DiscoveryURLs[0]
+	g.Log.Infof("Using discovery URL for further discovery: %s", discoveryURL)
+
+	updatedURL, err := g.ReplaceHostInEndpointURL(discoveryURL, g.Endpoint)
+	if err != nil {
+		g.Log.Errorf("Failed to adjust endpoint URL: %s", err)
+		return nil, err
+	}
+
+	moreEndpoints, err := opcua.GetEndpoints(ctx, updatedURL)
+	if err != nil {
+		return nil, err
+	}
+
+	// Adjust the hosts of the newly discovered endpoints.
+	adjustedEndpoints, err := g.ReplaceHostInEndpoints(moreEndpoints, g.Endpoint)
+	if err != nil {
+		g.Log.Errorf("Failed to adjust endpoint hosts: %s", err)
+		return nil, err
+	}
+
+	return adjustedEndpoints, nil
+}
+
+// ReplaceHostInEndpoints updates each endpoint's URL to use a specified host, aiming to mitigate potential connectivity issues due to DNS name discrepancies.
+func (g *OPCUAInput) ReplaceHostInEndpoints(endpoints []*ua.EndpointDescription, newHost string) ([]*ua.EndpointDescription, error) {
+	var updatedEndpoints []*ua.EndpointDescription
+
+	for _, endpoint := range endpoints {
+		updatedURL, err := g.ReplaceHostInEndpointURL(endpoint.EndpointURL, newHost)
+		if err != nil {
+			return nil, err
+		}
+
+		// Update the endpoint URL with the new host.
+		endpoint.EndpointURL = updatedURL
+		updatedEndpoints = append(updatedEndpoints, endpoint)
+	}
+
+	return updatedEndpoints, nil
+}
+
+// replaceHostInEndpointURL constructs a new endpoint URL by replacing the existing host with a new host, preserving the original path and query parameters.
+func (g *OPCUAInput) ReplaceHostInEndpointURL(endpointURL, newHost string) (string, error) {
+
+	// Remove the "opc.tcp://" prefix to simplify parsing.
+	newHost = strings.TrimPrefix(newHost, "opc.tcp://")
+
+	// Remove the "opc.tcp://" prefix to simplify parsing.
+	withoutPrefix := strings.TrimPrefix(endpointURL, "opc.tcp://")
+
+	// Identify the first slash ("/") to separate the host from the path.
+	slashIndex := strings.Index(withoutPrefix, "/")
+
+	if slashIndex == -1 {
+		g.Log.Warnf("Endpoint URL does not contain a path: %s", endpointURL)
+		// Assume entire URL is a host and directly replace with newHost, retaining the "opc.tcp://" prefix.
+		return "opc.tcp://" + newHost, nil
+	}
+
+	// Reconstruct the endpoint URL with the new host and the original path/query.
+	newURL := fmt.Sprintf("opc.tcp://%s%s", newHost, withoutPrefix[slashIndex:])
+	g.Log.Infof("Updated endpoint URL to: %s", newURL)
+
+	return newURL, nil
 }

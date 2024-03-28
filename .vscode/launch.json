@@ -9,6 +9,7 @@
             "program": "${fileDirname}",
             "env": {
                 "OPC_DEBUG": "debug",
+                "TEST_PROSYS_ENDPOINT_URI": "opc.tcp://10.13.37.19:53530",
             },
             "args": ["-test.run", "^TestOpcuaPlugin$"]
         }

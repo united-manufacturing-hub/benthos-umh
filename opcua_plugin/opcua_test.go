@@ -110,7 +110,7 @@ func TestAgainstSimulator(t *testing.T) {
 		}
 	})
 
-	t.Run("ConnectAnonymousInsecure", func(t *testing.T) {
+	t.Run("Connect Anonymous", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
@@ -121,7 +121,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Username: "",
 			Password: "",
 			NodeIDs:  nil,
-			Insecure: true, // It only works when not using encryption
 		}
 		// Attempt to connect
 		err = input.Connect(ctx)
@@ -138,7 +137,7 @@ func TestAgainstSimulator(t *testing.T) {
 		}
 	})
 
-	t.Run("Connect Username-Password fail Insecure", func(t *testing.T) {
+	t.Run("Connect Username-Password fail", func(t *testing.T) {
 		t.Skip() // Needs to be skipped, the current OPC-UA simulator does only logging in once, after that it fails
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -149,7 +148,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint: "opc.tcp://localhost:50000",
 			Username: "sysadmin_bad", // bad user and password
 			Password: "demo",
-			Insecure: true, // It only works when not using encryption
 			NodeIDs:  nil,
 		}
 		// Attempt to connect
@@ -165,34 +163,7 @@ func TestAgainstSimulator(t *testing.T) {
 		}
 	})
 
-	t.Run("Connect Anonymous Insecure", func(t *testing.T) {
-		t.Skip() // Needs to be skipped, the current OPC-UA simulator does only logging in once, after that it fails
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		var err error
-
-		input := &OPCUAInput{
-			Endpoint: "opc.tcp://localhost:50000",
-			Username: "",
-			Password: "",
-			Insecure: true, // It only works when not using encryption
-			NodeIDs:  nil,
-		}
-		// Attempt to connect
-		err = input.Connect(ctx)
-		assert.Error(t, err)
-
-		// Close connection
-		if input.Client != nil {
-			err = input.Client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	})
-
-	t.Run("Connect Username-Password success Insecure", func(t *testing.T) {
+	t.Run("Connect Username-Password success", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
@@ -202,7 +173,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint: "opc.tcp://localhost:50000",
 			Username: "sysadmin",
 			Password: "demo",
-			Insecure: true, // It only works when not using encryption
 			NodeIDs:  nil,
 		}
 		// Attempt to connect
@@ -234,7 +204,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: true,
 		}
@@ -286,7 +255,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: true,
 		}
@@ -336,7 +304,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: true,
 		}
@@ -386,7 +353,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: true,
 		}
@@ -423,7 +389,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: true,
 		}
@@ -504,7 +469,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: true,
 		}
@@ -566,7 +530,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Username:         "",
 			Password:         "",
 			NodeIDs:          parsedNodeIDs,
-			Insecure:         true,
 			SubscribeEnabled: true,
 		}
 
@@ -640,7 +603,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: true,
 		}
@@ -723,7 +685,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: false, // set to false because some values will change more often in a second resulting in too many messages
 		}
@@ -761,7 +722,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: true,
 		}
@@ -798,7 +758,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: true,
 		}
@@ -828,7 +787,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: false, // disabling subscribe because messages change moreo ften than once in a second reuslting in to many messages
 		}
@@ -865,7 +823,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: false, // disabling subscribe because messages change moreo ften than once in a second reuslting in to many messages
 		}
@@ -902,7 +859,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: false,
 		}
@@ -939,7 +895,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: false,
 		}
@@ -976,7 +931,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: false,
 		}
@@ -1013,7 +967,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: false,
 		}
@@ -1267,11 +1220,12 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		var err error
 
 		input := &OPCUAInput{
-			Endpoint: endpoint,
-			Username: "",
-			Password: "",
-			NodeIDs:  nil,
-			Insecure: true,
+			Endpoint:       endpoint,
+			Username:       "",
+			Password:       "",
+			NodeIDs:        nil,
+			SecurityMode:   "None",
+			SecurityPolicy: "None",
 		}
 
 		// Attempt to connect

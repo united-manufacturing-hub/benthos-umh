@@ -226,7 +226,7 @@ input:
     nodeIDs: ['ns=2;s=IoTSensors']
     username: 'your-username'  # optional (default: unset)
     password: 'your-password'  # optional (default: unset)
-    insecure: false | true # optional (default: false)
+    insecure: false | true # DEPRECATED, see further below
     securityMode: None | Sign | SignAndEncrypt # optional (default: unset)
     securityPolicy: None | Basic256Sha256  # optional (default: unset)
     subscribeEnabled: false | true # optional (default: false)
@@ -274,7 +274,7 @@ Security Mode: This defines the level of security applied to the messages. The o
 - Sign: Messages are signed for integrity and authenticity but not encrypted.
 - SignAndEncrypt: Provides the highest security level where messages are both signed and encrypted.
 
-Security Policy: Specifies the set of cryptographic algorithms used for securing messages. This includes algorithms for encryption, decryption, and signing of messages. Currently only  Basic256Sha256 is tested.
+Security Policy: Specifies the set of cryptographic algorithms used for securing messages. This includes algorithms for encryption, decryption, and signing of messages. Currently only Basic256Sha256 is allowed.
 
 While the security mode and policy are automatically selected based on the endpoint and authentication method, you have the option to override this by specifying them in the configuration file:
 
@@ -289,17 +289,7 @@ input:
 
 ##### Insecure Mode
 
-Setting this to true will overwrite any configured securityMode and securityPolicy!
-
-If the most secure endpoint selected by benthos-umh is not working or the server's security implementation is lacking, you can bypass encryption by setting `insecure: true`. This will use the Security Mode "None".
-
-```yaml
-input:
-  opcua:
-    endpoint: 'opc.tcp://localhost:46010'
-    nodeIDs: ['ns=2;s=IoTSensors']
-    insecure: true
-```
+This is now deprecated. By default, benthos-umh will now connect via SignAndEncrypt and Basic256Sha256 and if this fails it will fallback to insecure mode.
 
 ##### Pull and Subscribe Methods
 
