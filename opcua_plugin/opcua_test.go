@@ -18,9 +18,7 @@ package opcua_plugin
 
 import (
 	"context"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"os"
 	"strings"
 	"testing"
@@ -1389,31 +1387,6 @@ func TestGetReasonableEndpoint_SecurityModeAndPolicy(t *testing.T) {
 	} else {
 		t.Error("Expected a reasonable endpoint, but got nil")
 	}
-}
-
-func logCertificateInfo(t *testing.T, certBytes []byte) {
-	t.Logf("  Server certificate:")
-
-	// Decode the certificate from base64 to DER format
-	block, _ := pem.Decode(certBytes)
-	if block == nil {
-		t.Log("Failed to decode certificate")
-		return
-	}
-
-	// Parse the DER-format certificate
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		t.Log("Failed to parse certificate:", err)
-		return
-	}
-
-	// Log the details
-	t.Log("    Not Before:", cert.NotBefore)
-	t.Log("    Not After:", cert.NotAfter)
-	t.Log("    DNS Names:", cert.DNSNames)
-	t.Log("    IP Addresses:", cert.IPAddresses)
-	t.Log("    URIs:", cert.URIs)
 }
 
 func TestUpdateNodePaths(t *testing.T) {
