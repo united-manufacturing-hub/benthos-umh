@@ -14,17 +14,16 @@
 
 package opcua_plugin
 
+// NOTE: future tests should be implemented in Ginkgo
+
 import (
 	"context"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/ua"
 	"github.com/stretchr/testify/assert"
 )
@@ -36,289 +35,9 @@ func TestAgainstSimulator(t *testing.T) {
 
 	// Check if environment variables are set
 	if endpoint != "" || username != "" || password != "" {
-		t.Skip("Skipping test: environment variables are set")
+		t.Skip("Skipping test: environment variables are set --> the wago test is running and we are not running a test against the simulator")
 		return
 	}
-
-	t.Run("Logging Endpoints", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		var endpoints []*ua.EndpointDescription
-		var err error
-
-		input := &OPCUAInput{
-			Endpoint: "opc.tcp://localhost:50000", // Important: ensure that the DNS name in the certificates of the server is also localhost (Hostname and DNS Name), as otherwise the server will refuse the connection
-			Username: "",
-			Password: "",
-			NodeIDs:  nil,
-			Insecure: false,
-		}
-
-		endpoints, err = opcua.GetEndpoints(ctx, input.Endpoint)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		for i, endpoint := range endpoints {
-			t.Logf("Endpoint %d:", i+1)
-			t.Logf("  EndpointURL: %s", endpoint.EndpointURL)
-			t.Logf("  SecurityMode: %v", endpoint.SecurityMode)
-			t.Logf("  SecurityPolicyURI: %s", endpoint.SecurityPolicyURI)
-			t.Logf("  TransportProfileURI: %s", endpoint.TransportProfileURI)
-			t.Logf("  SecurityLevel: %d", endpoint.SecurityLevel)
-
-			// If Server is not nil, log its details
-			if endpoint.Server != nil {
-				t.Logf("  Server ApplicationURI: %s", endpoint.Server.ApplicationURI)
-				t.Logf("  Server ProductURI: %s", endpoint.Server.ProductURI)
-				t.Logf("  Server ApplicationName: %s", endpoint.Server.ApplicationName.Text)
-				t.Logf("  Server ApplicationType: %v", endpoint.Server.ApplicationType)
-				t.Logf("  Server GatewayServerURI: %s", endpoint.Server.GatewayServerURI)
-				t.Logf("  Server DiscoveryProfileURI: %s", endpoint.Server.DiscoveryProfileURI)
-				t.Logf("  Server DiscoveryURLs: %v", endpoint.Server.DiscoveryURLs)
-			}
-
-			// Output the certificate
-			if len(endpoint.ServerCertificate) > 0 {
-				// Convert to PEM format first, then log the certificate information
-				pemCert := pem.EncodeToMemory(&pem.Block{
-					Type:  "CERTIFICATE",
-					Bytes: endpoint.ServerCertificate,
-				})
-				logCertificateInfo(t, pemCert)
-			}
-
-			// Loop through UserIdentityTokens
-			for j, token := range endpoint.UserIdentityTokens {
-				t.Logf("  UserIdentityToken %d:", j+1)
-				t.Logf("    PolicyID: %s", token.PolicyID)
-				t.Logf("    TokenType: %v", token.TokenType)
-				t.Logf("    IssuedTokenType: %s", token.IssuedTokenType)
-				t.Logf("    IssuerEndpointURL: %s", token.IssuerEndpointURL)
-			}
-		}
-		selectedEndpoint := input.getReasonableEndpoint(endpoints, ua.UserTokenTypeFromString("Anonymous"), input.Insecure, "SignAndEncrypt", "Basic256Sha256")
-		t.Logf("selected endpoint %v:", selectedEndpoint)
-		if input.Client != nil {
-			err = input.Client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	})
-
-	t.Run("ConnectAnonymousInsecure", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		var err error
-
-		input := &OPCUAInput{
-			Endpoint: "opc.tcp://localhost:50000",
-			Username: "",
-			Password: "",
-			NodeIDs:  nil,
-			Insecure: true, // It only works when not using encryption
-		}
-		// Attempt to connect
-		err = input.Connect(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		// Close connection
-		if input.Client != nil {
-			err = input.Client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	})
-
-	t.Run("Connect Username-Password fail Insecure", func(t *testing.T) {
-		t.Skip() // Needs to be skipped, the current OPC-UA simulator does only logging in once, after that it fails
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		var err error
-
-		input := &OPCUAInput{
-			Endpoint: "opc.tcp://localhost:50000",
-			Username: "sysadmin_bad", // bad user and password
-			Password: "demo",
-			Insecure: true, // It only works when not using encryption
-			NodeIDs:  nil,
-		}
-		// Attempt to connect
-		err = input.Connect(ctx)
-		assert.Error(t, err)
-
-		// Close connection
-		if input.Client != nil {
-			err = input.Client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	})
-
-	t.Run("Connect Anonymous Insecure", func(t *testing.T) {
-		t.Skip() // Needs to be skipped, the current OPC-UA simulator does only logging in once, after that it fails
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		var err error
-
-		input := &OPCUAInput{
-			Endpoint: "opc.tcp://localhost:50000",
-			Username: "",
-			Password: "",
-			Insecure: true, // It only works when not using encryption
-			NodeIDs:  nil,
-		}
-		// Attempt to connect
-		err = input.Connect(ctx)
-		assert.Error(t, err)
-
-		// Close connection
-		if input.Client != nil {
-			err = input.Client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	})
-
-	t.Run("Connect Username-Password success Insecure", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		var err error
-
-		input := &OPCUAInput{
-			Endpoint: "opc.tcp://localhost:50000",
-			Username: "sysadmin",
-			Password: "demo",
-			Insecure: true, // It only works when not using encryption
-			NodeIDs:  nil,
-		}
-		// Attempt to connect
-		err = input.Connect(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		// Close connection
-		if input.Client != nil {
-			err = input.Client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	})
-
-	t.Run("Connect Subscribe", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		var err error
-
-		var nodeIDStrings = []string{"ns=3;s=Fast"}
-
-		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
-
-		input := &OPCUAInput{
-			Endpoint:         "opc.tcp://localhost:50000",
-			Username:         "",
-			Password:         "",
-			Insecure:         true, // It only works when not using encryption
-			NodeIDs:          parsedNodeIDs,
-			SubscribeEnabled: true,
-		}
-		// Attempt to connect
-		err = input.Connect(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		messageBatch, _, err := input.ReadBatch(ctx)
-		if err != nil {
-			t.Logf("%+v", messageBatch)
-			t.Fatal(err)
-		}
-
-		assert.GreaterOrEqual(t, len(messageBatch), 6)
-
-		for _, message := range messageBatch {
-			message, err := message.AsStructuredMut()
-			if err != nil {
-				t.Fatal(err)
-			}
-			var exampleNumber json.Number = "22.565684"
-			assert.IsType(t, exampleNumber, message) // it should be a number
-			t.Log("Received message: ", message)
-		}
-
-		// Close connection
-		if input.Client != nil {
-			err = input.Client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	})
-
-	t.Run("Connect Subscribe Boolean With Properties", func(t *testing.T) {
-		// This test checks that properties are not browsed by default
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		var err error
-
-		var nodeIDStrings = []string{"ns=6;s=DataAccess_AnalogType_Byte"}
-
-		parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
-
-		input := &OPCUAInput{
-			Endpoint:         "opc.tcp://localhost:50000",
-			Username:         "",
-			Password:         "",
-			Insecure:         true, // It only works when not using encryption
-			NodeIDs:          parsedNodeIDs,
-			SubscribeEnabled: true,
-		}
-		// Attempt to connect
-		err = input.Connect(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		messageBatch, _, err := input.ReadBatch(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		assert.Equal(t, 1, len(messageBatch))
-
-		for _, message := range messageBatch {
-			message, err := message.AsStructuredMut()
-			if err != nil {
-				t.Fatal(err)
-			}
-			var exampleNumber json.Number = "0"
-			assert.Equal(t, exampleNumber, message) // it should be 0
-			t.Log("Received message: ", message)
-		}
-
-		// Close connection
-		if input.Client != nil {
-			err = input.Client.Close(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	})
 
 	t.Run("Connect Subscribe AnalogTypes (simple datatypes)", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -334,7 +53,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: true,
 		}
@@ -384,7 +102,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: true,
 		}
@@ -421,7 +138,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: true,
 		}
@@ -502,7 +218,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: true,
 		}
@@ -564,7 +279,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Username:         "",
 			Password:         "",
 			NodeIDs:          parsedNodeIDs,
-			Insecure:         true,
 			SubscribeEnabled: true,
 		}
 
@@ -638,7 +352,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: true,
 		}
@@ -721,7 +434,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: false, // set to false because some values will change more often in a second resulting in too many messages
 		}
@@ -759,7 +471,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: true,
 		}
@@ -796,7 +507,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: true,
 		}
@@ -826,7 +536,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: false, // disabling subscribe because messages change moreo ften than once in a second reuslting in to many messages
 		}
@@ -863,7 +572,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: false, // disabling subscribe because messages change moreo ften than once in a second reuslting in to many messages
 		}
@@ -900,7 +608,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: false,
 		}
@@ -937,7 +644,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: false,
 		}
@@ -974,7 +680,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: false,
 		}
@@ -1011,7 +716,6 @@ func TestAgainstSimulator(t *testing.T) {
 			Endpoint:         "opc.tcp://localhost:50000",
 			Username:         "",
 			Password:         "",
-			Insecure:         true, // It only works when not using encryption
 			NodeIDs:          parsedNodeIDs,
 			SubscribeEnabled: false,
 		}
@@ -1237,48 +941,6 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		t.Skip("Skipping test: environment variables not set")
 		return
 	}
-
-	t.Run("ConnectAnonymous", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		var err error
-
-		input := &OPCUAInput{
-			Endpoint: endpoint,
-			Username: "",
-			Password: "",
-			NodeIDs:  nil,
-		}
-		// Attempt to connect
-		err = input.Connect(ctx)
-		defer input.Close(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-	})
-
-	t.Run("ConnectAnonymousWithNoEncryption", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		var err error
-
-		input := &OPCUAInput{
-			Endpoint: endpoint,
-			Username: "",
-			Password: "",
-			NodeIDs:  nil,
-			Insecure: true,
-		}
-
-		// Attempt to connect
-		err = input.Connect(ctx)
-		defer input.Close(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-	})
 
 	t.Run("Connect Username-Password fail", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1682,31 +1344,6 @@ func TestGetReasonableEndpoint_SecurityModeAndPolicy(t *testing.T) {
 	} else {
 		t.Error("Expected a reasonable endpoint, but got nil")
 	}
-}
-
-func logCertificateInfo(t *testing.T, certBytes []byte) {
-	t.Logf("  Server certificate:")
-
-	// Decode the certificate from base64 to DER format
-	block, _ := pem.Decode(certBytes)
-	if block == nil {
-		t.Log("Failed to decode certificate")
-		return
-	}
-
-	// Parse the DER-format certificate
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		t.Log("Failed to parse certificate:", err)
-		return
-	}
-
-	// Log the details
-	t.Log("    Not Before:", cert.NotBefore)
-	t.Log("    Not After:", cert.NotAfter)
-	t.Log("    DNS Names:", cert.DNSNames)
-	t.Log("    IP Addresses:", cert.IPAddresses)
-	t.Log("    URIs:", cert.URIs)
 }
 
 func TestUpdateNodePaths(t *testing.T) {

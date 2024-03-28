@@ -51,7 +51,8 @@ func GenerateCert(host string, rsaBits int, validFor time.Duration) (certPEM, ke
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			Organization: []string{"Gopcua Test Client"},
+			CommonName:   "benthos-umh",
+			Organization: []string{"UMH"},
 		},
 		NotBefore: notBefore,
 		NotAfter:  notAfter,
