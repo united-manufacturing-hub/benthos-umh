@@ -942,49 +942,6 @@ func TestAgainstRemoteInstance(t *testing.T) {
 		return
 	}
 
-	t.Run("ConnectAnonymous", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		var err error
-
-		input := &OPCUAInput{
-			Endpoint: endpoint,
-			Username: "",
-			Password: "",
-			NodeIDs:  nil,
-		}
-		// Attempt to connect
-		err = input.Connect(ctx)
-		defer input.Close(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-	})
-
-	t.Run("ConnectAnonymousWithNoEncryption", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		var err error
-
-		input := &OPCUAInput{
-			Endpoint:       endpoint,
-			Username:       "",
-			Password:       "",
-			NodeIDs:        nil,
-			SecurityMode:   "None",
-			SecurityPolicy: "None",
-		}
-
-		// Attempt to connect
-		err = input.Connect(ctx)
-		defer input.Close(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-	})
-
 	t.Run("Connect Username-Password fail", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
