@@ -22,14 +22,8 @@ target:
 	@goreleaser build --single-target --snapshot --id benthos \
 		--output ./tmp/bin/benthos
 
-test-all:
+test:
 	@ginkgo -r --output-interceptor-mode=none --github-output -vv --race -trace -p --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./...
-
-test-opcua: 
-	@ginkgo -r --output-interceptor-mode=none --github-output -vv --race -trace -p --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./opcua_plugin
-
-test-s7:
-	@ginkgo -r --output-interceptor-mode=none --github-output -vv --race -trace -p --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./s7comm_plugin
 
 lint:
 	@golangci-lint run

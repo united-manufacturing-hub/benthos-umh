@@ -349,13 +349,60 @@ Similar to the OPC UA input, this outputs for each address a single message with
 
 ## Testing
 
-We execute automated tests and verify that benthos-umh works:
+We execute automated tests and verify that benthos-umh works against various targets. All tests are started with `make test`, but might require environment parameters in order to not be skipped.
 
-- (WAGO PFC100, 750-8101, OPC UA) Connect Anonymously
-- (WAGO PFC100, 750-8101, OPC UA) Connect Username / Password
-- (WAGO PFC100, 750-8101, OPC UA) Connect and get one float number
+Some of these tests are executed with a local github runner called "hercules", which is connected to a isolated testing network.
 
-These tests are executed with a local github runner called "hercules", which is connected to a isolated testing network.
+### Target: WAGO PFC100 (OPC UA)
+
+Model number: 750-8101
+
+Requires:
+- TEST_WAGO_ENDPOINT_URI
+- TEST_WAGO_USERNAME
+- TEST_WAGO_PASSWORD
+
+### Target: Microsoft OPC UA Simulator (OPC UA)
+
+Docker tag: mcr.microsoft.com/iotedge/opc-plc:2.9.11
+
+Requires:
+- TEST_OPCUA_SIMULATOR
+
+### Target: Prosys OPC UA Simulator (OPC UA)
+
+Version: 5.4.6-148
+
+Requires: 
+- TEST_PROSYS_ENDPOINT_URI
+
+This requires additional to have the simulator setup somewhere (e.g., locally on your PC) and pointing the test towards it. This is not included in any CI andm ust be run manually.
+
+### Target: Siemens S7-1200 (OPC UA)
+
+Model number: SIMATIC S7-1200 6ES7211-1AE40-0XB0
+
+Requires:
+- TEST_S7_ENDPOINT_URI
+
+### Target: Unit Tests (OPC UA)
+
+Requires:
+- TEST_OPCUA_UNITTEST
+
+### Target: Siemens S7-1200 (S7comm)
+
+Model number: SIMATIC S7-1200 6ES7211-1AE40-0XB0
+
+Requires:
+- TEST_S7_TCPDEVICE
+- TEST_S7_RACK
+- TEST_S7_SLOT
+
+### Target: Unit Tests (S7comm)
+
+Requires:
+- TEST_S7COMM_UNITTEST
 
 ## Development
 

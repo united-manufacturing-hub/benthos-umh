@@ -349,9 +349,9 @@ type OPCUAInput struct {
 	SessionTimeout   int
 }
 
-// updateNodePaths updates the node paths to use the nodeID instead of the browseName
+// UpdateNodePaths updates the node paths to use the nodeID instead of the browseName
 // if the browseName is not unique
-func updateNodePaths(nodes []NodeDef) {
+func UpdateNodePaths(nodes []NodeDef) {
 	for i, node := range nodes {
 		for j, otherNode := range nodes {
 			if i == j {
@@ -736,10 +736,15 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 				// TODO: only continue if it is not something like password wrong or toomanysessions, etc.
 				if errors.Is(err, ua.StatusBadUserAccessDenied) || errors.Is(err, ua.StatusBadTooManySessions) {
+					var timeout time.Duration
 					// Adding a sleep to prevent immediate re-connect
 					// In the case of ua.StatusBadUserAccessDenied, the session is for some reason not properly closed on the server
 					// If we were to re-connect, we could overload the server with too many sessions as the default timeout is 10 seconds
-					timeout := time.Duration(g.SessionTimeout * int(time.Millisecond))
+					if g.SessionTimeout > 0 {
+						timeout = time.Duration(g.SessionTimeout * int(time.Millisecond))
+					} else {
+						timeout = SESSION_TIMEOUT
+					}
 					g.Log.Errorf("Encountered unrecoverable error. Waiting before trying to re-connect to prevent overloading the server.", err, timeout)
 					time.Sleep(timeout)
 					return err
@@ -793,7 +798,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			return err
 		}
 
-		updateNodePaths(nodes)
+		UpdateNodePaths(nodes)
 
 		// Add the nodes to the nodeList
 		nodeList = append(nodeList, nodes...)
@@ -905,7 +910,11 @@ func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescript
 	}
 
 	opts = append(opts, opcua.SessionName("benthos-umh"))
-	opts = append(opts, opcua.SessionTimeout(time.Duration(g.SessionTimeout*int(time.Millisecond)))) // set the session timeout to prevent having to many connections
+	if g.SessionTimeout > 0 {
+		opts = append(opts, opcua.SessionTimeout(time.Duration(g.SessionTimeout*int(time.Millisecond)))) // set the session timeout to prevent having to many connections
+	} else {
+		opts = append(opts, opcua.SessionTimeout(SESSION_TIMEOUT))
+	}
 	opts = append(opts, opcua.ApplicationName("benthos-umh"))
 	//opts = append(opts, opcua.ApplicationURI("urn:benthos-umh"))
 	//opts = append(opts, opcua.ProductURI("urn:benthos-umh"))

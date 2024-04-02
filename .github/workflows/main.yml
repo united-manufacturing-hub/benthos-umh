@@ -50,7 +50,7 @@ jobs:
             sleep 1
           done
       - name: Test
-        run: TEST_OPCUA_SIMULATOR=true make test-all
+        run: TEST_OPCUA_SIMULATOR=true TEST_OPCUA_UNITTEST=true make test
   go-build:
     runs-on:
       group: large-runners
