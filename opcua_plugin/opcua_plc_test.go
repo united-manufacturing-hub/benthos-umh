@@ -66,7 +66,7 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 	})
 })
 
-var _ = FDescribe("Test Against WAGO PLC", Serial, func() {
+var _ = Describe("Test Against WAGO PLC", Serial, func() {
 
 	var endpoint string
 	var username string
@@ -98,7 +98,9 @@ var _ = FDescribe("Test Against WAGO PLC", Serial, func() {
 				fmt.Println("Closed connection")
 			}
 		}
-		cancel()
+		if cancel != nil {
+			cancel()
+		}
 	})
 
 	Describe("Connect Anonymous", func() {
@@ -133,7 +135,7 @@ var _ = FDescribe("Test Against WAGO PLC", Serial, func() {
 
 	Describe("Connect with Username and Password", func() {
 		Context("when using incorrect credentials", func() {
-			FIt("should fail to connect", func() {
+			It("should fail to connect", func() {
 
 				input = &OPCUAInput{
 					Endpoint:       endpoint,

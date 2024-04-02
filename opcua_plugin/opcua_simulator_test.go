@@ -133,13 +133,11 @@ var _ = Describe("Test Against Prosys Simulator", func() {
 var _ = Describe("Test Against Microsoft OPC UA simulator", func() {
 
 	BeforeEach(func() {
-		endpoint := os.Getenv("TEST_WAGO_ENDPOINT_URI")
-		username := os.Getenv("TEST_WAGO_USERNAME")
-		password := os.Getenv("TEST_WAGO_PASSWORD")
+		testActivated := os.Getenv("TEST_OPCUA_SIMULATOR")
 
 		// Check if environment variables are set
-		if endpoint != "" || username != "" || password != "" {
-			Skip("Skipping test: environment variables are set --> the wago test is running and we are not running a test against the simulator")
+		if testActivated == "" {
+			Skip("Skipping unit tests against simulator: TEST_OPCUA_SIMULATOR not set")
 			return
 		}
 	})

@@ -39,6 +39,8 @@ jobs:
         uses: ./.github/actions/setup-go
         with:
           go_version: ${{ env.GO_VERSION }}
+      - name: Install Ginkgo
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.17.1
       - name: Test
         working-directory: s7comm_plugin
-        run: TEST_S7_TCPDEVICE=${{ secrets.TEST_S7_TCPDEVICE }} TEST_S7_RACK=${{ secrets.TEST_S7_RACK }} TEST_S7_SLOT=${{ secrets.TEST_S7_SLOT }} go test ./...
+        run: TEST_S7_TCPDEVICE=${{ secrets.TEST_S7_TCPDEVICE }} TEST_S7_RACK=${{ secrets.TEST_S7_RACK }} TEST_S7_SLOT=${{ secrets.TEST_S7_SLOT }} make test-s7

@@ -42,6 +42,8 @@ jobs:
         uses: ./.github/actions/setup-go
         with:
           go_version: ${{ env.GO_VERSION }}
+      - name: Install Ginkgo
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.17.1
       - name: Test
         working-directory: opcua_plugin
-        run: TEST_S7_ENDPOINT_URI=${{ secrets.TEST_S7_ENDPOINT_URI }} TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI }} TEST_WAGO_USERNAME=${{ secrets.TEST_WAGO_USERNAME }} TEST_WAGO_PASSWORD=${{ secrets.TEST_WAGO_PASSWORD }}  go test ./...
+        run: TEST_S7_ENDPOINT_URI=${{ secrets.TEST_S7_ENDPOINT_URI }} TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI }} TEST_WAGO_USERNAME=${{ secrets.TEST_WAGO_USERNAME }} TEST_WAGO_PASSWORD=${{ secrets.TEST_WAGO_PASSWORD }} make test-opcua
