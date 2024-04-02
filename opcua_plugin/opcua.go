@@ -748,6 +748,9 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 					g.Log.Errorf("Encountered unrecoverable error. Waiting before trying to re-connect to prevent overloading the server.", err, timeout)
 					time.Sleep(timeout)
 					return err
+				} else if errors.Is(err, ua.StatusBadTimeout) {
+					g.Log.Warnf("Selected endpoint timed out. Selecting next one...", currentEndpoint)
+					continue
 				}
 
 				continue

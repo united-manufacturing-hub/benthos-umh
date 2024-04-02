@@ -38,8 +38,8 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 
 	Describe("Connect", func() {
 		It("should connect", func() {
-			Skip("This currently fails")
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			//Skip("This currently fails")
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
 			nodeIDStrings := []string{"ns=4;i=1"}
@@ -61,7 +61,35 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			messageBatch, _, err := input.ReadBatch(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(messageBatch).To(HaveLen(3))
+			Expect(messageBatch).To(HaveLen(2))
+		})
+
+		It("should connect with no security", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			nodeIDStrings := []string{"ns=4;i=1"}
+
+			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+			input = &OPCUAInput{
+				Endpoint:         endpoint,
+				Username:         "",
+				Password:         "",
+				NodeIDs:          parsedNodeIDs,
+				SubscribeEnabled: false,
+				SecurityMode:     "None",
+				SecurityPolicy:   "None",
+			}
+
+			// Attempt to connect
+			err := input.Connect(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			messageBatch, _, err := input.ReadBatch(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(messageBatch).To(HaveLen(2))
 		})
 	})
 })

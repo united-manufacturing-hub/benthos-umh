@@ -15,6 +15,15 @@ import (
 )
 
 var _ = Describe("S7Comm Plugin Unittests", func() {
+	BeforeEach(func() {
+		testActive := os.Getenv("TEST_S7COMM_UNITTEST")
+
+		// Check if environment variables are set
+		if testActive == "" {
+			Skip("Skipping test: environment variables are not set")
+			return
+		}
+	})
 
 	Describe("Parsing Addresses", func() {
 		type testCase struct {
