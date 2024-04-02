@@ -136,10 +136,11 @@ var _ = FDescribe("Test Against WAGO PLC", Serial, func() {
 			FIt("should fail to connect", func() {
 
 				input = &OPCUAInput{
-					Endpoint: endpoint,
-					Username: "123", // Incorrect username and password
-					Password: "123",
-					NodeIDs:  nil,
+					Endpoint:       endpoint,
+					Username:       "123", // Incorrect username and password
+					Password:       "123",
+					NodeIDs:        nil,
+					SessionTimeout: 1000,
 				}
 				// Attempt to connect
 				err := input.Connect(ctx)
