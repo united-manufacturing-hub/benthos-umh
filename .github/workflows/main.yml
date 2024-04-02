@@ -49,6 +49,8 @@ jobs:
             echo "Waiting for port 50000 to be ready..."
             sleep 1
           done
+      - name: Install Ginkgo
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.17.1
       - name: Test
         run: TEST_OPCUA_SIMULATOR=true TEST_OPCUA_UNITTEST=true make test
   go-build:
