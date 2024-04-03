@@ -1,166 +1,139 @@
-package s7comm_plugin
+package s7comm_plugin_test
 
 import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"os"
 	"strconv"
-	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/united-manufacturing-hub/benthos-umh/v2/s7comm_plugin"
 )
 
-// Define a structure for test cases
-type testCase struct {
-	address            string
-	inputBytesHex      string
-	expectedConversion interface{}
-}
+var _ = Describe("S7Comm Plugin Unittests", func() {
+	BeforeEach(func() {
+		testActive := os.Getenv("TEST_S7COMM_UNITTEST")
 
-// TestParseAddresses refactored to include address, bytes, and expected output
-func TestParseAddresses(t *testing.T) {
-	// Define your test cases here
-	tests := []testCase{
-		{"DB2.W0", "0000", uint16(0)},
-		{"DB2.W1", "0001", uint16(1)},
-	}
+		// Check if environment variables are set
+		if testActive == "" {
+			Skip("Skipping test: environment variables are not set")
+			return
+		}
+	})
 
-	for _, tc := range tests {
-		t.Run(fmt.Sprintf("Address %s with bytes %s", tc.address, tc.inputBytesHex), func(t *testing.T) {
-			addresses := []string{tc.address}
-			batchMaxSize := 1
+	Describe("Parsing Addresses", func() {
+		type testCase struct {
+			address            string
+			inputBytesHex      string
+			expectedConversion interface{}
+		}
 
-			batches, err := parseAddresses(addresses, batchMaxSize)
-			if err != nil {
-				t.Errorf("parseAddresses returned an error: %v", err)
-				return
+		It("correctly parses addresses and converts input bytes", func() {
+			tests := []testCase{
+				{"DB2.W0", "0000", uint16(0)},
+				{"DB2.W1", "0001", uint16(1)},
 			}
 
-			if len(batches) != 1 || len(batches[0]) != 1 {
-				t.Fatalf("Expected 1 batch with 1 address, got %d batches with %d addresses", len(batches), len(batches[0]))
-			}
+			for _, tc := range tests {
+				By("Testing address "+tc.address+" with bytes "+tc.inputBytesHex, func() {
+					addresses := []string{tc.address}
+					batchMaxSize := 1
 
-			converterFunc := batches[0][0].ConverterFunc
+					batches, err := s7comm_plugin.ParseAddresses(addresses, batchMaxSize)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(batches).To(HaveLen(1))
+					Expect(batches[0]).To(HaveLen(1))
 
-			// Convert inputBytesHex to bytes
-			inputBytes, err := hex.DecodeString(tc.inputBytesHex)
-			if err != nil {
-				t.Fatalf("Failed to decode input bytes hex: %v", err)
-			}
+					converterFunc := batches[0][0].ConverterFunc
 
-			// Execute the converter function with the input bytes
-			actualConversionResult := converterFunc(inputBytes)
+					inputBytes, err := hex.DecodeString(tc.inputBytesHex)
+					Expect(err).NotTo(HaveOccurred())
 
-			// Assert the expected conversion result without checking the type without reflection
-			// as the type of the expected conversion result is not known
-
-			if actualConversionResult != tc.expectedConversion {
-				t.Errorf("Expected conversion result %v, got %v", tc.expectedConversion, actualConversionResult)
+					actualConversionResult := converterFunc(inputBytes)
+					Expect(actualConversionResult).To(Equal(tc.expectedConversion))
+				})
 			}
 		})
-	}
-}
-
-func TestAgainstRemoteInstance(t *testing.T) {
-
-	// These information can be found in Bitwarden under Siemens S7-1200
-	endpoint := os.Getenv("TEST_S7_TCPDEVICE")
-
-	rackStr := os.Getenv("TEST_S7_RACK")
-	slotStr := os.Getenv("TEST_S7_SLOT")
-
-	// Check if environment variables are set
-	if endpoint == "" || rackStr == "" || slotStr == "" {
-		t.Skip("Skipping test: environment variables not set")
-		return
-	}
-
-	rack, err := strconv.Atoi(rackStr)
-	if err != nil {
-		t.Errorf("Failed to convert rack to integer: %v", err)
-		return
-	}
-
-	slot, err := strconv.Atoi(slotStr)
-	if err != nil {
-		t.Errorf("Failed to convert slot to integer: %v", err)
-		return
-	}
-	const batchMaxSize = 480 // default
-
-	t.Run("Connect", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		var err error
-
-		var addresses = []string{"DB2.W0"}
-
-		batches, err := parseAddresses(addresses, batchMaxSize)
-		if err != nil {
-			t.Errorf("Failed to parse addresses: %v", err)
-		}
-
-		input := &S7CommInput{
-			tcpDevice:    endpoint,
-			rack:         rack,
-			slot:         slot,
-			batchMaxSize: batchMaxSize,
-			batches:      batches,
-		}
-
-		// Attempt to connect
-		err = input.Connect(ctx)
-		defer input.Close(ctx)
-		assert.NoError(t, err)
 	})
+})
 
-	t.Run("Read", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+var _ = Describe("S7Comm Test Against Local PLC", func() {
 
-		var err error
+	Describe("Communication with a Remote S7 Instance", func() {
+		var (
+			endpoint string
+			rack     int
+			slot     int
+			ctx      context.Context
+			input    *s7comm_plugin.S7CommInput
+			cancel   context.CancelFunc
+		)
 
-		var addresses = []string{"DB2.W0"}
+		BeforeEach(func() {
+			endpoint = os.Getenv("TEST_S7_TCPDEVICE")
+			rackStr := os.Getenv("TEST_S7_RACK")
+			slotStr := os.Getenv("TEST_S7_SLOT")
 
-		batches, err := parseAddresses(addresses, batchMaxSize)
-		if err != nil {
-			t.Errorf("Failed to parse addresses: %v", err)
-		}
-
-		input := &S7CommInput{
-			tcpDevice:    endpoint,
-			rack:         rack,
-			slot:         slot,
-			batchMaxSize: batchMaxSize,
-			batches:      batches,
-		}
-
-		// Attempt to connect
-		err = input.Connect(ctx)
-		defer input.Close(ctx)
-		assert.NoError(t, err)
-
-		messageBatch, _, err := input.ReadBatch(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		t.Logf("Received %d messages:", len(messageBatch))
-
-		assert.Equal(t, 1, len(messageBatch))
-
-		for _, message := range messageBatch {
-			message, err := message.AsStructuredMut()
-			if err != nil {
-				t.Fatal(message, err)
+			if endpoint == "" || rackStr == "" || slotStr == "" {
+				Skip("Skipping test: environment variables not set")
 			}
-			var exampleNumber json.Number = "22.565684"
-			assert.IsType(t, exampleNumber, message) // it should be a number
-			t.Log("Received message: ", message)
-		}
+
+			var err error
+			rack, err = strconv.Atoi(rackStr)
+			Expect(err).NotTo(HaveOccurred())
+
+			slot, err = strconv.Atoi(slotStr)
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+
+			addresses := []string{"DB2.W0"}
+			batchMaxSize := 480 // default
+
+			batches, err := s7comm_plugin.ParseAddresses(addresses, batchMaxSize)
+			Expect(err).NotTo(HaveOccurred())
+
+			input = &s7comm_plugin.S7CommInput{
+				TcpDevice:    endpoint,
+				Rack:         rack,
+				Slot:         slot,
+				BatchMaxSize: batchMaxSize,
+				Batches:      batches,
+			}
+		})
+
+		AfterEach(func() {
+			if input != nil && ctx != nil {
+				input.Close(ctx)
+			}
+
+			if ctx != nil {
+				cancel()
+			}
+		})
+
+		It("connects and reads data successfully", func() {
+
+			By("Connecting to the remote instance", func() {
+				err := input.Connect(ctx)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			By("Reading data", func() {
+				messageBatch, _, err := input.ReadBatch(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(messageBatch).To(HaveLen(1))
+
+				for _, message := range messageBatch {
+					message, err := message.AsStructuredMut()
+					Expect(err).NotTo(HaveOccurred())
+					Expect(message).To(BeAssignableToTypeOf(json.Number("22.565684")))
+				}
+			})
+		})
 	})
-}
+})
