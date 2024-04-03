@@ -67,16 +67,16 @@ type S7DataItemWithAddressAndConverter struct {
 // It holds the configuration necessary to establish a connection with a Siemens S7 PLC,
 // along with the read requests to fetch data from the PLC.
 type S7CommInput struct {
-	tcpDevice      string                                // IP address of the S7 PLC.
-	rack           int                                   // Rack number where the CPU resides. Identifies the physical location within the PLC rack.
-	slot           int                                   // Slot number where the CPU resides. Identifies the CPU slot within the rack.
-	batchMaxSize   int                                   // Maximum count of addresses to be bundled in one batch-request. Affects PDU size.
-	timeout        time.Duration                         // Time duration before a connection attempt or read request times out.
-	client         gos7.Client                           // S7 client for communication.
-	handler        *gos7.TCPClientHandler                // TCP handler to manage the connection.
-	log            *service.Logger                       // Logger for logging plugin activity.
-	batches        [][]S7DataItemWithAddressAndConverter // List of items to read from the PLC, grouped into batches with a maximum size.
-	disableCPUInfo bool                                  // Set this to true to not fetch CPU information from the PLC. Should be used when you get the error "Failed to get CPU information"
+	TcpDevice      string                                // IP address of the S7 PLC.
+	Rack           int                                   // Rack number where the CPU resides. Identifies the physical location within the PLC rack.
+	Slot           int                                   // Slot number where the CPU resides. Identifies the CPU slot within the rack.
+	BatchMaxSize   int                                   // Maximum count of addresses to be bundled in one batch-request. Affects PDU size.
+	Timeout        time.Duration                         // Time duration before a connection attempt or read request times out.
+	Client         gos7.Client                           // S7 client for communication.
+	Handler        *gos7.TCPClientHandler                // TCP handler to manage the connection.
+	Log            *service.Logger                       // Logger for logging plugin activity.
+	Batches        [][]S7DataItemWithAddressAndConverter // List of items to read from the PLC, grouped into batches with a maximum size.
+	DisableCPUInfo bool                                  // Set this to true to not fetch CPU information from the PLC. Should be used when you get the error "Failed to get CPU information"
 }
 
 type converterFunc func([]byte) interface{}
@@ -135,26 +135,26 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	// Now split the addresses into batches based on the batchMaxSize
-	batches, err := parseAddresses(addresses, batchMaxSize)
+	batches, err := ParseAddresses(addresses, batchMaxSize)
 	if err != nil {
 		return nil, err
 	}
 
 	m := &S7CommInput{
-		tcpDevice:      tcpDevice,
-		rack:           rack,
-		slot:           slot,
-		log:            mgr.Logger(),
-		batches:        batches,
-		batchMaxSize:   batchMaxSize,
-		timeout:        time.Duration(timeoutInt) * time.Second,
-		disableCPUInfo: disableCPUInfo,
+		TcpDevice:      tcpDevice,
+		Rack:           rack,
+		Slot:           slot,
+		Log:            mgr.Logger(),
+		Batches:        batches,
+		BatchMaxSize:   batchMaxSize,
+		Timeout:        time.Duration(timeoutInt) * time.Second,
+		DisableCPUInfo: disableCPUInfo,
 	}
 
 	return service.AutoRetryNacksBatched(m), nil
 }
 
-func parseAddresses(addresses []string, batchMaxSize int) ([][]S7DataItemWithAddressAndConverter, error) {
+func ParseAddresses(addresses []string, batchMaxSize int) ([][]S7DataItemWithAddressAndConverter, error) {
 	parsedAddresses := make([]S7DataItemWithAddressAndConverter, 0, len(addresses))
 
 	for _, address := range addresses {
@@ -212,26 +212,26 @@ func init() {
 }
 
 func (g *S7CommInput) Connect(ctx context.Context) error {
-	g.handler = gos7.NewTCPClientHandler(g.tcpDevice, g.rack, g.slot)
-	g.handler.Timeout = g.timeout
-	g.handler.IdleTimeout = g.timeout
+	g.Handler = gos7.NewTCPClientHandler(g.TcpDevice, g.Rack, g.Slot)
+	g.Handler.Timeout = g.Timeout
+	g.Handler.IdleTimeout = g.Timeout
 
-	err := g.handler.Connect()
+	err := g.Handler.Connect()
 	if err != nil {
-		g.log.Errorf("Failed to connect to S7 PLC at %s: %v", g.tcpDevice, err)
+		g.Log.Errorf("Failed to connect to S7 PLC at %s: %v", g.TcpDevice, err)
 		return err
 	}
 
-	g.client = gos7.NewClient(g.handler)
-	g.log.Infof("Successfully connected to S7 PLC at %s", g.tcpDevice)
+	g.Client = gos7.NewClient(g.Handler)
+	g.Log.Infof("Successfully connected to S7 PLC at %s", g.TcpDevice)
 
 	// Fetch and show CPU information, but only if the user has not disabled it
-	if !g.disableCPUInfo {
-		cpuInfo, err := g.client.GetCPUInfo()
+	if !g.DisableCPUInfo {
+		cpuInfo, err := g.Client.GetCPUInfo()
 		if err != nil {
-			g.log.Warnf("Failed to get CPU information: %v", err)
+			g.Log.Warnf("Failed to get CPU information: %v", err)
 		} else {
-			g.log.Infof("CPU Information: %s", cpuInfo)
+			g.Log.Infof("CPU Information: %s", cpuInfo)
 		}
 	}
 
@@ -239,12 +239,12 @@ func (g *S7CommInput) Connect(ctx context.Context) error {
 }
 
 func (g *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
-	if g.client == nil {
+	if g.Client == nil {
 		return nil, nil, fmt.Errorf("S7Comm client is not initialized")
 	}
 
 	msgs := make(service.MessageBatch, 0)
-	for i, b := range g.batches {
+	for i, b := range g.Batches {
 
 		// Create a new batch to read
 		batchToRead := make([]gos7.S7DataItem, len(b))
@@ -253,8 +253,8 @@ func (g *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 		}
 
 		// Read the batch
-		g.log.Debugf("Reading batch %d...", i+1)
-		if err := g.client.AGReadMulti(batchToRead, len(batchToRead)); err != nil {
+		g.Log.Debugf("Reading batch %d...", i+1)
+		if err := g.Client.AGReadMulti(batchToRead, len(batchToRead)); err != nil {
 			// Try to reconnect and skip this gather cycle to avoid hammering
 			// the network if the server is down or under load.
 			errMsg := fmt.Sprintf("Failed to read batch %d: %v. Reconnecting...", i+1, err)
@@ -296,10 +296,10 @@ func (g *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 }
 
 func (g *S7CommInput) Close(ctx context.Context) error {
-	if g.handler != nil {
-		g.handler.Close()
-		g.handler = nil
-		g.client = nil
+	if g.Handler != nil {
+		g.Handler.Close()
+		g.Handler = nil
+		g.Client = nil
 	}
 
 	return nil
