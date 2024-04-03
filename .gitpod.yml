@@ -28,6 +28,8 @@ tasks:
       docker-compose up -d
       sleep 5
       gp sync-done docker
+  - command: |
+      go install github.com/onsi/ginkgo/v2/ginkgo@v2.17.1
   - name: tailscaled
     command: |
         if [ -n "${TAILSCALE_STATE_MYPROJECT}" ]; then

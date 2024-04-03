@@ -252,7 +252,12 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				messageBatch, _, err := input.ReadBatch(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				Expect(len(messageBatch)).To(BeNumerically(">=", 6))
+				// ns=3;s=Fast consists out of 6 nodes
+				// FastUInt1 - 5 and BadFastUInt1
+				// BadFastUInt1 can sometimes be null, and then it will not report anything
+				// Therefore, the expected messageBatch is between 5 and 6
+				// However, sometimes the OPC UA server sends back the values for multiple seconds in the same batch, so it could also be 10 or 12
+				Expect(len(messageBatch)).To(BeNumerically(">=", 5))
 
 				for _, message := range messageBatch {
 					message, err := message.AsStructuredMut()
