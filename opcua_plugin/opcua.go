@@ -223,7 +223,7 @@ var OPCUAConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringField("endpoint").Description("Address of the OPC-UA server to connect with.")).
 	Field(service.NewStringField("username").Description("Username for server access. If not set, no username is used.").Default("")).
 	Field(service.NewStringField("password").Description("Password for server access. If not set, no password is used.").Default("")).
-	Field(service.NewStringField("sessionTimeout").Description("The duration in milliseconds that a OPC UA session will last. Is used to ensure that older failed sessions will timeout and that we will not get a TooManySession error.").Default("10000")).
+	Field(service.NewStringField("sessionTimeout").Description("The duration in milliseconds that a OPC UA session will last. Is used to ensure that older failed sessions will timeout and that we will not get a TooManySession error.").Default(10000)).
 	Field(service.NewStringListField("nodeIDs").Description("List of OPC-UA node IDs to begin browsing.")).
 	Field(service.NewStringField("securityMode").Description("Security mode to use. If not set, a reasonable security mode will be set depending on the discovered endpoints.").Default("")).
 	Field(service.NewStringField("securityPolicy").Description("The security policy to use.  If not set, a reasonable security policy will be set depending on the discovered endpoints.").Default("")).
