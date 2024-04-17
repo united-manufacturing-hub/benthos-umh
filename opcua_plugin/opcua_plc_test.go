@@ -17,6 +17,8 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 
 	var endpoint string
 	var input *OPCUAInput
+	var ctx context.Context
+	var cancel context.CancelFunc
 
 	BeforeEach(func() {
 		endpoint = os.Getenv("TEST_S7_ENDPOINT_URI")
@@ -26,23 +28,27 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			Skip("Skipping test: environment variables are not set")
 			return
 		}
+
+		ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
 	})
 
 	AfterEach(func() {
 		if input != nil {
 			if input.Client != nil {
-				input.Client.Close(context.Background())
+				err := input.Client.Close(context.Background())
+				Expect(err).NotTo(HaveOccurred())
 			}
+		}
+
+		if cancel != nil {
+			cancel()
 		}
 	})
 
 	Describe("Connect", func() {
 		It("should connect", func() {
-			//Skip("This currently fails")
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
 
-			nodeIDStrings := []string{"ns=4;i=1"}
+			nodeIDStrings := []string{"ns=4;i=2"}
 
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -61,14 +67,11 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			messageBatch, _, err := input.ReadBatch(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(messageBatch).To(HaveLen(2))
+			Expect(messageBatch).To(HaveLen(1))
 		})
 
 		It("should connect with no security", func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-
-			nodeIDStrings := []string{"ns=4;i=1"}
+			nodeIDStrings := []string{"ns=4;i=2"}
 
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -89,7 +92,34 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			messageBatch, _, err := input.ReadBatch(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(messageBatch).To(HaveLen(2))
+			Expect(messageBatch).To(HaveLen(1))
+		})
+	})
+
+	When("Subscribing to a struct", func() {
+		It("should return data changes", func() {
+			var err error
+
+			var nodeIDStrings = []string{"ns=4;i=6"}
+
+			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+			input = &OPCUAInput{
+				Endpoint:         endpoint,
+				Username:         "",
+				Password:         "",
+				NodeIDs:          parsedNodeIDs,
+				SubscribeEnabled: true,
+			}
+			// Attempt to connect
+			err = input.Connect(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			messageBatch, _, err := input.ReadBatch(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			// expect 2 messages for both nodes
+			Expect(len(messageBatch)).To(Equal(2))
 		})
 	})
 })
@@ -122,7 +152,8 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 	AfterEach(func() {
 		if input != nil {
 			if input.Client != nil {
-				input.Client.Close(context.Background())
+				err := input.Client.Close(context.Background())
+				Expect(err).NotTo(HaveOccurred())
 				fmt.Println("Closed connection")
 			}
 		}
