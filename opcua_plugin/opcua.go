@@ -167,12 +167,13 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	def.ParentNodeID = parentNodeId
 
 	var nodes []NodeDef
-	// If a node has a Variable class, it probably means that it is a tag
-	// Therefore, no need to browse further
-	if def.NodeClass == ua.NodeClassVariable {
-		def.Path = join(path, def.BrowseName)
-		nodes = append(nodes, def)
-		return nodes, nil
+
+	hasNodeReferencedComponents := func() bool {
+		refs, err := n.ReferencedNodes(ctx, id.HasComponent, ua.BrowseDirectionForward, ua.NodeClassAll, true)
+		if err != nil || len(refs) == 0 {
+			return false
+		}
+		return true
 	}
 
 	browseChildren := func(refType uint32) error {
@@ -189,6 +190,23 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 			nodes = append(nodes, children...)
 		}
 		return nil
+	}
+
+	// If a node has a Variable class, it probably means that it is a tag
+	// Normally, there is no need to browse further. However, structs will be a variable on the top level,
+	// but it then will have HasComponent references to its children
+	if def.NodeClass == ua.NodeClassVariable {
+
+		if hasNodeReferencedComponents() {
+			if err := browseChildren(id.HasComponent); err != nil {
+				return nil, err
+			}
+			return nodes, nil
+		}
+
+		def.Path = join(path, def.BrowseName)
+		nodes = append(nodes, def)
+		return nodes, nil
 	}
 
 	// If a node has an Object class, it probably means that it is a folder
