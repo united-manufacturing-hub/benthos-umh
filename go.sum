@@ -539,6 +539,8 @@ github.com/googleinterns/cloud-operations-api-mock v0.0.0-20200709193332-a1e58c2
 github.com/googleinterns/cloud-operations-api-mock v0.0.0-20200709193332-a1e58c29bdd3/go.mod h1:h/KNeRx7oYU4SpA4SoY7W2/NxDKEEVuwA6j9A27L4OI=
 github.com/gopcua/opcua v0.5.2 h1:VPBnxA2a+F4IEIpKKE3j80itgWDPTSerC88q+HZoBDI=
 github.com/gopcua/opcua v0.5.2/go.mod h1:nrVl4/Rs3SDQRhNQ50EbAiI5JSpDrTG6Frx3s4HLnw4=
+github.com/gopcua/opcua v0.5.3 h1:K5QQhjK9KQxQW8doHL/Cd8oljUeXWnJJsNgP7mOGIhw=
+github.com/gopcua/opcua v0.5.3/go.mod h1:nrVl4/Rs3SDQRhNQ50EbAiI5JSpDrTG6Frx3s4HLnw4=
 github.com/gordonklaus/ineffassign v0.0.0-20200309095847-7953dde2c7bf/go.mod h1:cuNKsD1zp2v6XfE/orVX2QE1LC+i254ceGcVeDT3pTU=
 github.com/gorilla/css v1.0.0 h1:BQqNyPTi50JCFMTw/b67hByjMVXZRwGha6wxVGkeihY=
 github.com/gorilla/css v1.0.0/go.mod h1:Dn721qIggHpt4+EFCcTLTU/vk5ySda2ReITrtgBl60c=
