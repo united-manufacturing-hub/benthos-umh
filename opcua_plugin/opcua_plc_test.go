@@ -109,7 +109,7 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 				Username:         "",
 				Password:         "",
 				NodeIDs:          parsedNodeIDs,
-				SubscribeEnabled: true,
+				SubscribeEnabled: false,
 			}
 			// Attempt to connect
 			err = input.Connect(ctx)
