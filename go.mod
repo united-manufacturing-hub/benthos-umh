@@ -4,7 +4,7 @@ go 1.21
 
 require (
 	github.com/benthosdev/benthos/v4 v4.7.0
-	github.com/gopcua/opcua v0.5.2
+	github.com/gopcua/opcua v0.5.3
 	github.com/onsi/ginkgo/v2 v2.17.1
 	github.com/onsi/gomega v1.30.0
 	github.com/stretchr/testify v1.8.0
