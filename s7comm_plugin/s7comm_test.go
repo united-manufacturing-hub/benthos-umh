@@ -132,7 +132,10 @@ var _ = Describe("S7Comm Test Against Local PLC", func() {
 					messageStructuredMut, err := message.AsStructuredMut()
 					Expect(err).NotTo(HaveOccurred())
 					Expect(messageStructuredMut).To(BeAssignableToTypeOf(json.Number("22.565684")))
-					Expect(message.MetaGet("s7_address")).To(Equal("DB2.W0"))
+
+					s7Address, wasFound := message.MetaGet("s7_address")
+					Expect(wasFound).To(BeTrue())
+					Expect(s7Address).To(Equal("DB2.W0"))
 				}
 			})
 		})
