@@ -284,6 +284,7 @@ func (g *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 			// Note: Depending on your requirements, you may want to reset the buffer
 			// after creating each message or keep accumulating data in it.
 			msg := service.NewMessage(buffer)
+			msg.MetaSet("s7_address", item.Address)
 
 			// Append the new message to the msgs slice
 			msgs = append(msgs, msg)
