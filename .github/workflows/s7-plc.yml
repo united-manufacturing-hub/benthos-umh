@@ -42,4 +42,4 @@ jobs:
       - name: Install Ginkgo
         run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.17.1
       - name: Test
-        run: TEST_S7_TCPDEVICE=${{ secrets.TEST_S7_TCPDEVICE }} TEST_S7_RACK=${{ secrets.TEST_S7_RACK }} TEST_S7_SLOT=${{ secrets.TEST_S7_SLOT }} make test
+        run: TEST_S7_TCPDEVICE=${{ secrets.TEST_S7_TCPDEVICE }} TEST_S7_RACK=0 TEST_S7_SLOT=1 make test
