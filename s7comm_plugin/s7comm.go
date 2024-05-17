@@ -291,6 +291,8 @@ func (g *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 		}
 	}
 
+	time.Sleep(time.Second)
+
 	return msgs, func(ctx context.Context, err error) error {
 		return nil // Acknowledgment handling here if needed
 	}, nil
