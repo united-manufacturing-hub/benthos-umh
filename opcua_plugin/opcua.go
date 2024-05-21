@@ -35,7 +35,7 @@ import (
 	"github.com/gopcua/opcua/ua"
 )
 
-const SESSION_TIMEOUT = 5 * time.Second
+const SessionTimeout = 5 * time.Second
 
 type NodeDef struct {
 	NodeID       *ua.NodeID
@@ -84,49 +84,49 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		NodeID: n.ID,
 	}
 
-	switch err := attrs[0].Status; err {
-	case ua.StatusOK:
+	switch err := attrs[0].Status; {
+	case errors.Is(err, ua.StatusOK):
 		def.NodeClass = ua.NodeClass(attrs[0].Value.Int())
-	case ua.StatusBadSecurityModeInsufficient:
+	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
 		return nil, nil
 	default:
 		return nil, err
 	}
 
-	switch err := attrs[1].Status; err {
-	case ua.StatusOK:
+	switch err := attrs[1].Status; {
+	case errors.Is(err, ua.StatusOK):
 		def.BrowseName = attrs[1].Value.String()
-	case ua.StatusBadSecurityModeInsufficient:
+	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
 		return nil, nil
 	default:
 		return nil, err
 	}
 
-	switch err := attrs[2].Status; err {
-	case ua.StatusOK:
+	switch err := attrs[2].Status; {
+	case errors.Is(err, ua.StatusOK):
 		def.Description = attrs[2].Value.String()
-	case ua.StatusBadAttributeIDInvalid:
+	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
 		// ignore
-	case ua.StatusBadSecurityModeInsufficient:
+	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
 		return nil, nil
 	default:
 		return nil, err
 	}
 
-	switch err := attrs[3].Status; err {
-	case ua.StatusOK:
+	switch err := attrs[3].Status; {
+	case errors.Is(err, ua.StatusOK):
 		def.AccessLevel = ua.AccessLevelType(attrs[3].Value.Int())
 		def.Writable = def.AccessLevel&ua.AccessLevelTypeCurrentWrite == ua.AccessLevelTypeCurrentWrite
-	case ua.StatusBadAttributeIDInvalid:
+	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
 		// ignore
-	case ua.StatusBadSecurityModeInsufficient:
+	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
 		return nil, nil
 	default:
 		return nil, err
 	}
 
-	switch err := attrs[4].Status; err {
-	case ua.StatusOK:
+	switch err := attrs[4].Status; {
+	case errors.Is(err, ua.StatusOK):
 		switch v := attrs[4].Value.NodeID().IntID(); v {
 		case id.DateTime:
 			def.DataType = "time.Time"
@@ -155,9 +155,9 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		default:
 			def.DataType = attrs[4].Value.NodeID().String()
 		}
-	case ua.StatusBadAttributeIDInvalid:
+	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
 		// ignore
-	case ua.StatusBadSecurityModeInsufficient:
+	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
 		return nil, nil
 	default:
 		return nil, err
@@ -254,8 +254,8 @@ func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 	// loop through all nodeIDs, parse them and put them into a slice
 	parsedNodeIDs := make([]*ua.NodeID, len(incomingNodes))
 
-	for _, id := range incomingNodes {
-		parsedNodeID, err := ua.ParseNodeID(id)
+	for _, incomingNodeId := range incomingNodes {
+		parsedNodeID, err := ua.ParseNodeID(incomingNodeId)
 		if err != nil {
 			return nil
 		}
@@ -407,7 +407,7 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 	case float64:
 		b = append(b, []byte(strconv.FormatFloat(v, 'f', -1, 64))...)
 	case string:
-		b = append(b, []byte(string(v))...)
+		b = append(b, []byte(v)...)
 	case bool:
 		b = append(b, []byte(strconv.FormatBool(v))...)
 	case int:
@@ -491,29 +491,29 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 		g.Log.Errorf("Read failed: %s", err)
 		// if the error is StatusBadSessionIDInvalid, the session has been closed
 		// and we need to reconnect.
-		switch err {
-		case ua.StatusBadSessionIDInvalid:
-			g.Client.Close(ctx)
+		switch {
+		case errors.Is(err, ua.StatusBadSessionIDInvalid):
+			_ = g.Client.Close(ctx)
 			g.Client = nil
 			return nil, nil, service.ErrNotConnected
-		case ua.StatusBadCommunicationError:
-			g.Client.Close(ctx)
+		case errors.Is(err, ua.StatusBadCommunicationError):
+			_ = g.Client.Close(ctx)
 			g.Client = nil
 			return nil, nil, service.ErrNotConnected
-		case ua.StatusBadConnectionClosed:
-			g.Client.Close(ctx)
+		case errors.Is(err, ua.StatusBadConnectionClosed):
+			_ = g.Client.Close(ctx)
 			g.Client = nil
 			return nil, nil, service.ErrNotConnected
-		case ua.StatusBadTimeout:
-			g.Client.Close(ctx)
+		case errors.Is(err, ua.StatusBadTimeout):
+			_ = g.Client.Close(ctx)
 			g.Client = nil
 			return nil, nil, service.ErrNotConnected
-		case ua.StatusBadConnectionRejected:
-			g.Client.Close(ctx)
+		case errors.Is(err, ua.StatusBadConnectionRejected):
+			_ = g.Client.Close(ctx)
 			g.Client = nil
 			return nil, nil, service.ErrNotConnected
-		case ua.StatusBadServerNotConnected:
-			g.Client.Close(ctx)
+		case errors.Is(err, ua.StatusBadServerNotConnected):
+			_ = g.Client.Close(ctx)
 			g.Client = nil
 			return nil, nil, service.ErrNotConnected
 		}
@@ -522,7 +522,7 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 		return nil, nil, err
 	}
 
-	if resp.Results[0].Status != ua.StatusOK {
+	if !errors.Is(resp.Results[0].Status, ua.StatusOK) {
 		g.Log.Errorf("Status not OK: %v", resp.Results[0].Status)
 	}
 
@@ -532,7 +532,7 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 	for i, node := range g.NodeList {
 		value := resp.Results[i].Value
 		if value == nil {
-			g.Log.Errorf("Received nil from node: %s", node.NodeID.String())
+			g.Log.Warnf("Received nil in item structure on node %s. This can occur when subscribing to an OPC UA folder and may be ignored.", node.NodeID.String())
 			continue
 		}
 		message := g.createMessageFromValue(value, node)
@@ -576,7 +576,7 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 		case *ua.DataChangeNotification:
 			for _, item := range x.MonitoredItems {
 				if item == nil || item.Value == nil || item.Value.Value == nil {
-					g.Log.Errorf("Received nil in item structure")
+					g.Log.Warnf("Received nil in item structure. This can occur when subscribing to an OPC UA folder and may be ignored.")
 					continue
 				}
 
@@ -620,7 +620,7 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 
 func (g *OPCUAInput) Close(ctx context.Context) error {
 	if g.Client != nil {
-		g.Client.Close(ctx)
+		_ = g.Client.Close(ctx)
 		g.Client = nil
 	}
 
@@ -640,16 +640,16 @@ func (g *OPCUAInput) logCertificateInfo(certBytes []byte) {
 	// Parse the DER-format certificate
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		g.Log.Errorf("Failed to parse certificate:", err)
+		g.Log.Errorf("Failed to parse certificate: " + err.Error())
 		return
 	}
 
 	// Log the details
-	g.Log.Infof("    Not Before:", cert.NotBefore)
-	g.Log.Infof("    Not After:", cert.NotAfter)
-	g.Log.Infof("    DNS Names:", cert.DNSNames)
-	g.Log.Infof("    IP Addresses:", cert.IPAddresses)
-	g.Log.Infof("    URIs:", cert.URIs)
+	g.Log.Infof("    Not Before: %v", cert.NotBefore)
+	g.Log.Infof("    Not After: %v", cert.NotAfter)
+	g.Log.Infof("    DNS Names: %v", cert.DNSNames)
+	g.Log.Infof("    IP Addresses: %v", cert.IPAddresses)
+	g.Log.Infof("    URIs: %v", cert.URIs)
 }
 
 // Connect connects to the OPC UA server
@@ -712,14 +712,14 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 		c, err = opcua.NewClient(foundEndpoint.EndpointURL, opts...)
 		if err != nil {
-			g.Log.Errorf("Failed to create a new client")
+			g.Log.Errorf("Failed to create a new client: %v", err)
 			return err
 		}
 
 		// Connect to the selected endpoint
 		if err := c.Connect(ctx); err != nil {
-			c.Close(ctx)
-			g.Log.Errorf("Failed to connect", err)
+			_ = c.Close(ctx)
+			g.Log.Errorf("Failed to connect: %v", err)
 			return err
 		}
 
@@ -748,9 +748,9 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 			// If connection fails, then continue to the next endpoint
 			// Connect to the selected endpoint
 			if err := c.Connect(ctx); err != nil {
-				c.Close(ctx)
+				_ = c.Close(ctx)
 
-				g.Log.Infof("Failed to connect", err)
+				g.Log.Infof("Failed to connect" + err.Error())
 
 				// TODO: only continue if it is not something like password wrong or toomanysessions, etc.
 				if errors.Is(err, ua.StatusBadUserAccessDenied) || errors.Is(err, ua.StatusBadTooManySessions) {
@@ -761,13 +761,13 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 					if g.SessionTimeout > 0 {
 						timeout = time.Duration(g.SessionTimeout * int(time.Millisecond))
 					} else {
-						timeout = SESSION_TIMEOUT
+						timeout = SessionTimeout
 					}
-					g.Log.Errorf("Encountered unrecoverable error. Waiting before trying to re-connect to prevent overloading the server.", err, timeout)
+					g.Log.Errorf("Encountered unrecoverable error. Waiting before trying to re-connect to prevent overloading the server: %v with timeout %v", err, timeout)
 					time.Sleep(timeout)
 					return err
 				} else if errors.Is(err, ua.StatusBadTimeout) {
-					g.Log.Warnf("Selected endpoint timed out. Selecting next one...", currentEndpoint)
+					g.Log.Warnf("Selected endpoint timed out. Selecting next one: %v", currentEndpoint)
 					continue
 				}
 
@@ -803,19 +803,19 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 	nodeList := make([]NodeDef, 0)
 
 	// Print all nodeIDs that are being browsed
-	for _, id := range g.NodeIDs {
-		if id == nil {
+	for _, nodeID := range g.NodeIDs {
+		if nodeID == nil {
 			continue
 		}
 
 		// Print id
-		g.Log.Debugf("Browsing nodeID: %s", id.String())
+		g.Log.Debugf("Browsing nodeID: %s", nodeID.String())
 
 		// Browse the OPC-UA server's node tree and print the results.
-		nodes, err := browse(ctx, g.Client.Node(id), "", 0, g.Log, id.String())
+		nodes, err := browse(ctx, g.Client.Node(nodeID), "", 0, g.Log, nodeID.String())
 		if err != nil {
-			g.Log.Errorf("Browsing failed: %s")
-			g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+			g.Log.Errorf("Browsing failed: %s", err)
+			_ = g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return err
 		}
 
@@ -827,8 +827,8 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
 	b, err := json.Marshal(nodeList)
 	if err != nil {
-		g.Log.Errorf("Unmarshalling failed: %s")
-		g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+		g.Log.Errorf("Unmarshalling failed: %s", err)
+		_ = g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 		return err
 	}
 
@@ -846,15 +846,15 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			Interval: opcua.DefaultSubscriptionInterval,
 		}, g.SubNotifyChan)
 		if err != nil {
-			g.Log.Errorf("Subscribing failed: %s")
-			g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+			g.Log.Errorf("Subscribing failed: %s", err)
+			_ = g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return err
 		}
 
 		monitoredRequests := make([]*ua.MonitoredItemCreateRequest, 0, len(nodeList))
 
-		for pos, id := range nodeList {
-			miCreateRequest := opcua.NewMonitoredItemCreateRequestWithDefaults(id.NodeID, ua.AttributeIDValue, uint32(pos))
+		for pos, nodeID := range nodeList {
+			miCreateRequest := opcua.NewMonitoredItemCreateRequestWithDefaults(nodeID.NodeID, ua.AttributeIDValue, uint32(pos))
 			monitoredRequests = append(monitoredRequests, miCreateRequest)
 		}
 
@@ -865,13 +865,13 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
 		res, err := sub.Monitor(ctx, ua.TimestampsToReturnBoth, monitoredRequests...)
 		if err != nil {
-			g.Log.Errorf("Monitoring failed: %s")
-			g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+			g.Log.Errorf("Monitoring failed: %v", err)
+			_ = g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return err
 		}
 		if res == nil {
 			g.Log.Errorf("Expected res to not be nil, if there is no error")
-			g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+			_ = g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return fmt.Errorf("expected res to be not nil")
 		}
 
@@ -879,7 +879,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 		for _, result := range res.Results {
 			if !errors.Is(result.StatusCode, ua.StatusOK) {
 				g.Log.Errorf("Monitoring failed with status code: %v", result.StatusCode)
-				g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+				_ = g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 				return fmt.Errorf("monitoring failed for node, status code: %v", result.StatusCode)
 			}
 		}
@@ -934,7 +934,7 @@ func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescript
 	if g.SessionTimeout > 0 {
 		opts = append(opts, opcua.SessionTimeout(time.Duration(g.SessionTimeout*int(time.Millisecond)))) // set the session timeout to prevent having to many connections
 	} else {
-		opts = append(opts, opcua.SessionTimeout(SESSION_TIMEOUT))
+		opts = append(opts, opcua.SessionTimeout(SessionTimeout))
 	}
 	opts = append(opts, opcua.ApplicationName("benthos-umh"))
 	//opts = append(opts, opcua.ApplicationURI("urn:benthos-umh"))
@@ -1063,7 +1063,7 @@ func (g *OPCUAInput) ReplaceHostInEndpoints(endpoints []*ua.EndpointDescription,
 	return updatedEndpoints, nil
 }
 
-// replaceHostInEndpointURL constructs a new endpoint URL by replacing the existing host with a new host, preserving the original path and query parameters.
+// ReplaceHostInEndpointURL constructs a new endpoint URL by replacing the existing host with a new host, preserving the original path and query parameters.
 func (g *OPCUAInput) ReplaceHostInEndpointURL(endpointURL, newHost string) (string, error) {
 
 	// Remove the "opc.tcp://" prefix to simplify parsing.
