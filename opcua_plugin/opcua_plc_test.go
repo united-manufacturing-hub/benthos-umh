@@ -350,4 +350,38 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
+
+	Describe("Direct Connect", func() {
+		When("connecting anonymously", func() {
+			It("should connect successful", func() {
+
+				input = &OPCUAInput{
+					Endpoint:      endpoint,
+					Username:      "",
+					Password:      "",
+					DirectConnect: true,
+				}
+
+				// Attempt to connect
+				err := input.Connect(ctx)
+				Expect(err).NotTo(HaveOccurred())
+			})
+		})
+
+		When("connecting with username password", func() {
+			It("should connect successful", func() {
+
+				input = &OPCUAInput{
+					Endpoint:      endpoint,
+					Username:      username,
+					Password:      password,
+					DirectConnect: true,
+				}
+
+				// Attempt to connect
+				err := input.Connect(ctx)
+				Expect(err).NotTo(HaveOccurred())
+			})
+		})
+	})
 })
