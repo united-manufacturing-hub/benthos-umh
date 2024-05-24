@@ -702,14 +702,20 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	// If connection fails, then return an error
 	if g.DirectConnect || len(endpoints) == 0 {
 		g.Log.Infof("Directly connecting to the endpoint %s", g.Endpoint)
+		fmt.Println("Direct connect")
 
 		// Create a new endpoint description
 		// It will never be used directly by the OPC UA library, but we need it for our internal helper functions
 		// such as GetOPCUAClientOptions
-		securityMode := ua.MessageSecurityModeFromString(g.SecurityMode)
-		securityPolicyURI := "http://opcfoundation.org/UA/SecurityPolicy#" + g.SecurityPolicy
+		securityMode := ua.MessageSecurityModeNone
+		if g.SecurityMode != "" {
+			securityMode = ua.MessageSecurityModeFromString(g.SecurityMode)
+		}
 
-		//TODO: mdoe for when securitymode and policy is not set
+		securityPolicyURI := ua.SecurityPolicyURINone
+		if g.SecurityPolicy != "" {
+			securityPolicyURI = "http://opcfoundation.org/UA/SecurityPolicy#" + g.SecurityPolicy
+		}
 
 		directEndpoint := &ua.EndpointDescription{
 			EndpointURL:       g.Endpoint,
