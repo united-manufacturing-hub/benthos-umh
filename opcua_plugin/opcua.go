@@ -246,7 +246,8 @@ var OPCUAConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringField("securityMode").Description("Security mode to use. If not set, a reasonable security mode will be set depending on the discovered endpoints.").Default("")).
 	Field(service.NewStringField("securityPolicy").Description("The security policy to use.  If not set, a reasonable security policy will be set depending on the discovered endpoints.").Default("")).
 	Field(service.NewBoolField("insecure").Description("Set to true to bypass secure connections, useful in case of SSL or certificate issues. Default is secure (false).").Default(false)).
-	Field(service.NewBoolField("subscribeEnabled").Description("Set to true to subscribe to OPC-UA nodes instead of fetching them every seconds. Default is pulling messages every second (false).").Default(false))
+	Field(service.NewBoolField("subscribeEnabled").Description("Set to true to subscribe to OPC UA nodes instead of fetching them every seconds. Default is pulling messages every second (false).").Default(false)).
+	Field(service.NewBoolField("directConnect").Description("Set this to true to directly connect to an OPC UA endpoint. This can be necessary in cases where the OPC UA server does not allow 'endpoint discovery'. This requires having the full endpoint name in endpoint, and securityMode and securityPolicy set. Defaults to 'false'").Default(false))
 
 func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 
@@ -312,6 +313,11 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		return nil, err
 	}
 
+	directConnect, err := conf.FieldBool("directConnect")
+	if err != nil {
+		return nil, err
+	}
+
 	// fail if no nodeIDs are provided
 	if len(nodeIDs) == 0 {
 		return nil, errors.New("no nodeIDs provided")
@@ -330,6 +336,7 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		Insecure:         insecure,
 		SubscribeEnabled: subscribeEnabled,
 		SessionTimeout:   sessionTimeout,
+		DirectConnect:    directConnect,
 	}
 
 	return service.AutoRetryNacksBatched(m), nil
@@ -365,6 +372,7 @@ type OPCUAInput struct {
 	SubscribeEnabled bool
 	SubNotifyChan    chan *opcua.PublishNotificationData
 	SessionTimeout   int
+	DirectConnect    bool
 }
 
 // UpdateNodePaths updates the node paths to use the nodeID instead of the browseName
@@ -673,12 +681,13 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 	endpoints, err = g.FetchAllEndpoints(ctx)
 	if err != nil {
-		g.Log.Errorf("Failed to fetch an endpoint: %s", err)
-		return err
+		g.Log.Warnf("Failed to fetch any endpoint: %s", err)
+		g.Log.Warnf("Trying to connect to the endpoint as a last resort measure")
+	} else {
+		g.Log.Infof("Fetched %d endpoints", len(endpoints))
+		// Step 2 (optional): Log details of each discovered endpoint for debugging
+		g.LogEndpoints(endpoints)
 	}
-
-	// Step 2: Log details of each discovered endpoint for debugging
-	g.LogEndpoints(endpoints)
 
 	// Step 3: Determine the authentication method to use.
 	// Default to Anonymous if neither username nor password is provided.
@@ -691,8 +700,50 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	// Step 4: Check if the user has specified a very concrete endpoint, security policy, and security mode
 	// Connect to this endpoint directly
 	// If connection fails, then return an error
+	if g.DirectConnect || len(endpoints) == 0 {
+		g.Log.Infof("Directly connecting to the endpoint %s", g.Endpoint)
+		fmt.Println("Direct connect")
 
-	if g.SecurityMode != "" && g.SecurityPolicy != "" {
+		// Create a new endpoint description
+		// It will never be used directly by the OPC UA library, but we need it for our internal helper functions
+		// such as GetOPCUAClientOptions
+		securityMode := ua.MessageSecurityModeNone
+		if g.SecurityMode != "" {
+			securityMode = ua.MessageSecurityModeFromString(g.SecurityMode)
+		}
+
+		securityPolicyURI := ua.SecurityPolicyURINone
+		if g.SecurityPolicy != "" {
+			securityPolicyURI = "http://opcfoundation.org/UA/SecurityPolicy#" + g.SecurityPolicy
+		}
+
+		directEndpoint := &ua.EndpointDescription{
+			EndpointURL:       g.Endpoint,
+			SecurityMode:      securityMode,
+			SecurityPolicyURI: securityPolicyURI,
+		}
+
+		// Prepare authentication and encryption
+		opts, err := g.GetOPCUAClientOptions(directEndpoint, selectedAuthentication)
+		if err != nil {
+			g.Log.Errorf("Failed to get OPC UA client options: %s", err)
+			return err
+		}
+
+		c, err = opcua.NewClient(directEndpoint.EndpointURL, opts...)
+		if err != nil {
+			g.Log.Errorf("Failed to create a new client: %v", err)
+			return err
+		}
+
+		// Connect to the selected endpoint
+		if err := c.Connect(ctx); err != nil {
+			_ = c.Close(ctx)
+			g.Log.Errorf("Failed to connect: %v", err)
+			return err
+		}
+
+	} else if g.SecurityMode != "" && g.SecurityPolicy != "" {
 		foundEndpoint, err := g.getEndpointIfExists(endpoints, selectedAuthentication, g.SecurityMode, g.SecurityPolicy)
 		if err != nil {
 			g.Log.Errorf("Failed to get endpoint: %s", err)

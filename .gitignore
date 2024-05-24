@@ -197,3 +197,6 @@ dist
 .pnp.*
 
 .vscode
+
+# Cover.profile
+*.profile
