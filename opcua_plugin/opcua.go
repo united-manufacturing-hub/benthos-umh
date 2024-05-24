@@ -706,10 +706,15 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		// Create a new endpoint description
 		// It will never be used directly by the OPC UA library, but we need it for our internal helper functions
 		// such as GetOPCUAClientOptions
+		securityMode := ua.MessageSecurityModeFromString(g.SecurityMode)
+		securityPolicyURI := "http://opcfoundation.org/UA/SecurityPolicy#" + g.SecurityPolicy
+
+		//TODO: mdoe for when securitymode and policy is not set
+
 		directEndpoint := &ua.EndpointDescription{
 			EndpointURL:       g.Endpoint,
-			SecurityMode:      ua.MessageSecurityModeFromString(g.SecurityMode),
-			SecurityPolicyURI: "http://opcfoundation.org/UA/SecurityPolicy#" + g.SecurityPolicy,
+			SecurityMode:      securityMode,
+			SecurityPolicyURI: securityPolicyURI,
 		}
 
 		// Prepare authentication and encryption
