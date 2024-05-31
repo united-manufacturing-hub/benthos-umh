@@ -34,8 +34,8 @@ builds:
       - CGO_ENABLED=0
     ldflags: >
       -s -w
-      -X github.com/benthosdev/benthos/v4/internal/cli.Version={{.Version}}
-      -X github.com/benthosdev/benthos/v4/internal/cli.DateBuilt={{.Date}}
+      -X github.com/redpanda-data/benthos/v4/internal/cli.Version={{.Version}}
+      -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt={{.Date}}
 
 archives:
   - id: benthos
