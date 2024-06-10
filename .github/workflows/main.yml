@@ -71,6 +71,7 @@ jobs:
         uses: goreleaser/goreleaser-action@v3
         with:
           args: release --skip-publish --skip-sign --snapshot --timeout=60m
+          version: '~> v1'
       - name: Read metadata
         id: metadata
         uses: juliangruber/read-file-action@v1
