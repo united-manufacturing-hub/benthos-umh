@@ -27,7 +27,7 @@ env:
 jobs:
   go-test:
     runs-on:
-      group: large-runners
+      group: arc-runners
     permissions:
       packages: write
       contents: read
@@ -55,7 +55,7 @@ jobs:
         run: TEST_OPCUA_SIMULATOR=true TEST_OPCUA_UNITTEST=true make test
   go-build:
     runs-on:
-      group: large-runners
+      group: arc-runners
     permissions:
       packages: write
       contents: read
@@ -91,7 +91,7 @@ jobs:
           retention-days: 2
   build:
     runs-on:
-      group: large-runners
+      group: arc-runners
     permissions:
       packages: write
       contents: read
