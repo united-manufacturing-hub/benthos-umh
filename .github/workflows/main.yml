@@ -27,7 +27,7 @@ env:
 jobs:
   go-test:
     runs-on:
-      group: large-runners
+      group: arc-runners
     permissions:
       packages: write
       contents: read
@@ -39,6 +39,10 @@ jobs:
         uses: ./.github/actions/setup-go
         with:
           go_version: ${{ env.GO_VERSION }}
+      - name: Install Docker Compose
+        run: |
+          sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
       - name: Startup simulator in background
         run: |
           docker-compose up -d
@@ -55,7 +59,7 @@ jobs:
         run: TEST_OPCUA_SIMULATOR=true TEST_OPCUA_UNITTEST=true make test
   go-build:
     runs-on:
-      group: large-runners
+      group: arc-runners
     permissions:
       packages: write
       contents: read
@@ -71,6 +75,7 @@ jobs:
         uses: goreleaser/goreleaser-action@v3
         with:
           args: release --skip-publish --skip-sign --snapshot --timeout=60m
+          version: '~> v1'
       - name: Read metadata
         id: metadata
         uses: juliangruber/read-file-action@v1
@@ -90,7 +95,7 @@ jobs:
           retention-days: 2
   build:
     runs-on:
-      group: large-runners
+      group: arc-runners
     permissions:
       packages: write
       contents: read
