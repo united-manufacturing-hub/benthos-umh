@@ -26,7 +26,7 @@ env:
 jobs:
   registry:
     runs-on:
-      group: large-runners
+      group: arc-runners
     permissions:
       packages: write
       contents: read
