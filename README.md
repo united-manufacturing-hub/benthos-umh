@@ -11,7 +11,7 @@ Welcome to the benthos-umh repository! This is a version of benthos maintained b
 `benthos-umh` is a Docker container designed to facilitate seamless shopfloor integration with the Unified Namespace (MQTT/Kafka). It is part of the United Manufacturing Hub project and offers the following features:
 
 - Simple deployment in Docker, docker-compose, and Kubernetes
-- Can connect to an OPC-UA server, browses selected nodes, and forwards all sub-nodes in 1-second intervals
+- Connects to an OPC-UA server, browses selected nodes, and forwards all sub-nodes in 1-second intervals.
 - Can connect to an S7 server, and read pre-defined addresses from it
 - Contains community supported plugins, such as SMTP and Beckhoff ADS
 - Supports a wide range of outputs, from the Unified Namespace (MQTT and Kafka) to HTTP, AMQP, Redis, NATS, SQL, MongoDB, Cassandra, or AWS S3. Check out the official [benthos output library](https://benthos.dev/docs/components/outputs/about)
@@ -22,11 +22,11 @@ Welcome to the benthos-umh repository! This is a version of benthos maintained b
 We encourage you to try out `benthos-umh` and explore the broader [United Manufacturing Hub](https://www.umh.app) project for a comprehensive solution to your industrial data integration needs.
 
 ### Additional Plugins
-If you know benthos, you know that it is a powerful tool with a lot of input, output, and processor plugins. We have added some additional plugins to benthos-umh, which are not part of the official benthos release. These plugins are:
-- (UMH) s7comm: A input plugin to read data from Siemens S7 PLCs. See [further below](#s7comm) for more information.
-- (UMH) opcua: A input plugin to read data from OPC UA servers. See [further below](#opc-ua)  for more information.
+If you are familiar with benthos, you know it is a powerful tool with many input, output, and processor plugins. We have added some additional plugins to benthos-umh, which are not part of the official benthos release. These plugins are:
+- (UMH) s7comm: An input plugin to read data from Siemens S7 PLCs. See [further below](#s7comm) for more information.
+- (UMH) opcua: An input plugin to read data from OPC UA servers. See [further below](#opc-ua)  for more information.
 - (community) smtp: A output plugin to send emails via SMTP. See [DanielH's repo](https://github.com/RuneRoven/benthosSMTP) for more information.
-- (community) ADS: A input plugin to read data from Beckhoff PLCs via ADS. See [DanielH's  repo](https://github.com/RuneRoven/benthosADS) for more information.
+- (community) ADS: An input plugin to read data from Beckhoff PLCs via ADS. See [further below](#beckhoff-ads) or at [DanielH's  repo](https://github.com/RuneRoven/benthosADS) for more information.
 
 The plugins marked with "UMH" are developed and maintained by us. The ones marked as "community" are developed by the community and are not maintained by us.
 
@@ -34,7 +34,7 @@ The plugins marked with "UMH" are developed and maintained by us. The ones marke
 
 ### Standalone
 
-To use benthos-umh in standalone mode with Docker, follow the instructions below (using OPC UA as an exampke).
+To use benthos-umh in standalone mode with Docker, follow the instructions below (using OPC UA as an example).
 
 1. Create a new file called benthos.yaml with the provided content
 
@@ -184,7 +184,7 @@ There are specific datatypes which are currently not supported by the plugin and
 
 #### Authentication and Security
 
-In benthos-umh, security and authentication are designed to be as robust as possible while maintaining flexibility. The software automates the process of selecting the highest level of security offered by an OPC-UA server for the selected Authentication Method, but the user can specify their own Security Policy / Security Mode if they want (see further below at Configuration options)
+In benthos-umh, we design security and authentication to be as robust as possible while maintaining flexibility. The software automates the process of selecting the highest level of security offered by an OPC-UA server for the selected Authentication Method, but the user can specify their own Security Policy / Security Mode if they want (see below at Configuration options)
 
 ##### Supported Authentication Methods
 
@@ -197,7 +197,7 @@ In benthos-umh, security and authentication are designed to be as robust as poss
 The plugin provides metadata for each message, that can be used to create a topic for the output, as shown in the example above. The metadata can also be used to create a unique identifier for each message, which is useful for deduplication.
 
 | Metadata            | Description                                                                                                                                                                                                  |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+|---------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `opcua_path`        | The sanitized ID of the Node that sent the message. This is always unique between nodes                                                                                                                      |
 | `opcua_parent_path` | The sanitized ID of the Node defined in the input. This is useful if the given node is a folder, and the plugin is browsing all child nodes. If the node is not a folder, the value is equal to `opcua_path` |
 | `opcua_tag_path`    | A dot-separated path to the tag, excluding the parent path, created by joining the BrowseNames. This is useful for creating a key name in the processor nicer than the output of `opcua_path`                |
@@ -217,7 +217,7 @@ Root
 Subscribing to `ns=2;s=FolderNode` would result in the following metadata:
 
 | `opcua_path`                       | `opcua_parent_path` | `opcua_tag_path` |
-| ---------------------------------- | ------------------- | ---------------- |
+|------------------------------------|---------------------|------------------|
 | `ns_2_s_FolderNode.Tag1`           | `ns_2_s_FolderNode` | `Tag1`           |
 | `ns_2_s_FolderNode.Tag1`           | `ns_2_s_FolderNode` | `Tag2`           |
 | `ns_2_s_FolderNode.SubFolder.Tag3` | `ns_2_s_FolderNode` | `SubFolder.Tag3` |
@@ -236,7 +236,7 @@ input:
     nodeIDs: ['ns=2;s=IoTSensors']
     username: 'your-username'  # optional (default: unset)
     password: 'your-password'  # optional (default: unset)
-    insecure: false | true # DEPRECATED, see further below
+    insecure: false | true # DEPRECATED, see below
     securityMode: None | Sign | SignAndEncrypt # optional (default: unset)
     securityPolicy: None | Basic256Sha256  # optional (default: unset)
     subscribeEnabled: false | true # optional (default: false)
@@ -299,16 +299,16 @@ input:
 
 ##### Insecure Mode
 
-This is now deprecated. By default, benthos-umh will now connect via SignAndEncrypt and Basic256Sha256 and if this fails it will fallback to insecure mode.
+This is now deprecated. By default, benthos-umh will now connect via SignAndEncrypt and Basic256Sha256 and if this fails it will fall back to insecure mode.
 
 ##### Pull and Subscribe Methods
 
 Benthos-umh supports two modes of operation: pull and subscribe. In pull mode, it pulls all nodes every second, regardless of changes. In subscribe mode, it only sends data when there's a change in value, reducing unnecessary data transfer.
 
-| Method | Advantages | Disadvantages |
-| --- | --- | --- |
-| Pull | - Provides real-time data visibility, e.g., in MQTT Explorer. <br> - Clearly differentiates between 'no data received' and 'value did not change' scenarios, which can be crucial for documentation and proving the OPC-UA client's activity. | - Results in higher data throughput as it pulls all nodes every second, regardless of changes. |
-| Subscribe | - Data is sent only when there's a change in value, reducing unnecessary data transfer. | - Less visibility into real-time data status, and it's harder to differentiate between no data and unchanged values. |
+| Method    | Advantages                                                                                                                                                                                                                                    | Disadvantages                                                                                                        |
+|-----------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------|
+| Pull      | - Provides real-time data visibility, e.g., in MQTT Explorer. <br> - Clearly differentiates between 'no data received' and 'value did not change' scenarios, which can be crucial for documentation and proving the OPC-UA client's activity. | - Results in higher data throughput as it pulls all nodes every second, regardless of changes.                       |
+| Subscribe | - Data is sent only when there's a change in value, reducing unnecessary data transfer.                                                                                                                                                       | - Less visibility into real-time data status, and it's harder to differentiate between no data and unchanged values. |
 
 ```yaml
 input:
@@ -357,11 +357,79 @@ input:
 
 Similar to the OPC UA input, this outputs for each address a single message with the payload being the value that was read. To distinguish messages, you can use meta("s7_address") in a following benthos bloblang processor.
 
+### Beckhoff ADS
+Input for Beckhoff's ADS protocol. Supports batch reading and notifications. Beckhoff recommends limiting notifications to approximately 500 to avoid overloading the controller.
+This input only supports symbols and not direct addresses.
+
+**This plugin is community supported only. If you encounter any issues, check out the [original repository](https://github.com/RuneRoven/benthosADS) for more information, or ask around in our Discord.**
+
+```yaml
+---
+input:
+  ads:
+    targetIP: '192.168.3.70'        # IP address of the PLC
+    targetAMS: '5.3.69.134.1.1'     # AMS net ID of the target
+    targetPort: 48898               # Port of the target internal gateway
+    runtimePort: 801                # Runtime port of PLC system
+    hostAMS: '192.168.56.1.1.1'     # Host AMS net ID. Usually the IP address + .1.1
+    hostPort: 10500                 # Host port
+    readType: 'interval'            # Read type, interval or notification
+    maxDelay: 100                   # Max delay for sending notifications in ms
+    cycleTime: 100                  # Cycle time for notification handler in ms
+    intervalTime: 1000              # Interval time for reading in ms
+    upperCase: true                 # Convert symbol names to all uppercase for older PLCs
+    logLevel: "disabled"            # Log level for ADS connection
+    symbols:                        # List of symbols to read from
+      - "MAIN.MYBOOL"               # variable in the main program
+      - "MAIN.MYTRIGGER:0:10"       # variable in the main program with 0ms max delay and 10ms cycleTime
+      - "MAIN.SPEEDOS"
+      - ".superDuperInt"            # Global variable
+      - ".someStrangeVar"
+
+pipeline:
+  processors:
+    - bloblang: |
+        root = {
+          meta("symbol_name"): this,
+          "timestamp_ms": (timestamp_unix_nano() / 1000000).floor()
+        }
+output:
+  stdout: {}
+
+logger:
+  level: ERROR
+  format: logfmt
+  add_timestamp: true
+  ```
+
+#### Connection to ADS
+Connecting to an ADS device involves routing traffic through a router using the AMS net ID.
+There are basically 2 ways for setting up the connection. One approach involves using the Twincat connection manager to locally scan for the device on the host and add a connection using the correct PLC credentials. The other way is to log in to the PLC using the Twincat system manager and add a static route from the PLC to the client. This is the preferred way when using benthos on a Kubernetes cluster since you have no good way of installing the connection manager.
+
+#### Configuration Parameters
+- **targetIP**: IP address of the PLC
+- **targetAMS**: AMS net ID of the target
+- **targetPort**: Port of the target internal gateway
+- **runtimePort**: Runtime port of PLC system,  800 to 899. Twincat 2 uses ports 800 to 850, while Twincat 3 is recommended to use ports 851 to 899. Twincat 2 usually have 801 as default and Twincat 3 uses 851
+- **hostAMS**: Host AMS net ID. Usually the IP address + .1.1
+- **hostPort**: Host port
+- **readType**: Read type for the symbols. Interval means benthos reads all symbols at a specified interval and notification is a function in the PLC where benthos sends a notification request to the PLC and the PLC adds the symbol to its internal notification system and sends data whenever there is a change.
+- **maxDelay**: Default max delay for sending notifications in ms. Sets a maximum time for how long after the change the PLC must send the notification
+- **cycleTime**: Default cycle time for notification handler in ms. Tells the notification handler how often to scan for changes. For symbols like triggers that is only true or false for 1 PLC cycle it can be necessary to use a low value.
+- **intervalTime**: Interval time for reading in ms. For reading batches of symbols this sets the time between readings
+- **upperCase**: Converts symbol names to all uppercase for older PLCs. For Twincat 2 this is often necessary.
+- **logLevel**: Log level for ADS connection sets the log level of the internal log function for the underlying ADS library
+- **symbols**: List of symbols to read from in the format <function.variable:maxDelay:cycleTime>, e.g., "MAIN.MYTRIGGER:0:10" is a variable in the main program with 0ms max delay and 10ms cycle time,  "MAIN.MYBOOL" is a variable in the main program with no extra arguments, so it will use the default max delay and cycle time. ".superDuperInt" is a global variable with no extra arguments. All global variables must start with a <.> e.g., ".someStrangeVar"
+
+#### Output
+
+Similar to the OPC UA input, this outputs for each address a single message with the payload being the value that was read. To distinguish messages, you can use meta("symbol_name") in a following benthos bloblang processor.
+
 ## Testing
 
 We execute automated tests and verify that benthos-umh works against various targets. All tests are started with `make test`, but might require environment parameters in order to not be skipped.
 
-Some of these tests are executed with a local github runner called "hercules", which is connected to a isolated testing network.
+Some of these tests are executed with a local GitHub runner called "hercules", which is connected to an isolated testing network.
 
 ### Target: WAGO PFC100 (OPC UA)
 
@@ -437,7 +505,7 @@ npm test
 
 #### Gitpod and Tailscale
 
-By default when opening the repo in Gitpod, everything that you need should start automatically. If you want to connect to our local PLCs in our office, you can use tailscale, which you will be prompted to install.
+By default, when opening the repo in Gitpod, everything that you need should start automatically. If you want to connect to our local PLCs in our office, you can use tailscale, which you will be prompted to install.
 See also: <https://www.gitpod.io/docs/integrations/tailscale>
 
 #### For Go Code
