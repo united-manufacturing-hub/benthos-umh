@@ -5,10 +5,13 @@ go 1.22.1
 toolchain go1.22.2
 
 require (
+	github.com/RuneRoven/benthosADS v1.0.4
+	github.com/RuneRoven/benthosSMTP v0.0.1
 	github.com/gopcua/opcua v0.5.3
 	github.com/onsi/ginkgo/v2 v2.17.1
 	github.com/onsi/gomega v1.30.0
 	github.com/redpanda-data/benthos/v4 v4.28.1
+	github.com/redpanda-data/connect/public/bundle/free/v4 v4.29.0
 )
 
 require (
@@ -47,8 +50,6 @@ require (
 	github.com/Microsoft/go-winio v0.6.1 // indirect
 	github.com/PaesslerAG/gval v1.2.2 // indirect
 	github.com/PaesslerAG/jsonpath v0.1.1 // indirect
-	github.com/RuneRoven/benthosADS v1.0.4 // indirect
-	github.com/RuneRoven/benthosSMTP v0.0.1 // indirect
 	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/apache/arrow/go/arrow v0.0.0-20211112161151-bc219186db40 // indirect
 	github.com/apache/arrow/go/v14 v14.0.2 // indirect
@@ -161,6 +162,7 @@ require (
 	github.com/gsterjov/go-libsecret v0.0.0-20161001094733-a6f4afe4910c // indirect
 	github.com/hailocab/go-hostpool v0.0.0-20160125115350-e80d13ce29ed // indirect
 	github.com/hashicorp/errwrap v1.0.0 // indirect
+	github.com/hashicorp/go-msgpack/v2 v2.1.2 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	github.com/hashicorp/golang-lru/arc/v2 v2.0.7 // indirect
@@ -230,7 +232,6 @@ require (
 	github.com/r3labs/diff/v3 v3.0.1 // indirect
 	github.com/rabbitmq/amqp091-go v1.9.0 // indirect
 	github.com/redis/go-redis/v9 v9.4.0 // indirect
-	github.com/redpanda-data/connect/public/bundle/free/v4 v4.29.0 // indirect
 	github.com/redpanda-data/connect/v4 v4.29.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rickb777/date v1.20.6 // indirect
