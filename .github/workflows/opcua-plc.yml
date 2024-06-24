@@ -22,7 +22,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  GO_VERSION: '1.21.*'
+  GO_VERSION: '1.22.*'
 
 concurrency:
   group: opcua-plc-test
