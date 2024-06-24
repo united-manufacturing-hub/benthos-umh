@@ -13,12 +13,22 @@ Welcome to the benthos-umh repository! This is a version of benthos maintained b
 - Simple deployment in Docker, docker-compose, and Kubernetes
 - Can connect to an OPC-UA server, browses selected nodes, and forwards all sub-nodes in 1-second intervals
 - Can connect to an S7 server, and read pre-defined addresses from it
+- Contains community supported plugins, such as SMTP and Beckhoff ADS
 - Supports a wide range of outputs, from the Unified Namespace (MQTT and Kafka) to HTTP, AMQP, Redis, NATS, SQL, MongoDB, Cassandra, or AWS S3. Check out the official [benthos output library](https://benthos.dev/docs/components/outputs/about)
 - Fully customizable messages using the benthos processor library: implement Report-by-Exception (RBE) / message deduplication, modify payloads and add timestamps using bloblang, apply protobuf (and therefore SparkplugB), and explore many more options
 - Integrates with modern IT landscape, providing metrics, logging, tracing, versionable configuration, and more
 - Entirely open-source (Apache 2.0) and free-to-use
 
 We encourage you to try out `benthos-umh` and explore the broader [United Manufacturing Hub](https://www.umh.app) project for a comprehensive solution to your industrial data integration needs.
+
+### Additional Plugins
+If you know benthos, you know that it is a powerful tool with a lot of input, output, and processor plugins. We have added some additional plugins to benthos-umh, which are not part of the official benthos release. These plugins are:
+- (UMH) s7comm: A input plugin to read data from Siemens S7 PLCs. See [further below](#s7comm) for more information.
+- (UMH) opcua: A input plugin to read data from OPC UA servers. See [further below](#opc-ua)  for more information.
+- (community) smtp: A output plugin to send emails via SMTP. See [DanielH's repo](https://github.com/RuneRoven/benthosSMTP) for more information.
+- (community) ADS: A input plugin to read data from Beckhoff PLCs via ADS. See [DanielH's  repo](https://github.com/RuneRoven/benthosADS) for more information.
+
+The plugins marked with "UMH" are developed and maintained by us. The ones marked as "community" are developed by the community and are not maintained by us.
 
 ## Usage
 
@@ -373,7 +383,7 @@ Requires:
 
 Version: 5.4.6-148
 
-Requires: 
+Requires:
 - TEST_PROSYS_ENDPOINT_URI
 
 This requires additional to have the simulator setup somewhere (e.g., locally on your PC) and pointing the test towards it. This is not included in any CI andm ust be run manually.
