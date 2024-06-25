@@ -30,7 +30,8 @@ concurrency:
 
 jobs:
   go-test-opcua-plc:
-    runs-on: hercules
+    runs-on:
+      group: arc-runners
     permissions:
       packages: write
       contents: read
