@@ -43,6 +43,6 @@ jobs:
         with:
           go_version: ${{ env.GO_VERSION }}
       - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.17.1
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.19.0
       - name: Test
         run: TEST_S7_ENDPOINT_URI=${{ secrets.TEST_S7_ENDPOINT_URI }} TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI }} TEST_WAGO_USERNAME=${{ secrets.TEST_WAGO_USERNAME }} TEST_WAGO_PASSWORD=${{ secrets.TEST_WAGO_PASSWORD }} make test
