@@ -53,3 +53,4 @@ EXPOSE 4195
 USER benthos
 
 LABEL org.opencontainers.image.source https://github.com/united-manufacturing-hub/benthos-umh
+
