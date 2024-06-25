@@ -32,7 +32,7 @@ COPY ./opcua_plugin ./opcua_plugin
 COPY ./s7comm_plugin ./s7comm_plugin
 COPY .goreleaser.yml .
 RUN echo 'project_name: app' >> .goreleaser.yml
-RUN goreleaser build --single-target --snapshot --id benthos --output ./main
+RUN goreleaser build --single-target --snapshot --id benthos --output ./main --timeout 45m
 
 FROM busybox as app
 
