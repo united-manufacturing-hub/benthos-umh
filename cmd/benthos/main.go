@@ -16,7 +16,7 @@ package main
 
 import (
 	"context"
-
+	"github.com/redpanda-data/benthos/v4/public/service"
 	_ "github.com/united-manufacturing-hub/benthos-umh/v2/bundle"
 )
 
