@@ -196,11 +196,10 @@ In benthos-umh, we design security and authentication to be as robust as possibl
 
 The plugin provides metadata for each message, that can be used to create a topic for the output, as shown in the example above. The metadata can also be used to create a unique identifier for each message, which is useful for deduplication.
 
-| Metadata            | Description                                                                                                                                                                                                  |
-|---------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `opcua_path`        | The sanitized ID of the Node that sent the message. This is always unique between nodes                                                                                                                      |
-| `opcua_parent_path` | The sanitized ID of the Node defined in the input. This is useful if the given node is a folder, and the plugin is browsing all child nodes. If the node is not a folder, the value is equal to `opcua_path` |
-| `opcua_tag_path`    | A dot-separated path to the tag, excluding the parent path, created by joining the BrowseNames. This is useful for creating a key name in the processor nicer than the output of `opcua_path`                |
+| Metadata          | Description                                                                             |
+|-------------------|-----------------------------------------------------------------------------------------|
+| `opcua_tag_name`  | The sanitized ID of the Node that sent the message. This is always unique between nodes |
+| `opcua_tag_group` | A dot-separated path to the tag, created by joining the BrowseNames.                    |
 
 Taking as example the following OPC-UA structure:
 
@@ -216,14 +215,12 @@ Root
 
 Subscribing to `ns=2;s=FolderNode` would result in the following metadata:
 
-| `opcua_path`                       | `opcua_parent_path` | `opcua_tag_path` |
-|------------------------------------|---------------------|------------------|
-| `ns_2_s_FolderNode.Tag1`           | `ns_2_s_FolderNode` | `Tag1`           |
-| `ns_2_s_FolderNode.Tag1`           | `ns_2_s_FolderNode` | `Tag2`           |
-| `ns_2_s_FolderNode.SubFolder.Tag3` | `ns_2_s_FolderNode` | `SubFolder.Tag3` |
-| `ns_2_s_FolderNode.SubFolder.Tag4` | `ns_2_s_FolderNode` | `SubFolder.Tag4` |
-
-> Note that the value of `opcua_path` actually depends on the specific node ID of the tag, and the value of `opcua_tag_path` is created by joining the BrowseNames of the nodes.
+| `opcua_tag_name` | `opcua_tag_group`      |
+|------------------|------------------------|
+| `Tag1`           | `FolderNode`           |
+| `Tag2`           | `FolderNode`           |
+| `Tag3`           | `FolderNode.SubFolder` |
+| `Tag4`           | `FolderNode.SubFolder` |
 
 ### Configuration Options
 
