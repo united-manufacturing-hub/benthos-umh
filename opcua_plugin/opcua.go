@@ -436,7 +436,7 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 		tagType = "string"
 	case bool:
 		b = append(b, []byte(strconv.FormatBool(v))...)
-		tagType = "boolean"
+		tagType = "bool"
 	case int:
 		b = append(b, []byte(strconv.Itoa(v))...)
 		tagType = "number"
