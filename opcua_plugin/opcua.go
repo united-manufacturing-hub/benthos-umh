@@ -80,8 +80,21 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		return nil, err
 	}
 
+	browseName, err := n.BrowseName(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var newPath string
+	if path == "" {
+		newPath = sanitize(browseName.Name)
+	} else {
+		newPath = path + "." + sanitize(browseName.Name)
+	}
+
 	var def = NodeDef{
 		NodeID: n.ID,
+		Path:   newPath,
 	}
 
 	switch err := attrs[0].Status; {
@@ -456,15 +469,18 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 	message := service.NewMessage(b)
 
 	message.MetaSet("opcua_path", sanitize(nodeDef.NodeID.String()))
-	message.MetaSet("opcua_tag_path", sanitize(nodeDef.Path))
+	message.MetaSet("opcua_tag_path", sanitize(nodeDef.BrowseName))
 	message.MetaSet("opcua_parent_path", sanitize(nodeDef.ParentNodeID))
 
-	op, _ := message.MetaGet("opcua_path")
-	pp, _ := message.MetaGet("opcua_parent_path")
-	tp, _ := message.MetaGet("opcua_tag_path")
-	g.Log.Debugf("Created message with opcua_path: %s", op)
-	g.Log.Debugf("Created message with opcua_parent_path: %s", pp)
-	g.Log.Debugf("Created message with opcua_tag_path: %s", tp)
+	// Tag Group
+	tagGroup := nodeDef.Path
+	// remove nodeDef.BrowseName from tagGroup
+	tagGroup = strings.Replace(tagGroup, nodeDef.BrowseName, "", 1)
+	// remove trailing dot
+	tagGroup = strings.TrimSuffix(tagGroup, ".")
+
+	message.MetaSet("opcua_tag_group", tagGroup)
+	message.MetaSet("opcua_tag_name", sanitize(nodeDef.BrowseName))
 
 	return message
 }
