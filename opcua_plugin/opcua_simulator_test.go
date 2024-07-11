@@ -949,6 +949,59 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 	})
 
+	FDescribe("opcua_tag_path", func() {
+		It("should create a proper opcua_tag_group and opcua_tag_name", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			var nodeIDStrings []string = []string{"ns=3;s=OpcPlc"}
+
+			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+			input := &OPCUAInput{
+				Endpoint:         "opc.tcp://localhost:50000",
+				Username:         "",
+				Password:         "",
+				NodeIDs:          parsedNodeIDs,
+				SubscribeEnabled: false,
+			}
+
+			// Attempt to connect
+			err := input.Connect(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			messageBatch, _, err := input.ReadBatch(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			// for each
+			for _, message := range messageBatch {
+				opcuaTagPath, err := message.MetaGet("opcua_tag_path")
+				Expect(err).To(BeTrue(), "Could not find opcua_tag_path")
+				GinkgoT().Log("opcua_tag_path: ", opcuaTagPath)
+
+				opcuaTagGroup, err := message.MetaGet("opcua_tag_group")
+				Expect(err).To(BeTrue(), "Could not find opcua_tag_group")
+				GinkgoT().Log("opcua_tag_group: ", opcuaTagGroup)
+
+				opcuaTagName, err := message.MetaGet("opcua_tag_name")
+				Expect(err).To(BeTrue(), "Could not find opcua_tag_name")
+				GinkgoT().Log("opcua_tag_name: ", opcuaTagName)
+
+				if opcuaTagPath == "StepUp" {
+					Expect(opcuaTagGroup).To(Equal("OpcPlc.Telemetry.Basic"))
+					Expect(opcuaTagName).To(Equal("StepUp"))
+				}
+			}
+
+			Fail("Test not implemented")
+
+			// Close connection
+			if input.Client != nil {
+				input.Client.Close(ctx)
+			}
+		})
+	})
+
 })
 
 func checkDatatypeOfOPCUATag(dataType string, messageParsed interface{}, opcuapath string) {
