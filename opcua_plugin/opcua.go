@@ -422,35 +422,51 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 
 	b := make([]byte, 0)
 
+	var tagType string
+
 	switch v := variant.Value().(type) {
 	case float32:
 		b = append(b, []byte(strconv.FormatFloat(float64(v), 'f', -1, 32))...)
+		tagType = "number"
 	case float64:
 		b = append(b, []byte(strconv.FormatFloat(v, 'f', -1, 64))...)
+		tagType = "number"
 	case string:
 		b = append(b, []byte(v)...)
+		tagType = "string"
 	case bool:
 		b = append(b, []byte(strconv.FormatBool(v))...)
+		tagType = "boolean"
 	case int:
 		b = append(b, []byte(strconv.Itoa(v))...)
+		tagType = "number"
 	case int8:
 		b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
+		tagType = "number"
 	case int16:
 		b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
+		tagType = "number"
 	case int32:
 		b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
+		tagType = "number"
 	case int64:
 		b = append(b, []byte(strconv.FormatInt(v, 10))...)
+		tagType = "number"
 	case uint:
 		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
+		tagType = "number"
 	case uint8:
 		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
+		tagType = "number"
 	case uint16:
 		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
+		tagType = "number"
 	case uint32:
 		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
+		tagType = "number"
 	case uint64:
 		b = append(b, []byte(strconv.FormatUint(v, 10))...)
+		tagType = "number"
 	default:
 		// Convert unknown types to JSON
 		jsonBytes, err := json.Marshal(v)
@@ -459,6 +475,7 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 			return nil
 		}
 		b = append(b, jsonBytes...)
+		tagType = "string"
 	}
 
 	if b == nil {
@@ -481,6 +498,8 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 
 	message.MetaSet("opcua_tag_group", tagGroup)
 	message.MetaSet("opcua_tag_name", sanitize(nodeDef.BrowseName))
+
+	message.MetaSet("opcua_tag_type", tagType)
 
 	return message
 }

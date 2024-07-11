@@ -949,8 +949,8 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 	})
 
-	FDescribe("opcua_tag_path", func() {
-		It("should create a proper opcua_tag_group and opcua_tag_name", func() {
+	Describe("metadata", func() {
+		It("should create a proper opcua_tag_group and opcua_tag_name and opcua_tag_type", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
@@ -987,13 +987,16 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				Expect(err).To(BeTrue(), "Could not find opcua_tag_name")
 				GinkgoT().Log("opcua_tag_name: ", opcuaTagName)
 
+				opcuaTagType, err := message.MetaGet("opcua_tag_type")
+				Expect(err).To(BeTrue(), "Could not find opcua_tag_type")
+				GinkgoT().Log("opcua_tag_type: ", opcuaTagType)
+
 				if opcuaTagPath == "StepUp" {
 					Expect(opcuaTagGroup).To(Equal("OpcPlc.Telemetry.Basic"))
 					Expect(opcuaTagName).To(Equal("StepUp"))
+					Expect(opcuaTagType).To(Equal("number"))
 				}
 			}
-
-			Fail("Test not implemented")
 
 			// Close connection
 			if input.Client != nil {
