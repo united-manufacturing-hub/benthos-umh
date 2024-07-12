@@ -1035,44 +1035,48 @@ func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescript
 	return opts, nil
 }
 
+func (g *OPCUAInput) LogEndpoint(endpoint *ua.EndpointDescription) {
+	g.Log.Infof("  EndpointURL: %s", endpoint.EndpointURL)
+	g.Log.Infof("  SecurityMode: %v", endpoint.SecurityMode)
+	g.Log.Infof("  SecurityPolicyURI: %s", endpoint.SecurityPolicyURI)
+	g.Log.Infof("  TransportProfileURI: %s", endpoint.TransportProfileURI)
+	g.Log.Infof("  SecurityLevel: %d", endpoint.SecurityLevel)
+
+	// If Server is not nil, log its details
+	if endpoint.Server != nil {
+		g.Log.Infof("  Server ApplicationURI: %s", endpoint.Server.ApplicationURI)
+		g.Log.Infof("  Server ProductURI: %s", endpoint.Server.ProductURI)
+		g.Log.Infof("  Server ApplicationName: %s", endpoint.Server.ApplicationName.Text)
+		g.Log.Infof("  Server ApplicationType: %v", endpoint.Server.ApplicationType)
+		g.Log.Infof("  Server GatewayServerURI: %s", endpoint.Server.GatewayServerURI)
+		g.Log.Infof("  Server DiscoveryProfileURI: %s", endpoint.Server.DiscoveryProfileURI)
+		g.Log.Infof("  Server DiscoveryURLs: %v", endpoint.Server.DiscoveryURLs)
+	}
+
+	// Output the certificate
+	if len(endpoint.ServerCertificate) > 0 {
+		// Convert to PEM format first, then log the certificate information
+		pemCert := pem.EncodeToMemory(&pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: endpoint.ServerCertificate,
+		})
+		g.logCertificateInfo(pemCert)
+	}
+
+	// Loop through UserIdentityTokens
+	for j, token := range endpoint.UserIdentityTokens {
+		g.Log.Infof("  UserIdentityToken %d:", j+1)
+		g.Log.Infof("    PolicyID: %s", token.PolicyID)
+		g.Log.Infof("    TokenType: %v", token.TokenType)
+		g.Log.Infof("    IssuedTokenType: %s", token.IssuedTokenType)
+		g.Log.Infof("    IssuerEndpointURL: %s", token.IssuerEndpointURL)
+	}
+}
+
 func (g *OPCUAInput) LogEndpoints(endpoints []*ua.EndpointDescription) {
 	for i, endpoint := range endpoints {
 		g.Log.Infof("Endpoint %d:", i+1)
-		g.Log.Infof("  EndpointURL: %s", endpoint.EndpointURL)
-		g.Log.Infof("  SecurityMode: %v", endpoint.SecurityMode)
-		g.Log.Infof("  SecurityPolicyURI: %s", endpoint.SecurityPolicyURI)
-		g.Log.Infof("  TransportProfileURI: %s", endpoint.TransportProfileURI)
-		g.Log.Infof("  SecurityLevel: %d", endpoint.SecurityLevel)
-
-		// If Server is not nil, log its details
-		if endpoint.Server != nil {
-			g.Log.Infof("  Server ApplicationURI: %s", endpoint.Server.ApplicationURI)
-			g.Log.Infof("  Server ProductURI: %s", endpoint.Server.ProductURI)
-			g.Log.Infof("  Server ApplicationName: %s", endpoint.Server.ApplicationName.Text)
-			g.Log.Infof("  Server ApplicationType: %v", endpoint.Server.ApplicationType)
-			g.Log.Infof("  Server GatewayServerURI: %s", endpoint.Server.GatewayServerURI)
-			g.Log.Infof("  Server DiscoveryProfileURI: %s", endpoint.Server.DiscoveryProfileURI)
-			g.Log.Infof("  Server DiscoveryURLs: %v", endpoint.Server.DiscoveryURLs)
-		}
-
-		// Output the certificate
-		if len(endpoint.ServerCertificate) > 0 {
-			// Convert to PEM format first, then log the certificate information
-			pemCert := pem.EncodeToMemory(&pem.Block{
-				Type:  "CERTIFICATE",
-				Bytes: endpoint.ServerCertificate,
-			})
-			g.logCertificateInfo(pemCert)
-		}
-
-		// Loop through UserIdentityTokens
-		for j, token := range endpoint.UserIdentityTokens {
-			g.Log.Infof("  UserIdentityToken %d:", j+1)
-			g.Log.Infof("    PolicyID: %s", token.PolicyID)
-			g.Log.Infof("    TokenType: %v", token.TokenType)
-			g.Log.Infof("    IssuedTokenType: %s", token.IssuedTokenType)
-			g.Log.Infof("    IssuerEndpointURL: %s", token.IssuerEndpointURL)
-		}
+		g.LogEndpoint(endpoint)
 	}
 }
 
@@ -1109,7 +1113,12 @@ func (g *OPCUAInput) FetchAllEndpoints(ctx context.Context) ([]*ua.EndpointDescr
 // handleSingleEndpointDiscovery processes a single discovered endpoint by attempting to discover more endpoints using its Discovery URL and applying user-specified host adjustments.
 func (g *OPCUAInput) handleSingleEndpointDiscovery(ctx context.Context, endpoint *ua.EndpointDescription) ([]*ua.EndpointDescription, error) {
 	if endpoint == nil || endpoint.Server == nil || len(endpoint.Server.DiscoveryURLs) == 0 {
-		g.Log.Errorf("Invalid or incomplete single endpoint data.")
+		if endpoint != nil && endpoint.Server != nil && len(endpoint.Server.DiscoveryURLs) == 0 {
+			g.Log.Errorf("No discovery URL. This is the endpoint: %v", endpoint)
+			g.LogEndpoint(endpoint)
+		} else {
+			g.Log.Errorf("Invalid endpoint configuration")
+		}
 		return nil, errors.New("invalid endpoint configuration")
 	}
 
