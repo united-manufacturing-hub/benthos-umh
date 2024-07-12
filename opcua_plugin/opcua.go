@@ -489,6 +489,8 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 	message.MetaSet("opcua_tag_path", sanitize(nodeDef.BrowseName))
 	message.MetaSet("opcua_parent_path", sanitize(nodeDef.ParentNodeID))
 
+	tagName := sanitize(nodeDef.BrowseName)
+
 	// Tag Group
 	tagGroup := nodeDef.Path
 	// remove nodeDef.BrowseName from tagGroup
@@ -496,8 +498,12 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 	// remove trailing dot
 	tagGroup = strings.TrimSuffix(tagGroup, ".")
 
+	if tagGroup == "" {
+		tagGroup = tagName
+	}
+
 	message.MetaSet("opcua_tag_group", tagGroup)
-	message.MetaSet("opcua_tag_name", sanitize(nodeDef.BrowseName))
+	message.MetaSet("opcua_tag_name", tagName)
 
 	message.MetaSet("opcua_tag_type", tagType)
 
