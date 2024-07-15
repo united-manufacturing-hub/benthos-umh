@@ -1004,7 +1004,40 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 			}
 		})
 	})
+})
 
+var _ = FDescribe("Test Against Softing OPC DataFeed", Serial, func() {
+	When("Subscribing to server without discovery urls", func() {
+		It("does successfully connects", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			nodeIDStrings := []string{"ns=3;s=Siemens_1"}
+			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+			input := &OPCUAInput{
+				Endpoint:         "opc.tcp://10.13.37.125:4998",
+				Username:         "",
+				Password:         "",
+				NodeIDs:          parsedNodeIDs,
+				SubscribeEnabled: false,
+			}
+
+			// Attempt to connect
+			err := input.Connect(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			messageBatch, _, err := input.ReadBatch(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(len(messageBatch)).To(Equal(1))
+
+			// Close connection
+			if input.Client != nil {
+				input.Client.Close(ctx)
+			}
+		})
+	})
 })
 
 func checkDatatypeOfOPCUATag(dataType string, messageParsed interface{}, opcuapath string) {
