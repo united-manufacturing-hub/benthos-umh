@@ -743,7 +743,6 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	// If connection fails, then return an error
 	if g.DirectConnect || len(endpoints) == 0 {
 		g.Log.Infof("Directly connecting to the endpoint %s", g.Endpoint)
-		fmt.Println("Direct connect")
 
 		// Create a new endpoint description
 		// It will never be used directly by the OPC UA library, but we need it for our internal helper functions
@@ -1113,9 +1112,23 @@ func (g *OPCUAInput) FetchAllEndpoints(ctx context.Context) ([]*ua.EndpointDescr
 // handleSingleEndpointDiscovery processes a single discovered endpoint by attempting to discover more endpoints using its Discovery URL and applying user-specified host adjustments.
 func (g *OPCUAInput) handleSingleEndpointDiscovery(ctx context.Context, endpoint *ua.EndpointDescription) ([]*ua.EndpointDescription, error) {
 	if endpoint == nil || endpoint.Server == nil || len(endpoint.Server.DiscoveryURLs) == 0 {
-		if endpoint != nil && endpoint.Server != nil && len(endpoint.Server.DiscoveryURLs) == 0 {
+		if endpoint != nil && endpoint.Server != nil && len(endpoint.Server.DiscoveryURLs) == 0 { // This is the edge case when there is no discovery URL
 			g.Log.Errorf("No discovery URL. This is the endpoint: %v", endpoint)
 			g.LogEndpoint(endpoint)
+
+			// Adjust the hosts of the endpoint that has no discovery URL
+			updatedURL, err := g.ReplaceHostInEndpointURL(endpoint.EndpointURL, g.Endpoint)
+			if err != nil {
+				return nil, err
+			}
+
+			// Update the endpoint URL with the new host.
+			endpoint.EndpointURL = updatedURL
+			var updatedEndpoints []*ua.EndpointDescription
+			updatedEndpoints = append(updatedEndpoints, endpoint)
+
+			return updatedEndpoints, nil
+
 		} else {
 			g.Log.Errorf("Invalid endpoint configuration")
 		}
