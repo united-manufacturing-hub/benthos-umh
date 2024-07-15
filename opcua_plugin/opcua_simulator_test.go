@@ -1006,9 +1006,10 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 	})
 })
 
-var _ = FDescribe("Test Against Softing OPC DataFeed", Serial, func() {
+var _ = Describe("Test Against Softing OPC DataFeed", Serial, func() {
 	When("Subscribing to server without discovery urls", func() {
 		It("does successfully connects", func() {
+			Skip("not implemented in CI pipeline")
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
