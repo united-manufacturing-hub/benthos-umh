@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/gopcua/opcua/ua"
 	"os"
 	"strings"
 	"time"
@@ -12,6 +13,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 var _ = Describe("Test Against Prosys Simulator", func() {
@@ -1020,6 +1023,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
 				UseHeartbeat:     true,
+				HeartbeatNodeId:  ua.NewNumericNodeID(0, 2258),
 			}
 
 			// Attempt to connect
@@ -1051,6 +1055,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
 				UseHeartbeat:     true,
+				HeartbeatNodeId:  ua.NewNumericNodeID(0, 2258),
 			}
 
 			// Attempt to connect
@@ -1065,6 +1070,105 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 			// Close connection
 			if input.Client != nil {
 				input.Client.Close(ctx)
+			}
+		})
+
+		It("does not disconnect if the heartbeat comes in in regular intervals", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			nodeIDStrings := []string{}
+			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+			input := &OPCUAInput{
+				Endpoint:         "opc.tcp://localhost:50000",
+				Username:         "",
+				Password:         "",
+				NodeIDs:          parsedNodeIDs,
+				SubscribeEnabled: true,
+				UseHeartbeat:     true,
+				HeartbeatNodeId:  ua.NewNumericNodeID(0, 2258),
+			}
+
+			// Attempt to connect
+			err := input.Connect(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			messageBatch, _, err := input.ReadBatch(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(len(messageBatch)).To(Equal(1))
+
+			time.Sleep(5 * time.Second)
+
+			messageBatch, _, err = input.ReadBatch(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(len(messageBatch)).To(Equal(1))
+
+			time.Sleep(5 * time.Second)
+
+			messageBatch, _, err = input.ReadBatch(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(len(messageBatch)).To(Equal(1))
+
+			// Close connection
+			if input.Client != nil {
+				input.Client.Close(ctx)
+			}
+		})
+
+		It("does disconnect if the heartbeat does not come in regular intervals", func() {
+
+			nodeIDStrings := []string{}
+			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+			input := &OPCUAInput{
+				Endpoint:         "opc.tcp://localhost:50000",
+				Username:         "",
+				Password:         "",
+				NodeIDs:          parsedNodeIDs,
+				SubscribeEnabled: true,
+				UseHeartbeat:     true,
+				HeartbeatNodeId:  ua.NewNumericNodeID(0, 2259), // 2259 is State, which will not change
+			}
+
+			// Attempt to connect
+			ctx1, cancel1 := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel1()
+			err := input.Connect(ctx1)
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel2()
+			messageBatch, _, err := input.ReadBatch(ctx2)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(len(messageBatch)).To(Equal(1))
+
+			time.Sleep(5 * time.Second)
+
+			ctx3, cancel3 := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel3()
+			messageBatch, _, err = input.ReadBatch(ctx3)
+			Expect(err).To(Equal(context.DeadlineExceeded))
+
+			Expect(len(messageBatch)).To(Equal(0))
+
+			time.Sleep(10 * time.Second)
+
+			ctx4, cancel4 := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel4()
+			messageBatch, _, err = input.ReadBatch(ctx4)
+			// Expect err to be service.ErrNotConnected
+			Expect(err).To(Equal(service.ErrNotConnected))
+
+			// Close connection
+			if input.Client != nil {
+				ctx6, cancel6 := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel6()
+				input.Client.Close(ctx6)
 			}
 		})
 	})

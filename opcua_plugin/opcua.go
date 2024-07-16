@@ -360,6 +360,7 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		UseHeartbeat:                 useHeartbeat,
 		LastHeartbeatMessageReceived: atomic.Uint32{},
 		HeartbeatManualSubscribed:    false,
+		HeartbeatNodeId:              ua.NewNumericNodeID(0, 2258), // 2258 is the nodeID for CurrentTime, only in tests this is different
 	}
 
 	m.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
@@ -401,6 +402,7 @@ type OPCUAInput struct {
 	UseHeartbeat                 bool
 	LastHeartbeatMessageReceived atomic.Uint32
 	HeartbeatManualSubscribed    bool
+	HeartbeatNodeId              *ua.NodeID
 }
 
 // UpdateNodePaths updates the node paths to use the nodeID instead of the browseName
@@ -514,7 +516,7 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 	tagGroup = strings.TrimSuffix(tagGroup, ".")
 
 	// if the node is the CurrentTime node, mark is as a heartbeat message
-	if nodeDef.NodeID.Namespace() == 0 && nodeDef.NodeID.IntID() == 2258 && g.UseHeartbeat {
+	if nodeDef.NodeID.Namespace() == g.HeartbeatNodeId.Namespace() && nodeDef.NodeID.IntID() == g.HeartbeatNodeId.IntID() && g.UseHeartbeat {
 		message.MetaSet("opcua_heartbeat_message", "true")
 	}
 
@@ -707,7 +709,7 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, 
 					msg.MetaSet("opcua_tag_group", "heartbeat")
 					msg.MetaSet("opcua_tag_name", "CurrentTime")
 				}
-
+				break
 			}
 		}
 
@@ -715,6 +717,7 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, 
 		// benthos will automatically reconnect
 		if g.LastHeartbeatMessageReceived.Load() < uint32(time.Now().Unix()-10) {
 			g.Log.Error("Did not receive a heartbeat message for more than 10 seconds. Closing the connection to prevent stale data.")
+			fmt.Printf("DId not receive a heartbeat message for more than 10 seconds. Closing the connection to prevent stale data.")
 			_ = g.Close(ctx)
 			return nil, nil, service.ErrNotConnected
 		}
@@ -974,11 +977,12 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
 	// Now add i=2258 to the nodeList, which is the CurrentTime node, which is used for heartbeats
 	// This is only added if the heartbeat is enabled
+	// instead of i=2258 the g.HeartbeatNodeId is used, which can be different in tests
 	if g.UseHeartbeat {
 
 		// Check if the node is already in the list
 		for _, node := range nodeList {
-			if node.NodeID.Namespace() == 0 && node.NodeID.IntID() == 2258 {
+			if node.NodeID.Namespace() == g.HeartbeatNodeId.Namespace() && node.NodeID.IntID() == g.HeartbeatNodeId.IntID() {
 				g.HeartbeatManualSubscribed = true
 				break
 			}
@@ -986,7 +990,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
 		// If the node is not in the list, add it
 		if !g.HeartbeatManualSubscribed {
-			heartbeatNodeID := ua.NewNumericNodeID(0, 2258)
+			heartbeatNodeID := g.HeartbeatNodeId
 
 			nodes, err := browse(ctx, g.Client.Node(heartbeatNodeID), "", 0, g.Log, heartbeatNodeID.String())
 			if err != nil {
