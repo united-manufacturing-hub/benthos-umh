@@ -1113,7 +1113,7 @@ func (g *OPCUAInput) FetchAllEndpoints(ctx context.Context) ([]*ua.EndpointDescr
 func (g *OPCUAInput) handleSingleEndpointDiscovery(ctx context.Context, endpoint *ua.EndpointDescription) ([]*ua.EndpointDescription, error) {
 	if endpoint == nil || endpoint.Server == nil || len(endpoint.Server.DiscoveryURLs) == 0 {
 		if endpoint != nil && endpoint.Server != nil && len(endpoint.Server.DiscoveryURLs) == 0 { // This is the edge case when there is no discovery URL
-			g.Log.Errorf("No discovery URL. This is the endpoint: %v", endpoint)
+			g.Log.Warnf("No discovery URL. This is the endpoint: %v", endpoint)
 			g.LogEndpoint(endpoint)
 
 			// Adjust the hosts of the endpoint that has no discovery URL
