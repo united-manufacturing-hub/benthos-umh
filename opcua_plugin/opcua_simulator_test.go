@@ -1004,6 +1004,70 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 			}
 		})
 	})
+
+	FWhen("Enabling sendHeartbeat", func() {
+		It("sends the heartbeat", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			nodeIDStrings := []string{}
+			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+			input := &OPCUAInput{
+				Endpoint:         "opc.tcp://localhost:50000",
+				Username:         "",
+				Password:         "",
+				NodeIDs:          parsedNodeIDs,
+				SubscribeEnabled: true,
+				UseHeartbeat:     true,
+			}
+
+			// Attempt to connect
+			err := input.Connect(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			messageBatch, _, err := input.ReadBatch(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(len(messageBatch)).To(Equal(1))
+
+			// Close connection
+			if input.Client != nil {
+				input.Client.Close(ctx)
+			}
+		})
+
+		It("sends the heartbeat when manual subscribe to i=2258", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			nodeIDStrings := []string{"i=2258"}
+			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+			input := &OPCUAInput{
+				Endpoint:         "opc.tcp://localhost:50000",
+				Username:         "",
+				Password:         "",
+				NodeIDs:          parsedNodeIDs,
+				SubscribeEnabled: true,
+				UseHeartbeat:     true,
+			}
+
+			// Attempt to connect
+			err := input.Connect(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			messageBatch, _, err := input.ReadBatch(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(len(messageBatch)).To(Equal(2))
+
+			// Close connection
+			if input.Client != nil {
+				input.Client.Close(ctx)
+			}
+		})
+	})
 })
 
 var _ = Describe("Test Against Softing OPC DataFeed", Serial, func() {
