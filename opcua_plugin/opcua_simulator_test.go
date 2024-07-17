@@ -1008,7 +1008,52 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 		})
 	})
 
-	FWhen("Enabling sendHeartbeat", func() {
+	When("Subscribing to slow values", func() {
+		It("keeps sending data at least once every 10 seconds", func() {
+			Skip("slow test")
+			ctx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel1()
+
+			nodeIDStrings := []string{"ns=3;s=SlowUInt1"}
+			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+			input := &OPCUAInput{
+				Endpoint:         "opc.tcp://localhost:50000",
+				Username:         "",
+				Password:         "",
+				NodeIDs:          parsedNodeIDs,
+				SubscribeEnabled: true,
+			}
+
+			// Attempt to connect
+			err := input.Connect(ctx1)
+			Expect(err).NotTo(HaveOccurred())
+
+			messageBatch, _, err := input.ReadBatch(ctx1)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(len(messageBatch)).To(Equal(1))
+
+			time.Sleep(15 * time.Second)
+
+			ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel2()
+
+			messageBatch, _, err = input.ReadBatch(ctx2)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(len(messageBatch)).To(Equal(1))
+
+			// Close connection
+			if input.Client != nil {
+				ctxEnd, cancelEnd := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancelEnd()
+				input.Client.Close(ctxEnd)
+			}
+		})
+	})
+
+	When("Enabling sendHeartbeat", func() {
 		It("sends the heartbeat", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -1204,6 +1249,57 @@ var _ = Describe("Test Against Softing OPC DataFeed", Serial, func() {
 			// Close connection
 			if input.Client != nil {
 				input.Client.Close(ctx)
+			}
+		})
+	})
+	When("Subscribing to softing and manually adjusting local item", func() {
+		It("does successfully reports a data change", func() {
+			// This requires manual intervention and a manual change of localitem during this test
+			Skip("not implemented in CI pipeline")
+			ctx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel1()
+
+			nodeIDStrings := []string{"ns=3;s=Local Items.test"}
+			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+			input := &OPCUAInput{
+				Endpoint:         "opc.tcp://10.13.37.125:4998",
+				Username:         "",
+				Password:         "",
+				NodeIDs:          parsedNodeIDs,
+				SubscribeEnabled: true,
+			}
+
+			// Attempt to connect
+			err := input.Connect(ctx1)
+			Expect(err).NotTo(HaveOccurred())
+
+			messageBatch, _, err := input.ReadBatch(ctx1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(len(messageBatch)).To(Equal(1))
+
+			ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel2()
+
+			messageBatch, _, err = input.ReadBatch(ctx2)
+			Expect(err).To(Equal(context.DeadlineExceeded)) // there should be no data change
+			Expect(len(messageBatch)).To(Equal(0))
+
+			ctx3, cancel3 := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel3()
+
+			// at this point of time local items is changed
+			GinkgoWriter.Println("Change local item now")
+
+			messageBatch, _, err = input.ReadBatch(ctx3)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(len(messageBatch)).To(Equal(1))
+
+			// Close connection
+			if input.Client != nil {
+				ctxEnd, cancelEnd := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancelEnd()
+				input.Client.Close(ctxEnd)
 			}
 		})
 	})

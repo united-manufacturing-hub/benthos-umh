@@ -516,7 +516,7 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 	tagGroup = strings.TrimSuffix(tagGroup, ".")
 
 	// if the node is the CurrentTime node, mark is as a heartbeat message
-	if nodeDef.NodeID.Namespace() == g.HeartbeatNodeId.Namespace() && nodeDef.NodeID.IntID() == g.HeartbeatNodeId.IntID() && g.UseHeartbeat {
+	if g.HeartbeatNodeId != nil && nodeDef.NodeID.Namespace() == g.HeartbeatNodeId.Namespace() && nodeDef.NodeID.IntID() == g.HeartbeatNodeId.IntID() && g.UseHeartbeat {
 		message.MetaSet("opcua_heartbeat_message", "true")
 	}
 
