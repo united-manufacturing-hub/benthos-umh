@@ -688,8 +688,14 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, ackFunc service.AckFunc, err error) {
 	if g.SubscribeEnabled {
 		msgs, ackFunc, err = g.ReadBatchSubscribe(ctx)
+	} else {
+		msgs, ackFunc, err = g.ReadBatchPull(ctx)
 	}
-	msgs, ackFunc, err = g.ReadBatchPull(ctx)
+
+	if err != nil {
+		g.Log.Error("Received error in ReadBatch: " + err.Error())
+		return nil, nil, err
+	}
 
 	// Heartbeat logic
 	if g.UseHeartbeat {
