@@ -1197,7 +1197,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 			ctx3, cancel3 := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel3()
 			messageBatch, _, err = input.ReadBatch(ctx3)
-			Expect(err).To(Equal(context.DeadlineExceeded))
+			Expect(err).NotTo(HaveOccurred())
 
 			Expect(len(messageBatch)).To(Equal(0))
 
