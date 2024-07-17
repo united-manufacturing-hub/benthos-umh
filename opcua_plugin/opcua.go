@@ -25,6 +25,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -260,7 +261,8 @@ var OPCUAConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringField("securityPolicy").Description("The security policy to use.  If not set, a reasonable security policy will be set depending on the discovered endpoints.").Default("")).
 	Field(service.NewBoolField("insecure").Description("Set to true to bypass secure connections, useful in case of SSL or certificate issues. Default is secure (false).").Default(false)).
 	Field(service.NewBoolField("subscribeEnabled").Description("Set to true to subscribe to OPC UA nodes instead of fetching them every seconds. Default is pulling messages every second (false).").Default(false)).
-	Field(service.NewBoolField("directConnect").Description("Set this to true to directly connect to an OPC UA endpoint. This can be necessary in cases where the OPC UA server does not allow 'endpoint discovery'. This requires having the full endpoint name in endpoint, and securityMode and securityPolicy set. Defaults to 'false'").Default(false))
+	Field(service.NewBoolField("directConnect").Description("Set this to true to directly connect to an OPC UA endpoint. This can be necessary in cases where the OPC UA server does not allow 'endpoint discovery'. This requires having the full endpoint name in endpoint, and securityMode and securityPolicy set. Defaults to 'false'").Default(false)).
+	Field(service.NewBoolField("useHeartbeat").Description("Set to true to provide an extra message with the servers timestamp as a heartbeat").Default(false))
 
 func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 
@@ -331,6 +333,11 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		return nil, err
 	}
 
+	useHeartbeat, err := conf.FieldBool("useHeartbeat")
+	if err != nil {
+		return nil, err
+	}
+
 	// fail if no nodeIDs are provided
 	if len(nodeIDs) == 0 {
 		return nil, errors.New("no nodeIDs provided")
@@ -339,18 +346,24 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 	parsedNodeIDs := ParseNodeIDs(nodeIDs)
 
 	m := &OPCUAInput{
-		Endpoint:         endpoint,
-		Username:         username,
-		Password:         password,
-		NodeIDs:          parsedNodeIDs,
-		Log:              mgr.Logger(),
-		SecurityMode:     securityMode,
-		SecurityPolicy:   securityPolicy,
-		Insecure:         insecure,
-		SubscribeEnabled: subscribeEnabled,
-		SessionTimeout:   sessionTimeout,
-		DirectConnect:    directConnect,
+		Endpoint:                     endpoint,
+		Username:                     username,
+		Password:                     password,
+		NodeIDs:                      parsedNodeIDs,
+		Log:                          mgr.Logger(),
+		SecurityMode:                 securityMode,
+		SecurityPolicy:               securityPolicy,
+		Insecure:                     insecure,
+		SubscribeEnabled:             subscribeEnabled,
+		SessionTimeout:               sessionTimeout,
+		DirectConnect:                directConnect,
+		UseHeartbeat:                 useHeartbeat,
+		LastHeartbeatMessageReceived: atomic.Uint32{},
+		HeartbeatManualSubscribed:    false,
+		HeartbeatNodeId:              ua.NewNumericNodeID(0, 2258), // 2258 is the nodeID for CurrentTime, only in tests this is different
 	}
+
+	m.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
 
 	return service.AutoRetryNacksBatched(m), nil
 }
@@ -382,10 +395,14 @@ type OPCUAInput struct {
 	Client         *opcua.Client
 	Log            *service.Logger
 	// this is required for subscription
-	SubscribeEnabled bool
-	SubNotifyChan    chan *opcua.PublishNotificationData
-	SessionTimeout   int
-	DirectConnect    bool
+	SubscribeEnabled             bool
+	SubNotifyChan                chan *opcua.PublishNotificationData
+	SessionTimeout               int
+	DirectConnect                bool
+	UseHeartbeat                 bool
+	LastHeartbeatMessageReceived atomic.Uint32
+	HeartbeatManualSubscribed    bool
+	HeartbeatNodeId              *ua.NodeID
 }
 
 // UpdateNodePaths updates the node paths to use the nodeID instead of the browseName
@@ -497,6 +514,11 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 	tagGroup = strings.Replace(tagGroup, nodeDef.BrowseName, "", 1)
 	// remove trailing dot
 	tagGroup = strings.TrimSuffix(tagGroup, ".")
+
+	// if the node is the CurrentTime node, mark is as a heartbeat message
+	if g.HeartbeatNodeId != nil && nodeDef.NodeID.Namespace() == g.HeartbeatNodeId.Namespace() && nodeDef.NodeID.IntID() == g.HeartbeatNodeId.IntID() && g.UseHeartbeat {
+		message.MetaSet("opcua_heartbeat_message", "true")
+	}
 
 	if tagGroup == "" {
 		tagGroup = tagName
@@ -660,11 +682,48 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 	}
 }
 
-func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, ackFunc service.AckFunc, err error) {
 	if g.SubscribeEnabled {
-		return g.ReadBatchSubscribe(ctx)
+		msgs, ackFunc, err = g.ReadBatchSubscribe(ctx)
 	}
-	return g.ReadBatchPull(ctx)
+	msgs, ackFunc, err = g.ReadBatchPull(ctx)
+
+	// Heartbeat logic
+	if g.UseHeartbeat {
+		// loop through all messages and check if they are heartbeat messages
+		// if they are, set the last heartbeat message received to the current time
+		for _, msg := range msgs {
+			_, exists := msg.MetaGet("opcua_heartbeat_message")
+			if exists {
+				g.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
+
+				// if the user subscribed manually to the current time, duplicate it and put it into a new topic
+				if g.HeartbeatManualSubscribed {
+					newMsg := msg.DeepCopy()
+					newMsg.MetaSet("opcua_tag_group", "heartbeat")
+					newMsg.MetaSet("opcua_tag_name", "CurrentTime")
+					newMsg.MetaSet("opcua_heartbeat_message", "")
+					msgs = append(msgs, newMsg)
+
+				} else { // otherwise rename it
+					msg.MetaSet("opcua_tag_group", "heartbeat")
+					msg.MetaSet("opcua_tag_name", "CurrentTime")
+				}
+				break
+			}
+		}
+
+		// if the last heartbeat message was received more than 10 seconds ago, close the connection
+		// benthos will automatically reconnect
+		if g.LastHeartbeatMessageReceived.Load() < uint32(time.Now().Unix()-10) {
+			g.Log.Error("Did not receive a heartbeat message for more than 10 seconds. Closing the connection to prevent stale data.")
+			fmt.Printf("DId not receive a heartbeat message for more than 10 seconds. Closing the connection to prevent stale data.")
+			_ = g.Close(ctx)
+			return nil, nil, service.ErrNotConnected
+		}
+	}
+
+	return
 }
 
 func (g *OPCUAInput) Close(ctx context.Context) error {
@@ -914,6 +973,37 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
 		// Add the nodes to the nodeList
 		nodeList = append(nodeList, nodes...)
+	}
+
+	// Now add i=2258 to the nodeList, which is the CurrentTime node, which is used for heartbeats
+	// This is only added if the heartbeat is enabled
+	// instead of i=2258 the g.HeartbeatNodeId is used, which can be different in tests
+	if g.UseHeartbeat {
+
+		// Check if the node is already in the list
+		for _, node := range nodeList {
+			if node.NodeID.Namespace() == g.HeartbeatNodeId.Namespace() && node.NodeID.IntID() == g.HeartbeatNodeId.IntID() {
+				g.HeartbeatManualSubscribed = true
+				break
+			}
+		}
+
+		// If the node is not in the list, add it
+		if !g.HeartbeatManualSubscribed {
+			heartbeatNodeID := g.HeartbeatNodeId
+
+			nodes, err := browse(ctx, g.Client.Node(heartbeatNodeID), "", 0, g.Log, heartbeatNodeID.String())
+			if err != nil {
+				g.Log.Errorf("Browsing failed: %s", err)
+				_ = g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+				return err
+			}
+
+			UpdateNodePaths(nodes)
+
+			// Add the nodes to the nodeList
+			nodeList = append(nodeList, nodes...)
+		}
 	}
 
 	b, err := json.Marshal(nodeList)
