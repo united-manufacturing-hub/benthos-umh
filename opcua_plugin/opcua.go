@@ -431,7 +431,8 @@ func UpdateNodePaths(nodes []NodeDef) {
 
 // createMessageFromValue creates a benthos messages from a given variant and nodeID
 // theoretically nodeID can be extracted from variant, but not in all cases (e.g., when subscribing), so it it left to the calling function
-func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef) *service.Message {
+func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef NodeDef) *service.Message {
+	variant := dataValue.Value
 	if variant == nil {
 		g.Log.Errorf("Variant is nil")
 		return nil
@@ -505,6 +506,8 @@ func (g *OPCUAInput) createMessageFromValue(variant *ua.Variant, nodeDef NodeDef
 	message.MetaSet("opcua_path", sanitize(nodeDef.NodeID.String()))
 	message.MetaSet("opcua_tag_path", sanitize(nodeDef.BrowseName))
 	message.MetaSet("opcua_parent_path", sanitize(nodeDef.ParentNodeID))
+	message.MetaSet("opcua_source_timestamp", dataValue.SourceTimestamp.Format("2006-01-02T15:04:05.000000Z07:00"))
+	message.MetaSet("opcua_server_timestamp", dataValue.ServerTimestamp.Format("2006-01-02T15:04:05.000000Z07:00"))
 
 	tagName := sanitize(nodeDef.BrowseName)
 
@@ -601,8 +604,8 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 	msgs := service.MessageBatch{}
 
 	for i, node := range g.NodeList {
-		value := resp.Results[i].Value
-		if value == nil {
+		value := resp.Results[i]
+		if value == nil || value.Value == nil {
 			g.Log.Warnf("Received nil in item structure on node %s. This can occur when subscribing to an OPC UA folder and may be ignored.", node.NodeID.String())
 			continue
 		}
@@ -656,7 +659,7 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 				handleID := item.ClientHandle
 
 				if uint32(len(g.NodeList)) >= handleID {
-					message := g.createMessageFromValue(item.Value.Value, g.NodeList[handleID])
+					message := g.createMessageFromValue(item.Value, g.NodeList[handleID])
 					if message != nil {
 						msgs = append(msgs, message)
 					}
