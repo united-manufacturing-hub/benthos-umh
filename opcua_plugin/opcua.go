@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"golang.org/x/exp/slices"
 	"regexp"
 	"strconv"
 	"strings"
@@ -699,45 +700,55 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, 
 	}
 
 	// Heartbeat logic
-	var newMsg *service.Message
+	msgs = g.updateHeartbeatInMessageBatch(msgs)
 
-	if g.UseHeartbeat {
-		// loop through all messages and check if they are heartbeat messages
-		// if they are, set the last heartbeat message received to the current time
-		for _, msg := range msgs {
-			_, exists := msg.MetaGet("opcua_heartbeat_message")
-			if exists {
-				g.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
-
-				// if the user subscribed manually to the current time, duplicate it and put it into a new topic
-				if g.HeartbeatManualSubscribed {
-					g.Log.Infof("Got heartbeat message. Duplicating it to a new message.")
-					newMsg = msg.DeepCopy()
-					newMsg.MetaSet("opcua_tag_group", "heartbeat")
-					newMsg.MetaSet("opcua_tag_name", "CurrentTime")
-					newMsg.MetaSet("opcua_heartbeat_message", "")
-				} else { // otherwise rename it
-					g.Log.Infof("Got heartbeat message. Renaming it.")
-					msg.MetaSet("opcua_tag_group", "heartbeat")
-					msg.MetaSet("opcua_tag_name", "CurrentTime")
-				}
-				break
-			}
-		}
-
-		msgs = append(msgs, newMsg)
-
-		// if the last heartbeat message was received more than 10 seconds ago, close the connection
-		// benthos will automatically reconnect
-		if g.LastHeartbeatMessageReceived.Load() < uint32(time.Now().Unix()-10) {
-			g.Log.Error("Did not receive a heartbeat message for more than 10 seconds. Closing the connection to prevent stale data.")
-			_ = g.Close(ctx)
-			return nil, nil, service.ErrNotConnected
-		}
-
+	// if the last heartbeat message was received more than 10 seconds ago, close the connection
+	// benthos will automatically reconnect
+	if g.UseHeartbeat && g.LastHeartbeatMessageReceived.Load() < uint32(time.Now().Unix()-10) {
+		g.Log.Error("Did not receive a heartbeat message for more than 10 seconds. Closing the connection to prevent stale data.")
+		_ = g.Close(ctx)
+		return nil, nil, service.ErrNotConnected
 	}
 
 	return
+}
+
+// updateHeartbeatInMessageBatch processes the heartbeat message in a batch of messages.
+// If UseHeartbeat is enabled, it searches for a heartbeat message in the batch.
+// When found, it updates the LastHeartbeatMessageReceived timestamp.
+// If HeartbeatManualSubscribed is true (so if the user specifically subscribed to the heartbeat node), it duplicates the heartbeat message and appends it to the batch.
+// Otherwise, it renames the existing heartbeat message.
+// The function returns the modified message batch.
+func (g *OPCUAInput) updateHeartbeatInMessageBatch(msgs service.MessageBatch) service.MessageBatch {
+	if !g.UseHeartbeat {
+		return msgs
+	}
+
+	idx := slices.IndexFunc(msgs, func(msg *service.Message) bool {
+		_, exists := msg.MetaGet("opcua_heartbeat_message")
+		return exists
+	})
+
+	if idx == -1 {
+		return msgs
+	}
+
+	g.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
+
+	if g.HeartbeatManualSubscribed {
+		g.Log.Infof("Got heartbeat message. Duplicating it to a new message.")
+		newMsg := msgs[idx].DeepCopy()
+		newMsg.MetaSet("opcua_tag_group", "heartbeat")
+		newMsg.MetaSet("opcua_tag_name", "CurrentTime")
+		newMsg.MetaSet("opcua_heartbeat_message", "")
+		return append(msgs, newMsg)
+	} else {
+		g.Log.Infof("Got heartbeat message. Renaming it.")
+		msgs[idx].MetaSet("opcua_tag_group", "heartbeat")
+		msgs[idx].MetaSet("opcua_tag_name", "CurrentTime")
+		msgs[idx].MetaSet("opcua_heartbeat_message", "")
+		return msgs
+	}
 }
 
 func (g *OPCUAInput) Close(ctx context.Context) error {
