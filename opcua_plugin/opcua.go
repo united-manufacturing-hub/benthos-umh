@@ -49,14 +49,6 @@ type NodeDef struct {
 	Path         string
 	DataType     string
 	Writable     bool
-	Unit         string
-	Scale        string
-	Min          string
-	Max          string
-}
-
-func (n NodeDef) Records() []string {
-	return []string{n.BrowseName, n.DataType, n.NodeID.String(), n.Unit, n.Scale, n.Min, n.Max, strconv.FormatBool(n.Writable), n.Description}
 }
 
 func join(a, b string) string {
