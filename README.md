@@ -196,10 +196,19 @@ In benthos-umh, we design security and authentication to be as robust as possibl
 
 The plugin provides metadata for each message, that can be used to create a topic for the output, as shown in the example above. The metadata can also be used to create a unique identifier for each message, which is useful for deduplication.
 
-| Metadata          | Description                                                                             |
-|-------------------|-----------------------------------------------------------------------------------------|
-| `opcua_tag_name`  | The sanitized ID of the Node that sent the message. This is always unique between nodes |
-| `opcua_tag_group` | A dot-separated path to the tag, created by joining the BrowseNames.                    |
+| Metadata                 | Description                                                                                                                                          |
+|--------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `opcua_tag_name`         | The sanitized ID of the Node that sent the message. This is always unique between nodes                                                              |
+| `opcua_tag_group`        | A dot-separated path to the tag, created by joining the BrowseNames.                                                                                 |
+| `opcua_tag_type`         | The data type of the node optimized for benthos, which can be either a number, string or bool. For the original one, check out `opcua_attr_datatype` |
+| `opcua_source_timestamp` | The SourceTimestamp of the OPC UA node                                                                                                               |
+| `opcua_server_timestamp` | The ServerTimestamp of the OPC UA node                                                                                                               |
+| `opcua_attr_nodeid`      | The NodeID attribute of the Node as a string                                                                                                         |
+| `opcua_attr_nodeclass`   | The NodeClass attribute of the Node as a string                                                                                                      |
+| `opcua_attr_browsename`  | The BrowseName attribute of the Node as a string                                                                                                     |
+| `opcua_attr_description` | The Description attribute of the Node as a string                                                                                                    |
+| `opcua_attr_accesslevel` | The AccessLevel attribute of the Node as a string                                                                                                    |
+| `opcua_attr_datatype`    | The DataType attribute of the Node as a string                                                                                                       |
 
 Taking as example the following OPC-UA structure:
 
