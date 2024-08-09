@@ -45,10 +45,9 @@ type NodeDef struct {
 	BrowseName   string
 	Description  string
 	AccessLevel  ua.AccessLevelType
-	ParentNodeID string
-	Path         string
 	DataType     string
-	Writable     bool
+	ParentNodeID string // custom, not an official opcua attribute
+	Path         string // custom, not an official opcua attribute
 }
 
 func join(a, b string) string {
@@ -496,11 +495,20 @@ func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef Nod
 
 	message := service.NewMessage(b)
 
+	// Deprecated
 	message.MetaSet("opcua_path", sanitize(nodeDef.NodeID.String()))
 	message.MetaSet("opcua_tag_path", sanitize(nodeDef.BrowseName))
 	message.MetaSet("opcua_parent_path", sanitize(nodeDef.ParentNodeID))
+
+	// New ones
 	message.MetaSet("opcua_source_timestamp", dataValue.SourceTimestamp.Format("2006-01-02T15:04:05.000000Z07:00"))
 	message.MetaSet("opcua_server_timestamp", dataValue.ServerTimestamp.Format("2006-01-02T15:04:05.000000Z07:00"))
+	message.MetaSet("opcua_attr_nodeid", nodeDef.NodeID.String())
+	message.MetaSet("opcua_attr_nodeclass", nodeDef.NodeClass.String())
+	message.MetaSet("opcua_attr_browsename", nodeDef.BrowseName)
+	message.MetaSet("opcua_attr_description", nodeDef.Description)
+	message.MetaSet("opcua_attr_accesslevel", nodeDef.AccessLevel.String())
+	message.MetaSet("opcua_attr_datatype", nodeDef.DataType)
 
 	tagName := sanitize(nodeDef.BrowseName)
 
