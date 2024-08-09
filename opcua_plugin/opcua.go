@@ -122,7 +122,6 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	switch err := attrs[3].Status; {
 	case errors.Is(err, ua.StatusOK):
 		def.AccessLevel = ua.AccessLevelType(attrs[3].Value.Int())
-		def.Writable = def.AccessLevel&ua.AccessLevelTypeCurrentWrite == ua.AccessLevelTypeCurrentWrite
 	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
 		// ignore
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
