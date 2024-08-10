@@ -15,7 +15,7 @@
 // Implementation:
 // Go for the metric implementation of telegraf
 // https://github.com/influxdata/telegraf/blob/master/plugins/inputs/modbus/README.md
-//
+// TODO: migrate modbus.go
 
 package modbus_plugin
 
