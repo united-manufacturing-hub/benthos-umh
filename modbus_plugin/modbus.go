@@ -118,43 +118,116 @@ type ModbusInput struct {
 
 type converterFunc func([]byte) interface{}
 
-// ModbusConfigSpec defines the configuration options available for the S7CommInput plugin.
-// It outlines the required information to establish a connection with the PLC and the data to be read.
+// ModbusConfigSpec defines the configuration options available for the ModbusInput plugin.
+// It outlines the required information to establish a connection with the Modbus device and the data to be read.
 var ModbusConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from Modbus devices. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
 	Description("This input plugin enables Benthos to read data directly from Modbus devices using the Modbus protocol.").
-	Field(service.NewStringField("tcpDevice").Description("IP address of the Modbus device.")).
-	Field(service.NewIntField("timeout").Description("The timeout duration in seconds for connection attempts and read requests.").Default(10)).
-	Field(service.NewStringListField("addresses").Description("List of Modbus addresses to read in the format '<address>:<quantity>', e.g., '40001:2'."))
+	Field(service.NewStringField("controller").Description("The Modbus controller address, e.g., 'tcp://localhost:502'").Default("tcp://localhost:502")).
+	Field(service.NewStringField("transmissionMode").Description("Transmission mode: 'TCP', 'RTUOverTCP', or 'ASCIIOverTCP'").Default("TCP")).
+	Field(service.NewIntField("slaveID").Description("Slave ID of the Modbus device").Default(1)).
+	Field(service.NewIntField("busyRetries").Description("Maximum number of retries when the device is busy").Default(3)).
+	Field(service.NewDurationField("busyRetriesWait").Description("Time to wait between retries when the device is busy").Default("200ms")).
+	Field(service.NewStringField("optimization").Description("Request optimization algorithm: 'none' or 'max_insert'").Default("none")).
+	Field(service.NewIntField("optimizationMaxRegisterFill").Description("Maximum number of registers to insert for optimization").Default(50)).
+	Field(service.NewStringField("byteOrder").Description("Byte order: 'ABCD', 'DCBA', 'BADC', or 'CDAB'").Default("ABCD")).
+	Field(service.NewObjectField("workarounds",
+		service.NewDurationField("pauseAfterConnect").Description("Pause after connect to delay the first request").Default("0s"),
+		service.NewBoolField("oneRequestPerField").Description("Send each field in a separate request").Default(false),
+		service.NewBoolField("readCoilsStartingAtZero").Description("Read coils starting at address 0 instead of 1").Default(false),
+		service.NewStringField("stringRegisterLocation").Description("String byte-location in registers: 'lower', 'upper', or empty for both").Default("")).
+		Description("Modbus workarounds. Required by some devices to work correctly. Should be left alone by default and must not be changed unless necessary.")).
+	Field(service.NewObjectListField("addresses",
+		service.NewStringField("name").Description("Field name"),
+		service.NewStringField("register").Description("Register type: 'coil', 'discrete', 'holding', or 'input'").Default("holding"),
+		service.NewIntField("address").Description("Address of the register to query"),
+		service.NewStringField("type").Description("Data type of the field"),
+		service.NewIntField("length").Description("Number of registers, only valid for STRING type").Default(1),
+		service.NewIntField("bit").Description("Bit of the register, only valid for BIT type").Default(0),
+		service.NewFloatField("scale").Description("Factor to scale the variable with").Default(1.0),
+		service.NewStringField("output").Description("Type of resulting field: 'INT64', 'UINT64', 'FLOAT64', or 'native'").Default("native")).
+		Description("List of Modbus addresses to read"))
 
 // newModbusInput is the constructor function for ModbusInput. It parses the plugin configuration,
 // establishes a connection with the Modbus device, and initializes the input plugin instance.
 func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
-	tcpDevice, err := conf.FieldString("tcpDevice")
-	if err != nil {
-		return nil, err
-	}
-
-	addresses, err := conf.FieldStringList("addresses")
-	if err != nil {
-		return nil, err
-	}
-
-	timeoutInt, err := conf.FieldInt("timeout")
-	if err != nil {
-		return nil, err
-	}
-
-	batches, err := ParseModbusAddresses(addresses)
-	if err != nil {
-		return nil, err
-	}
-
 	m := &ModbusInput{
-		TcpDevice: tcpDevice,
-		Log:       mgr.Logger(),
-		Batches:   batches,
-		Timeout:   time.Duration(timeoutInt) * time.Second,
+		Log: mgr.Logger(),
+	}
+
+	var err error
+
+	if m.Controller, err = conf.FieldString("controller"); err != nil {
+		return nil, err
+	}
+	if m.TransmissionMode, err = conf.FieldString("transmissionMode"); err != nil {
+		return nil, err
+	}
+	if slaveID, err := conf.FieldInt("slaveID"); err != nil {
+		return nil, err
+	} else {
+		m.SlaveID = byte(slaveID)
+	}
+	if m.BusyRetries, err = conf.FieldInt("busyRetries"); err != nil {
+		return nil, err
+	}
+	if m.BusyRetriesWait, err = conf.FieldDuration("busyRetriesWait"); err != nil {
+		return nil, err
+	}
+	if m.Optimization, err = conf.FieldString("optimization"); err != nil {
+		return nil, err
+	}
+	if m.OptimizationMaxRegisterFill, err = conf.FieldInt("optimizationMaxRegisterFill"); err != nil {
+		return nil, err
+	}
+	if m.ByteOrder, err = conf.FieldString("byteOrder"); err != nil {
+		return nil, err
+	}
+	if m.PauseAfterConnect, err = conf.FieldDuration("pauseAfterConnect"); err != nil {
+		return nil, err
+	}
+	if m.OneRequestPerField, err = conf.FieldBool("oneRequestPerField"); err != nil {
+		return nil, err
+	}
+	if m.ReadCoilsStartingAtZero, err = conf.FieldBool("readCoilsStartingAtZero"); err != nil {
+		return nil, err
+	}
+	if m.StringRegisterLocation, err = conf.FieldString("stringRegisterLocation"); err != nil {
+		return nil, err
+	}
+
+	addressesConf, err := conf.FieldObjectList("addresses")
+	if err != nil {
+		return nil, err
+	}
+
+	for _, addrConf := range addressesConf {
+		item := ModbusDataItemWithAddress{}
+		if item.Name, err = addrConf.FieldString("name"); err != nil {
+			return nil, err
+		}
+		if item.Register, err = addrConf.FieldString("register"); err != nil {
+			return nil, err
+		}
+		if item.Address, err = addrConf.FieldUint16("address"); err != nil {
+			return nil, err
+		}
+		if item.Type, err = addrConf.FieldString("type"); err != nil {
+			return nil, err
+		}
+		if item.Length, err = addrConf.FieldUint16("length"); err != nil {
+			return nil, err
+		}
+		if item.Bit, err = addrConf.FieldUint16("bit"); err != nil {
+			return nil, err
+		}
+		if item.Scale, err = addrConf.FieldFloat("scale"); err != nil {
+			return nil, err
+		}
+		if item.Output, err = addrConf.FieldString("output"); err != nil {
+			return nil, err
+		}
+		m.Addresses = append(m.Addresses, item)
 	}
 
 	return service.AutoRetryNacksBatched(m), nil
