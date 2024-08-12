@@ -21,8 +21,10 @@ package modbus_plugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/maphash"
+	"math"
 	"time"
 
 	"github.com/grid-x/modbus"
@@ -124,7 +126,18 @@ type ModbusInput struct {
 	Log     *service.Logger
 }
 
+type modbusTag struct {
+	name      string
+	address   uint16
+	length    uint16
+	omit      bool
+	converter converterFunc
+	value     interface{}
+}
+
 type converterFunc func([]byte) interface{}
+
+var errAddressOverflow = errors.New("address overflow")
 
 // ModbusConfigSpec defines the configuration options available for the ModbusInput plugin.
 // It outlines the required information to establish a connection with the Modbus device and the data to be read.
@@ -371,71 +384,101 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		}
 
 		// Check for duplicate fields
-		if _, exists := seenFields[fieldID(seed, item)]; exists {
+		if _, exists := seenFields[tagID(seed, item)]; exists {
 			m.Log.Warnf("Duplicate field %q %q, ignoring", item.Name, item.Address)
 			continue
 		} else {
-			seenFields[fieldID(seed, item)] = true
+			seenFields[tagID(seed, item)] = true
 		}
 
 		m.Addresses = append(m.Addresses, item)
 	}
 
+	// Parse the addresses into batches
+
 	return service.AutoRetryNacksBatched(m), nil
 }
 
-func ParseModbusAddresses(addresses []string) ([][]ModbusDataItemWithAddress, error) {
-	parsedAddresses := make([]ModbusDataItemWithAddress, 0, len(addresses))
+func (m *ModbusInput) newTag(item ModbusDataItemWithAddress) (modbusTag, error) {
+	typed := item.Register == "holding" || item.Register == "input"
 
-	for _, address := range addresses {
-		addr, qty, converterFunc, err := handleModbusAddress(address)
+	fieldLength := uint16(1)
+	if typed {
+		var err error
+		if fieldLength, err = determineTagLength(item.Type, item.Length); err != nil {
+			return modbusTag{}, err
+		}
+	}
+
+	// Check for address overflow
+	if item.Address > math.MaxUint16-fieldLength {
+		return modbusTag{}, fmt.Errorf("%w for field %q", errAddressOverflow, item.Name)
+	}
+
+	// Initialize the field
+	f := modbusTag{
+		name:    item.Name,
+		address: item.Address,
+		length:  fieldLength,
+	}
+
+	// Handle type conversions for coil and discrete registers
+	if !typed {
+		var err error
+		f.converter, err = determineUntypedConverter(item.Output)
 		if err != nil {
-			return nil, fmt.Errorf("address %q: %w", address, err)
+			return modbusTag{}, err
 		}
-
-		newModbusDataItemWithAddress := ModbusDataItemWithAddress{
-			Address:       addr,
-			Quantity:      qty,
-			ConverterFunc: converterFunc,
-		}
-
-		parsedAddresses = append(parsedAddresses, newModbusDataItemWithAddress)
+		// No more processing for un-typed (coil and discrete registers) fields
+		return f, nil
 	}
 
-	// Now split the addresses into batches based on a reasonable size
-	batchMaxSize := 125 // Modbus typically allows up to 125 registers per request
-	batches := make([][]ModbusDataItemWithAddress, 0)
-	for i := 0; i < len(parsedAddresses); i += batchMaxSize {
-		end := i + batchMaxSize
-		if end > len(parsedAddresses) {
-			end = len(parsedAddresses)
+	// Automagically determine the output type...
+	if item.Output == "" {
+		if item.Scale == 0.0 {
+			// For non-scaling cases we should choose the output corresponding to the input class
+			// i.e. INT64 for INT*, UINT64 for UINT* etc.
+			var err error
+			if item.Output, err = determineOutputDatatype(item.Type); err != nil {
+				return modbusTag{}, err
+			}
+		} else {
+			// For scaling cases we always want FLOAT64 by default except for
+			// string fields
+			if item.Type != "STRING" {
+				item.Output = "FLOAT64"
+			} else {
+				item.Output = "STRING"
+			}
 		}
-		batches = append(batches, parsedAddresses[i:end])
 	}
 
-	return batches, nil
-}
-
-func handleModbusAddress(address string) (uint16, uint16, converterFunc, error) {
-	var addr uint16
-	var qty uint16
-	n, err := fmt.Sscanf(address, "%d:%d", &addr, &qty)
-	if n != 2 || err != nil {
-		return 0, 0, nil, fmt.Errorf("invalid address format: %s", address)
+	// Setting default byte-order
+	byteOrder := m.ByteOrder
+	if byteOrder == "" {
+		byteOrder = "ABCD"
 	}
 
-	converterFunc := determineModbusConversion(qty)
-	return addr, qty, converterFunc, nil
-}
-
-func determineModbusConversion(qty uint16) converterFunc {
-	return func(data []byte) interface{} {
-		// Simple conversion function example
-		if qty == 1 {
-			return int(data[0])
-		}
-		return data
+	// Normalize the data relevant for determining the converter
+	inType, err := normalizeInputDatatype(item.Type)
+	if err != nil {
+		return modbusTag{}, err
 	}
+	outType, err := normalizeOutputDatatype(item.Output)
+	if err != nil {
+		return modbusTag{}, err
+	}
+	order, err := normalizeByteOrder(byteOrder)
+	if err != nil {
+		return modbusTag{}, err
+	}
+
+	f.converter, err = determineConverter(inType, order, outType, def.Scale, def.Bit, c.workarounds.StringRegisterLocation)
+	if err != nil {
+		return modbusTag{}, err
+	}
+
+	return f, nil
 }
 
 func (m *ModbusInput) Connect(ctx context.Context) error {

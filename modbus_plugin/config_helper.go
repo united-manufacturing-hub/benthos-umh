@@ -61,7 +61,7 @@ func normalizeByteOrder(byteOrder string) (string, error) {
 	return "unknown", fmt.Errorf("unknown byte-order %q", byteOrder)
 }
 
-func fieldID(seed maphash.Seed, item ModbusDataItemWithAddress) uint64 {
+func tagID(seed maphash.Seed, item ModbusDataItemWithAddress) uint64 {
 	var mh maphash.Hash
 	mh.SetSeed(seed)
 
@@ -71,4 +71,36 @@ func fieldID(seed maphash.Seed, item ModbusDataItemWithAddress) uint64 {
 	mh.WriteByte(0)
 
 	return mh.Sum64()
+}
+
+func determineTagLength(input string, length uint16) (uint16, error) {
+	// Handle our special types
+	switch input {
+	case "BIT", "INT8L", "INT8H", "UINT8L", "UINT8H":
+		return 1, nil
+	case "INT16", "UINT16", "FLOAT16":
+		return 1, nil
+	case "INT32", "UINT32", "FLOAT32":
+		return 2, nil
+	case "INT64", "UINT64", "FLOAT64":
+		return 4, nil
+	case "STRING":
+		return length, nil
+	}
+	return 0, fmt.Errorf("invalid input datatype %q for determining tag length", input)
+}
+
+func determineOutputDatatype(input string) (string, error) {
+	// Handle our special types
+	switch input {
+	case "INT8L", "INT8H", "INT16", "INT32", "INT64":
+		return "INT64", nil
+	case "BIT", "UINT8L", "UINT8H", "UINT16", "UINT32", "UINT64":
+		return "UINT64", nil
+	case "FLOAT16", "FLOAT32", "FLOAT64":
+		return "FLOAT64", nil
+	case "STRING":
+		return "STRING", nil
+	}
+	return "unknown", fmt.Errorf("invalid input datatype %q for determining output", input)
 }
