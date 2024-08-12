@@ -1,6 +1,10 @@
 package modbus_plugin
 
-import "fmt"
+import (
+	"fmt"
+	"hash/maphash"
+	"strconv"
+)
 
 const (
 	maxQuantityDiscreteInput    = uint16(2000)
@@ -55,4 +59,16 @@ func normalizeByteOrder(byteOrder string) (string, error) {
 		return "DCBA", nil
 	}
 	return "unknown", fmt.Errorf("unknown byte-order %q", byteOrder)
+}
+
+func fieldID(seed maphash.Seed, item ModbusDataItemWithAddress) uint64 {
+	var mh maphash.Hash
+	mh.SetSeed(seed)
+
+	mh.WriteString(item.Register)
+	mh.WriteByte(0)
+	mh.WriteString(strconv.Itoa(int(item.Address)))
+	mh.WriteByte(0)
+
+	return mh.Sum64()
 }

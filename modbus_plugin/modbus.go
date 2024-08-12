@@ -22,6 +22,7 @@ package modbus_plugin
 import (
 	"context"
 	"fmt"
+	"hash/maphash"
 	"time"
 
 	"github.com/grid-x/modbus"
@@ -110,6 +111,13 @@ type ModbusInput struct {
 	// Addresses is a list of Modbus addresses to read
 	Addresses []ModbusDataItemWithAddress
 
+	// Requests is the auto-generated list of requests to be made
+	// They are creates based on the addresses and the optimization strategy
+	coilRequest     request
+	discreteRequest request
+	holdingRequest  request
+	inputRequest    request
+
 	// Internal
 	Handler modbus.TCPClientHandler
 	Client  modbus.Client
@@ -196,37 +204,180 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		return nil, err
 	}
 
+	// These are the general checks for the configuration
+	switch m.ByteOrder {
+	case "":
+		m.ByteOrder = "ABCD"
+	case "ABCD", "DCBA", "BADC", "CDAB", "MSW-BE", "MSW-LE", "LSW-LE", "LSW-BE":
+	default:
+		return nil, fmt.Errorf("unknown byte-order %q", m.ByteOrder)
+	}
+
+	// These are the checks for the workarounds
+
+	// StringRegisterLocation
+	switch m.StringRegisterLocation {
+	case "", "both", "lower", "upper":
+		// Do nothing as those are valid
+	default:
+		return nil, fmt.Errorf("invalid 'string_register_location' %q", m.StringRegisterLocation)
+	}
+
+	// Check optimization algorithm
+	switch m.Optimization {
+	case "", "none":
+		m.Optimization = "none"
+	case "max_insert":
+		if m.OptimizationMaxRegisterFill == 0 {
+			m.OptimizationMaxRegisterFill = 50
+		}
+	default:
+		return nil, fmt.Errorf("unknown optimization %q", m.Optimization)
+	}
+
+	// Read in addresses
 	addressesConf, err := conf.FieldObjectList("addresses")
 	if err != nil {
 		return nil, err
 	}
 
+	// Reject any configuration without fields as it would be pointless
+	if len(addressesConf) == 0 {
+		return nil, fmt.Errorf("adresses are empty")
+	}
+
+	// used to de-duplicate
+	seenFields := make(map[uint64]bool)
+	seed := maphash.MakeSeed()
+
 	for _, addrConf := range addressesConf {
 		item := ModbusDataItemWithAddress{}
+
+		// Name
 		if item.Name, err = addrConf.FieldString("name"); err != nil {
 			return nil, err
 		}
+
+		// mandatory
+		if item.Name == "" {
+			return nil, fmt.Errorf("empty field name in request for slave %d", m.SlaveID)
+		}
+
+		// Register
 		if item.Register, err = addrConf.FieldString("register"); err != nil {
 			return nil, err
 		}
-		if item.Address, err = addrConf.FieldUint16("address"); err != nil {
-			return nil, err
+
+		switch item.Register {
+		case "":
+			item.Register = "holding"
+		case "coil", "discrete", "holding", "input":
+		default:
+			return nil, fmt.Errorf("unknown register-type %q for field %q", item.Register, item.Name)
 		}
+
+		// Address
+		if addr, err := addrConf.FieldInt("address"); err != nil {
+			return nil, err
+		} else if addr < 0 || addr > 65535 { // Check if the value is within the range of uint16
+			return nil, fmt.Errorf("value out of range for uint16: %d", addr)
+		} else {
+			item.Address = uint16(addr) // Convert int to uint16
+		}
+
 		if item.Type, err = addrConf.FieldString("type"); err != nil {
 			return nil, err
 		}
-		if item.Length, err = addrConf.FieldUint16("length"); err != nil {
+
+		if length, err := addrConf.FieldInt("length"); err != nil {
 			return nil, err
+		} else if length < 0 || length > 65535 { // Check if the value is within the range of uint16
+			return nil, fmt.Errorf("value out of range for uint16: %d", length)
+		} else {
+			item.Length = uint16(length) // Convert int to uint16
 		}
-		if item.Bit, err = addrConf.FieldUint16("bit"); err != nil {
+
+		if bit, err := addrConf.FieldInt("bit"); err != nil {
 			return nil, err
+		} else if bit < 0 || bit > 65535 { // Check if the value is within the range of uint16
+			return nil, fmt.Errorf("value out of range for uint16: %d", bit)
+		} else {
+			item.Bit = uint16(bit) // Convert int to uint16
 		}
+
 		if item.Scale, err = addrConf.FieldFloat("scale"); err != nil {
 			return nil, err
 		}
 		if item.Output, err = addrConf.FieldString("output"); err != nil {
 			return nil, err
 		}
+
+		// Check the input and output type for all fields as we later need
+		// it to determine the number of registers to query.
+		switch item.Register {
+		case "holding", "input":
+			// Check the input type
+			switch item.Type {
+			case "":
+			case "INT8L", "INT8H", "INT16", "INT32", "INT64",
+				"UINT8L", "UINT8H", "UINT16", "UINT32", "UINT64",
+				"FLOAT16", "FLOAT32", "FLOAT64":
+				if item.Length != 0 {
+					return nil, fmt.Errorf("length option cannot be used for type %q of field %q", item.Type, item.Name)
+				}
+				if item.Bit != 0 {
+					return nil, fmt.Errorf("bit option cannot be used for type %q of field %q", item.Type, item.Name)
+				}
+				if item.Output == "STRING" {
+					return nil, fmt.Errorf("cannot output field %q as string", item.Name)
+				}
+			case "STRING":
+				if item.Length < 1 {
+					return nil, fmt.Errorf("missing length for string field %q", item.Name)
+				}
+				if item.Bit != 0 {
+					return nil, fmt.Errorf("bit option cannot be used for type %q of field %q", item.Type, item.Name)
+				}
+				if item.Scale != 0.0 {
+					return nil, fmt.Errorf("scale option cannot be used for string field %q", item.Name)
+				}
+				if item.Output != "" && item.Output != "STRING" {
+					return nil, fmt.Errorf("invalid output type %q for string field %q", item.Type, item.Name)
+				}
+			case "BIT":
+				if item.Length != 0 {
+					return nil, fmt.Errorf("length option cannot be used for type %q of field %q", item.Type, item.Name)
+				}
+				if item.Output == "STRING" {
+					return nil, fmt.Errorf("cannot output field %q as string", item.Name)
+				}
+			default:
+				return nil, fmt.Errorf("unknown register data-type %q for field %q", item.Type, item.Name)
+			}
+
+			// Check output type
+			switch item.Output {
+			case "", "INT64", "UINT64", "FLOAT64", "STRING":
+			default:
+				return nil, fmt.Errorf("unknown output data-type %q for field %q", item.Output, item.Name)
+			}
+		case "coil", "discrete":
+			// Bit register types can only be UINT64 or BOOL
+			switch item.Output {
+			case "", "UINT16", "BOOL":
+			default:
+				return nil, fmt.Errorf("unknown output data-type %q for field %q", item.Output, item.Name)
+			}
+		}
+
+		// Check for duplicate fields
+		if _, exists := seenFields[fieldID(seed, item)]; exists {
+			m.Log.Warnf("Duplicate field %q %q, ignoring", item.Name, item.Address)
+			continue
+		} else {
+			seenFields[fieldID(seed, item)] = true
+		}
+
 		m.Addresses = append(m.Addresses, item)
 	}
 
