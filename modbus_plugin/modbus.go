@@ -27,6 +27,7 @@ import (
 	"math"
 	"net"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/grid-x/modbus"
@@ -121,10 +122,9 @@ type ModbusInput struct {
 	requestSet requestSet
 
 	// Internal
-	handler     modbus.ClientHandler
-	client      modbus.Client
-	isConnected bool
-	Log         *service.Logger
+	handler modbus.ClientHandler
+	client  modbus.Client
+	Log     *service.Logger
 }
 
 type requestSet struct {
@@ -475,7 +475,6 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	m.client = modbus.NewClient(m.handler)
-	m.isConnected = false
 
 	return service.AutoRetryNacksBatched(m), nil
 }
@@ -630,46 +629,54 @@ func (m *ModbusInput) newTag(item ModbusDataItemWithAddress) (modbusTag, error) 
 }
 
 func (m *ModbusInput) Connect(ctx context.Context) error {
-	m.Handler = modbus.NewTCPClientHandler(m.TcpDevice)
-	m.Handler.Timeout = m.Timeout
-
-	err := m.Handler.Connect()
+	err := m.handler.Connect()
 	if err != nil {
 		m.Log.Errorf("Failed to connect to Modbus device at %s: %v", m.TcpDevice, err)
 		return err
 	}
 
-	m.Client = modbus.NewClient(m.Handler)
-	m.Log.Infof("Successfully connected to Modbus device at %s", m.TcpDevice)
+	if m.PauseAfterConnect != 0 {
+		time.Sleep(m.PauseAfterConnect)
+	}
+
+	m.Log.Infof("Successfully connected to Modbus device at %s", m.Controller)
 
 	return nil
 }
 
 func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
-	if m.Client == nil {
+	if m.handler == nil {
 		return nil, nil, fmt.Errorf("Modbus client is not initialized")
 	}
 
 	msgs := make(service.MessageBatch, 0)
-	for i, batch := range m.Batches {
 
-		for _, item := range batch {
-			// Read the registers
-			results, err := m.Client.ReadHoldingRegisters(item.Address, item.Quantity)
-			if err != nil {
-				return nil, nil, fmt.Errorf("Failed to read batch %d: %v", i+1, err)
-			}
-
-			// Convert the result using the converter function
-			convertedData := item.ConverterFunc(results)
-
-			// Create a message with the converted data
-			msg := service.NewMessage([]byte(fmt.Sprintf("%v", convertedData)))
-			msg.MetaSet("modbus_address", fmt.Sprintf("%d", item.Address))
-
-			msgs = append(msgs, msg)
+	m.Log.Debugf("Reading slave %d for %s...", m.SlaveID, m.Controller)
+	if err := m.readSlaveData(m.SlaveID, m.requestSet); err != nil {
+		m.Log.Errorf("slave %d encountered an error: %v", m.SlaveID, err)
+		var mbErr *modbus.Error
+		if !errors.As(err, &mbErr) || mbErr.ExceptionCode != modbus.ExceptionCodeServerDeviceBusy {
+			m.Log.Errorf("slave %d encountered an error: %v", m.SlaveID, mbErr)
+			return nil, nil, err
 		}
 	}
+	timestamp := time.Now()
+
+	tags := map[string]string{
+		"name":     m.Name,
+		"type":     cCoils,
+		"slave_id": strconv.Itoa(int(slaveID)),
+	}
+	m.collectFields(acc, timestamp, tags, requests.coil)
+
+	tags["type"] = cDiscreteInputs
+	m.collectFields(acc, timestamp, tags, requests.discrete)
+
+	tags["type"] = cHoldingRegisters
+	m.collectFields(acc, timestamp, tags, requests.holding)
+
+	tags["type"] = cInputRegisters
+	m.collectFields(acc, timestamp, tags, requests.input)
 
 	time.Sleep(time.Second)
 
@@ -678,9 +685,158 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 	}, nil
 }
 
+func (m *ModbusInput) readSlaveData(slaveID byte, requests requestSet) error {
+	m.handler.SetSlave(slaveID)
+
+	for retry := 0; retry < m.BusyRetries; retry++ {
+		err := m.gatherTags(requests)
+		if err == nil {
+			// Reading was successful
+			return nil
+		}
+
+		// Exit in case a non-recoverable error occurred
+		var mbErr *modbus.Error
+		if !errors.As(err, &mbErr) || mbErr.ExceptionCode != modbus.ExceptionCodeServerDeviceBusy {
+			return err
+		}
+
+		// Wait some time and try again reading the slave.
+		m.Log.Infof("Device busy! Retrying %d more time(s)...", m.BusyRetries-retry)
+		time.Sleep(m.BusyRetriesWait)
+	}
+	return m.gatherTags(requests)
+}
+
+func (m *ModbusInput) createMessageFromValue(item modbusTag, v []byte) *service.Message {
+
+	message := service.NewMessage(item.converter(v))
+
+}
+
+func (m *ModbusInput) gatherTags(requests requestSet) error {
+	if err := m.gatherRequestsCoil(requests.coil); err != nil {
+		return err
+	}
+	if err := m.gatherRequestsDiscrete(requests.discrete); err != nil {
+		return err
+	}
+	if err := m.gatherRequestsHolding(requests.holding); err != nil {
+		return err
+	}
+	return m.gatherRequestsInput(requests.input)
+}
+
+func (m *ModbusInput) gatherRequestsCoil(requests []request) (service.MessageBatch, error) {
+	msgs := service.MessageBatch{}
+
+	for _, request := range requests {
+		m.Log.Debugf("trying to read coil@%v[%v]...", request.address, request.length)
+		bytes, err := m.client.ReadCoils(request.address, request.length)
+		if err != nil {
+			return nil, err
+		}
+
+		m.Log.Debugf("got coil@%v[%v]: %v", request.address, request.length, bytes)
+
+		// Bit value handling
+		for i, field := range request.fields {
+			offset := field.address - request.address
+			idx := offset / 8
+			bit := offset % 8
+
+			v := (bytes[idx] >> bit) & 0x01
+			//request.fields[i].value = field.converter([]byte{v})
+			m.Log.Debugf("  field %s with bit %d @ byte %d: %v --> %v", field.name, bit, idx, v, request.fields[i].value)
+
+			message := m.createMessageFromValue(field, v)
+			if message != nil {
+				msgs = append(msgs, message)
+			}
+		}
+
+	}
+	return msgs, nil
+}
+
+func (m *ModbusInput) gatherRequestsDiscrete(requests []request) error {
+	for _, request := range requests {
+		m.Log.Debugf("trying to read discrete@%v[%v]...", request.address, request.length)
+		bytes, err := m.client.ReadDiscreteInputs(request.address, request.length)
+		if err != nil {
+			return err
+		}
+
+		m.Log.Debugf("got discrete@%v[%v]: %v", request.address, request.length, bytes)
+
+		// Bit value handling
+		for i, field := range request.fields {
+			offset := field.address - request.address
+			idx := offset / 8
+			bit := offset % 8
+
+			v := (bytes[idx] >> bit) & 0x01
+			request.fields[i].value = field.converter([]byte{v})
+			m.Log.Debugf("  field %s with bit %d @ byte %d: %v --> %v", field.name, bit, idx, v, request.fields[i].value)
+		}
+
+	}
+	return nil
+}
+
+func (m *ModbusInput) gatherRequestsHolding(requests []request) error {
+	for _, request := range requests {
+		m.Log.Debugf("trying to read holding@%v[%v]...", request.address, request.length)
+		bytes, err := m.client.ReadHoldingRegisters(request.address, request.length)
+		if err != nil {
+			return err
+		}
+
+		m.Log.Debugf("got holding@%v[%v]: %v", request.address, request.length, bytes)
+
+		// Non-bit value handling
+		for i, field := range request.fields {
+			// Determine the offset of the field values in the read array
+			offset := 2 * uint32(field.address-request.address) // registers are 16bit = 2 byte
+			length := 2 * uint32(field.length)                  // field length is in registers a 16bit
+
+			// Convert the actual value
+			request.fields[i].value = field.converter(bytes[offset : offset+length])
+			m.Log.Debugf("  field %s with offset %d with len %d: %v --> %v", field.name, offset, length, bytes[offset:offset+length], request.fields[i].value)
+		}
+
+	}
+	return nil
+}
+
+func (m *ModbusInput) gatherRequestsInput(requests []request) error {
+	for _, request := range requests {
+		m.Log.Debugf("trying to read input@%v[%v]...", request.address, request.length)
+		bytes, err := m.client.ReadInputRegisters(request.address, request.length)
+		if err != nil {
+			return err
+		}
+
+		m.Log.Debugf("got input@%v[%v]: %v", request.address, request.length, bytes)
+
+		// Non-bit value handling
+		for i, field := range request.fields {
+			// Determine the offset of the field values in the read array
+			offset := 2 * uint32(field.address-request.address) // registers are 16bit = 2 byte
+			length := 2 * uint32(field.length)                  // field length is in registers a 16bit
+
+			// Convert the actual value
+			request.fields[i].value = field.converter(bytes[offset : offset+length])
+			m.Log.Debugf("  field %s with offset %d with len %d: %v --> %v", field.name, offset, length, bytes[offset:offset+length], request.fields[i].value)
+		}
+
+	}
+	return nil
+}
+
 func (m *ModbusInput) Close(ctx context.Context) error {
-	if m.Handler != nil {
-		m.Handler.Close()
+	if m.handler != nil {
+		m.handler.Close()
 	}
 
 	return nil
