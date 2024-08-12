@@ -8,7 +8,7 @@ import (
 type request struct {
 	address uint16
 	length  uint16
-	fields  []field
+	fields  []modbusTag
 }
 
 func countRegisters(requests []request) uint64 {
@@ -26,7 +26,7 @@ func splitMaxBatchSize(g request, maxBatchSize uint16) []request {
 	idx := 0
 	for start := g.address; start < g.address+g.length; {
 		current := request{
-			fields:  []field{},
+			fields:  []modbusTag{},
 			address: start,
 		}
 
@@ -88,7 +88,7 @@ func shrinkGroup(g request, maxBatchSize uint16) []request {
 
 		// Create a new request
 		current = request{
-			fields:  []field{f},
+			fields:  []modbusTag{f},
 			address: f.address,
 			length:  f.length,
 		}
@@ -137,14 +137,14 @@ func optimizeGroup(g request, maxBatchSize uint16) []request {
 	return requests
 }
 
-func optimitzeGroupWithinLimits(g request, params groupingParams) []request {
+func (m *ModbusInput) optimizeGroupWithinLimits(g request, params groupingParams) []request {
 	if len(g.fields) == 0 {
 		return nil
 	}
 
 	var requests []request
 	currentRequest := request{
-		fields:  []field{g.fields[0]},
+		fields:  []modbusTag{g.fields[0]},
 		address: g.fields[0].address,
 		length:  g.fields[0].length,
 	}
@@ -152,7 +152,7 @@ func optimitzeGroupWithinLimits(g request, params groupingParams) []request {
 		// Check if we need to interrupt the current chunk and require a new one
 		holeSize := g.fields[i].address - (g.fields[i-1].address + g.fields[i-1].length)
 		if g.fields[i].address < g.fields[i-1].address+g.fields[i-1].length {
-			params.Log.Warnf(
+			m.Log.Warnf(
 				"Request at %d with length %d overlaps with next request at %d",
 				g.fields[i-1].address, g.fields[i-1].length, g.fields[i].address,
 			)
@@ -169,7 +169,7 @@ func optimitzeGroupWithinLimits(g request, params groupingParams) []request {
 		// Finish the current request, add it to the list and construct a new one
 		requests = append(requests, currentRequest)
 		currentRequest = request{
-			fields:  []field{g.fields[i]},
+			fields:  []modbusTag{g.fields[i]},
 			address: g.fields[i].address,
 			length:  g.fields[i].length,
 		}
@@ -188,13 +188,9 @@ type groupingParams struct {
 	// Will force reads to start at zero (if possible) while respecting
 	// the max-batch size.
 	EnforceFromZero bool
-	// Tags to add for the requests
-	Tags map[string]string
-	// Log facility to inform the user
-	Log telegraf.Logger
 }
 
-func groupFieldsToRequests(fields []field, params groupingParams) []request {
+func (m *ModbusInput) groupTagsToRequests(fields []modbusTag, params groupingParams) []request {
 	if len(fields) == 0 {
 		return nil
 	}
@@ -213,14 +209,6 @@ func groupFieldsToRequests(fields []field, params groupingParams) []request {
 	var groups []request
 	var current request
 	for _, f := range fields {
-		// Add tags from higher up
-		if f.tags == nil {
-			f.tags = make(map[string]string, len(params.Tags))
-		}
-		for k, v := range params.Tags {
-			f.tags[k] = v
-		}
-
 		// Check if we need to interrupt the current chunk and require a new one
 		if current.length > 0 && f.address == current.address+current.length {
 			// Still safe to add the field to the current request
@@ -236,7 +224,7 @@ func groupFieldsToRequests(fields []field, params groupingParams) []request {
 			groups = append(groups, current)
 		}
 		current = request{
-			fields:  []field{},
+			fields:  []modbusTag{},
 			address: f.address,
 			length:  f.length,
 		}
@@ -293,7 +281,7 @@ func groupFieldsToRequests(fields []field, params groupingParams) []request {
 				total.fields = append(total.fields, g.fields...)
 			}
 		}
-		requests = optimitzeGroupWithinLimits(total, params)
+		requests = m.optimizeGroupWithinLimits(total, params)
 	default:
 		// no optimization
 		for _, g := range groups {

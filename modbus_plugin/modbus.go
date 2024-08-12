@@ -115,15 +115,19 @@ type ModbusInput struct {
 
 	// Requests is the auto-generated list of requests to be made
 	// They are creates based on the addresses and the optimization strategy
-	coilRequest     request
-	discreteRequest request
-	holdingRequest  request
-	inputRequest    request
+	requestSet requestSet
 
 	// Internal
 	Handler modbus.TCPClientHandler
 	Client  modbus.Client
 	Log     *service.Logger
+}
+
+type requestSet struct {
+	coil     []request
+	discrete []request
+	holding  []request
+	input    []request
 }
 
 type modbusTag struct {
@@ -395,8 +399,79 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	// Parse the addresses into batches
+	m.requestSet, err = m.createBatchesFromAddresses(m.Addresses)
+	if err != nil {
+		m.Log.Errorf("Failed to create batches: %v", err)
+	}
 
 	return service.AutoRetryNacksBatched(m), nil
+}
+
+func (m *ModbusInput) createBatchesFromAddresses(addresses []ModbusDataItemWithAddress) (requestSet, error) {
+
+	// Create a map of requests for each register type
+	collection := make(map[string][]modbusTag)
+
+	// Collect the requested registers across metrics and transform them into
+	// requests. This will produce one request per slave and register-type
+
+	for _, item := range addresses {
+
+		// Create a new tag
+		tag, err := m.newTag(item)
+		if err != nil {
+			return requestSet{}, err
+		}
+
+		// Append the tag to the collection
+		collection[item.Register] = append(collection[item.Register], tag)
+	}
+
+	var result requestSet
+
+	// Create a request for each register type
+	params := groupingParams{
+		Optimization:      m.Optimization,
+		MaxExtraRegisters: uint16(m.OptimizationMaxRegisterFill),
+	}
+
+	for register, tags := range collection {
+		switch register {
+		case "coil":
+			params.MaxBatchSize = maxQuantityCoils
+			if m.OneRequestPerField {
+				params.MaxBatchSize = 1
+			}
+			params.EnforceFromZero = m.ReadCoilsStartingAtZero
+			requests := m.groupTagsToRequests(tags, params)
+			result.coil = append(result.coil, requests...)
+		case "discrete":
+			params.MaxBatchSize = maxQuantityDiscreteInput
+			if m.OneRequestPerField {
+				params.MaxBatchSize = 1
+			}
+			requests := m.groupTagsToRequests(tags, params)
+			result.discrete = append(result.discrete, requests...)
+		case "holding":
+			params.MaxBatchSize = maxQuantityHoldingRegisters
+			if m.OneRequestPerField {
+				params.MaxBatchSize = 1
+			}
+			requests := m.groupTagsToRequests(tags, params)
+			result.holding = append(result.holding, requests...)
+		case "input":
+			params.MaxBatchSize = maxQuantityInputRegisters
+			if m.OneRequestPerField {
+				params.MaxBatchSize = 1
+			}
+			requests := m.groupTagsToRequests(tags, params)
+			result.input = append(result.input, requests...)
+		default:
+			return requestSet{}, fmt.Errorf("unknown register type %q", register)
+		}
+	}
+
+	return result, nil
 }
 
 func (m *ModbusInput) newTag(item ModbusDataItemWithAddress) (modbusTag, error) {
@@ -473,7 +548,7 @@ func (m *ModbusInput) newTag(item ModbusDataItemWithAddress) (modbusTag, error) 
 		return modbusTag{}, err
 	}
 
-	f.converter, err = determineConverter(inType, order, outType, def.Scale, def.Bit, c.workarounds.StringRegisterLocation)
+	f.converter, err = determineConverter(inType, order, outType, item.Scale, uint8(item.Bit), m.StringRegisterLocation)
 	if err != nil {
 		return modbusTag{}, err
 	}
