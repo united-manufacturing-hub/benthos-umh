@@ -25,6 +25,8 @@ import (
 	"fmt"
 	"hash/maphash"
 	"math"
+	"net"
+	"net/url"
 	"time"
 
 	"github.com/grid-x/modbus"
@@ -72,6 +74,7 @@ type ModbusInput struct {
 	Controller       string // e.g., "tcp://localhost:502"
 	TransmissionMode string // Can be "TCP" (default), "RTUOverTCP", "ASCIIOverTCP"\
 	SlaveID          byte
+	Timeout          time.Duration // Timeout for the connection
 	BusyRetries      int           // Maximum number of retries when the device is busy
 	BusyRetriesWait  time.Duration // Time to wait between retries when the device is busy
 
@@ -118,9 +121,10 @@ type ModbusInput struct {
 	requestSet requestSet
 
 	// Internal
-	Handler modbus.TCPClientHandler
-	Client  modbus.Client
-	Log     *service.Logger
+	handler     modbus.ClientHandler
+	client      modbus.Client
+	isConnected bool
+	Log         *service.Logger
 }
 
 type requestSet struct {
@@ -151,6 +155,7 @@ var ModbusConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringField("controller").Description("The Modbus controller address, e.g., 'tcp://localhost:502'").Default("tcp://localhost:502")).
 	Field(service.NewStringField("transmissionMode").Description("Transmission mode: 'TCP', 'RTUOverTCP', or 'ASCIIOverTCP'").Default("TCP")).
 	Field(service.NewIntField("slaveID").Description("Slave ID of the Modbus device").Default(1)).
+	Field(service.NewDurationField("timeout").Description("").Default("1s")).
 	Field(service.NewIntField("busyRetries").Description("Maximum number of retries when the device is busy").Default(3)).
 	Field(service.NewDurationField("busyRetriesWait").Description("Time to wait between retries when the device is busy").Default("200ms")).
 	Field(service.NewStringField("optimization").Description("Request optimization algorithm: 'none' or 'max_insert'").Default("none")).
@@ -192,6 +197,9 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		return nil, err
 	} else {
 		m.SlaveID = byte(slaveID)
+	}
+	if m.Timeout, err = conf.FieldDuration("timeout"); err != nil {
+		return nil, err
 	}
 	if m.BusyRetries, err = conf.FieldInt("busyRetries"); err != nil {
 		return nil, err
@@ -402,7 +410,72 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	m.requestSet, err = m.createBatchesFromAddresses(m.Addresses)
 	if err != nil {
 		m.Log.Errorf("Failed to create batches: %v", err)
+		return nil, err
 	}
+
+	// Output debug messages
+	var nHoldingRegs, nInputsRegs, nDiscreteRegs, nCoilRegs uint16
+	var nHoldingFields, nInputsFields, nDiscreteFields, nCoilFields int
+
+	for _, r := range m.requestSet.holding {
+		nHoldingRegs += r.length
+		nHoldingFields += len(r.fields)
+	}
+	for _, r := range m.requestSet.input {
+		nInputsRegs += r.length
+		nInputsFields += len(r.fields)
+	}
+	for _, r := range m.requestSet.discrete {
+		nDiscreteRegs += r.length
+		nDiscreteFields += len(r.fields)
+	}
+	for _, r := range m.requestSet.coil {
+		nCoilRegs += r.length
+		nCoilFields += len(r.fields)
+	}
+	m.Log.Infof("Got %d request(s) touching %d holding registers for %d fields (slave %d)",
+		len(m.requestSet.holding), nHoldingRegs, nHoldingFields, m.SlaveID)
+	m.Log.Infof("Got %d request(s) touching %d inputs registers for %d fields (slave %d)",
+		len(m.requestSet.input), nInputsRegs, nInputsFields, m.SlaveID)
+	m.Log.Infof("Got %d request(s) touching %d discrete registers for %d fields (slave %d)",
+		len(m.requestSet.discrete), nDiscreteRegs, nDiscreteFields, m.SlaveID)
+	m.Log.Infof("Got %d request(s) touching %d coil registers for %d fields (slave %d)",
+		len(m.requestSet.coil), nCoilRegs, nCoilFields, m.SlaveID)
+
+	// Now setup the modbus client
+	u, err := url.Parse(m.Controller)
+	if err != nil {
+		return nil, err
+	}
+
+	switch u.Scheme {
+	case "tcp":
+		host, port, err := net.SplitHostPort(u.Host)
+		if err != nil {
+			return nil, err
+		}
+		switch m.TransmissionMode {
+		case "", "auto", "TCP":
+			handler := modbus.NewTCPClientHandler(host + ":" + port)
+			handler.Timeout = time.Duration(m.Timeout)
+			m.handler = handler
+		case "RTUoverTCP":
+			handler := modbus.NewRTUOverTCPClientHandler(host + ":" + port)
+			handler.Timeout = time.Duration(m.Timeout)
+			m.handler = handler
+		case "ASCIIoverTCP":
+			handler := modbus.NewASCIIOverTCPClientHandler(host + ":" + port)
+			handler.Timeout = time.Duration(m.Timeout)
+			m.handler = handler
+		default:
+			return nil, fmt.Errorf("invalid transmission mode %q for %q", m.TransmissionMode, u.Scheme)
+		}
+	default:
+		return nil, fmt.Errorf("invalid controller %q", m.Controller)
+	}
+
+	m.client = modbus.NewClient(m.handler)
+	m.isConnected = false
 
 	return service.AutoRetryNacksBatched(m), nil
 }
