@@ -45,7 +45,7 @@ jobs:
           sudo chmod +x /usr/local/bin/docker-compose
       - name: Startup simulator in background
         run: |
-          docker-compose -f docker-compose.yml -f docker-compose-modbus.yaml up -d
+          docker-compose -f docker-compose.yaml -f docker-compose-modbus.yaml up -d
         working-directory: tests
       - name: Wait for port 50000 to be ready
         run: |
