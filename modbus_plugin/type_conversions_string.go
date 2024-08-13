@@ -4,7 +4,7 @@ import (
 	"bytes"
 )
 
-func determineConverterString(byteOrder string) (fieldConverterFunc, error) {
+func determineConverterString(byteOrder string) (converterFunc, error) {
 	tohost, err := endiannessConverter16(byteOrder)
 	if err != nil {
 		return nil, err
@@ -24,7 +24,7 @@ func determineConverterString(byteOrder string) (fieldConverterFunc, error) {
 	}, nil
 }
 
-func determineConverterStringLow(byteOrder string) (fieldConverterFunc, error) {
+func determineConverterStringLow(byteOrder string) (converterFunc, error) {
 	tohost, err := endiannessConverter16(byteOrder)
 	if err != nil {
 		return nil, err
@@ -43,7 +43,7 @@ func determineConverterStringLow(byteOrder string) (fieldConverterFunc, error) {
 	}, nil
 }
 
-func determineConverterStringHigh(byteOrder string) (fieldConverterFunc, error) {
+func determineConverterStringHigh(byteOrder string) (converterFunc, error) {
 	tohost, err := endiannessConverter16(byteOrder)
 	if err != nil {
 		return nil, err

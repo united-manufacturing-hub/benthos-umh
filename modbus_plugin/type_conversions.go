@@ -4,7 +4,7 @@ import (
 	"fmt"
 )
 
-func determineUntypedConverter(outType string) (fieldConverterFunc, error) {
+func determineUntypedConverter(outType string) (converterFunc, error) {
 	switch outType {
 	case "", "UINT16":
 		return func(b []byte) interface{} {
@@ -18,7 +18,7 @@ func determineUntypedConverter(outType string) (fieldConverterFunc, error) {
 	return nil, fmt.Errorf("invalid output data-type: %s", outType)
 }
 
-func determineConverter(inType, byteOrder, outType string, scale float64, bit uint8, strloc string) (fieldConverterFunc, error) {
+func determineConverter(inType, byteOrder, outType string, scale float64, bit uint8, strloc string) (converterFunc, error) {
 	switch inType {
 	case "STRING":
 		switch strloc {
@@ -39,7 +39,7 @@ func determineConverter(inType, byteOrder, outType string, scale float64, bit ui
 	return determineConverterNoScale(inType, byteOrder, outType)
 }
 
-func determineConverterScale(inType, byteOrder, outType string, scale float64) (fieldConverterFunc, error) {
+func determineConverterScale(inType, byteOrder, outType string, scale float64) (converterFunc, error) {
 	switch inType {
 	case "INT8L":
 		return determineConverterI8LScale(outType, byteOrder, scale)
@@ -71,7 +71,7 @@ func determineConverterScale(inType, byteOrder, outType string, scale float64) (
 	return nil, fmt.Errorf("invalid input data-type: %s", inType)
 }
 
-func determineConverterNoScale(inType, byteOrder, outType string) (fieldConverterFunc, error) {
+func determineConverterNoScale(inType, byteOrder, outType string) (converterFunc, error) {
 	switch inType {
 	case "INT8L":
 		return determineConverterI8L(outType, byteOrder)

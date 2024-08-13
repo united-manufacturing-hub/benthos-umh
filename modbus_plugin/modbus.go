@@ -128,8 +128,8 @@ type ModbusInput struct {
 	requestSet requestSet
 
 	// Internal
-	handler modbus.ClientHandler
-	client  modbus.Client
+	Handler modbus.ClientHandler
+	Client  modbus.Client
 	Log     *service.Logger
 }
 
@@ -472,15 +472,15 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		case "", "auto", "TCP":
 			handler := modbus.NewTCPClientHandler(host + ":" + port)
 			handler.Timeout = m.Timeout
-			m.handler = handler
+			m.Handler = handler
 		case "RTUoverTCP":
 			handler := modbus.NewRTUOverTCPClientHandler(host + ":" + port)
 			handler.Timeout = m.Timeout
-			m.handler = handler
+			m.Handler = handler
 		case "ASCIIoverTCP":
 			handler := modbus.NewASCIIOverTCPClientHandler(host + ":" + port)
 			handler.Timeout = m.Timeout
-			m.handler = handler
+			m.Handler = handler
 		default:
 			return nil, fmt.Errorf("invalid transmission mode %q for %q", m.TransmissionMode, u.Scheme)
 		}
@@ -488,7 +488,7 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		return nil, fmt.Errorf("invalid controller %q", m.Controller)
 	}
 
-	m.client = modbus.NewClient(m.handler)
+	m.Client = modbus.NewClient(m.Handler)
 
 	return service.AutoRetryNacksBatched(m), nil
 }
@@ -643,7 +643,7 @@ func (m *ModbusInput) newTag(item ModbusDataItemWithAddress) (modbusTag, error) 
 }
 
 func (m *ModbusInput) Connect(ctx context.Context) error {
-	err := m.handler.Connect()
+	err := m.Handler.Connect()
 	if err != nil {
 		m.Log.Errorf("Failed to connect to Modbus device at %s: %v", m.Controller, err)
 		return err
@@ -659,7 +659,7 @@ func (m *ModbusInput) Connect(ctx context.Context) error {
 }
 
 func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
-	if m.handler == nil {
+	if m.Handler == nil {
 		return nil, nil, fmt.Errorf("modbus client is not initialized")
 	}
 
@@ -685,7 +685,7 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 }
 
 func (m *ModbusInput) readSlaveData(slaveID byte, requests requestSet) (msgBatch service.MessageBatch, err error) {
-	m.handler.SetSlave(slaveID)
+	m.Handler.SetSlave(slaveID)
 
 	for retry := 0; retry < m.BusyRetries; retry++ {
 		msgBatch, err = m.gatherTags(requests)
@@ -816,7 +816,7 @@ func (m *ModbusInput) gatherRequestsCoil(requests []request) (service.MessageBat
 
 	for _, request := range requests {
 		m.Log.Debugf("trying to read coil@%v[%v]...", request.address, request.length)
-		bytes, err := m.client.ReadCoils(request.address, request.length)
+		bytes, err := m.Client.ReadCoils(request.address, request.length)
 		if err != nil {
 			return nil, err
 		}
@@ -852,7 +852,7 @@ func (m *ModbusInput) gatherRequestsDiscrete(requests []request) (service.Messag
 
 	for _, request := range requests {
 		m.Log.Debugf("trying to read discrete@%v[%v]...", request.address, request.length)
-		bytes, err := m.client.ReadDiscreteInputs(request.address, request.length)
+		bytes, err := m.Client.ReadDiscreteInputs(request.address, request.length)
 		if err != nil {
 			return nil, err
 		}
@@ -888,7 +888,7 @@ func (m *ModbusInput) gatherRequestsHolding(requests []request) (service.Message
 
 	for _, request := range requests {
 		m.Log.Debugf("trying to read holding@%v[%v]...", request.address, request.length)
-		bytes, err := m.client.ReadHoldingRegisters(request.address, request.length)
+		bytes, err := m.Client.ReadHoldingRegisters(request.address, request.length)
 		if err != nil {
 			return nil, err
 		}
@@ -924,7 +924,7 @@ func (m *ModbusInput) gatherRequestsInput(requests []request) (service.MessageBa
 
 	for _, request := range requests {
 		m.Log.Debugf("trying to read input@%v[%v]...", request.address, request.length)
-		bytes, err := m.client.ReadInputRegisters(request.address, request.length)
+		bytes, err := m.Client.ReadInputRegisters(request.address, request.length)
 		if err != nil {
 			return nil, err
 		}
@@ -956,8 +956,8 @@ func (m *ModbusInput) gatherRequestsInput(requests []request) (service.MessageBa
 }
 
 func (m *ModbusInput) Close(ctx context.Context) error {
-	if m.handler != nil {
-		m.handler.Close()
+	if m.Handler != nil {
+		m.Handler.Close()
 	}
 
 	return nil
