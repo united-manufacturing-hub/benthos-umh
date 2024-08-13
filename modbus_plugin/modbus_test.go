@@ -35,10 +35,10 @@ var _ = Describe("Test Against Docker Modbus Simulator", func() {
 				{
 					Name:     "firstFlagOfDiscreteInput",
 					Register: "discrete",
-					Address:  0,
+					Address:  1,
 					Type:     "BIT",
 					Output:   "BOOL",
-					Bit:      0,
+					Bit:      1,
 				},
 			},
 			Handler: modbus.NewTCPClientHandler("127.0.0.1:50502"),
