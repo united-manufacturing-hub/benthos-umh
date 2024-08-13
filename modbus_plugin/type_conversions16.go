@@ -20,7 +20,7 @@ func endiannessConverter16(byteOrder string) (convert16, error) {
 }
 
 // I16 - no scale
-func determineConverterI16(outType, byteOrder string) (fieldConverterFunc, error) {
+func determineConverterI16(outType, byteOrder string) (converterFunc, error) {
 	tohost, err := endiannessConverter16(byteOrder)
 	if err != nil {
 		return nil, err
@@ -48,7 +48,7 @@ func determineConverterI16(outType, byteOrder string) (fieldConverterFunc, error
 }
 
 // U16 - no scale
-func determineConverterU16(outType, byteOrder string) (fieldConverterFunc, error) {
+func determineConverterU16(outType, byteOrder string) (converterFunc, error) {
 	tohost, err := endiannessConverter16(byteOrder)
 	if err != nil {
 		return nil, err
@@ -76,7 +76,7 @@ func determineConverterU16(outType, byteOrder string) (fieldConverterFunc, error
 }
 
 // F16 - no scale
-func determineConverterF16(outType, byteOrder string) (fieldConverterFunc, error) {
+func determineConverterF16(outType, byteOrder string) (converterFunc, error) {
 	tohost, err := endiannessConverter16(byteOrder)
 	if err != nil {
 		return nil, err
@@ -99,7 +99,7 @@ func determineConverterF16(outType, byteOrder string) (fieldConverterFunc, error
 }
 
 // I16 - scale
-func determineConverterI16Scale(outType, byteOrder string, scale float64) (fieldConverterFunc, error) {
+func determineConverterI16Scale(outType, byteOrder string, scale float64) (converterFunc, error) {
 	tohost, err := endiannessConverter16(byteOrder)
 	if err != nil {
 		return nil, err
@@ -131,7 +131,7 @@ func determineConverterI16Scale(outType, byteOrder string, scale float64) (field
 }
 
 // U16 - scale
-func determineConverterU16Scale(outType, byteOrder string, scale float64) (fieldConverterFunc, error) {
+func determineConverterU16Scale(outType, byteOrder string, scale float64) (converterFunc, error) {
 	tohost, err := endiannessConverter16(byteOrder)
 	if err != nil {
 		return nil, err
@@ -163,7 +163,7 @@ func determineConverterU16Scale(outType, byteOrder string, scale float64) (field
 }
 
 // F16 - scale
-func determineConverterF16Scale(outType, byteOrder string, scale float64) (fieldConverterFunc, error) {
+func determineConverterF16Scale(outType, byteOrder string, scale float64) (converterFunc, error) {
 	tohost, err := endiannessConverter16(byteOrder)
 	if err != nil {
 		return nil, err

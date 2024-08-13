@@ -21,7 +21,7 @@ func endiannessIndex8(byteOrder string, low bool) (int, error) {
 }
 
 // I8 lower byte - no scale
-func determineConverterI8L(outType, byteOrder string) (fieldConverterFunc, error) {
+func determineConverterI8L(outType, byteOrder string) (converterFunc, error) {
 	idx, err := endiannessIndex8(byteOrder, true)
 	if err != nil {
 		return nil, err
@@ -49,7 +49,7 @@ func determineConverterI8L(outType, byteOrder string) (fieldConverterFunc, error
 }
 
 // I8 higher byte - no scale
-func determineConverterI8H(outType, byteOrder string) (fieldConverterFunc, error) {
+func determineConverterI8H(outType, byteOrder string) (converterFunc, error) {
 	idx, err := endiannessIndex8(byteOrder, false)
 	if err != nil {
 		return nil, err
@@ -77,7 +77,7 @@ func determineConverterI8H(outType, byteOrder string) (fieldConverterFunc, error
 }
 
 // U8 lower byte - no scale
-func determineConverterU8L(outType, byteOrder string) (fieldConverterFunc, error) {
+func determineConverterU8L(outType, byteOrder string) (converterFunc, error) {
 	idx, err := endiannessIndex8(byteOrder, true)
 	if err != nil {
 		return nil, err
@@ -105,7 +105,7 @@ func determineConverterU8L(outType, byteOrder string) (fieldConverterFunc, error
 }
 
 // U8 higher byte - no scale
-func determineConverterU8H(outType, byteOrder string) (fieldConverterFunc, error) {
+func determineConverterU8H(outType, byteOrder string) (converterFunc, error) {
 	idx, err := endiannessIndex8(byteOrder, false)
 	if err != nil {
 		return nil, err
@@ -133,7 +133,7 @@ func determineConverterU8H(outType, byteOrder string) (fieldConverterFunc, error
 }
 
 // I8 lower byte - scale
-func determineConverterI8LScale(outType, byteOrder string, scale float64) (fieldConverterFunc, error) {
+func determineConverterI8LScale(outType, byteOrder string, scale float64) (converterFunc, error) {
 	idx, err := endiannessIndex8(byteOrder, true)
 	if err != nil {
 		return nil, err
@@ -165,7 +165,7 @@ func determineConverterI8LScale(outType, byteOrder string, scale float64) (field
 }
 
 // I8 higher byte - scale
-func determineConverterI8HScale(outType, byteOrder string, scale float64) (fieldConverterFunc, error) {
+func determineConverterI8HScale(outType, byteOrder string, scale float64) (converterFunc, error) {
 	idx, err := endiannessIndex8(byteOrder, false)
 	if err != nil {
 		return nil, err
@@ -197,7 +197,7 @@ func determineConverterI8HScale(outType, byteOrder string, scale float64) (field
 }
 
 // U8 lower byte - scale
-func determineConverterU8LScale(outType, byteOrder string, scale float64) (fieldConverterFunc, error) {
+func determineConverterU8LScale(outType, byteOrder string, scale float64) (converterFunc, error) {
 	idx, err := endiannessIndex8(byteOrder, true)
 	if err != nil {
 		return nil, err
@@ -225,7 +225,7 @@ func determineConverterU8LScale(outType, byteOrder string, scale float64) (field
 }
 
 // U8 higher byte - scale
-func determineConverterU8HScale(outType, byteOrder string, scale float64) (fieldConverterFunc, error) {
+func determineConverterU8HScale(outType, byteOrder string, scale float64) (converterFunc, error) {
 	idx, err := endiannessIndex8(byteOrder, false)
 	if err != nil {
 		return nil, err

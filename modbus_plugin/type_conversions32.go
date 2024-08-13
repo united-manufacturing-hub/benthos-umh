@@ -33,7 +33,7 @@ func endiannessConverter32(byteOrder string) (convert32, error) {
 }
 
 // I32 - no scale
-func determineConverterI32(outType, byteOrder string) (fieldConverterFunc, error) {
+func determineConverterI32(outType, byteOrder string) (converterFunc, error) {
 	tohost, err := endiannessConverter32(byteOrder)
 	if err != nil {
 		return nil, err
@@ -61,7 +61,7 @@ func determineConverterI32(outType, byteOrder string) (fieldConverterFunc, error
 }
 
 // U32 - no scale
-func determineConverterU32(outType, byteOrder string) (fieldConverterFunc, error) {
+func determineConverterU32(outType, byteOrder string) (converterFunc, error) {
 	tohost, err := endiannessConverter32(byteOrder)
 	if err != nil {
 		return nil, err
@@ -89,7 +89,7 @@ func determineConverterU32(outType, byteOrder string) (fieldConverterFunc, error
 }
 
 // F32 - no scale
-func determineConverterF32(outType, byteOrder string) (fieldConverterFunc, error) {
+func determineConverterF32(outType, byteOrder string) (converterFunc, error) {
 	tohost, err := endiannessConverter32(byteOrder)
 	if err != nil {
 		return nil, err
@@ -112,7 +112,7 @@ func determineConverterF32(outType, byteOrder string) (fieldConverterFunc, error
 }
 
 // I32 - scale
-func determineConverterI32Scale(outType, byteOrder string, scale float64) (fieldConverterFunc, error) {
+func determineConverterI32Scale(outType, byteOrder string, scale float64) (converterFunc, error) {
 	tohost, err := endiannessConverter32(byteOrder)
 	if err != nil {
 		return nil, err
@@ -144,7 +144,7 @@ func determineConverterI32Scale(outType, byteOrder string, scale float64) (field
 }
 
 // U32 - scale
-func determineConverterU32Scale(outType, byteOrder string, scale float64) (fieldConverterFunc, error) {
+func determineConverterU32Scale(outType, byteOrder string, scale float64) (converterFunc, error) {
 	tohost, err := endiannessConverter32(byteOrder)
 	if err != nil {
 		return nil, err
@@ -176,7 +176,7 @@ func determineConverterU32Scale(outType, byteOrder string, scale float64) (field
 }
 
 // F32 - scale
-func determineConverterF32Scale(outType, byteOrder string, scale float64) (fieldConverterFunc, error) {
+func determineConverterF32Scale(outType, byteOrder string, scale float64) (converterFunc, error) {
 	tohost, err := endiannessConverter32(byteOrder)
 	if err != nil {
 		return nil, err

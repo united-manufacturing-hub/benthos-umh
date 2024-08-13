@@ -1,6 +1,6 @@
 package modbus_plugin
 
-func determineConverterBit(byteOrder string, bit uint8) (fieldConverterFunc, error) {
+func determineConverterBit(byteOrder string, bit uint8) (converterFunc, error) {
 	tohost, err := endiannessConverter16(byteOrder)
 	if err != nil {
 		return nil, err
