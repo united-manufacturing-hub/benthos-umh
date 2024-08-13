@@ -1,0 +1,10 @@
+services:
+  modbus-server:
+    container_name: modbus-server
+    image: oitc/modbus-server:latest
+    restart: always
+    command: -f /server_config.json
+    ports:
+      - 50502:502
+    volumes:
+      - ./config-modbus.json:/server_config.json:ro
