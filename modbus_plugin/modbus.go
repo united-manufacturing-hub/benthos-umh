@@ -195,6 +195,9 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 
 	var err error
 
+	if m.TimeBetweenReads, err = conf.FieldDuration("timeBetweenReads"); err != nil {
+		return nil, err
+	}
 	if m.Controller, err = conf.FieldString("controller"); err != nil {
 		return nil, err
 	}
@@ -234,6 +237,9 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		return nil, err
 	}
 	if m.StringRegisterLocation, err = conf.FieldString("stringRegisterLocation"); err != nil {
+		return nil, err
+	}
+	if m.TimeBetweenRequests, err = conf.FieldDuration("timeBetweenRequests"); err != nil {
 		return nil, err
 	}
 
@@ -657,6 +663,11 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 		return nil, nil, fmt.Errorf("modbus client is not initialized")
 	}
 
+	// Wait at the beginning of each read cycle
+	if m.TimeBetweenReads > 0 {
+		time.Sleep(m.TimeBetweenReads)
+	}
+
 	m.Log.Debugf("Reading slave %d for %s...", m.SlaveID, m.Controller)
 	msgBatch, err := m.readSlaveData(m.SlaveID, m.requestSet)
 	if err != nil {
@@ -828,6 +839,10 @@ func (m *ModbusInput) gatherRequestsCoil(requests []request) (service.MessageBat
 			}
 		}
 
+		// Sleep between requests to avoid flooding the device
+		if m.TimeBetweenRequests > 0 {
+			time.Sleep(m.TimeBetweenRequests)
+		}
 	}
 	return msgs, nil
 }
@@ -860,6 +875,10 @@ func (m *ModbusInput) gatherRequestsDiscrete(requests []request) (service.Messag
 			}
 		}
 
+		// Sleep between requests to avoid flooding the device
+		if m.TimeBetweenRequests > 0 {
+			time.Sleep(m.TimeBetweenRequests)
+		}
 	}
 	return msgs, nil
 }
@@ -892,6 +911,10 @@ func (m *ModbusInput) gatherRequestsHolding(requests []request) (service.Message
 			}
 		}
 
+		// Sleep between requests to avoid flooding the device
+		if m.TimeBetweenRequests > 0 {
+			time.Sleep(m.TimeBetweenRequests)
+		}
 	}
 	return msgs, nil
 }
@@ -924,6 +947,10 @@ func (m *ModbusInput) gatherRequestsInput(requests []request) (service.MessageBa
 			}
 		}
 
+		// Sleep between requests to avoid flooding the device
+		if m.TimeBetweenRequests > 0 {
+			time.Sleep(m.TimeBetweenRequests)
+		}
 	}
 	return msgs, nil
 }
