@@ -125,7 +125,7 @@ type ModbusInput struct {
 
 	// Requests is the auto-generated list of requests to be made
 	// They are creates based on the addresses and the optimization strategy
-	requestSet requestSet
+	RequestSet RequestSet
 
 	// Internal
 	Handler modbus.ClientHandler
@@ -133,7 +133,7 @@ type ModbusInput struct {
 	Log     *service.Logger
 }
 
-type requestSet struct {
+type RequestSet struct {
 	coil     []request
 	discrete []request
 	holding  []request
@@ -421,7 +421,7 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	// Parse the addresses into batches
-	m.requestSet, err = m.createBatchesFromAddresses(m.Addresses)
+	m.RequestSet, err = m.CreateBatchesFromAddresses(m.Addresses)
 	if err != nil {
 		m.Log.Errorf("Failed to create batches: %v", err)
 		return nil, err
@@ -431,30 +431,30 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	var nHoldingRegs, nInputsRegs, nDiscreteRegs, nCoilRegs uint16
 	var nHoldingFields, nInputsFields, nDiscreteFields, nCoilFields int
 
-	for _, r := range m.requestSet.holding {
+	for _, r := range m.RequestSet.holding {
 		nHoldingRegs += r.length
 		nHoldingFields += len(r.fields)
 	}
-	for _, r := range m.requestSet.input {
+	for _, r := range m.RequestSet.input {
 		nInputsRegs += r.length
 		nInputsFields += len(r.fields)
 	}
-	for _, r := range m.requestSet.discrete {
+	for _, r := range m.RequestSet.discrete {
 		nDiscreteRegs += r.length
 		nDiscreteFields += len(r.fields)
 	}
-	for _, r := range m.requestSet.coil {
+	for _, r := range m.RequestSet.coil {
 		nCoilRegs += r.length
 		nCoilFields += len(r.fields)
 	}
 	m.Log.Infof("Got %d request(s) touching %d holding registers for %d fields (slave %d)",
-		len(m.requestSet.holding), nHoldingRegs, nHoldingFields, m.SlaveID)
+		len(m.RequestSet.holding), nHoldingRegs, nHoldingFields, m.SlaveID)
 	m.Log.Infof("Got %d request(s) touching %d inputs registers for %d fields (slave %d)",
-		len(m.requestSet.input), nInputsRegs, nInputsFields, m.SlaveID)
+		len(m.RequestSet.input), nInputsRegs, nInputsFields, m.SlaveID)
 	m.Log.Infof("Got %d request(s) touching %d discrete registers for %d fields (slave %d)",
-		len(m.requestSet.discrete), nDiscreteRegs, nDiscreteFields, m.SlaveID)
+		len(m.RequestSet.discrete), nDiscreteRegs, nDiscreteFields, m.SlaveID)
 	m.Log.Infof("Got %d request(s) touching %d coil registers for %d fields (slave %d)",
-		len(m.requestSet.coil), nCoilRegs, nCoilFields, m.SlaveID)
+		len(m.RequestSet.coil), nCoilRegs, nCoilFields, m.SlaveID)
 
 	// Now set up the modbus client
 	u, err := url.Parse(m.Controller)
@@ -493,7 +493,7 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	return service.AutoRetryNacksBatched(m), nil
 }
 
-func (m *ModbusInput) createBatchesFromAddresses(addresses []ModbusDataItemWithAddress) (requestSet, error) {
+func (m *ModbusInput) CreateBatchesFromAddresses(addresses []ModbusDataItemWithAddress) (RequestSet, error) {
 
 	// Create a map of requests for each register type
 	collection := make(map[string][]modbusTag)
@@ -506,14 +506,14 @@ func (m *ModbusInput) createBatchesFromAddresses(addresses []ModbusDataItemWithA
 		// Create a new tag
 		tag, err := m.newTag(item)
 		if err != nil {
-			return requestSet{}, err
+			return RequestSet{}, err
 		}
 
 		// Append the tag to the collection
 		collection[item.Register] = append(collection[item.Register], tag)
 	}
 
-	var result requestSet
+	var result RequestSet
 
 	// Create a request for each register type
 	params := groupingParams{
@@ -553,7 +553,7 @@ func (m *ModbusInput) createBatchesFromAddresses(addresses []ModbusDataItemWithA
 			requests := m.groupTagsToRequests(tags, params)
 			result.input = append(result.input, requests...)
 		default:
-			return requestSet{}, fmt.Errorf("unknown register type %q", register)
+			return RequestSet{}, fmt.Errorf("unknown register type %q", register)
 		}
 	}
 
@@ -669,7 +669,7 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 	}
 
 	m.Log.Debugf("Reading slave %d for %s...", m.SlaveID, m.Controller)
-	msgBatch, err := m.readSlaveData(m.SlaveID, m.requestSet)
+	msgBatch, err := m.readSlaveData(m.SlaveID, m.RequestSet)
 	if err != nil {
 		m.Log.Errorf("slave %d encountered an error: %v", m.SlaveID, err)
 		var mbErr *modbus.Error
@@ -684,7 +684,7 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 	}, nil
 }
 
-func (m *ModbusInput) readSlaveData(slaveID byte, requests requestSet) (msgBatch service.MessageBatch, err error) {
+func (m *ModbusInput) readSlaveData(slaveID byte, requests RequestSet) (msgBatch service.MessageBatch, err error) {
 	m.Handler.SetSlave(slaveID)
 
 	for retry := 0; retry < m.BusyRetries; retry++ {
@@ -786,7 +786,7 @@ func sanitize(s string) string {
 	return re.ReplaceAllString(s, "_")
 }
 
-func (m *ModbusInput) gatherTags(requests requestSet) (service.MessageBatch, error) {
+func (m *ModbusInput) gatherTags(requests RequestSet) (service.MessageBatch, error) {
 	msgBatchCoil, err := m.gatherRequestsCoil(requests.coil)
 	if err != nil {
 		return nil, err
