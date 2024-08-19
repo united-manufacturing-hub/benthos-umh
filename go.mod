@@ -8,10 +8,12 @@ require (
 	github.com/RuneRoven/benthosADS v1.0.4
 	github.com/RuneRoven/benthosSMTP v0.0.1
 	github.com/gopcua/opcua v0.5.3
+	github.com/grid-x/modbus v0.0.0-20240503115206-582f2ab60a18
 	github.com/onsi/ginkgo/v2 v2.19.0
 	github.com/onsi/gomega v1.33.1
 	github.com/redpanda-data/benthos/v4 v4.28.1
 	github.com/redpanda-data/connect/public/bundle/free/v4 v4.29.0
+	github.com/x448/float16 v0.8.4
 )
 
 require (
@@ -157,7 +159,6 @@ require (
 	github.com/gorilla/websocket v1.5.1 // indirect
 	github.com/gosimple/slug v1.14.0 // indirect
 	github.com/gosimple/unidecode v1.0.1 // indirect
-	github.com/grid-x/modbus v0.0.0-20240503115206-582f2ab60a18 // indirect
 	github.com/grid-x/serial v0.0.0-20211107191517-583c7356b3aa // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.19.0 // indirect
@@ -255,7 +256,6 @@ require (
 	github.com/twmb/franz-go/pkg/kmsg v1.7.0 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
-	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.1.2 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
