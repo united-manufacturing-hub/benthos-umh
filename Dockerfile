@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM golang:1.22 as build
+FROM management.umh.app/oci/library/golang:1.22 as build
 
 RUN useradd -u 10001 benthos
 
@@ -35,7 +35,7 @@ COPY .goreleaser.yml .
 RUN echo 'project_name: app' >> .goreleaser.yml
 RUN goreleaser build --single-target --snapshot --id benthos --output ./main --timeout 45m
 
-FROM busybox as app
+FROM management.umh.app/oci/library/busybox as app
 
 WORKDIR /
 

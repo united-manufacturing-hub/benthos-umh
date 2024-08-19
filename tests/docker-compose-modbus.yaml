@@ -1,7 +1,7 @@
 services:
   modbus-server:
     container_name: modbus-server
-    image: oitc/modbus-server:latest
+    image: management.umh.app/oci/oitc/modbus-server:latest
     restart: always
     command: -f /server_config.json
     ports:
