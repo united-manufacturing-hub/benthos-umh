@@ -180,10 +180,10 @@ var ModbusConfigSpec = service.NewConfigSpec().
 		service.NewStringField("register").Description("Register type: 'coil', 'discrete', 'holding', or 'input'").Default("holding"),
 		service.NewIntField("address").Description("Address of the register to query"),
 		service.NewStringField("type").Description("Data type of the field"),
-		service.NewIntField("length").Description("Number of registers, only valid for STRING type").Default(1),
+		service.NewIntField("length").Description("Number of registers, only valid for STRING type").Default(0),
 		service.NewIntField("bit").Description("Bit of the register, only valid for BIT type").Default(0),
-		service.NewFloatField("scale").Description("Factor to scale the variable with").Default(1.0),
-		service.NewStringField("output").Description("Type of resulting field: 'INT64', 'UINT64', 'FLOAT64', or 'native'").Default("native")).
+		service.NewFloatField("scale").Description("Factor to scale the variable with").Default(0.0),
+		service.NewStringField("output").Description("Type of resulting field: 'INT64', 'UINT64', 'FLOAT64', or 'native'").Default("")).
 		Description("List of Modbus addresses to read"))
 
 // newModbusInput is the constructor function for ModbusInput. It parses the plugin configuration,
@@ -227,20 +227,25 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	if m.ByteOrder, err = conf.FieldString("byteOrder"); err != nil {
 		return nil, err
 	}
-	if m.PauseAfterConnect, err = conf.FieldDuration("pauseAfterConnect"); err != nil {
-		return nil, err
-	}
-	if m.OneRequestPerField, err = conf.FieldBool("oneRequestPerField"); err != nil {
-		return nil, err
-	}
-	if m.ReadCoilsStartingAtZero, err = conf.FieldBool("readCoilsStartingAtZero"); err != nil {
-		return nil, err
-	}
-	if m.StringRegisterLocation, err = conf.FieldString("stringRegisterLocation"); err != nil {
-		return nil, err
-	}
-	if m.TimeBetweenRequests, err = conf.FieldDuration("timeBetweenRequests"); err != nil {
-		return nil, err
+
+	// Workarounds
+	if workarounds := conf.Namespace("workarounds"); err == nil {
+		if m.PauseAfterConnect, err = workarounds.FieldDuration("pauseAfterConnect"); err != nil {
+			return nil, err
+		}
+		if m.OneRequestPerField, err = workarounds.FieldBool("oneRequestPerField"); err != nil {
+			return nil, err
+		}
+		if m.ReadCoilsStartingAtZero, err = workarounds.FieldBool("readCoilsStartingAtZero"); err != nil {
+			return nil, err
+		}
+		if m.StringRegisterLocation, err = workarounds.FieldString("stringRegisterLocation"); err != nil {
+			return nil, err
+		}
+		if m.TimeBetweenRequests, err = workarounds.FieldDuration("timeBetweenRequests"); err != nil {
+			return nil, err
+		}
+
 	}
 
 	// These are the general checks for the configuration
