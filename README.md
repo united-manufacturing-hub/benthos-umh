@@ -25,6 +25,7 @@ We encourage you to try out `benthos-umh` and explore the broader [United Manufa
 If you are familiar with benthos, you know it is a powerful tool with many input, output, and processor plugins. We have added some additional plugins to benthos-umh, which are not part of the official benthos release. These plugins are:
 - (UMH) s7comm: An input plugin to read data from Siemens S7 PLCs. See [further below](#s7comm) for more information.
 - (UMH) opcua: An input plugin to read data from OPC UA servers. See [further below](#opc-ua)  for more information.
+- (UMH) modbus: An input plugin to read data from Modbus devices. See [further below](#modbus)  for more information.
 - (community) smtp: A output plugin to send emails via SMTP. See [DanielH's repo](https://github.com/RuneRoven/benthosSMTP) for more information.
 - (community) ADS: An input plugin to read data from Beckhoff PLCs via ADS. See [further below](#beckhoff-ads) or at [DanielH's  repo](https://github.com/RuneRoven/benthosADS) for more information.
 
@@ -402,7 +403,7 @@ input:
     timeout: '1s'
     busyRetries: 3
     busyRetriesWait: '200ms'
-    readInterval: '1s'
+    timeBetweenReads: '1s'
     optimization: 'none'
     byteOrder: 'ABCD'
     addresses:
@@ -459,14 +460,14 @@ input:
     timeout: '1s'
 ```
 
-##### Read Interval
+##### Time Between Reads
 
 Defines how frequently the Modbus device should be polled:
 
 ```yaml
 input:
   modbus:
-    readInterval: '1s'
+    timeBetweenReads: '1s'
 ```
 
 ##### Optimization
@@ -638,7 +639,7 @@ input:
 
 5. **Length**
   - **Description**: Number of registers to read, primarily used when the data type is "STRING".
-  - **Default**: 1
+  - **Default**: 0
   - **Configuration Example**:
     ```yaml
     length: 2
@@ -654,7 +655,7 @@ input:
 
 7. **Scale**
   - **Description**: A multiplier applied to the numeric data read from the register, used to scale values to the desired range or unit.
-  - **Default**: 1.0
+  - **Default**: 0.0
   - **Configuration Example**:
     ```yaml
     scale: 0.1
