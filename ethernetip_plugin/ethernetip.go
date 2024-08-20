@@ -21,6 +21,7 @@ import (
 	"github.com/robinson/gos7"
 	"time"
 
+	"github.com/libplctag/goplctag"
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
@@ -40,9 +41,9 @@ type EthernetIPTag struct {
 // along with the read requests to fetch data from the PLC.
 type EthernetIPInput struct {
 	Gateway  string          // IP address of the PLC.
-	Protocol string          // Protocol to use for communication.
+	Protocol string          // Protocol to use for communication. Can be ab_eip, ab_cip
 	Path     string          // Routing path for the Tags. (default: 1,0)
-	PLCType  string          // Type of the PLC. (default: controllogix)
+	PLCType  string          // Type of the PLC. (default: controllogix). Can be plc,plc5,slc,slc500,micrologix,mlgx,compactlogix,clgx,lgx,controllogix,contrologix,flexlogix,flgx
 	Timeout  time.Duration   // Time duration before a connection attempt or read request times out.
 	Log      *service.Logger // Logger for logging plugin activity.
 	Tags     []EthernetIPTag // List of items to read from the PLC
@@ -68,7 +69,8 @@ var EthernetIPConfigSpec = service.NewConfigSpec().
 // establishes a connection with the S7 PLC, and initializes the input plugin instance.
 func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
 
-	tcpDevice, err := conf.FieldString("tcpDevice")
+	goplctag.
+		tcpDevice, err := conf.FieldString("tcpDevice")
 	if err != nil {
 		return nil, err
 	}
