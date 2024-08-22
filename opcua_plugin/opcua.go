@@ -39,6 +39,8 @@ import (
 
 const SessionTimeout = 5 * time.Second
 
+const SubscribeTimeoutContext = 3 * time.Second
+
 type NodeDef struct {
 	NodeID       *ua.NodeID
 	NodeClass    ua.NodeClass
@@ -227,6 +229,9 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 			return nil, err
 		}
 		if err := browseChildren(id.FolderType); err != nil {
+			return nil, err
+		}
+		if err := browseChildren(id.HasNotifier); err != nil {
 			return nil, err
 		}
 		// For hasProperty it makes sense to show it very close to the tag itself, e.g., use the tagName as tagGroup and then the properties as subparts of it
@@ -674,15 +679,17 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 			return nil
 		}, nil
 
-	case _, ok := <-ctx.Done():
-		if !ok {
-			g.Log.Warnf("subscribe timeout")
-			return nil, nil, nil
+	case <-ctx.Done():
+		// Check why the context was done
+		err := ctx.Err()
+		if errors.Is(err, context.DeadlineExceeded) {
+			g.Log.Warnf("Subscribe timeout: this will happen if the server does not send any data updates within %v", SubscribeTimeoutContext)
+		} else if errors.Is(err, context.Canceled) {
+			g.Log.Warnf("Subscribe canceled: operation was manually canceled")
 		} else {
-			// Timeout occurred
-			g.Log.Warnf("Timeout waiting for response from g.subNotifyChan")
-			return nil, nil, nil
+			g.Log.Warnf("Subscribe stopped due to context error: %v", err)
 		}
+		return nil, nil, err
 	}
 }
 
@@ -690,7 +697,7 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, 
 	if g.SubscribeEnabled {
 		// Wait for maximum 3 seconds for a response from the subscription channel
 		// So that this never gets stuck
-		ctxSubscribe, cancel := context.WithTimeout(ctx, time.Second*3)
+		ctxSubscribe, cancel := context.WithTimeout(ctx, SubscribeTimeoutContext)
 		defer cancel()
 
 		msgs, ackFunc, err = g.ReadBatchSubscribe(ctxSubscribe)
