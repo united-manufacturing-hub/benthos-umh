@@ -6,6 +6,7 @@ import (
 
 	_ "github.com/RuneRoven/benthosADS"
 	_ "github.com/RuneRoven/benthosSMTP"
+	_ "github.com/RuneRoven/benthosAlarm"
 	_ "github.com/united-manufacturing-hub/benthos-umh/v2/opcua_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/v2/s7comm_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/v2/modbus_plugin"
