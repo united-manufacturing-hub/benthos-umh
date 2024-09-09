@@ -11,7 +11,7 @@ require (
 	github.com/grid-x/modbus v0.0.0-20240503115206-582f2ab60a18
 	github.com/onsi/ginkgo/v2 v2.19.0
 	github.com/onsi/gomega v1.33.1
-	github.com/redpanda-data/benthos/v4 v4.28.1
+	github.com/redpanda-data/benthos/v4 v4.30.0
 	github.com/redpanda-data/connect/public/bundle/free/v4 v4.29.0
 	github.com/x448/float16 v0.8.4
 )
@@ -52,6 +52,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.1 // indirect
 	github.com/PaesslerAG/gval v1.2.2 // indirect
 	github.com/PaesslerAG/jsonpath v0.1.1 // indirect
+	github.com/RuneRoven/benthosAlarm v1.0.0 // indirect
 	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/apache/arrow/go/arrow v0.0.0-20211112161151-bc219186db40 // indirect
 	github.com/apache/arrow/go/v14 v14.0.2 // indirect

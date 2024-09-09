@@ -139,6 +139,8 @@ github.com/PaesslerAG/jsonpath v0.1.1 h1:c1/AToHQMVsduPAa4Vh6xp2U0evy4t8SWp8imEs
 github.com/PaesslerAG/jsonpath v0.1.1/go.mod h1:lVboNxFGal/VwW6d9JzIy56bUsYAP6tH/x80vjnCseY=
 github.com/RuneRoven/benthosADS v1.0.4 h1:YoWVt9PaoQRRjDCAz2gYNSIKwuPUchgcXTc8B1dUtsM=
 github.com/RuneRoven/benthosADS v1.0.4/go.mod h1:vLm9HpAZqZbDb+8HzRDZxv5e89SXq4jOLv2aOGETaV0=
+github.com/RuneRoven/benthosAlarm v1.0.0 h1:jI1RUjgta0FsNGtGPM7yIc1ox3zSbP/ZZVc518GhVs0=
+github.com/RuneRoven/benthosAlarm v1.0.0/go.mod h1:8081JBViQHAJAWDy+T/IYEB/UCICAJCb0M61EmI89DI=
 github.com/RuneRoven/benthosSMTP v0.0.1 h1:pgFBqcYvFXPT07YuoYPbpXhAD0CRD8dEC7SuC82VFAs=
 github.com/RuneRoven/benthosSMTP v0.0.1/go.mod h1:TXVZVWdtKUdHkPWJ/WWDWSEulsToHXNlOgx+zX5THH8=
 github.com/ajstarks/svgo v0.0.0-20180226025133-644b8db467af/go.mod h1:K08gAheRH3/J6wwsYMMT4xOr94bZjxIelGM0+d/wbFw=
@@ -897,6 +899,8 @@ github.com/redis/go-redis/v9 v9.4.0 h1:Yzoz33UZw9I/mFhx4MNrB6Fk+XHO1VukNcCa1+lwy
 github.com/redis/go-redis/v9 v9.4.0/go.mod h1:hdY0cQFCN4fnSYT6TkisLufl/4W5UIXyv0b/CLO2V2M=
 github.com/redpanda-data/benthos/v4 v4.28.1 h1:+pXURW62NVbLHMLQXpS8qEUtxCsptpKneh+7chzv7Fw=
 github.com/redpanda-data/benthos/v4 v4.28.1/go.mod h1:veuREp5S8MJ21MXofdfMPVm5qOwQGmymh9c13jax284=
+github.com/redpanda-data/benthos/v4 v4.30.0 h1:JViX1UBMJBB3EXH6vOtKQA2Su9x60LcA+Yb6K1xXkw4=
+github.com/redpanda-data/benthos/v4 v4.30.0/go.mod h1:veuREp5S8MJ21MXofdfMPVm5qOwQGmymh9c13jax284=
 github.com/redpanda-data/connect/public/bundle/free/v4 v4.29.0 h1:Z6cF6q86b6bw0uRohX2tnUBe0EgRtak7JjQlaXBnAVs=
 github.com/redpanda-data/connect/public/bundle/free/v4 v4.29.0/go.mod h1:AU2ujaShckZ9Zn3N58MGy6QYw500v8bvWgBgdnxCqaE=
 github.com/redpanda-data/connect/v4 v4.29.0 h1:EFA5G+fEPwt+AFJ1PNPRce9KTmz1W7LJh4fskcU9rlM=

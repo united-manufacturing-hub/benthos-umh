@@ -25,7 +25,7 @@ tasks:
       make test
   - command: |
       cd tests
-      docker-compose -f docker-compose.yml -f docker-compose-modbus.yaml up -d
+      docker-compose -f docker-compose.yaml -f docker-compose-modbus.yaml up -d
       sleep 5
       gp sync-done docker
   - command: |
