@@ -77,9 +77,9 @@ type ModbusInput struct {
 	TimeBetweenReads time.Duration // The time between two reads of a Modbus device. Useful if you want to read the device every x seconds. Defaults to 1s. Not to be confused with TimeBetweenRequests.
 
 	// Standard
-	Controller       string // e.g., "tcp://localhost:502"
-	TransmissionMode string // Can be "TCP" (default), "RTUOverTCP", "ASCIIOverTCP"\
-	SlaveID          byte
+	Controller       string        // e.g., "tcp://localhost:502"
+	TransmissionMode string        // Can be "TCP" (default), "RTUOverTCP", "ASCIIOverTCP"\
+	SlaveIDs         []byte        // This allows to fetch the same Addresses from different SlaveIDs
 	Timeout          time.Duration // Timeout for the connection
 	BusyRetries      int           // Maximum number of retries when the device is busy
 	BusyRetriesWait  time.Duration // Time to wait between retries when the device is busy
@@ -162,6 +162,7 @@ var ModbusConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringField("controller").Description("The Modbus controller address, e.g., 'tcp://localhost:502'").Default("tcp://localhost:502")).
 	Field(service.NewStringField("transmissionMode").Description("Transmission mode: 'TCP', 'RTUOverTCP', or 'ASCIIOverTCP'").Default("TCP")).
 	Field(service.NewIntField("slaveID").Description("Slave ID of the Modbus device").Default(1)).
+	Field(service.NewIntListField("slaveIDs").Description("Slave ID of the Modbus device").Default([]int{1})).
 	Field(service.NewDurationField("timeout").Description("").Default("1s")).
 	Field(service.NewIntField("busyRetries").Description("Maximum number of retries when the device is busy").Default(3)).
 	Field(service.NewDurationField("busyRetriesWait").Description("Time to wait between retries when the device is busy").Default("200ms")).
@@ -204,11 +205,24 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	if m.TransmissionMode, err = conf.FieldString("transmissionMode"); err != nil {
 		return nil, err
 	}
-	if slaveID, err := conf.FieldInt("slaveID"); err != nil {
-		return nil, err
+
+	// slaveID only exist for backwards compatibility
+	var slaveIDs []int
+	if ids, err := conf.FieldIntList("slaveIDs"); err == nil {
+		// slaveIDs exists, use it
+		slaveIDs = ids
+	} else if id, err := conf.FieldInt("slaveID"); err == nil {
+		// Fallback to slaveID if slaveIDs doesn't exist
+		slaveIDs = []int{id}
 	} else {
-		m.SlaveID = byte(slaveID)
+		return nil, fmt.Errorf("no valid slaveID or slaveIDs found")
 	}
+
+	// Convert to byte and assign to m.SlaveIDs
+	for _, slaveID := range slaveIDs {
+		m.SlaveIDs = append(m.SlaveIDs, byte(slaveID))
+	}
+
 	if m.Timeout, err = conf.FieldDuration("timeout"); err != nil {
 		return nil, err
 	}
@@ -304,7 +318,7 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 
 		// mandatory
 		if item.Name == "" {
-			return nil, fmt.Errorf("empty field name in request for slave %d", m.SlaveID)
+			return nil, fmt.Errorf("empty field name in request")
 		}
 
 		// Register
@@ -452,14 +466,14 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		nCoilRegs += r.length
 		nCoilFields += len(r.fields)
 	}
-	m.Log.Infof("Got %d request(s) touching %d holding registers for %d fields (slave %d)",
-		len(m.RequestSet.holding), nHoldingRegs, nHoldingFields, m.SlaveID)
-	m.Log.Infof("Got %d request(s) touching %d inputs registers for %d fields (slave %d)",
-		len(m.RequestSet.input), nInputsRegs, nInputsFields, m.SlaveID)
-	m.Log.Infof("Got %d request(s) touching %d discrete registers for %d fields (slave %d)",
-		len(m.RequestSet.discrete), nDiscreteRegs, nDiscreteFields, m.SlaveID)
-	m.Log.Infof("Got %d request(s) touching %d coil registers for %d fields (slave %d)",
-		len(m.RequestSet.coil), nCoilRegs, nCoilFields, m.SlaveID)
+	m.Log.Infof("Got %d request(s) touching %d holding registers for %d fields",
+		len(m.RequestSet.holding), nHoldingRegs, nHoldingFields)
+	m.Log.Infof("Got %d request(s) touching %d inputs registers for %d fields",
+		len(m.RequestSet.input), nInputsRegs, nInputsFields)
+	m.Log.Infof("Got %d request(s) touching %d discrete registers for %d fields",
+		len(m.RequestSet.discrete), nDiscreteRegs, nDiscreteFields)
+	m.Log.Infof("Got %d request(s) touching %d coil registers for %d fields",
+		len(m.RequestSet.coil), nCoilRegs, nCoilFields)
 
 	// Now set up the modbus client
 	u, err := url.Parse(m.Controller)
@@ -673,18 +687,29 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 		time.Sleep(m.TimeBetweenReads)
 	}
 
-	m.Log.Debugf("Reading slave %d for %s...", m.SlaveID, m.Controller)
-	msgBatch, err := m.readSlaveData(m.SlaveID, m.RequestSet)
-	if err != nil {
-		m.Log.Errorf("slave %d encountered an error: %v", m.SlaveID, err)
-		var mbErr *modbus.Error
-		if !errors.As(err, &mbErr) || mbErr.ExceptionCode != modbus.ExceptionCodeServerDeviceBusy {
-			m.Log.Errorf("slave %d encountered an error: %v", m.SlaveID, mbErr)
-			return nil, nil, err
+	// Initialize an empty MessageBatch to collect results from all slaves
+	var mergedBatch service.MessageBatch
+
+	// Loop through all slaves
+	for _, slaveID := range m.SlaveIDs {
+		m.Log.Debugf("Reading slave %d for %s...", slaveID, m.Controller)
+		msgBatch, err := m.readSlaveData(slaveID, m.RequestSet)
+		if err != nil {
+			m.Log.Errorf("slave %d encountered an error: %v", slaveID, err)
+
+			var mbErr *modbus.Error
+			// Check if the error is a Modbus error and if the exception code is not "Server Device Busy"
+			if errors.As(err, &mbErr) && mbErr.ExceptionCode != modbus.ExceptionCodeServerDeviceBusy {
+				m.Log.Errorf("slave %d encountered an error: %v", slaveID, mbErr)
+				return nil, nil, err
+			}
 		}
+
+		// Append the current slave's message batch to the merged batch
+		mergedBatch = append(mergedBatch, msgBatch...)
 	}
 
-	return msgBatch, func(ctx context.Context, err error) error {
+	return mergedBatch, func(ctx context.Context, err error) error {
 		return nil
 	}, nil
 }

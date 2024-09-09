@@ -399,7 +399,8 @@ input:
   modbus:
     controller: 'tcp://localhost:502'
     transmissionMode: 'TCP'
-    slaveID: 1
+    slaveIDs:
+      - 1
     timeout: '1s'
     busyRetries: 3
     busyRetriesWait: '200ms'
@@ -438,15 +439,19 @@ input:
     transmissionMode: 'TCP'
 ```
 
-##### Slave ID
+##### Slave IDs
 
-Configure the modbus slave ID :
+Configure the modbus slave IDs :
 
 ```yaml
 input:
   modbus:
-    slaveID: 1
+    slaveIDs:
+      - 1
+      - 2
 ```
+
+For backwars compatbility there is also `slaveID: 1`, which allows setting only a single Modbus slave.
 
 ##### Retry Settings & Timeout
 

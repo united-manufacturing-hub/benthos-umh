@@ -31,7 +31,7 @@ var _ = Describe("Test Against Docker Modbus Simulator", func() {
 		defer cancel()
 
 		input := &ModbusInput{
-			SlaveID:     1,
+			SlaveIDs:    []byte{1},
 			BusyRetries: 1,
 			Addresses: []ModbusDataItemWithAddress{
 				{
@@ -105,7 +105,7 @@ var _ = Describe("Test Against Docker Modbus Simulator", func() {
 		defer cancel()
 
 		input := &ModbusInput{
-			SlaveID:     1,
+			SlaveIDs:    []byte{1},
 			BusyRetries: 1,
 			Addresses: []ModbusDataItemWithAddress{
 				{
