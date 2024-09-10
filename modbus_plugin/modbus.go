@@ -731,7 +731,7 @@ func (m *ModbusInput) readSlaveData(slaveID byte, requests RequestSet) (msgBatch
 		}
 
 		// Wait some time and try again reading the slave.
-		m.Log.Infof("Device busy! Retrying %d more time(s)...", m.BusyRetries-retry)
+		m.Log.Infof("Slave %d busy! Retrying %d more time(s)...", slaveID, m.BusyRetries-retry)
 		time.Sleep(m.BusyRetriesWait)
 	}
 	return m.gatherTags(requests)

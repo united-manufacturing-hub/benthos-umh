@@ -742,14 +742,14 @@ func (g *OPCUAInput) updateHeartbeatInMessageBatch(msgs service.MessageBatch) se
 	g.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
 
 	if g.HeartbeatManualSubscribed {
-		g.Log.Infof("Got heartbeat message. Duplicating it to a new message.")
+		g.Log.Debugf("Got heartbeat message. Duplicating it to a new message.")
 		newMsg := msgs[idx].DeepCopy()
 		newMsg.MetaSet("opcua_tag_group", "heartbeat")
 		newMsg.MetaSet("opcua_tag_name", "CurrentTime")
 		newMsg.MetaSet("opcua_heartbeat_message", "")
 		return append(msgs, newMsg)
 	} else {
-		g.Log.Infof("Got heartbeat message. Renaming it.")
+		g.Log.Debugf("Got heartbeat message. Renaming it.")
 		msgs[idx].MetaSet("opcua_tag_group", "heartbeat")
 		msgs[idx].MetaSet("opcua_tag_name", "CurrentTime")
 		msgs[idx].MetaSet("opcua_heartbeat_message", "")
