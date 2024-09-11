@@ -426,7 +426,7 @@ func UpdateNodePaths(nodes []NodeDef) {
 }
 
 // createMessageFromValue creates a benthos messages from a given variant and nodeID
-// theoretically nodeID can be extracted from variant, but not in all cases (e.g., when subscribing), so it it left to the calling function
+// theoretically nodeID can be extracted from variant, but not in all cases (e.g., when subscribing), so it is left to the calling function
 func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef NodeDef) *service.Message {
 	variant := dataValue.Value
 	if variant == nil {
@@ -568,8 +568,7 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 	resp, err := g.Client.Read(ctx, req)
 	if err != nil {
 		g.Log.Errorf("Read failed: %s", err)
-		// if the error is StatusBadSessionIDInvalid, the session has been closed
-		// and we need to reconnect.
+		// if the error is StatusBadSessionIDInvalid, the session has been closed, and we need to reconnect.
 		switch {
 		case errors.Is(err, ua.StatusBadSessionIDInvalid):
 			_ = g.Client.Close(ctx)
@@ -714,6 +713,12 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, 
 		g.Log.Error("Did not receive a heartbeat message for more than 10 seconds. Closing the connection to prevent stale data.")
 		_ = g.Close(ctx)
 		return nil, nil, service.ErrNotConnected
+	}
+
+	// If context deadline exceeded, print it as debug and ignore it. We don't want to show this to the user.
+	if err != nil && errors.Is(err, context.DeadlineExceeded) {
+		g.Log.Debugf("ReadBatch context.DeadlineExceeded")
+		return nil, nil, nil
 	}
 
 	return
@@ -941,7 +946,6 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 				g.Log.Infof("Failed to connect" + err.Error())
 
-				// TODO: only continue if it is not something like password wrong or toomanysessions, etc.
 				if errors.Is(err, ua.StatusBadUserAccessDenied) || errors.Is(err, ua.StatusBadTooManySessions) {
 					var timeout time.Duration
 					// Adding a sleep to prevent immediate re-connect
