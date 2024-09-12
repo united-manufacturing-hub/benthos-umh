@@ -389,15 +389,16 @@ For each read operation, the plugin outputs detailed metadata that includes vari
 
 Below is the extended metadata output schema provided by the plugin:
 
-| Metadata                        | Description                                                                     |
-|---------------------------------|---------------------------------------------------------------------------------|
-| `modbus_tag_name`               | Sanitized tag name, with special characters removed for compatibility.          |
-| `modbus_tag_name_original`      | Original tag name, as defined in the device configuration.                      |
-| `modbus_tag_datatype`           | Original Modbus data type of the tag.                                           |
-| `modbus_tag_datatype_json`      | Data type of the tag suitable for JSON representation: number, bool, or string. |
-| `modbus_tag_address`            | String representation of the tag's Modbus address.                              |
-| `modbus_tag_length`             | The length of the tag in registers, relevant for string or array data types.    |
-| `modbus_tag_register`           | The specific Modbus register type where the tag is located.                     |
+| Metadata                   | Description                                                                     |
+|----------------------------|---------------------------------------------------------------------------------|
+| `modbus_tag_name`          | Sanitized tag name, with special characters removed for compatibility.          |
+| `modbus_tag_name_original` | Original tag name, as defined in the device configuration.                      |
+| `modbus_tag_datatype`      | Original Modbus data type of the tag.                                           |
+| `modbus_tag_datatype_json` | Data type of the tag suitable for JSON representation: number, bool, or string. |
+| `modbus_tag_address`       | String representation of the tag's Modbus address.                              |
+| `modbus_tag_length`        | The length of the tag in registers, relevant for string or array data types.    |
+| `modbus_tag_register`      | The specific Modbus register type where the tag is located.                     |
+| `modbus_tag_slaveid`       | The slave ID where the tag is coming from                                       |
 
 This enhanced metadata schema provides comprehensive data for each read operation, ensuring that users have all necessary details for effective data management and application integration.
 
