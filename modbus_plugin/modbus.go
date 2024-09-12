@@ -30,6 +30,7 @@ import (
 	"reflect"
 	"regexp"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/grid-x/modbus"
@@ -128,9 +129,11 @@ type ModbusInput struct {
 	RequestSet RequestSet
 
 	// Internal
-	Handler modbus.ClientHandler
-	Client  modbus.Client
-	Log     *service.Logger
+	Handler        modbus.ClientHandler
+	SlaveMutex     sync.Mutex // Add a mutex to avoid mixing up slave responses
+	CurrentSlaveID byte       // The current slave ID
+	Client         modbus.Client
+	Log            *service.Logger
 }
 
 type RequestSet struct {
@@ -243,23 +246,21 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	// Workarounds
-	if workarounds := conf.Namespace("workarounds"); err == nil {
-		if m.PauseAfterConnect, err = workarounds.FieldDuration("pauseAfterConnect"); err != nil {
-			return nil, err
-		}
-		if m.OneRequestPerField, err = workarounds.FieldBool("oneRequestPerField"); err != nil {
-			return nil, err
-		}
-		if m.ReadCoilsStartingAtZero, err = workarounds.FieldBool("readCoilsStartingAtZero"); err != nil {
-			return nil, err
-		}
-		if m.StringRegisterLocation, err = workarounds.FieldString("stringRegisterLocation"); err != nil {
-			return nil, err
-		}
-		if m.TimeBetweenRequests, err = workarounds.FieldDuration("timeBetweenRequests"); err != nil {
-			return nil, err
-		}
-
+	workarounds := conf.Namespace("workarounds")
+	if m.PauseAfterConnect, err = workarounds.FieldDuration("pauseAfterConnect"); err != nil {
+		return nil, err
+	}
+	if m.OneRequestPerField, err = workarounds.FieldBool("oneRequestPerField"); err != nil {
+		return nil, err
+	}
+	if m.ReadCoilsStartingAtZero, err = workarounds.FieldBool("readCoilsStartingAtZero"); err != nil {
+		return nil, err
+	}
+	if m.StringRegisterLocation, err = workarounds.FieldString("stringRegisterLocation"); err != nil {
+		return nil, err
+	}
+	if m.TimeBetweenRequests, err = workarounds.FieldDuration("timeBetweenRequests"); err != nil {
+		return nil, err
 	}
 
 	// These are the general checks for the configuration
@@ -715,7 +716,11 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 }
 
 func (m *ModbusInput) readSlaveData(slaveID byte, requests RequestSet) (msgBatch service.MessageBatch, err error) {
+	m.SlaveMutex.Lock()
+	defer m.SlaveMutex.Unlock()
+
 	m.Handler.SetSlave(slaveID)
+	m.CurrentSlaveID = slaveID
 
 	for retry := 0; retry < m.BusyRetries; retry++ {
 		msgBatch, err = m.gatherTags(requests)
@@ -734,7 +739,9 @@ func (m *ModbusInput) readSlaveData(slaveID byte, requests RequestSet) (msgBatch
 		m.Log.Infof("Slave %d busy! Retrying %d more time(s)...", slaveID, m.BusyRetries-retry)
 		time.Sleep(m.BusyRetriesWait)
 	}
-	return m.gatherTags(requests)
+
+	msgBatch, err = m.gatherTags(requests)
+	return msgBatch, err
 }
 
 func (m *ModbusInput) createMessageFromValue(item modbusTag, rawValue []byte, registerName string) *service.Message {
@@ -800,13 +807,14 @@ func (m *ModbusInput) createMessageFromValue(item modbusTag, rawValue []byte, re
 	originalDataType := reflect.TypeOf(value).String()
 
 	message := service.NewMessage(b)
-	message.MetaSet("modbus_tag_name", sanitize(item.name))                // This is the tag name without special characters
-	message.MetaSet("modbus_tag_name_original", item.name)                 // This is the tag name without any changes
-	message.MetaSet("modbus_tag_datatype", originalDataType)               // This is the original data type in Modbus
-	message.MetaSet("modbus_tag_datatype_json", tagType)                   // This is the data type for JSONs. Either number, bool or string
-	message.MetaSet("modbus_tag_address", strconv.Itoa(int(item.address))) // This is the address of the tag
-	message.MetaSet("modbus_tag_length", strconv.Itoa(int(item.length)))   // This is the length of the tag
-	message.MetaSet("modbus_tag_register", registerName)                   // This is the register where the tag is located
+	message.MetaSet("modbus_tag_name", sanitize(item.name))                    // This is the tag name without special characters
+	message.MetaSet("modbus_tag_name_original", item.name)                     // This is the tag name without any changes
+	message.MetaSet("modbus_tag_datatype", originalDataType)                   // This is the original data type in Modbus
+	message.MetaSet("modbus_tag_datatype_json", tagType)                       // This is the data type for JSONs. Either number, bool or string
+	message.MetaSet("modbus_tag_address", strconv.Itoa(int(item.address)))     // This is the address of the tag
+	message.MetaSet("modbus_tag_length", strconv.Itoa(int(item.length)))       // This is the length of the tag
+	message.MetaSet("modbus_tag_register", registerName)                       // This is the register where the tag is located
+	message.MetaSet("modbus_tag_slaveid", strconv.Itoa(int(m.CurrentSlaveID))) // This is the slaveID that we are currently reading
 
 	return message
 }
