@@ -94,7 +94,11 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 
 	switch err := attrs[0].Status; {
 	case errors.Is(err, ua.StatusOK):
-		def.NodeClass = ua.NodeClass(attrs[0].Value.Int())
+		if attrs[0].Value == nil {
+			return nil, errors.New("node class is nil")
+		} else {
+			def.NodeClass = ua.NodeClass(attrs[0].Value.Int())
+		}
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
 		return nil, nil
 	default:
@@ -103,7 +107,11 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 
 	switch err := attrs[1].Status; {
 	case errors.Is(err, ua.StatusOK):
-		def.BrowseName = attrs[1].Value.String()
+		if attrs[1].Value == nil {
+			return nil, errors.New("browse name is nil")
+		} else {
+			def.BrowseName = attrs[1].Value.String()
+		}
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
 		return nil, nil
 	default:
@@ -112,7 +120,11 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 
 	switch err := attrs[2].Status; {
 	case errors.Is(err, ua.StatusOK):
-		def.Description = attrs[2].Value.String()
+		if attrs[2].Value == nil {
+			def.Description = "" // this can happen for example in Kepware v6, where the description is OPCUAType_Null
+		} else {
+			def.Description = attrs[2].Value.String()
+		}
 	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
 		// ignore
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
@@ -123,7 +135,11 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 
 	switch err := attrs[3].Status; {
 	case errors.Is(err, ua.StatusOK):
-		def.AccessLevel = ua.AccessLevelType(attrs[3].Value.Int())
+		if attrs[3].Value == nil {
+			return nil, errors.New("access level is nil")
+		} else {
+			def.AccessLevel = ua.AccessLevelType(attrs[3].Value.Int())
+		}
 	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
 		// ignore
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
@@ -134,34 +150,39 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 
 	switch err := attrs[4].Status; {
 	case errors.Is(err, ua.StatusOK):
-		switch v := attrs[4].Value.NodeID().IntID(); v {
-		case id.DateTime:
-			def.DataType = "time.Time"
-		case id.Boolean:
-			def.DataType = "bool"
-		case id.SByte:
-			def.DataType = "int8"
-		case id.Int16:
-			def.DataType = "int16"
-		case id.Int32:
-			def.DataType = "int32"
-		case id.Byte:
-			def.DataType = "byte"
-		case id.UInt16:
-			def.DataType = "uint16"
-		case id.UInt32:
-			def.DataType = "uint32"
-		case id.UtcTime:
-			def.DataType = "time.Time"
-		case id.String:
-			def.DataType = "string"
-		case id.Float:
-			def.DataType = "float32"
-		case id.Double:
-			def.DataType = "float64"
-		default:
-			def.DataType = attrs[4].Value.NodeID().String()
+		if attrs[4].Value == nil {
+			return nil, errors.New("data type is nil")
+		} else {
+			switch v := attrs[4].Value.NodeID().IntID(); v {
+			case id.DateTime:
+				def.DataType = "time.Time"
+			case id.Boolean:
+				def.DataType = "bool"
+			case id.SByte:
+				def.DataType = "int8"
+			case id.Int16:
+				def.DataType = "int16"
+			case id.Int32:
+				def.DataType = "int32"
+			case id.Byte:
+				def.DataType = "byte"
+			case id.UInt16:
+				def.DataType = "uint16"
+			case id.UInt32:
+				def.DataType = "uint32"
+			case id.UtcTime:
+				def.DataType = "time.Time"
+			case id.String:
+				def.DataType = "string"
+			case id.Float:
+				def.DataType = "float32"
+			case id.Double:
+				def.DataType = "float64"
+			default:
+				def.DataType = attrs[4].Value.NodeID().String()
+			}
 		}
+
 	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
 		// ignore
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
