@@ -237,3 +237,4 @@ jobs:
           artifacts: './artifacts/*'
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
+          prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
