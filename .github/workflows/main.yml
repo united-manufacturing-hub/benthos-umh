@@ -139,8 +139,23 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     strategy:
       matrix:
-        goos: [linux, windows, darwin]
-        goarch: [amd64, arm64, armv7]
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: arm
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+          - goos: windows
+            goarch: arm
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
     runs-on:
       group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || matrix.architecture == 'armv7' && 'arc-runners-small' || 'arc-runners' }}
     steps:
