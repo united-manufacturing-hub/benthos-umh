@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM management.umh.app/oci/library/golang:1.22 as build
+FROM management.umh.app/oci/library/golang:1.23 as build
 
 RUN useradd -u 10001 benthos
 
 WORKDIR /go/src/github.com/united-manufacturing-hub/benthos-umh
+
+ENV GOPROXY=https://golangproxy.umh.app,https://proxy.golang.org,direct
 
 COPY go.mod go.sum ./
 RUN go mod download
