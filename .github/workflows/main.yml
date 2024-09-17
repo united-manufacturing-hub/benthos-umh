@@ -86,7 +86,7 @@ jobs:
           export GIT_TAG=$(git describe --tags --always)
           export DOCKER_FILE=./Dockerfile
           export PLATFORM=${{ matrix.architecture }}
-          export PLATFORM_SHORT=${{ matrix.architecture | replace('/', '-') }
+          export PLATFORM_SHORT=${{ format(matrix.architecture, '/', '-') }}
 
           if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/master" ]]; then
             export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.component }}:master-${PLATFORM_SHORT}
