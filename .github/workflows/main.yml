@@ -88,13 +88,13 @@ jobs:
           export PLATFORM=${{ matrix.architecture }}
 
           if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/master" ]]; then
-            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.component }}:master-${PLATFORM}
+            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:master-${PLATFORM}
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.component }}:pr-${{ github.event.pull_request.number }}-${PLATFORM}
+            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}-${PLATFORM}
           elif [[ "${{ github.event_name }}" == "merge_group" ]]; then
-            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.component }}:$(git rev-parse --abbrev-ref HEAD)-${PLATFORM}
+            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(git rev-parse --abbrev-ref HEAD)-${PLATFORM}
           elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == refs/tags/* ]]; then
-            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.component }}:${GIT_TAG}-${PLATFORM}
+            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GIT_TAG}-${PLATFORM}
           fi
 
           docker buildx build --platform linux/${PLATFORM} --provenance=false --progress=plain \
@@ -129,7 +129,7 @@ jobs:
 
       - name: Create multiarch manifests
         run: |
-            docker buildx imagetools create -t ghcr.io/united-manufacturing-hub/${{ matrix.component}}:${{ needs.build-docker.outputs.BUILD_TAG }} \
-              ghcr.io/united-manufacturing-hub/${{ matrix.component}}:${{ needs.build-docker.outputs.BUILD_TAG }}-amd64 \
-              ghcr.io/united-manufacturing-hub/${{ matrix.component}}:${{ needs.build-docker.outputs.BUILD_TAG }}-arm64 \
-              ghcr.io/united-manufacturing-hub/${{ matrix.component}}:${{ needs.build-docker.outputs.BUILD_TAG }}-arm-v7
+            docker buildx imagetools create -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.BUILD_TAG }} \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.BUILD_TAG }}-amd64 \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.BUILD_TAG }}-arm64 \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.BUILD_TAG }}-arm-v7
