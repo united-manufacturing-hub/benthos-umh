@@ -19,109 +19,117 @@ on:
   push:
     branches:
       - '**'
+    tags:
+      - v*
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  GO_VERSION: '1.22.*'
 
 jobs:
-  go-test:
-    runs-on:
-      group: arc-runners
+  build-docker:
     permissions:
       packages: write
       contents: read
     timeout-minutes: 60
+    strategy:
+      matrix:
+        architecture: ['amd64', 'arm64', 'arm/v7']
+    runs-on:
+      group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || matrix.architecture == 'arm/v7' && 'arc-runners-small' || 'arc-runners' }}
+    outputs:
+      BUILD_TAG: ${{ steps.output-build-tag.outputs.BUILD_TAG }}
+    env:
+      PR_ID: ${{ github.event.pull_request.number }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
-      - name: Setup Go
-        uses: ./.github/actions/setup-go
+        uses: actions/checkout@v4
         with:
-          go_version: ${{ env.GO_VERSION }}
-      - name: Install Docker Compose
+          ref: ${{ github.event.pull_request && github.head_ref || github.ref_name }}
+
+      - name: Check if Docker daemon is running
+        id: check_docker
         run: |
-          sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-          sudo chmod +x /usr/local/bin/docker-compose
-      - name: Startup simulator in background
-        run: |
-          docker-compose -f docker-compose.yaml -f docker-compose-modbus.yaml up -d
-        working-directory: tests
-      - name: Wait for port 50000 to be ready
-        run: |
-          while ! nc -z localhost 50000; do
-            echo "Waiting for port 50000 to be ready..."
+          SECONDS=0
+          TIMEOUT=120
+          while ! docker info >/dev/null 2>&1; do
+            if [ $SECONDS -ge $TIMEOUT ]; then
+              echo "Docker daemon is not running after ${TIMEOUT} seconds, exiting..."
+              docker info
+              exit 1
+            fi
+            echo "Waiting for Docker daemon to start..."
             sleep 1
           done
-      - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.19.0
-      - name: Test
-        run: TEST_OPCUA_SIMULATOR=true TEST_OPCUA_UNITTEST=true make test
-  go-build:
-    runs-on:
-      group: arc-runners
-    permissions:
-      packages: write
-      contents: read
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Setup Go
-        uses: ./.github/actions/setup-go
-        with:
-          go_version: ${{ env.GO_VERSION }}
-      - name: Build
-        uses: goreleaser/goreleaser-action@v3
-        with:
-          args: release --skip-publish --skip-sign --snapshot --timeout=60m
-          version: '~> v1'
-      - name: Read metadata
-        id: metadata
-        uses: juliangruber/read-file-action@v1
-        with:
-          path: target/dist/metadata.json
-      - name: Prepare artifacts
-        run: |
-          mkdir -p tmp/bin
-          cp target/dist/benthos_linux_amd64_v1/benthos tmp/bin/benthos
+          echo "Docker daemon is running."
+
+      - name: Login to GitHub Container registry
+        uses: docker/login-action@v3
         env:
-          VERSION: ${{ fromJSON(steps.metadata.outputs.content).version }}
-      - name: Upload Benthos artifacts
-        uses: actions/upload-artifact@v3
+          GITHUB_USER: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: benthos
-          path: tmp/bin/benthos
-          retention-days: 2
-  build:
+          registry: ghcr.io
+          username: $GITHUB_USER
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          image: management.umh.app/oci/tonistiigi/binfmt:latest
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Setup variables and build
+        id: build-and-output
+        run: |
+          export GIT_TAG=$(git describe --tags --always)
+          export DOCKER_FILE=./Dockerfile
+          export PLATFORM=${{ matrix.architecture }}
+
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/master" ]]; then
+            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.component }}:master-$(subst /,-,$(PLATFORM))
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.component }}:pr-${{ github.event.pull_request.number }}-$(subst /,-,$(PLATFORM))
+          elif [[ "${{ github.event_name }}" == "merge_group" ]]; then
+            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.component }}:$(git rev-parse --abbrev-ref HEAD)-$(subst /,-,$(PLATFORM))
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == refs/tags/* ]]; then
+            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.component }}:${GIT_TAG}-$(subst /,-,$(PLATFORM))
+          fi
+
+          docker buildx build --platform linux/${PLATFORM} --provenance=false --progress=plain \
+            --build-arg APP_VERSION=${GIT_TAG} -t ${BUILD_TAG} -f ${DOCKER_FILE} --push .
+
+          echo "BUILD_TAG=${BUILD_TAG}" >> $GITHUB_OUTPUT
+          echo "BUILD_TAG=${BUILD_TAG}"
+
+  create-manifests:
+    needs: build-docker
+    if: needs.build-docker.outputs.BUILD_TAG != ''
+    permissions:
+      contents: read
+      packages: write
     runs-on:
       group: arc-runners
-    permissions:
-      packages: write
-      contents: read
-    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Setup Docker
-        uses: ./.github/actions/setup-docker
+      - name: Login to GitHub Container registry
+        uses: docker/login-action@v3
+        env:
+          GITHUB_USER: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          registry_domain: ${{ env.REGISTRY }}
-          registry_username: ${{ github.actor }}
-          registry_password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build
-        uses: docker/build-push-action@v3
-        with:
-          push: true
-          platforms: linux/amd64,linux/arm64
-          cache-from: 'type=local,src=/tmp/.buildx-cache'
-          cache-to: 'type=local,dest=/tmp/.buildx-cache'
-          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
-      - name: Remove CI container image
-        uses: bots-house/ghcr-delete-image-action@v1.0.1
-        if: always()
-        with:
-          owner: ${{ github.repository_owner }}
-          name: ${{ github.event.repository.name }}
-          tag: ${{ github.sha }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          registry: ghcr.io
+          username: $GITHUB_USER
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create multiarch manifests
+        run: |
+            docker buildx imagetools create -t ghcr.io/united-manufacturing-hub/${{ matrix.component}}:${{ needs.build-docker.outputs.BUILD_TAG }} \
+              ghcr.io/united-manufacturing-hub/${{ matrix.component}}:${{ needs.build-docker.outputs.BUILD_TAG }}-amd64 \
+              ghcr.io/united-manufacturing-hub/${{ matrix.component}}:${{ needs.build-docker.outputs.BUILD_TAG }}-arm64 \
+              ghcr.io/united-manufacturing-hub/${{ matrix.component}}:${{ needs.build-docker.outputs.BUILD_TAG }}-arm-v7
