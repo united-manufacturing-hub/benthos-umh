@@ -37,7 +37,7 @@ jobs:
     runs-on:
       group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || matrix.architecture == 'arm/v7' && 'arc-runners-small' || 'arc-runners' }}
     outputs:
-      BUILD_TAG: ${{ steps.build-and-output.outputs.BUILD_TAG }}
+      tags: ${{ steps.meta.outputs.tags }}
     env:
       PR_ID: ${{ github.event.pull_request.number }}
     steps:
@@ -80,33 +80,44 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Setup variables and build
-        id: build-and-output
+      - name: Set PLATFORM_SHORT
+        id: platform_short
+        shell: bash
         run: |
-          export GIT_TAG=$(git describe --tags --always)
-          export DOCKER_FILE=./Dockerfile
-          export PLATFORM=${{ matrix.architecture }}
-          export PLATFORM_SHORT=${PLATFORM//\//-}
+          PLATFORM_SHORT="${{ matrix.architecture }}"
+          PLATFORM_SHORT="${PLATFORM_SHORT//\//-}"
+          echo "PLATFORM_SHORT=${PLATFORM_SHORT}" >> $GITHUB_OUTPUT
 
-          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/master" ]]; then
-            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:master
-          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
-          elif [[ "${{ github.event_name }}" == "merge_group" ]]; then
-            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(git rev-parse --abbrev-ref HEAD)
-          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == refs/tags/* ]]; then
-            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GIT_TAG}
-          fi
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            suffix: ${{ steps.platform_short.outputs.PLATFORM_SHORT }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern=latest,include_prereleases=false
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha
 
-          docker buildx build --platform linux/${PLATFORM} --provenance=false --progress=plain \
-            --build-arg APP_VERSION=${GIT_TAG} -t ${BUILD_TAG}-${PLATFORM_SHORT} -f ${DOCKER_FILE} --push .
-
-          echo "BUILD_TAG=${BUILD_TAG}" >> $GITHUB_OUTPUT
-          echo "BUILD_TAG=${BUILD_TAG}"
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v4
+        with:
+          push: true
+          platforms: linux/${{ matrix.architecture }}
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.version }}
+          provenance: false
+          file: ./Dockerfile
 
   create-manifests:
     needs: build-docker
-    if: needs.build-docker.outputs.BUILD_TAG != ''
+    if: needs.build-docker.outputs.tags != ''
     permissions:
       contents: read
       packages: write
@@ -130,10 +141,30 @@ jobs:
 
       - name: Create multiarch manifests
         run: |
-            docker buildx imagetools create -t ${{ needs.build-docker.outputs.BUILD_TAG }} \
-              ${{ needs.build-docker.outputs.BUILD_TAG }}-amd64 \
-              ${{ needs.build-docker.outputs.BUILD_TAG }}-arm64 \
-              ${{ needs.build-docker.outputs.BUILD_TAG }}-arm-v7
+          # Get the list of tags
+          TAGS="${{ needs.build-docker.outputs.tags }}"
+          echo "TAGS: $TAGS"
+          # Split tags into an array
+          IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
+
+
+          # Define architectures
+          ARCHITECTURES=("amd64" "arm64" "arm/v7")
+
+
+          # Create manifests for each tag
+          for TAG in "${TAG_ARRAY[@]}"; do
+            echo "Processing tag $TAG"
+            # Construct platform-specific tags
+            PLATFORM_TAGS=""
+            for ARCH in "${ARCHITECTURES[@]}"; do
+              PLATFORM_SHORT="${ARCH//\//-}"
+              PLATFORM_TAG="${TAG}-${PLATFORM_SHORT}"
+              PLATFORM_TAGS="${PLATFORM_TAGS} ${PLATFORM_TAG}"
+            done
+            echo "Creating manifest for $TAG from $PLATFORM_TAGS"
+            docker buildx imagetools create -t "${TAG}" ${PLATFORM_TAGS}
+          done
 
   build-binaries:
     if: startsWith(github.ref, 'refs/tags/')
