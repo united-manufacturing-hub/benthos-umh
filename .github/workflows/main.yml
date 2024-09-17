@@ -162,7 +162,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ github.event.pull_request && github.head_ref || github.ref_name }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -187,12 +187,14 @@ jobs:
             echo "EXTENSION=" >> $GITHUB_ENV
           fi
           echo "OUTPUT_NAME=benthos-${{ matrix.goos }}-${{ matrix.goarch }}${{ env.EXTENSION }}" >> $GITHUB_ENV
+      - name: Print working directory
+        run: pwd
+      - name: List files in working directory
+        run: ls -la
 
       - name: Build Binary
         run: |
           mkdir -p ./dist
-          # Replace this with your build command
-          # Example for Go:
           GOOS=${{ env.GOOS }} GOARCH=${{ env.GOARCH }} GOARM=${{ env.GOARM }} CGO_ENABLED=0 go build -ldflags "-s -w \
             -X github.com/redpanda-data/benthos/v4/internal/cli.Version=${APP_VERSION} \
             -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o ./dist/${{ env.OUTPUT_NAME }}
