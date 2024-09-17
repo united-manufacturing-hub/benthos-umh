@@ -148,12 +148,20 @@ jobs:
 
       - name: Create multiarch manifests
         run: |
+          # Enable debug mode and error handling
+          set -euxo pipefail
+
           # Get the list of base tags
           TAGS="${{ needs.build-docker.outputs.BASE_TAGS }}"
           echo "TAGS: $TAGS"
 
           # Split tags into an array using newlines as the delimiter
-          IFS=$'\n' read -d '' -r -a TAG_ARRAY <<< "$TAGS"
+          IFS=$'\n' readarray -t TAG_ARRAY <<< "$TAGS"
+
+          echo "Number of tags: ${#TAG_ARRAY[@]}"
+          for i in "${!TAG_ARRAY[@]}"; do
+            echo "TAG_ARRAY[$i]: ${TAG_ARRAY[$i]}"
+          done
 
           # Define architectures
           ARCHITECTURES=("amd64" "arm64" "arm/v7")
@@ -168,6 +176,24 @@ jobs:
               PLATFORM_TAG="${TAG}-${PLATFORM_SHORT}"
               PLATFORM_TAGS="${PLATFORM_TAGS} ${PLATFORM_TAG}"
             done
+
+            echo "Checking availability of images for $TAG"
+            MISSING_IMAGES=0
+            for IMAGE in ${PLATFORM_TAGS}; do
+              echo "Checking image: $IMAGE"
+              if ! docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
+                echo "Image not found: $IMAGE"
+                MISSING_IMAGES=1
+              else
+                echo "Image exists: $IMAGE"
+              fi
+            done
+
+            if [ $MISSING_IMAGES -ne 0 ]; then
+              echo "One or more images are missing for $TAG. Skipping manifest creation."
+              continue
+            fi
+
             echo "Creating manifest for $TAG from $PLATFORM_TAGS"
             docker buildx imagetools create -t "${TAG}" ${PLATFORM_TAGS}
           done
