@@ -218,6 +218,8 @@ jobs:
   release:
     if: needs.build-binaries.result == 'success'
     needs: build-binaries
+    permissions:
+      contents: write
     runs-on:
       group: arc-runners  # Use your own runners
     steps:
