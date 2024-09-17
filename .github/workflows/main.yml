@@ -37,7 +37,7 @@ jobs:
     runs-on:
       group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || matrix.architecture == 'arm/v7' && 'arc-runners-small' || 'arc-runners' }}
     outputs:
-      BUILD_TAG: ${{ steps.output-build-tag.outputs.BUILD_TAG }}
+      BUILD_TAG: ${{ steps.build-and-output.outputs.BUILD_TAG }}
     env:
       PR_ID: ${{ github.event.pull_request.number }}
     steps:
