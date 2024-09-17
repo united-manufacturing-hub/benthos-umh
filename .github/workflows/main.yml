@@ -149,7 +149,7 @@ jobs:
       - name: Create multiarch manifests
         run: |
           # Get the list of base tags
-          TAGS="${{ needs.build-docker.outputs.output-tags.BASE_TAGS }}"
+          TAGS="${{ needs.build-docker.outputs.BASE_TAGS }}"
           echo "TAGS: $TAGS"
 
           # Split tags into an array using newlines as the delimiter
