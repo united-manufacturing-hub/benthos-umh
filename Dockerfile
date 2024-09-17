@@ -16,12 +16,6 @@ FROM management.umh.app/oci/library/golang:1.22 as build
 
 RUN useradd -u 10001 benthos
 
-RUN echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' \
-  | tee /etc/apt/sources.list.d/goreleaser.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends goreleaser=1.26.2 \
- && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /go/src/github.com/united-manufacturing-hub/benthos-umh
 
 COPY go.mod go.sum ./
@@ -31,9 +25,14 @@ COPY ./cmd ./cmd
 COPY ./opcua_plugin ./opcua_plugin
 COPY ./s7comm_plugin ./s7comm_plugin
 COPY ./modbus_plugin ./modbus_plugin
-COPY .goreleaser.yml .
-RUN echo 'project_name: app' >> .goreleaser.yml
-RUN goreleaser build --single-target --snapshot --id benthos --output ./main --timeout 45m
+
+ENV CGO_ENABLED=0
+RUN go build \
+    -ldflags "-s -w \
+    -X github.com/redpanda-data/benthos/v4/internal/cli.Version=${APP_VERSION} \
+    -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    -o benthos \
+    cmd/benthos/main.go
 
 FROM management.umh.app/oci/library/busybox as app
 
@@ -41,7 +40,7 @@ WORKDIR /
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /etc/passwd /etc/passwd
-COPY --from=build /go/src/github.com/united-manufacturing-hub/benthos-umh/main benthos
+COPY --from=build /go/src/github.com/united-manufacturing-hub/benthos-umh/benthos benthos
 COPY ./config/default.yaml /benthos.yaml
 COPY ./templates /templates
 COPY ./proto /proto
@@ -54,5 +53,5 @@ EXPOSE 4195
 
 USER benthos
 
-LABEL org.opencontainers.image.source https://github.com/united-manufacturing-hub/benthos-umh
+LABEL org.opencontainers.image.source=https://github.com/united-manufacturing-hub/benthos-umh
 
