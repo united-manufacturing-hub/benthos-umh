@@ -86,15 +86,16 @@ jobs:
           export GIT_TAG=$(git describe --tags --always)
           export DOCKER_FILE=./Dockerfile
           export PLATFORM=${{ matrix.architecture }}
+          export PLATFORM_SHORT=${{ matrix.architecture | replace('/', '-') }
 
           if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/master" ]]; then
-            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.component }}:master-$(subst /,-,$(PLATFORM))
+            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.component }}:master-${PLATFORM_SHORT}
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.component }}:pr-${{ github.event.pull_request.number }}-$(subst /,-,$(PLATFORM))
+            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.component }}:pr-${{ github.event.pull_request.number }}-${PLATFORM_SHORT}
           elif [[ "${{ github.event_name }}" == "merge_group" ]]; then
-            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.component }}:$(git rev-parse --abbrev-ref HEAD)-$(subst /,-,$(PLATFORM))
+            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.component }}:$(git rev-parse --abbrev-ref HEAD)-${PLATFORM_SHORT}
           elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == refs/tags/* ]]; then
-            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.component }}:${GIT_TAG}-$(subst /,-,$(PLATFORM))
+            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.component }}:${GIT_TAG}-${PLATFORM_SHORT}
           fi
 
           docker buildx build --platform linux/${PLATFORM} --provenance=false --progress=plain \
