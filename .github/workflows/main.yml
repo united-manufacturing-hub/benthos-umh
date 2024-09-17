@@ -38,6 +38,7 @@ jobs:
       group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || matrix.architecture == 'arm/v7' && 'arc-runners-small' || 'arc-runners' }}
     outputs:
       tags: ${{ steps.meta.outputs.tags }}
+      BASE_TAGS: ${{ steps.output-tags.outputs.BASE_TAGS }}
     env:
       PR_ID: ${{ github.event.pull_request.number }}
     steps:
@@ -94,8 +95,6 @@ jobs:
         with:
           images: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          flavor: |
-            suffix=-${{ steps.platform_short.outputs.PLATFORM_SHORT }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -109,12 +108,17 @@ jobs:
         with:
           push: true
           platforms: linux/${{ matrix.architecture }}
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ steps.meta.outputs.tags }}-${{ steps.platform_short.outputs.PLATFORM_SHORT }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             APP_VERSION=${{ steps.meta.outputs.version }}
           provenance: false
           file: ./Dockerfile
+
+      - name: Set Output Tags
+        id: output-tags
+        run: |
+          echo "BASE_TAGS=${{ steps.meta.outputs.tags }}" >> $GITHUB_OUTPUT
 
   create-manifests:
     needs: build-docker
@@ -142,18 +146,17 @@ jobs:
 
       - name: Create multiarch manifests
         run: |
-          # Get the list of tags
-          TAGS="${{ needs.build-docker.outputs.tags }}"
+          # Get the list of base tags
+          TAGS="${{ needs.build-docker.outputs.output-tags.BASE_TAGS }}"
           echo "TAGS: $TAGS"
+
           # Split tags into an array
           IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
-
 
           # Define architectures
           ARCHITECTURES=("amd64" "arm64" "arm/v7")
 
-
-          # Create manifests for each tag
+          # Create manifests for each base tag
           for TAG in "${TAG_ARRAY[@]}"; do
             echo "Processing tag $TAG"
             # Construct platform-specific tags
@@ -218,13 +221,13 @@ jobs:
           fi
 
           if [ "${{ matrix.goos }}" == "windows" ]; then
-            echo "FILE_EXTENSION=.exe" >> $GITHUB_ENV
+            FILE_EXTENSION=".exe"
           else
-            echo "FILE_EXTENSION=" >> $GITHUB_ENV
+            FILE_EXTENSION=""
           fi
 
-          echo "OUTPUT_NAME=benthos-${{ matrix.goos }}-${{ matrix.goarch }}$(FILE_EXTENSION)"
-          echo "OUTPUT_NAME=benthos-${{ matrix.goos }}-${{ matrix.goarch }}$(FILE_EXTENSION)" >> $GITHUB_ENV
+          echo "OUTPUT_NAME=benthos-${{ matrix.goos }}-${{ matrix.goarch }}${FILE_EXTENSION}"
+          echo "OUTPUT_NAME=benthos-${{ matrix.goos }}-${{ matrix.goarch }}${FILE_EXTENSION}" >> $GITHUB_ENV
       - name: Print working directory
         run: pwd
       - name: List files in working directory
