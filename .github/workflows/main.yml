@@ -111,11 +111,12 @@ jobs:
           echo "Original Tags: $TAGS"
           echo "Platform Suffix: $PLATFORM_SUFFIX"
 
-          # Split tags into an array
-          IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
+          # Replace newlines with commas
+          TAGS_CLEAN=$(echo "$TAGS" | tr '\n' ',' | sed 's/,$//')
+          echo "Cleaned Tags: $TAGS_CLEAN"
 
-          # Initialize an empty array for new tags
-          NEW_TAGS_ARRAY=()
+          # Split tags into an array
+          IFS=',' read -ra TAG_ARRAY <<< "$TAGS_CLEAN"
 
           # Append platform suffix to each tag
           for TAG in "${TAG_ARRAY[@]}"; do
