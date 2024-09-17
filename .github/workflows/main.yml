@@ -118,7 +118,9 @@ jobs:
       - name: Set Output Tags
         id: output-tags
         run: |
-          echo "BASE_TAGS=${{ steps.meta.outputs.tags }}" >> $GITHUB_OUTPUT
+          echo "BASE_TAGS<<EOF" >> $GITHUB_OUTPUT
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
   create-manifests:
     needs: build-docker
@@ -150,8 +152,8 @@ jobs:
           TAGS="${{ needs.build-docker.outputs.output-tags.BASE_TAGS }}"
           echo "TAGS: $TAGS"
 
-          # Split tags into an array
-          IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
+          # Split tags into an array using newlines as the delimiter
+          IFS=$'\n' read -d '' -r -a TAG_ARRAY <<< "$TAGS"
 
           # Define architectures
           ARCHITECTURES=("amd64" "arm64" "arm/v7")
