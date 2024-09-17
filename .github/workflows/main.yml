@@ -191,8 +191,8 @@ jobs:
             echo "FILE_EXTENSION=" >> $GITHUB_ENV
           fi
 
-          echo "OUTPUT_NAME=benthos-${{ matrix.goos }}-${{ matrix.goarch }}${{ env.FILE_EXTENSION }}"
-          echo "OUTPUT_NAME=benthos-${{ matrix.goos }}-${{ matrix.goarch }}${{ env.FILE_EXTENSION }}" >> $GITHUB_ENV
+          echo "OUTPUT_NAME=benthos-${{ matrix.goos }}-${{ matrix.goarch }}$(FILE_EXTENSION)"
+          echo "OUTPUT_NAME=benthos-${{ matrix.goos }}-${{ matrix.goarch }}$(FILE_EXTENSION)" >> $GITHUB_ENV
       - name: Print working directory
         run: pwd
       - name: List files in working directory
