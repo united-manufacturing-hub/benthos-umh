@@ -89,17 +89,17 @@ jobs:
           export PLATFORM_SHORT=${PLATFORM//\//-}
 
           if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/master" ]]; then
-            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:master-${PLATFORM_SHORT}
+            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:master
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}-${PLATFORM_SHORT}
+            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
           elif [[ "${{ github.event_name }}" == "merge_group" ]]; then
-            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(git rev-parse --abbrev-ref HEAD)-${PLATFORM_SHORT}
+            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(git rev-parse --abbrev-ref HEAD)
           elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == refs/tags/* ]]; then
-            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GIT_TAG}-${PLATFORM_SHORT}
+            export BUILD_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GIT_TAG}
           fi
 
           docker buildx build --platform linux/${PLATFORM} --provenance=false --progress=plain \
-            --build-arg APP_VERSION=${GIT_TAG} -t ${BUILD_TAG} -f ${DOCKER_FILE} --push .
+            --build-arg APP_VERSION=${GIT_TAG} -t ${BUILD_TAG}-${PLATFORM_SHORT} -f ${DOCKER_FILE} --push .
 
           echo "BUILD_TAG=${BUILD_TAG}" >> $GITHUB_OUTPUT
           echo "BUILD_TAG=${BUILD_TAG}"
