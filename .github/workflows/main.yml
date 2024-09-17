@@ -103,12 +103,40 @@ jobs:
             type=ref,event=pr
             type=sha
 
+      - name: Prepare tags with platform suffix
+        id: prepare_tags
+        run: |
+          TAGS="${{ steps.meta.outputs.tags }}"
+          PLATFORM_SUFFIX="-${{ steps.platform_short.outputs.PLATFORM_SHORT }}"
+          echo "Original Tags: $TAGS"
+          echo "Platform Suffix: $PLATFORM_SUFFIX"
+
+          # Split tags into an array
+          IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
+
+          # Initialize an empty array for new tags
+          NEW_TAGS_ARRAY=()
+
+          # Append platform suffix to each tag
+          for TAG in "${TAG_ARRAY[@]}"; do
+            TAG_WITH_SUFFIX="${TAG}${PLATFORM_SUFFIX}"
+            NEW_TAGS_ARRAY+=("$TAG_WITH_SUFFIX")
+          done
+
+          # Join the new tags into a comma-separated string
+          NEW_TAGS=$(IFS=','; echo "${NEW_TAGS_ARRAY[*]}")
+
+          echo "Tags with Platform Suffix: $NEW_TAGS"
+
+          # Set the output variable
+          echo "NEW_TAGS=$NEW_TAGS" >> $GITHUB_OUTPUT
+
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v4
         with:
           push: true
           platforms: linux/${{ matrix.architecture }}
-          tags: ${{ steps.meta.outputs.tags }}-${{ steps.platform_short.outputs.PLATFORM_SHORT }}
+          tags: ${{ steps.prepare_tags.outputs.NEW_TAGS }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             APP_VERSION=${{ steps.meta.outputs.version }}
