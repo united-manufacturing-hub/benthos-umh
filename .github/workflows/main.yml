@@ -186,12 +186,13 @@ jobs:
           fi
 
           if [ "${{ matrix.goos }}" == "windows" ]; then
-            echo "EXTENSION=.exe" >> $GITHUB_ENV
+            echo "FILE_EXTENSION=.exe" >> $GITHUB_ENV
           else
-            echo "EXTENSION=" >> $GITHUB_ENV
+            echo "FILE_EXTENSION=" >> $GITHUB_ENV
           fi
 
-          echo "OUTPUT_NAME=benthos-${{ matrix.goos }}-${{ matrix.goarch }}${{ env.EXTENSION }}" >> $GITHUB_ENV
+          echo "OUTPUT_NAME=benthos-${{ matrix.goos }}-${{ matrix.goarch }}${{ env.FILE_EXTENSION }}"
+          echo "OUTPUT_NAME=benthos-${{ matrix.goos }}-${{ matrix.goarch }}${{ env.FILE_EXTENSION }}" >> $GITHUB_ENV
       - name: Print working directory
         run: pwd
       - name: List files in working directory
