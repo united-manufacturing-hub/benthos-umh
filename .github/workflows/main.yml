@@ -193,7 +193,7 @@ jobs:
           mkdir -p ./dist
           # Replace this with your build command
           # Example for Go:
-          GOOS=${{ env.GOOS }} GOARCH=${{ env.GOARCH }} GOARM=${{ env.GOARM }} CGO_ENABLED=0 -ldflags "-s -w \
+          GOOS=${{ env.GOOS }} GOARCH=${{ env.GOARCH }} GOARM=${{ env.GOARM }} CGO_ENABLED=0 go build -ldflags "-s -w \
             -X github.com/redpanda-data/benthos/v4/internal/cli.Version=${APP_VERSION} \
             -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o ./dist/${{ env.OUTPUT_NAME }}
 
