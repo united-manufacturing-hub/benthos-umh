@@ -750,7 +750,7 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, 
 
 	// if the last heartbeat message was received more than 10 seconds ago, close the connection
 	// benthos will automatically reconnect
-	if g.UseHeartbeat && g.LastHeartbeatMessageReceived.Load() < uint32(time.Now().Unix()-10) {
+	if g.UseHeartbeat && g.LastHeartbeatMessageReceived.Load() < uint32(time.Now().Unix()-10) && g.LastHeartbeatMessageReceived.Load() != 0 {
 		if g.LastMessageReceived.Load() < uint32(time.Now().Unix()-10) {
 			g.Log.Error("No messages received (including heartbeat) for over 10 seconds. Closing connection.")
 			_ = g.Close(ctx)
