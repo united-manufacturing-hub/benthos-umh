@@ -1353,6 +1353,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		monitoredNodes := len(response.Results)
 		totalMonitored += monitoredNodes
 		g.Log.Infof("Successfully monitored %d nodes in current batch", monitoredNodes)
+		time.Sleep(time.Second * 3) // Sleep for some time to prevent overloading the server
 	}
 
 	g.Log.Infof("Monitoring completed. Total nodes monitored: %d/%d", totalMonitored, totalNodes)
