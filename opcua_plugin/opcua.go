@@ -1295,7 +1295,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 // This approach prevents the server from returning BadTcpMessageTooLarge by avoiding oversized monitoring requests.
 // It returns the total number of nodes that were successfully monitored or an error if monitoring fails.
 func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, error) {
-	const maxBatchSize = 500
+	const maxBatchSize = 100
 	totalMonitored := 0
 	totalNodes := len(nodes)
 
@@ -1359,7 +1359,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		monitoredNodes := len(response.Results)
 		totalMonitored += monitoredNodes
 		g.Log.Infof("Successfully monitored %d nodes in current batch", monitoredNodes)
-		time.Sleep(time.Second * 3) // Sleep for some time to prevent overloading the server
+		time.Sleep(time.Second) // Sleep for some time to prevent overloading the server
 	}
 
 	g.Log.Infof("Monitoring completed. Total nodes monitored: %d/%d", totalMonitored, totalNodes)
