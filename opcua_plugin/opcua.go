@@ -390,6 +390,7 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		DirectConnect:                directConnect,
 		UseHeartbeat:                 useHeartbeat,
 		LastHeartbeatMessageReceived: atomic.Uint32{},
+		LastMessageReceived:          atomic.Uint32{},
 		HeartbeatManualSubscribed:    false,
 		HeartbeatNodeId:              ua.NewNumericNodeID(0, 2258), // 2258 is the nodeID for CurrentTime, only in tests this is different
 	}
@@ -430,6 +431,7 @@ type OPCUAInput struct {
 	DirectConnect                bool
 	UseHeartbeat                 bool
 	LastHeartbeatMessageReceived atomic.Uint32
+	LastMessageReceived          atomic.Uint32
 	HeartbeatManualSubscribed    bool
 	HeartbeatNodeId              *ua.NodeID
 	Subscription                 *opcua.Subscription
@@ -738,9 +740,13 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, 
 	// if the last heartbeat message was received more than 10 seconds ago, close the connection
 	// benthos will automatically reconnect
 	if g.UseHeartbeat && g.LastHeartbeatMessageReceived.Load() < uint32(time.Now().Unix()-10) {
-		g.Log.Error("Did not receive a heartbeat message for more than 10 seconds. Closing the connection to prevent stale data.")
-		_ = g.Close(ctx)
-		return nil, nil, service.ErrNotConnected
+		if g.LastMessageReceived.Load() < uint32(time.Now().Unix()-10) {
+			g.Log.Error("No messages received (including heartbeat) for over 10 seconds. Closing connection.")
+			_ = g.Close(ctx)
+			return nil, nil, service.ErrNotConnected
+		} else {
+			g.Log.Warn("No heartbeat message (ServerTime) received for over 10 seconds. This can be normal for certain OPC UA servers (e.g., Prosys OPC UA Simulation). Other messages are being received; continuing operations.")
+		}
 	}
 
 	// If context deadline exceeded, print it as debug and ignore it. We don't want to show this to the user.
@@ -761,6 +767,10 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, 
 func (g *OPCUAInput) updateHeartbeatInMessageBatch(msgs service.MessageBatch) service.MessageBatch {
 	if !g.UseHeartbeat {
 		return msgs
+	}
+
+	if len(msgs) != 0 {
+		g.LastMessageReceived.Store(uint32(time.Now().Unix()))
 	}
 
 	idx := slices.IndexFunc(msgs, func(msg *service.Message) bool {
