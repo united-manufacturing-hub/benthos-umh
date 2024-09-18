@@ -651,7 +651,7 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 	for i, node := range g.NodeList {
 		value := resp.Results[i]
 		if value == nil || value.Value == nil {
-			g.Log.Warnf("Received nil in item structure on node %s. This can occur when subscribing to an OPC UA folder and may be ignored.", node.NodeID.String())
+			g.Log.Debugf("Received nil in item structure on node %s. This can occur when subscribing to an OPC UA folder and may be ignored.", node.NodeID.String())
 			continue
 		}
 		message := g.createMessageFromValue(value, node)
@@ -695,7 +695,7 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 		case *ua.DataChangeNotification:
 			for _, item := range x.MonitoredItems {
 				if item == nil || item.Value == nil || item.Value.Value == nil {
-					g.Log.Warnf("Received nil in item structure. This can occur when subscribing to an OPC UA folder and may be ignored.")
+					g.Log.Debugf("Received nil in item structure. This can occur when subscribing to an OPC UA folder and may be ignored.")
 					continue
 				}
 
@@ -1041,6 +1041,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	}
 
 	g.Log.Infof("Connected to %s", g.Endpoint)
+	g.Client = c
 
 	// Get OPC UA server information
 	serverInfo, err := g.GetOPCUAServerInformation(ctx)
@@ -1052,8 +1053,6 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	}
 
 	g.Log.Infof("Please note that browsing large node trees can take some time")
-
-	g.Client = c
 
 	// Browse and subscribe to the nodes if needed
 	if err := g.BrowseAndSubscribeIfNeeded(ctx); err != nil {
@@ -1139,7 +1138,7 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 	for i, node := range nodeList {
 		value := resp.Results[i]
 		if value == nil || value.Value == nil {
-			g.Log.Warnf("Received nil in item structure for OPC UA Server Information")
+			g.Log.Debugf("Received nil in item structure for OPC UA Server Information")
 		}
 
 		message := g.createMessageFromValue(value, node)
