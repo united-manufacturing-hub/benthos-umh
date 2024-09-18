@@ -20,6 +20,78 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
+var _ = Describe("Debugging test", func() {
+
+	var endpoint string
+
+	BeforeEach(func() {
+		endpoint = os.Getenv("TEST_DEBUG_ENDPOINT_URI")
+
+		// Check if environment variables are set
+		if endpoint == "" {
+			Skip("Skipping test: environment variables not set")
+			return
+		}
+
+	})
+
+	When("using a yaml and stream builder", func() {
+
+		It("should subscribe to all nodes and receive data", func() {
+
+			// Create a new stream builder
+			builder := service.NewStreamBuilder()
+
+			// Create a new stream
+			err := builder.AddInputYAML(fmt.Sprintf(`
+opcua:
+  endpoint: "%s"
+  username: ""
+  password: ""
+  subscribeEnabled: true
+  useHeartbeat: true
+  nodeIDs:
+    - i=84
+`, endpoint))
+
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.SetLoggerYAML(`level: off`)
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.SetTracerYAML(`type: none`)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Add a total message count consumer
+			var count int64
+			err = builder.AddConsumerFunc(func(c context.Context, m *service.Message) error {
+				atomic.AddInt64(&count, 1)
+				return err
+			})
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			timeout := time.Second * 45
+
+			// Run the stream
+			ctx, cncl := context.WithTimeout(context.Background(), timeout)
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Check if we received any messages continuously
+			Eventually(
+				func() int64 {
+					return atomic.LoadInt64(&count)
+				}, timeout).Should(BeNumerically(">", int64(0)))
+
+			cncl()
+
+		})
+	})
+})
+
 var _ = Describe("Test Against Prosys Simulator", func() {
 
 	var endpoint string
