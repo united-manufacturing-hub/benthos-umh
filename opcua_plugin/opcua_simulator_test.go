@@ -24,17 +24,56 @@ var _ = Describe("Test Against Prosys Simulator", func() {
 
 	var endpoint string
 
-	Describe("YAML Configuration", func() {
-		BeforeEach(func() {
-			endpoint = os.Getenv("TEST_PROSYS_ENDPOINT_URI")
+	BeforeEach(func() {
+		endpoint = os.Getenv("TEST_PROSYS_ENDPOINT_URI")
 
-			// Check if environment variables are set
-			if endpoint == "" {
-				Skip("Skipping test: environment variables not set")
-				return
+		// Check if environment variables are set
+		if endpoint == "" {
+			Skip("Skipping test: environment variables not set")
+			return
+		}
+
+	})
+
+	Describe("OPC UA Server Information", func() {
+
+		It("should connect to the server and retrieve server information", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+
+			var nodeIDStrings = []string{"ns=3;i=1003"}
+			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+			input := &OPCUAInput{
+				Endpoint:       endpoint,
+				Username:       "",
+				Password:       "",
+				NodeIDs:        parsedNodeIDs,
+				SecurityMode:   "None",
+				SecurityPolicy: "None",
 			}
 
+			// Attempt to connect
+			err := input.Connect(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			serverInformation, err := input.GetOPCUAServerInformation(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			GinkgoWriter.Printf("Server Information: \n")
+			GinkgoWriter.Printf("ManufacturerName: %s\n", serverInformation.ManufacturerName)
+			GinkgoWriter.Printf("ProductName: %s\n", serverInformation.ProductName)
+			GinkgoWriter.Printf("SoftwareVersion: %s\n", serverInformation.SoftwareVersion)
+
+			// Close connection
+			if input.Client != nil {
+				err = input.Close(ctx)
+				Expect(err).NotTo(HaveOccurred())
+			}
 		})
+	})
+
+	Describe("YAML Configuration", func() {
 
 		When("using a yaml and stream builder", func() {
 
@@ -67,7 +106,6 @@ opcua:
 				var count int64
 				err = builder.AddConsumerFunc(func(c context.Context, m *service.Message) error {
 					atomic.AddInt64(&count, 1)
-					GinkgoWriter.Printf("Received message: %+v\n", m)
 					return err
 				})
 
@@ -99,16 +137,6 @@ opcua:
 
 		var endpoint string
 
-		BeforeEach(func() {
-			endpoint = os.Getenv("TEST_PROSYS_ENDPOINT_URI")
-
-			// Check if environment variables are set
-			if endpoint == "" {
-				Skip("Skipping test: environment variables not set")
-				return
-			}
-
-		})
 		It("should read data correctly", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -153,20 +181,6 @@ opcua:
 
 	Describe("Secure (SignAndEncrypt/Basic256Sha256) Connect", func() {
 
-		var endpoint string
-
-		BeforeEach(func() {
-			Skip("Skipping test: prosys will reject all unknown certificates")
-
-			endpoint = os.Getenv("TEST_PROSYS_ENDPOINT_URI")
-
-			// Check if environment variables are set
-			if endpoint == "" {
-				Skip("Skipping test: environment variables not set")
-				return
-			}
-
-		})
 		It("should read data correctly", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
