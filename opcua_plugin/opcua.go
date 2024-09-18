@@ -1271,44 +1271,92 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			return err
 		}
 
-		monitoredRequests := make([]*ua.MonitoredItemCreateRequest, 0, len(nodeList))
-
-		for pos, nodeID := range nodeList {
-			miCreateRequest := opcua.NewMonitoredItemCreateRequestWithDefaults(nodeID.NodeID, ua.AttributeIDValue, uint32(pos))
-			monitoredRequests = append(monitoredRequests, miCreateRequest)
-		}
-
-		if len(nodeList) == 0 {
-			g.Log.Errorf("Did not subscribe to any nodes. This can happen if the nodes that are selected are incompatible with this benthos version. Aborting...")
-			return fmt.Errorf("no valid nodes selected")
-		}
-
-		res, err := g.Subscription.Monitor(ctx, ua.TimestampsToReturnBoth, monitoredRequests...)
+		monitoredNodes, err := g.MonitorBatched(ctx, nodeList)
 		if err != nil {
-			g.Log.Errorf("Monitoring failed: %v", err)
+			g.Log.Errorf("Monitoring failed: %s", err)
 			_ = g.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return err
 		}
-		if res == nil {
-			g.Log.Errorf("Expected res to not be nil, if there is no error")
-			_ = g.Close(ctx) // ensure that if something fails here, the connection is always safely closed
-			return fmt.Errorf("expected res to be not nil")
-		}
 
-		// Assuming you want to check the status code of each result
-		for _, result := range res.Results {
-			if !errors.Is(result.StatusCode, ua.StatusOK) {
-				g.Log.Errorf("Monitoring failed with status code: %v", result.StatusCode)
-				_ = g.Close(ctx) // ensure that if something fails here, the connection is always safely closed
-				return fmt.Errorf("monitoring failed for node, status code: %v", result.StatusCode)
-			}
-		}
-
-		g.Log.Infof("Subscribed to %d nodes!", len(res.Results))
+		g.Log.Infof("Subscribed to %d nodes!", monitoredNodes)
 
 	}
 
 	return nil
+}
+
+// MonitorBatched splits the nodes into manageable batches and starts monitoring them.
+// This approach prevents the server from returning BadTcpMessageTooLarge by avoiding oversized monitoring requests.
+// It returns the total number of nodes that were successfully monitored or an error if monitoring fails.
+func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, error) {
+	const maxBatchSize = 500
+	totalMonitored := 0
+	totalNodes := len(nodes)
+
+	if len(nodes) == 0 {
+		g.Log.Errorf("Did not subscribe to any nodes. This can happen if the nodes that are selected are incompatible with this benthos version. Aborting...")
+		return 0, fmt.Errorf("no valid nodes selected")
+	}
+
+	g.Log.Infof("Starting to monitor %d nodes in batches of %d", totalNodes, maxBatchSize)
+
+	for startIdx := 0; startIdx < totalNodes; startIdx += maxBatchSize {
+		endIdx := startIdx + maxBatchSize
+		if endIdx > totalNodes {
+			endIdx = totalNodes
+		}
+
+		batch := nodes[startIdx:endIdx]
+		g.Log.Infof("Creating monitor for nodes %d to %d", startIdx, endIdx-1)
+
+		monitoredRequests := make([]*ua.MonitoredItemCreateRequest, 0, len(batch))
+
+		for pos, nodeDef := range batch {
+			request := opcua.NewMonitoredItemCreateRequestWithDefaults(
+				nodeDef.NodeID,
+				ua.AttributeIDValue,
+				uint32(startIdx+pos),
+			)
+			monitoredRequests = append(monitoredRequests, request)
+		}
+
+		response, err := g.Subscription.Monitor(ctx, ua.TimestampsToReturnBoth, monitoredRequests...)
+		if err != nil {
+			g.Log.Errorf("Failed to monitor batch %d-%d: %v", startIdx, endIdx-1, err)
+			if closeErr := g.Close(ctx); closeErr != nil {
+				g.Log.Errorf("Failed to close OPC UA connection: %v", closeErr)
+			}
+			return totalMonitored, fmt.Errorf("monitoring failed for batch %d-%d: %w", startIdx, endIdx-1, err)
+		}
+
+		if response == nil {
+			g.Log.Error("Received nil response from Monitor call")
+			if closeErr := g.Close(ctx); closeErr != nil {
+				g.Log.Errorf("Failed to close OPC UA connection: %v", closeErr)
+			}
+			return totalMonitored, errors.New("received nil response from Monitor")
+		}
+
+		for i, result := range response.Results {
+			if !errors.Is(result.StatusCode, ua.StatusOK) {
+				failedNode := batch[i].NodeID.String()
+				g.Log.Errorf("Failed to monitor node %s: %v", failedNode, result.StatusCode)
+				// Depending on requirements, you might choose to continue monitoring other nodes
+				// instead of aborting. Here, we abort on the first failure.
+				if closeErr := g.Close(ctx); closeErr != nil {
+					g.Log.Errorf("Failed to close OPC UA connection: %v", closeErr)
+				}
+				return totalMonitored, fmt.Errorf("monitoring failed for node %s: %v", failedNode, result.StatusCode)
+			}
+		}
+
+		monitoredNodes := len(response.Results)
+		totalMonitored += monitoredNodes
+		g.Log.Infof("Successfully monitored %d nodes in current batch", monitoredNodes)
+	}
+
+	g.Log.Infof("Monitoring completed. Total nodes monitored: %d/%d", totalMonitored, totalNodes)
+	return totalMonitored, nil
 }
 
 func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescription, selectedAuthentication ua.UserTokenType) (opts []opcua.Option, err error) {
@@ -1360,6 +1408,10 @@ func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescript
 	//opts = append(opts, opcua.ApplicationURI("urn:benthos-umh"))
 	//opts = append(opts, opcua.ProductURI("urn:benthos-umh"))
 
+	// Fine-Tune Buffer
+	//opts = append(opts, opcua.MaxMessageSize(2*1024*1024))    // 2MB
+	//opts = append(opts, opcua.ReceiveBufferSize(2*1024*1024)) // 2MB
+	//opts = append(opts, opcua.SendBufferSize(2*1024*1024))    // 2MB
 	return opts, nil
 }
 
