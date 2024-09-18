@@ -7,6 +7,7 @@ import (
 	"github.com/gopcua/opcua/ua"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	. "github.com/united-manufacturing-hub/benthos-umh/v2/opcua_plugin"
@@ -14,10 +15,85 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	_ "github.com/redpanda-data/benthos/v4/public/components/io"
+	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 var _ = Describe("Test Against Prosys Simulator", func() {
+
+	var endpoint string
+
+	Describe("YAML Configuration", func() {
+		BeforeEach(func() {
+			endpoint = os.Getenv("TEST_PROSYS_ENDPOINT_URI")
+
+			// Check if environment variables are set
+			if endpoint == "" {
+				Skip("Skipping test: environment variables not set")
+				return
+			}
+
+		})
+
+		When("using a yaml and stream builder", func() {
+
+			It("should subscribe to all nodes and receive data", func() {
+
+				// Create a new stream builder
+				builder := service.NewStreamBuilder()
+
+				// Create a new stream
+				err := builder.AddInputYAML(fmt.Sprintf(`
+opcua:
+  endpoint: "%s"
+  username: ""
+  password: ""
+  subscribeEnabled: true
+  useHeartbeat: true
+  nodeIDs:
+    - i=84
+`, endpoint))
+
+				Expect(err).NotTo(HaveOccurred())
+
+				err = builder.SetLoggerYAML(`level: off`)
+				Expect(err).NotTo(HaveOccurred())
+
+				err = builder.SetTracerYAML(`type: none`)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Add a total message count consumer
+				var count int64
+				err = builder.AddConsumerFunc(func(c context.Context, m *service.Message) error {
+					atomic.AddInt64(&count, 1)
+					GinkgoWriter.Printf("Received message: %+v\n", m)
+					return err
+				})
+
+				stream, err := builder.Build()
+				Expect(err).NotTo(HaveOccurred())
+
+				timeout := time.Second * 120
+
+				// Run the stream
+				ctx, cncl := context.WithTimeout(context.Background(), timeout)
+				go func() {
+					_ = stream.Run(ctx)
+				}()
+
+				// Check if we received any messages continuously
+				Eventually(
+					func() int64 {
+						return atomic.LoadInt64(&count)
+					}, timeout).Should(BeNumerically(">", int64(0)))
+
+				cncl()
+
+			})
+		})
+
+	})
 
 	Describe("Insecure (None/None) Connect", func() {
 
@@ -69,7 +145,7 @@ var _ = Describe("Test Against Prosys Simulator", func() {
 
 			// Close connection
 			if input.Client != nil {
-				err = input.Client.Close(ctx)
+				err = input.Close(ctx)
 				Expect(err).NotTo(HaveOccurred())
 			}
 		})
@@ -127,7 +203,7 @@ var _ = Describe("Test Against Prosys Simulator", func() {
 
 			// Close connection
 			if input.Client != nil {
-				err = input.Client.Close(ctx)
+				err = input.Close(ctx)
 				Expect(err).NotTo(HaveOccurred())
 			}
 		})
@@ -152,7 +228,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			var nodeIDStrings []string = []string{"ns=3;s=Basic"}
+			var nodeIDStrings = []string{"ns=3;s=Basic"}
 
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -175,7 +251,8 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 			// Close connection
 			if input.Client != nil {
-				input.Client.Close(ctx)
+				err = input.Close(ctx)
+				Expect(err).NotTo(HaveOccurred())
 			}
 		})
 	})
@@ -200,7 +277,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					err := input.Client.Close(ctx)
+					err := input.Close(ctx)
 					Expect(err).NotTo(HaveOccurred())
 				}
 			})
@@ -224,7 +301,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					err := input.Client.Close(ctx)
+					err := input.Close(ctx)
 					Expect(err).NotTo(HaveOccurred())
 				}
 			})
@@ -271,7 +348,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					err := input.Client.Close(ctx)
+					err := input.Close(ctx)
 					Expect(err).NotTo(HaveOccurred())
 				}
 			})
@@ -310,7 +387,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					err := input.Client.Close(ctx)
+					err := input.Close(ctx)
 					Expect(err).NotTo(HaveOccurred())
 				}
 			})
@@ -363,7 +440,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					err := input.Client.Close(ctx)
+					err := input.Close(ctx)
 					Expect(err).NotTo(HaveOccurred())
 				}
 			})
@@ -396,7 +473,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					err = input.Client.Close(ctx)
+					err = input.Close(ctx)
 					Expect(err).NotTo(HaveOccurred())
 				}
 			})
@@ -467,7 +544,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					err := input.Client.Close(ctx)
+					err := input.Close(ctx)
 					Expect(err).NotTo(HaveOccurred())
 				}
 			})
@@ -515,7 +592,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					err = input.Client.Close(ctx)
+					err = input.Close(ctx)
 					Expect(err).NotTo(HaveOccurred())
 				}
 			})
@@ -555,7 +632,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					err = input.Client.Close(ctx)
+					err = input.Close(ctx)
 					Expect(err).NotTo(HaveOccurred())
 				}
 			})
@@ -652,7 +729,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					err = input.Client.Close(ctx)
+					err = input.Close(ctx)
 					Expect(err).NotTo(HaveOccurred())
 				}
 			})
@@ -685,7 +762,8 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					input.Client.Close(ctx)
+					err = input.Close(ctx)
+					Expect(err).NotTo(HaveOccurred())
 				}
 			})
 		})
@@ -719,7 +797,8 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					input.Client.Close(ctx)
+					err = input.Close(ctx)
+					Expect(err).NotTo(HaveOccurred())
 				}
 			})
 		})
@@ -753,7 +832,8 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					input.Client.Close(ctx)
+					err = input.Close(ctx)
+					Expect(err).NotTo(HaveOccurred())
 				}
 			})
 		})
@@ -785,7 +865,8 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					input.Client.Close(ctx)
+					err = input.Close(ctx)
+					Expect(err).NotTo(HaveOccurred())
 				}
 			})
 		})
@@ -817,7 +898,8 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					input.Client.Close(ctx)
+					err = input.Close(ctx)
+					Expect(err).NotTo(HaveOccurred())
 				}
 			})
 		})
@@ -849,7 +931,8 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					input.Client.Close(ctx)
+					err = input.Close(ctx)
+					Expect(err).NotTo(HaveOccurred())
 				}
 			})
 		})
@@ -881,7 +964,8 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					input.Client.Close(ctx)
+					err = input.Close(ctx)
+					Expect(err).NotTo(HaveOccurred())
 				}
 			})
 		})
@@ -913,7 +997,8 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					input.Client.Close(ctx)
+					err = input.Close(ctx)
+					Expect(err).NotTo(HaveOccurred())
 				}
 			})
 		})
@@ -945,7 +1030,8 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 				// Close connection
 				if input.Client != nil {
-					input.Client.Close(ctx)
+					err = input.Close(ctx)
+					Expect(err).NotTo(HaveOccurred())
 				}
 			})
 		})
@@ -957,7 +1043,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			var nodeIDStrings []string = []string{"ns=3;s=OpcPlc"}
+			var nodeIDStrings = []string{"ns=3;s=OpcPlc"}
 
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -1003,7 +1089,8 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 			// Close connection
 			if input.Client != nil {
-				input.Client.Close(ctx)
+				err = input.Close(ctx)
+				Expect(err).NotTo(HaveOccurred())
 			}
 		})
 	})
@@ -1048,7 +1135,8 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 			if input.Client != nil {
 				ctxEnd, cancelEnd := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancelEnd()
-				input.Client.Close(ctxEnd)
+				err = input.Close(ctxEnd)
+				Expect(err).NotTo(HaveOccurred())
 			}
 		})
 	})
@@ -1058,7 +1146,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			nodeIDStrings := []string{}
+			var nodeIDStrings []string
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
@@ -1082,7 +1170,8 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 			// Close connection
 			if input.Client != nil {
-				input.Client.Close(ctx)
+				err = input.Close(ctx)
+				Expect(err).NotTo(HaveOccurred())
 			}
 		})
 
@@ -1114,7 +1203,8 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 			// Close connection
 			if input.Client != nil {
-				input.Client.Close(ctx)
+				err = input.Close(ctx)
+				Expect(err).NotTo(HaveOccurred())
 			}
 		})
 
@@ -1122,7 +1212,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			nodeIDStrings := []string{}
+			var nodeIDStrings []string
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
@@ -1160,13 +1250,14 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 			// Close connection
 			if input.Client != nil {
-				input.Client.Close(ctx)
+				err = input.Close(ctx)
+				Expect(err).NotTo(HaveOccurred())
 			}
 		})
 
 		It("does disconnect if the heartbeat does not come in regular intervals", func() {
 
-			nodeIDStrings := []string{}
+			var nodeIDStrings []string
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
@@ -1213,7 +1304,8 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 			if input.Client != nil {
 				ctx6, cancel6 := context.WithTimeout(context.Background(), 3*time.Second)
 				defer cancel6()
-				input.Client.Close(ctx6)
+				err = input.Close(ctx6)
+				Expect(err).NotTo(HaveOccurred())
 			}
 		})
 	})
@@ -1248,7 +1340,8 @@ var _ = Describe("Test Against Softing OPC DataFeed", Serial, func() {
 
 			// Close connection
 			if input.Client != nil {
-				input.Client.Close(ctx)
+				err = input.Close(ctx)
+				Expect(err).NotTo(HaveOccurred())
 			}
 		})
 	})
@@ -1299,7 +1392,8 @@ var _ = Describe("Test Against Softing OPC DataFeed", Serial, func() {
 			if input.Client != nil {
 				ctxEnd, cancelEnd := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancelEnd()
-				input.Client.Close(ctxEnd)
+				err = input.Close(ctxEnd)
+				Expect(err).NotTo(HaveOccurred())
 			}
 		})
 	})

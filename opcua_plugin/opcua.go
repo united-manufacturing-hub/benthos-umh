@@ -26,6 +26,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -64,20 +65,24 @@ func sanitize(s string) string {
 	return re.ReplaceAllString(s, "_")
 }
 
-func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *service.Logger, parentNodeId string) ([]NodeDef, error) {
+func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *service.Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	logger.Debugf("node:%s path:%q level:%d parentNodeId:%s\n", n, path, level, parentNodeId)
 	if level > 10 {
-		return nil, nil
+		return
 	}
 
 	attrs, err := n.Attributes(ctx, ua.AttributeIDNodeClass, ua.AttributeIDBrowseName, ua.AttributeIDDescription, ua.AttributeIDAccessLevel, ua.AttributeIDDataType)
 	if err != nil {
-		return nil, err
+		errChan <- err
+		return
 	}
 
 	browseName, err := n.BrowseName(ctx)
 	if err != nil {
-		return nil, err
+		errChan <- err
+		return
 	}
 
 	var newPath string
@@ -95,27 +100,31 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	switch err := attrs[0].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[0].Value == nil {
-			return nil, errors.New("node class is nil")
+			errChan <- errors.New("node class is nil")
+			return
 		} else {
 			def.NodeClass = ua.NodeClass(attrs[0].Value.Int())
 		}
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
-		return nil, nil
+		return
 	default:
-		return nil, err
+		errChan <- err
+		return
 	}
 
 	switch err := attrs[1].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[1].Value == nil {
-			return nil, errors.New("browse name is nil")
+			errChan <- errors.New("browse name is nil")
+			return
 		} else {
 			def.BrowseName = attrs[1].Value.String()
 		}
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
-		return nil, nil
+		return
 	default:
-		return nil, err
+		errChan <- err
+		return
 	}
 
 	switch err := attrs[2].Status; {
@@ -128,30 +137,34 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
 		// ignore
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
-		return nil, nil
+		return
 	default:
-		return nil, err
+		errChan <- err
+		return
 	}
 
 	switch err := attrs[3].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[3].Value == nil {
-			return nil, errors.New("access level is nil")
+			errChan <- errors.New("access level is nil")
+			return
 		} else {
 			def.AccessLevel = ua.AccessLevelType(attrs[3].Value.Int())
 		}
 	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
 		// ignore
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
-		return nil, nil
+		return
 	default:
-		return nil, err
+		errChan <- err
+		return
 	}
 
 	switch err := attrs[4].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[4].Value == nil {
-			return nil, errors.New("data type is nil")
+			errChan <- errors.New("data type is nil")
+			return
 		} else {
 			switch v := attrs[4].Value.NodeID().IntID(); v {
 			case id.DateTime:
@@ -186,15 +199,14 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
 		// ignore
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
-		return nil, nil
+		return
 	default:
-		return nil, err
+		errChan <- err
+		return
 	}
 
 	logger.Debugf("%d: def.Path:%s def.NodeClass:%s\n", level, def.Path, def.NodeClass)
 	def.ParentNodeID = parentNodeId
-
-	var nodes []NodeDef
 
 	hasNodeReferencedComponents := func() bool {
 		refs, err := n.ReferencedNodes(ctx, id.HasComponent, ua.BrowseDirectionForward, ua.NodeClassAll, true)
@@ -211,11 +223,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		}
 		logger.Debugf("found %d child refs\n", len(refs))
 		for _, rn := range refs {
-			children, err := browse(ctx, rn, def.Path, level+1, logger, parentNodeId)
-			if err != nil {
-				return errors.Errorf("browse children: %s", err)
-			}
-			nodes = append(nodes, children...)
+			wg.Add(1)
+			go browse(ctx, rn, def.Path, level+1, logger, parentNodeId, nodeChan, errChan, wg)
 		}
 		return nil
 	}
@@ -227,14 +236,15 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 
 		if hasNodeReferencedComponents() {
 			if err := browseChildren(id.HasComponent); err != nil {
-				return nil, err
+				errChan <- err
+				return
 			}
-			return nodes, nil
+			return
 		}
 
 		def.Path = join(path, def.BrowseName)
-		nodes = append(nodes, def)
-		return nodes, nil
+		nodeChan <- def
+		return
 	}
 
 	// If a node has an Object class, it probably means that it is a folder
@@ -244,16 +254,20 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		// Add here all references that should be checked
 
 		if err := browseChildren(id.HasComponent); err != nil {
-			return nil, err
+			errChan <- err
+			return
 		}
 		if err := browseChildren(id.Organizes); err != nil {
-			return nil, err
+			errChan <- err
+			return
 		}
 		if err := browseChildren(id.FolderType); err != nil {
-			return nil, err
+			errChan <- err
+			return
 		}
 		if err := browseChildren(id.HasNotifier); err != nil {
-			return nil, err
+			errChan <- err
+			return
 		}
 		// For hasProperty it makes sense to show it very close to the tag itself, e.g., use the tagName as tagGroup and then the properties as subparts of it
 		/*
@@ -262,7 +276,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 			}
 		*/
 	}
-	return nodes, nil
+	return
 }
 
 //------------------------------------------------------------------------------
@@ -380,8 +394,6 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		HeartbeatNodeId:              ua.NewNumericNodeID(0, 2258), // 2258 is the nodeID for CurrentTime, only in tests this is different
 	}
 
-	m.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
-
 	return service.AutoRetryNacksBatched(m), nil
 }
 
@@ -420,6 +432,7 @@ type OPCUAInput struct {
 	LastHeartbeatMessageReceived atomic.Uint32
 	HeartbeatManualSubscribed    bool
 	HeartbeatNodeId              *ua.NodeID
+	Subscription                 *opcua.Subscription
 }
 
 // UpdateNodePaths updates the node paths to use the nodeID instead of the browseName
@@ -592,28 +605,22 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 		// if the error is StatusBadSessionIDInvalid, the session has been closed, and we need to reconnect.
 		switch {
 		case errors.Is(err, ua.StatusBadSessionIDInvalid):
-			_ = g.Client.Close(ctx)
-			g.Client = nil
+			_ = g.Close(ctx)
 			return nil, nil, service.ErrNotConnected
 		case errors.Is(err, ua.StatusBadCommunicationError):
-			_ = g.Client.Close(ctx)
-			g.Client = nil
+			_ = g.Close(ctx)
 			return nil, nil, service.ErrNotConnected
 		case errors.Is(err, ua.StatusBadConnectionClosed):
-			_ = g.Client.Close(ctx)
-			g.Client = nil
+			_ = g.Close(ctx)
 			return nil, nil, service.ErrNotConnected
 		case errors.Is(err, ua.StatusBadTimeout):
-			_ = g.Client.Close(ctx)
-			g.Client = nil
+			_ = g.Close(ctx)
 			return nil, nil, service.ErrNotConnected
 		case errors.Is(err, ua.StatusBadConnectionRejected):
-			_ = g.Client.Close(ctx)
-			g.Client = nil
+			_ = g.Close(ctx)
 			return nil, nil, service.ErrNotConnected
 		case errors.Is(err, ua.StatusBadServerNotConnected):
-			_ = g.Client.Close(ctx)
-			g.Client = nil
+			_ = g.Close(ctx)
 			return nil, nil, service.ErrNotConnected
 		}
 
@@ -786,10 +793,20 @@ func (g *OPCUAInput) updateHeartbeatInMessageBatch(msgs service.MessageBatch) se
 func (g *OPCUAInput) Close(ctx context.Context) error {
 	g.Log.Errorf("Closing OPC UA client...")
 	if g.Client != nil {
+		// Unsubscribe from the subscription
+		if g.SubscribeEnabled && g.Subscription != nil {
+			g.Log.Infof("Unsubscribing from subscription...")
+			if err := g.Subscription.Cancel(ctx); err != nil {
+				g.Log.Errorf("Failed to unsubscribe from subscription: %v", err)
+			}
+			g.Subscription = nil
+		}
+
 		_ = g.Client.Close(ctx)
 		g.Client = nil
 	}
 	g.Log.Infof("OPC UA client closed!")
+
 	return nil
 }
 
@@ -902,7 +919,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 		// Connect to the selected endpoint
 		if err := c.Connect(ctx); err != nil {
-			_ = c.Close(ctx)
+			_ = g.Close(ctx)
 			g.Log.Errorf("Failed to connect: %v", err)
 			return err
 		}
@@ -933,7 +950,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 		// Connect to the selected endpoint
 		if err := c.Connect(ctx); err != nil {
-			_ = c.Close(ctx)
+			_ = g.Close(ctx)
 			g.Log.Errorf("Failed to connect: %v", err)
 			return err
 		}
@@ -963,7 +980,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 			// If connection fails, then continue to the next endpoint
 			// Connect to the selected endpoint
 			if err := c.Connect(ctx); err != nil {
-				_ = c.Close(ctx)
+				_ = g.Close(ctx)
 
 				g.Log.Infof("Failed to connect" + err.Error())
 
@@ -1008,6 +1025,8 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		return err
 	}
 
+	// Set the heartbeat after browsing, as browsing might take some time
+	g.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
 	return nil
 }
 
@@ -1016,27 +1035,46 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 	// Create a slice to store the detected nodes
 	nodeList := make([]NodeDef, 0)
 
-	// Print all nodeIDs that are being browsed
+	// Create a channel to store the detected nodes
+	nodeChan := make(chan NodeDef, 100_000)
+
+	// Create a WaitGroup to synchronize goroutines
+	var wg sync.WaitGroup
+
+	// For collecting errors from goroutines
+	errChan := make(chan error, len(g.NodeIDs))
+
+	// Start goroutines for each nodeID
 	for _, nodeID := range g.NodeIDs {
 		if nodeID == nil {
 			continue
 		}
 
-		// Print id
+		// Log the nodeID being browsed
 		g.Log.Debugf("Browsing nodeID: %s", nodeID.String())
 
-		// Browse the OPC-UA server's node tree and print the results.
-		nodes, err := browse(ctx, g.Client.Node(nodeID), "", 0, g.Log, nodeID.String())
-		if err != nil {
-			g.Log.Errorf("Browsing failed: %s", err)
-			_ = g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
-			return err
-		}
+		// Start a goroutine for browsing
+		wg.Add(1)
+		go browse(ctx, g.Client.Node(nodeID), "", 0, g.Log, nodeID.String(), nodeChan, errChan, &wg)
+	}
 
-		UpdateNodePaths(nodes)
+	// close nodeChan and errChan once all browsing is done
+	wg.Wait()
+	close(nodeChan)
+	close(errChan)
 
-		// Add the nodes to the nodeList
-		nodeList = append(nodeList, nodes...)
+	// Read nodes from nodeChan and process them
+	for node := range nodeChan {
+		// Add the node to nodeList
+		nodeList = append(nodeList, node)
+	}
+
+	UpdateNodePaths(nodeList)
+
+	// Check for any errors collected during browsing
+	if len(errChan) > 0 {
+		// Return the first error encountered
+		return <-errChan
 	}
 
 	// Now add i=2258 to the nodeList, which is the CurrentTime node, which is used for heartbeats
@@ -1056,24 +1094,31 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 		if !g.HeartbeatManualSubscribed {
 			heartbeatNodeID := g.HeartbeatNodeId
 
-			nodes, err := browse(ctx, g.Client.Node(heartbeatNodeID), "", 0, g.Log, heartbeatNodeID.String())
-			if err != nil {
-				g.Log.Errorf("Browsing failed: %s", err)
-				_ = g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
-				return err
+			// Copied and pasted from above, just for one node
+			nodeHeartbeatChan := make(chan NodeDef, 1)
+			var wgHeartbeat sync.WaitGroup
+			errChanHeartbeat := make(chan error, 1)
+
+			wgHeartbeat.Add(1)
+			go browse(ctx, g.Client.Node(heartbeatNodeID), "", 0, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat)
+
+			wgHeartbeat.Wait()
+			close(nodeHeartbeatChan)
+			close(errChanHeartbeat)
+			for node := range nodeHeartbeatChan {
+				nodeList = append(nodeList, node)
 			}
-
-			UpdateNodePaths(nodes)
-
-			// Add the nodes to the nodeList
-			nodeList = append(nodeList, nodes...)
+			UpdateNodePaths(nodeList)
+			if len(errChanHeartbeat) > 0 {
+				return <-errChanHeartbeat
+			}
 		}
 	}
 
 	b, err := json.Marshal(nodeList)
 	if err != nil {
 		g.Log.Errorf("Unmarshalling failed: %s", err)
-		_ = g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+		_ = g.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 		return err
 	}
 
@@ -1085,14 +1130,14 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 	if g.SubscribeEnabled {
 		g.Log.Infof("Subscription is enabled, therefore start subscribing to the selected notes...")
 
-		g.SubNotifyChan = make(chan *opcua.PublishNotificationData, 100)
+		g.SubNotifyChan = make(chan *opcua.PublishNotificationData, 10000)
 
-		sub, err := g.Client.Subscribe(ctx, &opcua.SubscriptionParameters{
+		g.Subscription, err = g.Client.Subscribe(ctx, &opcua.SubscriptionParameters{
 			Interval: opcua.DefaultSubscriptionInterval,
 		}, g.SubNotifyChan)
 		if err != nil {
 			g.Log.Errorf("Subscribing failed: %s", err)
-			_ = g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+			_ = g.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return err
 		}
 
@@ -1108,15 +1153,15 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			return fmt.Errorf("no valid nodes selected")
 		}
 
-		res, err := sub.Monitor(ctx, ua.TimestampsToReturnBoth, monitoredRequests...)
+		res, err := g.Subscription.Monitor(ctx, ua.TimestampsToReturnBoth, monitoredRequests...)
 		if err != nil {
 			g.Log.Errorf("Monitoring failed: %v", err)
-			_ = g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+			_ = g.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return err
 		}
 		if res == nil {
 			g.Log.Errorf("Expected res to not be nil, if there is no error")
-			_ = g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+			_ = g.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return fmt.Errorf("expected res to be not nil")
 		}
 
@@ -1124,7 +1169,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 		for _, result := range res.Results {
 			if !errors.Is(result.StatusCode, ua.StatusOK) {
 				g.Log.Errorf("Monitoring failed with status code: %v", result.StatusCode)
-				_ = g.Client.Close(ctx) // ensure that if something fails here, the connection is always safely closed
+				_ = g.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 				return fmt.Errorf("monitoring failed for node, status code: %v", result.StatusCode)
 			}
 		}
