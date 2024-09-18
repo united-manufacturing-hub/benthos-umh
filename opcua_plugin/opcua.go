@@ -1052,15 +1052,23 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		g.ServerInfo = serverInfo
 	}
 
-	g.Log.Infof("Please note that browsing large node trees can take some time")
-
 	// Browse and subscribe to the nodes if needed
-	if err := g.BrowseAndSubscribeIfNeeded(ctx); err != nil {
-		return err
+	// Do this asynchronously so that the first messages can already arrive
+	go func() {
+		g.Log.Infof("Please note that browsing large node trees can take some time")
+		if err := g.BrowseAndSubscribeIfNeeded(ctx); err != nil {
+			g.Log.Errorf("Failed to subscribe: %v", err)
+			_ = g.Close(ctx)
+		}
+		// Set the heartbeat after browsing, as browsing might take some time
+		g.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
+	}()
+
+	// Create a subscription channel if needed
+	if g.SubscribeEnabled {
+		g.SubNotifyChan = make(chan *opcua.PublishNotificationData, 10000)
 	}
 
-	// Set the heartbeat after browsing, as browsing might take some time
-	g.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
 	return nil
 }
 
@@ -1259,8 +1267,6 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 	// If subscription is enabled, start subscribing to the nodes
 	if g.SubscribeEnabled {
 		g.Log.Infof("Subscription is enabled, therefore start subscribing to the selected notes...")
-
-		g.SubNotifyChan = make(chan *opcua.PublishNotificationData, 10000)
 
 		g.Subscription, err = g.Client.Subscribe(ctx, &opcua.SubscriptionParameters{
 			Interval: opcua.DefaultSubscriptionInterval,
