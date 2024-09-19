@@ -5,6 +5,22 @@ go 1.23
 // to compile it on go 1.23
 replace github.com/parquet-go/parquet-go => github.com/parquet-go/parquet-go v0.23.0
 
+// Set the GODEBUG environment variable to allow parsing of certificates with negative serial numbers.
+// This is necessary for backwards compatibility with some OPC UA servers (e.g., Kepware) that may issue
+// certificates containing negative serial numbers.
+//
+// Background:
+// - Prior to Go 1.23, the x509.ParseCertificate function accepted certificates with negative serial numbers.
+// - Starting with Go 1.23, the default behavior of x509.ParseCertificate was changed to reject certificates
+//   with negative serial numbers to comply with RFC 5280, which mandates that serial numbers must be positive.
+//
+// Solution:
+// - To restore the pre-Go 1.23 behavior and allow parsing of certificates with negative serial numbers,
+//   set the "x509negativeserial=1" flag in the GODEBUG environment variable.
+godebug (
+	x509negativeserial=1
+)
+
 require (
 	github.com/RuneRoven/benthosADS v1.0.4
 	github.com/RuneRoven/benthosAlarm v1.0.0
