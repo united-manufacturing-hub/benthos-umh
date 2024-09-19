@@ -42,7 +42,13 @@ func GenerateCert(host string, rsaBits int, validFor time.Duration) (certPEM, ke
 	notBefore := time.Now()
 	notAfter := notBefore.Add(validFor)
 
-	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	// Use 127 bits instead of 128 to ensure the serial number is always positive.
+	// In ASN.1 DER encoding (used by X.509), integers are signed. If the most significant bit (MSB)
+	// is set (i.e., 1), the integer is interpreted as negative. By limiting the serial number
+	// to 127 bits, we guarantee that the MSB is 0, ensuring the serial number remains positive
+	// and complies with RFC 5280 requirements, thereby preventing parsing errors like
+	// "x509: negative serial number".
+	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 127)
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate serial number: %s", err)
