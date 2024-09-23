@@ -175,7 +175,11 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	switch err := attrs[4].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[4].Value == nil {
-			errChan <- errors.New("data type is nil")
+			// This is not an error, it can happen for some OPC UA servers...
+			// in oru case it is the amine amaach opcua simulator
+			// if the data type is nil, we simpy ignore it
+			// errChan <- errors.New("data type is nil")
+			logger.Debugf("ignoring node: %s as its datatype is nil...\n", path)
 			return
 		} else {
 			switch v := attrs[4].Value.NodeID().IntID(); v {
