@@ -305,6 +305,10 @@ func (g *OPCUAInput) closeRaw(ctx context.Context) {
 		g.Client = nil
 	}
 
+	// Reset the heartbeat
+	g.LastHeartbeatMessageReceived.Store(uint32(0))
+	g.LastMessageReceived.Store(uint32(0))
+
 	return
 }
 
