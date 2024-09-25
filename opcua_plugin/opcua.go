@@ -190,15 +190,11 @@ type OPCUAInput struct {
 // settings first and iterates through available endpoints and security combinations
 // if necessary. Upon successful connection, it retrieves server information
 // and initiates browsing and subscription of nodes.
-func (g *OPCUAInput) Connect(ctx context.Context) error {
+func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 
 	if g.Client != nil {
 		return nil
 	}
-
-	var c *opcua.Client
-	var endpoints []*ua.EndpointDescription
-	var err error
 
 	defer func() {
 		if err != nil {
@@ -207,165 +203,12 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		}
 	}()
 
-	// Step 1: Retrieve all available endpoints from the OPC UA server
-	// Iterate through DiscoveryURLs until we receive a list of all working endpoints including their potential security modes, etc.
-
-	endpoints, err = g.FetchAllEndpoints(ctx)
+	err = g.connect(ctx)
 	if err != nil {
-		g.Log.Infof("Failed to fetch any endpoint: %s", err)
-		g.Log.Infof("Trying to connect to the endpoint as a last resort measure")
-	} else {
-		g.Log.Infof("Fetched %d endpoints", len(endpoints))
-		// Step 2 (optional): Log details of each discovered endpoint for debugging
-		g.LogEndpoints(endpoints)
-	}
-
-	// Step 3: Determine the authentication method to use.
-	// Default to Anonymous if neither username nor password is provided.
-	selectedAuthentication := ua.UserTokenTypeAnonymous
-	if g.Username != "" && g.Password != "" {
-		// Use UsernamePassword authentication if both username and password are available.
-		selectedAuthentication = ua.UserTokenTypeUserName
-	}
-
-	// Step 4: Check if the user has specified a very concrete endpoint, security policy, and security mode
-	// Connect to this endpoint directly
-	// If connection fails, then return an error
-	if g.DirectConnect || len(endpoints) == 0 {
-		g.Log.Infof("Directly connecting to the endpoint %s", g.Endpoint)
-
-		// Create a new endpoint description
-		// It will never be used directly by the OPC UA library, but we need it for our internal helper functions
-		// such as GetOPCUAClientOptions
-		securityMode := ua.MessageSecurityModeNone
-		if g.SecurityMode != "" {
-			securityMode = ua.MessageSecurityModeFromString(g.SecurityMode)
-		}
-
-		securityPolicyURI := ua.SecurityPolicyURINone
-		if g.SecurityPolicy != "" {
-			securityPolicyURI = "http://opcfoundation.org/UA/SecurityPolicy#" + g.SecurityPolicy
-		}
-
-		directEndpoint := &ua.EndpointDescription{
-			EndpointURL:       g.Endpoint,
-			SecurityMode:      securityMode,
-			SecurityPolicyURI: securityPolicyURI,
-		}
-
-		// Prepare authentication and encryption
-		opts, err := g.GetOPCUAClientOptions(directEndpoint, selectedAuthentication)
-		if err != nil {
-			g.Log.Errorf("Failed to get OPC UA client options: %s", err)
-			return err
-		}
-
-		c, err = opcua.NewClient(directEndpoint.EndpointURL, opts...)
-		if err != nil {
-			g.Log.Errorf("Failed to create a new client: %v", err)
-			return err
-		}
-
-		// Connect to the selected endpoint
-		if err := c.Connect(ctx); err != nil {
-			_ = g.Close(ctx)
-			g.Log.Errorf("Failed to connect: %v", err)
-			return err
-		}
-
-	} else if g.SecurityMode != "" && g.SecurityPolicy != "" {
-		foundEndpoint, err := g.getEndpointIfExists(endpoints, selectedAuthentication, g.SecurityMode, g.SecurityPolicy)
-		if err != nil {
-			g.Log.Errorf("Failed to get endpoint: %s", err)
-			return err
-		}
-
-		if foundEndpoint == nil {
-			g.Log.Errorf("No suitable endpoint found")
-			return errors.New("no suitable endpoint found")
-		}
-
-		opts, err := g.GetOPCUAClientOptions(foundEndpoint, selectedAuthentication)
-		if err != nil {
-			g.Log.Errorf("Failed to get OPC UA client options: %s", err)
-			return err
-		}
-
-		c, err = opcua.NewClient(foundEndpoint.EndpointURL, opts...)
-		if err != nil {
-			g.Log.Errorf("Failed to create a new client: %v", err)
-			return err
-		}
-
-		// Connect to the selected endpoint
-		if err := c.Connect(ctx); err != nil {
-			_ = g.Close(ctx)
-			g.Log.Errorf("Failed to connect: %v", err)
-			return err
-		}
-
-	} else {
-		// Step 5: If the user has not specified a very concrete endpoint, security policy, and security mode
-		// Iterate through all available endpoints and try to connect to them
-
-		// Order the endpoints based on the expected success of the connection
-		orderedEndpoints := g.orderEndpoints(endpoints, selectedAuthentication)
-
-		for _, currentEndpoint := range orderedEndpoints {
-
-			opts, err := g.GetOPCUAClientOptions(currentEndpoint, selectedAuthentication)
-			if err != nil {
-				g.Log.Errorf("Failed to get OPC UA client options: %s", err)
-				return err
-			}
-
-			c, err = opcua.NewClient(currentEndpoint.EndpointURL, opts...)
-			if err != nil {
-				g.Log.Errorf("Failed to create a new client")
-				return err
-			}
-
-			// Connect to the endpoint
-			// If connection fails, then continue to the next endpoint
-			// Connect to the selected endpoint
-			if err := c.Connect(ctx); err != nil {
-				g.CloseExpected(ctx)
-
-				g.Log.Infof("Failed to connect, but continue anyway: %v", err)
-
-				if errors.Is(err, ua.StatusBadUserAccessDenied) || errors.Is(err, ua.StatusBadTooManySessions) {
-					var timeout time.Duration
-					// Adding a sleep to prevent immediate re-connect
-					// In the case of ua.StatusBadUserAccessDenied, the session is for some reason not properly closed on the server
-					// If we were to re-connect, we could overload the server with too many sessions as the default timeout is 10 seconds
-					if g.SessionTimeout > 0 {
-						timeout = time.Duration(g.SessionTimeout * int(time.Millisecond))
-					} else {
-						timeout = SessionTimeout
-					}
-					g.Log.Errorf("Encountered unrecoverable error. Waiting before trying to re-connect to prevent overloading the server: %v with timeout %v", err, timeout)
-					time.Sleep(timeout)
-					return err
-				} else if errors.Is(err, ua.StatusBadTimeout) {
-					g.Log.Infof("Selected endpoint timed out. Selecting next one: %v", currentEndpoint)
-					continue
-				}
-
-				continue
-			} else {
-				break
-			}
-		}
-
-		// If no connection was successful, return an error
-		if c == nil {
-			g.Log.Errorf("Failed to connect to any endpoint")
-			return errors.New("failed to connect to any endpoint")
-		}
+		return err
 	}
 
 	g.Log.Infof("Connected to %s", g.Endpoint)
-	g.Client = c
 
 	// Get OPC UA server information
 	serverInfo, err := g.GetOPCUAServerInformation(ctx)
