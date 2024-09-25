@@ -295,7 +295,42 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	return
 }
 
-// DiscoverNodes retrieves a list of nodes from an OPC UA server.
+// GetNodes gets all available list of nodes from an OPC UA server.
+// The list of nodes returned varies depends on the OPCUAInput.NodeIDs field. Use i=84 to get all nodes.
+// It internally refreshes the connection if it is not available.
+// The function is specially designed to be used outside Benthos plugin context.
+// Example:
+//		opcua := OPCUAInput{
+// 			Endpoint:       "opc.tcp://localhost:4840",
+// 			Username:       "",
+// 			Password:       "",
+// 			SecurityMode:   "",
+// 			SecurityPolicy: "",
+// 			NodeIDs:        ParseNodeIDs([]string{"i=84"}),
+// 		}
+//
+// 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+// 		defer cancel()
+// 		nodes, err := opcua.GetNodes(ctx)
+// 		if err != nil {
+// 			panic(err)
+// 		}
+// 		fmt.Println(nodes) // Output: [{i=2259 NodeClassVariable State  AccessLevelTypeNone i=852 i=84 Root.Objects.Server.ServerStatus.State}]
+
+func (g *OPCUAInput) GetNodes(ctx context.Context) ([]NodeDef, error) {
+	// ensure connection is available
+	if g.Client == nil {
+		err := g.connect(ctx)
+		if err != nil {
+			g.Log.Infof("error setting up connection while getting the OPCUA nodes: %v", err)
+			return nil, err
+		}
+
+	}
+	return g.discoverNodes(ctx)
+}
+
+// discoverNodes retrieves a list of nodes from an OPC UA server.
 // It starts a goroutine for each nodeID to browse the nodes concurrently.
 // The function collects the nodes into a slice and returns it along with any error encountered.
 //
@@ -305,7 +340,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 // Returns:
 // - []NodeDef: A slice containing the detected nodes.
 // - error: An error if any occurred during the browsing process.
-func (g *OPCUAInput) DiscoverNodes(ctx context.Context) ([]NodeDef, error) {
+func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 	// Create a slice to store the detected nodes
 	nodeList := make([]NodeDef, 0)
 
@@ -362,7 +397,7 @@ func (g *OPCUAInput) DiscoverNodes(ctx context.Context) ([]NodeDef, error) {
 // 3. **Subscribe to Nodes:** If subscriptions are enabled, creates a subscription and sets up monitoring for the detected nodes.
 func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
-	nodeList, err := g.DiscoverNodes(ctx)
+	nodeList, err := g.discoverNodes(ctx)
 	if err != nil {
 		g.Log.Infof("error while getting the node list: %v", err)
 		return err
