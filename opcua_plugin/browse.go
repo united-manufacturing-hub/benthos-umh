@@ -295,26 +295,27 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	return
 }
 
-// BrowseAndSubscribeIfNeeded browses the specified OPC UA nodes, adds a heartbeat node if required,
-// and sets up monitored requests for the nodes.
+// DiscoverNodes retrieves a list of nodes from an OPC UA server.
+// It starts a goroutine for each nodeID to browse the nodes concurrently.
+// The function collects the nodes into a slice and returns it along with any error encountered.
 //
-// The function performs the following steps:
-// 1. **Browse Nodes:** Iterates through `NodeIDs` and concurrently browses each node to detect available nodes.
-// 2. **Add Heartbeat Node:** If heartbeats are enabled, ensures the heartbeat node (`HeartbeatNodeId`) is included in the node list.
-// 3. **Subscribe to Nodes:** If subscriptions are enabled, creates a subscription and sets up monitoring for the detected nodes.
-func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
-
+// Parameters:
+// - ctx: The context for managing the lifecycle of the goroutines.
+//
+// Returns:
+// - []NodeDef: A slice containing the detected nodes.
+// - error: An error if any occurred during the browsing process.
+func (g *OPCUAInput) DiscoverNodes(ctx context.Context) ([]NodeDef, error) {
 	// Create a slice to store the detected nodes
 	nodeList := make([]NodeDef, 0)
 
 	// Create a channel to store the detected nodes
 	nodeChan := make(chan NodeDef, 100_000)
+	// For collecting errors from goroutines
+	errChan := make(chan error, len(g.NodeIDs))
 
 	// Create a WaitGroup to synchronize goroutines
 	var wg sync.WaitGroup
-
-	// For collecting errors from goroutines
-	errChan := make(chan error, len(g.NodeIDs))
 
 	// Start goroutines for each nodeID
 	for _, nodeID := range g.NodeIDs {
@@ -346,7 +347,25 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 	// Check for any errors collected during browsing
 	if len(errChan) > 0 {
 		// Return the first error encountered
-		return <-errChan
+		return nil, <-errChan
+	}
+
+	return nodeList, nil
+}
+
+// BrowseAndSubscribeIfNeeded browses the specified OPC UA nodes, adds a heartbeat node if required,
+// and sets up monitored requests for the nodes.
+//
+// The function performs the following steps:
+// 1. **Browse Nodes:** Iterates through `NodeIDs` and concurrently browses each node to detect available nodes.
+// 2. **Add Heartbeat Node:** If heartbeats are enabled, ensures the heartbeat node (`HeartbeatNodeId`) is included in the node list.
+// 3. **Subscribe to Nodes:** If subscriptions are enabled, creates a subscription and sets up monitoring for the detected nodes.
+func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
+
+	nodeList, err := g.DiscoverNodes(ctx)
+	if err != nil {
+		g.Log.Infof("error while getting the node list: %v", err)
+		return err
 	}
 
 	// Now add i=2258 to the nodeList, which is the CurrentTime node, which is used for heartbeats
