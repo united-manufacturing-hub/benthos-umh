@@ -5,9 +5,6 @@ go 1.23
 // to compile it on go 1.23
 replace github.com/parquet-go/parquet-go => github.com/parquet-go/parquet-go v0.23.0
 
-// Manually bump redpanda-connect/v4 until they update the free bundle to v4.37.0
-replace github.com/redpanda-data/connect/v4 => github.com/redpanda-data/connect/v4 v4.37.0
-
 // Set the GODEBUG environment variable to allow parsing of certificates with negative serial numbers.
 // This is necessary for backwards compatibility with some OPC UA servers (e.g., Kepware) that may issue
 // certificates containing negative serial numbers.
@@ -30,7 +27,7 @@ require (
 	github.com/grid-x/modbus v0.0.0-20240503115206-582f2ab60a18
 	github.com/onsi/ginkgo/v2 v2.19.0
 	github.com/onsi/gomega v1.34.1
-	github.com/redpanda-data/benthos/v4 v4.37.0
+	github.com/redpanda-data/benthos/v4 v4.38.0
 	github.com/redpanda-data/connect/public/bundle/free/v4 v4.31.0
 	github.com/x448/float16 v0.8.4
 )
@@ -268,7 +265,7 @@ require (
 	github.com/r3labs/diff/v3 v3.0.1 // indirect
 	github.com/rabbitmq/amqp091-go v1.10.0 // indirect
 	github.com/redis/go-redis/v9 v9.6.1 // indirect
-	github.com/redpanda-data/connect/v4 v4.31.0 // indirect
+	github.com/redpanda-data/connect/v4 v4.37.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rickb777/period v1.0.6 // indirect
 	github.com/rickb777/plural v1.4.2 // indirect
