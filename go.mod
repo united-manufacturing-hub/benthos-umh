@@ -31,7 +31,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.19.0
 	github.com/onsi/gomega v1.34.1
 	github.com/redpanda-data/benthos/v4 v4.37.0
-	github.com/redpanda-data/connect/public/bundle/free/v4 v4.31.0
+	github.com/redpanda-data/connect/public/bundle/free/v4 v4.37.0
 	github.com/x448/float16 v0.8.4
 )
 
