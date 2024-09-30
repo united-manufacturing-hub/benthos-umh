@@ -31,4 +31,10 @@ lint:
 format:
 	@golangci-lint run --fix
 
-.PHONY: clean target test lint format
+update-benthos:
+	@go get github.com/redpanda-data/connect/public/bundle/free/v4@latest && \
+  go get github.com/redpanda-data/connect/v4@latest && \
+  go get github.com/redpanda-data/benthos/v4@latest && \
+  go mod tidy
+
+.PHONY: clean target test lint format update-benthos
