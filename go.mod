@@ -17,7 +17,9 @@ replace github.com/parquet-go/parquet-go => github.com/parquet-go/parquet-go v0.
 // Solution:
 // - To restore the pre-Go 1.23 behavior and allow parsing of certificates with negative serial numbers,
 //   set the "x509negativeserial=1" flag in the GODEBUG environment variable.
-godebug x509negativeserial=1
+godebug (
+	x509negativeserial=1
+)
 
 require (
 	github.com/RuneRoven/benthosADS v1.0.4
