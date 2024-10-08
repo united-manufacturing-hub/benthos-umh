@@ -28,7 +28,7 @@ import (
 )
 
 const SessionTimeout = 5 * time.Second
-const SubscribeTimeoutContext = 3 * time.Second
+const SubscribeTimeoutContext = 10 * time.Second
 
 var OPCUAConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from OPC-UA servers. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
@@ -220,6 +220,10 @@ func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 		g.ServerInfo = serverInfo
 	}
 
+	// Create a subscription channel if needed
+	if g.SubscribeEnabled {
+		g.SubNotifyChan = make(chan *opcua.PublishNotificationData, 10000)
+	}
 	// Browse and subscribe to the nodes if needed
 	// Do this asynchronously so that the first messages can already arrive
 	var wg sync.WaitGroup
@@ -236,11 +240,6 @@ func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 	}()
 	wg.Wait()
 
-	// Create a subscription channel if needed
-	if g.SubscribeEnabled {
-		g.SubNotifyChan = make(chan *opcua.PublishNotificationData, 10000)
-	}
-
 	return nil
 }
 
@@ -250,12 +249,13 @@ func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 // If no messages or heartbeats are received within the expected timeframe, it closes the connection.
 func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, ackFunc service.AckFunc, err error) {
 	if g.SubscribeEnabled {
-		// Wait for maximum 3 seconds for a response from the subscription channel
+		// Wait for maximum 10 seconds for a response from the subscription channel
 		// So that this never gets stuck
 		ctxSubscribe, cancel := context.WithTimeout(ctx, SubscribeTimeoutContext)
 		defer cancel()
 
 		msgs, ackFunc, err = g.ReadBatchSubscribe(ctxSubscribe)
+
 	} else {
 		msgs, ackFunc, err = g.ReadBatchPull(ctx)
 	}

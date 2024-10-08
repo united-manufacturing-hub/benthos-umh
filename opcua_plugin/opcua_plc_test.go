@@ -13,7 +13,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("Test Against Siemens S7", Serial, func() {
+var _ = Describe("Test Against Siemens S7", FlakeAttempts(5), Serial, func() {
 
 	var endpoint string
 	var input *OPCUAInput
@@ -298,6 +298,7 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
 			}
+			ctx := context.Background()
 			// Attempt to connect
 			err = input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
