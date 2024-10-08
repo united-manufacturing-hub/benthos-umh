@@ -14,7 +14,7 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/v2/s7comm_plugin"
 )
 
-var _ = Describe("S7Comm Plugin Unittests", FlakeAttempts(5), func() {
+var _ = Describe("S7Comm Plugin Unittests", func() {
 	BeforeEach(func() {
 		testActive := os.Getenv("TEST_S7COMM_UNITTEST")
 
@@ -61,7 +61,7 @@ var _ = Describe("S7Comm Plugin Unittests", FlakeAttempts(5), func() {
 	})
 })
 
-var _ = Describe("S7Comm Test Against Local PLC", func() {
+var _ = Describe("S7Comm Test Against Local PLC", FlakeAttempts(5), func() {
 
 	Describe("Communication with a Remote S7 Instance", func() {
 		var (
