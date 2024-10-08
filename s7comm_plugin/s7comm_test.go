@@ -61,7 +61,7 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 	})
 })
 
-var _ = Describe("S7Comm Test Against Local PLC", FlakeAttempts(5), func() {
+var _ = Describe("S7Comm Test Against Local PLC", func() {
 
 	Describe("Communication with a Remote S7 Instance", func() {
 		var (
