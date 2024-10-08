@@ -298,8 +298,8 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
 			}
-			// Attempt to connect
-			err = input.Connect(ctx)
+			// Attempt to connect. A local context is used since using the global context with timeout cancel makes this so flaky
+			err = input.Connect(context.Background())
 			Expect(err).NotTo(HaveOccurred())
 
 			messageBatch, _, err := input.ReadBatch(ctx)
