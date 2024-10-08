@@ -16,9 +16,11 @@ package opcua_plugin
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
 	"github.com/redpanda-data/benthos/v4/public/service"
 
 	"github.com/gopcua/opcua"
@@ -47,7 +49,7 @@ func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 
 	// Parse all nodeIDs to validate them.
 	// loop through all nodeIDs, parse them and put them into a slice
-	parsedNodeIDs := make([]*ua.NodeID, len(incomingNodes))
+	var parsedNodeIDs []*ua.NodeID
 
 	for _, incomingNodeId := range incomingNodes {
 		parsedNodeID, err := ua.ParseNodeID(incomingNodeId)
@@ -221,7 +223,10 @@ func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 
 	// Browse and subscribe to the nodes if needed
 	// Do this asynchronously so that the first messages can already arrive
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		g.Log.Infof("Please note that browsing large node trees can take some time")
 		if err := g.BrowseAndSubscribeIfNeeded(ctx); err != nil {
 			g.Log.Errorf("Failed to subscribe: %v", err)
@@ -230,6 +235,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 		// Set the heartbeat after browsing, as browsing might take some time
 		g.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
 	}()
+	wg.Wait()
 
 	// Create a subscription channel if needed
 	if g.SubscribeEnabled {
