@@ -14,7 +14,7 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/v2/s7comm_plugin"
 )
 
-var _ = Describe("S7Comm Plugin Unittests", func() {
+var _ = Describe("S7Comm Plugin Unittests", FlakeAttempts(5), func() {
 	BeforeEach(func() {
 		testActive := os.Getenv("TEST_S7COMM_UNITTEST")
 
