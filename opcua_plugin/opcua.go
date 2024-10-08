@@ -16,7 +16,6 @@ package opcua_plugin
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -225,20 +224,15 @@ func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 		g.SubNotifyChan = make(chan *opcua.PublishNotificationData, 10000)
 	}
 	// Browse and subscribe to the nodes if needed
-	// Do this asynchronously so that the first messages can already arrive
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		g.Log.Infof("Please note that browsing large node trees can take some time")
-		if err := g.BrowseAndSubscribeIfNeeded(ctx); err != nil {
-			g.Log.Errorf("Failed to subscribe: %v", err)
-			_ = g.Close(ctx)
-		}
-		// Set the heartbeat after browsing, as browsing might take some time
-		g.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
-	}()
-	wg.Wait()
+	// BrowseAndSubscribeIfNeeded has to be run synchronously since the field g.NodeList
+	// is set inside this function.And g.NodeList is required to be set mandatorily for further func calls like ReadBatch or ReadBatchSubscribe
+	g.Log.Infof("Please note that browsing large node trees can take some time")
+	if err := g.BrowseAndSubscribeIfNeeded(ctx); err != nil {
+		g.Log.Errorf("Failed to subscribe: %v", err)
+		_ = g.Close(ctx)
+	}
+	// Set the heartbeat after browsing, as browsing might take some time
+	g.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
 
 	return nil
 }
