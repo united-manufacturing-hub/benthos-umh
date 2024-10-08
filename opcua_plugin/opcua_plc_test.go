@@ -298,7 +298,6 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
 			}
-			ctx := context.Background()
 			// Attempt to connect
 			err = input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
