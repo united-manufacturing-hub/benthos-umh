@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
 	"github.com/redpanda-data/benthos/v4/public/service"
 
 	"github.com/gopcua/opcua"
