@@ -4,137 +4,11 @@
 [![GitHub Actions](https://github.com/united-manufacturing-hub/benthos-umh/workflows/main/badge.svg)](https://github.com/united-manufacturing-hub/benthos-umh/actions)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Funited-manufacturing-hub%2Fbenthos-umh.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Funited-manufacturing-hub%2Fbenthos-umh?ref=badge_shield)
 
-Welcome to the benthos-umh repository! This is a version of benthos maintained by the United Manufacturing Hub (UMH) to provide seamless shopfloor integration with the [Unified Namespace](https://learn.umh.app/lesson/introduction-into-it-ot-unified-namespace/) (MQTT/Kafka). Our goal is to enhance the integration of IT and OT tools for engineers while avoiding vendor lock-in and streamlining data management processes.
+benthos-umh is a specialized extension of Benthos (now known as Redpanda Connect) developed by the [United Manufacturing Hub (UMH)](https://www.umh.app). Tailored for the manufacturing industry, benthos-umh integrates additionally manufacturing protocols such as OPC UA, Siemens S7, and Modbus.
 
-## Description
+Learn more by visiting our [Protocol Converter product page](https://www.umh.app/product/protocol-converter). For comprehensive technical documentation and configuration details, please continue reading below.
 
-`benthos-umh` is a Docker container designed to facilitate seamless shopfloor integration with the Unified Namespace (MQTT/Kafka). It is part of the United Manufacturing Hub project and offers the following features:
-
-- Simple deployment in Docker, docker-compose, and Kubernetes
-- Connects to an OPC-UA server, browses selected nodes, and forwards all sub-nodes in 1-second intervals.
-- Can connect to an S7 server, and read pre-defined addresses from it
-- Contains community supported plugins, such as SMTP and Beckhoff ADS
-- Supports a wide range of outputs, from the Unified Namespace (MQTT and Kafka) to HTTP, AMQP, Redis, NATS, SQL, MongoDB, Cassandra, or AWS S3. Check out the official [benthos output library](https://benthos.dev/docs/components/outputs/about)
-- Fully customizable messages using the benthos processor library: implement Report-by-Exception (RBE) / message deduplication, modify payloads and add timestamps using bloblang, apply protobuf (and therefore SparkplugB), and explore many more options
-- Integrates with modern IT landscape, providing metrics, logging, tracing, versionable configuration, and more
-- Entirely open-source (Apache 2.0) and free-to-use
-
-We encourage you to try out `benthos-umh` and explore the broader [United Manufacturing Hub](https://www.umh.app) project for a comprehensive solution to your industrial data integration needs.
-
-### Additional Plugins
-If you are familiar with benthos, you know it is a powerful tool with many input, output, and processor plugins. We have added some additional plugins to benthos-umh, which are not part of the official benthos release. These plugins are:
-- (UMH) s7comm: An input plugin to read data from Siemens S7 PLCs. See [further below](#s7comm) for more information.
-- (UMH) opcua: An input plugin to read data from OPC UA servers. See [further below](#opc-ua)  for more information.
-- (UMH) modbus: An input plugin to read data from Modbus devices. See [further below](#modbus)  for more information.
-- (community) smtp: A output plugin to send emails via SMTP. See [DanielH's repo](https://github.com/RuneRoven/benthosSMTP) for more information.
-- (community) ADS: An input plugin to read data from Beckhoff PLCs via ADS. See [further below](#beckhoff-ads) or at [DanielH's  repo](https://github.com/RuneRoven/benthosADS) for more information.
-
-The plugins marked with "UMH" are developed and maintained by us. The ones marked as "community" are developed by the community and are not maintained by us.
-
-## Usage
-
-### Standalone
-
-To use benthos-umh in standalone mode with Docker, follow the instructions below (using OPC UA as an example).
-
-1. Create a new file called benthos.yaml with the provided content
-
-    ```yaml
-    ---
-    input:
-      opcua:
-        endpoint: 'opc.tcp://localhost:46010'
-        nodeIDs: ['ns=2;s=IoTSensors']
-
-    pipeline:
-      processors:
-        - bloblang: |
-            root = {
-              meta("opcua_path"): this,
-              "timestamp_ms": (timestamp_unix_nano() / 1000000).floor()
-            }
-
-    output:
-      mqtt:
-        urls:
-          - 'localhost:1883'
-        topic: 'ia/raw/opcuasimulator/${! meta("opcua_path") }'
-        client_id: 'benthos-umh'
-    ```
-
-2. Execute the docker run command to start a new benthos-umh container
-    `docker run --rm --network="host" -v '<absolute path to your file>/benthos.yaml:/benthos.yaml' ghcr.io/united-manufacturing-hub/benthos-umh:latest`
-
-### With the United Manufacturing Hub (Kubernetes & Kafka)
-
-To deploy benthos-umh with the United Manufacturing Hub and its OPC-UA simulator, use the provided Kubernetes manifests in UMHLens/OpenLens.
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: benthos-1-config
-  namespace: united-manufacturing-hub
-  labels:
-    app: benthos-1
-data:
-  benthos.yaml: |-
-    input:
-      umh_input_opcuasimulator: {}
-    pipeline:
-      processors:
-        - bloblang: |
-            root = {
-              meta("opcua_path"): this,
-              "timestamp_ms": (timestamp_unix_nano() / 1000000).floor()
-            }
-    output:
-      umh_output:
-        topic: 'ia.raw.${! meta("opcua_path") }'
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: benthos-1-deployment
-  namespace: united-manufacturing-hub
-  labels:
-    app: benthos-1
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: benthos-1
-  template:
-    metadata:
-      labels:
-        app: benthos-1
-    spec:
-      containers:
-        - name: benthos-1
-          image: "ghcr.io/united-manufacturing-hub/benthos-umh:latest"
-          imagePullPolicy: IfNotPresent
-          ports:
-            - name: http
-              containerPort: 4195
-              protocol: TCP
-          livenessProbe:
-            httpGet:
-              path: /ping
-              port: http
-          readinessProbe:
-            httpGet:
-              path: /ready
-              port: http
-          volumeMounts:
-            - name: config
-              mountPath: "/benthos.yaml"
-              subPath: "benthos.yaml"
-              readOnly: true
-      volumes:
-        - name: config
-          configMap:
-            name: benthos-1-config
-```
+## Manufacturing Specific Plugins
 
 ### OPC UA
 
@@ -193,7 +67,7 @@ In benthos-umh, we design security and authentication to be as robust as possibl
 - **Username and Password**: Specify the username and password in the configuration. The client opts for the highest security level that supports these credentials.
 - **Certificate (Future Release)**: Certificate-based authentication is planned for future releases.
 
-### Metadata outputs
+#### Metadata outputs
 
 The plugin provides metadata for each message, that can be used to create a topic for the output, as shown in the example above. The metadata can also be used to create a unique identifier for each message, which is useful for deduplication.
 
@@ -232,7 +106,7 @@ Subscribing to `ns=2;s=FolderNode` would result in the following metadata:
 | `Tag3`           | `FolderNode.SubFolder` |
 | `Tag4`           | `FolderNode.SubFolder` |
 
-### Configuration Options
+#### Configuration Options
 
 The following options can be specified in the `benthos.yaml` configuration file:
 
@@ -383,7 +257,7 @@ The Modbus plugin facilitates communication with various types of Modbus devices
 
 Data reads can be configured to occur at a set interval, allowing for consistent data polling. Advanced features like register optimization and workarounds for device-specific quirks are also supported to enhance communication efficiency and compatibility.
 
-### Metadata Outputs
+#### Metadata Outputs
 
 For each read operation, the plugin outputs detailed metadata that includes various aspects of the read operation, which can be utilized to effectively tag, organize, and utilize the data within a system. This metadata encompasses identifiers, data types, and register specifics to ensure precise tracking and utilization of the Modbus data.
 
@@ -402,7 +276,7 @@ Below is the extended metadata output schema provided by the plugin:
 
 This enhanced metadata schema provides comprehensive data for each read operation, ensuring that users have all necessary details for effective data management and application integration.
 
-### Configuration Options
+#### Configuration Options
 
 Below are the comprehensive configuration options available in the configuration file for the Modbus plugin. This includes settings for device connectivity, data reading intervals, optimization strategies, and detailed data item configurations.
 
@@ -811,44 +685,6 @@ Requires:
 Requires:
 - TEST_S7COMM_UNITTEST
 
-## Development
-
-### Quickstart
-
-Follow the steps below to set up your development environment and run tests:
-
-```
-git clone https://github.com/united-manufacturing-hub/benthos-umh.git
-cd serverless-stack
-nvm install
-npm install
-sudo apt-get install zip
-echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
-sudo apt update
-sudo apt install goreleaser
-make
-npm test
-```
-
-### Additional Checks and Commands
-
-#### Gitpod and Tailscale
-
-By default, when opening the repo in Gitpod, everything that you need should start automatically. If you want to connect to our local PLCs in our office, you can use tailscale, which you will be prompted to install.
-See also: <https://www.gitpod.io/docs/integrations/tailscale>
-
-#### For Go Code
-
-1. **Linting**: Run `make lint` to check for linting errors. If any are found, you can automatically fix them by running `make format`.
-
-2. **Unit Tests**: Run `make test` to execute all Go unit tests.
-
-#### For Other Code Types (Including Config Files)
-
-1. **Benthos Tests**: Use `npm run test` to run all Benthos tests for configuration files. Note: We currently do not have these tests. [Learn more](https://www.benthos.dev/docs/configuration/unit_testing/).
-
-2. **Linting**: Run `npm run lint` to check all files, including YAML files, for linting errors. To automatically fix these errors, run `npm run format`.
-
 ## License
 
 All source code is distributed under the APACHE LICENSE, VERSION 2.0. See LICENSE for more information.
@@ -860,4 +696,4 @@ All source code is distributed under the APACHE LICENSE, VERSION 2.0. See LICENS
 
 Feel free to provide us feedback on our [Discord channel](https://discord.gg/F9mqkZnm9d).
 
-For more information about the United Manufacturing Hub, visit [UMH Systems GmbH](https://www.umh.app). If you haven't worked with the United Manufacturing Hub before, [give it a try](https://umh.docs.umh.app/docs/getstarted/installation/)! Setting it up takes only a matter of minutes.
+For more information about the United Manufacturing Hub, visit [UMH Systems GmbH](https://www.umh.app). If you haven't worked with the United Manufacturing Hub before, [give it a try](https://management.umh.app))! Setting it up takes only a matter of minutes.
