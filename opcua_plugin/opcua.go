@@ -16,7 +16,6 @@ package opcua_plugin
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -226,10 +225,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 	}
 	// Browse and subscribe to the nodes if needed
 	// Do this asynchronously so that the first messages can already arrive
-	var wg sync.WaitGroup
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
 		g.Log.Infof("Please note that browsing large node trees can take some time")
 		if err := g.BrowseAndSubscribeIfNeeded(ctx); err != nil {
 			g.Log.Errorf("Failed to subscribe: %v", err)
@@ -238,7 +234,6 @@ func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 		// Set the heartbeat after browsing, as browsing might take some time
 		g.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
 	}()
-	wg.Wait()
 
 	return nil
 }
@@ -248,6 +243,12 @@ func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 // The function updates heartbeat information and monitors the connection's health.
 // If no messages or heartbeats are received within the expected timeframe, it closes the connection.
 func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, ackFunc service.AckFunc, err error) {
+	if len(g.NodeList) == 0 {
+		g.NodeList, err = g.GetNodes(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	if g.SubscribeEnabled {
 		// Wait for maximum 10 seconds for a response from the subscription channel
 		// So that this never gets stuck
