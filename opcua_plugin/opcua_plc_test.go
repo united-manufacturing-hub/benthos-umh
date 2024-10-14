@@ -298,11 +298,13 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
 			}
-			// Attempt to connect. A local context is used since using the global context with timeout cancel makes this so flaky
-			err = input.Connect(context.Background())
+			// Attempt to connect. A local context is used since using the global context with timeout of 30s
+			// is not enough time to receive a data change notification.
+			localctx := context.Background()
+			err = input.Connect(localctx)
 			Expect(err).NotTo(HaveOccurred())
 
-			messageBatch, _, err := input.ReadBatch(ctx)
+			messageBatch, _, err := input.ReadBatch(localctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// expect 2 messages for both nodes
@@ -316,7 +318,7 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 				Expect(message).To(BeAssignableToTypeOf(exampleNumber)) // it should be a number
 			}
 
-			messageBatch2, _, err := input.ReadBatch(ctx)
+			messageBatch2, _, err := input.ReadBatch(localctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// expect 1 message only as RevisionCounter will not change
