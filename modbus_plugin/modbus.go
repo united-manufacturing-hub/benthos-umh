@@ -669,7 +669,7 @@ func (m *ModbusInput) newTag(item ModbusDataItemWithAddress) (modbusTag, error) 
 	return f, nil
 }
 
-func (m *ModbusInput) Connect(ctx context.Context) error {
+func (m *ModbusInput) Connect(context.Context) error {
 	err := m.Handler.Connect()
 	if err != nil {
 		m.Log.Errorf("Failed to connect to Modbus device at %s: %v", m.Controller, err)
@@ -693,7 +693,10 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 	// Heartbeat logic: Reconnect if no message received in the last 10 seconds
 	if m.LastHeartbeatMessageReceived.Load() != 0 && m.LastHeartbeatMessageReceived.Load() < uint32(time.Now().Unix()-10) {
 		m.Log.Warnf("No heartbeat message received in the last 10 seconds, forcing reconnect...")
-		m.Close(ctx)
+		err := m.Close(ctx)
+		if err != nil {
+			m.Log.Errorf("Failed to close Modbus connection: %v", err)
+		}
 		return nil, nil, service.ErrNotConnected
 	}
 
@@ -714,8 +717,15 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 
 			// Check for "broken pipe" error
 			if isBrokenPipeError(err) {
-				m.Log.Errorf("Broken pipe error detected for slave %d, reconnecting...", slaveID)
-				m.Close(ctx)
+				m.Log.Errorf(
+					"Broken pipe error detected for slave %d. This indicates that the TCP/IP connection was unexpectedly closed by the server. Possible reasons include server restarts, server being offline, or network issues preventing communication between UMH and the Modbus server. Attempting to reconnect...",
+					slaveID,
+				)
+
+				err := m.Close(ctx)
+				if err != nil {
+					m.Log.Errorf("Failed to close Modbus connection: %v", err)
+				}
 				return nil, nil, service.ErrNotConnected
 			}
 
@@ -1032,9 +1042,12 @@ func (m *ModbusInput) gatherRequestsInput(requests []request) (service.MessageBa
 	return msgs, nil
 }
 
-func (m *ModbusInput) Close(ctx context.Context) error {
+func (m *ModbusInput) Close(context.Context) error {
 	if m.Handler != nil {
-		m.Handler.Close()
+		err := m.Handler.Close()
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
