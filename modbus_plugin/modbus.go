@@ -30,7 +30,9 @@ import (
 	"reflect"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/grid-x/modbus"
@@ -134,6 +136,9 @@ type ModbusInput struct {
 	CurrentSlaveID byte       // The current slave ID
 	Client         modbus.Client
 	Log            *service.Logger
+
+	LastHeartbeatMessageReceived atomic.Uint32
+	LastMessageReceived          atomic.Uint32
 }
 
 type RequestSet struct {
@@ -194,7 +199,9 @@ var ModbusConfigSpec = service.NewConfigSpec().
 // establishes a connection with the Modbus device, and initializes the input plugin instance.
 func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
 	m := &ModbusInput{
-		Log: mgr.Logger(),
+		Log:                          mgr.Logger(),
+		LastHeartbeatMessageReceived: atomic.Uint32{},
+		LastMessageReceived:          atomic.Uint32{},
 	}
 
 	var err error
@@ -662,7 +669,7 @@ func (m *ModbusInput) newTag(item ModbusDataItemWithAddress) (modbusTag, error) 
 	return f, nil
 }
 
-func (m *ModbusInput) Connect(ctx context.Context) error {
+func (m *ModbusInput) Connect(context.Context) error {
 	err := m.Handler.Connect()
 	if err != nil {
 		m.Log.Errorf("Failed to connect to Modbus device at %s: %v", m.Controller, err)
@@ -683,6 +690,16 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 		return nil, nil, fmt.Errorf("modbus client is not initialized")
 	}
 
+	// Heartbeat logic: Reconnect if no message received in the last 10 seconds
+	if m.LastHeartbeatMessageReceived.Load() != 0 && m.LastHeartbeatMessageReceived.Load() < uint32(time.Now().Unix()-10) {
+		m.Log.Warnf("No heartbeat message received in the last 10 seconds, forcing reconnect...")
+		err := m.Close(ctx)
+		if err != nil {
+			m.Log.Errorf("Failed to close Modbus connection: %v", err)
+		}
+		return nil, nil, service.ErrNotConnected
+	}
+
 	// Wait at the beginning of each read cycle
 	if m.TimeBetweenReads > 0 {
 		time.Sleep(m.TimeBetweenReads)
@@ -698,6 +715,20 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 		if err != nil {
 			m.Log.Errorf("slave %d encountered an error: %v", slaveID, err)
 
+			// Check for "broken pipe" error
+			if isBrokenPipeError(err) {
+				m.Log.Errorf(
+					"Broken pipe error detected for slave %d. This indicates that the TCP/IP connection was unexpectedly closed by the server. Possible reasons include server restarts, server being offline, or network issues preventing communication between UMH and the Modbus server. Attempting to reconnect...",
+					slaveID,
+				)
+
+				err := m.Close(ctx)
+				if err != nil {
+					m.Log.Errorf("Failed to close Modbus connection: %v", err)
+				}
+				return nil, nil, service.ErrNotConnected
+			}
+
 			var mbErr *modbus.Error
 			// Check if the error is a Modbus error and if the exception code is not "Server Device Busy"
 			if errors.As(err, &mbErr) && mbErr.ExceptionCode != modbus.ExceptionCodeServerDeviceBusy {
@@ -708,6 +739,24 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 
 		// Append the current slave's message batch to the merged batch
 		mergedBatch = append(mergedBatch, msgBatch...)
+	}
+
+	if len(mergedBatch) > 0 {
+		// Update the last heartbeat message received time
+		m.LastMessageReceived.Store(uint32(time.Now().Unix()))
+
+		// Create a heartbeat message and add it to the batch
+		heartbeatMessage := service.NewMessage([]byte(time.Now().Format(time.RFC3339)))
+		heartbeatMessage.MetaSet("modbus_tag_name", "heartbeat")
+		heartbeatMessage.MetaSet("modbus_tag_name_original", "heartbeat")                   // This is the tag name without any changes
+		heartbeatMessage.MetaSet("modbus_tag_datatype", "string")                           // This is the original data type in Modbus
+		heartbeatMessage.MetaSet("modbus_tag_datatype_json", "string")                      // This is the data type for JSONs. Either number, bool or string
+		heartbeatMessage.MetaSet("modbus_tag_address", "auto-generated-heartbeat")          // This is the address of the tag
+		heartbeatMessage.MetaSet("modbus_tag_length", strconv.Itoa(len("heartbeat")))       // This is the length of the tag
+		heartbeatMessage.MetaSet("modbus_tag_register", "auto-generated")                   // This is the register where the tag is located
+		heartbeatMessage.MetaSet("modbus_tag_slaveid", strconv.Itoa(int(m.CurrentSlaveID))) // This is the slaveID that we are currently reading
+
+		mergedBatch = append(mergedBatch, heartbeatMessage)
 	}
 
 	return mergedBatch, func(ctx context.Context, err error) error {
@@ -993,9 +1042,12 @@ func (m *ModbusInput) gatherRequestsInput(requests []request) (service.MessageBa
 	return msgs, nil
 }
 
-func (m *ModbusInput) Close(ctx context.Context) error {
+func (m *ModbusInput) Close(context.Context) error {
 	if m.Handler != nil {
-		m.Handler.Close()
+		err := m.Handler.Close()
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -1010,4 +1062,32 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+// isBrokenPipeError checks whether the provided error is a "broken pipe" error.
+//
+// **Purpose:**
+// The underlying Modbus library's Send function does not correctly handle "broken pipe" errors,
+// which occur when attempting to write to a closed TCP connection. Without proper handling,
+// these errors can lead to unexpected disconnections and disrupt communication.
+//
+// **Why It's Necessary:**
+// Since the library lacks built-in logic to manage "broken pipe" errors by reconnecting,
+// this function identifies such errors. Detecting a "broken pipe" allows the application to
+// proactively close the current connection and trigger a reconnection mechanism, ensuring
+// continuous and reliable communication with the Modbus slaves.
+func isBrokenPipeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if strings.Contains(err.Error(), "broken pipe") {
+		return true
+	}
+	var netErr *net.OpError
+	if errors.As(err, &netErr) {
+		if netErr.Err.Error() == "write: broken pipe" {
+			return true
+		}
+	}
+	return false
 }
