@@ -8,10 +8,11 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"github.com/gopcua/opcua"
-	"github.com/gopcua/opcua/ua"
 	"strings"
 	"time"
+
+	"github.com/gopcua/opcua"
+	"github.com/gopcua/opcua/ua"
 )
 
 // GetOPCUAClientOptions constructs the OPC UA client options based on the selected endpoint and authentication method.
@@ -125,6 +126,7 @@ func (g *OPCUAInput) LogEndpoint(endpoint *ua.EndpointDescription) {
 
 // LogEndpoints logs information for a slice of OPC UA endpoints.
 func (g *OPCUAInput) LogEndpoints(endpoints []*ua.EndpointDescription) {
+	g.Log.Infof("Fetched %d endpoints", len(endpoints))
 	for i, endpoint := range endpoints {
 		g.Log.Infof("Endpoint %d:", i+1)
 		g.LogEndpoint(endpoint)
@@ -307,4 +309,246 @@ func (g *OPCUAInput) logCertificateInfo(certBytes []byte) {
 	g.Log.Infof("    DNS Names: %v", cert.DNSNames)
 	g.Log.Infof("    IP Addresses: %v", cert.IPAddresses)
 	g.Log.Infof("    URIs: %v", cert.URIs)
+}
+
+// attemptBestEndpointConnection attempts to connect to the available OPC UA endpoints
+// using the specified authentication type. It orders the endpoints based on the expected
+// success of the connection and tries to establish a connection with each endpoint.
+//
+// Parameters:
+// - ctx: The context for managing the connection lifecycle.
+// - endpoints: A slice of endpoint descriptions to attempt connections to.
+// - authType: The type of user token to use for authentication.
+//
+// Returns:
+// - *opcua.Client: A pointer to the connected OPC UA client, if successful.
+// - error: An error object if the connection attempt fails.
+func (g *OPCUAInput) attemptBestEndpointConnection(ctx context.Context, endpoints []*ua.EndpointDescription, authType ua.UserTokenType) (*opcua.Client, error) {
+	// Order the endpoints based on the expected success of the connection
+	orderedEndpoints := g.orderEndpoints(endpoints, authType)
+	for _, currentEndpoint := range orderedEndpoints {
+		opts, err := g.GetOPCUAClientOptions(currentEndpoint, authType)
+		if err != nil {
+			g.Log.Errorf("Failed to get OPC UA client options: %s", err)
+			return nil, err
+		}
+
+		c, err := opcua.NewClient(currentEndpoint.EndpointURL, opts...)
+		if err != nil {
+			g.Log.Errorf("Failed to create a new client")
+			return nil, err
+		}
+
+		// Connect to the endpoint
+		// If connection fails, then continue to the next endpoint
+		// Connect to the selected endpoint
+		err = c.Connect(ctx)
+		if err == nil {
+			return c, nil
+		}
+
+		// case where an error occured
+		g.CloseExpected(ctx)
+		g.Log.Infof("Failed to connect, but continue anyway: %v", err)
+
+		if errors.Is(err, ua.StatusBadUserAccessDenied) || errors.Is(err, ua.StatusBadTooManySessions) {
+			var timeout time.Duration
+			// Adding a sleep to prevent immediate re-connect
+			// In the case of ua.StatusBadUserAccessDenied, the session is for some reason not properly closed on the server
+			// If we were to re-connect, we could overload the server with too many sessions as the default timeout is 10 seconds
+			if g.SessionTimeout > 0 {
+				timeout = time.Duration(g.SessionTimeout * int(time.Millisecond))
+			} else {
+				timeout = SessionTimeout
+			}
+			g.Log.Errorf("Encountered unrecoverable error. Waiting before trying to re-connect to prevent overloading the server: %v with timeout %v", err, timeout)
+			time.Sleep(timeout)
+			return nil, err
+		}
+
+		if errors.Is(err, ua.StatusBadTimeout) {
+			g.Log.Infof("Selected endpoint timed out. Selecting next one: %v", currentEndpoint)
+		}
+
+	}
+	return nil, errors.New("error could not connect successfully to any endpoint")
+}
+
+// connectWithSecurity establishes a connection to an OPC UA server using the specified security mode and policy.
+// It takes a context for cancellation, a list of endpoint descriptions, and an authentication type.
+// It returns an OPC UA client if the connection is successful, or an error if it fails.
+//
+// Parameters:
+// - ctx: context.Context - The context for managing cancellation and timeouts.
+// - endpoints: []*ua.EndpointDescription - A list of endpoint descriptions to connect to.
+// - authType: ua.UserTokenType - The type of user authentication to use.
+//
+// Returns:
+// - *opcua.Client - The connected OPC UA client.
+// - error - An error if the connection fails.
+func (g *OPCUAInput) connectWithSecurity(ctx context.Context, endpoints []*ua.EndpointDescription, authType ua.UserTokenType) (*opcua.Client, error) {
+	foundEndpoint, err := g.getEndpointIfExists(endpoints, authType, g.SecurityMode, g.SecurityPolicy)
+	if err != nil {
+		g.Log.Errorf("Failed to get endpoint: %s", err)
+		return nil, err
+	}
+
+	if foundEndpoint == nil {
+		g.Log.Errorf("No suitable endpoint found")
+		return nil, errors.New("no suitable endpoint found")
+	}
+
+	opts, err := g.GetOPCUAClientOptions(foundEndpoint, authType)
+	if err != nil {
+		g.Log.Errorf("Failed to get OPC UA client options: %s", err)
+		return nil, err
+	}
+
+	c, err := opcua.NewClient(foundEndpoint.EndpointURL, opts...)
+	if err != nil {
+		g.Log.Errorf("Failed to create a new client: %v", err)
+		return nil, err
+	}
+
+	// Connect to the selected endpoint
+	if err := c.Connect(ctx); err != nil {
+		_ = g.Close(ctx)
+		g.Log.Errorf("Failed to connect: %v", err)
+		return nil, err
+	}
+
+	return c, nil
+}
+
+// connectToDirectEndpoint establishes a connection to an OPC UA server using a direct endpoint.
+// It takes a context for managing the connection lifecycle and an authentication type for user token.
+// It returns an OPC UA client instance and an error if the connection fails.
+func (g *OPCUAInput) connectToDirectEndpoint(ctx context.Context, authType ua.UserTokenType) (*opcua.Client, error) {
+
+	g.Log.Infof("Directly connecting to the endpoint %s", g.Endpoint)
+
+	// Create a new endpoint description
+	// It will never be used directly by the OPC UA library, but we need it for our internal helper functions
+	// such as GetOPCUAClientOptions
+	securityMode := ua.MessageSecurityModeNone
+	if g.SecurityMode != "" {
+		securityMode = ua.MessageSecurityModeFromString(g.SecurityMode)
+	}
+
+	securityPolicyURI := ua.SecurityPolicyURINone
+	if g.SecurityPolicy != "" {
+		securityPolicyURI = fmt.Sprintf("http://opcfoundation.org/UA/SecurityPolicy#%s", g.SecurityPolicy)
+	}
+
+	directEndpoint := &ua.EndpointDescription{
+		EndpointURL:       g.Endpoint,
+		SecurityMode:      securityMode,
+		SecurityPolicyURI: securityPolicyURI,
+	}
+
+	// Prepare authentication and encryption
+	opts, err := g.GetOPCUAClientOptions(directEndpoint, authType)
+	if err != nil {
+		g.Log.Errorf("Failed to get OPC UA client options: %s", err)
+		return nil, err
+	}
+
+	c, err := opcua.NewClient(directEndpoint.EndpointURL, opts...)
+	if err != nil {
+		g.Log.Errorf("Failed to create a new client: %v", err)
+		return nil, err
+	}
+
+	// Connect to the selected endpoint
+	if err := c.Connect(ctx); err != nil {
+		_ = g.Close(ctx)
+		g.Log.Errorf("Failed to connect: %v", err)
+		return nil, err
+	}
+
+	return c, nil
+}
+
+// connect establishes a connection for the OPCUAInput instance.
+// It takes a context to handle cancellation and timeouts.
+// On successful connection establishment, the function sets the connection to g.Client
+//
+// Parameters:
+// - ctx: The context to control the connection lifecycle.
+//
+// Returns:
+// - error: An error if the connection fails, otherwise nil.
+func (g *OPCUAInput) connect(ctx context.Context) error {
+	var (
+		c         *opcua.Client
+		endpoints []*ua.EndpointDescription
+		err       error
+	)
+
+	// Step 1: Retrieve all available endpoints from the OPC UA server
+	// Iterate through DiscoveryURLs until we receive a list of all working endpoints including their potential security modes, etc.
+
+	endpoints, err = g.FetchAllEndpoints(ctx)
+	if err != nil {
+		g.Log.Infof("Trying to connect to the endpoint as a last resort measure")
+		return err
+	}
+
+	// Step 2 (optional): Log details of each discovered endpoint for debugging
+	g.LogEndpoints(endpoints)
+
+	// Step 3: Determine the authentication method to use.
+	// Default to Anonymous if neither username nor password is provided.
+	var selectedAuthentication ua.UserTokenType
+	switch {
+	case g.Username != "" && g.Password != "":
+		selectedAuthentication = ua.UserTokenTypeUserName
+	default:
+		selectedAuthentication = ua.UserTokenTypeAnonymous
+	}
+
+	// Step 4: Check if the user has specified a very concrete endpoint, security policy, and security mode
+	// Connect to this endpoint directly
+	// If connection fails, then return an error
+
+	// Step 4a: Connect using concrete endpoint
+	if g.DirectConnect || len(endpoints) == 0 {
+		c, err := g.connectToDirectEndpoint(ctx, selectedAuthentication)
+		if err != nil {
+			g.Log.Infof("error while connecting to the endpoint directly: %v", err)
+			return err
+		}
+
+		g.Client = c
+		return nil
+
+	}
+
+	// Step 4b: Connect using SecurityMode and SecurityPolicy
+	if g.SecurityMode != "" && g.SecurityPolicy != "" {
+		c, err = g.connectWithSecurity(ctx, endpoints, selectedAuthentication)
+		if err != nil {
+			g.Log.Infof("error while connecting using securitymode %s, securityPolicy: %s. err:%v", g.SecurityMode, g.SecurityPolicy, err)
+			return err
+		}
+
+		g.Client = c
+		return nil
+	}
+
+	// Step 5: If the user has not specified a very concrete endpoint, security policy, and security mode
+	// Iterate through all available endpoints and try to connect to them
+	c, err = g.attemptBestEndpointConnection(ctx, endpoints, selectedAuthentication)
+	if err != nil {
+		return err
+	}
+
+	// If no connection was successful, return an error
+	if c == nil {
+		g.Log.Errorf("Failed to connect to any endpoint")
+		return errors.New("failed to connect to any endpoint")
+	}
+
+	g.Client = c
+	return nil
 }
