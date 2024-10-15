@@ -240,7 +240,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		logger.Debugf("found %d child refs\n", len(refs))
 		for _, rn := range refs {
 			wg.Add(1)
-			go browse(ctx, rn, def.Path, level+1, logger, parentNodeId, nodeChan, errChan, wg)
+			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, wg)
 		}
 		return nil
 	}
