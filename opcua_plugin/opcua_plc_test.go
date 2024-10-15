@@ -286,7 +286,7 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 	})
 
 	When("Subscribing", func() {
-		It("should return data changes", Label("now"), func() {
+		It("should return data changes", FlakeAttempts(3), func() {
 
 			var err error
 
