@@ -47,7 +47,7 @@ func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 
 	// Parse all nodeIDs to validate them.
 	// loop through all nodeIDs, parse them and put them into a slice
-	parsedNodeIDs := make([]*ua.NodeID, len(incomingNodes))
+	var parsedNodeIDs []*ua.NodeID
 
 	for _, incomingNodeId := range incomingNodes {
 		parsedNodeID, err := ua.ParseNodeID(incomingNodeId)
@@ -219,6 +219,10 @@ func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 		g.ServerInfo = serverInfo
 	}
 
+	// Create a subscription channel if needed
+	if g.SubscribeEnabled {
+		g.SubNotifyChan = make(chan *opcua.PublishNotificationData, 10000)
+	}
 	// Browse and subscribe to the nodes if needed
 	// Do this asynchronously so that the first messages can already arrive
 	go func() {
@@ -231,11 +235,6 @@ func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 		g.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
 	}()
 
-	// Create a subscription channel if needed
-	if g.SubscribeEnabled {
-		g.SubNotifyChan = make(chan *opcua.PublishNotificationData, 10000)
-	}
-
 	return nil
 }
 
@@ -244,6 +243,11 @@ func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 // The function updates heartbeat information and monitors the connection's health.
 // If no messages or heartbeats are received within the expected timeframe, it closes the connection.
 func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, ackFunc service.AckFunc, err error) {
+	if len(g.NodeList) == 0 {
+		g.Log.Debug("ReadBatch is called with empty nodelists. returning early from ReadBatch")
+		return nil, nil, nil
+	}
+
 	if g.SubscribeEnabled {
 		// Wait for maximum 3 seconds for a response from the subscription channel
 		// So that this never gets stuck
