@@ -93,7 +93,7 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			Eventually(func() (int, error) {
 				messageBatch, _, err := input.ReadBatch(ctx)
 				return len(messageBatch), err
-			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(1))
+			}, 10*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(1))
 		})
 	})
 
@@ -120,7 +120,7 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			Eventually(func() (int, error) {
 				messageBatch, _, err := input.ReadBatch(ctx)
 				return len(messageBatch), err
-			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(2))
+			}, 10*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(2))
 		})
 	})
 })
@@ -273,7 +273,7 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			Eventually(func() (int, error) {
 				messageBatch, _, err = input.ReadBatch(ctx)
 				return len(messageBatch), err
-			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(1))
+			}, 10*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(1))
 
 			for _, message := range messageBatch {
 				message, err := message.AsStructuredMut()
@@ -309,7 +309,7 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			Eventually(func() (int, error) {
 				messageBatch, _, err := input.ReadBatch(ctx)
 				return len(messageBatch), err
-			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(2))
+			}, 10*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(2))
 
 			for _, message := range messageBatch {
 				message, err := message.AsStructuredMut()
@@ -324,7 +324,7 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			Eventually(func() (int, error) {
 				messageBatch2, _, err = input.ReadBatch(ctx)
 				return len(messageBatch2), err
-			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(1))
+			}, 10*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(1))
 
 			for _, message := range messageBatch2 {
 				message, err := message.AsStructuredMut()
