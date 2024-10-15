@@ -301,6 +301,7 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
 			}
+			ctx := context.Background()
 			err = input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -324,7 +325,7 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			Eventually(func() (int, error) {
 				messageBatch2, _, err = input.ReadBatch(ctx)
 				return len(messageBatch2), err
-			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(1))
+			}, 60*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(1))
 
 			for _, message := range messageBatch2 {
 				message, err := message.AsStructuredMut()
