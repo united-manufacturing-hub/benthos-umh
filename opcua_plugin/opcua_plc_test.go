@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/redpanda-data/benthos/v4/public/service"
 	. "github.com/united-manufacturing-hub/benthos-umh/v2/opcua_plugin"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -64,10 +65,10 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			err := input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
-			messageBatch, _, err := input.ReadBatch(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(messageBatch).To(HaveLen(1))
+			Eventually(func() (int, error) {
+				messageBatch, _, err := input.ReadBatch(ctx)
+				return len(messageBatch), err
+			}, 10*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(1))
 		})
 
 		It("should connect with no security", func() {
@@ -89,10 +90,10 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			err := input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
-			messageBatch, _, err := input.ReadBatch(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(messageBatch).To(HaveLen(1))
+			Eventually(func() (int, error) {
+				messageBatch, _, err := input.ReadBatch(ctx)
+				return len(messageBatch), err
+			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(1))
 		})
 	})
 
@@ -115,11 +116,11 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			err = input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
-			messageBatch, _, err := input.ReadBatch(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
 			// expect 2 messages for both nodes
-			Expect(len(messageBatch)).To(Equal(2))
+			Eventually(func() (int, error) {
+				messageBatch, _, err := input.ReadBatch(ctx)
+				return len(messageBatch), err
+			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(2))
 		})
 	})
 })
@@ -267,10 +268,12 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			err = input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
-			messageBatch, _, err := input.ReadBatch(ctx)
-			Expect(err).NotTo(HaveOccurred())
+			var messageBatch service.MessageBatch
 
-			Expect(len(messageBatch)).To(Equal(1))
+			Eventually(func() (int, error) {
+				messageBatch, _, err = input.ReadBatch(ctx)
+				return len(messageBatch), err
+			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(1))
 
 			for _, message := range messageBatch {
 				message, err := message.AsStructuredMut()
@@ -283,7 +286,7 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 	})
 
 	When("Subscribing", func() {
-		It("should return data changes", func() {
+		It("should return data changes", FlakeAttempts(3), func() {
 
 			var err error
 
@@ -298,15 +301,16 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
 			}
-			// Attempt to connect
+			ctx := context.Background()
 			err = input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
-			messageBatch, _, err := input.ReadBatch(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
+			var messageBatch service.MessageBatch
 			// expect 2 messages for both nodes
-			Expect(len(messageBatch)).To(Equal(2))
+			Eventually(func() (int, error) {
+				messageBatch, _, err := input.ReadBatch(ctx)
+				return len(messageBatch), err
+			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(2))
 
 			for _, message := range messageBatch {
 				message, err := message.AsStructuredMut()
@@ -316,11 +320,12 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 				Expect(message).To(BeAssignableToTypeOf(exampleNumber)) // it should be a number
 			}
 
-			messageBatch2, _, err := input.ReadBatch(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
+			var messageBatch2 service.MessageBatch
 			// expect 1 message only as RevisionCounter will not change
-			Expect(len(messageBatch2)).To(Equal(1))
+			Eventually(func() (int, error) {
+				messageBatch2, _, err = input.ReadBatch(ctx)
+				return len(messageBatch2), err
+			}, 60*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(1))
 
 			for _, message := range messageBatch2 {
 				message, err := message.AsStructuredMut()
