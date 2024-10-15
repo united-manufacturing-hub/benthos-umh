@@ -27,7 +27,7 @@ import (
 )
 
 const SessionTimeout = 5 * time.Second
-const SubscribeTimeoutContext = 10 * time.Second
+const SubscribeTimeoutContext = 3 * time.Second
 
 var OPCUAConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from OPC-UA servers. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
@@ -244,19 +244,17 @@ func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 // If no messages or heartbeats are received within the expected timeframe, it closes the connection.
 func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, ackFunc service.AckFunc, err error) {
 	if len(g.NodeList) == 0 {
-		g.NodeList, err = g.GetNodes(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
+		g.Log.Debug("ReadBatch is called with empty nodelists. returning early from ReadBatch")
+		return nil, nil, nil
 	}
+
 	if g.SubscribeEnabled {
-		// Wait for maximum 10 seconds for a response from the subscription channel
+		// Wait for maximum 3 seconds for a response from the subscription channel
 		// So that this never gets stuck
 		ctxSubscribe, cancel := context.WithTimeout(ctx, SubscribeTimeoutContext)
 		defer cancel()
 
 		msgs, ackFunc, err = g.ReadBatchSubscribe(ctxSubscribe)
-
 	} else {
 		msgs, ackFunc, err = g.ReadBatchPull(ctx)
 	}
