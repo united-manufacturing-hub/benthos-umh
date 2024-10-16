@@ -77,7 +77,7 @@ func sanitize(s string) string {
 //
 // **Returns:**
 // - `void`: Errors are sent through `errChan`, and discovered nodes are sent through `nodeChan`.
-func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *service.Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *sync.WaitGroup) {
+func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *service.Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, nodeNameToIDChan chan map[string]string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	logger.Debugf("node:%s path:%q level:%d parentNodeId:%s\n", n, path, level, parentNodeId)
@@ -108,6 +108,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		NodeID: n.ID,
 		Path:   newPath,
 	}
+
+	nodeNameToIDChan <- map[string]string{newPath: n.ID.String()}
 
 	switch err := attrs[0].Status; {
 	case errors.Is(err, ua.StatusOK):
@@ -240,7 +242,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		logger.Debugf("found %d child refs\n", len(refs))
 		for _, rn := range refs {
 			wg.Add(1)
-			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, wg)
+			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, nodeNameToIDChan, wg)
 		}
 		return nil
 	}
@@ -317,13 +319,13 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 // 		}
 // 		fmt.Println(nodes) // Output: [{i=2259 NodeClassVariable State  AccessLevelTypeNone i=852 i=84 Root.Objects.Server.ServerStatus.State}]
 
-func (g *OPCUAInput) GetNodes(ctx context.Context) ([]NodeDef, error) {
+func (g *OPCUAInput) GetNodes(ctx context.Context) ([]NodeDef, map[string]string, error) {
 	// ensure connection is available
 	if g.Client == nil {
 		err := g.connect(ctx)
 		if err != nil {
 			g.Log.Infof("error setting up connection while getting the OPCUA nodes: %v", err)
-			return nil, err
+			return nil, nil, err
 		}
 
 	}
@@ -340,12 +342,15 @@ func (g *OPCUAInput) GetNodes(ctx context.Context) ([]NodeDef, error) {
 // Returns:
 // - []NodeDef: A slice containing the detected nodes.
 // - error: An error if any occurred during the browsing process.
-func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
+func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]string, error) {
 	// Create a slice to store the detected nodes
 	nodeList := make([]NodeDef, 0)
 
+	nodeNameToID := make(map[string]string)
+
 	// Create a channel to store the detected nodes
 	nodeChan := make(chan NodeDef, 100_000)
+	nodeNameToIDChan := make(chan map[string]string, 1000)
 	// For collecting errors from goroutines
 	errChan := make(chan error, len(g.NodeIDs))
 
@@ -363,13 +368,20 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 
 		// Start a goroutine for browsing
 		wg.Add(1)
-		go browse(ctx, g.Client.Node(nodeID), "", 0, g.Log, nodeID.String(), nodeChan, errChan, &wg)
+		go browse(ctx, g.Client.Node(nodeID), "", 0, g.Log, nodeID.String(), nodeChan, errChan, nodeNameToIDChan, &wg)
 	}
 
 	// close nodeChan and errChan once all browsing is done
 	wg.Wait()
+	close(nodeNameToIDChan)
 	close(nodeChan)
 	close(errChan)
+
+	for nodeNameToIDMap := range nodeNameToIDChan {
+		for k, v := range nodeNameToIDMap {
+			nodeNameToID[k] = v
+		}
+	}
 
 	// Read nodes from nodeChan and process them
 	for node := range nodeChan {
@@ -382,10 +394,10 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 	// Check for any errors collected during browsing
 	if len(errChan) > 0 {
 		// Return the first error encountered
-		return nil, <-errChan
+		return nil, nil, <-errChan
 	}
 
-	return nodeList, nil
+	return nodeList, nodeNameToID, nil
 }
 
 // BrowseAndSubscribeIfNeeded browses the specified OPC UA nodes, adds a heartbeat node if required,
@@ -397,7 +409,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 // 3. **Subscribe to Nodes:** If subscriptions are enabled, creates a subscription and sets up monitoring for the detected nodes.
 func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
-	nodeList, err := g.discoverNodes(ctx)
+	nodeList, _, err := g.discoverNodes(ctx)
 	if err != nil {
 		g.Log.Infof("error while getting the node list: %v", err)
 		return err
@@ -422,15 +434,18 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
 			// Copied and pasted from above, just for one node
 			nodeHeartbeatChan := make(chan NodeDef, 1)
-			var wgHeartbeat sync.WaitGroup
 			errChanHeartbeat := make(chan error, 1)
+			nodeNameToIDChan := make(chan map[string]string, 1)
+			var wgHeartbeat sync.WaitGroup
 
 			wgHeartbeat.Add(1)
-			go browse(ctx, g.Client.Node(heartbeatNodeID), "", 0, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat)
+			go browse(ctx, g.Client.Node(heartbeatNodeID), "", 0, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, nodeNameToIDChan, &wgHeartbeat)
 
 			wgHeartbeat.Wait()
 			close(nodeHeartbeatChan)
 			close(errChanHeartbeat)
+			close(nodeNameToIDChan)
+
 			for node := range nodeHeartbeatChan {
 				nodeList = append(nodeList, node)
 			}
