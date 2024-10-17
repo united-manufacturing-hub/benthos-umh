@@ -73,11 +73,12 @@ func sanitize(s string) string {
 // - `parentNodeId` (`string`): The NodeID of the parent node, used for reference tracking.
 // - `nodeChan` (`chan NodeDef`): Channel to send discovered NodeDefs for collection.
 // - `errChan` (`chan error`): Channel to send encountered errors for centralized handling.
+// - `nodeIDMapChan` (`chan map[string]string`): Channel to send the mapping of node names to NodeIDs.
 // - `wg` (`*sync.WaitGroup`): WaitGroup to synchronize the completion of goroutines.
 //
 // **Returns:**
 // - `void`: Errors are sent through `errChan`, and discovered nodes are sent through `nodeChan`.
-func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *service.Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, nodeNameToIDChan chan map[string]string, wg *sync.WaitGroup) {
+func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *service.Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, nodeIDMapChan chan map[string]string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	logger.Debugf("node:%s path:%q level:%d parentNodeId:%s\n", n, path, level, parentNodeId)
@@ -109,7 +110,9 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		Path:   newPath,
 	}
 
-	nodeNameToIDChan <- map[string]string{newPath: n.ID.String()}
+	// send the mapping of nodeName to NodeID
+	// An example event sent is map["Root.Objects.Server"] = "i=86"
+	nodeIDMapChan <- map[string]string{newPath: n.ID.String()}
 
 	switch err := attrs[0].Status; {
 	case errors.Is(err, ua.StatusOK):
@@ -242,7 +245,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		logger.Debugf("found %d child refs\n", len(refs))
 		for _, rn := range refs {
 			wg.Add(1)
-			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, nodeNameToIDChan, wg)
+			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, nodeIDMapChan, wg)
 		}
 		return nil
 	}
@@ -297,7 +300,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	return
 }
 
-// GetNodes gets all available list of nodes from an OPC UA server.
+// GetNodes gets all available list of nodes from an OPC UA server and node to nodeID map.
 // The list of nodes returned varies depends on the OPCUAInput.NodeIDs field. Use i=84 to get all nodes.
 // It internally refreshes the connection if it is not available.
 // The function is specially designed to be used outside Benthos plugin context.
@@ -313,7 +316,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 //
 // 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 // 		defer cancel()
-// 		nodes, err := opcua.GetNodes(ctx)
+// 		nodes,nodeIDMap, err := opcua.GetNodes(ctx)
 // 		if err != nil {
 // 			panic(err)
 // 		}
@@ -341,16 +344,18 @@ func (g *OPCUAInput) GetNodes(ctx context.Context) ([]NodeDef, map[string]string
 //
 // Returns:
 // - []NodeDef: A slice containing the detected nodes.
+// - map[string]string: A map of node names to NodeIDs.
 // - error: An error if any occurred during the browsing process.
 func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]string, error) {
 	// Create a slice to store the detected nodes
 	nodeList := make([]NodeDef, 0)
 
-	nodeNameToID := make(map[string]string)
+	nodeIDMap := make(map[string]string)
 
 	// Create a channel to store the detected nodes
 	nodeChan := make(chan NodeDef, 100_000)
-	nodeNameToIDChan := make(chan map[string]string, 1000)
+	// Create a channel to store the mapping of node names to NodeIDs
+	nodeIDMapChan := make(chan map[string]string, 1000)
 	// For collecting errors from goroutines
 	errChan := make(chan error, len(g.NodeIDs))
 
@@ -368,18 +373,19 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 
 		// Start a goroutine for browsing
 		wg.Add(1)
-		go browse(ctx, g.Client.Node(nodeID), "", 0, g.Log, nodeID.String(), nodeChan, errChan, nodeNameToIDChan, &wg)
+		go browse(ctx, g.Client.Node(nodeID), "", 0, g.Log, nodeID.String(), nodeChan, errChan, nodeIDMapChan, &wg)
 	}
 
-	// close nodeChan and errChan once all browsing is done
+	// close nodeChan, nodeIDMapChan and errChan once all browsing is done
 	wg.Wait()
-	close(nodeNameToIDChan)
+	close(nodeIDMapChan)
 	close(nodeChan)
 	close(errChan)
 
-	for nodeNameToIDMap := range nodeNameToIDChan {
+	// Collect the mapping of node names to NodeIDs and merge them into a single map
+	for nodeNameToIDMap := range nodeIDMapChan {
 		for k, v := range nodeNameToIDMap {
-			nodeNameToID[k] = v
+			nodeIDMap[k] = v
 		}
 	}
 
@@ -397,7 +403,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		return nil, nil, <-errChan
 	}
 
-	return nodeList, nodeNameToID, nil
+	return nodeList, nodeIDMap, nil
 }
 
 // BrowseAndSubscribeIfNeeded browses the specified OPC UA nodes, adds a heartbeat node if required,
@@ -435,16 +441,16 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			// Copied and pasted from above, just for one node
 			nodeHeartbeatChan := make(chan NodeDef, 1)
 			errChanHeartbeat := make(chan error, 1)
-			nodeNameToIDChan := make(chan map[string]string, 1)
+			nodeIDMapChan := make(chan map[string]string, 1)
 			var wgHeartbeat sync.WaitGroup
 
 			wgHeartbeat.Add(1)
-			go browse(ctx, g.Client.Node(heartbeatNodeID), "", 0, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, nodeNameToIDChan, &wgHeartbeat)
+			go browse(ctx, g.Client.Node(heartbeatNodeID), "", 0, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, nodeIDMapChan, &wgHeartbeat)
 
 			wgHeartbeat.Wait()
 			close(nodeHeartbeatChan)
 			close(errChanHeartbeat)
-			close(nodeNameToIDChan)
+			close(nodeIDMapChan)
 
 			for node := range nodeHeartbeatChan {
 				nodeList = append(nodeList, node)
