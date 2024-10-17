@@ -30,17 +30,20 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 	softwareVersionNodeID := ua.NewNumericNodeID(0, 2264)
 
 	nodeChan := make(chan NodeDef, 3)
-	var wg sync.WaitGroup
 	errChan := make(chan error, 3)
+	pathIDMapChan := make(chan map[string]string, 3)
+	var wg sync.WaitGroup
 
 	wg.Add(3)
-	go browse(ctx, g.Client.Node(manufacturerNameNodeID), "", 0, g.Log, manufacturerNameNodeID.String(), nodeChan, errChan, &wg)
-	go browse(ctx, g.Client.Node(productNameNodeID), "", 0, g.Log, productNameNodeID.String(), nodeChan, errChan, &wg)
-	go browse(ctx, g.Client.Node(softwareVersionNodeID), "", 0, g.Log, softwareVersionNodeID.String(), nodeChan, errChan, &wg)
+	go browse(ctx, g.Client.Node(manufacturerNameNodeID), "", 0, g.Log, manufacturerNameNodeID.String(), nodeChan, errChan, pathIDMapChan, &wg)
+	go browse(ctx, g.Client.Node(productNameNodeID), "", 0, g.Log, productNameNodeID.String(), nodeChan, errChan, pathIDMapChan, &wg)
+	go browse(ctx, g.Client.Node(softwareVersionNodeID), "", 0, g.Log, softwareVersionNodeID.String(), nodeChan, errChan, pathIDMapChan, &wg)
 	wg.Wait()
 
 	close(nodeChan)
 	close(errChan)
+	// Note: We can close the pathIDMapChan as we are not using its data
+	close(pathIDMapChan)
 
 	if len(errChan) > 0 {
 		return ServerInfo{}, <-errChan
