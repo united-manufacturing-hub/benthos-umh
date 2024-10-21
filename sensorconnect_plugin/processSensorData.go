@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"go.uber.org/zap"
+	"math"
+	"math/big"
 	"strconv"
 )
 
@@ -64,6 +67,39 @@ func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, portModeMap 
 				continue
 			}
 
+			// create IoddFilemapKey
+			var ioddFilemapKey IoddFilemapKey
+			ioddFilemapKey.DeviceId = int(portMode.DeviceID)
+			ioddFilemapKey.VendorId = int64(portMode.VendorID)
+
+			// check if entry for IoddFilemapKey exists in ioddIoDeviceMap
+			if _, ok := s.IoDeviceMap.Load(ioddFilemapKey); !ok {
+				zap.S().Debugf("IoddFilemapKey %v not in IodddeviceMap", ioddFilemapKey)
+				continue
+			}
+
+			// create padded binary raw sensor output
+			/*
+				rawSensorOutputLength := len(rawSensorOutput)
+
+					outputBitLength := rawSensorOutputLength * 4
+					rawSensorOutputString := string(rawSensorOutput)
+					rawSensorOutputBinary := HexToBin(rawSensorOutputString)
+					rawSensorOutputBinaryPadded := zeroPadding(rawSensorOutputBinary, outputBitLength)
+
+					cidm, ok := idm.(IoDevice)
+					if !ok {
+						zap.S().Errorf("Failed to cast idm to IoDevice")
+						continue
+					}
+
+					// Extract important IoddStruct parts for better readability
+					processDataIn := cidm.ProfileBody.DeviceFunction.ProcessDataCollection.ProcessData.ProcessDataIn
+					datatypeReferenceArray := cidm.ProfileBody.DeviceFunction.DatatypeCollection.DatatypeArray
+					var emptySimpleDatatype SimpleDatatype
+					primLangExternalTextCollection := cidm.ExternalTextCollection.PrimaryLanguage.Text
+
+			*/
 			// Create message
 			message := service.NewMessage(rawSensorOutput)
 
@@ -114,4 +150,80 @@ func (s *SensorConnectInput) extractIntFromSensorDataMap(key string, tag string,
 		return 0, fmt.Errorf("failed to cast elementMap[%s] for key %s to float64", tag, key)
 	}
 	return int(val), nil
+}
+
+// convertBinaryValue converts a binary string to its corresponding value based on the datatype.
+// It handles both string and numeric data types and logs errors using the Benthos logger.
+func (s *SensorConnectInput) convertBinaryValue(binaryValue string, datatype string) (interface{}, error) {
+	bitLen := len(binaryValue)
+	raw, err := strconv.ParseUint(binaryValue, 2, bitLen)
+	if err != nil {
+		s.logger.Errorf("Error while converting binary value to %v: %v", datatype, err)
+		return nil, fmt.Errorf("failed to parse binary value: %w", err)
+	}
+
+	var output interface{}
+
+	switch datatype {
+	case "OctetStringT":
+		output = BinToHex(binaryValue)
+	case "UIntegerT":
+		output = raw
+	case "IntegerT":
+		switch bitLen {
+		case 8:
+			output = int(int8(raw))
+		case 16:
+			output = int(int16(raw))
+		case 32:
+			output = int(int32(raw))
+		case 64:
+			output = int(int64(raw))
+		default:
+			s.logger.Errorf("Unsupported bit length for IntegerT: %d", bitLen)
+			return nil, fmt.Errorf("unsupported bit length for IntegerT: %d", bitLen)
+		}
+	case "Float32T":
+		output = math.Float32frombits(uint32(raw))
+	case "BooleanT":
+		output = raw == 1
+	default:
+		s.logger.Warnf("Datatype %s not supported", datatype)
+		output = BinToHex(binaryValue)
+	}
+
+	return output, nil
+}
+
+// BinToHex converts a binary string to a hex string
+func BinToHex(bin string) (hex string) {
+	i := new(big.Int)
+	i.SetString(bin, 2)
+	hex = fmt.Sprintf("%x", i)
+	return
+}
+
+// zeroPadding adds zeros on the left side of a string until the lengt of the string equals the requested length
+func zeroPadding(input string, length int) (output string) {
+	output = fmt.Sprintf("%0*v", length, input)
+	return
+}
+
+// HexToBin converts a hex string into a binary string
+func HexToBin(hex string) (bin string) {
+	i := new(big.Int)
+	i.SetString(hex, 16)
+	bin = fmt.Sprintf("%b", i)
+	return
+}
+
+// determineValueBitLength returns the bitlength of a value
+func determineValueBitLength(datatype string, bitLength uint, fixedLength uint) (length uint) {
+	if datatype == "BooleanT" {
+		return 1
+	} else if datatype == "octetStringT" {
+		return fixedLength * 8
+	} else {
+		return bitLength
+	}
 }

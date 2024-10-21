@@ -33,6 +33,8 @@ type SensorConnectInput struct {
 	mu              sync.Mutex
 	logger          *service.Logger
 	CurrentCid      int
+
+	IoDeviceMap sync.Map // IoDeviceMap to store IoDevices
 }
 
 // ConfigSpec defines the plugin's configuration spec
