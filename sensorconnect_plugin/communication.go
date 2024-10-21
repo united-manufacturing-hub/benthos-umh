@@ -13,7 +13,7 @@ import (
 const CONNECTION_TIMEOUT_SECONDS = 10
 
 // SendRequestToDevice sends a request to the device and checks the response CID
-func (s *SensorConnectInput) SendRequestToDevice(requestData map[string]interface{}) (map[string]interface{}, error) {
+func (s *SensorConnectInput) SendRequestToDevice(ctx context.Context, requestData map[string]interface{}) (map[string]interface{}, error) {
 	s.CurrentCid++
 	cid := s.CurrentCid
 
@@ -27,7 +27,7 @@ func (s *SensorConnectInput) SendRequestToDevice(requestData map[string]interfac
 
 	url := fmt.Sprintf("http://%s", s.DeviceAddress)
 
-	req, err := http.NewRequestWithContext(context.Background(), "POST", url, bytes.NewBuffer(payloadBytes))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		s.logger.Warnf("Failed to create request for %s: %v", url, err)
 		return nil, err

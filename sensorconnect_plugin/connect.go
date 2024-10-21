@@ -1,6 +1,7 @@
 package sensorconnect_plugin
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -28,7 +29,7 @@ type DeviceInformation struct {
 }
 
 // GetDeviceInformation connects to the device and retrieves its information
-func (s *SensorConnectInput) GetDeviceInformation() (DeviceInformation, error) {
+func (s *SensorConnectInput) GetDeviceInformation(ctx context.Context) (DeviceInformation, error) {
 	requestData := map[string]interface{}{
 		"code": "request",
 		"adr":  "/getdatamulti",
@@ -39,7 +40,7 @@ func (s *SensorConnectInput) GetDeviceInformation() (DeviceInformation, error) {
 		},
 	}
 
-	response, err := s.SendRequestToDevice(requestData)
+	response, err := s.SendRequestToDevice(ctx, requestData)
 	if err != nil {
 		return DeviceInformation{}, err
 	}

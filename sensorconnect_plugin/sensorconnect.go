@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"sync"
+	"time"
 )
 
 type SensorConnectInput struct {
@@ -25,9 +27,12 @@ type SensorConnectInput struct {
 	DeviceAddress string
 
 	// Internal fields
-	deviceInfo DeviceInformation
-	logger     *service.Logger
-	CurrentCid int
+	DeviceInfo      DeviceInformation
+	CurrentPortMap  map[int]ConnectedDeviceInfo
+	lastPortMapTime time.Time
+	mu              sync.Mutex
+	logger          *service.Logger
+	CurrentCid      int
 }
 
 // ConfigSpec defines the plugin's configuration spec
@@ -66,20 +71,96 @@ func (s *SensorConnectInput) Connect(ctx context.Context) error {
 	s.logger.Infof("Connecting to device at %s", s.DeviceAddress)
 
 	// Get device information
-	deviceInfo, err := s.GetDeviceInformation()
+	deviceInfo, err := s.GetDeviceInformation(ctx)
 	if err != nil {
 		s.logger.Errorf("Failed to connect to device at %s: %v", s.DeviceAddress, err)
 		return err
 	}
 
-	s.deviceInfo = deviceInfo
+	s.DeviceInfo = deviceInfo
 	s.logger.Infof("Connected to device at %s (SN: %s, PN: %s)", deviceInfo.URL, deviceInfo.SerialNumber, deviceInfo.ProductCode)
+
+	// Get Port Map and Print
+	portMap, err := s.GetUsedPortsAndMode(ctx)
+	if err != nil {
+		s.logger.Errorf("Failed to fetch port map %s: %v", s.DeviceAddress, err)
+		return err
+	}
+
+	s.mu.Lock()
+	s.CurrentPortMap = portMap
+	s.lastPortMapTime = time.Now()
+	s.mu.Unlock()
+
+	s.logger.Infof("Port Map for device at %s:", s.DeviceAddress)
+	for port, info := range portMap {
+		s.logger.Infof(
+			"Port %d:\n"+
+				"  Mode        : %d\n"+
+				"  Connected   : %t\n"+
+				"  DeviceID    : %d\n"+
+				"  VendorID    : %d\n"+
+				"  ProductName : %s\n"+
+				"  Serial      : %s\n",
+			port,
+			info.Mode,
+			info.Connected,
+			info.DeviceID,
+			info.VendorID,
+			info.ProductName,
+			info.Serial,
+		)
+	}
 
 	return nil
 }
 
 // ReadBatch reads data from sensors and returns it as a batch of messages
 func (s *SensorConnectInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+	s.mu.Lock()
+	timeSinceLastUpdate := time.Since(s.lastPortMapTime)
+	if timeSinceLastUpdate >= 10*time.Second {
+		s.logger.Infof("10 seconds elapsed since last port map update. Updating port map for device at %s.", s.DeviceAddress)
+
+		// Attempt to fetch the updated port map
+		updatedPortMap, err := s.GetUsedPortsAndMode(ctx)
+		if err != nil {
+			s.logger.Errorf("Failed to update port map for device at %s: %v", s.DeviceAddress, err)
+			// Proceed with old port map
+		} else {
+			s.CurrentPortMap = updatedPortMap
+			s.lastPortMapTime = time.Now()
+
+			s.logger.Infof("Updated Port Map for device at %s:", s.DeviceAddress)
+			for port, info := range updatedPortMap {
+				s.logger.Infof(
+					"Port %d:\n"+
+						"  Mode        : %d\n"+
+						"  Connected   : %t\n"+
+						"  DeviceID    : %d\n"+
+						"  VendorID    : %d\n"+
+						"  ProductName : %s\n"+
+						"  Serial      : %s\n",
+					port,
+					info.Mode,
+					info.Connected,
+					info.DeviceID,
+					info.VendorID,
+					info.ProductName,
+					info.Serial,
+				)
+			}
+		}
+	}
+	s.mu.Unlock()
+
+	/*
+		dataMap, err := s.GetSensorDataMap(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+	*/
+
 	return nil, nil, nil
 }
 

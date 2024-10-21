@@ -1,6 +1,7 @@
 package sensorconnect_plugin_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	. "github.com/onsi/ginkgo/v2"
@@ -75,7 +76,7 @@ var _ = Describe("SensorConnect Plugin Unittests", func() {
 					CurrentCid:    0,
 				}
 
-				deviceInfo, err := input.GetDeviceInformation()
+				deviceInfo, err := input.GetDeviceInformation(context.Background())
 				Expect(err).NotTo(HaveOccurred())
 				Expect(deviceInfo.ProductCode).To(Equal("PN987654"))
 				Expect(deviceInfo.SerialNumber).To(Equal("SN123456"))
@@ -98,7 +99,7 @@ var _ = Describe("SensorConnect Plugin Unittests", func() {
 					CurrentCid:    0,
 				}
 
-				_, err := input.GetDeviceInformation()
+				_, err := input.GetDeviceInformation(context.Background())
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("unexpected status code 500"))
 			})
@@ -148,7 +149,7 @@ var _ = Describe("SensorConnect Plugin Unittests", func() {
 					CurrentCid:    0,
 				}
 
-				_, err := input.GetDeviceInformation()
+				_, err := input.GetDeviceInformation(context.Background())
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("unexpected correlation ID in response"))
 			})
@@ -202,7 +203,7 @@ var _ = Describe("SensorConnect Plugin Unittests", func() {
 				CurrentCid:    0,
 			}
 
-			_, err := input.GetDeviceInformation()
+			_, err := input.GetDeviceInformation(context.Background())
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("device returned error code 530"))
 		})
@@ -231,7 +232,7 @@ var _ = Describe("SensorConnect Integration Tests", func() {
 					CurrentCid:    0,
 				}
 
-				deviceInfo, err := input.GetDeviceInformation()
+				deviceInfo, err := input.GetDeviceInformation(context.Background())
 				Expect(err).NotTo(HaveOccurred())
 				Expect(deviceInfo.ProductCode).To(Equal("AL1350"))
 				Expect(deviceInfo.SerialNumber).To(Equal("000201610237"))

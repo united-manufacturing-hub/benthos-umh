@@ -1,6 +1,7 @@
 package sensorconnect_plugin
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -19,8 +20,8 @@ type ConnectedDeviceInfo struct {
 }
 
 // GetUsedPortsAndMode returns a map of the IO-Link Master's ports with port numbers as keys and ConnectedDeviceInfo as values
-func (s *SensorConnectInput) GetUsedPortsAndMode() (map[int]ConnectedDeviceInfo, error) {
-	response, err := s.getUsedPortsAndMode()
+func (s *SensorConnectInput) GetUsedPortsAndMode(ctx context.Context) (map[int]ConnectedDeviceInfo, error) {
+	response, err := s.getUsedPortsAndMode(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +106,7 @@ func (s *SensorConnectInput) GetUsedPortsAndMode() (map[int]ConnectedDeviceInfo,
 }
 
 // getUsedPortsAndMode sends a request to the device to get information about used ports and their modes
-func (s *SensorConnectInput) getUsedPortsAndMode() (RawUsedPortsAndMode, error) {
+func (s *SensorConnectInput) getUsedPortsAndMode(ctx context.Context) (RawUsedPortsAndMode, error) {
 	// Define the data points to request for each port
 	var dataPoints []string
 	for port := 1; port <= 8; port++ {
@@ -126,7 +127,7 @@ func (s *SensorConnectInput) getUsedPortsAndMode() (RawUsedPortsAndMode, error) 
 		},
 	}
 
-	response, err := s.SendRequestToDevice(requestData)
+	response, err := s.SendRequestToDevice(ctx, requestData)
 	if err != nil {
 		return RawUsedPortsAndMode{}, err
 	}
