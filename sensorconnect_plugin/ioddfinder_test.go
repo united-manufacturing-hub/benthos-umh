@@ -15,6 +15,7 @@ var _ = Describe("IODD File Tests", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
+		Skip("prevent overloading the iodd server")
 	})
 
 	Describe("GetIoddFile", func() {
