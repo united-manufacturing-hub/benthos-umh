@@ -59,8 +59,6 @@ var _ = Describe("Sensorconnnect", func() {
 
 			// Close the connection
 			err = input.Close(ctx)
-
-			Fail("test")
 		})
 	})
 
