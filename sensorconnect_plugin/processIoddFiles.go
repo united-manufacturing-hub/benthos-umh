@@ -3,7 +3,6 @@ package sensorconnect_plugin
 import (
 	"context"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"os"
 )
@@ -123,7 +122,8 @@ func (s *SensorConnectInput) AddNewDeviceToIoddFilesAndMap(ctx context.Context,
 	s.logger.Debugf("Requesting IODD file %v -> %s", ioddFilemapKey)
 	err := s.RequestSaveIoddFile(ctx, ioddFilemapKey)
 	if err != nil {
-		s.logger.Debugf("File with fileMapKey %v already saved.", ioddFilemapKey)
+		s.logger.Errorf("Error in AddNewDeviceToIoddFilesAndMap: %s", err.Error())
+		return err
 	}
 	s.logger.Debugf("Reading IODD files %v -> %s")
 
@@ -160,7 +160,7 @@ func (s *SensorConnectInput) UnmarshalIoddFile(ioddFile []byte, absoluteFilePath
 func (s *SensorConnectInput) RequestSaveIoddFile(ctx context.Context, ioddFilemapKey IoddFilemapKey) error {
 	// Check if IoDevice already in IoDeviceMap
 	if _, ok := s.IoDeviceMap.Load(ioddFilemapKey); ok {
-		return errors.New("request to save IODD file invalid: entry for ioddFilemapKey already exists")
+		return nil
 	}
 	// Execute download and saving of IODD file
 	err := s.FetchAndStoreIoDDFile(ctx, ioddFilemapKey.VendorId, ioddFilemapKey.DeviceId)

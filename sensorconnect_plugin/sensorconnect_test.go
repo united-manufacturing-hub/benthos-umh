@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	_ "github.com/redpanda-data/benthos/v4/public/components/io"
+	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 )
 
 var _ = Describe("Sensorconnnect", func() {
@@ -31,7 +34,7 @@ var _ = Describe("Sensorconnnect", func() {
 	When("ReadBatch", func() {
 		It("should receive data from the AL1350", func() {
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
 
 			input := &sensorconnect_plugin.SensorConnectInput{
@@ -49,12 +52,69 @@ var _ = Describe("Sensorconnnect", func() {
 			Expect(len(msgs)).To(BeNumerically(">", 0))
 
 			for _, message := range msgs {
-				messageBytes, err := message.AsBytes()
+				messageStruct, err := message.AsStructuredMut()
 				Expect(err).NotTo(HaveOccurred())
 
-				//var exampleNumber json.Number = "22.565684"
-				//Expect(message).To(BeAssignableToTypeOf(exampleNumber))
-				fmt.Printf("Received messageBytes: %+v\n", messageBytes)
+				portMode, found := message.MetaGetMut("sensorconnect_port_mode")
+				Expect(found).To(BeTrue())
+				Expect(portMode).To(Equal("io-link"))
+
+				portNumber, found := message.MetaGet("sensorconnect_port_number")
+				Expect(found).To(BeTrue())
+				Expect(portNumber).To(Equal("1"))
+
+				portIolinkVendorId, found := message.MetaGet("sensorconnect_port_iolink_vendor_id")
+				Expect(found).To(BeTrue())
+				Expect(portIolinkVendorId).To(Equal("310"))
+
+				portIolinkDeviceId, found := message.MetaGet("sensorconnect_port_iolink_device_id")
+				Expect(found).To(BeTrue())
+				Expect(portIolinkDeviceId).To(Equal("1028"))
+
+				portIolinkProductName, found := message.MetaGet("sensorconnect_port_iolink_product_name")
+				Expect(found).To(BeTrue())
+				Expect(portIolinkProductName).To(Equal("VVB001"))
+
+				portIolinkSerial, found := message.MetaGet("sensorconnect_port_iolink_serial")
+				Expect(found).To(BeTrue())
+				Expect(portIolinkSerial).To(Equal("000008512993"))
+
+				deviceUrl, found := message.MetaGet("sensorconnect_device_url")
+				Expect(found).To(BeTrue())
+				Expect(deviceUrl).To(Equal("http://" + endpoint))
+
+				deviceProductCode, found := message.MetaGet("sensorconnect_device_product_code")
+				Expect(found).To(BeTrue())
+				Expect(deviceProductCode).To(Equal("AL1350"))
+
+				deviceSerialNumber, found := message.MetaGet("sensorconnect_device_serial_number")
+				Expect(found).To(BeTrue())
+				Expect(deviceSerialNumber).To(Equal("000201610237"))
+
+				// Check if messageStruct of type any has the field {"Crest":41,"Device status":0,"OUT1":true,"OUT2":true,"Temperature":394,"a-Peak":2,"a-Rms":0,"v-Rms":0}
+
+				// Type assert messageStruct to map[string]interface{}
+				payload, ok := messageStruct.(map[string]interface{})
+				Expect(ok).To(BeTrue(), "messageStruct should be of type map[string]interface{}")
+
+				expectedFields := map[string]interface{}{
+					"Crest":         41,
+					"Device status": 0,
+					"OUT1":          true,
+					"OUT2":          true,
+					"Temperature":   394,
+					"a-Peak":        2,
+					"a-Rms":         0,
+					"v-Rms":         0,
+				}
+
+				// Iterate over each expected field and assert its presence and value
+				for key, _ := range expectedFields {
+					_, exists := payload[key]
+					Expect(exists).To(BeTrue(), fmt.Sprintf("Field '%s' should exist in the messageStruct", key))
+				}
+
+				fmt.Printf("Received messageBytes: %+v\n", messageStruct)
 			}
 
 			// Close the connection
@@ -64,8 +124,7 @@ var _ = Describe("Sensorconnnect", func() {
 
 	When("using a yaml and stream builder", func() {
 
-		It("should subscribe to all nodes and receive data", func() {
-			Skip("not relevant for now")
+		It("should receive data", func() {
 
 			// Create a new stream builder
 			builder := service.NewStreamBuilder()

@@ -102,6 +102,23 @@ func (s *SensorConnectInput) GetUsedPortsAndMode(ctx context.Context) (map[int]C
 		}
 	}
 
+	// Now check if we have iodd files in s.IoDeviceMap sync.Map for all the IO link devices
+	// if we dont have them, fetch them
+
+	for _, info := range portModeUsageMap {
+		if info.Mode == 3 && info.Connected && info.DeviceID != 0 && info.VendorID != 0 { // IO-Link mode
+			s.logger.Debugf("IO-Link device found, checking if iodd files are present for device ID: %d, Vendor ID: %d", info.DeviceID, info.VendorID)
+			ioddFilemapKey := IoddFilemapKey{
+				DeviceId: int(info.DeviceID),
+				VendorId: int64(info.VendorID),
+			}
+			err := s.AddNewDeviceToIoddFilesAndMap(ctx, ioddFilemapKey)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	return portModeUsageMap, nil
 }
 

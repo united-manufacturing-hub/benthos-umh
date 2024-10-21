@@ -44,6 +44,10 @@ func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, portModeMap 
 			message.MetaSet("sensorconnect_port_mode", "digital-input")
 			message.MetaSet("sensorconnect_port_number", portNumberString)
 
+			message.MetaSet("sensorconnect_device_url", s.DeviceInfo.URL)
+			message.MetaSet("sensorconnect_device_product_code", s.DeviceInfo.ProductCode)
+			message.MetaSet("sensorconnect_device_serial_number", s.DeviceInfo.SerialNumber)
+
 			// Add message to batch
 			batch = append(batch, message)
 
@@ -134,6 +138,14 @@ func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, portModeMap 
 
 			message.MetaSet("sensorconnect_port_mode", "io-link")
 			message.MetaSet("sensorconnect_port_number", portNumberString)
+			message.MetaSet("sensorconnect_port_iolink_vendor_id", strconv.Itoa(int(portMode.VendorID)))
+			message.MetaSet("sensorconnect_port_iolink_device_id", strconv.Itoa(int(portMode.DeviceID)))
+			message.MetaSet("sensorconnect_port_iolink_product_name", portMode.ProductName)
+			message.MetaSet("sensorconnect_port_iolink_serial", portMode.Serial)
+
+			message.MetaSet("sensorconnect_device_url", s.DeviceInfo.URL)
+			message.MetaSet("sensorconnect_device_product_code", s.DeviceInfo.ProductCode)
+			message.MetaSet("sensorconnect_device_serial_number", s.DeviceInfo.SerialNumber)
 
 			// Add message to batch
 			batch = append(batch, message)

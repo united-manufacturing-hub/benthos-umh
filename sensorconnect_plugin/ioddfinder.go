@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"github.com/goccy/go-json"
@@ -39,7 +40,14 @@ func (s *SensorConnectInput) FetchAndStoreIoDDFile(ctx context.Context, vendorId
 		DeviceId: deviceId,
 	}
 
-	s.IoDeviceMap.Store(fileMapKey, fileMap[index].File)
+	// Unmarshal the iodd file
+	payload := IoDevice{}
+	err = xml.Unmarshal(fileMap[index].File, &payload)
+	if err != nil {
+		return err
+	}
+
+	s.IoDeviceMap.Store(fileMapKey, payload)
 	return
 }
 
