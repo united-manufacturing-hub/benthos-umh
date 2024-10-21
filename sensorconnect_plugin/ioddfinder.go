@@ -34,7 +34,12 @@ func (s *SensorConnectInput) FetchAndStoreIoDDFile(ctx context.Context, vendorId
 		}
 	}
 
-	s.IoDeviceMap.Store(fileMap[index].Name, fileMap[index].File)
+	fileMapKey := IoddFilemapKey{
+		VendorId: vendorId,
+		DeviceId: deviceId,
+	}
+
+	s.IoDeviceMap.Store(fileMapKey, fileMap[index].File)
 	return
 }
 
