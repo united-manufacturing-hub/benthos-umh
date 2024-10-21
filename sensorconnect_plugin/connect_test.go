@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 )
 
 var _ = Describe("SensorConnect Plugin Unittests", func() {
@@ -212,12 +213,17 @@ var _ = Describe("SensorConnect Plugin Unittests", func() {
 
 var _ = Describe("SensorConnect Integration Tests", func() {
 
-	var (
-		address string
-	)
+	var endpoint string
 
 	BeforeEach(func() {
-		address = "10.13.37.178" // AL1350-1
+		endpoint = os.Getenv("TEST_DEBUG_IFM_ENDPOINT")
+
+		// Check if environment variables are set
+		if endpoint == "" {
+			Skip("Skipping test: environment variables not set")
+			return
+		}
+
 	})
 
 	AfterEach(func() {
@@ -228,7 +234,7 @@ var _ = Describe("SensorConnect Integration Tests", func() {
 			It("should successfully retrieve device information", func() {
 				// Initialize SensorConnectInput
 				input := &sensorconnect_plugin.SensorConnectInput{
-					DeviceAddress: address,
+					DeviceAddress: endpoint,
 					CurrentCid:    0,
 				}
 
@@ -236,7 +242,7 @@ var _ = Describe("SensorConnect Integration Tests", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(deviceInfo.ProductCode).To(Equal("AL1350"))
 				Expect(deviceInfo.SerialNumber).To(Equal("000201610237"))
-				Expect(deviceInfo.URL).To(Equal(fmt.Sprintf("http://%s", address)))
+				Expect(deviceInfo.URL).To(Equal(fmt.Sprintf("http://%s", endpoint)))
 			})
 		})
 	})

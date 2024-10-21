@@ -4,18 +4,24 @@ import (
 	"context"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"os"
 
 	"github.com/united-manufacturing-hub/benthos-umh/v2/sensorconnect_plugin"
 )
 
 var _ = Describe("DownloadPortModeData Integration Tests", func() {
 
-	var (
-		address string
-	)
+	var endpoint string
 
 	BeforeEach(func() {
-		address = "10.13.37.178" // AL1350-1
+		endpoint = os.Getenv("TEST_DEBUG_IFM_ENDPOINT")
+
+		// Check if environment variables are set
+		if endpoint == "" {
+			Skip("Skipping test: environment variables not set")
+			return
+		}
+
 	})
 
 	AfterEach(func() {
@@ -26,7 +32,7 @@ var _ = Describe("DownloadPortModeData Integration Tests", func() {
 			It("should successfully retrieve port mode information", func() {
 				// Initialize SensorConnectInput
 				input := &sensorconnect_plugin.SensorConnectInput{
-					DeviceAddress: address,
+					DeviceAddress: endpoint,
 					CurrentCid:    0,
 				}
 

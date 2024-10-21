@@ -154,14 +154,22 @@ func (s *SensorConnectInput) ReadBatch(ctx context.Context) (service.MessageBatc
 	}
 	s.mu.Unlock()
 
-	/*
-		dataMap, err := s.GetSensorDataMap(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-	*/
+	// Read sensor data
+	sensorData, err := s.GetSensorDataMap(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
 
-	return nil, nil, nil
+	// Create a message batch
+	msgBatch, err := s.ProcessSensorData(ctx, s.CurrentPortMap, sensorData)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return msgBatch, func(ctx context.Context, err error) error {
+		// Nacks are retried automatically when we use service.AutoRetryNacks
+		return nil
+	}, nil
 }
 
 // Close cleans up resources
