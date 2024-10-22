@@ -87,6 +87,16 @@ func (s *SensorConnectInput) GetDeviceInformation(ctx context.Context) (DeviceIn
 		return DeviceInformation{}, err
 	}
 
+	if productCodeDP.Code != 200 {
+		s.logger.Errorf("Error extracting product code, responded with code %v: %v", GetDiagnosticMessage(productCodeDP.Code), productCodeDP.Data)
+		return DeviceInformation{}, fmt.Errorf("error extracting product code, responded with code %v: %v", GetDiagnosticMessage(productCodeDP.Code), productCodeDP.Data)
+	}
+
+	if serialNumberDP.Code != 200 {
+		s.logger.Errorf("Error extracting serial number, responded with code %v: %v", GetDiagnosticMessage(serialNumberDP.Code), serialNumberDP.Data)
+		return DeviceInformation{}, fmt.Errorf("error extracting serial number, responded with code %v: %v", GetDiagnosticMessage(serialNumberDP.Code), serialNumberDP.Data)
+	}
+
 	deviceInfo := DeviceInformation{
 		ProductCode:  productCodeDP.Data,
 		SerialNumber: serialNumberDP.Data,

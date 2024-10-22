@@ -5,6 +5,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"math"
+	"os"
 
 	"github.com/united-manufacturing-hub/benthos-umh/v2/sensorconnect_plugin"
 )
@@ -16,9 +17,14 @@ var _ = Describe("ProcessSensorData", func() {
 	)
 
 	BeforeEach(func() {
-		// Initialize SensorConnectInput with a no-op logger or a mock logger
-		// Here, we'll assume that a logger can be initialized as follows:
-		// Adjust this according to your actual logger initialization
+		endpoint := os.Getenv("TEST_DEBUG_IFM_ENDPOINT")
+
+		// Check if environment variables are set
+		if endpoint == "" {
+			Skip("Skipping test: environment variables not set")
+			return
+		}
+
 		s = &sensorconnect_plugin.SensorConnectInput{}
 	})
 

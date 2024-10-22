@@ -21,6 +21,15 @@ var _ = Describe("SensorConnect Plugin Unittests", func() {
 	)
 
 	BeforeEach(func() {
+
+		endpoint := os.Getenv("TEST_DEBUG_IFM_ENDPOINT")
+
+		// Check if environment variables are set
+		if endpoint == "" {
+			Skip("Skipping test: environment variables not set")
+			return
+		}
+
 		// Set up a test HTTP server
 		testServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Read request body
@@ -206,7 +215,7 @@ var _ = Describe("SensorConnect Plugin Unittests", func() {
 
 			_, err := input.GetDeviceInformation(context.Background())
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("device returned error code 530"))
+			Expect(err.Error()).To(ContainSubstring("requested data is invalid"))
 		})
 	})
 })

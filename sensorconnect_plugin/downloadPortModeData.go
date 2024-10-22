@@ -48,6 +48,12 @@ func (s *SensorConnectInput) GetUsedPortsAndMode(ctx context.Context) (map[int]C
 				deviceInfo.Connected = connected
 				portModeUsageMap[port] = deviceInfo
 				s.logger.Debugf("Port %d: Mode set to %d, Connected: %v", port, mode, connected)
+			} else {
+				s.logger.Warnf("Failed to get mode for port %d: %v", port, value)
+				if value.Code != 200 {
+					diagnosticMessage := GetDiagnosticMessage(value.Code)
+					s.logger.Warnf("Response Code: %s", diagnosticMessage)
+				}
 			}
 		} else if strings.Contains(key, "deviceid") {
 			if value.Code == 200 && value.Data != nil {
@@ -60,6 +66,12 @@ func (s *SensorConnectInput) GetUsedPortsAndMode(ctx context.Context) (map[int]C
 				deviceInfo.DeviceID = uint(deviceID)
 				portModeUsageMap[port] = deviceInfo
 				s.logger.Debugf("Port %d: DeviceID set to %d", port, deviceID)
+			} else {
+				s.logger.Warnf("Failed to get deviceID for port %d: %v", port, value)
+				if value.Code != 200 {
+					diagnosticMessage := GetDiagnosticMessage(value.Code)
+					s.logger.Warnf("Response Code: %s", diagnosticMessage)
+				}
 			}
 		} else if strings.Contains(key, "vendorid") {
 			if value.Code == 200 && value.Data != nil {
@@ -72,6 +84,12 @@ func (s *SensorConnectInput) GetUsedPortsAndMode(ctx context.Context) (map[int]C
 				deviceInfo.VendorID = uint(vendorID)
 				portModeUsageMap[port] = deviceInfo
 				s.logger.Debugf("Port %d: VendorID set to %d", port, vendorID)
+			} else {
+				s.logger.Warnf("Failed to get vendorID for port %d: %v", port, value)
+				if value.Code != 200 {
+					diagnosticMessage := GetDiagnosticMessage(value.Code)
+					s.logger.Warnf("Response Code: %s", diagnosticMessage)
+				}
 			}
 		} else if strings.Contains(key, "productname") {
 			if value.Code == 200 && value.Data != nil {
@@ -84,6 +102,12 @@ func (s *SensorConnectInput) GetUsedPortsAndMode(ctx context.Context) (map[int]C
 				deviceInfo.ProductName = productName
 				portModeUsageMap[port] = deviceInfo
 				s.logger.Debugf("Port %d: ProductName set to %s", port, productName)
+			} else {
+				s.logger.Warnf("Failed to get ProductName for port %d: %v", port, value)
+				if value.Code != 200 {
+					diagnosticMessage := GetDiagnosticMessage(value.Code)
+					s.logger.Warnf("Response Code: %s", diagnosticMessage)
+				}
 			}
 		} else if strings.Contains(key, "serial") {
 			if value.Code == 200 && value.Data != nil {
@@ -96,14 +120,20 @@ func (s *SensorConnectInput) GetUsedPortsAndMode(ctx context.Context) (map[int]C
 				deviceInfo.Serial = serial
 				portModeUsageMap[port] = deviceInfo
 				s.logger.Debugf("Port %d: Serial set to %s", port, serial)
+			} else {
+				s.logger.Warnf("Failed to get serial for port %d: %v", port, value)
+				if value.Code != 200 {
+					diagnosticMessage := GetDiagnosticMessage(value.Code)
+					s.logger.Warnf("Response Code: %s", diagnosticMessage)
+				}
 			}
 		} else {
 			s.logger.Errorf("Invalid data returned from IO-Link Master: %v -> %v", key, value)
 		}
 	}
 
-	// Now check if we have iodd files in s.IoDeviceMap sync.Map for all the IO link devices
-	// if we dont have them, fetch them
+	// Now check if we have IODD files in s.IoDeviceMap sync.Map for all the IO link devices
+	// if we don't have them, fetch them
 
 	for _, info := range portModeUsageMap {
 		if info.Mode == 3 && info.Connected && info.DeviceID != 0 && info.VendorID != 0 { // IO-Link mode

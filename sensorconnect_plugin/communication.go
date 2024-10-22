@@ -75,6 +75,15 @@ func (s *SensorConnectInput) SendRequestToDevice(ctx context.Context, requestDat
 		return nil, fmt.Errorf("no cid in response")
 	}
 
+	// Check diagnostic code in response
+	if responseCode, ok := response["code"].(float64); ok { // JSON numbers are float64
+		if int(responseCode) != 200 {
+			diagnosticMessage := GetDiagnosticMessage(resp.StatusCode)
+			s.logger.Errorf("Unexpected status code %d in payload from %s: %s", resp.StatusCode, url, diagnosticMessage)
+			return nil, fmt.Errorf("unexpected status code in payload %d: %s", resp.StatusCode, diagnosticMessage)
+		}
+	}
+
 	return response, nil
 }
 
@@ -83,7 +92,7 @@ func GetDiagnosticMessage(code int) string {
 	messages := map[int]string{
 		200: "OK: Request successfully processed",
 		230: "OK but needs reboot: Request successfully processed; IO-Link master must be restarted",
-		231: "OK but block request not finished: Request successfully processed; blockwise request, but not yet finished",
+		231: "OK but block request not finished: Request successfully processed; block wise request, but not yet finished",
 		232: "Data has been accepted, but internally modified: New values have been accepted, but were adjusted by the IO-Link master (Master cycle time)",
 		233: "IP settings have been updated: IP settings have been successfully changed, IO-Link master will be reloaded; wait for at least 1 second",
 		400: "Bad request: Invalid request",
