@@ -342,9 +342,9 @@ func (g *OPCUAInput) GetNodes(ctx context.Context) ([]NodeDef, map[string]string
 
 // Node represents a node in the tree structure
 type Node struct {
-	NodeId   *ua.NodeID
-	Name     string
-	Children []*Node
+	NodeId   *ua.NodeID `json:"nodeId"`
+	Name     string     `json:"name"`
+	Children []*Node    `json:"children,omitempty"`
 }
 
 func (g *OPCUAInput) GetNodeTree(ctx context.Context) (*Node, error) {
