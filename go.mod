@@ -23,6 +23,7 @@ require (
 	github.com/RuneRoven/benthosADS v1.0.4
 	github.com/RuneRoven/benthosAlarm v1.0.0
 	github.com/RuneRoven/benthosSMTP v0.0.1
+	github.com/goccy/go-json v0.10.2
 	github.com/gopcua/opcua v0.5.3
 	github.com/grid-x/modbus v0.0.0-20240503115206-582f2ab60a18
 	github.com/onsi/ginkgo/v2 v2.19.0
@@ -30,6 +31,7 @@ require (
 	github.com/redpanda-data/benthos/v4 v4.38.0
 	github.com/redpanda-data/connect/public/bundle/free/v4 v4.31.0
 	github.com/x448/float16 v0.8.4
+	go.uber.org/zap v1.27.0
 )
 
 require (
@@ -156,7 +158,6 @@ require (
 	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
-	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/gocql/gocql v1.6.0 // indirect
 	github.com/godbus/dbus v0.0.0-20190726142602-4481cbc300e2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
@@ -308,7 +309,6 @@ require (
 	go.opentelemetry.io/proto/otlp v1.3.1 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/mod v0.20.0 // indirect
 	golang.org/x/oauth2 v0.22.0 // indirect
 	golang.org/x/term v0.23.0 // indirect
