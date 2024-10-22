@@ -45,8 +45,6 @@ var _ = Describe("DownloadSensorData Integration Tests", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				fmt.Printf("%v\n", dataMap)
-
-				Fail("test")
 			})
 		})
 	})
