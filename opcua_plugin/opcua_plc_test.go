@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/gopcua/opcua/id"
+	"github.com/gopcua/opcua/ua"
 	"os"
 	"time"
 
@@ -35,41 +37,54 @@ func printNodeTree(node *Node, depth int) {
 	}
 }
 
-var _ = Describe("Test GetNodeTree", Label("now"), func() {
+var _ = Describe("Getting Nodes for a OPC Ua server in a tree datastructure", Label("now"), func() {
 	var ctx context.Context
 	var cancel context.CancelFunc
+	var endpoint string
+	var username string
+	var password string
 
 	BeforeEach(func() {
 		ctx, cancel = context.WithTimeout(context.Background(), 60*time.Second)
+		endpoint = os.Getenv("TEST_WAGO_ENDPOINT_URI")
+		username = os.Getenv("TEST_WAGO_USERNAME")
+		password = os.Getenv("TEST_WAGO_PASSWORD")
 	})
 
 	AfterEach(func() {
 		cancel()
 	})
 
-	Context("When connecting to a Wago plc", func() {
+	Context("When GetNodeTree is called for a PLC", func() {
 		It("should return a node tree", func() {
-
-			rootNode := ParseNodeIDs([]string{"i=84"})
+			if endpoint == "" {
+				Skip("Skipping test: environment variables not set")
+				return
+			}
 			opc := &OPCUAInput{
-				Endpoint:         "opc.tcp://10.13.37.50:4840",
-				Username:         "",
-				Password:         "",
-				NodeIDs:          rootNode,
-				SubscribeEnabled: true,
-				UseHeartbeat:     true,
+				Endpoint: endpoint,
+				Username: username,
+				Password: password,
 			}
 			msgCh := make(chan string, 100000)
-			nodeTree, err := opc.GetNodeTree(ctx, msgCh)
+			parentNode := &Node{
+				NodeId:   ua.NewNumericNodeID(0, id.RootFolder),
+				Name:     "Root",
+				Children: make([]*Node, 0),
+			}
+			_, err := opc.GetNodeTree(ctx, msgCh, parentNode)
 			Expect(err).ShouldNot(HaveOccurred())
-
 			go func() {
-				for msg := range msgCh {
-					GinkgoWriter.Println(msg)
+				for {
+					select {
+					// Do nothing from the messages from msgCh
+					case <-msgCh:
+					case <-ctx.Done():
+						return
+					}
 				}
-				GinkgoWriter.Println("Exiting the message writer")
 			}()
-			printNodeTree(nodeTree, 0)
+
 		})
 	})
 })

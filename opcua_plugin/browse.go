@@ -300,46 +300,6 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	return
 }
 
-// GetNodes gets all available list of nodes from an OPC UA server and path to pathID map.
-// The list of nodes returned varies depends on the OPCUAInput.NodeIDs field. Use i=84 to get all nodes.
-// It internally refreshes the connection if it is not available.
-// The function is specially designed to be used outside Benthos plugin context.
-// Example:
-//		opcua := OPCUAInput{
-// 			Endpoint:       "opc.tcp://localhost:4840",
-// 			Username:       "",
-// 			Password:       "",
-// 			SecurityMode:   "",
-// 			SecurityPolicy: "",
-// 			NodeIDs:        ParseNodeIDs([]string{"i=84"}),
-// 		}
-//
-// 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-// 		defer cancel()
-// 		nodes,pathIDMap, err := opcua.GetNodes(ctx)
-// 		if err != nil {
-// 			panic(err)
-// 		}
-// 		fmt.Println(nodes) // Output: [{i=2259 NodeClassVariable State  AccessLevelTypeNone i=852 i=84 Root.Objects.Server.ServerStatus.State}]
-
-func (g *OPCUAInput) GetNodes(ctx context.Context) ([]NodeDef, map[string]string, error) {
-	// GetNodes() is currently used by united-manufacturing-hub/ManagementConsole repo to get the list of nodes for OPC UA Browse tags
-	// The Nodedef is used to construct the OPC UA Browse tags tree	in the Management Console
-	// However, the Nodes in the Nodedef might not have node ids for each hierarchy level
-	// For example, the node id for the tag "Root.Objects.Server.ServerStatus.State" is "i=2259" and will be present in the Nodedef
-	// But in order to construct the OPC UA Browse tags tree, we need the path ids for each hierarchy level like,
-	// Root, Root.Objects, Root.Objects.Server, Root.Objects.Server.ServerStatus and this information is present in the nodeIDMap which is returned by GetNodes() as the second return value
-	if g.Client == nil {
-		err := g.connect(ctx)
-		if err != nil {
-			g.Log.Infof("error setting up connection while getting the OPCUA nodes: %v", err)
-			return nil, nil, err
-		}
-
-	}
-	return g.discoverNodes(ctx)
-}
-
 // Node represents a node in the tree structure
 type Node struct {
 	NodeId   *ua.NodeID `json:"nodeId"`
@@ -347,7 +307,9 @@ type Node struct {
 	Children []*Node    `json:"children,omitempty"`
 }
 
-func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string) (*Node, error) {
+// GetNodeTree returns the tree structure of the OPC UA server nodes
+// GetNodeTree is currently used by united-manufacturing-hub/ManagementConsole repo for the BrowseOPCUA tags functionality
+func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, rootNode *Node) (*Node, error) {
 	if g.Client == nil {
 		err := g.connect(context.Background())
 		if err != nil {
@@ -355,29 +317,29 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string) (*N
 			return nil, err
 		}
 	}
-	// ginkgo.GinkgoWriter.Println("g.Client is ", g.Client)
 	defer func() {
-		g.Client.Close(ctx)
+		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			// Create a new context to close the connection if the existing context is canceled or timed out
+			ctx = context.Background()
+		}
+		err := g.Client.Close(ctx)
+		if err != nil {
+			g.Log.Infof("error closing the connection while getting the OPCUA nodes: %v", err)
+		}
 	}()
 
 	var wg sync.WaitGroup
-	// Start browsing from the RootFolder
-	rootNodeID := ua.NewNumericNodeID(0, id.RootFolder)
-	parentNode := &Node{
-		NodeId:   rootNodeID,
-		Name:     "Root",
-		Children: make([]*Node, 0),
-	}
 	wg.Add(1)
-	g.browseNode(ctx, &wg, 0, parentNode, msgChan)
+	g.browseChildren(ctx, &wg, 0, rootNode, msgChan)
 	wg.Wait()
 	close(msgChan)
-	return parentNode, nil
+	return rootNode, nil
 }
 
-// browseNode recursively browses the OPC UA server nodes and builds a tree structure
-func (w *OPCUAInput) browseNode(ctx context.Context, wg *sync.WaitGroup, level int, parent *Node, msgChan chan<- string) {
+// browseChildren recursively browses the OPC UA server nodes and builds a tree structure
+func (g *OPCUAInput) browseChildren(ctx context.Context, wg *sync.WaitGroup, level int, parent *Node, msgChan chan<- string) {
 	defer wg.Done()
+	// Recursion limit only goes up to 10 levels
 	if level >= 10 {
 		return
 	}
@@ -396,21 +358,18 @@ func (w *OPCUAInput) browseNode(ctx context.Context, wg *sync.WaitGroup, level i
 	}
 
 	go func() {
-		msgChan <- fmt.Sprintf("Fetching result for node:  %s\n", parent.Name)
+		msgChan <- fmt.Sprintf("Fetching result for node:  %s", parent.Name)
 	}()
-	// Send the browse request
-	browseResp, err := w.Client.Browse(ctx, browseRequest)
+
+	browseResp, err := g.Client.Browse(ctx, browseRequest)
 	if err != nil {
+		g.Log.Warnf("error browsing children: %v", err)
 		return
 	}
 
-	// Create the current node
 	currentNode := parent
-
-	// Iterate over the browse response results
 	for _, result := range browseResp.Results {
-		if result.StatusCode != ua.StatusOK {
-			// ginkgo.GinkgoWriter.Println("result.StatusCode is ", result.StatusCode)
+		if !errors.Is(result.StatusCode, ua.StatusOK) {
 			continue
 		}
 
@@ -423,9 +382,8 @@ func (w *OPCUAInput) browseNode(ctx context.Context, wg *sync.WaitGroup, level i
 			}
 			currentNode.Children = append(currentNode.Children, child)
 
-			// Now call browseNode for the subinstances
 			wg.Add(1)
-			go w.browseNode(ctx, wg, level+1, child, msgChan)
+			go g.browseChildren(ctx, wg, level+1, child, msgChan)
 		}
 	}
 
