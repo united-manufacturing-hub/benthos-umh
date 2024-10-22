@@ -342,13 +342,12 @@ func (g *OPCUAInput) GetNodes(ctx context.Context) ([]NodeDef, map[string]string
 
 // Node represents a node in the tree structure
 type Node struct {
-	NodeID     string
-	BrowseName string
-	Children   []*Node
+	NodeId   *ua.NodeID
+	Name     string
+	Children []*Node
 }
 
 func (g *OPCUAInput) GetNodeTree(ctx context.Context) (*Node, error) {
-	// ginkgo.GinkgoWriter.Println("g.Client is ", g.Client)
 	if g.Client == nil {
 		err := g.connect(context.Background())
 		if err != nil {
@@ -361,27 +360,30 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context) (*Node, error) {
 		g.Client.Close(ctx)
 	}()
 
+	var wg sync.WaitGroup
 	// Start browsing from the RootFolder
-	rootNodeID := ua.NewNumericNodeID(0, id.SubscriptionDiagnosticsArrayType)
-
-	// Recursively browse and build the node tree
-	nodeTree, err := g.browseNode(ctx, rootNodeID)
-	if err != nil {
-		return nil, err
+	rootNodeID := ua.NewNumericNodeID(0, id.RootFolder)
+	parentNode := &Node{
+		NodeId:   rootNodeID,
+		Name:     "Root",
+		Children: make([]*Node, 0),
 	}
-
-	// Return the constructed tree
-	return nodeTree, nil
-
+	wg.Add(1)
+	g.browseNode(ctx, 0, parentNode, &wg)
+	return parentNode, nil
 }
 
 // browseNode recursively browses the OPC UA server nodes and builds a tree structure
-func (g *OPCUAInput) browseNode(ctx context.Context, nodeID *ua.NodeID) (*Node, error) {
+func (w *OPCUAInput) browseNode(ctx context.Context, level int, parent *Node, wg *sync.WaitGroup) {
+	defer wg.Done()
+	if level >= 6 {
+		return
+	}
 	// Create a browse request for the current node
 	browseRequest := &ua.BrowseRequest{
 		NodesToBrowse: []*ua.BrowseDescription{
 			{
-				NodeID:          nodeID,
+				NodeID:          parent.NodeId,
 				BrowseDirection: ua.BrowseDirectionForward,
 				ReferenceTypeID: ua.NewNumericNodeID(0, id.HierarchicalReferences),
 				IncludeSubtypes: true,
@@ -392,15 +394,13 @@ func (g *OPCUAInput) browseNode(ctx context.Context, nodeID *ua.NodeID) (*Node, 
 	}
 
 	// Send the browse request
-	browseResp, err := g.Client.Browse(ctx, browseRequest)
+	browseResp, err := w.Client.Browse(ctx, browseRequest)
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	// Create the current node
-	currentNode := &Node{
-		NodeID: nodeID.String(),
-	}
+	currentNode := parent
 
 	// Iterate over the browse response results
 	for _, result := range browseResp.Results {
@@ -411,22 +411,19 @@ func (g *OPCUAInput) browseNode(ctx context.Context, nodeID *ua.NodeID) (*Node, 
 
 		// Recursively browse each child reference and build the tree
 		for _, ref := range result.References {
-			// ginkgo.GinkgoWriter.Printf("NodeID: %s, BrowseName: %s\n", ref.NodeID, ref.BrowseName.Name)
-
-			// Recursively browse the child node
-			childNode, err := g.browseNode(ctx, ref.NodeID.NodeID)
-			if err != nil {
-				return nil, err
+			child := &Node{
+				NodeId:   ref.NodeID.NodeID,
+				Name:     ref.BrowseName.Name,
+				Children: make([]*Node, 0),
 			}
+			currentNode.Children = append(currentNode.Children, child)
 
-			// Add the child node to the current node's children
-			childNode.BrowseName = ref.BrowseName.Name
-			currentNode.Children = append(currentNode.Children, childNode)
+			// Now call browseNode for the subinstances
+			wg.Add(1)
+			w.browseNode(ctx, level+1, child, wg)
 		}
 	}
 
-	// Return the current node with its children
-	return currentNode, nil
 }
 
 // discoverNodes retrieves a list of nodes from an OPC UA server.

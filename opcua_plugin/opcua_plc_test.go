@@ -27,7 +27,7 @@ func printNodeTree(node *Node, depth int) {
 	}
 
 	// Print the current node
-	GinkgoWriter.Printf("%sNodeID: %s, BrowseName: %s\n", indent, node.NodeID, node.BrowseName)
+	GinkgoWriter.Printf("%sNodeID: %s, Name: %s\n", indent, node.NodeId, node.Name)
 
 	// Recursively print the children
 	for _, child := range node.Children {
