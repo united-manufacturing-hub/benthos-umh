@@ -48,8 +48,7 @@ tasks:
           gp env TAILSCALE_STATE_MYPROJECT="$(sudo cat /var/lib/tailscale/tailscaled.state)"
         fi
 
-vscode:
-  extensions:
+jetbrains:
+  plugins:
     - golang.go
-    - GitHub.copilot
     - com.github.intellij.ginkgo
