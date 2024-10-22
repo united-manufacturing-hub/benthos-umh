@@ -16,28 +16,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// Helper function to print the tree structure
-func printNodeTree(node *Node, depth int) {
-	if node == nil {
-		return
-	}
-
-	// Indentation for visualizing the tree structure
-	indent := ""
-	for i := 0; i < depth; i++ {
-		indent += "  "
-	}
-
-	// Print the current node
-	GinkgoWriter.Printf("%sNodeID: %s, Name: %s\n", indent, node.NodeId, node.Name)
-
-	// Recursively print the children
-	for _, child := range node.Children {
-		printNodeTree(child, depth+1)
-	}
-}
-
-var _ = Describe("Getting Nodes for a OPC Ua server in a tree datastructure", Label("now"), func() {
+var _ = Describe("Getting Nodes for a OPC Ua server in a tree datastructure", func() {
 	var ctx context.Context
 	var cancel context.CancelFunc
 	var endpoint string

@@ -311,7 +311,7 @@ type Node struct {
 // GetNodeTree is currently used by united-manufacturing-hub/ManagementConsole repo for the BrowseOPCUA tags functionality
 func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, rootNode *Node) (*Node, error) {
 	if g.Client == nil {
-		err := g.connect(context.Background())
+		err := g.connect(ctx)
 		if err != nil {
 			g.Log.Infof("error setting up connection while getting the OPCUA nodes: %v", err)
 			return nil, err
@@ -343,6 +343,15 @@ func (g *OPCUAInput) browseChildren(ctx context.Context, wg *sync.WaitGroup, lev
 	if level >= 10 {
 		return
 	}
+
+	// Check if the context is cancelled
+	select {
+	case <-ctx.Done():
+		return
+	default:
+		// continue to do other operation
+	}
+
 	// Create a browse request for the current node
 	browseRequest := &ua.BrowseRequest{
 		NodesToBrowse: []*ua.BrowseDescription{
