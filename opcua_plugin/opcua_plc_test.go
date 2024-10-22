@@ -59,9 +59,16 @@ var _ = Describe("Test GetNodeTree", Label("now"), func() {
 				SubscribeEnabled: true,
 				UseHeartbeat:     true,
 			}
-			nodeTree, err := opc.GetNodeTree(ctx)
+			msgCh := make(chan string, 100000)
+			nodeTree, err := opc.GetNodeTree(ctx, msgCh)
 			Expect(err).ShouldNot(HaveOccurred())
 
+			go func() {
+				for msg := range msgCh {
+					GinkgoWriter.Println(msg)
+				}
+				GinkgoWriter.Println("Exiting the message writer")
+			}()
 			printNodeTree(nodeTree, 0)
 		})
 	})

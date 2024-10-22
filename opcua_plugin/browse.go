@@ -347,7 +347,7 @@ type Node struct {
 	Children []*Node    `json:"children,omitempty"`
 }
 
-func (g *OPCUAInput) GetNodeTree(ctx context.Context) (*Node, error) {
+func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string) (*Node, error) {
 	if g.Client == nil {
 		err := g.connect(context.Background())
 		if err != nil {
@@ -369,14 +369,16 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context) (*Node, error) {
 		Children: make([]*Node, 0),
 	}
 	wg.Add(1)
-	g.browseNode(ctx, 0, parentNode, &wg)
+	g.browseNode(ctx, &wg, 0, parentNode, msgChan)
+	wg.Wait()
+	close(msgChan)
 	return parentNode, nil
 }
 
 // browseNode recursively browses the OPC UA server nodes and builds a tree structure
-func (w *OPCUAInput) browseNode(ctx context.Context, level int, parent *Node, wg *sync.WaitGroup) {
+func (w *OPCUAInput) browseNode(ctx context.Context, wg *sync.WaitGroup, level int, parent *Node, msgChan chan<- string) {
 	defer wg.Done()
-	if level >= 6 {
+	if level >= 10 {
 		return
 	}
 	// Create a browse request for the current node
@@ -393,6 +395,9 @@ func (w *OPCUAInput) browseNode(ctx context.Context, level int, parent *Node, wg
 		},
 	}
 
+	go func() {
+		msgChan <- fmt.Sprintf("Fetching result for node:  %s\n", parent.Name)
+	}()
 	// Send the browse request
 	browseResp, err := w.Client.Browse(ctx, browseRequest)
 	if err != nil {
@@ -420,7 +425,7 @@ func (w *OPCUAInput) browseNode(ctx context.Context, level int, parent *Node, wg
 
 			// Now call browseNode for the subinstances
 			wg.Add(1)
-			w.browseNode(ctx, level+1, child, wg)
+			go w.browseNode(ctx, wg, level+1, child, msgChan)
 		}
 	}
 
