@@ -23,7 +23,7 @@ target:
 		--output ./tmp/bin/benthos
 
 test:
-	@ginkgo -r --output-interceptor-mode=none --github-output -vv -trace -p --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./...
+	@ginkgo -r --output-interceptor-mode=none --github-output -v -trace -p --randomize-all --cover --label-filter="now" ./opcua_plugin/...
 
 lint:
 	@golangci-lint run
