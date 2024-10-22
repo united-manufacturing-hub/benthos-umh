@@ -51,11 +51,11 @@ var _ = Describe("SensorConnect Plugin Unittests", func() {
 				"data": map[string]interface{}{
 					"/deviceinfo/serialnumber/": map[string]interface{}{
 						"data": "SN123456",
-						"code": 0,
+						"code": 200,
 					},
 					"/deviceinfo/productcode/": map[string]interface{}{
 						"data": "PN987654",
-						"code": 0,
+						"code": 200,
 					},
 				},
 				"cid": int(cid),
@@ -133,11 +133,11 @@ var _ = Describe("SensorConnect Plugin Unittests", func() {
 						"data": map[string]interface{}{
 							"/deviceinfo/serialnumber/": map[string]interface{}{
 								"data": "SN123456",
-								"code": 0,
+								"code": 200,
 							},
 							"/deviceinfo/productcode/": map[string]interface{}{
 								"data": "PN987654",
-								"code": 0,
+								"code": 200,
 							},
 						},
 						"cid": 9999, // Deliberately incorrect cid
