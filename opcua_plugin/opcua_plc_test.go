@@ -14,6 +14,59 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+// Helper function to print the tree structure
+func printNodeTree(node *Node, depth int) {
+	if node == nil {
+		return
+	}
+
+	// Indentation for visualizing the tree structure
+	indent := ""
+	for i := 0; i < depth; i++ {
+		indent += "  "
+	}
+
+	// Print the current node
+	GinkgoWriter.Printf("%sNodeID: %s, BrowseName: %s\n", indent, node.NodeID, node.BrowseName)
+
+	// Recursively print the children
+	for _, child := range node.Children {
+		printNodeTree(child, depth+1)
+	}
+}
+
+var _ = Describe("Test GetNodeTree", Label("now"), func() {
+	var ctx context.Context
+	var cancel context.CancelFunc
+
+	BeforeEach(func() {
+		ctx, cancel = context.WithTimeout(context.Background(), 60*time.Second)
+	})
+
+	AfterEach(func() {
+		cancel()
+	})
+
+	Context("When connecting to a Wago plc", func() {
+		It("should return a node tree", func() {
+
+			rootNode := ParseNodeIDs([]string{"i=84"})
+			opc := &OPCUAInput{
+				Endpoint:         "opc.tcp://10.13.37.50:4840",
+				Username:         "",
+				Password:         "",
+				NodeIDs:          rootNode,
+				SubscribeEnabled: true,
+				UseHeartbeat:     true,
+			}
+			nodeTree, err := opc.GetNodeTree(ctx)
+			Expect(err).ShouldNot(HaveOccurred())
+
+			printNodeTree(nodeTree, 0)
+		})
+	})
+})
+
 var _ = Describe("Test Against Siemens S7", Serial, func() {
 
 	var endpoint string
