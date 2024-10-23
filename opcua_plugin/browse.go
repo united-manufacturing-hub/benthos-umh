@@ -367,7 +367,6 @@ func (g *OPCUAInput) browseChildren(ctx context.Context, wg *sync.WaitGroup, lev
 		},
 	}
 
-
 	browseResp, err := g.Client.Browse(ctx, browseRequest)
 	if err != nil {
 		g.Log.Warnf("error browsing children: %v", err)
@@ -393,12 +392,13 @@ func (g *OPCUAInput) browseChildren(ctx context.Context, wg *sync.WaitGroup, lev
 			}
 			currentNode.Children = append(currentNode.Children, child)
 
-			wg.Add(1)
 			if nodeClass == ua.NodeClassVariable {
+				wg.Add(1)
 				go g.browseChildren(ctx, wg, level+1, child, id.HasComponent, msgChan)
 			}
 
 			if nodeClass == ua.NodeClassObject {
+				wg.Add(4)
 				go g.browseChildren(ctx, wg, level+1, child, id.HasComponent, msgChan)
 				go g.browseChildren(ctx, wg, level+1, child, id.Organizes, msgChan)
 				go g.browseChildren(ctx, wg, level+1, child, id.FolderType, msgChan)
