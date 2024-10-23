@@ -560,6 +560,58 @@ input:
     output: "FLOAT64"
     ```
 
+### ifm IO-Link Master / "sensorconnect"
+The SensorConnect plugin facilitates communication with ifm electronic’s IO-Link Masters devices, such as the AL1350 IO-Link Master.
+It enables the integration of sensor data into Benthos pipelines by connecting to the device over HTTP and processing data from connected sensors, including digital inputs and IO-Link devices.
+The plugin handles parsing and interpreting IO-Link data using IODD files, converting raw sensor outputs into human-readable data.
+
+It was previously known as [sensorconnect](https://github.com/united-manufacturing-hub/united-manufacturing-hub/tree/staging/golang/cmd/sensorconnect).
+
+#### Configuration
+```yaml
+input:
+  sensorconnect:
+    device_address: '192.168.0.1' # IP address of the IO-Link Master
+```
+
+#### Configuration Parameters
+
+- **device_address**: IP address of the IO-Link Master
+
+#### Output
+The payload of each message is a JSON object containing the sensor data, structured according to the data provided by the connected device. The exact structure of the payload depends on the specific sensors connected to the SensorConnect device and the data they provide.
+
+Example for a VVB001 vibration sensor:
+```json
+{
+  "Crest": 41,
+  "Device status": 0,
+  "OUT1": true,
+  "OUT2": true,
+  "Temperature": 394,
+  "a-Peak": 2,
+  "a-Rms": 0,
+  "v-Rms": 0
+}
+
+```
+#### Metadata Outputs
+
+For each read operation, the plugin outputs detailed metadata that includes various aspects of the read operation, which can be utilized to effectively tag, organize, and utilize the data within a system. This metadata encompasses identifiers, data types, and register specifics to ensure precise tracking and utilization of the Modbus data.
+
+Below is the extended metadata output schema provided by the plugin:
+
+| Metadata                                 | Description                                                       |
+|------------------------------------------|-------------------------------------------------------------------|
+| `sensorconnect_port_mode`                | The mode of the port, e.g., digital-input or io-link.             |
+| `sensorconnect_port_number`              | The number of the port on the ifm IO-Link Master device.          |
+| `sensorconnect_port_iolink_vendor_id`    | The IO-Link vendor ID of the connected device (if applicable).    |
+| `sensorconnect_port_iolink_device_id`    | The IO-Link device ID of the connected device (if applicable).    |
+| `sensorconnect_port_iolink_product_name` | The product name of the connected IO-Link device (if applicable). |
+| `sensorconnect_port_iolink_serial`       | The serial number of the connected IO-Link device.                |
+| `sensorconnect_device_product_code`      | The product code of the connected IO-Link device.                 |
+| `sensorconnect_device_serial_number`     | The serial number of the connected IO-Link device                 |
+
 ### Beckhoff ADS
 Input for Beckhoff's ADS protocol. Supports batch reading and notifications. Beckhoff recommends limiting notifications to approximately 500 to avoid overloading the controller.
 This input only supports symbols and not direct addresses.

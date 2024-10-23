@@ -27,6 +27,7 @@ COPY ./cmd ./cmd
 COPY ./opcua_plugin ./opcua_plugin
 COPY ./s7comm_plugin ./s7comm_plugin
 COPY ./modbus_plugin ./modbus_plugin
+COPY ./sensorconnect_plugin ./sensorconnect_plugin
 
 ENV CGO_ENABLED=0
 RUN go build \
