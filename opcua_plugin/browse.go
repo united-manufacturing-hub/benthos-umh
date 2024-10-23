@@ -78,7 +78,7 @@ func sanitize(s string) string {
 //
 // **Returns:**
 // - `void`: Errors are sent through `errChan`, and discovered nodes are sent through `nodeChan`.
-func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *service.Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, pathIDMapChan chan map[string]string, wg *sync.WaitGroup) {
+func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *service.Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, pathIDMapChan chan map[string]string, wg *sync.WaitGroup, client *opcua.Client) {
 	defer wg.Done()
 
 	logger.Debugf("node:%s path:%q level:%d parentNodeId:%s\n", n, path, level, parentNodeId)
@@ -109,10 +109,6 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		NodeID: n.ID,
 		Path:   newPath,
 	}
-
-	// send the mapping of path to PathID
-	// An example event sent is map["Root.Objects.Server"] = "i=86"
-	pathIDMapChan <- map[string]string{newPath: n.ID.String()}
 
 	switch err := attrs[0].Status; {
 	case errors.Is(err, ua.StatusOK):
@@ -238,14 +234,33 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	}
 
 	browseChildren := func(refType uint32) error {
+		browseRequest := &ua.BrowseRequest{
+			NodesToBrowse: []*ua.BrowseDescription{
+				{
+					NodeID:          def.NodeID,
+					BrowseDirection: ua.BrowseDirectionForward,
+					ReferenceTypeID: ua.NewNumericNodeID(0, refType),
+					IncludeSubtypes: true,
+					NodeClassMask:   uint32(ua.NodeClassAll),
+					ResultMask:      uint32(ua.BrowseResultMaskAll),
+				},
+			},
+		}
+
+		browseResp, err := client.Browse(ctx, browseRequest)
+		if err != nil {
+			return err
+		}
 		refs, err := n.ReferencedNodes(ctx, refType, ua.BrowseDirectionForward, ua.NodeClassAll, true)
 		if err != nil {
 			return errors.Errorf("References: %d: %s", refType, err)
 		}
+		// ginkgo.GinkgoWriter.Printf("Node ID: %v Browse results: %v, Old method: %v", def.NodeID, len(browseResp.Results), len(refs))
+		logger.Debugf("Node ID: %v Browse results: %v, Old method: %v\n", def.NodeID, len(browseResp.Results), len(refs))
 		logger.Debugf("found %d child refs\n", len(refs))
 		for _, rn := range refs {
 			wg.Add(1)
-			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, pathIDMapChan, wg)
+			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, pathIDMapChan, wg, client)
 		}
 		return nil
 	}
@@ -436,7 +451,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 
 		// Start a goroutine for browsing
 		wg.Add(1)
-		go browse(ctx, g.Client.Node(nodeID), "", 0, g.Log, nodeID.String(), nodeChan, errChan, pathIDMapChan, &wg)
+		go browse(ctx, g.Client.Node(nodeID), "", 0, g.Log, nodeID.String(), nodeChan, errChan, pathIDMapChan, &wg, g.Client)
 	}
 
 	// close nodeChan, nodeIDMapChan and errChan once all browsing is done
@@ -508,7 +523,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			var wgHeartbeat sync.WaitGroup
 
 			wgHeartbeat.Add(1)
-			go browse(ctx, g.Client.Node(heartbeatNodeID), "", 0, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, pathIDMapChan, &wgHeartbeat)
+			go browse(ctx, g.Client.Node(heartbeatNodeID), "", 1, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, pathIDMapChan, &wgHeartbeat, g.Client)
 
 			wgHeartbeat.Wait()
 			close(nodeHeartbeatChan)
