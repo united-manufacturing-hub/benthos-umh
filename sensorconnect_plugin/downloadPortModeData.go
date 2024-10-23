@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
-	"strings"
 )
 
 // ConnectedDeviceInfo represents information about a connected device on a port
@@ -26,8 +25,8 @@ func (s *SensorConnectInput) GetUsedPortsAndMode(ctx context.Context) (map[int]C
 		return nil, err
 	}
 
-	portModeUsageMap := make(map[int]ConnectedDeviceInfo)
-
+	// Group the response data by port
+	portData := make(map[int]map[string]UPAMDatum)
 	for key, value := range response.Data {
 		port, err := extractIntFromString(key)
 		if err != nil {
@@ -35,109 +34,149 @@ func (s *SensorConnectInput) GetUsedPortsAndMode(ctx context.Context) (map[int]C
 			continue
 		}
 
-		if strings.Contains(key, "mode") {
-			if value.Code == 200 && value.Data != nil {
-				mode, err := parseUint(value.Data)
-				if err != nil {
-					s.logger.Errorf("Failed to parse mode for port %d: %v", port, err)
-					return nil, err
-				}
-				connected := mode != 0
-				deviceInfo := portModeUsageMap[port]
-				deviceInfo.Mode = uint(mode)
-				deviceInfo.Connected = connected
-				portModeUsageMap[port] = deviceInfo
-				s.logger.Debugf("Port %d: Mode set to %d, Connected: %v", port, mode, connected)
-			} else {
-				s.logger.Warnf("Failed to get mode for port %d: %v", port, value)
-				if value.Code != 200 {
-					diagnosticMessage := GetDiagnosticMessage(value.Code)
-					s.logger.Warnf("Response Code: %s", diagnosticMessage)
-				}
-			}
-		} else if strings.Contains(key, "deviceid") {
-			if value.Code == 200 && value.Data != nil {
-				deviceID, err := parseUint(value.Data)
-				if err != nil {
-					s.logger.Errorf("Failed to parse deviceID for port %d: %v", port, err)
-					return nil, err
-				}
-				deviceInfo := portModeUsageMap[port]
-				deviceInfo.DeviceID = uint(deviceID)
-				portModeUsageMap[port] = deviceInfo
-				s.logger.Debugf("Port %d: DeviceID set to %d", port, deviceID)
-			} else {
-				s.logger.Warnf("Failed to get deviceID for port %d: %v", port, value)
-				if value.Code != 200 {
-					diagnosticMessage := GetDiagnosticMessage(value.Code)
-					s.logger.Warnf("Response Code: %s", diagnosticMessage)
-				}
-			}
-		} else if strings.Contains(key, "vendorid") {
-			if value.Code == 200 && value.Data != nil {
-				vendorID, err := parseUint(value.Data)
-				if err != nil {
-					s.logger.Errorf("Failed to parse vendorID for port %d: %v", port, err)
-					return nil, err
-				}
-				deviceInfo := portModeUsageMap[port]
-				deviceInfo.VendorID = uint(vendorID)
-				portModeUsageMap[port] = deviceInfo
-				s.logger.Debugf("Port %d: VendorID set to %d", port, vendorID)
-			} else {
-				s.logger.Warnf("Failed to get vendorID for port %d: %v", port, value)
-				if value.Code != 200 {
-					diagnosticMessage := GetDiagnosticMessage(value.Code)
-					s.logger.Warnf("Response Code: %s", diagnosticMessage)
-				}
-			}
-		} else if strings.Contains(key, "productname") {
-			if value.Code == 200 && value.Data != nil {
-				productName, err := parseString(value.Data)
-				if err != nil {
-					s.logger.Errorf("Failed to parse productName for port %d: %v", port, err)
-					return nil, err
-				}
-				deviceInfo := portModeUsageMap[port]
-				deviceInfo.ProductName = productName
-				portModeUsageMap[port] = deviceInfo
-				s.logger.Debugf("Port %d: ProductName set to %s", port, productName)
-			} else {
-				s.logger.Warnf("Failed to get ProductName for port %d: %v", port, value)
-				if value.Code != 200 {
-					diagnosticMessage := GetDiagnosticMessage(value.Code)
-					s.logger.Warnf("Response Code: %s", diagnosticMessage)
-				}
-			}
-		} else if strings.Contains(key, "serial") {
-			if value.Code == 200 && value.Data != nil {
-				serial, err := parseString(value.Data)
-				if err != nil {
-					s.logger.Errorf("Failed to parse serial for port %d: %v", port, err)
-					return nil, err
-				}
-				deviceInfo := portModeUsageMap[port]
-				deviceInfo.Serial = serial
-				portModeUsageMap[port] = deviceInfo
-				s.logger.Debugf("Port %d: Serial set to %s", port, serial)
-			} else {
-				s.logger.Warnf("Failed to get serial for port %d: %v", port, value)
-				if value.Code != 200 {
-					diagnosticMessage := GetDiagnosticMessage(value.Code)
-					s.logger.Warnf("Response Code: %s", diagnosticMessage)
-				}
-			}
-		} else {
-			s.logger.Errorf("Invalid data returned from IO-Link Master: %v -> %v", key, value)
+		if _, exists := portData[port]; !exists {
+			portData[port] = make(map[string]UPAMDatum)
 		}
+		portData[port][key] = value
+		fmt.Printf("Port: %v, Key: %v, Value: %v\n", port, key, value)
 	}
 
-	// Now check if we have IODD files in s.IoDeviceMap sync.Map for all the IO link devices
-	// if we don't have them, fetch them
+	portModeUsageMap := make(map[int]ConnectedDeviceInfo)
 
-	for _, info := range portModeUsageMap {
-		if info.Mode == 3 && info.Connected && info.DeviceID != 0 && info.VendorID != 0 { // IO-Link mode
-			s.logger.Debugf("IO-Link device found, checking if iodd files are present for device ID: %d, Vendor ID: %d", info.DeviceID, info.VendorID)
+	// Process each port's data
+	for port, data := range portData {
+		deviceInfo := ConnectedDeviceInfo{}
+		deviceInfo.Connected = true // Default to connected unless proven otherwise
+
+		// Process the mode first
+		modeKey := fmt.Sprintf("/iolinkmaster/port[%d]/mode", port)
+		modeValue, modeExists := data[modeKey]
+		if !modeExists {
+			s.logger.Warnf("Mode not found for port %d", port)
+			continue
+		}
+
+		if modeValue.Code == 200 && modeValue.Data != nil {
+			mode, err := parseUint(modeValue.Data)
+			if err != nil {
+				s.logger.Errorf("Failed to parse mode for port %d: %v", port, err)
+				return nil, err
+			}
+			deviceInfo.Mode = uint(mode)
+			s.logger.Debugf("Port %d: Mode set to %d", port, mode)
+		} else {
+			s.logger.Warnf("Failed to get mode for port %d: %v", port, modeValue)
+			if modeValue.Code != 200 {
+				diagnosticMessage := GetDiagnosticMessage(modeValue.Code)
+				s.logger.Warnf("Response Code: %s", diagnosticMessage)
+			}
+			continue // Cannot proceed without mode
+		}
+
+		// Process other keys based on port mode
+		if deviceInfo.Mode == 3 { // IO-Link mode
+
+			// Process device ID
+			deviceIDKey := fmt.Sprintf("/iolinkmaster/port[%d]/iolinkdevice/deviceid", port)
+			deviceIDValue, exists := data[deviceIDKey]
+			if !exists || deviceIDValue.Code != 200 || deviceIDValue.Data == nil {
+				if deviceIDValue.Code == 503 {
+					s.logger.Debugf("DeviceID not available for port %d (code 503), marking as disconnected", port)
+					deviceInfo.Connected = false
+					portModeUsageMap[port] = deviceInfo
+					continue
+				}
+
+				s.logger.Warnf("Failed to get deviceID for port %d: %v", port, deviceIDValue)
+				deviceInfo.Connected = false
+				portModeUsageMap[port] = deviceInfo
+				continue // Cannot proceed without device ID
+			}
+
+			deviceID, err := parseUint(deviceIDValue.Data)
+			if err != nil {
+				s.logger.Errorf("Failed to parse deviceID for port %d: %v", port, err)
+				deviceInfo.Connected = false
+				portModeUsageMap[port] = deviceInfo
+				continue // Cannot proceed without valid device ID
+			}
+			deviceInfo.DeviceID = uint(deviceID)
+			s.logger.Debugf("Port %d: DeviceID set to %d", port, deviceID)
+
+			// Process vendor ID
+			vendorIDKey := fmt.Sprintf("/iolinkmaster/port[%d]/iolinkdevice/vendorid", port)
+			vendorIDValue, exists := data[vendorIDKey]
+			if !exists || vendorIDValue.Code != 200 || vendorIDValue.Data == nil {
+				if vendorIDValue.Code == 503 {
+					s.logger.Debugf("VendorID not available for port %d (code 503), marking as disconnected", port)
+					deviceInfo.Connected = false
+					portModeUsageMap[port] = deviceInfo
+					continue
+				}
+
+				s.logger.Warnf("Failed to get vendorID for port %d: %v", port, vendorIDValue)
+				deviceInfo.Connected = false
+				portModeUsageMap[port] = deviceInfo
+				continue // Cannot proceed without vendor ID
+			}
+
+			vendorID, err := parseUint(vendorIDValue.Data)
+			if err != nil {
+				s.logger.Errorf("Failed to parse vendorID for port %d: %v", port, err)
+				deviceInfo.Connected = false
+				portModeUsageMap[port] = deviceInfo
+				continue // Cannot proceed without valid vendor ID
+			}
+			deviceInfo.VendorID = uint(vendorID)
+			s.logger.Debugf("Port %d: VendorID set to %d", port, vendorID)
+
+			// Process product name
+			productNameKey := fmt.Sprintf("/iolinkmaster/port[%d]/iolinkdevice/productname", port)
+			productNameValue, exists := data[productNameKey]
+			if !exists || productNameValue.Data == nil || productNameValue.Code == 503 {
+				s.logger.Infof("ProductName not available for port %d", port)
+			} else if productNameValue.Code == 200 {
+				productName, err := parseString(productNameValue.Data)
+				if err != nil {
+					s.logger.Errorf("Failed to parse productName for port %d: %v", port, err)
+				} else {
+					deviceInfo.ProductName = productName
+					s.logger.Debugf("Port %d: ProductName set to %s", port, productName)
+				}
+			} else {
+				s.logger.Warnf("Unexpected code for productName on port %d: %d", port, productNameValue.Code)
+			}
+
+			// Process serial number
+			serialKey := fmt.Sprintf("/iolinkmaster/port[%d]/iolinkdevice/serial", port)
+			serialValue, exists := data[serialKey]
+			if !exists || serialValue.Data == nil || serialValue.Code == 503 {
+				s.logger.Infof("Serial number not available for port %d", port)
+			} else if serialValue.Code == 200 {
+				serial, err := parseString(serialValue.Data)
+				if err != nil {
+					s.logger.Errorf("Failed to parse serial number for port %d: %v", port, err)
+				} else {
+					deviceInfo.Serial = serial
+					s.logger.Debugf("Port %d: Serial number set to %s", port, serial)
+				}
+			} else {
+				s.logger.Warnf("Unexpected code for serial number on port %d: %d", port, serialValue.Code)
+			}
+
+		} else {
+			// For non-IO-Link modes, no product information is expected
+			s.logger.Debugf("Port %d is in mode %d, skipping product info", port, deviceInfo.Mode)
+		}
+
+		// Add the deviceInfo to the map
+		portModeUsageMap[port] = deviceInfo
+	}
+
+	// Check and fetch IODD files for IO-Link devices if necessary
+	for port, info := range portModeUsageMap {
+		if info.Mode == 3 && info.Connected && info.DeviceID != 0 && info.VendorID != 0 {
+			s.logger.Debugf("IO-Link device found on port %d, checking IODD files for Device ID: %d, Vendor ID: %d", port, info.DeviceID, info.VendorID)
 			ioddFilemapKey := IoddFilemapKey{
 				DeviceId: int(info.DeviceID),
 				VendorId: int64(info.VendorID),

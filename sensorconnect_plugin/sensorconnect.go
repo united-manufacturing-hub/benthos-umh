@@ -25,6 +25,7 @@ import (
 type SensorConnectInput struct {
 	// Configuration fields
 	DeviceAddress string
+	IODDAPI       string
 
 	// Internal fields
 	DeviceInfo      DeviceInformation
@@ -43,7 +44,8 @@ func ConfigSpec() *service.ConfigSpec {
 		Summary("An input plugin that discovers devices and collects sensor data.").
 		Description("This plugin replaces the 'sensorconnect' microservice as a Benthos plugin.").
 		// Define all your configuration fields here
-		Field(service.NewStringField("device_address").Description("IP address or hostname of the IFM IO-Link master device"))
+		Field(service.NewStringField("device_address").Description("IP address or hostname of the IFM IO-Link master device")).
+		Field(service.NewStringField("iodd_api").Description("URL of the IODD API").Default("https://management.umh.app/iodd"))
 }
 
 // NewSensorConnectInput creates a new instance of SensorConnectInput
@@ -60,6 +62,9 @@ func NewSensorConnectInput(conf *service.ParsedConfig, mgr *service.Resources) (
 		return nil, err
 	}
 
+	if input.IODDAPI, err = conf.FieldString("iodd_api"); err != nil {
+		return nil, err
+	}
 	// Validate that DeviceAddress is provided
 	if input.DeviceAddress == "" {
 		return nil, fmt.Errorf("'device_address' must be provided")
@@ -71,6 +76,12 @@ func NewSensorConnectInput(conf *service.ParsedConfig, mgr *service.Resources) (
 // Connect establishes connections and starts background processes
 func (s *SensorConnectInput) Connect(ctx context.Context) error {
 	s.logger.Infof("Connecting to device at %s", s.DeviceAddress)
+
+	if s.IODDAPI == "" { // fallback option for tests that create directly a SensorConnectInput without usign the benthos aprsing the default values there, in production this would never be executed
+		s.IODDAPI = "https://management.umh.app/iodd"
+	}
+
+	s.logger.Infof("IODD API: %v", s.IODDAPI)
 
 	// Get device information
 	deviceInfo, err := s.GetDeviceInformation(ctx)

@@ -14,13 +14,11 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"go.uber.org/zap"
 )
 
 func (s *SensorConnectInput) FetchAndStoreIoDDFile(ctx context.Context, vendorId int64, deviceId int) (err error) {
 	// download iodd file
-	zap.S().Debugf("Downloading iodd file for vendorId: %v, deviceId: %v", vendorId, deviceId)
+	s.logger.Infof("Downloading iodd file for vendorId: %v, deviceId: %v", vendorId, deviceId)
 	fileMap, err := s.GetIoddFile(ctx, vendorId, deviceId)
 	if err != nil {
 		return err
@@ -56,7 +54,9 @@ func (s *SensorConnectInput) GetIoddFile(ctx context.Context, vendorId int64, de
 	var body []byte
 	body, err = s.GetUrlWithRetry(ctx,
 		fmt.Sprintf(
-			"https://ioddfinder.io-link.com/api/drivers?page=0&size=2000&status=APPROVED&status=UPLOADED&deviceIdString=%d",
+			// "https://ioddfinder.io-link.com/api/drivers?page=0&size=2000&status=APPROVED&status=UPLOADED&deviceIdString=%d",
+			"%s/drivers?page=0&size=2000&status=APPROVED&status=UPLOADED&deviceIdString=%d",
+			s.IODDAPI,
 			deviceId))
 	if err != nil {
 		return
@@ -87,7 +87,9 @@ func (s *SensorConnectInput) GetIoddFile(ctx context.Context, vendorId int64, de
 		var ioddzip []byte
 		ioddzip, err = s.GetUrlWithRetry(ctx,
 			fmt.Sprintf(
-				"https://ioddfinder.io-link.com/api/vendors/%d/iodds/%d/files/zip/rated",
+				//"https://ioddfinder.io-link.com/api/vendors/%d/iodds/%d/files/zip/rated",
+				"%s/vendors/%d/iodds/%d/files/zip/rated",
+				s.IODDAPI,
 				vendorId,
 				ioddId))
 		if err != nil {
