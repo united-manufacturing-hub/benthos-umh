@@ -19,17 +19,15 @@ clean:
 
 target:
 	@mkdir -p tmp/bin
-	@goreleaser build --single-target --snapshot --id benthos \
-		--output ./tmp/bin/benthos
+	@go build \
+       -ldflags "-s -w \
+       -X github.com/redpanda-data/benthos/v4/internal/cli.Version=temp \
+       -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+       -o tmp/bin/benthos \
+       cmd/benthos/main.go
 
 test:
 	@ginkgo -r --output-interceptor-mode=none --github-output -vv -trace -p --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./...
-
-lint:
-	@golangci-lint run
-
-format:
-	@golangci-lint run --fix
 
 update-benthos:
 	@go get github.com/redpanda-data/connect/public/bundle/free/v4@latest && \
@@ -37,4 +35,4 @@ update-benthos:
   go get github.com/redpanda-data/benthos/v4@latest && \
   go mod tidy
 
-.PHONY: clean target test lint format update-benthos
+.PHONY: clean target test update-benthos
