@@ -577,6 +577,7 @@ input:
 #### Configuration Parameters
 
 - **device_address**: IP address of the IO-Link Master
+- **iodd_api**: URL of the IODD API. Defaults to `https://management.umh.app/iodd` and should not be changed except for development purposes.
 
 #### Output
 The payload of each message is a JSON object containing the sensor data, structured according to the data provided by the connected device. The exact structure of the payload depends on the specific sensors connected to the SensorConnect device and the data they provide.
@@ -597,7 +598,7 @@ Example for a VVB001 vibration sensor:
 ```
 #### Metadata Outputs
 
-For each read operation, the plugin outputs detailed metadata that includes various aspects of the read operation, which can be utilized to effectively tag, organize, and utilize the data within a system. This metadata encompasses identifiers, data types, and register specifics to ensure precise tracking and utilization of the Modbus data.
+For each read operation, the plugin outputs detailed metadata that includes various aspects of the read operation, which can be utilized to effectively tag, organize, and utilize the data within a system.
 
 Below is the extended metadata output schema provided by the plugin:
 
