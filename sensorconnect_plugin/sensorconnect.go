@@ -130,53 +130,63 @@ func (s *SensorConnectInput) Connect(ctx context.Context) error {
 
 // ReadBatch reads data from sensors and returns it as a batch of messages
 func (s *SensorConnectInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
-	s.mu.Lock()
+
 	timeSinceLastUpdate := time.Since(s.lastPortMapTime)
 	if timeSinceLastUpdate >= 10*time.Second {
 		s.logger.Infof("10 seconds elapsed since last port map update. Updating port map for device at %s.", s.DeviceAddress)
 
-		// Attempt to fetch the updated port map
-		updatedPortMap, err := s.GetUsedPortsAndMode(ctx)
-		if err != nil {
-			s.logger.Errorf("Failed to update port map for device at %s: %v", s.DeviceAddress, err)
-			// Proceed with old port map
-		} else {
-			s.CurrentPortMap = updatedPortMap
-			s.lastPortMapTime = time.Now()
+		go func() {
+			s.mu.Lock()
 
-			s.logger.Infof("Updated Port Map for device at %s:", s.DeviceAddress)
-			for port, info := range updatedPortMap {
-				s.logger.Infof(
-					"Port %d:\n"+
-						"  Mode        : %d\n"+
-						"  Connected   : %t\n"+
-						"  DeviceID    : %d\n"+
-						"  VendorID    : %d\n"+
-						"  ProductName : %s\n"+
-						"  Serial      : %s\n",
-					port,
-					info.Mode,
-					info.Connected,
-					info.DeviceID,
-					info.VendorID,
-					info.ProductName,
-					info.Serial,
-				)
+			// Attempt to fetch the updated port map
+			updatedPortMap, err := s.GetUsedPortsAndMode(ctx)
+			if err != nil {
+				s.logger.Errorf("Failed to update port map for device at %s: %v", s.DeviceAddress, err)
+				// Proceed with old port map
+			} else {
+				s.CurrentPortMap = updatedPortMap
+				s.lastPortMapTime = time.Now()
+
+				s.logger.Infof("Updated Port Map for device at %s:", s.DeviceAddress)
+				for port, info := range updatedPortMap {
+					s.logger.Infof(
+						"Port %d:\n"+
+							"  Mode        : %d\n"+
+							"  Connected   : %t\n"+
+							"  DeviceID    : %d\n"+
+							"  VendorID    : %d\n"+
+							"  ProductName : %s\n"+
+							"  Serial      : %s\n",
+						port,
+						info.Mode,
+						info.Connected,
+						info.DeviceID,
+						info.VendorID,
+						info.ProductName,
+						info.Serial,
+					)
+				}
 			}
-		}
+
+			s.mu.Unlock()
+		}()
+
 	}
-	s.mu.Unlock()
 
 	// Read sensor data
 	sensorData, err := s.GetSensorDataMap(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, service.ErrNotConnected
 	}
 
 	// Create a message batch
 	msgBatch, err := s.ProcessSensorData(ctx, s.CurrentPortMap, sensorData)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	if s.DeviceInfo.BuggedFirmware {
+		time.Sleep(1000 * time.Millisecond) // Sleep for 1000ms as a workaround for the Crash Bug bug in the firmware
 	}
 
 	return msgBatch, func(ctx context.Context, err error) error {
