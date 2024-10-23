@@ -326,7 +326,7 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	g.browseChildren(ctx, &wg, 0, rootNode, id.References, msgChan)
+	g.browseChildren(ctx, &wg, 0, rootNode, id.HierarchicalReferences, msgChan)
 	wg.Wait()
 	close(msgChan)
 	return rootNode, nil
@@ -352,61 +352,45 @@ func (g *OPCUAInput) browseChildren(ctx context.Context, wg *sync.WaitGroup, lev
 		msgChan <- fmt.Sprintf("Fetching result for node:  %s", parent.Name)
 	}()
 
-	// Create a browse request for the current node
-	browseRequest := &ua.BrowseRequest{
-		NodesToBrowse: []*ua.BrowseDescription{
-			{
-				NodeID:          parent.NodeId,
-				BrowseDirection: ua.BrowseDirectionForward,
-				// TODO: Athavan
-				ReferenceTypeID: ua.NewNumericNodeID(0, referenceType),
-				IncludeSubtypes: true,
-				NodeClassMask:   uint32(ua.NodeClassAll),
-				ResultMask:      uint32(ua.BrowseResultMaskAll),
-			},
-		},
+	node := g.Client.Node(parent.NodeId)
+	nodeClass, err := node.NodeClass(ctx)
+	if err != nil {
+		g.Log.Warnf("error getting nodeClass for node ID %s: %v", parent.NodeId, err)
 	}
 
-	browseResp, err := g.Client.Browse(ctx, browseRequest)
+	refs, err := node.ReferencedNodes(ctx, referenceType, ua.BrowseDirectionForward, ua.NodeClassAll, true)
 	if err != nil {
 		g.Log.Warnf("error browsing children: %v", err)
 		return
 	}
 
-	currentNode := parent
-	nodeClass, err := g.Client.Node(parent.NodeId).NodeClass(ctx)
-	if err != nil {
-		g.Log.Warnf("error getting nodeClass for node ID %s: %v", parent.NodeId, err)
-	}
-	for _, result := range browseResp.Results {
-		if !errors.Is(result.StatusCode, ua.StatusOK) {
+	for _, ref := range refs {
+		newNode := g.Client.Node(ref.ID)
+		newNodeName, err := newNode.BrowseName(ctx)
+		if err != nil {
+			g.Log.Warnf("error browsing children: %v", err)
 			continue
+
+		}
+		child := &Node{
+			NodeId:   ref.ID,
+			Name:     newNodeName.Name,
+			Children: make([]*Node, 0),
+		}
+		parent.Children = append(parent.Children, child)
+		if nodeClass == ua.NodeClassVariable {
+			wg.Add(1)
+			go g.browseChildren(ctx, wg, level+1, child, id.HasComponent, msgChan)
 		}
 
-		// Recursively browse each child reference and build the tree
-		for _, ref := range result.References {
-			child := &Node{
-				NodeId:   ref.NodeID.NodeID,
-				Name:     ref.BrowseName.Name,
-				Children: make([]*Node, 0),
-			}
-			currentNode.Children = append(currentNode.Children, child)
-
-			if nodeClass == ua.NodeClassVariable {
-				wg.Add(1)
-				go g.browseChildren(ctx, wg, level+1, child, id.HasComponent, msgChan)
-			}
-
-			if nodeClass == ua.NodeClassObject {
-				wg.Add(4)
-				go g.browseChildren(ctx, wg, level+1, child, id.HasComponent, msgChan)
-				go g.browseChildren(ctx, wg, level+1, child, id.Organizes, msgChan)
-				go g.browseChildren(ctx, wg, level+1, child, id.FolderType, msgChan)
-				go g.browseChildren(ctx, wg, level+1, child, id.HasNotifier, msgChan)
-			}
+		if nodeClass == ua.NodeClassObject {
+			wg.Add(4)
+			go g.browseChildren(ctx, wg, level+1, child, id.HasComponent, msgChan)
+			go g.browseChildren(ctx, wg, level+1, child, id.Organizes, msgChan)
+			go g.browseChildren(ctx, wg, level+1, child, id.FolderType, msgChan)
+			go g.browseChildren(ctx, wg, level+1, child, id.HasNotifier, msgChan)
 		}
 	}
-
 }
 
 // discoverNodes retrieves a list of nodes from an OPC UA server.
