@@ -35,4 +35,8 @@ update-benthos:
   go get github.com/redpanda-data/benthos/v4@latest && \
   go mod tidy
 
+test-sensorconnect:
+	./tmp/bin/benthos -c ./config/sensorconnect-test.yaml
+
+
 .PHONY: clean target test update-benthos
