@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	"go.uber.org/zap"
 	"math"
 	"math/big"
 	"reflect"
@@ -81,13 +80,13 @@ func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, portModeMap 
 			// check if entry for IoddFilemapKey exists in ioddIoDeviceMap
 			ioddFile, ok := s.IoDeviceMap.Load(ioddFilemapKey)
 			if !ok {
-				zap.S().Debugf("IoddFilemapKey %v not in IodddeviceMap", ioddFilemapKey)
+				s.logger.Debugf("IoddFilemapKey %v not in IodddeviceMap", ioddFilemapKey)
 				continue
 			}
 
 			cidm, ok := ioddFile.(IoDevice)
 			if !ok {
-				zap.S().Errorf("Failed to cast idm to IoDevice")
+				s.logger.Errorf("Failed to cast idm to IoDevice")
 				continue
 			}
 
@@ -224,8 +223,8 @@ func (s *SensorConnectInput) ConvertBinaryValue(binaryValue string, datatype str
 		case 64:
 			output = int(int64(raw))
 		default:
-			s.logger.Errorf("Unsupported bit length for IntegerT: %d", bitLen)
-			return nil, fmt.Errorf("unsupported bit length for IntegerT: %d", bitLen)
+			s.logger.Debugf("Unsupported bit length for IntegerT: %d", bitLen)
+			output = int(raw) // still need to convert it to int, the ifm KQ6005 has for example 12 bit as IntegerT lol
 		}
 	case "Float32T":
 		output = math.Float32frombits(uint32(raw))
