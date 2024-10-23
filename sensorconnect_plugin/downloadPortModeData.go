@@ -38,7 +38,6 @@ func (s *SensorConnectInput) GetUsedPortsAndMode(ctx context.Context) (map[int]C
 			portData[port] = make(map[string]UPAMDatum)
 		}
 		portData[port][key] = value
-		fmt.Printf("Port: %v, Key: %v, Value: %v\n", port, key, value)
 	}
 
 	portModeUsageMap := make(map[int]ConnectedDeviceInfo)
