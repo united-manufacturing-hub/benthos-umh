@@ -234,29 +234,10 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	}
 
 	browseChildren := func(refType uint32) error {
-		browseRequest := &ua.BrowseRequest{
-			NodesToBrowse: []*ua.BrowseDescription{
-				{
-					NodeID:          def.NodeID,
-					BrowseDirection: ua.BrowseDirectionForward,
-					ReferenceTypeID: ua.NewNumericNodeID(0, refType),
-					IncludeSubtypes: true,
-					NodeClassMask:   uint32(ua.NodeClassAll),
-					ResultMask:      uint32(ua.BrowseResultMaskAll),
-				},
-			},
-		}
-
-		browseResp, err := client.Browse(ctx, browseRequest)
-		if err != nil {
-			return err
-		}
 		refs, err := n.ReferencedNodes(ctx, refType, ua.BrowseDirectionForward, ua.NodeClassAll, true)
 		if err != nil {
 			return errors.Errorf("References: %d: %s", refType, err)
 		}
-		// ginkgo.GinkgoWriter.Printf("Node ID: %v Browse results: %v, Old method: %v", def.NodeID, len(browseResp.Results), len(refs))
-		logger.Debugf("Node ID: %v Browse results: %v, Old method: %v\n", def.NodeID, len(browseResp.Results), len(refs))
 		logger.Debugf("found %d child refs\n", len(refs))
 		for _, rn := range refs {
 			wg.Add(1)
@@ -345,14 +326,14 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	g.browseChildren(ctx, &wg, 0, rootNode, msgChan)
+	g.browseChildren(ctx, &wg, 0, rootNode, id.References, msgChan)
 	wg.Wait()
 	close(msgChan)
 	return rootNode, nil
 }
 
 // browseChildren recursively browses the OPC UA server nodes and builds a tree structure
-func (g *OPCUAInput) browseChildren(ctx context.Context, wg *sync.WaitGroup, level int, parent *Node, msgChan chan<- string) {
+func (g *OPCUAInput) browseChildren(ctx context.Context, wg *sync.WaitGroup, level int, parent *Node, referenceType uint32, msgChan chan<- string) {
 	defer wg.Done()
 	// Recursion limit only goes up to 10 levels
 	if level >= 10 {
@@ -367,13 +348,18 @@ func (g *OPCUAInput) browseChildren(ctx context.Context, wg *sync.WaitGroup, lev
 		// continue to do other operation
 	}
 
+	go func() {
+		msgChan <- fmt.Sprintf("Fetching result for node:  %s", parent.Name)
+	}()
+
 	// Create a browse request for the current node
 	browseRequest := &ua.BrowseRequest{
 		NodesToBrowse: []*ua.BrowseDescription{
 			{
 				NodeID:          parent.NodeId,
 				BrowseDirection: ua.BrowseDirectionForward,
-				ReferenceTypeID: ua.NewNumericNodeID(0, id.HierarchicalReferences),
+				// TODO: Athavan
+				ReferenceTypeID: ua.NewNumericNodeID(0, referenceType),
 				IncludeSubtypes: true,
 				NodeClassMask:   uint32(ua.NodeClassAll),
 				ResultMask:      uint32(ua.BrowseResultMaskAll),
@@ -381,9 +367,6 @@ func (g *OPCUAInput) browseChildren(ctx context.Context, wg *sync.WaitGroup, lev
 		},
 	}
 
-	go func() {
-		msgChan <- fmt.Sprintf("Fetching result for node:  %s", parent.Name)
-	}()
 
 	browseResp, err := g.Client.Browse(ctx, browseRequest)
 	if err != nil {
@@ -392,6 +375,10 @@ func (g *OPCUAInput) browseChildren(ctx context.Context, wg *sync.WaitGroup, lev
 	}
 
 	currentNode := parent
+	nodeClass, err := g.Client.Node(parent.NodeId).NodeClass(ctx)
+	if err != nil {
+		g.Log.Warnf("error getting nodeClass for node ID %s: %v", parent.NodeId, err)
+	}
 	for _, result := range browseResp.Results {
 		if !errors.Is(result.StatusCode, ua.StatusOK) {
 			continue
@@ -407,7 +394,16 @@ func (g *OPCUAInput) browseChildren(ctx context.Context, wg *sync.WaitGroup, lev
 			currentNode.Children = append(currentNode.Children, child)
 
 			wg.Add(1)
-			go g.browseChildren(ctx, wg, level+1, child, msgChan)
+			if nodeClass == ua.NodeClassVariable {
+				go g.browseChildren(ctx, wg, level+1, child, id.HasComponent, msgChan)
+			}
+
+			if nodeClass == ua.NodeClassObject {
+				go g.browseChildren(ctx, wg, level+1, child, id.HasComponent, msgChan)
+				go g.browseChildren(ctx, wg, level+1, child, id.Organizes, msgChan)
+				go g.browseChildren(ctx, wg, level+1, child, id.FolderType, msgChan)
+				go g.browseChildren(ctx, wg, level+1, child, id.HasNotifier, msgChan)
+			}
 		}
 	}
 
