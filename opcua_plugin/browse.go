@@ -110,10 +110,6 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		Path:   newPath,
 	}
 
-	// send the mapping of path to PathID
-	// An example event sent is map["Root.Objects.Server"] = "i=86"
-	pathIDMapChan <- map[string]string{newPath: n.ID.String()}
-
 	switch err := attrs[0].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[0].Value == nil {
@@ -300,44 +296,101 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	return
 }
 
-// GetNodes gets all available list of nodes from an OPC UA server and path to pathID map.
-// The list of nodes returned varies depends on the OPCUAInput.NodeIDs field. Use i=84 to get all nodes.
-// It internally refreshes the connection if it is not available.
-// The function is specially designed to be used outside Benthos plugin context.
-// Example:
-//		opcua := OPCUAInput{
-// 			Endpoint:       "opc.tcp://localhost:4840",
-// 			Username:       "",
-// 			Password:       "",
-// 			SecurityMode:   "",
-// 			SecurityPolicy: "",
-// 			NodeIDs:        ParseNodeIDs([]string{"i=84"}),
-// 		}
-//
-// 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-// 		defer cancel()
-// 		nodes,pathIDMap, err := opcua.GetNodes(ctx)
-// 		if err != nil {
-// 			panic(err)
-// 		}
-// 		fmt.Println(nodes) // Output: [{i=2259 NodeClassVariable State  AccessLevelTypeNone i=852 i=84 Root.Objects.Server.ServerStatus.State}]
+// Node represents a node in the tree structure
+type Node struct {
+	NodeId   *ua.NodeID `json:"nodeId"`
+	Name     string     `json:"name"`
+	Children []*Node    `json:"children,omitempty"`
+}
 
-func (g *OPCUAInput) GetNodes(ctx context.Context) ([]NodeDef, map[string]string, error) {
-	// GetNodes() is currently used by united-manufacturing-hub/ManagementConsole repo to get the list of nodes for OPC UA Browse tags
-	// The Nodedef is used to construct the OPC UA Browse tags tree	in the Management Console
-	// However, the Nodes in the Nodedef might not have node ids for each hierarchy level
-	// For example, the node id for the tag "Root.Objects.Server.ServerStatus.State" is "i=2259" and will be present in the Nodedef
-	// But in order to construct the OPC UA Browse tags tree, we need the path ids for each hierarchy level like,
-	// Root, Root.Objects, Root.Objects.Server, Root.Objects.Server.ServerStatus and this information is present in the nodeIDMap which is returned by GetNodes() as the second return value
+// GetNodeTree returns the tree structure of the OPC UA server nodes
+// GetNodeTree is currently used by united-manufacturing-hub/ManagementConsole repo for the BrowseOPCUA tags functionality
+func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, rootNode *Node) (*Node, error) {
 	if g.Client == nil {
 		err := g.connect(ctx)
 		if err != nil {
 			g.Log.Infof("error setting up connection while getting the OPCUA nodes: %v", err)
-			return nil, nil, err
+			return nil, err
+		}
+	}
+	defer func() {
+		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			// Create a new context to close the connection if the existing context is canceled or timed out
+			ctx = context.Background()
+		}
+		err := g.Client.Close(ctx)
+		if err != nil {
+			g.Log.Infof("error closing the connection while getting the OPCUA nodes: %v", err)
+		}
+	}()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	g.browseChildren(ctx, &wg, 0, rootNode, id.HierarchicalReferences, msgChan)
+	wg.Wait()
+	close(msgChan)
+	return rootNode, nil
+}
+
+// browseChildren recursively browses the OPC UA server nodes and builds a tree structure
+func (g *OPCUAInput) browseChildren(ctx context.Context, wg *sync.WaitGroup, level int, parent *Node, referenceType uint32, msgChan chan<- string) {
+	defer wg.Done()
+	// Recursion limit only goes up to 10 levels
+	if level >= 10 {
+		return
+	}
+
+	// Check if the context is cancelled
+	select {
+	case <-ctx.Done():
+		return
+	default:
+		// continue to do other operation
+	}
+
+	go func() {
+		msgChan <- fmt.Sprintf("Fetching result for node:  %s", parent.Name)
+	}()
+
+	node := g.Client.Node(parent.NodeId)
+	nodeClass, err := node.NodeClass(ctx)
+	if err != nil {
+		g.Log.Warnf("error getting nodeClass for node ID %s: %v", parent.NodeId, err)
+	}
+
+	refs, err := node.ReferencedNodes(ctx, referenceType, ua.BrowseDirectionForward, ua.NodeClassAll, true)
+	if err != nil {
+		g.Log.Warnf("error browsing children: %v", err)
+		return
+	}
+
+	for _, ref := range refs {
+		newNode := g.Client.Node(ref.ID)
+		newNodeName, err := newNode.BrowseName(ctx)
+		if err != nil {
+			g.Log.Warnf("error browsing children: %v", err)
+			continue
+
+		}
+		child := &Node{
+			NodeId:   ref.ID,
+			Name:     newNodeName.Name,
+			Children: make([]*Node, 0),
+		}
+		parent.Children = append(parent.Children, child)
+		if nodeClass == ua.NodeClassVariable {
+			wg.Add(1)
+			go g.browseChildren(ctx, wg, level+1, child, id.HasComponent, msgChan)
 		}
 
+		if nodeClass == ua.NodeClassObject {
+			wg.Add(4)
+			go g.browseChildren(ctx, wg, level+1, child, id.HasComponent, msgChan)
+			go g.browseChildren(ctx, wg, level+1, child, id.Organizes, msgChan)
+			go g.browseChildren(ctx, wg, level+1, child, id.FolderType, msgChan)
+			go g.browseChildren(ctx, wg, level+1, child, id.HasNotifier, msgChan)
+		}
 	}
-	return g.discoverNodes(ctx)
 }
 
 // discoverNodes retrieves a list of nodes from an OPC UA server.
@@ -450,7 +503,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			var wgHeartbeat sync.WaitGroup
 
 			wgHeartbeat.Add(1)
-			go browse(ctx, g.Client.Node(heartbeatNodeID), "", 0, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, pathIDMapChan, &wgHeartbeat)
+			go browse(ctx, g.Client.Node(heartbeatNodeID), "", 1, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, pathIDMapChan, &wgHeartbeat)
 
 			wgHeartbeat.Wait()
 			close(nodeHeartbeatChan)
