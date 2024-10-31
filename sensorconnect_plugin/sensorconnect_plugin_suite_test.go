@@ -11,5 +11,6 @@ func TestSensorconnectPlugin(t *testing.T) {
 	RegisterFailHandler(Fail)
 	suiteConfig, _ := GinkgoConfiguration()
 	suiteConfig.ParallelTotal = 1 // ensure it runs in serial
+	suiteConfig.ParallelProcess = 1
 	RunSpecs(t, "SensorconnectPlugin Suite", suiteConfig)
 }
