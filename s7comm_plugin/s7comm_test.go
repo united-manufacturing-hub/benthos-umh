@@ -11,7 +11,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/united-manufacturing-hub/benthos-umh/v2/s7comm_plugin"
+	"github.com/united-manufacturing-hub/benthos-umh/s7comm_plugin"
 )
 
 var _ = Describe("S7Comm Plugin Unittests", func() {

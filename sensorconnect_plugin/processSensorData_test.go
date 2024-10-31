@@ -7,7 +7,7 @@ import (
 	"math"
 	"os"
 
-	"github.com/united-manufacturing-hub/benthos-umh/v2/sensorconnect_plugin"
+	"github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
 )
 
 var _ = Describe("ProcessSensorData", func() {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/united-manufacturing-hub/benthos-umh/v2/sensorconnect_plugin"
+	"github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
 	"os"
 	"sync/atomic"
 	"time"

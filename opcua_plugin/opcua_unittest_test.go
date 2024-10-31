@@ -5,7 +5,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	. "github.com/united-manufacturing-hub/benthos-umh/v2/opcua_plugin"
+	. "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
 )
 
 var _ = Describe("Unit Tests", func() {

@@ -10,7 +10,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	. "github.com/united-manufacturing-hub/benthos-umh/v2/modbus_plugin"
+	. "github.com/united-manufacturing-hub/benthos-umh/modbus_plugin"
 )
 
 var _ = Describe("Test Against Docker Modbus Simulator", func() {
