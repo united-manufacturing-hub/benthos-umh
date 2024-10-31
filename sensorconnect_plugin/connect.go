@@ -94,8 +94,8 @@ func (s *SensorConnectInput) GetDeviceInformation(ctx context.Context) (DeviceIn
 
 	firmwareVersionCodeDP, err := getStringDataPoint("/deviceinfo/swrevision/")
 	if err != nil {
-		s.logger.Errorf("Error extracting firmware: %v", err)
-		return DeviceInformation{}, err
+		s.logger.Debugf("Error extracting firmware: %v", err)
+		firmwareVersionCodeDP = StringDataPoint{Data: "Unknown", Code: 200}
 	}
 
 	if productCodeDP.Code != 200 {
