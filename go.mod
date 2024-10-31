@@ -1,4 +1,4 @@
-module github.com/united-manufacturing-hub/benthos-umh/v2
+module github.com/united-manufacturing-hub/benthos-umh
 
 go 1.23
 
@@ -20,17 +20,20 @@ replace github.com/parquet-go/parquet-go => github.com/parquet-go/parquet-go v0.
 godebug x509negativeserial=1
 
 require (
+	github.com/goccy/go-json v0.10.2
+	github.com/onsi/ginkgo/v2 v2.19.0
+	github.com/onsi/gomega v1.34.1
+	github.com/x448/float16 v0.8.4
+)
+
+require (
 	github.com/RuneRoven/benthosADS v1.0.4
 	github.com/RuneRoven/benthosAlarm v1.0.0
 	github.com/RuneRoven/benthosSMTP v0.0.1
-	github.com/goccy/go-json v0.10.2
 	github.com/gopcua/opcua v0.5.3
 	github.com/grid-x/modbus v0.0.0-20240503115206-582f2ab60a18
-	github.com/onsi/ginkgo/v2 v2.19.0
-	github.com/onsi/gomega v1.34.1
 	github.com/redpanda-data/benthos/v4 v4.38.0
 	github.com/redpanda-data/connect/public/bundle/free/v4 v4.31.0
-	github.com/x448/float16 v0.8.4
 )
 
 require (

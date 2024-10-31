@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	. "github.com/united-manufacturing-hub/benthos-umh/v2/opcua_plugin"
+	. "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"

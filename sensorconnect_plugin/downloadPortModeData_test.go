@@ -6,7 +6,7 @@ import (
 	. "github.com/onsi/gomega"
 	"os"
 
-	"github.com/united-manufacturing-hub/benthos-umh/v2/sensorconnect_plugin"
+	"github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
 )
 
 var _ = Describe("DownloadPortModeData Integration Tests", func() {
