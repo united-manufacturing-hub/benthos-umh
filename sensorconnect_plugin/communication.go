@@ -14,8 +14,7 @@ const CONNECTION_TIMEOUT_SECONDS = 10
 
 // SendRequestToDevice sends a request to the device and checks the response CID
 func (s *SensorConnectInput) SendRequestToDevice(ctx context.Context, requestData map[string]interface{}) (map[string]interface{}, error) {
-	s.CurrentCid++
-	cid := s.CurrentCid
+	cid := s.getNextCid() // Use the safe increment method
 
 	requestData["cid"] = cid
 
@@ -66,7 +65,7 @@ func (s *SensorConnectInput) SendRequestToDevice(ctx context.Context, requestDat
 
 	// Check CID in response
 	if responseCid, ok := response["cid"].(float64); ok { // JSON numbers are float64
-		if int(responseCid) != cid {
+		if int16(responseCid) != cid {
 			s.logger.Errorf("Unexpected correlation ID in response from %s: %d (expected %d)", url, int(responseCid), cid)
 			return nil, fmt.Errorf("unexpected correlation ID in response")
 		}
@@ -109,4 +108,21 @@ func GetDiagnosticMessage(code int) string {
 		return msg
 	}
 	return "Unknown error code"
+}
+
+// getNextCid safely increments and retrieves the next CID within the allowed range
+func (s *SensorConnectInput) getNextCid() int16 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Increment CurrentCid
+	s.CurrentCid++
+
+	// Check upper bound
+	// the actual allowed range is between -2 to 32,764
+	if s.CurrentCid > 32760 || s.CurrentCid < 0 {
+		s.CurrentCid = 1
+	}
+
+	return s.CurrentCid
 }

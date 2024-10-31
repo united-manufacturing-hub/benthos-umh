@@ -31,6 +31,34 @@ var _ = Describe("Sensorconnnect", func() {
 
 	})
 
+	When("CID is set to an invalid CID", func() {
+		It("should work for negative cid", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+
+			input := &sensorconnect_plugin.SensorConnectInput{
+				DeviceAddress: endpoint,
+				CurrentCid:    -5,
+			}
+
+			err := input.Connect(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should work for out of bounds cid", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+
+			input := &sensorconnect_plugin.SensorConnectInput{
+				DeviceAddress: endpoint,
+				CurrentCid:    32764,
+			}
+
+			err := input.Connect(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
 	When("ReadBatch", func() {
 		It("should receive data from the AL1350", func() {
 

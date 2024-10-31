@@ -33,7 +33,7 @@ type SensorConnectInput struct {
 	lastPortMapTime time.Time
 	mu              sync.Mutex
 	logger          *service.Logger
-	CurrentCid      int
+	CurrentCid      int16
 
 	IoDeviceMap sync.Map // IoDeviceMap to store IoDevices
 }
