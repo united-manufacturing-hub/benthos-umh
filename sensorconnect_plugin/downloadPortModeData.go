@@ -16,6 +16,7 @@ type ConnectedDeviceInfo struct {
 	VendorID    uint
 	ProductName string
 	Serial      string
+	UseRawData  bool // If true, the raw data will be used instead of the parsed data. This flag is automatically set if there is no IODD file available
 }
 
 // GetUsedPortsAndMode returns a map of the IO-Link Master's ports with port numbers as keys and ConnectedDeviceInfo as values
@@ -181,8 +182,13 @@ func (s *SensorConnectInput) GetUsedPortsAndMode(ctx context.Context) (map[int]C
 				VendorId: int64(info.VendorID),
 			}
 			err := s.AddNewDeviceToIoddFilesAndMap(ctx, ioddFilemapKey)
-			if err != nil {
-				return nil, err
+			if err != nil || s.UseOnlyRawData { // If there is an error or the plugin is set to use only raw data, set the port to use raw data
+				s.logger.Warnf("Failed to find iodd file: %v", err)
+				s.logger.Warnf("Setting port %d to use raw data", port)
+				deviceInfo := portModeUsageMap[port]
+				deviceInfo.UseRawData = true
+				portModeUsageMap[port] = deviceInfo
+				continue
 			}
 		}
 	}

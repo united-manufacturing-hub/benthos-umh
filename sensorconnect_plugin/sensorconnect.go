@@ -34,6 +34,7 @@ type SensorConnectInput struct {
 	mu              sync.Mutex
 	logger          *service.Logger
 	CurrentCid      int16
+	UseOnlyRawData  bool // Use only raw data for sensor data. This is used for testing purposes and skips the iodd download
 
 	IoDeviceMap sync.Map // IoDeviceMap to store IoDevices
 }
