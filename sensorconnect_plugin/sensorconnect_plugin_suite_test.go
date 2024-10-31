@@ -9,5 +9,7 @@ import (
 
 func TestSensorconnectPlugin(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "SensorconnectPlugin Suite")
+	suiteConfig, _ := GinkgoConfiguration()
+	suiteConfig.ParallelTotal = 1 // ensure it runs in serial
+	RunSpecs(t, "SensorconnectPlugin Suite", suiteConfig)
 }
