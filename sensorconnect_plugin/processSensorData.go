@@ -72,56 +72,15 @@ func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, portModeMap 
 				continue
 			}
 
-			// create IoddFilemapKey
-			var ioddFilemapKey IoddFilemapKey
-			ioddFilemapKey.DeviceId = int(portMode.DeviceID)
-			ioddFilemapKey.VendorId = int64(portMode.VendorID)
+			var payload map[string]interface{}
 
-			// check if entry for IoddFilemapKey exists in ioddIoDeviceMap
-			ioddFile, ok := s.IoDeviceMap.Load(ioddFilemapKey)
-			if !ok {
-				s.logger.Debugf("IoddFilemapKey %v not in IodddeviceMap", ioddFilemapKey)
-				continue
+			if !portMode.UseRawData {
+				payload, err = s.GetProcessedSensorDataFromRawSensorOutput(string(rawSensorOutput), portMode)
 			}
-
-			cidm, ok := ioddFile.(IoDevice)
-			if !ok {
-				s.logger.Errorf("Failed to cast idm to IoDevice")
-				continue
-			}
-
-			// create padded binary raw sensor output
-
-			rawSensorOutputLength := len(rawSensorOutput)
-
-			outputBitLength := rawSensorOutputLength * 4
-			rawSensorOutputString := string(rawSensorOutput)
-			rawSensorOutputBinary, err := s.HexToBin(rawSensorOutputString)
-			if err != nil {
-				return nil, err
-			}
-			rawSensorOutputBinaryPadded := s.ZeroPadding(rawSensorOutputBinary, outputBitLength)
-
-			// Extract important IoddStruct parts for better readability
-			processDataIn := cidm.ProfileBody.DeviceFunction.ProcessDataCollection.ProcessData.ProcessDataIn
-			datatypeReferenceArray := cidm.ProfileBody.DeviceFunction.DatatypeCollection.DatatypeArray
-			var emptySimpleDatatype SimpleDatatype
-			primLangExternalTextCollection := cidm.ExternalTextCollection.PrimaryLanguage.Text
-
-			// Process the data
-			payload, err := s.processData(
-				processDataIn.Datatype,
-				processDataIn.DatatypeRef,
-				emptySimpleDatatype,
-				0,
-				outputBitLength,
-				rawSensorOutputBinaryPadded,
-				datatypeReferenceArray,
-				processDataIn.Name.TextId,
-				primLangExternalTextCollection)
-			if err != nil {
-				s.logger.Errorf("Failed to process data: %v", err)
-				// Handle the error as needed
+			if err != nil || portMode.UseRawData { // if above did not work or UseRawData is set
+				s.logger.Errorf("Failed to process sensor data: %v", err)
+				payload = make(map[string]interface{})
+				payload["raw_sensor_output"] = rawSensorOutput
 			}
 
 			// Create message
@@ -158,6 +117,61 @@ func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, portModeMap 
 }
 
 // Helper functions
+
+func (s *SensorConnectInput) GetProcessedSensorDataFromRawSensorOutput(rawSensorOutput string, portMode ConnectedDeviceInfo) (map[string]interface{}, error) {
+	// create IoddFilemapKey
+	var ioddFilemapKey IoddFilemapKey
+	ioddFilemapKey.DeviceId = int(portMode.DeviceID)
+	ioddFilemapKey.VendorId = int64(portMode.VendorID)
+
+	// check if entry for IoddFilemapKey exists in ioddIoDeviceMap
+	ioddFile, ok := s.IoDeviceMap.Load(ioddFilemapKey)
+	if !ok {
+		s.logger.Errorf("IoddFilemapKey %v not in IodddeviceMap", ioddFilemapKey)
+		return nil, fmt.Errorf("IoddFilemapKey %v not in IodddeviceMap", ioddFilemapKey)
+	}
+
+	cidm, ok := ioddFile.(IoDevice)
+	if !ok {
+		s.logger.Errorf("Failed to cast idm to IoDevice")
+		return nil, fmt.Errorf("failed to cast idm to IoDevice")
+	}
+
+	// create padded binary raw sensor output
+
+	rawSensorOutputLength := len(rawSensorOutput)
+
+	outputBitLength := rawSensorOutputLength * 4
+	rawSensorOutputString := string(rawSensorOutput)
+	rawSensorOutputBinary, err := s.HexToBin(rawSensorOutputString)
+	if err != nil {
+		return nil, err
+	}
+	rawSensorOutputBinaryPadded := s.ZeroPadding(rawSensorOutputBinary, outputBitLength)
+
+	// Extract important IoddStruct parts for better readability
+	processDataIn := cidm.ProfileBody.DeviceFunction.ProcessDataCollection.ProcessData.ProcessDataIn
+	datatypeReferenceArray := cidm.ProfileBody.DeviceFunction.DatatypeCollection.DatatypeArray
+	var emptySimpleDatatype SimpleDatatype
+	primLangExternalTextCollection := cidm.ExternalTextCollection.PrimaryLanguage.Text
+
+	// Process the data
+	payload, err := s.processData(
+		processDataIn.Datatype,
+		processDataIn.DatatypeRef,
+		emptySimpleDatatype,
+		0,
+		outputBitLength,
+		rawSensorOutputBinaryPadded,
+		datatypeReferenceArray,
+		processDataIn.Name.TextId,
+		primLangExternalTextCollection)
+	if err != nil {
+		s.logger.Errorf("Failed to process data: %v", err)
+		return nil, err
+	}
+	return payload, nil
+}
 
 func (s *SensorConnectInput) extractByteArrayFromSensorDataMap(key string, tag string, sensorDataMap map[string]interface{}) ([]byte, error) {
 	element, ok := sensorDataMap[key]
