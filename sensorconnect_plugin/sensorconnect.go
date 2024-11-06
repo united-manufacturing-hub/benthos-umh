@@ -197,10 +197,10 @@ func (s *SensorConnectInput) ReadBatch(ctx context.Context) (service.MessageBatc
 		s.logger.Infof("10 seconds elapsed since last port map update. Updating port map for device at %s.", s.DeviceAddress)
 
 		go func() {
-			s.mu.Lock()
-
 			// Attempt to fetch the updated port map
 			updatedPortMap, err := s.GetUsedPortsAndMode(ctx)
+			s.mu.Lock()
+
 			if err != nil {
 				s.logger.Errorf("Failed to update port map for device at %s: %v", s.DeviceAddress, err)
 				// Proceed with old port map
