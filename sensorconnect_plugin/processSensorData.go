@@ -210,6 +210,15 @@ func (s *SensorConnectInput) extractIntFromSensorDataMap(key string, tag string,
 // It handles both string and numeric data types and logs errors using the Benthos logger.
 func (s *SensorConnectInput) ConvertBinaryValue(binaryValue string, datatype string) (interface{}, error) {
 	bitLen := len(binaryValue)
+
+	if datatype == "OctetStringT" {
+		output, err := s.BinToHex(binaryValue)
+		if err != nil {
+			return nil, err
+		}
+		return output, nil
+	}
+
 	raw, err := strconv.ParseUint(binaryValue, 2, bitLen)
 	if err != nil {
 		s.logger.Errorf("Error while converting binary value to %v: %v", datatype, err)
@@ -219,11 +228,6 @@ func (s *SensorConnectInput) ConvertBinaryValue(binaryValue string, datatype str
 	var output interface{}
 
 	switch datatype {
-	case "OctetStringT":
-		output, err = s.BinToHex(binaryValue)
-		if err != nil {
-			return nil, err
-		}
 	case "UIntegerT":
 		output = raw
 	case "IntegerT":
