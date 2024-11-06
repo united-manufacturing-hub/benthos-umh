@@ -568,16 +568,55 @@ The plugin handles parsing and interpreting IO-Link data using IODD files, conve
 It was previously known as [sensorconnect](https://github.com/united-manufacturing-hub/united-manufacturing-hub/tree/staging/golang/cmd/sensorconnect).
 
 #### Configuration
+Below is an example configuration demonstrating all available options for the sensorconnect plugin. This includes settings for device connectivity, IODD API URLs, and detailed device-specific configurations.
 ```yaml
 input:
   sensorconnect:
     device_address: '192.168.0.1' # IP address of the IO-Link Master
+    iodd_api: 'https://management.umh.app/iodd' # URL of the IODD API
+    devices:
+      - device_id: 1234
+        vendor_id: 5678
+        iodd_url: "https://example.com/iodd/device1234.xml"
+      - device_id: 2345
+        vendor_id: 6789
+        iodd_url: "https://example.com/iodd/device2345.xml"
 ```
 
-#### Configuration Parameters
+#### Configuration Options
 
-- **device_address**: IP address of the IO-Link Master
-- **iodd_api**: URL of the IODD API. Defaults to `https://management.umh.app/iodd` and should not be changed except for development purposes.
+##### Device Address
+
+Specifies the IP address of the ifm IO-Link Master device
+
+```yaml
+input:
+  sensorconnect:
+    device_address: '192.168.0.1'
+```
+
+##### IODD API
+
+Defines the URL of the IODD API, which is used to fetch IODD files for connected devices. Defaults to `https://management.umh.app/iodd` and should not be changed except for development purposes.
+
+```yaml
+input:
+  sensorconnect:
+    iodd_api: 'https://management.umh.app/iodd'
+```
+
+##### Devices
+
+Provides a list of devices to provide for a given device_id and vendor_id,  a fallback iodd_url (in case the IODD file is not available via the IODD API).
+
+```yaml
+input:
+  sensorconnect:
+    devices:
+      - device_id: 509 # Device ID of the IO-Link device
+        vendor_id: 2035 # Vendor ID of the IO-Link device
+        iodd_url: "https://yourserver.com/iodd/KEYENCE-FD-EPA1-20230410-IODD1.1.xml" # URL of the IODD file for the device. You might need to download this from the vendors website and self-host it.
+```
 
 #### Output
 The payload of each message is a JSON object containing the sensor data, structured according to the data provided by the connected device. The exact structure of the payload depends on the specific sensors connected to the SensorConnect device and the data they provide.

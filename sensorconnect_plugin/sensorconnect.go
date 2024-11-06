@@ -44,9 +44,31 @@ func ConfigSpec() *service.ConfigSpec {
 	return service.NewConfigSpec().
 		Summary("An input plugin that discovers devices and collects sensor data.").
 		Description("This plugin replaces the 'sensorconnect' microservice as a Benthos plugin.").
-		// Define all your configuration fields here
-		Field(service.NewStringField("device_address").Description("IP address or hostname of the IFM IO-Link master device")).
-		Field(service.NewStringField("iodd_api").Description("URL of the IODD API").Default("https://management.umh.app/iodd"))
+		// Existing configuration fields
+		Field(
+			service.NewStringField("device_address").
+				Description("IP address or hostname of the IFM IO-Link master device"),
+		).
+		Field(
+			service.NewStringField("iodd_api").
+				Description("URL of the IODD API").
+				Default("https://management.umh.app/iodd"),
+		).
+		// New configuration for device-specific settings
+		Field(
+			service.NewObjectListField("devices",
+				service.NewIntField("device_id").
+					Description("The device ID of the IO-Link device").
+					Example(509),
+				service.NewIntField("vendor_id").
+					Description("The vendor ID of the IO-Link device").
+					Example(2035),
+				service.NewStringField("iodd_url").
+					Description("Fallback URL to download the IODD file if not found in the IODD API").
+					Example("https://yourserver.com/iodd/KEYENCE-FD-EPA1-20230410-IODD1.1.xml"),
+			).
+				Description("List of devices with specific configuration options"),
+		)
 }
 
 // NewSensorConnectInput creates a new instance of SensorConnectInput
@@ -69,6 +91,44 @@ func NewSensorConnectInput(conf *service.ParsedConfig, mgr *service.Resources) (
 	// Validate that DeviceAddress is provided
 	if input.DeviceAddress == "" {
 		return nil, fmt.Errorf("'device_address' must be provided")
+	}
+
+	// Parse 'devices' list
+	deviceConfigs, err := conf.FieldObjectList("devices")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse 'devices' list: %w", err)
+	}
+
+	for i, deviceConf := range deviceConfigs {
+		// Parse 'device_id'
+		deviceID, err := deviceConf.FieldInt("device_id")
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse 'devices[%d].device_id': %w", i, err)
+		}
+
+		// Parse 'vendor_id'
+		vendorID, err := deviceConf.FieldInt("vendor_id")
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse 'devices[%d].vendor_id': %w", i, err)
+		}
+
+		// Parse 'iodd_url'
+		ioddURL, err := deviceConf.FieldString("iodd_url")
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse 'devices[%d].iodd_url': %w", i, err)
+		}
+
+		currentDevice := DeviceConfig{
+			DeviceID: deviceID,
+			VendorID: vendorID,
+			IoddURL:  ioddURL,
+		}
+
+		err = input.FetchAndStoreIoddFromURL(context.Background(), currentDevice)
+		if err != nil {
+			return nil, err
+		}
+
 	}
 
 	return input, nil
