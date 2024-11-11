@@ -3,10 +3,12 @@ package sensorconnect_plugin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // ConnectedDeviceInfo represents information about a connected device on a port
@@ -23,7 +25,10 @@ type ConnectedDeviceInfo struct {
 	btAdapter   string
 }
 
-// GetUsedPortsAndMode returns a map of the IO-Link Master's ports with port numbers as keys and ConnectedDeviceInfo as values
+// BadgeSize is Maximum possible size of the "/getdatamulti" request, determined for AL1352 and EIO404 Devices.
+const BadgeSize = 50
+
+// GetConnectedDevices returns a map of the IO-Link Master's ports with port numbers as keys and ConnectedDeviceInfo as values
 func (s *SensorConnectInput) GetConnectedDevices(ctx context.Context) ([]ConnectedDeviceInfo, error) {
 	response, err := s.getUsedPortsAndMode(ctx)
 	if err != nil {
@@ -222,6 +227,8 @@ func (s *SensorConnectInput) GetConnectedDevices(ctx context.Context) ([]Connect
 // getUsedPortsAndMode sends a request to the device to get information about used ports and their modes
 func (s *SensorConnectInput) getUsedPortsAndMode(ctx context.Context) (map[string]UPAMDatum, error) {
 	// Define the data points to request for each port
+	// We also request the states of peripheral ports on EIO404, even though these models do not have any peripheral ports
+	// Devices return status code 404 for not existing peripheral ports
 	var dataPoints []string
 	for port := 1; port <= 8; port++ {
 		dataPoints = append(dataPoints,
@@ -235,6 +242,8 @@ func (s *SensorConnectInput) getUsedPortsAndMode(ctx context.Context) (map[strin
 
 	// The EIO404 Bluetooth Mesh IoT Base Station supports up to 50 EIO344 Bluetooth Mesh IO-Link Adapters.
 	// Note that each EIO344 Bluetooth Mesh IO-Link Adapter is limited to a single IO-Link port.
+	// We also request the states of mesh adapters on the AL1350/AL1352, even though these models do not support bluetooth mesh adapters.
+	// Devices will return status code 503 for unprovisioned adapters and 404 for cases where no mesh adapters are supported.
 	for meshAdapter := 1; meshAdapter <= 50; meshAdapter++ {
 		dataPoints = append(dataPoints,
 			fmt.Sprintf("/meshnetwork/mesh_adapter[%d]/iolinkmaster/port[1]/mode", meshAdapter),
@@ -246,11 +255,11 @@ func (s *SensorConnectInput) getUsedPortsAndMode(ctx context.Context) (map[strin
 	}
 
 	// To avoid HTTP 413 "Payload Too Large" or 507 "Insufficient Storage" errors, we need to request data in batches, splitting the payload into smaller, manageable chunks.
-	badgeSize := 50
 	result := map[string]UPAMDatum{}
+	var errstrings []string
 
-	for offset := 0; offset < len(dataPoints); offset += badgeSize {
-		limit := min(badgeSize, len(dataPoints)-offset)
+	for offset := 0; offset < len(dataPoints); offset += BadgeSize {
+		limit := min(BadgeSize, len(dataPoints)-offset)
 		requestData := map[string]interface{}{
 			"code": "request",
 			"adr":  "/getdatamulti",
@@ -261,7 +270,9 @@ func (s *SensorConnectInput) getUsedPortsAndMode(ctx context.Context) (map[strin
 
 		response, err := s.SendRequestToDevice(ctx, requestData)
 		if err != nil {
-			return result, err
+			s.logger.Errorf("Request data from device: %v", err)
+			errstrings = append(errstrings, err.Error())
+			continue
 		}
 
 		// Parse the response into RawUsedPortsAndMode struct
@@ -269,15 +280,21 @@ func (s *SensorConnectInput) getUsedPortsAndMode(ctx context.Context) (map[strin
 		responseBytes, err := json.Marshal(response)
 		if err != nil {
 			s.logger.Errorf("Failed to marshal response: %v", err)
-			return result, err
+			errstrings = append(errstrings, err.Error())
+			continue
 		}
 		err = json.Unmarshal(responseBytes, &rawData)
 		if err != nil {
 			s.logger.Errorf("Failed to parse response: %v", err)
-			return result, err
+			errstrings = append(errstrings, err.Error())
+			continue
 		}
 
 		maps.Copy(result, rawData.Data)
+	}
+
+	if len(errstrings) > 0 {
+		return result, errors.New(strings.Join(errstrings, "\n"))
 	}
 
 	return result, nil
@@ -296,6 +313,8 @@ type UPAMDatum struct {
 	Code int         `json:"code"`
 }
 
+// extractUri extracts the unique URI from a data request path.
+// The result is used as a unique identifier to identify a connected sensor.
 func extractUri(input string) (string, error) {
 	rx := regexp.MustCompile("(.*port\\[\\d*])(.*$)")
 	matches := rx.FindStringSubmatch(input)
@@ -307,6 +326,8 @@ func extractUri(input string) (string, error) {
 	return "", fmt.Errorf("cannot find uri in %s", input)
 }
 
+// extractPort extracts the physical connected port id from the sensor uri
+// to append it later to message metadata
 func extractPort(input string) (string, error) {
 	rx := regexp.MustCompile("port\\[(\\d)\\]")
 	matches := rx.FindStringSubmatch(input)
@@ -318,6 +339,8 @@ func extractPort(input string) (string, error) {
 	return "", fmt.Errorf("cannot find port in %s", input)
 }
 
+// extractBluetoothAdapter extracts the bluetooth adapter id from the sensor uri.
+// to append it later to message metadata
 func extractBluetoothAdapter(input string) (string, error) {
 	rx := regexp.MustCompile("mesh_adapter\\[(\\d)\\]")
 	matches := rx.FindStringSubmatch(input)
