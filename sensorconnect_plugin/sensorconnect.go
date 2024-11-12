@@ -177,7 +177,7 @@ func (s *SensorConnectInput) Connect(ctx context.Context) error {
 				"  VendorID    : %d\n"+
 				"  ProductName : %s\n"+
 				"  Serial      : %s\n",
-			device.btAdapter,
+			device.BtAdapter,
 			device.Port,
 			device.Mode,
 			device.Connected,
@@ -221,7 +221,7 @@ func (s *SensorConnectInput) ReadBatch(ctx context.Context) (service.MessageBatc
 							"  VendorID    : %d\n"+
 							"  ProductName : %s\n"+
 							"  Serial      : %s\n",
-						device.btAdapter,
+						device.BtAdapter,
 						device.Port,
 						device.Mode,
 						device.Connected,

@@ -22,7 +22,7 @@ type ConnectedDeviceInfo struct {
 	Serial      string
 	Port        string
 	UseRawData  bool // If true, the raw data will be used instead of the parsed data. This flag is automatically set if there is no IODD file available
-	btAdapter   string
+	BtAdapter   string
 }
 
 // BadgeSize is Maximum possible size of the "/getdatamulti" request, determined for AL1352 and EIO404 Devices.
@@ -60,9 +60,9 @@ func (s *SensorConnectInput) GetConnectedDevices(ctx context.Context) ([]Connect
 		btAdapter, err := extractBluetoothAdapter(uri)
 		if err != nil {
 			s.logger.Debugf(err.Error())
-			deviceInfo.btAdapter = "none"
+			deviceInfo.BtAdapter = "none"
 		} else {
-			deviceInfo.btAdapter = btAdapter
+			deviceInfo.BtAdapter = btAdapter
 		}
 
 		port, err := extractPort(uri)
@@ -109,7 +109,7 @@ func (s *SensorConnectInput) GetConnectedDevices(ctx context.Context) ([]Connect
 			deviceIDValue, exists := data[deviceIDKey]
 			if !exists || deviceIDValue.Code != 200 || deviceIDValue.Data == nil {
 				if deviceIDValue.Code == 503 {
-					s.logger.Debugf("DeviceID not available for port %d (code 503), marking as disconnected", uri)
+					s.logger.Debugf("DeviceID not available for %s (code 503), marking as disconnected", uri)
 					deviceInfo.Connected = false
 					connectedDevices = append(connectedDevices, deviceInfo)
 					continue
@@ -179,7 +179,7 @@ func (s *SensorConnectInput) GetConnectedDevices(ctx context.Context) ([]Connect
 			serialKey := uri + "/iolinkdevice/serial"
 			serialValue, exists := data[serialKey]
 			if !exists || serialValue.Data == nil || serialValue.Code == 503 {
-				s.logger.Infof("Serial number not available for port %d", uri)
+				s.logger.Infof("Serial number not available for port %s", uri)
 			} else if serialValue.Code == 200 {
 				serial, err := parseString(serialValue.Data)
 				if err != nil {

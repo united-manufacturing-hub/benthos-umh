@@ -44,7 +44,7 @@ func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, connectedDev
 			message.MetaSet("sensorconnect_device_url", s.DeviceInfo.URL)
 			message.MetaSet("sensorconnect_device_product_code", s.DeviceInfo.ProductCode)
 			message.MetaSet("sensorconnect_device_serial_number", s.DeviceInfo.SerialNumber)
-			message.MetaSet("sensorconnect_bluetooth_meshadapter", device.btAdapter)
+			message.MetaSet("sensorconnect_bluetooth_meshadapter", device.BtAdapter)
 
 			// Add message to batch
 			batch = append(batch, message)
@@ -107,7 +107,7 @@ func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, connectedDev
 			message.MetaSet("sensorconnect_device_product_code", s.DeviceInfo.ProductCode)
 			message.MetaSet("sensorconnect_device_serial_number", s.DeviceInfo.SerialNumber)
 
-			message.MetaSet("sensorconnect_bluetooth_meshadapter", device.btAdapter)
+			message.MetaSet("sensorconnect_bluetooth_meshadapter", device.BtAdapter)
 
 			// Add message to batch
 			batch = append(batch, message)
