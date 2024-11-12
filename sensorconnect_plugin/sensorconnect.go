@@ -28,13 +28,13 @@ type SensorConnectInput struct {
 	IODDAPI       string
 
 	// Internal fields
-	DeviceInfo      DeviceInformation
-	CurrentPortMap  map[int]ConnectedDeviceInfo
-	lastPortMapTime time.Time
-	mu              sync.Mutex
-	logger          *service.Logger
-	CurrentCid      int16
-	UseOnlyRawData  bool // Use only raw data for sensor data. This is used for testing purposes and skips the iodd download
+	DeviceInfo       DeviceInformation
+	ConnectedDevices []ConnectedDeviceInfo
+	lastPortMapTime  time.Time
+	mu               sync.Mutex
+	logger           *service.Logger
+	CurrentCid       int16
+	UseOnlyRawData   bool // Use only raw data for sensor data. This is used for testing purposes and skips the iodd download
 
 	IoDeviceMap sync.Map // IoDeviceMap to store IoDevices
 }
@@ -155,34 +155,36 @@ func (s *SensorConnectInput) Connect(ctx context.Context) error {
 	s.logger.Infof("Connected to device at %s (SN: %s, PN: %s)", deviceInfo.URL, deviceInfo.SerialNumber, deviceInfo.ProductCode)
 
 	// Get Port Map and Print
-	portMap, err := s.GetUsedPortsAndMode(ctx)
+	devices, err := s.GetConnectedDevices(ctx)
 	if err != nil {
 		s.logger.Errorf("Failed to fetch port map %s: %v", s.DeviceAddress, err)
 		return err
 	}
 
 	s.mu.Lock()
-	s.CurrentPortMap = portMap
+	s.ConnectedDevices = devices
 	s.lastPortMapTime = time.Now()
 	s.mu.Unlock()
 
 	s.logger.Infof("Port Map for device at %s:", s.DeviceAddress)
-	for port, info := range portMap {
+	for _, device := range devices {
 		s.logger.Infof(
-			"Port %d:\n"+
+			"Bluetooth Adapter: %s \n"+
+				"  Port %s:\n"+
 				"  Mode        : %d\n"+
 				"  Connected   : %t\n"+
 				"  DeviceID    : %d\n"+
 				"  VendorID    : %d\n"+
 				"  ProductName : %s\n"+
 				"  Serial      : %s\n",
-			port,
-			info.Mode,
-			info.Connected,
-			info.DeviceID,
-			info.VendorID,
-			info.ProductName,
-			info.Serial,
+			device.BtAdapter,
+			device.Port,
+			device.Mode,
+			device.Connected,
+			device.DeviceID,
+			device.VendorID,
+			device.ProductName,
+			device.Serial,
 		)
 	}
 
@@ -198,33 +200,35 @@ func (s *SensorConnectInput) ReadBatch(ctx context.Context) (service.MessageBatc
 
 		go func() {
 			// Attempt to fetch the updated port map
-			updatedPortMap, err := s.GetUsedPortsAndMode(ctx)
+			updatedDevices, err := s.GetConnectedDevices(ctx)
 			s.mu.Lock()
 
 			if err != nil {
 				s.logger.Errorf("Failed to update port map for device at %s: %v", s.DeviceAddress, err)
 				// Proceed with old port map
 			} else {
-				s.CurrentPortMap = updatedPortMap
+				s.ConnectedDevices = updatedDevices
 				s.lastPortMapTime = time.Now()
 
 				s.logger.Infof("Updated Port Map for device at %s:", s.DeviceAddress)
-				for port, info := range updatedPortMap {
+				for _, device := range updatedDevices {
 					s.logger.Infof(
-						"Port %d:\n"+
+						"  Bluetooth Adapter: %s \n"+
+							"  Port %s:\n"+
 							"  Mode        : %d\n"+
 							"  Connected   : %t\n"+
 							"  DeviceID    : %d\n"+
 							"  VendorID    : %d\n"+
 							"  ProductName : %s\n"+
 							"  Serial      : %s\n",
-						port,
-						info.Mode,
-						info.Connected,
-						info.DeviceID,
-						info.VendorID,
-						info.ProductName,
-						info.Serial,
+						device.BtAdapter,
+						device.Port,
+						device.Mode,
+						device.Connected,
+						device.DeviceID,
+						device.VendorID,
+						device.ProductName,
+						device.Serial,
 					)
 				}
 			}
@@ -241,7 +245,7 @@ func (s *SensorConnectInput) ReadBatch(ctx context.Context) (service.MessageBatc
 	}
 
 	// Create a message batch
-	msgBatch, err := s.ProcessSensorData(ctx, s.CurrentPortMap, sensorData)
+	msgBatch, err := s.ProcessSensorData(ctx, s.ConnectedDevices, sensorData)
 	if err != nil {
 		return nil, nil, err
 	}

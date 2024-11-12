@@ -13,24 +13,22 @@ import (
 
 // ProcessSensorData processes the downloaded information from one IO-Link master
 // and returns a message batch with one message per sensor (active port).
-func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, portModeMap map[int]ConnectedDeviceInfo, sensorDataMap map[string]interface{}) (service.MessageBatch, error) {
+func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, connectedDevices []ConnectedDeviceInfo, sensorDataMap map[string]interface{}) (service.MessageBatch, error) {
 	// Initialize an empty MessageBatch to collect results from all ports
 	var batch service.MessageBatch
 
 	// Loop over the ports
-	for portNumber, portMode := range portModeMap {
-		if !portMode.Connected {
-			s.logger.Debugf("Port %v is not connected, skipping.", portNumber)
+	for _, device := range connectedDevices {
+		if !device.Connected {
+			s.logger.Debugf("%s is not connected, skipping.", device.Uri)
 			continue
 		}
 
 		// Process based on port mode
-		switch portMode.Mode {
+		switch device.Mode {
 		case 1: // Digital Input
-			s.logger.Debugf("Processing sensor data for port %v, mode %v", portNumber, portMode.Mode)
-			// Get value from sensorDataMap
-			portNumberString := strconv.Itoa(portNumber)
-			key := "/iolinkmaster/port[" + portNumberString + "]/pin2in"
+			s.logger.Debugf("Processing sensor data for port %v, mode %v", device.Uri, device.Mode)
+			key := device.Uri + "/pin2in"
 			dataPin2In, err := s.extractByteArrayFromSensorDataMap(key, "data", sensorDataMap)
 			if err != nil {
 				s.logger.Debugf("Error extracting dataPin2In from sensorDataMap: %v for key %s", err, key)
@@ -41,28 +39,28 @@ func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, portModeMap 
 			message := service.NewMessage(dataPin2In)
 
 			message.MetaSet("sensorconnect_port_mode", "digital-input")
-			message.MetaSet("sensorconnect_port_number", portNumberString)
+			message.MetaSet("sensorconnect_port_number", device.Port)
 
 			message.MetaSet("sensorconnect_device_url", s.DeviceInfo.URL)
 			message.MetaSet("sensorconnect_device_product_code", s.DeviceInfo.ProductCode)
 			message.MetaSet("sensorconnect_device_serial_number", s.DeviceInfo.SerialNumber)
+			message.MetaSet("sensorconnect_bluetooth_meshadapter", device.BtAdapter)
 
 			// Add message to batch
 			batch = append(batch, message)
 
 		case 3: // IO-Link
-			s.logger.Debugf("Processing IO-Link data for port %v, mode %v", portNumber, portMode.Mode)
+			s.logger.Debugf("Processing IO-Link data for port %v, mode %v", device.Uri, device.Mode)
 			// Get value from sensorDataMap
-			portNumberString := strconv.Itoa(portNumber)
-			keyPdin := "/iolinkmaster/port[" + portNumberString + "]/iolinkdevice/pdin"
+			keyPdin := device.Uri + "/iolinkdevice/pdin"
 			connectionCode, err := s.extractIntFromSensorDataMap(keyPdin, "code", sensorDataMap)
 			if err != nil {
-				s.logger.Warnf("Failed to extract connection code for port %v: %v", portNumber, err)
+				s.logger.Warnf("Failed to extract connection code %s: %v", device.Uri, err)
 				continue
 			}
 
 			if connectionCode != 200 {
-				s.logger.Debugf("Port %d is not connected", portNumber)
+				s.logger.Debugf("%s is not connected", device.Uri)
 				continue
 			}
 
@@ -72,12 +70,16 @@ func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, portModeMap 
 				continue
 			}
 
+			// create IoddFilemapKey
+			var ioddFilemapKey IoddFilemapKey
+			ioddFilemapKey.DeviceId = int(device.DeviceID)
+			ioddFilemapKey.VendorId = int64(device.VendorID)
 			var payload map[string]interface{}
 
-			if !portMode.UseRawData {
-				payload, err = s.GetProcessedSensorDataFromRawSensorOutput(string(rawSensorOutput), portMode)
+			if !device.UseRawData {
+				payload, err = s.GetProcessedSensorDataFromRawSensorOutput(string(rawSensorOutput), device)
 			}
-			if err != nil || portMode.UseRawData { // if above did not work or UseRawData is set
+			if err != nil || device.UseRawData { // if above did not work or UseRawData is set
 				s.logger.Errorf("Failed to process sensor data: %v", err)
 				payload = make(map[string]interface{})
 				payload["raw_sensor_output"] = rawSensorOutput
@@ -95,20 +97,22 @@ func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, portModeMap 
 			message := service.NewMessage(b)
 
 			message.MetaSet("sensorconnect_port_mode", "io-link")
-			message.MetaSet("sensorconnect_port_number", portNumberString)
-			message.MetaSet("sensorconnect_port_iolink_vendor_id", strconv.Itoa(int(portMode.VendorID)))
-			message.MetaSet("sensorconnect_port_iolink_device_id", strconv.Itoa(int(portMode.DeviceID)))
-			message.MetaSet("sensorconnect_port_iolink_product_name", portMode.ProductName)
-			message.MetaSet("sensorconnect_port_iolink_serial", portMode.Serial)
+			message.MetaSet("sensorconnect_port_number", device.Port)
+			message.MetaSet("sensorconnect_port_iolink_vendor_id", strconv.Itoa(int(device.VendorID)))
+			message.MetaSet("sensorconnect_port_iolink_device_id", strconv.Itoa(int(device.DeviceID)))
+			message.MetaSet("sensorconnect_port_iolink_product_name", device.ProductName)
+			message.MetaSet("sensorconnect_port_iolink_serial", device.Serial)
 
 			message.MetaSet("sensorconnect_device_url", s.DeviceInfo.URL)
 			message.MetaSet("sensorconnect_device_product_code", s.DeviceInfo.ProductCode)
 			message.MetaSet("sensorconnect_device_serial_number", s.DeviceInfo.SerialNumber)
 
+			message.MetaSet("sensorconnect_bluetooth_meshadapter", device.BtAdapter)
+
 			// Add message to batch
 			batch = append(batch, message)
 		default:
-			s.logger.Warnf("Unsupported port mode %v on port %v", portMode.Mode, portNumber)
+			s.logger.Warnf("Unsupported port mode %v on port %v", device.Mode, device.Port)
 			continue
 		}
 	}
