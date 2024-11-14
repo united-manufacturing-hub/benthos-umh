@@ -329,7 +329,7 @@ func extractUri(input string) (string, error) {
 // extractPort extracts the physical connected port id from the sensor uri
 // to append it later to message metadata
 func extractPort(input string) (string, error) {
-	rx := regexp.MustCompile("port\\[(\\d)\\]")
+	rx := regexp.MustCompile("port\\[(\\d+)\\]")
 	matches := rx.FindStringSubmatch(input)
 
 	if len(matches) > 1 {
