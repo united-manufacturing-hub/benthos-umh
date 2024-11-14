@@ -36,7 +36,7 @@ var _ = Describe("DownloadPortModeData Integration Tests", func() {
 					CurrentCid:    0,
 				}
 
-				portMap, err := input.GetUsedPortsAndMode(context.Background())
+				portMap, err := input.GetConnectedDevices(context.Background())
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(portMap[1].Mode).To(Equal(uint(3)))
