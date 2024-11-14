@@ -89,10 +89,11 @@ func (s *SensorConnectInput) GetConnectedDevices(ctx context.Context) ([]Connect
 			deviceInfo.Mode = uint(mode)
 			s.logger.Debugf("%s: Mode set to %d", uri, mode)
 		} else {
-			switch modeValue.Code {
-			case 503:
+			switch {
+			case modeValue.Code == 503 && s.IsDeviceBluetoothMeshCompatible():
+				// Handle the 503 case when the device is Bluetooth mesh compatible
 				s.logger.Debugf("%s not paired", uri)
-			case 404:
+			case modeValue.Code == 404:
 				s.logger.Debugf("%s does not exist on device", uri)
 			default:
 				diagnosticMessage := GetDiagnosticMessage(modeValue.Code)
@@ -202,7 +203,8 @@ func (s *SensorConnectInput) GetConnectedDevices(ctx context.Context) ([]Connect
 	}
 
 	// Check and fetch IODD files for IO-Link devices if necessary
-	for _, device := range connectedDevices {
+	for idx := range connectedDevices {
+		device := &connectedDevices[idx] // we use this approach so that we can further modify the device object by setting it to UseRawData
 		if device.Mode == 3 && device.Connected && device.DeviceID != 0 && device.VendorID != 0 {
 			s.logger.Debugf("IO-Link device found %s, checking IODD files for Device ID: %d, Vendor ID: %d", device.Uri, device.DeviceID, device.VendorID)
 			ioddFilemapKey := IoddFilemapKey{
@@ -213,9 +215,7 @@ func (s *SensorConnectInput) GetConnectedDevices(ctx context.Context) ([]Connect
 			if err != nil || s.UseOnlyRawData { // If there is an error or the plugin is set to use only raw data, set the port to use raw data
 				s.logger.Warnf("Failed to find iodd file: %v", err)
 				s.logger.Warnf("Setting device %s to use raw data", device.Uri)
-				deviceInfo := device
-				deviceInfo.UseRawData = true
-				connectedDevices = append(connectedDevices, deviceInfo)
+				device.UseRawData = true
 				continue
 			}
 		}
@@ -242,16 +242,17 @@ func (s *SensorConnectInput) getUsedPortsAndMode(ctx context.Context) (map[strin
 
 	// The EIO404 Bluetooth Mesh IoT Base Station supports up to 50 EIO344 Bluetooth Mesh IO-Link Adapters.
 	// Note that each EIO344 Bluetooth Mesh IO-Link Adapter is limited to a single IO-Link port.
-	// We also request the states of mesh adapters on the AL1350/AL1352, even though these models do not support bluetooth mesh adapters.
 	// Devices will return status code 503 for unprovisioned adapters and 404 for cases where no mesh adapters are supported.
-	for meshAdapter := 1; meshAdapter <= 50; meshAdapter++ {
-		dataPoints = append(dataPoints,
-			fmt.Sprintf("/meshnetwork/mesh_adapter[%d]/iolinkmaster/port[1]/mode", meshAdapter),
-			fmt.Sprintf("/meshnetwork/mesh_adapter[%d]/iolinkmaster/port[1]/iolinkdevice/deviceid", meshAdapter),
-			fmt.Sprintf("/meshnetwork/mesh_adapter[%d]/iolinkmaster/port[1]/iolinkdevice/vendorid", meshAdapter),
-			fmt.Sprintf("/meshnetwork/mesh_adapter[%d]/iolinkmaster/port[1]/iolinkdevice/productname", meshAdapter),
-			fmt.Sprintf("/meshnetwork/mesh_adapter[%d]/iolinkmaster/port[1]/iolinkdevice/serial", meshAdapter),
-		)
+	if s.DeviceInfo.ProductCode == "EIO404" {
+		for meshAdapter := 1; meshAdapter <= 50; meshAdapter++ {
+			dataPoints = append(dataPoints,
+				fmt.Sprintf("/meshnetwork/mesh_adapter[%d]/iolinkmaster/port[1]/mode", meshAdapter),
+				fmt.Sprintf("/meshnetwork/mesh_adapter[%d]/iolinkmaster/port[1]/iolinkdevice/deviceid", meshAdapter),
+				fmt.Sprintf("/meshnetwork/mesh_adapter[%d]/iolinkmaster/port[1]/iolinkdevice/vendorid", meshAdapter),
+				fmt.Sprintf("/meshnetwork/mesh_adapter[%d]/iolinkmaster/port[1]/iolinkdevice/productname", meshAdapter),
+				fmt.Sprintf("/meshnetwork/mesh_adapter[%d]/iolinkmaster/port[1]/iolinkdevice/serial", meshAdapter),
+			)
+		}
 	}
 
 	// To avoid HTTP 413 "Payload Too Large" or 507 "Insufficient Storage" errors, we need to request data in batches, splitting the payload into smaller, manageable chunks.

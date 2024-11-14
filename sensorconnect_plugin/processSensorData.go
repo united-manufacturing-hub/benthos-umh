@@ -79,8 +79,12 @@ func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, connectedDev
 			if !device.UseRawData {
 				payload, err = s.GetProcessedSensorDataFromRawSensorOutput(string(rawSensorOutput), device)
 			}
-			if err != nil || device.UseRawData { // if above did not work or UseRawData is set
+
+			if err != nil {
 				s.logger.Errorf("Failed to process sensor data: %v", err)
+			}
+
+			if err != nil || device.UseRawData { // if above did not work or UseRawData is set
 				payload = make(map[string]interface{})
 				payload["raw_sensor_output"] = rawSensorOutput
 			}
