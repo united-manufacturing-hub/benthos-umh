@@ -343,7 +343,7 @@ func extractPort(input string) (string, error) {
 // extractBluetoothAdapter extracts the bluetooth adapter id from the sensor uri.
 // to append it later to message metadata
 func extractBluetoothAdapter(input string) (string, error) {
-	rx := regexp.MustCompile("mesh_adapter\\[(\\d)\\]")
+	rx := regexp.MustCompile("mesh_adapter\\[(\\d+)\\]")
 	matches := rx.FindStringSubmatch(input)
 
 	if len(matches) > 1 {
