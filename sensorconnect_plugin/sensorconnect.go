@@ -276,3 +276,7 @@ func init() {
 		panic(err)
 	}
 }
+
+func (s *SensorConnectInput) IsDeviceBluetoothMeshCompatible() bool {
+	return s.DeviceInfo.ProductCode == "EIO404"
+}
