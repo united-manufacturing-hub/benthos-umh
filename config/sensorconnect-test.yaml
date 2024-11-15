@@ -1,7 +1,6 @@
 input:
   sensorconnect:
-    device_address: "${DEVICE_ADDRESS}"
-    iodd_api: "${IODD_API}"
+    device_address: "${TEST_DEBUG_IFM_ENDPOINT}"
 
 pipeline:
   processors:
