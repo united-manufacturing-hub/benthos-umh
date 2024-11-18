@@ -34,12 +34,12 @@ var _ = Describe("FetchAndStoreCustomIODD", func() {
 
 		// Initialize SensorConnectInput with necessary fields
 		input = &sensorconnect_plugin.SensorConnectInput{
-			IoDeviceMap:    sync.Map{},
-			UseOnlyRawData: false,
-			DeviceAddress:  "192.168.0.1",
-			IODDAPI:        "https://management.umh.app/iodd",
-			CurrentCid:     0,
-			CurrentPortMap: make(map[int]sensorconnect_plugin.ConnectedDeviceInfo),
+			IoDeviceMap:      sync.Map{},
+			UseOnlyRawData:   false,
+			DeviceAddress:    "192.168.0.1",
+			IODDAPI:          "https://management.umh.app/iodd",
+			CurrentCid:       0,
+			ConnectedDevices: []sensorconnect_plugin.ConnectedDeviceInfo{},
 		}
 
 		// Setup mock server to simulate IODD URL responses
