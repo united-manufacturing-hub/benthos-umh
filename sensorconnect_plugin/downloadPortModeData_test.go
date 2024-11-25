@@ -2,6 +2,7 @@ package sensorconnect_plugin_test
 
 import (
 	"context"
+	"fmt"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"os"
@@ -39,12 +40,21 @@ var _ = Describe("DownloadPortModeData Integration Tests", func() {
 				portMap, err := input.GetConnectedDevices(context.Background())
 				Expect(err).NotTo(HaveOccurred())
 
-				Expect(portMap[1].Mode).To(Equal(uint(3)))
-				Expect(portMap[1].Connected).To(BeTrue())
-				Expect(portMap[1].DeviceID).To(Equal(uint(1028)))
-				Expect(portMap[1].VendorID).To(Equal(uint(310)))
-				Expect(portMap[1].ProductName).To(Equal("VVB001"))
-				Expect(portMap[1].Serial).To(Equal("000008512993"))
+				// Debugging: print out the port map including mode, connected, deviceID, vendorID, productName, serial
+				for i, port := range portMap {
+					debugInfo := fmt.Sprintf(
+						"Port %d:\n  Mode: %d\n  Connected: %t\n  DeviceID: %d\n  VendorID: %d\n  ProductName: %s\n  Serial: %s\n",
+						i, port.Mode, port.Connected, port.DeviceID, port.VendorID, port.ProductName, port.Serial,
+					)
+					GinkgoWriter.Write([]byte(debugInfo))
+				}
+
+				Expect(portMap[0].Mode).To(Equal(uint(3)))
+				Expect(portMap[0].Connected).To(BeTrue())
+				Expect(portMap[0].DeviceID).To(Equal(uint(1028)))
+				Expect(portMap[0].VendorID).To(Equal(uint(310)))
+				Expect(portMap[0].ProductName).To(Equal("VVB001"))
+				Expect(portMap[0].Serial).To(Equal("000008512993"))
 			})
 		})
 	})
