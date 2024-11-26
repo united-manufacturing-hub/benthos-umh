@@ -78,7 +78,7 @@ func sanitize(s string) string {
 //
 // **Returns:**
 // - `void`: Errors are sent through `errChan`, and discovered nodes are sent through `nodeChan`.
-func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *service.Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, pathIDMapChan chan map[string]string, wg *sync.WaitGroup) {
+func browse(ctx context.Context, n NodeBrowser, path string, level int, logger *service.Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, pathIDMapChan chan map[string]string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	logger.Debugf("node:%s path:%q level:%d parentNodeId:%s\n", n, path, level, parentNodeId)
@@ -106,7 +106,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	}
 
 	var def = NodeDef{
-		NodeID: n.ID,
+		NodeID: n.ID(),
 		Path:   newPath,
 	}
 
@@ -241,7 +241,8 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		logger.Debugf("found %d child refs\n", len(refs))
 		for _, rn := range refs {
 			wg.Add(1)
-			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, pathIDMapChan, wg)
+			referenceWrapper := NewOpcuaNodeWrapper(rn)
+			go browse(ctx, referenceWrapper, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, pathIDMapChan, wg)
 		}
 		return nil
 	}
@@ -431,7 +432,8 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 
 		// Start a goroutine for browsing
 		wg.Add(1)
-		go browse(ctx, g.Client.Node(nodeID), "", 0, g.Log, nodeID.String(), nodeChan, errChan, pathIDMapChan, &wg)
+		wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(nodeID))
+		go browse(ctx, wrapperNodeID, "", 0, g.Log, nodeID.String(), nodeChan, errChan, pathIDMapChan, &wg)
 	}
 
 	// close nodeChan, nodeIDMapChan and errChan once all browsing is done
@@ -503,7 +505,8 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			var wgHeartbeat sync.WaitGroup
 
 			wgHeartbeat.Add(1)
-			go browse(ctx, g.Client.Node(heartbeatNodeID), "", 1, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, pathIDMapChan, &wgHeartbeat)
+			wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(heartbeatNodeID))
+			go browse(ctx, wrapperNodeID, "", 1, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, pathIDMapChan, &wgHeartbeat)
 
 			wgHeartbeat.Wait()
 			close(nodeHeartbeatChan)
