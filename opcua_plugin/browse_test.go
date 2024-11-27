@@ -142,7 +142,6 @@ var _ = Describe("Tests for browse function", Label("browse_test"), func() {
 
 	Context("When browsing nodes with a node class value nil", func() {
 		It("should return an error for nil node class in the error channel", func() {
-			Skip("temp")
 			var attributes []*ua.DataValue
 			attributes = append(attributes, getDataValueForNilNodeClass())
 			rootNodeWithNilNodeClass := &MockOpcuaNodeWraper{
