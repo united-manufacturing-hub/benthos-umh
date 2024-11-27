@@ -34,7 +34,6 @@ require (
 	github.com/grid-x/modbus v0.0.0-20240503115206-582f2ab60a18
 	github.com/redpanda-data/benthos/v4 v4.38.0
 	github.com/redpanda-data/connect/public/bundle/free/v4 v4.31.0
-	go.uber.org/mock v0.5.0
 )
 
 require (
