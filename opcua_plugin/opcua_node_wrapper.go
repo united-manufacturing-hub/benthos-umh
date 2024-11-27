@@ -15,7 +15,7 @@ type NodeBrowser interface {
 	BrowseName(ctx context.Context) (*ua.QualifiedName, error)
 
 	// ReferencedNodes retrieves nodes referenced by this node based on specified criteria
-	ReferencedNodes(ctx context.Context, refType uint32, browseDir ua.BrowseDirection, nodeClassMask ua.NodeClass, includeSubtypes bool) ([]*opcua.Node, error)
+	ReferencedNodes(ctx context.Context, refType uint32, browseDir ua.BrowseDirection, nodeClassMask ua.NodeClass, includeSubtypes bool) ([]NodeBrowser, error)
 
 	// ID returns the node identifier
 	ID() *ua.NodeID
@@ -36,8 +36,16 @@ func (n *OpcuaNodeWrapper) Attributes(ctx context.Context, attrs ...ua.Attribute
 	return n.n.Attributes(ctx, attrs...)
 }
 
-func (n *OpcuaNodeWrapper) ReferencedNodes(ctx context.Context, refType uint32, browseDir ua.BrowseDirection, nodeClassMask ua.NodeClass, includeSubtypes bool) ([]*opcua.Node, error) {
-	return n.n.ReferencedNodes(ctx, refType, browseDir, nodeClassMask, includeSubtypes)
+func (n *OpcuaNodeWrapper) ReferencedNodes(ctx context.Context, refType uint32, browseDir ua.BrowseDirection, nodeClassMask ua.NodeClass, includeSubtypes bool) ([]NodeBrowser, error) {
+	refrences, err := n.n.ReferencedNodes(ctx, refType, browseDir, nodeClassMask, includeSubtypes)
+	if err != nil {
+		return nil, err
+	}
+	var result []NodeBrowser
+	for _, ref := range refrences {
+		result = append(result, NewOpcuaNodeWrapper(ref))
+	}
+	return result, nil
 }
 
 func (n *OpcuaNodeWrapper) BrowseName(ctx context.Context) (*ua.QualifiedName, error) {

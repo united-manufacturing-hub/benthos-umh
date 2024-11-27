@@ -13,8 +13,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	opcua "github.com/gopcua/opcua"
 	ua "github.com/gopcua/opcua/ua"
+	opcua_plugin "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -92,10 +92,10 @@ func (mr *MockNodeBrowserMockRecorder) ID() *gomock.Call {
 }
 
 // ReferencedNodes mocks base method.
-func (m *MockNodeBrowser) ReferencedNodes(ctx context.Context, refType uint32, browseDir ua.BrowseDirection, nodeClassMask ua.NodeClass, includeSubtypes bool) ([]*opcua.Node, error) {
+func (m *MockNodeBrowser) ReferencedNodes(ctx context.Context, refType uint32, browseDir ua.BrowseDirection, nodeClassMask ua.NodeClass, includeSubtypes bool) ([]opcua_plugin.NodeBrowser, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ReferencedNodes", ctx, refType, browseDir, nodeClassMask, includeSubtypes)
-	ret0, _ := ret[0].([]*opcua.Node)
+	ret0, _ := ret[0].([]opcua_plugin.NodeBrowser)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
