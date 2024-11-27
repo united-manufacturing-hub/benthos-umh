@@ -46,7 +46,10 @@ var _ = Describe("DownloadPortModeData Integration Tests", func() {
 						"Port %d:\n  Mode: %d\n  Connected: %t\n  DeviceID: %d\n  VendorID: %d\n  ProductName: %s\n  Serial: %s\n",
 						i, port.Mode, port.Connected, port.DeviceID, port.VendorID, port.ProductName, port.Serial,
 					)
-					GinkgoWriter.Write([]byte(debugInfo))
+					_, err := GinkgoWriter.Write([]byte(debugInfo))
+					if err != nil {
+						Fail(fmt.Sprintf("Failed to write debug info: %v", err))
+					}
 				}
 
 				Expect(portMap[0].Mode).To(Equal(uint(3)))
