@@ -241,6 +241,8 @@ var _ = Describe("Tests for browse function", Label("browse_test"), func() {
 
 			Expect(errs).Should(BeEmpty())
 			Expect(nodes).Should(HaveLen(1))
+			Expect(nodes[0].NodeID.String()).To(Equal("i=1223"))
+			Expect(nodes[0].BrowseName).To(Equal("TestChildNode"))
 		})
 		It("root node with id.HasChild should return 1 child", func() {
 
@@ -279,6 +281,8 @@ var _ = Describe("Tests for browse function", Label("browse_test"), func() {
 
 			Expect(errs).Should(BeEmpty())
 			Expect(nodes).Should(HaveLen(1))
+			Expect(nodes[0].NodeID.String()).To(Equal("i=1223"))
+			Expect(nodes[0].BrowseName).To(Equal("TestChildNode"))
 		})
 	})
 })
