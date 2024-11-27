@@ -35,7 +35,9 @@ update-benthos:
   go get github.com/redpanda-data/benthos/v4@latest && \
   go mod tidy
 
-test-sensorconnect:
+# usage:
+# make test-sensorconnect TEST_DEBUG_IFM_ENDPOINT=10.13.37.176
+test-sensorconnect: test
 	./tmp/bin/benthos -c ./config/sensorconnect-test.yaml
 
 

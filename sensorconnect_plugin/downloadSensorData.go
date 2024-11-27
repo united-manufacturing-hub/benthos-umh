@@ -14,15 +14,15 @@ type SensorDataInformation struct {
 // GetSensorDataMap retrieves sensor data from the connected devices
 func (s *SensorConnectInput) GetSensorDataMap(ctx context.Context) (map[string]interface{}, error) {
 	// Get the connected ports and their modes
-	usedPortsAndModes := s.CurrentPortMap
-	if len(usedPortsAndModes) == 0 {
+	devices := s.ConnectedDevices
+	if len(devices) == 0 {
 		// No devices connected, return empty map
 		s.logger.Warn("No devices connected to any ports")
 		return make(map[string]interface{}), nil
 	}
 
 	// Create the request data for sensor data
-	requestData, err := s.createSensorDataRequestData(usedPortsAndModes)
+	requestData, err := s.createSensorDataRequestData(devices)
 	if err != nil {
 		s.logger.Errorf("Failed to create sensor data request: %v", err)
 		return nil, err
@@ -46,27 +46,27 @@ func (s *SensorConnectInput) GetSensorDataMap(ctx context.Context) (map[string]i
 }
 
 // createSensorDataRequestData creates the request data to fetch sensor data from connected devices
-func (s *SensorConnectInput) createSensorDataRequestData(connectedDeviceInfo map[int]ConnectedDeviceInfo) (map[string]interface{}, error) {
+func (s *SensorConnectInput) createSensorDataRequestData(connectedDeviceInfo []ConnectedDeviceInfo) (map[string]interface{}, error) {
 	datatosend := []string{}
 
-	for port, info := range connectedDeviceInfo {
-		if !info.Connected {
+	for _, device := range connectedDeviceInfo {
+		if !device.Connected {
 			continue
 		}
 
 		var query string
-		switch info.Mode {
+		switch device.Mode {
 		// DI mode
 		case 1:
-			query = fmt.Sprintf("/iolinkmaster/port[%d]/pin2in", port)
+			query = device.Uri + "/pin2in"
 		// DO mode
 		case 2:
-			return nil, fmt.Errorf("DO mode is currently not supported for port %d", port)
+			return nil, fmt.Errorf("DO mode is currently not supported for %s", device.Uri)
 		// IO-Link mode
 		case 3:
-			query = fmt.Sprintf("/iolinkmaster/port[%d]/iolinkdevice/pdin", port)
+			query = device.Uri + "/iolinkdevice/pdin"
 		default:
-			return nil, fmt.Errorf("invalid IO-Link port mode: %d for port %d", info.Mode, port)
+			return nil, fmt.Errorf("invalid IO-Link port mode: %d for %s", device.Mode, device.Uri)
 		}
 		datatosend = append(datatosend, query)
 	}
