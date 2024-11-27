@@ -13,7 +13,6 @@ import (
 	"github.com/gopcua/opcua/errors"
 	"github.com/gopcua/opcua/id"
 	"github.com/gopcua/opcua/ua"
-	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 type NodeDef struct {
@@ -51,6 +50,10 @@ func sanitize(s string) string {
 	return re.ReplaceAllString(s, "_")
 }
 
+type Logger interface {
+	Debugf(format string, args ...interface{})
+}
+
 // browse recursively explores OPC UA nodes to build a comprehensive list of NodeDefs.
 //
 // The `browse` function is essential for discovering the structure and details of OPC UA nodes.
@@ -78,10 +81,9 @@ func sanitize(s string) string {
 //
 // **Returns:**
 // - `void`: Errors are sent through `errChan`, and discovered nodes are sent through `nodeChan`.
-func browse(ctx context.Context, n NodeBrowser, path string, level int, logger *service.Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, pathIDMapChan chan map[string]string, wg *sync.WaitGroup) {
+func browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, pathIDMapChan chan map[string]string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	logger.Debugf("node:%s path:%q level:%d parentNodeId:%s\n", n, path, level, parentNodeId)
 	if level > 10 {
 		return
 	}
@@ -283,6 +285,11 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger *
 			return
 		}
 		if err := browseChildren(id.HasNotifier); err != nil {
+			errChan <- err
+			return
+		}
+		// This edge case has been sponsored by "AVEVA System Platform IDE 2020 R2 SP1"
+		if err := browseChildren(id.HasChild); err != nil {
 			errChan <- err
 			return
 		}
