@@ -19,9 +19,6 @@ type NodeBrowser interface {
 
 	// ID returns the node identifier
 	ID() *ua.NodeID
-
-	// // String returns the string representation of the node
-	// String() string
 }
 
 type OpcuaNodeWrapper struct {
