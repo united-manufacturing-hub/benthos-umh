@@ -80,6 +80,15 @@ func (m *MockOpcuaNodeWraper) ID() *ua.NodeID {
 	return m.id
 }
 
+func (m *MockOpcuaNodeWraper) Children(ctx context.Context, refType uint32, nodeClassMask ua.NodeClass) ([]NodeBrowser, error) {
+	var result []NodeBrowser
+	// return all reference nodes of all refType
+	for _, nodes := range m.referenceNodes {
+		result = append(result, nodes...)
+	}
+	return result, nil
+}
+
 // ReferencedNodes implements NodeBrowser.
 func (m *MockOpcuaNodeWraper) ReferencedNodes(ctx context.Context, refType uint32, browseDir ua.BrowseDirection, nodeClassMask ua.NodeClass, includeSubtypes bool) ([]NodeBrowser, error) {
 	if nodes, ok := m.referenceNodes[refType]; ok {
@@ -117,16 +126,17 @@ var _ NodeBrowser = &MockOpcuaNodeWraper{}
 var _ = Describe("Tests for browse function", Label("browse_test"), func() {
 
 	var (
-		ctx           context.Context
-		nodeBrowser   NodeBrowser
-		path          string
-		level         int
-		logger        Logger
-		parentNodeId  string
-		nodeChan      chan NodeDef
-		errChan       chan error
-		pathIDMapChan chan map[string]string
-		wg            *sync.WaitGroup
+		ctx                          context.Context
+		nodeBrowser                  NodeBrowser
+		path                         string
+		level                        int
+		logger                       Logger
+		parentNodeId                 string
+		nodeChan                     chan NodeDef
+		errChan                      chan error
+		pathIDMapChan                chan map[string]string
+		wg                           *sync.WaitGroup
+		browseHierarchicalReferences bool
 	)
 	BeforeEach(func() {
 		ctx = context.Background()
@@ -138,6 +148,7 @@ var _ = Describe("Tests for browse function", Label("browse_test"), func() {
 		errChan = make(chan error, 100)
 		pathIDMapChan = make(chan map[string]string, 100)
 		wg = &sync.WaitGroup{}
+		browseHierarchicalReferences = false
 	})
 
 	Context("When browsing nodes with a node class value nil", func() {
@@ -153,7 +164,7 @@ var _ = Describe("Tests for browse function", Label("browse_test"), func() {
 			nodeBrowser = rootNodeWithNilNodeClass
 			wg.Add(1)
 			go func() {
-				browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg)
+				browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
 			}()
 			wg.Wait()
 			close(nodeChan)
@@ -185,7 +196,7 @@ var _ = Describe("Tests for browse function", Label("browse_test"), func() {
 			nodeBrowser = rootNode
 			wg.Add(1)
 			go func() {
-				browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg)
+				browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
 			}()
 			wg.Wait()
 			close(nodeChan)
@@ -223,7 +234,7 @@ var _ = Describe("Tests for browse function", Label("browse_test"), func() {
 			nodeBrowser = rootNode
 			wg.Add(1)
 			go func() {
-				browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg)
+				browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
 			}()
 			wg.Wait()
 			close(nodeChan)
@@ -263,7 +274,51 @@ var _ = Describe("Tests for browse function", Label("browse_test"), func() {
 			nodeBrowser = rootNode
 			wg.Add(1)
 			go func() {
-				browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg)
+				// set browseHierarchicalReferences to true for reference nodes like id.HasChild
+				browseHierarchicalReferences := true
+				browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+			}()
+			wg.Wait()
+			close(nodeChan)
+			close(errChan)
+
+			var nodes []NodeDef
+			for nodeDef := range nodeChan {
+				nodes = append(nodes, nodeDef)
+			}
+
+			var errs []error
+			for err := range errChan {
+				errs = append(errs, err)
+			}
+
+			Expect(errs).Should(BeEmpty())
+			Expect(nodes).Should(HaveLen(1))
+			Expect(nodes[0].NodeID.String()).To(Equal("i=1223"))
+			Expect(nodes[0].BrowseName).To(Equal("TestChildNode"))
+		})
+		It("root node with id.Organizes should return 1 child", func() {
+
+			rootNode := createMockVariableNode(1234, "TestNode")
+			rootNode.attributes = append(rootNode.attributes, getDataValueForNodeClass(ua.NodeClassObject))
+			rootNode.attributes = append(rootNode.attributes, getDataValueForBrowseName("TestNode"))
+			rootNode.attributes = append(rootNode.attributes, getDataValueForDescription("Test Description"))
+			rootNode.attributes = append(rootNode.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead|ua.AccessLevelTypeCurrentWrite))
+			rootNode.attributes = append(rootNode.attributes, getDataValueForDataType(ua.TypeIDInt32))
+			childNode := createMockVariableNode(1223, "TestChildNode")
+			childNode.attributes = append(childNode.attributes, getDataValueForNodeClass(ua.NodeClassVariable))
+			childNode.attributes = append(childNode.attributes, getDataValueForBrowseName("TestChildNode"))
+			childNode.attributes = append(childNode.attributes, getDataValueForDescription("Test Child Description"))
+			childNode.attributes = append(childNode.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead|ua.AccessLevelTypeCurrentWrite))
+			childNode.attributes = append(childNode.attributes, getDataValueForDataType(ua.TypeIDInt32))
+			rootNode.AddReferenceNode(id.HasChild, childNode)
+
+			nodeBrowser = rootNode
+			wg.Add(1)
+			go func() {
+				// set browseHierarchicalReferences to true for reference nodes like id.Organizes
+				browseHierarchicalReferences := true
+				browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
 			}()
 			wg.Wait()
 			close(nodeChan)
