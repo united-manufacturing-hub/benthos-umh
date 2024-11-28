@@ -335,11 +335,6 @@ func browseReferencesDeprecated(def NodeDef, nodeChan chan<- NodeDef, errChan ch
 			errChan <- err
 			return
 		}
-		// This edge case has been sponsored by "AVEVA System Platform IDE 2020 R2 SP1"
-		if err := browseChildren(id.HasChild); err != nil {
-			errChan <- err
-			return
-		}
 		// For hasProperty it makes sense to show it very close to the tag itself, e.g., use the tagName as tagGroup and then the properties as subparts of it
 		/*
 			if err := browseChildren(id.HasProperty); err != nil {
@@ -347,7 +342,6 @@ func browseReferencesDeprecated(def NodeDef, nodeChan chan<- NodeDef, errChan ch
 			}
 		*/
 	}
-	return
 }
 
 // Node represents a node in the tree structure
