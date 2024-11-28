@@ -78,10 +78,10 @@ type Logger interface {
 // - `errChan` (`chan error`): Channel to send encountered errors for centralized handling.
 // - `pathIDMapChan` (`chan map[string]string`): Channel to send the mapping of node names to NodeIDs.
 // - `wg` (`*sync.WaitGroup`): WaitGroup to synchronize the completion of goroutines.
-//
+// - `browseHierarchicalReferences` (`bool`): Indicates whether to browse hierarchical references.
 // **Returns:**
 // - `void`: Errors are sent through `errChan`, and discovered nodes are sent through `nodeChan`.
-func browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, pathIDMapChan chan map[string]string, wg *sync.WaitGroup) {
+func browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, pathIDMapChan chan map[string]string, wg *sync.WaitGroup, browseHierarchicalReferences bool) {
 	defer wg.Done()
 
 	if level > 10 {
@@ -235,6 +235,18 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		return true
 	}
 
+	browseChildrenV2 := func(refType uint32) error {
+		children, err := n.Children(ctx, refType, ua.NodeClassAll)
+		if err != nil {
+			return errors.Errorf("Children: %d: %s", refType, err)
+		}
+		for _, child := range children {
+			wg.Add(1)
+			go browse(ctx, child, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+		}
+		return nil
+	}
+
 	browseChildren := func(refType uint32) error {
 		refs, err := n.ReferencedNodes(ctx, refType, ua.BrowseDirectionForward, ua.NodeClassAll, true)
 		if err != nil {
@@ -243,10 +255,45 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		logger.Debugf("found %d child refs\n", len(refs))
 		for _, rn := range refs {
 			wg.Add(1)
-			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, pathIDMapChan, wg)
+			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
 		}
 		return nil
 	}
+
+	// In OPC Unified Architecture (UA), hierarchical references are a type of reference that establishes a containment relationship between nodes in the address space. They are used to model a hierarchical structure, such as a system composed of components, where each component may contain sub-components.
+	// Refer link: https://qiyuqi.gitbooks.io/opc-ua/content/Part3/Chapter7.html
+	// With browseHierarchicalReferences set to true, we can browse the hierarchical references of a node which will check for references of type
+	// HasEventSource, HasChild, HasComponent, Organizes, FolderType, HasNotifier and all their sub-hierarchical references
+	// Setting browseHierarchicalReferences to true will be the new way to browse for tags and folders properly without any duplicate browsing
+	if browseHierarchicalReferences {
+		switch def.NodeClass {
+		case ua.NodeClassVariable:
+			if hasNodeReferencedComponents() {
+				if err := browseChildren(id.HierarchicalReferences); err != nil {
+					errChan <- err
+					return
+				}
+				return
+			}
+
+			def.Path = join(path, def.BrowseName)
+			nodeChan <- def
+			return
+		case ua.NodeClassObject:
+			if err := browseChildrenV2(id.HierarchicalReferences); err != nil {
+				errChan <- err
+				return
+			}
+			return
+		}
+	}
+
+	browseReferencesDeprecated(def, nodeChan, errChan, path, hasNodeReferencedComponents, browseChildren)
+}
+
+// browseReferencesDeprecated is the old way to browse for tags and folders without any duplicate browsing
+// It browses the following references: HasComponent, HasProperty, HasEventSource, HasOrder, HasNotifier, Organizes, FolderType
+func browseReferencesDeprecated(def NodeDef, nodeChan chan<- NodeDef, errChan chan<- error, path string, hasNodeReferencedComponents func() bool, browseChildren func(refType uint32) error) {
 
 	// If a node has a Variable class, it probably means that it is a tag
 	// Normally, there is no need to browse further. However, structs will be a variable on the top level,
@@ -439,7 +486,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		// Start a goroutine for browsing
 		wg.Add(1)
 		wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(nodeID))
-		go browse(ctx, wrapperNodeID, "", 0, g.Log, nodeID.String(), nodeChan, errChan, pathIDMapChan, &wg)
+		go browse(ctx, wrapperNodeID, "", 0, g.Log, nodeID.String(), nodeChan, errChan, pathIDMapChan, &wg, g.BrowseHierarchicalReferences)
 	}
 
 	// close nodeChan, nodeIDMapChan and errChan once all browsing is done
@@ -512,7 +559,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
 			wgHeartbeat.Add(1)
 			wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(heartbeatNodeID))
-			go browse(ctx, wrapperNodeID, "", 1, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, pathIDMapChan, &wgHeartbeat)
+			go browse(ctx, wrapperNodeID, "", 1, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, pathIDMapChan, &wgHeartbeat, g.BrowseHierarchicalReferences)
 
 			wgHeartbeat.Wait()
 			close(nodeHeartbeatChan)
