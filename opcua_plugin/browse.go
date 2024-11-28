@@ -13,7 +13,6 @@ import (
 	"github.com/gopcua/opcua/errors"
 	"github.com/gopcua/opcua/id"
 	"github.com/gopcua/opcua/ua"
-	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 type NodeDef struct {
@@ -51,6 +50,17 @@ func sanitize(s string) string {
 	return re.ReplaceAllString(s, "_")
 }
 
+type Logger interface {
+	Debugf(format string, args ...interface{})
+	Warnf(format string, args ...interface{})
+}
+
+// Browse is a public wrapper function for the browse function
+// Avoid using this function directly, use it only for testing
+func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, pathIDMapChan chan map[string]string, wg *sync.WaitGroup, browseHierarchicalReferences bool) {
+	browse(ctx, n, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+}
+
 // browse recursively explores OPC UA nodes to build a comprehensive list of NodeDefs.
 //
 // The `browse` function is essential for discovering the structure and details of OPC UA nodes.
@@ -75,13 +85,12 @@ func sanitize(s string) string {
 // - `errChan` (`chan error`): Channel to send encountered errors for centralized handling.
 // - `pathIDMapChan` (`chan map[string]string`): Channel to send the mapping of node names to NodeIDs.
 // - `wg` (`*sync.WaitGroup`): WaitGroup to synchronize the completion of goroutines.
-//
+// - `browseHierarchicalReferences` (`bool`): Indicates whether to browse hierarchical references.
 // **Returns:**
 // - `void`: Errors are sent through `errChan`, and discovered nodes are sent through `nodeChan`.
-func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *service.Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, pathIDMapChan chan map[string]string, wg *sync.WaitGroup) {
+func browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, pathIDMapChan chan map[string]string, wg *sync.WaitGroup, browseHierarchicalReferences bool) {
 	defer wg.Done()
 
-	logger.Debugf("node:%s path:%q level:%d parentNodeId:%s\n", n, path, level, parentNodeId)
 	if level > 10 {
 		return
 	}
@@ -106,7 +115,7 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 	}
 
 	var def = NodeDef{
-		NodeID: n.ID,
+		NodeID: n.ID(),
 		Path:   newPath,
 	}
 
@@ -120,6 +129,10 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		}
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
 		return
+	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
+		logger.Warnf("Tried to browse node: %s but got access denied on getting the NodeClass, do not subscribe to it, continuing browsing its children...\n", path)
+		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
+		// no need to return here, as we can continue without the NodeClass for browsing
 	default:
 		errChan <- err
 		return
@@ -135,6 +148,9 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		}
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
 		return
+	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
+		logger.Warnf("Tried to browse node: %s but got access denied on getting the BrowseName, skipping...\n", path)
+		return // We need to return here, as we can't continue without the BrowseName (we need it at least for the path when browsing the children)
 	default:
 		errChan <- err
 		return
@@ -151,6 +167,10 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		// ignore
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
 		return
+	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
+		logger.Warnf("Tried to browse node: %s but got access denied on getting the Description, do not subscribe to it, continuing browsing its children...\n", path)
+		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
+		// no need to return here, as we can continue without the Description
 	default:
 		errChan <- err
 		return
@@ -168,9 +188,19 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		// ignore
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
 		return
+	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
+		logger.Warnf("Tried to browse node: %s but got access denied on getting the AccessLevel, continuing...\n", path)
+		// no need to return here, as we can continue without the AccessLevel for browsing
 	default:
 		errChan <- err
 		return
+	}
+
+	// if AccessLevel exists and it is set to None
+	if def.AccessLevel == ua.AccessLevelTypeNone && errors.Is(err, ua.StatusOK) {
+		logger.Warnf("Tried to browse node: %s but access level is None ('access denied'). Do not subscribe to it, continuing browsing its children...\n", path)
+		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
+		// we need to continue here, as we still want to browse the children of this node
 	}
 
 	switch err := attrs[4].Status; {
@@ -217,6 +247,10 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		// ignore
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
 		return
+	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
+		logger.Warnf("Tried to browse node: %s but got access denied on getting the DataType, do not subscribe to it, continuing browsing its children...\n", path)
+		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
+		// no need to return here, as we can continue without the DataType
 	default:
 		errChan <- err
 		return
@@ -233,6 +267,18 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		return true
 	}
 
+	browseChildrenV2 := func(refType uint32) error {
+		children, err := n.Children(ctx, refType, ua.NodeClassAll)
+		if err != nil {
+			return errors.Errorf("Children: %d: %s", refType, err)
+		}
+		for _, child := range children {
+			wg.Add(1)
+			go browse(ctx, child, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+		}
+		return nil
+	}
+
 	browseChildren := func(refType uint32) error {
 		refs, err := n.ReferencedNodes(ctx, refType, ua.BrowseDirectionForward, ua.NodeClassAll, true)
 		if err != nil {
@@ -241,10 +287,52 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 		logger.Debugf("found %d child refs\n", len(refs))
 		for _, rn := range refs {
 			wg.Add(1)
-			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, pathIDMapChan, wg)
+			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
 		}
 		return nil
 	}
+
+	// In OPC Unified Architecture (UA), hierarchical references are a type of reference that establishes a containment relationship between nodes in the address space. They are used to model a hierarchical structure, such as a system composed of components, where each component may contain sub-components.
+	// Refer link: https://qiyuqi.gitbooks.io/opc-ua/content/Part3/Chapter7.html
+	// With browseHierarchicalReferences set to true, we can browse the hierarchical references of a node which will check for references of type
+	// HasEventSource, HasChild, HasComponent, Organizes, FolderType, HasNotifier and all their sub-hierarchical references
+	// Setting browseHierarchicalReferences to true will be the new way to browse for tags and folders properly without any duplicate browsing
+	if browseHierarchicalReferences {
+		switch def.NodeClass {
+
+		// If its a variable, we add it to the node list and browse all its children
+		case ua.NodeClassVariable:
+			if hasNodeReferencedComponents() {
+				if err := browseChildrenV2(id.HierarchicalReferences); err != nil {
+					errChan <- err
+					return
+				}
+				return
+			}
+
+			// adding it to the node list
+			def.Path = join(path, def.BrowseName)
+			nodeChan <- def
+			return
+
+			// If its an object, we browse all its children but DO NOT add it to the node list and therefore not subscribe
+		case ua.NodeClassObject:
+			if err := browseChildrenV2(id.HierarchicalReferences); err != nil {
+				errChan <- err
+				return
+			}
+			return
+		}
+	}
+
+	// This old way of browsing is deprecated and will be removed in the future
+	// This method is called only when browseHierarchicalReferences is false
+	browseReferencesDeprecated(def, nodeChan, errChan, path, hasNodeReferencedComponents, browseChildren)
+}
+
+// browseReferencesDeprecated is the old way to browse for tags and folders without any duplicate browsing
+// It browses the following references: HasComponent, HasProperty, HasEventSource, HasOrder, HasNotifier, Organizes, FolderType
+func browseReferencesDeprecated(def NodeDef, nodeChan chan<- NodeDef, errChan chan<- error, path string, hasNodeReferencedComponents func() bool, browseChildren func(refType uint32) error) {
 
 	// If a node has a Variable class, it probably means that it is a tag
 	// Normally, there is no need to browse further. However, structs will be a variable on the top level,
@@ -293,7 +381,6 @@ func browse(ctx context.Context, n *opcua.Node, path string, level int, logger *
 			}
 		*/
 	}
-	return
 }
 
 // Node represents a node in the tree structure
@@ -431,7 +518,8 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 
 		// Start a goroutine for browsing
 		wg.Add(1)
-		go browse(ctx, g.Client.Node(nodeID), "", 0, g.Log, nodeID.String(), nodeChan, errChan, pathIDMapChan, &wg)
+		wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(nodeID))
+		go browse(ctx, wrapperNodeID, "", 0, g.Log, nodeID.String(), nodeChan, errChan, pathIDMapChan, &wg, g.BrowseHierarchicalReferences)
 	}
 
 	// close nodeChan, nodeIDMapChan and errChan once all browsing is done
@@ -503,7 +591,8 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			var wgHeartbeat sync.WaitGroup
 
 			wgHeartbeat.Add(1)
-			go browse(ctx, g.Client.Node(heartbeatNodeID), "", 1, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, pathIDMapChan, &wgHeartbeat)
+			wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(heartbeatNodeID))
+			go browse(ctx, wrapperNodeID, "", 1, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, pathIDMapChan, &wgHeartbeat, g.BrowseHierarchicalReferences)
 
 			wgHeartbeat.Wait()
 			close(nodeHeartbeatChan)

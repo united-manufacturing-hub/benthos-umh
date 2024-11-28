@@ -27,6 +27,10 @@ func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef Nod
 		return nil
 	}
 
+	if !errors.Is(dataValue.Status, ua.StatusOK) {
+		g.Log.Warnf("Received bad status %v for node %s", dataValue.Status, nodeDef.NodeID.String())
+	}
+
 	b := make([]byte, 0)
 
 	var tagType string

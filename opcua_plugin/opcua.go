@@ -41,7 +41,8 @@ var OPCUAConfigSpec = service.NewConfigSpec().
 	Field(service.NewBoolField("insecure").Description("Set to true to bypass secure connections, useful in case of SSL or certificate issues. Default is secure (false).").Default(false)).
 	Field(service.NewBoolField("subscribeEnabled").Description("Set to true to subscribe to OPC UA nodes instead of fetching them every seconds. Default is pulling messages every second (false).").Default(false)).
 	Field(service.NewBoolField("directConnect").Description("Set this to true to directly connect to an OPC UA endpoint. This can be necessary in cases where the OPC UA server does not allow 'endpoint discovery'. This requires having the full endpoint name in endpoint, and securityMode and securityPolicy set. Defaults to 'false'").Default(false)).
-	Field(service.NewBoolField("useHeartbeat").Description("Set to true to provide an extra message with the servers timestamp as a heartbeat").Default(false))
+	Field(service.NewBoolField("useHeartbeat").Description("Set to true to provide an extra message with the servers timestamp as a heartbeat").Default(false)).
+	Field(service.NewBoolField("browseHierarchicalReferences").Description("Set to true to browse hierarchical references. This is the new way to browse for tags and folders references properly without any duplicates. Defaults to 'false'").Default(false))
 
 func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 
@@ -117,6 +118,11 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		return nil, err
 	}
 
+	browseHierarchicalReferences, err := conf.FieldBool("browseHierarchicalReferences")
+	if err != nil {
+		return nil, err
+	}
+
 	// fail if no nodeIDs are provided
 	if len(nodeIDs) == 0 {
 		return nil, errors.New("no nodeIDs provided")
@@ -137,6 +143,7 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		SessionTimeout:               sessionTimeout,
 		DirectConnect:                directConnect,
 		UseHeartbeat:                 useHeartbeat,
+		BrowseHierarchicalReferences: browseHierarchicalReferences,
 		LastHeartbeatMessageReceived: atomic.Uint32{},
 		LastMessageReceived:          atomic.Uint32{},
 		HeartbeatManualSubscribed:    false,
@@ -182,6 +189,7 @@ type OPCUAInput struct {
 	HeartbeatNodeId              *ua.NodeID
 	Subscription                 *opcua.Subscription
 	ServerInfo                   ServerInfo
+	BrowseHierarchicalReferences bool
 }
 
 // Connect establishes a connection to the OPC UA server.
