@@ -275,7 +275,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		switch def.NodeClass {
 		case ua.NodeClassVariable:
 			if hasNodeReferencedComponents() {
-				if err := browseChildren(id.HierarchicalReferences); err != nil {
+				if err := browseChildrenV2(id.HierarchicalReferences); err != nil {
 					errChan <- err
 					return
 				}
@@ -294,6 +294,8 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		}
 	}
 
+	// This old way of browsing is deprecated and will be removed in the future
+	// This method is called only when browseHierarchicalReferences is false
 	browseReferencesDeprecated(def, nodeChan, errChan, path, hasNodeReferencedComponents, browseChildren)
 }
 
