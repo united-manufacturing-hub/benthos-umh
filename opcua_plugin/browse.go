@@ -196,7 +196,8 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		return
 	}
 
-	if def.AccessLevel == ua.AccessLevelTypeNone {
+	// if AccessLevel exists and it is set to None
+	if def.AccessLevel == ua.AccessLevelTypeNone && errors.Is(err, ua.StatusOK) {
 		logger.Warnf("Tried to browse node: %s but access level is None ('access denied'). Do not subscribe to it, continuing browsing its children...\n", path)
 		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
 		// we need to continue here, as we still want to browse the children of this node
