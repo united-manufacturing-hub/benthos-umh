@@ -314,10 +314,11 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input = &OPCUAInput{
-				Endpoint: endpoint,
-				Username: "",
-				Password: "",
-				NodeIDs:  parsedNodeIDs,
+				Endpoint:                     endpoint,
+				Username:                     "",
+				Password:                     "",
+				NodeIDs:                      parsedNodeIDs,
+				BrowseHierarchicalReferences: true,
 			}
 			// Attempt to connect
 			err = input.Connect(ctx)
@@ -350,11 +351,12 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input = &OPCUAInput{
-				Endpoint:         endpoint,
-				Username:         "",
-				Password:         "",
-				NodeIDs:          parsedNodeIDs,
-				SubscribeEnabled: true,
+				Endpoint:                     endpoint,
+				Username:                     "",
+				Password:                     "",
+				NodeIDs:                      parsedNodeIDs,
+				SubscribeEnabled:             true,
+				BrowseHierarchicalReferences: true,
 			}
 			ctx := context.Background()
 			err = input.Connect(ctx)
@@ -380,7 +382,7 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			Eventually(func() (int, error) {
 				messageBatch2, _, err = input.ReadBatch(ctx)
 				return len(messageBatch2), err
-			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(2))
+			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(1))
 
 			for _, message := range messageBatch2 {
 				message, err := message.AsStructuredMut()

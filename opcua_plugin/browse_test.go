@@ -170,11 +170,6 @@ var _ = Describe("Tests for browse function", Label("browse_test"), func() {
 			close(nodeChan)
 			close(errChan)
 
-			var nodes []NodeDef
-			for nodeDef := range nodeChan {
-				nodes = append(nodes, nodeDef)
-			}
-
 			var errs []error
 			for err := range errChan {
 				errs = append(errs, err)
