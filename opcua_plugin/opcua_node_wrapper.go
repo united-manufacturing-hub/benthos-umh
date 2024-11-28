@@ -17,6 +17,9 @@ type NodeBrowser interface {
 	// ReferencedNodes retrieves nodes referenced by this node based on specified criteria
 	ReferencedNodes(ctx context.Context, refType uint32, browseDir ua.BrowseDirection, nodeClassMask ua.NodeClass, includeSubtypes bool) ([]NodeBrowser, error)
 
+	// Children retrieves nodes referenced by this node based on specified criteria
+	Children(ctx context.Context, refType uint32, nodeClassMask ua.NodeClass) ([]NodeBrowser, error)
+
 	// ID returns the node identifier
 	ID() *ua.NodeID
 }
@@ -51,4 +54,16 @@ func (n *OpcuaNodeWrapper) BrowseName(ctx context.Context) (*ua.QualifiedName, e
 
 func (n *OpcuaNodeWrapper) ID() *ua.NodeID {
 	return n.n.ID
+}
+
+func (n *OpcuaNodeWrapper) Children(ctx context.Context, refType uint32, nodeClassMask ua.NodeClass) ([]NodeBrowser, error) {
+	children, err := n.n.Children(ctx, refType, nodeClassMask)
+	if err != nil {
+		return nil, err
+	}
+	var result []NodeBrowser
+	for _, child := range children {
+		result = append(result, NewOpcuaNodeWrapper(child))
+	}
+	return result, nil
 }
