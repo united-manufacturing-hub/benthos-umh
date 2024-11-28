@@ -119,34 +119,6 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		Path:   newPath,
 	}
 
-	// Let's check the AccessLevel first
-
-	switch err := attrs[3].Status; {
-	case errors.Is(err, ua.StatusOK):
-		if attrs[3].Value == nil {
-			errChan <- errors.New("access level is nil")
-			return
-		} else {
-			def.AccessLevel = ua.AccessLevelType(attrs[3].Value.Int())
-		}
-	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
-		// ignore
-	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
-		return
-	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
-		logger.Warnf("Tried to browse node: %s but got access denied on getting the AccessLevel, continuing...\n", path)
-		// no need to return here, as we can continue without the AccessLevel for browsing
-	default:
-		errChan <- err
-		return
-	}
-
-	if def.AccessLevel == ua.AccessLevelTypeNone {
-		logger.Warnf("Tried to browse node: %s but access level is None ('access denied'). Do not subscribe to it, continuing browsing its children...\n", path)
-		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
-		// we need to continue here, as we still want to browse the children of this node
-	}
-
 	switch err := attrs[0].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[0].Value == nil {
@@ -202,6 +174,32 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	default:
 		errChan <- err
 		return
+	}
+
+	switch err := attrs[3].Status; {
+	case errors.Is(err, ua.StatusOK):
+		if attrs[3].Value == nil {
+			errChan <- errors.New("access level is nil")
+			return
+		} else {
+			def.AccessLevel = ua.AccessLevelType(attrs[3].Value.Int())
+		}
+	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
+		// ignore
+	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
+		return
+	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
+		logger.Warnf("Tried to browse node: %s but got access denied on getting the AccessLevel, continuing...\n", path)
+		// no need to return here, as we can continue without the AccessLevel for browsing
+	default:
+		errChan <- err
+		return
+	}
+
+	if def.AccessLevel == ua.AccessLevelTypeNone {
+		logger.Warnf("Tried to browse node: %s but access level is None ('access denied'). Do not subscribe to it, continuing browsing its children...\n", path)
+		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
+		// we need to continue here, as we still want to browse the children of this node
 	}
 
 	switch err := attrs[4].Status; {
