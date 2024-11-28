@@ -235,7 +235,7 @@ var _ = Describe("Unit Tests", func() {
 				childNode.attributes = append(childNode.attributes, getDataValueForDescription("Test Child Description"))
 				childNode.attributes = append(childNode.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead|ua.AccessLevelTypeCurrentWrite))
 				childNode.attributes = append(childNode.attributes, getDataValueForDataType(ua.TypeIDInt32))
-				rootNode.AddReferenceNode(id.HasChild, childNode)
+				rootNode.AddReferenceNode(id.Organizes, childNode)
 
 				nodeBrowser = rootNode
 				wg.Add(1)
