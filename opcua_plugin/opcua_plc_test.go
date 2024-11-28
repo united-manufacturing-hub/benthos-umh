@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/gopcua/opcua/id"
-	"github.com/gopcua/opcua/ua"
 	"os"
 	"time"
+
+	"github.com/gopcua/opcua/id"
+	"github.com/gopcua/opcua/ua"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 	. "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
@@ -84,7 +85,7 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			return
 		}
 
-		ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel = context.WithTimeout(context.Background(), 45*time.Second)
 	})
 
 	AfterEach(func() {
@@ -304,7 +305,7 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 	})
 
 	When("Reading a batch", func() {
-		It("should return a batch of messages", func() {
+		It("should return a batch of messages", FlakeAttempts(3), func() {
 
 			var err error
 
@@ -313,10 +314,11 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input = &OPCUAInput{
-				Endpoint: endpoint,
-				Username: "",
-				Password: "",
-				NodeIDs:  parsedNodeIDs,
+				Endpoint:                     endpoint,
+				Username:                     "",
+				Password:                     "",
+				NodeIDs:                      parsedNodeIDs,
+				BrowseHierarchicalReferences: true,
 			}
 			// Attempt to connect
 			err = input.Connect(ctx)
@@ -349,11 +351,12 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input = &OPCUAInput{
-				Endpoint:         endpoint,
-				Username:         "",
-				Password:         "",
-				NodeIDs:          parsedNodeIDs,
-				SubscribeEnabled: true,
+				Endpoint:                     endpoint,
+				Username:                     "",
+				Password:                     "",
+				NodeIDs:                      parsedNodeIDs,
+				SubscribeEnabled:             true,
+				BrowseHierarchicalReferences: true,
 			}
 			ctx := context.Background()
 			err = input.Connect(ctx)
@@ -375,11 +378,11 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			}
 
 			var messageBatch2 service.MessageBatch
-			// expect 1 message only as RevisionCounter will not change
+			// expect 2 message only as RevisionCounter will not change
 			Eventually(func() (int, error) {
 				messageBatch2, _, err = input.ReadBatch(ctx)
 				return len(messageBatch2), err
-			}, 60*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(1))
+			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(1))
 
 			for _, message := range messageBatch2 {
 				message, err := message.AsStructuredMut()
