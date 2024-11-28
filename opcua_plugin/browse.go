@@ -52,6 +52,7 @@ func sanitize(s string) string {
 
 type Logger interface {
 	Debugf(format string, args ...interface{})
+	Warnf(format string, args ...interface{})
 }
 
 // Browse is a public wrapper function for the browse function
@@ -128,6 +129,10 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		}
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
 		return
+	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
+		logger.Warnf("Tried to browse node: %s but got access denied on getting the NodeClass, do not subscribe to it, continuing browsing its children...\n", path)
+		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
+		// no need to return here, as we can continue without the NodeClass for browsing
 	default:
 		errChan <- err
 		return
@@ -143,6 +148,9 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		}
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
 		return
+	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
+		logger.Warnf("Tried to browse node: %s but got access denied on getting the BrowseName, skipping...\n", path)
+		return // We need to return here, as we can't continue without the BrowseName (we need it at least for the path when browsing the children)
 	default:
 		errChan <- err
 		return
@@ -159,6 +167,10 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		// ignore
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
 		return
+	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
+		logger.Warnf("Tried to browse node: %s but got access denied on getting the Description, do not subscribe to it, continuing browsing its children...\n", path)
+		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
+		// no need to return here, as we can continue without the Description
 	default:
 		errChan <- err
 		return
@@ -176,9 +188,19 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		// ignore
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
 		return
+	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
+		logger.Warnf("Tried to browse node: %s but got access denied on getting the AccessLevel, continuing...\n", path)
+		// no need to return here, as we can continue without the AccessLevel for browsing
 	default:
 		errChan <- err
 		return
+	}
+
+	// if AccessLevel exists and it is set to None
+	if def.AccessLevel == ua.AccessLevelTypeNone && errors.Is(err, ua.StatusOK) {
+		logger.Warnf("Tried to browse node: %s but access level is None ('access denied'). Do not subscribe to it, continuing browsing its children...\n", path)
+		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
+		// we need to continue here, as we still want to browse the children of this node
 	}
 
 	switch err := attrs[4].Status; {
@@ -225,6 +247,10 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		// ignore
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
 		return
+	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
+		logger.Warnf("Tried to browse node: %s but got access denied on getting the DataType, do not subscribe to it, continuing browsing its children...\n", path)
+		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
+		// no need to return here, as we can continue without the DataType
 	default:
 		errChan <- err
 		return
@@ -273,6 +299,8 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	// Setting browseHierarchicalReferences to true will be the new way to browse for tags and folders properly without any duplicate browsing
 	if browseHierarchicalReferences {
 		switch def.NodeClass {
+
+		// If its a variable, we add it to the node list and browse all its children
 		case ua.NodeClassVariable:
 			if hasNodeReferencedComponents() {
 				if err := browseChildrenV2(id.HierarchicalReferences); err != nil {
@@ -282,9 +310,12 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 				return
 			}
 
+			// adding it to the node list
 			def.Path = join(path, def.BrowseName)
 			nodeChan <- def
 			return
+
+			// If its an object, we browse all its children but DO NOT add it to the node list and therefore not subscribe
 		case ua.NodeClassObject:
 			if err := browseChildrenV2(id.HierarchicalReferences); err != nil {
 				errChan <- err

@@ -2,6 +2,7 @@ package opcua_plugin_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -113,9 +114,9 @@ var _ = Describe("Unit Tests", func() {
 				rootNode := createMockVariableNode(1234, "TestNode")
 				rootNode.attributes = append(rootNode.attributes, getDataValueForNodeClass(ua.NodeClassVariable))
 				rootNode.attributes = append(rootNode.attributes, getDataValueForBrowseName("TestNode"))
-				rootNode.attributes = append(rootNode.attributes, getDataValueForDescription("Test Description"))
+				rootNode.attributes = append(rootNode.attributes, getDataValueForDescription("Test Description", ua.StatusOK))
 				rootNode.attributes = append(rootNode.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead|ua.AccessLevelTypeCurrentWrite))
-				rootNode.attributes = append(rootNode.attributes, getDataValueForDataType(ua.TypeIDInt32))
+				rootNode.attributes = append(rootNode.attributes, getDataValueForDataType(ua.TypeIDInt32, ua.StatusOK))
 
 				nodeBrowser = rootNode
 				wg.Add(1)
@@ -144,15 +145,15 @@ var _ = Describe("Unit Tests", func() {
 				rootNode := createMockVariableNode(1234, "TestNode")
 				rootNode.attributes = append(rootNode.attributes, getDataValueForNodeClass(ua.NodeClassObject))
 				rootNode.attributes = append(rootNode.attributes, getDataValueForBrowseName("TestNode"))
-				rootNode.attributes = append(rootNode.attributes, getDataValueForDescription("Test Description"))
+				rootNode.attributes = append(rootNode.attributes, getDataValueForDescription("Test Description", ua.StatusOK))
 				rootNode.attributes = append(rootNode.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead|ua.AccessLevelTypeCurrentWrite))
-				rootNode.attributes = append(rootNode.attributes, getDataValueForDataType(ua.TypeIDInt32))
+				rootNode.attributes = append(rootNode.attributes, getDataValueForDataType(ua.TypeIDInt32, ua.StatusOK))
 				childNode := createMockVariableNode(1223, "TestChildNode")
 				childNode.attributes = append(childNode.attributes, getDataValueForNodeClass(ua.NodeClassVariable))
 				childNode.attributes = append(childNode.attributes, getDataValueForBrowseName("TestChildNode"))
-				childNode.attributes = append(childNode.attributes, getDataValueForDescription("Test Child Description"))
+				childNode.attributes = append(childNode.attributes, getDataValueForDescription("Test Child Description", ua.StatusOK))
 				childNode.attributes = append(childNode.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead|ua.AccessLevelTypeCurrentWrite))
-				childNode.attributes = append(childNode.attributes, getDataValueForDataType(ua.TypeIDInt32))
+				childNode.attributes = append(childNode.attributes, getDataValueForDataType(ua.TypeIDInt32, ua.StatusOK))
 				rootNode.AddReferenceNode(id.HasComponent, childNode)
 
 				nodeBrowser = rootNode
@@ -184,15 +185,15 @@ var _ = Describe("Unit Tests", func() {
 				rootNode := createMockVariableNode(1234, "TestNode")
 				rootNode.attributes = append(rootNode.attributes, getDataValueForNodeClass(ua.NodeClassObject))
 				rootNode.attributes = append(rootNode.attributes, getDataValueForBrowseName("TestNode"))
-				rootNode.attributes = append(rootNode.attributes, getDataValueForDescription("Test Description"))
+				rootNode.attributes = append(rootNode.attributes, getDataValueForDescription("Test Description", ua.StatusOK))
 				rootNode.attributes = append(rootNode.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead|ua.AccessLevelTypeCurrentWrite))
-				rootNode.attributes = append(rootNode.attributes, getDataValueForDataType(ua.TypeIDInt32))
+				rootNode.attributes = append(rootNode.attributes, getDataValueForDataType(ua.TypeIDInt32, ua.StatusOK))
 				childNode := createMockVariableNode(1223, "TestChildNode")
 				childNode.attributes = append(childNode.attributes, getDataValueForNodeClass(ua.NodeClassVariable))
 				childNode.attributes = append(childNode.attributes, getDataValueForBrowseName("TestChildNode"))
-				childNode.attributes = append(childNode.attributes, getDataValueForDescription("Test Child Description"))
+				childNode.attributes = append(childNode.attributes, getDataValueForDescription("Test Child Description", ua.StatusOK))
 				childNode.attributes = append(childNode.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead|ua.AccessLevelTypeCurrentWrite))
-				childNode.attributes = append(childNode.attributes, getDataValueForDataType(ua.TypeIDInt32))
+				childNode.attributes = append(childNode.attributes, getDataValueForDataType(ua.TypeIDInt32, ua.StatusOK))
 				rootNode.AddReferenceNode(id.HasChild, childNode)
 
 				nodeBrowser = rootNode
@@ -226,21 +227,65 @@ var _ = Describe("Unit Tests", func() {
 				rootNode := createMockVariableNode(1234, "TestNode")
 				rootNode.attributes = append(rootNode.attributes, getDataValueForNodeClass(ua.NodeClassObject))
 				rootNode.attributes = append(rootNode.attributes, getDataValueForBrowseName("TestNode"))
-				rootNode.attributes = append(rootNode.attributes, getDataValueForDescription("Test Description"))
+				rootNode.attributes = append(rootNode.attributes, getDataValueForDescription("Test Description", ua.StatusOK))
 				rootNode.attributes = append(rootNode.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead|ua.AccessLevelTypeCurrentWrite))
-				rootNode.attributes = append(rootNode.attributes, getDataValueForDataType(ua.TypeIDInt32))
+				rootNode.attributes = append(rootNode.attributes, getDataValueForDataType(ua.TypeIDInt32, ua.StatusOK))
 				childNode := createMockVariableNode(1223, "TestChildNode")
 				childNode.attributes = append(childNode.attributes, getDataValueForNodeClass(ua.NodeClassVariable))
 				childNode.attributes = append(childNode.attributes, getDataValueForBrowseName("TestChildNode"))
-				childNode.attributes = append(childNode.attributes, getDataValueForDescription("Test Child Description"))
+				childNode.attributes = append(childNode.attributes, getDataValueForDescription("Test Child Description", ua.StatusOK))
 				childNode.attributes = append(childNode.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead|ua.AccessLevelTypeCurrentWrite))
-				childNode.attributes = append(childNode.attributes, getDataValueForDataType(ua.TypeIDInt32))
+				childNode.attributes = append(childNode.attributes, getDataValueForDataType(ua.TypeIDInt32, ua.StatusOK))
 				rootNode.AddReferenceNode(id.Organizes, childNode)
 
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
 					// set browseHierarchicalReferences to true for reference nodes like id.Organizes
+					browseHierarchicalReferences := true
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+				}()
+				wg.Wait()
+				close(nodeChan)
+				close(errChan)
+
+				var nodes []NodeDef
+				for nodeDef := range nodeChan {
+					nodes = append(nodes, nodeDef)
+				}
+
+				var errs []error
+				for err := range errChan {
+					errs = append(errs, err)
+				}
+
+				Expect(errs).Should(BeEmpty())
+				Expect(nodes).Should(HaveLen(1))
+				Expect(nodes[0].NodeID.String()).To(Equal("i=1223"))
+				Expect(nodes[0].BrowseName).To(Equal("TestChildNode"))
+			})
+		})
+
+		Context("When browsing nodes where the folder has a PermissionDenied on its Value and ValueRank but one can still see the contents of its children, which is stupid but so is OPC UA. This edge case has been sponsored by Siemens S7-1500 and the community member Diederik", func() {
+			It("root node with PermissionDenied should return 1 child ", func() {
+				rootNode := createMockVariableNode(1234, "08DischargeCartGroup")
+				rootNode.attributes = append(rootNode.attributes, getDataValueForNodeClass(ua.NodeClassVariable))
+				rootNode.attributes = append(rootNode.attributes, getDataValueForBrowseName("3:08DischargeCartGroup"))
+				rootNode.attributes = append(rootNode.attributes, getDataValueForDescription("", ua.StatusBadAttributeIDInvalid))
+				rootNode.attributes = append(rootNode.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeNone)) // PermissionDenied and therefore this node should be ignored in the node-list, but still subscribed to
+				rootNode.attributes = append(rootNode.attributes, getDataValueForDataType(0, ua.StatusBadNotReadable))
+
+				childNode := createMockVariableNode(1223, "TestChildNode")
+				childNode.attributes = append(childNode.attributes, getDataValueForNodeClass(ua.NodeClassVariable))
+				childNode.attributes = append(childNode.attributes, getDataValueForBrowseName("TestChildNode"))
+				childNode.attributes = append(childNode.attributes, getDataValueForDescription("Test Child Description", ua.StatusOK))
+				childNode.attributes = append(childNode.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead|ua.AccessLevelTypeCurrentWrite))
+				childNode.attributes = append(childNode.attributes, getDataValueForDataType(ua.TypeIDInt32, ua.StatusOK))
+				rootNode.AddReferenceNode(id.HasChild, childNode)
+
+				nodeBrowser = rootNode
+				wg.Add(1)
+				go func() {
 					browseHierarchicalReferences := true
 					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
 				}()
@@ -385,11 +430,19 @@ func getDataValueForBrowseName(name string) *ua.DataValue {
 	}
 }
 
-func getDataValueForDescription(description string) *ua.DataValue {
-	return &ua.DataValue{
-		EncodingMask: ua.DataValueValue,
-		Value:        ua.MustVariant(description),
-		Status:       ua.StatusOK,
+func getDataValueForDescription(description string, statusCode ua.StatusCode) *ua.DataValue {
+	if errors.Is(statusCode, ua.StatusOK) {
+		return &ua.DataValue{
+			EncodingMask: ua.DataValueValue,
+			Value:        ua.MustVariant(description),
+			Status:       ua.StatusOK,
+		}
+	} else {
+		return &ua.DataValue{
+			EncodingMask: ua.DataValueValue,
+			Value:        nil,
+			Status:       ua.StatusBadNotReadable,
+		}
 	}
 }
 
@@ -401,14 +454,21 @@ func getDataValueForAccessLevel(accessLevel ua.AccessLevelType) *ua.DataValue {
 	}
 }
 
-func getDataValueForDataType(id ua.TypeID) *ua.DataValue {
-	return &ua.DataValue{
-		EncodingMask: ua.DataValueValue,
-		Value:        ua.MustVariant(ua.NewNumericNodeID(0, uint32(id))),
-		Status:       ua.StatusOK,
+func getDataValueForDataType(id ua.TypeID, statusCode ua.StatusCode) *ua.DataValue {
+	if errors.Is(statusCode, ua.StatusOK) {
+		return &ua.DataValue{
+			EncodingMask: ua.DataValueValue,
+			Value:        ua.MustVariant(ua.NewNumericNodeID(0, uint32(id))),
+			Status:       ua.StatusOK,
+		}
+	} else {
+		return &ua.DataValue{
+			EncodingMask: ua.DataValueValue,
+			Value:        nil,
+			Status:       ua.StatusBadNotReadable,
+		}
 	}
 }
-
 func (m *MockOpcuaNodeWraper) Attributes(ctx context.Context, attrs ...ua.AttributeID) ([]*ua.DataValue, error) {
 	return m.attributes, nil
 }
@@ -450,6 +510,10 @@ func (m *MockOpcuaNodeWraper) AddReferenceNode(refType uint32, node NodeBrowser)
 }
 
 func (m *MockLogger) Debugf(format string, args ...interface{}) {
+	fmt.Printf(format, args...)
+}
+
+func (m *MockLogger) Warnf(format string, args ...interface{}) {
 	fmt.Printf(format, args...)
 }
 
