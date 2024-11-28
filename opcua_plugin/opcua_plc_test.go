@@ -85,7 +85,7 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			return
 		}
 
-		ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel = context.WithTimeout(context.Background(), 45*time.Second)
 	})
 
 	AfterEach(func() {
