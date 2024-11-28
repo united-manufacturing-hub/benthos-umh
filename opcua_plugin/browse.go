@@ -54,6 +54,12 @@ type Logger interface {
 	Debugf(format string, args ...interface{})
 }
 
+// Browse is a public wrapper function for the browse function
+// Avoid using this function directly, use it only for testing
+func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, pathIDMapChan chan map[string]string, wg *sync.WaitGroup, browseHierarchicalReferences bool) {
+	browse(ctx, n, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+}
+
 // browse recursively explores OPC UA nodes to build a comprehensive list of NodeDefs.
 //
 // The `browse` function is essential for discovering the structure and details of OPC UA nodes.
