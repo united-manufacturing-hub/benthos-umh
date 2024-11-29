@@ -213,10 +213,15 @@ input:
 
 ##### Browse Hierarchical References
 
-If you want to plugin to browse OPCUA nodes by following their Hierarchical References, you can set this to true. Please refer to the [Standard References Type](https://qiyuqi.gitbooks.io/opc-ua/content/Part3/Chapter7.html) to understand more about the different types of node references. 
-This is an optional parameter and the default value is set to false. When the value is `false` the plugin will browse for node references by only a subset of references types like `HasComponent` and `Organizes`, `FolderType` and `HasNotifier`.
+The plugin offers an option to browse OPCUA nodes by following Hierarchical References. By default, this feature is disabled (`false`), which means the plugin will only browse a limited subset of reference types, including:
+- `HasComponent`
+- `Organizes`
+- `FolderType`
+- `HasNotifier`
 
-**Recommendation**: Set this to true.
+When set to `true`, the plugin will explore a broader range of node references. For a deeper understanding of the different reference types, refer to the [Standard References Type documentation](https://qiyuqi.gitbooks.io/opc-ua/content/Part3/Chapter7.html).
+
+**Recommendation**: Enable this option (`browseHierarchicalReferences: true`) for more comprehensive node discovery.
 
 ```yaml
 input:
