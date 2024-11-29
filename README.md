@@ -122,6 +122,7 @@ input:
     securityPolicy: None | Basic256Sha256  # optional (default: unset)
     subscribeEnabled: false | true # optional (default: false)
     useHeartbeat: false | true # optional (default: false)
+    browseHierarchicalReferences: false | true # optional (default: false)
 ```
 
 ##### Endpoint
@@ -208,6 +209,19 @@ If you are unsure if the OPC UA server is actually sending new data, you can ena
 input:
   opcua:
     useHeartbeat: true
+```
+
+##### Browse Hierarchical References
+
+If you want to plugin to browse OPCUA nodes by following their Hierarchical References, you can set this to true. Please refer to the [Standard References Type](https://qiyuqi.gitbooks.io/opc-ua/content/Part3/Chapter7.html) to understand more about the different types of node references. 
+This is an optional parameter and the default value is set to false. When the value is `false` the plugin will browse for node references by only a subset of references types like `HasComponent` and `Organizes`, `FolderType` and `HasNotifier`.
+
+**Recommendation**: Set this to true.
+
+```yaml
+input:
+  opcua:
+    browseHierarchicalReferences: true
 ```
 
 ### S7comm
