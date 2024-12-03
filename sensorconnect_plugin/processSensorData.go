@@ -217,6 +217,12 @@ func (s *SensorConnectInput) extractIntFromSensorDataMap(key string, tag string,
 // ConvertBinaryValue converts a binary string to its corresponding value based on the datatype.
 // It handles both string and numeric data types and logs errors using the Benthos logger.
 func (s *SensorConnectInput) ConvertBinaryValue(binaryValue string, datatype string) (interface{}, error) {
+
+	if binaryValue == "" {
+		s.logger.Errorf("binaryValue is empty for datatype %s", datatype)
+		return nil, fmt.Errorf("binaryValue is empty")
+	}
+
 	bitLen := len(binaryValue)
 
 	if datatype == "OctetStringT" {
@@ -253,6 +259,15 @@ func (s *SensorConnectInput) ConvertBinaryValue(binaryValue string, datatype str
 			output = int(raw) // still need to convert it to int, the ifm KQ6005 has for example 12 bit as IntegerT lol
 		}
 	case "Float32T":
+		if bitLen != 32 {
+			s.logger.Errorf("Invalid binary length for Float32T: expected 32 bits, got %d bits", bitLen)
+			return nil, fmt.Errorf("invalid binary length for Float32T")
+		}
+		raw, err = strconv.ParseUint(binaryValue, 2, 32)
+		if err != nil {
+			s.logger.Errorf("Error while parsing binary value for Float32T: %v", err)
+			return nil, fmt.Errorf("failed to parse binary value for Float32T: %w", err)
+		}
 		output = math.Float32frombits(uint32(raw))
 	case "BooleanT":
 		output = raw == 1
@@ -331,17 +346,6 @@ func (s *SensorConnectInput) ZeroPadding(input string, desiredLength int) string
 	return string(padding) + input
 }
 
-// determineValueBitLength returns the bitlength of a value
-func determineValueBitLength(datatype string, bitLength uint, fixedLength uint) (length uint) {
-	if datatype == "BooleanT" {
-		return 1
-	} else if datatype == "octetStringT" {
-		return fixedLength * 8
-	} else {
-		return bitLength
-	}
-}
-
 // processData turns raw sensor data into human-readable data.
 // It handles the input of Datatype, DatatypeRef, and SimpleDatatype structures.
 // It determines which one is provided and delegates processing accordingly.
@@ -360,7 +364,7 @@ func (s *SensorConnectInput) processData(
 	var err error
 
 	if !s.isEmpty(simpleDatatype) {
-		payload, err = s.processSimpleDatatype(
+		payload, err = s.ProcessSimpleDatatype(
 			simpleDatatype,
 			outputBitLength,
 			rawSensorOutputBinaryPadded,
@@ -422,8 +426,8 @@ func (s *SensorConnectInput) getDatatypeFromDatatypeRef(datatypeRef DatatypeRef,
 	return Datatype{}, fmt.Errorf("did not find Datatype structure for given datatype reference id: %v", datatypeRef.DatatypeId)
 }
 
-// processSimpleDatatype processes the given SimpleDatatype and returns the payload.
-func (s *SensorConnectInput) processSimpleDatatype(
+// ProcessSimpleDatatype processes the given SimpleDatatype and returns the payload.
+func (s *SensorConnectInput) ProcessSimpleDatatype(
 	simpleDatatype SimpleDatatype,
 	outputBitLength int,
 	rawSensorOutputBinaryPadded string,
@@ -458,7 +462,7 @@ func (s *SensorConnectInput) extractBinaryValueFromRawSensorOutput(
 	outputBitLength int,
 	bitOffset int) string {
 
-	valueBitLength := s.determineValueBitLength(typeString, bitLength, fixedLength)
+	valueBitLength := s.DetermineValueBitLength(typeString, bitLength, fixedLength)
 
 	leftIndex := outputBitLength - int(valueBitLength) - bitOffset
 	rightIndex := outputBitLength - bitOffset
@@ -555,13 +559,19 @@ func (s *SensorConnectInput) isEmpty(object interface{}) bool {
 	return false
 }
 
-// determineValueBitLength returns the bit length of a value based on its datatype.
-func (s *SensorConnectInput) determineValueBitLength(datatype string, bitLength uint, fixedLength uint) uint {
-	if datatype == "BooleanT" {
+// DetermineValueBitLength returns the bit length of a value based on its datatype.
+func (s *SensorConnectInput) DetermineValueBitLength(datatype string, bitLength uint, fixedLength uint) uint {
+	switch datatype {
+	case "BooleanT":
 		return 1
-	} else if datatype == "OctetStringT" {
+	case "OctetStringT":
 		return fixedLength * 8
-	} else {
+	case "Float32T":
+		return 32
+	case "IntegerT", "UIntegerT":
+		return bitLength
+	default:
+		s.logger.Warnf("Unsupported datatype %s; using bitLength %d", datatype, bitLength)
 		return bitLength
 	}
 }
