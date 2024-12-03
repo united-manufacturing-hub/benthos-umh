@@ -35,9 +35,9 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 	var wg sync.WaitGroup
 
 	wg.Add(3)
-	go browse(ctx, g.Client.Node(manufacturerNameNodeID), "", 0, g.Log, manufacturerNameNodeID.String(), nodeChan, errChan, pathIDMapChan, &wg)
-	go browse(ctx, g.Client.Node(productNameNodeID), "", 0, g.Log, productNameNodeID.String(), nodeChan, errChan, pathIDMapChan, &wg)
-	go browse(ctx, g.Client.Node(softwareVersionNodeID), "", 0, g.Log, softwareVersionNodeID.String(), nodeChan, errChan, pathIDMapChan, &wg)
+	go browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(manufacturerNameNodeID)), "", 0, g.Log, manufacturerNameNodeID.String(), nodeChan, errChan, pathIDMapChan, &wg, g.BrowseHierarchicalReferences)
+	go browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(productNameNodeID)), "", 0, g.Log, productNameNodeID.String(), nodeChan, errChan, pathIDMapChan, &wg, g.BrowseHierarchicalReferences)
+	go browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(softwareVersionNodeID)), "", 0, g.Log, softwareVersionNodeID.String(), nodeChan, errChan, pathIDMapChan, &wg, g.BrowseHierarchicalReferences)
 	wg.Wait()
 
 	close(nodeChan)
