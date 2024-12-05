@@ -15,6 +15,11 @@ import (
 	"github.com/gopcua/opcua/ua"
 )
 
+const (
+	maxNodeChannelSize      = 100_000
+	maxPathIDMapChannelSize = 1_000
+)
+
 type NodeDef struct {
 	NodeID       *ua.NodeID
 	NodeClass    ua.NodeClass
@@ -57,8 +62,8 @@ type Logger interface {
 
 // Browse is a public wrapper function for the browse function
 // Avoid using this function directly, use it only for testing
-func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, pathIDMapChan chan map[string]string, wg *sync.WaitGroup, browseHierarchicalReferences bool) {
-	browse(ctx, n, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, pathIDMapChan chan map[string]string, wg *sync.WaitGroup, browseHierarchicalReferences bool, msgChan chan<- string) {
+	browse(ctx, n, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences, msgChan)
 }
 
 // browse recursively explores OPC UA nodes to build a comprehensive list of NodeDefs.
@@ -88,11 +93,33 @@ func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 // - `browseHierarchicalReferences` (`bool`): Indicates whether to browse hierarchical references.
 // **Returns:**
 // - `void`: Errors are sent through `errChan`, and discovered nodes are sent through `nodeChan`.
-func browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, pathIDMapChan chan map[string]string, wg *sync.WaitGroup, browseHierarchicalReferences bool) {
+func browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, pathIDMapChan chan map[string]string, wg *sync.WaitGroup, browseHierarchicalReferences bool, msgChan chan<- string) {
 	defer wg.Done()
 
+	// Recursion limit only goes up to 10 levels
 	if level > 10 {
 		return
+	}
+
+	// Check if the context is cancelled
+	select {
+	case <-ctx.Done():
+		return
+	default:
+		// continue to do other operation
+	}
+
+	if msgChan != nil {
+		go func() {
+			select {
+			case <-ctx.Done():
+				return
+			case msgChan <- fmt.Sprintf("Fetching result for node:  %s", path):
+				// sending message to the channel is done
+			default:
+				// continue to do other operation
+			}
+		}()
 	}
 
 	attrs, err := n.Attributes(ctx, ua.AttributeIDNodeClass, ua.AttributeIDBrowseName, ua.AttributeIDDescription, ua.AttributeIDAccessLevel, ua.AttributeIDDataType)
@@ -274,7 +301,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		}
 		for _, child := range children {
 			wg.Add(1)
-			go browse(ctx, child, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+			go browse(ctx, child, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences, msgChan)
 		}
 		return nil
 	}
@@ -287,7 +314,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		logger.Debugf("found %d child refs\n", len(refs))
 		for _, rn := range refs {
 			wg.Add(1)
-			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences, msgChan)
 		}
 		return nil
 	}
@@ -413,71 +440,27 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	g.browseChildren(ctx, &wg, 0, rootNode, id.HierarchicalReferences, msgChan)
+	rootNodeWrapper := NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId))
+	nodeChan := make(chan NodeDef, maxNodeChannelSize)
+	errChan := make(chan error, maxNodeChannelSize)
+	pathIDMapChan := make(chan map[string]string, maxPathIDMapChannelSize)
+	browse(
+		ctx,
+		rootNodeWrapper,
+		"",
+		0,
+		g.Log,
+		rootNode.NodeId.String(),
+		nodeChan,
+		errChan,
+		pathIDMapChan,
+		&wg,
+		g.BrowseHierarchicalReferences,
+		msgChan,
+	)
 	wg.Wait()
 	close(msgChan)
 	return rootNode, nil
-}
-
-// browseChildren recursively browses the OPC UA server nodes and builds a tree structure
-func (g *OPCUAInput) browseChildren(ctx context.Context, wg *sync.WaitGroup, level int, parent *Node, referenceType uint32, msgChan chan<- string) {
-	defer wg.Done()
-	// Recursion limit only goes up to 10 levels
-	if level >= 10 {
-		return
-	}
-
-	// Check if the context is cancelled
-	select {
-	case <-ctx.Done():
-		return
-	default:
-		// continue to do other operation
-	}
-
-	go func() {
-		msgChan <- fmt.Sprintf("Fetching result for node:  %s", parent.Name)
-	}()
-
-	node := g.Client.Node(parent.NodeId)
-	nodeClass, err := node.NodeClass(ctx)
-	if err != nil {
-		g.Log.Warnf("error getting nodeClass for node ID %s: %v", parent.NodeId, err)
-	}
-
-	refs, err := node.ReferencedNodes(ctx, referenceType, ua.BrowseDirectionForward, ua.NodeClassAll, true)
-	if err != nil {
-		g.Log.Warnf("error browsing children: %v", err)
-		return
-	}
-
-	for _, ref := range refs {
-		newNode := g.Client.Node(ref.ID)
-		newNodeName, err := newNode.BrowseName(ctx)
-		if err != nil {
-			g.Log.Warnf("error browsing children: %v", err)
-			continue
-
-		}
-		child := &Node{
-			NodeId:   ref.ID,
-			Name:     newNodeName.Name,
-			Children: make([]*Node, 0),
-		}
-		parent.Children = append(parent.Children, child)
-		if nodeClass == ua.NodeClassVariable {
-			wg.Add(1)
-			go g.browseChildren(ctx, wg, level+1, child, id.HasComponent, msgChan)
-		}
-
-		if nodeClass == ua.NodeClassObject {
-			wg.Add(4)
-			go g.browseChildren(ctx, wg, level+1, child, id.HasComponent, msgChan)
-			go g.browseChildren(ctx, wg, level+1, child, id.Organizes, msgChan)
-			go g.browseChildren(ctx, wg, level+1, child, id.FolderType, msgChan)
-			go g.browseChildren(ctx, wg, level+1, child, id.HasNotifier, msgChan)
-		}
-	}
 }
 
 // discoverNodes retrieves a list of nodes from an OPC UA server.
@@ -519,7 +502,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		// Start a goroutine for browsing
 		wg.Add(1)
 		wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(nodeID))
-		go browse(ctx, wrapperNodeID, "", 0, g.Log, nodeID.String(), nodeChan, errChan, pathIDMapChan, &wg, g.BrowseHierarchicalReferences)
+		go browse(ctx, wrapperNodeID, "", 0, g.Log, nodeID.String(), nodeChan, errChan, pathIDMapChan, &wg, g.BrowseHierarchicalReferences, nil)
 	}
 
 	// close nodeChan, nodeIDMapChan and errChan once all browsing is done
@@ -592,7 +575,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
 			wgHeartbeat.Add(1)
 			wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(heartbeatNodeID))
-			go browse(ctx, wrapperNodeID, "", 1, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, pathIDMapChan, &wgHeartbeat, g.BrowseHierarchicalReferences)
+			go browse(ctx, wrapperNodeID, "", 1, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, pathIDMapChan, &wgHeartbeat, g.BrowseHierarchicalReferences, nil)
 
 			wgHeartbeat.Wait()
 			close(nodeHeartbeatChan)
