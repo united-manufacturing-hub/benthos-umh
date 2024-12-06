@@ -3,7 +3,6 @@ package opcua_plugin
 import (
 	"context"
 	"errors"
-	"sync"
 
 	"github.com/gopcua/opcua/ua"
 )
@@ -32,7 +31,7 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 	nodeChan := make(chan NodeDef, 3)
 	errChan := make(chan error, 3)
 	pathIDMapChan := make(chan map[string]string, 3)
-	var wg sync.WaitGroup
+	var wg TrackedWaitGroup
 
 	wg.Add(3)
 	go browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(manufacturerNameNodeID)), "", 0, g.Log, manufacturerNameNodeID.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/gopcua/opcua/id"
 	"github.com/gopcua/opcua/ua"
@@ -64,7 +63,7 @@ var _ = Describe("Unit Tests", func() {
 			parentNodeId                 string
 			nodeChan                     chan NodeDef
 			errChan                      chan error
-			wg                           *sync.WaitGroup
+			wg                           *TrackedWaitGroup
 			browseHierarchicalReferences bool
 		)
 		BeforeEach(func() {
@@ -75,7 +74,7 @@ var _ = Describe("Unit Tests", func() {
 			parentNodeId = ""
 			nodeChan = make(chan NodeDef, 100)
 			errChan = make(chan error, 100)
-			wg = &sync.WaitGroup{}
+			wg = &TrackedWaitGroup{}
 			browseHierarchicalReferences = false
 		})
 

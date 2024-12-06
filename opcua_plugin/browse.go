@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gopcua/opcua"
@@ -62,7 +62,7 @@ type Logger interface {
 
 // Browse is a public wrapper function for the browse function
 // Avoid using this function directly, use it only for testing
-func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *sync.WaitGroup, browseHierarchicalReferences bool) {
+func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, browseHierarchicalReferences bool) {
 	browse(ctx, n, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences)
 }
 
@@ -93,7 +93,7 @@ func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 // - `browseHierarchicalReferences` (`bool`): Indicates whether to browse hierarchical references.
 // **Returns:**
 // - `void`: Errors are sent through `errChan`, and discovered nodes are sent through `nodeChan`.
-func browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *sync.WaitGroup, browseHierarchicalReferences bool) {
+func browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, browseHierarchicalReferences bool) {
 	defer wg.Done()
 
 	if level > 10 {
@@ -114,13 +114,21 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		case errChan <- err:
 		case <-ctx.Done():
 			logger.Warnf("Failed to send error due to context cancellation: %v", err)
+		default:
+			logger.Warnf("Channel is blocked, skipping error send: %v", err)
 		}
 		return
 	}
 
 	browseName, err := n.BrowseName(ctx)
 	if err != nil {
-		errChan <- err
+		select {
+		case errChan <- err:
+		case <-ctx.Done():
+			logger.Warnf("Failed to send error due to context cancellation: %v", err)
+		default:
+			logger.Warnf("Channel is blocked, skipping error send: %v", err)
+		}
 		return
 	}
 
@@ -139,7 +147,13 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	switch err := attrs[0].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[0].Value == nil {
-			errChan <- errors.New("node class is nil")
+			select {
+			case errChan <- errors.New("node class is nil"):
+			case <-ctx.Done():
+				logger.Warnf("Failed to send error due to context cancellation: node class is nil")
+			default:
+				logger.Warnf("Channel is blocked, skipping error send: node class is nil")
+			}
 			return
 		} else {
 			def.NodeClass = ua.NodeClass(attrs[0].Value.Int())
@@ -151,14 +165,26 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
 		// no need to return here, as we can continue without the NodeClass for browsing
 	default:
-		errChan <- err
+		select {
+		case errChan <- err:
+		case <-ctx.Done():
+			logger.Warnf("Failed to send error due to context cancellation: %v", err)
+		default:
+			logger.Warnf("Channel is blocked, skipping error send: %v", err)
+		}
 		return
 	}
 
 	switch err := attrs[1].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[1].Value == nil {
-			errChan <- errors.New("browse name is nil")
+			select {
+			case errChan <- errors.New("browse name is nil"):
+			case <-ctx.Done():
+				logger.Warnf("Failed to send error due to context cancellation: browse name is nil")
+			default:
+				logger.Warnf("Channel is blocked, skipping error send: browse name is nil")
+			}
 			return
 		} else {
 			def.BrowseName = attrs[1].Value.String()
@@ -169,7 +195,13 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		logger.Warnf("Tried to browse node: %s but got access denied on getting the BrowseName, skipping...\n", path)
 		return // We need to return here, as we can't continue without the BrowseName (we need it at least for the path when browsing the children)
 	default:
-		errChan <- err
+		select {
+		case errChan <- err:
+		case <-ctx.Done():
+			logger.Warnf("Failed to send error due to context cancellation: %v", err)
+		default:
+			logger.Warnf("Channel is blocked, skipping error send: %v", err)
+		}
 		return
 	}
 
@@ -189,14 +221,26 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
 		// no need to return here, as we can continue without the Description
 	default:
-		errChan <- err
+		select {
+		case errChan <- err:
+		case <-ctx.Done():
+			logger.Warnf("Failed to send error due to context cancellation: %v", err)
+		default:
+			logger.Warnf("Channel is blocked, skipping error send: %v", err)
+		}
 		return
 	}
 
 	switch err := attrs[3].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[3].Value == nil {
-			errChan <- errors.New("access level is nil")
+			select {
+			case errChan <- errors.New("access level is nil"):
+			case <-ctx.Done():
+				logger.Warnf("Failed to send error due to context cancellation: access level is nil")
+			default:
+				logger.Warnf("Channel is blocked, skipping error send: access level is nil")
+			}
 			return
 		} else {
 			def.AccessLevel = ua.AccessLevelType(attrs[3].Value.Int())
@@ -209,7 +253,13 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		logger.Warnf("Tried to browse node: %s but got access denied on getting the AccessLevel, continuing...\n", path)
 		// no need to return here, as we can continue without the AccessLevel for browsing
 	default:
-		errChan <- err
+		select {
+		case errChan <- err:
+		case <-ctx.Done():
+			logger.Warnf("Failed to send error due to context cancellation: %v", err)
+		default:
+			logger.Warnf("Channel is blocked, skipping error send: %v", err)
+		}
 		return
 	}
 
@@ -269,7 +319,13 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
 		// no need to return here, as we can continue without the DataType
 	default:
-		errChan <- err
+		select {
+		case errChan <- err:
+		case <-ctx.Done():
+			logger.Warnf("Failed to send error due to context cancellation: %v", err)
+		default:
+			logger.Warnf("Channel is blocked, skipping error send: %v", err)
+		}
 		return
 	}
 
@@ -325,6 +381,8 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 					case errChan <- err:
 					case <-ctx.Done():
 						logger.Warnf("Failed to send error due to context cancellation: %v", err)
+					default:
+						logger.Warnf("Channel is blocked, skipping error send: %v", err)
 					}
 					return
 				}
@@ -348,6 +406,8 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 				case errChan <- err:
 				case <-ctx.Done():
 					logger.Warnf("Failed to send error due to context cancellation: %v", err)
+				default:
+					logger.Warnf("Channel is blocked, skipping error send: %v", err)
 				}
 				return
 			}
@@ -357,12 +417,12 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 
 	// This old way of browsing is deprecated and will be removed in the future
 	// This method is called only when browseHierarchicalReferences is false
-	browseReferencesDeprecated(def, nodeChan, errChan, path, hasNodeReferencedComponents, browseChildren)
+	browseReferencesDeprecated(ctx, def, nodeChan, errChan, path, logger, hasNodeReferencedComponents, browseChildren)
 }
 
 // browseReferencesDeprecated is the old way to browse for tags and folders without any duplicate browsing
 // It browses the following references: HasComponent, HasProperty, HasEventSource, HasOrder, HasNotifier, Organizes, FolderType
-func browseReferencesDeprecated(def NodeDef, nodeChan chan<- NodeDef, errChan chan<- error, path string, hasNodeReferencedComponents func() bool, browseChildren func(refType uint32) error) {
+func browseReferencesDeprecated(ctx context.Context, def NodeDef, nodeChan chan<- NodeDef, errChan chan<- error, path string, logger Logger, hasNodeReferencedComponents func() bool, browseChildren func(refType uint32) error) {
 
 	// If a node has a Variable class, it probably means that it is a tag
 	// Normally, there is no need to browse further. However, structs will be a variable on the top level,
@@ -371,14 +431,26 @@ func browseReferencesDeprecated(def NodeDef, nodeChan chan<- NodeDef, errChan ch
 
 		if hasNodeReferencedComponents() {
 			if err := browseChildren(id.HasComponent); err != nil {
-				errChan <- err
+				select {
+				case errChan <- err:
+				case <-ctx.Done():
+					logger.Warnf("Failed to send error due to context cancellation: %v", err)
+				default:
+					logger.Warnf("Channel is blocked, skipping error send: %v", err)
+				}
 				return
 			}
 			return
 		}
 
 		def.Path = join(path, def.BrowseName)
-		nodeChan <- def
+		select {
+		case nodeChan <- def:
+		case <-ctx.Done():
+			logger.Warnf("Failed to send node due to context cancellation")
+		default:
+			logger.Warnf("Channel is blocked, skipping node send")
+		}
 		return
 	}
 
@@ -389,19 +461,43 @@ func browseReferencesDeprecated(def NodeDef, nodeChan chan<- NodeDef, errChan ch
 		// Add here all references that should be checked
 
 		if err := browseChildren(id.HasComponent); err != nil {
-			errChan <- err
+			select {
+			case errChan <- err:
+			case <-ctx.Done():
+				logger.Warnf("Failed to send error due to context cancellation: %v", err)
+			default:
+				logger.Warnf("Channel is blocked, skipping error send: %v", err)
+			}
 			return
 		}
 		if err := browseChildren(id.Organizes); err != nil {
-			errChan <- err
+			select {
+			case errChan <- err:
+			case <-ctx.Done():
+				logger.Warnf("Failed to send error due to context cancellation: %v", err)
+			default:
+				logger.Warnf("Channel is blocked, skipping error send: %v", err)
+			}
 			return
 		}
 		if err := browseChildren(id.FolderType); err != nil {
-			errChan <- err
+			select {
+			case errChan <- err:
+			case <-ctx.Done():
+				logger.Warnf("Failed to send error due to context cancellation: %v", err)
+			default:
+				logger.Warnf("Channel is blocked, skipping error send: %v", err)
+			}
 			return
 		}
 		if err := browseChildren(id.HasNotifier); err != nil {
-			errChan <- err
+			select {
+			case errChan <- err:
+			case <-ctx.Done():
+				logger.Warnf("Failed to send error due to context cancellation: %v", err)
+			default:
+				logger.Warnf("Channel is blocked, skipping error send: %v", err)
+			}
 			return
 		}
 		// For hasProperty it makes sense to show it very close to the tag itself, e.g., use the tagName as tagGroup and then the properties as subparts of it
@@ -420,28 +516,36 @@ type Node struct {
 	Children []*Node    `json:"children,omitempty"`
 }
 
-// discoverNodes retrieves a list of nodes from an OPC UA server.
-// It starts a goroutine for each nodeID to browse the nodes concurrently.
-// The function collects the nodes into a slice and returns it along with any error encountered.
-//
-// Parameters:
-// - ctx: The context for managing the lifecycle of the goroutines.
-//
-// Returns:
-// - []NodeDef: A slice containing the detected nodes.
-// - map[string]string: A map of node names to NodeIDs.
-// - error: An error if any occurred during the browsing process.
+// Add this type at the top of the file with other type definitions
+type TrackedWaitGroup struct {
+	sync.WaitGroup
+	count int64
+}
+
+func (twg *TrackedWaitGroup) Add(delta int) {
+	atomic.AddInt64(&twg.count, int64(delta))
+	twg.WaitGroup.Add(delta)
+}
+
+func (twg *TrackedWaitGroup) Done() {
+	atomic.AddInt64(&twg.count, -1)
+	twg.WaitGroup.Done()
+}
+
+func (twg *TrackedWaitGroup) Count() int64 {
+	return atomic.LoadInt64(&twg.count)
+}
+
+// Then modify the discoverNodes function to use TrackedWaitGroup
 func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]string, error) {
-	// Define a timeout duration
 	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	// Use timeoutCtx instead of ctx for operations
 	nodeList := make([]NodeDef, 0)
 	pathIDMap := make(map[string]string)
 	nodeChan := make(chan NodeDef, MaxTagsToBrowse)
 	errChan := make(chan error, MaxTagsToBrowse)
-	var wg sync.WaitGroup
+	var wg TrackedWaitGroup
 	done := make(chan struct{})
 
 	go func() {
@@ -450,7 +554,8 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		for {
 			select {
 			case <-ticker.C:
-				g.Log.Infof("Amount of found opcua tags currently in channel: %d, (%d goroutines in total)", len(nodeChan), runtime.NumGoroutine())
+				g.Log.Infof("Amount of found opcua tags currently in channel: %d, (%d active browse goroutines)",
+					len(nodeChan), wg.Count())
 			case <-done:
 				return
 			case <-timeoutCtx.Done():
@@ -539,7 +644,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			nodeHeartbeatChan := make(chan NodeDef, 1)
 			errChanHeartbeat := make(chan error, 1)
 			pathIDMapChan := make(chan map[string]string, 1)
-			var wgHeartbeat sync.WaitGroup
+			var wgHeartbeat TrackedWaitGroup
 
 			wgHeartbeat.Add(1)
 			wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(heartbeatNodeID))

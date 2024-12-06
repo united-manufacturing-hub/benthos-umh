@@ -63,6 +63,7 @@ func (g *OPCUAInput) browseChildren(ctx context.Context, wg *sync.WaitGroup, lev
 	nodeClass, err := node.NodeClass(ctx)
 	if err != nil {
 		g.Log.Warnf("error getting nodeClass for node ID %s: %v", parent.NodeId, err)
+		return
 	}
 
 	refs, err := node.ReferencedNodes(ctx, referenceType, ua.BrowseDirectionForward, ua.NodeClassAll, true)
@@ -78,6 +79,10 @@ func (g *OPCUAInput) browseChildren(ctx context.Context, wg *sync.WaitGroup, lev
 			g.Log.Warnf("error browsing children: %v", err)
 			continue
 
+		}
+		if newNodeName == nil {
+			g.Log.Warnf("newNodeName is nil for node ID %s", ref.ID)
+			continue
 		}
 		child := &Node{
 			NodeId:   ref.ID,
