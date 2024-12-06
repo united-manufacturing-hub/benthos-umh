@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/gopcua/opcua/id"
 	"github.com/gopcua/opcua/ua"
@@ -64,8 +63,7 @@ var _ = Describe("Unit Tests", func() {
 			parentNodeId                 string
 			nodeChan                     chan NodeDef
 			errChan                      chan error
-			pathIDMapChan                chan map[string]string
-			wg                           *sync.WaitGroup
+			wg                           *TrackedWaitGroup
 			browseHierarchicalReferences bool
 		)
 		BeforeEach(func() {
@@ -76,8 +74,7 @@ var _ = Describe("Unit Tests", func() {
 			parentNodeId = ""
 			nodeChan = make(chan NodeDef, 100)
 			errChan = make(chan error, 100)
-			pathIDMapChan = make(chan map[string]string, 100)
-			wg = &sync.WaitGroup{}
+			wg = &TrackedWaitGroup{}
 			browseHierarchicalReferences = false
 		})
 
@@ -94,7 +91,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNodeWithNilNodeClass
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -121,7 +118,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -159,7 +156,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -201,7 +198,7 @@ var _ = Describe("Unit Tests", func() {
 				go func() {
 					// set browseHierarchicalReferences to true for reference nodes like id.HasChild
 					browseHierarchicalReferences := true
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -243,7 +240,7 @@ var _ = Describe("Unit Tests", func() {
 				go func() {
 					// set browseHierarchicalReferences to true for reference nodes like id.Organizes
 					browseHierarchicalReferences := true
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -287,7 +284,7 @@ var _ = Describe("Unit Tests", func() {
 				wg.Add(1)
 				go func() {
 					browseHierarchicalReferences := true
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences)
 				}()
 				wg.Wait()
 				close(nodeChan)
