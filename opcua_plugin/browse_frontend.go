@@ -30,7 +30,7 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 	var wg sync.WaitGroup
 	wg.Add(1)
 	rootNodeWrapper := NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId))
-	browse(ctx, rootNodeWrapper, "", 0, g.Log, rootNode.NodeId.String(), nil, nil, &wg, g.BrowseHierarchicalReferences, msgChan)
+	browse(ctx, rootNodeWrapper, "", 0, g.Log, rootNode.NodeId.String(), nil, nil, &wg, g.BrowseHierarchicalReferences, msgChan, rootNode)
 	wg.Wait()
 	close(msgChan)
 	return rootNode, nil
