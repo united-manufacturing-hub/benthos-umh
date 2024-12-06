@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -50,10 +51,41 @@ func (s *SensorConnectInput) GetConnectedDevices(ctx context.Context) ([]Connect
 		uris[uri][key] = value
 	}
 
+	// The following part is to ensure that uris[0] equals to the first port, uris[1] equals to the second port, and so on.
+	// Collect URIs and sort them based on port numbers
+	var sortedUris []string
+	type uriWithPort struct {
+		uri        string
+		portNumber int
+	}
+
+	var urisWithPorts []uriWithPort
+
+	for uri := range uris {
+		portNum, err := extractPortNumber(uri)
+		if err != nil {
+			s.logger.Warnf("Skipping URI due to error: %v", err)
+			continue
+		}
+		urisWithPorts = append(urisWithPorts, uriWithPort{uri: uri, portNumber: portNum})
+	}
+
+	// Sort the URIs based on port numbers in ascending order
+	sort.Slice(urisWithPorts, func(i, j int) bool {
+		return urisWithPorts[i].portNumber < urisWithPorts[j].portNumber
+	})
+
+	// Extract sorted URIs
+	for _, item := range urisWithPorts {
+		sortedUris = append(sortedUris, item.uri)
+	}
+
 	var connectedDevices []ConnectedDeviceInfo
 
-	//// Process each uri's data
-	for uri, data := range uris {
+	// Process each uri's data
+	for _, uri := range sortedUris {
+		data := uris[uri]
+
 		deviceInfo := ConnectedDeviceInfo{Uri: uri}
 		deviceInfo.Connected = true // Default to connected unless proven otherwise
 
@@ -222,6 +254,18 @@ func (s *SensorConnectInput) GetConnectedDevices(ctx context.Context) ([]Connect
 	}
 
 	return connectedDevices, nil
+}
+
+// Helper function to extract port number from URI
+func extractPortNumber(uri string) (int, error) {
+	// Assuming URI format is "/iolinkmaster/port[<number>]"
+	start := strings.Index(uri, "[")
+	end := strings.Index(uri, "]")
+	if start == -1 || end == -1 || end <= start+1 {
+		return 0, fmt.Errorf("invalid URI format: %s", uri)
+	}
+	numStr := uri[start+1 : end]
+	return strconv.Atoi(numStr)
 }
 
 // getUsedPortsAndMode sends a request to the device to get information about used ports and their modes
