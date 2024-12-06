@@ -229,7 +229,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 
 	// Create a subscription channel if needed
 	if g.SubscribeEnabled {
-		g.SubNotifyChan = make(chan *opcua.PublishNotificationData, 10000)
+		g.SubNotifyChan = make(chan *opcua.PublishNotificationData, MaxTagsToBrowse)
 	}
 	// Browse and subscribe to the nodes if needed
 	// Do this asynchronously so that the first messages can already arrive
