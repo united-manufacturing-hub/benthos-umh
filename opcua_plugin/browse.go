@@ -110,25 +110,13 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 
 	attrs, err := n.Attributes(ctx, ua.AttributeIDNodeClass, ua.AttributeIDBrowseName, ua.AttributeIDDescription, ua.AttributeIDAccessLevel, ua.AttributeIDDataType)
 	if err != nil {
-		select {
-		case errChan <- err:
-		case <-ctx.Done():
-			logger.Warnf("Failed to send error due to context cancellation: %v", err)
-		default:
-			logger.Warnf("Channel is blocked, skipping error send: %v", err)
-		}
+		sendError(ctx, err, errChan, logger)
 		return
 	}
 
 	browseName, err := n.BrowseName(ctx)
 	if err != nil {
-		select {
-		case errChan <- err:
-		case <-ctx.Done():
-			logger.Warnf("Failed to send error due to context cancellation: %v", err)
-		default:
-			logger.Warnf("Channel is blocked, skipping error send: %v", err)
-		}
+		sendError(ctx, err, errChan, logger)
 		return
 	}
 
@@ -147,13 +135,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	switch err := attrs[0].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[0].Value == nil {
-			select {
-			case errChan <- errors.New("node class is nil"):
-			case <-ctx.Done():
-				logger.Warnf("Failed to send error due to context cancellation: node class is nil")
-			default:
-				logger.Warnf("Channel is blocked, skipping error send: node class is nil")
-			}
+			sendError(ctx, errors.New("node class is nil"), errChan, logger)
 			return
 		} else {
 			def.NodeClass = ua.NodeClass(attrs[0].Value.Int())
@@ -165,26 +147,14 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
 		// no need to return here, as we can continue without the NodeClass for browsing
 	default:
-		select {
-		case errChan <- err:
-		case <-ctx.Done():
-			logger.Warnf("Failed to send error due to context cancellation: %v", err)
-		default:
-			logger.Warnf("Channel is blocked, skipping error send: %v", err)
-		}
+		sendError(ctx, err, errChan, logger)
 		return
 	}
 
 	switch err := attrs[1].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[1].Value == nil {
-			select {
-			case errChan <- errors.New("browse name is nil"):
-			case <-ctx.Done():
-				logger.Warnf("Failed to send error due to context cancellation: browse name is nil")
-			default:
-				logger.Warnf("Channel is blocked, skipping error send: browse name is nil")
-			}
+			sendError(ctx, errors.New("browse name is nil"), errChan, logger)
 			return
 		} else {
 			def.BrowseName = attrs[1].Value.String()
@@ -195,13 +165,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		logger.Warnf("Tried to browse node: %s but got access denied on getting the BrowseName, skipping...\n", path)
 		return // We need to return here, as we can't continue without the BrowseName (we need it at least for the path when browsing the children)
 	default:
-		select {
-		case errChan <- err:
-		case <-ctx.Done():
-			logger.Warnf("Failed to send error due to context cancellation: %v", err)
-		default:
-			logger.Warnf("Channel is blocked, skipping error send: %v", err)
-		}
+		sendError(ctx, err, errChan, logger)
 		return
 	}
 
@@ -221,26 +185,14 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
 		// no need to return here, as we can continue without the Description
 	default:
-		select {
-		case errChan <- err:
-		case <-ctx.Done():
-			logger.Warnf("Failed to send error due to context cancellation: %v", err)
-		default:
-			logger.Warnf("Channel is blocked, skipping error send: %v", err)
-		}
+		sendError(ctx, err, errChan, logger)
 		return
 	}
 
 	switch err := attrs[3].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[3].Value == nil {
-			select {
-			case errChan <- errors.New("access level is nil"):
-			case <-ctx.Done():
-				logger.Warnf("Failed to send error due to context cancellation: access level is nil")
-			default:
-				logger.Warnf("Channel is blocked, skipping error send: access level is nil")
-			}
+			sendError(ctx, errors.New("access level is nil"), errChan, logger)
 			return
 		} else {
 			def.AccessLevel = ua.AccessLevelType(attrs[3].Value.Int())
@@ -253,13 +205,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		logger.Warnf("Tried to browse node: %s but got access denied on getting the AccessLevel, continuing...\n", path)
 		// no need to return here, as we can continue without the AccessLevel for browsing
 	default:
-		select {
-		case errChan <- err:
-		case <-ctx.Done():
-			logger.Warnf("Failed to send error due to context cancellation: %v", err)
-		default:
-			logger.Warnf("Channel is blocked, skipping error send: %v", err)
-		}
+		sendError(ctx, err, errChan, logger)
 		return
 	}
 
@@ -319,13 +265,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
 		// no need to return here, as we can continue without the DataType
 	default:
-		select {
-		case errChan <- err:
-		case <-ctx.Done():
-			logger.Warnf("Failed to send error due to context cancellation: %v", err)
-		default:
-			logger.Warnf("Channel is blocked, skipping error send: %v", err)
-		}
+		sendError(ctx, err, errChan, logger)
 		return
 	}
 
@@ -343,7 +283,8 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	browseChildrenV2 := func(refType uint32) error {
 		children, err := n.Children(ctx, refType, ua.NodeClassAll)
 		if err != nil {
-			return errors.Errorf("Children: %d: %s", refType, err)
+			sendError(ctx, errors.Errorf("Children: %d: %s", refType, err), errChan, logger)
+			return err
 		}
 		for _, child := range children {
 			wg.Add(1)
@@ -355,7 +296,8 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	browseChildren := func(refType uint32) error {
 		refs, err := n.ReferencedNodes(ctx, refType, ua.BrowseDirectionForward, ua.NodeClassAll, true)
 		if err != nil {
-			return errors.Errorf("References: %d: %s", refType, err)
+			sendError(ctx, errors.Errorf("References: %d: %s", refType, err), errChan, logger)
+			return err
 		}
 		logger.Debugf("found %d child refs\n", len(refs))
 		for _, rn := range refs {
@@ -377,13 +319,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		case ua.NodeClassVariable:
 			if hasNodeReferencedComponents() {
 				if err := browseChildrenV2(id.HierarchicalReferences); err != nil {
-					select {
-					case errChan <- err:
-					case <-ctx.Done():
-						logger.Warnf("Failed to send error due to context cancellation: %v", err)
-					default:
-						logger.Warnf("Channel is blocked, skipping error send: %v", err)
-					}
+					sendError(ctx, err, errChan, logger)
 					return
 				}
 				return
@@ -402,13 +338,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 			// If its an object, we browse all its children but DO NOT add it to the node list and therefore not subscribe
 		case ua.NodeClassObject:
 			if err := browseChildrenV2(id.HierarchicalReferences); err != nil {
-				select {
-				case errChan <- err:
-				case <-ctx.Done():
-					logger.Warnf("Failed to send error due to context cancellation: %v", err)
-				default:
-					logger.Warnf("Channel is blocked, skipping error send: %v", err)
-				}
+				sendError(ctx, err, errChan, logger)
 				return
 			}
 			return
@@ -431,13 +361,7 @@ func browseReferencesDeprecated(ctx context.Context, def NodeDef, nodeChan chan<
 
 		if hasNodeReferencedComponents() {
 			if err := browseChildren(id.HasComponent); err != nil {
-				select {
-				case errChan <- err:
-				case <-ctx.Done():
-					logger.Warnf("Failed to send error due to context cancellation: %v", err)
-				default:
-					logger.Warnf("Channel is blocked, skipping error send: %v", err)
-				}
+				sendError(ctx, err, errChan, logger)
 				return
 			}
 			return
@@ -461,43 +385,19 @@ func browseReferencesDeprecated(ctx context.Context, def NodeDef, nodeChan chan<
 		// Add here all references that should be checked
 
 		if err := browseChildren(id.HasComponent); err != nil {
-			select {
-			case errChan <- err:
-			case <-ctx.Done():
-				logger.Warnf("Failed to send error due to context cancellation: %v", err)
-			default:
-				logger.Warnf("Channel is blocked, skipping error send: %v", err)
-			}
+			sendError(ctx, err, errChan, logger)
 			return
 		}
 		if err := browseChildren(id.Organizes); err != nil {
-			select {
-			case errChan <- err:
-			case <-ctx.Done():
-				logger.Warnf("Failed to send error due to context cancellation: %v", err)
-			default:
-				logger.Warnf("Channel is blocked, skipping error send: %v", err)
-			}
+			sendError(ctx, err, errChan, logger)
 			return
 		}
 		if err := browseChildren(id.FolderType); err != nil {
-			select {
-			case errChan <- err:
-			case <-ctx.Done():
-				logger.Warnf("Failed to send error due to context cancellation: %v", err)
-			default:
-				logger.Warnf("Channel is blocked, skipping error send: %v", err)
-			}
+			sendError(ctx, err, errChan, logger)
 			return
 		}
 		if err := browseChildren(id.HasNotifier); err != nil {
-			select {
-			case errChan <- err:
-			case <-ctx.Done():
-				logger.Warnf("Failed to send error due to context cancellation: %v", err)
-			default:
-				logger.Warnf("Channel is blocked, skipping error send: %v", err)
-			}
+			sendError(ctx, err, errChan, logger)
 			return
 		}
 		// For hasProperty it makes sense to show it very close to the tag itself, e.g., use the tagName as tagGroup and then the properties as subparts of it
@@ -799,5 +699,16 @@ func UpdateNodePaths(nodes []NodeDef) {
 				nodes[j].Path = otherNodePath
 			}
 		}
+	}
+}
+
+// helper function to send an error to a channel, with logging if the channel is blocked or the context is done
+func sendError(ctx context.Context, err error, errChan chan<- error, logger Logger) {
+	select {
+	case errChan <- err:
+	case <-ctx.Done():
+		logger.Warnf("Failed to send error due to context cancellation: %v", err)
+	default:
+		logger.Warnf("Channel is blocked, skipping error send: %v", err)
 	}
 }
