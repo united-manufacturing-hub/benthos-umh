@@ -65,6 +65,7 @@ var _ = Describe("Unit Tests", func() {
 			errChan                      chan error
 			wg                           *TrackedWaitGroup
 			browseHierarchicalReferences bool
+			nodeIDChan                   chan []string
 		)
 		BeforeEach(func() {
 			ctx = context.Background()
@@ -76,6 +77,7 @@ var _ = Describe("Unit Tests", func() {
 			errChan = make(chan error, 100)
 			wg = &TrackedWaitGroup{}
 			browseHierarchicalReferences = false
+			nodeIDChan = make(chan []string, 100)
 		})
 
 		Context("When browsing nodes with a node class value nil", func() {
@@ -91,7 +93,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNodeWithNilNodeClass
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences, nodeIDChan)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -118,7 +120,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences, nodeIDChan)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -156,7 +158,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences, nodeIDChan)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -198,7 +200,7 @@ var _ = Describe("Unit Tests", func() {
 				go func() {
 					// set browseHierarchicalReferences to true for reference nodes like id.HasChild
 					browseHierarchicalReferences := true
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences, nodeIDChan)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -240,7 +242,7 @@ var _ = Describe("Unit Tests", func() {
 				go func() {
 					// set browseHierarchicalReferences to true for reference nodes like id.Organizes
 					browseHierarchicalReferences := true
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences, nodeIDChan)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -284,7 +286,7 @@ var _ = Describe("Unit Tests", func() {
 				wg.Add(1)
 				go func() {
 					browseHierarchicalReferences := true
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences, nodeIDChan)
 				}()
 				wg.Wait()
 				close(nodeChan)
