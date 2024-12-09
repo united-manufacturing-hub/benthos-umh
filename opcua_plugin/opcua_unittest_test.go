@@ -20,8 +20,7 @@ var _ = Describe("Unit Tests", func() {
 		var endpoints []*ua.EndpointDescription
 		BeforeEach(func() {
 			endpoints = MockGetEndpoints()
-
-			endpoints = endpoints
+			Expect(endpoints).NotTo(BeEmpty())
 			Skip("Implement this test")
 		})
 	})

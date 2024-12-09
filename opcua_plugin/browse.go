@@ -502,7 +502,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		for err := range errChan {
 			combinedErr.WriteString(err.Error() + "; ")
 		}
-		return nil, nil, fmt.Errorf(combinedErr.String())
+		return nil, nil, errors.New(combinedErr.String())
 	}
 
 	return nodeList, pathIDMap, nil
