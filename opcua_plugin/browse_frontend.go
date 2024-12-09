@@ -38,7 +38,7 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 	nodeIDMap := make(map[string]string)
 	nodes := make([]NodeDef, 0, MaxTagsToBrowse)
 
-	go collectNodesFromChannel(ctx, nodeChan, nodes, msgChan)
+	go collectNodesFromChannel(ctx, nodeChan, &nodes, msgChan)
 	go logErrors(ctx, errChan, g.Log)
 	go collectNodeIDFromChannel(ctx, nodeIDChan, nodeIDMap)
 
@@ -58,13 +58,13 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 	return rootNode, nil
 }
 
-func collectNodesFromChannel(ctx context.Context, nodeChan chan NodeDef, nodes []NodeDef, msgChan chan<- string) {
+func collectNodesFromChannel(ctx context.Context, nodeChan chan NodeDef, nodes *[]NodeDef, msgChan chan<- string) {
 	for n := range nodeChan {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			nodes = append(nodes, n)
+			*nodes = append(*nodes, n)
 			msgChan <- fmt.Sprintf("Browsing node for %s", n.BrowseName)
 		}
 	}
@@ -112,8 +112,8 @@ func InsertNode(rootNode *Node, node NodeDef, nodeIDMap map[string]string) {
 				ChildIDMap: make(map[string]*Node),
 				Children:   make([]*Node, 0),
 			}
+			current.Children = append(current.Children, current.ChildIDMap[part])
 		}
-		current.Children = append(current.Children, current.ChildIDMap[part])
 		current = current.ChildIDMap[part]
 	}
 }
