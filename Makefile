@@ -40,5 +40,9 @@ update-benthos:
 test-sensorconnect: test
 	./tmp/bin/benthos -c ./config/sensorconnect-test.yaml
 
+# run the tests against the opc-plc simulator
+# this will be the default simulator when starting up the devcontainer
+test-opc-plc:
+	@TEST_OPCUA_SIMULATOR=true ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./opcua_plugin/...
 
-.PHONY: clean target test update-benthos
+.PHONY: clean target test update-benthos test-opc-plc

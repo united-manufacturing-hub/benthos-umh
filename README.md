@@ -122,6 +122,8 @@ input:
     securityPolicy: None | Basic256Sha256  # optional (default: unset)
     subscribeEnabled: false | true # optional (default: false)
     useHeartbeat: false | true # optional (default: false)
+    browseHierarchicalReferences: false | true # optional (default: false)
+    pollRate: 1000 # optional (default: 1000) The rate in milliseconds at which to poll the OPC UA server when not using subscriptions
 ```
 
 ##### Endpoint
@@ -189,7 +191,7 @@ Benthos-umh supports two modes of operation: pull and subscribe. In pull mode, i
 
 | Method    | Advantages                                                                                                                                                                                                                                    | Disadvantages                                                                                                        |
 |-----------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------|
-| Pull      | - Provides real-time data visibility, e.g., in MQTT Explorer. <br> - Clearly differentiates between 'no data received' and 'value did not change' scenarios, which can be crucial for documentation and proving the OPC-UA client's activity. | - Results in higher data throughput as it pulls all nodes every second, regardless of changes.                       |
+| Pull      | - Provides real-time data visibility, e.g., in MQTT Explorer. <br> - Clearly differentiates between 'no data received' and 'value did not change' scenarios, which can be crucial for documentation and proving the OPC-UA client's activity. | - Results in higher data throughput as it pulls all nodes at the configured poll rate (default: every second), regardless of changes. |
 | Subscribe | - Data is sent only when there's a change in value, reducing unnecessary data transfer.                                                                                                                                                       | - Less visibility into real-time data status, and it's harder to differentiate between no data and unchanged values. |
 
 ```yaml
@@ -208,6 +210,24 @@ If you are unsure if the OPC UA server is actually sending new data, you can ena
 input:
   opcua:
     useHeartbeat: true
+```
+
+##### Browse Hierarchical References
+
+The plugin offers an option to browse OPCUA nodes by following Hierarchical References. By default, this feature is disabled (`false`), which means the plugin will only browse a limited subset of reference types, including:
+- `HasComponent`
+- `Organizes`
+- `FolderType`
+- `HasNotifier`
+
+When set to `true`, the plugin will explore a broader range of node references. For a deeper understanding of the different reference types, refer to the [Standard References Type documentation](https://qiyuqi.gitbooks.io/opc-ua/content/Part3/Chapter7.html).
+
+**Recommendation**: Enable this option (`browseHierarchicalReferences: true`) for more comprehensive node discovery.
+
+```yaml
+input:
+  opcua:
+    browseHierarchicalReferences: true
 ```
 
 ### S7comm
