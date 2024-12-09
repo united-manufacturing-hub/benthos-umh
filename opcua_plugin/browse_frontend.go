@@ -55,7 +55,6 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 	for _, node := range nodes {
 		InsertNode(rootNode, node, nodeIDMap)
 	}
-	close(msgChan)
 	return rootNode, nil
 }
 
