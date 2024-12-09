@@ -16,6 +16,7 @@ package opcua_plugin
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 
 const SessionTimeout = 5 * time.Second
 const SubscribeTimeoutContext = 3 * time.Second
+const DefaultPollRate = 1000
 
 var OPCUAConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from OPC-UA servers. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
@@ -42,7 +44,8 @@ var OPCUAConfigSpec = service.NewConfigSpec().
 	Field(service.NewBoolField("subscribeEnabled").Description("Set to true to subscribe to OPC UA nodes instead of fetching them every seconds. Default is pulling messages every second (false).").Default(false)).
 	Field(service.NewBoolField("directConnect").Description("Set this to true to directly connect to an OPC UA endpoint. This can be necessary in cases where the OPC UA server does not allow 'endpoint discovery'. This requires having the full endpoint name in endpoint, and securityMode and securityPolicy set. Defaults to 'false'").Default(false)).
 	Field(service.NewBoolField("useHeartbeat").Description("Set to true to provide an extra message with the servers timestamp as a heartbeat").Default(false)).
-	Field(service.NewBoolField("browseHierarchicalReferences").Description("Set to true to browse hierarchical references. This is the new way to browse for tags and folders references properly without any duplicates. Defaults to 'false'").Default(false))
+	Field(service.NewBoolField("browseHierarchicalReferences").Description("Set to true to browse hierarchical references. This is the new way to browse for tags and folders references properly without any duplicates. Defaults to 'false'").Default(false)).
+	Field(service.NewIntField("pollRate").Description("The rate in milliseconds at which to poll the OPC UA server when not using subscriptions. Defaults to 1000ms (1 second).").Default(DefaultPollRate))
 
 func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 
@@ -123,6 +126,11 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		return nil, err
 	}
 
+	pollRate, err := conf.FieldInt("pollRate")
+	if err != nil {
+		return nil, err
+	}
+
 	// fail if no nodeIDs are provided
 	if len(nodeIDs) == 0 {
 		return nil, errors.New("no nodeIDs provided")
@@ -148,6 +156,9 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		LastMessageReceived:          atomic.Uint32{},
 		HeartbeatManualSubscribed:    false,
 		HeartbeatNodeId:              ua.NewNumericNodeID(0, 2258), // 2258 is the nodeID for CurrentTime, only in tests this is different
+		PollRate:                     pollRate,
+		browseWaitGroup:              sync.WaitGroup{},
+		browseErrorChan:              make(chan error, 1),
 	}
 
 	return service.AutoRetryNacksBatched(m), nil
@@ -190,15 +201,87 @@ type OPCUAInput struct {
 	Subscription                 *opcua.Subscription
 	ServerInfo                   ServerInfo
 	BrowseHierarchicalReferences bool
+	PollRate                     int
+	browseCancel                 context.CancelFunc
+	browseWaitGroup              sync.WaitGroup
+	browseErrorChan              chan error
 }
 
-// Connect establishes a connection to the OPC UA server.
-// It handles various configurations such as security policies, authentication methods,
-// and endpoint selections. The function attempts to connect using user-specified
-// settings first and iterates through available endpoints and security combinations
-// if necessary. Upon successful connection, it retrieves server information
-// and initiates browsing and subscription of nodes.
-func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
+// cleanupBrowsing ensures the browsing goroutine is properly stopped and cleaned up
+func (g *OPCUAInput) cleanupBrowsing() {
+	if g.browseCancel != nil {
+		g.browseCancel()
+		g.browseCancel = nil
+
+		g.Log.Infof("Waiting for browsing subroutine to finish...")
+		g.browseWaitGroup.Wait()
+		g.Log.Infof("Browsing subroutine finished")
+	}
+}
+
+// closeConnection handles the actual connection closure
+func (g *OPCUAInput) closeConnection(ctx context.Context) {
+	if g.Client != nil {
+		// Unsubscribe from the subscription
+		if g.SubscribeEnabled && g.Subscription != nil {
+			g.Log.Infof("Unsubscribing from OPC UA subscription...")
+			if err := g.Subscription.Cancel(ctx); err != nil {
+				g.Log.Infof("Failed to unsubscribe from OPC UA subscription: %v", err)
+			}
+			g.Subscription = nil
+		}
+
+		if err := g.Client.Close(ctx); err != nil {
+			g.Log.Infof("Error closing OPC UA client: %v", err)
+		}
+		g.Client = nil
+	}
+
+	// Reset the heartbeat
+	g.LastHeartbeatMessageReceived.Store(uint32(0))
+	g.LastMessageReceived.Store(uint32(0))
+}
+
+// Close terminates the OPC UA connection with error logging
+func (g *OPCUAInput) Close(ctx context.Context) error {
+	g.Log.Errorf("Initiating closure of OPC UA client...")
+	g.cleanupBrowsing()
+	g.closeConnection(ctx)
+	g.Log.Infof("OPC UA client closed successfully.")
+	return nil
+}
+
+// CloseExpected terminates the OPC UA connection without error logging
+func (g *OPCUAInput) CloseExpected(ctx context.Context) {
+	g.Log.Infof("Initiating expected closure of OPC UA client...")
+	g.cleanupBrowsing()
+	g.closeConnection(ctx)
+	g.Log.Infof("OPC UA client closed successfully.")
+}
+
+// startBrowsing initiates the browsing process and handles errors
+func (g *OPCUAInput) startBrowsing(ctx context.Context) {
+	browseCtx, cancel := context.WithCancel(ctx)
+	g.browseCancel = cancel
+	g.browseWaitGroup.Add(1)
+
+	go func() {
+		defer g.browseWaitGroup.Done()
+		g.Log.Infof("Please note that browsing large node trees can take some time")
+
+		if err := g.BrowseAndSubscribeIfNeeded(browseCtx); err != nil {
+			g.Log.Errorf("Failed to subscribe: %v", err)
+			g.Close(ctx) // Safe to call Close here as we're in a separate goroutine
+			return
+		}
+
+		g.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
+	}()
+}
+
+// Connect establishes a connection to the OPC UA server
+func (g *OPCUAInput) Connect(ctx context.Context) error {
+	var err error
 
 	if g.Client != nil {
 		return nil
@@ -211,16 +294,14 @@ func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 		}
 	}()
 
-	err = g.connect(ctx)
-	if err != nil {
+	if err = g.connect(ctx); err != nil {
 		return err
 	}
 
 	g.Log.Infof("Connected to %s", g.Endpoint)
 
 	// Get OPC UA server information
-	serverInfo, err := g.GetOPCUAServerInformation(ctx)
-	if err != nil {
+	if serverInfo, err := g.GetOPCUAServerInformation(ctx); err != nil {
 		g.Log.Infof("Failed to get OPC UA server information: %s", err)
 	} else {
 		g.Log.Infof("OPC UA Server Information: %v+", serverInfo)
@@ -231,18 +312,8 @@ func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 	if g.SubscribeEnabled {
 		g.SubNotifyChan = make(chan *opcua.PublishNotificationData, MaxTagsToBrowse)
 	}
-	// Browse and subscribe to the nodes if needed
-	// Do this asynchronously so that the first messages can already arrive
-	go func() {
-		g.Log.Infof("Please note that browsing large node trees can take some time")
-		if err := g.BrowseAndSubscribeIfNeeded(ctx); err != nil {
-			g.Log.Errorf("Failed to subscribe: %v", err)
-			_ = g.Close(ctx)
-		}
-		// Set the heartbeat after browsing, as browsing might take some time
-		g.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
-	}()
 
+	g.startBrowsing(ctx)
 	return nil
 }
 
@@ -291,57 +362,6 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, 
 		g.Log.Debugf("ReadBatch context.DeadlineExceeded")
 		return nil, nil, nil
 	}
-
-	return
-}
-
-// closeRaw closes the OPC UA client and handles subscription cleanup if necessary.
-// It performs the closure without logging any high-level messages, allowing
-// higher-level functions to manage logging based on context.
-func (g *OPCUAInput) closeRaw(ctx context.Context) {
-	if g.Client != nil {
-		// Unsubscribe from the subscription
-		if g.SubscribeEnabled && g.Subscription != nil {
-			g.Log.Infof("Unsubscribing from OPC UA subscription...")
-			if err := g.Subscription.Cancel(ctx); err != nil {
-				g.Log.Infof("Failed to unsubscribe from OPC UA subscription: %v", err)
-			}
-			g.Subscription = nil
-		}
-
-		// Attempt to close the OPC UA client
-		if err := g.Client.Close(ctx); err != nil {
-			g.Log.Infof("Error closing OPC UA client: %v", err)
-		}
-
-		g.Client = nil
-	}
-
-	// Reset the heartbeat
-	g.LastHeartbeatMessageReceived.Store(uint32(0))
-	g.LastMessageReceived.Store(uint32(0))
-
-	return
-}
-
-// Close terminates the OPC UA connection and logs the closure process.
-// It logs an informational message when starting and successfully closing the client.
-// If an error occurs during closure, it logs the error.
-func (g *OPCUAInput) Close(ctx context.Context) error {
-	g.Log.Errorf("Initiating closure of OPC UA client...")
-	g.closeRaw(ctx)
-	g.Log.Infof("OPC UA client closed successfully.")
-
-	return nil
-}
-
-// CloseExpected terminates the OPC UA connection without logging errors.
-// This function is intended for scenarios where closing the client is expected
-// and should not be treated as an error (e.g., when attempting multiple client connections).
-func (g *OPCUAInput) CloseExpected(ctx context.Context) {
-	g.Log.Infof("Initiating expected closure of OPC UA client...")
-	g.closeRaw(ctx)
-	g.Log.Infof("OPC UA client closed successfully.")
 
 	return
 }

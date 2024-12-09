@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/gopcua/opcua/id"
 	"github.com/gopcua/opcua/ua"
@@ -19,8 +20,7 @@ var _ = Describe("Unit Tests", func() {
 		var endpoints []*ua.EndpointDescription
 		BeforeEach(func() {
 			endpoints = MockGetEndpoints()
-
-			endpoints = endpoints
+			Expect(endpoints).NotTo(BeEmpty())
 			Skip("Implement this test")
 		})
 	})
@@ -56,6 +56,7 @@ var _ = Describe("Unit Tests", func() {
 
 		var (
 			ctx                          context.Context
+			cncl                         context.CancelFunc
 			nodeBrowser                  NodeBrowser
 			path                         string
 			level                        int
@@ -68,7 +69,7 @@ var _ = Describe("Unit Tests", func() {
 			nodeIDChan                   chan []string
 		)
 		BeforeEach(func() {
-			ctx = context.Background()
+			ctx, cncl = context.WithTimeout(context.Background(), 2*time.Second)
 			path = ""
 			level = 0
 			logger = &MockLogger{}
@@ -78,6 +79,9 @@ var _ = Describe("Unit Tests", func() {
 			wg = &TrackedWaitGroup{}
 			browseHierarchicalReferences = false
 			nodeIDChan = make(chan []string, 100)
+		})
+		AfterEach(func() {
+			cncl()
 		})
 
 		Context("When browsing nodes with a node class value nil", func() {
