@@ -420,8 +420,8 @@ type Node struct {
 	NodeId   *ua.NodeID `json:"nodeId"`
 	Name     string     `json:"name"`
 	Children []*Node    `json:"children,omitempty"`
-	// childrenMap is a map of children nodes, key is the browseName
-	childrenMap map[string]*Node `json:"-"`
+	// ChildIDMap is a map of children nodes, key is the browseName
+	ChildIDMap map[string]*Node `json:"-"`
 }
 
 // Add this type at the top of the file with other type definitions

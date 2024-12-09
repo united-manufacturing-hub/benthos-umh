@@ -97,18 +97,25 @@ func collectNodeIDFromChannel(ctx context.Context, nodeIDChan chan []string, nod
 
 func InsertNode(rootNode *Node, node NodeDef, nodeIDMap map[string]string) {
 	current := rootNode
+	if current.ChildIDMap == nil {
+		current.ChildIDMap = make(map[string]*Node)
+	}
+	if current.Children == nil {
+		current.Children = make([]*Node, 0)
+	}
+
 	paths := strings.Split(node.Path, ".")
 	for _, part := range paths {
-		if _, exists := current.childrenMap[part]; !exists {
-			current.childrenMap[part] = &Node{
-				Name:        part,
-				NodeId:      ua.NewStringNodeID(0, FindID(nodeIDMap, part)),
-				childrenMap: make(map[string]*Node),
-				Children:    make([]*Node, 0),
+		if _, exists := current.ChildIDMap[part]; !exists {
+			current.ChildIDMap[part] = &Node{
+				Name:       part,
+				NodeId:     ua.NewStringNodeID(0, FindID(nodeIDMap, part)),
+				ChildIDMap: make(map[string]*Node),
+				Children:   make([]*Node, 0),
 			}
 		}
-		current.Children = append(current.Children, current.childrenMap[part])
-		current = current.childrenMap[part]
+		current.Children = append(current.Children, current.ChildIDMap[part])
+		current = current.ChildIDMap[part]
 	}
 }
 
