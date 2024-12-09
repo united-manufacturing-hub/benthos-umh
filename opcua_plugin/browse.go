@@ -62,8 +62,8 @@ type Logger interface {
 
 // Browse is a public wrapper function for the browse function
 // Avoid using this function directly, use it only for testing
-func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, browseHierarchicalReferences bool) {
-	browse(ctx, n, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences)
+func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, browseHierarchicalReferences bool, nodeIDChan chan []string) {
+	browse(ctx, n, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences, nodeIDChan)
 }
 
 // browse recursively explores OPC UA nodes to build a comprehensive list of NodeDefs.
@@ -93,7 +93,7 @@ func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 // - `browseHierarchicalReferences` (`bool`): Indicates whether to browse hierarchical references.
 // **Returns:**
 // - `void`: Errors are sent through `errChan`, and discovered nodes are sent through `nodeChan`.
-func browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, browseHierarchicalReferences bool) {
+func browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, browseHierarchicalReferences bool, nodeIDChan chan []string) {
 	defer wg.Done()
 
 	if level > 10 {
@@ -130,6 +130,14 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	var def = NodeDef{
 		NodeID: n.ID(),
 		Path:   newPath,
+	}
+
+	// Send the node name and ID mapping to the nodeIDChan for showing intermediate results in the frontend
+	// Uses a non-blocking select to avoid deadlocks if the channel is full.
+	select {
+	case nodeIDChan <- []string{browseName.Name, def.NodeID.String()}:
+	default:
+		logger.Debugf("nodeIDChan is blocked, skipping nodeID send")
 	}
 
 	switch err := attrs[0].Status; {
@@ -288,7 +296,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		}
 		for _, child := range children {
 			wg.Add(1)
-			go browse(ctx, child, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, wg, browseHierarchicalReferences)
+			go browse(ctx, child, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, wg, browseHierarchicalReferences, nodeIDChan)
 		}
 		return nil
 	}
@@ -302,7 +310,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		logger.Debugf("found %d child refs\n", len(refs))
 		for _, rn := range refs {
 			wg.Add(1)
-			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, wg, browseHierarchicalReferences)
+			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, wg, browseHierarchicalReferences, nodeIDChan)
 		}
 		return nil
 	}
@@ -414,6 +422,8 @@ type Node struct {
 	NodeId   *ua.NodeID `json:"nodeId"`
 	Name     string     `json:"name"`
 	Children []*Node    `json:"children,omitempty"`
+	// ChildIDMap is a map of children nodes, key is the browseName
+	ChildIDMap map[string]*Node `json:"-"`
 }
 
 // Add this type at the top of the file with other type definitions
@@ -445,6 +455,9 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	pathIDMap := make(map[string]string)
 	nodeChan := make(chan NodeDef, MaxTagsToBrowse)
 	errChan := make(chan error, MaxTagsToBrowse)
+	// nodeIDChan is created to just satisfy the browse function signature.
+	// The data inside nodeIDChan is not so useful for this function. It is more useful for the GetNodeTree function
+	nodeIDChan := make(chan []string, MaxTagsToBrowse)
 	var wg TrackedWaitGroup
 	done := make(chan struct{})
 
@@ -473,7 +486,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		g.Log.Debugf("Browsing nodeID: %s", nodeID.String())
 		wg.Add(1)
 		wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(nodeID))
-		go browse(timeoutCtx, wrapperNodeID, "", 0, g.Log, nodeID.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences)
+		go browse(timeoutCtx, wrapperNodeID, "", 0, g.Log, nodeID.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, nodeIDChan)
 	}
 
 	go func() {
@@ -490,6 +503,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 
 	close(nodeChan)
 	close(errChan)
+	close(nodeIDChan)
 
 	for node := range nodeChan {
 		nodeList = append(nodeList, node)
@@ -543,17 +557,17 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			// Copied and pasted from above, just for one node
 			nodeHeartbeatChan := make(chan NodeDef, 1)
 			errChanHeartbeat := make(chan error, 1)
-			pathIDMapChan := make(chan map[string]string, 1)
+			nodeIDChanHeartbeat := make(chan []string, 1)
 			var wgHeartbeat TrackedWaitGroup
 
 			wgHeartbeat.Add(1)
 			wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(heartbeatNodeID))
-			go browse(ctx, wrapperNodeID, "", 1, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat, g.BrowseHierarchicalReferences)
+			go browse(ctx, wrapperNodeID, "", 1, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat, g.BrowseHierarchicalReferences, nodeIDChanHeartbeat)
 
 			wgHeartbeat.Wait()
 			close(nodeHeartbeatChan)
 			close(errChanHeartbeat)
-			close(pathIDMapChan)
+			close(nodeIDChanHeartbeat)
 
 			for node := range nodeHeartbeatChan {
 				nodeList = append(nodeList, node)
