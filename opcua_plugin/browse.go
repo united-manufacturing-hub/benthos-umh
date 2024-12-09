@@ -132,6 +132,8 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		Path:   newPath,
 	}
 
+	// Send the node name and ID mapping to the nodeIDChan for showing intermediate results in the frontend
+	// Uses a non-blocking select to avoid deadlocks if the channel is full.
 	select {
 	case nodeIDChan <- []string{browseName.Name, def.NodeID.String()}:
 	default:

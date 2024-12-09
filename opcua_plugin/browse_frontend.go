@@ -38,13 +38,13 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 	nodeIDMap := make(map[string]string)
 	nodes := make([]NodeDef, 0, MaxTagsToBrowse)
 
-	go collectNodesFromChannel(ctx, nodeChan, &nodes, msgChan)
-	go logErrors(ctx, errChan, g.Log)
-	go collectNodeIDFromChannel(ctx, nodeIDChan, nodeIDMap)
-
 	var wg TrackedWaitGroup
 	wg.Add(1)
 	browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", 0, g.Log, rootNode.NodeId.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, nodeIDChan)
+	go collectNodesFromChannel(ctx, nodeChan, &nodes, msgChan, &wg)
+	go logErrors(ctx, errChan, g.Log)
+	go collectNodeIDFromChannel(ctx, nodeIDChan, nodeIDMap)
+
 	wg.Wait()
 
 	close(nodeChan)
@@ -58,14 +58,16 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 	return rootNode, nil
 }
 
-func collectNodesFromChannel(ctx context.Context, nodeChan chan NodeDef, nodes *[]NodeDef, msgChan chan<- string) {
+func collectNodesFromChannel(ctx context.Context, nodeChan chan NodeDef, nodes *[]NodeDef, msgChan chan<- string, wg *TrackedWaitGroup) {
 	for n := range nodeChan {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 			*nodes = append(*nodes, n)
-			msgChan <- fmt.Sprintf("Browsing node for %s", n.BrowseName)
+			// Send a more detailed message about the browsing progress using WaitGroup count
+			msgChan <- fmt.Sprintf("found node '%s' (%d active browse operations)",
+				n.BrowseName, wg.Count())
 		}
 	}
 }
