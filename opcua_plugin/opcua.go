@@ -29,6 +29,7 @@ import (
 
 const SessionTimeout = 5 * time.Second
 const SubscribeTimeoutContext = 3 * time.Second
+const DefaultPollRate = 1000
 
 var OPCUAConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from OPC-UA servers. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
@@ -44,7 +45,7 @@ var OPCUAConfigSpec = service.NewConfigSpec().
 	Field(service.NewBoolField("directConnect").Description("Set this to true to directly connect to an OPC UA endpoint. This can be necessary in cases where the OPC UA server does not allow 'endpoint discovery'. This requires having the full endpoint name in endpoint, and securityMode and securityPolicy set. Defaults to 'false'").Default(false)).
 	Field(service.NewBoolField("useHeartbeat").Description("Set to true to provide an extra message with the servers timestamp as a heartbeat").Default(false)).
 	Field(service.NewBoolField("browseHierarchicalReferences").Description("Set to true to browse hierarchical references. This is the new way to browse for tags and folders references properly without any duplicates. Defaults to 'false'").Default(false)).
-	Field(service.NewIntField("pollRate").Description("The rate in milliseconds at which to poll the OPC UA server when not using subscriptions. Defaults to 1000ms (1 second).").Default(1000))
+	Field(service.NewIntField("pollRate").Description("The rate in milliseconds at which to poll the OPC UA server when not using subscriptions. Defaults to 1000ms (1 second).").Default(DefaultPollRate))
 
 func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 
@@ -354,7 +355,7 @@ func (g *OPCUAInput) Close(ctx context.Context) error {
 		g.browseCancel = nil
 
 		// Wait for the goroutine to finish
-		g.Log.Infof("Waiting for browssing subroutine to finish...")
+		g.Log.Infof("Waiting for browsing subroutine to finish...")
 		g.browseWaitGroup.Wait()
 		g.Log.Infof("Browsing subroutine finished")
 	}

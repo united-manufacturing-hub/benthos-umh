@@ -190,6 +190,13 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 	if g.Client == nil {
 		return nil, nil, errors.New("client is nil")
 	}
+
+	// Add validation for PollRate
+	// benthos will set a default value if not set, and this is the fallback option for tests
+	if g.PollRate <= 0 {
+		g.PollRate = DefaultPollRate
+	}
+
 	// Read all values in NodeList and return each of them as a message with the node's path as the metadata
 
 	// Create first a list of all the values to read

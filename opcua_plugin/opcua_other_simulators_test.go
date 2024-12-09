@@ -90,9 +90,6 @@ var _ = Describe("Test Against Softing OPC DataFeed", Serial, func() {
 			ctx3, cancel3 := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel3()
 
-			// at this point of time local items is changed
-			GinkgoWriter.Println("Change local item now")
-
 			messageBatch, _, err = input.ReadBatch(ctx3)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(len(messageBatch)).To(Equal(1))

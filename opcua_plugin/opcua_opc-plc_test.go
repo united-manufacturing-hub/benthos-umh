@@ -1366,6 +1366,7 @@ opcua:
 				timestampsMutex.Unlock()
 				return nil
 			})
+			Expect(err).NotTo(HaveOccurred())
 
 			stream, err := builder.Build()
 			Expect(err).NotTo(HaveOccurred())
