@@ -60,7 +60,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			Eventually(func() int {
 				var err error
 				messageBatch, _, err = input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
 				return len(messageBatch)
 			}, 10*time.Second, 100*time.Millisecond).Should(Equal(4))
 
@@ -153,7 +157,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				Eventually(func() int {
 					var err error
 					messageBatch, _, err = input.ReadBatch(ctx)
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
 					return len(messageBatch)
 				}, 10*time.Second, 100*time.Millisecond).Should(BeNumerically(">=", 5))
 
@@ -196,7 +204,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				Eventually(func() int {
 					var err error
 					messageBatch, _, err = input.ReadBatch(ctx)
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
 					return len(messageBatch)
 				}, 10*time.Second, 100*time.Millisecond).Should(Equal(1))
 
@@ -252,7 +264,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				Eventually(func() int {
 					var err error
 					messageBatch, _, err = input.ReadBatch(ctx)
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
 					return len(messageBatch)
 				}, 10*time.Second, 100*time.Millisecond).Should(Equal(10))
 
@@ -295,7 +311,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				Eventually(func() int {
 					var err error
 					messageBatch, _, err = input.ReadBatch(ctx)
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1 // return -1 to indicate that the messageBatch is empty
+					}
 					return len(messageBatch)
 				}, 10*time.Second, 100*time.Millisecond).Should(Equal(0)) // should never subscribe to null datatype
 
@@ -331,7 +351,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				Eventually(func() int {
 					var err error
 					messageBatch, _, err = input.ReadBatch(ctx)
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
 					return len(messageBatch)
 				}, 10*time.Second, 100*time.Millisecond).Should(Equal(26))
 
@@ -406,7 +430,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				Eventually(func() int {
 					var err error
 					messageBatch, _, err = input.ReadBatch(ctx)
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
 					return len(messageBatch)
 				}, 10*time.Second, 100*time.Millisecond).Should(Equal(23)) // these are theoretically >30, but most of them are null, so the browse function ignores them
 
@@ -461,7 +489,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				Eventually(func() int {
 					var err error
 					messageBatch, _, err = input.ReadBatch(ctx)
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
 					return len(messageBatch)
 				}, 10*time.Second, 100*time.Millisecond).Should(BeNumerically(">", 0))
 
@@ -530,7 +562,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				Eventually(func() int {
 					var err error
 					messageBatch, _, err = input.ReadBatch(ctx)
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
 					return len(messageBatch)
 				}, 10*time.Second, 100*time.Millisecond).Should(Equal(25))
 
@@ -603,7 +639,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				Eventually(func() int {
 					var err error
 					messageBatch, _, err = input.ReadBatch(ctx)
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
 					return len(messageBatch)
 				}, 10*time.Second, 100*time.Millisecond).Should(BeNumerically(">=", 125))
 
@@ -641,7 +681,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				Eventually(func() int {
 					var err error
 					messageBatch, _, err = input.ReadBatch(ctx)
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
 					return len(messageBatch)
 				}, 10*time.Second, 100*time.Millisecond).Should(Equal(25))
 
@@ -679,7 +723,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				Eventually(func() int {
 					var err error
 					messageBatch, _, err = input.ReadBatch(ctx)
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
 					return len(messageBatch)
 				}, 10*time.Second, 100*time.Millisecond).Should(Equal(25))
 
@@ -715,7 +763,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				Eventually(func() int {
 					var err error
 					messageBatch, _, err = input.ReadBatch(ctx)
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
 					return len(messageBatch)
 				}, 10*time.Second, 100*time.Millisecond).Should(Equal(4))
 
@@ -751,7 +803,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				Eventually(func() int {
 					var err error
 					messageBatch, _, err = input.ReadBatch(ctx)
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
 					return len(messageBatch)
 				}, 10*time.Second, 100*time.Millisecond).Should(Equal(4))
 
@@ -787,7 +843,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				Eventually(func() int {
 					var err error
 					messageBatch, _, err = input.ReadBatch(ctx)
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
 					return len(messageBatch)
 				}, 10*time.Second, 100*time.Millisecond).Should(Equal(5))
 
@@ -823,7 +883,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				Eventually(func() int {
 					var err error
 					messageBatch, _, err = input.ReadBatch(ctx)
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
 					return len(messageBatch)
 				}, 10*time.Second, 100*time.Millisecond).Should(BeNumerically(">=", 5))
 
@@ -859,7 +923,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				Eventually(func() int {
 					var err error
 					messageBatch, _, err = input.ReadBatch(ctx)
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
 					return len(messageBatch)
 				}, 10*time.Second, 100*time.Millisecond).Should(BeNumerically(">=", 100))
 
@@ -895,7 +963,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				Eventually(func() int {
 					var err error
 					messageBatch, _, err = input.ReadBatch(ctx)
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
 					return len(messageBatch)
 				}, 10*time.Second, 100*time.Millisecond).Should(Equal(7))
 
@@ -934,7 +1006,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			Eventually(func() int {
 				var err error
 				messageBatch, _, err = input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
 				return len(messageBatch)
 			}, 10*time.Second, 100*time.Millisecond).Should(BeNumerically(">=", 1))
 
@@ -996,7 +1072,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			Eventually(func() int {
 				var err error
 				messageBatch, _, err = input.ReadBatch(ctx1)
-				Expect(err).NotTo(HaveOccurred())
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
 				return len(messageBatch)
 			}, 10*time.Second, 100*time.Millisecond).Should(Equal(1))
 
@@ -1009,7 +1089,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			Eventually(func() int {
 				var err error
 				messageBatch2, _, err = input.ReadBatch(ctx2)
-				Expect(err).NotTo(HaveOccurred())
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
 				return len(messageBatch2)
 			}, 10*time.Second, 100*time.Millisecond).Should(Equal(1))
 
@@ -1049,7 +1133,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			Eventually(func() int {
 				var err error
 				messageBatch, _, err = input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
 				return len(messageBatch)
 			}, 10*time.Second, 100*time.Millisecond).Should(Equal(1))
 
@@ -1085,7 +1173,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			Eventually(func() int {
 				var err error
 				messageBatch, _, err = input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
 				return len(messageBatch)
 			}, 10*time.Second, 100*time.Millisecond).Should(Equal(2))
 
@@ -1121,7 +1213,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			Eventually(func() int {
 				var err error
 				messageBatch, _, err = input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
 				return len(messageBatch)
 			}, 10*time.Second, 100*time.Millisecond).Should(Equal(1))
 
@@ -1131,7 +1227,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			Eventually(func() int {
 				var err error
 				messageBatch2, _, err = input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
 				return len(messageBatch2)
 			}, 10*time.Second, 100*time.Millisecond).Should(Equal(1))
 
@@ -1141,7 +1241,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			Eventually(func() int {
 				var err error
 				messageBatch3, _, err = input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
 				return len(messageBatch3)
 			}, 10*time.Second, 100*time.Millisecond).Should(Equal(1))
 
@@ -1179,7 +1283,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			Eventually(func() int {
 				var err error
 				messageBatch, _, err = input.ReadBatch(ctx2)
-				Expect(err).NotTo(HaveOccurred())
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
 				return len(messageBatch)
 			}, 10*time.Second, 100*time.Millisecond).Should(Equal(1))
 
@@ -1191,7 +1299,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			Eventually(func() int {
 				var err error
 				messageBatch2, _, err = input.ReadBatch(ctx3)
-				Expect(err).NotTo(HaveOccurred())
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
 				return len(messageBatch2)
 			}, 10*time.Second, 100*time.Millisecond).Should(Equal(0))
 

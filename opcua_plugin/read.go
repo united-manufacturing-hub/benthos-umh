@@ -214,12 +214,37 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 	resp, err := g.Read(ctx, req)
 	if err != nil {
 		g.Log.Errorf("Read failed: %s", err)
+		return nil, nil, err
+	}
+
+	// Add nil check for response
+	if resp == nil {
+		g.Log.Errorf("Received nil response from Read")
+		return nil, nil, errors.New("received nil response from Read")
+	}
+
+	// Add nil check for Results
+	if resp.Results == nil {
+		g.Log.Errorf("Received nil Results in response")
+		return nil, nil, errors.New("received nil Results in response")
+	}
+
+	// Check if Results length matches NodeList length
+	if len(resp.Results) != len(g.NodeList) {
+		g.Log.Errorf("Results length (%d) does not match NodeList length (%d)", len(resp.Results), len(g.NodeList))
+		return nil, nil, fmt.Errorf("results length (%d) does not match NodeList length (%d)", len(resp.Results), len(g.NodeList))
 	}
 
 	// Create a message with the node's path as the metadata
 	msgs := service.MessageBatch{}
 
 	for i, node := range g.NodeList {
+		// Check if index is within bounds (redundant after length check, but good practice)
+		if i >= len(resp.Results) {
+			g.Log.Errorf("Index %d out of bounds for Results length %d", i, len(resp.Results))
+			continue
+		}
+
 		value := resp.Results[i]
 		if value == nil || value.Value == nil {
 			g.Log.Debugf("Received nil in item structure on node %s. This can occur when subscribing to an OPC UA folder and may be ignored.", node.NodeID.String())
