@@ -158,6 +158,7 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		HeartbeatNodeId:              ua.NewNumericNodeID(0, 2258), // 2258 is the nodeID for CurrentTime, only in tests this is different
 		PollRate:                     pollRate,
 		browseWaitGroup:              sync.WaitGroup{},
+		browseErrorChan:              make(chan error, 1),
 	}
 
 	return service.AutoRetryNacksBatched(m), nil
@@ -203,6 +204,7 @@ type OPCUAInput struct {
 	PollRate                     int
 	browseCancel                 context.CancelFunc
 	browseWaitGroup              sync.WaitGroup
+	browseErrorChan              chan error
 }
 
 // Connect establishes a connection to the OPC UA server.
@@ -258,10 +260,29 @@ func (g *OPCUAInput) Connect(ctx context.Context) (err error) {
 		g.Log.Infof("Please note that browsing large node trees can take some time")
 		if err := g.BrowseAndSubscribeIfNeeded(browseCtx); err != nil {
 			g.Log.Errorf("Failed to subscribe: %v", err)
-			_ = g.Close(browseCtx)
+
+			// Send the error to the error channel instead of calling Close directly
+			// This is a workaround to avoid a deadlock
+			select {
+			case g.browseErrorChan <- err:
+			default:
+				// If the channel is already full, do not block
+			}
+			return
 		}
 		// Set the heartbeat after browsing, as browsing might take some time
 		g.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
+	}()
+
+	// Start a goroutine to listen for browsing errors
+	go func() {
+		select {
+		case err := <-g.browseErrorChan:
+			g.Log.Infof("Received browsing error: %v. Initiating closure.", err)
+			_ = g.Close(ctx) // Now safe to call Close from a separate goroutine
+		case <-ctx.Done():
+			// Context canceled, no action needed
+		}
 	}()
 
 	return nil
@@ -371,6 +392,17 @@ func (g *OPCUAInput) Close(ctx context.Context) error {
 // This function is intended for scenarios where closing the client is expected
 // and should not be treated as an error (e.g., when attempting multiple client connections).
 func (g *OPCUAInput) CloseExpected(ctx context.Context) {
+	// Cancel the browsing goroutine if it exists
+	if g.browseCancel != nil {
+		g.browseCancel()
+		g.browseCancel = nil
+
+		// Wait for the goroutine to finish
+		g.Log.Infof("Waiting for browsing subroutine to finish...")
+		g.browseWaitGroup.Wait()
+		g.Log.Infof("Browsing subroutine finished")
+	}
+
 	g.Log.Infof("Initiating expected closure of OPC UA client...")
 	g.closeRaw(ctx)
 	g.Log.Infof("OPC UA client closed successfully.")
