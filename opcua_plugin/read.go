@@ -231,8 +231,8 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 		}
 	}
 
-	// Wait for a second before returning a message.
-	time.Sleep(time.Second)
+	// Wait for the configured poll rate before returning a message.
+	time.Sleep(time.Duration(g.PollRate) * time.Millisecond)
 
 	return msgs, func(ctx context.Context, err error) error {
 		// Nacks are retried automatically when we use service.AutoRetryNacks
