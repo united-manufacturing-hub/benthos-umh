@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
+	"strings"
 
-	"github.com/gopcua/opcua/id"
 	"github.com/gopcua/opcua/ua"
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 // GetNodeTree returns the tree structure of the OPC UA server nodes
@@ -31,76 +31,99 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 		}
 	}()
 
-	var wg sync.WaitGroup
+	nodeChan := make(chan NodeDef, MaxTagsToBrowse)
+	errChan := make(chan error, MaxTagsToBrowse)
+	nodeIDChan := make(chan []string, MaxTagsToBrowse)
+
+	nodeIDMap := make(map[string]string)
+	nodes := make([]NodeDef, 0, MaxTagsToBrowse)
+
+	var wg TrackedWaitGroup
 	wg.Add(1)
-	g.browseChildren(ctx, &wg, 0, rootNode, id.HierarchicalReferences, msgChan)
+	browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", 0, g.Log, rootNode.NodeId.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, nodeIDChan)
+	go collectNodesFromChannel(ctx, nodeChan, &nodes, msgChan, &wg)
+	go logErrors(ctx, errChan, g.Log)
+	go collectNodeIDFromChannel(ctx, nodeIDChan, nodeIDMap)
+
 	wg.Wait()
-	close(msgChan)
+
+	close(nodeChan)
+	close(errChan)
+	close(nodeIDChan)
+
+	// By this time, nodeIDMap and nodes are populated with the nodes and nodeIDs
+	for _, node := range nodes {
+		InsertNode(rootNode, node, nodeIDMap)
+	}
 	return rootNode, nil
 }
 
-// browseChildren recursively browses the OPC UA server nodes and builds a tree structure
-func (g *OPCUAInput) browseChildren(ctx context.Context, wg *sync.WaitGroup, level int, parent *Node, referenceType uint32, msgChan chan<- string) {
-	defer wg.Done()
-	// Recursion limit only goes up to 10 levels
-	if level >= 10 {
-		return
-	}
-
-	// Check if the context is cancelled
-	select {
-	case <-ctx.Done():
-		return
-	default:
-		// continue to do other operation
-	}
-
-	go func() {
-		msgChan <- fmt.Sprintf("Fetching result for node:  %s", parent.Name)
-	}()
-
-	node := g.Client.Node(parent.NodeId)
-	nodeClass, err := node.NodeClass(ctx)
-	if err != nil {
-		g.Log.Warnf("error getting nodeClass for node ID %s: %v", parent.NodeId, err)
-		return
-	}
-
-	refs, err := node.ReferencedNodes(ctx, referenceType, ua.BrowseDirectionForward, ua.NodeClassAll, true)
-	if err != nil {
-		g.Log.Warnf("error browsing children: %v", err)
-		return
-	}
-
-	for _, ref := range refs {
-		newNode := g.Client.Node(ref.ID)
-		newNodeName, err := newNode.BrowseName(ctx)
-		if err != nil {
-			g.Log.Warnf("error browsing children: %v", err)
-			continue
-
-		}
-		if newNodeName == nil {
-			g.Log.Warnf("newNodeName is nil for node ID %s", ref.ID)
-			continue
-		}
-		child := &Node{
-			NodeId:   ref.ID,
-			Name:     newNodeName.Name,
-			Children: make([]*Node, 0),
-		}
-		parent.Children = append(parent.Children, child)
-		if nodeClass == ua.NodeClassVariable {
-			wg.Add(1)
-			go g.browseChildren(ctx, wg, level+1, child, id.HasComponent, msgChan)
-		}
-
-		if nodeClass == ua.NodeClassObject {
-			wg.Add(4)
-			go g.browseChildren(ctx, wg, level+1, child, id.HasComponent, msgChan)
-			go g.browseChildren(ctx, wg, level+1, child, id.Organizes, msgChan)
-			go g.browseChildren(ctx, wg, level+1, child, id.FolderType, msgChan)
-			go g.browseChildren(ctx, wg, level+1, child, id.HasNotifier, msgChan)
+func collectNodesFromChannel(ctx context.Context, nodeChan chan NodeDef, nodes *[]NodeDef, msgChan chan<- string, wg *TrackedWaitGroup) {
+	for n := range nodeChan {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			*nodes = append(*nodes, n)
+			// Send a more detailed message about the browsing progress using WaitGroup count
+			msgChan <- fmt.Sprintf("found node '%s' (%d active browse operations)",
+				n.BrowseName, wg.Count())
 		}
 	}
+}
+
+func logErrors(ctx context.Context, errChan chan error, logger *service.Logger) {
+	for err := range errChan {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			logger.Errorf("error browsing children while constructing the node tree: %v", err)
+		}
+	}
+}
+
+func collectNodeIDFromChannel(ctx context.Context, nodeIDChan chan []string, nodeIDMap map[string]string) {
+	for i := range nodeIDChan {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			if len(i) == 2 {
+				nodeIDMap[i[0]] = i[1]
+			}
+		}
+	}
+}
+
+func InsertNode(rootNode *Node, node NodeDef, nodeIDMap map[string]string) {
+	current := rootNode
+	if current.ChildIDMap == nil {
+		current.ChildIDMap = make(map[string]*Node)
+	}
+	if current.Children == nil {
+		current.Children = make([]*Node, 0)
+	}
+
+	paths := strings.Split(node.Path, ".")
+	for _, part := range paths {
+		if _, exists := current.ChildIDMap[part]; !exists {
+			current.ChildIDMap[part] = &Node{
+				Name:       part,
+				NodeId:     ua.NewStringNodeID(0, FindID(nodeIDMap, part)),
+				ChildIDMap: make(map[string]*Node),
+				Children:   make([]*Node, 0),
+			}
+			current.Children = append(current.Children, current.ChildIDMap[part])
+		}
+		current = current.ChildIDMap[part]
+	}
+}
+
+// FindID finds the ID from the dictionary
+func FindID(dictionary map[string]string, nodeName string) string {
+	if id, ok := dictionary[nodeName]; ok {
+		return id
+	}
+	return "unknown"
 }
