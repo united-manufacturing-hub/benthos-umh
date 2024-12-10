@@ -68,7 +68,7 @@ nodered_js:
 
 			jsonStr, err := json.Marshal(structured)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(jsonStr)).To(Equal(`{"payload":"test"}`))
+			Expect(string(jsonStr)).To(Equal(`"test"`))
 		})
 
 		It("should modify message payload", func() {
@@ -122,7 +122,7 @@ nodered_js:
 
 			jsonStr, err := json.Marshal(structured)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(jsonStr)).To(Equal(`{"payload":3}`))
+			Expect(string(jsonStr)).To(Equal(`3`))
 		})
 
 		It("should create new message", func() {
@@ -176,7 +176,7 @@ nodered_js:
 
 			jsonStr, err := json.Marshal(structured)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(jsonStr)).To(Equal(`{"payload":"new message"}`))
+			Expect(string(jsonStr)).To(Equal(`"new message"`))
 		})
 
 		It("should drop messages when returning null", func() {
@@ -434,9 +434,17 @@ nodered_js:
 
 			msg := messages[0]
 			// Check metadata
-			Expect(msg.MetaGet("processed")).To(Equal("true"))
-			Expect(msg.MetaGet("count")).To(Equal("1"))
-			Expect(msg.MetaGet("source")).To(Equal("modified-original"))
+			processed, exists := msg.MetaGet("processed")
+			Expect(exists).To(BeTrue())
+			Expect(processed).To(Equal("true"))
+
+			count, exists := msg.MetaGet("count")
+			Expect(exists).To(BeTrue())
+			Expect(count).To(Equal("1"))
+
+			source, exists := msg.MetaGet("source")
+			Expect(exists).To(BeTrue())
+			Expect(source).To(Equal("modified-original"))
 		})
 
 		It("should preserve metadata when not modified", func() {
@@ -487,7 +495,9 @@ nodered_js:
 
 			msg := messages[0]
 			// Check metadata is preserved
-			Expect(msg.MetaGet("original")).To(Equal("value"))
+			original, exists := msg.MetaGet("original")
+			Expect(exists).To(BeTrue())
+			Expect(original).To(Equal("value"))
 		})
 	})
 })

@@ -92,24 +92,31 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		// Convert the Benthos message to a map
 		jsMsg, err := msg.AsStructured()
 		if err != nil {
-			// If message can't be converted to structured format, use it as-is
+			// If message can't be converted to structured format, wrap it in a payload field
 			bytes, _ := msg.AsBytes()
-			jsMsg = string(bytes)
+			jsMsg = map[string]interface{}{
+				"payload": string(bytes),
+			}
+		} else if _, ok := jsMsg.(map[string]interface{}); !ok {
+			// If it's not already a map, wrap it in a payload field
+			jsMsg = map[string]interface{}{
+				"payload": jsMsg,
+			}
 		}
 
 		// Create a wrapper object that contains both the message content and metadata
-		meta := make(map[string]string)
+		meta := make(map[string]interface{})
 		msg.MetaWalkMut(func(key string, value any) error {
-			meta[key] = value.(string)
+			meta[key] = value
 			return nil
 		})
-		msgWrapper := map[string]interface{}{
-			"payload": jsMsg,
-			"meta":    meta,
+		if m, ok := jsMsg.(map[string]interface{}); ok {
+			m["meta"] = meta
+			jsMsg = m
 		}
 
 		// Set up the msg variable in the JS environment
-		if err := vm.Set("msg", msgWrapper); err != nil {
+		if err := vm.Set("msg", jsMsg); err != nil {
 			u.errorCount.Incr(1)
 			u.logger.Errorf("Failed to set message in JS environment: %v\nMessage content: %v", err, jsMsg)
 			return []service.MessageBatch{}, nil
@@ -178,9 +185,11 @@ Message content: %v`,
 		if payload, exists := returnedMsg["payload"]; exists {
 			newMsg.SetStructured(payload)
 		}
-		if meta, exists := returnedMsg["meta"].(map[string]string); exists {
+		if meta, exists := returnedMsg["meta"].(map[string]interface{}); exists {
 			for k, v := range meta {
-				newMsg.MetaSet(k, v)
+				if str, ok := v.(string); ok {
+					newMsg.MetaSet(k, str)
+				}
 			}
 		}
 		resultBatch = append(resultBatch, newMsg)
