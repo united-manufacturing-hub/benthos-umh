@@ -278,4 +278,216 @@ nodered_js:
 			}, "500ms").Should(Equal(0))
 		})
 	})
+
+	When("handling different input types", func() {
+		It("should handle string input", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    msg.payload = msg.payload.toUpperCase();
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Create and send test message with string payload
+			testMsg := service.NewMessage([]byte("hello world"))
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			msg := messages[0]
+			structured, err := msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+
+			jsonStr, err := json.Marshal(structured)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(jsonStr)).To(Equal(`"HELLO WORLD"`))
+		})
+
+		It("should handle number input", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    msg.payload = msg.payload * 2;
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Create and send test message with number payload
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured(42)
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			msg := messages[0]
+			structured, err := msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+
+			jsonStr, err := json.Marshal(structured)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(jsonStr)).To(Equal(`84`))
+		})
+
+		It("should handle metadata", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    // Add new metadata
+    msg.meta.processed = "true";
+    msg.meta.count = "1";
+    
+    // Modify existing metadata
+    msg.meta.source = "modified-" + msg.meta.source;
+    
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Create message with metadata
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured(map[string]interface{}{
+				"payload": "test",
+			})
+			testMsg.MetaSet("source", "original")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			msg := messages[0]
+			// Check metadata
+			Expect(msg.MetaGet("processed")).To(Equal("true"))
+			Expect(msg.MetaGet("count")).To(Equal("1"))
+			Expect(msg.MetaGet("source")).To(Equal("modified-original"))
+		})
+
+		It("should preserve metadata when not modified", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    // Only modify payload, leave metadata unchanged
+    msg.payload = "modified";
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Create message with metadata
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured(map[string]interface{}{
+				"payload": "test",
+			})
+			testMsg.MetaSet("original", "value")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			msg := messages[0]
+			// Check metadata is preserved
+			Expect(msg.MetaGet("original")).To(Equal("value"))
+		})
+	})
 })

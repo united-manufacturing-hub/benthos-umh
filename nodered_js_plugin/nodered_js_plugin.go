@@ -21,15 +21,25 @@ func init() {
 return msg;
 
 // Example 2: Modify message payload
-msg.payload = msg.payload.length;
+msg.payload = msg.payload.toString().length;
 return msg;
 
 // Example 3: Create new message
 var newMsg = { payload: msg.payload.length };
 return newMsg;
 
-// Example 4: Stop the flow
-return null;`))
+// Example 4: Drop/stop processing this message
+console.log("Dropping message");
+return null;
+
+// Example 5: Log message content
+console.log("Processing message with payload:", msg.payload);
+console.log("Message metadata:", msg.meta);
+
+// Example 6: Modify metadata
+msg.meta.processed = true;
+msg.meta.count = (msg.meta.count || 0) + 1;
+return msg;`))
 
 	err := service.RegisterBatchProcessor(
 		"nodered_js",
@@ -42,12 +52,6 @@ return null;`))
 			// Wrap the user's code in a function that handles the return value
 			wrappedCode := fmt.Sprintf(`
 				(function(){
-					var node = {
-						log: function(msg) { console.log(msg); },
-						warn: function(msg) { console.warn(msg); },
-						error: function(msg) { console.error(msg); },
-						status: function(status) { /* TODO: Implement status */ }
-					};
 					%s
 				})()
 			`, code)
@@ -88,13 +92,24 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		// Convert the Benthos message to a map
 		jsMsg, err := msg.AsStructured()
 		if err != nil {
-			u.errorCount.Incr(1)
-			u.logger.Errorf("Failed to convert message to structured format: %v\nMessage content: %v", err, msg)
-			return []service.MessageBatch{}, nil
+			// If message can't be converted to structured format, use it as-is
+			bytes, _ := msg.AsBytes()
+			jsMsg = string(bytes)
+		}
+
+		// Create a wrapper object that contains both the message content and metadata
+		meta := make(map[string]string)
+		msg.MetaWalkMut(func(key string, value any) error {
+			meta[key] = value.(string)
+			return nil
+		})
+		msgWrapper := map[string]interface{}{
+			"payload": jsMsg,
+			"meta":    meta,
 		}
 
 		// Set up the msg variable in the JS environment
-		if err := vm.Set("msg", jsMsg); err != nil {
+		if err := vm.Set("msg", msgWrapper); err != nil {
 			u.errorCount.Incr(1)
 			u.logger.Errorf("Failed to set message in JS environment: %v\nMessage content: %v", err, jsMsg)
 			return []service.MessageBatch{}, nil
@@ -160,7 +175,14 @@ Message content: %v`,
 
 		// Create a new message with the returned content
 		newMsg := service.NewMessage(nil)
-		newMsg.SetStructured(returnedMsg)
+		if payload, exists := returnedMsg["payload"]; exists {
+			newMsg.SetStructured(payload)
+		}
+		if meta, exists := returnedMsg["meta"].(map[string]string); exists {
+			for k, v := range meta {
+				newMsg.MetaSet(k, v)
+			}
+		}
 		resultBatch = append(resultBatch, newMsg)
 	}
 
