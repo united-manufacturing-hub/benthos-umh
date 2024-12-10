@@ -741,6 +741,294 @@ There are basically 2 ways for setting up the connection. One approach involves 
 
 Similar to the OPC UA input, this outputs for each address a single message with the payload being the value that was read. To distinguish messages, you can use meta("symbol_name") in a following benthos bloblang processor.
 
+### Node-RED JavaScript Processor
+
+The Node-RED JavaScript processor allows you to write JavaScript code to process messages in a style similar to Node-RED function nodes. This makes it easy to port existing Node-RED functions to Benthos or write new processing logic using familiar JavaScript syntax.
+
+#### Configuration
+
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // Your JavaScript code here
+          return msg;
+```
+
+#### Message Format
+
+Messages in Benthos and in the JavaScript processor are handled differently:
+
+**In Benthos/Bloblang:**
+```yaml
+# Message content is the message itself
+root = this   # accesses the message content
+
+# Metadata is accessed via meta() function
+meta("some_key")   # gets metadata value
+meta some_key = "value"   # sets metadata
+```
+
+**In JavaScript (Node-RED style):**
+```javascript
+// Message content is in msg.payload
+msg.payload   // accesses the message content
+
+// Metadata is in msg.meta
+msg.meta.some_key   // accesses metadata
+```
+
+The processor automatically converts between these formats.
+
+#### Examples
+
+1. **Pass Through Message**
++Input message:
+```json
+{
+  "temperature": 25.5,
+  "humidity": 60
+}
+```
+
+Metadata:
+```yaml
+sensor_id: "temp_1"
+location: "room_a"
+```
+
+JavaScript code:
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // Message arrives as:
+          // msg.payload = {"temperature": 25.5, "humidity": 60}
+          // msg.meta = {"sensor_id": "temp_1", "location": "room_a"}
+          
+          // Simply pass through
+          return msg;
+```
+
+Output: Identical to input
+
+2. **Modify Message Payload**
++Input message:
+```json
+["apple", "banana", "orange"]
+```
+
+JavaScript code:
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // msg.payload = ["apple", "banana", "orange"]
+          msg.payload = msg.payload.length;
+          return msg;
+```
+
+Output message:
+```json
+3
+```
+
+3. **Create New Message**
++Input message:
+```json
+{
+  "raw_value": 1234
+}
+```
+
+JavaScript code:
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // Create new message with transformed data
+          var newMsg = { 
+            payload: {
+              processed_value: msg.payload.raw_value * 2,
+              timestamp: Date.now()
+            }
+          };
+          return newMsg;
+```
+
+Output message:
+```json
+{
+  "processed_value": 2468,
+  "timestamp": 1710254879123
+}
+```
+
+4. **Drop Messages (Filter)**
++Input messages:
+```json
+{"status": "ok"}
+{"status": "error"}
+{"status": "ok"}
+```
+
+JavaScript code:
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // Only pass through messages with status "ok"
+          if (msg.payload.status === "error") {
+            return null;  // Message will be dropped
+          }
+          return msg;
+```
+
+Output: Only messages with status "ok" pass through
+
+5. **Working with Metadata**
++Input message:
+```json
+{"value": 42}
+```
+
+Metadata:
+```yaml
+source: "sensor_1"
+```
+
+JavaScript code:
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // Add processing information to metadata
+          msg.meta.processed = "true";
+          msg.meta.count = "1";
+          
+          // Modify existing metadata
+          if (msg.meta.source) {
+            msg.meta.source = "modified-" + msg.meta.source;
+          }
+          
+          return msg;
+```
+
+Output message: Same as input
+
+Output metadata:
+```yaml
+source: "modified-sensor_1"
+processed: "true"
+count: "1"
+```
+
+Equivalent Bloblang:
+```coffee
+meta processed = "true"
+meta count = "1"
+meta source = "modified-" + meta("source")
+```
+
+6. **String Manipulation**
++Input message:
+```json
+"hello world"
+```
+
+JavaScript code:
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // Convert to uppercase
+          msg.payload = msg.payload.toUpperCase();
+          return msg;
+```
+
+Output message:
+```json
+"HELLO WORLD"
+```
+
+7. **Numeric Operations**
++Input message:
+```json
+42
+```
+
+JavaScript code:
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // Double a number
+          msg.payload = msg.payload * 2;
+          return msg;
+```
+
+Output message:
+```json
+84
+```
+
+8. **Logging**
++Input message:
+```json
+{
+  "sensor": "temp_1",
+  "value": 25.5
+}
+```
+
+Metadata:
+```yaml
+timestamp: "2024-03-12T12:00:00Z"
+```
+
+JavaScript code:
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // Log various aspects of the message
+          console.log("Processing temperature reading:", msg.payload.value);
+          console.log("From sensor:", msg.payload.sensor);
+          console.log("At time:", msg.meta.timestamp);
+          
+          if (msg.payload.value > 30) {
+            console.warn("High temperature detected!");
+          }
+          
+          return msg;
+```
+
+Output: Same as input, with log messages in Benthos logs
+
+#### Metrics
+
+The processor exposes several metrics:
+
+- `messages_processed`: Total number of messages that have been processed
+- `messages_errored`: Number of messages that failed to process (due to JavaScript errors)
+- `messages_dropped`: Number of messages intentionally dropped (via `return null`)
+
+These metrics can be used to:
+- Monitor the health of your processing pipeline
+- Track how many messages are being filtered out
+- Identify potential issues with your JavaScript code
+
+For example, if you see a high number of `messages_errored`, you might want to check your JavaScript code for errors or add more error handling.
+
 ## Testing
 
 We execute automated tests and verify that benthos-umh works against various targets. All tests are started with `make test`, but might require environment parameters in order to not be skipped.

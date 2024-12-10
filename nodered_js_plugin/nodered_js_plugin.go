@@ -64,20 +64,20 @@ return msg;`))
 
 // NodeREDJSProcessor defines the processor that wraps the JavaScript processor.
 type NodeREDJSProcessor struct {
-	code            string
-	logger          *service.Logger
-	executionCount  *service.MetricCounter
-	errorCount      *service.MetricCounter
-	nullReturnCount *service.MetricCounter
+	code              string
+	logger            *service.Logger
+	messagesProcessed *service.MetricCounter
+	messagesErrored   *service.MetricCounter
+	messagesDropped   *service.MetricCounter
 }
 
 func newNodeREDJSProcessor(code string, logger *service.Logger, metrics *service.Metrics) *NodeREDJSProcessor {
 	return &NodeREDJSProcessor{
-		code:            code,
-		logger:          logger,
-		executionCount:  metrics.NewCounter("execution_count"),
-		errorCount:      metrics.NewCounter("error_count"),
-		nullReturnCount: metrics.NewCounter("null_return_count"),
+		code:              code,
+		logger:            logger,
+		messagesProcessed: metrics.NewCounter("messages_processed"),
+		messagesErrored:   metrics.NewCounter("messages_errored"),
+		messagesDropped:   metrics.NewCounter("messages_dropped"),
 	}
 }
 
@@ -86,22 +86,15 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 	var resultBatch service.MessageBatch
 
 	for _, msg := range batch {
-		u.executionCount.Incr(1)
+		u.messagesProcessed.Incr(1)
 		vm := goja.New()
 
 		// Convert the Benthos message to a map
 		jsMsg, err := msg.AsStructured()
 		if err != nil {
-			// If message can't be converted to structured format, wrap it in a payload field
-			bytes, _ := msg.AsBytes()
-			jsMsg = map[string]interface{}{
-				"payload": string(bytes),
-			}
-		} else if _, ok := jsMsg.(map[string]interface{}); !ok {
-			// If it's not already a map, wrap it in a payload field
-			jsMsg = map[string]interface{}{
-				"payload": jsMsg,
-			}
+			u.messagesErrored.Incr(1)
+			u.logger.Errorf("Failed to convert message to structured format: %v\nMessage content: %v", err, msg)
+			return []service.MessageBatch{}, nil
 		}
 
 		// Create a wrapper object that contains both the message content and metadata
@@ -117,7 +110,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 
 		// Set up the msg variable in the JS environment
 		if err := vm.Set("msg", jsMsg); err != nil {
-			u.errorCount.Incr(1)
+			u.messagesErrored.Incr(1)
 			u.logger.Errorf("Failed to set message in JS environment: %v\nMessage content: %v", err, jsMsg)
 			return []service.MessageBatch{}, nil
 		}
@@ -129,7 +122,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 			"error": func(msg string) { u.logger.Error(msg) },
 		}
 		if err := vm.Set("console", console); err != nil {
-			u.errorCount.Incr(1)
+			u.messagesErrored.Incr(1)
 			u.logger.Errorf("Failed to set console in JS environment: %v\nMessage content: %v", err, jsMsg)
 			return []service.MessageBatch{}, nil
 		}
@@ -137,7 +130,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		// Execute the user-provided JavaScript code
 		result, err := vm.RunString(u.code)
 		if err != nil {
-			u.errorCount.Incr(1)
+			u.messagesErrored.Incr(1)
 			// Check if it's a JavaScript error with stack trace
 			if jsErr, ok := err.(*goja.Exception); ok {
 				stack := jsErr.String()
@@ -168,14 +161,14 @@ Message content: %v`,
 		// - If null/undefined is returned, stop processing this message
 		// - If an object is returned, use it as the new message
 		if result.Equals(goja.Undefined()) || result.Equals(goja.Null()) {
-			u.nullReturnCount.Incr(1)
+			u.messagesDropped.Incr(1)
 			u.logger.Debug("Message dropped due to null/undefined return")
 			continue
 		}
 
 		returnedMsg, ok := result.Export().(map[string]interface{})
 		if !ok {
-			u.errorCount.Incr(1)
+			u.messagesErrored.Incr(1)
 			u.logger.Error("Function must return a message object or null")
 			return nil, fmt.Errorf("function must return a message object or null")
 		}
