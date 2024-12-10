@@ -3,6 +3,7 @@ package nodered_js_plugin_test
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -14,6 +15,16 @@ import (
 )
 
 var _ = Describe("NodeREDJS Processor", func() {
+	BeforeEach(func() {
+		testActivated := os.Getenv("TEST_NODERED_JS")
+
+		// Check if environment variables are set
+		if testActivated == "" {
+			Skip("Skipping Node-RED JS tests: TEST_NODERED_JS not set")
+			return
+		}
+	})
+
 	When("using a stream builder", func() {
 		It("should pass through messages unchanged", func() {
 			builder := service.NewStreamBuilder()
