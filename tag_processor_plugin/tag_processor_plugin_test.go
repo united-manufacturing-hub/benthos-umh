@@ -2,7 +2,9 @@ package tag_processor_plugin_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -96,7 +98,13 @@ tag_processor:
 
 			value, ok := payload["temperature"]
 			Expect(ok).To(BeTrue())
-			Expect(value).To(Equal("23.5"))
+
+			// Convert json.Number to float64
+			numValue, ok := value.(json.Number)
+			Expect(ok).To(BeTrue())
+			floatValue, err := numValue.Float64()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(floatValue).To(BeNumerically("==", 23.5))
 
 			_, ok = payload["timestamp_ms"]
 			Expect(ok).To(BeTrue())
@@ -109,7 +117,7 @@ tag_processor:
 			msgHandler, err := builder.AddProducerFunc()
 			Expect(err).NotTo(HaveOccurred())
 
-			err = builder.AddProcessorYAML(`
+			yamlConfig := strings.TrimSpace(`
 tag_processor:
   defaults: |
     msg.meta.level0 = "enterprise";
@@ -121,7 +129,9 @@ tag_processor:
       then: |
         msg.meta.level2 = "SpecialArea";
         msg.meta.tagName = "temperature";
+        return msg;
 `)
+			err = builder.AddProcessorYAML(yamlConfig)
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
@@ -183,7 +193,13 @@ tag_processor:
 
 			value, ok := payload["temperature"]
 			Expect(ok).To(BeTrue())
-			Expect(value).To(Equal("23.5"))
+
+			// Convert json.Number to float64
+			numValue, ok := value.(json.Number)
+			Expect(ok).To(BeTrue())
+			floatValue, err := numValue.Float64()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(floatValue).To(BeNumerically("==", 23.5))
 
 			_, ok = payload["timestamp_ms"]
 			Expect(ok).To(BeTrue())
@@ -263,7 +279,13 @@ tag_processor:
 
 			value, ok := payload["temperature"]
 			Expect(ok).To(BeTrue())
-			Expect(value).To(Equal(float64(47)))
+
+			// Convert json.Number to float64
+			numValue, ok := value.(json.Number)
+			Expect(ok).To(BeTrue())
+			floatValue, err := numValue.Float64()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(floatValue).To(BeNumerically("==", 47))
 
 			_, ok = payload["timestamp_ms"]
 			Expect(ok).To(BeTrue())
@@ -333,9 +355,11 @@ tag_processor:
     - if: msg.meta.folder.startsWith("OEE")
       then: |
         msg.meta.level2 = "OEEArea";
+        return msg;
     - if: msg.meta.opcua_node_id === "ns=1;i=2245"
       then: |
         msg.meta.tagName = "temperature";
+        return msg;
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -402,7 +426,13 @@ tag_processor:
 
 			value, ok := payload["temperature"]
 			Expect(ok).To(BeTrue())
-			Expect(value).To(Equal("23.5"))
+
+			// Convert json.Number to float64
+			numValue, ok := value.(json.Number)
+			Expect(ok).To(BeTrue())
+			floatValue, err := numValue.Float64()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(floatValue).To(BeNumerically("==", 23.5))
 
 			_, ok = payload["timestamp_ms"]
 			Expect(ok).To(BeTrue())
