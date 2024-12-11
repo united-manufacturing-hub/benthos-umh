@@ -8,60 +8,6 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-// init registers the nodered_js processor.
-func init() {
-	spec := service.NewConfigSpec().
-		Version("1.0.0").
-		Summary("A Node-RED style JavaScript processor.").
-		Description("Executes user-defined JavaScript code to process messages in a format similar to Node-RED functions.").
-		Field(service.NewStringField("code").
-			Description("The JavaScript code to execute. The code should be a function that processes the message.").
-			Example(`// Node-RED style function that returns the modified message
-// Example 1: Return message as-is
-return msg;
-
-// Example 2: Modify message payload
-msg.payload = msg.payload.toString().length;
-return msg;
-
-// Example 3: Create new message
-var newMsg = { payload: msg.payload.length };
-return newMsg;
-
-// Example 4: Drop/stop processing this message
-console.log("Dropping message");
-return null;
-
-// Example 5: Log message content
-console.log("Processing message with payload:", msg.payload);
-console.log("Message metadata:", msg.meta);
-
-// Example 6: Modify metadata
-msg.meta.processed = true;
-msg.meta.count = (msg.meta.count || 0) + 1;
-return msg;`))
-
-	err := service.RegisterBatchProcessor(
-		"nodered_js",
-		spec,
-		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
-			code, err := conf.FieldString("code")
-			if err != nil {
-				return nil, err
-			}
-			// Wrap the user's code in a function that handles the return value
-			wrappedCode := fmt.Sprintf(`
-				(function(){
-					%s
-				})()
-			`, code)
-			return newNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics()), nil
-		})
-	if err != nil {
-		panic(err)
-	}
-}
-
 // NodeREDJSProcessor defines the processor that wraps the JavaScript processor.
 type NodeREDJSProcessor struct {
 	code              string
@@ -71,7 +17,8 @@ type NodeREDJSProcessor struct {
 	messagesDropped   *service.MetricCounter
 }
 
-func newNodeREDJSProcessor(code string, logger *service.Logger, metrics *service.Metrics) *NodeREDJSProcessor {
+// NewNodeREDJSProcessor creates a new NodeREDJSProcessor instance.
+func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service.Metrics) *NodeREDJSProcessor {
 	return &NodeREDJSProcessor{
 		code:              code,
 		logger:            logger,
@@ -81,8 +28,8 @@ func newNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 	}
 }
 
-// Helper function to convert a Benthos message to a JavaScript-compatible object
-func convertMessageToJSObject(msg *service.Message) (map[string]interface{}, error) {
+// ConvertMessageToJSObject converts a Benthos message to a JavaScript-compatible object.
+func ConvertMessageToJSObject(msg *service.Message) (map[string]interface{}, error) {
 	jsMsg, err := msg.AsStructured()
 	if err != nil {
 		// If message can't be converted to structured format, wrap it in a payload field
@@ -105,8 +52,8 @@ func convertMessageToJSObject(msg *service.Message) (map[string]interface{}, err
 	return jsMsg.(map[string]interface{}), nil
 }
 
-// Helper function to setup the JavaScript VM environment
-func (u *NodeREDJSProcessor) setupJSEnvironment(vm *goja.Runtime, jsMsg map[string]interface{}) error {
+// SetupJSEnvironment sets up the JavaScript VM environment.
+func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[string]interface{}) error {
 	// Set up the msg variable in the JS environment
 	if err := vm.Set("msg", jsMsg); err != nil {
 		return fmt.Errorf("failed to set message in JS environment: %v", err)
@@ -125,8 +72,8 @@ func (u *NodeREDJSProcessor) setupJSEnvironment(vm *goja.Runtime, jsMsg map[stri
 	return nil
 }
 
-// Helper function to handle JavaScript execution results
-func (u *NodeREDJSProcessor) handleExecutionResult(result goja.Value) (*service.Message, bool, error) {
+// HandleExecutionResult handles JavaScript execution results.
+func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) (*service.Message, bool, error) {
 	// Handle null/undefined returns
 	if result.Equals(goja.Undefined()) || result.Equals(goja.Null()) {
 		u.messagesDropped.Incr(1)
@@ -165,7 +112,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		vm := goja.New()
 
 		// Convert message to JS object
-		jsMsg, err := convertMessageToJSObject(msg)
+		jsMsg, err := ConvertMessageToJSObject(msg)
 		if err != nil {
 			u.messagesErrored.Incr(1)
 			u.logger.Errorf("%v\nOriginal message: %v", err, msg)
@@ -185,7 +132,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		jsMsg["meta"] = meta
 
 		// Setup JS environment
-		if err := u.setupJSEnvironment(vm, jsMsg); err != nil {
+		if err := u.SetupJSEnvironment(vm, jsMsg); err != nil {
 			u.messagesErrored.Incr(1)
 			u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
 			continue
@@ -200,7 +147,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		}
 
 		// Handle the execution result
-		newMsg, shouldKeep, err := u.handleExecutionResult(result)
+		newMsg, shouldKeep, err := u.HandleExecutionResult(result)
 		if err != nil {
 			u.messagesErrored.Incr(1)
 			u.logger.Errorf("%v\nMessage content: %v\nReturned value: %v", err, jsMsg, result.Export())
@@ -247,4 +194,57 @@ Message content: %v`,
 // Close gracefully shuts down the processor.
 func (u *NodeREDJSProcessor) Close(ctx context.Context) error {
 	return nil
+}
+
+func init() {
+	spec := service.NewConfigSpec().
+		Version("1.0.0").
+		Summary("A Node-RED style JavaScript processor.").
+		Description("Executes user-defined JavaScript code to process messages in a format similar to Node-RED functions.").
+		Field(service.NewStringField("code").
+			Description("The JavaScript code to execute. The code should be a function that processes the message.").
+			Example(`// Node-RED style function that returns the modified message
+// Example 1: Return message as-is
+return msg;
+
+// Example 2: Modify message payload
+msg.payload = msg.payload.toString().length;
+return msg;
+
+// Example 3: Create new message
+var newMsg = { payload: msg.payload.length };
+return newMsg;
+
+// Example 4: Drop/stop processing this message
+console.log("Dropping message");
+return null;
+
+// Example 5: Log message content
+console.log("Processing message with payload:", msg.payload);
+console.log("Message metadata:", msg.meta);
+
+// Example 6: Modify metadata
+msg.meta.processed = true;
+msg.meta.count = (msg.meta.count || 0) + 1;
+return msg;`))
+
+	err := service.RegisterBatchProcessor(
+		"nodered_js",
+		spec,
+		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
+			code, err := conf.FieldString("code")
+			if err != nil {
+				return nil, err
+			}
+			// Wrap the user's code in a function that handles the return value
+			wrappedCode := fmt.Sprintf(`
+				(function(){
+					%s
+				})()
+			`, code)
+			return NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics()), nil
+		})
+	if err != nil {
+		panic(err)
+	}
 }
