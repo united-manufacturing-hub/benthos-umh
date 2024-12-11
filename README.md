@@ -1075,28 +1075,30 @@ pipeline:
    - Can modify both metadata and payload
    - Must return a message object
 
-#### Topic Generation
+#### Metadata Fields
 
-The processor automatically generates a topic string from metadata fields in this format:
-```
-umh.v1.[level0].[level1].[level2].[level3].[level4].[schema].[virtualPath].[tagName]
-```
+The processor uses the following metadata fields:
 
-Where:
-- All fields except `level0`, `schema`, and `tagName` are optional
-- Empty or missing fields are skipped
-- Fields are joined with dots
-- The topic always starts with "umh.v1"
-- `virtualPath` can contain dots to create nested virtual paths (e.g., "OEE.area1.line2")
-
-#### Required Metadata Fields
-
-The processor enforces certain required metadata fields:
-
+**Required Fields:**
 - `level0`: Top-level hierarchy (e.g., "enterprise")
-- `schema`: Data schema identifier (e.g., "_historian")
-- `tagName`: Name of the tag/variable
-- `virtualPath` (optional): A logical, non-physical grouping path that can use dots for nesting (e.g., "OEE.production.line1")
+- `schema`: Data schema identifier (e.g., "_historian", "_analytics")
+- `tagName`: Name of the tag/variable (e.g., "temperature", "pressure")
+
+**Optional Hierarchical Fields:**
+- `level1`: Second-level hierarchy (e.g., "site")
+- `level2`: Third-level hierarchy (e.g., "area")
+- `level3`: Fourth-level hierarchy (e.g., "line")
+- `level4`: Fifth-level hierarchy (e.g., "workcell")
+
+**Optional Organizational Fields:**
+- `virtualPath`: A logical, non-physical grouping path that can use dots for nesting (e.g., "axis.x"). Also known as "folder" in the UMH data model.
+
+**Generated Fields:**
+- `topic`: Automatically generated from the above fields in the format:
+  ```
+  umh.v1.<level0>.<level1>.<level2>.<level3>.<level4>.<schema>.<virtualPath>.<tagName>
+  ```
+  Empty or undefined fields are skipped, and dots are normalized.
 
 #### Message Structure
 
@@ -1104,13 +1106,42 @@ Messages in the Tag Processor follow the Node-RED style format:
 
 ```javascript
 {
-  payload: "value",  // The message content
-  meta: {           // Metadata fields
-    level0: "enterprise",
-    schema: "_historian",
-    tagName: "temperature",
-    virtualPath: "OEE.production.line1",  // Optional nested virtual path
-    // ... other metadata
+  payload: {
+    // The message content - can be a simple value or complex object
+    "temperature": 23.5,
+    "timestamp_ms": 1733903611000
+  },
+  meta: {
+    // Required fields
+    level0: "enterprise",           // Top-level hierarchy
+    schema: "_historian",           // Data schema identifier
+    tagName: "temperature",         // Name of the tag/variable
+
+    // Optional hierarchical fields
+    level1: "site_munich",         // Second-level hierarchy
+    level2: "area_assembly",       // Third-level hierarchy
+    level3: "line_final",          // Fourth-level hierarchy
+    level4: "cell_test",           // Fifth-level hierarchy
+
+    // Optional organizational field
+    virtualPath: "axis.x",         // Logical grouping path (can be nested), also known as "folder" in the UMH data model
+
+    // Generated field (by processor)
+    topic: "umh.v1.enterprise.site_munich.area_assembly.line_final.cell_test._historian.axis.x.temperature",
+
+    // Input-specific fields (e.g., from OPC UA)
+    opcua_node_id: "ns=1;i=2245",
+    opcua_tag_name: "temperature_sensor_1",
+    opcua_tag_group: "sensors.temperature",
+    opcua_tag_type: "number",
+    opcua_source_timestamp: "2024-03-12T10:00:00Z",
+    opcua_server_timestamp: "2024-03-12T10:00:00.001Z",
+    opcua_attr_nodeid: "ns=1;i=2245",
+    opcua_attr_nodeclass: "Variable",
+    opcua_attr_browsename: "Temperature",
+    opcua_attr_description: "Temperature Sensor 1",
+    opcua_attr_accesslevel: "CurrentRead",
+    opcua_attr_datatype: "Double"
   }
 }
 ```
@@ -1124,7 +1155,7 @@ tag_processor:
     msg.meta.level0 = "enterprise";
     msg.meta.schema = "_historian";
     msg.meta.tagName = "temperature";
-    msg.meta.virtualPath = "OEE.production";
+    msg.meta.virtualPath = "axis.x";
     return msg;
 ```
 
@@ -1140,7 +1171,7 @@ Output:
   "timestamp_ms": 1733903611000
 }
 ```
-Topic: `umh.v1.enterprise._historian.OEE.production.temperature`
+Topic: `umh.v1.enterprise._historian.axis.x.temperature`
 
 2. **Conditional Area Assignment**
 ```yaml
@@ -1149,7 +1180,7 @@ tag_processor:
     msg.meta.level0 = "enterprise";
     msg.meta.schema = "_historian";
     msg.meta.tagName = "default";
-    msg.meta.virtualPath = "OEE.area1";
+    msg.meta.virtualPath = "axis.x";
     return msg;
   conditions:
     - if: msg.meta.opcua_node_id === "ns=1;i=2245"
@@ -1171,7 +1202,7 @@ Output:
   "timestamp_ms": 1733903611000
 }
 ```
-Topic: `umh.v1.enterprise.SpecialArea._historian.OEE.area1.temperature`
+Topic: `umh.v1.enterprise.SpecialArea._historian.axis.x.temperature`
 
 3. **Advanced Processing with Value Transformation**
 ```yaml
@@ -1199,6 +1230,102 @@ Output:
 }
 ```
 Topic: `umh.v1.enterprise._historian.temperature`
+
+#### (upcoming) Accessing Historian Data via umh.getHistorianValue
+
+Within the advanced processing stage, you can access historical data from the UMH historian using umh.getHistorianValue(fullTagName). This function allows you to combine current OPC UA data with historical records.
+
+```js
+tag_processor:
+  defaults: |
+    msg.meta.level0 = "enterprise";
+    msg.meta.level1 = "site";
+    msg.meta.level2 = "area";
+    msg.meta.level3 = "line";
+    msg.meta.level4 = "workcell";
+    msg.meta.schema = "_analytics";
+    msg.meta.virtualPath = "work_order";
+    return msg;
+
+  # this assumes there are three tags: workorderid_SSX, workorderid_start_time, workorderid_end_time
+  # they are first all converted to the historian schema and stored in the historian
+  conditions:
+    - if: msg.meta.opcua_attr_browsename == "workorderid_SSX"
+      then: |
+        msg.meta.tagName = "current_work_order_id";
+        return msg;
+    - if: msg.meta.opcua_attr_browsename == "workorderid_start_time"
+      then: |
+        msg.meta.tagName = "work_order_start_time";
+        return msg;
+    - if: msg.meta.opcua_attr_browsename == "workorderid_end_time"
+      then: |
+        msg.meta.tagName = "work_order_end_time";
+        return msg;
+
+  # but now additionally if its the current work order id, we want to fetch the start and end time from the historian
+  advancedProcessing: |
+    if (msg.meta.tagName == "current_work_order_id") {
+      // Fetch related historical data using the work order context
+      var startTime = umh.getHistorianValue("umh.v1.enterprise.site.area.line.workcell._historian.work_order.start_time");
+      var endTime = umh.getHistorianValue("umh.v1.enterprise.site.area.line.workcell._historian.work_order.end_time");
+
+      // Create a new payload combining current and historical data
+      msg.payload = {
+        "work_order_id": msg.payload.current_work_order_id,
+        "work_order_start_time": startTime,
+        "work_order_end_time": endTime
+      };
+    }
+    return msg;
+```
+
+#### Message Handling Patterns
+
+The tag processor supports several message handling patterns in its JavaScript environment:
+
+1. **Dropping Messages**
+   To drop a message (prevent it from being processed further), return `null`:
+   ```js
+   advancedProcessing: |
+     if (msg.payload.value < 0) {
+       // Drop negative values
+       return null;
+     }
+     return msg;
+   ```
+
+2. **Creating New Messages**
+   To create an entirely new message, create a new object with payload and optional meta:
+   ```js
+   advancedProcessing: |
+     // Create a new message with transformed data
+     var newMsg = {
+       payload: {
+         transformed_value: msg.payload.value * 2,
+         timestamp: Date.now()
+       },
+       meta: {
+         level0: "enterprise",
+         schema: "_analytics",
+         tagName: "transformed_value"
+       }
+     };
+     return newMsg;
+   ```
+
+3. **Modifying Existing Messages**
+   To modify the existing message, update msg.payload and/or msg.meta:
+   ```js
+   advancedProcessing: |
+     // Update existing message
+     msg.payload = msg.payload * 2;
+     msg.meta.processed = "true";
+     return msg;
+   ```
+
+Remember that any message returned must include the required metadata fields (level0, schema, tagName) for proper topic construction.
+
 
 #### Metrics
 

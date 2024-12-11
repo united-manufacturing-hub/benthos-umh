@@ -12,8 +12,6 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin"
 )
 
-//TODO: change advanced processing to be applied at the end of processing the entire batch, to give the option to aggregate over the entire batch (e.g., merge into a single payload)
-
 type TagProcessorConfig struct {
 	Defaults           string            `json:"defaults" yaml:"defaults"`
 	Conditions         []ConditionConfig `json:"conditions" yaml:"conditions"`

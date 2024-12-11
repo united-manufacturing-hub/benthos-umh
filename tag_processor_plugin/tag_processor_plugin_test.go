@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -440,7 +441,7 @@ tag_processor:
 		})
 
 		It("should process work order data (skipped)", func() {
-			Skip("Skipping until umh.getTagFromFullTagName is implemented")
+			Skip("Skipping until umh.getHistorianValue is implemented")
 
 			builder := service.NewStreamBuilder()
 
@@ -460,8 +461,8 @@ tag_processor:
     msg.meta.folder = "work_order";
     msg.payload = {
       "work_order_id": msg.payload.work_order_id,
-      "work_order_start_time": umh.getTagFromFullTagName("enterprise.site.area.line.workcell._historian.workorder.work_order_start_time"),
-      "work_order_end_time": umh.getTagFromFullTagName("enterprise.site.area.line.workcell._historian.workorder.work_order_end_time")
+      "work_order_start_time": umh.getHistorianValue("enterprise.site.area.line.workcell._historian.workorder.work_order_start_time"),
+      "work_order_end_time": umh.getHistorianValue("enterprise.site.area.line.workcell._historian.workorder.work_order_end_time")
     };
     return msg;
 `)
@@ -540,7 +541,7 @@ tag_processor:
 			Expect(ok).To(BeTrue())
 			Expect(workOrderID).To(Equal("WO123"))
 
-			// These checks will be enabled once umh.getTagFromFullTagName is implemented
+			// These checks will be enabled once umh.getHistorianValue is implemented
 			_, ok = payload["work_order_start_time"]
 			Expect(ok).To(BeTrue())
 
@@ -632,6 +633,65 @@ tag_processor:
 
 			_, ok = payload["timestamp_ms"]
 			Expect(ok).To(BeTrue())
+		})
+
+		It("should drop messages when returning null", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.level0 = "enterprise";
+    msg.meta.schema = "_historian";
+    msg.meta.tagName = "temperature";
+    return msg;
+  advancedProcessing: |
+    if (msg.payload < 0) {
+      // Drop negative values
+      return null;
+    }
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var count int64
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				atomic.AddInt64(&count, 1)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Send a negative value that should be dropped
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured(-10)
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Send a positive value that should pass through
+			testMsg = service.NewMessage(nil)
+			testMsg.SetStructured(10)
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Wait a bit to ensure all messages are processed
+			time.Sleep(500 * time.Millisecond)
+
+			// Expect only one message (the positive value) to pass through
+			Expect(atomic.LoadInt64(&count)).To(Equal(int64(1)))
 		})
 	})
 })
