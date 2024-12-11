@@ -784,7 +784,7 @@ The processor automatically converts between these formats.
 #### Examples
 
 1. **Pass Through Message**
-+Input message:
+Input message:
 ```json
 {
   "temperature": 25.5,
@@ -815,7 +815,7 @@ pipeline:
 Output: Identical to input
 
 2. **Modify Message Payload**
-+Input message:
+Input message:
 ```json
 ["apple", "banana", "orange"]
 ```
@@ -837,7 +837,7 @@ Output message:
 ```
 
 3. **Create New Message**
-+Input message:
+Input message:
 ```json
 {
   "raw_value": 1234
@@ -869,7 +869,7 @@ Output message:
 ```
 
 4. **Drop Messages (Filter)**
-+Input messages:
+Input messages:
 ```json
 {"status": "ok"}
 {"status": "error"}
@@ -892,7 +892,7 @@ pipeline:
 Output: Only messages with status "ok" pass through
 
 5. **Working with Metadata**
-+Input message:
+Input message:
 ```json
 {"value": 42}
 ```
@@ -937,7 +937,7 @@ meta source = "modified-" + meta("source")
 ```
 
 6. **String Manipulation**
-+Input message:
+Input message:
 ```json
 "hello world"
 ```
@@ -959,7 +959,7 @@ Output message:
 ```
 
 7. **Numeric Operations**
-+Input message:
+Input message:
 ```json
 42
 ```
@@ -981,7 +981,7 @@ Output message:
 ```
 
 8. **Logging**
-+Input message:
+Input message:
 ```json
 {
   "sensor": "temp_1",

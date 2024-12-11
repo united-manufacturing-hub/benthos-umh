@@ -93,7 +93,12 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		jsMsg, err := msg.AsStructured()
 		if err != nil {
 			// If message can't be converted to structured format, wrap it in a payload field
-			bytes, _ := msg.AsBytes()
+			bytes, err := msg.AsBytes()
+			if err != nil {
+				u.messagesErrored.Incr(1)
+				u.logger.Errorf("Failed to convert message to bytes: %v\nOriginal message: %v", err, msg)
+				continue
+			}
 			jsMsg = map[string]interface{}{
 				"payload": string(bytes),
 			}
@@ -106,10 +111,15 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 
 		// Create a wrapper object that contains both the message content and metadata
 		meta := make(map[string]interface{})
-		msg.MetaWalkMut(func(key string, value any) error {
+		err = msg.MetaWalkMut(func(key string, value any) error {
 			meta[key] = value
 			return nil
 		})
+		if err != nil {
+			u.messagesErrored.Incr(1)
+			u.logger.Errorf("Failed to walk message metadata: %v\nOriginal message: %v\nMessage content: %v", err, msg, jsMsg)
+			continue
+		}
 
 		// Add metadata to the message wrapper
 		msgWrapper := jsMsg.(map[string]interface{})
@@ -118,8 +128,8 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		// Set up the msg variable in the JS environment
 		if err := vm.Set("msg", jsMsg); err != nil {
 			u.messagesErrored.Incr(1)
-			u.logger.Errorf("Failed to set message in JS environment: %v\nMessage content: %v", err, jsMsg)
-			return []service.MessageBatch{}, nil
+			u.logger.Errorf("Failed to set message in JS environment: %v\nOriginal message: %v\nProcessed message content: %v", err, msg, jsMsg)
+			continue
 		}
 
 		// Set up console for logging that uses Benthos logger
@@ -131,7 +141,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		if err := vm.Set("console", console); err != nil {
 			u.messagesErrored.Incr(1)
 			u.logger.Errorf("Failed to set console in JS environment: %v\nMessage content: %v", err, jsMsg)
-			return []service.MessageBatch{}, nil
+			continue
 		}
 
 		// Execute the user-provided JavaScript code
@@ -161,7 +171,7 @@ Message content: %v`,
 					u.code,
 					jsMsg)
 			}
-			return []service.MessageBatch{}, nil
+			continue
 		}
 
 		// Handle the return value like Node-RED:
@@ -176,7 +186,7 @@ Message content: %v`,
 		returnedMsg, ok := result.Export().(map[string]interface{})
 		if !ok {
 			u.messagesErrored.Incr(1)
-			u.logger.Error("Function must return a message object or null")
+			u.logger.Errorf("Function must return a message object or null\nnMessage content: %v\nReturned value: %v", jsMsg, result.Export())
 			return nil, fmt.Errorf("function must return a message object or null")
 		}
 
