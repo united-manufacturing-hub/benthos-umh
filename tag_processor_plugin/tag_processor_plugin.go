@@ -42,7 +42,7 @@ It applies defaults, conditional transformations, and optional advanced processi
 			Optional())
 
 	err := service.RegisterBatchProcessor(
-		"tagProcessor",
+		"tag_processor",
 		spec,
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
 			defaults, err := conf.FieldString("defaults")

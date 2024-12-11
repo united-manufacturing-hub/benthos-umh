@@ -33,7 +33,7 @@ var _ = Describe("TagProcessor", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			err = builder.AddProcessorYAML(`
-tagProcessor:
+tag_processor:
   defaults: |
     msg.meta.level0 = "enterprise";
     msg.meta.schema = "_historian";
@@ -110,7 +110,7 @@ tagProcessor:
 			Expect(err).NotTo(HaveOccurred())
 
 			err = builder.AddProcessorYAML(`
-tagProcessor:
+tag_processor:
   defaults: |
     msg.meta.level0 = "enterprise";
     msg.meta.schema = "_historian";
@@ -197,7 +197,7 @@ tagProcessor:
 			Expect(err).NotTo(HaveOccurred())
 
 			err = builder.AddProcessorYAML(`
-tagProcessor:
+tag_processor:
   defaults: |
     msg.meta.level0 = "enterprise";
     msg.meta.schema = "_historian";
@@ -277,7 +277,7 @@ tagProcessor:
 			Expect(err).NotTo(HaveOccurred())
 
 			err = builder.AddProcessorYAML(`
-tagProcessor:
+tag_processor:
   defaults: |
     // Missing level0
     msg.meta.schema = "_historian";
@@ -322,7 +322,7 @@ tagProcessor:
 			Expect(err).NotTo(HaveOccurred())
 
 			err = builder.AddProcessorYAML(`
-tagProcessor:
+tag_processor:
   defaults: |
     msg.meta.level0 = "enterprise";
     msg.meta.schema = "_historian";
