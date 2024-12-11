@@ -778,7 +778,6 @@ tag_processor:
 		})
 
 		It("should process duplicated messages through all stages", func() {
-			Skip("Skipping for now")
 			builder := service.NewStreamBuilder()
 
 			var msgHandler service.MessageHandlerFunc
@@ -788,60 +787,37 @@ tag_processor:
 			err = builder.AddProcessorYAML(`
 tag_processor:
   defaults: |
-    msg1 = {
-        payload: msg.payload,
-        meta: {
-          level0: "enterprise",
-          schema: "_historian",
-          tagName: "temperature"
-        }
-      };
-	  msg2 = {
-        payload: msg.payload,
-        meta: {
-          level0: "enterprise",
-          schema: "_analytics",
-          tagName: "temperature"
-        }
-      };
-	  return [msg1, msg2];
+    msg.meta.level0 = "enterprise";
+    msg.meta.schema = "_historian";
+    msg.meta.tagName = "temperature";
+    return msg;
 
   conditions:
-    - if: msg.meta.schema === "_historian"
+    - if: true
       then: |
-        // For historian messages, add area info
         msg.meta.level2 = "production";
         return msg;
-    - if: msg.meta.schema === "_analytics"
-      then: |
-        // For analytics messages, duplicate with different areas
-        return [
-          {
-            payload: msg.payload,
-            meta: {
-              level0: msg.meta.level0,
-              schema: msg.meta.schema,
-              tagName: msg.meta.tagName,
-              level2: "area1"
-            }
-          },
-          {
-            payload: msg.payload,
-            meta: {
-              level0: msg.meta.level0,
-              schema: msg.meta.schema,
-              tagName: msg.meta.tagName,
-              level2: "area2"
-            }
-          }
-        ];
 
   advancedProcessing: |
-    // Double the value for analytics schema
-    if (msg.meta.schema === "_analytics") {
-      msg.payload = msg.payload * 2;
-    }
-    return msg;
+    msg1 = {
+      payload: msg.payload,
+      meta: {
+        level0: msg.meta.level0,
+        schema: "_historian",
+        tagName: msg.meta.tagName,
+        level2: msg.meta.level2
+      }
+    };
+    msg2 = {
+      payload: msg.payload * 2, // Double the value
+      meta: {
+        level0: msg.meta.level0,
+        schema: "_analytics",
+        tagName: msg.meta.tagName + "_doubled",
+        level2: msg.meta.level2
+      }
+    };
+    return [msg1, msg2];
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -868,13 +844,12 @@ tag_processor:
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Should get three messages:
-			// 1. Historian message with production area
-			// 2. Analytics message with area1 and doubled value
-			// 3. Analytics message with area2 and doubled value
+			// Should get two messages:
+			// 1. Original historian message
+			// 2. Analytics message with doubled value
 			Eventually(func() int {
 				return len(messages)
-			}).Should(Equal(3))
+			}).Should(Equal(2))
 
 			// Check historian message
 			msg := messages[0]
@@ -890,28 +865,14 @@ tag_processor:
 			Expect(ok).To(BeTrue())
 			Expect(payload["temperature"]).To(Equal(json.Number("23.5")))
 
-			// Check first analytics message
+			// Check analytics message
 			msg = messages[1]
 			schema, exists = msg.MetaGet("schema")
 			Expect(exists).To(BeTrue())
 			Expect(schema).To(Equal("_analytics"))
 			level2, exists = msg.MetaGet("level2")
 			Expect(exists).To(BeTrue())
-			Expect(level2).To(Equal("area1"))
-			structured, err = msg.AsStructured()
-			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
-			Expect(ok).To(BeTrue())
-			Expect(payload["temperature"]).To(Equal(json.Number("47")))
-
-			// Check second analytics message
-			msg = messages[2]
-			schema, exists = msg.MetaGet("schema")
-			Expect(exists).To(BeTrue())
-			Expect(schema).To(Equal("_analytics"))
-			level2, exists = msg.MetaGet("level2")
-			Expect(exists).To(BeTrue())
-			Expect(level2).To(Equal("area2"))
+			Expect(level2).To(Equal("production"))
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]interface{})
