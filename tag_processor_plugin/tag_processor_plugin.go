@@ -2,6 +2,7 @@ package tag_processor_plugin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin"
 )
+
+//TODO: change advanced processing to be applied at the end of processing the entire batch, to give the option to aggregate over the entire batch (e.g., merge into a single payload)
 
 type TagProcessorConfig struct {
 	Defaults           string            `json:"defaults" yaml:"defaults"`
@@ -224,6 +227,12 @@ func (p *TagProcessor) processMessage(msg *service.Message) (*service.Message, e
 
 		// Update jsMsg with the returned values
 		jsMsg = returnedMsg
+
+		// Update VM with new message state
+		if err := vm.Set("msg", jsMsg); err != nil {
+			p.logError(err, "JS environment update after defaults", jsMsg)
+			return nil, fmt.Errorf("failed to update JavaScript environment after defaults: %v. This might be an internal error", err)
+		}
 	}
 
 	// Run conditions
@@ -252,12 +261,12 @@ func (p *TagProcessor) processMessage(msg *service.Message) (*service.Message, e
 
 			// Update jsMsg with the returned values
 			jsMsg = returnedMsg
-		}
 
-		// Update VM with new message state
-		if err := vm.Set("msg", jsMsg); err != nil {
-			p.logError(err, "JS environment update after condition", jsMsg)
-			return nil, fmt.Errorf("failed to update JavaScript environment after condition: %v. This might be an internal error", err)
+			// Update VM with new message state
+			if err := vm.Set("msg", jsMsg); err != nil {
+				p.logError(err, "JS environment update after condition", jsMsg)
+				return nil, fmt.Errorf("failed to update JavaScript environment after condition: %v. This might be an internal error", err)
+			}
 		}
 	}
 
@@ -310,7 +319,7 @@ func (p *TagProcessor) processMessage(msg *service.Message) (*service.Message, e
 
 	// Set payload from the final state
 	payload := map[string]interface{}{
-		meta["tagName"].(string): jsMsg["payload"],
+		meta["tagName"].(string): json.Number(fmt.Sprintf("%v", jsMsg["payload"])),
 		"timestamp_ms":           time.Now().UnixMilli(),
 	}
 	newMsg.SetStructured(payload)

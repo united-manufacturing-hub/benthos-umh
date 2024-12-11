@@ -163,7 +163,7 @@ Given this specification, an LLM or a developer can implement tagProcessor by pr
 
 ## This is how it should look like to the user
 ```yaml
-tagProcessor:
+tag_processor:
   # Required metadata fields:
   # - msg.meta.level0 (e.g., enterprise)
   # - msg.meta.level1 (optional, e.g., site)
