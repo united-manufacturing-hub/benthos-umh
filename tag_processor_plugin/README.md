@@ -189,7 +189,7 @@ tag_processor:
       msg.meta.level3 = "MyLine";
       msg.meta.level4 = "MyWorkCell";
       msg.meta.schema = "_historian";
-      msg.meta.folder = "MyFolder";
+      msg.meta.folder = "MyFolder"; // not intuitive
       msg.meta.tagName = "MyTagName";
       return msg;
 
@@ -221,8 +221,20 @@ tag_processor:
   advancedProcessing: |
       // Optional more advanced logic
       // Example: double a numeric value
-      if (typeof msg.payload.value === 'number') {
-        msg.payload.value *= 2;
+      msg.payload.value *= 2;
+
+      msg.level0 = "enterprise";
+      msg.level1 = "site";
+      msg.level2 = "area";
+      msg.level3 = "line";
+      msg.level4 = "workcell";
+      msg.schema = "_analytics";
+      msg.folder = "work_order";
+      msg.payload {
+        "work_order_id": msg.payload.work_order_id,
+        "work_order_start_time": umh.getTagFromFullTagName("enterprise.site.area.line.workcell._historian.workorder.work_order_start_time"),
+        "work_order_end_time": umh.getTagFromFullTagName("enterprise.site.area.line.workcell._historian.workorder.work_order_end_time")
       }
       return msg;
 ```
+
