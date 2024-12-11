@@ -1,4 +1,3 @@
-
 Overview
 
 The tagProcessor is a Benthos processor plugin designed to:
@@ -22,14 +21,14 @@ The following metadata fields must be set by the end of processing:
 	•	msg.meta.level3 (optional)
 	•	msg.meta.level4 (optional)
 	•	msg.meta.schema (e.g., _historian)
-	•	msg.meta.folder (optional grouping, e.g., OEE or folderA)
+	•	msg.meta.virtualPath (optional logical grouping, e.g., "OEE.production.line1")
 	•	msg.meta.tagName (measurement name)
 
 These fields combine to form a Kafka topic of the format:
 
-umh.v1.<level0>.<level1>.<level2>.<level3>.<level4>.<schema>.<folder>.<tagName>
+umh.v1.<level0>.<level1>.<level2>.<level3>.<level4>.<schema>.<virtualPath>.<tagName>
 
-Empty or undefined levels are skipped, and consecutive dots are normalized to a single dot. Trailing or leading dots are trimmed.
+Empty or undefined levels are skipped, and consecutive dots are normalized to a single dot. Trailing or leading dots are trimmed. The virtualPath field can contain dots to create nested paths (e.g., "OEE.production.line1"), which will be properly expanded in the topic.
 
 The payload structure is as follows:
 
@@ -54,7 +53,7 @@ tagProcessor:
       msg.meta.level3 = "MyLine";
       msg.meta.level4 = "MyWorkCell";
       msg.meta.schema = "_historian";
-      msg.meta.folder = "MyFolder";
+      msg.meta.virtualPath = "OEE.production.line1";  // Logical grouping with nested path
       msg.meta.tagName = "MyTagName";
       return msg;
 
@@ -67,12 +66,12 @@ tagProcessor:
       then: |
         msg.meta.level2 = "SpecialArea";
         msg.meta.tagName = "humidity";
-    - if: msg.meta.folder.startsWith("OEE")
+    - if: msg.meta.virtualPath.startsWith("OEE")
       then: |
         msg.meta.level2 = "OEEArea";    
-    - if: msg.meta.folder.includes("folderA")
+    - if: msg.meta.virtualPath.includes("production")
       then: |
-        msg.meta.tagName = msg.meta.opcua_tag_name || "defaultTagFromFolderA";
+        msg.meta.tagName = msg.meta.opcua_tag_name || "defaultTagFromProduction";
 
   advancedProcessing: |
       // Optional advanced logic, runs last
@@ -103,7 +102,7 @@ Execution Flow
 
 	1.	Convert Benthos Message to Node-RED Style:
 Internally, the tagProcessor will convert the Benthos message into the Node-RED style JavaScript environment used by the nodered_js processor:
-	•	msg.payload for content
+	��	msg.payload for content
 	•	msg.meta for metadata
 	2.	Run Defaults Code:
 	•	Executes the defaults code once.
@@ -171,10 +170,10 @@ tag_processor:
   # - msg.meta.level3 (optional)
   # - msg.meta.level4 (optional)
   # - msg.meta.schema (e.g., "_historian")
-  # - msg.meta.folder (optional, e.g., "OEE" or "folderA", think of it as a sub-group)
+  # - msg.meta.virtualPath (optional, e.g., "OEE.production.line1", a logical non-physical grouping)
   # - msg.meta.tagName (the actual measurement name)
 
-  # The final topic: umh.v1.<level0>.<level1>.<level2>.<level3>.<level4>.<schema>.<folder>.<tagName>
+  # The final topic: umh.v1.<level0>.<level1>.<level2>.<level3>.<level4>.<schema>.<virtualPath>.<tagName>
   # The payload will have:
   # {
   #   "<tagName>": <msg.payload>,   // e.g., {"temperature": 23.5}
@@ -189,13 +188,12 @@ tag_processor:
       msg.meta.level3 = "MyLine";
       msg.meta.level4 = "MyWorkCell";
       msg.meta.schema = "_historian";
-      msg.meta.folder = "MyFolder"; // not intuitive
+      msg.meta.virtualPath = "OEE.production.line1";  // Logical grouping with nested path
       msg.meta.tagName = "MyTagName";
       return msg;
 
   # All conditions are checked from top to bottom, and multiple conditions can be true
   conditions:
-
     # If the OPC UA node_id matches 2245, adjust these values
     - if: msg.meta.opcua_node_id === "ns=1;i=2245"
       then: |
@@ -207,15 +205,15 @@ tag_processor:
         msg.meta.level2 = "SpecialArea";
         msg.meta.tagName = "humidity";
 
-    # If the folder starts with "OEE", set level2 accordingly
-    - if: msg.meta.folder.startsWith("OEE")
+    # If the virtualPath starts with "OEE", set level2 accordingly
+    - if: msg.meta.virtualPath.startsWith("OEE")
       then: |
         msg.meta.level2 = "OEEArea";    
 
-    # If the folder starts with "folderA", set tagName from opcua_tag_name if available
-    - if: msg.meta.folder.includes("folderA")
+    # If the virtualPath includes "production", set tagName from opcua_tag_name if available
+    - if: msg.meta.virtualPath.includes("production")
       then: |
-        msg.meta.tagName = msg.meta.opcua_tag_name || "defaultTagFromFolderA";
+        msg.meta.tagName = msg.meta.opcua_tag_name || "defaultTagFromProduction";
 
   # Advanced processing is executed after all conditions have been processed
   advancedProcessing: |
@@ -223,18 +221,18 @@ tag_processor:
       // Example: double a numeric value
       msg.payload.value *= 2;
 
-      msg.level0 = "enterprise";
-      msg.level1 = "site";
-      msg.level2 = "area";
-      msg.level3 = "line";
-      msg.level4 = "workcell";
-      msg.schema = "_analytics";
-      msg.folder = "work_order";
-      msg.payload {
+      msg.meta.level0 = "enterprise";
+      msg.meta.level1 = "site";
+      msg.meta.level2 = "area";
+      msg.meta.level3 = "line";
+      msg.meta.level4 = "workcell";
+      msg.meta.schema = "_analytics";
+      msg.meta.virtualPath = "work_order";  // Logical grouping
+      msg.payload = {
         "work_order_id": msg.payload.work_order_id,
         "work_order_start_time": umh.getTagFromFullTagName("enterprise.site.area.line.workcell._historian.workorder.work_order_start_time"),
         "work_order_end_time": umh.getTagFromFullTagName("enterprise.site.area.line.workcell._historian.workorder.work_order_end_time")
-      }
+      };
       return msg;
 ```
 

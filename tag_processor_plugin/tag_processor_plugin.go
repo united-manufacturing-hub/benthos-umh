@@ -346,9 +346,15 @@ func (p *TagProcessor) constructTopic(meta map[string]interface{}) string {
 		levels = append(levels, schema.(string))
 	}
 
-	// Add folder
-	if folder, exists := meta["folder"]; exists && folder != "" {
-		levels = append(levels, folder.(string))
+	// Add virtualPath (split by dots for nested paths)
+	if virtualPath, exists := meta["virtualPath"]; exists && virtualPath != "" {
+		virtualPathStr := virtualPath.(string)
+		virtualPathLevels := strings.Split(virtualPathStr, ".")
+		for _, level := range virtualPathLevels {
+			if level != "" {
+				levels = append(levels, level)
+			}
+		}
 	}
 
 	// Add tagName

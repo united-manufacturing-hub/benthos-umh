@@ -1029,6 +1029,187 @@ These metrics can be used to:
 
 For example, if you see a high number of `messages_errored`, you might want to check your JavaScript code for errors or add more error handling.
 
+### Tag Processor
+
+The Tag Processor is designed to prepare incoming data for the UMH data model. It processes messages through three configurable stages: defaults, conditional transformations, and advanced processing, all using a Node-RED style JavaScript environment.
+
+#### Configuration
+
+```yaml
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |
+          # Set default metadata values
+          msg.meta.level0 = "enterprise";
+          msg.meta.schema = "_historian";
+          msg.meta.tagName = "temperature";
+          return msg;
+        conditions:
+          - if: msg.meta.opcua_node_id === "ns=1;i=2245"
+            then: |
+              msg.meta.level2 = "SpecialArea";
+              msg.meta.tagName = "temperature";
+              return msg;
+        advancedProcessing: |
+          # Optional advanced message processing
+          msg.payload = parseFloat(msg.payload) * 2;
+          return msg;
+```
+
+#### Processing Stages
+
+1. **Defaults**
+   - Sets initial metadata values
+   - Runs first on every message
+   - Must return a message object
+
+2. **Conditions**
+   - List of conditional transformations
+   - Each condition has an `if` expression and a `then` code block
+   - Runs after defaults
+   - Must return a message object
+
+3. **Advanced Processing**
+   - Optional final processing stage
+   - Can modify both metadata and payload
+   - Must return a message object
+
+#### Topic Generation
+
+The processor automatically generates a topic string from metadata fields in this format:
+```
+umh.v1.[level0].[level1].[level2].[level3].[level4].[schema].[virtualPath].[tagName]
+```
+
+Where:
+- All fields except `level0`, `schema`, and `tagName` are optional
+- Empty or missing fields are skipped
+- Fields are joined with dots
+- The topic always starts with "umh.v1"
+- `virtualPath` can contain dots to create nested virtual paths (e.g., "OEE.area1.line2")
+
+#### Required Metadata Fields
+
+The processor enforces certain required metadata fields:
+
+- `level0`: Top-level hierarchy (e.g., "enterprise")
+- `schema`: Data schema identifier (e.g., "_historian")
+- `tagName`: Name of the tag/variable
+- `virtualPath` (optional): A logical, non-physical grouping path that can use dots for nesting (e.g., "OEE.production.line1")
+
+#### Message Structure
+
+Messages in the Tag Processor follow the Node-RED style format:
+
+```javascript
+{
+  payload: "value",  // The message content
+  meta: {           // Metadata fields
+    level0: "enterprise",
+    schema: "_historian",
+    tagName: "temperature",
+    virtualPath: "OEE.production.line1",  // Optional nested virtual path
+    // ... other metadata
+  }
+}
+```
+
+#### Examples
+
+1. **Basic Temperature Processing**
+```yaml
+tag_processor:
+  defaults: |
+    msg.meta.level0 = "enterprise";
+    msg.meta.schema = "_historian";
+    msg.meta.tagName = "temperature";
+    msg.meta.virtualPath = "OEE.production";
+    return msg;
+```
+
+Input:
+```json
+"23.5"
+```
+
+Output:
+```json
+{
+  "temperature": "23.5",
+  "timestamp_ms": 1733903611000
+}
+```
+Topic: `umh.v1.enterprise._historian.OEE.production.temperature`
+
+2. **Conditional Area Assignment**
+```yaml
+tag_processor:
+  defaults: |
+    msg.meta.level0 = "enterprise";
+    msg.meta.schema = "_historian";
+    msg.meta.tagName = "default";
+    msg.meta.virtualPath = "OEE.area1";
+    return msg;
+  conditions:
+    - if: msg.meta.opcua_node_id === "ns=1;i=2245"
+      then: |
+        msg.meta.level2 = "SpecialArea";
+        msg.meta.tagName = "temperature";
+        return msg;
+```
+
+Input with metadata `opcua_node_id: "ns=1;i=2245"`:
+```json
+"23.5"
+```
+
+Output:
+```json
+{
+  "temperature": "23.5",
+  "timestamp_ms": 1733903611000
+}
+```
+Topic: `umh.v1.enterprise.SpecialArea._historian.OEE.area1.temperature`
+
+3. **Advanced Processing with Value Transformation**
+```yaml
+tag_processor:
+  defaults: |
+    msg.meta.level0 = "enterprise";
+    msg.meta.schema = "_historian";
+    msg.meta.tagName = "temperature";
+    return msg;
+  advancedProcessing: |
+    msg.payload = parseFloat(msg.payload) * 2;
+    return msg;
+```
+
+Input:
+```json
+"23.5"
+```
+
+Output:
+```json
+{
+  "temperature": 47,
+  "timestamp_ms": 1733903611000
+}
+```
+Topic: `umh.v1.enterprise._historian.temperature`
+
+#### Metrics
+
+The processor exposes several metrics:
+
+- `messages_processed`: Total number of messages processed
+- `messages_errored`: Number of messages that failed processing
+- `messages_dropped`: Number of messages intentionally dropped
+
+These metrics can be used to monitor the health and performance of your tag processing pipeline.
+
 ## Testing
 
 We execute automated tests and verify that benthos-umh works against various targets. All tests are started with `make test`, but might require environment parameters in order to not be skipped.

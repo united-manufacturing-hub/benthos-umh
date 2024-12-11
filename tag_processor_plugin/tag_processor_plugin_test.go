@@ -123,6 +123,7 @@ tag_processor:
     msg.meta.level0 = "enterprise";
     msg.meta.schema = "_historian";
     msg.meta.tagName = "default";
+    msg.meta.virtualPath = "OEE";
     return msg;
   conditions:
     - if: msg.meta.opcua_node_id === "ns=1;i=2245"
@@ -182,7 +183,7 @@ tag_processor:
 
 			topic, exists := msg.MetaGet("topic")
 			Expect(exists).To(BeTrue())
-			Expect(topic).To(Equal("umh.v1.enterprise.SpecialArea._historian.temperature"))
+			Expect(topic).To(Equal("umh.v1.enterprise.SpecialArea._historian.OEE.temperature"))
 
 			// Check payload
 			structured, err := msg.AsStructured()
@@ -349,10 +350,10 @@ tag_processor:
     msg.meta.level0 = "enterprise";
     msg.meta.schema = "_historian";
     msg.meta.tagName = "default";
-    msg.meta.folder = "OEE";
+    msg.meta.virtualPath = "OEE";
     return msg;
   conditions:
-    - if: msg.meta.folder.startsWith("OEE")
+    - if: msg.meta.virtualPath.startsWith("OEE")
       then: |
         msg.meta.level2 = "OEEArea";
         return msg;
@@ -409,9 +410,9 @@ tag_processor:
 			Expect(exists).To(BeTrue())
 			Expect(tagName).To(Equal("temperature"))
 
-			folder, exists := msg.MetaGet("folder")
+			virtualPath, exists := msg.MetaGet("virtualPath")
 			Expect(exists).To(BeTrue())
-			Expect(folder).To(Equal("OEE"))
+			Expect(virtualPath).To(Equal("OEE"))
 
 			topic, exists := msg.MetaGet("topic")
 			Expect(exists).To(BeTrue())
