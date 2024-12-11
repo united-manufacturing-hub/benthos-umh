@@ -81,6 +81,81 @@ func newNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 	}
 }
 
+// Helper function to convert a Benthos message to a JavaScript-compatible object
+func convertMessageToJSObject(msg *service.Message) (map[string]interface{}, error) {
+	jsMsg, err := msg.AsStructured()
+	if err != nil {
+		// If message can't be converted to structured format, wrap it in a payload field
+		bytes, err := msg.AsBytes()
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert message to bytes: %v", err)
+		}
+		return map[string]interface{}{
+			"payload": string(bytes),
+		}, nil
+	}
+
+	// If it's not already a map, wrap it in a payload field
+	if _, ok := jsMsg.(map[string]interface{}); !ok {
+		return map[string]interface{}{
+			"payload": jsMsg,
+		}, nil
+	}
+
+	return jsMsg.(map[string]interface{}), nil
+}
+
+// Helper function to setup the JavaScript VM environment
+func (u *NodeREDJSProcessor) setupJSEnvironment(vm *goja.Runtime, jsMsg map[string]interface{}) error {
+	// Set up the msg variable in the JS environment
+	if err := vm.Set("msg", jsMsg); err != nil {
+		return fmt.Errorf("failed to set message in JS environment: %v", err)
+	}
+
+	// Set up console for logging that uses Benthos logger
+	console := map[string]interface{}{
+		"log":   func(msg string) { u.logger.Info(msg) },
+		"warn":  func(msg string) { u.logger.Warn(msg) },
+		"error": func(msg string) { u.logger.Error(msg) },
+	}
+	if err := vm.Set("console", console); err != nil {
+		return fmt.Errorf("failed to set console in JS environment: %v", err)
+	}
+
+	return nil
+}
+
+// Helper function to handle JavaScript execution results
+func (u *NodeREDJSProcessor) handleExecutionResult(result goja.Value) (*service.Message, bool, error) {
+	// Handle null/undefined returns
+	if result.Equals(goja.Undefined()) || result.Equals(goja.Null()) {
+		u.messagesDropped.Incr(1)
+		u.logger.Debug("Message dropped due to null/undefined return")
+		return service.NewMessage(nil), false, nil
+	}
+
+	// Convert return value to message object
+	returnedMsg, ok := result.Export().(map[string]interface{})
+	if !ok {
+		return service.NewMessage(nil), false, fmt.Errorf("function must return a message object or null")
+	}
+
+	// Create new message with returned content
+	newMsg := service.NewMessage(nil)
+	if payload, exists := returnedMsg["payload"]; exists {
+		newMsg.SetStructured(payload)
+	}
+	if meta, exists := returnedMsg["meta"].(map[string]interface{}); exists {
+		for k, v := range meta {
+			if str, ok := v.(string); ok {
+				newMsg.MetaSet(k, str)
+			}
+		}
+	}
+
+	return newMsg, true, nil
+}
+
 // ProcessBatch applies the JavaScript code to each message in the batch.
 func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var resultBatch service.MessageBatch
@@ -89,128 +164,84 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		u.messagesProcessed.Incr(1)
 		vm := goja.New()
 
-		// Convert the Benthos message to a map
-		jsMsg, err := msg.AsStructured()
-		if err != nil {
-			// If message can't be converted to structured format, wrap it in a payload field
-			bytes, err := msg.AsBytes()
-			if err != nil {
-				u.messagesErrored.Incr(1)
-				u.logger.Errorf("Failed to convert message to bytes: %v\nOriginal message: %v", err, msg)
-				continue
-			}
-			jsMsg = map[string]interface{}{
-				"payload": string(bytes),
-			}
-		} else if _, ok := jsMsg.(map[string]interface{}); !ok {
-			// If it's not already a map, wrap it in a payload field
-			jsMsg = map[string]interface{}{
-				"payload": jsMsg,
-			}
-		}
-
-		// Create a wrapper object that contains both the message content and metadata
-		meta := make(map[string]interface{})
-		err = msg.MetaWalkMut(func(key string, value any) error {
-			meta[key] = value
-			return nil
-		})
+		// Convert message to JS object
+		jsMsg, err := convertMessageToJSObject(msg)
 		if err != nil {
 			u.messagesErrored.Incr(1)
-			u.logger.Errorf("Failed to walk message metadata: %v\nOriginal message: %v\nMessage content: %v", err, msg, jsMsg)
+			u.logger.Errorf("%v\nOriginal message: %v", err, msg)
 			continue
 		}
 
 		// Add metadata to the message wrapper
-		msgWrapper := jsMsg.(map[string]interface{})
-		msgWrapper["meta"] = meta
-
-		// Set up the msg variable in the JS environment
-		if err := vm.Set("msg", jsMsg); err != nil {
+		meta := make(map[string]interface{})
+		if err := msg.MetaWalkMut(func(key string, value any) error {
+			meta[key] = value
+			return nil
+		}); err != nil {
 			u.messagesErrored.Incr(1)
-			u.logger.Errorf("Failed to set message in JS environment: %v\nOriginal message: %v\nProcessed message content: %v", err, msg, jsMsg)
+			u.logger.Errorf("Failed to walk message metadata: %v\nOriginal message: %v", err, msg)
+			continue
+		}
+		jsMsg["meta"] = meta
+
+		// Setup JS environment
+		if err := u.setupJSEnvironment(vm, jsMsg); err != nil {
+			u.messagesErrored.Incr(1)
+			u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
 			continue
 		}
 
-		// Set up console for logging that uses Benthos logger
-		console := map[string]interface{}{
-			"log":   func(msg string) { u.logger.Info(msg) },
-			"warn":  func(msg string) { u.logger.Warn(msg) },
-			"error": func(msg string) { u.logger.Error(msg) },
-		}
-		if err := vm.Set("console", console); err != nil {
-			u.messagesErrored.Incr(1)
-			u.logger.Errorf("Failed to set console in JS environment: %v\nMessage content: %v", err, jsMsg)
-			continue
-		}
-
-		// Execute the user-provided JavaScript code
+		// Execute the JavaScript code
 		result, err := vm.RunString(u.code)
 		if err != nil {
 			u.messagesErrored.Incr(1)
-			// Check if it's a JavaScript error with stack trace
-			if jsErr, ok := err.(*goja.Exception); ok {
-				stack := jsErr.String()
-				u.logger.Errorf(`JavaScript execution failed:
+			u.logJSError(err, jsMsg)
+			continue
+		}
+
+		// Handle the execution result
+		newMsg, shouldKeep, err := u.handleExecutionResult(result)
+		if err != nil {
+			u.messagesErrored.Incr(1)
+			u.logger.Errorf("%v\nMessage content: %v\nReturned value: %v", err, jsMsg, result.Export())
+			return nil, err
+		}
+		if shouldKeep {
+			resultBatch = append(resultBatch, newMsg)
+		}
+	}
+
+	if len(resultBatch) == 0 {
+		return []service.MessageBatch{}, nil
+	}
+
+	return []service.MessageBatch{resultBatch}, nil
+}
+
+// Helper function to log JavaScript errors
+func (u *NodeREDJSProcessor) logJSError(err error, jsMsg interface{}) {
+	if jsErr, ok := err.(*goja.Exception); ok {
+		stack := jsErr.String()
+		u.logger.Errorf(`JavaScript execution failed:
 Error: %v
 Stack: %v
 Code:
 %v
 Message content: %v`,
-					jsErr.Error(),
-					stack,
-					u.code,
-					jsMsg)
-			} else {
-				u.logger.Errorf(`JavaScript execution failed:
+			jsErr.Error(),
+			stack,
+			u.code,
+			jsMsg)
+	} else {
+		u.logger.Errorf(`JavaScript execution failed:
 Error: %v
 Code:
 %v
 Message content: %v`,
-					err,
-					u.code,
-					jsMsg)
-			}
-			continue
-		}
-
-		// Handle the return value like Node-RED:
-		// - If null/undefined is returned, stop processing this message
-		// - If an object is returned, use it as the new message
-		if result.Equals(goja.Undefined()) || result.Equals(goja.Null()) {
-			u.messagesDropped.Incr(1)
-			u.logger.Debug("Message dropped due to null/undefined return")
-			continue
-		}
-
-		returnedMsg, ok := result.Export().(map[string]interface{})
-		if !ok {
-			u.messagesErrored.Incr(1)
-			u.logger.Errorf("Function must return a message object or null\nnMessage content: %v\nReturned value: %v", jsMsg, result.Export())
-			return nil, fmt.Errorf("function must return a message object or null")
-		}
-
-		// Create a new message with the returned content
-		newMsg := service.NewMessage(nil)
-		if payload, exists := returnedMsg["payload"]; exists {
-			newMsg.SetStructured(payload)
-		}
-		if meta, exists := returnedMsg["meta"].(map[string]interface{}); exists {
-			for k, v := range meta {
-				if str, ok := v.(string); ok {
-					newMsg.MetaSet(k, str)
-				}
-			}
-		}
-		resultBatch = append(resultBatch, newMsg)
+			err,
+			u.code,
+			jsMsg)
 	}
-
-	if len(resultBatch) == 0 {
-		// If no messages were produced, return empty batch list
-		return []service.MessageBatch{}, nil
-	}
-
-	return []service.MessageBatch{resultBatch}, nil
 }
 
 // Close gracefully shuts down the processor.
