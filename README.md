@@ -1231,97 +1231,29 @@ Output:
 ```
 Topic: `umh.v1.enterprise._historian.temperature`
 
-#### (upcoming) Accessing Historian Data via umh.getHistorianValue
-
-Within the advanced processing stage, you can access historical data from the UMH historian using umh.getHistorianValue(fullTagName). This function allows you to combine current OPC UA data with historical records.
-
-```js
-tag_processor:
-  defaults: |
-    msg.meta.level0 = "enterprise";
-    msg.meta.level1 = "site";
-    msg.meta.level2 = "area";
-    msg.meta.level3 = "line";
-    msg.meta.level4 = "workcell";
-    msg.meta.schema = "_analytics";
-    msg.meta.virtualPath = "work_order";
-    return msg;
-
-  # this assumes there are three tags: workorderid_SSX, workorderid_start_time, workorderid_end_time
-  # they are first all converted to the historian schema and stored in the historian
-  conditions:
-    - if: msg.meta.opcua_attr_browsename == "workorderid_SSX"
-      then: |
-        msg.meta.tagName = "current_work_order_id";
-        return msg;
-    - if: msg.meta.opcua_attr_browsename == "workorderid_start_time"
-      then: |
-        msg.meta.tagName = "work_order_start_time";
-        return msg;
-    - if: msg.meta.opcua_attr_browsename == "workorderid_end_time"
-      then: |
-        msg.meta.tagName = "work_order_end_time";
-        return msg;
-
-  # but now additionally if its the current work order id, we want to fetch the start and end time from the historian
-  advancedProcessing: |
-    if (msg.meta.tagName == "current_work_order_id") {
-      // Fetch related historical data using the work order context
-      var startTime = umh.getHistorianValue("umh.v1.enterprise.site.area.line.workcell._historian.work_order.start_time");
-      var endTime = umh.getHistorianValue("umh.v1.enterprise.site.area.line.workcell._historian.work_order.end_time");
-
-      // Create a new payload combining current and historical data
-      msg.payload = {
-        "work_order_id": msg.payload.current_work_order_id,
-        "work_order_start_time": startTime,
-        "work_order_end_time": endTime
-      };
-    }
-    return msg;
-```
-
-#### Message Handling Patterns
-
-The tag processor supports several message handling patterns in its JavaScript environment:
-
-1. **Dropping Messages**
-   To drop a message (prevent it from being processed further), return `null`:
+4. **Creating Multiple Messages**
+   To send the same data to multiple tags, return an array of messages:
    ```js
    advancedProcessing: |
-     if (msg.payload.value < 0) {
-       // Drop negative values
-       return null;
-     }
-     return msg;
-   ```
-
-2. **Creating New Messages**
-   To create an entirely new message, create a new object with payload and optional meta:
-   ```js
-   advancedProcessing: |
-     // Create a new message with transformed data
-     var newMsg = {
-       payload: {
-         transformed_value: msg.payload.value * 2,
-         timestamp: Date.now()
+     // Create multiple messages with different tags
+     return [
+       {
+         payload: msg.payload,
+         meta: {
+           level0: "enterprise",
+           schema: "_historian",
+           tagName: "temperature"
+         }
        },
-       meta: {
-         level0: "enterprise",
-         schema: "_analytics",
-         tagName: "transformed_value"
+       {
+         payload: msg.payload,
+         meta: {
+           level0: "enterprise",
+           schema: "_historian",
+           tagName: "temperature_backup"
+         }
        }
-     };
-     return newMsg;
-   ```
-
-3. **Modifying Existing Messages**
-   To modify the existing message, update msg.payload and/or msg.meta:
-   ```js
-   advancedProcessing: |
-     // Update existing message
-     msg.payload = msg.payload * 2;
-     msg.meta.processed = "true";
-     return msg;
+     ];
    ```
 
 Remember that any message returned must include the required metadata fields (level0, schema, tagName) for proper topic construction.
