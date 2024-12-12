@@ -217,7 +217,7 @@ tag_processor:
 
 			topic, exists := msg.MetaGet("topic")
 			Expect(exists).To(BeTrue())
-			Expect(topic).To(Equal("umh.v1.enterprise.machiningArea.cnc-line.cnc5.plc123._historian.axis.x.position.actual"))
+			Expect(topic).To(Equal("umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.x.position.actual"))
 
 			// Check payload
 			structured, err := msg.AsStructured()

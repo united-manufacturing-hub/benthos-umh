@@ -28,7 +28,21 @@ func init() {
 		Version("1.0.0").
 		Summary("A processor for standardizing tag metadata and topics").
 		Description(`The tagProcessor sets up a canonical metadata structure for constructing standardized topic and payload schemas.
-It applies defaults, conditional transformations, and optional advanced processing using a Node-RED style JavaScript environment.`).
+It applies defaults, conditional transformations, and optional advanced processing using a Node-RED style JavaScript environment.
+
+Required metadata fields:
+- location0: Top-level hierarchy (e.g., "enterprise")
+- datacontract: Data schema identifier (e.g., "_historian", "_analytics")
+- tagName: Name of the tag/variable (e.g., "temperature")
+
+Optional metadata fields:
+- location1-5: Additional hierarchy levels (e.g., site, area, line, workcell, plc)
+- path0-N: Logical, non-physical grouping paths (e.g., "axis", "x", "position")
+
+The final topic will be constructed as:
+umh.v1.<location0>.<location1>.<location2>.<location3>.<location4>.<location5>.<datacontract>.<path0>.<path1>.<path2>....<pathN>.<tagName>
+
+Empty or undefined fields will be omitted from the topic.`).
 		Field(service.NewStringField("defaults").
 			Description("JavaScript code to set initial metadata values").
 			Default("")).
@@ -294,7 +308,7 @@ func (p *TagProcessor) processMessage(msg *service.Message) (*service.Message, e
 		return nil, fmt.Errorf("message is missing the required 'meta' object. Your JavaScript code must set 'msg.meta' as an object with the required fields")
 	}
 
-	requiredFields := []string{"level0", "schema", "tagName"}
+	requiredFields := []string{"location0", "datacontract", "tagName"}
 	for _, field := range requiredFields {
 		if _, exists := meta[field]; !exists {
 			p.logError(fmt.Errorf("missing field: %s", field), "metadata validation", meta)
@@ -339,9 +353,9 @@ func (p *TagProcessor) constructTopic(meta map[string]interface{}) string {
 		}
 	}
 
-	// Add schema
-	if schema, ok := meta["schema"].(string); ok && schema != "" {
-		parts = append(parts, schema)
+	// Add datacontract
+	if datacontract, ok := meta["datacontract"].(string); ok && datacontract != "" {
+		parts = append(parts, datacontract)
 	}
 
 	// Add path components
