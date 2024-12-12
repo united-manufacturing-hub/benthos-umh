@@ -2,16 +2,19 @@
 ```yaml
 tag_processor:
   # Required metadata fields:
-  # - msg.meta.level0 (e.g., enterprise)
-  # - msg.meta.level1 (optional, e.g., site)
-  # - msg.meta.level2 (optional, e.g., area)
-  # - msg.meta.level3 (optional)
-  # - msg.meta.level4 (optional)
-  # - msg.meta.schema (e.g., "_historian")
-  # - msg.meta.virtualPath (optional, e.g., "OEE.production.line1", a logical non-physical grouping)
+  # - msg.meta.location0 (e.g., enterprise)
+  # - msg.meta.location1 (optional, e.g., site)
+  # - msg.meta.location2 (optional, e.g., area)
+  # - msg.meta.location3 (optional, e.g., line)
+  # - msg.meta.location4 (optional, e.g., workcell)
+  # - msg.meta.location5 (optional, e.g., originID)
+  # - msg.meta.datacontract (e.g., "_historian")
+  # - msg.meta.path0 (optional, e.g., "axis", a logical non-physical grouping)
+  # - msg.meta.path1 (optional, e.g., "x", a logical non-physical grouping)
+  # - msg.meta.path2 (optional, e.g., "position", a logical non-physical grouping)
   # - msg.meta.tagName (the actual measurement name)
 
-  # The final topic / fulltagname: umh.v1.<level0>.<level1>.<level2>.<level3>.<level4>.<schema>.<virtualPath>.<tagName>
+  # The final topic / fulltagname: umh.v1.<location0>.<location1>.<location2>.<location3>.<location4>.<location5>.<datacontract>.<path0>.<path1>.<path2>....<pathN>.<tagName>
   # The payload will have:
   # {
   #   "<tagName>": <msg.payload>,   // e.g., {"temperature": 23.5}
@@ -20,14 +23,14 @@ tag_processor:
 
   # Set basic defaults (change as needed)
   defaults: |
-      msg.meta.level0 = "MyEnterprise";
-      msg.meta.level1 = "MySite";
-      msg.meta.level2 = "MyArea";
-      msg.meta.level3 = "MyLine";
-      msg.meta.level4 = "MyWorkCell";
-      msg.meta.schema = "_historian";
-      msg.meta.virtualPath = "OEE.production.line1";  // Logical grouping with nested path
-      msg.meta.tagName = "MyTagName";
+      msg.meta.location0 = "enterprise";
+      msg.meta.location1 = "plant1";
+      msg.meta.location2 = "machiningArea";
+      msg.meta.location3 = "cnc-line";
+      msg.meta.location4 = "cnc5";
+      msg.meta.location5 = "plc123";
+
+      msg.meta.datacontract = "_historian";
       return msg;
 
   # All conditions are checked from top to bottom, and multiple conditions can be true
@@ -35,42 +38,48 @@ tag_processor:
     # If the OPC UA node_id matches 2245, adjust these values
     - if: msg.meta.opcua_node_id === "ns=1;i=2245"
       then: |
-        msg.meta.level2 = "SpecialArea";
-        msg.meta.tagName = "temperature";
+        newmsg = msg;
+
+        msg.meta.path0 = "axis";
+        msg.meta.path1 = "x";
+        msg.meta.path2 = "position";
+        msg.meta.tagName = "value";
+
+        return [newmsg, msg];
+
 
     - if: msg.meta.opcua_node_id === "ns=1;i=2246"
       then: |
-        msg.meta.level2 = "SpecialArea";
-        msg.meta.tagName = "humidity";
+        newmsg = msg;
 
-    # If the virtualPath starts with "OEE", set level2 accordingly
-    - if: msg.meta.virtualPath.startsWith("OEE")
-      then: |
-        msg.meta.level2 = "OEEArea";    
+        msg.meta.path0 = "axis";
+        msg.meta.path1 = "y";
+        msg.meta.path2 = "position";
+        msg.meta.tagName = "value";
 
-    # If the virtualPath includes "production", set tagName from opcua_tag_name if available
-    - if: msg.meta.virtualPath.includes("production")
-      then: |
-        msg.meta.tagName = msg.meta.opcua_tag_name || "defaultTagFromProduction";
+        return [newmsg, msg];
+
 
   # Advanced processing is executed after all conditions have been processed
   advancedProcessing: |
       // Optional more advanced logic
       // Example: double a numeric value
-      msg.payload.value *= 2;
+      msg.payload.actual *= 2;
 
-      msg.meta.level0 = "enterprise";
-      msg.meta.level1 = "site";
-      msg.meta.level2 = "area";
-      msg.meta.level3 = "line";
-      msg.meta.level4 = "workcell";
-      msg.meta.schema = "_analytics";
-      msg.meta.virtualPath = "work_order";  // Logical grouping
+      msg.meta.location0 = "enterprise";
+      msg.meta.location1 = "site";
+      msg.meta.location2 = "area";
+      msg.meta.location3 = "line";
+      msg.meta.location4 = "workcell";
+      msg.meta.datacontract = "_analytics";
+      msg.meta.path0 = "work_order";  // Logical grouping
+
       msg.payload = {
         "work_order_id": msg.payload.work_order_id,
-        "work_order_start_time": umh.getHistorianValue("enterprise.site.area.line.workcell._historian.workorder.work_order_start_time"),
-        "work_order_end_time": umh.getHistorianValue("enterprise.site.area.line.workcell._historian.workorder.work_order_end_time")
+        "work_order_start_time": umh.getLastPayload("enterprise.site.area.line.workcell._historian.workorder.work_order_start_time"),
+        "work_order_end_time": umh.getLastPayload("enterprise.site.area.line.workcell._historian.workorder.work_order_end_time")
       };
+
       return msg;
 ```
 

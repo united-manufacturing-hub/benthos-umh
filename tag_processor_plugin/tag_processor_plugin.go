@@ -329,43 +329,39 @@ func (p *TagProcessor) processMessage(msg *service.Message) (*service.Message, e
 }
 
 func (p *TagProcessor) constructTopic(meta map[string]interface{}) string {
-	levels := []string{"umh", "v1"}
+	parts := []string{"umh", "v1"}
 
-	// Add hierarchical levels
-	for i := 0; i <= 4; i++ {
-		key := fmt.Sprintf("level%d", i)
-		if value, exists := meta[key]; exists && value != "" {
-			levels = append(levels, value.(string))
+	// Add location levels
+	for i := 0; i <= 5; i++ {
+		key := fmt.Sprintf("location%d", i)
+		if value, ok := meta[key].(string); ok && value != "" {
+			parts = append(parts, value)
 		}
 	}
 
 	// Add schema
-	if schema, exists := meta["schema"]; exists && schema != "" {
-		levels = append(levels, schema.(string))
+	if schema, ok := meta["schema"].(string); ok && schema != "" {
+		parts = append(parts, schema)
 	}
 
-	// Add virtualPath (split by dots for nested paths)
-	if virtualPath, exists := meta["virtualPath"]; exists && virtualPath != "" {
-		virtualPathStr := virtualPath.(string)
-		virtualPathLevels := strings.Split(virtualPathStr, ".")
-		for _, level := range virtualPathLevels {
-			if level != "" {
-				levels = append(levels, level)
-			}
+	// Add path components
+	i := 0
+	for {
+		key := fmt.Sprintf("path%d", i)
+		if value, ok := meta[key].(string); ok && value != "" {
+			parts = append(parts, value)
+		} else {
+			break
 		}
+		i++
 	}
 
 	// Add tagName
-	if tagName, exists := meta["tagName"]; exists && tagName != "" {
-		levels = append(levels, tagName.(string))
+	if tagName, ok := meta["tagName"].(string); ok && tagName != "" {
+		parts = append(parts, tagName)
 	}
 
-	// Join with dots and normalize
-	topic := strings.Join(levels, ".")
-	topic = strings.ReplaceAll(topic, "..", ".")
-	topic = strings.Trim(topic, ".")
-
-	return topic
+	return strings.Join(parts, ".")
 }
 
 func (p *TagProcessor) Close(ctx context.Context) error {

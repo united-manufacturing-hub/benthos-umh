@@ -1040,19 +1040,27 @@ pipeline:
   processors:
     - tag_processor:
         defaults: |
-          # Set default metadata values
-          msg.meta.level0 = "enterprise";
-          msg.meta.schema = "_historian";
-          msg.meta.tagName = "temperature";
+          # Set default location hierarchy and datacontract
+          msg.meta.location0 = "enterprise";
+          msg.meta.location1 = "plant1";
+          msg.meta.location2 = "machiningArea";
+          msg.meta.location3 = "cnc-line";
+          msg.meta.location4 = "cnc5";
+          msg.meta.location5 = "plc123";
+          msg.meta.datacontract = "_historian";
           return msg;
         conditions:
           - if: msg.meta.opcua_node_id === "ns=1;i=2245"
             then: |
-              msg.meta.level2 = "SpecialArea";
-              msg.meta.tagName = "temperature";
+              # Set path hierarchy and tag name for specific OPC UA node
+              msg.meta.path0 = "axis";
+              msg.meta.path1 = "x";
+              msg.meta.path2 = "position";
+              msg.meta.tagName = "actual";
               return msg;
         advancedProcessing: |
           # Optional advanced message processing
+          # Example: double numeric values
           msg.payload = parseFloat(msg.payload) * 2;
           return msg;
 ```
@@ -1080,23 +1088,24 @@ pipeline:
 The processor uses the following metadata fields:
 
 **Required Fields:**
-- `level0`: Top-level hierarchy (e.g., "enterprise")
-- `schema`: Data schema identifier (e.g., "_historian", "_analytics")
+- `location0`: Top-level hierarchy (e.g., "enterprise")
+- `datacontract`: Data schema identifier (e.g., "_historian", "_analytics")
 - `tagName`: Name of the tag/variable (e.g., "temperature", "pressure")
 
 **Optional Hierarchical Fields:**
-- `level1`: Second-level hierarchy (e.g., "site")
-- `level2`: Third-level hierarchy (e.g., "area")
-- `level3`: Fourth-level hierarchy (e.g., "line")
-- `level4`: Fifth-level hierarchy (e.g., "workcell")
+- `location1`: Second-level hierarchy (e.g., "site")
+- `location2`: Third-level hierarchy (e.g., "area")
+- `location3`: Fourth-level hierarchy (e.g., "line")
+- `location4`: Fifth-level hierarchy (e.g., "workcell")
+- `location5`: Sixth-level hierarchy (e.g., "plc123")
 
-**Optional Organizational Fields:**
-- `virtualPath`: A logical, non-physical grouping path that can use dots for nesting (e.g., "axis.x"). Also known as "folder" in the UMH data model.
+**Optional Path Fields:**
+- `path0`, `path1`, `path2`, etc.: Logical, non-physical grouping paths (e.g., "axis", "x", "position")
 
 **Generated Fields:**
 - `topic`: Automatically generated from the above fields in the format:
   ```
-  umh.v1.<level0>.<level1>.<level2>.<level3>.<level4>.<schema>.<virtualPath>.<tagName>
+  umh.v1.<location0>.<location1>.<location2>.<location3>.<location4>.<location5>.<datacontract>.<path0>.<path1>.<path2>....<pathN>.<tagName>
   ```
   Empty or undefined fields are skipped, and dots are normalized.
 
@@ -1113,21 +1122,24 @@ Messages in the Tag Processor follow the Node-RED style format:
   },
   meta: {
     // Required fields
-    level0: "enterprise",           // Top-level hierarchy
-    schema: "_historian",           // Data schema identifier
+    location0: "enterprise",        // Top-level hierarchy
+    datacontract: "_historian",     // Data schema identifier
     tagName: "temperature",         // Name of the tag/variable
 
     // Optional hierarchical fields
-    level1: "site_munich",         // Second-level hierarchy
-    level2: "area_assembly",       // Third-level hierarchy
-    level3: "line_final",          // Fourth-level hierarchy
-    level4: "cell_test",           // Fifth-level hierarchy
+    location1: "site_munich",       // Second-level hierarchy
+    location2: "area_assembly",     // Third-level hierarchy
+    location3: "line_final",        // Fourth-level hierarchy
+    location4: "cell_test",         // Fifth-level hierarchy
+    location5: "plc123",            // Sixth-level hierarchy
 
-    // Optional organizational field
-    virtualPath: "axis.x",         // Logical grouping path (can be nested), also known as "folder" in the UMH data model
+    // Optional path fields
+    path0: "axis",                  // First logical grouping path
+    path1: "x",                     // Second logical grouping path
+    path2: "position",              // Third logical grouping path
 
     // Generated field (by processor)
-    topic: "umh.v1.enterprise.site_munich.area_assembly.line_final.cell_test._historian.axis.x.temperature",
+    topic: "umh.v1.enterprise.site_munich.area_assembly.line_final.cell_test.plc123._historian.axis.x.position.temperature",
 
     // Input-specific fields (e.g., from OPC UA)
     opcua_node_id: "ns=1;i=2245",
@@ -1148,14 +1160,17 @@ Messages in the Tag Processor follow the Node-RED style format:
 
 #### Examples
 
-1. **Basic Temperature Processing**
+1. **Basic Defaults Processing**
 ```yaml
 tag_processor:
   defaults: |
-    msg.meta.level0 = "enterprise";
-    msg.meta.schema = "_historian";
-    msg.meta.tagName = "temperature";
-    msg.meta.virtualPath = "axis.x";
+    msg.meta.location0 = "enterprise";
+    msg.meta.location1 = "plant1";
+    msg.meta.location2 = "machiningArea";
+    msg.meta.location3 = "cnc-line";
+    msg.meta.location4 = "cnc5";
+    msg.meta.location5 = "plc123";
+    msg.meta.datacontract = "_historian";
     return msg;
 ```
 
@@ -1167,26 +1182,31 @@ Input:
 Output:
 ```json
 {
-  "temperature": "23.5",
+  "actual": "23.5",
   "timestamp_ms": 1733903611000
 }
 ```
-Topic: `umh.v1.enterprise._historian.axis.x.temperature`
+Topic: `umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.actual`
 
-2. **Conditional Area Assignment**
+2. **OPC UA Node ID Based Processing**
 ```yaml
 tag_processor:
   defaults: |
-    msg.meta.level0 = "enterprise";
-    msg.meta.schema = "_historian";
-    msg.meta.tagName = "default";
-    msg.meta.virtualPath = "axis.x";
+    msg.meta.location0 = "enterprise";
+    msg.meta.location1 = "plant1";
+    msg.meta.location2 = "machiningArea";
+    msg.meta.location3 = "cnc-line";
+    msg.meta.location4 = "cnc5";
+    msg.meta.location5 = "plc123";
+    msg.meta.datacontract = "_historian";
     return msg;
   conditions:
     - if: msg.meta.opcua_node_id === "ns=1;i=2245"
       then: |
-        msg.meta.level2 = "SpecialArea";
-        msg.meta.tagName = "temperature";
+        msg.meta.path0 = "axis";
+        msg.meta.path1 = "x";
+        msg.meta.path2 = "position";
+        msg.meta.tagName = "actual";
         return msg;
 ```
 
@@ -1198,76 +1218,86 @@ Input with metadata `opcua_node_id: "ns=1;i=2245"`:
 Output:
 ```json
 {
-  "temperature": "23.5",
+  "actual": "23.5",
   "timestamp_ms": 1733903611000
 }
 ```
-Topic: `umh.v1.enterprise.SpecialArea._historian.axis.x.temperature`
+Topic: `umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.x.position.actual`
 
-3. **Advanced Processing with Value Transformation**
+3. (upcoming) **Advanced Processing with Analytics**
 ```yaml
 tag_processor:
   defaults: |
-    msg.meta.level0 = "enterprise";
-    msg.meta.schema = "_historian";
-    msg.meta.tagName = "temperature";
+    msg.meta.location0 = "enterprise";
+    msg.meta.location1 = "site";
+    msg.meta.location2 = "area";
+    msg.meta.location3 = "line";
+    msg.meta.location4 = "workcell";
+    msg.meta.datacontract = "_analytics";
+    msg.meta.path0 = "work_order";
     return msg;
   advancedProcessing: |
-    msg.payload = parseFloat(msg.payload) * 2;
+    msg.payload = {
+      "work_order_id": msg.payload.work_order_id,
+      "work_order_start_time": umh.getLastPayload("enterprise.site.area.line.workcell._historian.workorder.work_order_start_time"),
+      "work_order_end_time": umh.getLastPayload("enterprise.site.area.line.workcell._historian.workorder.work_order_end_time")
+    };
     return msg;
 ```
 
 Input:
 ```json
-"23.5"
+{
+  "work_order_id": "WO123"
+}
 ```
 
 Output:
 ```json
 {
-  "temperature": 47,
+  "work_order_id": "WO123",
+  "work_order_start_time": "2024-03-12T10:00:00Z",
+  "work_order_end_time": "2024-03-12T18:00:00Z"
+}
+```
+Topic: `umh.v1.enterprise.site.area.line.workcell._analytics.work_order`
+
+4. **Dropping Messages Based on Value**
+```yaml
+tag_processor:
+  defaults: |
+    msg.meta.location0 = "enterprise";
+    msg.meta.datacontract = "_historian";
+    msg.meta.tagName = "temperature";
+    return msg;
+  advancedProcessing: |
+    if (msg.payload < 0) {
+      // Drop negative values
+      return null;
+    }
+    return msg;
+```
+
+Input:
+```json
+-10
+```
+
+Output: Message is dropped (no output)
+
+Input:
+```json
+10
+```
+
+Output:
+```json
+{
+  "temperature": 10,
   "timestamp_ms": 1733903611000
 }
 ```
 Topic: `umh.v1.enterprise._historian.temperature`
-
-4. **Creating Multiple Messages**
-   To send the same data to multiple tags, return an array of messages:
-   ```js
-   advancedProcessing: |
-     // Create multiple messages with different tags
-     return [
-       {
-         payload: msg.payload,
-         meta: {
-           level0: "enterprise",
-           schema: "_historian",
-           tagName: "temperature"
-         }
-       },
-       {
-         payload: msg.payload,
-         meta: {
-           level0: "enterprise",
-           schema: "_historian",
-           tagName: "temperature_backup"
-         }
-       }
-     ];
-   ```
-
-Remember that any message returned must include the required metadata fields (level0, schema, tagName) for proper topic construction.
-
-
-#### Metrics
-
-The processor exposes several metrics:
-
-- `messages_processed`: Total number of messages processed
-- `messages_errored`: Number of messages that failed processing
-- `messages_dropped`: Number of messages intentionally dropped
-
-These metrics can be used to monitor the health and performance of your tag processing pipeline.
 
 ## Testing
 
