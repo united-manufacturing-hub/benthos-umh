@@ -1176,13 +1176,13 @@ tag_processor:
 
 Input:
 ```json
-"23.5"
+23.5
 ```
 
 Output:
 ```json
 {
-  "actual": "23.5",
+  "actual": 23.5,
   "timestamp_ms": 1733903611000
 }
 ```
@@ -1212,19 +1212,22 @@ tag_processor:
 
 Input with metadata `opcua_node_id: "ns=1;i=2245"`:
 ```json
-"23.5"
+23.5
 ```
 
 Output:
 ```json
 {
-  "actual": "23.5",
+  "actual": 23.5,
   "timestamp_ms": 1733903611000
 }
 ```
 Topic: `umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.x.position.actual`
 
-3. (upcoming) **Advanced Processing with Analytics**
+3. **Advanced Processing with getLastPayload**
+
+getLastPayload is a function that returns the last payload of a message that was avaialble in Kafka. Remember that you will get the full payload, and might still need to extract the value you need.
+
 ```yaml
 tag_processor:
   defaults: |
@@ -1239,8 +1242,8 @@ tag_processor:
   advancedProcessing: |
     msg.payload = {
       "work_order_id": msg.payload.work_order_id,
-      "work_order_start_time": umh.getLastPayload("enterprise.site.area.line.workcell._historian.workorder.work_order_start_time"),
-      "work_order_end_time": umh.getLastPayload("enterprise.site.area.line.workcell._historian.workorder.work_order_end_time")
+      "work_order_start_time": umh.getLastPayload("enterprise.site.area.line.workcell._historian.workorder.work_order_start_time").work_order_start_time,
+      "work_order_end_time": umh.getLastPayload("enterprise.site.area.line.workcell._historian.workorder.work_order_end_time").work_order_end_time
     };
     return msg;
 ```
@@ -1298,6 +1301,61 @@ Output:
 }
 ```
 Topic: `umh.v1.enterprise._historian.temperature`
+
+5. **Duplicating Messages for Different Datacontracts**
+```yaml
+tag_processor:
+  defaults: |
+    msg.meta.location0 = "enterprise";
+    msg.meta.datacontract = "_historian";
+    msg.meta.tagName = "temperature";
+    return msg;
+  conditions:
+    - if: true
+      then: |
+        msg.meta.location2 = "production";
+        return msg;
+  advancedProcessing: |
+    // Create two versions of the message:
+    // 1. Original value for historian
+    // 2. Doubled value for custom
+    let doubledValue = msg.payload * 2;
+
+    msg1 = {
+      payload: msg.payload,
+      meta: { ...msg.meta, datacontract: "_historian" }
+    };
+
+    msg2 = {
+      payload: doubledValue,
+      meta: { ...msg.meta, datacontract: "_custom", tagName: msg.meta.tagName + "_doubled" }
+    };
+
+    return [msg1, msg2];
+```
+
+Input:
+```json
+23.5
+```
+
+Output 1 (Historian):
+```json
+{
+  "temperature": 23.5,
+  "timestamp_ms": 1733903611000
+}
+```
+Topic: `umh.v1.enterprise.production._historian.temperature`
+
+Output 2 (custom):
+```json
+{
+  "temperature_doubled": 47,
+  "timestamp_ms": 1733903611000
+}
+```
+Topic: `umh.v1.enterprise.production._custom.temperature_doubled`
 
 ## Testing
 
