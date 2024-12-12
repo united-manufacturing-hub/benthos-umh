@@ -583,7 +583,6 @@ tag_processor:
 		})
 
 		It("should process message with only advanced processing", func() {
-			Skip("Skipping until multiple message returns are implemented")
 			builder := service.NewStreamBuilder()
 
 			var msgHandler service.MessageHandlerFunc
@@ -804,7 +803,6 @@ tag_processor:
 		})
 
 		It("should process messages duplicated in advancedProcessing through all stages", func() {
-			Skip("Skipping until multiple message returns are implemented")
 			builder := service.NewStreamBuilder()
 
 			var msgHandler service.MessageHandlerFunc
@@ -828,17 +826,17 @@ tag_processor:
   advancedProcessing: |
     let doubledValue = msg.payload * 2;
 
-	msg1 = {
-		payload: msg.payload,
-		meta: { ...msg.meta, datacontract: "_historian" }
-	};
+    msg1 = {
+        payload: msg.payload,
+        meta: { ...msg.meta, datacontract: "_historian" }
+    };
 
-	msg2 = {
-		payload: doubledValue,
-		meta: { ...msg.meta, datacontract: "_analytics", tagName: msg.meta.tagName + "_doubled" }
-	};
+    msg2 = {
+        payload: doubledValue,
+        meta: { ...msg.meta, datacontract: "_analytics", tagName: msg.meta.tagName + "_doubled" }
+    };
 
-	return [msg1, msg2];
+    return [msg1, msg2];
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -902,7 +900,6 @@ tag_processor:
 		})
 
 		It("should process messages duplicated in defaults through all stages", func() {
-			Skip("Skipping until multiple message returns are implemented")
 			builder := service.NewStreamBuilder()
 
 			var msgHandler service.MessageHandlerFunc
