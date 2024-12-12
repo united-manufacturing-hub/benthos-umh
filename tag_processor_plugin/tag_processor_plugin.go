@@ -153,9 +153,30 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 				continue
 			}
 
+			// Initialize meta if it doesn't exist
+			if _, exists := jsMsg["meta"]; !exists {
+				jsMsg["meta"] = make(map[string]interface{})
+			}
+
+			// Add existing metadata
+			meta := jsMsg["meta"].(map[string]interface{})
+			if err := msg.MetaWalkMut(func(key string, value any) error {
+				meta[key] = value
+				return nil
+			}); err != nil {
+				p.logError(err, "metadata extraction", msg)
+				continue
+			}
+
 			// Setup JS environment
 			if err := p.jsProcessor.SetupJSEnvironment(vm, jsMsg); err != nil {
 				p.logError(err, "JS environment setup", jsMsg)
+				continue
+			}
+
+			// Set msg variable in VM
+			if err := vm.Set("msg", jsMsg); err != nil {
+				p.logError(err, "JS message setup", jsMsg)
 				continue
 			}
 
@@ -173,7 +194,9 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 					p.logError(err, "condition processing", msg)
 					continue
 				}
-				newBatch = append(newBatch, conditionBatch...)
+				if len(conditionBatch) > 0 {
+					newBatch = append(newBatch, conditionBatch...)
+				}
 			} else {
 				newBatch = append(newBatch, msg)
 			}
@@ -193,6 +216,11 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 
 	// Validate and construct final messages
 	for _, msg := range batch {
+		// Skip nil messages
+		if msg == nil {
+			continue
+		}
+
 		// Validate required fields
 		if err := p.validateMessage(msg); err != nil {
 			p.messagesErrored.Incr(1)
@@ -264,12 +292,20 @@ func (p *TagProcessor) executeJSCode(vm *goja.Runtime, code string, jsMsg map[st
 		return nil, fmt.Errorf("JavaScript error in code: %v", err)
 	}
 
+	// Handle null/undefined returns (message dropped)
+	if result == nil || goja.IsNull(result) || goja.IsUndefined(result) {
+		return nil, nil
+	}
+
 	// Handle both single message and array returns
 	switch v := result.Export().(type) {
 	case []interface{}:
 		// Handle array of messages
 		messages := make([]map[string]interface{}, 0, len(v))
 		for _, msg := range v {
+			if msg == nil {
+				continue // Skip nil messages in array
+			}
 			if msgMap, ok := msg.(map[string]interface{}); ok {
 				messages = append(messages, msgMap)
 			} else {
@@ -325,10 +361,21 @@ func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code stri
 			return nil, fmt.Errorf("failed to setup JavaScript environment: %v", err)
 		}
 
+		// Set msg variable in VM
+		if err := vm.Set("msg", jsMsg); err != nil {
+			p.logError(err, "JS message setup", jsMsg)
+			return nil, fmt.Errorf("failed to set message in JavaScript environment: %v", err)
+		}
+
 		// Execute the code
 		messages, err := p.executeJSCode(vm, code, jsMsg)
 		if err != nil {
 			return nil, err
+		}
+
+		// Skip if message was dropped (null return)
+		if messages == nil {
+			continue
 		}
 
 		// Convert resulting messages back to Benthos messages
@@ -347,6 +394,9 @@ func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code stri
 			// Set payload
 			if payload, exists := resultMsg["payload"]; exists {
 				newMsg.SetStructured(payload)
+			} else {
+				// If no payload in result, copy from original message
+				newMsg.SetStructured(jsMsg["payload"])
 			}
 
 			resultBatch = append(resultBatch, newMsg)

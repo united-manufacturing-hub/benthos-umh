@@ -729,7 +729,6 @@ tag_processor:
 		})
 
 		It("should handle multiple message returns", func() {
-			Skip("Skipping until multiple message returns are implemented")
 			builder := service.NewStreamBuilder()
 
 			var msgHandler service.MessageHandlerFunc
