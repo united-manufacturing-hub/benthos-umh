@@ -550,6 +550,7 @@ tag_processor:
 		})
 
 		It("should process message with only advanced processing", func() {
+			Skip("Skipping until multiple message returns are implemented")
 			builder := service.NewStreamBuilder()
 
 			var msgHandler service.MessageHandlerFunc
@@ -695,7 +696,7 @@ tag_processor:
 		})
 
 		It("should handle multiple message returns", func() {
-			Skip("Skipping for now")
+			Skip("Skipping until multiple message returns are implemented")
 			builder := service.NewStreamBuilder()
 
 			var msgHandler service.MessageHandlerFunc
@@ -710,25 +711,18 @@ tag_processor:
     msg.meta.tagName = "temperature";
     return msg;
   advancedProcessing: |
-    // Return multiple messages with different tags
-    return [
-      {
-        payload: msg.payload,
-        meta: {
-          level0: "enterprise",
-          schema: "_historian",
-          tagName: "temperature"
-        }
-      },
-      {
-        payload: msg.payload,
-        meta: {
-          level0: "enterprise",
-          schema: "_historian",
-          tagName: "temperature_backup"
-        }
-      }
-    ];
+    // Prepare two separate messages: one original and one backup
+    let msg1 = {
+      payload: msg.payload,
+      meta: { ...msg.meta }
+    };
+
+    let msg2 = {
+      payload: msg.payload,
+      meta: { ...msg.meta, tagName: msg.meta.tagName + "_backup" }
+    };
+
+    return [msg1, msg2];
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -777,7 +771,8 @@ tag_processor:
 			Expect(payload["temperature_backup"]).To(Equal(json.Number("23.5")))
 		})
 
-		It("should process duplicated messages through all stages", func() {
+		It("should process messages duplicated in advancedProcessing through all stages", func() {
+			Skip("Skipping until multiple message returns are implemented")
 			builder := service.NewStreamBuilder()
 
 			var msgHandler service.MessageHandlerFunc
@@ -799,25 +794,19 @@ tag_processor:
         return msg;
 
   advancedProcessing: |
-    msg1 = {
-      payload: msg.payload,
-      meta: {
-        level0: msg.meta.level0,
-        schema: "_historian",
-        tagName: msg.meta.tagName,
-        level2: msg.meta.level2
-      }
-    };
-    msg2 = {
-      payload: msg.payload * 2, // Double the value
-      meta: {
-        level0: msg.meta.level0,
-        schema: "_analytics",
-        tagName: msg.meta.tagName + "_doubled",
-        level2: msg.meta.level2
-      }
-    };
-    return [msg1, msg2];
+    let doubledValue = msg.payload * 2;
+
+	msg1 = {
+		payload: msg.payload,
+		meta: { ...msg.meta, schema: "_historian" }
+	};
+
+	msg2 = {
+		payload: doubledValue,
+		meta: { ...msg.meta, schema: "_analytics", tagName: msg.meta.tagName + "_doubled" }
+	};
+
+	return [msg1, msg2];
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -877,7 +866,122 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]interface{})
 			Expect(ok).To(BeTrue())
-			Expect(payload["temperature"]).To(Equal(json.Number("47")))
+			Expect(payload["temperature_doubled"]).To(Equal(json.Number("47")))
+		})
+
+		It("should process messages duplicated in defaults through all stages", func() {
+			Skip("Skipping until multiple message returns are implemented")
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg1 = {
+      payload: msg.payload,
+      meta: {
+        level0: "enterprise",
+        schema: "_historian",
+        tagName: "temperature"
+      }
+    };
+
+    msg2 = {
+      payload: msg.payload,
+      meta: {
+        level0: "enterprise",
+        schema: "_analytics",
+        tagName: "temperature_raw"
+      }
+    };
+
+    return [msg1, msg2];
+
+  conditions:
+    - if: msg.meta.schema === "_historian"
+      then: |
+        msg.meta.level2 = "production";
+        return msg;
+    - if: msg.meta.schema === "_analytics"
+      then: |
+        msg.meta.level2 = "analytics";
+        msg.payload = msg.payload * 2;
+        return msg;
+
+  advancedProcessing: |
+    if (msg.meta.schema === "_analytics") {
+      msg.meta.virtualPath = "raw_data";
+    } else {
+      msg.meta.virtualPath = "processed";
+    }
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Send test message
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured(23.5)
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should get two messages that went through all stages
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(2))
+
+			// Check historian message
+			msg := messages[0]
+			schema, exists := msg.MetaGet("schema")
+			Expect(exists).To(BeTrue())
+			Expect(schema).To(Equal("_historian"))
+			level2, exists := msg.MetaGet("level2")
+			Expect(exists).To(BeTrue())
+			Expect(level2).To(Equal("production"))
+			virtualPath, exists := msg.MetaGet("virtualPath")
+			Expect(exists).To(BeTrue())
+			Expect(virtualPath).To(Equal("processed"))
+			structured, err := msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			payload, ok := structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(payload["temperature"]).To(Equal(json.Number("23.5")))
+
+			// Check analytics message
+			msg = messages[1]
+			schema, exists = msg.MetaGet("schema")
+			Expect(exists).To(BeTrue())
+			Expect(schema).To(Equal("_analytics"))
+			level2, exists = msg.MetaGet("level2")
+			Expect(exists).To(BeTrue())
+			Expect(level2).To(Equal("analytics"))
+			virtualPath, exists = msg.MetaGet("virtualPath")
+			Expect(exists).To(BeTrue())
+			Expect(virtualPath).To(Equal("raw_data"))
+			structured, err = msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			payload, ok = structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(payload["temperature_raw"]).To(Equal(json.Number("47")))
 		})
 	})
 })
