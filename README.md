@@ -1224,9 +1224,11 @@ Output:
 ```
 Topic: `umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.x.position.actual`
 
-3. **Advanced Processing with getLastPayload**
+3. (upcoming)**Advanced Processing with getLastPayload**
 
 getLastPayload is a function that returns the last payload of a message that was avaialble in Kafka. Remember that you will get the full payload, and might still need to extract the value you need.
+
+**This is not yet implemented, but will be available in the future.**
 
 ```yaml
 tag_processor:
