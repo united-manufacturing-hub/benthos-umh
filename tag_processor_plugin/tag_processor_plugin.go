@@ -129,26 +129,91 @@ func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics 
 func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var resultBatch service.MessageBatch
 
-	for _, msg := range batch {
-		p.messagesProcessed.Incr(1)
-
-		// Process the message
-		newMsg, err := p.processMessage(msg)
+	// Process defaults
+	if p.config.Defaults != "" {
+		var err error
+		batch, err = p.processMessageBatch(batch, p.config.Defaults)
 		if err != nil {
-			p.messagesErrored.Incr(1)
-			p.logger.Errorf("Failed to process message: %v", err)
-			continue
-		}
-
-		if newMsg != nil {
-			resultBatch = append(resultBatch, newMsg)
-		} else {
-			p.messagesDropped.Incr(1)
+			return nil, fmt.Errorf("error in defaults processing: %v", err)
 		}
 	}
 
+	// Process conditions
+	for _, condition := range p.config.Conditions {
+		var newBatch service.MessageBatch
+
+		for _, msg := range batch {
+			// Create JavaScript runtime for condition evaluation
+			vm := goja.New()
+
+			// Convert message to JS object for condition check
+			jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
+			if err != nil {
+				p.logError(err, "message conversion", msg)
+				continue
+			}
+
+			// Setup JS environment
+			if err := p.jsProcessor.SetupJSEnvironment(vm, jsMsg); err != nil {
+				p.logError(err, "JS environment setup", jsMsg)
+				continue
+			}
+
+			// Evaluate condition
+			ifResult, err := vm.RunString(condition.If)
+			if err != nil {
+				p.logJSError(err, condition.If, jsMsg)
+				continue
+			}
+
+			// If condition is true, process the message
+			if ifResult.ToBoolean() {
+				conditionBatch, err := p.processMessageBatch(service.MessageBatch{msg}, condition.Then)
+				if err != nil {
+					p.logError(err, "condition processing", msg)
+					continue
+				}
+				newBatch = append(newBatch, conditionBatch...)
+			} else {
+				newBatch = append(newBatch, msg)
+			}
+		}
+
+		batch = newBatch
+	}
+
+	// Process advanced processing
+	if p.config.AdvancedProcessing != "" {
+		var err error
+		batch, err = p.processMessageBatch(batch, p.config.AdvancedProcessing)
+		if err != nil {
+			return nil, fmt.Errorf("error in advanced processing: %v", err)
+		}
+	}
+
+	// Validate and construct final messages
+	for _, msg := range batch {
+		// Validate required fields
+		if err := p.validateMessage(msg); err != nil {
+			p.messagesErrored.Incr(1)
+			p.logger.Errorf("Message validation failed: %v", err)
+			continue
+		}
+
+		// Construct final message
+		finalMsg, err := p.constructFinalMessage(msg)
+		if err != nil {
+			p.messagesErrored.Incr(1)
+			p.logger.Errorf("Failed to construct final message: %v", err)
+			continue
+		}
+
+		resultBatch = append(resultBatch, finalMsg)
+		p.messagesProcessed.Incr(1)
+	}
+
 	if len(resultBatch) == 0 {
-		return []service.MessageBatch{}, nil
+		return nil, nil
 	}
 
 	return []service.MessageBatch{resultBatch}, nil
@@ -190,179 +255,181 @@ Message content: %v`,
 		msg)
 }
 
-func (p *TagProcessor) processMessage(msg *service.Message) (*service.Message, error) {
-	// Create JavaScript runtime
-	vm := goja.New()
-
-	// Convert message to JS object using nodered_js_plugin
-	jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
+// executeJSCode executes JavaScript code and returns an array of message objects
+func (p *TagProcessor) executeJSCode(vm *goja.Runtime, code string, jsMsg map[string]interface{}) ([]map[string]interface{}, error) {
+	wrappedCode := fmt.Sprintf(`(function(){%s})()`, code)
+	result, err := vm.RunString(wrappedCode)
 	if err != nil {
-		p.logError(err, "message conversion", msg)
-		return nil, fmt.Errorf("failed to convert Benthos message to JavaScript object: %v. Please check message format", err)
+		p.logJSError(err, code, jsMsg)
+		return nil, fmt.Errorf("JavaScript error in code: %v", err)
 	}
 
-	// Initialize meta if it doesn't exist
-	if _, exists := jsMsg["meta"]; !exists {
-		jsMsg["meta"] = make(map[string]interface{})
-	}
-
-	// Add existing metadata to the message wrapper
-	meta := jsMsg["meta"].(map[string]interface{})
-	if err := msg.MetaWalkMut(func(key string, value any) error {
-		meta[key] = value
-		return nil
-	}); err != nil {
-		p.logError(err, "metadata extraction", msg)
-		return nil, fmt.Errorf("failed to extract metadata from message: %v. Please check message metadata format", err)
-	}
-
-	// Setup JS environment using nodered_js_plugin
-	if err := p.jsProcessor.SetupJSEnvironment(vm, jsMsg); err != nil {
-		p.logError(err, "JS environment setup", jsMsg)
-		return nil, fmt.Errorf("failed to setup JavaScript environment: %v. This might be an internal error", err)
-	}
-
-	// Run defaults code
-	if p.config.Defaults != "" {
-		wrappedCode := fmt.Sprintf(`(function(){%s})()`, p.config.Defaults)
-		result, err := vm.RunString(wrappedCode)
-		if err != nil {
-			p.logJSError(err, p.config.Defaults, jsMsg)
-			return nil, fmt.Errorf("JavaScript error in defaults code: %v. Please check your defaults configuration", err)
-		}
-
-		// Get the returned message object
-		returnedMsg, ok := result.Export().(map[string]interface{})
-		if !ok {
-			return nil, fmt.Errorf("defaults code must return a message object")
-		}
-
-		// Update jsMsg with the returned values
-		jsMsg = returnedMsg
-
-		// Update VM with new message state
-		if err := vm.Set("msg", jsMsg); err != nil {
-			p.logError(err, "JS environment update after defaults", jsMsg)
-			return nil, fmt.Errorf("failed to update JavaScript environment after defaults: %v. This might be an internal error", err)
-		}
-	}
-
-	// Run conditions
-	for _, condition := range p.config.Conditions {
-		// Evaluate if expression
-		ifResult, err := vm.RunString(condition.If)
-		if err != nil {
-			p.logJSError(err, condition.If, jsMsg)
-			return nil, fmt.Errorf("JavaScript error in condition expression: %v. Please check your condition 'if' statement", err)
-		}
-
-		// If condition is true, run then code
-		if ifResult.ToBoolean() {
-			wrappedCode := fmt.Sprintf(`(function(){%s})()`, condition.Then)
-			result, err := vm.RunString(wrappedCode)
-			if err != nil {
-				p.logJSError(err, condition.Then, jsMsg)
-				return nil, fmt.Errorf("JavaScript error in condition code: %v. Please check your condition 'then' code", err)
-			}
-
-			// Get the returned message object
-			returnedMsg, ok := result.Export().(map[string]interface{})
-			if !ok {
-				return nil, fmt.Errorf("condition code must return a message object")
-			}
-
-			// Update jsMsg with the returned values
-			jsMsg = returnedMsg
-
-			// Update VM with new message state
-			if err := vm.Set("msg", jsMsg); err != nil {
-				p.logError(err, "JS environment update after condition", jsMsg)
-				return nil, fmt.Errorf("failed to update JavaScript environment after condition: %v. This might be an internal error", err)
+	// Handle both single message and array returns
+	switch v := result.Export().(type) {
+	case []interface{}:
+		// Handle array of messages
+		messages := make([]map[string]interface{}, 0, len(v))
+		for _, msg := range v {
+			if msgMap, ok := msg.(map[string]interface{}); ok {
+				messages = append(messages, msgMap)
+			} else {
+				return nil, fmt.Errorf("array elements must be message objects")
 			}
 		}
+		return messages, nil
+	case map[string]interface{}:
+		// Handle single message
+		return []map[string]interface{}{v}, nil
+	default:
+		return nil, fmt.Errorf("code must return a message object or array of message objects")
+	}
+}
+
+// processMessageBatch processes a batch of messages with the given JavaScript code
+func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code string) (service.MessageBatch, error) {
+	if code == "" {
+		return batch, nil
 	}
 
-	// Run advanced processing if configured
-	if p.config.AdvancedProcessing != "" {
-		wrappedCode := fmt.Sprintf(`(function(){%s})()`, p.config.AdvancedProcessing)
-		result, err := vm.RunString(wrappedCode)
+	var resultBatch service.MessageBatch
+
+	for _, msg := range batch {
+		// Create JavaScript runtime for this message
+		vm := goja.New()
+
+		// Convert message to JS object
+		jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
 		if err != nil {
-			p.logJSError(err, p.config.AdvancedProcessing, jsMsg)
-			return nil, fmt.Errorf("JavaScript error in advanced processing code: %v. Please check your advanced processing configuration", err)
+			p.logError(err, "message conversion", msg)
+			return nil, fmt.Errorf("failed to convert message to JavaScript object: %v", err)
 		}
 
-		// Get the returned message object
-		returnedMsg, ok := result.Export().(map[string]interface{})
-		if !ok {
-			return nil, fmt.Errorf("advanced processing code must return a message object")
+		// Initialize meta if it doesn't exist
+		if _, exists := jsMsg["meta"]; !exists {
+			jsMsg["meta"] = make(map[string]interface{})
 		}
 
-		// Update jsMsg with the returned values
-		jsMsg = returnedMsg
+		// Add existing metadata
+		meta := jsMsg["meta"].(map[string]interface{})
+		if err := msg.MetaWalkMut(func(key string, value any) error {
+			meta[key] = value
+			return nil
+		}); err != nil {
+			p.logError(err, "metadata extraction", msg)
+			return nil, fmt.Errorf("failed to extract metadata: %v", err)
+		}
+
+		// Setup JS environment
+		if err := p.jsProcessor.SetupJSEnvironment(vm, jsMsg); err != nil {
+			p.logError(err, "JS environment setup", jsMsg)
+			return nil, fmt.Errorf("failed to setup JavaScript environment: %v", err)
+		}
+
+		// Execute the code
+		messages, err := p.executeJSCode(vm, code, jsMsg)
+		if err != nil {
+			return nil, err
+		}
+
+		// Convert resulting messages back to Benthos messages
+		for _, resultMsg := range messages {
+			newMsg := service.NewMessage(nil)
+
+			// Set metadata
+			if meta, ok := resultMsg["meta"].(map[string]interface{}); ok {
+				for k, v := range meta {
+					if str, ok := v.(string); ok {
+						newMsg.MetaSet(k, str)
+					}
+				}
+			}
+
+			// Set payload
+			if payload, exists := resultMsg["payload"]; exists {
+				newMsg.SetStructured(payload)
+			}
+
+			resultBatch = append(resultBatch, newMsg)
+		}
 	}
 
-	// Validate required fields
-	meta, ok := jsMsg["meta"].(map[string]interface{})
-	if !ok {
-		p.logError(fmt.Errorf("meta field is not a map"), "metadata validation", jsMsg)
-		return nil, fmt.Errorf("message is missing the required 'meta' object. Your JavaScript code must set 'msg.meta' as an object with the required fields")
-	}
+	return resultBatch, nil
+}
 
+// validateMessage checks if a message has all required metadata fields
+func (p *TagProcessor) validateMessage(msg *service.Message) error {
 	requiredFields := []string{"location0", "datacontract", "tagName"}
 	for _, field := range requiredFields {
-		if _, exists := meta[field]; !exists {
-			p.logError(fmt.Errorf("missing field: %s", field), "metadata validation", meta)
-			return nil, fmt.Errorf("missing required metadata field '%s'. Your JavaScript code must set 'msg.meta.%s'", field, field)
+		if _, exists := msg.MetaGet(field); !exists {
+			p.logError(fmt.Errorf("missing field: %s", field), "metadata validation", msg)
+			return fmt.Errorf("missing required metadata field '%s'", field)
 		}
 	}
+	return nil
+}
 
-	// Construct topic
-	topic := p.constructTopic(meta)
-
-	// Create final message
+// constructFinalMessage creates the final message with proper topic and payload structure
+func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Message, error) {
+	// Create new message
 	newMsg := service.NewMessage(nil)
 
-	// Set all metadata from the final state
-	for k, v := range meta {
-		if str, ok := v.(string); ok {
-			newMsg.MetaSet(k, str)
+	// Copy all metadata
+	err := msg.MetaWalkMut(func(key string, value any) error {
+		if str, ok := value.(string); ok {
+			newMsg.MetaSet(key, str)
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to copy metadata: %v", err)
 	}
 
-	// Set payload from the final state
+	// Construct and set topic
+	topic := p.constructTopic(msg)
+	newMsg.MetaSet("topic", topic)
+
+	// Get tagName from metadata
+	tagName, exists := msg.MetaGet("tagName")
+	if !exists {
+		return nil, fmt.Errorf("missing tagName in metadata")
+	}
+
+	// Get payload value
+	structured, err := msg.AsStructured()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get structured payload: %v", err)
+	}
+
+	// Structure payload
 	payload := map[string]interface{}{
-		meta["tagName"].(string): json.Number(fmt.Sprintf("%v", jsMsg["payload"])),
-		"timestamp_ms":           time.Now().UnixMilli(),
+		tagName:        json.Number(fmt.Sprintf("%v", structured)),
+		"timestamp_ms": time.Now().UnixMilli(),
 	}
 	newMsg.SetStructured(payload)
-
-	// Set topic
-	newMsg.MetaSet("topic", topic)
 
 	return newMsg, nil
 }
 
-func (p *TagProcessor) constructTopic(meta map[string]interface{}) string {
+// constructTopic creates the topic string from message metadata
+func (p *TagProcessor) constructTopic(msg *service.Message) string {
 	parts := []string{"umh", "v1"}
 
 	// Add location levels
 	for i := 0; i <= 5; i++ {
-		key := fmt.Sprintf("location%d", i)
-		if value, ok := meta[key].(string); ok && value != "" {
+		if value, exists := msg.MetaGet(fmt.Sprintf("location%d", i)); exists && value != "" {
 			parts = append(parts, value)
 		}
 	}
 
 	// Add datacontract
-	if datacontract, ok := meta["datacontract"].(string); ok && datacontract != "" {
-		parts = append(parts, datacontract)
+	if value, exists := msg.MetaGet("datacontract"); exists && value != "" {
+		parts = append(parts, value)
 	}
 
 	// Add path components
 	i := 0
 	for {
-		key := fmt.Sprintf("path%d", i)
-		if value, ok := meta[key].(string); ok && value != "" {
+		if value, exists := msg.MetaGet(fmt.Sprintf("path%d", i)); exists && value != "" {
 			parts = append(parts, value)
 		} else {
 			break
@@ -371,8 +438,8 @@ func (p *TagProcessor) constructTopic(meta map[string]interface{}) string {
 	}
 
 	// Add tagName
-	if tagName, ok := meta["tagName"].(string); ok && tagName != "" {
-		parts = append(parts, tagName)
+	if value, exists := msg.MetaGet("tagName"); exists && value != "" {
+		parts = append(parts, value)
 	}
 
 	return strings.Join(parts, ".")
