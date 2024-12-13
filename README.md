@@ -74,7 +74,8 @@ The plugin provides metadata for each message, that can be used to create a topi
 | Metadata                 | Description                                                                                                                                          |
 |--------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `opcua_tag_name`         | The sanitized ID of the Node that sent the message. This is always unique between nodes                                                              |
-| `opcua_tag_group`        | A dot-separated path to the tag, created by joining the BrowseNames.                                                                                 |
+| `opcua_tag_path`        | A dot-separated path to the tag, created by joining the BrowseNames.                                                                                 |
+| `opcua_tag_group`        | Other name for `opcua_tag_path`                                                                                  |
 | `opcua_tag_type`         | The data type of the node optimized for benthos, which can be either a number, string or bool. For the original one, check out `opcua_attr_datatype` |
 | `opcua_source_timestamp` | The SourceTimestamp of the OPC UA node                                                                                                               |
 | `opcua_server_timestamp` | The ServerTimestamp of the OPC UA node                                                                                                               |
@@ -740,6 +741,734 @@ There are basically 2 ways for setting up the connection. One approach involves 
 #### Output
 
 Similar to the OPC UA input, this outputs for each address a single message with the payload being the value that was read. To distinguish messages, you can use meta("symbol_name") in a following benthos bloblang processor.
+
+### Node-RED JavaScript Processor
+
+The Node-RED JavaScript processor allows you to write JavaScript code to process messages in a style similar to Node-RED function nodes. This makes it easy to port existing Node-RED functions to Benthos or write new processing logic using familiar JavaScript syntax.
+
+#### Configuration
+
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // Your JavaScript code here
+          return msg;
+```
+
+#### Message Format
+
+Messages in Benthos and in the JavaScript processor are handled differently:
+
+**In Benthos/Bloblang:**
+```yaml
+# Message content is the message itself
+root = this   # accesses the message content
+
+# Metadata is accessed via meta() function
+meta("some_key")   # gets metadata value
+meta some_key = "value"   # sets metadata
+```
+
+**In JavaScript (Node-RED style):**
+```javascript
+// Message content is in msg.payload
+msg.payload   // accesses the message content
+
+// Metadata is in msg.meta
+msg.meta.some_key   // accesses metadata
+```
+
+The processor automatically converts between these formats.
+
+#### Examples
+
+1. **Pass Through Message**
+Input message:
+```json
+{
+  "temperature": 25.5,
+  "humidity": 60
+}
+```
+
+Metadata:
+```yaml
+sensor_id: "temp_1"
+location: "room_a"
+```
+
+JavaScript code:
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // Message arrives as:
+          // msg.payload = {"temperature": 25.5, "humidity": 60}
+          // msg.meta = {"sensor_id": "temp_1", "location": "room_a"}
+          
+          // Simply pass through
+          return msg;
+```
+
+Output: Identical to input
+
+2. **Modify Message Payload**
+Input message:
+```json
+["apple", "banana", "orange"]
+```
+
+JavaScript code:
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // msg.payload = ["apple", "banana", "orange"]
+          msg.payload = msg.payload.length;
+          return msg;
+```
+
+Output message:
+```json
+3
+```
+
+3. **Create New Message**
+Input message:
+```json
+{
+  "raw_value": 1234
+}
+```
+
+JavaScript code:
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // Create new message with transformed data
+          var newMsg = { 
+            payload: {
+              processed_value: msg.payload.raw_value * 2,
+              timestamp: Date.now()
+            }
+          };
+          return newMsg;
+```
+
+Output message:
+```json
+{
+  "processed_value": 2468,
+  "timestamp": 1710254879123
+}
+```
+
+4. **Drop Messages (Filter)**
+Input messages:
+```json
+{"status": "ok"}
+{"status": "error"}
+{"status": "ok"}
+```
+
+JavaScript code:
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // Only pass through messages with status "ok"
+          if (msg.payload.status === "error") {
+            return null;  // Message will be dropped
+          }
+          return msg;
+```
+
+Output: Only messages with status "ok" pass through
+
+5. **Working with Metadata**
+Input message:
+```json
+{"value": 42}
+```
+
+Metadata:
+```yaml
+source: "sensor_1"
+```
+
+JavaScript code:
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // Add processing information to metadata
+          msg.meta.processed = "true";
+          msg.meta.count = "1";
+          
+          // Modify existing metadata
+          if (msg.meta.source) {
+            msg.meta.source = "modified-" + msg.meta.source;
+          }
+          
+          return msg;
+```
+
+Output message: Same as input
+
+Output metadata:
+```yaml
+source: "modified-sensor_1"
+processed: "true"
+count: "1"
+```
+
+Equivalent Bloblang:
+```coffee
+meta processed = "true"
+meta count = "1"
+meta source = "modified-" + meta("source")
+```
+
+6. **String Manipulation**
+Input message:
+```json
+"hello world"
+```
+
+JavaScript code:
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // Convert to uppercase
+          msg.payload = msg.payload.toUpperCase();
+          return msg;
+```
+
+Output message:
+```json
+"HELLO WORLD"
+```
+
+7. **Numeric Operations**
+Input message:
+```json
+42
+```
+
+JavaScript code:
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // Double a number
+          msg.payload = msg.payload * 2;
+          return msg;
+```
+
+Output message:
+```json
+84
+```
+
+8. **Logging**
+Input message:
+```json
+{
+  "sensor": "temp_1",
+  "value": 25.5
+}
+```
+
+Metadata:
+```yaml
+timestamp: "2024-03-12T12:00:00Z"
+```
+
+JavaScript code:
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // Log various aspects of the message
+          console.log("Processing temperature reading:", msg.payload.value);
+          console.log("From sensor:", msg.payload.sensor);
+          console.log("At time:", msg.meta.timestamp);
+          
+          if (msg.payload.value > 30) {
+            console.warn("High temperature detected!");
+          }
+          
+          return msg;
+```
+
+Output: Same as input, with log messages in Benthos logs
+
+#### Performance Comparison
+
+When choosing between Node-RED JavaScript and Bloblang for message processing, consider the performance implications. Here's a benchmark comparison of both processors performing a simple operation (doubling a number) on 1000 messages:
+
+**JavaScript Processing:**
+- Median: 15.4ms
+- Mean: 20.9ms
+- Standard Deviation: 9.4ms
+- Range: 13.8ms - 39ms
+
+**Bloblang Processing:**
+- Median: 3.7ms
+- Mean: 4ms
+- Standard Deviation: 800µs
+- Range: 3.3ms - 5.6ms
+
+**Key Observations:**
+1. Bloblang is approximately 4-5x faster for simple operations
+2. Bloblang shows more consistent performance (smaller standard deviation)
+3. However, considering typical protocol converter workloads (around 1000 messages/second), the performance difference is negligible for most use cases. The JavaScript processor's ease of use and familiarity often outweigh the performance benefits of Bloblang, especially for smaller user-generated flows.
+
+Note that these benchmarks represent a simple operation. The performance difference may vary with more complex transformations or when using advanced JavaScript features.
+
+### Tag Processor
+
+The Tag Processor is designed to prepare incoming data for the UMH data model. It processes messages through three configurable stages: defaults, conditional transformations, and advanced processing, all using a Node-RED style JavaScript environment.
+
+#### Message Formatting Behavior
+
+The processor automatically formats different input types into a consistent structure with a "value" field:
+
+1. **Simple Values (numbers, strings, booleans)**
+Input:
+```json
+42
+```
+Output:
+```json
+{
+  "value": 42
+}
+```
+
+Input:
+```json
+"test string"
+```
+Output:
+```json
+{
+  "value": "test string"
+}
+```
+
+Input:
+```json
+true
+```
+Output:
+```json
+{
+  "value": true
+}
+```
+
+2. **Arrays** (converted to string representation)
+Input:
+```json
+["a", "b", "c"]
+```
+Output:
+```json
+{
+  "value": "[a b c]"
+}
+```
+
+3. **Objects** (preserved as JSON objects)
+Input:
+```json
+{
+  "key1": "value1",
+  "key2": 42
+}
+```
+Output:
+```json
+{
+  "value": {
+    "key1": "value1",
+    "key2": 42
+  }
+}
+```
+
+4. **Numbers** (preserved as numbers)
+Input:
+```json
+23.5
+```
+Output:
+```json
+{
+  "value": 23.5
+}
+```
+
+Input:
+```json
+42
+```
+Output:
+```json
+{
+  "value": 42
+}
+```
+
+This consistent formatting ensures that:
+- All messages have a "value" field
+- Simple types (numbers, strings, booleans) are preserved as-is
+- Complex types (arrays, objects) are converted to their string representations
+- Numbers are always preserved as numeric types (integers or floats)
+
+#### Configuration
+
+```yaml
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |
+
+          # Set default location hierarchy and datacontract
+          msg.meta.location_path = "enterprise.plant1.machiningArea.cnc-line.cnc5.plc123";
+          msg.meta.data_contract = "_historian";
+          return msg;
+        conditions:
+          - if: msg.meta.opcua_node_id === "ns=1;i=2245"
+            then: |
+              # Set path hierarchy and tag name for specific OPC UA node
+              msg.meta.virtual_path = "axis.x.position";
+              msg.meta.tag_name = "actual";
+              return msg;
+        advancedProcessing: |
+          # Optional advanced message processing
+          # Example: double numeric values
+          msg.payload = parseFloat(msg.payload) * 2;
+          return msg;
+```
+
+#### Processing Stages
+
+1. **Defaults**
+   - Sets initial metadata values
+   - Runs first on every message
+   - Must return a message object
+
+2. **Conditions**
+   - List of conditional transformations
+   - Each condition has an `if` expression and a `then` code block
+   - Runs after defaults
+   - Must return a message object
+
+3. **Advanced Processing**
+   - Optional final processing stage
+   - Can modify both metadata and payload
+   - Must return a message object
+
+#### Metadata Fields
+
+The processor uses the following metadata fields:
+
+**Required Fields:**
+- `location_path`: Hierarchical location path in dot notation (e.g., "enterprise.site.area.line.workcell.plc123")
+- `data_contract`: Data schema identifier (e.g., "_historian", "_analytics")
+- `tag_name`: Name of the tag/variable (e.g., "temperature", "pressure")
+
+**Optional Fields:**
+- `virtual_path`: Logical, non-physical grouping path in dot notation (e.g., "axis.x.position")
+
+**Generated Fields:**
+- `topic`: Automatically generated from the above fields in the format:
+  ```
+  umh.v1.<location_path>.<data_contract>.<virtual_path>.<tag_name>
+  ```
+  Empty or undefined fields are skipped, and dots are normalized.
+
+#### Message Structure
+
+Messages in the Tag Processor follow the Node-RED style format:
+
+```javascript
+{
+  payload: {
+    // The message content - can be a simple value or complex object
+    "temperature": 23.5,
+    "timestamp_ms": 1733903611000
+  },
+  meta: {
+    // Required fields
+    location_path: "enterprise.site.area.line.workcell.plc123",  // Hierarchical location path
+    data_contract: "_historian",                                 // Data schema identifier
+    tag_name: "temperature",                                     // Name of the tag/variable
+
+    // Optional fields
+    virtual_path: "axis.x.position",                            // Logical grouping path
+
+    // Generated field (by processor)
+    topic: "umh.v1.enterprise.site.area.line.workcell.plc123._historian.axis.x.position.temperature",
+
+    // Input-specific fields (e.g., from OPC UA)
+    opcua_node_id: "ns=1;i=2245",
+    opcua_tag_name: "temperature_sensor_1",
+    opcua_tag_group: "sensors.temperature",
+    opcua_tag_path: "sensors.temperature",
+    opcua_tag_type: "number",
+    opcua_source_timestamp: "2024-03-12T10:00:00Z",
+    opcua_server_timestamp: "2024-03-12T10:00:00.001Z",
+    opcua_attr_nodeid: "ns=1;i=2245",
+    opcua_attr_nodeclass: "Variable",
+    opcua_attr_browsename: "Temperature",
+    opcua_attr_description: "Temperature Sensor 1",
+    opcua_attr_accesslevel: "CurrentRead",
+    opcua_attr_datatype: "Double"
+  }
+}
+```
+
+#### Examples
+
+1. **Basic Defaults Processing**
+```yaml
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.plant1.machiningArea.cnc-line.cnc5.plc123";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "actual";
+    return msg;
+```
+
+Input:
+```json
+23.5
+```
+
+Output:
+```json
+{
+  "actual": 23.5,
+  "timestamp_ms": 1733903611000
+}
+```
+Topic: `umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.actual`
+
+2. **OPC UA Node ID Based Processing**
+```yaml
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.plant1.machiningArea.cnc-line.cnc5.plc123";
+    msg.meta.data_contract = "_historian";
+    return msg;
+  conditions:
+    - if: msg.meta.opcua_attr_nodeid === "ns=1;i=2245"
+      then: |
+        msg.meta.virtual_path = "axis.x.position";
+        msg.meta.tag_name = "actual";
+        return msg;
+```
+
+Input with metadata `opcua_attr_nodeid: "ns=1;i=2245"`:
+```json
+23.5
+```
+
+Output:
+```json
+{
+  "actual": 23.5,
+  "timestamp_ms": 1733903611000
+}
+```
+Topic: `umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.x.position.actual`
+
+3. **Moving Folder Structures in Virtual Path**
+```yaml
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.plant1";
+    msg.meta.data_contract = "_historian";
+    msg.meta.virtual_path = msg.meta.opcua_tag_path;
+    msg.meta.tag_name = msg.meta.opcua_tag_name;
+    return msg;
+  conditions:
+    # Move the entire DataAccess_AnalogType folder and its children into axis.x
+    - if: msg.meta.opcua_tag_path && msg.meta.opcua_tag_path.includes("DataAccess_AnalogType")
+      then: |
+        msg.meta.location_path += ".area1.machining_line.cnc5.plc123";
+        msg.meta.virtual_path = "axis.x." + msg.meta.opcua_tag_path;
+        return msg;
+```
+
+Input messages with OPC UA tags:
+```javascript
+// Original tag paths from OPC UA:
+// DataAccess_AnalogType
+// DataAccess_AnalogType.EURange
+// DataAccess_AnalogType.Min
+// DataAccess_AnalogType.Max
+```
+
+Output topics will be:
+```
+umh.v1.enterprise.plant1.area1.machining_line.cnc5.plc123._historian.axis.x.DataAccess_AnalogType
+umh.v1.enterprise.plant1.area1.machining_line.cnc5.plc123._historian.axis.x.DataAccess_AnalogType.EURange
+umh.v1.enterprise.plant1.area1.machining_line.cnc5.plc123._historian.axis.x.DataAccess_AnalogType.Min
+umh.v1.enterprise.plant1.area1.machining_line.cnc5.plc123._historian.axis.x.DataAccess_AnalogType.Max
+```
+
+This example shows how to:
+- Match an entire folder structure using `includes("DataAccess_AnalogType")`
+- Move all matching nodes into a new virtual path prefix (`axis.x`)
+- Preserve the original folder hierarchy under the new location
+- Apply consistent location path for the entire folder structure
+
+4. **Advanced Processing with getLastPayload**
+
+getLastPayload is a function that returns the last payload of a message that was avaialble in Kafka. Remember that you will get the full payload, and might still need to extract the value you need.
+
+**This is not yet implemented, but will be available in the future.**
+
+```yaml
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.site.area.line.workcell";
+    msg.meta.data_contract = "_analytics";
+    msg.meta.virtual_path = "work_order";
+    return msg;
+  advancedProcessing: |
+    msg.payload = {
+      "work_order_id": msg.payload.work_order_id,
+      "work_order_start_time": umh.getLastPayload("enterprise.site.area.line.workcell._historian.workorder.work_order_start_time").work_order_start_time,
+      "work_order_end_time": umh.getLastPayload("enterprise.site.area.line.workcell._historian.workorder.work_order_end_time").work_order_end_time
+    };
+    return msg;
+```
+
+Input:
+```json
+{
+  "work_order_id": "WO123"
+}
+```
+
+Output:
+```json
+{
+  "work_order_id": "WO123",
+  "work_order_start_time": "2024-03-12T10:00:00Z",
+  "work_order_end_time": "2024-03-12T18:00:00Z"
+}
+```
+Topic: `umh.v1.enterprise.site.area.line.workcell._analytics.work_order`
+
+4. **Dropping Messages Based on Value**
+```yaml
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
+    return msg;
+  advancedProcessing: |
+    if (msg.payload < 0) {
+      // Drop negative values
+      return null;
+    }
+    return msg;
+```
+
+Input:
+```json
+-10
+```
+
+Output: Message is dropped (no output)
+
+Input:
+```json
+10
+```
+
+Output:
+```json
+{
+  "temperature": 10,
+  "timestamp_ms": 1733903611000
+}
+```
+Topic: `umh.v1.enterprise._historian.temperature`
+
+5. **Duplicating Messages for Different Data Contracts**
+```yaml
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
+    return msg;
+  conditions:
+    - if: true
+      then: |
+        msg.meta.location_path += ".production";
+        return msg;
+  advancedProcessing: |
+    // Create two versions of the message:
+    // 1. Original value for historian
+    // 2. Doubled value for custom
+    let doubledValue = msg.payload * 2;
+
+    msg1 = {
+      payload: msg.payload,
+      meta: { ...msg.meta, data_contract: "_historian" }
+    };
+
+    msg2 = {
+      payload: doubledValue,
+      meta: { ...msg.meta, data_contract: "_custom", tag_name: msg.meta.tag_name + "_doubled" }
+    };
+
+    return [msg1, msg2];
+```
+
+Input:
+```json
+23.5
+```
+
+Output 1 (Historian):
+```json
+{
+  "temperature": 23.5,
+  "timestamp_ms": 1733903611000
+}
+```
+Topic: `umh.v1.enterprise.production._historian.temperature`
+
+Output 2 (custom):
+```json
+{
+  "temperature_doubled": 47,
+  "timestamp_ms": 1733903611000
+}
+```
+Topic: `umh.v1.enterprise.production._custom.temperature_doubled`
 
 ## Testing
 

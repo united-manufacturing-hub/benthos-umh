@@ -114,6 +114,11 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		return
 	}
 
+	if len(attrs) != 5 {
+		sendError(ctx, errors.Errorf("only got %d attr, needed 5", len(attrs)), errChan, logger)
+		return
+	}
+
 	browseName, err := n.BrowseName(ctx)
 	if err != nil {
 		sendError(ctx, err, errChan, logger)
@@ -289,7 +294,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	}
 
 	browseChildrenV2 := func(refType uint32) error {
-		children, err := n.Children(ctx, refType, ua.NodeClassAll)
+		children, err := n.Children(ctx, refType, ua.NodeClassVariable|ua.NodeClassObject)
 		if err != nil {
 			sendError(ctx, errors.Errorf("Children: %d: %s", refType, err), errChan, logger)
 			return err
@@ -325,11 +330,8 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 
 		// If its a variable, we add it to the node list and browse all its children
 		case ua.NodeClassVariable:
-			if hasNodeReferencedComponents() {
-				if err := browseChildrenV2(id.HierarchicalReferences); err != nil {
-					sendError(ctx, err, errChan, logger)
-					return
-				}
+			if err := browseChildrenV2(id.HierarchicalReferences); err != nil {
+				sendError(ctx, err, errChan, logger)
 				return
 			}
 
