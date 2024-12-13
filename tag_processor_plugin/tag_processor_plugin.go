@@ -380,7 +380,7 @@ func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code stri
 		}
 
 		// Convert resulting messages back to Benthos messages
-		for i, resultMsg := range messages {
+		for _, resultMsg := range messages {
 			newMsg := service.NewMessage(nil)
 
 			// Set metadata
