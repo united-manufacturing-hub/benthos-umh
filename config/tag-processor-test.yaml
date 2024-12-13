@@ -17,8 +17,13 @@ pipeline:
           msg.meta.location4 = "cnc5";
           msg.meta.location5 = "plc123";
           msg.meta.datacontract = "_historian";
-          msg.meta.tagName = msg.meta.opcua_attr_browsename;
+
+          msg.meta.tagName = msg.meta.opcua_tag_name;
+          msg.meta.opcua_tag_group = "sensors.temperature";
+          msg.meta.path0 = "sensors";
+
           return msg;
+
         conditions:
           - if: msg.meta.opcua_node_id === "ns=6;s=DataAccess_AnalogType_Byte"
             then: |
@@ -28,11 +33,10 @@ pipeline:
               return msg;
         advancedProcessing: |
           return msg;
-    #- nodered_js:
-    #    code: |
-    #      console.log(JSON.stringify(msg, null, 2));
-    #      // console.log(JSON.stringify(msg.meta, null, 2));
-    #      return msg;
+    - nodered_js:
+        code: |
+          console.log(JSON.stringify(msg.meta.topic, null, 2));
+          return msg;
 
 output:
   stdout: {} 

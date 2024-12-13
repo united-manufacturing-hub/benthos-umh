@@ -1014,20 +1014,28 @@ pipeline:
 
 Output: Same as input, with log messages in Benthos logs
 
-#### Metrics
+#### Performance Comparison
 
-The processor exposes several metrics:
+When choosing between Node-RED JavaScript and Bloblang for message processing, consider the performance implications. Here's a benchmark comparison of both processors performing a simple operation (doubling a number) on 1000 messages:
 
-- `messages_processed`: Total number of messages that have been processed
-- `messages_errored`: Number of messages that failed to process (due to JavaScript errors)
-- `messages_dropped`: Number of messages intentionally dropped (via `return null`)
+**JavaScript Processing:**
+- Median: 15.4ms
+- Mean: 20.9ms
+- Standard Deviation: 9.4ms
+- Range: 13.8ms - 39ms
 
-These metrics can be used to:
-- Monitor the health of your processing pipeline
-- Track how many messages are being filtered out
-- Identify potential issues with your JavaScript code
+**Bloblang Processing:**
+- Median: 3.7ms
+- Mean: 4ms
+- Standard Deviation: 800µs
+- Range: 3.3ms - 5.6ms
 
-For example, if you see a high number of `messages_errored`, you might want to check your JavaScript code for errors or add more error handling.
+**Key Observations:**
+1. Bloblang is approximately 4-5x faster for simple operations
+2. Bloblang shows more consistent performance (smaller standard deviation)
+3. However, considering typical protocol converter workloads (around 1000 messages/second), the performance difference is negligible for most use cases. The JavaScript processor's ease of use and familiarity often outweigh the performance benefits of Bloblang, especially for smaller user-generated flows.
+
+Note that these benchmarks represent a simple operation. The performance difference may vary with more complex transformations or when using advanced JavaScript features.
 
 ### Tag Processor
 

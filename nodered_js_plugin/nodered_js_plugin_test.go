@@ -9,6 +9,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gmeasure"
 	_ "github.com/redpanda-data/benthos/v4/public/components/io"
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -495,6 +496,114 @@ nodered_js:
 			original, exists := msg.MetaGet("original")
 			Expect(exists).To(BeTrue())
 			Expect(original).To(Equal("value"))
+		})
+	})
+
+	Context("Performance testing", func() {
+		It("compares JavaScript and Bloblang processing performance", func() {
+			experiment := gmeasure.NewExperiment("Processing Performance Comparison")
+			AddReportEntry(experiment.Name, experiment)
+
+			// Test JavaScript processor
+			jsBuilder := service.NewStreamBuilder()
+			var jsMsgHandler service.MessageHandlerFunc
+			jsMsgHandler, err := jsBuilder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = jsBuilder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    msg.payload = msg.payload * 2;
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var jsMessages []*service.Message
+			err = jsBuilder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				jsMessages = append(jsMessages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			jsStream, err := jsBuilder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
+			defer cancel()
+
+			go func() {
+				_ = jsStream.Run(ctx)
+			}()
+
+			// Run JavaScript measurement 5 times
+			for i := 0; i < 5; i++ {
+				jsMessages = nil // Reset messages slice
+				experiment.MeasureDuration("JavaScript processing", func() {
+					for j := 0; j < 1000; j++ {
+						testMsg := service.NewMessage(nil)
+						testMsg.SetStructured(j)
+						err = jsMsgHandler(ctx, testMsg)
+						Expect(err).NotTo(HaveOccurred())
+					}
+
+					Eventually(func() int {
+						return len(jsMessages)
+					}).Should(Equal(1000))
+				})
+			}
+
+			// Test Bloblang processor
+			bloblangBuilder := service.NewStreamBuilder()
+			var bloblangMsgHandler service.MessageHandlerFunc
+			bloblangMsgHandler, err = bloblangBuilder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = bloblangBuilder.AddProcessorYAML(`
+bloblang: 'root = this * 2'
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var bloblangMessages []*service.Message
+			err = bloblangBuilder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				bloblangMessages = append(bloblangMessages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			bloblangStream, err := bloblangBuilder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			go func() {
+				_ = bloblangStream.Run(ctx)
+			}()
+
+			// Run Bloblang measurement 5 times
+			for i := 0; i < 5; i++ {
+				bloblangMessages = nil // Reset messages slice
+				experiment.MeasureDuration("Bloblang processing", func() {
+					for j := 0; j < 1000; j++ {
+						testMsg := service.NewMessage(nil)
+						testMsg.SetStructured(j)
+						err = bloblangMsgHandler(ctx, testMsg)
+						Expect(err).NotTo(HaveOccurred())
+					}
+
+					Eventually(func() int {
+						return len(bloblangMessages)
+					}).Should(Equal(1000))
+				})
+			}
+
+			// Verify last messages for sanity check
+			jsLastMsg := jsMessages[len(jsMessages)-1]
+			jsStructured, err := jsLastMsg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(jsStructured).To(Equal(int64(1998))) // 999 * 2
+
+			bloblangLastMsg := bloblangMessages[len(bloblangMessages)-1]
+			bloblangStructured, err := bloblangLastMsg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(bloblangStructured).To(Equal(int64(1998))) // 999 * 2
 		})
 	})
 })
