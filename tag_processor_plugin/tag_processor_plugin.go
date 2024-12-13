@@ -369,7 +369,6 @@ func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code stri
 		}
 
 		// Execute the code
-		fmt.Printf("jsMsg: %v \n", jsMsg)
 		messages, err := p.executeJSCode(vm, code, jsMsg)
 		if err != nil {
 			return nil, err
@@ -382,7 +381,6 @@ func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code stri
 
 		// Convert resulting messages back to Benthos messages
 		for i, resultMsg := range messages {
-			fmt.Printf("message[%d]: %v \n", i, resultMsg)
 			newMsg := service.NewMessage(nil)
 
 			// Set metadata
