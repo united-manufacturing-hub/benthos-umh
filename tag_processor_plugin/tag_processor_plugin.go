@@ -32,16 +32,15 @@ func init() {
 It applies defaults, conditional transformations, and optional advanced processing using a Node-RED style JavaScript environment.
 
 Required metadata fields:
-- location0: Top-level hierarchy (e.g., "enterprise")
-- datacontract: Data schema identifier (e.g., "_historian", "_analytics")
-- tagName: Name of the tag/variable (e.g., "temperature")
+- location_path: Hierarchical location path in dot notation (e.g., "enterprise.site.area.line.workcell.plc123")
+- data_contract: Data schema identifier (e.g., "_historian", "_analytics")
+- tag_name: Name of the tag/variable (e.g., "temperature")
 
 Optional metadata fields:
-- location1-5: Additional hierarchy levels (e.g., site, area, line, workcell, plc)
-- path0-N: Logical, non-physical grouping paths (e.g., "axis", "x", "position")
+- virtual_path: Logical, non-physical grouping path in dot notation (e.g., "axis.x.position")
 
 The final topic will be constructed as:
-umh.v1.<location0>.<location1>.<location2>.<location3>.<location4>.<location5>.<datacontract>.<path0>.<path1>.<path2>....<pathN>.<tagName>
+umh.v1.<location_path>.<data_contract>.<virtual_path>.<tag_name>
 
 Empty or undefined fields will be omitted from the topic.`).
 		Field(service.NewStringField("defaults").
@@ -409,7 +408,7 @@ func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code stri
 
 // validateMessage checks if a message has all required metadata fields
 func (p *TagProcessor) validateMessage(msg *service.Message) error {
-	requiredFields := []string{"location0", "datacontract", "tagName"}
+	requiredFields := []string{"location_path", "data_contract", "tag_name"}
 	missingFields := []string{}
 
 	// Get current metadata for context
@@ -453,7 +452,7 @@ func (p *TagProcessor) validateMessage(msg *service.Message) error {
 
 		// Create detailed error message with better formatting
 		errorMsg := fmt.Sprintf(`Message validation failed
-━━━━━━━━━━━━━━━━━━━━━��━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Missing fields: %s
 
 Current message:
@@ -463,7 +462,7 @@ Current message:
 └ Metadata:
 %s
 
-To fix: Set required fields (msg.meta.location0, msg.meta.datacontract, msg.meta.tagName) in defaults, conditions, or advancedProcessing.`,
+To fix: Set required fields (msg.meta.location_path, msg.meta.data_contract, msg.meta.tag_name) in defaults, conditions, or advancedProcessing.`,
 			strings.Join(missingFields, ", "),
 			payloadStr,
 			string(metadataJSON))
@@ -494,10 +493,10 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	topic := p.constructTopic(msg)
 	newMsg.MetaSet("topic", topic)
 
-	// Get tagName from metadata
-	tagName, exists := msg.MetaGet("tagName")
+	// Get tag_name from metadata
+	tagName, exists := msg.MetaGet("tag_name")
 	if !exists {
-		return nil, fmt.Errorf("missing tagName in metadata")
+		return nil, fmt.Errorf("missing tag_name in metadata")
 	}
 
 	// Get payload value
@@ -555,31 +554,23 @@ func (p *TagProcessor) convertValue(v interface{}) interface{} {
 func (p *TagProcessor) constructTopic(msg *service.Message) string {
 	parts := []string{"umh", "v1"}
 
-	// Add location levels
-	for i := 0; i <= 5; i++ {
-		if value, exists := msg.MetaGet(fmt.Sprintf("location%d", i)); exists && value != "" {
-			parts = append(parts, value)
-		}
+	// Add location path
+	if value, exists := msg.MetaGet("location_path"); exists && value != "" {
+		parts = append(parts, strings.Split(value, ".")...)
 	}
 
-	// Add datacontract
-	if value, exists := msg.MetaGet("datacontract"); exists && value != "" {
+	// Add data_contract
+	if value, exists := msg.MetaGet("data_contract"); exists && value != "" {
 		parts = append(parts, value)
 	}
 
-	// Add path components
-	i := 0
-	for {
-		if value, exists := msg.MetaGet(fmt.Sprintf("path%d", i)); exists && value != "" {
-			parts = append(parts, value)
-		} else {
-			break
-		}
-		i++
+	// Add virtual_path if it exists
+	if value, exists := msg.MetaGet("virtual_path"); exists && value != "" {
+		parts = append(parts, strings.Split(value, ".")...)
 	}
 
-	// Add tagName
-	if value, exists := msg.MetaGet("tagName"); exists && value != "" {
+	// Add tag_name
+	if value, exists := msg.MetaGet("tag_name"); exists && value != "" {
 		parts = append(parts, value)
 	}
 
