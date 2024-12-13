@@ -1277,14 +1277,14 @@ tag_processor:
     msg.meta.data_contract = "_historian";
     return msg;
   conditions:
-    - if: msg.meta.opcua_attr_nodeid === "ns=1;i=2245"
+    - if: msg.meta.opcua_node_id === "ns=1;i=2245"
       then: |
         msg.meta.virtual_path = "axis.x.position";
         msg.meta.tag_name = "actual";
         return msg;
 ```
 
-Input with metadata `opcua_attr_nodeid: "ns=1;i=2245"`:
+Input with metadata `opcua_node_id: "ns=1;i=2245"`:
 ```json
 23.5
 ```
@@ -1298,7 +1298,48 @@ Output:
 ```
 Topic: `umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.x.position.actual`
 
-3. (upcoming)**Advanced Processing with getLastPayload**
+3. **Moving Folder Structures in Virtual Path**
+```yaml
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.plant1";
+    msg.meta.data_contract = "_historian";
+    msg.meta.virtual_path = msg.meta.opcua_tag_path;
+    msg.meta.tag_name = msg.meta.opcua_tag_name;
+    return msg;
+  conditions:
+    # Move the entire DataAccess_AnalogType folder and its children into axis.x
+    - if: msg.meta.opcua_tag_path && msg.meta.opcua_tag_path.includes("DataAccess_AnalogType")
+      then: |
+        msg.meta.location_path += ".area1.machining_line.cnc5.plc123";
+        msg.meta.virtual_path = "axis.x." + msg.meta.opcua_tag_path;
+        return msg;
+```
+
+Input messages with OPC UA tags:
+```javascript
+// Original tag paths from OPC UA:
+// DataAccess_AnalogType
+// DataAccess_AnalogType.EURange
+// DataAccess_AnalogType.Min
+// DataAccess_AnalogType.Max
+```
+
+Output topics will be:
+```
+umh.v1.enterprise.plant1.area1.machining_line.cnc5.plc123._historian.axis.x.DataAccess_AnalogType
+umh.v1.enterprise.plant1.area1.machining_line.cnc5.plc123._historian.axis.x.DataAccess_AnalogType.EURange
+umh.v1.enterprise.plant1.area1.machining_line.cnc5.plc123._historian.axis.x.DataAccess_AnalogType.Min
+umh.v1.enterprise.plant1.area1.machining_line.cnc5.plc123._historian.axis.x.DataAccess_AnalogType.Max
+```
+
+This example shows how to:
+- Match an entire folder structure using `includes("DataAccess_AnalogType")`
+- Move all matching nodes into a new virtual path prefix (`axis.x`)
+- Preserve the original folder hierarchy under the new location
+- Apply consistent location path for the entire folder structure
+
+4. **Advanced Processing with getLastPayload**
 
 getLastPayload is a function that returns the last payload of a message that was avaialble in Kafka. Remember that you will get the full payload, and might still need to extract the value you need.
 
