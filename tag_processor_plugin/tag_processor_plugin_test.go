@@ -1164,7 +1164,6 @@ tag_processor:
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			GinkgoWriter.Printf("payload: %v \n", payload)
-			GinkgoWriter.Printf("Object value: %v (type: %T)\n", value, value)
 			Expect(ok).To(BeTrue())
 			strValue, ok = value.(string)
 			Expect(ok).To(BeTrue())
