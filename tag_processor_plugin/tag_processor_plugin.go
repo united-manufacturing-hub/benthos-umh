@@ -544,7 +544,6 @@ func (p *TagProcessor) convertValue(v interface{}) interface{} {
 				return converted
 		*/
 	default:
-		fmt.Printf("default: %v \n", val)
 		// For any other type, try to convert to number if it's a string representation
 		str := fmt.Sprintf("%v", val)
 		if num, err := strconv.ParseFloat(str, 64); err == nil {
