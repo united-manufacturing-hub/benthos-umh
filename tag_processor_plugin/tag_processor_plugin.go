@@ -453,7 +453,7 @@ func (p *TagProcessor) validateMessage(msg *service.Message) error {
 
 		// Create detailed error message with better formatting
 		errorMsg := fmt.Sprintf(`Message validation failed
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━��━━━━━━━━━━━━━━━━━━
 Missing fields: %s
 
 Current message:

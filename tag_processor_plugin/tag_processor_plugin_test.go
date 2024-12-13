@@ -38,9 +38,9 @@ var _ = Describe("TagProcessor", func() {
 			err = builder.AddProcessorYAML(`
 tag_processor:
   defaults: |
-    msg.meta.location0 = "enterprise";
-    msg.meta.datacontract = "_historian";
-    msg.meta.tagName = "temperature";
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
     return msg;
 `)
 			Expect(err).NotTo(HaveOccurred())
@@ -74,17 +74,17 @@ tag_processor:
 			msg := messages[0]
 
 			// Check metadata
-			location0, exists := msg.MetaGet("location0")
+			location_path, exists := msg.MetaGet("location_path")
 			Expect(exists).To(BeTrue())
-			Expect(location0).To(Equal("enterprise"))
+			Expect(location_path).To(Equal("enterprise"))
 
-			datacontract, exists := msg.MetaGet("datacontract")
+			data_contract, exists := msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
-			Expect(datacontract).To(Equal("_historian"))
+			Expect(data_contract).To(Equal("_historian"))
 
-			tagName, exists := msg.MetaGet("tagName")
+			tag_name, exists := msg.MetaGet("tag_name")
 			Expect(exists).To(BeTrue())
-			Expect(tagName).To(Equal("temperature"))
+			Expect(tag_name).To(Equal("temperature"))
 
 			topic, exists := msg.MetaGet("topic")
 			Expect(exists).To(BeTrue())
@@ -122,21 +122,14 @@ tag_processor:
 			yamlConfig := strings.TrimSpace(`
 tag_processor:
   defaults: |
-    msg.meta.location0 = "enterprise";
-    msg.meta.location1 = "plant1";
-    msg.meta.location2 = "machiningArea";
-    msg.meta.location3 = "cnc-line";
-    msg.meta.location4 = "cnc5";
-    msg.meta.location5 = "plc123";
-    msg.meta.datacontract = "_historian";
+    msg.meta.location_path = "enterprise.plant1.machiningArea.cnc-line.cnc5.plc123";
+    msg.meta.data_contract = "_historian";
     return msg;
   conditions:
     - if: msg.meta.opcua_node_id === "ns=1;i=2245"
       then: |
-        msg.meta.path0 = "axis";
-        msg.meta.path1 = "x";
-        msg.meta.path2 = "position";
-        msg.meta.tagName = "actual";
+        msg.meta.virtual_path = "axis.x.position";
+        msg.meta.tag_name = "actual";
         return msg;
 `)
 			err = builder.AddProcessorYAML(yamlConfig)
@@ -172,49 +165,21 @@ tag_processor:
 			msg := messages[0]
 
 			// Check metadata
-			location0, exists := msg.MetaGet("location0")
+			location_path, exists := msg.MetaGet("location_path")
 			Expect(exists).To(BeTrue())
-			Expect(location0).To(Equal("enterprise"))
+			Expect(location_path).To(Equal("enterprise.plant1.machiningArea.cnc-line.cnc5.plc123"))
 
-			location1, exists := msg.MetaGet("location1")
+			data_contract, exists := msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
-			Expect(location1).To(Equal("plant1"))
+			Expect(data_contract).To(Equal("_historian"))
 
-			location2, exists := msg.MetaGet("location2")
+			virtual_path, exists := msg.MetaGet("virtual_path")
 			Expect(exists).To(BeTrue())
-			Expect(location2).To(Equal("machiningArea"))
+			Expect(virtual_path).To(Equal("axis.x.position"))
 
-			location3, exists := msg.MetaGet("location3")
+			tag_name, exists := msg.MetaGet("tag_name")
 			Expect(exists).To(BeTrue())
-			Expect(location3).To(Equal("cnc-line"))
-
-			location4, exists := msg.MetaGet("location4")
-			Expect(exists).To(BeTrue())
-			Expect(location4).To(Equal("cnc5"))
-
-			location5, exists := msg.MetaGet("location5")
-			Expect(exists).To(BeTrue())
-			Expect(location5).To(Equal("plc123"))
-
-			datacontract, exists := msg.MetaGet("datacontract")
-			Expect(exists).To(BeTrue())
-			Expect(datacontract).To(Equal("_historian"))
-
-			path0, exists := msg.MetaGet("path0")
-			Expect(exists).To(BeTrue())
-			Expect(path0).To(Equal("axis"))
-
-			path1, exists := msg.MetaGet("path1")
-			Expect(exists).To(BeTrue())
-			Expect(path1).To(Equal("x"))
-
-			path2, exists := msg.MetaGet("path2")
-			Expect(exists).To(BeTrue())
-			Expect(path2).To(Equal("position"))
-
-			tagName, exists := msg.MetaGet("tagName")
-			Expect(exists).To(BeTrue())
-			Expect(tagName).To(Equal("actual"))
+			Expect(tag_name).To(Equal("actual"))
 
 			topic, exists := msg.MetaGet("topic")
 			Expect(exists).To(BeTrue())
@@ -251,9 +216,9 @@ tag_processor:
 			err = builder.AddProcessorYAML(`
 tag_processor:
   defaults: |
-    msg.meta.location0 = "enterprise";
-    msg.meta.datacontract = "_historian";
-    msg.meta.tagName = "temperature";
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
     return msg;
   advancedProcessing: |
     msg.payload = parseFloat(msg.payload) * 2;
@@ -290,17 +255,17 @@ tag_processor:
 			msg := messages[0]
 
 			// Check metadata
-			location0, exists := msg.MetaGet("location0")
+			location_path, exists := msg.MetaGet("location_path")
 			Expect(exists).To(BeTrue())
-			Expect(location0).To(Equal("enterprise"))
+			Expect(location_path).To(Equal("enterprise"))
 
-			datacontract, exists := msg.MetaGet("datacontract")
+			data_contract, exists := msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
-			Expect(datacontract).To(Equal("_historian"))
+			Expect(data_contract).To(Equal("_historian"))
 
-			tagName, exists := msg.MetaGet("tagName")
+			tag_name, exists := msg.MetaGet("tag_name")
 			Expect(exists).To(BeTrue())
-			Expect(tagName).To(Equal("temperature"))
+			Expect(tag_name).To(Equal("temperature"))
 
 			topic, exists := msg.MetaGet("topic")
 			Expect(exists).To(BeTrue())
@@ -337,9 +302,9 @@ tag_processor:
 			err = builder.AddProcessorYAML(`
 tag_processor:
   defaults: |
-    // Missing location0
-    msg.meta.datacontract = "_historian";
-    // Missing tagName
+    // Missing location_path
+    msg.meta.data_contract = "_historian";
+    // Missing tag_name
     return msg;
 `)
 			Expect(err).NotTo(HaveOccurred())
@@ -382,19 +347,19 @@ tag_processor:
 			err = builder.AddProcessorYAML(`
 tag_processor:
   defaults: |
-    msg.meta.location0 = "enterprise";
-    msg.meta.datacontract = "_historian";
-    msg.meta.tagName = "default";
-    msg.meta.path0 = "OEE";
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "default";
+    msg.meta.virtual_path = "OEE";
     return msg;
   conditions:
-    - if: msg.meta.path0.startsWith("OEE")
+    - if: msg.meta.virtual_path.startsWith("OEE")
       then: |
-        msg.meta.location2 = "OEEArea";
+        msg.meta.location_path += ".OEEArea";
         return msg;
     - if: msg.meta.opcua_node_id === "ns=1;i=2245"
       then: |
-        msg.meta.tagName = "temperature";
+        msg.meta.tag_name = "temperature";
         return msg;
 `)
 			Expect(err).NotTo(HaveOccurred())
@@ -429,25 +394,21 @@ tag_processor:
 			msg := messages[0]
 
 			// Check metadata
-			location0, exists := msg.MetaGet("location0")
+			location_path, exists := msg.MetaGet("location_path")
 			Expect(exists).To(BeTrue())
-			Expect(location0).To(Equal("enterprise"))
+			Expect(location_path).To(Equal("enterprise.OEEArea"))
 
-			location2, exists := msg.MetaGet("location2")
+			data_contract, exists := msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
-			Expect(location2).To(Equal("OEEArea"))
+			Expect(data_contract).To(Equal("_historian"))
 
-			datacontract, exists := msg.MetaGet("datacontract")
+			virtual_path, exists := msg.MetaGet("virtual_path")
 			Expect(exists).To(BeTrue())
-			Expect(datacontract).To(Equal("_historian"))
+			Expect(virtual_path).To(Equal("OEE"))
 
-			path0, exists := msg.MetaGet("path0")
+			tag_name, exists := msg.MetaGet("tag_name")
 			Expect(exists).To(BeTrue())
-			Expect(path0).To(Equal("OEE"))
-
-			tagName, exists := msg.MetaGet("tagName")
-			Expect(exists).To(BeTrue())
-			Expect(tagName).To(Equal("temperature"))
+			Expect(tag_name).To(Equal("temperature"))
 
 			topic, exists := msg.MetaGet("topic")
 			Expect(exists).To(BeTrue())
@@ -486,13 +447,9 @@ tag_processor:
 			err = builder.AddProcessorYAML(`
 tag_processor:
   advancedProcessing: |
-    msg.meta.location0 = "enterprise";
-    msg.meta.location1 = "site";
-    msg.meta.location2 = "area";
-    msg.meta.location3 = "line";
-    msg.meta.location4 = "workcell";
-    msg.meta.datacontract = "_analytics";
-    msg.meta.path0 = "work_order";
+    msg.meta.location_path = "enterprise.site.area.line.workcell";
+    msg.meta.data_contract = "_analytics";
+    msg.meta.virtual_path = "work_order";
     msg.payload = {
       "work_order_id": msg.payload.work_order_id,
       "work_order_start_time": umh.getHistorianValue("enterprise.site.area.line.workcell._historian.workorder.work_order_start_time"),
@@ -536,33 +493,17 @@ tag_processor:
 			msg := messages[0]
 
 			// Check metadata
-			location0, exists := msg.MetaGet("location0")
+			location_path, exists := msg.MetaGet("location_path")
 			Expect(exists).To(BeTrue())
-			Expect(location0).To(Equal("enterprise"))
+			Expect(location_path).To(Equal("enterprise.site.area.line.workcell"))
 
-			location1, exists := msg.MetaGet("location1")
+			data_contract, exists := msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
-			Expect(location1).To(Equal("site"))
+			Expect(data_contract).To(Equal("_analytics"))
 
-			location2, exists := msg.MetaGet("location2")
+			virtual_path, exists := msg.MetaGet("virtual_path")
 			Expect(exists).To(BeTrue())
-			Expect(location2).To(Equal("area"))
-
-			location3, exists := msg.MetaGet("location3")
-			Expect(exists).To(BeTrue())
-			Expect(location3).To(Equal("line"))
-
-			location4, exists := msg.MetaGet("location4")
-			Expect(exists).To(BeTrue())
-			Expect(location4).To(Equal("workcell"))
-
-			datacontract, exists := msg.MetaGet("datacontract")
-			Expect(exists).To(BeTrue())
-			Expect(datacontract).To(Equal("_analytics"))
-
-			path0, exists := msg.MetaGet("path0")
-			Expect(exists).To(BeTrue())
-			Expect(path0).To(Equal("work_order"))
+			Expect(virtual_path).To(Equal("work_order"))
 
 			// Check payload
 			structured, err := msg.AsStructured()
@@ -594,9 +535,9 @@ tag_processor:
 tag_processor:
   advancedProcessing: |
     msg.meta = {
-      location0: "enterprise",
-      datacontract: "_historian",
-      tagName: "temperature"
+      location_path: "enterprise",
+      data_contract: "_historian",
+      tag_name: "temperature"
     };
     msg.payload = parseFloat(msg.payload) * 2;
     return msg;
@@ -632,17 +573,17 @@ tag_processor:
 			msg := messages[0]
 
 			// Check metadata
-			location0, exists := msg.MetaGet("location0")
+			location_path, exists := msg.MetaGet("location_path")
 			Expect(exists).To(BeTrue())
-			Expect(location0).To(Equal("enterprise"))
+			Expect(location_path).To(Equal("enterprise"))
 
-			datacontract, exists := msg.MetaGet("datacontract")
+			data_contract, exists := msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
-			Expect(datacontract).To(Equal("_historian"))
+			Expect(data_contract).To(Equal("_historian"))
 
-			tagName, exists := msg.MetaGet("tagName")
+			tag_name, exists := msg.MetaGet("tag_name")
 			Expect(exists).To(BeTrue())
-			Expect(tagName).To(Equal("temperature"))
+			Expect(tag_name).To(Equal("temperature"))
 
 			topic, exists := msg.MetaGet("topic")
 			Expect(exists).To(BeTrue())
@@ -679,9 +620,9 @@ tag_processor:
 			err = builder.AddProcessorYAML(`
 tag_processor:
   defaults: |
-    msg.meta.location0 = "enterprise";
-    msg.meta.datacontract = "_historian";
-    msg.meta.tagName = "temperature";
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
     return msg;
   advancedProcessing: |
     if (msg.payload < 0) {
@@ -738,9 +679,9 @@ tag_processor:
 			err = builder.AddProcessorYAML(`
 tag_processor:
   defaults: |
-    msg.meta.location0 = "enterprise";
-    msg.meta.datacontract = "_historian";
-    msg.meta.tagName = "temperature";
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
     return msg;
   advancedProcessing: |
     // Prepare two separate messages: one original and one backup
@@ -751,7 +692,7 @@ tag_processor:
 
     let msg2 = {
       payload: msg.payload,
-      meta: { ...msg.meta, tagName: msg.meta.tagName + "_backup" }
+      meta: { ...msg.meta, tag_name: msg.meta.tag_name + "_backup" }
     };
 
     return [msg1, msg2];
@@ -813,15 +754,15 @@ tag_processor:
 			err = builder.AddProcessorYAML(`
 tag_processor:
   defaults: |
-    msg.meta.location0 = "enterprise";
-    msg.meta.datacontract = "_historian";
-    msg.meta.tagName = "temperature";
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
     return msg;
 
   conditions:
     - if: true
       then: |
-        msg.meta.location2 = "production";
+        msg.meta.location_path += ".production";
         return msg;
 
   advancedProcessing: |
@@ -829,12 +770,12 @@ tag_processor:
 
     msg1 = {
         payload: msg.payload,
-        meta: { ...msg.meta, datacontract: "_historian" }
+        meta: { ...msg.meta, data_contract: "_historian" }
     };
 
     msg2 = {
         payload: doubledValue,
-        meta: { ...msg.meta, datacontract: "_analytics", tagName: msg.meta.tagName + "_doubled" }
+        meta: { ...msg.meta, data_contract: "_analytics", tag_name: msg.meta.tag_name + "_doubled" }
     };
 
     return [msg1, msg2];
@@ -873,12 +814,12 @@ tag_processor:
 
 			// Check historian message
 			msg := messages[0]
-			datacontract, exists := msg.MetaGet("datacontract")
+			data_contract, exists := msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
-			Expect(datacontract).To(Equal("_historian"))
-			level2, exists := msg.MetaGet("location2")
+			Expect(data_contract).To(Equal("_historian"))
+			location_path, exists := msg.MetaGet("location_path")
 			Expect(exists).To(BeTrue())
-			Expect(level2).To(Equal("production"))
+			Expect(location_path).To(Equal("enterprise.production"))
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok := structured.(map[string]interface{})
@@ -887,12 +828,12 @@ tag_processor:
 
 			// Check analytics message
 			msg = messages[1]
-			datacontract, exists = msg.MetaGet("datacontract")
+			data_contract, exists = msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
-			Expect(datacontract).To(Equal("_analytics"))
-			level2, exists = msg.MetaGet("location2")
+			Expect(data_contract).To(Equal("_analytics"))
+			location_path, exists = msg.MetaGet("location_path")
 			Expect(exists).To(BeTrue())
-			Expect(level2).To(Equal("production"))
+			Expect(location_path).To(Equal("enterprise.production"))
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]interface{})
@@ -913,39 +854,39 @@ tag_processor:
     msg1 = {
       payload: msg.payload,
       meta: {
-        location0: "enterprise",
-        datacontract: "_historian",
-        tagName: "temperature"
+        location_path: "enterprise",
+        data_contract: "_historian",
+        tag_name: "temperature"
       }
     };
 
     msg2 = {
       payload: msg.payload,
       meta: {
-        location0: "enterprise",
-        datacontract: "_analytics",
-        tagName: "temperature_raw"
+        location_path: "enterprise",
+        data_contract: "_analytics",
+        tag_name: "temperature_raw"
       }
     };
 
     return [msg1, msg2];
 
   conditions:
-    - if: msg.meta.datacontract === "_historian"
+    - if: msg.meta.data_contract === "_historian"
       then: |
-        msg.meta.location2 = "production";
+        msg.meta.location_path += ".production";
         return msg;
-    - if: msg.meta.datacontract === "_analytics"
+    - if: msg.meta.data_contract === "_analytics"
       then: |
-        msg.meta.location2 = "analytics";
+        msg.meta.location_path += ".analytics";
         msg.payload = msg.payload * 2;
         return msg;
 
   advancedProcessing: |
-    if (msg.meta.datacontract === "_analytics") {
-      msg.meta.path0 = "raw_data";
+    if (msg.meta.data_contract === "_analytics") {
+      msg.meta.virtual_path = "raw_data";
     } else {
-      msg.meta.path0 = "processed";
+      msg.meta.virtual_path = "processed";
     }
     return msg;
 `)
@@ -981,15 +922,15 @@ tag_processor:
 
 			// Check historian message
 			msg := messages[0]
-			datacontract, exists := msg.MetaGet("datacontract")
+			data_contract, exists := msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
-			Expect(datacontract).To(Equal("_historian"))
-			level2, exists := msg.MetaGet("location2")
+			Expect(data_contract).To(Equal("_historian"))
+			location_path, exists := msg.MetaGet("location_path")
 			Expect(exists).To(BeTrue())
-			Expect(level2).To(Equal("production"))
-			path0, exists := msg.MetaGet("path0")
+			Expect(location_path).To(Equal("enterprise.production"))
+			virtual_path, exists := msg.MetaGet("virtual_path")
 			Expect(exists).To(BeTrue())
-			Expect(path0).To(Equal("processed"))
+			Expect(virtual_path).To(Equal("processed"))
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok := structured.(map[string]interface{})
@@ -998,15 +939,15 @@ tag_processor:
 
 			// Check analytics message
 			msg = messages[1]
-			datacontract, exists = msg.MetaGet("datacontract")
+			data_contract, exists = msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
-			Expect(datacontract).To(Equal("_analytics"))
-			level2, exists = msg.MetaGet("location2")
+			Expect(data_contract).To(Equal("_analytics"))
+			location_path, exists = msg.MetaGet("location_path")
 			Expect(exists).To(BeTrue())
-			Expect(level2).To(Equal("analytics"))
-			path0, exists = msg.MetaGet("path0")
+			Expect(location_path).To(Equal("enterprise.analytics"))
+			virtual_path, exists = msg.MetaGet("virtual_path")
 			Expect(exists).To(BeTrue())
-			Expect(path0).To(Equal("raw_data"))
+			Expect(virtual_path).To(Equal("raw_data"))
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]interface{})
@@ -1024,9 +965,9 @@ tag_processor:
 			err = builder.AddProcessorYAML(`
 tag_processor:
   defaults: |
-    msg.meta.location0 = "enterprise";
-    msg.meta.datacontract = "_historian";
-    msg.meta.tagName = "value";
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "value";
     return msg;
 `)
 			Expect(err).NotTo(HaveOccurred())

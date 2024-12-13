@@ -130,6 +130,7 @@ func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef Nod
 	}
 
 	message.MetaSet("opcua_tag_group", tagGroup)
+	message.MetaSet("opcua_tag_path", tagGroup)
 	message.MetaSet("opcua_tag_name", tagName)
 
 	message.MetaSet("opcua_tag_type", tagType)

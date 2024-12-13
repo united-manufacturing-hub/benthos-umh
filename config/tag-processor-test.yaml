@@ -10,33 +10,33 @@ pipeline:
   processors:
     - tag_processor:
         defaults: |
-          msg.meta.location0 = "enterprise";
-          msg.meta.location1 = "plant1";
-          msg.meta.location2 = "machiningArea";
-          msg.meta.location3 = "cnc-line";
-          msg.meta.location4 = "cnc5";
-          msg.meta.location5 = "plc123";
-          msg.meta.datacontract = "_historian";
-
-          msg.meta.tagName = msg.meta.opcua_tag_name;
-          msg.meta.opcua_tag_group = "sensors.temperature";
-          msg.meta.path0 = "sensors";
+          msg.meta.location_path = "enterprise.plant1";
+          msg.meta.data_contract = "_historian"; 
+          msg.meta.virtual_path = msg.meta.opcua_tag_path; // opcua_tag_path is coming from the benthos-umh opcua plugin, it's the dot notation path to the node consisting of the BrowseNames of the node's parent nodes
+          msg.meta.tag_name = msg.meta.opcua_tag_name; // opcua_tag_name is coming from the benthos-umh opcua plugin, it's the sanitized browse name of the node
 
           return msg;
 
         conditions:
           - if: msg.meta.opcua_node_id === "ns=6;s=DataAccess_AnalogType_Byte"
             then: |
-              msg.meta.path0 = "sensors";
-              msg.meta.path1 = "analog";
-              msg.meta.tagName = "analog";
+              // This tag is part of the cnc5 workcell in the machining_line
+              msg.meta.location_path += ".area1.machining_line.cnc5.plc123";
+
+              // The "ns=6;s=DataAccess_AnalogType_Byte" NodeID is actually the acceleration of the x-axis, so let's move it into the folder "axis.x" ...
+              msg.meta.virtual_path = "axis.x"; 
+
+              // ... and rename it to "acceleration"
+              msg.meta.tag_name = "acceleration";
+
               return msg;
         advancedProcessing: |
           return msg;
     - nodered_js:
         code: |
           console.log(JSON.stringify(msg.meta.topic, null, 2));
+          console.log(JSON.stringify(msg.payload, null, 2));
           return msg;
 
-output:
-  stdout: {} 
+#output:
+#  stdout: {} 

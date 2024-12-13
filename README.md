@@ -74,7 +74,8 @@ The plugin provides metadata for each message, that can be used to create a topi
 | Metadata                 | Description                                                                                                                                          |
 |--------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `opcua_tag_name`         | The sanitized ID of the Node that sent the message. This is always unique between nodes                                                              |
-| `opcua_tag_group`        | A dot-separated path to the tag, created by joining the BrowseNames.                                                                                 |
+| `opcua_tag_path`        | A dot-separated path to the tag, created by joining the BrowseNames.                                                                                 |
+| `opcua_tag_group`        | Other name for `opcua_tag_path`                                                                                  |
 | `opcua_tag_type`         | The data type of the node optimized for benthos, which can be either a number, string or bool. For the original one, check out `opcua_attr_datatype` |
 | `opcua_source_timestamp` | The SourceTimestamp of the OPC UA node                                                                                                               |
 | `opcua_server_timestamp` | The ServerTimestamp of the OPC UA node                                                                                                               |
@@ -1147,23 +1148,15 @@ pipeline:
         defaults: |
 
           # Set default location hierarchy and datacontract
-          #this could also mean that these are 6 different locations and not just 1 with different levels
-          msg.meta.location0 = "enterprise";
-          msg.meta.location1 = "plant1";
-          msg.meta.location2 = "machiningArea";
-          msg.meta.location3 = "cnc-line";
-          msg.meta.location4 = "cnc5";
-          msg.meta.location5 = "plc123";
-          msg.meta.datacontract = "_historian";
+          msg.meta.location_path = "enterprise.plant1.machiningArea.cnc-line.cnc5.plc123";
+          msg.meta.data_contract = "_historian";
           return msg;
         conditions:
           - if: msg.meta.opcua_node_id === "ns=1;i=2245"
             then: |
               # Set path hierarchy and tag name for specific OPC UA node
-              msg.meta.path0 = "axis";
-              msg.meta.path1 = "x";
-              msg.meta.path2 = "position";
-              msg.meta.tagName = "actual";
+              msg.meta.virtual_path = "axis.x.position";
+              msg.meta.tag_name = "actual";
               return msg;
         advancedProcessing: |
           # Optional advanced message processing
@@ -1195,24 +1188,17 @@ pipeline:
 The processor uses the following metadata fields:
 
 **Required Fields:**
-- `location0`: Top-level hierarchy (e.g., "enterprise")
-- `datacontract`: Data schema identifier (e.g., "_historian", "_analytics")
-- `tagName`: Name of the tag/variable (e.g., "temperature", "pressure")
+- `location_path`: Hierarchical location path in dot notation (e.g., "enterprise.site.area.line.workcell.plc123")
+- `data_contract`: Data schema identifier (e.g., "_historian", "_analytics")
+- `tag_name`: Name of the tag/variable (e.g., "temperature", "pressure")
 
-**Optional Hierarchical Fields:**
-- `location1`: Second-level hierarchy (e.g., "site")
-- `location2`: Third-level hierarchy (e.g., "area")
-- `location3`: Fourth-level hierarchy (e.g., "line")
-- `location4`: Fifth-level hierarchy (e.g., "workcell")
-- `location5`: Sixth-level hierarchy (e.g., "plc123")
-
-**Optional Path Fields:**
-- `path0`, `path1`, `path2`, etc.: Logical, non-physical grouping paths (e.g., "axis", "x", "position")
+**Optional Fields:**
+- `virtual_path`: Logical, non-physical grouping path in dot notation (e.g., "axis.x.position")
 
 **Generated Fields:**
 - `topic`: Automatically generated from the above fields in the format:
   ```
-  umh.v1.<location0>.<location1>.<location2>.<location3>.<location4>.<location5>.<datacontract>.<path0>.<path1>.<path2>....<pathN>.<tagName>
+  umh.v1.<location_path>.<data_contract>.<virtual_path>.<tag_name>
   ```
   Empty or undefined fields are skipped, and dots are normalized.
 
@@ -1229,29 +1215,21 @@ Messages in the Tag Processor follow the Node-RED style format:
   },
   meta: {
     // Required fields
-    location0: "enterprise",        // Top-level hierarchy
-    datacontract: "_historian",     // Data schema identifier
-    tagName: "temperature",         // Name of the tag/variable
+    location_path: "enterprise.site.area.line.workcell.plc123",  // Hierarchical location path
+    data_contract: "_historian",                                 // Data schema identifier
+    tag_name: "temperature",                                     // Name of the tag/variable
 
-    // Optional hierarchical fields
-    location1: "site_munich",       // Second-level hierarchy
-    location2: "area_assembly",     // Third-level hierarchy
-    location3: "line_final",        // Fourth-level hierarchy
-    location4: "cell_test",         // Fifth-level hierarchy
-    location5: "plc123",            // Sixth-level hierarchy
-
-    // Optional path fields
-    path0: "axis",                  // First logical grouping path
-    path1: "x",                     // Second logical grouping path
-    path2: "position",              // Third logical grouping path
+    // Optional fields
+    virtual_path: "axis.x.position",                            // Logical grouping path
 
     // Generated field (by processor)
-    topic: "umh.v1.enterprise.site_munich.area_assembly.line_final.cell_test.plc123._historian.axis.x.position.temperature",
+    topic: "umh.v1.enterprise.site.area.line.workcell.plc123._historian.axis.x.position.temperature",
 
     // Input-specific fields (e.g., from OPC UA)
     opcua_node_id: "ns=1;i=2245",
     opcua_tag_name: "temperature_sensor_1",
     opcua_tag_group: "sensors.temperature",
+    opcua_tag_path: "sensors.temperature",
     opcua_tag_type: "number",
     opcua_source_timestamp: "2024-03-12T10:00:00Z",
     opcua_server_timestamp: "2024-03-12T10:00:00.001Z",
@@ -1271,13 +1249,9 @@ Messages in the Tag Processor follow the Node-RED style format:
 ```yaml
 tag_processor:
   defaults: |
-    msg.meta.location0 = "enterprise";
-    msg.meta.location1 = "plant1";
-    msg.meta.location2 = "machiningArea";
-    msg.meta.location3 = "cnc-line";
-    msg.meta.location4 = "cnc5";
-    msg.meta.location5 = "plc123";
-    msg.meta.datacontract = "_historian";
+    msg.meta.location_path = "enterprise.plant1.machiningArea.cnc-line.cnc5.plc123";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "actual";
     return msg;
 ```
 
@@ -1299,21 +1273,14 @@ Topic: `umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.a
 ```yaml
 tag_processor:
   defaults: |
-    msg.meta.location0 = "enterprise";
-    msg.meta.location1 = "plant1";
-    msg.meta.location2 = "machiningArea";
-    msg.meta.location3 = "cnc-line";
-    msg.meta.location4 = "cnc5";
-    msg.meta.location5 = "plc123";
-    msg.meta.datacontract = "_historian";
+    msg.meta.location_path = "enterprise.plant1.machiningArea.cnc-line.cnc5.plc123";
+    msg.meta.data_contract = "_historian";
     return msg;
   conditions:
     - if: msg.meta.opcua_node_id === "ns=1;i=2245"
       then: |
-        msg.meta.path0 = "axis";
-        msg.meta.path1 = "x";
-        msg.meta.path2 = "position";
-        msg.meta.tagName = "actual";
+        msg.meta.virtual_path = "axis.x.position";
+        msg.meta.tag_name = "actual";
         return msg;
 ```
 
@@ -1340,13 +1307,9 @@ getLastPayload is a function that returns the last payload of a message that was
 ```yaml
 tag_processor:
   defaults: |
-    msg.meta.location0 = "enterprise";
-    msg.meta.location1 = "site";
-    msg.meta.location2 = "area";
-    msg.meta.location3 = "line";
-    msg.meta.location4 = "workcell";
-    msg.meta.datacontract = "_analytics";
-    msg.meta.path0 = "work_order";
+    msg.meta.location_path = "enterprise.site.area.line.workcell";
+    msg.meta.data_contract = "_analytics";
+    msg.meta.virtual_path = "work_order";
     return msg;
   advancedProcessing: |
     msg.payload = {
@@ -1378,9 +1341,9 @@ Topic: `umh.v1.enterprise.site.area.line.workcell._analytics.work_order`
 ```yaml
 tag_processor:
   defaults: |
-    msg.meta.location0 = "enterprise";
-    msg.meta.datacontract = "_historian";
-    msg.meta.tagName = "temperature";
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
     return msg;
   advancedProcessing: |
     if (msg.payload < 0) {
@@ -1411,18 +1374,18 @@ Output:
 ```
 Topic: `umh.v1.enterprise._historian.temperature`
 
-5. **Duplicating Messages for Different Datacontracts**
+5. **Duplicating Messages for Different Data Contracts**
 ```yaml
 tag_processor:
   defaults: |
-    msg.meta.location0 = "enterprise";
-    msg.meta.datacontract = "_historian";
-    msg.meta.tagName = "temperature";
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
     return msg;
   conditions:
     - if: true
       then: |
-        msg.meta.location2 = "production";
+        msg.meta.location_path += ".production";
         return msg;
   advancedProcessing: |
     // Create two versions of the message:
@@ -1432,12 +1395,12 @@ tag_processor:
 
     msg1 = {
       payload: msg.payload,
-      meta: { ...msg.meta, datacontract: "_historian" }
+      meta: { ...msg.meta, data_contract: "_historian" }
     };
 
     msg2 = {
       payload: doubledValue,
-      meta: { ...msg.meta, datacontract: "_custom", tagName: msg.meta.tagName + "_doubled" }
+      meta: { ...msg.meta, data_contract: "_custom", tag_name: msg.meta.tag_name + "_doubled" }
     };
 
     return [msg1, msg2];
