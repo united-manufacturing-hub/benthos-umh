@@ -1277,14 +1277,14 @@ tag_processor:
     msg.meta.data_contract = "_historian";
     return msg;
   conditions:
-    - if: msg.meta.opcua_node_id === "ns=1;i=2245"
+    - if: msg.meta.opcua_attr_nodeid === "ns=1;i=2245"
       then: |
         msg.meta.virtual_path = "axis.x.position";
         msg.meta.tag_name = "actual";
         return msg;
 ```
 
-Input with metadata `opcua_node_id: "ns=1;i=2245"`:
+Input with metadata `opcua_attr_nodeid: "ns=1;i=2245"`:
 ```json
 23.5
 ```
