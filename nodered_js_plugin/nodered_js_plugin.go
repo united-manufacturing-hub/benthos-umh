@@ -28,11 +28,12 @@ func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 	}
 }
 
-// ConvertMessageToJSObject converts a Benthos message to a JavaScript-compatible object.
+// ConvertMessageToJSObject converts a Benthos message to a JavaScript-compatible object with the payload being in the payload field.
 func ConvertMessageToJSObject(msg *service.Message) (map[string]interface{}, error) {
-	jsMsg, err := msg.AsStructured()
+	// Try to get structured data first
+	structured, err := msg.AsStructured()
 	if err != nil {
-		// If message can't be converted to structured format, wrap it in a payload field
+		// If message can't be converted to structured format, wrap raw bytes in a payload field
 		bytes, err := msg.AsBytes()
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert message to bytes: %v", err)
@@ -42,14 +43,10 @@ func ConvertMessageToJSObject(msg *service.Message) (map[string]interface{}, err
 		}, nil
 	}
 
-	// If it's not already a map, wrap it in a payload field
-	if _, ok := jsMsg.(map[string]interface{}); !ok {
-		return map[string]interface{}{
-			"payload": jsMsg,
-		}, nil
-	}
-
-	return jsMsg.(map[string]interface{}), nil
+	// Always wrap the structured data in a payload field
+	return map[string]interface{}{
+		"payload": structured,
+	}, nil
 }
 
 // SetupJSEnvironment sets up the JavaScript VM environment.

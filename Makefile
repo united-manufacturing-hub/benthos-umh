@@ -45,4 +45,8 @@ test-sensorconnect: test
 test-opc-plc:
 	@TEST_OPCUA_SIMULATOR=true ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./opcua_plugin/...
 
-.PHONY: clean target test update-benthos test-opc-plc
+# Test the tag processor with a local OPC UA server
+test-tag-processor: target
+	./tmp/bin/benthos -c ./config/tag-processor-test.yaml
+
+.PHONY: clean target test update-benthos test-opc-plc test-tag-processor

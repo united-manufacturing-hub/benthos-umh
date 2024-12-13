@@ -1,0 +1,38 @@
+input:
+  opcua:
+    endpoint: "opc.tcp://localhost:50000"
+    nodeIDs: ["ns=6;s=DataAccess_AnalogType_Byte"]
+    subscribeEnabled: true
+    useHeartbeat: true
+    browseHierarchicalReferences: true
+
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |
+          msg.meta.location0 = "enterprise";
+          msg.meta.location1 = "plant1";
+          msg.meta.location2 = "machiningArea";
+          msg.meta.location3 = "cnc-line";
+          msg.meta.location4 = "cnc5";
+          msg.meta.location5 = "plc123";
+          msg.meta.datacontract = "_historian";
+          msg.meta.tagName = msg.meta.opcua_attr_browsename;
+          return msg;
+        conditions:
+          - if: msg.meta.opcua_node_id === "ns=6;s=DataAccess_AnalogType_Byte"
+            then: |
+              msg.meta.path0 = "sensors";
+              msg.meta.path1 = "analog";
+              msg.meta.tagName = "analog";
+              return msg;
+        advancedProcessing: |
+          return msg;
+    #- nodered_js:
+    #    code: |
+    #      console.log(JSON.stringify(msg, null, 2));
+    #      // console.log(JSON.stringify(msg.meta, null, 2));
+    #      return msg;
+
+output:
+  stdout: {} 

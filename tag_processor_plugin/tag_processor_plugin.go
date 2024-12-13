@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -333,7 +334,7 @@ func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code stri
 		// Create JavaScript runtime for this message
 		vm := goja.New()
 
-		// Convert message to JS object
+		// Convert message to JS object with the payload being in the payload field
 		jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
 		if err != nil {
 			p.logError(err, "message conversion", msg)
@@ -368,6 +369,7 @@ func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code stri
 		}
 
 		// Execute the code
+		fmt.Printf("jsMsg: %v \n", jsMsg)
 		messages, err := p.executeJSCode(vm, code, jsMsg)
 		if err != nil {
 			return nil, err
@@ -379,7 +381,8 @@ func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code stri
 		}
 
 		// Convert resulting messages back to Benthos messages
-		for _, resultMsg := range messages {
+		for i, resultMsg := range messages {
+			fmt.Printf("message[%d]: %v \n", i, resultMsg)
 			newMsg := service.NewMessage(nil)
 
 			// Set metadata
@@ -409,11 +412,66 @@ func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code stri
 // validateMessage checks if a message has all required metadata fields
 func (p *TagProcessor) validateMessage(msg *service.Message) error {
 	requiredFields := []string{"location0", "datacontract", "tagName"}
+	missingFields := []string{}
+
+	// Get current metadata for context
+	metadata := map[string]string{}
+	msg.MetaWalkMut(func(key string, value any) error {
+		if str, ok := value.(string); ok {
+			metadata[key] = str
+		}
+		return nil
+	})
+
+	// Check for missing fields
 	for _, field := range requiredFields {
 		if _, exists := msg.MetaGet(field); !exists {
-			p.logError(fmt.Errorf("missing field: %s", field), "metadata validation", msg)
-			return fmt.Errorf("missing required metadata field '%s'", field)
+			missingFields = append(missingFields, field)
 		}
+	}
+
+	if len(missingFields) > 0 {
+		// Get message payload for context
+		var payloadStr string
+		payload, err := msg.AsStructuredMut()
+		if err != nil {
+			payloadStr = "unable to parse message payload"
+		} else {
+			// Try to format as JSON first
+			payloadJSON, err := json.MarshalIndent(payload, "", "  ")
+			if err != nil {
+				// If JSON formatting fails, use string representation
+				payloadStr = fmt.Sprintf("%v", payload)
+			} else {
+				payloadStr = string(payloadJSON)
+			}
+		}
+
+		// Convert metadata to pretty JSON
+		metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
+		if err != nil {
+			metadataJSON = []byte("unable to format metadata as JSON")
+		}
+
+		// Create detailed error message with better formatting
+		errorMsg := fmt.Sprintf(`Message validation failed
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Missing fields: %s
+
+Current message:
+┌ Payload:
+%s
+
+└ Metadata:
+%s
+
+To fix: Set required fields (msg.meta.location0, msg.meta.datacontract, msg.meta.tagName) in defaults, conditions, or advancedProcessing.`,
+			strings.Join(missingFields, ", "),
+			payloadStr,
+			string(metadataJSON))
+
+		p.logError(fmt.Errorf(errorMsg), "metadata validation", msg)
+		return fmt.Errorf(errorMsg)
 	}
 	return nil
 }
@@ -450,14 +508,52 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 		return nil, fmt.Errorf("failed to get structured payload: %v", err)
 	}
 
+	// Convert the value based on its type
+	value := p.convertValue(structured)
+
 	// Structure payload
 	payload := map[string]interface{}{
-		tagName:        json.Number(fmt.Sprintf("%v", structured)),
+		tagName:        value,
 		"timestamp_ms": time.Now().UnixMilli(),
 	}
 	newMsg.SetStructured(payload)
 
 	return newMsg, nil
+}
+
+// convertValue recursively converts values to their appropriate types
+func (p *TagProcessor) convertValue(v interface{}) interface{} {
+	switch val := v.(type) {
+	case bool:
+		return val
+	case string:
+		// Try to convert string to number if possible
+		if num, err := strconv.ParseFloat(val, 64); err == nil {
+			return json.Number(fmt.Sprintf("%v", num))
+		}
+		return val
+	case float64, float32, int, int32, int64, uint, uint32, uint64:
+		return json.Number(fmt.Sprintf("%v", val))
+	case []interface{}:
+		return fmt.Sprintf("%v", val)
+		/*
+			case map[string]interface{}:
+				// Recursively convert values in the map
+				converted := make(map[string]interface{})
+				for k, v := range val {
+					converted[k] = p.convertValue(v)
+				}
+				return converted
+		*/
+	default:
+		fmt.Printf("default: %v \n", val)
+		// For any other type, try to convert to number if it's a string representation
+		str := fmt.Sprintf("%v", val)
+		if num, err := strconv.ParseFloat(str, 64); err == nil {
+			return json.Number(fmt.Sprintf("%v", num))
+		}
+		return str
+	}
 }
 
 // constructTopic creates the topic string from message metadata

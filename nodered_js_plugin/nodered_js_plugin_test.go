@@ -62,9 +62,7 @@ nodered_js:
 
 			// Create and send test message
 			testMsg := service.NewMessage(nil)
-			testMsg.SetStructured(map[string]interface{}{
-				"payload": "test",
-			})
+			testMsg.SetStructured("test")
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -117,9 +115,7 @@ nodered_js:
 
 			// Create and send test message
 			testMsg := service.NewMessage(nil)
-			testMsg.SetStructured(map[string]interface{}{
-				"payload": []interface{}{1, 2, 3},
-			})
+			testMsg.SetStructured("test")
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -133,7 +129,7 @@ nodered_js:
 
 			jsonStr, err := json.Marshal(structured)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(jsonStr)).To(Equal(`3`))
+			Expect(string(jsonStr)).To(Equal(`4`))
 		})
 
 		It("should create new message", func() {
@@ -171,9 +167,7 @@ nodered_js:
 
 			// Create and send test message
 			testMsg := service.NewMessage(nil)
-			testMsg.SetStructured(map[string]interface{}{
-				"original": "data",
-			})
+			testMsg.SetStructured("test")
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -227,9 +221,7 @@ nodered_js:
 
 			// Send multiple test messages
 			testMsg := service.NewMessage(nil)
-			testMsg.SetStructured(map[string]interface{}{
-				"payload": "test",
-			})
+			testMsg.SetStructured("test")
 
 			for i := 0; i < 5; i++ {
 				err = msgHandler(ctx, testMsg)
@@ -277,9 +269,7 @@ nodered_js:
 			}()
 
 			testMsg := service.NewMessage(nil)
-			testMsg.SetStructured(map[string]interface{}{
-				"payload": "test",
-			})
+			testMsg.SetStructured("test")
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -432,9 +422,7 @@ nodered_js:
 
 			// Create message with metadata
 			testMsg := service.NewMessage(nil)
-			testMsg.SetStructured(map[string]interface{}{
-				"payload": "test",
-			})
+			testMsg.SetStructured("test")
 			testMsg.MetaSet("source", "original")
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
@@ -493,9 +481,7 @@ nodered_js:
 
 			// Create message with metadata
 			testMsg := service.NewMessage(nil)
-			testMsg.SetStructured(map[string]interface{}{
-				"payload": "test",
-			})
+			testMsg.SetStructured("test")
 			testMsg.MetaSet("original", "value")
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())

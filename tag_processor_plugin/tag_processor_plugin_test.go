@@ -101,6 +101,7 @@ tag_processor:
 			Expect(ok).To(BeTrue())
 
 			// Convert json.Number to float64
+			GinkgoWriter.Printf("Value: %v, Type: %T\n", value, value)
 			numValue, ok := value.(json.Number)
 			Expect(ok).To(BeTrue())
 			floatValue, err := numValue.Float64()
@@ -1011,6 +1012,163 @@ tag_processor:
 			payload, ok = structured.(map[string]interface{})
 			Expect(ok).To(BeTrue())
 			Expect(payload["temperature_raw"]).To(Equal(json.Number("47")))
+		})
+
+		It("should handle different data types correctly", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location0 = "enterprise";
+    msg.meta.datacontract = "_historian";
+    msg.meta.tagName = "value";
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Test boolean
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured(true)
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Test string
+			testMsg = service.NewMessage(nil)
+			testMsg.SetStructured("test string")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Test integer
+			testMsg = service.NewMessage(nil)
+			testMsg.SetStructured(42)
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Test float
+			testMsg = service.NewMessage(nil)
+			testMsg.SetStructured(23.5)
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Test array (should be converted to string)
+			testMsg = service.NewMessage(nil)
+			testMsg.SetStructured([]interface{}{"a", "b", "c"})
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Test object (should be preserved as object)
+			testMsg = service.NewMessage(nil)
+			testMsg.SetStructured(map[string]interface{}{
+				"key1": "value1",
+				"key2": 42,
+			})
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should get six messages
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(6))
+
+			// Check boolean value
+			msg := messages[0]
+			structured, err := msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			payload, ok := structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			value, ok := payload["value"]
+			Expect(ok).To(BeTrue())
+			boolValue, ok := value.(bool)
+			Expect(ok).To(BeTrue())
+			Expect(boolValue).To(BeTrue())
+
+			// Check string value
+			msg = messages[1]
+			structured, err = msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			payload, ok = structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			value, ok = payload["value"]
+			Expect(ok).To(BeTrue())
+			strValue, ok := value.(string)
+			Expect(ok).To(BeTrue())
+			Expect(strValue).To(Equal("test string"))
+
+			// Check integer value
+			msg = messages[2]
+			structured, err = msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			payload, ok = structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			value, ok = payload["value"]
+			Expect(ok).To(BeTrue())
+			numValue, ok := value.(json.Number)
+			Expect(ok).To(BeTrue())
+			intValue, err := numValue.Int64()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(intValue).To(Equal(int64(42)))
+
+			// Check float value
+			msg = messages[3]
+			structured, err = msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			payload, ok = structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			value, ok = payload["value"]
+			Expect(ok).To(BeTrue())
+			numValue, ok = value.(json.Number)
+			Expect(ok).To(BeTrue())
+			floatValue, err := numValue.Float64()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(floatValue).To(BeNumerically("==", 23.5))
+
+			// Check array value (should be string)
+			msg = messages[4]
+			structured, err = msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			payload, ok = structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			value, ok = payload["value"]
+			Expect(ok).To(BeTrue())
+			strValue, ok = value.(string)
+			Expect(ok).To(BeTrue())
+			Expect(strValue).To(Equal("[a b c]"))
+
+			// Check object value (should be preserved)
+			msg = messages[5]
+			structured, err = msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			payload, ok = structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			value, ok = payload["value"]
+			GinkgoWriter.Printf("payload: %v \n", payload)
+			GinkgoWriter.Printf("Object value: %v (type: %T)\n", value, value)
+			Expect(ok).To(BeTrue())
+			strValue, ok = value.(string)
+			Expect(ok).To(BeTrue())
+			Expect(strValue).To(Equal("map[key1:value1 key2:42]"))
 		})
 	})
 })
