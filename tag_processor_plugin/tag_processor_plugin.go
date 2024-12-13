@@ -3,6 +3,7 @@ package tag_processor_plugin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -413,12 +414,15 @@ func (p *TagProcessor) validateMessage(msg *service.Message) error {
 
 	// Get current metadata for context
 	metadata := map[string]string{}
-	msg.MetaWalkMut(func(key string, value any) error {
+	err := msg.MetaWalkMut(func(key string, value any) error {
 		if str, ok := value.(string); ok {
 			metadata[key] = str
 		}
 		return nil
 	})
+	if err != nil {
+		return fmt.Errorf("failed to walk message metadata: %v", err)
+	}
 
 	// Check for missing fields
 	for _, field := range requiredFields {
@@ -467,8 +471,9 @@ To fix: Set required fields (msg.meta.location_path, msg.meta.data_contract, msg
 			payloadStr,
 			string(metadataJSON))
 
-		p.logError(fmt.Errorf(errorMsg), "metadata validation", msg)
-		return fmt.Errorf(errorMsg)
+		err = errors.New(errorMsg)
+		p.logError(err, "metadata validation", msg)
+		return err
 	}
 	return nil
 }
