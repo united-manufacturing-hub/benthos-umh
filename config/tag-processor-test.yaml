@@ -18,7 +18,7 @@ pipeline:
           return msg;
 
         conditions:
-          - if: msg.meta.opcua_node_id === "ns=6;s=DataAccess_AnalogType_Byte"
+          - if: msg.meta.opcua_attr_nodeid == "ns=6;s=DataAccess_AnalogType_Byte"
             then: |
               // This tag is part of the cnc5 workcell in the machining_line
               msg.meta.location_path += ".area1.machining_line.cnc5.plc123";
@@ -35,7 +35,7 @@ pipeline:
     - nodered_js:
         code: |
           console.log(JSON.stringify(msg.meta.topic, null, 2));
-          console.log(JSON.stringify(msg.payload, null, 2));
+          //console.log(JSON.stringify(msg.payload, null, 2));
           return msg;
 
 #output:
