@@ -1091,7 +1091,7 @@ Output:
 }
 ```
 
-3. **Objects** (converted to string representation)
+3. **Objects** (preserved as JSON objects)
 Input:
 ```json
 {
@@ -1102,7 +1102,10 @@ Input:
 Output:
 ```json
 {
-  "value": "map[key1:value1 key2:42]"
+  "value": {
+    "key1": "value1",
+    "key2": 42
+  }
 }
 ```
 
@@ -1142,7 +1145,9 @@ pipeline:
   processors:
     - tag_processor:
         defaults: |
+
           # Set default location hierarchy and datacontract
+          #this could also mean that these are 6 different locations and not just 1 with different levels
           msg.meta.location0 = "enterprise";
           msg.meta.location1 = "plant1";
           msg.meta.location2 = "machiningArea";

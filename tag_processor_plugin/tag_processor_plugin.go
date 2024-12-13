@@ -534,15 +534,13 @@ func (p *TagProcessor) convertValue(v interface{}) interface{} {
 		return json.Number(fmt.Sprintf("%v", val))
 	case []interface{}:
 		return fmt.Sprintf("%v", val)
-		/*
-			case map[string]interface{}:
-				// Recursively convert values in the map
-				converted := make(map[string]interface{})
-				for k, v := range val {
-					converted[k] = p.convertValue(v)
-				}
-				return converted
-		*/
+	case map[string]interface{}:
+		// Recursively convert values in the map
+		converted := make(map[string]interface{})
+		for k, v := range val {
+			converted[k] = p.convertValue(v)
+		}
+		return converted
 	default:
 		// For any other type, try to convert to number if it's a string representation
 		str := fmt.Sprintf("%v", val)

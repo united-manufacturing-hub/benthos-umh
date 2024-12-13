@@ -1165,9 +1165,10 @@ tag_processor:
 			value, ok = payload["value"]
 			GinkgoWriter.Printf("payload: %v \n", payload)
 			Expect(ok).To(BeTrue())
-			strValue, ok = value.(string)
+			objValue, ok := value.(map[string]interface{})
 			Expect(ok).To(BeTrue())
-			Expect(strValue).To(Equal("map[key1:value1 key2:42]"))
+			Expect(objValue["key1"]).To(Equal("value1"))
+			Expect(objValue["key2"]).To(Equal(json.Number("42")))
 		})
 	})
 })
