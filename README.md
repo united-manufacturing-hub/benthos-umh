@@ -1033,6 +1033,100 @@ For example, if you see a high number of `messages_errored`, you might want to c
 
 The Tag Processor is designed to prepare incoming data for the UMH data model. It processes messages through three configurable stages: defaults, conditional transformations, and advanced processing, all using a Node-RED style JavaScript environment.
 
+#### Message Formatting Behavior
+
+The processor automatically formats different input types into a consistent structure with a "value" field:
+
+1. **Simple Values (numbers, strings, booleans)**
+Input:
+```json
+42
+```
+Output:
+```json
+{
+  "value": 42
+}
+```
+
+Input:
+```json
+"test string"
+```
+Output:
+```json
+{
+  "value": "test string"
+}
+```
+
+Input:
+```json
+true
+```
+Output:
+```json
+{
+  "value": true
+}
+```
+
+2. **Arrays** (converted to string representation)
+Input:
+```json
+["a", "b", "c"]
+```
+Output:
+```json
+{
+  "value": "[a b c]"
+}
+```
+
+3. **Objects** (converted to string representation)
+Input:
+```json
+{
+  "key1": "value1",
+  "key2": 42
+}
+```
+Output:
+```json
+{
+  "value": "map[key1:value1 key2:42]"
+}
+```
+
+4. **Numbers** (preserved as numbers)
+Input:
+```json
+23.5
+```
+Output:
+```json
+{
+  "value": 23.5
+}
+```
+
+Input:
+```json
+42
+```
+Output:
+```json
+{
+  "value": 42
+}
+```
+
+This consistent formatting ensures that:
+- All messages have a "value" field
+- Simple types (numbers, strings, booleans) are preserved as-is
+- Complex types (arrays, objects) are converted to their string representations
+- Numbers are always preserved as numeric types (integers or floats)
+
 #### Configuration
 
 ```yaml
