@@ -96,11 +96,6 @@ func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef Nod
 
 	message := service.NewMessage(b)
 
-	// Deprecated
-	message.MetaSet("opcua_path", sanitize(nodeDef.NodeID.String()))
-	message.MetaSet("opcua_tag_path", sanitize(nodeDef.BrowseName))
-	message.MetaSet("opcua_parent_path", sanitize(nodeDef.ParentNodeID))
-
 	// New ones
 	message.MetaSet("opcua_source_timestamp", dataValue.SourceTimestamp.Format("2006-01-02T15:04:05.000000Z07:00"))
 	message.MetaSet("opcua_server_timestamp", dataValue.ServerTimestamp.Format("2006-01-02T15:04:05.000000Z07:00"))
@@ -131,6 +126,13 @@ func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef Nod
 
 	message.MetaSet("opcua_tag_group", tagGroup)
 	message.MetaSet("opcua_tag_name", tagName)
+
+	// if the tag group is the same as the tag name ("root"), we don't want to have a tag path
+	if tagGroup == tagName {
+		message.MetaSet("opcua_tag_path", "")
+	} else {
+		message.MetaSet("opcua_tag_path", tagGroup)
+	}
 
 	message.MetaSet("opcua_tag_type", tagType)
 

@@ -1398,6 +1398,62 @@ opcua:
 			}
 		})
 	})
+
+	Context("When browsing nodes with HasTypeDefinition references on a real OPC UA server", func() {
+		It("should not browse HasTypeDefinition references when browsing DataAccess_AnalogType_Byte", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			nodeIDStrings := []string{"ns=6;s=DataAccess_AnalogType_Byte"}
+			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+			input := &OPCUAInput{
+				Endpoint:         "opc.tcp://localhost:50000",
+				Username:         "",
+				Password:         "",
+				NodeIDs:          parsedNodeIDs,
+				SubscribeEnabled: false,
+			}
+
+			// Connect to the server
+			err := input.Connect(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			defer input.Close(ctx)
+
+			// Create channels for browsing
+			nodeChan := make(chan NodeDef, 100)
+			errChan := make(chan error, 100)
+			nodeIDChan := make(chan []string, 100)
+			var wg TrackedWaitGroup
+
+			// Browse the node
+			wg.Add(1)
+			wrapperNodeID := NewOpcuaNodeWrapper(input.Client.Node(parsedNodeIDs[0]))
+			go Browse(ctx, wrapperNodeID, "", 0, input.Log, parsedNodeIDs[0].String(), nodeChan, errChan, &wg, true, nodeIDChan)
+
+			wg.Wait()
+			close(nodeChan)
+			close(errChan)
+			close(nodeIDChan)
+
+			var nodes []NodeDef
+			for nodeDef := range nodeChan {
+				nodes = append(nodes, nodeDef)
+			}
+
+			var errs []error
+			for err := range errChan {
+				errs = append(errs, err)
+			}
+
+			// We expect no errors
+			Expect(errs).Should(BeEmpty())
+
+			// We expect only osix node (the analog node itself and all of its properties) since HasTypeDefinition references should be ignored
+			Expect(nodes).Should(HaveLen(6))
+			Expect(nodes[0].NodeID.String()).To(Equal("ns=6;s=DataAccess_AnalogType_Byte"))
+		})
+	})
 })
 
 func checkDatatypeOfOPCUATag(dataType string, messageParsed interface{}, opcuapath string) {
