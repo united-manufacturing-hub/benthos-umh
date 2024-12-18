@@ -746,6 +746,8 @@ Similar to the OPC UA input, this outputs for each address a single message with
 
 The Node-RED JavaScript processor allows you to write JavaScript code to process messages in a style similar to Node-RED function nodes. This makes it easy to port existing Node-RED functions to Benthos or write new processing logic using familiar JavaScript syntax.
 
+Use the `nodered_js` processor instead of the `tag_processor` when you need full control over the payload and require custom processing logic that goes beyond standard tag or time series data handling. This processor allows you to write custom JavaScript code to manipulate both the payload and metadata, providing the flexibility to implement complex transformations, conditional logic, or integrate with other systems.
+
 #### Configuration
 
 ```yaml
@@ -1041,6 +1043,9 @@ Note that these benchmarks represent a simple operation. The performance differe
 ### Tag Processor
 
 The Tag Processor is designed to prepare incoming data for the UMH data model. It processes messages through three configurable stages: defaults, conditional transformations, and advanced processing, all using a Node-RED style JavaScript environment.
+
+Use the `tag_processor` compared to the `nodered_js` when you are processing tags or time series data and converting them to the UMH data model within the `_historian` data contract. This processor is optimized for handling structured time series data, automatically formats messages, and generates appropriate metadata.
+
 
 #### Message Formatting Behavior
 
