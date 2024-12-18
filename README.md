@@ -1470,6 +1470,102 @@ Output 2 (custom):
 ```
 Topic: `umh.v1.enterprise.production._custom.temperature_doubled`
 
+6. **Processing Full MQTT Message Payload**
+```yaml
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.area._workorder";
+    msg.meta.data_contract = "_workorder";
+    msg.meta.virtual_path = "new";
+    msg.meta.tag_name = "maintenance";
+    return msg;
+```
+
+Input:
+```json
+{
+  "maintenanceSchedule": {
+    "eventType": "ScheduledMaintenance",
+    "eventId": "SM-20240717-025",
+    "timestamp": "2024-07-17T13:00:00Z",
+    "equipmentId": "InjectionMoldingMachine5",
+    "equipmentName": "Engel Victory 120",
+    "scheduledDate": "2024-07-22",
+    "maintenanceType": "Preventive",
+    "description": "Inspection and cleaning of injection unit and mold.",
+    "maintenanceDuration": "6 hours",
+    "assignedTo": {
+      "employeeId": "EMP-5005",
+      "name": "Hans Becker"
+    },
+    "status": "Scheduled",
+    "partsRequired": [
+      {
+        "partId": "NOZZLE-015",
+        "description": "Injection Nozzle",
+        "quantity": 1
+      }
+    ],
+    "notes": "Replace worn nozzle to prevent defects."
+  }
+}
+```
+
+Output:
+```json
+{
+  "maintenance": {
+    "maintenanceSchedule": {
+      "eventType": "ScheduledMaintenance",
+      "eventId": "SM-20240717-025",
+      "timestamp": "2024-07-17T13:00:00Z",
+      "equipmentId": "InjectionMoldingMachine5",
+      "equipmentName": "Engel Victory 120",
+      "scheduledDate": "2024-07-22",
+      "maintenanceType": "Preventive",
+      "description": "Inspection and cleaning of injection unit and mold.",
+      "maintenanceDuration": "6 hours",
+      "assignedTo": {
+        "employeeId": "EMP-5005",
+        "name": "Hans Becker"
+      },
+      "status": "Scheduled",
+      "partsRequired": [
+        {
+          "partId": "NOZZLE-015",
+          "description": "Injection Nozzle",
+          "quantity": 1
+        }
+      ],
+      "notes": "Replace worn nozzle to prevent defects."
+    }
+    
+  },
+  "timestamp_ms": 1733903611000
+}
+```
+Topic: `umh.v1.enterprise.area._workorder.maintenance`
+
+**Note:** In the `tag_processor`, the resulting payload will always include `timestamp_ms` and one additional key corresponding to the `tag_name`. If you need to fully control the resulting payload structure, consider using the `nodered_js` processor instead. You can set the topic and payload manually, as shown below:
+
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // set kafka topic manually
+          msg.meta.topic = "umh.v1.enterprise.site.area._workorder.new"
+
+          // only take two fields from the payload
+          msg.meta.payload = {
+            "maintenanceSchedule": {
+              "eventType": msg.payload.maintenanceSchedule.eventType,
+              "description": msg.payload.maintenanceSchedule.description
+            }
+          }
+          return msg;
+```
+
 ## Testing
 
 We execute automated tests and verify that benthos-umh works against various targets. All tests are started with `make test`, but might require environment parameters in order to not be skipped.
