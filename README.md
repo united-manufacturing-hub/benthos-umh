@@ -149,6 +149,137 @@ input:
     nodeIDs: ['ns=2;s=IoTSensors']
 ```
 
+##### nodeIDsV2
+
+You can use `nodeIDsV2` to programmatically set the `nodeIDs` by executing a series of processors during initialization. This approach follows Benthos's pipeline-style configuration but runs only once during startup:
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDsV2:
+      # First processor: fetch node configurations from database
+      - sql:
+          driver: 'postgres'
+          dsn: 'host=localhost port=5432 user=umh password=secret dbname=opcua_nodes sslmode=disable'
+          query: 'SELECT node_id, virtual_path, tag_name FROM node_configurations'
+      # Second processor: transform SQL results into nodeIDs with metadata
+      - nodered_js:
+          code: |
+            // Transform SQL query results into nodeIDs with metadata
+            msg.meta.nodeIDs = msg.payload.map(row => ({
+              nodeID: row.node_id,
+              meta: {
+                virtual_path: row.virtual_path,
+                tag_name: row.tag_name
+              }
+            }));
+            return msg;
+```
+
+When enabled, this **overwrites** any static `nodeIDs` specified in the configuration. The processors run in sequence during the OPC UA input's initialization, and the final result must set `msg.meta.nodeIDs` to an array of node ID objects.
+
+###### How It Works
+
+1. **Initialization Phase**:
+   - When the OPC UA input starts, it executes the `nodeIDsV2` processors in order
+   - The final processor must set `msg.meta.nodeIDs` to an array of objects
+   - Each object must have a `nodeID` field and can optionally include a `meta` object
+   - The OPC UA plugin stores this configuration for use during runtime
+
+2. **Runtime Phase**:
+   - The OPC UA plugin subscribes to or polls the configured node IDs
+   - When data arrives for a node, its associated metadata is included in the message
+   - This metadata is available to downstream processors like `tag_processor`
+
+###### Node ID Object Format
+
+Each node ID in the `msg.meta.nodeIDs` array should follow this structure:
+```javascript
+{
+  nodeID: "ns=2;s=MyNode",  // Required: The OPC UA node ID
+  meta: {                   // Optional: Additional metadata
+    virtual_path: "path.to.node",
+    tag_name: "temperature",
+    // ... any other metadata fields
+  }
+}
+```
+
+###### Example: Static Node IDs via JavaScript
+
+Simple example using Node-RED JavaScript to set static node IDs:
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDsV2:
+      - nodered_js:
+          code: |
+            msg.meta.nodeIDs = [
+              { 
+                nodeID: 'ns=2;s=IoTSensors',
+                meta: {
+                  virtual_path: 'sensors.iot',
+                  tag_name: 'group1'
+                }
+              }
+            ];
+            return msg;
+```
+
+###### Example: Database-Driven Node IDs with Metadata
+
+More complex example fetching nodes and metadata from a database:
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDsV2:
+      # Fetch configurations from database
+      - sql:
+          driver: 'postgres'
+          dsn: 'host=localhost port=5432 user=umh password=secret dbname=opcua_nodes sslmode=disable'
+          query: |
+            SELECT 
+              node_id,
+              virtual_path,
+              tag_name,
+              description,
+              location_path
+            FROM node_configurations
+            WHERE enabled = true
+      
+      # Transform results into nodeIDs array
+      - nodered_js:
+          code: |
+            // Convert database rows to nodeID objects
+            msg.meta.nodeIDs = msg.payload.map(row => ({
+              nodeID: row.node_id,
+              meta: {
+                virtual_path: row.virtual_path,
+                tag_name: row.tag_name,
+                description: row.description,
+                location_path: row.location_path
+              }
+            }));
+            return msg;
+
+# Later in your pipeline, use tag_processor to apply the metadata
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |
+          // Use the metadata that was associated with this node
+          msg.meta.location_path = msg.meta.location_path || "enterprise.default";
+          msg.meta.data_contract = "_historian";
+          msg.meta.virtual_path = msg.meta.virtual_path;
+          msg.meta.tag_name = msg.meta.tag_name;
+          return msg;
+```
+
+The `nodeIDsV2` processors run only during initialization, but the metadata they associate with each node ID becomes available in every message from that node during runtime.
+
 ##### Username and Password
 
 If you want to use username and password authentication, you can specify them in the configuration file:
