@@ -66,7 +66,7 @@ var _ = Describe("Unit Tests", func() {
 			errChan                      chan error
 			wg                           *TrackedWaitGroup
 			browseHierarchicalReferences bool
-			nodeIDChan                   chan []string
+			nodeIDChan                   chan OpcuaBrowserRecord
 		)
 		BeforeEach(func() {
 			ctx, cncl = context.WithTimeout(context.Background(), 180*time.Second)
@@ -78,7 +78,7 @@ var _ = Describe("Unit Tests", func() {
 			errChan = make(chan error, 100)
 			wg = &TrackedWaitGroup{}
 			browseHierarchicalReferences = false
-			nodeIDChan = make(chan []string, 100)
+			nodeIDChan = make(chan OpcuaBrowserRecord, 100)
 		})
 		AfterEach(func() {
 			cncl()

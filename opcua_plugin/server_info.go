@@ -33,7 +33,7 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 	// nodeIDChan is declared to satisfy the browse function signature.
 	// The data inside nodeIDChan is not used for this function.
 	// It is more useful for the GetNodeTree function.
-	nodeIDChan := make(chan []string, 3)
+	nodeIDChan := make(chan OpcuaBrowserRecord, 3)
 	var wg TrackedWaitGroup
 
 	wg.Add(3)
