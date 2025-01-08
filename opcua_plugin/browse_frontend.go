@@ -11,6 +11,8 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
+// OpcuaBrowserRecord is a struct that is used to pass information from the browse method to GetNodeTree method
+// for every recursion call that happens inside the browse method in browse.go
 type OpcuaBrowserRecord struct {
 	Node       NodeDef
 	BrowseName string
@@ -47,9 +49,9 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 	var wg TrackedWaitGroup
 	wg.Add(1)
 	browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", 0, g.Log, rootNode.NodeId.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, browserRecordChan)
-	go collectNodesFromChannel(ctx, nodeChan, msgChan, &wg)
+	go logBrowseStatus(ctx, nodeChan, msgChan, &wg)
 	go logErrors(ctx, errChan, g.Log)
-	go collectNodeIDFromChannel(ctx, browserRecordChan, nodeIDMap, &nodes)
+	go collectNodes(ctx, browserRecordChan, nodeIDMap, &nodes)
 
 	wg.Wait()
 
@@ -64,12 +66,12 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 
 	// By this time, nodeIDMap and nodes are populated with the nodes and nodeIDs
 	for _, node := range nodes {
-		InsertNode(rootNode, node, nodeIDMap)
+		constructNodeHierarchy(rootNode, node, nodeIDMap)
 	}
 	return rootNode, nil
 }
 
-func collectNodesFromChannel(ctx context.Context, nodeChan chan NodeDef, msgChan chan<- string, wg *TrackedWaitGroup) {
+func logBrowseStatus(ctx context.Context, nodeChan chan NodeDef, msgChan chan<- string, wg *TrackedWaitGroup) {
 	for n := range nodeChan {
 		select {
 		case <-ctx.Done():
@@ -93,7 +95,7 @@ func logErrors(ctx context.Context, errChan chan error, logger *service.Logger) 
 	}
 }
 
-func collectNodeIDFromChannel(ctx context.Context, nodeIDChan chan OpcuaBrowserRecord, nodeIDMap map[string]string, nodes *[]NodeDef) {
+func collectNodes(ctx context.Context, nodeIDChan chan OpcuaBrowserRecord, nodeIDMap map[string]string, nodes *[]NodeDef) {
 	for i := range nodeIDChan {
 		select {
 		case <-ctx.Done():
@@ -106,7 +108,7 @@ func collectNodeIDFromChannel(ctx context.Context, nodeIDChan chan OpcuaBrowserR
 	}
 }
 
-func InsertNode(rootNode *Node, node NodeDef, nodeIDMap map[string]string) {
+func constructNodeHierarchy(rootNode *Node, node NodeDef, nodeIDMap map[string]string) {
 	current := rootNode
 	if current.ChildIDMap == nil {
 		current.ChildIDMap = make(map[string]*Node)
