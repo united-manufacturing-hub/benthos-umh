@@ -96,7 +96,7 @@ func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 func browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, browseHierarchicalReferences bool, nodeIDChan chan []string) {
 	defer wg.Done()
 
-	if level > 10 {
+	if level > 500 {
 		return
 	}
 
