@@ -71,6 +71,9 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 	return rootNode, nil
 }
 
+// logBrowseStatus logs the status of the browse operation. It sends a message to the channel
+// every time a node is found, and the wait group counter status is sent to the channel
+// to indicate that the browse operation is still active.
 func logBrowseStatus(ctx context.Context, nodeChan chan NodeDef, msgChan chan<- string, wg *TrackedWaitGroup) {
 	for n := range nodeChan {
 		select {
@@ -84,6 +87,7 @@ func logBrowseStatus(ctx context.Context, nodeChan chan NodeDef, msgChan chan<- 
 	}
 }
 
+// logErrors logs errors from the error channel
 func logErrors(ctx context.Context, errChan chan error, logger *service.Logger) {
 	for err := range errChan {
 		select {
@@ -95,6 +99,7 @@ func logErrors(ctx context.Context, errChan chan error, logger *service.Logger) 
 	}
 }
 
+// collectNodes collects the NodeDefs from the channel and adds them to the list of NodeDefs
 func collectNodes(ctx context.Context, nodeIDChan chan OpcuaBrowserRecord, nodeIDMap map[string]string, nodes *[]NodeDef) {
 	for i := range nodeIDChan {
 		select {
@@ -108,6 +113,7 @@ func collectNodes(ctx context.Context, nodeIDChan chan OpcuaBrowserRecord, nodeI
 	}
 }
 
+// constructNodeHierarchy constructs a tree structure from the list of NodeDefs
 func constructNodeHierarchy(rootNode *Node, node NodeDef, nodeIDMap map[string]string) {
 	current := rootNode
 	if current.ChildIDMap == nil {
