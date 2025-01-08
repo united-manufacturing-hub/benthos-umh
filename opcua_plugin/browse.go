@@ -315,15 +315,13 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		return nil
 	}
 
-	// Send the node name and ID mapping to the nodeIDChan for showing intermediate results in the frontend
-	// Uses a non-blocking select to avoid deadlocks if the channel is full.
-	// Create a nodeDef copy. Do no modify the original nodeDef. This nodeCopy is used only for OPCUA browser
-	nodeCopy := def
-	nodeCopy.Path = join(path, nodeCopy.BrowseName)
+	// Create a copy of the def(current Node). Do no modify the original nodeDef. This nodeDefForOPCUABrowser is used only for OPCUA browser
+	nodeDefForOPCUABrowser := def
+	nodeDefForOPCUABrowser.Path = join(path, nodeDefForOPCUABrowser.BrowseName)
 	select {
 	case nodeIDChan <- OpcuaBrowserRecord{
 		BrowseName: browseName.Name,
-		Node:       nodeCopy,
+		Node:       nodeDefForOPCUABrowser,
 	}:
 	// do nothing if message publish to the channel is successful
 	default:
