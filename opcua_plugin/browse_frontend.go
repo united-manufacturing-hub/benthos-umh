@@ -5,10 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gopcua/opcua/ua"
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
+
+type OpcuaBrowserRecord struct {
+	Node       NodeDef
+	BrowseName string
+}
 
 // GetNodeTree returns the tree structure of the OPC UA server nodes
 // GetNodeTree is currently used by united-manufacturing-hub/ManagementConsole repo for the BrowseOPCUA tags functionality
@@ -33,23 +39,28 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 
 	nodeChan := make(chan NodeDef, MaxTagsToBrowse)
 	errChan := make(chan error, MaxTagsToBrowse)
-	nodeIDChan := make(chan []string, MaxTagsToBrowse)
+	browserRecordChan := make(chan OpcuaBrowserRecord, MaxTagsToBrowse)
 
 	nodeIDMap := make(map[string]string)
 	nodes := make([]NodeDef, 0, MaxTagsToBrowse)
 
 	var wg TrackedWaitGroup
 	wg.Add(1)
-	browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", 0, g.Log, rootNode.NodeId.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, nodeIDChan)
-	go collectNodesFromChannel(ctx, nodeChan, &nodes, msgChan, &wg)
+	browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", 0, g.Log, rootNode.NodeId.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, browserRecordChan)
+	go collectNodesFromChannel(ctx, nodeChan, msgChan, &wg)
 	go logErrors(ctx, errChan, g.Log)
-	go collectNodeIDFromChannel(ctx, nodeIDChan, nodeIDMap)
+	go collectNodeIDFromChannel(ctx, browserRecordChan, nodeIDMap, &nodes)
 
 	wg.Wait()
 
 	close(nodeChan)
 	close(errChan)
-	close(nodeIDChan)
+	close(browserRecordChan)
+
+	// TODO: Temporary workaround - Adding a timeout ensures all child nodes are properly
+	// collected in the nodes[] array. Without this timeout, the last children nodes
+	// may be missing from the results.
+	time.Sleep(3 * time.Second)
 
 	// By this time, nodeIDMap and nodes are populated with the nodes and nodeIDs
 	for _, node := range nodes {
@@ -58,13 +69,12 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 	return rootNode, nil
 }
 
-func collectNodesFromChannel(ctx context.Context, nodeChan chan NodeDef, nodes *[]NodeDef, msgChan chan<- string, wg *TrackedWaitGroup) {
+func collectNodesFromChannel(ctx context.Context, nodeChan chan NodeDef, msgChan chan<- string, wg *TrackedWaitGroup) {
 	for n := range nodeChan {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			*nodes = append(*nodes, n)
 			// Send a more detailed message about the browsing progress using WaitGroup count
 			msgChan <- fmt.Sprintf("found node '%s' (%d active browse operations)",
 				n.BrowseName, wg.Count())
@@ -83,15 +93,15 @@ func logErrors(ctx context.Context, errChan chan error, logger *service.Logger) 
 	}
 }
 
-func collectNodeIDFromChannel(ctx context.Context, nodeIDChan chan []string, nodeIDMap map[string]string) {
+func collectNodeIDFromChannel(ctx context.Context, nodeIDChan chan OpcuaBrowserRecord, nodeIDMap map[string]string, nodes *[]NodeDef) {
 	for i := range nodeIDChan {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			if len(i) == 2 {
-				nodeIDMap[i[0]] = i[1]
-			}
+			nodeID := i.Node.NodeID.String()
+			nodeIDMap[i.BrowseName] = nodeID
+			*nodes = append(*nodes, i.Node)
 		}
 	}
 }
