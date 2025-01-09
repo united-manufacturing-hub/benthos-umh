@@ -145,10 +145,16 @@ func findNthParentNode(n int, node *NodeDef, nodeIDMap map[string]*NodeDef) *Nod
 	if n == 0 {
 		return node
 	}
+
 	for i := 0; i < n; i++ {
 		parentNodeID := node.ParentNodeID
 		parentNode := nodeIDMap[parentNodeID]
+
+		if parentNode == nil {
+			return node
+		}
 		node = parentNode
 	}
+
 	return node
 }
