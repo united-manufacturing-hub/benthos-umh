@@ -59,7 +59,7 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 
 	// By this time, nodeIDMap and nodes are populated with the nodes and nodeIDs
 	for _, node := range nodes {
-		constructNodeHierarchy(rootNode, node, nodeIDMap)
+		constructNodeHierarchy(rootNode, node, nodeIDMap, g.Log)
 	}
 	return rootNode, nil
 }
@@ -107,7 +107,7 @@ func collectNodes(ctx context.Context, nodeBrowserChan chan NodeDef, nodeIDMap m
 }
 
 // constructNodeHierarchy constructs a tree structure from the list of NodeDefs
-func constructNodeHierarchy(rootNode *Node, node NodeDef, nodeIDMap map[string]*NodeDef) {
+func constructNodeHierarchy(rootNode *Node, node NodeDef, nodeIDMap map[string]*NodeDef, logger *service.Logger) {
 	current := rootNode
 	if current.ChildIDMap == nil {
 		current.ChildIDMap = make(map[string]*Node)
@@ -121,9 +121,17 @@ func constructNodeHierarchy(rootNode *Node, node NodeDef, nodeIDMap map[string]*
 	for i, part := range paths {
 		if _, exists := current.ChildIDMap[part]; !exists {
 			parentNode := findNthParentNode(length-i-1, &node, nodeIDMap)
+			id, err := ua.ParseNodeID(parentNode.NodeID.String())
+			if err != nil {
+				// This should never happen
+				// All node ids should be valid
+				logger.Errorf("error parsing node id: %v", err)
+				return
+			}
+
 			current.ChildIDMap[part] = &Node{
 				Name:       part,
-				NodeId:     ua.MustParseNodeID(parentNode.NodeID.String()),
+				NodeId:     id,
 				ChildIDMap: make(map[string]*Node),
 				Children:   make([]*Node, 0),
 			}
