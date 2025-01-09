@@ -1423,18 +1423,18 @@ opcua:
 			// Create channels for browsing
 			nodeChan := make(chan NodeDef, 100)
 			errChan := make(chan error, 100)
-			nodeIDChan := make(chan NodeDef, 100)
+			opcuaBrowserChan := make(chan NodeDef, 100)
 			var wg TrackedWaitGroup
 
 			// Browse the node
 			wg.Add(1)
 			wrapperNodeID := NewOpcuaNodeWrapper(input.Client.Node(parsedNodeIDs[0]))
-			go Browse(ctx, wrapperNodeID, "", 0, input.Log, parsedNodeIDs[0].String(), nodeChan, errChan, &wg, true, nodeIDChan)
+			go Browse(ctx, wrapperNodeID, "", 0, input.Log, parsedNodeIDs[0].String(), nodeChan, errChan, &wg, true, opcuaBrowserChan)
 
 			wg.Wait()
 			close(nodeChan)
 			close(errChan)
-			close(nodeIDChan)
+			close(opcuaBrowserChan)
 
 			var nodes []NodeDef
 			for nodeDef := range nodeChan {
