@@ -107,7 +107,7 @@ func collectNodes(ctx context.Context, nodeIDChan chan OpcuaBrowserRecord, nodeI
 			return
 		default:
 			nodeID := i.Node.NodeID.String()
-			nodeIDMap[i.BrowseName] = nodeID
+			nodeIDMap[nodeID] = i.BrowseName
 			*nodes = append(*nodes, i.Node)
 		}
 	}
@@ -123,25 +123,45 @@ func constructNodeHierarchy(rootNode *Node, node NodeDef, nodeIDMap map[string]s
 		current.Children = make([]*Node, 0)
 	}
 
-	paths := strings.Split(node.Path, ".")
-	for _, part := range paths {
-		if _, exists := current.ChildIDMap[part]; !exists {
-			current.ChildIDMap[part] = &Node{
-				Name:       part,
-				NodeId:     ua.NewStringNodeID(0, FindID(nodeIDMap, part)),
+	// paths := strings.Split(node.Path, ".")
+	nodeIDPaths := strings.Split(node.internalNodeIDPath, "::")
+	for _, id := range nodeIDPaths {
+		if _, exists := current.ChildIDMap[id]; !exists {
+			current.ChildIDMap[id] = &Node{
+				Name:       FindBrowseName(nodeIDMap, id),
+				NodeId:     ua.MustParseNodeID(id),
 				ChildIDMap: make(map[string]*Node),
 				Children:   make([]*Node, 0),
 			}
-			current.Children = append(current.Children, current.ChildIDMap[part])
+			current.Children = append(current.Children, current.ChildIDMap[id])
 		}
-		current = current.ChildIDMap[part]
+		current = current.ChildIDMap[id]
 	}
+	// for _, part := range paths {
+	// 	if _, exists := current.ChildIDMap[part]; !exists {
+	// 		current.ChildIDMap[part] = &Node{
+	// 			Name:       part,
+	// 			NodeId:     ua.NewStringNodeID(0, FindID(nodeIDMap, part)),
+	// 			ChildIDMap: make(map[string]*Node),
+	// 			Children:   make([]*Node, 0),
+	// 		}
+	// 		current.Children = append(current.Children, current.ChildIDMap[part])
+	// 	}
+	// 	current = current.ChildIDMap[part]
+	// }
 }
 
 // FindID finds the ID from the dictionary
 func FindID(dictionary map[string]string, nodeName string) string {
 	if id, ok := dictionary[nodeName]; ok {
 		return id
+	}
+	return "unknown"
+}
+
+func FindBrowseName(dictionary map[string]string, nodeID string) string {
+	if name, ok := dictionary[nodeID]; ok {
+		return name
 	}
 	return "unknown"
 }

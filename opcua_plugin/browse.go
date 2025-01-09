@@ -29,6 +29,21 @@ type NodeDef struct {
 	DataType     string
 	ParentNodeID string // custom, not an official opcua attribute
 	Path         string // custom, not an official opcua attribute
+	// internalNodeIDPath is the list of parent nodeIDs that lead to this node and the current nodeID connected by a ::
+	internalNodeIDPath string // custom, not an official opcua attribute
+}
+
+// joinNodeID concatenates two nodeIDs with a :: separator.
+func joinNodeID(a, b string) string {
+	if a == "" {
+		return b
+	}
+
+	if b == "" {
+		return a
+	}
+
+	return a + "::" + b
 }
 
 // join concatenates two strings with a dot separator.
@@ -315,9 +330,10 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		return nil
 	}
 
-	// Create a copy of the def(current Node). Do no modify the original nodeDef. This nodeDefForOPCUABrowser is used only for OPCUA browser
+	// Create a copy of the def(current Node). Do no modify the original nodeDef. This nodeDefForOPCUABrowser is used only for OPCUA browser operation
 	nodeDefForOPCUABrowser := def
 	nodeDefForOPCUABrowser.Path = join(path, nodeDefForOPCUABrowser.BrowseName)
+	nodeDefForOPCUABrowser.internalNodeIDPath = joinNodeID(nodeDefForOPCUABrowser.ParentNodeID, nodeDefForOPCUABrowser.NodeID.String())
 	select {
 	case nodeIDChan <- OpcuaBrowserRecord{
 		BrowseName: browseName.Name,
