@@ -30,21 +30,21 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 
 	nodeChan := make(chan NodeDef, 3)
 	errChan := make(chan error, 3)
-	// nodeIDChan is declared to satisfy the browse function signature.
-	// The data inside nodeIDChan is not used for this function.
+	// opcuaBrowserChan is declared to satisfy the browse function signature.
+	// The data inside opcuaBrowserChan is not used for this function.
 	// It is more useful for the GetNodeTree function.
-	nodeIDChan := make(chan []string, 3)
+	opcuaBrowserChan := make(chan NodeDef, 3)
 	var wg TrackedWaitGroup
 
 	wg.Add(3)
-	go browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(manufacturerNameNodeID)), "", 0, g.Log, manufacturerNameNodeID.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, nodeIDChan)
-	go browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(productNameNodeID)), "", 0, g.Log, productNameNodeID.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, nodeIDChan)
-	go browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(softwareVersionNodeID)), "", 0, g.Log, softwareVersionNodeID.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, nodeIDChan)
+	go browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(manufacturerNameNodeID)), "", 0, g.Log, manufacturerNameNodeID.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, opcuaBrowserChan)
+	go browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(productNameNodeID)), "", 0, g.Log, productNameNodeID.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, opcuaBrowserChan)
+	go browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(softwareVersionNodeID)), "", 0, g.Log, softwareVersionNodeID.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, opcuaBrowserChan)
 	wg.Wait()
 
 	close(nodeChan)
 	close(errChan)
-	close(nodeIDChan)
+	close(opcuaBrowserChan)
 
 	if len(errChan) > 0 {
 		return ServerInfo{}, <-errChan
