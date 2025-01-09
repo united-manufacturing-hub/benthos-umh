@@ -11,13 +11,6 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-// OpcuaBrowserRecord is a struct that is used to pass information from the browse method to GetNodeTree method
-// for every recursion call that happens inside the browse method in browse.go
-type OpcuaBrowserRecord struct {
-	Node       NodeDef
-	BrowseName string
-}
-
 // GetNodeTree returns the tree structure of the OPC UA server nodes
 // GetNodeTree is currently used by united-manufacturing-hub/ManagementConsole repo for the BrowseOPCUA tags functionality
 func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, rootNode *Node) (*Node, error) {
@@ -41,23 +34,23 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 
 	nodeChan := make(chan NodeDef, MaxTagsToBrowse)
 	errChan := make(chan error, MaxTagsToBrowse)
-	browserRecordChan := make(chan OpcuaBrowserRecord, MaxTagsToBrowse)
+	opcuaBrowserChan := make(chan NodeDef, MaxTagsToBrowse)
 
-	nodeIDMap := make(map[string]string)
+	nodeIDMap := make(map[string]*NodeDef)
 	nodes := make([]NodeDef, 0, MaxTagsToBrowse)
 
 	var wg TrackedWaitGroup
 	wg.Add(1)
-	browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", 0, g.Log, rootNode.NodeId.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, browserRecordChan)
+	browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", 0, g.Log, rootNode.NodeId.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, opcuaBrowserChan)
 	go logBrowseStatus(ctx, nodeChan, msgChan, &wg)
 	go logErrors(ctx, errChan, g.Log)
-	go collectNodes(ctx, browserRecordChan, nodeIDMap, &nodes)
+	go collectNodes(ctx, opcuaBrowserChan, nodeIDMap, &nodes)
 
 	wg.Wait()
 
 	close(nodeChan)
 	close(errChan)
-	close(browserRecordChan)
+	close(opcuaBrowserChan)
 
 	// TODO: Temporary workaround - Adding a timeout ensures all child nodes are properly
 	// collected in the nodes[] array. Without this timeout, the last children nodes
@@ -100,21 +93,21 @@ func logErrors(ctx context.Context, errChan chan error, logger *service.Logger) 
 }
 
 // collectNodes collects the NodeDefs from the channel and adds them to the list of NodeDefs
-func collectNodes(ctx context.Context, nodeIDChan chan OpcuaBrowserRecord, nodeIDMap map[string]string, nodes *[]NodeDef) {
-	for i := range nodeIDChan {
+func collectNodes(ctx context.Context, nodeBrowserChan chan NodeDef, nodeIDMap map[string]*NodeDef, nodes *[]NodeDef) {
+	for node := range nodeBrowserChan {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			nodeID := i.Node.NodeID.String()
-			nodeIDMap[nodeID] = i.BrowseName
-			*nodes = append(*nodes, i.Node)
+			nodeID := node.NodeID.String()
+			nodeIDMap[nodeID] = &node
+			*nodes = append(*nodes, node)
 		}
 	}
 }
 
 // constructNodeHierarchy constructs a tree structure from the list of NodeDefs
-func constructNodeHierarchy(rootNode *Node, node NodeDef, nodeIDMap map[string]string) {
+func constructNodeHierarchy(rootNode *Node, node NodeDef, nodeIDMap map[string]*NodeDef) {
 	current := rootNode
 	if current.ChildIDMap == nil {
 		current.ChildIDMap = make(map[string]*Node)
@@ -123,45 +116,31 @@ func constructNodeHierarchy(rootNode *Node, node NodeDef, nodeIDMap map[string]s
 		current.Children = make([]*Node, 0)
 	}
 
-	// paths := strings.Split(node.Path, ".")
-	nodeIDPaths := strings.Split(node.internalNodeIDPath, "::")
-	for _, id := range nodeIDPaths {
-		if _, exists := current.ChildIDMap[id]; !exists {
-			current.ChildIDMap[id] = &Node{
-				Name:       FindBrowseName(nodeIDMap, id),
-				NodeId:     ua.MustParseNodeID(id),
+	paths := strings.Split(node.Path, ".")
+	length := len(paths)
+	for i, part := range paths {
+		if _, exists := current.ChildIDMap[part]; !exists {
+			parentNode := findNthParentNode(length-i-1, &node, nodeIDMap)
+			current.ChildIDMap[part] = &Node{
+				Name:       part,
+				NodeId:     ua.MustParseNodeID(parentNode.NodeID.String()),
 				ChildIDMap: make(map[string]*Node),
 				Children:   make([]*Node, 0),
 			}
-			current.Children = append(current.Children, current.ChildIDMap[id])
+			current.Children = append(current.Children, current.ChildIDMap[part])
 		}
-		current = current.ChildIDMap[id]
+		current = current.ChildIDMap[part]
 	}
-	// for _, part := range paths {
-	// 	if _, exists := current.ChildIDMap[part]; !exists {
-	// 		current.ChildIDMap[part] = &Node{
-	// 			Name:       part,
-	// 			NodeId:     ua.NewStringNodeID(0, FindID(nodeIDMap, part)),
-	// 			ChildIDMap: make(map[string]*Node),
-	// 			Children:   make([]*Node, 0),
-	// 		}
-	// 		current.Children = append(current.Children, current.ChildIDMap[part])
-	// 	}
-	// 	current = current.ChildIDMap[part]
-	// }
 }
 
-// FindID finds the ID from the dictionary
-func FindID(dictionary map[string]string, nodeName string) string {
-	if id, ok := dictionary[nodeName]; ok {
-		return id
+func findNthParentNode(n int, node *NodeDef, nodeIDMap map[string]*NodeDef) *NodeDef {
+	if n == 0 {
+		return node
 	}
-	return "unknown"
-}
-
-func FindBrowseName(dictionary map[string]string, nodeID string) string {
-	if name, ok := dictionary[nodeID]; ok {
-		return name
+	for i := 0; i < n; i++ {
+		parentNodeID := node.ParentNodeID
+		parentNode := nodeIDMap[parentNodeID]
+		node = parentNode
 	}
-	return "unknown"
+	return node
 }
