@@ -322,7 +322,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	case opcuaBrowserChan <- nodeDefForOPCUABrowser:
 	// do nothing if message publish to the channel is successful
 	default:
-		logger.Debugf("nodeIDChan is blocked, skipping nodeID send")
+		logger.Debugf("opcuaBrowserChan is blocked, skipping nodeDefForOPCUABrowser send")
 	}
 	// In OPC Unified Architecture (UA), hierarchical references are a type of reference that establishes a containment relationship between nodes in the address space. They are used to model a hierarchical structure, such as a system composed of components, where each component may contain sub-components.
 	// Refer link: https://qiyuqi.gitbooks.io/opc-ua/content/Part3/Chapter7.html
@@ -563,17 +563,17 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			// Copied and pasted from above, just for one node
 			nodeHeartbeatChan := make(chan NodeDef, 1)
 			errChanHeartbeat := make(chan error, 1)
-			nodeIDChanHeartbeat := make(chan NodeDef, 1)
+			opcuaBrowserChanHeartbeat := make(chan NodeDef, 1)
 			var wgHeartbeat TrackedWaitGroup
 
 			wgHeartbeat.Add(1)
 			wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(heartbeatNodeID))
-			go browse(ctx, wrapperNodeID, "", 1, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat, g.BrowseHierarchicalReferences, nodeIDChanHeartbeat)
+			go browse(ctx, wrapperNodeID, "", 1, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat, g.BrowseHierarchicalReferences, opcuaBrowserChanHeartbeat)
 
 			wgHeartbeat.Wait()
 			close(nodeHeartbeatChan)
 			close(errChanHeartbeat)
-			close(nodeIDChanHeartbeat)
+			close(opcuaBrowserChanHeartbeat)
 
 			for node := range nodeHeartbeatChan {
 				nodeList = append(nodeList, node)
