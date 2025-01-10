@@ -78,8 +78,11 @@ func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescript
 	//opts = append(opts, opcua.MaxMessageSize(2*1024*1024))    // 2MB
 	//opts = append(opts, opcua.ReceiveBufferSize(2*1024*1024)) // 2MB
 	//opts = append(opts, opcua.SendBufferSize(2*1024*1024))    // 2MB
-	opts = append(opts, opcua.AutoReconnect(true))
-	opts = append(opts, opcua.ReconnectInterval(5*time.Second))
+	if g.AutoReconnect {
+		opts = append(opts, opcua.AutoReconnect(true))
+		reconnectInterval := time.Duration(g.ReconnectIntervalInSeconds) * time.Second
+		opts = append(opts, opcua.ReconnectInterval(reconnectInterval))
+	}
 	return opts, nil
 }
 
