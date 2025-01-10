@@ -45,7 +45,9 @@ var OPCUAConfigSpec = service.NewConfigSpec().
 	Field(service.NewBoolField("directConnect").Description("Set this to true to directly connect to an OPC UA endpoint. This can be necessary in cases where the OPC UA server does not allow 'endpoint discovery'. This requires having the full endpoint name in endpoint, and securityMode and securityPolicy set. Defaults to 'false'").Default(false)).
 	Field(service.NewBoolField("useHeartbeat").Description("Set to true to provide an extra message with the servers timestamp as a heartbeat").Default(false)).
 	Field(service.NewBoolField("browseHierarchicalReferences").Description("Set to true to browse hierarchical references. This is the new way to browse for tags and folders references properly without any duplicates. Defaults to 'false'").Default(false)).
-	Field(service.NewIntField("pollRate").Description("The rate in milliseconds at which to poll the OPC UA server when not using subscriptions. Defaults to 1000ms (1 second).").Default(DefaultPollRate))
+	Field(service.NewIntField("pollRate").Description("The rate in milliseconds at which to poll the OPC UA server when not using subscriptions. Defaults to 1000ms (1 second).").Default(DefaultPollRate)).
+	Field(service.NewBoolField("autoReconnect").Description("Set to true to automatically reconnect to the OPC UA server when the connection is lost. Defaults to 'false'").Default(false)).
+	Field(service.NewIntField("reconnectIntervalInSeconds").Description("The interval in seconds at which to reconnect to the OPC UA server when the connection is lost. This is only used if `autoReconnect` is set to true. Defaults to 5 seconds.").Default(5))
 
 func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 
@@ -131,6 +133,16 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		return nil, err
 	}
 
+	autoReconnect, err := conf.FieldBool("autoReconnect")
+	if err != nil {
+		return nil, err
+	}
+
+	reconnectIntervalInSeconds, err := conf.FieldInt("reconnectIntervalInSeconds")
+	if err != nil {
+		return nil, err
+	}
+
 	// fail if no nodeIDs are provided
 	if len(nodeIDs) == 0 {
 		return nil, errors.New("no nodeIDs provided")
@@ -159,6 +171,8 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		PollRate:                     pollRate,
 		browseWaitGroup:              sync.WaitGroup{},
 		browseErrorChan:              make(chan error, 1),
+		AutoReconnect:                autoReconnect,
+		ReconnectIntervalInSeconds:   reconnectIntervalInSeconds,
 	}
 
 	return service.AutoRetryNacksBatched(m), nil
@@ -205,6 +219,8 @@ type OPCUAInput struct {
 	browseCancel                 context.CancelFunc
 	browseWaitGroup              sync.WaitGroup
 	browseErrorChan              chan error
+	AutoReconnect                bool
+	ReconnectIntervalInSeconds   int
 }
 
 // cleanupBrowsing ensures the browsing goroutine is properly stopped and cleaned up

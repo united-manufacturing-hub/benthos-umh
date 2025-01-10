@@ -109,11 +109,13 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input = &OPCUAInput{
-				Endpoint:         endpoint,
-				Username:         "",
-				Password:         "",
-				NodeIDs:          parsedNodeIDs,
-				SubscribeEnabled: false,
+				Endpoint:                   endpoint,
+				Username:                   "",
+				Password:                   "",
+				NodeIDs:                    parsedNodeIDs,
+				SubscribeEnabled:           false,
+				AutoReconnect:              true,
+				ReconnectIntervalInSeconds: 5,
 			}
 
 			// Attempt to connect
@@ -319,6 +321,8 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 				Password:                     "",
 				NodeIDs:                      parsedNodeIDs,
 				BrowseHierarchicalReferences: true,
+				AutoReconnect:                true,
+				ReconnectIntervalInSeconds:   5,
 			}
 			// Attempt to connect
 			err = input.Connect(ctx)
