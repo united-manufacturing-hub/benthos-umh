@@ -78,6 +78,8 @@ func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescript
 	//opts = append(opts, opcua.MaxMessageSize(2*1024*1024))    // 2MB
 	//opts = append(opts, opcua.ReceiveBufferSize(2*1024*1024)) // 2MB
 	//opts = append(opts, opcua.SendBufferSize(2*1024*1024))    // 2MB
+	opts = append(opts, opcua.AutoReconnect(true))
+	opts = append(opts, opcua.ReconnectInterval(5*time.Second))
 	return opts, nil
 }
 
@@ -550,5 +552,6 @@ func (g *OPCUAInput) connect(ctx context.Context) error {
 	}
 
 	g.Client = c
+
 	return nil
 }
