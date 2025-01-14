@@ -71,10 +71,10 @@ jobs:
         run: |
           if [ "${{ steps.check_s7.outputs.available }}" == "true" ]; then
             echo "using s7 main"
-            TEST_S7_TCPDEVICE=${{ secrets.TEST_S7_TCPDEVICE }}
+            export TEST_S7_TCPDEVICE=${{ secrets.TEST_S7_TCPDEVICE }}
           elif [ "${{ steps.check_s7_fallback.outputs.available }}" == "true" ]; then
             echo "using s7 fallback"
-            TEST_S7_TCPDEVICE=${{ secrets.TEST_S7_TCPDEVICE_FALLBACK }}
+            export TEST_S7_TCPDEVICE=${{ secrets.TEST_S7_TCPDEVICE_FALLBACK }}
           else
             exit 1
           fi

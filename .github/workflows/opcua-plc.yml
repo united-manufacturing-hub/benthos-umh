@@ -99,19 +99,19 @@ jobs:
         run: |
           if [ "${{ steps.check_s7.outputs.available }}" == "true" ]; then
             echo "using s7 main"
-            TEST_S7_ENDPOINT_URI=${{ secrets.TEST_S7_ENDPOINT_URI }}
+            export TEST_S7_ENDPOINT_URI=${{ secrets.TEST_S7_ENDPOINT_URI }}
           elif  [ "${{ steps.check_s7_fallback.outputs.available }}" == "true" ]; then
             echo "using s7 fallback"
-            TEST_S7_ENDPOINT_URI=${{ secrets.TEST_S7_ENDPOINT_URI_FALLBACK }}
+            export TEST_S7_ENDPOINT_URI=${{ secrets.TEST_S7_ENDPOINT_URI_FALLBACK }}
           else
             exit 1
           fi
           if [ "${{ steps.check_wago.outputs.available }}" == "true" ]; then
             echo "using wago main"
-            TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI }}
+            export TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI }}
           elif [ "${{ steps.check_wago_fallback.outputs.available }}" == "true" ]; then
             echo "using wago fallback"
-            TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI_FALLBACK }}
+            export TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI_FALLBACK }}
           else
             exit 1
           fi
