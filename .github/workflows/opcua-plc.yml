@@ -22,7 +22,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  GO_VERSION: '1.22.*'
+  GO_VERSION: '1.23'
 
 concurrency:
   group: opcua-plc-test
@@ -45,5 +45,76 @@ jobs:
           go_version: ${{ env.GO_VERSION }}
       - name: Install Ginkgo
         run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.19.0
+      - name: Install Tcping
+        run: go install github.com/cloverstd/tcping@latest
+      - name: Check S7 port availability
+        id: check_s7
+        run: |
+          set +x
+          URI="${{ secrets.TEST_S7_ENDPOINT_URI }}"
+          ENDPOINT="${URI#opc.tcp://}"
+          if tcping "$ENDPOINT" | grep -qi "Connected"; then
+            echo "available=true" >> $GITHUB_OUTPUT
+          else
+            echo "available=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check S7-falback port availability
+        id: check_s7_fallback
+        run: |
+          set +x
+          URI="${{ secrets.TEST_S7_ENDPOINT_URI_FALLBACK }}"
+          ENDPOINT="${URI#opc.tcp://}"
+          if tcping "$ENDPOINT" | grep -qi "Connected"; then
+            echo "available=true" >> $GITHUB_OUTPUT
+          else
+            echo "available=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check Wago port availability
+        id: check_wago
+        run: |
+          set +x
+          URI="${{ secrets.TEST_WAGO_ENDPOINT_URI }}"
+          ENDPOINT="${URI#opc.tcp://}"
+          if tcping "$ENDPOINT" | grep -qi "Connected"; then
+            echo "available=true" >> $GITHUB_OUTPUT
+          else
+            echo "available=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check Wago-fallback port availability
+        id: check_wago_fallback
+        run: |
+          set +x
+          URI="${{ secrets.TEST_WAGO_ENDPOINT_URI_FALLBACK }}"
+          ENDPOINT="${URI#opc.tcp://}"
+          if tcping "$ENDPOINT" | grep -qi "Connected"; then
+            echo "available=true" >> $GITHUB_OUTPUT
+          else
+            echo "available=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Test
-        run: TEST_S7_ENDPOINT_URI=${{ secrets.TEST_S7_ENDPOINT_URI }} TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI }} TEST_WAGO_USERNAME=${{ secrets.TEST_WAGO_USERNAME }} TEST_WAGO_PASSWORD=${{ secrets.TEST_WAGO_PASSWORD }} make test
+        run: |
+          if [ "${{ steps.check_s7.outputs.available }}" == "true" ]; then
+            echo "using s7 main"
+            TEST_S7_ENDPOINT_URI=${{ secrets.TEST_S7_ENDPOINT_URI }}
+          elif  [ "${{ steps.check_s7_fallback.outputs.available }}" == "true" ]; then
+            echo "using s7 fallback"
+            TEST_S7_ENDPOINT_URI=${{ secrets.TEST_S7_ENDPOINT_URI_FALLBACK }}
+          else
+            exit 1
+          fi
+          if [ "${{ steps.check_wago.outputs.available }}" == "true" ]; then
+            echo "using wago main"
+            TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI }}
+          elif [ "${{ steps.check_wago_fallback.outputs.available }}" == "true" ]; then
+            echo "using wago fallback"
+            TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI_FALLBACK }}
+          else
+            exit 1
+          fi
+          TEST_WAGO_USERNAME=${{ secrets.TEST_WAGO_USERNAME }} \
+          TEST_WAGO_PASSWORD=${{ secrets.TEST_WAGO_PASSWORD }} \
+          make test
