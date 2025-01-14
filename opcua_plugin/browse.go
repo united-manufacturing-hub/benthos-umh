@@ -281,19 +281,38 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	def.ParentNodeID = parentNodeId
 
 	hasNodeReferencedComponents := func() bool {
-		refs, err := n.ReferencedNodes(ctx, id.HasComponent, ua.BrowseDirectionForward, ua.NodeClassAll, true)
-		if err != nil || len(refs) == 0 {
+		variableClassRefs, err := n.ReferencedNodes(ctx, id.HasComponent, ua.BrowseDirectionForward, ua.NodeClassVariable, true)
+		if err != nil {
 			return false
 		}
+		objectClassRefs, err := n.ReferencedNodes(ctx, id.HasComponent, ua.BrowseDirectionForward, ua.NodeClassObject, true)
+		if err != nil {
+			return false
+		}
+
+		if len(variableClassRefs) == 0 && len(objectClassRefs) == 0 {
+			return false
+		}
+
 		return true
 	}
 
 	browseChildrenV2 := func(refType uint32) error {
-		children, err := n.Children(ctx, refType, ua.NodeClassVariable|ua.NodeClassObject)
+		children := make([]NodeBrowser, 0)
+		variableClassChildren, err := n.Children(ctx, refType, ua.NodeClassVariable)
 		if err != nil {
 			sendError(ctx, errors.Errorf("Children: %d: %s", refType, err), errChan, logger)
 			return err
 		}
+		children = append(children, variableClassChildren...)
+
+		objectClassChildren, err := n.Children(ctx, refType, ua.NodeClassObject)
+		if err != nil {
+			sendError(ctx, errors.Errorf("Children: %d: %s", refType, err), errChan, logger)
+			return err
+		}
+		children = append(children, objectClassChildren...)
+
 		for _, child := range children {
 			wg.Add(1)
 			go browse(ctx, child, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, wg, browseHierarchicalReferences, opcuaBrowserChan)
@@ -302,11 +321,20 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	}
 
 	browseChildren := func(refType uint32) error {
-		refs, err := n.ReferencedNodes(ctx, refType, ua.BrowseDirectionForward, ua.NodeClassAll, true)
+		refs := make([]NodeBrowser, 0)
+		variableClassReferences, err := n.ReferencedNodes(ctx, refType, ua.BrowseDirectionForward, ua.NodeClassVariable, true)
 		if err != nil {
 			sendError(ctx, errors.Errorf("References: %d: %s", refType, err), errChan, logger)
 			return err
 		}
+		refs = append(refs, variableClassReferences...)
+		objectClassReferences, err := n.ReferencedNodes(ctx, refType, ua.BrowseDirectionForward, ua.NodeClassObject, true)
+		if err != nil {
+			sendError(ctx, errors.Errorf("References: %d: %s", refType, err), errChan, logger)
+			return err
+		}
+		refs = append(refs, objectClassReferences...)
+
 		logger.Debugf("found %d child refs\n", len(refs))
 		for _, rn := range refs {
 			wg.Add(1)
