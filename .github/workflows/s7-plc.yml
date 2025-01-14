@@ -13,7 +13,7 @@
 # limitations under the License.
 
 ---
-name: main
+name: s7-plc
 
 on:
   push:
@@ -22,7 +22,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  GO_VERSION: '1.23'
+  GO_VERSION: '1.23.0'
 
 concurrency:
   group: s7-plc-test
