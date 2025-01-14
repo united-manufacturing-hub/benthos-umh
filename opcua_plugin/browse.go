@@ -615,7 +615,6 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 	var wg TrackedWaitGroup
 	wgInfoTicker := time.NewTicker(10 * time.Second)
 	defer wgInfoTicker.Stop()
-	go logWaitGroupInfo(childCtx, g.Log, wgInfoTicker, done, nodeChan, &wg)
 
 	inputNodeIDs := g.NodeIDs
 	if len(inputNodeIDs) == 0 {
@@ -643,9 +642,11 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 		}
 
 		// Any code below this line needs browsing as it is not a varible node and we need to get the children nodes
-		wg.Add(1)
+		go logWaitGroupInfo(childCtx, g.Log, wgInfoTicker, done, nodeChan, &wg)
+
 		wrapperNodeID := NewOpcuaNodeWrapper(node)
 		go addBrowsedNodesToNodeList(childCtx, nodeChan, &nodeList)
+		wg.Add(1)
 		go browse(childCtx, wrapperNodeID, "", 0, g.Log, nodeId.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, opcuaBrowserChan)
 	}
 
