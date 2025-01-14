@@ -595,19 +595,22 @@ func addBrowsedNodesToNodeList(ctx context.Context, nodeChan chan NodeDef, nodeL
 
 }
 
-func (g *OPCUAInput) discoverNodesV2(ctx context.Context) ([]NodeDef, map[string]string, error) {
+// discoverNodes gets a list of NodeIds from OPCUAInput and tries to check
+// if the nodeID is whether a variable class or not. If it is a variable class, then it directly adds it to the output nodeList.
+// If the nodeID is not a variable class, then it browses the children nodes and adds them to the nodeList
+func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 
 	childCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
 	nodeList := make([]NodeDef, 0)
-	pathIDMap := make(map[string]string)
 	nodeChan := make(chan NodeDef, MaxTagsToBrowse)
 	errChan := make(chan error, MaxTagsToBrowse)
+	done := make(chan struct{})
+
 	// opcuaBrowserChan is created to just satisfy the browse function signature.
 	// The data inside opcuaBrowserChan is not so useful for this function. It is more useful for the GetNodeTree function
 	opcuaBrowserChan := make(chan NodeDef, MaxTagsToBrowse)
-	done := make(chan struct{})
 
 	var wg TrackedWaitGroup
 	wgInfoTicker := time.NewTicker(10 * time.Second)
@@ -616,7 +619,7 @@ func (g *OPCUAInput) discoverNodesV2(ctx context.Context) ([]NodeDef, map[string
 
 	inputNodeIDs := g.NodeIDs
 	if len(inputNodeIDs) == 0 {
-		return nil, nil, fmt.Errorf("no node ids provided to browse")
+		return nil, fmt.Errorf("no node ids provided to browse")
 	}
 
 	for _, nodeId := range inputNodeIDs {
@@ -660,86 +663,10 @@ func (g *OPCUAInput) discoverNodesV2(ctx context.Context) ([]NodeDef, map[string
 		for err := range errChan {
 			combinedErr.WriteString(err.Error() + "; ")
 		}
-		return nil, nil, errors.New(combinedErr.String())
+		return nil, errors.New(combinedErr.String())
 	}
 
-	return nodeList, pathIDMap, nil
-}
-
-// Then modify the discoverNodes function to use TrackedWaitGroup
-func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]string, error) {
-	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-
-	nodeList := make([]NodeDef, 0)
-	pathIDMap := make(map[string]string)
-	nodeChan := make(chan NodeDef, MaxTagsToBrowse)
-	errChan := make(chan error, MaxTagsToBrowse)
-	// opcuaBrowserChan is created to just satisfy the browse function signature.
-	// The data inside opcuaBrowserChan is not so useful for this function. It is more useful for the GetNodeTree function
-	opcuaBrowserChan := make(chan NodeDef, MaxTagsToBrowse)
-	var wg TrackedWaitGroup
-	done := make(chan struct{})
-
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				g.Log.Infof("Amount of found opcua tags currently in channel: %d, (%d active browse goroutines)",
-					len(nodeChan), wg.Count())
-			case <-done:
-				return
-			case <-timeoutCtx.Done():
-				g.Log.Warn("browse function received timeout signal after 5 minutes. Please select less nodes.")
-				return
-			}
-		}
-	}()
-
-	for _, nodeID := range g.NodeIDs {
-		if nodeID == nil {
-			continue
-		}
-
-		g.Log.Debugf("Browsing nodeID: %s", nodeID.String())
-		wg.Add(1)
-		wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(nodeID))
-		go browse(timeoutCtx, wrapperNodeID, "", 0, g.Log, nodeID.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, opcuaBrowserChan)
-	}
-
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-timeoutCtx.Done():
-		g.Log.Warn("browse function received timeout signal after 5 minutes. Please select less nodes.")
-		return nil, nil, timeoutCtx.Err()
-	case <-done:
-	}
-
-	close(nodeChan)
-	close(errChan)
-	close(opcuaBrowserChan)
-
-	for node := range nodeChan {
-		nodeList = append(nodeList, node)
-	}
-
-	UpdateNodePaths(nodeList)
-
-	if len(errChan) > 0 {
-		var combinedErr strings.Builder
-		for err := range errChan {
-			combinedErr.WriteString(err.Error() + "; ")
-		}
-		return nil, nil, errors.New(combinedErr.String())
-	}
-
-	return nodeList, pathIDMap, nil
+	return nodeList, nil
 }
 
 // BrowseAndSubscribeIfNeeded browses the specified OPC UA nodes, adds a heartbeat node if required,
@@ -751,7 +678,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 // 3. **Subscribe to Nodes:** If subscriptions are enabled, creates a subscription and sets up monitoring for the detected nodes.
 func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
-	nodeList, _, err := g.discoverNodes(ctx)
+	nodeList, err := g.discoverNodes(ctx)
 	if err != nil {
 		g.Log.Infof("error while getting the node list: %v", err)
 		return err
