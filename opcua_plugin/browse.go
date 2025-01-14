@@ -14,6 +14,7 @@ import (
 	"github.com/gopcua/opcua/errors"
 	"github.com/gopcua/opcua/id"
 	"github.com/gopcua/opcua/ua"
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 const (
@@ -450,6 +451,219 @@ func (twg *TrackedWaitGroup) Done() {
 
 func (twg *TrackedWaitGroup) Count() int64 {
 	return atomic.LoadInt64(&twg.count)
+}
+
+// nodeClass returns the node class of the node
+func nodeClass(ctx context.Context, node *opcua.Node) (ua.NodeClass, error) {
+	return node.NodeClass(ctx)
+}
+
+// browseName returns the browse name of the node. The returned value is sanitized by the sanitize function
+func sanitizedBrowseName(ctx context.Context, node *opcua.Node) (string, error) {
+	browseName, err := node.BrowseName(ctx)
+	if err != nil {
+		return "", err
+	}
+	return sanitize(browseName.Name), nil
+}
+
+// description returns the description of the node
+func description(ctx context.Context, node *opcua.Node) (string, error) {
+	description, err := node.Description(ctx)
+	if err != nil {
+		return "", err
+	}
+	return description.Text, nil
+}
+
+func accessLevel(ctx context.Context, node *opcua.Node) (ua.AccessLevelType, error) {
+	accessLevel, err := node.AccessLevel(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return accessLevel, nil
+}
+
+func dataType(ctx context.Context, node *opcua.Node) (string, error) {
+
+	dataTypeAttribute, err := node.Attribute(ctx, ua.AttributeIDDataType)
+	if err != nil {
+		return "", nil
+	}
+	dataType := dataTypeAttribute.NodeID().String()
+	switch dataTypeAttribute.NodeID().IntID() {
+	case id.DateTime:
+		dataType = "time.Time"
+	case id.Boolean:
+		dataType = "bool"
+	case id.SByte:
+		dataType = "int8"
+	case id.Int16:
+		dataType = "int16"
+	case id.Int32:
+		dataType = "int32"
+	case id.Byte:
+		dataType = "byte"
+	case id.UInt16:
+		dataType = "uint16"
+	case id.UInt32:
+		dataType = "uint32"
+	case id.UtcTime:
+		dataType = "time.Time"
+	case id.String:
+		dataType = "string"
+	case id.Float:
+		dataType = "float32"
+	case id.Double:
+		dataType = "float64"
+	}
+	return dataType, nil
+}
+
+func getNodeDefForVariableNode(ctx context.Context, nodeId *ua.NodeID, node *opcua.Node) (*NodeDef, error) {
+	var isVariableNode bool
+
+	nodeClass, err := nodeClass(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+
+	isVariableNode = nodeClass == ua.NodeClassVariable
+	if !isVariableNode {
+		return nil, errors.New("node is not a variable node")
+	}
+
+	browseName, err := sanitizedBrowseName(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+
+	description, err := description(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+
+	accessLevel, err := accessLevel(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+
+	dataType, err := dataType(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+
+	nodeDef := &NodeDef{
+		NodeID:       nodeId,
+		NodeClass:    nodeClass,
+		BrowseName:   browseName,
+		Description:  description,
+		AccessLevel:  accessLevel,
+		DataType:     dataType,
+		ParentNodeID: nodeId.String(), // ParentNodeID is not significant for variable nodes. Hence set the same nodeID as ParentNodeID
+		Path:         browseName,      // Path is not significant for variable nodes. Hence set the browseName as Path
+	}
+
+	return nodeDef, err
+}
+
+func logWaitGroupInfo(ctx context.Context, logger *service.Logger, ticker *time.Ticker, done <-chan struct{}, nodeChan chan NodeDef, wg *TrackedWaitGroup) {
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Warn("browse function received timeout signal after 5 minutes. Please select less nodes.")
+			return
+		case <-done:
+			return
+		case <-ticker.C:
+			logger.Infof("Amount of found opcua tags currently in channel: %d, (%d active browse goroutines)", len(nodeChan), wg.Count())
+		}
+	}
+}
+
+// addBrowsedNodesToNodeList is a go routine that listens to the nodeChan and adds the nodes to the nodeList
+// This routine ensures that the nodes are added to the nodeList in a thread safe manner and nodeChan buffer is not exhausted
+func addBrowsedNodesToNodeList(ctx context.Context, nodeChan chan NodeDef, nodeList *[]NodeDef) {
+	for {
+		select {
+		case node := <-nodeChan:
+			*nodeList = append(*nodeList, node)
+		case <-ctx.Done():
+			return
+		}
+	}
+
+}
+
+func (g *OPCUAInput) discoverNodesV2(ctx context.Context) ([]NodeDef, map[string]string, error) {
+
+	childCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	nodeList := make([]NodeDef, 0)
+	pathIDMap := make(map[string]string)
+	nodeChan := make(chan NodeDef, MaxTagsToBrowse)
+	errChan := make(chan error, MaxTagsToBrowse)
+	// opcuaBrowserChan is created to just satisfy the browse function signature.
+	// The data inside opcuaBrowserChan is not so useful for this function. It is more useful for the GetNodeTree function
+	opcuaBrowserChan := make(chan NodeDef, MaxTagsToBrowse)
+	done := make(chan struct{})
+
+	var wg TrackedWaitGroup
+	wgInfoTicker := time.NewTicker(10 * time.Second)
+	defer wgInfoTicker.Stop()
+	go logWaitGroupInfo(childCtx, g.Log, wgInfoTicker, done, nodeChan, &wg)
+
+	inputNodeIDs := g.NodeIDs
+	if len(inputNodeIDs) == 0 {
+		return nil, nil, fmt.Errorf("no node ids provided to browse")
+	}
+
+	for _, nodeId := range inputNodeIDs {
+		g.Log.Debugf("Browsing Nodes for the nodeID: %v", nodeId.String())
+
+		node := g.Client.Node(nodeId)
+
+		// Check if the current Node id is of variable class type.
+		// If it is a variable node, then we can avoid further browsing and directly add it to the nodeList
+		// Note: Variable class types don't have children nodes
+		// This also helps in avoiding the unnecessary browsing of the node that don't have children nodes
+		nodeDef, err := getNodeDefForVariableNode(childCtx, nodeId, node)
+		if err != nil {
+			g.Log.Debugf("error while trying to discover the variable nodeID: %v, err: %v", nodeId.String(), err)
+		}
+
+		// For a nodeDef that is not nil, we can confirm that this is a variable node and we can avoid further browsing down the line
+		if nodeDef != nil {
+			nodeList = append(nodeList, *nodeDef)
+			continue
+		}
+
+		// Any code below this line needs browsing as it is not a varible node and we need to get the children nodes
+		wg.Add(1)
+		wrapperNodeID := NewOpcuaNodeWrapper(node)
+		go addBrowsedNodesToNodeList(childCtx, nodeChan, &nodeList)
+		go browse(childCtx, wrapperNodeID, "", 0, g.Log, nodeId.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, opcuaBrowserChan)
+	}
+
+	wg.Wait()
+	close(done)
+
+	close(nodeChan)
+	close(errChan)
+	close(opcuaBrowserChan)
+
+	UpdateNodePaths(nodeList)
+
+	if len(errChan) > 0 {
+		var combinedErr strings.Builder
+		for err := range errChan {
+			combinedErr.WriteString(err.Error() + "; ")
+		}
+		return nil, nil, errors.New(combinedErr.String())
+	}
+
+	return nodeList, pathIDMap, nil
 }
 
 // Then modify the discoverNodes function to use TrackedWaitGroup
