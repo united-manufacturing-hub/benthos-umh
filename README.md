@@ -125,6 +125,8 @@ input:
     useHeartbeat: false | true # optional (default: false)
     browseHierarchicalReferences: false | true # optional (default: false)
     pollRate: 1000 # optional (default: 1000) The rate in milliseconds at which to poll the OPC UA server when not using subscriptions
+    autoReconnect: false | true # optional (default: false)
+    reconnectIntervalInSeconds: 5 # optional (default: 5) The rate in seconds at which to reconnect to the OPC UA server when the connection is lost
 ```
 
 ##### Endpoint
@@ -229,6 +231,26 @@ When set to `true`, the plugin will explore a broader range of node references. 
 input:
   opcua:
     browseHierarchicalReferences: true
+```
+
+##### Auto Reconnect
+
+If the connection is lost, the plugin will automatically reconnect to the OPC UA server. This is useful if the OPC UA server is unstable or if the network is unstable.
+
+```yaml
+input:
+  opcua:
+    autoReconnect: true
+```
+
+##### Reconnect Interval
+
+The interval in seconds at which to reconnect to the OPC UA server when the connection is lost. This is only used if `autoReconnect` is set to true.
+
+```yaml
+input:
+  opcua:
+    reconnectIntervalInSeconds: 5
 ```
 
 ### S7comm
@@ -808,7 +830,7 @@ pipeline:
           // Message arrives as:
           // msg.payload = {"temperature": 25.5, "humidity": 60}
           // msg.meta = {"sensor_id": "temp_1", "location": "room_a"}
-          
+
           // Simply pass through
           return msg;
 ```
@@ -852,7 +874,7 @@ pipeline:
     - nodered_js:
         code: |
           // Create new message with transformed data
-          var newMsg = { 
+          var newMsg = {
             payload: {
               processed_value: msg.payload.raw_value * 2,
               timestamp: Date.now()
@@ -912,12 +934,12 @@ pipeline:
           // Add processing information to metadata
           msg.meta.processed = "true";
           msg.meta.count = "1";
-          
+
           // Modify existing metadata
           if (msg.meta.source) {
             msg.meta.source = "modified-" + msg.meta.source;
           }
-          
+
           return msg;
 ```
 
@@ -1005,11 +1027,11 @@ pipeline:
           console.log("Processing temperature reading:", msg.payload.value);
           console.log("From sensor:", msg.payload.sensor);
           console.log("At time:", msg.meta.timestamp);
-          
+
           if (msg.payload.value > 30) {
             console.warn("High temperature detected!");
           }
-          
+
           return msg;
 ```
 
