@@ -35,7 +35,8 @@ update-benthos:
   go get github.com/redpanda-data/benthos/v4@latest && \
   go mod tidy
 
-## provides serial runners, which are needed to restrict data requests on sensor interface
+# provides serial runners, which are needed to restrict data requests on sensor interface
+# Note: Serial execution will increase test duration but ensures reliable results
 test-serial:
 	@ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --procs 1 --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./...
 
