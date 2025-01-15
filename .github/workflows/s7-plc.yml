@@ -51,9 +51,9 @@ jobs:
           set +x
           ENDPOINT="${{ secrets.TEST_S7_TCPDEVICE }}"
           if tcping "$ENDPOINT" | grep -qi "Connected"; then
-            echo "available=true" >> $GITHUB_OUTPUT
+            echo "available=true" >> "$GITHUB_OUTPUT"
           else
-            echo "available=false" >> $GITHUB_OUTPUT
+            echo "available=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check S7-fallback port availability
@@ -62,19 +62,19 @@ jobs:
           set +x
           ENDPOINT="${{ secrets.TEST_S7_TCPDEVICE_FALLBACK }}"
           if tcping "$ENDPOINT" | grep -qi "Connected"; then
-            echo "available=true" >> $GITHUB_OUTPUT
+            echo "available=true" >> "$GITHUB_OUTPUT"
           else
-            echo "available=false" >> $GITHUB_OUTPUT
+            echo "available=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Test
         run: |
           if [ "${{ steps.check_s7.outputs.available }}" == "true" ]; then
             echo "using s7 main"
-            export TEST_S7_TCPDEVICE=${{ secrets.TEST_S7_TCPDEVICE }}
+            export TEST_S7_TCPDEVICE="${{ secrets.TEST_S7_TCPDEVICE }}"
           elif [ "${{ steps.check_s7_fallback.outputs.available }}" == "true" ]; then
             echo "using s7 fallback"
-            export TEST_S7_TCPDEVICE=${{ secrets.TEST_S7_TCPDEVICE_FALLBACK }}
+            export TEST_S7_TCPDEVICE="${{ secrets.TEST_S7_TCPDEVICE_FALLBACK }}"
           else
             exit 1
           fi
