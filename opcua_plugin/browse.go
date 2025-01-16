@@ -131,7 +131,6 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		sendError(ctx, err, errChan, logger)
 		return
 	}
-	logger.Debugf("browseName for node %s is %s", n.ID().String(), browseName.Name)
 
 	var newPath string
 	if path == "" {
@@ -146,7 +145,6 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	}
 
 	logger.Debugf("NodeClass attr[0].Status for node %s is %s", n.ID().String(), attrs[0].Status)
-	logger.Debugf("NodeClass attr[0].Value for node %s is %s", n.ID().String(), attrs[0].Value.Int())
 	switch err := attrs[0].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[0].Value == nil {
@@ -154,6 +152,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 			logger.Debugf("Sending error and returning from browse function after getting a Nil NodeClass for node %s", n.ID().String())
 			return
 		} else {
+			logger.Debugf("NodeClass attr[0].Value for node %s is %s", n.ID().String(), attrs[0].Value.Int())
 			def.NodeClass = ua.NodeClass(attrs[0].Value.Int())
 		}
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
@@ -170,7 +169,6 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	}
 
 	logger.Debugf("BrowseName attr[1].Status for node %s is %s", n.ID().String(), attrs[1].Status)
-	logger.Debugf("BrowseName attr[1].Value for node %s is %s", n.ID().String(), attrs[1].Value.String())
 	switch err := attrs[1].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[1].Value == nil {
@@ -178,6 +176,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 			logger.Debugf("Sending error and returning from browse function after getting a Nil BrowseName for node %s", n.ID().String())
 			return
 		} else {
+			logger.Debugf("BrowseName attr[1].Value for node %s is %s", n.ID().String(), attrs[1].Value.String())
 			def.BrowseName = attrs[1].Value.String()
 		}
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
@@ -193,12 +192,12 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	}
 
 	logger.Debugf("Description attr[2].Status for node %s is %s", n.ID().String(), attrs[2].Status)
-	logger.Debugf("Description attr[2].Value for node %s is %s", n.ID().String(), attrs[2].Value.String())
 	switch err := attrs[2].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[2].Value == nil {
 			def.Description = "" // this can happen for example in Kepware v6, where the description is OPCUAType_Null
 		} else {
+			logger.Debugf("Description attr[2].Value for node %s is %s", n.ID().String(), attrs[2].Value.String())
 			def.Description = attrs[2].Value.String()
 		}
 	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
@@ -218,7 +217,6 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	}
 
 	logger.Debugf("AccessLevel attr[3].Status for node %s is %s", n.ID().String(), attrs[3].Status)
-	logger.Debugf("AccessLevel attr[3].Value for node %s is %s", n.ID().String(), attrs[3].Value.Int())
 	switch err := attrs[3].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[3].Value == nil {
@@ -226,6 +224,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 			logger.Debugf("Sending error and returning from browse function after getting a Nil AccessLevel for node %s", n.ID().String())
 			return
 		} else {
+			logger.Debugf("AccessLevel attr[3].Value for node %s is %s", n.ID().String(), attrs[3].Value.Int())
 			def.AccessLevel = ua.AccessLevelType(attrs[3].Value.Int())
 		}
 	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
@@ -253,7 +252,6 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	}
 
 	logger.Debugf("DataType attr[4].Status for node %s is %s", n.ID().String(), attrs[4].Status)
-	logger.Debugf("DataType attr[4].Value for node %s is %s", n.ID().String(), attrs[4].Value.NodeID().String())
 	switch err := attrs[4].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[4].Value == nil {
@@ -264,6 +262,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 			logger.Debugf("ignoring node: %s as its datatype is nil...\n", path)
 			return
 		} else {
+			logger.Debugf("DataType attr[4].Value for node %s is %s", n.ID().String(), attrs[4].Value.NodeID().String())
 			switch v := attrs[4].Value.NodeID().IntID(); v {
 			case id.DateTime:
 				def.DataType = "time.Time"
