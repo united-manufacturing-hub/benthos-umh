@@ -9,6 +9,10 @@ benthos-umh is a specialized extension of Benthos (now known as Redpanda Connect
 Learn more by visiting our [Protocol Converter product page](https://www.umh.app/product/protocol-converter). For comprehensive technical documentation and configuration details, please continue reading below.
 
 ## Manufacturing Specific Plugins
+<details>
+<summary>
+OPC UA
+</summary>
 
 ### OPC UA
 
@@ -252,6 +256,12 @@ input:
   opcua:
     reconnectIntervalInSeconds: 5
 ```
+</details>
+
+<details>
+<summary>
+S7comm
+</summary>
 
 ### S7comm
 
@@ -293,6 +303,12 @@ input:
 Similar to the OPC UA input, this outputs for each address a single message with the payload being the value that was read. To distinguish messages, you can use meta("s7_address") in a following benthos bloblang processor.
 
 Here's the requested Modbus documentation formatted similarly to your existing OPC UA documentation for inclusion in your README:
+
+</details>
+<details>
+<summary>
+Modbus
+</summary>
 
 ### Modbus
 
@@ -603,7 +619,14 @@ input:
     output: "FLOAT64"
     ```
 
+</details>
+<details>
+<summary>
+ifm IO-Link Master / "sensorconnect"
+</summary>
+
 ### ifm IO-Link Master / "sensorconnect"
+
 The SensorConnect plugin facilitates communication with ifm electronic’s IO-Link Masters devices, such as the AL1350 or AL1352 IO-Link Masters.
 It also supports EIO404 Bluetooth mesh base stations with EIO344 Bluetooth mesh IO-Link adapters.
 It enables the integration of sensor data into Benthos pipelines by connecting to the device over HTTP and processing data from connected sensors, including digital inputs and IO-Link devices.
@@ -696,7 +719,14 @@ Below is the extended metadata output schema provided by the plugin:
 | `sensorconnect_device_product_code`      | The product code of the connected IO-Link device.                 |
 | `sensorconnect_device_serial_number`     | The serial number of the connected IO-Link device                 |
 
+</details>
+<details>
+<summary>
+Beckhoff ADS
+</summary>
+
 ### Beckhoff ADS
+
 Input for Beckhoff's ADS protocol. Supports batch reading and notifications. Beckhoff recommends limiting notifications to approximately 500 to avoid overloading the controller.
 This input only supports symbols and not direct addresses.
 
@@ -763,6 +793,13 @@ There are basically 2 ways for setting up the connection. One approach involves 
 #### Output
 
 Similar to the OPC UA input, this outputs for each address a single message with the payload being the value that was read. To distinguish messages, you can use meta("symbol_name") in a following benthos bloblang processor.
+
+</details>
+
+<details>
+<summary>
+Node-RED JavaScript Processor
+</summary>
 
 ### Node-RED JavaScript Processor
 
@@ -1059,6 +1096,12 @@ When choosing between Node-RED JavaScript and Bloblang for message processing, c
 3. However, considering typical protocol converter workloads (around 1000 messages/second), the performance difference is negligible for most use cases. The JavaScript processor's ease of use and familiarity often outweigh the performance benefits of Bloblang, especially for smaller user-generated flows.
 
 Note that these benchmarks represent a simple operation. The performance difference may vary with more complex transformations or when using advanced JavaScript features.
+
+</details>
+<details>
+<summary>
+Tag Processor
+</summary>
 
 ### Tag Processor
 
@@ -1492,6 +1535,8 @@ Output 2 (custom):
 ```
 Topic: `umh.v1.enterprise.production._custom.temperature_doubled`
 
+</details>
+
 ## Testing
 
 We execute automated tests and verify that benthos-umh works against various targets. All tests are started with `make test`, but might require environment parameters in order to not be skipped.
@@ -1500,58 +1545,74 @@ Some of these tests are executed with a local GitHub runner called "hercules", w
 
 ### Target: WAGO PFC100 (OPC UA)
 
-Model number: 750-8101 PFC100 CS 2ETH
-Firmware: 03.10.08(22)
-OPC-UA-Server Version: 1.3.1
+ - Model number: 750-8101 PFC100 CS 2ETH
+ - Firmware: 03.10.08(22)
+ - OPC-UA-Server Version: 1.3.1
 
 Requires:
-- TEST_WAGO_ENDPOINT_URI
-- TEST_WAGO_USERNAME
-- TEST_WAGO_PASSWORD
+
+```bash
+TEST_WAGO_ENDPOINT_URI="opc.tcp://your_wago_endpoint_uri:port"
+TEST_WAGO_USERNAME="your_wago_username"
+TEST_WAGO_PASSWORD="your_wago_password"
+```
 
 ### Target: Microsoft OPC UA Simulator (OPC UA)
 
-Docker tag: mcr.microsoft.com/iotedge/opc-plc:2.9.11
+- Docker tag: mcr.microsoft.com/iotedge/opc-plc:2.9.11
 
 Requires:
-- TEST_OPCUA_SIMULATOR
+```bash
+TEST_OPCUA_SIMULATOR="opc.tcp://localhost:50000"
+```
 
 ### Target: Prosys OPC UA Simulator (OPC UA)
 
-Version: 5.4.6-148
+- Version: 5.4.6-148
 
 Requires:
-- TEST_PROSYS_ENDPOINT_URI
+```bash
+TEST_PROSYS_ENDPOINT_URI="opc.tcp://your_prosys_endpoint:port"
+```
 
-This requires additional to have the simulator setup somewhere (e.g., locally on your PC) and pointing the test towards it. This is not included in any CI andm ust be run manually.
+This requires additional to have the simulator setup somewhere (e.g., locally on your PC) and pointing the test towards it. This is not included in any CI and must be run manually.
 
 ### Target: Siemens S7-1200 (OPC UA)
 
-Model number: SIMATIC S7-1200 6ES7211-1AE40-0XB0
-Firmware: v4.4
+- Model number: SIMATIC S7-1200 (6ES7211-1AE40-0XB0)
+- Firmware: v4.4
 
 Requires:
-- TEST_S7_ENDPOINT_URI
+```bash
+TEST_S7_ENDPOINT_URI="opc.tcp://your_s7_endpoint_uri:port"
+```
 
 ### Target: Unit Tests (OPC UA)
 
 Requires:
-- TEST_OPCUA_UNITTEST
+```bash
+TEST_OPCUA_UNITTEST=true
+```
 
 ### Target: Siemens S7-1200 (S7comm)
 
-Model number: SIMATIC S7-1200 6ES7211-1AE40-0XB0
-Firmware: v4.4
+- Model number: SIMATIC S7-1200 (6ES7211-1AE40-0XB0)
+- Firmware: v4.4
 
 Requires:
-- TEST_S7_TCPDEVICE
-- TEST_S7_RACK
-- TEST_S7_SLOT
+```bash
+TEST_S7_TCPDEVICE="your_s7_ip:port"
+TEST_S7_RACK=0
+TEST_S7_SLOT=1
+```
+The rack and slotnumbers are just an example. Ensure to pick the matching ones for your test-setup.
 
 ### Target: Unit Tests (S7comm)
 
 Requires:
-- TEST_S7COMM_UNITTEST
+```bash
+TEST_S7COMM_UNITTEST=true
+```
 
 ## License
 
@@ -1564,4 +1625,4 @@ All source code is distributed under the APACHE LICENSE, VERSION 2.0. See LICENS
 
 Feel free to provide us feedback on our [Discord channel](https://discord.gg/F9mqkZnm9d).
 
-For more information about the United Manufacturing Hub, visit [UMH Systems GmbH](https://www.umh.app). If you haven't worked with the United Manufacturing Hub before, [give it a try](https://management.umh.app))! Setting it up takes only a matter of minutes.
+For more information about the United Manufacturing Hub, visit [UMH Systems GmbH](https://www.umh.app). If you haven't worked with the United Manufacturing Hub before, [give it a try](https://management.umh.app)! Setting it up takes only a matter of minutes.
