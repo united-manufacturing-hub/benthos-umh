@@ -3,9 +3,10 @@ package sensorconnect_plugin_test
 import (
 	"context"
 	"fmt"
+	"os"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"os"
 
 	"github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
 )

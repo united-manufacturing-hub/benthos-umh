@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
 )
 
 var _ = Describe("SensorConnect Plugin Unittests", func() {

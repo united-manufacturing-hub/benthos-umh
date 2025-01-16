@@ -1500,7 +1500,9 @@ Some of these tests are executed with a local GitHub runner called "hercules", w
 
 ### Target: WAGO PFC100 (OPC UA)
 
-Model number: 750-8101
+Model number: 750-8101 PFC100 CS 2ETH
+Firmware: 03.10.08(22)
+OPC-UA-Server Version: 1.3.1
 
 Requires:
 - TEST_WAGO_ENDPOINT_URI
@@ -1526,6 +1528,7 @@ This requires additional to have the simulator setup somewhere (e.g., locally on
 ### Target: Siemens S7-1200 (OPC UA)
 
 Model number: SIMATIC S7-1200 6ES7211-1AE40-0XB0
+Firmware: v4.4
 
 Requires:
 - TEST_S7_ENDPOINT_URI
@@ -1538,6 +1541,7 @@ Requires:
 ### Target: Siemens S7-1200 (S7comm)
 
 Model number: SIMATIC S7-1200 6ES7211-1AE40-0XB0
+Firmware: v4.4
 
 Requires:
 - TEST_S7_TCPDEVICE
