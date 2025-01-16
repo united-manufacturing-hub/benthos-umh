@@ -1174,20 +1174,20 @@ pipeline:
     - tag_processor:
         defaults: |
 
-          # Set default location hierarchy and datacontract
+          // Set default location hierarchy and datacontract
           msg.meta.location_path = "enterprise.plant1.machiningArea.cnc-line.cnc5.plc123";
           msg.meta.data_contract = "_historian";
           return msg;
         conditions:
           - if: msg.meta.opcua_node_id === "ns=1;i=2245"
             then: |
-              # Set path hierarchy and tag name for specific OPC UA node
+              // Set path hierarchy and tag name for specific OPC UA node
               msg.meta.virtual_path = "axis.x.position";
               msg.meta.tag_name = "actual";
               return msg;
         advancedProcessing: |
-          # Optional advanced message processing
-          # Example: double numeric values
+          // Optional advanced message processing
+          // Example: double numeric values
           msg.payload = parseFloat(msg.payload) * 2;
           return msg;
 ```
@@ -1601,7 +1601,9 @@ Some of these tests are executed with a local GitHub runner called "hercules", w
 
 ### Target: WAGO PFC100 (OPC UA)
 
-Model number: 750-8101
+Model number: 750-8101 PFC100 CS 2ETH
+Firmware: 03.10.08(22)
+OPC-UA-Server Version: 1.3.1
 
 Requires:
 - TEST_WAGO_ENDPOINT_URI
@@ -1627,6 +1629,7 @@ This requires additional to have the simulator setup somewhere (e.g., locally on
 ### Target: Siemens S7-1200 (OPC UA)
 
 Model number: SIMATIC S7-1200 6ES7211-1AE40-0XB0
+Firmware: v4.4
 
 Requires:
 - TEST_S7_ENDPOINT_URI
@@ -1639,6 +1642,7 @@ Requires:
 ### Target: Siemens S7-1200 (S7comm)
 
 Model number: SIMATIC S7-1200 6ES7211-1AE40-0XB0
+Firmware: v4.4
 
 Requires:
 - TEST_S7_TCPDEVICE

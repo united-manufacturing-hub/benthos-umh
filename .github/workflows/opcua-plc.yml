@@ -13,7 +13,7 @@
 # limitations under the License.
 
 ---
-name: main
+name: opcua-plc
 
 on:
   push:
@@ -22,7 +22,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  GO_VERSION: '1.22.*'
+  GO_VERSION: '1.23.0'
 
 concurrency:
   group: opcua-plc-test
@@ -45,5 +45,77 @@ jobs:
           go_version: ${{ env.GO_VERSION }}
       - name: Install Ginkgo
         run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.19.0
+      - name: Install Tcping
+        run: go install github.com/cloverstd/tcping@v0.1.1
+      - name: Check S7 port availability
+        id: check_s7
+        run: |
+          set +x
+          URI="${{ secrets.TEST_S7_ENDPOINT_URI }}"
+          ENDPOINT="${URI#opc.tcp://}"
+          if tcping -c 4 -T 1s "$ENDPOINT" | grep -qi "Connected"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "TEST_S7_ENDPOINT_URI=${{ secrets.TEST_S7_ENDPOINT_URI }}" >> "$GITHUB_ENV"
+            echo "using s7-main device for testing"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check S7-fallback port availability
+        id: check_s7_fallback
+        if: ${{ steps.check_s7.outputs.available == 'false' }}
+        run: |
+          set +x
+          URI="${{ secrets.TEST_S7_ENDPOINT_URI_FALLBACK }}"
+          ENDPOINT="${URI#opc.tcp://}"
+          if tcping -c 4 -T 1s "$ENDPOINT" | grep -qi "Connected"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "TEST_S7_ENDPOINT_URI=${{ secrets.TEST_S7_ENDPOINT_URI_FALLBACK }}" >> "$GITHUB_ENV"
+            echo "using s7-fallback device for testing"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check Wago port availability
+        id: check_wago
+        run: |
+          set +x
+          URI="${{ secrets.TEST_WAGO_ENDPOINT_URI }}"
+          ENDPOINT="${URI#opc.tcp://}"
+          if tcping -c 4 -T 1s "$ENDPOINT" | grep -qi "Connected"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI }}" >> "$GITHUB_ENV"
+            echo "using wago-main device for testing"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check Wago-fallback port availability
+        id: check_wago_fallback
+        if: ${{ steps.check_wago.outputs.available == 'false' }}
+        run: |
+          set +x
+          URI="${{ secrets.TEST_WAGO_ENDPOINT_URI_FALLBACK }}"
+          ENDPOINT="${URI#opc.tcp://}"
+          if tcping -c 4 -T 1s "$ENDPOINT" | grep -qi "Connected"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI_FALLBACK }}" >> "$GITHUB_ENV"
+            echo "using wago-fallback device for testing"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Test
-        run: TEST_S7_ENDPOINT_URI=${{ secrets.TEST_S7_ENDPOINT_URI }} TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI }} TEST_WAGO_USERNAME=${{ secrets.TEST_WAGO_USERNAME }} TEST_WAGO_PASSWORD=${{ secrets.TEST_WAGO_PASSWORD }} make test
+        env:
+          TEST_WAGO_USERNAME: ${{ secrets.TEST_WAGO_USERNAME }}
+          TEST_WAGO_PASSWORD: ${{ secrets.TEST_WAGO_PASSWORD }}
+        run: |
+          if [ -z "$TEST_S7_ENDPOINT_URI" ]; then
+            echo "no s7-endpoint available for testing"
+            exit 1
+          fi
+          if [ -z "$TEST_WAGO_ENDPOINT_URI" ]; then
+            echo "no wago-endpoint available for testing"
+            exit 1
+          fi
+          make test
