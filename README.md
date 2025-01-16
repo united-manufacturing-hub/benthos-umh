@@ -1584,7 +1584,7 @@ pipeline:
           msg.meta.topic = "umh.v1.enterprise.site.area._workorder.new"
 
           // only take two fields from the payload
-          msg.meta.payload = {
+          msg.payload = {
             "maintenanceSchedule": {
               "eventType": msg.payload.maintenanceSchedule.eventType,
               "description": msg.payload.maintenanceSchedule.description
