@@ -95,7 +95,10 @@ func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 // - `void`: Errors are sent through `errChan`, and discovered nodes are sent through `nodeChan`.
 func browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, browseHierarchicalReferences bool, opcuaBrowserChan chan NodeDef) {
 	defer wg.Done()
+	logger.Debugf("[IMPORTANT] browse function called with level: %d, path: %s, parentNodeId: %s", level, path, parentNodeId)
 
+	namespace := n.ID().Namespace()
+	logger.Debugf("[IMPORTANT] The namespace for node %s is %s", n.ID().String(), namespace)
 	// Limits browsing depth to a maximum of 25 levels in the node hierarchy.
 	// Performance impact is minimized since most browse operations terminate earlier
 	// due to other exit conditions before reaching this maximum depth.
@@ -118,6 +121,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	}
 
 	if len(attrs) != 5 {
+		logger.Debugf("only got %d attr for node %s, needed 5", len(attrs), n.ID().String())
 		sendError(ctx, errors.Errorf("only got %d attr, needed 5", len(attrs)), errChan, logger)
 		return
 	}
@@ -127,6 +131,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		sendError(ctx, err, errChan, logger)
 		return
 	}
+	logger.Debugf("browseName for node %s is %s", n.ID().String(), browseName.Name)
 
 	var newPath string
 	if path == "" {
@@ -134,16 +139,19 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	} else {
 		newPath = path + "." + sanitize(browseName.Name)
 	}
-
+	logger.Debugf("newPath after the sanitized browse name for node %s is %s", n.ID().String(), newPath)
 	var def = NodeDef{
 		NodeID: n.ID(),
 		Path:   newPath,
 	}
 
+	logger.Debugf("NodeClass attr[0].Status for node %s is %s", n.ID().String(), attrs[0].Status)
+	logger.Debugf("NodeClass attr[0].Value for node %s is %s", n.ID().String(), attrs[0].Value.Int())
 	switch err := attrs[0].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[0].Value == nil {
 			sendError(ctx, errors.New("node class is nil"), errChan, logger)
+			logger.Debugf("Sending error and returning from browse function after getting a Nil NodeClass for node %s", n.ID().String())
 			return
 		} else {
 			def.NodeClass = ua.NodeClass(attrs[0].Value.Int())
@@ -152,17 +160,22 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		return
 	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
 		logger.Warnf("Tried to browse node: %s but got access denied on getting the NodeClass, do not subscribe to it, continuing browsing its children...\n", path)
+		logger.Debugf("[IMPORTANT] The node class is not readable for node %s. So setting the node class to object", n.ID().String())
 		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
 		// no need to return here, as we can continue without the NodeClass for browsing
 	default:
+		logger.Debugf("Sending error and returning from browse function after getting the NodeClass for node %s", n.ID().String())
 		sendError(ctx, err, errChan, logger)
 		return
 	}
 
+	logger.Debugf("BrowseName attr[1].Status for node %s is %s", n.ID().String(), attrs[1].Status)
+	logger.Debugf("BrowseName attr[1].Value for node %s is %s", n.ID().String(), attrs[1].Value.String())
 	switch err := attrs[1].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[1].Value == nil {
 			sendError(ctx, errors.New("browse name is nil"), errChan, logger)
+			logger.Debugf("Sending error and returning from browse function after getting a Nil BrowseName for node %s", n.ID().String())
 			return
 		} else {
 			def.BrowseName = attrs[1].Value.String()
@@ -171,12 +184,16 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		return
 	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
 		logger.Warnf("Tried to browse node: %s but got access denied on getting the BrowseName, skipping...\n", path)
+		logger.Debugf("[IMPORTANT] Browse name is not readable for node %s. So returning from browse function", n.ID().String())
 		return // We need to return here, as we can't continue without the BrowseName (we need it at least for the path when browsing the children)
 	default:
+		logger.Debugf("Sending error and returning from browse function after getting the BrowseName")
 		sendError(ctx, err, errChan, logger)
 		return
 	}
 
+	logger.Debugf("Description attr[2].Status for node %s is %s", n.ID().String(), attrs[2].Status)
+	logger.Debugf("Description attr[2].Value for node %s is %s", n.ID().String(), attrs[2].Value.String())
 	switch err := attrs[2].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[2].Value == nil {
@@ -187,43 +204,56 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
 		// ignore
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
+		logger.Debugf("Got security mode insufficient for node %s. So returning from browse function", n.ID().String())
 		return
 	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
 		logger.Warnf("Tried to browse node: %s but got access denied on getting the Description, do not subscribe to it, continuing browsing its children...\n", path)
+		logger.Debugf("[IMPORTANT] The description is nil. So setting the node class to object for node %s", n.ID().String())
 		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
 		// no need to return here, as we can continue without the Description
 	default:
+		logger.Debugf("Sending error and returning from browse function after getting the Description for node %s", n.ID().String())
 		sendError(ctx, err, errChan, logger)
 		return
 	}
 
+	logger.Debugf("AccessLevel attr[3].Status for node %s is %s", n.ID().String(), attrs[3].Status)
+	logger.Debugf("AccessLevel attr[3].Value for node %s is %s", n.ID().String(), attrs[3].Value.Int())
 	switch err := attrs[3].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[3].Value == nil {
 			sendError(ctx, errors.New("access level is nil"), errChan, logger)
+			logger.Debugf("Sending error and returning from browse function after getting a Nil AccessLevel for node %s", n.ID().String())
 			return
 		} else {
 			def.AccessLevel = ua.AccessLevelType(attrs[3].Value.Int())
 		}
 	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
+		logger.Debugf("Got Bad attribute id invalid for node %s while getting the AccessLevel. So ignoring it", n.ID().String())
 		// ignore
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
+		logger.Debugf("[IMPORTANT] Got security mode insufficient for node %s. So returning from browse function", n.ID().String())
 		return
 	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
-		logger.Warnf("Tried to browse node: %s but got access denied on getting the AccessLevel, continuing...\n", path)
+		logger.Debugf("Tried to browse node: %s but got access denied on getting the AccessLevel, continuing...\n", path)
 		// no need to return here, as we can continue without the AccessLevel for browsing
 	default:
+		logger.Debugf("Sending error and returning from browse function after getting the AccessLevel for node %s", n.ID().String())
 		sendError(ctx, err, errChan, logger)
 		return
 	}
 
+	logger.Debugf("Checking whether AccessLevelType is None for node %s. The result is : %v", n.ID().String(), def.AccessLevel == ua.AccessLevelTypeNone)
 	// if AccessLevel exists and it is set to None
 	if def.AccessLevel == ua.AccessLevelTypeNone && errors.Is(err, ua.StatusOK) {
 		logger.Warnf("Tried to browse node: %s but access level is None ('access denied'). Do not subscribe to it, continuing browsing its children...\n", path)
+		logger.Debugf("[IMPORTANT] The access level is None. So setting the node class to object for node %s", n.ID().String())
 		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
 		// we need to continue here, as we still want to browse the children of this node
 	}
 
+	logger.Debugf("DataType attr[4].Status for node %s is %s", n.ID().String(), attrs[4].Status)
+	logger.Debugf("DataType attr[4].Value for node %s is %s", n.ID().String(), attrs[4].Value.NodeID().String())
 	switch err := attrs[4].Status; {
 	case errors.Is(err, ua.StatusOK):
 		if attrs[4].Value == nil {
@@ -265,46 +295,61 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		}
 
 	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
+		logger.Debugf("Got Bad attribute id invalid for node %s while getting the DataType. So ignoring it", n.ID().String())
 		// ignore
 	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
+		logger.Debugf("[IMPORTANT] Got security mode insufficient for node %s. So returning from browse function", n.ID().String())
 		return
 	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
 		logger.Warnf("Tried to browse node: %s but got access denied on getting the DataType, do not subscribe to it, continuing browsing its children...\n", path)
+		logger.Debugf("[IMPORTANT] The data type is not readable for node %s. So setting the node class to object", n.ID().String())
 		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
 		// no need to return here, as we can continue without the DataType
 	default:
+		logger.Debugf("Sending error and returning from browse function after getting the DataType for node %s", n.ID().String())
 		sendError(ctx, err, errChan, logger)
 		return
 	}
 
+	originalNodeClass, err := n.Node().NodeClass(ctx)
+	if err != nil {
+		logger.Debugf("Error getting the original node class for node %s: %s", n.ID().String(), err)
+	}
+	logger.Debugf("originalNodeClass for node %s is %s. def.NodeClass after the fallback condition is %s", n.ID().String(), originalNodeClass, def.NodeClass)
 	logger.Debugf("%d: def.Path:%s def.NodeClass:%s\n", level, def.Path, def.NodeClass)
 	def.ParentNodeID = parentNodeId
 
 	hasNodeReferencedComponents := func() bool {
 		variableClassRefs, err := n.ReferencedNodes(ctx, id.HasComponent, ua.BrowseDirectionForward, ua.NodeClassVariable, true)
 		if err != nil {
+			logger.Debugf("Error getting the referenced nodes of type Variables for node %s: %s", n.ID().String(), err)
 			return false
 		}
 		objectClassRefs, err := n.ReferencedNodes(ctx, id.HasComponent, ua.BrowseDirectionForward, ua.NodeClassObject, true)
 		if err != nil {
+			logger.Debugf("Error getting the referenced nodes of type Objects for node %s: %s", n.ID().String(), err)
 			return false
 		}
 
 		if len(variableClassRefs) == 0 && len(objectClassRefs) == 0 {
+			logger.Debugf("No referenced nodes found for node %s", n.ID().String())
 			return false
 		}
 
+		logger.Debugf("Found %d referenced nodes of type Variables and %d referenced nodes of type Objects for node %s", len(variableClassRefs), len(objectClassRefs), n.ID().String())
 		return true
 	}
 
 	browseChildrenV2 := func(refType uint32) error {
 		children := make([]NodeBrowser, 0)
+		logger.Debugf("browseChildrenV2 is invoked for node %s with refType %d", n.ID().String(), refType)
 		variableClassChildren, err := n.Children(ctx, refType, ua.NodeClassVariable)
 		if err != nil {
 			sendError(ctx, errors.Errorf("Children: %d: %s", refType, err), errChan, logger)
 			return err
 		}
 		children = append(children, variableClassChildren...)
+		logger.Debugf("Found %d children of type Variable for node %s", len(variableClassChildren), n.ID().String())
 
 		objectClassChildren, err := n.Children(ctx, refType, ua.NodeClassObject)
 		if err != nil {
@@ -312,8 +357,10 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 			return err
 		}
 		children = append(children, objectClassChildren...)
+		logger.Debugf("Found %d children of type Object for node %s", len(objectClassChildren), n.ID().String())
 
 		for _, child := range children {
+			logger.Debugf("browseChildrenV2 is invoking browse for node %s with child %s", n.ID().String(), child.ID().String())
 			wg.Add(1)
 			go browse(ctx, child, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, wg, browseHierarchicalReferences, opcuaBrowserChan)
 		}
@@ -322,21 +369,25 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 
 	browseChildren := func(refType uint32) error {
 		refs := make([]NodeBrowser, 0)
+		logger.Debugf("browseChildren is invoked for node %s with refType %d", n.ID().String(), refType)
 		variableClassReferences, err := n.ReferencedNodes(ctx, refType, ua.BrowseDirectionForward, ua.NodeClassVariable, true)
 		if err != nil {
+			logger.Debugf("Error getting the referenced nodes of type Variables for node %s: %s", n.ID().String(), err)
 			sendError(ctx, errors.Errorf("References: %d: %s", refType, err), errChan, logger)
 			return err
 		}
 		refs = append(refs, variableClassReferences...)
 		objectClassReferences, err := n.ReferencedNodes(ctx, refType, ua.BrowseDirectionForward, ua.NodeClassObject, true)
 		if err != nil {
+			logger.Debugf("Error getting the referenced nodes of type Objects for node %s: %s", n.ID().String(), err)
 			sendError(ctx, errors.Errorf("References: %d: %s", refType, err), errChan, logger)
 			return err
 		}
 		refs = append(refs, objectClassReferences...)
 
-		logger.Debugf("found %d child refs\n", len(refs))
+		logger.Debugf("found %d child refs for node %s", len(refs), n.ID().String())
 		for _, rn := range refs {
+			logger.Debugf("browseChildren is invoking browse for node %s with child %s", n.ID().String(), rn.ID().String())
 			wg.Add(1)
 			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, wg, browseHierarchicalReferences, opcuaBrowserChan)
 		}
@@ -362,6 +413,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 
 		// If its a variable, we add it to the node list and browse all its children
 		case ua.NodeClassVariable:
+			logger.Debugf("browseHierarchicalReferences is true for node %s and its a variable", n.ID().String())
 			if err := browseChildrenV2(id.HierarchicalReferences); err != nil {
 				sendError(ctx, err, errChan, logger)
 				return
@@ -371,15 +423,18 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 			def.Path = join(path, def.BrowseName)
 			select {
 			case nodeChan <- def:
+				logger.Debugf("Sending node to nodeChan under browseHierarchicalReferences %s", def.Path)
 			case <-ctx.Done():
-				logger.Warnf("Failed to send node due to context cancellation")
+				logger.Debugf("Failed to send node due to context cancellation under browseHierarchicalReferences %s", def.Path)
 				return
 			}
 			return
 
 			// If its an object, we browse all its children but DO NOT add it to the node list and therefore not subscribe
 		case ua.NodeClassObject:
+			logger.Debugf("browseHierarchicalReferences is true for node %s and its an object", n.ID().String())
 			if err := browseChildrenV2(id.HierarchicalReferences); err != nil {
+				logger.Debugf("error after calling browseChildrenV2 for node %s: %s", n.ID().String(), err)
 				sendError(ctx, err, errChan, logger)
 				return
 			}
@@ -395,13 +450,14 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 // browseReferencesDeprecated is the old way to browse for tags and folders without any duplicate browsing
 // It browses the following references: HasComponent, HasProperty, HasEventSource, HasOrder, HasNotifier, Organizes, FolderType
 func browseReferencesDeprecated(ctx context.Context, def NodeDef, nodeChan chan<- NodeDef, errChan chan<- error, path string, logger Logger, hasNodeReferencedComponents func() bool, browseChildren func(refType uint32) error) {
-
+	logger.Debugf("browseReferencesDeprecated is invoked for node %s", def.Path)
 	// If a node has a Variable class, it probably means that it is a tag
 	// Normally, there is no need to browse further. However, structs will be a variable on the top level,
 	// but it then will have HasComponent references to its children
 	if def.NodeClass == ua.NodeClassVariable {
-
+		logger.Debugf("browseReferencesDeprecated is invoked for node %s and its a variable", def.Path)
 		if hasNodeReferencedComponents() {
+			logger.Debugf("browseReferencesDeprecated is invoking browseChildren for node %s with refType %d", def.Path, id.HasComponent)
 			if err := browseChildren(id.HasComponent); err != nil {
 				sendError(ctx, err, errChan, logger)
 				return
@@ -412,10 +468,11 @@ func browseReferencesDeprecated(ctx context.Context, def NodeDef, nodeChan chan<
 		def.Path = join(path, def.BrowseName)
 		select {
 		case nodeChan <- def:
+			logger.Debugf("Sending node to nodeChan under browseReferencesDeprecated %s", def.Path)
 		case <-ctx.Done():
-			logger.Warnf("Failed to send node due to context cancellation")
+			logger.Debugf("Failed to send node due to context cancellation under browseReferencesDeprecated %s", def.Path)
 		default:
-			logger.Warnf("Channel is blocked, skipping node send")
+			logger.Debugf("Channel is blocked, skipping node send under browseReferencesDeprecated %s", def.Path)
 		}
 		return
 	}
@@ -425,20 +482,24 @@ func browseReferencesDeprecated(ctx context.Context, def NodeDef, nodeChan chan<
 	if def.NodeClass == ua.NodeClassObject {
 		// To determine if an Object is a folder, we need to check different references
 		// Add here all references that should be checked
-
+		logger.Debugf("browseReferencesDeprecated is invoked for node %s and its an object", def.Path)
 		if err := browseChildren(id.HasComponent); err != nil {
+			logger.Debugf("error after calling browseChildren for node %s: %s", def.Path, err)
 			sendError(ctx, err, errChan, logger)
 			return
 		}
 		if err := browseChildren(id.Organizes); err != nil {
+			logger.Debugf("error after calling browseChildren for node %s: %s", def.Path, err)
 			sendError(ctx, err, errChan, logger)
 			return
 		}
 		if err := browseChildren(id.FolderType); err != nil {
+			logger.Debugf("error after calling browseChildren for node %s: %s", def.Path, err)
 			sendError(ctx, err, errChan, logger)
 			return
 		}
 		if err := browseChildren(id.HasNotifier); err != nil {
+			logger.Debugf("error after calling browseChildren for node %s: %s", def.Path, err)
 			sendError(ctx, err, errChan, logger)
 			return
 		}
@@ -567,14 +628,16 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
 	nodeList, _, err := g.discoverNodes(ctx)
 	if err != nil {
-		g.Log.Infof("error while getting the node list: %v", err)
+		g.Log.Debugf("error while getting the node list: %v", err)
 		return err
 	}
+	g.Log.Debugf("Got node list after discoverNodes: %v", nodeList)
 
 	// Now add i=2258 to the nodeList, which is the CurrentTime node, which is used for heartbeats
 	// This is only added if the heartbeat is enabled
 	// instead of i=2258 the g.HeartbeatNodeId is used, which can be different in tests
 	if g.UseHeartbeat {
+		g.Log.Debugf("Adding heartbeat node to the node list")
 
 		// Check if the node is already in the list
 		for _, node := range nodeList {
@@ -620,7 +683,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 		return err
 	}
 
-	g.Log.Infof("Detected nodes: %s", b)
+	g.Log.Debugf("Detected nodes: %s", b)
 
 	g.NodeList = nodeList
 
@@ -632,19 +695,19 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			Interval: opcua.DefaultSubscriptionInterval,
 		}, g.SubNotifyChan)
 		if err != nil {
-			g.Log.Errorf("Subscribing failed: %s", err)
+			g.Log.Debugf("Subscribing failed: %s", err)
 			_ = g.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return err
 		}
 
 		monitoredNodes, err := g.MonitorBatched(ctx, nodeList)
 		if err != nil {
-			g.Log.Errorf("Monitoring failed: %s", err)
+			g.Log.Debugf("Monitoring failed: %s", err)
 			_ = g.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return err
 		}
 
-		g.Log.Infof("Subscribed to %d nodes!", monitoredNodes)
+		g.Log.Debugf("Subscribed to %d nodes!", monitoredNodes)
 
 	}
 

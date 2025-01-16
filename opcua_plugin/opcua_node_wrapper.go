@@ -22,6 +22,8 @@ type NodeBrowser interface {
 
 	// ID returns the node identifier
 	ID() *ua.NodeID
+
+	Node() *opcua.Node
 }
 
 type OpcuaNodeWrapper struct {
@@ -66,4 +68,8 @@ func (n *OpcuaNodeWrapper) Children(ctx context.Context, refType uint32, nodeCla
 		result = append(result, NewOpcuaNodeWrapper(child))
 	}
 	return result, nil
+}
+
+func (n *OpcuaNodeWrapper) Node() *opcua.Node {
+	return n.n
 }

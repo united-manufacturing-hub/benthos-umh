@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/id"
 	"github.com/gopcua/opcua/ua"
 	. "github.com/onsi/ginkgo/v2"
@@ -489,6 +490,7 @@ type MockOpcuaNodeWraper struct {
 	attributes     []*ua.DataValue
 	browseName     *ua.QualifiedName
 	referenceNodes map[uint32][]NodeBrowser
+	node           *opcua.Node
 }
 
 func getDataValueForNilNodeClass() *ua.DataValue {
@@ -566,6 +568,10 @@ func (m *MockOpcuaNodeWraper) BrowseName(ctx context.Context) (*ua.QualifiedName
 // ID implements NodeBrowser.
 func (m *MockOpcuaNodeWraper) ID() *ua.NodeID {
 	return m.id
+}
+
+func (m *MockOpcuaNodeWraper) Node() *opcua.Node {
+	return m.node
 }
 
 // Children returns all reference nodes of all refType. In real implementation, it will use id.HierarchicalReferences reference type
