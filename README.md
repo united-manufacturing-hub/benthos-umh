@@ -1169,20 +1169,20 @@ pipeline:
     - tag_processor:
         defaults: |
 
-          # Set default location hierarchy and datacontract
+          // Set default location hierarchy and datacontract
           msg.meta.location_path = "enterprise.plant1.machiningArea.cnc-line.cnc5.plc123";
           msg.meta.data_contract = "_historian";
           return msg;
         conditions:
           - if: msg.meta.opcua_node_id === "ns=1;i=2245"
             then: |
-              # Set path hierarchy and tag name for specific OPC UA node
+              // Set path hierarchy and tag name for specific OPC UA node
               msg.meta.virtual_path = "axis.x.position";
               msg.meta.tag_name = "actual";
               return msg;
         advancedProcessing: |
-          # Optional advanced message processing
-          # Example: double numeric values
+          // Optional advanced message processing
+          // Example: double numeric values
           msg.payload = parseFloat(msg.payload) * 2;
           return msg;
 ```
