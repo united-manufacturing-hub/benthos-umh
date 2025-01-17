@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -55,6 +56,60 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 
 					actualConversionResult := converterFunc(inputBytes)
 					Expect(actualConversionResult).To(Equal(tc.expectedConversion))
+				})
+			}
+		})
+	})
+
+	Describe("Parsing duplicate Addresses", func() {
+		type testCase struct {
+			addresses        []string
+			expectedErrorMsg []string
+		}
+
+		It("parses addresses and should fail on duplicates", func() {
+			tests := []testCase{
+				{
+					addresses:        []string{"DB2.W0", "DB2.W2"},
+					expectedErrorMsg: nil,
+				},
+				{
+					addresses:        []string{"DB2.X0.0", "DB2.X0.1"},
+					expectedErrorMsg: nil,
+				},
+				{
+					addresses:        []string{"DB2.X0.0", "DB3.X0.0"},
+					expectedErrorMsg: nil,
+				},
+				{
+					addresses:        []string{"PE2.X0.0", "PE2.X0.1"},
+					expectedErrorMsg: nil,
+				},
+				{
+					addresses:        []string{"DB2.W0", "DB2.W2", "DB2.W0"},
+					expectedErrorMsg: []string{"duplicate address", "DB2.W0"},
+				},
+				{
+					addresses:        []string{"DB2.X0.0", "DB2.W2", "DB2.X0.0"},
+					expectedErrorMsg: []string{"duplicate address", "DB2.X0.0"},
+				},
+			}
+
+			for _, tc := range tests {
+				By("Testing with addresses"+fmt.Sprintf("%v", tc.addresses), func() {
+					// not relevant for this test
+					batchMaxSize := 1
+
+					_, err := s7comm_plugin.ParseAddresses(tc.addresses, batchMaxSize)
+
+					if tc.expectedErrorMsg != nil {
+						Expect(err).To(HaveOccurred())
+						for _, containedErrStr := range tc.expectedErrorMsg {
+							Expect(err.Error()).To(ContainSubstring(containedErrStr))
+						}
+						return
+					}
+					Expect(err).NotTo(HaveOccurred())
 				})
 			}
 		})
