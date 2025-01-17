@@ -302,8 +302,6 @@ input:
 
 Similar to the OPC UA input, this outputs for each address a single message with the payload being the value that was read. To distinguish messages, you can use meta("s7_address") in a following benthos bloblang processor.
 
-Here's the requested Modbus documentation formatted similarly to your existing OPC UA documentation for inclusion in your README:
-
 </details>
 <details>
 <summary>
