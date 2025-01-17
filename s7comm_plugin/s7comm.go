@@ -179,7 +179,7 @@ func ParseAddresses(addresses []string, batchMaxSize int) ([][]S7DataItemWithAdd
 			if i == j {
 				continue
 			}
-			if a.Item.Area == b.Item.Area && a.Item.DBNumber == b.Item.DBNumber && a.Item.Start == b.Item.Start {
+			if a.Item.Area == b.Item.Area && a.Item.DBNumber == b.Item.DBNumber && a.Item.Start == b.Item.Start && a.Item.Bit == b.Item.Bit {
 				return nil, fmt.Errorf("duplicate address %v", a)
 			}
 		}
