@@ -16,6 +16,7 @@ package opcua_plugin
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -65,6 +66,56 @@ func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 	}
 
 	return parsedNodeIDs
+}
+
+func ParseExpandedNodeIDs(incomingNodes []string, namespaceArray []string) ([]*ua.ExpandedNodeID, error) {
+	var parsedExpandedNodeIDs []*ua.ExpandedNodeID
+
+	for _, incomingNodeID := range incomingNodes {
+		parsedExpandedNodeID, err := ua.ParseExpandedNodeID(incomingNodeID, namespaceArray)
+		if err != nil {
+			return nil, err
+		}
+		parsedExpandedNodeIDs = append(parsedExpandedNodeIDs, parsedExpandedNodeID)
+	}
+	return parsedExpandedNodeIDs, nil
+}
+
+func ReadNamespaceArray(endpoint string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+	defer cancel()
+
+	client, err := opcua.NewClient(endpoint, opcua.AuthAnonymous())
+	if err != nil {
+		return nil, err
+	}
+
+	err = client.Connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close(ctx)
+
+	req := &ua.ReadRequest{
+		NodesToRead: []*ua.ReadValueID{
+			{
+				NodeID:      ua.NewNumericNodeID(0, 2255),
+				AttributeID: ua.AttributeIDValue,
+			},
+		},
+	}
+
+	resp, err := client.Read(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	namespaceArray, ok := resp.Results[0].Value.Value().([]string)
+	if !ok {
+		return nil, fmt.Errorf("failed to parse namespaceArray as []string")
+	}
+
+	return namespaceArray, nil
 }
 
 func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
@@ -148,6 +199,16 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		return nil, errors.New("no nodeIDs provided")
 	}
 
+	namespaceArray, err := ReadNamespaceArray(endpoint)
+	if err != nil {
+		return nil, err
+	}
+
+	parsedExpandedNodeIDs, err := ParseExpandedNodeIDs(nodeIDs, namespaceArray)
+	if err != nil {
+		return nil, err
+	}
+
 	parsedNodeIDs := ParseNodeIDs(nodeIDs)
 
 	m := &OPCUAInput{
@@ -155,6 +216,7 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		Username:                     username,
 		Password:                     password,
 		NodeIDs:                      parsedNodeIDs,
+		ExpandedNodeIDs:              parsedExpandedNodeIDs,
 		Log:                          mgr.Logger(),
 		SecurityMode:                 securityMode,
 		SecurityPolicy:               securityPolicy,
@@ -192,16 +254,17 @@ func init() {
 }
 
 type OPCUAInput struct {
-	Endpoint       string
-	Username       string
-	Password       string
-	NodeIDs        []*ua.NodeID
-	NodeList       []NodeDef
-	SecurityMode   string
-	SecurityPolicy string
-	Insecure       bool
-	Client         *opcua.Client
-	Log            *service.Logger
+	Endpoint        string
+	Username        string
+	Password        string
+	NodeIDs         []*ua.NodeID
+	ExpandedNodeIDs []*ua.ExpandedNodeID
+	NodeList        []NodeDef
+	SecurityMode    string
+	SecurityPolicy  string
+	Insecure        bool
+	Client          *opcua.Client
+	Log             *service.Logger
 	// this is required for subscription
 	SubscribeEnabled             bool
 	SubNotifyChan                chan *opcua.PublishNotificationData
