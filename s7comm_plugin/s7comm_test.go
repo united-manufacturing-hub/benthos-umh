@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -61,59 +60,56 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 		})
 	})
 
-	Describe("Parsing duplicate Addresses", func() {
-		type testCase struct {
-			addresses        []string
-			expectedErrorMsg []string
+	type S7Addresses struct {
+		addresses      []string
+		expectedErrMsg []string
+	}
+
+	DescribeTable("Parsing duplicate Addresses", func(entries S7Addresses) {
+		batchMaxSize := 1
+
+		_, err := s7comm_plugin.ParseAddresses(entries.addresses, batchMaxSize)
+
+		if entries.expectedErrMsg != nil {
+			Expect(err).To(HaveOccurred())
+			for _, containedErrStr := range entries.expectedErrMsg {
+				Expect(err.Error()).To(ContainSubstring(containedErrStr))
+			}
+			return
 		}
-
-		It("parses addresses and should fail on duplicates", func() {
-			tests := []testCase{
-				{
-					addresses:        []string{"DB2.W0", "DB2.W2"},
-					expectedErrorMsg: nil,
-				},
-				{
-					addresses:        []string{"DB2.X0.0", "DB2.X0.1"},
-					expectedErrorMsg: nil,
-				},
-				{
-					addresses:        []string{"DB2.X0.0", "DB3.X0.0"},
-					expectedErrorMsg: nil,
-				},
-				{
-					addresses:        []string{"PE2.X0.0", "PE2.X0.1"},
-					expectedErrorMsg: nil,
-				},
-				{
-					addresses:        []string{"DB2.W0", "DB2.W2", "DB2.W0"},
-					expectedErrorMsg: []string{"duplicate address", "DB2.W0"},
-				},
-				{
-					addresses:        []string{"DB2.X0.0", "DB2.W2", "DB2.X0.0"},
-					expectedErrorMsg: []string{"duplicate address", "DB2.X0.0"},
-				},
-			}
-
-			for _, tc := range tests {
-				By("Testing with addresses"+fmt.Sprintf("%v", tc.addresses), func() {
-					// not relevant for this test
-					batchMaxSize := 1
-
-					_, err := s7comm_plugin.ParseAddresses(tc.addresses, batchMaxSize)
-
-					if tc.expectedErrorMsg != nil {
-						Expect(err).To(HaveOccurred())
-						for _, containedErrStr := range tc.expectedErrorMsg {
-							Expect(err.Error()).To(ContainSubstring(containedErrStr))
-						}
-						return
-					}
-					Expect(err).NotTo(HaveOccurred())
-				})
-			}
-		})
-	})
+		Expect(err).NotTo(HaveOccurred())
+	},
+		Entry("same DBNumber but different Item.Start",
+			S7Addresses{
+				addresses:      []string{"DB2.W0", "DB2.W2"},
+				expectedErrMsg: nil,
+			}),
+		Entry("same DBNumber but differen Item.Bit",
+			S7Addresses{
+				addresses:      []string{"DB2.X0.0", "DB2.X0.1"},
+				expectedErrMsg: nil,
+			}),
+		Entry("same Bit but different Item.DBNumber",
+			S7Addresses{
+				addresses:      []string{"DB2.X0.0", "DB3.X0.0"},
+				expectedErrMsg: nil,
+			}),
+		Entry("same Area but different Item.Bit",
+			S7Addresses{
+				addresses:      []string{"PE2.X0.0", "PE2.X0.1"},
+				expectedErrMsg: nil,
+			}),
+		Entry("same DBNumber and same Item.Area",
+			S7Addresses{
+				addresses:      []string{"DB2.W0", "DB2.W2", "DB2.W0"},
+				expectedErrMsg: []string{"duplicate address", "DB2.W0"},
+			}),
+		Entry("same DBNumber and same Item.Bit",
+			S7Addresses{
+				addresses:      []string{"DB2.X0.0", "DB2.W2", "DB2.X0.0"},
+				expectedErrMsg: []string{"duplicate address", "DB2.X0.0"},
+			}),
+	)
 })
 
 var _ = Describe("S7Comm Test Against Local PLC", func() {
