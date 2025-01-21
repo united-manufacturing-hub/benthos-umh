@@ -59,6 +59,57 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 			}
 		})
 	})
+
+	type S7Addresses struct {
+		addresses      []string
+		expectedErrMsg []string
+	}
+
+	DescribeTable("Parsing duplicate Addresses", func(entries S7Addresses) {
+		batchMaxSize := 1
+
+		_, err := s7comm_plugin.ParseAddresses(entries.addresses, batchMaxSize)
+
+		if entries.expectedErrMsg != nil {
+			Expect(err).To(HaveOccurred())
+			for _, containedErrStr := range entries.expectedErrMsg {
+				Expect(err.Error()).To(ContainSubstring(containedErrStr))
+			}
+			return
+		}
+		Expect(err).NotTo(HaveOccurred())
+	},
+		Entry("same DBNumber but different Item.Start",
+			S7Addresses{
+				addresses:      []string{"DB2.W0", "DB2.W2"},
+				expectedErrMsg: nil,
+			}),
+		Entry("same DBNumber but different Item.Bit",
+			S7Addresses{
+				addresses:      []string{"DB2.X0.0", "DB2.X0.1"},
+				expectedErrMsg: nil,
+			}),
+		Entry("same Bit but different Item.DBNumber",
+			S7Addresses{
+				addresses:      []string{"DB2.X0.0", "DB3.X0.0"},
+				expectedErrMsg: nil,
+			}),
+		Entry("same Area but different Item.Bit",
+			S7Addresses{
+				addresses:      []string{"PE2.X0.0", "PE2.X0.1"},
+				expectedErrMsg: nil,
+			}),
+		Entry("same DBNumber and same Item.Area",
+			S7Addresses{
+				addresses:      []string{"DB2.W0", "DB2.W2", "DB2.W0"},
+				expectedErrMsg: []string{"duplicate address", "DB2.W0"},
+			}),
+		Entry("same DBNumber and same Item.Bit",
+			S7Addresses{
+				addresses:      []string{"DB2.X0.0", "DB2.W2", "DB2.X0.0"},
+				expectedErrMsg: []string{"duplicate address", "DB2.X0.0"},
+			}),
+	)
 })
 
 var _ = Describe("S7Comm Test Against Local PLC", func() {
