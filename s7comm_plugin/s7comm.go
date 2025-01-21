@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
 	"time"
@@ -179,7 +180,7 @@ func ParseAddresses(addresses []string, batchMaxSize int) ([][]S7DataItemWithAdd
 			if i == j {
 				continue
 			}
-			if a.Item.Area == b.Item.Area && a.Item.DBNumber == b.Item.DBNumber && a.Item.Start == b.Item.Start {
+			if reflect.DeepEqual(a.Item, b.Item) {
 				return nil, fmt.Errorf("duplicate address %v", a)
 			}
 		}
