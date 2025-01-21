@@ -84,7 +84,7 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 				addresses:      []string{"DB2.W0", "DB2.W2"},
 				expectedErrMsg: nil,
 			}),
-		Entry("same DBNumber but differen Item.Bit",
+		Entry("same DBNumber but different Item.Bit",
 			S7Addresses{
 				addresses:      []string{"DB2.X0.0", "DB2.X0.1"},
 				expectedErrMsg: nil,
