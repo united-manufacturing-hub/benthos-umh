@@ -59,7 +59,7 @@ jobs:
           fi
 
       - name: Check Wago-Modbus-fallback port availability
-        id: wago_fallback
+        id: check_wago_fallback
         if: ${{ steps.check_wago.outputs.available  == 'false' }}
         run: |
           set +x
