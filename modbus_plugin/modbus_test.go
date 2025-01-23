@@ -233,6 +233,7 @@ var _ = Describe("Test Against Wago-PLC", func() {
 				GinkgoWriter.Printf("Skipping heartbeat message: %+v\n", message)
 				continue
 			}
+			Expect(tagName).To(Equal(tableEntry.Addresses[0].Name))
 
 			register, exists := message.MetaGet("modbus_tag_register")
 			Expect(exists).To(BeTrue())
@@ -244,9 +245,6 @@ var _ = Describe("Test Against Wago-PLC", func() {
 
 			messageStruct, err := message.AsStructuredMut()
 			Expect(err).NotTo(HaveOccurred())
-
-			Expect(err).NotTo(HaveOccurred())
-			Expect(tagName).To(Equal(tableEntry.Addresses[0].Name))
 
 			Expect(messageStruct).To(BeAssignableToTypeOf(tableEntry.ExpectedValue))
 			Expect(messageStruct).To(Equal(tableEntry.ExpectedValue))
