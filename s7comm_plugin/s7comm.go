@@ -258,10 +258,8 @@ func (g *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 		if err := g.Client.AGReadMulti(batchToRead, len(batchToRead)); err != nil {
 			// Try to reconnect and skip this gather cycle to avoid hammering
 			// the network if the server is down or under load.
-			errMsg := fmt.Sprintf("Failed to read batch %d: %v. Reconnecting...", i+1, err)
-
-			// Return the error message so Benthos can handle it appropriately
-			return nil, nil, errors.New(errMsg)
+			g.Log.Errorf("Failed to read batch %d: %v", i+1, err)
+			return nil, nil, service.ErrNotConnected
 		}
 
 		// Read the data from the batch and convert it using the converter function
