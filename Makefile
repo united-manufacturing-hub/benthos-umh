@@ -35,10 +35,23 @@ update-benthos:
   go get github.com/redpanda-data/benthos/v4@latest && \
   go mod tidy
 
+# provides serial runners, which are needed to restrict data requests on sensor interface
+# Note: Serial execution will increase test duration but ensures reliable results
+test-serial:
+	@ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --procs 1 --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./...
+
 # usage:
-# make test-sensorconnect TEST_DEBUG_IFM_ENDPOINT=10.13.37.176
-test-sensorconnect: test
+# make test-sensorconnect TEST_DEBUG_IFM_ENDPOINT=(IP of sensor interface)
+test-sensorconnect: test-serial
 	./tmp/bin/benthos -c ./config/sensorconnect-test.yaml
 
+# run the tests against the opc-plc simulator
+# this will be the default simulator when starting up the devcontainer
+test-opc-plc:
+	@TEST_OPCUA_SIMULATOR=true ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./opcua_plugin/...
 
-.PHONY: clean target test update-benthos
+# Test the tag processor with a local OPC UA server
+test-tag-processor: target
+	./tmp/bin/benthos -c ./config/tag-processor-test.yaml
+
+.PHONY: clean target test update-benthos test-opc-plc test-tag-processor

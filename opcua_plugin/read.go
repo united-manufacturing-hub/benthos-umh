@@ -96,11 +96,6 @@ func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef Nod
 
 	message := service.NewMessage(b)
 
-	// Deprecated
-	message.MetaSet("opcua_path", sanitize(nodeDef.NodeID.String()))
-	message.MetaSet("opcua_tag_path", sanitize(nodeDef.BrowseName))
-	message.MetaSet("opcua_parent_path", sanitize(nodeDef.ParentNodeID))
-
 	// New ones
 	message.MetaSet("opcua_source_timestamp", dataValue.SourceTimestamp.Format("2006-01-02T15:04:05.000000Z07:00"))
 	message.MetaSet("opcua_server_timestamp", dataValue.ServerTimestamp.Format("2006-01-02T15:04:05.000000Z07:00"))
@@ -131,6 +126,13 @@ func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef Nod
 
 	message.MetaSet("opcua_tag_group", tagGroup)
 	message.MetaSet("opcua_tag_name", tagName)
+
+	// if the tag group is the same as the tag name ("root"), we don't want to have a tag path
+	if tagGroup == tagName {
+		message.MetaSet("opcua_tag_path", "")
+	} else {
+		message.MetaSet("opcua_tag_path", tagGroup)
+	}
 
 	message.MetaSet("opcua_tag_type", tagType)
 
@@ -190,6 +192,13 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 	if g.Client == nil {
 		return nil, nil, errors.New("client is nil")
 	}
+
+	// Add validation for PollRate
+	// benthos will set a default value if not set, and this is the fallback option for tests
+	if g.PollRate <= 0 {
+		g.PollRate = DefaultPollRate
+	}
+
 	// Read all values in NodeList and return each of them as a message with the node's path as the metadata
 
 	// Create first a list of all the values to read
@@ -214,12 +223,37 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 	resp, err := g.Read(ctx, req)
 	if err != nil {
 		g.Log.Errorf("Read failed: %s", err)
+		return nil, nil, err
+	}
+
+	// Add nil check for response
+	if resp == nil {
+		g.Log.Errorf("Received nil response from Read")
+		return nil, nil, errors.New("received nil response from Read")
+	}
+
+	// Add nil check for Results
+	if resp.Results == nil {
+		g.Log.Errorf("Received nil Results in response")
+		return nil, nil, errors.New("received nil Results in response")
+	}
+
+	// Check if Results length matches NodeList length
+	if len(resp.Results) != len(g.NodeList) {
+		g.Log.Errorf("Results length (%d) does not match NodeList length (%d)", len(resp.Results), len(g.NodeList))
+		return nil, nil, fmt.Errorf("results length (%d) does not match NodeList length (%d)", len(resp.Results), len(g.NodeList))
 	}
 
 	// Create a message with the node's path as the metadata
 	msgs := service.MessageBatch{}
 
 	for i, node := range g.NodeList {
+		// Check if index is within bounds (redundant after length check, but good practice)
+		if i >= len(resp.Results) {
+			g.Log.Errorf("Index %d out of bounds for Results length %d", i, len(resp.Results))
+			continue
+		}
+
 		value := resp.Results[i]
 		if value == nil || value.Value == nil {
 			g.Log.Debugf("Received nil in item structure on node %s. This can occur when subscribing to an OPC UA folder and may be ignored.", node.NodeID.String())
@@ -231,8 +265,8 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 		}
 	}
 
-	// Wait for a second before returning a message.
-	time.Sleep(time.Second)
+	// Wait for the configured poll rate before returning a message.
+	time.Sleep(time.Duration(g.PollRate) * time.Millisecond)
 
 	return msgs, func(ctx context.Context, err error) error {
 		// Nacks are retried automatically when we use service.AutoRetryNacks

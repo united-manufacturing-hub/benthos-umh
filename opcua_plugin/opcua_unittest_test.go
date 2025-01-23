@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
+	"time"
 
 	"github.com/gopcua/opcua/id"
 	"github.com/gopcua/opcua/ua"
@@ -20,8 +20,7 @@ var _ = Describe("Unit Tests", func() {
 		var endpoints []*ua.EndpointDescription
 		BeforeEach(func() {
 			endpoints = MockGetEndpoints()
-
-			endpoints = endpoints
+			Expect(endpoints).NotTo(BeEmpty())
 			Skip("Implement this test")
 		})
 	})
@@ -57,6 +56,7 @@ var _ = Describe("Unit Tests", func() {
 
 		var (
 			ctx                          context.Context
+			cncl                         context.CancelFunc
 			nodeBrowser                  NodeBrowser
 			path                         string
 			level                        int
@@ -64,27 +64,35 @@ var _ = Describe("Unit Tests", func() {
 			parentNodeId                 string
 			nodeChan                     chan NodeDef
 			errChan                      chan error
-			pathIDMapChan                chan map[string]string
-			wg                           *sync.WaitGroup
+			wg                           *TrackedWaitGroup
 			browseHierarchicalReferences bool
+			opcuaBrowserChan             chan NodeDef
 		)
 		BeforeEach(func() {
-			ctx = context.Background()
+			ctx, cncl = context.WithTimeout(context.Background(), 180*time.Second)
 			path = ""
 			level = 0
 			logger = &MockLogger{}
 			parentNodeId = ""
 			nodeChan = make(chan NodeDef, 100)
 			errChan = make(chan error, 100)
-			pathIDMapChan = make(chan map[string]string, 100)
-			wg = &sync.WaitGroup{}
+			wg = &TrackedWaitGroup{}
 			browseHierarchicalReferences = false
+			opcuaBrowserChan = make(chan NodeDef, 100)
+		})
+		AfterEach(func() {
+			cncl()
 		})
 
 		Context("When browsing nodes with a node class value nil", func() {
 			It("should return an error for nil node class in the error channel", func() {
 				var attributes []*ua.DataValue
 				attributes = append(attributes, getDataValueForNilNodeClass())
+				attributes = append(attributes, getDataValueForBrowseName("TestNode"))
+				attributes = append(attributes, getDataValueForDescription("Test Description", ua.StatusOK))
+				attributes = append(attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead|ua.AccessLevelTypeCurrentWrite))
+				attributes = append(attributes, getDataValueForDataType(ua.TypeIDInt32, ua.StatusOK))
+
 				rootNodeWithNilNodeClass := &MockOpcuaNodeWraper{
 					id:             ua.NewNumericNodeID(0, 1234),
 					attributes:     attributes,
@@ -94,7 +102,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNodeWithNilNodeClass
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences, opcuaBrowserChan)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -121,7 +129,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences, opcuaBrowserChan)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -159,7 +167,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences, opcuaBrowserChan)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -201,7 +209,7 @@ var _ = Describe("Unit Tests", func() {
 				go func() {
 					// set browseHierarchicalReferences to true for reference nodes like id.HasChild
 					browseHierarchicalReferences := true
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences, opcuaBrowserChan)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -243,7 +251,7 @@ var _ = Describe("Unit Tests", func() {
 				go func() {
 					// set browseHierarchicalReferences to true for reference nodes like id.Organizes
 					browseHierarchicalReferences := true
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences, opcuaBrowserChan)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -287,7 +295,7 @@ var _ = Describe("Unit Tests", func() {
 				wg.Add(1)
 				go func() {
 					browseHierarchicalReferences := true
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, pathIDMapChan, wg, browseHierarchicalReferences)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences, opcuaBrowserChan)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -307,6 +315,83 @@ var _ = Describe("Unit Tests", func() {
 				Expect(nodes).Should(HaveLen(1))
 				Expect(nodes[0].NodeID.String()).To(Equal("i=1223"))
 				Expect(nodes[0].BrowseName).To(Equal("TestChildNode"))
+			})
+		})
+
+		Context("When browsing a folder structure with HasTypeDefinition and HasChild references", func() {
+			It("should browse through ABC folder and return the ProcessValue variable", func() {
+				Skip("fake opc ua node browser cannot handle this, as children wiull always return all referencednodes independent of the nodeclass")
+				// Create ABC folder node
+				abcFolder := createMockVariableNode(1234, "ABC")
+				abcFolder.attributes = append(abcFolder.attributes, getDataValueForNodeClass(ua.NodeClassObject))
+				abcFolder.attributes = append(abcFolder.attributes, getDataValueForBrowseName("ABC"))
+				abcFolder.attributes = append(abcFolder.attributes, getDataValueForDescription("ABC Folder", ua.StatusOK))
+				abcFolder.attributes = append(abcFolder.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead))
+				abcFolder.attributes = append(abcFolder.attributes, getDataValueForDataType(ua.TypeIDString, ua.StatusOK))
+
+				// Create DEF folder node
+				defFolder := createMockVariableNode(1235, "DEF")
+				defFolder.attributes = append(defFolder.attributes, getDataValueForNodeClass(ua.NodeClassObject))
+				defFolder.attributes = append(defFolder.attributes, getDataValueForBrowseName("DEF"))
+				defFolder.attributes = append(defFolder.attributes, getDataValueForDescription("DEF Folder", ua.StatusOK))
+				defFolder.attributes = append(defFolder.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead))
+				defFolder.attributes = append(defFolder.attributes, getDataValueForDataType(ua.TypeIDString, ua.StatusOK))
+
+				// Create the object node
+				objectNode := createMockVariableNode(0, "0:6312FT000")
+				objectNode.id = ua.MustParseNodeID("ns=3;s=0:6312FT000")
+				objectNode.attributes = append(objectNode.attributes, getDataValueForNodeClass(ua.NodeClassObject))
+				objectNode.attributes = append(objectNode.attributes, getDataValueForBrowseName("0:6312FT000"))
+				objectNode.attributes = append(objectNode.attributes, getDataValueForDescription("Object Node", ua.StatusOK))
+				objectNode.attributes = append(objectNode.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead))
+				objectNode.attributes = append(objectNode.attributes, getDataValueForDataType(ua.TypeIDString, ua.StatusOK))
+
+				// Create the ProcessValue variable node
+				processValueNode := createMockVariableNode(0, "0:645645645.ProcessValue")
+				processValueNode.id = ua.MustParseNodeID("ns=3;s=0:645645645.ProcessValue")
+				processValueNode.attributes = append(processValueNode.attributes, getDataValueForNodeClass(ua.NodeClassVariable))
+				processValueNode.attributes = append(processValueNode.attributes, getDataValueForBrowseName("ProcessValue"))
+				processValueNode.attributes = append(processValueNode.attributes, getDataValueForDescription("Process Value", ua.StatusOK))
+				processValueNode.attributes = append(processValueNode.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead|ua.AccessLevelTypeCurrentWrite))
+				processValueNode.attributes = append(processValueNode.attributes, getDataValueForDataType(ua.TypeIDString, ua.StatusOK))
+
+				// Set up the references
+				folderTypeNode := createMockVariableNode(61, "FolderType")
+				folderTypeNode.attributes = append(folderTypeNode.attributes, getDataValueForNodeClass(ua.NodeClassVariableType))
+				folderTypeNode.attributes = append(folderTypeNode.attributes, getDataValueForBrowseName("FolderType"))
+				folderTypeNode.attributes = append(folderTypeNode.attributes, getDataValueForDescription("Folder Type", ua.StatusOK))
+				folderTypeNode.attributes = append(folderTypeNode.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead|ua.AccessLevelTypeCurrentWrite))
+				folderTypeNode.attributes = append(folderTypeNode.attributes, getDataValueForDataType(ua.TypeIDString, ua.StatusOK))
+
+				abcFolder.AddReferenceNode(id.HasTypeDefinition, folderTypeNode)
+				abcFolder.AddReferenceNode(id.HasChild, defFolder)
+				defFolder.AddReferenceNode(id.HasChild, objectNode)
+				objectNode.AddReferenceNode(id.HasChild, processValueNode)
+
+				nodeBrowser = abcFolder
+				wg.Add(1)
+				go func() {
+					browseHierarchicalReferences := true
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, browseHierarchicalReferences, opcuaBrowserChan)
+				}()
+				wg.Wait()
+				close(nodeChan)
+				close(errChan)
+
+				var nodes []NodeDef
+				for nodeDef := range nodeChan {
+					nodes = append(nodes, nodeDef)
+				}
+
+				var errs []error
+				for err := range errChan {
+					errs = append(errs, err)
+				}
+
+				Expect(errs).Should(BeEmpty())
+				Expect(nodes).Should(HaveLen(1))
+				Expect(nodes[0].NodeID.String()).To(Equal("ns=3;s=0:645645645.ProcessValue"))
+				Expect(nodes[0].BrowseName).To(Equal("ProcessValue"))
 			})
 		})
 	})

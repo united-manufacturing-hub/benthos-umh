@@ -13,7 +13,7 @@
 # limitations under the License.
 
 ---
-name: sensorconnect
+name: nodered-js
 
 on:
   push:
@@ -25,20 +25,20 @@ env:
   GO_VERSION: '1.23.0'
 
 concurrency:
-  group: sensorconnect-test
+  group: nodered-js-test
   cancel-in-progress: true
 
 jobs:
-  go-test-sensorconnect:
+  go-test-nodered-js:
     runs-on:
-      group: arc-runners-tests
+      group: arc-runners
     permissions:
       packages: write
       contents: read
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Setup Go
         uses: ./.github/actions/setup-go
         with:
@@ -46,4 +46,4 @@ jobs:
       - name: Install Ginkgo
         run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.19.0
       - name: Test
-        run: TEST_DEBUG_IFM_ENDPOINT=${{ secrets.TEST_DEBUG_IFM_ENDPOINT }} make test-serial
+        run: TEST_NODERED_JS=1 make test

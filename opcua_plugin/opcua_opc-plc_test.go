@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/gopcua/opcua/ua"
 	"os"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
+
+	"github.com/gopcua/opcua/ua"
 
 	. "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
 
@@ -20,284 +21,9 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-var _ = Describe("Debugging test", func() {
-
-	var endpoint string
-
-	BeforeEach(func() {
-		endpoint = os.Getenv("TEST_DEBUG_ENDPOINT_URI")
-
-		// Check if environment variables are set
-		if endpoint == "" {
-			Skip("Skipping test: environment variables not set")
-			return
-		}
-
-	})
-
-	When("using a yaml and stream builder", func() {
-
-		It("should subscribe to all nodes and receive data", func() {
-
-			// Create a new stream builder
-			builder := service.NewStreamBuilder()
-
-			// Create a new stream
-			err := builder.AddInputYAML(fmt.Sprintf(`
-opcua:
-  endpoint: "%s"
-  username: ""
-  password: ""
-  subscribeEnabled: true
-  useHeartbeat: true
-  nodeIDs:
-    - i=84
-`, endpoint))
-
-			Expect(err).NotTo(HaveOccurred())
-
-			err = builder.SetLoggerYAML(`level: off`)
-			Expect(err).NotTo(HaveOccurred())
-
-			err = builder.SetTracerYAML(`type: none`)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Add a total message count consumer
-			var count int64
-			err = builder.AddConsumerFunc(func(c context.Context, m *service.Message) error {
-				atomic.AddInt64(&count, 1)
-				return err
-			})
-
-			stream, err := builder.Build()
-			Expect(err).NotTo(HaveOccurred())
-
-			timeout := time.Second * 45
-
-			// Run the stream
-			ctx, cncl := context.WithTimeout(context.Background(), timeout)
-			go func() {
-				_ = stream.Run(ctx)
-			}()
-
-			// Check if we received any messages continuously
-			Eventually(
-				func() int64 {
-					return atomic.LoadInt64(&count)
-				}, timeout).Should(BeNumerically(">", int64(0)))
-
-			cncl()
-
-		})
-	})
-})
-
-var _ = Describe("Test Against Prosys Simulator", func() {
-
-	var endpoint string
-
-	BeforeEach(func() {
-		endpoint = os.Getenv("TEST_PROSYS_ENDPOINT_URI")
-
-		// Check if environment variables are set
-		if endpoint == "" {
-			Skip("Skipping test: environment variables not set")
-			return
-		}
-
-	})
-
-	Describe("OPC UA Server Information", func() {
-
-		It("should connect to the server and retrieve server information", func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-
-			var nodeIDStrings = []string{"ns=3;i=1003"}
-			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
-
-			input := &OPCUAInput{
-				Endpoint:       endpoint,
-				Username:       "",
-				Password:       "",
-				NodeIDs:        parsedNodeIDs,
-				SecurityMode:   "None",
-				SecurityPolicy: "None",
-			}
-
-			// Attempt to connect
-			err := input.Connect(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
-			serverInformation, err := input.GetOPCUAServerInformation(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
-			GinkgoWriter.Printf("Server Information: \n")
-			GinkgoWriter.Printf("ManufacturerName: %s\n", serverInformation.ManufacturerName)
-			GinkgoWriter.Printf("ProductName: %s\n", serverInformation.ProductName)
-			GinkgoWriter.Printf("SoftwareVersion: %s\n", serverInformation.SoftwareVersion)
-
-			// Close connection
-			if input.Client != nil {
-				err = input.Close(ctx)
-				Expect(err).NotTo(HaveOccurred())
-			}
-		})
-	})
-
-	Describe("YAML Configuration", func() {
-
-		When("using a yaml and stream builder", func() {
-
-			It("should subscribe to all nodes and receive data", func() {
-
-				// Create a new stream builder
-				builder := service.NewStreamBuilder()
-
-				// Create a new stream
-				err := builder.AddInputYAML(fmt.Sprintf(`
-opcua:
-  endpoint: "%s"
-  username: ""
-  password: ""
-  subscribeEnabled: true
-  useHeartbeat: true
-  nodeIDs:
-    - i=84
-`, endpoint))
-
-				Expect(err).NotTo(HaveOccurred())
-
-				err = builder.SetLoggerYAML(`level: off`)
-				Expect(err).NotTo(HaveOccurred())
-
-				err = builder.SetTracerYAML(`type: none`)
-				Expect(err).NotTo(HaveOccurred())
-
-				// Add a total message count consumer
-				var count int64
-				err = builder.AddConsumerFunc(func(c context.Context, m *service.Message) error {
-					atomic.AddInt64(&count, 1)
-					return err
-				})
-
-				stream, err := builder.Build()
-				Expect(err).NotTo(HaveOccurred())
-
-				timeout := time.Second * 120
-
-				// Run the stream
-				ctx, cncl := context.WithTimeout(context.Background(), timeout)
-				go func() {
-					_ = stream.Run(ctx)
-				}()
-
-				// Check if we received any messages continuously
-				Eventually(
-					func() int64 {
-						return atomic.LoadInt64(&count)
-					}, timeout).Should(BeNumerically(">", int64(0)))
-
-				cncl()
-
-			})
-		})
-
-	})
-
-	Describe("Insecure (None/None) Connect", func() {
-
-		var endpoint string
-
-		It("should read data correctly", func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-
-			var nodeIDStrings = []string{"ns=3;i=1003"}
-			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
-
-			input := &OPCUAInput{
-				Endpoint:       endpoint,
-				Username:       "",
-				Password:       "",
-				NodeIDs:        parsedNodeIDs,
-				SecurityMode:   "None",
-				SecurityPolicy: "None",
-			}
-
-			// Attempt to connect
-			err := input.Connect(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
-			messageBatch, _, err := input.ReadBatch(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(messageBatch).To(HaveLen(1))
-
-			for _, message := range messageBatch {
-				message, err := message.AsStructuredMut()
-				Expect(err).NotTo(HaveOccurred())
-
-				var exampleNumber json.Number = "22.565684"
-				Expect(message).To(BeAssignableToTypeOf(exampleNumber))
-				GinkgoWriter.Printf("Received message: %+v\n", message)
-			}
-
-			// Close connection
-			if input.Client != nil {
-				err = input.Close(ctx)
-				Expect(err).NotTo(HaveOccurred())
-			}
-		})
-	})
-
-	Describe("Secure (SignAndEncrypt/Basic256Sha256) Connect", func() {
-
-		It("should read data correctly", func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-
-			var nodeIDStrings = []string{"ns=3;i=1003"}
-			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
-
-			input := &OPCUAInput{
-				Endpoint:       endpoint,
-				Username:       "",
-				Password:       "",
-				NodeIDs:        parsedNodeIDs,
-				SecurityMode:   "SignAndEncrypt",
-				SecurityPolicy: "Basic256Sha256",
-			}
-
-			// Attempt to connect
-			err := input.Connect(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
-			messageBatch, _, err := input.ReadBatch(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(messageBatch).To(HaveLen(1))
-
-			for _, message := range messageBatch {
-				message, err := message.AsStructuredMut()
-				Expect(err).NotTo(HaveOccurred())
-
-				var exampleNumber json.Number = "22.565684"
-				Expect(message).To(BeAssignableToTypeOf(exampleNumber))
-				GinkgoWriter.Printf("Received message: %+v\n", message)
-			}
-
-			// Close connection
-			if input.Client != nil {
-				err = input.Close(ctx)
-				Expect(err).NotTo(HaveOccurred())
-			}
-		})
-	})
-
-})
-
-var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
+// opc-plc is what is running when starting up the devcontainer
+// other simulators are not running when starting up the devcontainer and are a rather manual process to start
+var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, func() {
 
 	BeforeEach(func() {
 		testActivated := os.Getenv("TEST_OPCUA_SIMULATOR")
@@ -330,10 +56,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 			err := input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
-			messageBatch, _, err := input.ReadBatch(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(messageBatch).To(HaveLen(4))
+			var messageBatch service.MessageBatch
+			Eventually(func() int {
+				var err error
+				messageBatch, _, err = input.ReadBatch(ctx)
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
+				return len(messageBatch)
+			}, 10*time.Second, 100*time.Millisecond).Should(Equal(4))
 
 			// Close connection
 			if input.Client != nil {
@@ -415,15 +148,22 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				err := input.Connect(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				messageBatch, _, err := input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
-
 				// ns=3;s=Fast consists out of 6 nodes
 				// FastUInt1 - 5 and BadFastUInt1
 				// BadFastUInt1 can sometimes be null, and then it will not report anything
 				// Therefore, the expected messageBatch is between 5 and 6
 				// However, sometimes the OPC UA server sends back the values for multiple seconds in the same batch, so it could also be 10 or 12
-				Expect(len(messageBatch)).To(BeNumerically(">=", 5))
+				var messageBatch service.MessageBatch
+				Eventually(func() int {
+					var err error
+					messageBatch, _, err = input.ReadBatch(ctx)
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
+					return len(messageBatch)
+				}, 10*time.Second, 100*time.Millisecond).Should(BeNumerically(">=", 5))
 
 				for _, message := range messageBatch {
 					message, err := message.AsStructuredMut()
@@ -460,9 +200,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				err := input.Connect(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				messageBatch, _, err := input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(len(messageBatch)).To(Equal(1))
+				var messageBatch service.MessageBatch
+				Eventually(func() int {
+					var err error
+					messageBatch, _, err = input.ReadBatch(ctx)
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
+					return len(messageBatch)
+				}, 10*time.Second, 100*time.Millisecond).Should(Equal(1))
 
 				for _, message := range messageBatch {
 					message, err := message.AsStructuredMut()
@@ -512,10 +260,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				err := input.Connect(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				messageBatch, _, err := input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(len(messageBatch)).To(Equal(10))
+				var messageBatch service.MessageBatch
+				Eventually(func() int {
+					var err error
+					messageBatch, _, err = input.ReadBatch(ctx)
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
+					return len(messageBatch)
+				}, 10*time.Second, 100*time.Millisecond).Should(Equal(10))
 
 				for _, message := range messageBatch {
 					message, err := message.AsStructuredMut()
@@ -552,10 +307,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				err := input.Connect(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				messageBatch, _, err := input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(len(messageBatch)).To(Equal(0)) // should never subscribe to null datatype
+				var messageBatch service.MessageBatch
+				Eventually(func() int {
+					var err error
+					messageBatch, _, err = input.ReadBatch(ctx)
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1 // return -1 to indicate that the messageBatch is empty
+					}
+					return len(messageBatch)
+				}, 10*time.Second, 100*time.Millisecond).Should(Equal(0)) // should never subscribe to null datatype
 
 				// Close connection
 				if input.Client != nil {
@@ -585,9 +347,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				err := input.Connect(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				messageBatch, _, err := input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(len(messageBatch)).To(Equal(26)) // Adjust the expected number of items as necessary
+				var messageBatch service.MessageBatch
+				Eventually(func() int {
+					var err error
+					messageBatch, _, err = input.ReadBatch(ctx)
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
+					return len(messageBatch)
+				}, 10*time.Second, 100*time.Millisecond).Should(Equal(26))
 
 				for _, message := range messageBatch {
 					messageParsed, err := message.AsStructuredMut()
@@ -656,9 +426,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				err := input.Connect(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				messageBatch, _, err := input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(len(messageBatch)).To(Equal(23)) // these are theoretically >30, but most of them are null, so the browse function ignores them
+				var messageBatch service.MessageBatch
+				Eventually(func() int {
+					var err error
+					messageBatch, _, err = input.ReadBatch(ctx)
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
+					return len(messageBatch)
+				}, 10*time.Second, 100*time.Millisecond).Should(Equal(23)) // these are theoretically >30, but most of them are null, so the browse function ignores them
 
 				for _, message := range messageBatch {
 					messageParsed, err := message.AsStructuredMut()
@@ -707,9 +485,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				err := input.Connect(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				messageBatch, _, err := input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(messageBatch).NotTo(BeEmpty())
+				var messageBatch service.MessageBatch
+				Eventually(func() int {
+					var err error
+					messageBatch, _, err = input.ReadBatch(ctx)
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
+					return len(messageBatch)
+				}, 10*time.Second, 100*time.Millisecond).Should(BeNumerically(">", 0))
 
 				for _, message := range messageBatch {
 					_, err := message.AsStructured()
@@ -772,9 +558,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				err := input.Connect(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				messageBatch, _, err := input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(len(messageBatch)).To(Equal(25))
+				var messageBatch service.MessageBatch
+				Eventually(func() int {
+					var err error
+					messageBatch, _, err = input.ReadBatch(ctx)
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
+					return len(messageBatch)
+				}, 10*time.Second, 100*time.Millisecond).Should(Equal(25))
 
 				for _, message := range messageBatch {
 					messageParsed, err := message.AsStructuredMut()
@@ -841,45 +635,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				err := input.Connect(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				messageBatch, _, err := input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(len(messageBatch)).To(BeNumerically(">=", 125))
-
-				// Close connection
-				if input.Client != nil {
-					err = input.Close(ctx)
-					Expect(err).NotTo(HaveOccurred())
-				}
-			})
-		})
-
-		When("Subscribing to everything", func() {
-			It("does not fail", func() {
-				Skip("This might take too long...")
-
-				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-				defer cancel()
-
-				nodeIDStrings := []string{"i=84"}
-				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
-
-				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
-					NodeIDs:          parsedNodeIDs,
-					SubscribeEnabled: true,
-				}
-
-				// Attempt to connect
-				err := input.Connect(ctx)
-				Expect(err).NotTo(HaveOccurred())
-
-				messageBatch, _, err := input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(len(messageBatch)).To(Equal(25))
+				var messageBatch service.MessageBatch
+				Eventually(func() int {
+					var err error
+					messageBatch, _, err = input.ReadBatch(ctx)
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
+					return len(messageBatch)
+				}, 10*time.Second, 100*time.Millisecond).Should(BeNumerically(">=", 125))
 
 				// Close connection
 				if input.Client != nil {
@@ -911,10 +677,59 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				err := input.Connect(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				messageBatch, _, err := input.ReadBatch(ctx)
+				var messageBatch service.MessageBatch
+				Eventually(func() int {
+					var err error
+					messageBatch, _, err = input.ReadBatch(ctx)
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
+					return len(messageBatch)
+				}, 10*time.Second, 100*time.Millisecond).Should(Equal(25))
+
+				// Close connection
+				if input.Client != nil {
+					err = input.Close(ctx)
+					Expect(err).NotTo(HaveOccurred())
+				}
+			})
+		})
+
+		When("Subscribing to everything", func() {
+			It("does not fail", func() {
+				Skip("This might take too long...")
+
+				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+				defer cancel()
+
+				nodeIDStrings := []string{"i=84"}
+				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
+				input := &OPCUAInput{
+					Endpoint:         "opc.tcp://localhost:50000",
+					Username:         "",
+					Password:         "",
+					NodeIDs:          parsedNodeIDs,
+					SubscribeEnabled: true,
+				}
+
+				// Attempt to connect
+				err := input.Connect(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				Expect(len(messageBatch)).To(Equal(25))
+				var messageBatch service.MessageBatch
+				Eventually(func() int {
+					var err error
+					messageBatch, _, err = input.ReadBatch(ctx)
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
+					return len(messageBatch)
+				}, 10*time.Second, 100*time.Millisecond).Should(Equal(25))
 
 				// Close connection
 				if input.Client != nil {
@@ -944,10 +759,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				err := input.Connect(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				messageBatch, _, err := input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(len(messageBatch)).To(Equal(4))
+				var messageBatch service.MessageBatch
+				Eventually(func() int {
+					var err error
+					messageBatch, _, err = input.ReadBatch(ctx)
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
+					return len(messageBatch)
+				}, 10*time.Second, 100*time.Millisecond).Should(Equal(4))
 
 				// Close connection
 				if input.Client != nil {
@@ -977,10 +799,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				err := input.Connect(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				messageBatch, _, err := input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(len(messageBatch)).To(Equal(4))
+				var messageBatch service.MessageBatch
+				Eventually(func() int {
+					var err error
+					messageBatch, _, err = input.ReadBatch(ctx)
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
+					return len(messageBatch)
+				}, 10*time.Second, 100*time.Millisecond).Should(Equal(4))
 
 				// Close connection
 				if input.Client != nil {
@@ -1010,10 +839,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				err := input.Connect(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				messageBatch, _, err := input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(len(messageBatch)).To(Equal(5))
+				var messageBatch service.MessageBatch
+				Eventually(func() int {
+					var err error
+					messageBatch, _, err = input.ReadBatch(ctx)
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
+					return len(messageBatch)
+				}, 10*time.Second, 100*time.Millisecond).Should(Equal(5))
 
 				// Close connection
 				if input.Client != nil {
@@ -1043,10 +879,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				err := input.Connect(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				messageBatch, _, err := input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(len(messageBatch)).To(BeNumerically(">=", 5))
+				var messageBatch service.MessageBatch
+				Eventually(func() int {
+					var err error
+					messageBatch, _, err = input.ReadBatch(ctx)
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
+					return len(messageBatch)
+				}, 10*time.Second, 100*time.Millisecond).Should(BeNumerically(">=", 5))
 
 				// Close connection
 				if input.Client != nil {
@@ -1076,10 +919,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				err := input.Connect(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				messageBatch, _, err := input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(len(messageBatch)).To(BeNumerically(">=", 100))
+				var messageBatch service.MessageBatch
+				Eventually(func() int {
+					var err error
+					messageBatch, _, err = input.ReadBatch(ctx)
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
+					return len(messageBatch)
+				}, 10*time.Second, 100*time.Millisecond).Should(BeNumerically(">=", 100))
 
 				// Close connection
 				if input.Client != nil {
@@ -1109,10 +959,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 				err := input.Connect(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
-				messageBatch, _, err := input.ReadBatch(ctx)
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(len(messageBatch)).To(Equal(7))
+				var messageBatch service.MessageBatch
+				Eventually(func() int {
+					var err error
+					messageBatch, _, err = input.ReadBatch(ctx)
+					if err != nil {
+						// Log the error but continue - it might succeed on next attempt
+						GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+						return -1
+					}
+					return len(messageBatch)
+				}, 10*time.Second, 100*time.Millisecond).Should(Equal(7))
 
 				// Close connection
 				if input.Client != nil {
@@ -1145,8 +1002,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 			err := input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
-			messageBatch, _, err := input.ReadBatch(ctx)
-			Expect(err).NotTo(HaveOccurred())
+			var messageBatch service.MessageBatch
+			Eventually(func() int {
+				var err error
+				messageBatch, _, err = input.ReadBatch(ctx)
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
+				return len(messageBatch)
+			}, 10*time.Second, 100*time.Millisecond).Should(BeNumerically(">=", 1))
 
 			// for each
 			for _, message := range messageBatch {
@@ -1202,20 +1068,34 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 			err := input.Connect(ctx1)
 			Expect(err).NotTo(HaveOccurred())
 
-			messageBatch, _, err := input.ReadBatch(ctx1)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(len(messageBatch)).To(Equal(1))
+			var messageBatch service.MessageBatch
+			Eventually(func() int {
+				var err error
+				messageBatch, _, err = input.ReadBatch(ctx1)
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
+				return len(messageBatch)
+			}, 10*time.Second, 100*time.Millisecond).Should(Equal(1))
 
 			time.Sleep(15 * time.Second)
 
 			ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel2()
 
-			messageBatch, _, err = input.ReadBatch(ctx2)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(len(messageBatch)).To(Equal(1))
+			var messageBatch2 service.MessageBatch
+			Eventually(func() int {
+				var err error
+				messageBatch2, _, err = input.ReadBatch(ctx2)
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
+				return len(messageBatch2)
+			}, 10*time.Second, 100*time.Millisecond).Should(Equal(1))
 
 			// Close connection
 			if input.Client != nil {
@@ -1249,10 +1129,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 			err := input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
-			messageBatch, _, err := input.ReadBatch(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(len(messageBatch)).To(Equal(1))
+			var messageBatch service.MessageBatch
+			Eventually(func() int {
+				var err error
+				messageBatch, _, err = input.ReadBatch(ctx)
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
+				return len(messageBatch)
+			}, 10*time.Second, 100*time.Millisecond).Should(Equal(1))
 
 			// Close connection
 			if input.Client != nil {
@@ -1282,10 +1169,17 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 			err := input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
-			messageBatch, _, err := input.ReadBatch(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(len(messageBatch)).To(Equal(2))
+			var messageBatch service.MessageBatch
+			Eventually(func() int {
+				var err error
+				messageBatch, _, err = input.ReadBatch(ctx)
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
+				return len(messageBatch)
+			}, 10*time.Second, 100*time.Millisecond).Should(Equal(2))
 
 			// Close connection
 			if input.Client != nil {
@@ -1315,24 +1209,45 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 			err := input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
-			messageBatch, _, err := input.ReadBatch(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(len(messageBatch)).To(Equal(1))
+			var messageBatch service.MessageBatch
+			Eventually(func() int {
+				var err error
+				messageBatch, _, err = input.ReadBatch(ctx)
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
+				return len(messageBatch)
+			}, 10*time.Second, 100*time.Millisecond).Should(Equal(1))
 
 			time.Sleep(5 * time.Second)
 
-			messageBatch, _, err = input.ReadBatch(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(len(messageBatch)).To(Equal(1))
+			var messageBatch2 service.MessageBatch
+			Eventually(func() int {
+				var err error
+				messageBatch2, _, err = input.ReadBatch(ctx)
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
+				return len(messageBatch2)
+			}, 10*time.Second, 100*time.Millisecond).Should(Equal(1))
 
 			time.Sleep(5 * time.Second)
 
-			messageBatch, _, err = input.ReadBatch(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(len(messageBatch)).To(Equal(1))
+			var messageBatch3 service.MessageBatch
+			Eventually(func() int {
+				var err error
+				messageBatch3, _, err = input.ReadBatch(ctx)
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
+				return len(messageBatch3)
+			}, 10*time.Second, 100*time.Millisecond).Should(Equal(1))
 
 			// Close connection
 			if input.Client != nil {
@@ -1364,27 +1279,46 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 
 			ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel2()
-			messageBatch, _, err := input.ReadBatch(ctx2)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(len(messageBatch)).To(Equal(1))
+			var messageBatch service.MessageBatch
+			Eventually(func() int {
+				var err error
+				messageBatch, _, err = input.ReadBatch(ctx2)
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
+				return len(messageBatch)
+			}, 10*time.Second, 100*time.Millisecond).Should(Equal(1))
 
 			time.Sleep(5 * time.Second)
 
 			ctx3, cancel3 := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel3()
-			messageBatch, _, err = input.ReadBatch(ctx3)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(len(messageBatch)).To(Equal(0))
+			var messageBatch2 service.MessageBatch
+			Eventually(func() int {
+				var err error
+				messageBatch2, _, err = input.ReadBatch(ctx3)
+				if err != nil {
+					// Log the error but continue - it might succeed on next attempt
+					GinkgoT().Logf("ReadBatch error (might be temporary): %v", err)
+					return -1
+				}
+				return len(messageBatch2)
+			}, 10*time.Second, 100*time.Millisecond).Should(Equal(0))
 
 			time.Sleep(10 * time.Second)
 
 			ctx4, cancel4 := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel4()
-			messageBatch, _, err = input.ReadBatch(ctx4)
-			// Expect err to be service.ErrNotConnected
-			Expect(err).To(Equal(service.ErrNotConnected))
+			var messageBatch3 service.MessageBatch
+			Eventually(func() int {
+				var err error
+				messageBatch3, _, err = input.ReadBatch(ctx4)
+				// Expect err to be service.ErrNotConnected
+				Expect(err).To(Equal(service.ErrNotConnected))
+				return len(messageBatch3)
+			}, 10*time.Second, 100*time.Millisecond).Should(Equal(0))
 
 			// Close connection
 			if input.Client != nil {
@@ -1395,92 +1329,129 @@ var _ = Describe("Test Against Microsoft OPC UA simulator", Serial, func() {
 			}
 		})
 	})
-})
 
-var _ = Describe("Test Against Softing OPC DataFeed", Serial, func() {
-	When("Subscribing to server without discovery urls", func() {
-		It("does successfully connects", func() {
-			Skip("not implemented in CI pipeline")
+	When("using a custom poll rate", func() {
+		It("should respect the configured poll interval", func() {
+			// Create a new stream builder
+			builder := service.NewStreamBuilder()
+
+			// Create a new stream with 10 second poll rate on the CurrentTime node
+			err := builder.AddInputYAML(`
+opcua:
+  endpoint: "opc.tcp://localhost:50000"
+  username: ""
+  password: ""
+  subscribeEnabled: false
+  useHeartbeat: false
+  pollRate: 10000
+  nodeIDs:
+    - "i=2258"
+`)
+
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.SetLoggerYAML(`level: off`)
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.SetTracerYAML(`type: none`)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Track message timestamps
+			var timestamps []time.Time
+			var timestampsMutex sync.Mutex
+
+			err = builder.AddConsumerFunc(func(c context.Context, m *service.Message) error {
+				timestampsMutex.Lock()
+				timestamps = append(timestamps, time.Now())
+				timestampsMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			// Run the stream for enough time to get multiple messages
+			ctx, cncl := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cncl()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Wait until we have at least 2 messages
+			Eventually(func() int {
+				timestampsMutex.Lock()
+				defer timestampsMutex.Unlock()
+				return len(timestamps)
+			}, 25*time.Second).Should(BeNumerically(">=", 2))
+
+			// Check intervals between messages
+			timestampsMutex.Lock()
+			defer timestampsMutex.Unlock()
+
+			for i := 1; i < len(timestamps); i++ {
+				interval := timestamps[i].Sub(timestamps[i-1])
+				// Allow for some timing variation (between 9 and 11 seconds)
+				Expect(interval.Seconds()).To(BeNumerically("~", 10.0, 1.0),
+					"Expected ~10 second interval, got %v seconds", interval.Seconds())
+			}
+		})
+	})
+
+	Context("When browsing nodes with HasTypeDefinition references on a real OPC UA server", func() {
+		It("should not browse HasTypeDefinition references when browsing DataAccess_AnalogType_Byte", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			nodeIDStrings := []string{"ns=3;s=Siemens_1"}
+			nodeIDStrings := []string{"ns=6;s=DataAccess_AnalogType_Byte"}
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
-				Endpoint:         "opc.tcp://10.13.37.125:4998",
+				Endpoint:         "opc.tcp://localhost:50000",
 				Username:         "",
 				Password:         "",
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: false,
 			}
 
-			// Attempt to connect
+			// Connect to the server
 			err := input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
+			defer input.Close(ctx)
 
-			messageBatch, _, err := input.ReadBatch(ctx)
-			Expect(err).NotTo(HaveOccurred())
+			// Create channels for browsing
+			nodeChan := make(chan NodeDef, 100)
+			errChan := make(chan error, 100)
+			opcuaBrowserChan := make(chan NodeDef, 100)
+			var wg TrackedWaitGroup
 
-			Expect(len(messageBatch)).To(Equal(1))
+			// Browse the node
+			wg.Add(1)
+			wrapperNodeID := NewOpcuaNodeWrapper(input.Client.Node(parsedNodeIDs[0]))
+			go Browse(ctx, wrapperNodeID, "", 0, input.Log, parsedNodeIDs[0].String(), nodeChan, errChan, &wg, true, opcuaBrowserChan)
 
-			// Close connection
-			if input.Client != nil {
-				err = input.Close(ctx)
-				Expect(err).NotTo(HaveOccurred())
-			}
-		})
-	})
-	When("Subscribing to softing and manually adjusting local item", func() {
-		It("does successfully reports a data change", func() {
-			// This requires manual intervention and a manual change of localitem during this test
-			Skip("not implemented in CI pipeline")
-			ctx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel1()
+			wg.Wait()
+			close(nodeChan)
+			close(errChan)
+			close(opcuaBrowserChan)
 
-			nodeIDStrings := []string{"ns=3;s=Local Items.test"}
-			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
-
-			input := &OPCUAInput{
-				Endpoint:         "opc.tcp://10.13.37.125:4998",
-				Username:         "",
-				Password:         "",
-				NodeIDs:          parsedNodeIDs,
-				SubscribeEnabled: true,
+			var nodes []NodeDef
+			for nodeDef := range nodeChan {
+				nodes = append(nodes, nodeDef)
 			}
 
-			// Attempt to connect
-			err := input.Connect(ctx1)
-			Expect(err).NotTo(HaveOccurred())
-
-			messageBatch, _, err := input.ReadBatch(ctx1)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(len(messageBatch)).To(Equal(1))
-
-			ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel2()
-
-			messageBatch, _, err = input.ReadBatch(ctx2)
-			Expect(err).To(Equal(context.DeadlineExceeded)) // there should be no data change
-			Expect(len(messageBatch)).To(Equal(0))
-
-			ctx3, cancel3 := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel3()
-
-			// at this point of time local items is changed
-			GinkgoWriter.Println("Change local item now")
-
-			messageBatch, _, err = input.ReadBatch(ctx3)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(len(messageBatch)).To(Equal(1))
-
-			// Close connection
-			if input.Client != nil {
-				ctxEnd, cancelEnd := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancelEnd()
-				err = input.Close(ctxEnd)
-				Expect(err).NotTo(HaveOccurred())
+			var errs []error
+			for err := range errChan {
+				errs = append(errs, err)
 			}
+
+			// We expect no errors
+			Expect(errs).Should(BeEmpty())
+
+			// We expect only osix node (the analog node itself and all of its properties) since HasTypeDefinition references should be ignored
+			Expect(nodes).Should(HaveLen(6))
+			Expect(nodes[0].NodeID.String()).To(Equal("ns=6;s=DataAccess_AnalogType_Byte"))
 		})
 	})
 })

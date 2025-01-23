@@ -1,0 +1,45 @@
+input:
+  opcua:
+    endpoint: "opc.tcp://localhost:50000"
+    nodeIDs: ["ns=6;s=DataAccess_AnalogType"]
+    subscribeEnabled: true
+    useHeartbeat: true
+    browseHierarchicalReferences: true
+
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |
+          msg.meta.location_path = "enterprise.plant1";
+          msg.meta.data_contract = "_historian"; 
+          msg.meta.virtual_path = msg.meta.opcua_tag_path; // opcua_tag_path is coming from the benthos-umh opcua plugin, it's the dot notation path to the node consisting of the BrowseNames of the node's parent nodes
+          msg.meta.tag_name = msg.meta.opcua_tag_name; // opcua_tag_name is coming from the benthos-umh opcua plugin, it's the sanitized browse name of the node
+
+          return msg;
+
+        conditions:
+        # lets move the folder DataAccess_AnalogType into the folder axis.x
+          - if: msg.meta.opcua_tag_path && msg.meta.opcua_tag_path.includes("DataAccess_AnalogType")
+            then: |
+              // This tag is part of the cnc5 workcell in the machining_line
+              msg.meta.location_path += ".area2.machining_line.cnc5.plc123";
+
+              msg.meta.virtual_path = "axis.x." + msg.meta.opcua_tag_path; 
+
+              return msg;
+          
+        advancedProcessing: |
+          return msg;
+    - nodered_js:
+        code: |
+          console.log(JSON.stringify(msg.meta, null, 2));
+          console.log(JSON.stringify(msg.payload, null, 2));
+          msg.meta.mqtt_topic = msg.meta.topic.replace(/\./g, "/")
+          return msg;
+
+output:
+  #stdout: {}
+  mqtt:
+    urls: ["tcp://10.13.37.202:1883"]
+    client_id: 'benthos-umh-test'
+    topic: '${! meta("mqtt_topic") }'

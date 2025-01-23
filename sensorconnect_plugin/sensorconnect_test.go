@@ -3,12 +3,13 @@ package sensorconnect_plugin_test
 import (
 	"context"
 	"fmt"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
 	"os"
 	"sync/atomic"
 	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 
@@ -16,7 +17,7 @@ import (
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 )
 
-var _ = Describe("Sensorconnnect", func() {
+var _ = Describe("Sensorconnect", func() {
 
 	var endpoint string
 
