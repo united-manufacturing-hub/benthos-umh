@@ -31,7 +31,7 @@ concurrency:
 jobs:
   go-test-tag-processor:
     runs-on:
-      group: arc-runners
+      group: arc-runners-tests
     permissions:
       packages: write
       contents: read
