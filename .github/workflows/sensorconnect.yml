@@ -31,7 +31,7 @@ concurrency:
 jobs:
   go-test-sensorconnect:
     runs-on:
-      group: arc-runners-test
+      group: arc-runners-tests
     permissions:
       packages: write
       contents: read
