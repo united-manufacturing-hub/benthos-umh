@@ -1028,7 +1028,7 @@ func (m *ModbusInput) gatherRequestsInput(requests []request) (service.MessageBa
 			//request.fields[i].value = field.converter(bytes[offset : offset+length])
 			m.Log.Debugf("  field %s with offset %d with len %d: %v --> %v", field.name, offset, length, bytes[offset:offset+length], request.fields[i].value)
 
-			message := m.createMessageFromValue(field, bytes[offset:offset+length], "holding")
+			message := m.createMessageFromValue(field, bytes[offset:offset+length], "input")
 			if message != nil {
 				msgs = append(msgs, message)
 			}
