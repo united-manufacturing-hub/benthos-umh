@@ -3,9 +3,11 @@ package modbus_plugin_test
 import (
 	"context"
 	"encoding/json"
-	"github.com/grid-x/modbus"
 	"os"
+	"strconv"
 	"time"
+
+	"github.com/grid-x/modbus"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -175,4 +177,133 @@ var _ = Describe("Test Against Docker Modbus Simulator", func() {
 		err = input.Close(ctx)
 		Expect(err).NotTo(HaveOccurred())
 	})
+})
+
+var _ = Describe("Test Against Wago-PLC", func() {
+
+	var wagoModbusEndpoint string
+
+	BeforeEach(func() {
+		wagoModbusEndpoint = os.Getenv("TEST_WAGO_MODBUS_ENDPOINT")
+
+		// Check if environment variables are set
+		if wagoModbusEndpoint == "" {
+			Skip("Skipping test: environment variables not set")
+			return
+		}
+
+	})
+
+	type ModbusRegister struct {
+		Addresses     []ModbusDataItemWithAddress
+		ExpectedValue json.Number
+	}
+
+	DescribeTable("Read discrete/coil/input/holding", func(tableEntry ModbusRegister) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		input := &ModbusInput{
+			SlaveIDs:    []byte{1},
+			BusyRetries: 1,
+			Addresses:   tableEntry.Addresses,
+			Handler:     modbus.NewTCPClientHandler(wagoModbusEndpoint),
+		}
+		input.Client = modbus.NewClient(input.Handler)
+
+		var err error
+		input.RequestSet, err = input.CreateBatchesFromAddresses(input.Addresses)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = input.Connect(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		messageBatch, _, err := input.ReadBatch(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		// increase the batch-length by 1 because of the heartbeat
+		Expect(messageBatch).To(HaveLen(len(tableEntry.Addresses) + 1))
+
+		for _, message := range messageBatch {
+
+			tagName, exists := message.MetaGet("modbus_tag_name")
+			Expect(exists).To(BeTrue())
+
+			// skip the heartbeat if processed
+			if tagName == "heartbeat" {
+				GinkgoWriter.Printf("Skipping heartbeat message: %+v\n", message)
+				continue
+			}
+			Expect(tagName).To(Equal(tableEntry.Addresses[0].Name))
+
+			register, exists := message.MetaGet("modbus_tag_register")
+			Expect(exists).To(BeTrue())
+			Expect(register).To(Equal(tableEntry.Addresses[0].Register))
+
+			address, exists := message.MetaGet("modbus_tag_address")
+			Expect(exists).To(BeTrue())
+			Expect(address).To(Equal(strconv.FormatUint(uint64(tableEntry.Addresses[0].Address), 10)))
+
+			messageStruct, err := message.AsStructuredMut()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(messageStruct).To(BeAssignableToTypeOf(tableEntry.ExpectedValue))
+			Expect(messageStruct).To(Equal(tableEntry.ExpectedValue))
+
+			GinkgoWriter.Printf("Received message: %+v\n", messageStruct)
+		}
+
+		// Close connection
+		err = input.Close(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+	},
+		Entry("discrete (input)",
+			ModbusRegister{
+				Addresses: []ModbusDataItemWithAddress{
+					{
+						Name:     "modbusBoolIn",
+						Register: "discrete",
+						Address:  0,
+						Type:     "BOOL",
+					},
+				},
+				ExpectedValue: "1",
+			}),
+		Entry("coil (output)",
+			ModbusRegister{
+				Addresses: []ModbusDataItemWithAddress{
+					{
+						Name:     "modbusBoolOut",
+						Register: "coil",
+						Address:  1,
+						Type:     "BOOL",
+					},
+				},
+				ExpectedValue: "1",
+			}),
+		Entry("input (input)",
+			ModbusRegister{
+				Addresses: []ModbusDataItemWithAddress{
+					{
+						Name:     "modbusIntIn",
+						Register: "input",
+						Address:  1,
+						Type:     "INT16",
+					},
+				},
+				ExpectedValue: "1234",
+			}),
+		Entry("holding (output)",
+			ModbusRegister{
+				Addresses: []ModbusDataItemWithAddress{
+					{
+						Name:     "modbusIntOut",
+						Register: "holding",
+						Address:  2,
+						Type:     "INT16",
+					},
+				},
+				ExpectedValue: "1234",
+			}),
+	)
 })
