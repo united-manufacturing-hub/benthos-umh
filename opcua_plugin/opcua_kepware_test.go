@@ -188,7 +188,7 @@ var _ = Describe("Test underlying OPC-clients", func() {
 		}
 	})
 
-	DescribeTable("Test if Siemens-Namespace is available", func(namespace string, contains bool) {
+	DescribeTable("Test if PLC-Namespaces are available", func(namespace string, nodeID *ua.NodeID, contains bool) {
 		input = &OPCUAInput{
 			Endpoint:                   endpoint,
 			Username:                   username,
@@ -203,7 +203,7 @@ var _ = Describe("Test underlying OPC-clients", func() {
 		req := &ua.ReadRequest{
 			NodesToRead: []*ua.ReadValueID{
 				{
-					NodeID:      ua.NewStringNodeID(2, "SiemensPLC_main.main.Server.NamespaceArray"),
+					NodeID:      nodeID,
 					AttributeID: ua.AttributeIDValue,
 				},
 			},
@@ -221,8 +221,30 @@ var _ = Describe("Test underlying OPC-clients", func() {
 		}
 		Expect(namespaces).To(ContainElement(namespace))
 	},
-		Entry("should contain siemens-namespace", "http://Server _interface_1", true),
-		Entry("should fail due to incorrect namespace", "totally wrong namespace", false),
+		Entry(
+			"should contain siemens-namespace",
+			"http://Server _interface_1",
+			ua.NewStringNodeID(2, "SiemensPLC_main.main.Server.NamespaceArray"),
+			true,
+		),
+		Entry(
+			"should fail due to incorrect namespace",
+			"totally wrong namespace",
+			ua.NewStringNodeID(2, "SiemensPLC_main.main.Server.NamespaceArray"),
+			false,
+		),
+		Entry(
+			"should contain wago-namespace",
+			"urn:wago-com:codesys-provider",
+			ua.NewStringNodeID(2, "Wago.play.Server.NamespaceArray"),
+			true,
+		),
+		Entry(
+			"should fail due to incorrect namespace",
+			"totally wrong namespace",
+			ua.NewStringNodeID(2, "Wago.play.Server.NamespaceArray"),
+			false,
+		),
 	)
 
 	DescribeTable("check for correct values", func(opcInput *OPCUAInput, expectedValue interface{}, dynamic bool) {
