@@ -41,7 +41,7 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 
 	var wg TrackedWaitGroup
 	wg.Add(1)
-	browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", 0, g.Log, rootNode.NodeId.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, opcuaBrowserChan)
+	browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", 0, g.Log, rootNode.NodeId.String(), nodeChan, errChan, &wg, opcuaBrowserChan)
 	go logBrowseStatus(ctx, nodeChan, msgChan, &wg)
 	go logErrors(ctx, errChan, g.Log)
 	go collectNodes(ctx, opcuaBrowserChan, nodeIDMap, &nodes)
