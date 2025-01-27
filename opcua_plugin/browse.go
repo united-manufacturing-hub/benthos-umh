@@ -280,14 +280,6 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	logger.Debugf("%d: def.Path:%s def.NodeClass:%s\n", level, def.Path, def.NodeClass)
 	def.ParentNodeID = parentNodeId
 
-	_ = func() bool {
-		refs, err := n.ReferencedNodes(ctx, id.HasComponent, ua.BrowseDirectionForward, ua.NodeClassAll, true)
-		if err != nil || len(refs) == 0 {
-			return false
-		}
-		return true
-	}
-
 	browseChildrenV2 := func(refType uint32) error {
 		children, err := n.Children(ctx, refType, ua.NodeClassVariable|ua.NodeClassObject)
 		if err != nil {
@@ -297,20 +289,6 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		for _, child := range children {
 			wg.Add(1)
 			go browse(ctx, child, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, wg, opcuaBrowserChan)
-		}
-		return nil
-	}
-
-	_ = func(refType uint32) error {
-		refs, err := n.ReferencedNodes(ctx, refType, ua.BrowseDirectionForward, ua.NodeClassAll, true)
-		if err != nil {
-			sendError(ctx, errors.Errorf("References: %d: %s", refType, err), errChan, logger)
-			return err
-		}
-		logger.Debugf("found %d child refs\n", len(refs))
-		for _, rn := range refs {
-			wg.Add(1)
-			go browse(ctx, rn, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, wg, opcuaBrowserChan)
 		}
 		return nil
 	}
