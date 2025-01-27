@@ -219,7 +219,9 @@ input:
     useHeartbeat: true
 ```
 
-##### Browse Hierarchical References
+##### Browse Hierarchical References (Option until version 0.5.2)
+
+**NOTE**: This property is removed in version 0.5.3 and made as a standard way to browse OPCUA nodes. From version 0.5.3 onwards, opcua_plugin will browse all nodes with Hierarchical References.
 
 The plugin offers an option to browse OPCUA nodes by following Hierarchical References. By default, this feature is disabled (`false`), which means the plugin will only browse a limited subset of reference types, including:
 - `HasComponent`
@@ -1607,7 +1609,7 @@ Output:
       ],
       "notes": "Replace worn nozzle to prevent defects."
     }
-    
+
   },
   "timestamp_ms": 1733903611000
 }
