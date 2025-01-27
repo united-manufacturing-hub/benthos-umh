@@ -330,10 +330,6 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	// HasEventSource, HasChild, HasComponent, Organizes, FolderType, HasNotifier and all their sub-hierarchical references
 	// Setting browseHierarchicalReferences to true will be the new way to browse for tags and folders properly without any duplicate browsing
 
-	// Hierarchical references has the following derived types:
-	// 1. HasChild
-	// 2. HasComponent
-	// 3. Organizes
 	switch def.NodeClass {
 
 	// If its a variable, we add it to the node list and browse all its children
@@ -360,65 +356,6 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 			return
 		}
 		return
-	}
-}
-
-// browseReferencesDeprecated is the old way to browse for tags and folders without any duplicate browsing
-// It browses the following references: HasComponent, HasProperty, HasEventSource, HasOrder, HasNotifier, Organizes, FolderType
-func browseReferencesDeprecated(ctx context.Context, def NodeDef, nodeChan chan<- NodeDef, errChan chan<- error, path string, logger Logger, hasNodeReferencedComponents func() bool, browseChildren func(refType uint32) error) {
-
-	// If a node has a Variable class, it probably means that it is a tag
-	// Normally, there is no need to browse further. However, structs will be a variable on the top level,
-	// but it then will have HasComponent references to its children
-	if def.NodeClass == ua.NodeClassVariable {
-
-		if hasNodeReferencedComponents() {
-			if err := browseChildren(id.HasComponent); err != nil {
-				sendError(ctx, err, errChan, logger)
-				return
-			}
-			return
-		}
-
-		def.Path = join(path, def.BrowseName)
-		select {
-		case nodeChan <- def:
-		case <-ctx.Done():
-			logger.Warnf("Failed to send node due to context cancellation")
-		default:
-			logger.Warnf("Channel is blocked, skipping node send")
-		}
-		return
-	}
-
-	// If a node has an Object class, it probably means that it is a folder
-	// Therefore, browse its children
-	if def.NodeClass == ua.NodeClassObject {
-		// To determine if an Object is a folder, we need to check different references
-		// Add here all references that should be checked
-
-		if err := browseChildren(id.HasComponent); err != nil {
-			sendError(ctx, err, errChan, logger)
-			return
-		}
-		if err := browseChildren(id.Organizes); err != nil {
-			sendError(ctx, err, errChan, logger)
-			return
-		}
-		if err := browseChildren(id.FolderType); err != nil {
-			sendError(ctx, err, errChan, logger)
-			return
-		}
-		if err := browseChildren(id.HasNotifier); err != nil {
-			sendError(ctx, err, errChan, logger)
-			return
-		}
-		// For hasProperty it makes sense to show it very close to the tag itself, e.g., use the tagName as tagGroup and then the properties as subparts of it
-		/*
-			if err := browseChildren(id.HasProperty); err != nil {
-				return nil, err
-			}
-		*/
 	}
 }
 
