@@ -803,6 +803,8 @@ Node-RED JavaScript Processor
 
 The Node-RED JavaScript processor allows you to write JavaScript code to process messages in a style similar to Node-RED function nodes. This makes it easy to port existing Node-RED functions to Benthos or write new processing logic using familiar JavaScript syntax.
 
+Use the `nodered_js` processor instead of the `tag_processor` when you need full control over the payload and require custom processing logic that goes beyond standard tag or time series data handling. This processor allows you to write custom JavaScript code to manipulate both the payload and metadata, providing the flexibility to implement complex transformations, conditional logic, or integrate with other systems.
+
 #### Configuration
 
 ```yaml
@@ -1104,6 +1106,9 @@ Tag Processor
 ### Tag Processor
 
 The Tag Processor is designed to prepare incoming data for the UMH data model. It processes messages through three configurable stages: defaults, conditional transformations, and advanced processing, all using a Node-RED style JavaScript environment.
+
+Use the `tag_processor` compared to the `nodered_js` when you are processing tags or time series data and converting them to the UMH data model within the `_historian` data contract. This processor is optimized for handling structured time series data, automatically formats messages, and generates appropriate metadata.
+
 
 #### Message Formatting Behavior
 
@@ -1533,6 +1538,101 @@ Output 2 (custom):
 ```
 Topic: `umh.v1.enterprise.production._custom.temperature_doubled`
 
+6. **Processing Full MQTT Message Payload**
+```yaml
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.area._workorder";
+    msg.meta.data_contract = "_workorder";
+    msg.meta.virtual_path = "new";
+    msg.meta.tag_name = "maintenance";
+    return msg;
+```
+
+Input:
+```json
+{
+  "maintenanceSchedule": {
+    "eventType": "ScheduledMaintenance",
+    "eventId": "SM-20240717-025",
+    "timestamp": "2024-07-17T13:00:00Z",
+    "equipmentId": "InjectionMoldingMachine5",
+    "equipmentName": "Engel Victory 120",
+    "scheduledDate": "2024-07-22",
+    "maintenanceType": "Preventive",
+    "description": "Inspection and cleaning of injection unit and mold.",
+    "maintenanceDuration": "6 hours",
+    "assignedTo": {
+      "employeeId": "EMP-5005",
+      "name": "Hans Becker"
+    },
+    "status": "Scheduled",
+    "partsRequired": [
+      {
+        "partId": "NOZZLE-015",
+        "description": "Injection Nozzle",
+        "quantity": 1
+      }
+    ],
+    "notes": "Replace worn nozzle to prevent defects."
+  }
+}
+```
+
+Output:
+```json
+{
+  "maintenance": {
+    "maintenanceSchedule": {
+      "eventType": "ScheduledMaintenance",
+      "eventId": "SM-20240717-025",
+      "timestamp": "2024-07-17T13:00:00Z",
+      "equipmentId": "InjectionMoldingMachine5",
+      "equipmentName": "Engel Victory 120",
+      "scheduledDate": "2024-07-22",
+      "maintenanceType": "Preventive",
+      "description": "Inspection and cleaning of injection unit and mold.",
+      "maintenanceDuration": "6 hours",
+      "assignedTo": {
+        "employeeId": "EMP-5005",
+        "name": "Hans Becker"
+      },
+      "status": "Scheduled",
+      "partsRequired": [
+        {
+          "partId": "NOZZLE-015",
+          "description": "Injection Nozzle",
+          "quantity": 1
+        }
+      ],
+      "notes": "Replace worn nozzle to prevent defects."
+    }
+    
+  },
+  "timestamp_ms": 1733903611000
+}
+```
+Topic: `umh.v1.enterprise.area._workorder.maintenance`
+
+**Note:** In the `tag_processor`, the resulting payload will always include `timestamp_ms` and one additional key corresponding to the `tag_name`. If you need to fully control the resulting payload structure, consider using the `nodered_js` processor instead. You can set the topic and payload manually, as shown below:
+
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // set kafka topic manually
+          msg.meta.topic = "umh.v1.enterprise.site.area._workorder.new"
+
+          // only take two fields from the payload
+          msg.payload = {
+            "maintenanceSchedule": {
+              "eventType": msg.payload.maintenanceSchedule.eventType,
+              "description": msg.payload.maintenanceSchedule.description
+            }
+          }
+          return msg;
+```
 </details>
 
 ## Testing
