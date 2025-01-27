@@ -15,12 +15,14 @@ import (
 )
 
 var _ = Describe("Test against KepServer EX6", func() {
-	var endpoint string
-	var username string
-	var password string
-	var input *OPCUAInput
-	var ctx context.Context
-	var cancel context.CancelFunc
+	var (
+		endpoint string
+		username string
+		password string
+		input    *OPCUAInput
+		ctx      context.Context
+		cancel   context.CancelFunc
+	)
 
 	BeforeEach(func() {
 		endpoint = os.Getenv("TEST_KEPWARE_ENDPOINT")
@@ -46,7 +48,13 @@ var _ = Describe("Test against KepServer EX6", func() {
 		}
 	})
 
-	DescribeTable("Connect", func(opcInput *OPCUAInput, errorExpected bool) {
+	DescribeTable("Connect and Read", func(opcInput *OPCUAInput, errorExpected bool, expectedValue any, dynamic bool) {
+		var (
+			messageBatch     service.MessageBatch
+			messageBatch2    service.MessageBatch
+			storedMessage    any
+			assignableNumber json.Number = "10.0"
+		)
 
 		input = opcInput
 		input.Endpoint = endpoint
@@ -58,57 +66,47 @@ var _ = Describe("Test against KepServer EX6", func() {
 		}
 		Expect(err).NotTo(HaveOccurred())
 
-		var messageBatch service.MessageBatch
-
-		switch len(input.NodeIDs) {
-		case 1:
-			Eventually(func() (int, error) {
-				messageBatch, _, err = input.ReadBatch(ctx)
-				return len(messageBatch), err
-			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(len(input.NodeIDs)))
-
-			for _, message := range messageBatch {
-				message, err := message.AsStructuredMut()
-				Expect(err).NotTo(HaveOccurred())
-				var assignableNumber json.Number = "10.0"
-
-				Expect(message).To(BeAssignableToTypeOf(assignableNumber))
-			}
+		// early return since we only want to check for connectivity in some test-cases
+		if input.NodeIDs == nil {
 			return
-		case 2:
-			Eventually(func() (int, error) {
-				messageBatch, _, err = input.ReadBatch(ctx)
-				return len(messageBatch), err
-			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(len(input.NodeIDs)))
+		}
 
-			var storedMessage any
+		// read the first message batch
+		Eventually(func() (int, error) {
+			messageBatch, _, err = input.ReadBatch(ctx)
+			return len(messageBatch), err
+		}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(len(input.NodeIDs)))
 
-			for _, message := range messageBatch {
-				message, err := message.AsStructuredMut()
-				Expect(err).NotTo(HaveOccurred())
-				var assignableNumber json.Number = "10.0"
+		for _, message := range messageBatch {
+			message, err := message.AsStructuredMut()
+			Expect(err).NotTo(HaveOccurred())
 
-				Expect(message).To(BeAssignableToTypeOf(assignableNumber))
-				storedMessage = message
+			// if we expect a specific Value here, check if it equals
+			if expectedValue != nil {
+				Expect(message).To(BeAssignableToTypeOf(expectedValue))
+				Expect(message).To(Equal(expectedValue))
+				return
 			}
+			// if not we just check if the type matches since its a dynamic value
+			Expect(message).To(BeAssignableToTypeOf(assignableNumber))
 
-			var messageBatch2 service.MessageBatch
+			storedMessage = message
+		}
+
+		// read a second message batch if we want to check on data changes
+		if dynamic {
 			Eventually(func() (int, error) {
 				messageBatch2, _, err = input.ReadBatch(ctx)
 				return len(messageBatch2), err
-			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(len(input.NodeIDs) - 1))
+			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(len(input.NodeIDs)))
 
 			for _, message := range messageBatch2 {
 				message, err := message.AsStructuredMut()
 				Expect(err).NotTo(HaveOccurred())
-				var assignableNumber json.Number = "10.0"
 
 				Expect(message).To(BeAssignableToTypeOf(assignableNumber))
 				Expect(message).NotTo(Equal(storedMessage))
 			}
-			return
-		default:
-			return
 		}
 
 	},
@@ -119,7 +117,7 @@ var _ = Describe("Test against KepServer EX6", func() {
 			SubscribeEnabled:           false,
 			AutoReconnect:              true,
 			ReconnectIntervalInSeconds: 5,
-		}, false),
+		}, false, nil, false),
 		Entry("should connect in no security mode", &OPCUAInput{
 			Username:         "",
 			Password:         "",
@@ -127,42 +125,44 @@ var _ = Describe("Test against KepServer EX6", func() {
 			SubscribeEnabled: false,
 			SecurityMode:     "None",
 			SecurityPolicy:   "None",
-		}, false),
+		}, false, nil, false),
 		Entry("should connect with correct credentials", &OPCUAInput{
 			Username: username,
 			Password: password,
 			NodeIDs:  nil,
-		}, false),
+		}, false, nil, false),
 		Entry("should fail to connect using incorrect credentials", &OPCUAInput{
 			Username: "123",
 			Password: "123",
 			NodeIDs:  nil,
-		}, true),
-		Entry("should return a batch of messages", &OPCUAInput{
+		}, true, nil, false),
+		Entry("should check if message-value is 123", &OPCUAInput{
+			Username:                     "",
+			Password:                     "",
+			NodeIDs:                      ParseNodeIDs([]string{"ns=2;s=Tests.TestDevice.testConstData"}),
+			BrowseHierarchicalReferences: true,
+			AutoReconnect:                true,
+			ReconnectIntervalInSeconds:   5,
+		}, false, json.Number("123"), false),
+		Entry("should return data changes on subscribe", &OPCUAInput{
 			Username:                     "",
 			Password:                     "",
 			NodeIDs:                      ParseNodeIDs([]string{"ns=2;s=Tests.TestDevice.testChangingData"}),
 			BrowseHierarchicalReferences: true,
-			AutoReconnect:                true,
-			ReconnectIntervalInSeconds:   5,
-		}, false),
-		Entry("should return data changes on subscribe", &OPCUAInput{
-			Username:                     "",
-			Password:                     "",
-			NodeIDs:                      ParseNodeIDs([]string{"ns=2;s=Tests.TestDevice.testChangingData", "ns=2;s=Tests.TestDevice.testConstData"}),
-			BrowseHierarchicalReferences: true,
 			SubscribeEnabled:             true,
-		}, false),
+		}, false, nil, true),
 	)
 })
 
 var _ = Describe("Test underlying OPC-clients", func() {
-	var endpoint string
-	var username string
-	var password string
-	var input *OPCUAInput
-	var ctx context.Context
-	var cancel context.CancelFunc
+	var (
+		endpoint string
+		username string
+		password string
+		input    *OPCUAInput
+		ctx      context.Context
+		cancel   context.CancelFunc
+	)
 
 	BeforeEach(func() {
 		endpoint = os.Getenv("TEST_KEPWARE_ENDPOINT")
@@ -247,7 +247,13 @@ var _ = Describe("Test underlying OPC-clients", func() {
 		),
 	)
 
-	DescribeTable("check for correct values", func(opcInput *OPCUAInput, expectedValue interface{}, dynamic bool) {
+	DescribeTable("check for correct values", func(opcInput *OPCUAInput, expectedValue any, dynamic bool) {
+		var (
+			messageBatch     service.MessageBatch
+			messageBatch2    service.MessageBatch
+			storedMessage    any
+			assignableNumber json.Number = "10.0"
+		)
 
 		input = opcInput
 		input.Endpoint = endpoint
@@ -255,56 +261,44 @@ var _ = Describe("Test underlying OPC-clients", func() {
 		err := input.Connect(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
-		var messageBatch service.MessageBatch
-
-		if !dynamic {
-			Eventually(func() (int, error) {
-				messageBatch, _, err = input.ReadBatch(ctx)
-				return len(messageBatch), err
-			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(len(input.NodeIDs)))
-
-			for _, message := range messageBatch {
-				message, err := message.AsStructuredMut()
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(message).To(BeAssignableToTypeOf(expectedValue))
-				Expect(message).To(Equal(expectedValue))
-			}
-			return
-		}
+		// read the first message batch
 		Eventually(func() (int, error) {
 			messageBatch, _, err = input.ReadBatch(ctx)
 			return len(messageBatch), err
 		}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(len(input.NodeIDs)))
 
-		var storedMessage any
-
 		for _, message := range messageBatch {
 			message, err := message.AsStructuredMut()
 			Expect(err).NotTo(HaveOccurred())
-			var assignableNumber json.Number = "10.0"
 
+			// if we expect a specific Value here, check if it equals
+			if expectedValue != nil {
+				Expect(message).To(BeAssignableToTypeOf(expectedValue))
+				Expect(message).To(Equal(expectedValue))
+				return
+			}
+			// if not we just check if the type matches since its a dynamic value
 			Expect(message).To(BeAssignableToTypeOf(assignableNumber))
 			storedMessage = message
 		}
 
-		var messageBatch2 service.MessageBatch
-		Eventually(func() (int, error) {
-			messageBatch2, _, err = input.ReadBatch(ctx)
-			return len(messageBatch2), err
-		}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(len(input.NodeIDs)))
+		// read a second message batch if we want to check on data changes
+		if dynamic {
+			Eventually(func() (int, error) {
+				messageBatch2, _, err = input.ReadBatch(ctx)
+				return len(messageBatch2), err
+			}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(len(input.NodeIDs)))
 
-		for _, message := range messageBatch2 {
-			message, err := message.AsStructuredMut()
-			Expect(err).NotTo(HaveOccurred())
-			var assignableNumber json.Number = "10.0"
+			for _, message := range messageBatch2 {
+				message, err := message.AsStructuredMut()
+				Expect(err).NotTo(HaveOccurred())
 
-			Expect(message).To(BeAssignableToTypeOf(assignableNumber))
-			Expect(message).NotTo(Equal(storedMessage))
+				Expect(message).To(BeAssignableToTypeOf(assignableNumber))
+				Expect(message).NotTo(Equal(storedMessage))
+			}
 		}
-
 	},
-		Entry("should return true", &OPCUAInput{
+		Entry("should check if message-value is true", &OPCUAInput{
 			Username:                     "",
 			Password:                     "",
 			NodeIDs:                      ParseNodeIDs([]string{"ns=2;s=SiemensPLC_main.main.ServerInterfaces.Server _interface_1.test"}),
