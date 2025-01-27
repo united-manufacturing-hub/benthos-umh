@@ -1429,7 +1429,7 @@ opcua:
 			// Browse the node
 			wg.Add(1)
 			wrapperNodeID := NewOpcuaNodeWrapper(input.Client.Node(parsedNodeIDs[0]))
-			go Browse(ctx, wrapperNodeID, "", 0, input.Log, parsedNodeIDs[0].String(), nodeChan, errChan, &wg, true, opcuaBrowserChan)
+			go Browse(ctx, wrapperNodeID, "", 0, input.Log, parsedNodeIDs[0].String(), nodeChan, errChan, &wg, opcuaBrowserChan)
 
 			wg.Wait()
 			close(nodeChan)
