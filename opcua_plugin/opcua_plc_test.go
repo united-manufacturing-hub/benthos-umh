@@ -316,13 +316,12 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input = &OPCUAInput{
-				Endpoint:                     endpoint,
-				Username:                     "",
-				Password:                     "",
-				NodeIDs:                      parsedNodeIDs,
-				BrowseHierarchicalReferences: true,
-				AutoReconnect:                true,
-				ReconnectIntervalInSeconds:   5,
+				Endpoint:                   endpoint,
+				Username:                   "",
+				Password:                   "",
+				NodeIDs:                    parsedNodeIDs,
+				AutoReconnect:              true,
+				ReconnectIntervalInSeconds: 5,
 			}
 			// Attempt to connect
 			err = input.Connect(ctx)
@@ -355,12 +354,11 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input = &OPCUAInput{
-				Endpoint:                     endpoint,
-				Username:                     "",
-				Password:                     "",
-				NodeIDs:                      parsedNodeIDs,
-				SubscribeEnabled:             true,
-				BrowseHierarchicalReferences: true,
+				Endpoint:         endpoint,
+				Username:         "",
+				Password:         "",
+				NodeIDs:          parsedNodeIDs,
+				SubscribeEnabled: true,
 			}
 			ctx := context.Background()
 			err = input.Connect(ctx)
