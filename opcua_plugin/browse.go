@@ -90,7 +90,6 @@ func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 // - `errChan` (`chan error`): Channel to send encountered errors for centralized handling.
 // - `pathIDMapChan` (`chan map[string]string`): Channel to send the mapping of node names to NodeIDs.
 // - `wg` (`*sync.WaitGroup`): WaitGroup to synchronize the completion of goroutines.
-// - `browseHierarchicalReferences` (`bool`): Indicates whether to browse hierarchical references.
 // **Returns:**
 // - `void`: Errors are sent through `errChan`, and discovered nodes are sent through `nodeChan`.
 func browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan NodeDef) {
@@ -304,9 +303,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	}
 	// In OPC Unified Architecture (UA), hierarchical references are a type of reference that establishes a containment relationship between nodes in the address space. They are used to model a hierarchical structure, such as a system composed of components, where each component may contain sub-components.
 	// Refer link: https://qiyuqi.gitbooks.io/opc-ua/content/Part3/Chapter7.html
-	// With browseHierarchicalReferences set to true, we can browse the hierarchical references of a node which will check for references of type
 	// HasEventSource, HasChild, HasComponent, Organizes, FolderType, HasNotifier and all their sub-hierarchical references
-	// Setting browseHierarchicalReferences to true will be the new way to browse for tags and folders properly without any duplicate browsing
 
 	switch def.NodeClass {
 
