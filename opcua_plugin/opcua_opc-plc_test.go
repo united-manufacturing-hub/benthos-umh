@@ -1425,11 +1425,12 @@ opcua:
 			errChan := make(chan error, 100)
 			opcuaBrowserChan := make(chan NodeDef, 100)
 			var wg TrackedWaitGroup
+			var visited sync.Map
 
 			// Browse the node
 			wg.Add(1)
 			wrapperNodeID := NewOpcuaNodeWrapper(input.Client.Node(parsedNodeIDs[0]))
-			go Browse(ctx, wrapperNodeID, "", 0, input.Log, parsedNodeIDs[0].String(), nodeChan, errChan, &wg, opcuaBrowserChan)
+			go Browse(ctx, wrapperNodeID, "", 0, input.Log, parsedNodeIDs[0].String(), nodeChan, errChan, &wg, opcuaBrowserChan, &visited)
 
 			wg.Wait()
 			close(nodeChan)
