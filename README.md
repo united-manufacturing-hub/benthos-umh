@@ -125,6 +125,7 @@ input:
     insecure: false | true # DEPRECATED, see below
     securityMode: None | Sign | SignAndEncrypt # optional (default: unset)
     securityPolicy: None | Basic256Sha256  # optional (default: unset)
+    fingerprint: 'sha1-fingerprint-of-cert' # optional (default: unset)
     subscribeEnabled: false | true # optional (default: false)
     useHeartbeat: false | true # optional (default: false)
     pollRate: 1000 # optional (default: 1000) The rate in milliseconds at which to poll the OPC UA server when not using subscriptions
@@ -185,6 +186,19 @@ input:
     nodeIDs: ['ns=2;s=IoTSensors']
     securityMode: SignAndEncrypt
     securityPolicy: Basic256Sha256
+```
+
+##### Fingerprint
+
+You can provide the fingerprint of your OPC-UA-Servers certificate, which should be a sha1-hash.
+This option ensures the 'client trusts server'-functionality.
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDs: ['ns=2;s=IoTSensors']
+    fingerprint: 'sha1-fingerprint-of-cert'
 ```
 
 ##### Insecure Mode
