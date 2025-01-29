@@ -97,6 +97,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 
 	// Check if the current node is already visited else proceed
 	if _, exists := visited.LoadOrStore(n.ID(), struct{}{}); exists {
+		logger.Debugf("node %s is visited already, hence doing an early exit from the browse routine", n.ID().String())
 		return
 	}
 
