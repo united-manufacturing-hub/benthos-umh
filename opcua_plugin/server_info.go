@@ -37,9 +37,9 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 	var wg TrackedWaitGroup
 
 	wg.Add(3)
-	go browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(manufacturerNameNodeID)), "", 0, g.Log, manufacturerNameNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan)
-	go browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(productNameNodeID)), "", 0, g.Log, productNameNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan)
-	go browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(softwareVersionNodeID)), "", 0, g.Log, softwareVersionNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan)
+	go browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(manufacturerNameNodeID)), "", 0, g.Log, manufacturerNameNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
+	go browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(productNameNodeID)), "", 0, g.Log, productNameNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
+	go browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(softwareVersionNodeID)), "", 0, g.Log, softwareVersionNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
 	wg.Wait()
 
 	close(nodeChan)

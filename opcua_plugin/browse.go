@@ -62,8 +62,8 @@ type Logger interface {
 
 // Browse is a public wrapper function for the browse function
 // Avoid using this function directly, use it only for testing
-func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan NodeDef) {
-	browse(ctx, n, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan)
+func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan NodeDef, visited *sync.Map) {
+	browse(ctx, n, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
 }
 
 // browse recursively explores OPC UA nodes to build a comprehensive list of NodeDefs.
@@ -92,8 +92,14 @@ func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 // - `wg` (`*sync.WaitGroup`): WaitGroup to synchronize the completion of goroutines.
 // **Returns:**
 // - `void`: Errors are sent through `errChan`, and discovered nodes are sent through `nodeChan`.
-func browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan NodeDef) {
+func browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan NodeDef, visited *sync.Map) {
 	defer wg.Done()
+
+	// Check if the current node is already visited else proceed
+	if _, exists := visited.LoadOrStore(n.ID(), struct{}{}); exists {
+		logger.Debugf("node %s is visited already, hence doing an early exit from the browse routine", n.ID().String())
+		return
+	}
 
 	// Limits browsing depth to a maximum of 25 levels in the node hierarchy.
 	// Performance impact is minimized since most browse operations terminate earlier
@@ -287,7 +293,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		}
 		for _, child := range children {
 			wg.Add(1)
-			go browse(ctx, child, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, wg, opcuaBrowserChan)
+			go browse(ctx, child, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, wg, opcuaBrowserChan, visited)
 		}
 		return nil
 	}
@@ -403,7 +409,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		g.Log.Debugf("Browsing nodeID: %s", nodeID.String())
 		wg.Add(1)
 		wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(nodeID))
-		go browse(timeoutCtx, wrapperNodeID, "", 0, g.Log, nodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan)
+		go browse(timeoutCtx, wrapperNodeID, "", 0, g.Log, nodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
 	}
 
 	go func() {
@@ -479,7 +485,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
 			wgHeartbeat.Add(1)
 			wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(heartbeatNodeID))
-			go browse(ctx, wrapperNodeID, "", 1, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat, opcuaBrowserChanHeartbeat)
+			go browse(ctx, wrapperNodeID, "", 1, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat, opcuaBrowserChanHeartbeat, &g.visited)
 
 			wgHeartbeat.Wait()
 			close(nodeHeartbeatChan)
