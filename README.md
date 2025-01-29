@@ -127,7 +127,6 @@ input:
     securityPolicy: None | Basic256Sha256  # optional (default: unset)
     subscribeEnabled: false | true # optional (default: false)
     useHeartbeat: false | true # optional (default: false)
-    browseHierarchicalReferences: false | true # optional (default: false)
     pollRate: 1000 # optional (default: 1000) The rate in milliseconds at which to poll the OPC UA server when not using subscriptions
     autoReconnect: false | true # optional (default: false)
     reconnectIntervalInSeconds: 5 # optional (default: 5) The rate in seconds at which to reconnect to the OPC UA server when the connection is lost
@@ -221,7 +220,7 @@ input:
 
 ##### Browse Hierarchical References (Option until version 0.5.2)
 
-**NOTE**: This property is removed in version 0.5.3 and made as a standard way to browse OPCUA nodes. From version 0.5.3 onwards, opcua_plugin will browse all nodes with Hierarchical References.
+**NOTE**: This property is removed in version 0.6.0 and made as a standard way to browse OPCUA nodes. From version 0.6.0 onwards, opcua_plugin will browse all nodes with Hierarchical References.
 
 The plugin offers an option to browse OPCUA nodes by following Hierarchical References. By default, this feature is disabled (`false`), which means the plugin will only browse a limited subset of reference types, including:
 - `HasComponent`
