@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/gopcua/opcua/id"
@@ -66,6 +67,7 @@ var _ = Describe("Unit Tests", func() {
 			errChan          chan error
 			wg               *TrackedWaitGroup
 			opcuaBrowserChan chan NodeDef
+			visited          sync.Map
 		)
 		BeforeEach(func() {
 			ctx, cncl = context.WithTimeout(context.Background(), 180*time.Second)
@@ -80,6 +82,7 @@ var _ = Describe("Unit Tests", func() {
 		})
 		AfterEach(func() {
 			cncl()
+			visited.Clear()
 		})
 
 		Context("When browsing nodes with a node class value nil", func() {
@@ -100,7 +103,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNodeWithNilNodeClass
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -127,7 +130,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -165,7 +168,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -205,7 +208,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -245,7 +248,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -288,7 +291,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -364,7 +367,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = abcFolder
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan)
+					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -393,7 +396,7 @@ var _ = Describe("Unit Tests", func() {
 				childNode := createMockNode(85, "child", ua.NodeClassVariable)
 				rootNode.AddReferenceNode(id.HasChild, childNode)
 
-				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan)
+				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 
 				Expect(errs).Should(BeEmpty())
 				Expect(nodes).Should(HaveLen(1))
@@ -406,7 +409,7 @@ var _ = Describe("Unit Tests", func() {
 				childNode := createMockNode(85, "child", ua.NodeClassVariable)
 				rootNode.AddReferenceNode(id.HasComponent, childNode)
 
-				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan)
+				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				Expect(errs).Should(BeEmpty())
 				Expect(nodes).Should(HaveLen(1))
 				Expect(nodes[0].NodeID.String()).To(Equal("i=85"))
@@ -418,7 +421,7 @@ var _ = Describe("Unit Tests", func() {
 				childNode := createMockNode(85, "child", ua.NodeClassVariable)
 				rootNode.AddReferenceNode(id.Organizes, childNode)
 
-				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan)
+				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				Expect(errs).Should(BeEmpty())
 				Expect(nodes).Should(HaveLen(1))
 				Expect(nodes[0].NodeID.String()).To(Equal("i=85"))
@@ -430,7 +433,7 @@ var _ = Describe("Unit Tests", func() {
 				childNode := createMockNode(85, "child", ua.NodeClassVariable)
 				rootNode.AddReferenceNode(id.FolderType, childNode)
 
-				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan)
+				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				Expect(errs).Should(BeEmpty())
 				Expect(nodes).Should(HaveLen(1))
 				Expect(nodes[0].NodeID.String()).To(Equal("i=85"))
@@ -442,7 +445,7 @@ var _ = Describe("Unit Tests", func() {
 				childNode := createMockNode(85, "child", ua.NodeClassVariable)
 				rootNode.AddReferenceNode(id.HasNotifier, childNode)
 
-				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan)
+				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				Expect(errs).Should(BeEmpty())
 				Expect(nodes).Should(HaveLen(1))
 				Expect(nodes[0].NodeID.String()).To(Equal("i=85"))
@@ -686,10 +689,10 @@ func createMockNode(id uint32, name string, nodeClass ua.NodeClass) *MockOpcuaNo
 // Ensure that the MockOpcuaNodeWraper implements the NodeBrowser interface
 var _ NodeBrowser = &MockOpcuaNodeWraper{}
 
-func startBrowsing(ctx context.Context, rootNode NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan NodeDef) ([]NodeDef, []error) {
+func startBrowsing(ctx context.Context, rootNode NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan NodeDef, visited *sync.Map) ([]NodeDef, []error) {
 	wg.Add(1)
 	go func() {
-		Browse(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan)
+		Browse(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
 	}()
 	wg.Wait()
 	close(nodeChan)

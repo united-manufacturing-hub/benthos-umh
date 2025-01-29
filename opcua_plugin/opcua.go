@@ -213,6 +213,7 @@ type OPCUAInput struct {
 	browseErrorChan              chan error
 	AutoReconnect                bool
 	ReconnectIntervalInSeconds   int
+	visited                      sync.Map
 }
 
 // cleanupBrowsing ensures the browsing goroutine is properly stopped and cleaned up
