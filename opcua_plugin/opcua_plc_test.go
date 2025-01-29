@@ -72,6 +72,7 @@ var _ = Describe("Getting Nodes for a OPC Ua server in a tree datastructure", fu
 var _ = Describe("Test Against Siemens S7", Serial, func() {
 
 	var endpoint string
+	var fingerprint string
 	var input *OPCUAInput
 	var ctx context.Context
 	var cancel context.CancelFunc
@@ -154,6 +155,42 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 		})
 	})
 
+	Describe("Connect to trusted server", func() {
+		It("should connect successfully", func() {
+			fingerprint = os.Getenv("TEST_S7_FINGERPRINT")
+
+			// we only want to skip the fingerprint test here
+			if fingerprint == "" {
+				Skip("Skipping test: environment variable not set")
+				return
+			}
+
+			input = &OPCUAInput{
+				Endpoint:    endpoint,
+				Username:    "",
+				Password:    "",
+				NodeIDs:     nil,
+				Fingerprint: fingerprint, // correct certificate fingerprint
+			}
+
+			err := input.Connect(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should fail due to fingerprint-mismatch", func() {
+			input = &OPCUAInput{
+				Endpoint:    endpoint,
+				Username:    "",
+				Password:    "",
+				NodeIDs:     nil,
+				Fingerprint: "test123", // incorrect certificate fingerprint
+			}
+
+			err := input.Connect(ctx)
+			Expect(err).To(HaveOccurred())
+		})
+	})
+
 	When("Subscribing to a struct", func() {
 		It("should return data changes", func() {
 			var err error
@@ -187,6 +224,7 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 	var endpoint string
 	var username string
 	var password string
+	var fingerprint string
 
 	var input *OPCUAInput
 	var ctx context.Context
@@ -247,6 +285,42 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			// Attempt to connect
 			err := input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Describe("Connect to trusted server", func() {
+		It("should connect successfully", func() {
+			fingerprint = os.Getenv("TEST_WAGO_FINGERPRINT")
+
+			// we only want to skip the fingerprint test here
+			if fingerprint == "" {
+				Skip("Skipping test: environment variable not set")
+				return
+			}
+
+			input = &OPCUAInput{
+				Endpoint:    endpoint,
+				Username:    "",
+				Password:    "",
+				NodeIDs:     nil,
+				Fingerprint: fingerprint, // correct certificate fingerprint
+			}
+
+			err := input.Connect(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should fail due to fingerprint-mismatch", func() {
+			input = &OPCUAInput{
+				Endpoint:    endpoint,
+				Username:    "",
+				Password:    "",
+				NodeIDs:     nil,
+				Fingerprint: "test123", // incorrect certificate fingerprint
+			}
+
+			err := input.Connect(ctx)
+			Expect(err).To(HaveOccurred())
 		})
 	})
 
