@@ -3,8 +3,10 @@ package opcua_plugin
 import (
 	"context"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -172,8 +174,80 @@ func (g *OPCUAInput) FetchAllEndpoints(ctx context.Context) ([]*ua.EndpointDescr
 		return nil, err
 	}
 
+	// filter the adjustedEndpoints by fingerprint if provided (client trust server)
+	filteredEndpoints, err := g.filterEndpointsByFingerprint(adjustedEndpoints)
+	if err != nil {
+		g.Log.Errorf("Failed to filter endpoint by fingerprint: %s", err)
+		return nil, err
+	}
+
 	// For multiple endpoints, adjust their hosts as per user specification.
-	return adjustedEndpoints, nil
+	return filteredEndpoints, nil
+}
+
+// filterEndpointsByFingerprint will filter the endpoints provided by the server if the fingerprint is set
+//
+// This function will check on each element of the fetched endpoints, if the fingerprint is correct.
+// Therefore we can check if the server is "trusted" by the client. It should check on the server certificate
+// of each endpoint if the fingerprint (sha1) matches with the fingerprint from input.yaml.
+//
+// **Why This Function is Needed:**
+//   - To ensure the client connects to the correct server
+func (g *OPCUAInput) filterEndpointsByFingerprint(endpoints []*ua.EndpointDescription) ([]*ua.EndpointDescription, error) {
+	if g.Fingerprint == "" {
+		// When there is no fingerprint set we will just trust the servers endpoints.
+		return endpoints, nil
+	}
+
+	var filteredEP []*ua.EndpointDescription
+
+	for _, ep := range endpoints {
+		// if the endpoint doesn't provide a server certificate, we skip it
+		// we could potentially return here since this should be the same for all endpoints
+		if len(ep.ServerCertificate) == 0 {
+			g.Log.Warnf("Endpoint %s doesn't provide any server certificate. Skipping...", ep.EndpointURL)
+			continue
+		}
+
+		// parse to PEM format
+		pemCert := pem.EncodeToMemory(&pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: ep.ServerCertificate,
+		})
+
+		// decode the certificate from base64 to DER format
+		block, _ := pem.Decode(pemCert)
+		if block == nil {
+			g.Log.Warnf("Could not decode server certificate for endpoint %s. Skipping...", ep.EndpointURL)
+			continue
+		}
+
+		// parse the DER-format certificate
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			g.Log.Warnf("Invalid server certificate for endpoint %s. Skipping...", ep.EndpointURL)
+			continue
+		}
+
+		// calculating the checksum of the certificate (sha1 is needed here)
+		// and convert the array into a slice for encoding
+		shaFingerprint := sha1.Sum(cert.Raw)
+		epFingerprint := hex.EncodeToString(shaFingerprint[:])
+
+		// to have some information on the mismatched fingerprints
+		if epFingerprint != g.Fingerprint {
+			g.Log.Warnf("Fingerprint of endpoint %s doesn't match, expected: '%s', got: '%s'. Skipping...", ep.EndpointURL, g.Fingerprint, epFingerprint)
+			continue
+		}
+
+		filteredEP = append(filteredEP, ep)
+
+		// return an error if there are no endpoints with matching fingerprints - to see failure
+	}
+	if len(filteredEP) == 0 {
+		return nil, fmt.Errorf("no endpoints with matching certificate fingerprint found: '%s' ", g.Fingerprint)
+	}
+	return filteredEP, nil
 }
 
 // handleSingleEndpointDiscovery processes a single discovered OPC UA endpoint by performing additional discovery.
