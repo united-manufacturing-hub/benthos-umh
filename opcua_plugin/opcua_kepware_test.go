@@ -137,19 +137,17 @@ var _ = Describe("Test against KepServer EX6", func() {
 			NodeIDs:  nil,
 		}, true, nil, false),
 		Entry("should check if message-value is 123", &OPCUAInput{
-			Username:                     "",
-			Password:                     "",
-			NodeIDs:                      ParseNodeIDs([]string{"ns=2;s=Tests.TestDevice.testConstData"}),
-			BrowseHierarchicalReferences: true,
-			AutoReconnect:                true,
-			ReconnectIntervalInSeconds:   5,
+			Username:                   "",
+			Password:                   "",
+			NodeIDs:                    ParseNodeIDs([]string{"ns=2;s=Tests.TestDevice.testConstData"}),
+			AutoReconnect:              true,
+			ReconnectIntervalInSeconds: 5,
 		}, false, json.Number("123"), false),
 		Entry("should return data changes on subscribe", &OPCUAInput{
-			Username:                     "",
-			Password:                     "",
-			NodeIDs:                      ParseNodeIDs([]string{"ns=2;s=Tests.TestDevice.testChangingData"}),
-			BrowseHierarchicalReferences: true,
-			SubscribeEnabled:             true,
+			Username:         "",
+			Password:         "",
+			NodeIDs:          ParseNodeIDs([]string{"ns=2;s=Tests.TestDevice.testChangingData"}),
+			SubscribeEnabled: true,
 		}, false, nil, true),
 	)
 })
@@ -299,19 +297,17 @@ var _ = Describe("Test underlying OPC-clients", func() {
 		}
 	},
 		Entry("should check if message-value is true", &OPCUAInput{
-			Username:                     "",
-			Password:                     "",
-			NodeIDs:                      ParseNodeIDs([]string{"ns=2;s=SiemensPLC_main.main.ServerInterfaces.Server _interface_1.test"}),
-			BrowseHierarchicalReferences: true,
-			AutoReconnect:                true,
-			ReconnectIntervalInSeconds:   5,
+			Username:                   "",
+			Password:                   "",
+			NodeIDs:                    ParseNodeIDs([]string{"ns=2;s=SiemensPLC_main.main.ServerInterfaces.Server _interface_1.test"}),
+			AutoReconnect:              true,
+			ReconnectIntervalInSeconds: 5,
 		}, true, false),
 		Entry("should return data changes on subscribe", &OPCUAInput{
-			Username:                     "",
-			Password:                     "",
-			NodeIDs:                      ParseNodeIDs([]string{"ns=2;s=SiemensPLC_main.main.ServerInterfaces.Server _interface_1.counter"}),
-			BrowseHierarchicalReferences: true,
-			SubscribeEnabled:             true,
+			Username:         "",
+			Password:         "",
+			NodeIDs:          ParseNodeIDs([]string{"ns=2;s=SiemensPLC_main.main.ServerInterfaces.Server _interface_1.counter"}),
+			SubscribeEnabled: true,
 		}, nil, true),
 	)
 
