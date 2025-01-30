@@ -20,6 +20,7 @@ type AttributeHandler struct {
 
 // handleAttributeStatus can be simplified by using early returns
 func handleAttributeStatus(
+	name string,
 	attr *ua.DataValue,
 	def *NodeDef,
 	path string,
@@ -32,7 +33,7 @@ func handleAttributeStatus(
 
 	if attr.Status == ua.StatusOK {
 		if attr.Value == nil && handler.requiresValue {
-			return fmt.Errorf("attribute value is nil")
+			return fmt.Errorf("attribute value is nil for %s", name)
 		}
 		return handleOKStatus(attr.Value, handler)
 	}
@@ -88,7 +89,7 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 		requiresValue:    true,
 		affectsNodeClass: true,
 	}
-	if err := handleAttributeStatus(attrs[0], def, path, logger, nodeClassHandler); err != nil {
+	if err := handleAttributeStatus("NodeClass", attrs[0], def, path, logger, nodeClassHandler); err != nil {
 		return err
 	}
 
@@ -100,7 +101,7 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 		},
 		requiresValue: true,
 	}
-	if err := handleAttributeStatus(attrs[1], def, path, logger, browseNameHandler); err != nil {
+	if err := handleAttributeStatus("BrowseName", attrs[1], def, path, logger, browseNameHandler); err != nil {
 		return err
 	}
 
@@ -117,7 +118,7 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 		ignoreInvalidAttr: true,
 		affectsNodeClass:  true,
 	}
-	if err := handleAttributeStatus(attrs[2], def, path, logger, descriptionHandler); err != nil {
+	if err := handleAttributeStatus("Description", attrs[2], def, path, logger, descriptionHandler); err != nil {
 		return err
 	}
 
@@ -129,7 +130,7 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 		},
 		ignoreInvalidAttr: true,
 	}
-	if err := handleAttributeStatus(attrs[3], def, path, logger, accessLevelHandler); err != nil {
+	if err := handleAttributeStatus("AccessLevel", attrs[3], def, path, logger, accessLevelHandler); err != nil {
 		return err
 	}
 
@@ -152,7 +153,7 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 		ignoreInvalidAttr: true,
 		affectsNodeClass:  true,
 	}
-	if err := handleAttributeStatus(attrs[4], def, path, logger, dataTypeHandler); err != nil {
+	if err := handleAttributeStatus("DataType", attrs[4], def, path, logger, dataTypeHandler); err != nil {
 		return err
 	}
 
