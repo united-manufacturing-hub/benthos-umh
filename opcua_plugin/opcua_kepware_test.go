@@ -40,7 +40,7 @@ var _ = Describe("Test against KepServer EX6", func() {
 	})
 
 	AfterEach(func() {
-		if input.Client != nil {
+		if input != nil && input.Client != nil {
 			err := input.Client.Close(ctx)
 			Expect(err).NotTo(HaveOccurred())
 		}
@@ -133,7 +133,7 @@ var _ = Describe("Test underlying OPC-clients", func() {
 	})
 
 	AfterEach(func() {
-		if input.Client != nil {
+		if input != nil && input.Client != nil {
 			err := input.Client.Close(ctx)
 			Expect(err).NotTo(HaveOccurred())
 		}
