@@ -340,7 +340,7 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 	}
 }
 
-// Node represents a node in the tree structure
+// Node represents a node in the tree structure.
 type Node struct {
 	NodeId   *ua.NodeID `json:"nodeId"`
 	Name     string     `json:"name"`
