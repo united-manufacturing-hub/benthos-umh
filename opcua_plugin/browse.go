@@ -287,25 +287,24 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		return
 	}
 
-	var newPath string
-	if path == "" {
-		newPath = sanitize(browseName.Name)
-	} else {
-		newPath = path + "." + sanitize(browseName.Name)
+	newPath := sanitize(browseName.Name)
+	if path != "" {
+		newPath = path + "." + newPath
 	}
 
 	var def = NodeDef{
-		NodeID: n.ID(),
-		Path:   newPath,
+		NodeID:       n.ID(),
+		Path:         newPath,
+		ParentNodeID: parentNodeId,
 	}
 
+	// def.NodeClass, def.BrowseName, def.Description, def.AccessLevel, def.DataType are set in the processNodeAttributes function
 	if err := processNodeAttributes(attrs, &def, newPath, logger); err != nil {
 		sendError(ctx, err, errChan, logger)
 		return
 	}
 
 	logger.Debugf("%d: def.Path:%s def.NodeClass:%s\n", level, def.Path, def.NodeClass)
-	def.ParentNodeID = parentNodeId
 
 	browseChildrenV2 := func(refType uint32) error {
 		children, err := n.Children(ctx, refType, ua.NodeClassVariable|ua.NodeClassObject)
