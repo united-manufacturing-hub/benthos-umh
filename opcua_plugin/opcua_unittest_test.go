@@ -115,7 +115,7 @@ var _ = Describe("Unit Tests", func() {
 				}
 
 				Expect(errs).Should(HaveLen(1))
-				Expect(errs[0].Error()).To(Equal("attribute value is nil for NodeClass"))
+				Expect(errs[0].Error()).To(Equal("attribute value is nil for node: i=1234 and attribute: NodeClass"))
 			})
 
 			It("should browse the root node with no children with right attributes", func() {
