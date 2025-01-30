@@ -8,16 +8,17 @@ import (
 	"github.com/gopcua/opcua/ua"
 )
 
-// AttributeHandler defines how to handle different attribute statuses and values
+// AttributeHandler can be simplified by using a more focused structure
 type AttributeHandler struct {
-	onOK             func(value *ua.Variant) error
-	onNotReadable    func()
-	onInvalidAttr    bool // whether to ignore invalid attribute errors
-	requiresValue    bool // whether a nil value is acceptable
-	affectsNodeClass bool // whether errors should mark node as Object
+	// Using more idiomatic names
+	handleOK          func(value *ua.Variant) error // instead of onOK
+	handleNotReadable func()                        // instead of onNotReadable
+	ignoreInvalidAttr bool                          // instead of onInvalidAttr
+	requiresValue     bool
+	affectsNodeClass  bool
 }
 
-// handleAttributeStatus processes an attribute's status and value according to defined handlers
+// handleAttributeStatus can be simplified by using early returns
 func handleAttributeStatus(
 	attr *ua.DataValue,
 	def *NodeDef,
@@ -25,37 +26,40 @@ func handleAttributeStatus(
 	logger Logger,
 	handler AttributeHandler,
 ) error {
-	// Early validation for nil value when required
-	if attr.Status == ua.StatusOK && attr.Value == nil && handler.requiresValue {
-		return fmt.Errorf("attribute value is nil")
+	if attr == nil {
+		return fmt.Errorf("attribute is nil")
 	}
 
-	switch attr.Status {
-	case ua.StatusOK:
+	if attr.Status == ua.StatusOK {
+		if attr.Value == nil && handler.requiresValue {
+			return fmt.Errorf("attribute value is nil")
+		}
 		return handleOKStatus(attr.Value, handler)
+	}
 
-	case ua.StatusBadSecurityModeInsufficient:
+	if attr.Status == ua.StatusBadSecurityModeInsufficient {
 		return errors.New("insufficient security mode")
+	}
 
-	case ua.StatusBadAttributeIDInvalid:
-		if handler.onInvalidAttr {
-			return nil // Skip invalid attributes if allowed
+	if attr.Status == ua.StatusBadAttributeIDInvalid {
+		if handler.ignoreInvalidAttr {
+			return nil
 		}
 		return fmt.Errorf("invalid attribute ID")
+	}
 
-	case ua.StatusBadNotReadable:
+	if attr.Status == ua.StatusBadNotReadable {
 		handleNotReadable(def, handler, path, logger)
 		return nil
-
-	default:
-		return attr.Status
 	}
+
+	return attr.Status
 }
 
 // handleOKStatus processes successful attribute reads
 func handleOKStatus(value *ua.Variant, handler AttributeHandler) error {
-	if handler.onOK != nil && value != nil {
-		return handler.onOK(value)
+	if handler.handleOK != nil && value != nil {
+		return handler.handleOK(value)
 	}
 	return nil
 }
@@ -65,18 +69,19 @@ func handleNotReadable(def *NodeDef, handler AttributeHandler, path string, logg
 	if handler.affectsNodeClass {
 		def.NodeClass = ua.NodeClassObject
 	}
-	if handler.onNotReadable != nil {
-		handler.onNotReadable()
+	if handler.handleNotReadable != nil {
+		handler.handleNotReadable()
 	}
 	logger.Warnf("Access denied for node: %s, continuing...\n", path)
 }
 
 // processNodeAttributes processes all attributes for a node
 // This function is used to process the attributes of a node and set the NodeDef struct
+// def.NodeClass, def.BrowseName, def.Description, def.AccessLevel, def.DataType are set in the processNodeAttributes function
 func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, logger Logger) error {
 	// NodeClass (attrs[0])
 	nodeClassHandler := AttributeHandler{
-		onOK: func(value *ua.Variant) error {
+		handleOK: func(value *ua.Variant) error {
 			def.NodeClass = ua.NodeClass(value.Int())
 			return nil
 		},
@@ -89,7 +94,7 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 
 	// BrowseName (attrs[1])
 	browseNameHandler := AttributeHandler{
-		onOK: func(value *ua.Variant) error {
+		handleOK: func(value *ua.Variant) error {
 			def.BrowseName = value.String()
 			return nil
 		},
@@ -101,7 +106,7 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 
 	// Description (attrs[2])
 	descriptionHandler := AttributeHandler{
-		onOK: func(value *ua.Variant) error {
+		handleOK: func(value *ua.Variant) error {
 			if value != nil {
 				def.Description = value.String()
 			} else {
@@ -109,8 +114,8 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 			}
 			return nil
 		},
-		onInvalidAttr:    true,
-		affectsNodeClass: true,
+		ignoreInvalidAttr: true,
+		affectsNodeClass:  true,
 	}
 	if err := handleAttributeStatus(attrs[2], def, path, logger, descriptionHandler); err != nil {
 		return err
@@ -118,11 +123,11 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 
 	// AccessLevel (attrs[3])
 	accessLevelHandler := AttributeHandler{
-		onOK: func(value *ua.Variant) error {
+		handleOK: func(value *ua.Variant) error {
 			def.AccessLevel = ua.AccessLevelType(value.Int())
 			return nil
 		},
-		onInvalidAttr: true,
+		ignoreInvalidAttr: true,
 	}
 	if err := handleAttributeStatus(attrs[3], def, path, logger, accessLevelHandler); err != nil {
 		return err
@@ -136,7 +141,7 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 
 	// DataType (attrs[4])
 	dataTypeHandler := AttributeHandler{
-		onOK: func(value *ua.Variant) error {
+		handleOK: func(value *ua.Variant) error {
 			if value == nil {
 				logger.Debugf("ignoring node: %s as its datatype is nil...\n", path)
 				return fmt.Errorf("datatype is nil")
@@ -144,8 +149,8 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 			def.DataType = getDataTypeString(value.NodeID().IntID())
 			return nil
 		},
-		onInvalidAttr:    true,
-		affectsNodeClass: true,
+		ignoreInvalidAttr: true,
+		affectsNodeClass:  true,
 	}
 	if err := handleAttributeStatus(attrs[4], def, path, logger, dataTypeHandler); err != nil {
 		return err
@@ -154,23 +159,23 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 	return nil
 }
 
-// getDataTypeString maps OPC UA data type IDs to Go type strings
-func getDataTypeString(typeID uint32) string {
-	dataTypeMap := map[uint32]string{
-		id.DateTime: "time.Time",
-		id.Boolean:  "bool",
-		id.SByte:    "int8",
-		id.Int16:    "int16",
-		id.Int32:    "int32",
-		id.Byte:     "byte",
-		id.UInt16:   "uint16",
-		id.UInt32:   "uint32",
-		id.UtcTime:  "time.Time",
-		id.String:   "string",
-		id.Float:    "float32",
-		id.Double:   "float64",
-	}
+// getDataTypeString can be improved by using a constant map
+var dataTypeMap = map[uint32]string{
+	id.DateTime: "time.Time",
+	id.Boolean:  "bool",
+	id.SByte:    "int8",
+	id.Int16:    "int16",
+	id.Int32:    "int32",
+	id.Byte:     "byte",
+	id.UInt16:   "uint16",
+	id.UInt32:   "uint32",
+	id.UtcTime:  "time.Time",
+	id.String:   "string",
+	id.Float:    "float32",
+	id.Double:   "float64",
+}
 
+func getDataTypeString(typeID uint32) string {
 	if dtype, ok := dataTypeMap[typeID]; ok {
 		return dtype
 	}
