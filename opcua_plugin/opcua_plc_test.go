@@ -162,13 +162,10 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			// we only want to skip the fingerprint test here
 			if fingerprint == "" {
 				Skip("Skipping test: environment variable not set")
-				return
 			}
 
 			input = &OPCUAInput{
 				Endpoint:    endpoint,
-				Username:    "",
-				Password:    "",
 				NodeIDs:     nil,
 				Fingerprint: fingerprint, // correct certificate fingerprint
 			}
@@ -180,8 +177,6 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 		It("should fail due to fingerprint-mismatch", func() {
 			input = &OPCUAInput{
 				Endpoint:    endpoint,
-				Username:    "",
-				Password:    "",
 				NodeIDs:     nil,
 				Fingerprint: "test123", // incorrect certificate fingerprint
 			}
@@ -295,13 +290,10 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			// we only want to skip the fingerprint test here
 			if fingerprint == "" {
 				Skip("Skipping test: environment variable not set")
-				return
 			}
 
 			input = &OPCUAInput{
 				Endpoint:    endpoint,
-				Username:    "",
-				Password:    "",
 				NodeIDs:     nil,
 				Fingerprint: fingerprint, // correct certificate fingerprint
 			}
@@ -313,8 +305,6 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 		It("should fail due to fingerprint-mismatch", func() {
 			input = &OPCUAInput{
 				Endpoint:    endpoint,
-				Username:    "",
-				Password:    "",
 				NodeIDs:     nil,
 				Fingerprint: "test123", // incorrect certificate fingerprint
 			}
