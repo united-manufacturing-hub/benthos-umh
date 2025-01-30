@@ -3,7 +3,6 @@ package opcua_plugin
 import (
 	"context"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -12,6 +11,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"crypto/sha3"
 
 	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/ua"
@@ -232,7 +233,7 @@ func (g *OPCUAInput) filterEndpointsByFingerprint(endpoints []*ua.EndpointDescri
 		// calculating the checksum of the certificate (sha1 is needed here)
 		// and convert the array into a slice for encoding
 		// shaFingerprint := sha1.Sum(cert.Raw)
-		shaFingerprint := sha256.Sum256(cert.Raw)
+		shaFingerprint := sha3.Sum512(cert.Raw)
 		epFingerprint := hex.EncodeToString(shaFingerprint[:])
 
 		// to have some information on the mismatched fingerprints
