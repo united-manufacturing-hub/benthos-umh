@@ -40,7 +40,7 @@ func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescript
 	// Generate certificates if Basic256Sha256
 	if selectedEndpoint.SecurityPolicyURI == ua.SecurityPolicyURIBasic256Sha256 {
 		randomStr := randomString(8) // Generates an 8-character random string
-		clientName := "urn:benthos-umh:client-" + randomStr
+		clientName := "urn:benthos-umh-test:client-" + randomStr
 		certPEM, keyPEM, err := GenerateCert(clientName, 2048, 24*time.Hour*365*10)
 		if err != nil {
 			g.Log.Errorf("Failed to generate certificate: %v", err)

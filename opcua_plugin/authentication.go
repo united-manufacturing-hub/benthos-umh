@@ -16,13 +16,17 @@ func (g *OPCUAInput) orderEndpoints(
 	selectedAuthentication ua.UserTokenType,
 ) []*ua.EndpointDescription {
 
-	var highSecurityEndpoints, noSecurityEndpoints []*ua.EndpointDescription
+	var highSecurityEndpoints, mediumSecurityEndpoints, lowSecurityEndpoints, noSecurityEndpoints []*ua.EndpointDescription
 
 	for _, endpoint := range endpoints {
 		if isUserTokenSupported(endpoint, selectedAuthentication) {
 			switch {
 			case isSignAndEncryptbasic256Sha256Endpoint(endpoint):
 				highSecurityEndpoints = append(highSecurityEndpoints, endpoint)
+			case isSignAndEncryptbasic256Endpoint(endpoint):
+				mediumSecurityEndpoints = append(mediumSecurityEndpoints, endpoint)
+			case isSignAndEncryptbasic128Rsa15Endpoint(endpoint):
+				lowSecurityEndpoints = append(lowSecurityEndpoints, endpoint)
 			case isNoSecurityEndpoint(endpoint):
 				noSecurityEndpoints = append(noSecurityEndpoints, endpoint)
 			}
@@ -30,7 +34,9 @@ func (g *OPCUAInput) orderEndpoints(
 	}
 
 	// Append no security endpoints to the end of the high security endpoints.
-	orderedEndpoints := append(highSecurityEndpoints, noSecurityEndpoints...)
+	orderedEndpoints := append(highSecurityEndpoints, mediumSecurityEndpoints...)
+	orderedEndpoints = append(orderedEndpoints, lowSecurityEndpoints...)
+	orderedEndpoints = append(orderedEndpoints, noSecurityEndpoints...)
 
 	return orderedEndpoints
 }
@@ -49,6 +55,16 @@ func isUserTokenSupported(endpoint *ua.EndpointDescription, selectedAuth ua.User
 func isSignAndEncryptbasic256Sha256Endpoint(endpoint *ua.EndpointDescription) bool {
 	return endpoint.SecurityMode == ua.MessageSecurityModeFromString("SignAndEncrypt") &&
 		endpoint.SecurityPolicyURI == "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256"
+}
+
+func isSignAndEncryptbasic256Endpoint(endpoint *ua.EndpointDescription) bool {
+	return endpoint.SecurityMode == ua.MessageSecurityModeFromString("SignAndEncrypt") &&
+		endpoint.SecurityPolicyURI == "http://opcfoundation.org/UA/SecurityPolicy#Basic256"
+}
+
+func isSignAndEncryptbasic128Rsa15Endpoint(endpoint *ua.EndpointDescription) bool {
+	return endpoint.SecurityMode == ua.MessageSecurityModeFromString("SignAndEncrypt") &&
+		endpoint.SecurityPolicyURI == "http://opcfoundation.org/UA/SecurityPolicy#Basic128Rsa15"
 }
 
 // isNoSecurityEndpoint checks if the endpoint has no security configured.
