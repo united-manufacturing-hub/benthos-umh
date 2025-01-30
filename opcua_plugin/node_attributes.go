@@ -1,7 +1,6 @@
 package opcua_plugin
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/gopcua/opcua/id"
@@ -28,25 +27,25 @@ func handleAttributeStatus(
 	handler AttributeHandler,
 ) error {
 	if attr == nil {
-		return fmt.Errorf("attribute is nil")
+		return fmt.Errorf("attribute is nil for node: %s and attribute: %s", def.NodeID, name)
 	}
 
 	if attr.Status == ua.StatusOK {
 		if attr.Value == nil && handler.requiresValue {
-			return fmt.Errorf("attribute value is nil for %s", name)
+			return fmt.Errorf("attribute value is nil for node: %s and attribute: %s", def.NodeID, name)
 		}
 		return handleOKStatus(attr.Value, handler)
 	}
 
 	if attr.Status == ua.StatusBadSecurityModeInsufficient {
-		return errors.New("insufficient security mode")
+		return fmt.Errorf("got insufficient security mode for node: %s and attribute: %s", def.NodeID, name)
 	}
 
 	if attr.Status == ua.StatusBadAttributeIDInvalid {
 		if handler.ignoreInvalidAttr {
 			return nil
 		}
-		return fmt.Errorf("invalid attribute ID")
+		return fmt.Errorf("invalid attribute ID for node: %s and attribute: %s", def.NodeID, name)
 	}
 
 	if attr.Status == ua.StatusBadNotReadable {
@@ -86,8 +85,8 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 			def.NodeClass = ua.NodeClass(value.Int())
 			return nil
 		},
-		requiresValue:    true,
-		affectsNodeClass: true,
+		requiresValue:    true, // NodeClass is required else the node is not valid
+		affectsNodeClass: true, // If the node class could not be determined, it is set to Object type and browsing can be continued
 	}
 	if err := handleAttributeStatus("NodeClass", attrs[0], def, path, logger, nodeClassHandler); err != nil {
 		return err
@@ -99,7 +98,7 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 			def.BrowseName = value.String()
 			return nil
 		},
-		requiresValue: true,
+		requiresValue: true, // BrowseName is required else the node is not valid
 	}
 	if err := handleAttributeStatus("BrowseName", attrs[1], def, path, logger, browseNameHandler); err != nil {
 		return err
@@ -112,11 +111,12 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 				def.Description = value.String()
 				return nil
 			}
+			// Description for Kepware v6 is OPCUATYPE_NULL. Set to empty string in such cases
 			def.Description = ""
 			return nil
 		},
-		ignoreInvalidAttr: true,
-		affectsNodeClass:  true,
+		ignoreInvalidAttr: true, // For some node, Description is not available and this is not an error and can be ignored
+		affectsNodeClass:  true, // If the node class could not be determined, it is set to Object type and browsing can be continued. By setting it to object, we will not subscribe to this node
 	}
 	if err := handleAttributeStatus("Description", attrs[2], def, path, logger, descriptionHandler); err != nil {
 		return err
@@ -128,25 +128,24 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 			def.AccessLevel = ua.AccessLevelType(value.Int())
 			return nil
 		},
-		ignoreInvalidAttr: true,
+		ignoreInvalidAttr: true, // For some node, AccessLevel is not available and this is not an error and can be ignored
 	}
 	if err := handleAttributeStatus("AccessLevel", attrs[3], def, path, logger, accessLevelHandler); err != nil {
 		return err
 	}
-
 
 	// DataType (attrs[4])
 	dataTypeHandler := AttributeHandler{
 		handleOK: func(value *ua.Variant) error {
 			if value == nil {
 				logger.Debugf("ignoring node: %s as its datatype is nil...\n", path)
-				return fmt.Errorf("datatype is nil")
+				return fmt.Errorf("datatype is nil for node: %s and attribute: %s", def.NodeID, "DataType")
 			}
 			def.DataType = getDataTypeString(value.NodeID().IntID())
 			return nil
 		},
-		ignoreInvalidAttr: true,
-		affectsNodeClass:  true,
+		ignoreInvalidAttr: true, // For some node, DataType is not available and this is not an error and can be ignored
+		affectsNodeClass:  true, // If the node class could not be determined, it is set to Object type and browsing can be continued. By setting it to object, we will not subscribe to this node
 	}
 	if err := handleAttributeStatus("DataType", attrs[4], def, path, logger, dataTypeHandler); err != nil {
 		return err
