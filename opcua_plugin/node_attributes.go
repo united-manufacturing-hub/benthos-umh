@@ -11,11 +11,11 @@ import (
 // AttributeHandler can be simplified by using a more focused structure
 type AttributeHandler struct {
 	// Using more idiomatic names
-	handleOK          func(value *ua.Variant) error // instead of onOK
-	handleNotReadable func()                        // instead of onNotReadable
-	ignoreInvalidAttr bool                          // instead of onInvalidAttr
-	requiresValue     bool
-	affectsNodeClass  bool
+	handleOK          func(value *ua.Variant) error // handleOK is the function that handles the OK status
+	handleNotReadable func()                        // handleNotReadable is the function that handles the NotReadable status
+	ignoreInvalidAttr bool                          // ignoreInvalidAttr is the flag that determines if invalid attributes should be ignored
+	requiresValue     bool                          // requiresValue is the flag that determines if a value is required
+	affectsNodeClass  bool                          // affectsNodeClass is the flag that determines if the node class should be affected
 }
 
 // handleAttributeStatus can be simplified by using early returns
