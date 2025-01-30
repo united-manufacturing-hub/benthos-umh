@@ -8,7 +8,7 @@ import (
 	"github.com/gopcua/opcua/ua"
 )
 
-// AttributeHandler can be simplified by using a more focused structure
+// AttributeHandler is the struct that handles the attributes of a node
 type AttributeHandler struct {
 	// Using more idiomatic names
 	handleOK          func(value *ua.Variant) error // handleOK is the function that handles the OK status
@@ -18,7 +18,7 @@ type AttributeHandler struct {
 	affectsNodeClass  bool                          // affectsNodeClass is the flag that determines if the node class should be affected
 }
 
-// handleAttributeStatus can be simplified by using early returns
+// handleAttributeStatus is the function that handles the attributes of a node
 func handleAttributeStatus(
 	name string,
 	attr *ua.DataValue,
@@ -160,7 +160,6 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 	return nil
 }
 
-// getDataTypeString can be improved by using a constant map
 var dataTypeMap = map[uint32]string{
 	id.DateTime: "time.Time",
 	id.Boolean:  "bool",
