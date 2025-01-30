@@ -110,9 +110,9 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 		handleOK: func(value *ua.Variant) error {
 			if value != nil {
 				def.Description = value.String()
-			} else {
-				def.Description = ""
+				return nil
 			}
+			def.Description = ""
 			return nil
 		},
 		ignoreInvalidAttr: true,
@@ -134,11 +134,6 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 		return err
 	}
 
-	// Check AccessLevel None
-	if def.AccessLevel == ua.AccessLevelTypeNone {
-		logger.Warnf("Node %s has AccessLevel None, marking as Object\n", path)
-		def.NodeClass = ua.NodeClassObject
-	}
 
 	// DataType (attrs[4])
 	dataTypeHandler := AttributeHandler{
