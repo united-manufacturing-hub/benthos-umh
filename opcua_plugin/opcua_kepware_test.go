@@ -31,7 +31,6 @@ var _ = Describe("Test against KepServer EX6", func() {
 
 		if endpoint == "" || username == "" || password == "" {
 			Skip("Skipping test: environmental variables are not set")
-			return
 		}
 
 		ctx, cancel = context.WithTimeout(context.Background(), 60*time.Second)
@@ -48,7 +47,7 @@ var _ = Describe("Test against KepServer EX6", func() {
 		}
 	})
 
-	DescribeTable("Connect and Read", func(opcInput *OPCUAInput, errorExpected bool, expectedValue any, dynamic bool) {
+	DescribeTable("Connect and Read", func(opcInput *OPCUAInput, errorExpected bool, expectedValue any, isChangingValue bool) {
 		var (
 			messageBatch     service.MessageBatch
 			messageBatch2    service.MessageBatch
@@ -94,7 +93,7 @@ var _ = Describe("Test against KepServer EX6", func() {
 		}
 
 		// read a second message batch if we want to check on data changes
-		if dynamic {
+		if isChangingValue {
 			Eventually(func() (int, error) {
 				messageBatch2, _, err = input.ReadBatch(ctx)
 				return len(messageBatch2), err
@@ -169,7 +168,6 @@ var _ = Describe("Test underlying OPC-clients", func() {
 
 		if endpoint == "" || username == "" || password == "" {
 			Skip("Skipping test: environmental variables are not set")
-			return
 		}
 
 		ctx, cancel = context.WithTimeout(context.Background(), 60*time.Second)
@@ -186,7 +184,7 @@ var _ = Describe("Test underlying OPC-clients", func() {
 		}
 	})
 
-	DescribeTable("Test if PLC-Namespaces are available", func(namespace string, nodeID *ua.NodeID, contains bool) {
+	DescribeTable("Test if PLC-Namespaces are available", func(namespace string, nodeID *ua.NodeID, isNamespaceAvailable bool) {
 		input = &OPCUAInput{
 			Endpoint:                   endpoint,
 			Username:                   username,
@@ -213,7 +211,7 @@ var _ = Describe("Test underlying OPC-clients", func() {
 		namespaces, ok := resp.Results[0].Value.Value().([]string)
 		Expect(ok).To(Equal(true))
 
-		if !contains {
+		if !isNamespaceAvailable {
 			Expect(namespaces).NotTo(ContainElement(namespace))
 			return
 		}
@@ -245,7 +243,7 @@ var _ = Describe("Test underlying OPC-clients", func() {
 		),
 	)
 
-	DescribeTable("check for correct values", func(opcInput *OPCUAInput, expectedValue any, dynamic bool) {
+	DescribeTable("check for correct values", func(opcInput *OPCUAInput, expectedValue any, isChangingValue bool) {
 		var (
 			messageBatch     service.MessageBatch
 			messageBatch2    service.MessageBatch
@@ -281,7 +279,7 @@ var _ = Describe("Test underlying OPC-clients", func() {
 		}
 
 		// read a second message batch if we want to check on data changes
-		if dynamic {
+		if isChangingValue {
 			Eventually(func() (int, error) {
 				messageBatch2, _, err = input.ReadBatch(ctx)
 				return len(messageBatch2), err
@@ -297,15 +295,11 @@ var _ = Describe("Test underlying OPC-clients", func() {
 		}
 	},
 		Entry("should check if message-value is true", &OPCUAInput{
-			Username:                   "",
-			Password:                   "",
 			NodeIDs:                    ParseNodeIDs([]string{"ns=2;s=SiemensPLC_main.main.ServerInterfaces.Server _interface_1.test"}),
 			AutoReconnect:              true,
 			ReconnectIntervalInSeconds: 5,
 		}, true, false),
 		Entry("should return data changes on subscribe", &OPCUAInput{
-			Username:         "",
-			Password:         "",
 			NodeIDs:          ParseNodeIDs([]string{"ns=2;s=SiemensPLC_main.main.ServerInterfaces.Server _interface_1.counter"}),
 			SubscribeEnabled: true,
 		}, nil, true),
