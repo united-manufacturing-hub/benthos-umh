@@ -62,149 +62,168 @@ type Logger interface {
 
 // Browse is a public wrapper function for the browse function
 // Avoid using this function directly, use it only for testing
-func Browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan NodeDef, visited *sync.Map) {
-	browse(ctx, n, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
+func Browse(ctx context.Context, n NodeBrowser, path string, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan NodeDef, visited *sync.Map) {
+	browse(ctx, n, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
 }
 
-// browse recursively explores OPC UA nodes to build a comprehensive list of NodeDefs.
-//
-// The `browse` function is essential for discovering the structure and details of OPC UA nodes.
-// It performs the following operations:
-//   - Fetches essential attributes of a node, such as NodeClass, BrowseName, Description,
-//     AccessLevel, and DataType.
-//   - Determines if a node has child components (e.g., variables within an object) and recursively
-//     browses them if necessary, ensuring a complete traversal of the node hierarchy.
-//
-// **Why This Function is Needed:** s
-//   - To build a structured representation (`nodeList`) of all relevant nodes for further processing
-//     such as subscribing to data changes.
-//
-// **Parameters:**
-// - `ctx` (`context.Context`): Manages cancellation and timeouts for the browsing operations.
-// - `n` (`*opcua.Node`): The current OPC UA node to browse.
-// - `path` (`string`): The hierarchical path accumulated so far.
-// - `level` (`int`): The current depth level in the node hierarchy, used to prevent excessive recursion.
-// - `logger` (`*service.Logger`): Logs debug and error messages for monitoring and troubleshooting.
-// - `parentNodeId` (`string`): The NodeID of the parent node, used for reference tracking.
-// - `nodeChan` (`chan NodeDef`): Channel to send discovered NodeDefs for collection.
-// - `errChan` (`chan error`): Channel to send encountered errors for centralized handling.
-// - `pathIDMapChan` (`chan map[string]string`): Channel to send the mapping of node names to NodeIDs.
-// - `wg` (`*sync.WaitGroup`): WaitGroup to synchronize the completion of goroutines.
-// **Returns:**
-// - `void`: Errors are sent through `errChan`, and discovered nodes are sent through `nodeChan`.
-func browse(ctx context.Context, n NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan NodeDef, visited *sync.Map) {
+// NodeTask represents a task for workers to process
+type NodeTask struct {
+	node         NodeBrowser
+	path         string
+	level        int
+	parentNodeId string
+}
+
+// browse uses a worker pool pattern to process nodes
+func browse(ctx context.Context, startNode NodeBrowser, startPath string, logger Logger, parentNodeId string,
+	nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan NodeDef, visited *sync.Map) {
+
+	const numWorkers = 10 // Adjust based on your needs
+	taskChan := make(chan NodeTask, numWorkers*10)
+
+	// Start worker pool
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go worker(ctx, i, taskChan, nodeChan, errChan, opcuaBrowserChan, visited, logger, wg)
+	}
+
+	// Send initial task
+	taskChan <- NodeTask{
+		node:         startNode,
+		path:         startPath,
+		level:        0,
+		parentNodeId: parentNodeId,
+	}
+
+	// Close task channel when all tasks are processed
+	go func() {
+		wg.Wait()
+		close(taskChan)
+	}()
+}
+
+func worker(ctx context.Context, id int, taskChan chan NodeTask, nodeChan chan NodeDef,
+	errChan chan error, opcuaBrowserChan chan NodeDef, visited *sync.Map, logger Logger, wg *TrackedWaitGroup) {
+
 	defer wg.Done()
 
-	// Check if the current node is already visited else proceed
-	if _, exists := visited.LoadOrStore(n.ID(), struct{}{}); exists {
-		logger.Debugf("node %s is visited already, hence doing an early exit from the browse routine", n.ID().String())
-		return
-	}
+	for task := range taskChan {
+		// Skip if already visited or too deep
+		if _, exists := visited.LoadOrStore(task.node.ID(), struct{}{}); exists {
+			logger.Debugf("Worker %d: node %s already visited", id, task.node.ID().String())
+			continue
+		}
+		if task.level > 25 {
+			continue
+		}
 
-	// Limits browsing depth to a maximum of 25 levels in the node hierarchy.
-	// Performance impact is minimized since most browse operations terminate earlier
-	// due to other exit conditions before reaching this maximum depth.
-	if level > 25 {
-		return
-	}
+		// Err will be nil if the context is not done
+		if ctx.Err() != nil {
+			logger.Warnf("Worker %d: received cancellation signal", id)
+			return
+		}
 
-	select {
-	case <-ctx.Done():
-		logger.Warnf("browse function received cancellation signal")
-		return
-	default:
-		// Continue processing
-	}
-
-	attrs, err := n.Attributes(ctx, ua.AttributeIDNodeClass, ua.AttributeIDBrowseName, ua.AttributeIDDescription, ua.AttributeIDAccessLevel, ua.AttributeIDDataType)
-	if err != nil {
-		sendError(ctx, err, errChan, logger)
-		return
-	}
-
-	if len(attrs) != 5 {
-		sendError(ctx, errors.Errorf("only got %d attr, needed 5", len(attrs)), errChan, logger)
-		return
-	}
-
-	browseName, err := n.BrowseName(ctx)
-	if err != nil {
-		sendError(ctx, err, errChan, logger)
-		return
-	}
-
-	newPath := sanitize(browseName.Name)
-	if path != "" {
-		newPath = path + "." + newPath
-	}
-
-	var def = NodeDef{
-		NodeID:       n.ID(),
-		Path:         newPath,
-		ParentNodeID: parentNodeId,
-	}
-
-	// def.NodeClass, def.BrowseName, def.Description, def.AccessLevel, def.DataType are set in the processNodeAttributes function
-	if err := processNodeAttributes(attrs, &def, newPath, logger); err != nil {
-		sendError(ctx, err, errChan, logger)
-		return
-	}
-
-	logger.Debugf("%d: def.Path:%s def.NodeClass:%s\n", level, def.Path, def.NodeClass)
-
-	browseChildrenV2 := func(refType uint32) error {
-		children, err := n.Children(ctx, refType, ua.NodeClassVariable|ua.NodeClassObject)
+		// Get node attributes
+		attrs, err := task.node.Attributes(ctx, ua.AttributeIDNodeClass, ua.AttributeIDBrowseName,
+			ua.AttributeIDDescription, ua.AttributeIDAccessLevel, ua.AttributeIDDataType)
 		if err != nil {
-			sendError(ctx, errors.Errorf("Children: %d: %s", refType, err), errChan, logger)
-			return err
-		}
-		for _, child := range children {
-			wg.Add(1)
-			go browse(ctx, child, def.Path, level+1, logger, def.NodeID.String(), nodeChan, errChan, wg, opcuaBrowserChan, visited)
-		}
-		return nil
-	}
-
-	// Create a copy of the def(current Node). Do no modify the original nodeDef. This nodeDefForOPCUABrowser is used only for OPCUA browser operation
-	nodeDefForOPCUABrowser := def
-	nodeDefForOPCUABrowser.Path = join(path, nodeDefForOPCUABrowser.BrowseName)
-	select {
-	case opcuaBrowserChan <- nodeDefForOPCUABrowser:
-	// do nothing if message publish to the channel is successful
-	default:
-		logger.Debugf("opcuaBrowserChan is blocked, skipping nodeDefForOPCUABrowser send")
-	}
-	// In OPC Unified Architecture (UA), hierarchical references are a type of reference that establishes a containment relationship between nodes in the address space. They are used to model a hierarchical structure, such as a system composed of components, where each component may contain sub-components.
-	// Refer link: https://qiyuqi.gitbooks.io/opc-ua/content/Part3/Chapter7.html
-	// HasEventSource, HasChild, HasComponent, Organizes, FolderType, HasNotifier and all their sub-hierarchical references
-
-	switch def.NodeClass {
-
-	// If its a variable, we add it to the node list and browse all its children
-	case ua.NodeClassVariable:
-		if err := browseChildrenV2(id.HierarchicalReferences); err != nil {
 			sendError(ctx, err, errChan, logger)
-			return
+			continue
 		}
 
-		// adding it to the node list
-		def.Path = join(path, def.BrowseName)
+		if len(attrs) != 5 {
+			sendError(ctx, errors.Errorf("only got %d attr, needed 5", len(attrs)), errChan, logger)
+			continue
+		}
+
+		browseName, err := task.node.BrowseName(ctx)
+		if err != nil {
+			sendError(ctx, err, errChan, logger)
+			continue
+		}
+
+		newPath := sanitize(browseName.Name)
+		if task.path != "" {
+			newPath = task.path + "." + newPath
+		}
+
+		def := NodeDef{
+			NodeID:       task.node.ID(),
+			Path:         newPath,
+			ParentNodeID: task.parentNodeId,
+		}
+
+		if err := processNodeAttributes(attrs, &def, newPath, logger); err != nil {
+			sendError(ctx, err, errChan, logger)
+			continue
+		}
+
+		logger.Debugf("Worker %d: level %d: def.Path:%s def.NodeClass:%s\n",
+			id, task.level, def.Path, def.NodeClass)
+
+		// Handle browser channel
+		browserDef := def
+		browserDef.Path = join(task.path, browserDef.BrowseName)
 		select {
-		case nodeChan <- def:
-		case <-ctx.Done():
-			logger.Warnf("Failed to send node due to context cancellation")
-			return
+		case opcuaBrowserChan <- browserDef:
+		default:
+			logger.Debugf("Worker %d: opcuaBrowserChan blocked, skipping", id)
 		}
-		return
 
-		// If its an object, we browse all its children but DO NOT add it to the node list and therefore not subscribe
-	case ua.NodeClassObject:
-		if err := browseChildrenV2(id.HierarchicalReferences); err != nil {
-			sendError(ctx, err, errChan, logger)
-			return
+		// Process based on node class
+		switch def.NodeClass {
+		case ua.NodeClassVariable:
+			// Add to results
+			select {
+			case nodeChan <- def:
+			case <-ctx.Done():
+				logger.Warnf("Worker %d: Failed to send node due to cancellation", id)
+				return
+			}
+			// Browse children (common for both Variable and Object)
+			if err := browseChildren(ctx, task, def, taskChan, wg); err != nil {
+				sendError(ctx, err, errChan, logger)
+			}
+
+		case ua.NodeClassObject:
+			// Browse children
+			if err := browseChildren(ctx, task, def, taskChan, wg); err != nil {
+				sendError(ctx, err, errChan, logger)
+			}
 		}
-		return
 	}
+}
+
+// helper function to send an error to a channel, with logging if the channel is blocked or the context is done
+func sendError(ctx context.Context, err error, errChan chan<- error, logger Logger) {
+	select {
+	case errChan <- err:
+	case <-ctx.Done():
+		logger.Warnf("Failed to send error due to context cancellation: %v", err)
+	default:
+		logger.Warnf("Channel is blocked, skipping error send: %v", err)
+	}
+}
+
+// Add this helper function after the worker function
+func browseChildren(ctx context.Context, task NodeTask, def NodeDef, taskChan chan NodeTask, wg *TrackedWaitGroup) error {
+	children, err := task.node.Children(ctx, id.HierarchicalReferences,
+		ua.NodeClassVariable|ua.NodeClassObject)
+	if err != nil {
+		return errors.Errorf("Children: %s", err)
+	}
+
+	// Queue child tasks
+	for _, child := range children {
+		wg.Add(1)
+		taskChan <- NodeTask{
+			node:         child,
+			path:         def.Path,
+			level:        task.level + 1,
+			parentNodeId: def.NodeID.String(),
+		}
+	}
+	return nil
 }
 
 // Node represents a node in the tree structure
@@ -276,7 +295,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		g.Log.Debugf("Browsing nodeID: %s", nodeID.String())
 		wg.Add(1)
 		wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(nodeID))
-		go browse(timeoutCtx, wrapperNodeID, "", 0, g.Log, nodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
+		go browse(timeoutCtx, wrapperNodeID, "", g.Log, nodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
 	}
 
 	go func() {
@@ -352,7 +371,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
 			wgHeartbeat.Add(1)
 			wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(heartbeatNodeID))
-			go browse(ctx, wrapperNodeID, "", 1, g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat, opcuaBrowserChanHeartbeat, &g.visited)
+			go browse(ctx, wrapperNodeID, "", g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat, opcuaBrowserChanHeartbeat, &g.visited)
 
 			wgHeartbeat.Wait()
 			close(nodeHeartbeatChan)
@@ -503,16 +522,5 @@ func UpdateNodePaths(nodes []NodeDef) {
 				nodes[j].Path = otherNodePath
 			}
 		}
-	}
-}
-
-// helper function to send an error to a channel, with logging if the channel is blocked or the context is done
-func sendError(ctx context.Context, err error, errChan chan<- error, logger Logger) {
-	select {
-	case errChan <- err:
-	case <-ctx.Done():
-		logger.Warnf("Failed to send error due to context cancellation: %v", err)
-	default:
-		logger.Warnf("Channel is blocked, skipping error send: %v", err)
 	}
 }
