@@ -80,7 +80,7 @@ func browse(ctx context.Context, startNode NodeBrowser, startPath string, logger
 
 	var taskWg TrackedWaitGroup
 	var workerWg TrackedWaitGroup
-	const numWorkers = 10 // Adjust based on your needs
+	const numWorkers = 100 // Adjust based on your needs
 	taskChan := make(chan NodeTask, numWorkers*10)
 
 	// Start worker pool
