@@ -133,157 +133,24 @@ func browse(ctx context.Context, n NodeBrowser, path string, level int, logger L
 		return
 	}
 
-	var newPath string
-	if path == "" {
-		newPath = sanitize(browseName.Name)
-	} else {
-		newPath = path + "." + sanitize(browseName.Name)
+	newPath := sanitize(browseName.Name)
+	if path != "" {
+		newPath = path + "." + newPath
 	}
 
 	var def = NodeDef{
-		NodeID: n.ID(),
-		Path:   newPath,
+		NodeID:       n.ID(),
+		Path:         newPath,
+		ParentNodeID: parentNodeId,
 	}
 
-	switch err := attrs[0].Status; {
-	case errors.Is(err, ua.StatusOK):
-		if attrs[0].Value == nil {
-			sendError(ctx, errors.New("node class is nil"), errChan, logger)
-			return
-		} else {
-			def.NodeClass = ua.NodeClass(attrs[0].Value.Int())
-		}
-	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
-		return
-	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
-		logger.Warnf("Tried to browse node: %s but got access denied on getting the NodeClass, do not subscribe to it, continuing browsing its children...\n", path)
-		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
-		// no need to return here, as we can continue without the NodeClass for browsing
-	default:
-		sendError(ctx, err, errChan, logger)
-		return
-	}
-
-	switch err := attrs[1].Status; {
-	case errors.Is(err, ua.StatusOK):
-		if attrs[1].Value == nil {
-			sendError(ctx, errors.New("browse name is nil"), errChan, logger)
-			return
-		} else {
-			def.BrowseName = attrs[1].Value.String()
-		}
-	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
-		return
-	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
-		logger.Warnf("Tried to browse node: %s but got access denied on getting the BrowseName, skipping...\n", path)
-		return // We need to return here, as we can't continue without the BrowseName (we need it at least for the path when browsing the children)
-	default:
-		sendError(ctx, err, errChan, logger)
-		return
-	}
-
-	switch err := attrs[2].Status; {
-	case errors.Is(err, ua.StatusOK):
-		if attrs[2].Value == nil {
-			def.Description = "" // this can happen for example in Kepware v6, where the description is OPCUAType_Null
-		} else {
-			def.Description = attrs[2].Value.String()
-		}
-	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
-		// ignore
-	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
-		return
-	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
-		logger.Warnf("Tried to browse node: %s but got access denied on getting the Description, do not subscribe to it, continuing browsing its children...\n", path)
-		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
-		// no need to return here, as we can continue without the Description
-	default:
-		sendError(ctx, err, errChan, logger)
-		return
-	}
-
-	switch err := attrs[3].Status; {
-	case errors.Is(err, ua.StatusOK):
-		if attrs[3].Value == nil {
-			sendError(ctx, errors.New("access level is nil"), errChan, logger)
-			return
-		} else {
-			def.AccessLevel = ua.AccessLevelType(attrs[3].Value.Int())
-		}
-	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
-		// ignore
-	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
-		return
-	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
-		logger.Warnf("Tried to browse node: %s but got access denied on getting the AccessLevel, continuing...\n", path)
-		// no need to return here, as we can continue without the AccessLevel for browsing
-	default:
-		sendError(ctx, err, errChan, logger)
-		return
-	}
-
-	// if AccessLevel exists and it is set to None
-	if def.AccessLevel == ua.AccessLevelTypeNone && errors.Is(err, ua.StatusOK) {
-		logger.Warnf("Tried to browse node: %s but access level is None ('access denied'). Do not subscribe to it, continuing browsing its children...\n", path)
-		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
-		// we need to continue here, as we still want to browse the children of this node
-	}
-
-	switch err := attrs[4].Status; {
-	case errors.Is(err, ua.StatusOK):
-		if attrs[4].Value == nil {
-			// This is not an error, it can happen for some OPC UA servers...
-			// in oru case it is the amine amaach opcua simulator
-			// if the data type is nil, we simpy ignore it
-			// errChan <- errors.New("data type is nil")
-			logger.Debugf("ignoring node: %s as its datatype is nil...\n", path)
-			return
-		} else {
-			switch v := attrs[4].Value.NodeID().IntID(); v {
-			case id.DateTime:
-				def.DataType = "time.Time"
-			case id.Boolean:
-				def.DataType = "bool"
-			case id.SByte:
-				def.DataType = "int8"
-			case id.Int16:
-				def.DataType = "int16"
-			case id.Int32:
-				def.DataType = "int32"
-			case id.Byte:
-				def.DataType = "byte"
-			case id.UInt16:
-				def.DataType = "uint16"
-			case id.UInt32:
-				def.DataType = "uint32"
-			case id.UtcTime:
-				def.DataType = "time.Time"
-			case id.String:
-				def.DataType = "string"
-			case id.Float:
-				def.DataType = "float32"
-			case id.Double:
-				def.DataType = "float64"
-			default:
-				def.DataType = attrs[4].Value.NodeID().String()
-			}
-		}
-
-	case errors.Is(err, ua.StatusBadAttributeIDInvalid):
-		// ignore
-	case errors.Is(err, ua.StatusBadSecurityModeInsufficient):
-		return
-	case errors.Is(err, ua.StatusBadNotReadable): // fallback option to not throw an error (this is "normal" for some servers)
-		logger.Warnf("Tried to browse node: %s but got access denied on getting the DataType, do not subscribe to it, continuing browsing its children...\n", path)
-		def.NodeClass = ua.NodeClassObject // by setting it as an object, we will not subscribe to it
-		// no need to return here, as we can continue without the DataType
-	default:
+	// def.NodeClass, def.BrowseName, def.Description, def.AccessLevel, def.DataType are set in the processNodeAttributes function
+	if err := processNodeAttributes(attrs, &def, newPath, logger); err != nil {
 		sendError(ctx, err, errChan, logger)
 		return
 	}
 
 	logger.Debugf("%d: def.Path:%s def.NodeClass:%s\n", level, def.Path, def.NodeClass)
-	def.ParentNodeID = parentNodeId
 
 	browseChildrenV2 := func(refType uint32) error {
 		children, err := n.Children(ctx, refType, ua.NodeClassVariable|ua.NodeClassObject)
