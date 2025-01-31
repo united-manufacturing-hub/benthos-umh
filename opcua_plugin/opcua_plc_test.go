@@ -165,22 +165,24 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			}
 
 			input = &OPCUAInput{
-				Endpoint:    endpoint,
-				NodeIDs:     nil,
-				Fingerprint: fingerprint, // correct certificate fingerprint
+				Endpoint:                     endpoint,
+				NodeIDs:                      nil,
+				ServerCertificateFingerprint: fingerprint, // correct certificate fingerprint
 			}
 
+			// Attempt to connect with matching fingerprints
 			err := input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("should fail due to fingerprint-mismatch", func() {
 			input = &OPCUAInput{
-				Endpoint:    endpoint,
-				NodeIDs:     nil,
-				Fingerprint: "test123", // incorrect certificate fingerprint
+				Endpoint:                     endpoint,
+				NodeIDs:                      nil,
+				ServerCertificateFingerprint: "test123", // incorrect certificate fingerprint
 			}
 
+			// Attempt to connect and fail due to fingerprint mismatch
 			err := input.Connect(ctx)
 			Expect(err).To(HaveOccurred())
 		})
@@ -293,22 +295,24 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			}
 
 			input = &OPCUAInput{
-				Endpoint:    endpoint,
-				NodeIDs:     nil,
-				Fingerprint: fingerprint, // correct certificate fingerprint
+				Endpoint:                     endpoint,
+				NodeIDs:                      nil,
+				ServerCertificateFingerprint: fingerprint, // correct certificate fingerprint
 			}
 
+			// Attempt to connect with matching fingerprints
 			err := input.Connect(ctx)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("should fail due to fingerprint-mismatch", func() {
 			input = &OPCUAInput{
-				Endpoint:    endpoint,
-				NodeIDs:     nil,
-				Fingerprint: "test123", // incorrect certificate fingerprint
+				Endpoint:                     endpoint,
+				NodeIDs:                      nil,
+				ServerCertificateFingerprint: "test123", // incorrect certificate fingerprint
 			}
 
+			// Attempt to connect and fail due to fingerprint mismatch
 			err := input.Connect(ctx)
 			Expect(err).To(HaveOccurred())
 		})
