@@ -47,7 +47,7 @@ var OPCUAConfigSpec = service.NewConfigSpec().
 	Field(service.NewIntField("pollRate").Description("The rate in milliseconds at which to poll the OPC UA server when not using subscriptions. Defaults to 1000ms (1 second).").Default(DefaultPollRate)).
 	Field(service.NewBoolField("autoReconnect").Description("Set to true to automatically reconnect to the OPC UA server when the connection is lost. Defaults to 'false'").Default(false)).
 	Field(service.NewIntField("reconnectIntervalInSeconds").Description("The interval in seconds at which to reconnect to the OPC UA server when the connection is lost. This is only used if `autoReconnect` is set to true. Defaults to 5 seconds.").Default(5)).
-	Field(service.NewStringField("fingerprint").Description("Set this to the fingerprint of your OPC-UA-Servers certificate, if you're willing to connect via encryption. This checks if the client can trust the server.").Default(""))
+	Field(service.NewStringField("serverCertificateFingerprint").Description("Set this to the fingerprint (sha3-hash) of your OPC-UA-Servers certificate, if you're willing to connect via encryption. This checks if the client can trust the server.").Default(""))
 
 func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 
@@ -138,7 +138,7 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		return nil, err
 	}
 
-	fingerprint, err := conf.FieldString("fingerprint")
+	serverCertificateFingerprint, err := conf.FieldString("serverCertificateFingerprint")
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +158,7 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		Log:                          mgr.Logger(),
 		SecurityMode:                 securityMode,
 		SecurityPolicy:               securityPolicy,
-		Fingerprint:                  fingerprint, // fingerprint is the sha1 uid for the servers certificate
+		ServerCertificateFingerprint: serverCertificateFingerprint, // ServerCertificateFingerprint is the sha3 hash of the servers certificate
 		Insecure:                     insecure,
 		SubscribeEnabled:             subscribeEnabled,
 		SessionTimeout:               sessionTimeout,
@@ -192,17 +192,17 @@ func init() {
 }
 
 type OPCUAInput struct {
-	Endpoint       string
-	Username       string
-	Password       string
-	NodeIDs        []*ua.NodeID
-	NodeList       []NodeDef
-	SecurityMode   string
-	SecurityPolicy string
-	Fingerprint    string
-	Insecure       bool
-	Client         *opcua.Client
-	Log            *service.Logger
+	Endpoint                     string
+	Username                     string
+	Password                     string
+	NodeIDs                      []*ua.NodeID
+	NodeList                     []NodeDef
+	SecurityMode                 string
+	SecurityPolicy               string
+	ServerCertificateFingerprint string
+	Insecure                     bool
+	Client                       *opcua.Client
+	Log                          *service.Logger
 	// this is required for subscription
 	SubscribeEnabled             bool
 	SubNotifyChan                chan *opcua.PublishNotificationData

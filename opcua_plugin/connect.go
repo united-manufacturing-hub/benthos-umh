@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"crypto/sha3"
+	"golang.org/x/crypto/sha3"
 
 	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/ua"
@@ -190,13 +190,19 @@ func (g *OPCUAInput) FetchAllEndpoints(ctx context.Context) ([]*ua.EndpointDescr
 //
 // This function will check on each element of the fetched endpoints, if the fingerprint is correct.
 // Therefore we can check if the server is "trusted" by the client. It should check on the server certificate
-// of each endpoint if the fingerprint (sha1) matches with the fingerprint from input.yaml.
+// of each endpoint if the fingerprint (sha3) matches with the fingerprint from input.yaml.
 //
 // **Why This Function is Needed:**
 //   - To ensure the client connects to the correct server
 func (g *OPCUAInput) filterEndpointsByFingerprint(endpoints []*ua.EndpointDescription) ([]*ua.EndpointDescription, error) {
-	if g.Fingerprint == "" {
+	if g.ServerCertificateFingerprint == "" {
 		// When there is no fingerprint set we will just trust the servers endpoints.
+		// This may be escalated to a warning in future releases.
+		g.Log.Infof(
+			"No 'serverCertificateFingerprint' was provided. " +
+				"We strongly recommend specifying 'serverCertificateFingerprint=xxxx' to verify the server's identity " +
+				"and avoid potential security risks. Future releases may escalate this to a warning that prevents deployment.",
+		)
 		return endpoints, nil
 	}
 
@@ -206,7 +212,7 @@ func (g *OPCUAInput) filterEndpointsByFingerprint(endpoints []*ua.EndpointDescri
 		// if the endpoint doesn't provide a server certificate, we skip it
 		// we could potentially return here since this should be the same for all endpoints
 		if len(ep.ServerCertificate) == 0 {
-			g.Log.Warnf("Endpoint %s doesn't provide any server certificate. Skipping...", ep.EndpointURL)
+			g.Log.Infof("Endpoint %s doesn't provide any server certificate. Skipping...", ep.EndpointURL)
 			continue
 		}
 
@@ -230,15 +236,19 @@ func (g *OPCUAInput) filterEndpointsByFingerprint(endpoints []*ua.EndpointDescri
 			continue
 		}
 
-		// calculating the checksum of the certificate (sha1 is needed here)
+		// calculating the checksum of the certificate (sha3 is needed here)
 		// and convert the array into a slice for encoding
-		// shaFingerprint := sha1.Sum(cert.Raw)
 		shaFingerprint := sha3.Sum512(cert.Raw)
 		epFingerprint := hex.EncodeToString(shaFingerprint[:])
 
-		// to have some information on the mismatched fingerprints
-		if epFingerprint != g.Fingerprint {
-			g.Log.Warnf("Fingerprint of endpoint %s doesn't match, expected: '%s', got: '%s'. Skipping...", ep.EndpointURL, g.Fingerprint, epFingerprint)
+		// This is not for debugging purpose, but for the user to get some
+		// information about the mismatch of the endpoints certificate fingerprint.
+		if epFingerprint != g.ServerCertificateFingerprint {
+			g.Log.Infof("Fingerprint of endpoint %s doesn't match, expected: '%s', got: '%s'. "+
+				"Either the server’s certificate was intentionally updated, or you are connecting to the wrong server. "+
+				"If intentional, please set the new 'serverCertificateFingerprint' in your configuration. "+
+				"Otherwise, double-check your security settings.",
+				ep.EndpointURL, g.ServerCertificateFingerprint, epFingerprint)
 			continue
 		}
 
@@ -247,7 +257,7 @@ func (g *OPCUAInput) filterEndpointsByFingerprint(endpoints []*ua.EndpointDescri
 		// return an error if there are no endpoints with matching fingerprints - to see failure
 	}
 	if len(filteredEP) == 0 {
-		return nil, fmt.Errorf("no endpoints with matching certificate fingerprint found: '%s' ", g.Fingerprint)
+		return nil, fmt.Errorf("No endpoints with matching certificate fingerprint '%s' found. ", g.ServerCertificateFingerprint)
 	}
 	return filteredEP, nil
 }

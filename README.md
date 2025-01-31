@@ -125,7 +125,7 @@ input:
     insecure: false | true # DEPRECATED, see below
     securityMode: None | Sign | SignAndEncrypt # optional (default: unset)
     securityPolicy: None | Basic256Sha256  # optional (default: unset)
-    fingerprint: 'sha1-fingerprint-of-cert' # optional (default: unset)
+    serverCertificateFingerprint: 'sha3-fingerprint-of-cert' # optional (default: unset)
     subscribeEnabled: false | true # optional (default: false)
     useHeartbeat: false | true # optional (default: false)
     pollRate: 1000 # optional (default: 1000) The rate in milliseconds at which to poll the OPC UA server when not using subscriptions
@@ -188,17 +188,24 @@ input:
     securityPolicy: Basic256Sha256
 ```
 
-##### Fingerprint
+###### Server Certificate Fingerprint
 
-You can provide the fingerprint of your OPC-UA-Servers certificate, which should be a sha1-hash.
-This option ensures the 'client trusts server'-functionality.
+**Key**: `serverCertificateFingerprint`
+**Description**:
+Use this field to explicitly trust the server’s certificate. When specified, only endpoints matching this fingerprint will be accepted. This ensures the client connects to the correct server and helps prevent man-in-the-middle attacks.
+
+> **Important**
+> - **If you omit `serverCertificateFingerprint`,** the client will still attempt to connect.
+> - Initially, it will log an **info message** to remind you to set `serverCertificateFingerprint`.
+> - Future releases may escalate this to a **warning** that blocks deployment in certain environments.
+> - If your server's certificate changes (e.g. renewal, new server) update the `serverCertificateFingerprint` accordingly. Otherwise the connection will be rejected, signaling a potential security issue or misconfiguration.
 
 ```yaml
 input:
   opcua:
     endpoint: 'opc.tcp://localhost:46010'
     nodeIDs: ['ns=2;s=IoTSensors']
-    fingerprint: 'sha1-fingerprint-of-cert'
+    serverCertificateFingerprint: 'sha3-fingerprint-of-cert'
 ```
 
 ##### Insecure Mode
