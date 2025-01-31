@@ -136,6 +136,7 @@ func worker(
 			}
 
 			if task.level > 25 {
+				logger.Debugf("Skipping node %s at browse level %d", task.node.ID().String(), task.level)
 				taskWg.Done()
 				continue
 			}
@@ -231,7 +232,7 @@ func sendError(ctx context.Context, err error, errChan chan<- error, logger Logg
 }
 
 // Add this helper function after the worker function
-func browseChildren(ctx context.Context, task NodeTask, def NodeDef, taskChan chan NodeTask, wg *TrackedWaitGroup) error {
+func browseChildren(ctx context.Context, task NodeTask, def NodeDef, taskChan chan NodeTask, taskWg *TrackedWaitGroup) error {
 	children, err := task.node.Children(ctx, id.HierarchicalReferences,
 		ua.NodeClassVariable|ua.NodeClassObject)
 	if err != nil {
@@ -240,7 +241,7 @@ func browseChildren(ctx context.Context, task NodeTask, def NodeDef, taskChan ch
 
 	// Queue child tasks
 	for _, child := range children {
-		wg.Add(1)
+		taskWg.Add(1)
 		taskChan <- NodeTask{
 			node:         child,
 			path:         def.Path,
