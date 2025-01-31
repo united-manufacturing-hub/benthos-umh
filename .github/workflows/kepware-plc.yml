@@ -22,7 +22,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  GO_VERSION: '1.23.0'
+  GO_VERSION: '1.23'
 
 concurrency:
   group: kepware-plc-test
