@@ -179,10 +179,8 @@ func worker(
 				continue
 			}
 
-			logger.Debugf("\nWorker %d: level %d: def.Path:%s def.NodeClass:%s\n",
-				id, task.level, def.Path, def.NodeClass)
-			logger.Debugf("TrackedWaitGroup count: %d\n", taskWg.Count())
-			logger.Debugf("WorkerWg count: %d\n", workerWg.Count())
+			logger.Debugf("\nWorker %d: level %d: def.Path:%s def.NodeClass:%s TaskWaitGroup count: %d WorkerWaitGroup count: %d\n",
+				id, task.level, def.Path, def.NodeClass, taskWg.Count(), workerWg.Count())
 
 			// Handle browser channel
 			browserDef := def
@@ -243,7 +241,6 @@ func browseChildren(ctx context.Context, task NodeTask, def NodeDef, taskChan ch
 	// Queue child tasks
 	for _, child := range children {
 		wg.Add(1)
-		fmt.Printf("Adding child task to channel: %s", child.ID().String())
 		taskChan <- NodeTask{
 			node:         child,
 			path:         def.Path,
