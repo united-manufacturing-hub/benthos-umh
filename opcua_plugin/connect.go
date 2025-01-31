@@ -175,91 +175,66 @@ func (g *OPCUAInput) FetchAllEndpoints(ctx context.Context) ([]*ua.EndpointDescr
 		return nil, err
 	}
 
-	// filter the adjustedEndpoints by fingerprint if provided (client trust server)
-	filteredEndpoints, err := g.filterEndpointsByFingerprint(adjustedEndpoints)
-	if err != nil {
-		g.Log.Errorf("Failed to filter endpoint by fingerprint: %s", err)
-		return nil, err
-	}
-
 	// For multiple endpoints, adjust their hosts as per user specification.
-	return filteredEndpoints, nil
+	return adjustedEndpoints, nil
 }
 
-// filterEndpointsByFingerprint will filter the endpoints provided by the server if the fingerprint is set
+// checkServerCertificateFingerprint will check the endpoints provided by the server if the fingerprint is set
 //
-// This function will check on each element of the fetched endpoints, if the fingerprint is correct.
-// Therefore we can check if the server is "trusted" by the client. It should check on the server certificate
-// of each endpoint if the fingerprint (sha3) matches with the fingerprint from input.yaml.
+// This function will check on the first one of the fetched endpoints, if the
+// fingerprint is correct. Therefore we can check if the server is "trusted"
+// by the client. It should check on the server certificate of the endpoint
+// if the fingerprint (sha3) matches with the fingerprint from input.yaml.
 //
 // **Why This Function is Needed:**
 //   - To ensure the client connects to the correct server
-func (g *OPCUAInput) filterEndpointsByFingerprint(endpoints []*ua.EndpointDescription) ([]*ua.EndpointDescription, error) {
-	if g.ServerCertificateFingerprint == "" {
-		// When there is no fingerprint set we will just trust the servers endpoints.
-		// This may be escalated to a warning in future releases.
-		g.Log.Infof(
-			"No 'serverCertificateFingerprint' was provided. " +
-				"We strongly recommend specifying 'serverCertificateFingerprint=xxxx' to verify the server's identity " +
-				"and avoid potential security risks. Future releases may escalate this to a warning that prevents deployment.",
-		)
-		return endpoints, nil
+func (g *OPCUAInput) checkServerCertificateFingerprint(endpoint *ua.EndpointDescription) error {
+
+	// If the endpoint doesn't provide a server certificate, we return here
+	// This is not expected to happen, since an OPC-UA server should always
+	// have a certificate. But it could happen due to incorrect setup.
+	if len(endpoint.ServerCertificate) == 0 {
+		return fmt.Errorf("Endpoint %s doesn't provide any server certificate. "+
+			"Please check your server's certificates and make sure it exists,"+
+			"since that could be a potential security issue.",
+			endpoint.EndpointURL)
 	}
 
-	var filteredEP []*ua.EndpointDescription
+	// parse to PEM format
+	pemCert := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: endpoint.ServerCertificate,
+	})
 
-	for _, ep := range endpoints {
-		// if the endpoint doesn't provide a server certificate, we skip it
-		// we could potentially return here since this should be the same for all endpoints
-		if len(ep.ServerCertificate) == 0 {
-			g.Log.Infof("Endpoint %s doesn't provide any server certificate. Skipping...", ep.EndpointURL)
-			continue
-		}
-
-		// parse to PEM format
-		pemCert := pem.EncodeToMemory(&pem.Block{
-			Type:  "CERTIFICATE",
-			Bytes: ep.ServerCertificate,
-		})
-
-		// decode the certificate from base64 to DER format
-		block, _ := pem.Decode(pemCert)
-		if block == nil {
-			g.Log.Warnf("Could not decode server certificate for endpoint %s. Skipping...", ep.EndpointURL)
-			continue
-		}
-
-		// parse the DER-format certificate
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			g.Log.Warnf("Invalid server certificate for endpoint %s. Skipping...", ep.EndpointURL)
-			continue
-		}
-
-		// calculating the checksum of the certificate (sha3 is needed here)
-		// and convert the array into a slice for encoding
-		shaFingerprint := sha3.Sum512(cert.Raw)
-		epFingerprint := hex.EncodeToString(shaFingerprint[:])
-
-		// This is not for debugging purpose, but for the user to get some
-		// information about the mismatch of the endpoints certificate fingerprint.
-		if epFingerprint != g.ServerCertificateFingerprint {
-			g.Log.Infof("Fingerprint of endpoint %s doesn't match, expected: '%s', got: '%s'. "+
-				"Either the server’s certificate was intentionally updated, or you are connecting to the wrong server. "+
-				"If intentional, please set the new 'serverCertificateFingerprint' in your configuration. "+
-				"Otherwise, double-check your security settings.",
-				ep.EndpointURL, g.ServerCertificateFingerprint, epFingerprint)
-			continue
-		}
-
-		filteredEP = append(filteredEP, ep)
-
-		// return an error if there are no endpoints with matching fingerprints - to see failure
+	// decode the certificate from base64 to DER format
+	block, _ := pem.Decode(pemCert)
+	if block == nil {
+		return fmt.Errorf("Could not decode server certificate for endpoint %s.", endpoint.EndpointURL)
 	}
-	if len(filteredEP) == 0 {
-		return nil, fmt.Errorf("No endpoints with matching certificate fingerprint '%s' found. ", g.ServerCertificateFingerprint)
+
+	// parse the DER-format certificate
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("Error while parsing server certificate for endpoint %s.", endpoint.EndpointURL)
 	}
-	return filteredEP, nil
+
+	// calculating the checksum of the certificate (sha3 is needed here)
+	// and convert the array into a slice for encoding
+	shaFingerprint := sha3.Sum512(cert.Raw)
+	endpointFingerprint := hex.EncodeToString(shaFingerprint[:])
+
+	// Return error with information about the mismatch of the endpoints
+	// certificate fingerprint.
+	if endpointFingerprint != g.ServerCertificateFingerprint {
+		return fmt.Errorf("fingerprint mismatch for endpoint %s\n"+
+			"Expected: '%s'\n"+
+			"Got: '%s'\n\n"+
+			"Either the server's certificate was intentionally updated, or you are connecting to the wrong server.\n"+
+			"If intentional, please set the new 'serverCertificateFingerprint' in your configuration.\n"+
+			"Otherwise, double-check your security settings.",
+			endpoint.EndpointURL, g.ServerCertificateFingerprint, endpointFingerprint)
+	}
+	return nil
 }
 
 // handleSingleEndpointDiscovery processes a single discovered OPC UA endpoint by performing additional discovery.
@@ -587,6 +562,28 @@ func (g *OPCUAInput) connect(ctx context.Context) error {
 
 	// Step 2 (optional): Log details of each discovered endpoint for debugging
 	g.LogEndpoints(endpoints)
+
+	// Step 2a (optional): Check if the user provided the ServerCertificateFingerprint
+	// If it's set check if the first endpoint provide a server certificate with a matching
+	// fingerprint. Also give the user some information about security risks here,
+	// since he should make sure he connects to the correct endpoint.
+	// We only need to check the first endpoint, since all endpoints are fetched
+	// from the same server.
+	switch {
+	case g.ServerCertificateFingerprint != "":
+		err = g.checkServerCertificateFingerprint(endpoints[0])
+		if err != nil {
+			g.Log.Infof("Error while trying to match the server's certificate fingerprint: %s", err)
+			return err
+		}
+	default:
+		// may be escalated to Warning-Level in future releases
+		g.Log.Infof(
+			"No 'serverCertificateFingerprint' was provided. " +
+				"We strongly recommend specifying 'serverCertificateFingerprint=xxxx' to verify the server's identity " +
+				"and avoid potential security risks. Future releases may escalate this to a warning that prevents deployment.",
+		)
+	}
 
 	// Step 3: Determine the authentication method to use.
 	// Default to Anonymous if neither username nor password is provided.
