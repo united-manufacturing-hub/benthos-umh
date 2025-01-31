@@ -102,24 +102,33 @@ func browse(ctx context.Context, startNode NodeBrowser, startPath string, logger
 	}()
 }
 
-func worker(ctx context.Context, id int, taskChan chan NodeTask, nodeChan chan NodeDef,
-	errChan chan error, opcuaBrowserChan chan NodeDef, visited *sync.Map, logger Logger, wg *TrackedWaitGroup) {
-
-	defer wg.Done()
-
+func worker(
+	ctx context.Context,
+	id int,
+	taskChan chan NodeTask,
+	nodeChan chan NodeDef,
+	errChan chan error,
+	opcuaBrowserChan chan NodeDef,
+	visited *sync.Map,
+	logger Logger,
+	wg *TrackedWaitGroup,
+) {
 	for task := range taskChan {
 		// Skip if already visited or too deep
 		if _, exists := visited.LoadOrStore(task.node.ID(), struct{}{}); exists {
 			logger.Debugf("Worker %d: node %s already visited", id, task.node.ID().String())
+			wg.Done() // Call Done() before continuing
 			continue
 		}
 		if task.level > 25 {
+			wg.Done() // Call Done() before continuing
 			continue
 		}
 
 		// Err will be nil if the context is not done
 		if ctx.Err() != nil {
 			logger.Warnf("Worker %d: received cancellation signal", id)
+			wg.Done() // Call Done() before returning
 			return
 		}
 
@@ -128,17 +137,20 @@ func worker(ctx context.Context, id int, taskChan chan NodeTask, nodeChan chan N
 			ua.AttributeIDDescription, ua.AttributeIDAccessLevel, ua.AttributeIDDataType)
 		if err != nil {
 			sendError(ctx, err, errChan, logger)
+			wg.Done() // Call Done() before returning
 			continue
 		}
 
 		if len(attrs) != 5 {
 			sendError(ctx, errors.Errorf("only got %d attr, needed 5", len(attrs)), errChan, logger)
+			wg.Done() // Call Done() before returning
 			continue
 		}
 
 		browseName, err := task.node.BrowseName(ctx)
 		if err != nil {
 			sendError(ctx, err, errChan, logger)
+			wg.Done() // Call Done() before returning
 			continue
 		}
 
@@ -155,6 +167,7 @@ func worker(ctx context.Context, id int, taskChan chan NodeTask, nodeChan chan N
 
 		if err := processNodeAttributes(attrs, &def, newPath, logger); err != nil {
 			sendError(ctx, err, errChan, logger)
+			wg.Done() // Call Done() before returning
 			continue
 		}
 
@@ -173,24 +186,23 @@ func worker(ctx context.Context, id int, taskChan chan NodeTask, nodeChan chan N
 		// Process based on node class
 		switch def.NodeClass {
 		case ua.NodeClassVariable:
-			// Add to results
 			select {
 			case nodeChan <- def:
 			case <-ctx.Done():
 				logger.Warnf("Worker %d: Failed to send node due to cancellation", id)
+				wg.Done() // Call Done() before returning
 				return
 			}
-			// Browse children (common for both Variable and Object)
 			if err := browseChildren(ctx, task, def, taskChan, wg); err != nil {
 				sendError(ctx, err, errChan, logger)
 			}
 
 		case ua.NodeClassObject:
-			// Browse children
 			if err := browseChildren(ctx, task, def, taskChan, wg); err != nil {
 				sendError(ctx, err, errChan, logger)
 			}
 		}
+		wg.Done() // Call Done() at the end of each successful iteration
 	}
 }
 
