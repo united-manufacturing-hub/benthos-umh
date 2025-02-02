@@ -22,7 +22,6 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  GO_VERSION: '1.23.0'
 
 concurrency:
   group: s7-plc-test
@@ -38,8 +37,6 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Go
         uses: ./.github/actions/setup-go
-        with:
-          go_version: ${{ env.GO_VERSION }}
       - name: Install Ginkgo
         run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.19.0
       - name: Install Tcping
