@@ -123,7 +123,7 @@ input:
     username: 'your-username'  # optional (default: unset)
     password: 'your-password'  # optional (default: unset)
     insecure: false | true # DEPRECATED, see below
-    securityMode: None | Sign | SignAndEncrypt # optional (default: unset)
+    securityMode: None | SignAndEncrypt # optional (default: unset)
     securityPolicy: None | Basic256Sha256  # optional (default: unset)
     serverCertificateFingerprint: 'sha3-fingerprint-of-cert' # optional (default: unset)
     subscribeEnabled: false | true # optional (default: false)
@@ -196,7 +196,8 @@ Use this field to explicitly trust the server’s certificate. When specified, o
 
 > **Important**
 > - **If you omit `serverCertificateFingerprint`,** the client will still attempt to connect.
-> - Initially, it will log an **info message** to remind you to set `serverCertificateFingerprint`.
+> - **You will need to set `securityMode` to `SignAndEncrypt` and the `securityPolicy` to one of the available policies.
+> - **Otherwise the `serverCertificateFingerprint` does not provide any value since it's only used for encryption.
 > - Future releases may escalate this to a **warning** that blocks deployment in certain environments.
 > - If your server's certificate changes (e.g. renewal, new server) update the `serverCertificateFingerprint` accordingly. Otherwise the connection will be rejected, signaling a potential security issue or misconfiguration.
 
@@ -205,6 +206,8 @@ input:
   opcua:
     endpoint: 'opc.tcp://localhost:46010'
     nodeIDs: ['ns=2;s=IoTSensors']
+    securityMode: SignAndEncrypt
+    securityPolicy: Basic256Sha256
     serverCertificateFingerprint: 'sha3-fingerprint-of-cert'
 ```
 
