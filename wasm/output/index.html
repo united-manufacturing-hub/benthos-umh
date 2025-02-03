@@ -102,7 +102,8 @@ SOFTWARE.
     </div>
     <div class="panel" id="default-mapping-panel" style="top:50%;bottom:0;left:0;right:0;padding: 5px 0 0 0">
         <h2 style="left:50%;bottom:0;margin-left:-50px;">Mapping</h2>
-        <textarea id="mapping">root = this</textarea>
+        <!--<textarea id="mapping">root = this</textarea>-->
+        <textarea id="mapping">msg.payload = msg.payload.toUpperCase()</textarea>
     </div>
     <div class="panel" id="ace-mapping-panel" style="top:50%;bottom:0;left:0;right:0;padding: 5px 0 0 0;display:none">
         <h2 style="left:50%;bottom:0;margin-left:-50px;z-index:100;background-color:#272822;">Mapping</h2>
@@ -137,7 +138,8 @@ SOFTWARE.
     function execute() {
         outputArea.innerHTML = "";
         // The function 'blobl' is defined in the Go code
-        result = document.createTextNode(blobl(getMapping(), getInput()));
+        //result = document.createTextNode(blobl(getMapping(), getInput()));
+        result = document.createTextNode(nodered_js(getMapping(), getInput()));
         outputArea.appendChild(result);
     }
 

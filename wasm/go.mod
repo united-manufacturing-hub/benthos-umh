@@ -2,7 +2,12 @@ module github.com/united-manufacturing-hub/benthos-umh-wasm
 
 go 1.23.4
 
-require github.com/redpanda-data/benthos/v4 v4.43.0
+require (
+	github.com/redpanda-data/benthos/v4 v4.43.0
+	github.com/united-manufacturing-hub/benthos-umh v0.0.0-00010101000000-000000000000
+)
+
+replace github.com/united-manufacturing-hub/benthos-umh => ../.
 
 require (
 	cuelang.org/go v0.12.0 // indirect
@@ -12,13 +17,17 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cockroachdb/apd/v3 v3.2.1 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.6 // indirect
+	github.com/dlclark/regexp2 v1.10.0 // indirect
+	github.com/dop251/goja v0.0.0-20231014103939-873a1496dc8e // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/gofrs/uuid v4.4.0+incompatible // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect
+	github.com/google/pprof v0.0.0-20240424215950-a892ee059fd6 // indirect
 	github.com/gorilla/handlers v1.5.2 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/matoous/go-nanoid/v2 v2.1.0 // indirect
