@@ -48,13 +48,13 @@ func isUserTokenSupported(endpoint *ua.EndpointDescription, selectedAuth ua.User
 // isSignAndEncryptbasic256Sha256Endpoint checks if the endpoint is configured with SignAndEncrypt and Basic256Sha256 security.
 func isSignAndEncryptbasic256Sha256Endpoint(endpoint *ua.EndpointDescription) bool {
 	return endpoint.SecurityMode == ua.MessageSecurityModeFromString("SignAndEncrypt") &&
-		endpoint.SecurityPolicyURI == "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256"
+		endpoint.SecurityPolicyURI == ua.FormatSecurityPolicyURI("Basic256Sha256")
 }
 
 // isNoSecurityEndpoint checks if the endpoint has no security configured.
 func isNoSecurityEndpoint(endpoint *ua.EndpointDescription) bool {
 	return endpoint.SecurityMode == ua.MessageSecurityModeFromString("None") &&
-		endpoint.SecurityPolicyURI == "http://opcfoundation.org/UA/SecurityPolicy#None"
+		endpoint.SecurityPolicyURI == ua.FormatSecurityPolicyURI("None")
 }
 
 // getEndpointIfExists searches within the provided endpoints for a suitable OPC UA endpoint.
@@ -78,7 +78,9 @@ func (g *OPCUAInput) getEndpointIfExists(
 		for _, userIdentity := range endpoint.UserIdentityTokens {
 
 			// Match the endpoint with the selected authentication type.
-			if selectedAuthentication == userIdentity.TokenType && endpoint.SecurityPolicyURI == "http://opcfoundation.org/UA/SecurityPolicy#"+securityPolicy && endpoint.SecurityMode == ua.MessageSecurityModeFromString(securityMode) {
+			if selectedAuthentication == userIdentity.TokenType &&
+				endpoint.SecurityPolicyURI == ua.FormatSecurityPolicyURI(securityPolicy) &&
+				endpoint.SecurityMode == ua.MessageSecurityModeFromString(securityMode) {
 
 				return endpoint, nil
 			}
