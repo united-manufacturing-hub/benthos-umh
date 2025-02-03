@@ -24,7 +24,7 @@ import (
 // **Why This Function is Needed:**
 // - To dynamically generate client options that match the server’s security requirements.
 // - To handle different authentication methods, such as anonymous or username/password-based logins.
-// - To generate and include client certificates when using enhanced security policies like Basic256Sha256.
+// - To generate and include client certificates when using enhanced security policies like Basic256Sha256/Basic256/Basic128Rsa15
 func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescription, selectedAuthentication ua.UserTokenType) (opts []opcua.Option, err error) {
 	opts = append(opts, opcua.SecurityFromEndpoint(selectedEndpoint, selectedAuthentication))
 
@@ -37,31 +37,53 @@ func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescript
 		opts = append(opts, opcua.AuthUsername(g.Username, g.Password))
 	}
 
-	// Generate certificates if Basic256Sha256
-	if selectedEndpoint.SecurityPolicyURI == ua.SecurityPolicyURIBasic256Sha256 {
-		randomStr := randomString(8) // Generates an 8-character random string
-		clientName := "urn:benthos-umh-test:client-" + randomStr
-		certPEM, keyPEM, err := GenerateCert(clientName, 2048, 24*time.Hour*365*10)
-		if err != nil {
-			g.Log.Errorf("Failed to generate certificate: %v", err)
-			return nil, err
+	// Generate certificates if we don't connect without Security
+	if selectedEndpoint.SecurityPolicyURI != ua.SecurityPolicyURINone {
+		if g.cachedTLSCertificate == nil {
+			if g.CertificateSeed == "" {
+				// Generate an 8-character random string if no 'certificateSeed'
+				// provided by the user.
+				g.CertificateSeed = randomString(8)
+			}
+
+			// Just use a random String to make the appearance in "trusted clients"
+			// more "unique". So the user is able to recognize the client in the
+			// servers UI.
+			clientNameUID := randomString(8)
+
+			clientName := "urn:benthos-umh:client-predefined-" + clientNameUID
+			certPEM, keyPEM, err := GenerateCertWithMode(clientName,
+				24*time.Hour*365*10,
+				g.SecurityMode,
+				g.SecurityPolicy,
+				g.CertificateSeed,
+				clientNameUID)
+			if err != nil {
+				g.Log.Errorf("Failed to generate certificate: %v", err)
+				return nil, err
+			}
+
+			// Convert PEM to X509 Certificate and RSA PrivateKey for in-memory use.
+			cert, err := tls.X509KeyPair(certPEM, keyPEM)
+			if err != nil {
+				g.Log.Errorf("Failed to parse certificate: %v", err)
+				return nil, err
+			}
+			// cache the tls.Certificate for future calls
+			g.cachedTLSCertificate = &cert
+			g.Log.Infof("The clients certificate was created, to use an encrypted connection "+
+				"please proceed to the OPC-UA Server Configuration and trust either all clients "+
+				"or the clients certificate with the Application-URI: '%s", clientName)
 		}
 
-		// Convert PEM to X509 Certificate and RSA PrivateKey for in-memory use.
-		cert, err := tls.X509KeyPair(certPEM, keyPEM)
-		if err != nil {
-			g.Log.Errorf("Failed to parse certificate: %v", err)
-			return nil, err
-		}
-
-		pk, ok := cert.PrivateKey.(*rsa.PrivateKey)
+		pk, ok := g.cachedTLSCertificate.PrivateKey.(*rsa.PrivateKey)
 		if !ok {
 			g.Log.Errorf("Invalid private key type")
 			return nil, err
 		}
 
 		// Append the certificate and private key to the client options
-		opts = append(opts, opcua.PrivateKey(pk), opcua.Certificate(cert.Certificate[0]))
+		opts = append(opts, opcua.PrivateKey(pk), opcua.Certificate(g.cachedTLSCertificate.Certificate[0]))
 	}
 
 	opts = append(opts, opcua.SessionName("benthos-umh"))
@@ -70,7 +92,7 @@ func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescript
 	} else {
 		opts = append(opts, opcua.SessionTimeout(SessionTimeout))
 	}
-	opts = append(opts, opcua.ApplicationName("benthos-umh"))
+	opts = append(opts, opcua.ApplicationName("benthos-umh-predefined"))
 	//opts = append(opts, opcua.ApplicationURI("urn:benthos-umh"))
 	//opts = append(opts, opcua.ProductURI("urn:benthos-umh"))
 
@@ -533,7 +555,7 @@ func (g *OPCUAInput) connect(ctx context.Context) error {
 	if g.SecurityMode != "" && g.SecurityPolicy != "" {
 		c, err = g.connectWithSecurity(ctx, endpoints, selectedAuthentication)
 		if err != nil {
-			g.Log.Infof("error while connecting using securitymode %s, securityPolicy: %s. err:%v", g.SecurityMode, g.SecurityPolicy, err)
+			g.Log.Infof("error while connecting using securitymode '%s', securityPolicy: '%s'. err:%v", g.SecurityMode, g.SecurityPolicy, err)
 			return err
 		}
 
