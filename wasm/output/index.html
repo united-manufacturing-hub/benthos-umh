@@ -1,0 +1,213 @@
+<!--
+MIT License
+
+Copyright (c) 2022 Mihai Todor
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+-->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <title>Bloblang Editor</title>
+    <style>
+        html,
+        body {
+            background-color: #202020;
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+        }
+
+        .panel {
+            position: absolute;
+            margin: 0;
+        }
+
+        .panel>h2 {
+            position: absolute;
+            text-align: center;
+            width: 100px;
+            background-color: #33352e;
+            color: white;
+            font-family: monospace;
+            border-bottom: solid #a6e22e 2px;
+        }
+
+        #input,
+        #output,
+        #mapping {
+            background-color: #33352e;
+            height: 100%;
+            width: 100%;
+            overflow: auto;
+            box-sizing: border-box;
+            margin: 0;
+            padding: 10px;
+            font-size: 12pt;
+            font-family: monospace;
+            color: #fff;
+            border: solid #33352e 2px;
+        }
+
+        #ace-mapping,
+        #ace-input {
+            font-size: 14pt;
+            overflow: auto;
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            border: solid #33352e 2px;
+        }
+
+        textarea {
+            resize: none;
+        }
+
+    </style>
+</head>
+
+<body>
+    <div class="panel" id="default-input-panel" style="top:0;bottom:50%;left:0;right:50%;padding:0 5px 5px 0">
+        <h2 style="left:50%;bottom:0;margin-left:-50px;">Input</h2>
+        <textarea id="input">{&#34;message&#34;:&#34;hello world&#34;}</textarea>
+    </div>
+    <div class="panel" id="ace-input-panel" style="top:0;bottom:50%;left:0;right:50%;padding:0 5px 5px 0;display:none">
+        <h2 style="left:50%;bottom:0;margin-left:-50px;z-index:100;background-color:#272822;">Input</h2>
+        <div id="ace-input"></div>
+    </div>
+    <div class="panel" style="top:0;bottom:50%;left:50%;right:0;padding:0 0 5px 5px">
+        <h2 style="left:50%;bottom:0;margin-left:-50px;">Output</h2>
+        <pre id="output"></pre>
+    </div>
+    <div class="panel" id="default-mapping-panel" style="top:50%;bottom:0;left:0;right:0;padding: 5px 0 0 0">
+        <h2 style="left:50%;bottom:0;margin-left:-50px;">Mapping</h2>
+        <textarea id="mapping">root = this</textarea>
+    </div>
+    <div class="panel" id="ace-mapping-panel" style="top:50%;bottom:0;left:0;right:0;padding: 5px 0 0 0;display:none">
+        <h2 style="left:50%;bottom:0;margin-left:-50px;z-index:100;background-color:#272822;">Mapping</h2>
+        <div id="ace-mapping"></div>
+    </div>
+</body>
+
+<script src="wasm_exec.js"></script>
+<script>
+    var mappingArea = document.getElementById("mapping");
+    var aceMappingEditor = null;
+
+    function getMapping() {
+        if (aceMappingEditor !== null) {
+            return aceMappingEditor.getValue();
+        }
+        return mappingArea.value;
+    }
+
+    var inputArea = document.getElementById("input");
+    var aceInputEditor = null;
+
+    function getInput() {
+        if (aceInputEditor !== null) {
+            return aceInputEditor.getValue();
+        }
+        return inputArea.value;
+    }
+
+    const outputArea = document.getElementById("output");
+
+    function execute() {
+        outputArea.innerHTML = "";
+        // The function 'blobl' is defined in the Go code
+        result = document.createTextNode(blobl(getMapping(), getInput()));
+        outputArea.appendChild(result);
+    }
+
+    const inputs = document.getElementsByTagName('textarea');
+    for (let input of inputs) {
+        input.addEventListener('keydown', function (e) {
+            if (e.key == 'Tab') {
+                e.preventDefault();
+                var start = this.selectionStart;
+                var end = this.selectionEnd;
+
+
+                this.value = this.value.substring(0, start) +
+                    "    " + this.value.substring(end);
+
+
+                this.selectionStart = start + 4;
+                this.selectionEnd = end + 4;
+            }
+        });
+        input.addEventListener('input', function (e) {
+            execute();
+        })
+    }
+
+    const go = new Go();
+    WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject).then((result) => {
+        go.run(result.instance);
+
+        // Call the wasm function on startup after the module is fully loaded
+        execute();
+    }).catch((err) => {
+        console.error(err);
+    });
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/ace-builds@1.15.0/src-min-noconflict/ace.js"
+    integrity="sha256-LDAbbBwaA1DWzagfX4uwqj9iddOjEYwTiV1xQeKVdEg=" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/ace-builds@1.15.0/src-min-noconflict/theme-monokai.js"
+    integrity="sha256-eBZhzA3IYQvEVQnnT67zSIZegWYQdXDJoLr6IAOXY4M=" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/ace-builds@1.15.0/src-min-noconflict/mode-coffee.js"
+    integrity="sha256-KfNo+n6fdx9+bT4hbsyp+2n4XDp8gRIqYFdDjVRHlNQ=" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/ace-builds@1.15.0/src-min-noconflict/mode-json.js"
+    integrity="sha256-NRrS1x8Lu3yntlnkoj1sViPUV/Tyahtm7i1g4llyRYQ=" crossorigin="anonymous"></script>
+<script>
+    currentMapping = getMapping();
+    aceMappingEditor = ace.edit("ace-mapping");
+    aceMappingEditor.setValue(currentMapping, 1);
+    aceMappingEditor.session.setMode("ace/mode/coffee");
+    mappingArea = document.getElementById("ace-mapping");
+
+    document.getElementById("default-mapping-panel").style.display = "none";
+    document.getElementById("ace-mapping-panel").style.display = "initial";
+
+    currentInput = getInput();
+    aceInputEditor = ace.edit("ace-input");
+    aceInputEditor.setValue(currentInput, 1);
+    aceInputEditor.session.setMode("ace/mode/json");
+    inputArea = document.getElementById("ace-input");
+
+    document.getElementById("default-input-panel").style.display = "none";
+    document.getElementById("ace-input-panel").style.display = "initial";
+
+    [aceMappingEditor, aceInputEditor].forEach(function (editor) {
+        editor.on('change', execute);
+        editor.setTheme("ace/theme/monokai");
+        editor.session.setTabSize(4);
+        editor.session.setUseSoftTabs(true);
+        editor.session.setUseWorker(false);
+    });
+</script>
+
+</html>
