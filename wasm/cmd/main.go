@@ -21,6 +21,9 @@ func blobl(_ js.Value, args []js.Value) any {
 	if len(args) != 2 {
 		return fmt.Sprintf("Expected two arguments, received %d instead", len(args))
 	}
+	for i, arg := range args {
+		fmt.Printf("arg %d: %+v\n", i, arg)
+	}
 
 	mapping, err := bloblang.NewEnvironment().Parse(args[0].String())
 	if err != nil {
