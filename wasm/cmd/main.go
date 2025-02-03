@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"syscall/js"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/redpanda-data/benthos/v4/public/bloblang"
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin"
 )
 
 func main() {
@@ -74,40 +76,51 @@ func nodered_js(_ js.Value, args []js.Value) any {
 		fmt.Printf("arg %d: %+v\n", i, arg)
 	}
 
-	fmt.Println("Registering NodeRED JS plugin")
+	code := args[0].String()
+	processor := nodered_js_plugin.NewNodeREDJSProcessor(code, nil, nil)
 
-	mapping, err := bloblang.NewEnvironment().Parse(args[0].String())
+	// Create a Benthos message from the second argument.
+	msg := service.NewMessage([]byte(args[1].String()))
+	batch := service.MessageBatch{msg}
+
+	// Process the message using the NodeRED JS processor.
+	batches, err := processor.ProcessBatch(context.Background(), batch)
 	if err != nil {
-		return fmt.Sprintf("Failed to parse mapping: %s", err)
+		return fmt.Sprintf("Failed to process message with NodeRED JS plugin: %s", err)
+	}
+	if len(batches) == 0 || len(batches[0]) == 0 {
+		return "Message dropped by NodeRED JS plugin"
+	}
+	resultMsg := batches[0][0]
+
+	// Retrieve the structured result.
+	structured, err := resultMsg.AsStructured()
+	if err != nil {
+		return fmt.Sprintf("Failed to retrieve structured message: %s", err)
 	}
 
-	msg, err := service.NewMessage([]byte(args[1].String())).BloblangQuery(mapping)
-	if err != nil {
-		return fmt.Sprintf("Failed to execute mapping: %s", err)
-	}
-
-	message, err := msg.AsStructured()
-	if err != nil {
-		return fmt.Sprintf("Failed to marshal message: %s", err)
-	}
-
+	// Collect metadata, if any.
 	var metadata map[string]any
-	msg.MetaWalkMut(func(key string, value any) error {
+	err = resultMsg.MetaWalkMut(func(key string, value any) error {
 		if metadata == nil {
 			metadata = make(map[string]any)
 		}
 		metadata[key] = value
 		return nil
 	})
+	if err != nil {
+		return fmt.Sprintf("Failed to walk metadata: %s", err)
+	}
 
-	var output []byte
-	if output, err = json.MarshalIndent(struct {
+	// Marshal the output into a formatted JSON string.
+	output, err := json.MarshalIndent(struct {
 		Msg  any            `json:"msg"`
 		Meta map[string]any `json:"meta,omitempty"`
 	}{
-		Msg:  message,
+		Msg:  structured,
 		Meta: metadata,
-	}, "", "  "); err != nil {
+	}, "", "  ")
+	if err != nil {
 		return fmt.Sprintf("Failed to marshal output: %s", err)
 	}
 

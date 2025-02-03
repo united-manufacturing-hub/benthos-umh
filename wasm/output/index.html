@@ -90,7 +90,7 @@ SOFTWARE.
 <body>
     <div class="panel" id="default-input-panel" style="top:0;bottom:50%;left:0;right:50%;padding:0 5px 5px 0">
         <h2 style="left:50%;bottom:0;margin-left:-50px;">Input</h2>
-        <textarea id="input">{&#34;message&#34;:&#34;hello world&#34;}</textarea>
+        <textarea id="input">{&#34;payload&#34;:&#34;hello world&#34;}</textarea>
     </div>
     <div class="panel" id="ace-input-panel" style="top:0;bottom:50%;left:0;right:50%;padding:0 5px 5px 0;display:none">
         <h2 style="left:50%;bottom:0;margin-left:-50px;z-index:100;background-color:#272822;">Input</h2>
@@ -101,12 +101,12 @@ SOFTWARE.
         <pre id="output"></pre>
     </div>
     <div class="panel" id="default-mapping-panel" style="top:50%;bottom:0;left:0;right:0;padding: 5px 0 0 0">
-        <h2 style="left:50%;bottom:0;margin-left:-50px;">Mapping</h2>
+        <h2 style="left:50%;bottom:0;margin-left:-50px;">NodeRED JS</h2>
         <!--<textarea id="mapping">root = this</textarea>-->
-        <textarea id="mapping">msg.payload = msg.payload.toUpperCase()</textarea>
+        <textarea id="mapping">msg.payload = msg.payload</textarea>
     </div>
     <div class="panel" id="ace-mapping-panel" style="top:50%;bottom:0;left:0;right:0;padding: 5px 0 0 0;display:none">
-        <h2 style="left:50%;bottom:0;margin-left:-50px;z-index:100;background-color:#272822;">Mapping</h2>
+        <h2 style="left:50%;bottom:0;margin-left:-50px;z-index:100;background-color:#272822;">NodeRED JS</h2>
         <div id="ace-mapping"></div>
     </div>
 </body>
