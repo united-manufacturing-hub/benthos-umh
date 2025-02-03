@@ -1219,6 +1219,8 @@ pipeline:
           // Set default location hierarchy and datacontract
           msg.meta.location_path = "enterprise.plant1.machiningArea.cnc-line.cnc5.plc123";
           msg.meta.data_contract = "_historian";
+          msg.meta.tag_name = "value";
+          msg.payload = msg.payload; //does not modify the payload
           return msg;
         conditions:
           - if: msg.meta.opcua_node_id === "ns=1;i=2245"
