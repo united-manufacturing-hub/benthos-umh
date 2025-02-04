@@ -166,10 +166,10 @@ func findNthParentNode(n int, node *NodeDef, nodeIDMap map[string]*NodeDef) *Nod
 func normalizeNodeID(nodeID *ua.NodeID) string {
 	id := nodeID.String()
 	if strings.HasPrefix(id, "s=i=") {
-		return strings.TrimPrefix(id, "s=i=")
+		return strings.TrimPrefix(id, "s=")
 	}
 	if strings.HasPrefix(id, "s=ns=") {
-		return strings.TrimPrefix(id, "s=ns=")
+		return strings.TrimPrefix(id, "s=")
 	}
 	return id
 }
