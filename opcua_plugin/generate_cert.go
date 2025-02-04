@@ -104,7 +104,12 @@ func GenerateCertWithMode(
 	notBefore := time.Now()
 	notAfter := notBefore.Add(validFor)
 
-	// Use 127 bits for the serial to ensure positivity in ASN.1
+	// Use 127 bits instead of 128 to ensure the serial number is always positive.
+	// In ASN.1 DER encoding (used by X.509), integers are signed. If the most significant bit (MSB)
+	// is set (i.e., 1), the integer is interpreted as negative. By limiting the serial number
+	// to 127 bits, we guarantee that the MSB is 0, ensuring the serial number remains positive
+	// and complies with RFC 5280 requirements, thereby preventing parsing errors like
+	// "x509: negative serial number".
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 127)
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
 	if err != nil {
@@ -176,68 +181,6 @@ func GenerateCertWithMode(
 	keyPEM = pem.EncodeToMemory(pemBlockForKey(priv))
 
 	return certPEM, keyPEM, nil
-}
-
-func GenerateCert(host string, rsaBits int, validFor time.Duration) (certPEM, keyPEM []byte, err error) {
-	if len(host) == 0 {
-		return nil, nil, fmt.Errorf("missing required host parameter")
-	}
-	if rsaBits == 0 {
-		rsaBits = 2048
-	}
-
-	priv, err := rsa.GenerateKey(rand.Reader, rsaBits)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate private key: %s", err)
-	}
-
-	notBefore := time.Now()
-	notAfter := notBefore.Add(validFor)
-
-	// Use 127 bits instead of 128 to ensure the serial number is always positive.
-	// In ASN.1 DER encoding (used by X.509), integers are signed. If the most significant bit (MSB)
-	// is set (i.e., 1), the integer is interpreted as negative. By limiting the serial number
-	// to 127 bits, we guarantee that the MSB is 0, ensuring the serial number remains positive
-	// and complies with RFC 5280 requirements, thereby preventing parsing errors like
-	// "x509: negative serial number".
-	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 127)
-	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate serial number: %s", err)
-	}
-
-	template := x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			CommonName:   "benthos-umh",
-			Organization: []string{"UMH"},
-		},
-		NotBefore: notBefore,
-		NotAfter:  notAfter,
-
-		KeyUsage:              x509.KeyUsageContentCommitment | x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageDataEncipherment | x509.KeyUsageCertSign,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
-		BasicConstraintsValid: true,
-	}
-
-	hosts := strings.Split(host, ",")
-	for _, h := range hosts {
-		if ip := net.ParseIP(h); ip != nil {
-			template.IPAddresses = append(template.IPAddresses, ip)
-		} else {
-			template.DNSNames = append(template.DNSNames, h)
-		}
-		if uri, err := url.Parse(h); err == nil {
-			template.URIs = append(template.URIs, uri)
-		}
-	}
-
-	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, publicKey(priv), priv)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create certificate: %s", err)
-	}
-
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes}), pem.EncodeToMemory(pemBlockForKey(priv)), nil
 }
 
 func publicKey(priv interface{}) interface{} {
