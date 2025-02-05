@@ -215,7 +215,7 @@ func (g *OPCUAInput) checkServerCertificateFingerprint(endpoint *ua.EndpointDesc
 				endpoint.EndpointURL, g.ServerCertificateFingerprint, endpointFingerprint)
 		}
 	default:
-		g.Log.Infof(
+		return fmt.Errorf(
 			"No 'serverCertificateFingerprint' was provided. "+
 				"We strongly recommend specifying 'serverCertificateFingerprint=%s' to verify the server's identity "+
 				"and avoid potential security risks. Future releases may escalate this to a warning that prevents deployment.", endpointFingerprint,
@@ -438,9 +438,15 @@ func (g *OPCUAInput) attemptBestEndpointConnection(
 		if currentEndpoint.SecurityMode == ua.MessageSecurityModeSignAndEncrypt &&
 			!isNoSecurityEndpoint(currentEndpoint) {
 			serverCertFingerprint, _ := g.getServerCertificateFingerprint(currentEndpoint)
-			g.Log.Infof("Encrypted endpoint was found, please provide the following "+
-				"fields: securityMode: 'SignAndEncrypt', securityPolicy: 'Basic256Sha256/"+
-				"Basic256/Basic128Rsa15', serverCertificateFingerprint: '%s'.", serverCertFingerprint)
+
+			g.Log.Infof("Secure endpoint detected. To ensure that your connection is "+
+				"fully encrypted, please set the following fields in your configuration:\n"+
+				"- securityMode: 'SignAndEncrypt'\n"+
+				"- securityPolicy: 'Basic256Sha256' (or alternatively, 'Basic256' or 'Basic128Rsa15')\n"+
+				"- serverCertificateFingerprint: '%s'\n"+
+				"These settings ensure that data is encrypted and that the server's "+
+				"identity is verified. Without them, encryption is not fully enabled, "+
+				"which could expose your connection to security risks.", serverCertFingerprint)
 		}
 
 		opts, err := g.GetOPCUAClientOptions(currentEndpoint, authType)
@@ -513,12 +519,13 @@ func (g *OPCUAInput) strictConnect(
 	g.Log.Info("Trying to strictly connect with encryption")
 
 	if g.SecurityMode != "SignAndEncrypt" {
-		return nil, fmt.Errorf("The provided 'securityMode' is not allowed for strictConnect, "+
-			"please use the 'securityMode: SignAndEncrypt'. You tried to connect via '%s'.", g.SecurityMode)
+		return nil, fmt.Errorf("Invalid securityMode '%s'. For secure (encrypted) "+
+			"connections, please set securityMode to 'SignAndEncrypt'. This setting is"+
+			"required to enable encryption and verify the server's certificate.", g.SecurityMode)
 	}
 	if g.SecurityPolicy == "None" {
-		return nil, fmt.Errorf("The provided 'securityPolicy' is not allowed for strictConnect, "+
-			"please use the another 'securityPolicy' supported by your server. You tried to connect via '%s'.", g.SecurityPolicy)
+		return nil, fmt.Errorf("Invalid securityPolicy '%s'. For encrypted communication, "+
+			"please choose a valid policy (e.g., 'Basic256Sha256', 'Basic256', or 'Basic128Rsa15') that your server supports.", g.SecurityPolicy)
 	}
 
 	foundEndpoint, err := g.getEndpointIfExists(endpoints, authType, g.SecurityMode, g.SecurityPolicy)
@@ -538,7 +545,11 @@ func (g *OPCUAInput) strictConnect(
 	// Check on the Server Certificate's Fingerprint
 	err = g.checkServerCertificateFingerprint(foundEndpoint)
 	if err != nil {
-		g.Log.Infof("Error while checking on the server certificates fingerprint: %s", err)
+		g.Log.Infof("The server certificate fingerprint does not match or is missing. "+
+			"To ensure that you are connecting to the intended server securely, please verify "+
+			"that your configuration includes the correct serverCertificateFingerprint. "+
+			"This value is critical for confirming the server’s identity and enabling encryption. "+
+			"Error details: %s", err)
 		// later on we might escalate this and return the err
 		// For now we only log this info-message so the user could check the correct
 		// Fingerprint here, since this is not fundamentally important for the
@@ -629,7 +640,11 @@ func (g *OPCUAInput) connectToDirectEndpoint(ctx context.Context, authType ua.Us
 	if !isNoSecurityEndpoint(directEndpoint) {
 		err := g.checkServerCertificateFingerprint(directEndpoint)
 		if err != nil {
-			g.Log.Infof("Error while checking on the server certificates fingerprint: %s", err)
+			g.Log.Infof("The server certificate fingerprint does not match or is missing. "+
+				"To ensure that you are connecting to the intended server securely, please verify "+
+				"that your configuration includes the correct serverCertificateFingerprint. "+
+				"This value is critical for confirming the server’s identity and enabling encryption. "+
+				"Error details: %s", err)
 			// later on we might escalate this and return the err
 		}
 	}
