@@ -480,47 +480,64 @@ To fix: Set required fields (msg.meta.location_path, msg.meta.data_contract, msg
 
 // constructFinalMessage creates the final message with proper topic and payload structure
 func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Message, error) {
-	// Create new message
-	newMsg := service.NewMessage(nil)
+    newMsg := service.NewMessage(nil)
 
-	// Copy all metadata
-	err := msg.MetaWalkMut(func(key string, value any) error {
-		if str, ok := value.(string); ok {
-			newMsg.MetaSet(key, str)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to copy metadata: %v", err)
-	}
+    // Copy all metadata from the original message.
+    allMeta := map[string]string{}
+    _ = msg.MetaWalkMut(func(k string, v any) error {
+        if strVal, ok := v.(string); ok {
+            allMeta[k] = strVal
+        }
+        return nil
+    })
 
-	// Construct and set topic
-	topic := p.constructTopic(msg)
-	newMsg.MetaSet("topic", topic)
+    // Construct the topic from UMH system fields.
+    topic := p.constructTopic(msg)
+    newMsg.MetaSet("topic", topic)
 
-	// Get tag_name from metadata
-	tagName, exists := msg.MetaGet("tag_name")
-	if !exists {
-		return nil, fmt.Errorf("missing tag_name in metadata")
-	}
+    // Retrieve the tag name (must be present).
+    tagName, exists := allMeta["tag_name"]
+    if !exists {
+        return nil, fmt.Errorf("missing 'tag_name' in metadata")
+    }
 
-	// Get payload value
-	structured, err := msg.AsStructured()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get structured payload: %v", err)
-	}
+    // Get the payload value.
+    structured, err := msg.AsStructured()
+    if err != nil {
+        return nil, fmt.Errorf("failed to get structured payload: %v", err)
+    }
+    value := p.convertValue(structured)
 
-	// Convert the value based on its type
-	value := p.convertValue(structured)
+    // Check if advanced users want to include all meta fields.
+    includeAll := allMeta["includeAll"] == "true"
 
-	// Structure payload
-	payload := map[string]interface{}{
-		tagName:        value,
-		"timestamp_ms": time.Now().UnixMilli(),
-	}
-	newMsg.SetStructured(payload)
+    // Define system fields that are excluded from final metadata by default.
+    systemFields := map[string]bool{
+        "location_path": true,
+        "data_contract": true,
+        "tag_name":      true,
+        "virtual_path":  true,
+        "topic":         true,
+        "includeAll":    true,
+    }
 
-	return newMsg, nil
+    // Build the user metadata map.
+    userMetadata := map[string]interface{}{}
+    for k, v := range allMeta {
+        if includeAll || !systemFields[k] {
+            userMetadata[k] = v
+        }
+    }
+
+    // Build the final payload.
+    payload := map[string]interface{}{
+        tagName:        value,
+        "timestamp_ms": time.Now().UnixMilli(),
+        "metadata":     userMetadata,
+    }
+    newMsg.SetStructured(payload)
+
+    return newMsg, nil
 }
 
 // convertValue recursively converts values to their appropriate types
