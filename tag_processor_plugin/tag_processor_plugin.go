@@ -482,22 +482,20 @@ To fix: Set required fields (msg.meta.location_path, msg.meta.data_contract, msg
 func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Message, error) {
     newMsg := service.NewMessage(nil)
 
-    // Collect all metadata from the final (post–processing) message.
+    // Copy all metadata from the original message.
     allMeta := map[string]string{}
-    if err := msg.MetaWalkMut(func(k string, v any) error {
+    _ = msg.MetaWalkMut(func(k string, v any) error {
         if strVal, ok := v.(string); ok {
             allMeta[k] = strVal
         }
         return nil
-    }); err != nil {
-        return nil, fmt.Errorf("failed to collect metadata: %v", err)
-    }
+    })
 
-    // Construct the topic using the required UMH system fields.
+    // Construct the topic from UMH system fields.
     topic := p.constructTopic(msg)
     newMsg.MetaSet("topic", topic)
 
-    // Retrieve the tag name (this is a required UMH field).
+    // Retrieve the tag name (must be present).
     tagName, exists := allMeta["tag_name"]
     if !exists {
         return nil, fmt.Errorf("missing 'tag_name' in metadata")
@@ -510,20 +508,10 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
     }
     value := p.convertValue(structured)
 
-    // Determine if advanced users want to include all meta fields.
-    includeAll := (allMeta["includeAll"] == "true")
+    // Check if advanced users want to include all meta fields.
+    includeAll := allMeta["includeAll"] == "true"
 
-    // Retrieve the original metadata that came from upstream.
-    // (This should have been stored in msg.meta._originalMeta as a JSON string.)
-    originalMeta := map[string]string{}
-    if origStr, exists := msg.MetaGet("_originalMeta"); exists {
-        // origStr is already a string.
-        if err := json.Unmarshal([]byte(origStr), &originalMeta); err != nil {
-            p.logger.Errorf("failed to unmarshal original metadata: %v", err)
-        }
-    }
-
-    // Define known UMH system fields that should never be exposed by default.
+    // Define system fields that are excluded from final metadata by default.
     systemFields := map[string]bool{
         "location_path": true,
         "data_contract": true,
@@ -531,37 +519,17 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
         "virtual_path":  true,
         "topic":         true,
         "includeAll":    true,
-        "_originalMeta": true,
     }
 
-    // Build the final metadata.
-    // If includeAll is enabled, simply include everything.
-    // Otherwise, include only those keys that are either:
-    //   - Not part of the system fields, AND
-    //   - Either not present in the original metadata OR
-    //     present but with a value different from the original.
+    // Build the user metadata map.
     userMetadata := map[string]interface{}{}
-    if includeAll {
-        for k, v := range allMeta {
-            userMetadata[k] = v
-        }
-    } else {
-        for k, v := range allMeta {
-            // Skip system fields entirely.
-            if systemFields[k] {
-                continue
-            }
-            // If the key existed in the original meta and its value is unchanged,
-            // then assume the user did not explicitly reassign it.
-            if origVal, found := originalMeta[k]; found && origVal == v {
-                continue
-            }
-            // Otherwise, include the key.
+    for k, v := range allMeta {
+        if includeAll || !systemFields[k] {
             userMetadata[k] = v
         }
     }
 
-    // Construct the final payload.
+    // Build the final payload.
     payload := map[string]interface{}{
         tagName:        value,
         "timestamp_ms": time.Now().UnixMilli(),
