@@ -482,7 +482,7 @@ To fix: Set required fields (msg.meta.location_path, msg.meta.data_contract, msg
 func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Message, error) {
     newMsg := service.NewMessage(nil)
 
-    // Copy all metadata from the original message.
+    // Collect all metadata from the original message.
     allMeta := map[string]string{}
     _ = msg.MetaWalkMut(func(k string, v any) error {
         if strVal, ok := v.(string); ok {
@@ -491,11 +491,11 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
         return nil
     })
 
-    // Construct the topic from UMH system fields.
+    // Construct the topic using UMH system fields.
     topic := p.constructTopic(msg)
     newMsg.MetaSet("topic", topic)
 
-    // Retrieve the tag name (must be present).
+    // Retrieve the tag name (this is a required UMH field).
     tagName, exists := allMeta["tag_name"]
     if !exists {
         return nil, fmt.Errorf("missing 'tag_name' in metadata")
@@ -508,28 +508,24 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
     }
     value := p.convertValue(structured)
 
-    // Check if advanced users want to include all meta fields.
+    // Check if advanced users want to include all metadata.
+    // When includeAll is not enabled, none of the original msg.meta fields will appear
+    // in the final output's "metadata" field.
     includeAll := allMeta["includeAll"] == "true"
 
-    // Define system fields that are excluded from final metadata by default.
-    systemFields := map[string]bool{
-        "location_path": true,
-        "data_contract": true,
-        "tag_name":      true,
-        "virtual_path":  true,
-        "topic":         true,
-        "includeAll":    true,
-    }
-
-    // Build the user metadata map.
-    userMetadata := map[string]interface{}{}
-    for k, v := range allMeta {
-        if includeAll || !systemFields[k] {
+    var userMetadata map[string]interface{}
+    if includeAll {
+        // Include every key that was originally in msg.meta.
+        userMetadata = map[string]interface{}{}
+        for k, v := range allMeta {
             userMetadata[k] = v
         }
+    } else {
+        // By default, do not expose any metadata from msg.meta.
+        userMetadata = map[string]interface{}{}
     }
 
-    // Build the final payload.
+    // Construct the final payload.
     payload := map[string]interface{}{
         tagName:        value,
         "timestamp_ms": time.Now().UnixMilli(),
