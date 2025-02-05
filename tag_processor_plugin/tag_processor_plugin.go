@@ -126,7 +126,7 @@ func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics 
 	}, nil
 }
 
-// TODO that everytime htere is any execution error, the code where the error happened is outputted as well as the message that caused it (see nodered_js_plugin). Need to double check that it is not double outputted with the ndoered_js_plugin
+// ProcessBatch runs the configured JavaScript code on each message.
 func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var resultBatch service.MessageBatch
 
@@ -248,7 +248,7 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 	return []service.MessageBatch{resultBatch}, nil
 }
 
-// logJSError logs JavaScript execution errors with code context
+// logJSError logs JavaScript execution errors with code context.
 func (p *TagProcessor) logJSError(err error, code string, jsMsg map[string]interface{}) {
 	if jsErr, ok := err.(*goja.Exception); ok {
 		stack := jsErr.String()
@@ -274,7 +274,7 @@ Message content: %v`,
 	}
 }
 
-// logError logs general processing errors with message context
+// logError logs general processing errors with message context.
 func (p *TagProcessor) logError(err error, stage string, msg interface{}) {
 	p.logger.Errorf(`Processing failed at stage '%s':
 Error: %v
@@ -284,7 +284,7 @@ Message content: %v`,
 		msg)
 }
 
-// executeJSCode executes JavaScript code and returns an array of message objects
+// executeJSCode executes JavaScript code and returns an array of message objects.
 func (p *TagProcessor) executeJSCode(vm *goja.Runtime, code string, jsMsg map[string]interface{}) ([]map[string]interface{}, error) {
 	wrappedCode := fmt.Sprintf(`(function(){%s})()`, code)
 	result, err := vm.RunString(wrappedCode)
@@ -298,14 +298,14 @@ func (p *TagProcessor) executeJSCode(vm *goja.Runtime, code string, jsMsg map[st
 		return nil, nil
 	}
 
-	// Handle both single message and array returns
+	// Handle both single message and array returns.
 	switch v := result.Export().(type) {
 	case []interface{}:
-		// Handle array of messages
+		// Handle array of messages.
 		messages := make([]map[string]interface{}, 0, len(v))
 		for _, msg := range v {
 			if msg == nil {
-				continue // Skip nil messages in array
+				continue // Skip nil messages in array.
 			}
 			if msgMap, ok := msg.(map[string]interface{}); ok {
 				messages = append(messages, msgMap)
@@ -315,14 +315,14 @@ func (p *TagProcessor) executeJSCode(vm *goja.Runtime, code string, jsMsg map[st
 		}
 		return messages, nil
 	case map[string]interface{}:
-		// Handle single message
+		// Handle single message.
 		return []map[string]interface{}{v}, nil
 	default:
 		return nil, fmt.Errorf("code must return a message object or array of message objects")
 	}
 }
 
-// processMessageBatch processes a batch of messages with the given JavaScript code
+// processMessageBatch processes a batch of messages with the given JavaScript code.
 func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code string) (service.MessageBatch, error) {
 	if code == "" {
 		return batch, nil
@@ -331,22 +331,36 @@ func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code stri
 	var resultBatch service.MessageBatch
 
 	for _, msg := range batch {
-		// Create JavaScript runtime for this message
+		// ***** Store the original metadata if not already set *****
+		if _, exists := msg.MetaGet("_originalMeta"); !exists {
+			orig := map[string]string{}
+			_ = msg.MetaWalkMut(func(key string, value any) error {
+				if s, ok := value.(string); ok {
+					orig[key] = s
+				}
+				return nil
+			})
+			if origJSON, err := json.Marshal(orig); err == nil {
+				msg.MetaSet("_originalMeta", string(origJSON))
+			}
+		}
+
+		// Create JavaScript runtime for this message.
 		vm := goja.New()
 
-		// Convert message to JS object with the payload being in the payload field
+		// Convert message to JS object with the payload in the "payload" field.
 		jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
 		if err != nil {
 			p.logError(err, "message conversion", msg)
 			return nil, fmt.Errorf("failed to convert message to JavaScript object: %v", err)
 		}
 
-		// Initialize meta if it doesn't exist
+		// Initialize meta if it doesn't exist.
 		if _, exists := jsMsg["meta"]; !exists {
 			jsMsg["meta"] = make(map[string]interface{})
 		}
 
-		// Add existing metadata
+		// Add existing metadata.
 		meta := jsMsg["meta"].(map[string]interface{})
 		if err := msg.MetaWalkMut(func(key string, value any) error {
 			meta[key] = value
@@ -356,34 +370,34 @@ func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code stri
 			return nil, fmt.Errorf("failed to extract metadata: %v", err)
 		}
 
-		// Setup JS environment
+		// Setup JS environment.
 		if err := p.jsProcessor.SetupJSEnvironment(vm, jsMsg); err != nil {
 			p.logError(err, "JS environment setup", jsMsg)
 			return nil, fmt.Errorf("failed to setup JavaScript environment: %v", err)
 		}
 
-		// Set msg variable in VM
+		// Set msg variable in VM.
 		if err := vm.Set("msg", jsMsg); err != nil {
 			p.logError(err, "JS message setup", jsMsg)
 			return nil, fmt.Errorf("failed to set message in JavaScript environment: %v", err)
 		}
 
-		// Execute the code
+		// Execute the code.
 		messages, err := p.executeJSCode(vm, code, jsMsg)
 		if err != nil {
 			return nil, err
 		}
 
-		// Skip if message was dropped (null return)
+		// Skip if message was dropped (null return).
 		if messages == nil {
 			continue
 		}
 
-		// Convert resulting messages back to Benthos messages
+		// Convert resulting messages back to Benthos messages.
 		for _, resultMsg := range messages {
 			newMsg := service.NewMessage(nil)
 
-			// Set metadata
+			// Set metadata.
 			if meta, ok := resultMsg["meta"].(map[string]interface{}); ok {
 				for k, v := range meta {
 					if str, ok := v.(string); ok {
@@ -392,11 +406,11 @@ func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code stri
 				}
 			}
 
-			// Set payload
+			// Set payload.
 			if payload, exists := resultMsg["payload"]; exists {
 				newMsg.SetStructured(payload)
 			} else {
-				// If no payload in result, copy from original message
+				// If no payload in result, copy from original message.
 				newMsg.SetStructured(jsMsg["payload"])
 			}
 
@@ -407,12 +421,12 @@ func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code stri
 	return resultBatch, nil
 }
 
-// validateMessage checks if a message has all required metadata fields
+// validateMessage checks if a message has all required metadata fields.
 func (p *TagProcessor) validateMessage(msg *service.Message) error {
 	requiredFields := []string{"location_path", "data_contract", "tag_name"}
 	missingFields := []string{}
 
-	// Get current metadata for context
+	// Get current metadata for context.
 	metadata := map[string]string{}
 	err := msg.MetaWalkMut(func(key string, value any) error {
 		if str, ok := value.(string); ok {
@@ -424,7 +438,7 @@ func (p *TagProcessor) validateMessage(msg *service.Message) error {
 		return fmt.Errorf("failed to walk message metadata: %v", err)
 	}
 
-	// Check for missing fields
+	// Check for missing fields.
 	for _, field := range requiredFields {
 		if _, exists := msg.MetaGet(field); !exists {
 			missingFields = append(missingFields, field)
@@ -432,29 +446,29 @@ func (p *TagProcessor) validateMessage(msg *service.Message) error {
 	}
 
 	if len(missingFields) > 0 {
-		// Get message payload for context
+		// Get message payload for context.
 		var payloadStr string
 		payload, err := msg.AsStructuredMut()
 		if err != nil {
 			payloadStr = "unable to parse message payload"
 		} else {
-			// Try to format as JSON first
+			// Try to format as JSON first.
 			payloadJSON, err := json.MarshalIndent(payload, "", "  ")
 			if err != nil {
-				// If JSON formatting fails, use string representation
+				// If JSON formatting fails, use string representation.
 				payloadStr = fmt.Sprintf("%v", payload)
 			} else {
 				payloadStr = string(payloadJSON)
 			}
 		}
 
-		// Convert metadata to pretty JSON
+		// Convert metadata to pretty JSON.
 		metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
 		if err != nil {
 			metadataJSON = []byte("unable to format metadata as JSON")
 		}
 
-		// Create detailed error message with better formatting
+		// Create detailed error message.
 		errorMsg := fmt.Sprintf(`Message validation failed
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Missing fields: %s
@@ -478,75 +492,99 @@ To fix: Set required fields (msg.meta.location_path, msg.meta.data_contract, msg
 	return nil
 }
 
-// constructFinalMessage creates the final message with proper topic and payload structure
+// constructFinalMessage creates the final message with proper topic and payload structure.
 func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Message, error) {
-    newMsg := service.NewMessage(nil)
+	newMsg := service.NewMessage(nil)
 
-    // Copy all metadata from the original message.
-    allMeta := map[string]string{}
-    _ = msg.MetaWalkMut(func(k string, v any) error {
-        if strVal, ok := v.(string); ok {
-            allMeta[k] = strVal
-        }
-        return nil
-    })
+	// Copy all metadata from the final message.
+	allMeta := map[string]string{}
+	_ = msg.MetaWalkMut(func(k string, v any) error {
+		if strVal, ok := v.(string); ok {
+			allMeta[k] = strVal
+		}
+		return nil
+	})
 
-    // Construct the topic from UMH system fields.
-    topic := p.constructTopic(msg)
-    newMsg.MetaSet("topic", topic)
+	// Construct the topic from UMH system fields.
+	topic := p.constructTopic(msg)
+	newMsg.MetaSet("topic", topic)
 
-    // Retrieve the tag name (must be present).
-    tagName, exists := allMeta["tag_name"]
-    if !exists {
-        return nil, fmt.Errorf("missing 'tag_name' in metadata")
-    }
+	// Retrieve the tag name (must be present).
+	tagName, exists := allMeta["tag_name"]
+	if !exists {
+		return nil, fmt.Errorf("missing 'tag_name' in metadata")
+	}
 
-    // Get the payload value.
-    structured, err := msg.AsStructured()
-    if err != nil {
-        return nil, fmt.Errorf("failed to get structured payload: %v", err)
-    }
-    value := p.convertValue(structured)
+	// Get the payload value.
+	structured, err := msg.AsStructured()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get structured payload: %v", err)
+	}
+	value := p.convertValue(structured)
 
-    // Check if advanced users want to include all meta fields.
-    includeAll := allMeta["includeAll"] == "true"
+	// Check if advanced users want to include all meta fields.
+	includeAll := allMeta["includeAll"] == "true"
 
-    // Define system fields that are excluded from final metadata by default.
-    systemFields := map[string]bool{
-        "location_path": true,
-        "data_contract": true,
-        "tag_name":      true,
-        "virtual_path":  true,
-        "topic":         true,
-        "includeAll":    true,
-    }
+	// Retrieve the original metadata stored earlier.
+	originalMeta := map[string]string{}
+	if origStr, exists := msg.MetaGet("_originalMeta"); exists {
+		if err := json.Unmarshal([]byte(origStr), &originalMeta); err != nil {
+			p.logger.Errorf("failed to unmarshal original metadata: %v", err)
+		}
+	}
 
-    // Build the user metadata map.
-    userMetadata := map[string]interface{}{}
-    for k, v := range allMeta {
-        if includeAll || !systemFields[k] {
-            userMetadata[k] = v
-        }
-    }
+	// Define known UMH system fields that are always excluded.
+	systemFields := map[string]bool{
+		"location_path": true,
+		"data_contract": true,
+		"tag_name":      true,
+		"virtual_path":  true,
+		"topic":         true,
+		"includeAll":    true,
+		"_originalMeta": true,
+	}
 
-    // Build the final payload.
-    payload := map[string]interface{}{
-        tagName:        value,
-        "timestamp_ms": time.Now().UnixMilli(),
-        "metadata":     userMetadata,
-    }
-    newMsg.SetStructured(payload)
+	// Build the final user metadata.
+	// If includeAll is enabled, include every key.
+	// Otherwise, include only keys that are not in systemFields
+	// and whose current value differs from the original value.
+	userMetadata := map[string]interface{}{}
+	if includeAll {
+		for k, v := range allMeta {
+			userMetadata[k] = v
+		}
+	} else {
+		for k, v := range allMeta {
+			if systemFields[k] {
+				continue
+			}
+			// Only include if the key is not in the original metadata
+			// or if it was explicitly modified (its current value differs).
+			if origVal, found := originalMeta[k]; found && origVal == v {
+				continue
+			}
+			userMetadata[k] = v
+		}
+	}
 
-    return newMsg, nil
+	// Build the final payload.
+	payload := map[string]interface{}{
+		tagName:        value,
+		"timestamp_ms": time.Now().UnixMilli(),
+		"metadata":     userMetadata,
+	}
+	newMsg.SetStructured(payload)
+
+	return newMsg, nil
 }
 
-// convertValue recursively converts values to their appropriate types
+// convertValue recursively converts values to their appropriate types.
 func (p *TagProcessor) convertValue(v interface{}) interface{} {
 	switch val := v.(type) {
 	case bool:
 		return val
 	case string:
-		// Try to convert string to number if possible
+		// Try to convert string to number if possible.
 		if num, err := strconv.ParseFloat(val, 64); err == nil {
 			return json.Number(fmt.Sprintf("%v", num))
 		}
@@ -556,14 +594,14 @@ func (p *TagProcessor) convertValue(v interface{}) interface{} {
 	case []interface{}:
 		return fmt.Sprintf("%v", val)
 	case map[string]interface{}:
-		// Recursively convert values in the map
+		// Recursively convert values in the map.
 		converted := make(map[string]interface{})
 		for k, v := range val {
 			converted[k] = p.convertValue(v)
 		}
 		return converted
 	default:
-		// For any other type, try to convert to number if it's a string representation
+		// For any other type, try to convert to number if it's a string representation.
 		str := fmt.Sprintf("%v", val)
 		if num, err := strconv.ParseFloat(str, 64); err == nil {
 			return json.Number(fmt.Sprintf("%v", num))
@@ -572,26 +610,26 @@ func (p *TagProcessor) convertValue(v interface{}) interface{} {
 	}
 }
 
-// constructTopic creates the topic string from message metadata
+// constructTopic creates the topic string from message metadata.
 func (p *TagProcessor) constructTopic(msg *service.Message) string {
 	parts := []string{"umh", "v1"}
 
-	// Add location path
+	// Add location path.
 	if value, exists := msg.MetaGet("location_path"); exists && value != "" {
 		parts = append(parts, strings.Split(value, ".")...)
 	}
 
-	// Add data_contract
+	// Add data_contract.
 	if value, exists := msg.MetaGet("data_contract"); exists && value != "" {
 		parts = append(parts, value)
 	}
 
-	// Add virtual_path if it exists
+	// Add virtual_path if it exists.
 	if value, exists := msg.MetaGet("virtual_path"); exists && value != "" {
 		parts = append(parts, strings.Split(value, ".")...)
 	}
 
-	// Add tag_name
+	// Add tag_name.
 	if value, exists := msg.MetaGet("tag_name"); exists && value != "" {
 		parts = append(parts, value)
 	}
