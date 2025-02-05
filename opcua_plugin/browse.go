@@ -231,7 +231,17 @@ func sendError(ctx context.Context, err error, errChan chan<- error, logger Logg
 	}
 }
 
-// Add this helper function after the worker function
+// browseChildren browses the child nodes of the given node and queues them as tasks.
+// It only browses for variables and objects through hierarchical references.
+// The child tasks are queued with an incremented level and the current node's path and ID as parent.
+// Parameters:
+//   - ctx: Context for cancellation
+//   - task: The current node task being processed
+//   - def: Node definition containing path and ID information
+//   - taskChan: Channel to queue child tasks
+//   - taskWg: WaitGroup to track task completion
+//
+// Returns an error if browsing children fails
 func browseChildren(ctx context.Context, task NodeTask, def NodeDef, taskChan chan NodeTask, taskWg *TrackedWaitGroup) error {
 	children, err := task.node.Children(ctx, id.HierarchicalReferences,
 		ua.NodeClassVariable|ua.NodeClassObject)
