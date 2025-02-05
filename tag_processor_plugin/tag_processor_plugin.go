@@ -516,11 +516,10 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
     // Retrieve the original metadata that came from upstream.
     // (This should have been stored in msg.meta._originalMeta as a JSON string.)
     originalMeta := map[string]string{}
-    if origJSON, exists := msg.MetaGet("_originalMeta"); exists {
-        if origStr, ok := origJSON.(string); ok {
-            if err := json.Unmarshal([]byte(origStr), &originalMeta); err != nil {
-                p.logger.Errorf("failed to unmarshal original metadata: %v", err)
-            }
+    if origStr, exists := msg.MetaGet("_originalMeta"); exists {
+        // origStr is already a string.
+        if err := json.Unmarshal([]byte(origStr), &originalMeta); err != nil {
+            p.logger.Errorf("failed to unmarshal original metadata: %v", err)
         }
     }
 
