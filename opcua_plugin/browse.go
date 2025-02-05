@@ -75,18 +75,58 @@ type NodeTask struct {
 }
 
 // browse uses a worker pool pattern to process nodes
-func browse(ctx context.Context, startNode NodeBrowser, startPath string, logger Logger, parentNodeId string,
-	nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan NodeDef, visited *sync.Map) {
-
+func browse(
+	ctx context.Context,
+	startNode NodeBrowser,
+	startPath string,
+	logger Logger,
+	parentNodeId string,
+	nodeChan chan NodeDef,
+	errChan chan error,
+	wg *TrackedWaitGroup,
+	opcuaBrowserChan chan NodeDef,
+	visited *sync.Map,
+) {
+	metrics := NewServerMetrics()
 	var taskWg TrackedWaitGroup
 	var workerWg TrackedWaitGroup
-	const numWorkers = 100 // Adjust based on your needs
-	taskChan := make(chan NodeTask, numWorkers*10)
+	taskChan := make(chan NodeTask, metrics.currentWorkers*10)
+
+	workerID := atomic.Int32{}
+	// Start worker pool manager
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				toAdd, toRemove := metrics.adjustWorkers(logger)
+				for i := 0; i < toAdd; i++ {
+					id := int(workerID.Add(1))
+					workerWg.Add(1)
+					stopChan := metrics.addWorker(id)
+					go worker(ctx, id, taskChan, nodeChan, errChan, opcuaBrowserChan, visited, logger, &taskWg, &workerWg, metrics, stopChan)
+				}
+
+				for i := 0; i < toRemove; i++ {
+					id := int(workerID.Load())
+					metrics.removeWorker(id)
+					workerWg.Add(-1)
+				}
+			}
+		}
+
+	}()
 
 	// Start worker pool
-	for i := 0; i < numWorkers; i++ {
+	for i := 0; i < metrics.currentWorkers; i++ {
+		id := int(workerID.Add(1))
 		workerWg.Add(1)
-		go worker(ctx, i, taskChan, nodeChan, errChan, opcuaBrowserChan, visited, logger, &taskWg, &workerWg)
+		stopChan := metrics.addWorker(id)
+		go worker(ctx, i, taskChan, nodeChan, errChan, opcuaBrowserChan, visited, logger, &taskWg, &workerWg, metrics, stopChan)
 	}
 
 	// Send initial task
@@ -118,16 +158,27 @@ func worker(
 	logger Logger,
 	taskWg *TrackedWaitGroup,
 	workerWg *TrackedWaitGroup,
+	metrics *ServerMetrics,
+	stopChan chan struct{},
 ) {
 	defer workerWg.Done()
 	for {
 		select {
+		case <-stopChan:
+			logger.Debugf("Worker %d removed stop signal to reduce load on the opcua server", id)
+			return
+
+		case <-ctx.Done():
+			logger.Warnf("Worker %d: received cancellation signal", id)
+			return
+
 		case task, ok := <-taskChan:
 			if !ok {
 				// Channel is closed
 				return
 			}
 
+			startTime := time.Now()
 			// Skip if already visited or too deep
 			if _, exists := visited.LoadOrStore(task.node.ID(), struct{}{}); exists {
 				logger.Debugf("Worker %d: node %s already visited", id, task.node.ID().String())
@@ -211,11 +262,9 @@ func worker(
 					sendError(ctx, err, errChan, logger)
 				}
 			}
+			metrics.recordResponseTime(time.Since(startTime))
 			taskWg.Done()
 
-		case <-ctx.Done():
-			logger.Warnf("Worker %d: received cancellation signal", id)
-			return
 		}
 	}
 }
