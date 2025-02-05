@@ -25,9 +25,13 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// We create an implementation for io.Reader here since we don't want to
+// randomly generate our private key but instead want to seed it.
 
 type seededReader struct {
 	src *mrand.Rand
@@ -48,24 +52,28 @@ func (r *seededReader) Read(p []byte) (int, error) {
 // usage, taking into account the security mode (Sign vs SignAndEncrypt) and
 // the desired security policy (Basic128Rsa15, Basic256, Basic256Sha256, etc.).
 //
-//   - host:         CommonName & DNS/IP/URI entries to include
-//   - validFor:     Certificate validity duration
-//   - securityMode: The OPC UA message security mode (None, Sign, SignAndEncrypt)
-//   - policy:       The OPC UA security policy (e.g., "Basic128Rsa15", "Basic256", "Basic256Sha256")
+//   - host:						CommonName & DNS/IP/URI entries to include
+//   - validFor:				Certificate validity duration
+//   - securityMode:		The OPC UA message security mode (None, Sign, SignAndEncrypt)
+//   - securityPolicy:  The OPC UA security policy (e.g., "Basic128Rsa15", "Basic256", "Basic256Sha256")
+//   - seedString:			The seed which is used to create the client certificate
 func GenerateCertWithMode(
-	host string,
 	validFor time.Duration,
 	securityMode string,
 	securityPolicy string,
 	seedString string,
-	clientNameUID string,
-) (certPEM, keyPEM []byte, err error) {
-	var rsaBits int
+) (certPEM, keyPEM []byte, clientName string, err error) {
+	var (
+		rsaBits            int
+		signatureAlgorithm x509.SignatureAlgorithm
+	)
 
-	if len(host) == 0 {
-		return nil, nil, fmt.Errorf("missing required host parameter")
-	}
-	var signatureAlgorithm x509.SignatureAlgorithm
+	h := fnv.New64a()
+	h.Write([]byte(seedString))
+	seed := int64(h.Sum64())
+	clientUID := strconv.FormatInt(seed, 10)
+
+	host := "urn:benthos-umh:client-predefined-" + clientUID[0:7]
 
 	switch securityPolicy {
 	case "Basic256Rsa256":
@@ -87,18 +95,10 @@ func GenerateCertWithMode(
 		signatureAlgorithm = x509.SHA256WithRSA
 	}
 
-	h := fnv.New64a()
-	h.Write([]byte(seedString))
-	seed := int64(h.Sum64())
-
-	// Create a custom io.Reader to ensure we don't use random Numbers to create
-	// the private key, but instead use the 'certificateSeed'.
-	seededReader := newSeededReader(seed)
-
 	// Generate RSA private key
-	priv, err := rsa.GenerateKey(seededReader, rsaBits)
+	priv, err := rsa.GenerateKey(rand.Reader, rsaBits)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate private key: %w", err)
+		return nil, nil, "", fmt.Errorf("failed to generate private key: %w", err)
 	}
 
 	notBefore := time.Now()
@@ -113,21 +113,22 @@ func GenerateCertWithMode(
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 127)
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate serial number: %w", err)
+		return nil, nil, "", fmt.Errorf("failed to generate serial number: %w", err)
 	}
 
 	// Prepare the certificate template
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			// Modify as appropriate for your org
-			CommonName:   "benthos-umh-predefined-" + clientNameUID,
+			// Modified by using the first 8 characters of the "hashed" seed
+			CommonName:   "benthos-umh-predefined-" + clientUID[0:7],
 			Organization: []string{"UMH"},
 		},
 		NotBefore:             notBefore,
 		NotAfter:              notAfter,
 		BasicConstraintsValid: true,
 		SignatureAlgorithm:    signatureAlgorithm,
+		IsCA:                  false,
 
 		// ExtKeyUsage: Both server & client auth for OPC UA usage
 		ExtKeyUsage: []x509.ExtKeyUsage{
@@ -136,7 +137,9 @@ func GenerateCertWithMode(
 		},
 	}
 
-	// Fill in IPAddresses, DNSNames, URIs from the host string (comma-separated)
+	clientName = template.Subject.CommonName
+
+	// Fill in IPAddresses, DNSNames, URIs from the ApplicationURI string (comma-separated)
 	hosts := strings.Split(host, ",")
 	for _, h := range hosts {
 		if ip := net.ParseIP(h); ip != nil {
@@ -152,35 +155,47 @@ func GenerateCertWithMode(
 	// Decide on the key usage bits based on security mode
 	switch securityMode {
 	case "Sign":
-		// For Sign-only, we need DigitalSignature
-		template.KeyUsage = x509.KeyUsageDigitalSignature
+		// For Sign-only, we need DigitalSignature and ContentCommitment("NonRepudiation")
+		// meaning the certificate can be used to sign data or communications that
+		// the signer later cannot deny having signed it.
+		template.KeyUsage = x509.KeyUsageDigitalSignature |
+			x509.KeyUsageContentCommitment
 	case "SignAndEncrypt":
-		// For Sign and Encrypt, we need KeyEncipherment + DigitalSignature
-		template.KeyUsage = x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageDataEncipherment
+		// For Sign and Encrypt, we need KeyEncipherment, DigitalSignature,
+		// DataEncipherement, ContentCommitment and CertSign
+		template.KeyUsage = x509.KeyUsageKeyEncipherment |
+			x509.KeyUsageDigitalSignature |
+			x509.KeyUsageDataEncipherment |
+			x509.KeyUsageContentCommitment |
+			x509.KeyUsageCertSign
 	default:
 		// e.g. fallback for SecurityMode 'None'
 		template.KeyUsage = x509.KeyUsageDigitalSignature
 	}
 
+	// Create a custom io.Reader to ensure we don't use random Numbers to create
+	// the server certificate, but instead use the 'certificateSeed'.
+	seededReader := newSeededReader(seed)
+
 	// Actually create the certificate
 	derBytes, err := x509.CreateCertificate(
-		//NOTE: We could also seed the certificate itself, but at least 1 component
-		//			should stay random, either the certificate or the priv.key
-		rand.Reader,
+		// Use the seededReader to seed the server certificate. We could also seed
+		// the private key, but at least 1 of them should be randomly created.
+		seededReader,
 		&template,
 		&template, // self-signed
 		publicKey(priv),
 		priv,
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create certificate: %w", err)
+		return nil, nil, "", fmt.Errorf("failed to create certificate: %w", err)
 	}
 
 	// PEM-encode the results
 	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
 	keyPEM = pem.EncodeToMemory(pemBlockForKey(priv))
 
-	return certPEM, keyPEM, nil
+	return certPEM, keyPEM, clientName, nil
 }
 
 func publicKey(priv interface{}) interface{} {

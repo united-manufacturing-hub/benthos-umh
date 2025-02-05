@@ -37,27 +37,31 @@ func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescript
 		opts = append(opts, opcua.AuthUsername(g.Username, g.Password))
 	}
 
-	// Generate certificates if we don't connect without Security
+	// Generate certificates if we connect with Security
 	if selectedEndpoint.SecurityPolicyURI != ua.SecurityPolicyURINone {
 		if g.cachedTLSCertificate == nil {
 			if g.CertificateSeed == "" {
-				// Generate an 8-character random string if no 'certificateSeed'
+				// Generate an 64-character random string if no 'certificateSeed'
 				// provided by the user.
-				g.CertificateSeed = randomString(8)
+				g.CertificateSeed = randomString(64)
+				g.Log.Infof(
+					"The client certificate was generated randomly upon startup and will "+
+						"change on every restart. To use the current dynamically generated "+
+						"certificate as a fixed certificate, copy the following configuration "+
+						"snippet into your config: 'certificateSeed: \"%s\"'", g.CertificateSeed)
+
 			}
 
 			// Just use a random String to make the appearance in "trusted clients"
 			// more "unique". So the user is able to recognize the client in the
 			// servers UI.
-			clientNameUID := randomString(8)
 
-			clientName := "urn:benthos-umh:client-predefined-" + clientNameUID
-			certPEM, keyPEM, err := GenerateCertWithMode(clientName,
+			certPEM, keyPEM, clientName, err := GenerateCertWithMode(
 				24*time.Hour*365*10,
 				g.SecurityMode,
 				g.SecurityPolicy,
 				g.CertificateSeed,
-				clientNameUID)
+			)
 			if err != nil {
 				g.Log.Errorf("Failed to generate certificate: %v", err)
 				return nil, err
@@ -73,7 +77,7 @@ func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescript
 			g.cachedTLSCertificate = &cert
 			g.Log.Infof("The clients certificate was created, to use an encrypted connection "+
 				"please proceed to the OPC-UA Server Configuration and trust either all clients "+
-				"or the clients certificate with the Application-URI: '%s", clientName)
+				"or the clients certificate with the client-name: '%s'", clientName)
 		}
 
 		pk, ok := g.cachedTLSCertificate.PrivateKey.(*rsa.PrivateKey)
