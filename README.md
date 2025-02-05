@@ -168,7 +168,7 @@ input:
     password: 'your-password'
 ```
 
-##### Security Mode and Security Policy
+##### Encryption (Security Mode, Security Policy and Server Certificate Fingerprint)
 
 Security Mode: This defines the level of security applied to the messages. The options are:
 - None: No security is applied; messages are neither signed nor encrypted.
