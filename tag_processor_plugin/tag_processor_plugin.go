@@ -343,6 +343,7 @@ func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code stri
 			if origJSON, err := json.Marshal(orig); err == nil {
 				msg.MetaSet("_originalMeta", string(origJSON))
 			}
+			p.logger.Debugf("Original metadata: %v", orig)
 		}
 
 		// Create JavaScript runtime for this message.
