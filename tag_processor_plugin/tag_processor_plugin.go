@@ -483,6 +483,8 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
         }
     }
 
+	p.logger.Infof("originalMeta: %v", originalMeta)
+
     // Define a set of internal keys that should always be removed.
     // These keys are considered internal and are not to be part of the final output.
     internalKeys := map[string]bool{
