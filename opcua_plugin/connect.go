@@ -40,15 +40,15 @@ func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescript
 	// Generate certificates if we connect with Security
 	if selectedEndpoint.SecurityPolicyURI != ua.SecurityPolicyURINone {
 		if g.cachedTLSCertificate == nil {
-			if g.CertificateSeed == "" {
-				// Generate an 64-character random string if no 'certificateSeed'
+			if g.ClientCertificateSeed == "" {
+				// Generate an 64-character random string if no 'clientCertificateSeed'
 				// provided by the user.
-				g.CertificateSeed = randomString(64)
+				g.ClientCertificateSeed = randomString(64)
 				g.Log.Infof(
 					"The client certificate was generated randomly upon startup and will "+
 						"change on every restart. To use the current dynamically generated "+
 						"certificate as a fixed certificate, copy the following configuration "+
-						"snippet into your config: 'certificateSeed: \"%s\"'", g.CertificateSeed)
+						"snippet into your config: 'clientCertificateSeed: \"%s\"'", g.ClientCertificateSeed)
 
 			}
 
@@ -60,7 +60,7 @@ func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescript
 				24*time.Hour*365*10,
 				g.SecurityMode,
 				g.SecurityPolicy,
-				g.CertificateSeed,
+				g.ClientCertificateSeed,
 			)
 			if err != nil {
 				g.Log.Errorf("Failed to generate certificate: %v", err)

@@ -71,6 +71,7 @@ func GenerateCertWithMode(
 	h := fnv.New64a()
 	h.Write([]byte(seedString))
 	seed := int64(h.Sum64())
+
 	clientUID := strconv.FormatInt(seed, 10)
 
 	host := "urn:benthos-umh:client-predefined-" + clientUID[0:7]
@@ -95,14 +96,22 @@ func GenerateCertWithMode(
 		signatureAlgorithm = x509.SHA256WithRSA
 	}
 
+	// Create a custom io.Reader to ensure we don't use random Numbers to create
+	// the server certificate, but instead use the 'certificateSeed'.
+	rKey := newSeededReader(seed)
+
 	// Generate RSA private key
-	priv, err := rsa.GenerateKey(rand.Reader, rsaBits)
+	priv, err := rsa.GenerateKey(rKey, rsaBits)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("failed to generate private key: %w", err)
 	}
 
-	notBefore := time.Now()
+	now := time.Now().UTC()
+	fixedStart := time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+	notBefore := fixedStart
 	notAfter := notBefore.Add(validFor)
+
+	rSerial := newSeededReader(seed)
 
 	// Use 127 bits instead of 128 to ensure the serial number is always positive.
 	// In ASN.1 DER encoding (used by X.509), integers are signed. If the most significant bit (MSB)
@@ -111,7 +120,7 @@ func GenerateCertWithMode(
 	// and complies with RFC 5280 requirements, thereby preventing parsing errors like
 	// "x509: negative serial number".
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 127)
-	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
+	serialNumber, err := rand.Int(rSerial, serialNumberLimit)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("failed to generate serial number: %w", err)
 	}
@@ -173,15 +182,13 @@ func GenerateCertWithMode(
 		template.KeyUsage = x509.KeyUsageDigitalSignature
 	}
 
-	// Create a custom io.Reader to ensure we don't use random Numbers to create
-	// the server certificate, but instead use the 'certificateSeed'.
-	seededReader := newSeededReader(seed)
+	rCert := newSeededReader(seed)
 
 	// Actually create the certificate
 	derBytes, err := x509.CreateCertificate(
 		// Use the seededReader to seed the server certificate. We could also seed
 		// the private key, but at least 1 of them should be randomly created.
-		seededReader,
+		rCert,
 		&template,
 		&template, // self-signed
 		publicKey(priv),

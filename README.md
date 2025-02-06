@@ -125,6 +125,7 @@ input:
     insecure: false | true # DEPRECATED, see below
     securityMode: None | Sign | SignAndEncrypt # optional (default: unset)
     securityPolicy: None | Basic256Sha256  # optional (default: unset)
+    clientCertificateSeed: 'your-fixed-64-character-random-string' # optional (default: unset)
     subscribeEnabled: false | true # optional (default: false)
     useHeartbeat: false | true # optional (default: false)
     pollRate: 1000 # optional (default: 1000) The rate in milliseconds at which to poll the OPC UA server when not using subscriptions
@@ -167,7 +168,7 @@ input:
     password: 'your-password'
 ```
 
-##### Security Mode and Security Policy
+##### Security Options
 
 Security Mode: This defines the level of security applied to the messages. The options are:
 - None: No security is applied; messages are neither signed nor encrypted.
@@ -175,6 +176,8 @@ Security Mode: This defines the level of security applied to the messages. The o
 - SignAndEncrypt: Provides the highest security level where messages are both signed and encrypted.
 
 Security Policy: Specifies the set of cryptographic algorithms used for securing messages. This includes algorithms for encryption, decryption, and signing of messages. Currently only Basic256Sha256 is allowed.
+
+Client Certificate Seed: The certificate seed is used to deterministically create the client certificate when using encryption. If not set, then the certificate will be random upon restart, which means the server must trust all client certificates. If the server requires to trust each single client certificate, then the certificate seed must be set to a random (but therefore fixed) string with at least 64 characters.
 
 While the security mode and policy are automatically selected based on the endpoint and authentication method, you have the option to override this by specifying them in the configuration file:
 
@@ -185,6 +188,7 @@ input:
     nodeIDs: ['ns=2;s=IoTSensors']
     securityMode: SignAndEncrypt
     securityPolicy: Basic256Sha256
+    clientCertificateSeed: 'your-fixed-64-character-random-string'
 ```
 
 ##### Insecure Mode
