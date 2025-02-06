@@ -479,65 +479,79 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
     originalMeta := map[string]string{}
     if originalMetaRaw != "" {
         if err := json.Unmarshal([]byte(originalMetaRaw), &originalMeta); err != nil {
-            p.logger.Errorf("failed to unmarshal _initialMetadata: %v", err)
+            p.logger.Warnf("failed to unmarshal _initialMetadata: %v", err)
+            // Continue processing even if unmarshal fails
         }
     }
 
-	p.logger.Infof("originalMeta: %v", originalMeta)
-
-    // Define a set of internal keys that should always be removed.
-    // These keys are considered internal and are not to be part of the final output.
+    // Define a set of internal keys that should always be removed
     internalKeys := map[string]bool{
         "tag_name":         true,
-        "topic":            true,
+        "topic":           true,
         "_initialMetadata": true,
+        "_incomingKeys":   true,
         "location_path":    true,
         "data_contract":    true,
         "virtual_path":     true,
     }
 
-    // Build the filtered metadata object.
+    // Build the filtered metadata object
     filteredMeta := make(map[string]string)
-    err := msg.MetaWalkMut(func(key string, value any) error {
+    _ = msg.MetaWalkMut(func(key string, value any) error {
+        // Skip internal keys
         if internalKeys[key] {
-            return nil // Skip internal keys.
+            return nil
         }
-        // If the key existed originally and its value is unchanged, skip it.
-        if origVal, exists := originalMeta[key]; exists {
-            if strVal, ok := value.(string); ok && strVal == origVal {
-                return nil
-            }
+        
+        // Convert value to string if possible
+        var strVal string
+        switch v := value.(type) {
+        case string:
+            strVal = v
+        case fmt.Stringer:
+            strVal = v.String()
+        default:
+            strVal = fmt.Sprintf("%v", v)
         }
-        if str, ok := value.(string); ok {
-            filteredMeta[key] = str
+
+        // If the key existed originally and its value is unchanged, skip it
+        if origVal, exists := originalMeta[key]; exists && strVal == origVal {
+            return nil
         }
+
+        filteredMeta[key] = strVal
         return nil
     })
-    if err != nil {
-        return nil, fmt.Errorf("failed to filter metadata: %v", err)
-    }
 
-    // Retrieve tag_name from the message meta.
+    // Retrieve tag_name from the message meta
     tagName, exists := msg.MetaGet("tag_name")
     if !exists {
         return nil, fmt.Errorf("missing tag_name in metadata")
     }
 
-    // Get the structured payload from the original message.
+    // Get the structured payload from the original message
     structured, err := msg.AsStructured()
     if err != nil {
         return nil, fmt.Errorf("failed to get structured payload: %v", err)
     }
     value := p.convertValue(structured)
 
-    // Build the final payload object.
-    // Note that metadata is now placed under the key "meta" inside the payload.
+    // Build the final payload object
     finalPayload := map[string]interface{}{
         tagName:        value,
         "timestamp_ms": time.Now().UnixMilli(),
-        "meta":         filteredMeta,
     }
+
+    // Only include meta in the payload if there are filtered metadata entries
+    if len(filteredMeta) > 0 {
+        finalPayload["meta"] = filteredMeta
+    }
+
     newMsg.SetStructured(finalPayload)
+    
+    // Set the topic
+    topic := p.constructTopic(msg)
+    newMsg.MetaSet("topic", topic)
 
     return newMsg, nil
 }
