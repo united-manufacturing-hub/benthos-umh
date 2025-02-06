@@ -7,9 +7,10 @@ import (
 
 const (
 	MaxWorkers     = 200
-	MinWorkers     = 2
-	InitialWorkers = 2
+	MinWorkers     = 5
+	InitialWorkers = 10
 	SampleSize     = 5 // Number of requsts to measure response time
+	TargetLatency  = 250 * time.Millisecond
 )
 
 // ServerMetrics is a struct that holds the metrics for the OPCUA server requests
@@ -25,7 +26,7 @@ func NewServerMetrics() *ServerMetrics {
 	return &ServerMetrics{
 		responseTimes:  make([]time.Duration, 0),
 		workerControls: make(map[int]chan struct{}),
-		targetLatency:  100 * time.Millisecond,
+		targetLatency:  TargetLatency,
 		currentWorkers: InitialWorkers,
 	}
 }
@@ -90,5 +91,9 @@ func (sm *ServerMetrics) adjustWorkers(logger Logger) (toAdd, toRemove int) {
 func (sm *ServerMetrics) recordResponseTime(duration time.Duration) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	// Discard the oldest response time once the sample size is reached
+	if len(sm.responseTimes) >= SampleSize {
+		sm.responseTimes = sm.responseTimes[1:]
+	}
 	sm.responseTimes = append(sm.responseTimes, duration)
 }
