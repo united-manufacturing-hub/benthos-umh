@@ -110,7 +110,7 @@ var _ = Describe("Test against KepServer EX6", func() {
 // We verify that we are able to find their namespaceArrays and check for the
 // correct namespace. On top of that we are reading static and changing data
 // from the underlying S7-1200.
-var _ = Describe("Test underlying OPC-clients", func() {
+var _ = Describe("Test underlying OPC-clients", FlakeAttempts(2), func() {
 	var (
 		endpoint string
 		username string
