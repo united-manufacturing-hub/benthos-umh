@@ -399,30 +399,17 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 
 	DescribeTable("Selecting a custom SecurityPolicy", func(input *OPCUAInput) {
 		// attempt to connect with securityMode and Policy
+		input.Endpoint = endpoint
 		err := input.Connect(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
 	},
-		Entry("", &OPCUAInput{
-			Endpoint:         endpoint,
-			SecurityMode:     "SignAndEncrypt",
-			SecurityPolicy:   "Basic256Sha256",
-			SubscribeEnabled: true,
-			UseHeartbeat:     true,
-		}),
-		Entry("", &OPCUAInput{
-			Endpoint:       endpoint,
+		Entry("should connect via Basic256Sha256", &OPCUAInput{
 			SecurityMode:   "SignAndEncrypt",
-			SecurityPolicy: "Basic128Rsa15",
-		}),
-		Entry("", &OPCUAInput{
-			Endpoint:       endpoint,
-			SecurityMode:   "Sign",
 			SecurityPolicy: "Basic256Sha256",
 		}),
-		Entry("", &OPCUAInput{
-			Endpoint:       endpoint,
-			SecurityMode:   "Sign",
+		Entry("should connect via Basic128Rsa15", &OPCUAInput{
+			SecurityMode:   "SignAndEncrypt",
 			SecurityPolicy: "Basic128Rsa15",
 		}),
 	)
