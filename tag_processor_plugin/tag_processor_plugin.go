@@ -480,11 +480,10 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
     if originalMetaRaw != "" {
         if err := json.Unmarshal([]byte(originalMetaRaw), &originalMeta); err != nil {
             p.logger.Warnf("failed to unmarshal _initialMetadata: %v", err)
-            // Continue processing even if unmarshal fails
         }
     }
 
-    // Define a set of internal keys that should always be removed
+    // Define internal keys that should not be included in the payload's meta field
     internalKeys := map[string]bool{
         "tag_name":         true,
         "topic":           true,
@@ -495,10 +494,22 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
         "virtual_path":     true,
     }
 
-    // Build the filtered metadata object
+    // Copy all metadata to the new message
+    _ = msg.MetaWalkMut(func(key string, value any) error {
+        if str, ok := value.(string); ok {
+            newMsg.MetaSet(key, str)
+        } else if stringer, ok := value.(fmt.Stringer); ok {
+            newMsg.MetaSet(key, stringer.String())
+        } else {
+            newMsg.MetaSet(key, fmt.Sprintf("%v", value))
+        }
+        return nil
+    })
+
+    // Build the filtered metadata object for the payload
     filteredMeta := make(map[string]string)
     _ = msg.MetaWalkMut(func(key string, value any) error {
-        // Skip internal keys
+        // Skip internal keys for the payload meta
         if internalKeys[key] {
             return nil
         }
@@ -514,12 +525,10 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
             strVal = fmt.Sprintf("%v", v)
         }
 
-        // If the key existed originally and its value is unchanged, skip it
-        if origVal, exists := originalMeta[key]; exists && strVal == origVal {
-            return nil
+        // Only include changed or new metadata in the payload
+        if origVal, exists := originalMeta[key]; !exists || strVal != origVal {
+            filteredMeta[key] = strVal
         }
-
-        filteredMeta[key] = strVal
         return nil
     })
 
