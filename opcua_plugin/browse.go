@@ -90,12 +90,13 @@ func browse(
 	metrics := NewServerMetrics()
 	var taskWg TrackedWaitGroup
 	var workerWg TrackedWaitGroup
-	taskChan := make(chan NodeTask, metrics.currentWorkers*10)
+	// Have sufficient buffer (currentWorkers * 1000) for taskChan to avoid blocking and the number of workers might grow dynamically down the line.
+	taskChan := make(chan NodeTask, metrics.currentWorkers*1000)
 
 	workerID := atomic.Int32{}
 	// Start worker pool manager
 	go func() {
-		ticker := time.NewTicker(10 * time.Second)
+		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 
 		for {
