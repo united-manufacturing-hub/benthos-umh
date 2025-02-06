@@ -16,19 +16,21 @@
 name: kepware-plc
 
 on:
-  push:
-    branches:
-      - '**'
+  workflow_run:
+    workflows: [opcua-plc]
+    types:
+      - completed
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 concurrency:
-  group: kepware-plc-test
+  group: opcua-plc-test
   cancel-in-progress: true
 
 jobs:
-  go-test-opcua-plc:
+  go-test-kepware-plc:
     runs-on:
       group: arc-runners-tests
     permissions:
