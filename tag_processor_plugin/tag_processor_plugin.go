@@ -472,67 +472,72 @@ To fix: Set required fields (msg.meta.location_path, msg.meta.data_contract, msg
 // metadata (as recorded in _incomingKeys) and those that were generated internally (e.g. tag_name, topic).
 //
 func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Message, error) {
-	newMsg := service.NewMessage(nil)
+    newMsg := service.NewMessage(nil)
 
-	// Retrieve the original incoming meta keys that were recorded earlier.
-	originalKeysRaw, _ := msg.MetaGet("_incomingKeys")
-	originalKeysSet := make(map[string]bool)
-	if originalKeysRaw != "" {
-		for _, k := range strings.Split(originalKeysRaw, ",") {
-			originalKeysSet[strings.TrimSpace(k)] = true
-		}
-	}
+    // Retrieve the original incoming metadata stored in _initialMetadata.
+    originalMetaRaw, _ := msg.MetaGet("_initialMetadata")
+    originalMeta := map[string]string{}
+    if originalMetaRaw != "" {
+        if err := json.Unmarshal([]byte(originalMetaRaw), &originalMeta); err != nil {
+            p.logger.Errorf("failed to unmarshal _initialMetadata: %v", err)
+        }
+    }
 
-	// Define a set of internal keys that should not appear in the final meta.
-	internalKeys := map[string]bool{
-		"tag_name":           true,
-		"topic":              true,
-		"_initialMetadata":   true,
-		"_incomingKeys":      true,
-		"location_path":      true,
-		"data_contract":      true,
-		"virtual_path":       true,
-	}
+    // Define a set of internal keys that should always be removed.
+    // These keys are considered internal and are not to be part of the final output.
+    internalKeys := map[string]bool{
+        "tag_name":         true,
+        "topic":            true,
+        "_initialMetadata": true,
+        "location_path":    true,
+        "data_contract":    true,
+        "virtual_path":     true,
+    }
 
-	// Copy only those meta keys that are NOT in the original incoming meta and are not internal.
-	err := msg.MetaWalkMut(func(key string, value any) error {
-		if str, ok := value.(string); ok {
-			if originalKeysSet[key] {
-				return nil // Skip keys that were originally present.
-			}
-			if internalKeys[key] {
-				return nil // Skip plugin/internal keys.
-			}
-			newMsg.MetaSet(key, str)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to copy metadata: %v", err)
-	}
+    // Build the filtered metadata object.
+    filteredMeta := make(map[string]string)
+    err := msg.MetaWalkMut(func(key string, value any) error {
+        if internalKeys[key] {
+            return nil // Skip internal keys.
+        }
+        // If the key existed originally and its value is unchanged, skip it.
+        if origVal, exists := originalMeta[key]; exists {
+            if strVal, ok := value.(string); ok && strVal == origVal {
+                return nil
+            }
+        }
+        if str, ok := value.(string); ok {
+            filteredMeta[key] = str
+        }
+        return nil
+    })
+    if err != nil {
+        return nil, fmt.Errorf("failed to filter metadata: %v", err)
+    }
 
-	// Note: We do not copy the plugin-generated topic or tag_name into the output meta.
-	// If you need to set the topic for routing, consider using a dedicated message field,
-	// e.g. newMsg.SetTopic(p.constructTopic(msg)), instead of embedding it in meta.
+    // Retrieve tag_name from the message meta.
+    tagName, exists := msg.MetaGet("tag_name")
+    if !exists {
+        return nil, fmt.Errorf("missing tag_name in metadata")
+    }
 
-	// Retrieve tag_name from the processed meta (this is used to key the payload).
-	tagName, exists := msg.MetaGet("tag_name")
-	if !exists {
-		return nil, fmt.Errorf("missing tag_name in metadata")
-	}
+    // Get the structured payload from the original message.
+    structured, err := msg.AsStructured()
+    if err != nil {
+        return nil, fmt.Errorf("failed to get structured payload: %v", err)
+    }
+    value := p.convertValue(structured)
 
-	structured, err := msg.AsStructured()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get structured payload: %v", err)
-	}
-	value := p.convertValue(structured)
-	payload := map[string]interface{}{
-		tagName:        value,
-		"timestamp_ms": time.Now().UnixMilli(),
-	}
-	newMsg.SetStructured(payload)
+    // Build the final payload object.
+    // Note that metadata is now placed under the key "meta" inside the payload.
+    finalPayload := map[string]interface{}{
+        tagName:        value,
+        "timestamp_ms": time.Now().UnixMilli(),
+        "meta":         filteredMeta,
+    }
+    newMsg.SetStructured(finalPayload)
 
-	return newMsg, nil
+    return newMsg, nil
 }
 
 func (p *TagProcessor) convertValue(v interface{}) interface{} {
