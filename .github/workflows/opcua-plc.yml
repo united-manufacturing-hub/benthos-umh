@@ -116,3 +116,55 @@ jobs:
             exit 1
           fi
           make test
+
+  go-test-kepware-plc:
+    needs: go-test-opcua-plc
+    runs-on:
+      group: arc-runners-tests
+    permissions:
+      packages: write
+      contents: read
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+      - name: Install Ginkgo
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.19.0
+      - name: Install Tcping
+        run: go install github.com/cloverstd/tcping@v0.1.1
+
+      - name: Check Kepware port availability
+        id: check_kepware
+        run: |
+          set +x
+          CURRENT_MINUTE=$(date +%M)
+          CURRENT_HOUR=$(date +%H)
+
+          # make timecheck since we restart kepware-runtime every 2 hours and
+          # don't want to unneccessaryly fail here
+          if [ "$CURRENT_MINUTE" -eq "00" ] && [ $((10#$CURRENT_HOUR % 2)) -eq 0 ]; then
+            sleep 60
+          fi
+
+          URI="${{ secrets.TEST_KEPWARE_ENDPOINT }}"
+          ENDPOINT="${URI#opc.tcp://}"
+          if tcping -c 4 -T 1s "$ENDPOINT" | grep -qi "Connected"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "TEST_KEPWARE_ENDPOINT=${{ secrets.TEST_KEPWARE_ENDPOINT }}" >> "$GITHUB_ENV"
+            echo "using kepware for testing"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Test
+        env:
+          TEST_KEPWARE_USERNAME: ${{ secrets.TEST_KEPWARE_USERNAME }}
+          TEST_KEPWARE_PASSWORD: ${{ secrets.TEST_KEPWARE_PASSWORD }}
+        run: |
+          if [ -z "$TEST_KEPWARE_ENDPOINT" ]; then
+            echo "no kepware-endpoint available for testing"
+            exit 1
+          fi
+          make test
