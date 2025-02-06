@@ -572,8 +572,25 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 		"timestamp_ms": time.Now().UnixMilli(),
 	}
 
-	// Only include meta in the payload if there are filtered metadata entries
-	if len(filteredMeta) > 0 {
+	// If exposeAllMeta is set to true in message meta, expose ALL metadata in the payload.
+	exposeAll := false
+	if exposeVal, exists := msg.MetaGet("exposeAllMeta"); exists {
+		if strings.ToLower(exposeVal) == "true" {
+			exposeAll = true
+		}
+	}
+	if exposeAll {
+		allMeta := make(map[string]string)
+		_ = msg.MetaWalkMut(func(key string, value any) error {
+			if str, ok := value.(string); ok {
+				allMeta[key] = str
+			} else {
+				allMeta[key] = fmt.Sprintf("%v", value)
+			}
+			return nil
+		})
+		finalPayload["meta"] = allMeta
+	} else if len(filteredMeta) > 0 {
 		finalPayload["meta"] = filteredMeta
 	}
 
