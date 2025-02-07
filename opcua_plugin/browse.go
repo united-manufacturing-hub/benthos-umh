@@ -92,6 +92,7 @@ func browse(
 	var taskWg TrackedWaitGroup
 	var workerWg TrackedWaitGroup
 	// Have sufficient buffer (minWorkers* 10_000) for taskChan to avoid blocking and the number of workers might grow dynamically down the line. The minWorkers is a constant of 3
+	// TODO: Introduce backpressure mechanism to avoid blocking the taskChan
 	taskChan := make(chan NodeTask, metrics.currentWorkers*10000)
 
 	workerID := make(map[uuid.UUID]struct{})
