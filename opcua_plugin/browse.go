@@ -91,8 +91,8 @@ func browse(
 	metrics := NewServerMetrics()
 	var taskWg TrackedWaitGroup
 	var workerWg TrackedWaitGroup
-	// Have sufficient buffer (currentWorkers * 1000) for taskChan to avoid blocking and the number of workers might grow dynamically down the line.
-	taskChan := make(chan NodeTask, metrics.currentWorkers*1000)
+	// Have sufficient buffer (minWorkers* 10_000) for taskChan to avoid blocking and the number of workers might grow dynamically down the line. The minWorkers is a constant of 3
+	taskChan := make(chan NodeTask, metrics.currentWorkers*10000)
 
 	workerID := make(map[uuid.UUID]struct{})
 	// Start worker pool manager
