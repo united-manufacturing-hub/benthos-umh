@@ -3,6 +3,8 @@ package opcua_plugin
 import (
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -19,20 +21,20 @@ type ServerMetrics struct {
 	responseTimes  []time.Duration
 	currentWorkers int
 	targetLatency  time.Duration
-	workerControls map[int]chan struct{} // Channel to signal workers to stop
+	workerControls map[uuid.UUID]chan struct{} // Channel to signal workers to stop
 }
 
 func NewServerMetrics() *ServerMetrics {
 	return &ServerMetrics{
 		responseTimes:  make([]time.Duration, 0),
-		workerControls: make(map[int]chan struct{}),
+		workerControls: make(map[uuid.UUID]chan struct{}),
 		targetLatency:  TargetLatency,
 		currentWorkers: InitialWorkers,
 	}
 }
 
 // addWorker adds new worker browser and registers the id to the workerControls map
-func (sm *ServerMetrics) addWorker(id int) chan struct{} {
+func (sm *ServerMetrics) addWorker(id uuid.UUID) chan struct{} {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	stopChan := make(chan struct{})
@@ -42,7 +44,7 @@ func (sm *ServerMetrics) addWorker(id int) chan struct{} {
 
 // removeWorker removes a worker from the workerControls map and
 // stops a worker by closing the channel for the worker
-func (sm *ServerMetrics) removeWorker(id int) {
+func (sm *ServerMetrics) removeWorker(id uuid.UUID) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	if stopChan, exists := sm.workerControls[id]; exists {
