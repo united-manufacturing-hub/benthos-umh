@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/errors"
 	"github.com/gopcua/opcua/id"
@@ -93,7 +94,7 @@ func browse(
 	// Have sufficient buffer (currentWorkers * 1000) for taskChan to avoid blocking and the number of workers might grow dynamically down the line.
 	taskChan := make(chan NodeTask, metrics.currentWorkers*1000)
 
-	workerID := atomic.Int32{}
+	workerID := make(map[uuid.UUID]struct{})
 	// Start worker pool manager
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
@@ -106,16 +107,19 @@ func browse(
 			case <-ticker.C:
 				toAdd, toRemove := metrics.adjustWorkers(logger)
 				for i := 0; i < toAdd; i++ {
-					id := int(workerID.Add(1))
+					id := uuid.New()
 					workerWg.Add(1)
 					stopChan := metrics.addWorker(id)
+					workerID[id] = struct{}{}
 					go worker(ctx, id, taskChan, nodeChan, errChan, opcuaBrowserChan, visited, logger, &taskWg, &workerWg, metrics, stopChan)
 				}
 
 				for i := 0; i < toRemove; i++ {
-					id := int(workerID.Load())
-					metrics.removeWorker(id)
-					workerWg.Add(-1)
+					for id := range workerID {
+						metrics.removeWorker(id)
+						// This break make sure that only one worker is removed on each iteration
+						break
+					}
 				}
 			}
 		}
@@ -124,10 +128,11 @@ func browse(
 
 	// Start worker pool
 	for i := 0; i < metrics.currentWorkers; i++ {
-		id := int(workerID.Add(1))
+		id := uuid.New()
 		workerWg.Add(1)
 		stopChan := metrics.addWorker(id)
-		go worker(ctx, i, taskChan, nodeChan, errChan, opcuaBrowserChan, visited, logger, &taskWg, &workerWg, metrics, stopChan)
+		workerID[id] = struct{}{}
+		go worker(ctx, id, taskChan, nodeChan, errChan, opcuaBrowserChan, visited, logger, &taskWg, &workerWg, metrics, stopChan)
 	}
 
 	// Send initial task
@@ -150,7 +155,7 @@ func browse(
 
 func worker(
 	ctx context.Context,
-	id int,
+	id uuid.UUID,
 	taskChan chan NodeTask,
 	nodeChan chan NodeDef,
 	errChan chan error,
@@ -166,11 +171,11 @@ func worker(
 	for {
 		select {
 		case <-stopChan:
-			logger.Debugf("Worker %d removed stop signal to reduce load on the opcua server", id)
+			logger.Debugf("Worker %s removed stop signal to reduce load on the opcua server", id)
 			return
 
 		case <-ctx.Done():
-			logger.Warnf("Worker %d: received cancellation signal", id)
+			logger.Warnf("Worker %s: received cancellation signal", id)
 			return
 
 		case task, ok := <-taskChan:
@@ -179,10 +184,14 @@ func worker(
 				return
 			}
 
+			if task.node == nil {
+				continue
+			}
+
 			startTime := time.Now()
 			// Skip if already visited or too deep
 			if _, exists := visited.LoadOrStore(task.node.ID(), struct{}{}); exists {
-				logger.Debugf("Worker %d: node %s already visited", id, task.node.ID().String())
+				logger.Debugf("Worker %s: node %s already visited", id, task.node.ID().String())
 				taskWg.Done()
 				continue
 			}
