@@ -186,10 +186,12 @@ func GenerateCertWithMode(
 	serialNumber.Mod(serialNumber, serialNumberLimit)
 
 	// Prepare the certificate template
+	// CommonName has to be different if you try to connect to one server with
+	// different securityPolicies (edge-case)
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			CommonName:   "benthos-umh-predefined",
+			CommonName:   "benthos-umh-predefined-" + seedString[0:7],
 			Organization: []string{"UMH"},
 		},
 		NotBefore:             notBefore,

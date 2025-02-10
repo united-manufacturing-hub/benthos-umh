@@ -103,6 +103,47 @@ var _ = Describe("Test against KepServer EX6", func() {
 			SubscribeEnabled: true,
 		}, false, nil, true),
 	)
+
+	// This should successfully connect to Kepware since we already trusted the
+	// certificates which will be created with the `ClientCertificateSeed`.
+	DescribeTable("Selecting a custom SecurityPolicy", func(input *OPCUAInput) {
+		// attempt to connect with securityMode and Policy
+		input.Endpoint = endpoint
+		err := input.Connect(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+	},
+		Entry("should connect via Basic256Sha256 SignAndEncrypt", &OPCUAInput{
+			SecurityMode:          "SignAndEncrypt",
+			SecurityPolicy:        "Basic256Sha256",
+			ClientCertificateSeed: "poodsGS5lL6tWvAnAn4RHwUjAUSBCGRFPocOAbIP7601vzMyXVbA4eNgdAaylZcV",
+		}),
+		Entry("should connect via Basic256 SignAndEncrypt", &OPCUAInput{
+			SecurityMode:          "SignAndEncrypt",
+			SecurityPolicy:        "Basic256",
+			ClientCertificateSeed: "Cfvro2T5d3JoW0RI5QNZqlqVFKgdnj4hpF5rxki9m2cixG4d7K9jKRe7c9Fm560y",
+		}),
+		Entry("should connect via Basic128Rsa15 SignAndEncrypt", &OPCUAInput{
+			SecurityMode:          "SignAndEncrypt",
+			SecurityPolicy:        "Basic128Rsa15",
+			ClientCertificateSeed: "ub4wyUWnkpYZwLE0KEW0elqwv09yikOYZYpLIee8DcbEeBCXZ8cGDbVNDbo0Kaqq",
+		}),
+		Entry("should connect via Basic256Sha256 Sign", &OPCUAInput{
+			SecurityMode:          "Sign",
+			SecurityPolicy:        "Basic256Sha256",
+			ClientCertificateSeed: "kRjGVOLVuDZTf52nF7MVEQYjW8CwqbA5UCJa3AXBRDivIduvO3NQ3zEp78de3JVi",
+		}),
+		Entry("should connect via Basic256 Sign", &OPCUAInput{
+			SecurityMode:          "Sign",
+			SecurityPolicy:        "Basic256",
+			ClientCertificateSeed: "ShDeYiDdTRBHXAkMgYQkR11j74yjHsYn7hpoy4GjsOEZClUOFcdsbSzSOmVf1Mb8",
+		}),
+		Entry("should connect via Basic128Rsa15 Sign", &OPCUAInput{
+			SecurityMode:          "Sign",
+			SecurityPolicy:        "Basic128Rsa15",
+			ClientCertificateSeed: "gJpZ2GoUxDRW9TaG4nxKEanFvk1787kLGIlExmfIhacedPa9EH6G4PuIbrGdivQ4",
+		}),
+	)
 })
 
 // Here we are testing the underlying opc-clients, which are siemens s7 / wago
