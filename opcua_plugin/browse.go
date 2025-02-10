@@ -353,7 +353,9 @@ func (twg *TrackedWaitGroup) Count() int64 {
 
 // Then modify the discoverNodes function to use TrackedWaitGroup
 func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]string, error) {
-	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	// This was previously 5 minutes, but we need to increase it to 1 hour to avoid context cancellation
+	// when browsing a large number of nodes.
+	timeoutCtx, cancel := context.WithTimeout(ctx, 1*time.Hour)
 	defer cancel()
 
 	nodeList := make([]NodeDef, 0)
