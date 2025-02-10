@@ -122,9 +122,8 @@ input:
     nodeIDs: ['ns=2;s=IoTSensors']
     username: 'your-username'  # optional (default: unset)
     password: 'your-password'  # optional (default: unset)
-    insecure: false | true # DEPRECATED, see below
     securityMode: None | Sign | SignAndEncrypt # optional (default: unset)
-    securityPolicy: None | Basic256Sha256  # optional (default: unset)
+    securityPolicy: None | Basic128Rsa15 | Basic256 | Basic256Sha256  # optional (default: unset)
     clientCertificateSeed: 'your-fixed-64-character-random-string' # optional (default: unset)
     subscribeEnabled: false | true # optional (default: false)
     useHeartbeat: false | true # optional (default: false)
@@ -175,9 +174,13 @@ Security Mode: This defines the level of security applied to the messages. The o
 - Sign: Messages are signed for integrity and authenticity but not encrypted.
 - SignAndEncrypt: Provides the highest security level where messages are both signed and encrypted.
 
-Security Policy: Specifies the set of cryptographic algorithms used for securing messages. This includes algorithms for encryption, decryption, and signing of messages. Currently only Basic256Sha256 is allowed.
+Security Policy: Specifies the set of cryptographic algorithms used for securing messages. This includes algorithms for encryption, decryption, and signing of messages. The options are:
+- None: No security is applied
+- Basic128Rsa15 **(depracated)**: This security policy should be only used as fallback since the signature algorithm Sha1 is depracated. By default OPC-UA-Servers have disabled this option, so this is not recommended!
+- Basic256 **(depracated)**: This security policy should be only used as a fallback since the signature algorithm Sha1 is depracated. By default OPC-UA-Servers have disabled this option, so this is not recommended!
+- Basic256Sha256: Provides the highest security level which uses Sha256 signature algorithm.
 
-Client Certificate Seed: The certificate seed is used to deterministically create the client certificate when using encryption. If not set, then the certificate will be random upon restart, which means the server must trust all client certificates. If the server requires to trust each single client certificate, then the certificate seed must be set to a random (but therefore fixed) string with at least 64 characters.
+Client Certificate Seed: The certificate seed is used to deterministically create the client certificate when using encryption. If not set, then the certificate will be random upon restart, which means the server must trust all client certificates. If the server requires to trust each single client certificate, then the certificate seed must be set to a random (but therefore fixed) string with at least 64 characters. Even if the server provides the option to automatically trust all clients certificates you should set the `clientCertificateSeed`, because you could flood the OPC-UA-Servers disk capacity and it won't accept new incoming certificates.
 
 While the security mode and policy are automatically selected based on the endpoint and authentication method, you have the option to override this by specifying them in the configuration file:
 
@@ -190,10 +193,6 @@ input:
     securityPolicy: Basic256Sha256
     clientCertificateSeed: 'your-fixed-64-character-random-string'
 ```
-
-##### Insecure Mode
-
-This is now deprecated. By default, benthos-umh will now connect via SignAndEncrypt and Basic256Sha256 and if this fails it will fall back to insecure mode.
 
 ##### Pull and Subscribe Methods
 
