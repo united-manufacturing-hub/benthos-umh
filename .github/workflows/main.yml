@@ -319,7 +319,7 @@ jobs:
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
-          name: binaries
+          name: artifact-${{ github.run_id }}-${{ github.run_attempt }}
           path: ./artifacts
 
       - name: Create or Update Release
