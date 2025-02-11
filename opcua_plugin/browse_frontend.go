@@ -41,7 +41,7 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 
 	var wg TrackedWaitGroup
 	wg.Add(1)
-	browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", 0, g.Log, rootNode.NodeId.String(), nodeChan, errChan, &wg, g.BrowseHierarchicalReferences, opcuaBrowserChan)
+	Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", g.Log, rootNode.NodeId.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
 	go logBrowseStatus(ctx, nodeChan, msgChan, &wg)
 	go logErrors(ctx, errChan, g.Log)
 	go collectNodes(ctx, opcuaBrowserChan, nodeIDMap, &nodes)
@@ -99,7 +99,7 @@ func collectNodes(ctx context.Context, nodeBrowserChan chan NodeDef, nodeIDMap m
 		case <-ctx.Done():
 			return
 		default:
-			nodeID := node.NodeID.String()
+			nodeID := normalizeNodeID(node.NodeID)
 			nodeIDMap[nodeID] = &node
 			*nodes = append(*nodes, node)
 		}
@@ -121,7 +121,8 @@ func constructNodeHierarchy(rootNode *Node, node NodeDef, nodeIDMap map[string]*
 	for i, part := range paths {
 		if _, exists := current.ChildIDMap[part]; !exists {
 			parentNode := findNthParentNode(length-i-1, &node, nodeIDMap)
-			id, err := ua.ParseNodeID(parentNode.NodeID.String())
+			normalizedParentID := normalizeNodeID(parentNode.NodeID)
+			id, err := ua.ParseNodeID(normalizedParentID)
 			if err != nil {
 				// This should never happen
 				// All node ids should be valid
@@ -157,4 +158,18 @@ func findNthParentNode(n int, node *NodeDef, nodeIDMap map[string]*NodeDef) *Nod
 	}
 
 	return node
+}
+
+// normalizeNodeID normalizes a node id string representation by removing unwanted 's=' prefixes
+// that can occur when the nodeID type is wrongly interpreted as a string type instead of a numeric type.
+// The prefix 's=' happens rarely but this function acts as a defensive mechanism to handle such scenarios
+func normalizeNodeID(nodeID *ua.NodeID) string {
+	id := nodeID.String()
+	if strings.HasPrefix(id, "s=i=") {
+		return strings.TrimPrefix(id, "s=")
+	}
+	if strings.HasPrefix(id, "s=ns=") {
+		return strings.TrimPrefix(id, "s=")
+	}
+	return id
 }
