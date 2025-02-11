@@ -18,7 +18,7 @@ name: main
 on:
   push:
     branches:
-      - '**'
+      - "**"
     tags:
       - v*
 env:
@@ -33,7 +33,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       matrix:
-        architecture: ['amd64', 'arm64', 'arm/v7']
+        architecture: ["amd64", "arm64", "arm/v7"]
     runs-on:
       group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || matrix.architecture == 'arm/v7' && 'arc-runners-small' || 'arc-runners-build' }}
     outputs:
@@ -303,9 +303,9 @@ jobs:
             cmd/benthos/main.go
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: binaries
+          name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ./dist/${{ env.OUTPUT_NAME }}
 
   release:
@@ -317,16 +317,16 @@ jobs:
       group: arc-runners-small
     steps:
       - name: Download Artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
-          name: binaries
+          pattern: "artifact-*-${{ github.run_id }}-${{ github.run_attempt }}"
           path: ./artifacts
 
       - name: Create or Update Release
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ github.ref_name }}
-          artifacts: './artifacts/*'
+          artifacts: "./artifacts/*"
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
           prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
