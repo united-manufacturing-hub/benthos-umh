@@ -223,8 +223,6 @@ type OPCUAInput struct {
 	AutoReconnect                bool
 	ReconnectIntervalInSeconds   int
 	visited                      sync.Map
-	cachedCert                   []byte           // DER bytes or PEM
-	cachedKey                    []byte           // DER bytes or PEM
 	cachedTLSCertificate         *tls.Certificate // certificate
 }
 
