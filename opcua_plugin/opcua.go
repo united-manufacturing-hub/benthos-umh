@@ -48,7 +48,7 @@ var OPCUAConfigSpec = service.NewConfigSpec().
 	Field(service.NewIntField("pollRate").Description("The rate in milliseconds at which to poll the OPC UA server when not using subscriptions. Defaults to 1000ms (1 second).").Default(DefaultPollRate)).
 	Field(service.NewBoolField("autoReconnect").Description("Set to true to automatically reconnect to the OPC UA server when the connection is lost. Defaults to 'false'").Default(false)).
 	Field(service.NewIntField("reconnectIntervalInSeconds").Description("The interval in seconds at which to reconnect to the OPC UA server when the connection is lost. This is only used if `autoReconnect` is set to true. Defaults to 5 seconds.").Default(5)).
-	Field(service.NewStringField("clientCertificateSeed").Description("The clients certificate seed is a secret string provided by the user, which will then get hashed to create the clients certificate. This is needed to ensure an explicit trusted client, which is significant for an encrypted connection. If not set, this will be provided by a random created string.").Default(""))
+	Field(service.NewStringField("clientCertificate").Description("The client certificate is base64-encoded and used as an input-source to provide an already trusted certificate. Therefore you don't have to switch to the OPC-UA Server's configuration and retrust the newly generated certificate. When running the application without this field, you will get the base64-encoding of your certificate printed out and can copy/paste it.").Default(""))
 
 func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 
@@ -139,7 +139,7 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		return nil, err
 	}
 
-	clientCertificateSeed, err := conf.FieldString("clientCertificateSeed")
+	clientCertificate, err := conf.FieldString("clientCertificate")
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +159,7 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		Log:                          mgr.Logger(),
 		SecurityMode:                 securityMode,
 		SecurityPolicy:               securityPolicy,
-		ClientCertificateSeed:        clientCertificateSeed,
+		ClientCertificate:            clientCertificate,
 		Insecure:                     insecure,
 		SubscribeEnabled:             subscribeEnabled,
 		SessionTimeout:               sessionTimeout,
@@ -193,17 +193,17 @@ func init() {
 }
 
 type OPCUAInput struct {
-	Endpoint              string
-	Username              string
-	Password              string
-	NodeIDs               []*ua.NodeID
-	NodeList              []NodeDef
-	SecurityMode          string
-	SecurityPolicy        string
-	ClientCertificateSeed string
-	Insecure              bool
-	Client                *opcua.Client
-	Log                   *service.Logger
+	Endpoint          string
+	Username          string
+	Password          string
+	NodeIDs           []*ua.NodeID
+	NodeList          []NodeDef
+	SecurityMode      string
+	SecurityPolicy    string
+	ClientCertificate string
+	Insecure          bool
+	Client            *opcua.Client
+	Log               *service.Logger
 	// this is required for subscription
 	SubscribeEnabled             bool
 	SubNotifyChan                chan *opcua.PublishNotificationData

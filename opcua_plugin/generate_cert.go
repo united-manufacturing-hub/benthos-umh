@@ -12,14 +12,12 @@ package opcua_plugin
 
 import (
 	"crypto/ecdsa"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"errors"
 	"fmt"
-	"hash/fnv"
-	"io"
 	"math/big"
 	"net"
 	"net/url"
@@ -28,114 +26,26 @@ import (
 	"time"
 )
 
-// nextPrime returns the first prime number >= n. This loop is fully deterministic.
-func nextPrime(n *big.Int) *big.Int {
-	one := big.NewInt(1)
-	candidate := new(big.Int).Set(n)
-	for {
-		if candidate.ProbablyPrime(20) { // fixed number of Miller-Rabin rounds
-			return candidate
-		}
-		candidate.Add(candidate, one)
-	}
-}
-
-// candidateFromSeed derives a candidate number of the given bit length from a seed and salt.
-func candidateFromSeed(seed, salt string, bits int) *big.Int {
-	h := fnv.New64a()
-	h.Write([]byte(seed + salt))
-	hashBytes := h.Sum(nil)
-	candidate := new(big.Int).SetBytes(hashBytes)
-	// Force candidate into the range [2^(bits-1), 2^(bits)-1]
-	min := new(big.Int).Lsh(big.NewInt(1), uint(bits-1))
-	max := new(big.Int).Lsh(big.NewInt(1), uint(bits))
-	rangeVal := new(big.Int).Sub(max, min)
-	candidate.Mod(candidate, rangeVal)
-	candidate.Add(candidate, min)
-	return candidate
-}
-
-func constantReader() io.Reader {
-	const nonce = "deterministic-constant-value-0123456789"
-	// Repeat the nonce enough times:
-	return strings.NewReader(strings.Repeat(nonce, 100))
-}
-
-// GenerateDeterministicRSAKey generates an RSA key of the specified bit size (must be even)
-// deterministically from the provided seed string.
-func GenerateDeterministicRSAKey(seed string, bits int) (*rsa.PrivateKey, error) {
-	if bits%2 != 0 {
-		return nil, errors.New("bit size must be even")
-	}
-	halfBits := bits / 2
-
-	// Derive candidate for prime p using salt "p".
-	candidateP := candidateFromSeed(seed, "p", halfBits)
-	p := nextPrime(candidateP)
-
-	// Derive candidate for prime q using salt "q".
-	candidateQ := candidateFromSeed(seed, "q", halfBits)
-	q := nextPrime(candidateQ)
-
-	// Ensure p and q are not equal (extremely unlikely).
-	if p.Cmp(q) == 0 {
-		q = nextPrime(new(big.Int).Add(q, big.NewInt(1)))
-	}
-
-	n := new(big.Int).Mul(p, q)
-
-	// Compute φ(n) = (p - 1)*(q - 1)
-	one := big.NewInt(1)
-	phi := new(big.Int).Mul(new(big.Int).Sub(p, one), new(big.Int).Sub(q, one))
-
-	// Common public exponent. (Fermat prime F4)
-	// using lower values can be problematic
-	e := 65537
-	eBig := big.NewInt(int64(e))
-
-	// Compute the private exponent d = e⁻¹ mod φ(n)
-	d := new(big.Int).ModInverse(eBig, phi)
-	if d == nil {
-		return nil, errors.New("failed to compute modular inverse")
-	}
-
-	priv := &rsa.PrivateKey{
-		PublicKey: rsa.PublicKey{
-			N: n,
-			E: e,
-		},
-		D:      d,
-		Primes: []*big.Int{p, q},
-	}
-	// Validate and precompute values.
-	if err := priv.Validate(); err != nil {
-		return nil, fmt.Errorf("key validation failed: %w", err)
-	}
-	priv.Precompute()
-	return priv, nil
-}
-
 // GenerateCertWithMode generates a self-signed X.509 certificate for OPC UA
 // usage, taking into account the security mode (Sign vs SignAndEncrypt) and
 // the desired security policy (Basic128Rsa15, Basic256, Basic256Sha256, etc.).
 //
-//   - host:						CommonName & DNS/IP/URI entries to include
 //   - validFor:				Certificate validity duration
 //   - securityMode:		The OPC UA message security mode (None, Sign, SignAndEncrypt)
 //   - securityPolicy:  The OPC UA security policy (e.g., "Basic128Rsa15", "Basic256", "Basic256Sha256")
-//   - seedString:			The seed which is used to create the client certificate
 func GenerateCertWithMode(
 	validFor time.Duration,
 	securityMode string,
 	securityPolicy string,
-	seedString string,
 ) (certPEM, keyPEM []byte, clientName string, err error) {
 	var (
 		rsaBits            int
 		signatureAlgorithm x509.SignatureAlgorithm
 	)
 
-	host := "urn:benthos-umh:client-predefined-" + seedString[0:7]
+	clientUID := randomString(8)
+
+	host := "urn:benthos-umh:client-predefined-" + clientUID
 
 	switch securityPolicy {
 	case "Basic256Rsa256":
@@ -157,23 +67,17 @@ func GenerateCertWithMode(
 		signatureAlgorithm = x509.SHA256WithRSA
 	}
 
-	// GenerateDeterministicRSAKey generates an RSA key of the specified bit size (must be even)
-	// deterministically from the provided seed string.
-	priv, err := GenerateDeterministicRSAKey(seedString, rsaBits)
+	priv, err := rsa.GenerateKey(rand.Reader, rsaBits)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("failed to generate private key: %w", err)
 	}
 
 	// Set a fixed NotBefore so the certificate always starts at the beginning
-	// of the year. Therefore it matches even if you run the application multiple
-	// times.
+	// of the year. Reasons for this could be incorrect setup of the plc's
+	// cpu-clock, timezone, summertime...
 	now := time.Now().UTC()
 	notBefore := time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
 	notAfter := notBefore.Add(validFor)
-
-	h := fnv.New64a()
-	h.Write([]byte(seedString))
-	seed := int64(h.Sum64())
 
 	// Use 127 bits instead of 128 to ensure the serial number is always positive.
 	// In ASN.1 DER encoding (used by X.509), integers are signed. If the most significant bit (MSB)
@@ -182,8 +86,10 @@ func GenerateCertWithMode(
 	// and complies with RFC 5280 requirements, thereby preventing parsing errors like
 	// "x509: negative serial number".
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 127)
-	serialNumber := new(big.Int).SetInt64(seed)
-	serialNumber.Mod(serialNumber, serialNumberLimit)
+	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("failed togenerate serial number: %s", err)
+	}
 
 	// Prepare the certificate template
 	// CommonName has to be different if you try to connect to one server with
@@ -191,7 +97,7 @@ func GenerateCertWithMode(
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			CommonName:   "benthos-umh-predefined-" + seedString[0:7],
+			CommonName:   "benthos-umh-predefined-" + clientUID,
 			Organization: []string{"UMH"},
 		},
 		NotBefore:             notBefore,
@@ -242,12 +148,9 @@ func GenerateCertWithMode(
 		template.KeyUsage = x509.KeyUsageDigitalSignature
 	}
 
-	// Use the constant io.Reader to sign the certificate and remove randomness
-	constantRand := constantReader()
-
 	// Actually create the certificate
 	derBytes, err := x509.CreateCertificate(
-		constantRand,
+		rand.Reader,
 		&template,
 		&template, // self-signed
 		publicKey(priv),
