@@ -103,7 +103,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNodeWithNilNodeClass
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -130,7 +130,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -168,7 +168,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -208,7 +208,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -248,7 +248,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -291,7 +291,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -367,7 +367,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = abcFolder
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -692,7 +692,7 @@ var _ NodeBrowser = &MockOpcuaNodeWraper{}
 func startBrowsing(ctx context.Context, rootNode NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan NodeDef, visited *sync.Map) ([]NodeDef, []error) {
 	wg.Add(1)
 	go func() {
-		Browse(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
+		Browse(ctx, rootNode, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
 	}()
 	wg.Wait()
 	close(nodeChan)
