@@ -453,19 +453,23 @@ func (p *TagProcessor) validateMessage(msg *service.Message) error {
 		if err != nil {
 			payloadStr = "unable to parse message payload"
 		} else {
+			// Try to format as JSON first
 			payloadJSON, err := json.MarshalIndent(payload, "", "  ")
 			if err != nil {
+				// If JSON formatting fails, use string representation
 				payloadStr = fmt.Sprintf("%v", payload)
 			} else {
 				payloadStr = string(payloadJSON)
 			}
 		}
 
+		// Convert metadata to pretty JSON
 		metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
 		if err != nil {
 			metadataJSON = []byte("unable to format metadata as JSON")
 		}
 
+		// Create detailed error message with better formatting
 		errorMsg := fmt.Sprintf(`Message validation failed
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Missing fields: %s
