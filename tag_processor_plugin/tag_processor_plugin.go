@@ -510,7 +510,6 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	newMsg := service.NewMessage(nil)
 
 	// Retrieve the original incoming metadata stored in _initialMetadata.
-	// (This is used later to determine which metadata fields have changed.)
 	originalMetaRaw, _ := msg.MetaGet("_initialMetadata")
 	originalMeta := map[string]string{}
 	if originalMetaRaw != "" {
@@ -520,7 +519,7 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	}
 
 	// Copy all metadata to the new message
-	_ = msg.MetaWalkMut(func(key string, value any) error {
+	err := msg.MetaWalkMut(func(key string, value any) error {
 		if str, ok := value.(string); ok {
 			newMsg.MetaSet(key, str)
 		} else if stringer, ok := value.(fmt.Stringer); ok {
@@ -530,10 +529,13 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to copy metadata: %v", err)
+	}
 
 	// Build the filtered metadata object for the payload
 	filteredMeta := make(map[string]string)
-	_ = msg.MetaWalkMut(func(key string, value any) error {
+	err = msg.MetaWalkMut(func(key string, value any) error {
 		// Skip internal keys for the payload meta
 		if internalKeys[key] {
 			return nil
@@ -556,6 +558,9 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to build filtered metadata: %v", err)
+	}
 
 	// Retrieve tag_name from the message meta
 	tagName, exists := msg.MetaGet("tag_name")
