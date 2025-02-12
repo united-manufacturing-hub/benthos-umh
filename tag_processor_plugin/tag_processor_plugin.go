@@ -139,7 +139,7 @@ func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics 
 
 // TODO: Each time there is any execution error, output the code where the error happened as well as the message that caused it (see nodered_js_plugin). Double-check that it is not being outputted twice.
 func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
-	// ─── NEW FEATURE: Store incoming metadata ────────────────────────────────
+	// ───────────────── Store incoming metadata ────────────────────────────────
 	// For each message, capture its current meta fields and store them as JSON
 	// in msg.meta._initialMetadata. Also, record the original keys in _incomingKeys.
 	for _, msg := range batch {
