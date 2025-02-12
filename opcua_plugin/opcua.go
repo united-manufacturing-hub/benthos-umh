@@ -159,6 +159,8 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		SecurityMode:                 securityMode,
 		SecurityPolicy:               securityPolicy,
 		ServerCertificateFingerprint: serverCertificateFingerprint, // ServerCertificateFingerprint is the sha3 hash of the servers certificate
+		// maybe store each endpoint in a map with its corresonding fingerprint
+		ServerCertificates:           make(map[*ua.EndpointDescription]string),
 		Insecure:                     insecure,
 		SubscribeEnabled:             subscribeEnabled,
 		SessionTimeout:               sessionTimeout,
@@ -200,6 +202,7 @@ type OPCUAInput struct {
 	SecurityMode                 string
 	SecurityPolicy               string
 	ServerCertificateFingerprint string
+	ServerCertificates           map[*ua.EndpointDescription]string
 	Insecure                     bool
 	Client                       *opcua.Client
 	Log                          *service.Logger
