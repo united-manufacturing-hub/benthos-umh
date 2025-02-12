@@ -25,6 +25,17 @@ type ConditionConfig struct {
 	Then string `json:"then" yaml:"then"`
 }
 
+// internalKeys defines metadata keys that should not be included in the payload's meta field
+var internalKeys = map[string]bool{
+	"tag_name":         true,
+	"topic":            true,
+	"_initialMetadata": true,
+	"_incomingKeys":    true,
+	"location_path":    true,
+	"data_contract":    true,
+	"virtual_path":     true,
+}
+
 func init() {
 	spec := service.NewConfigSpec().
 		Version("1.0.0").
@@ -506,17 +517,6 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 		if err := json.Unmarshal([]byte(originalMetaRaw), &originalMeta); err != nil {
 			p.logger.Warnf("failed to unmarshal _initialMetadata: %v", err)
 		}
-	}
-
-	// Define internal keys that should not be included in the payload's meta field
-	internalKeys := map[string]bool{
-		"tag_name":         true,
-		"topic":            true,
-		"_initialMetadata": true,
-		"_incomingKeys":    true,
-		"location_path":    true,
-		"data_contract":    true,
-		"virtual_path":     true,
 	}
 
 	// Copy all metadata to the new message
