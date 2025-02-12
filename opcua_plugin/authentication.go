@@ -90,3 +90,55 @@ func (g *OPCUAInput) getEndpointIfExists(
 	// Return nil if no suitable endpoint is found.
 	return nil, errors.New("no suitable endpoint found")
 }
+
+func (g *OPCUAInput) getUserAuthenticationType() ua.UserTokenType {
+	// Here we can add UserTokenTypeCertificate and UserTokenTypeIssuedToken later
+	switch {
+	case g.Username != "" && g.Password != "":
+		return ua.UserTokenTypeUserName
+	default:
+		return ua.UserTokenTypeAnonymous
+	}
+}
+
+// explicitely check if security is selected + only allow specified settings
+func (g *OPCUAInput) isSecuritySelected() bool {
+	var (
+		securityModeOK   bool
+		securityPolicyOK bool
+	)
+	switch g.SecurityMode {
+	case "Sign":
+		securityModeOK = true
+	case "SignAndEncrypt":
+		securityModeOK = true
+	case "None":
+		g.Log.Infof("Invalid securityMode '%s'. For secure (encrypted) connections "+
+			", please set securityMode to 'SignAndEncrypt' or 'Sign'. This setting is "+
+			"required to enable encryption and verify the server's certificate.", g.SecurityMode)
+		securityModeOK = false
+	default:
+		securityModeOK = false
+	}
+
+	switch g.SecurityPolicy {
+	case "Basic128Rsa15":
+		securityPolicyOK = true
+	case "Basic256":
+		securityPolicyOK = true
+	case "Basic256Sha256":
+		securityPolicyOK = true
+	case "None":
+		g.Log.Infof("Invalid securityPolicy '%s'. For encrypted communication, "+
+			"please choose a valid policy (e.g., 'Basic256Sha256', 'Basic256', or "+
+			"'Basic128Rsa15') that your server supports.", g.SecurityPolicy)
+		securityPolicyOK = false
+	default:
+		securityPolicyOK = false
+	}
+
+	if securityModeOK && securityPolicyOK && g.ServerCertificateFingerprint != "" {
+		return true
+	}
+	return false
+}
