@@ -122,9 +122,9 @@ input:
     nodeIDs: ['ns=2;s=IoTSensors']
     username: 'your-username'  # optional (default: unset)
     password: 'your-password'  # optional (default: unset)
-    insecure: false | true # DEPRECATED, see below
     securityMode: None | Sign | SignAndEncrypt # optional (default: unset)
-    securityPolicy: None | Basic256Sha256  # optional (default: unset)
+    securityPolicy: None | Basic128Rsa15 | Basic256 | Basic256Sha256  # optional (default: unset)
+    clientCertificate: 'your-fixed-base64-encoded-certificate' # optional (default: unset)
     subscribeEnabled: false | true # optional (default: false)
     useHeartbeat: false | true # optional (default: false)
     pollRate: 1000 # optional (default: 1000) The rate in milliseconds at which to poll the OPC UA server when not using subscriptions
@@ -167,14 +167,23 @@ input:
     password: 'your-password'
 ```
 
-##### Security Mode and Security Policy
+##### Security Options
 
 Security Mode: This defines the level of security applied to the messages. The options are:
 - None: No security is applied; messages are neither signed nor encrypted.
 - Sign: Messages are signed for integrity and authenticity but not encrypted.
 - SignAndEncrypt: Provides the highest security level where messages are both signed and encrypted.
 
-Security Policy: Specifies the set of cryptographic algorithms used for securing messages. This includes algorithms for encryption, decryption, and signing of messages. Currently only Basic256Sha256 is allowed.
+Security Policy: Specifies the set of cryptographic algorithms used for securing messages. This includes algorithms for encryption, decryption, and signing of messages. The options are:
+- None: No security is applied
+- Basic128Rsa15 **(depracated)**: This security policy should be only used as fallback since the signature algorithm Sha1 is depracated. By default OPC-UA-Servers have disabled this option, so this is not recommended!
+- Basic256 **(depracated)**: This security policy should be only used as a fallback since the signature algorithm Sha1 is depracated. By default OPC-UA-Servers have disabled this option, so this is not recommended!
+- Basic256Sha256: Provides the highest security level which uses Sha256 signature algorithm.
+
+Client Certificate: When using encryption, a client certificate is required to establish a secure connection with the OPC UA server. If no certificate is provided, the application will generate a new one upon startup, encode it in Base64, and print it out. You must manually add this certificate to the OPC UA server's trusted certificates to allow secure communication.
+
+To avoid repeating this process every time you restart the application, copy the printed Base64-encoded certificate and paste it into your configuration under `clientCertificate`. This ensures that the same certificate is reused across sessions, preventing unnecessary certificate regeneration and avoiding potential issues with certificate storage on the OPC UA server.
+
 
 While the security mode and policy are automatically selected based on the endpoint and authentication method, you have the option to override this by specifying them in the configuration file:
 
@@ -185,11 +194,8 @@ input:
     nodeIDs: ['ns=2;s=IoTSensors']
     securityMode: SignAndEncrypt
     securityPolicy: Basic256Sha256
+    clientCertificate: 'your-fixed-base64-encoded-certificate'
 ```
-
-##### Insecure Mode
-
-This is now deprecated. By default, benthos-umh will now connect via SignAndEncrypt and Basic256Sha256 and if this fails it will fall back to insecure mode.
 
 ##### Pull and Subscribe Methods
 
