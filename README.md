@@ -1062,9 +1062,9 @@ pipeline:
     - nodered_js:
         code: |
           // Log various aspects of the message
-          console.log("Processing temperature reading:", msg.payload.value);
-          console.log("From sensor:", msg.payload.sensor);
-          console.log("At time:", msg.meta.timestamp);
+          console.log("Processing temperature reading:" + msg.payload.value);
+          console.log("From sensor:" + msg.payload.sensor);
+          console.log("At time:" + msg.meta.timestamp);
 
           if (msg.payload.value > 30) {
             console.warn("High temperature detected!");
