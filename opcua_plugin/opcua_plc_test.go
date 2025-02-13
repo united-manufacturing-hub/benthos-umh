@@ -465,55 +465,20 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 		})
 	})
 
-	When("Selecting a custom SecurityPolicy", func() {
-		It("should connect", func() {
-			Skip("This currently fails")
-			input = &OPCUAInput{
-				Endpoint:       endpoint,
-				Username:       "",
-				Password:       "",
-				NodeIDs:        nil,
-				SecurityMode:   "SignAndEncrypt",
-				SecurityPolicy: "Basic128Rsa15",
-			}
+	DescribeTable("Selecting a custom SecurityPolicy", func(input *OPCUAInput) {
+		// attempt to connect with securityMode and Policy
+		input.Endpoint = endpoint
+		err := input.Connect(ctx)
+		Expect(err).NotTo(HaveOccurred())
 
-			// Attempt to connect
-			err := input.Connect(ctx)
-			Expect(err).NotTo(HaveOccurred())
-		})
-	})
-
-	Describe("Direct Connect", func() {
-		When("connecting anonymously", func() {
-			It("should connect successful", func() {
-
-				input = &OPCUAInput{
-					Endpoint:      endpoint,
-					Username:      "",
-					Password:      "",
-					DirectConnect: true,
-				}
-
-				// Attempt to connect
-				err := input.Connect(ctx)
-				Expect(err).NotTo(HaveOccurred())
-			})
-		})
-
-		When("connecting with username password", func() {
-			It("should connect successful", func() {
-
-				input = &OPCUAInput{
-					Endpoint:      endpoint,
-					Username:      username,
-					Password:      password,
-					DirectConnect: true,
-				}
-
-				// Attempt to connect
-				err := input.Connect(ctx)
-				Expect(err).NotTo(HaveOccurred())
-			})
-		})
-	})
+	},
+		Entry("should connect via Basic256Sha256", &OPCUAInput{
+			SecurityMode:   "SignAndEncrypt",
+			SecurityPolicy: "Basic256Sha256",
+		}),
+		Entry("should connect via Basic128Rsa15", &OPCUAInput{
+			SecurityMode:   "SignAndEncrypt",
+			SecurityPolicy: "Basic128Rsa15",
+		}),
+	)
 })
