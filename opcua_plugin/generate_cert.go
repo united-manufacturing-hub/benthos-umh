@@ -26,20 +26,57 @@ import (
 	"time"
 )
 
-func GenerateCert(host string, rsaBits int, validFor time.Duration) (certPEM, keyPEM []byte, err error) {
-	if len(host) == 0 {
-		return nil, nil, fmt.Errorf("missing required host parameter")
-	}
-	if rsaBits == 0 {
+// GenerateCertWithMode generates a self-signed X.509 certificate for OPC UA
+// usage, taking into account the security mode (Sign vs SignAndEncrypt) and
+// the desired security policy (Basic128Rsa15, Basic256, Basic256Sha256, etc.).
+//
+//   - validFor:				Certificate validity duration
+//   - securityMode:		The OPC UA message security mode (None, Sign, SignAndEncrypt)
+//   - securityPolicy:  The OPC UA security policy (e.g., "Basic128Rsa15", "Basic256", "Basic256Sha256")
+func GenerateCertWithMode(
+	validFor time.Duration,
+	securityMode string,
+	securityPolicy string,
+) (certPEM, keyPEM []byte, clientName string, err error) {
+	var (
+		rsaBits            int
+		signatureAlgorithm x509.SignatureAlgorithm
+	)
+
+	clientUID := randomString(8)
+
+	host := "urn:benthos-umh:client-predefined-" + clientUID
+
+	switch securityPolicy {
+	case "Basic256Rsa256":
+		// typically a 2048-bit RSA key
 		rsaBits = 2048
+		signatureAlgorithm = x509.SHA256WithRSA
+	case "Basic256":
+		// typically a 2048-bit RSA key
+		rsaBits = 2048
+		signatureAlgorithm = x509.SHA1WithRSA
+	case "Basic128Rsa15":
+		// typically a 1024-bit RSA key, sometimes 2048-bit keys also work
+		rsaBits = 1024
+		signatureAlgorithm = x509.SHA1WithRSA
+	default:
+		// fallback, we could also err out here if we don't want to allow
+		// something else
+		rsaBits = 2048
+		signatureAlgorithm = x509.SHA256WithRSA
 	}
 
 	priv, err := rsa.GenerateKey(rand.Reader, rsaBits)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate private key: %s", err)
+		return nil, nil, "", fmt.Errorf("failed to generate private key: %w", err)
 	}
 
-	notBefore := time.Now()
+	// Set a fixed NotBefore so the certificate always starts at the beginning
+	// of the year. Reasons for this could be incorrect setup of the plc's
+	// cpu-clock, timezone, summertime...
+	now := time.Now().UTC()
+	notBefore := time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
 	notAfter := notBefore.Add(validFor)
 
 	// Use 127 bits instead of 128 to ensure the serial number is always positive.
@@ -51,23 +88,34 @@ func GenerateCert(host string, rsaBits int, validFor time.Duration) (certPEM, ke
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 127)
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate serial number: %s", err)
+		return nil, nil, "", fmt.Errorf("failed togenerate serial number: %s", err)
 	}
 
+	// Prepare the certificate template
+	// CommonName has to be different if you try to connect to one server with
+	// different securityPolicies (edge-case)
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			CommonName:   "benthos-umh",
+			CommonName:   "benthos-umh-predefined-" + clientUID,
 			Organization: []string{"UMH"},
 		},
-		NotBefore: notBefore,
-		NotAfter:  notAfter,
-
-		KeyUsage:              x509.KeyUsageContentCommitment | x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageDataEncipherment | x509.KeyUsageCertSign,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
 		BasicConstraintsValid: true,
+		SignatureAlgorithm:    signatureAlgorithm,
+		IsCA:                  false,
+
+		// ExtKeyUsage: Both server & client auth for OPC UA usage
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageServerAuth,
+			x509.ExtKeyUsageClientAuth,
+		},
 	}
 
+	clientName = template.Subject.CommonName
+
+	// Fill in IPAddresses, DNSNames, URIs from the ApplicationURI string (comma-separated)
 	hosts := strings.Split(host, ",")
 	for _, h := range hosts {
 		if ip := net.ParseIP(h); ip != nil {
@@ -75,17 +123,48 @@ func GenerateCert(host string, rsaBits int, validFor time.Duration) (certPEM, ke
 		} else {
 			template.DNSNames = append(template.DNSNames, h)
 		}
-		if uri, err := url.Parse(h); err == nil {
+		if uri, parseErr := url.Parse(h); parseErr == nil && (uri.Scheme == "urn" || uri.Scheme == "http" || uri.Scheme == "https") {
 			template.URIs = append(template.URIs, uri)
 		}
 	}
 
-	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, publicKey(priv), priv)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create certificate: %s", err)
+	// Decide on the key usage bits based on security mode
+	switch securityMode {
+	case "Sign":
+		// For Sign-only, we need DigitalSignature and ContentCommitment("NonRepudiation")
+		// meaning the certificate can be used to sign data or communications that
+		// the signer later cannot deny having signed it.
+		template.KeyUsage = x509.KeyUsageDigitalSignature |
+			x509.KeyUsageContentCommitment
+	case "SignAndEncrypt":
+		// For Sign and Encrypt, we need KeyEncipherment, DigitalSignature,
+		// DataEncipherement, ContentCommitment and CertSign
+		template.KeyUsage = x509.KeyUsageKeyEncipherment |
+			x509.KeyUsageDigitalSignature |
+			x509.KeyUsageDataEncipherment |
+			x509.KeyUsageContentCommitment |
+			x509.KeyUsageCertSign
+	default:
+		template.KeyUsage = x509.KeyUsageDigitalSignature
 	}
 
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes}), pem.EncodeToMemory(pemBlockForKey(priv)), nil
+	// Actually create the certificate
+	derBytes, err := x509.CreateCertificate(
+		rand.Reader,
+		&template,
+		&template, // self-signed
+		publicKey(priv),
+		priv,
+	)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("failed to create certificate: %w", err)
+	}
+
+	// PEM-encode the results
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	keyPEM = pem.EncodeToMemory(pemBlockForKey(priv))
+
+	return certPEM, keyPEM, clientName, nil
 }
 
 func publicKey(priv interface{}) interface{} {
