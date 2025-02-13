@@ -590,14 +590,16 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	}
 	if exposeAll {
 		allMeta := make(map[string]string)
-		_ = msg.MetaWalkMut(func(key string, value any) error {
+		if err := msg.MetaWalkMut(func(key string, value any) error {
 			if str, ok := value.(string); ok {
 				allMeta[key] = str
 			} else {
 				allMeta[key] = fmt.Sprintf("%v", value)
 			}
 			return nil
-		})
+		}); err != nil {
+			return nil, fmt.Errorf("failed to collect all metadata: %v", err)
+		}
 		finalPayload["meta"] = allMeta
 	} else if len(filteredMeta) > 0 {
 		finalPayload["meta"] = filteredMeta
