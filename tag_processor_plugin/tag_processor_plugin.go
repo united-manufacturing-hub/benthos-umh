@@ -155,6 +155,10 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 				p.logger.Errorf("failed to collect original metadata: %v", err)
 				continue
 			}
+			// check if originalMeta is empty
+			if len(originalMeta) == 0 {
+				continue
+			}
 			if encoded, err := json.Marshal(originalMeta); err != nil {
 				p.logger.Errorf("failed to marshal original metadata: %v", err)
 				continue
