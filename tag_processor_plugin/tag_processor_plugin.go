@@ -146,23 +146,33 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 		// Only store if not already set (for example, in case of multiple processing steps).
 		if _, exists := msg.MetaGet("_initialMetadata"); !exists {
 			originalMeta := make(map[string]string)
-			_ = msg.MetaWalkMut(func(key string, value any) error {
+			if err := msg.MetaWalkMut(func(key string, value any) error {
 				if str, ok := value.(string); ok {
 					originalMeta[key] = str
 				}
 				return nil
-			})
+			}); err != nil {
+				p.logger.Errorf("failed to collect original metadata: %v", err)
+				continue
+			}
 			if encoded, err := json.Marshal(originalMeta); err != nil {
 				p.logger.Errorf("failed to marshal original metadata: %v", err)
+				continue
 			} else {
-				msg.MetaSet("_initialMetadata", string(encoded))
+				if err := msg.MetaSet("_initialMetadata", string(encoded)); err != nil {
+					p.logger.Errorf("failed to store original metadata: %v", err)
+					continue
+				}
 			}
 			// Record the list of original keys as a comma-separated string.
 			var keys []string
 			for k := range originalMeta {
 				keys = append(keys, k)
 			}
-			msg.MetaSet("_incomingKeys", strings.Join(keys, ","))
+			if err := msg.MetaSet("_incomingKeys", strings.Join(keys, ",")); err != nil {
+				p.logger.Errorf("failed to store incoming keys: %v", err)
+				continue
+			}
 		}
 	}
 	// ─────────────────────────────────────────────────────────────────────────────
