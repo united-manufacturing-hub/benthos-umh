@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -15,6 +16,41 @@ import (
 	"github.com/gopcua/opcua/ua"
 )
 
+// parseBase64PEMBundle takes a base64-encoded string of a PEM bundle (containing both
+// the CERTIFICATE block and the PRIVATE KEY block) and returns a parsed tls.Certificate.
+func parseBase64PEMBundle(b64PemBundle string) (*tls.Certificate, error) {
+	raw, err := base64.StdEncoding.DecodeString(b64PemBundle)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode error: %w", err)
+	}
+
+	var certPEM, keyPEM []byte
+	rest := raw
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		switch block.Type {
+		case "CERTIFICATE":
+			certPEM = pem.EncodeToMemory(block)
+		case "PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY":
+			keyPEM = pem.EncodeToMemory(block)
+		}
+	}
+
+	if len(certPEM) == 0 || len(keyPEM) == 0 {
+		return nil, errors.New("unable to find both CERTIFICATE and PRIVATE KEY in the provided PEM bundle")
+	}
+
+	tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load X509KeyPair: %w", err)
+	}
+	return &tlsCert, nil
+}
+
 // GetOPCUAClientOptions constructs the OPC UA client options based on the selected endpoint and authentication method.
 //
 // This function is essential for configuring the OPC UA client with the appropriate security settings,
@@ -24,8 +60,13 @@ import (
 // **Why This Function is Needed:**
 // - To dynamically generate client options that match the server’s security requirements.
 // - To handle different authentication methods, such as anonymous or username/password-based logins.
-// - To generate and include client certificates when using enhanced security policies like Basic256Sha256.
-func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescription, selectedAuthentication ua.UserTokenType) (opts []opcua.Option, err error) {
+// - To generate and include client certificates when using enhanced security policies like Basic256Sha256/Basic256/Basic128Rsa15
+func (g *OPCUAInput) GetOPCUAClientOptions(
+	selectedEndpoint *ua.EndpointDescription,
+	selectedAuthentication ua.UserTokenType,
+) (opts []opcua.Option, err error) {
+
+	// Basic security from the endpoint + user token type
 	opts = append(opts, opcua.SecurityFromEndpoint(selectedEndpoint, selectedAuthentication))
 
 	// Set additional options based on the authentication method
@@ -37,52 +78,95 @@ func (g *OPCUAInput) GetOPCUAClientOptions(selectedEndpoint *ua.EndpointDescript
 		opts = append(opts, opcua.AuthUsername(g.Username, g.Password))
 	}
 
-	// Generate certificates if Basic256Sha256
-	if selectedEndpoint.SecurityPolicyURI == ua.SecurityPolicyURIBasic256Sha256 {
-		randomStr := randomString(8) // Generates an 8-character random string
-		clientName := "urn:benthos-umh:client-" + randomStr
-		certPEM, keyPEM, err := GenerateCert(clientName, 2048, 24*time.Hour*365*10)
-		if err != nil {
-			g.Log.Errorf("Failed to generate certificate: %v", err)
-			return nil, err
+	// If the endpoint's security policy is not None, we must attach a certificate
+	if selectedEndpoint.SecurityPolicyURI != ua.SecurityPolicyURINone {
+		// Only generate or parse the certificate if we don't already have one cached
+		if g.cachedTLSCertificate == nil {
+			// If ClientCertificate is provided (base64 of PEM blocks), parse it
+			if g.ClientCertificate != "" {
+				g.Log.Infof("Using base64-encoded client certificate from configuration")
+
+				cert, err := parseBase64PEMBundle(g.ClientCertificate)
+				if err != nil {
+					g.Log.Errorf("Failed to parse the provided Base64 certificate/key: %v", err)
+					return nil, err
+				}
+				g.cachedTLSCertificate = cert
+
+			} else {
+				g.Log.Infof("No base64-encoded certificate provided, generating a new one...")
+
+				// Generate brand-new certificate
+				certPEM, keyPEM, clientName, err := GenerateCertWithMode(
+					24*time.Hour*365*10,
+					g.SecurityMode,
+					g.SecurityPolicy,
+					// Provide any random string for the subject, purely internal
+				)
+				if err != nil {
+					g.Log.Errorf("Failed to generate certificate: %v", err)
+					return nil, err
+				}
+
+				// Parse into a tls.Certificate
+				newTLSCert, err := tls.X509KeyPair(certPEM, keyPEM)
+				if err != nil {
+					g.Log.Errorf("Failed to parse generated certificate: %v", err)
+					return nil, err
+				}
+
+				g.cachedTLSCertificate = &newTLSCert
+				g.Log.Infof("The clients certificate was created, to use an encrypted "+
+					"connection please proceed to the OPC-UA Server's configuration and "+
+					"trust either all clients or the clients certificate with the client-name: "+
+					"'%s'", clientName)
+
+				// Encode the combined PEM (cert + key) as base64 so the user can persist it
+				combinedPEM := append(
+					append([]byte{}, certPEM...),
+					keyPEM...,
+				)
+				encodedClientCert := base64.StdEncoding.EncodeToString(combinedPEM)
+				g.Log.Infof("The client certificate was generated randomly upon startup "+
+					"and will change on every restart. To reuse this certificate in future "+
+					"sessions, set your 'clientCertificate: %s'", encodedClientCert)
+			}
 		}
 
-		// Convert PEM to X509 Certificate and RSA PrivateKey for in-memory use.
-		cert, err := tls.X509KeyPair(certPEM, keyPEM)
-		if err != nil {
-			g.Log.Errorf("Failed to parse certificate: %v", err)
-			return nil, err
-		}
-
-		pk, ok := cert.PrivateKey.(*rsa.PrivateKey)
+		// We have g.cachedTLSCertificate set; parse out the private key for the OPC UA library
+		pk, ok := g.cachedTLSCertificate.PrivateKey.(*rsa.PrivateKey)
 		if !ok {
-			g.Log.Errorf("Invalid private key type")
-			return nil, err
+			g.Log.Errorf("Invalid private key type or not RSA")
+			return nil, errors.New("invalid private key type or not RSA")
 		}
 
 		// Append the certificate and private key to the client options
-		opts = append(opts, opcua.PrivateKey(pk), opcua.Certificate(cert.Certificate[0]))
+		opts = append(opts,
+			opcua.PrivateKey(pk),
+			opcua.Certificate(g.cachedTLSCertificate.Certificate[0]),
+		)
 	}
 
+	// Session config
 	opts = append(opts, opcua.SessionName("benthos-umh"))
 	if g.SessionTimeout > 0 {
-		opts = append(opts, opcua.SessionTimeout(time.Duration(g.SessionTimeout*int(time.Millisecond)))) // set the session timeout to prevent having to many connections
+		opts = append(opts,
+			opcua.SessionTimeout(time.Duration(g.SessionTimeout)*time.Millisecond),
+		)
 	} else {
-		opts = append(opts, opcua.SessionTimeout(SessionTimeout))
+		opts = append(opts,
+			opcua.SessionTimeout(SessionTimeout),
+		)
 	}
-	opts = append(opts, opcua.ApplicationName("benthos-umh"))
-	//opts = append(opts, opcua.ApplicationURI("urn:benthos-umh"))
-	//opts = append(opts, opcua.ProductURI("urn:benthos-umh"))
+	opts = append(opts, opcua.ApplicationName("benthos-umh-predefined"))
 
-	// Fine-Tune Buffer
-	//opts = append(opts, opcua.MaxMessageSize(2*1024*1024))    // 2MB
-	//opts = append(opts, opcua.ReceiveBufferSize(2*1024*1024)) // 2MB
-	//opts = append(opts, opcua.SendBufferSize(2*1024*1024))    // 2MB
+	// Auto reconnect?
 	if g.AutoReconnect {
 		opts = append(opts, opcua.AutoReconnect(true))
 		reconnectInterval := time.Duration(g.ReconnectIntervalInSeconds) * time.Second
 		opts = append(opts, opcua.ReconnectInterval(reconnectInterval))
 	}
+
 	return opts, nil
 }
 
@@ -533,7 +617,7 @@ func (g *OPCUAInput) connect(ctx context.Context) error {
 	if g.SecurityMode != "" && g.SecurityPolicy != "" {
 		c, err = g.connectWithSecurity(ctx, endpoints, selectedAuthentication)
 		if err != nil {
-			g.Log.Infof("error while connecting using securitymode %s, securityPolicy: %s. err:%v", g.SecurityMode, g.SecurityPolicy, err)
+			g.Log.Infof("error while connecting using securitymode '%s', securityPolicy: '%s'. err:%v", g.SecurityMode, g.SecurityPolicy, err)
 			return err
 		}
 
