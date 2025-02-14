@@ -67,6 +67,7 @@ func parseBase64PEMBundle(b64PemBundle string) (*tls.Certificate, error) {
 func (g *OPCUAInput) GetOPCUAClientOptions(
 	selectedEndpoint *ua.EndpointDescription,
 	selectedAuthentication ua.UserTokenType,
+	discoveryOnly bool,
 ) (opts []opcua.Option, err error) {
 
 	// Basic security from the endpoint + user token type
@@ -130,9 +131,12 @@ func (g *OPCUAInput) GetOPCUAClientOptions(
 					keyPEM...,
 				)
 				encodedClientCert := base64.StdEncoding.EncodeToString(combinedPEM)
-				g.Log.Infof("The client certificate was generated randomly upon startup "+
-					"and will change on every restart. To reuse this certificate in future "+
-					"sessions, set your 'clientCertificate: %s'", encodedClientCert)
+				if !discoveryOnly {
+					g.Log.Infof("The client certificate was generated randomly upon startup "+
+						"and will change on every restart. To reuse this certificate in future "+
+						"sessions, set your 'clientCertificate: %s'", encodedClientCert)
+				}
+				g.ClientCertificate = encodedClientCert
 			}
 		}
 
@@ -252,7 +256,7 @@ func (g *OPCUAInput) checkForSecurityEndpoints(
 				// the connect-attempt we send it over to the OPC-UA server so the user,
 				// can proceed to trust this certificate and only has to copy the snippet
 				// below
-				c, err := g.openConnection(ctx, ep, authType)
+				c, err := g.openConnection(ctx, ep, authType, true)
 				if err == nil {
 					c.Close(ctx)
 				}
@@ -557,7 +561,7 @@ func (g *OPCUAInput) connectWithoutSecurity(
 
 		// Connect to the "None"-security endpoint if found in endpoints-list.
 		if isNoSecurityEndpoint(currentEndpoint) {
-			c, err := g.openConnection(ctx, currentEndpoint, authType)
+			c, err := g.openConnection(ctx, currentEndpoint, authType, false)
 			if err == nil {
 				return c, nil
 			}
@@ -640,7 +644,7 @@ func (g *OPCUAInput) encryptedConnect(
 		// encryption.
 	}
 
-	c, err := g.openConnection(ctx, foundEndpoint, authType)
+	c, err := g.openConnection(ctx, foundEndpoint, authType, false)
 	if err != nil {
 		_ = g.Close(ctx)
 		g.Log.Errorf("Failed to connect: %v", err)
@@ -723,7 +727,7 @@ func (g *OPCUAInput) connectToDirectEndpoint(ctx context.Context, authType ua.Us
 		}
 	}
 
-	c, err := g.openConnection(ctx, directEndpoint, authType)
+	c, err := g.openConnection(ctx, directEndpoint, authType, false)
 	if err != nil {
 		_ = g.Close(ctx)
 		g.Log.Errorf("Failed to connect: %v", err)
@@ -815,9 +819,10 @@ func (g *OPCUAInput) openConnection(
 	ctx context.Context,
 	endpoint *ua.EndpointDescription,
 	authType ua.UserTokenType,
+	discoveryOnly bool,
 ) (*opcua.Client, error) {
 
-	opts, err := g.GetOPCUAClientOptions(endpoint, authType)
+	opts, err := g.GetOPCUAClientOptions(endpoint, authType, discoveryOnly)
 	if err != nil {
 		g.Log.Errorf("Failed to get OPC UA client options: %s", err)
 		return nil, err
