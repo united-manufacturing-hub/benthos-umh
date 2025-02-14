@@ -266,7 +266,7 @@ func (g *OPCUAInput) checkForSecurityEndpoints(
 					"- securityMode: '%s'\n"+
 					"- securityPolicy: '%s'\n"+
 					"- serverCertificateFingerprint: '%s'\n"+
-					"- clientCertificate: '%s'\n"+
+					"- clientCertificate: '%s'\n\n"+
 					"These settings ensure that data is encrypted and that the server's "+
 					"identity is verified. Without them, encryption is not fully enabled, "+
 					"which could expose your connection to security risks.",
