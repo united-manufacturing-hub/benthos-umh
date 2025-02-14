@@ -262,10 +262,11 @@ func (g *OPCUAInput) checkForSecurityEndpoints(
 					"- securityMode: '%s'\n"+
 					"- securityPolicy: '%s'\n"+
 					"- serverCertificateFingerprint: '%s'\n"+
+					"- clientCertificate: '%s'\n"+
 					"These settings ensure that data is encrypted and that the server's "+
 					"identity is verified. Without them, encryption is not fully enabled, "+
 					"which could expose your connection to security risks.",
-					securityMode, securityPolicy, g.ServerCertificates[ep])
+					securityMode, securityPolicy, g.ServerCertificates[ep], g.ClientCertificate)
 				return
 			}
 		}
@@ -589,7 +590,7 @@ func (g *OPCUAInput) connectWithoutSecurity(
 	return nil, errors.New("error could not connect successfully to any endpoint")
 }
 
-// strictConnect establishes a connection to an OPC UA server using the specified
+// encryptedConnect establishes a connection to an OPC UA server using the specified
 // security mode, policy and server certificate fingerprint.
 // It takes a context for cancellation, a list of endpoint descriptions, and an authentication type.
 // It returns an OPC UA client if the connection is successful, or an error if it fails.
@@ -604,7 +605,7 @@ func (g *OPCUAInput) connectWithoutSecurity(
 // Returns:
 // - *opcua.Client - The connected OPC UA client.
 // - error - An error if the connection fails.
-func (g *OPCUAInput) strictConnect(
+func (g *OPCUAInput) encryptedConnect(
 	ctx context.Context,
 	endpoints []*ua.EndpointDescription,
 	authType ua.UserTokenType,
@@ -771,7 +772,7 @@ func (g *OPCUAInput) connect(ctx context.Context) error {
 	//				are correctly set, if not we will use 'unencryptedConnect' and
 	//				provide the user with some information.
 	if g.isSecuritySelected() {
-		c, err = g.strictConnect(ctx, endpoints, selectedAuthentication)
+		c, err = g.encryptedConnect(ctx, endpoints, selectedAuthentication)
 		if err != nil {
 			g.Log.Infof("Error while connecting using securityMode: '%s',"+
 				"securityPolicy: '%s', serverCertificateFingerprint: '%s'. err:%v",
