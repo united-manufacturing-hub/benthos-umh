@@ -263,10 +263,10 @@ func (g *OPCUAInput) checkForSecurityEndpoints(
 
 				g.Log.Infof("Secure endpoint detected. To ensure that your connection is "+
 					"fully encrypted, please set the following fields in your configuration:\n"+
-					"- securityMode: '%s'\n"+
-					"- securityPolicy: '%s'\n"+
-					"- serverCertificateFingerprint: '%s'\n"+
-					"- clientCertificate: '%s'\n\n"+
+					"    securityMode: '%s'\n"+
+					"    securityPolicy: '%s'\n"+
+					"    serverCertificateFingerprint: '%s'\n"+
+					"    clientCertificate: '%s'\n\n"+
 					"These settings ensure that data is encrypted and that the server's "+
 					"identity is verified. Without them, encryption is not fully enabled, "+
 					"which could expose your connection to security risks.",
@@ -633,15 +633,7 @@ func (g *OPCUAInput) encryptedConnect(
 	// Check on the Server Certificate's Fingerprint
 	err = g.checkServerCertificateFingerprint(foundEndpoint)
 	if err != nil {
-		g.Log.Infof("The server certificate fingerprint does not match or is missing. "+
-			"To ensure that you are connecting to the intended server securely, please verify "+
-			"that your configuration includes the correct serverCertificateFingerprint. "+
-			"This value is critical for confirming the server’s identity and enabling encryption. "+
-			"Error details: %s", err)
-		// later on we might escalate this and return the err
-		// For now we only log this info-message so the user could check the correct
-		// Fingerprint here, since this is not fundamentally important for the
-		// encryption.
+		return nil, err
 	}
 
 	c, err := g.openConnection(ctx, foundEndpoint, authType, false)
