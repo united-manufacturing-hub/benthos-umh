@@ -350,7 +350,9 @@ func (g *OPCUAInput) checkServerCertificateFingerprint(endpoint *ua.EndpointDesc
 				endpoint.EndpointURL, g.ServerCertificateFingerprint, g.ServerCertificates[endpoint])
 		}
 	default:
-		return fmt.Errorf(
+		// Later on we might return this as an error if we want to enforce usage of
+		// the 'serverCertificateFingerprint'
+		g.Log.Infof(
 			"No 'serverCertificateFingerprint' was provided. "+
 				"We strongly recommend specifying 'serverCertificateFingerprint=%s' to verify the server's identity "+
 				"and avoid potential security risks. Future releases may escalate this to a warning that prevents deployment.", g.ServerCertificates[endpoint],
