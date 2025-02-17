@@ -185,7 +185,7 @@ func (g *OPCUAInput) isSecuritySelected() bool {
 		securityPolicyOK = false
 	}
 
-	if securityModeOK && securityPolicyOK && g.ServerCertificateFingerprint != "" {
+	if securityModeOK && securityPolicyOK {
 		return true
 	}
 	return false
