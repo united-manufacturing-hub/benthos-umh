@@ -157,6 +157,7 @@ jobs:
           if tcping -c 4 -T 1s "$ENDPOINT" | grep -qi "Connected"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
             echo "TEST_KEPWARE_ENDPOINT=${{ secrets.TEST_KEPWARE_ENDPOINT }}" >> "$GITHUB_ENV"
+            echo "TEST_KEPWARE_FINGERPRINT=${{ secrets.TEST_KEPWARE_FINGERPRINT }}" >> "$GITHUB_ENV"
             echo "using kepware for testing"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
