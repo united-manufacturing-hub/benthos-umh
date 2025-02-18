@@ -200,6 +200,7 @@ OPC UA supports various security modes and security policies. These options defi
   - **Description**: A Base64‐encoded PEM bundle (certificate + private key).
   - When using encryption (`Sign` or `SignAndEncrypt`), the client must present a certificate to the server. If you **do not** provide one, the system **auto‐generates** a random certificate at startup.
   - The auto‐generated certificate is logged in Base64 so you can copy/paste it into your configuration. This allows the server to trust the same client certificate across restarts instead of generating a new one each time.
+  - Whenever a certificate is created, and the OPC UA server's settings do not allow automatic acceptance of client certificates, you will need to manually trust the client certificate in the server's settings. The client's name will be displayed, enabling you to uniquely identify it in the certificate list.
 
 
 If you want to connect with security options, you will at least have to provide the following sample:
