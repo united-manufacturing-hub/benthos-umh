@@ -6,11 +6,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/sha3"
 
 	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/ua"
@@ -64,6 +67,7 @@ func parseBase64PEMBundle(b64PemBundle string) (*tls.Certificate, error) {
 func (g *OPCUAInput) GetOPCUAClientOptions(
 	selectedEndpoint *ua.EndpointDescription,
 	selectedAuthentication ua.UserTokenType,
+	discoveryOnly bool,
 ) (opts []opcua.Option, err error) {
 
 	// Basic security from the endpoint + user token type
@@ -127,9 +131,12 @@ func (g *OPCUAInput) GetOPCUAClientOptions(
 					keyPEM...,
 				)
 				encodedClientCert := base64.StdEncoding.EncodeToString(combinedPEM)
-				g.Log.Infof("The client certificate was generated randomly upon startup "+
-					"and will change on every restart. To reuse this certificate in future "+
-					"sessions, set your 'clientCertificate: %s'", encodedClientCert)
+				if !discoveryOnly {
+					g.Log.Infof("The client certificate was generated randomly upon startup "+
+						"and will change on every restart. To reuse this certificate in future "+
+						"sessions, set your 'clientCertificate: %s'", encodedClientCert)
+				}
+				g.ClientCertificate = encodedClientCert
 			}
 		}
 
@@ -200,6 +207,9 @@ func (g *OPCUAInput) LogEndpoint(endpoint *ua.EndpointDescription) {
 			Type:  "CERTIFICATE",
 			Bytes: endpoint.ServerCertificate,
 		})
+
+		// Store the fingerprint of the servers certificate
+		g.storeServerCertificateFingerprint(endpoint)
 		g.logCertificateInfo(pemCert)
 	}
 
@@ -219,6 +229,51 @@ func (g *OPCUAInput) LogEndpoints(endpoints []*ua.EndpointDescription) {
 	for i, endpoint := range endpoints {
 		g.Log.Infof("Endpoint %d:", i+1)
 		g.LogEndpoint(endpoint)
+	}
+}
+
+// checkForSecurityEndpoints iterates through the endpoint-list and checks
+// if there are any endpoints available which have a securityPolicy set, that is
+// not "None". If so it returns the first endpoint. The first endpoint will
+// always be the most "secure", because we order the endpoints by their security-
+// policy and -mode.
+func (g *OPCUAInput) checkForSecurityEndpoints(
+	ctx context.Context,
+	endpoints []*ua.EndpointDescription,
+	authType ua.UserTokenType,
+) {
+	// Oder the endpoints to get the most "secure" endpoint first and provide
+	// the user with its information (SecurityPolicy / SecurityMode / Fingerprint).
+	orderedEndpoints := g.orderEndpoints(endpoints, authType)
+
+	for _, ep := range orderedEndpoints {
+		if isUserTokenSupported(ep, authType) {
+			if !isNoSecurityEndpoint(ep) {
+				securityMode := strings.TrimPrefix(ep.SecurityMode.String(), "MessageSecurityMode")
+				securityPolicy := strings.TrimPrefix(ep.SecurityPolicyURI, ua.SecurityPolicyURIPrefix)
+
+				// we use the openConnection func here to pre-create the cert and with
+				// the connect-attempt we send it over to the OPC-UA server so the user,
+				// can proceed to trust this certificate and only has to copy the snippet
+				// below
+				c, err := g.openConnection(ctx, ep, authType, true)
+				if err == nil {
+					c.Close(ctx)
+				}
+
+				g.Log.Infof("Secure endpoint detected. To ensure that your connection is "+
+					"fully encrypted, please set the following fields in your configuration:\n"+
+					"    securityMode: '%s'\n"+
+					"    securityPolicy: '%s'\n"+
+					"    serverCertificateFingerprint: '%s'\n"+
+					"    clientCertificate: '%s'\n\n"+
+					"These settings ensure that data is encrypted and that the server's "+
+					"identity is verified. Without them, encryption is not fully enabled, "+
+					"which could expose your connection to security risks.",
+					securityMode, securityPolicy, g.ServerCertificates[ep], g.ClientCertificate)
+				return
+			}
+		}
 	}
 }
 
@@ -258,6 +313,90 @@ func (g *OPCUAInput) FetchAllEndpoints(ctx context.Context) ([]*ua.EndpointDescr
 
 	// For multiple endpoints, adjust their hosts as per user specification.
 	return adjustedEndpoints, nil
+}
+
+// checkServerCertificateFingerprint will check the endpoints provided by the server if the fingerprint is set
+//
+// This function will check if the endpoint's certificate fingerprint does
+// match with the one provided by the user. Therefore we can check if the
+// server is "trusted". This should only be called if we are trying to use
+// an "encrypted" connection.
+// On top of that if no fingerprint provided it informs the user that it
+// would be safer using this and writes back the server certificates fingerprint.
+//
+// **Why This Function is Needed:**
+//   - To ensure the client connects to the correct server(when encrypted)
+//   - To inform the user using a Fingerprint of the Server's certificate would
+//     be more secure
+func (g *OPCUAInput) checkServerCertificateFingerprint(endpoint *ua.EndpointDescription) error {
+
+	if g.ServerCertificates[endpoint] == "" {
+		return fmt.Errorf("The servers endpoint '%s' doesn't provide any server certificate. "+
+			"This is crucial in order to get a reliable OPC-UA connection, please "+
+			"check your server's certificates and make sure it exists.", endpoint.EndpointURL)
+	}
+
+	switch {
+	case g.ServerCertificateFingerprint != "":
+		// Return error with information about the mismatch of the endpoints
+		// certificate fingerprint.
+		if g.ServerCertificates[endpoint] != g.ServerCertificateFingerprint {
+			return fmt.Errorf("fingerprint mismatch for endpoint %s\n"+
+				"Expected: '%s'\n"+
+				"Got: '%s'\n\n"+
+				"Either the server's certificate was intentionally updated, or you are connecting to the wrong server.\n"+
+				"If intentional, please set the new 'serverCertificateFingerprint' in your configuration.\n"+
+				"Otherwise, double-check your security settings.",
+				endpoint.EndpointURL, g.ServerCertificateFingerprint, g.ServerCertificates[endpoint])
+		}
+	default:
+		// Later on we might return this as an error if we want to enforce usage of
+		// the 'serverCertificateFingerprint'
+		g.Log.Infof(
+			"No 'serverCertificateFingerprint' was provided. "+
+				"We strongly recommend specifying 'serverCertificateFingerprint=%s' to verify the server's identity "+
+				"and avoid potential security risks. Future releases may escalate this to a warning that prevents deployment.", g.ServerCertificates[endpoint],
+		)
+	}
+	return nil
+}
+
+// storeServerCertificateFingerprint will store the endpoint and it's certificates fingerprint
+//
+// Store the OPC-UA servers endpoint and it's certificates fingerprint in a map
+// in order to check the specific fingerprint of that endpoint. This should
+// prevent any edge-cases where certificates could differ for endpoints of the
+// same OPC-UA server.
+//
+// **Why this Function is needed:**
+//   - to store each endpoint of the OPC-UA-Server and it's corresponding fingerprint
+//   - to prevent edge-cases where certificates could differ for its endpoints
+func (g *OPCUAInput) storeServerCertificateFingerprint(endpoint *ua.EndpointDescription) error {
+
+	pemCert := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: endpoint.ServerCertificate,
+	})
+
+	// decode the certificate from base64 to DER format
+	block, _ := pem.Decode(pemCert)
+	if block == nil {
+		return fmt.Errorf("Could not decode server certificate.")
+	}
+
+	// parse the DER-format certificate
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("Error while parsing server certificate.")
+	}
+
+	// calculating the checksum of the certificate (sha3 is needed here)
+	// and convert the array into a slice for encoding
+	shaFingerprint := sha3.Sum512(cert.Raw)
+
+	g.ServerCertificates[endpoint] = hex.EncodeToString(shaFingerprint[:])
+
+	return nil
 }
 
 // handleSingleEndpointDiscovery processes a single discovered OPC UA endpoint by performing additional discovery.
@@ -400,7 +539,7 @@ func (g *OPCUAInput) logCertificateInfo(certBytes []byte) {
 	g.Log.Infof("    URIs: %v", cert.URIs)
 }
 
-// attemptBestEndpointConnection attempts to connect to the available OPC UA endpoints
+// connectWithoutSecurity attempts to connect to the available OPC UA endpoints
 // using the specified authentication type. It orders the endpoints based on the expected
 // success of the connection and tries to establish a connection with each endpoint.
 //
@@ -412,60 +551,57 @@ func (g *OPCUAInput) logCertificateInfo(certBytes []byte) {
 // Returns:
 // - *opcua.Client: A pointer to the connected OPC UA client, if successful.
 // - error: An error object if the connection attempt fails.
-func (g *OPCUAInput) attemptBestEndpointConnection(ctx context.Context, endpoints []*ua.EndpointDescription, authType ua.UserTokenType) (*opcua.Client, error) {
+func (g *OPCUAInput) connectWithoutSecurity(
+	ctx context.Context,
+	endpoints []*ua.EndpointDescription,
+	authType ua.UserTokenType,
+) (*opcua.Client, error) {
+
 	// Order the endpoints based on the expected success of the connection
-	orderedEndpoints := g.orderEndpoints(endpoints, authType)
-	for _, currentEndpoint := range orderedEndpoints {
-		opts, err := g.GetOPCUAClientOptions(currentEndpoint, authType)
-		if err != nil {
-			g.Log.Errorf("Failed to get OPC UA client options: %s", err)
-			return nil, err
-		}
+	// orderedEndpoints := g.orderEndpoints(endpoints, authType)
+	for _, currentEndpoint := range endpoints {
 
-		c, err := opcua.NewClient(currentEndpoint.EndpointURL, opts...)
-		if err != nil {
-			g.Log.Errorf("Failed to create a new client")
-			return nil, err
-		}
-
-		// Connect to the endpoint
-		// If connection fails, then continue to the next endpoint
-		// Connect to the selected endpoint
-		err = c.Connect(ctx)
-		if err == nil {
-			return c, nil
-		}
-
-		// case where an error occured
-		g.CloseExpected(ctx)
-		g.Log.Infof("Failed to connect, but continue anyway: %v", err)
-
-		if errors.Is(err, ua.StatusBadUserAccessDenied) || errors.Is(err, ua.StatusBadTooManySessions) {
-			var timeout time.Duration
-			// Adding a sleep to prevent immediate re-connect
-			// In the case of ua.StatusBadUserAccessDenied, the session is for some reason not properly closed on the server
-			// If we were to re-connect, we could overload the server with too many sessions as the default timeout is 10 seconds
-			if g.SessionTimeout > 0 {
-				timeout = time.Duration(g.SessionTimeout * int(time.Millisecond))
-			} else {
-				timeout = SessionTimeout
+		// Connect to the "None"-security endpoint if found in endpoints-list.
+		if isNoSecurityEndpoint(currentEndpoint) {
+			c, err := g.openConnection(ctx, currentEndpoint, authType, false)
+			if err == nil {
+				return c, nil
 			}
-			g.Log.Errorf("Encountered unrecoverable error. Waiting before trying to re-connect to prevent overloading the server: %v with timeout %v", err, timeout)
-			time.Sleep(timeout)
-			return nil, err
-		}
 
-		if errors.Is(err, ua.StatusBadTimeout) {
-			g.Log.Infof("Selected endpoint timed out. Selecting next one: %v", currentEndpoint)
+			// case where an error occured
+			g.CloseExpected(ctx)
+			g.Log.Infof("Failed to connect, but continue anyway: %v", err)
+
+			if errors.Is(err, ua.StatusBadUserAccessDenied) || errors.Is(err, ua.StatusBadTooManySessions) {
+				var timeout time.Duration
+				// Adding a sleep to prevent immediate re-connect
+				// In the case of ua.StatusBadUserAccessDenied, the session is for some reason not properly closed on the server
+				// If we were to re-connect, we could overload the server with too many sessions as the default timeout is 10 seconds
+				if g.SessionTimeout > 0 {
+					timeout = time.Duration(g.SessionTimeout * int(time.Millisecond))
+				} else {
+					timeout = SessionTimeout
+				}
+				g.Log.Errorf("Encountered unrecoverable error. Waiting before trying to re-connect to prevent overloading the server: %v with timeout %v", err, timeout)
+				time.Sleep(timeout)
+				return nil, err
+			}
+
+			if errors.Is(err, ua.StatusBadTimeout) {
+				g.Log.Infof("Selected endpoint timed out. Selecting next one: %v", currentEndpoint)
+			}
 		}
 
 	}
 	return nil, errors.New("error could not connect successfully to any endpoint")
 }
 
-// connectWithSecurity establishes a connection to an OPC UA server using the specified security mode and policy.
+// encryptedConnect establishes a connection to an OPC UA server using the specified
+// security mode, policy and server certificate fingerprint.
 // It takes a context for cancellation, a list of endpoint descriptions, and an authentication type.
 // It returns an OPC UA client if the connection is successful, or an error if it fails.
+// If the SecurityMode is not SignAndEncrypt or the Policy is set to None we return early.
+// This is ONLY for encrypted connections.
 //
 // Parameters:
 // - ctx: context.Context - The context for managing cancellation and timeouts.
@@ -475,7 +611,13 @@ func (g *OPCUAInput) attemptBestEndpointConnection(ctx context.Context, endpoint
 // Returns:
 // - *opcua.Client - The connected OPC UA client.
 // - error - An error if the connection fails.
-func (g *OPCUAInput) connectWithSecurity(ctx context.Context, endpoints []*ua.EndpointDescription, authType ua.UserTokenType) (*opcua.Client, error) {
+func (g *OPCUAInput) encryptedConnect(
+	ctx context.Context,
+	endpoints []*ua.EndpointDescription,
+	authType ua.UserTokenType,
+) (*opcua.Client, error) {
+	g.Log.Info("Trying to strictly connect with encryption")
+
 	foundEndpoint, err := g.getEndpointIfExists(endpoints, authType, g.SecurityMode, g.SecurityPolicy)
 	if err != nil {
 		g.Log.Errorf("Failed to get endpoint: %s", err)
@@ -487,22 +629,51 @@ func (g *OPCUAInput) connectWithSecurity(ctx context.Context, endpoints []*ua.En
 		return nil, errors.New("no suitable endpoint found")
 	}
 
-	opts, err := g.GetOPCUAClientOptions(foundEndpoint, authType)
+	g.Log.Infof("Establishing a strict connection to endpoint: '%s' using securityMode: '%s' and "+
+		"securityPolicy: '%s'.", foundEndpoint.EndpointURL, g.SecurityMode, g.SecurityPolicy)
+
+	// Check on the Server Certificate's Fingerprint
+	err = g.checkServerCertificateFingerprint(foundEndpoint)
 	if err != nil {
-		g.Log.Errorf("Failed to get OPC UA client options: %s", err)
 		return nil, err
 	}
 
-	c, err := opcua.NewClient(foundEndpoint.EndpointURL, opts...)
+	c, err := g.openConnection(ctx, foundEndpoint, authType, false)
 	if err != nil {
-		g.Log.Errorf("Failed to create a new client: %v", err)
-		return nil, err
-	}
-
-	// Connect to the selected endpoint
-	if err := c.Connect(ctx); err != nil {
 		_ = g.Close(ctx)
 		g.Log.Errorf("Failed to connect: %v", err)
+		return nil, err
+	}
+
+	return c, nil
+}
+
+// unencryptedConnect is used as a fallback, so if the user decides not to use
+// an encrypted connection this will be executed and tries to connect to any
+// endpoints ("encrypted">none-encrypted)
+func (g *OPCUAInput) unencryptedConnect(
+	ctx context.Context,
+	endpoints []*ua.EndpointDescription,
+	authType ua.UserTokenType,
+) (*opcua.Client, error) {
+
+	g.Log.Infof("Establishing an unencrypted connection...")
+
+	// If there are no endpoints found or the `directConnect`-flag is set try to
+	// directly connect to the endpoint.
+	if g.DirectConnect || len(endpoints) == 0 {
+		c, err := g.connectToDirectEndpoint(ctx, authType)
+		if err != nil {
+			g.Log.Infof("error while connecting to the endpoint directly: %v", err)
+			return nil, err
+		}
+		g.Client = c
+		return c, nil
+	}
+
+	// Otherwise just connect without security
+	c, err := g.connectWithoutSecurity(ctx, endpoints, authType)
+	if err != nil {
 		return nil, err
 	}
 
@@ -535,21 +706,23 @@ func (g *OPCUAInput) connectToDirectEndpoint(ctx context.Context, authType ua.Us
 		SecurityPolicyURI: securityPolicyURI,
 	}
 
-	// Prepare authentication and encryption
-	opts, err := g.GetOPCUAClientOptions(directEndpoint, authType)
-	if err != nil {
-		g.Log.Errorf("Failed to get OPC UA client options: %s", err)
-		return nil, err
+	// If we are not using a NoSecurityEndpoint meaning we are using an "encrypted"
+	// endpoint, we should check if a 'serverCertificateFingerprint' was provided
+	// and otherwise let the user know, he should possibly use this option.
+	if !isNoSecurityEndpoint(directEndpoint) {
+		err := g.checkServerCertificateFingerprint(directEndpoint)
+		if err != nil {
+			g.Log.Infof("The server certificate fingerprint does not match or is missing. "+
+				"To ensure that you are connecting to the intended server securely, please verify "+
+				"that your configuration includes the correct serverCertificateFingerprint. "+
+				"This value is critical for confirming the server’s identity and enabling encryption. "+
+				"Error details: %s", err)
+			// later on we might escalate this and return the err
+		}
 	}
 
-	c, err := opcua.NewClient(directEndpoint.EndpointURL, opts...)
+	c, err := g.openConnection(ctx, directEndpoint, authType, false)
 	if err != nil {
-		g.Log.Errorf("Failed to create a new client: %v", err)
-		return nil, err
-	}
-
-	// Connect to the selected endpoint
-	if err := c.Connect(ctx); err != nil {
 		_ = g.Close(ctx)
 		g.Log.Errorf("Failed to connect: %v", err)
 		return nil, err
@@ -588,36 +761,20 @@ func (g *OPCUAInput) connect(ctx context.Context) error {
 
 	// Step 3: Determine the authentication method to use.
 	// Default to Anonymous if neither username nor password is provided.
-	var selectedAuthentication ua.UserTokenType
-	switch {
-	case g.Username != "" && g.Password != "":
-		selectedAuthentication = ua.UserTokenTypeUserName
-	default:
-		selectedAuthentication = ua.UserTokenTypeAnonymous
-	}
+	selectedAuthentication := g.getUserAuthenticationType()
 
-	// Step 4: Check if the user has specified a very concrete endpoint, security policy, and security mode
-	// Connect to this endpoint directly
-	// If connection fails, then return an error
-
-	// Step 4a: Connect using concrete endpoint
-	if g.DirectConnect || len(endpoints) == 0 {
-		c, err := g.connectToDirectEndpoint(ctx, selectedAuthentication)
+	// NOTE: strictConnect only if:
+	//				-	SecurityMode
+	//				-	SecurityPolicy
+	//				-	ServerCertificateFingerprint
+	//				are correctly set, if not we will use 'unencryptedConnect' and
+	//				provide the user with some information.
+	if g.isSecuritySelected() {
+		c, err = g.encryptedConnect(ctx, endpoints, selectedAuthentication)
 		if err != nil {
-			g.Log.Infof("error while connecting to the endpoint directly: %v", err)
-			return err
-		}
-
-		g.Client = c
-		return nil
-
-	}
-
-	// Step 4b: Connect using SecurityMode and SecurityPolicy
-	if g.SecurityMode != "" && g.SecurityPolicy != "" {
-		c, err = g.connectWithSecurity(ctx, endpoints, selectedAuthentication)
-		if err != nil {
-			g.Log.Infof("error while connecting using securitymode '%s', securityPolicy: '%s'. err:%v", g.SecurityMode, g.SecurityPolicy, err)
+			g.Log.Infof("Error while connecting using securityMode: '%s',"+
+				"securityPolicy: '%s', serverCertificateFingerprint: '%s'. err:%v",
+				g.SecurityMode, g.SecurityPolicy, g.ServerCertificateFingerprint, err)
 			return err
 		}
 
@@ -625,9 +782,11 @@ func (g *OPCUAInput) connect(ctx context.Context) error {
 		return nil
 	}
 
-	// Step 5: If the user has not specified a very concrete endpoint, security policy, and security mode
-	// Iterate through all available endpoints and try to connect to them
-	c, err = g.attemptBestEndpointConnection(ctx, endpoints, selectedAuthentication)
+	// Step 4: Check if there is any "security"-based endpoint available and if
+	// so print out some information on how to use it.
+	g.checkForSecurityEndpoints(ctx, endpoints, selectedAuthentication)
+
+	c, err = g.unencryptedConnect(ctx, endpoints, selectedAuthentication)
 	if err != nil {
 		return err
 	}
@@ -641,4 +800,40 @@ func (g *OPCUAInput) connect(ctx context.Context) error {
 	g.Client = c
 
 	return nil
+}
+
+// We can use this function to prevent getting duplicated code, whenever we are
+// trying to open a connection to the OPC-UA server
+// On success:
+//   - it returns the client
+//
+// On failure:
+//   - it returns the error
+func (g *OPCUAInput) openConnection(
+	ctx context.Context,
+	endpoint *ua.EndpointDescription,
+	authType ua.UserTokenType,
+	discoveryOnly bool,
+) (*opcua.Client, error) {
+
+	opts, err := g.GetOPCUAClientOptions(endpoint, authType, discoveryOnly)
+	if err != nil {
+		g.Log.Errorf("Failed to get OPC UA client options: %s", err)
+		return nil, err
+	}
+
+	c, err := opcua.NewClient(endpoint.EndpointURL, opts...)
+	if err != nil {
+		g.Log.Errorf("Failed to create a new client")
+		return nil, err
+	}
+
+	// Connect to the endpoint
+	// If connection fails, then continue to the next endpoint
+	// Connect to the selected endpoint
+	err = c.Connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
 }

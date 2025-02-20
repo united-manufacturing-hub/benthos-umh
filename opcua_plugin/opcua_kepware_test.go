@@ -19,18 +19,20 @@ import (
 // some static and dynamic data exchange.
 var _ = Describe("Test against KepServer EX6", func() {
 	var (
-		endpoint string
-		username string
-		password string
-		input    *OPCUAInput
-		ctx      context.Context
-		cancel   context.CancelFunc
+		endpoint    string
+		username    string
+		password    string
+		fingerprint string
+		input       *OPCUAInput
+		ctx         context.Context
+		cancel      context.CancelFunc
 	)
 
 	BeforeEach(func() {
 		endpoint = os.Getenv("TEST_KEPWARE_ENDPOINT")
 		username = os.Getenv("TEST_KEPWARE_USERNAME")
 		password = os.Getenv("TEST_KEPWARE_PASSWORD")
+		fingerprint = os.Getenv("TEST_KEPWARE_FINGERPRINT")
 
 		if endpoint == "" || username == "" || password == "" {
 			Skip("Skipping test: environmental variables are not set")
@@ -54,6 +56,7 @@ var _ = Describe("Test against KepServer EX6", func() {
 
 		input = opcInput
 		input.Endpoint = endpoint
+		input.ServerCertificates = make(map[*ua.EndpointDescription]string)
 
 		err := input.Connect(ctx)
 		if errorExpected {
@@ -109,6 +112,8 @@ var _ = Describe("Test against KepServer EX6", func() {
 	DescribeTable("Selecting a custom SecurityPolicy", func(input *OPCUAInput) {
 		// attempt to connect with securityMode and Policy
 		input.Endpoint = endpoint
+		input.ServerCertificates = make(map[*ua.EndpointDescription]string)
+		input.ServerCertificateFingerprint = fingerprint
 		err := input.Connect(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -205,6 +210,7 @@ var _ = Describe("Test underlying OPC-clients", FlakeAttempts(3), func() {
 			Endpoint:                   endpoint,
 			Username:                   username,
 			Password:                   password,
+			ServerCertificates:         make(map[*ua.EndpointDescription]string),
 			AutoReconnect:              true,
 			ReconnectIntervalInSeconds: 5,
 		}
@@ -266,6 +272,7 @@ var _ = Describe("Test underlying OPC-clients", FlakeAttempts(3), func() {
 
 		input = opcInput
 		input.Endpoint = endpoint
+		input.ServerCertificates = make(map[*ua.EndpointDescription]string)
 
 		err := input.Connect(ctx)
 		Expect(err).NotTo(HaveOccurred())

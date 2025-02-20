@@ -53,6 +53,7 @@ jobs:
           if tcping -c 4 -T 1s "$ENDPOINT" | grep -qi "Connected"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
             echo "TEST_S7_ENDPOINT_URI=${{ secrets.TEST_S7_ENDPOINT_URI }}" >> "$GITHUB_ENV"
+            echo "TEST_S7_FINGERPRINT=${{ secrets.TEST_S7_FINGERPRINT }}" >> "$GITHUB_ENV"
             echo "using s7-main device for testing"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
@@ -68,6 +69,7 @@ jobs:
           if tcping -c 4 -T 1s "$ENDPOINT" | grep -qi "Connected"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
             echo "TEST_S7_ENDPOINT_URI=${{ secrets.TEST_S7_ENDPOINT_URI_FALLBACK }}" >> "$GITHUB_ENV"
+            echo "TEST_S7_FINGERPRINT=${{ secrets.TEST_S7_FINGERPRINT_FALLBACK }}" >> "$GITHUB_ENV"
             echo "using s7-fallback device for testing"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
@@ -82,6 +84,7 @@ jobs:
           if tcping -c 4 -T 1s "$ENDPOINT" | grep -qi "Connected"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
             echo "TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI }}" >> "$GITHUB_ENV"
+            echo "TEST_WAGO_FINGERPRINT=${{ secrets.TEST_WAGO_FINGERPRINT }}" >> "$GITHUB_ENV"
             echo "using wago-main device for testing"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
@@ -97,6 +100,7 @@ jobs:
           if tcping -c 4 -T 1s "$ENDPOINT" | grep -qi "Connected"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
             echo "TEST_WAGO_ENDPOINT_URI=${{ secrets.TEST_WAGO_ENDPOINT_URI_FALLBACK }}" >> "$GITHUB_ENV"
+            echo "TEST_WAGO_FINGERPRINT=${{ secrets.TEST_WAGO_FINGERPRINT_FALLBACK }}" >> "$GITHUB_ENV"
             echo "using wago-fallback device for testing"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
@@ -153,6 +157,7 @@ jobs:
           if tcping -c 4 -T 1s "$ENDPOINT" | grep -qi "Connected"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
             echo "TEST_KEPWARE_ENDPOINT=${{ secrets.TEST_KEPWARE_ENDPOINT }}" >> "$GITHUB_ENV"
+            echo "TEST_KEPWARE_FINGERPRINT=${{ secrets.TEST_KEPWARE_FINGERPRINT }}" >> "$GITHUB_ENV"
             echo "using kepware for testing"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
