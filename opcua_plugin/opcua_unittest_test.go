@@ -149,6 +149,49 @@ var _ = Describe("Unit Tests", func() {
 				Expect(errs).Should(BeEmpty())
 				Expect(nodes).Should(HaveLen(1))
 			})
+			Context("There is an edge-case where the S7-1500 creates references of type HasComponent for an existing Node of type NodeClassVariable", func() {
+				It("root and child node are of type ua.NodeClassVariable", func() {
+					rootNode := createMockVariableNode(1234, "rootNode")
+					rootNode.attributes = append(rootNode.attributes, getDataValueForNodeClass(ua.NodeClassVariable))
+					rootNode.attributes = append(rootNode.attributes, getDataValueForBrowseName("rootNode"))
+					rootNode.attributes = append(rootNode.attributes, getDataValueForDescription("root description", ua.StatusOK))
+					rootNode.attributes = append(rootNode.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead|ua.AccessLevelTypeCurrentWrite))
+					rootNode.attributes = append(rootNode.attributes, getDataValueForDataType(ua.TypeIDInt32, ua.StatusOK))
+
+					childNode := createMockVariableNode(1337, "childNode")
+					childNode.attributes = append(childNode.attributes, getDataValueForNodeClass(ua.NodeClassVariable))
+					childNode.attributes = append(childNode.attributes, getDataValueForBrowseName("childNode"))
+					childNode.attributes = append(childNode.attributes, getDataValueForDescription("child description", ua.StatusOK))
+					childNode.attributes = append(childNode.attributes, getDataValueForAccessLevel(ua.AccessLevelTypeCurrentRead|ua.AccessLevelTypeCurrentWrite))
+					childNode.attributes = append(childNode.attributes, getDataValueForDataType(ua.TypeIDInt32, ua.StatusOK))
+					rootNode.AddReferenceNode(id.HasComponent, childNode)
+
+					nodeBrowser = rootNode
+					wg.Add(1)
+					go func() {
+						Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					}()
+					wg.Wait()
+					close(nodeChan)
+					close(errChan)
+
+					var nodes []NodeDef
+					for nodeDef := range nodeChan {
+						nodes = append(nodes, nodeDef)
+					}
+					var errs []error
+					for err := range errChan {
+						errs = append(errs, err)
+					}
+
+					Expect(errs).Should(BeEmpty())
+					Expect(nodes).Should(HaveLen(2))
+					Expect(nodes[0].NodeID.String()).To(Equal("i=1234"))
+					Expect(nodes[0].BrowseName).To(Equal("rootNode"))
+					Expect(nodes[1].NodeID.String()).To(Equal("i=1337"))
+					Expect(nodes[1].BrowseName).To(Equal("childNode"))
+				})
+			})
 			It("root node with id.HasComponent should return 1 child", func() {
 
 				rootNode := createMockVariableNode(1234, "TestNode")
