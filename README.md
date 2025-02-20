@@ -171,7 +171,7 @@ input:
 
 ##### Security Options
 
-> **Note**: In order to ensure a fully secure connection, we strongly recommend specifying **all** of the following parameters. However, if you omit them, **benthos-umh** will attempt to discover and prepare the most secure endpoint automatically, and it will also log the recommended settings (security mode/policy, server fingerprint, and generated client certificate) so that you can easily configure them once you are ready
+> To ensure a fully secure connection, you must explicitly configure all of the following security options. However, if these settings seem overwhelming, you can leave them unspecified. In that case, **benthos-umh** will automatically scan for and connect to available endpoints until it succeeds—and then it will log the recommended security settings for your future configuration.
 
 OPC UA supports various security modes and security policies. These options define how messages are signed or encrypted and which cryptographic algorithms are used. In the configuration, you can specify the following:
 
