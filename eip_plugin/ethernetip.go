@@ -1,4 +1,4 @@
-// Copyright 2024 UMH Systems GmbH
+// Copyright 2025 UMH Systems GmbH
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"net"
 	"strconv"
@@ -36,7 +37,7 @@ const (
 	socketTimeoutDefault = time.Second * 10
 )
 
-type EthernetIPInput struct {
+type EIPInput struct {
 	// IP address of the EIP plc
 	Controller   *gologix.Controller
 	Path         string
@@ -160,7 +161,7 @@ func newEthernetIPInput(conf *service.ParsedConfig, mgr *service.Resources) (ser
 		return nil, err
 	}
 
-	m := &EthernetIPInput{
+	m := &EIPInput{
 		Controller:   controller,
 		Path:         path,
 		PollRate:     time.Duration(pollRate) * time.Millisecond,
@@ -186,7 +187,7 @@ func init() {
 	}
 }
 
-func (g *EthernetIPInput) Connect(ctx context.Context) error {
+func (g *EIPInput) Connect(ctx context.Context) error {
 	g.Client = &gologix.Client{
 		Controller:         *g.Controller,
 		VendorId:           vendorIdDefault,
@@ -199,6 +200,10 @@ func (g *EthernetIPInput) Connect(ctx context.Context) error {
 		RPI:           g.PollRate,
 		SocketTimeout: socketTimeoutDefault,
 		KnownTags:     make(map[string]gologix.KnownTag),
+		// we only want to use our logs not the gologix-logs here
+		//Logger: slog.New(slog.DiscardHandler),
+		// but for now we want to see some logs here:
+		Logger: slog.Default(),
 	}
 
 	err := g.Client.Connect()
@@ -207,16 +212,45 @@ func (g *EthernetIPInput) Connect(ctx context.Context) error {
 		return err
 	}
 
+	// just an example which works for WAGO maybe reproducable for other devices
+	err = g.logDeviceProperties()
+	if err != nil {
+		g.Log.Warnf("Unable to get device properties: %v", err)
+	}
+
 	g.Log.Infof("EIP connection established at %s", g.Controller.IpAddress)
 
 	return nil
 }
 
-func (g *EthernetIPInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+func (g *EIPInput) logDeviceProperties() error {
+	// this should be the device Name Attribute
+	deviceNameAttribute, err := g.Client.GetAttrSingle(1, 1, 7)
+	if err != nil {
+		return err
+	}
+
+	data, err := deviceNameAttribute.Bytes()
+	if err != nil {
+		return err
+	}
+
+	deviceName := string(data)
+	g.Log.Infof("EIP Device Properties:")
+	g.Log.Infof("    Device Name: %s", deviceName)
+
+	return nil
+}
+
+func (g *EIPInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
 	return nil, nil, nil
 }
 
-func (g *EthernetIPInput) Close(ctx context.Context) error {
+func (g *EIPInput) Close(ctx context.Context) error {
+	err := g.Client.Disconnect()
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
