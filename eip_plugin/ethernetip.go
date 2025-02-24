@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"math"
 	"net"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -59,21 +60,19 @@ type CIPReadItem struct {
 	IsAttribute bool
 
 	// attribute addressing
-	CIPClass     uint16
-	CIPInstance  uint32
-	CIPAttribute uint16
+	CIPClass     gologix.CIPClass
+	CIPInstance  gologix.CIPInstance
+	CIPAttribute gologix.CIPAttribute
 
 	// tag addressing
-	TagName string
+	TagName       string
+	AttributeName string
 
 	// unified fields
 	Alias string
 
 	// the datatype string from input
-	CIPDatatype string
-
-	// not sure on that
-	CIPLibType gologix.CIPType
+	CIPDatatype gologix.CIPType
 
 	// needed to transform data into given type
 	ConverterFunc func(*gologix.CIPItem) (any, error)
@@ -243,7 +242,80 @@ func (g *EIPInput) logDeviceProperties() error {
 }
 
 func (g *EIPInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
-	return nil, nil, nil
+	var (
+		msgs service.MessageBatch
+		resp *gologix.CIPItem
+		err  error
+	)
+
+	buffer := make([]byte, 0)
+
+	for _, item := range g.Items {
+		var data any
+
+		// if we're reading from a specified tag
+		if !item.IsAttribute {
+			//	err := g.Client.Read(item.TagName, &data)
+			//	if err != nil {
+			//		return nil, nil, err
+			//	}
+
+			// ----------------
+			val, err := g.Client.Read_single(item.TagName, item.CIPDatatype, 1)
+			if err != nil {
+				return nil, nil, err
+			}
+			refVal := reflect.ValueOf(val)
+			resp.Data = refVal.Bytes()
+			resp.Pos = 6
+
+		} else {
+			resp, err = g.Client.GetAttrSingle(item.CIPClass, item.CIPInstance, item.CIPAttribute)
+			if err != nil {
+				g.Log.Errorf("failed to get attribute - class %v, instance %v, attribute %v, err:",
+					item.CIPClass, item.CIPInstance, item.CIPAttribute, err)
+				return nil, nil, err
+			}
+		}
+		fmt.Println(resp.Pos)
+
+		data, err = item.ConverterFunc(resp)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// convert the data into string
+		dataAsString := fmt.Sprintf("%v", data)
+
+		// convert the dataAsString into bytes
+		dataAsBytes := []byte(dataAsString)
+
+		buffer = append(buffer, dataAsBytes...)
+
+		msg := service.NewMessage(buffer)
+
+		// set alias as name if set
+		if item.Alias != "" {
+			msg.MetaSet("name", item.Alias)
+		} else {
+			if item.IsAttribute {
+				msg.MetaSet("name", item.AttributeName)
+			} else {
+				msg.MetaSet("name", item.TagName)
+			}
+		}
+
+		// append the new message to the msgs slice
+		msgs = append(msgs, msg)
+	}
+
+	// not sure if we could just set a global "pollRate" for the plc
+	time.Sleep(time.Second)
+
+	return msgs, func(ctx context.Context, err error) error {
+		// for now
+		return nil
+	}, nil
 }
 
 func (g *EIPInput) Close(ctx context.Context) error {
@@ -340,19 +412,19 @@ func parseAttributes(attributesConf []*service.ParsedConfig) ([]*CIPReadItem, er
 
 		// convert user string "bool", "real", etc. to CIPType
 		// not sure if we will need this later on
-		cipLibType, err := parseCIPTypeFromString(datatype)
+		cipDatatype, err := parseCIPTypeFromString(datatype)
 		if err != nil {
 			return nil, err
 		}
 
 		item := &CIPReadItem{
 			IsAttribute:   true,
-			CIPClass:      uint16(class),
-			CIPInstance:   uint32(instance),
-			CIPAttribute:  uint16(attribute),
-			CIPDatatype:   datatype,
-			CIPLibType:    cipLibType,
+			CIPClass:      gologix.CIPClass(class),
+			CIPInstance:   gologix.CIPInstance(instance),
+			CIPAttribute:  gologix.CIPAttribute(attribute),
+			CIPDatatype:   cipDatatype,
 			Alias:         alias,
+			AttributeName: pathStr,
 			ConverterFunc: buildConverterFunc(datatype),
 		}
 		items = append(items, item)
@@ -376,7 +448,7 @@ func parseTags(tagsConf []*service.ParsedConfig) ([]*CIPReadItem, error) {
 		// ignore error because it's optional
 		alias, _ := tag.FieldString("alias")
 
-		cipLibType, err := parseCIPTypeFromString(datatype)
+		cipDatatype, err := parseCIPTypeFromString(datatype)
 		if err != nil {
 			return nil, err
 		}
@@ -384,8 +456,7 @@ func parseTags(tagsConf []*service.ParsedConfig) ([]*CIPReadItem, error) {
 		item := &CIPReadItem{
 			IsAttribute:   false,
 			TagName:       name,
-			CIPDatatype:   datatype,
-			CIPLibType:    cipLibType,
+			CIPDatatype:   cipDatatype,
 			Alias:         alias,
 			ConverterFunc: buildConverterFunc(datatype),
 		}
@@ -400,14 +471,30 @@ func parseCIPTypeFromString(datatype string) (gologix.CIPType, error) {
 	switch strings.ToLower(datatype) {
 	case "bool":
 		return gologix.CIPTypeBOOL, nil
-	case "uint16", "word":
+	case "word":
+		return gologix.CIPTypeWORD, nil
+	case "dword":
+		return gologix.CIPTypeDWORD, nil
+	case "uint16":
 		return gologix.CIPTypeUINT, nil
+	case "uint32":
+		return gologix.CIPTypeUDINT, nil
+	case "uint64":
+		return gologix.CIPTypeULINT, nil
 	case "int16":
 		return gologix.CIPTypeINT, nil
+	case "int32":
+		return gologix.CIPTypeDINT, nil
+	case "int64":
+		return gologix.CIPTypeLINT, nil
 	case "real", "float", "float32":
 		return gologix.CIPTypeREAL, nil
+	case "float64":
+		return gologix.CIPTypeLREAL, nil
 	case "string":
 		return gologix.CIPTypeSTRING, nil
+	case "array of octed":
+		return gologix.CIPTypeBYTE, nil
 	default:
 		return gologix.CIPTypeUnknown, fmt.Errorf("unsupported CIP data type: %s", datatype)
 	}
@@ -433,9 +520,41 @@ func buildConverterFunc(datatype string) func(*gologix.CIPItem) (any, error) {
 			}
 			return val, nil
 		}
+	case "uint32":
+		return func(item *gologix.CIPItem) (any, error) {
+			val, err := item.Uint32()
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}
+	case "uint64":
+		return func(item *gologix.CIPItem) (any, error) {
+			val, err := item.Uint64()
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}
 	case "int16":
 		return func(item *gologix.CIPItem) (any, error) {
 			val, err := item.Int16()
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}
+	case "int32":
+		return func(item *gologix.CIPItem) (any, error) {
+			val, err := item.Int32()
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}
+	case "int64":
+		return func(item *gologix.CIPItem) (any, error) {
+			val, err := item.Int64()
 			if err != nil {
 				return nil, err
 			}
@@ -450,10 +569,30 @@ func buildConverterFunc(datatype string) func(*gologix.CIPItem) (any, error) {
 			fl := math.Float32frombits(bits)
 			return fl, nil
 		}
+	case "float64":
+		return func(item *gologix.CIPItem) (any, error) {
+			fl, err := item.Float64()
+			if err != nil {
+				return nil, err
+			}
+			return fl, nil
+		}
 	case "string":
 		return func(item *gologix.CIPItem) (any, error) {
-			// not sure yet
-			return nil, nil
+			val, err := item.Bytes()
+			if err != nil {
+				return nil, err
+			}
+			return string(val), nil
+		}
+	case "array of octed":
+		return func(item *gologix.CIPItem) (any, error) {
+			val, err := item.Bytes()
+			if err != nil {
+				return nil, err
+			}
+
+			return val, nil
 		}
 	default:
 		return nil
