@@ -53,6 +53,18 @@ func (sm *ServerMetrics) removeWorker(id uuid.UUID) {
 	}
 }
 
+func (sm *ServerMetrics) AverageResponseTime() time.Duration {
+	if len(sm.responseTimes) == 0 {
+		return 0
+	}
+
+	var totalTime time.Duration
+	for _, t := range sm.responseTimes {
+		totalTime += t
+	}
+	return totalTime / time.Duration(len(sm.responseTimes))
+}
+
 // adjustWorkers calculates the number of workers to adjust based on the response time of the last SampleSize requests
 func (sm *ServerMetrics) adjustWorkers(logger Logger) (toAdd, toRemove int) {
 	sm.mu.Lock()
