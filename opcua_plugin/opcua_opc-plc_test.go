@@ -1423,7 +1423,7 @@ opcua:
 			// Create channels for browsing
 			nodeChan := make(chan NodeDef, 100)
 			errChan := make(chan error, 100)
-			opcuaBrowserChan := make(chan NodeDef, 100)
+			opcuaBrowserChan := make(chan BrowseDetails, 100)
 			var wg TrackedWaitGroup
 			var visited sync.Map
 
