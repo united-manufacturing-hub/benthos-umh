@@ -11,6 +11,13 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
+// BrowseDetails represents the details of a browse operation.
+type BrowseDetails struct {
+	NodeDef     NodeDef
+	TaskCount   int64
+	WorkerCount int64
+}
+
 // GetNodeTree returns the tree structure of the OPC UA server nodes
 // GetNodeTree is currently used by united-manufacturing-hub/ManagementConsole repo for the BrowseOPCUA tags functionality
 func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, rootNode *Node) (*Node, error) {
@@ -34,7 +41,7 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 
 	nodeChan := make(chan NodeDef, MaxTagsToBrowse)
 	errChan := make(chan error, MaxTagsToBrowse)
-	opcuaBrowserChan := make(chan NodeDef, MaxTagsToBrowse)
+	opcuaBrowserChan := make(chan BrowseDetails, MaxTagsToBrowse)
 
 	nodeIDMap := make(map[string]*NodeDef)
 	nodes := make([]NodeDef, 0, MaxTagsToBrowse)
@@ -42,9 +49,8 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 	var wg TrackedWaitGroup
 	wg.Add(1)
 	Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", g.Log, rootNode.NodeId.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
-	go logBrowseStatus(ctx, nodeChan, msgChan, &wg)
 	go logErrors(ctx, errChan, g.Log)
-	go collectNodes(ctx, opcuaBrowserChan, nodeIDMap, &nodes)
+	go collectNodes(ctx, opcuaBrowserChan, nodeIDMap, &nodes, msgChan)
 
 	wg.Wait()
 
@@ -64,22 +70,6 @@ func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, roo
 	return rootNode, nil
 }
 
-// logBrowseStatus logs the status of the browse operation. It sends a message to the channel
-// every time a node is found, and the wait group counter status is sent to the channel
-// to indicate that the browse operation is still active.
-func logBrowseStatus(ctx context.Context, nodeChan chan NodeDef, msgChan chan<- string, wg *TrackedWaitGroup) {
-	for n := range nodeChan {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			// Send a more detailed message about the browsing progress using WaitGroup count
-			msgChan <- fmt.Sprintf("found node '%s' (%d active browse operations)",
-				n.BrowseName, wg.Count())
-		}
-	}
-}
-
 // logErrors logs errors from the error channel
 func logErrors(ctx context.Context, errChan chan error, logger *service.Logger) {
 	for err := range errChan {
@@ -93,15 +83,19 @@ func logErrors(ctx context.Context, errChan chan error, logger *service.Logger) 
 }
 
 // collectNodes collects the NodeDefs from the channel and adds them to the list of NodeDefs
-func collectNodes(ctx context.Context, nodeBrowserChan chan NodeDef, nodeIDMap map[string]*NodeDef, nodes *[]NodeDef) {
-	for node := range nodeBrowserChan {
+func collectNodes(ctx context.Context, nodeBrowserChan chan BrowseDetails, nodeIDMap map[string]*NodeDef, nodes *[]NodeDef, msgChan chan<- string) {
+	for browseRecord := range nodeBrowserChan {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			nodeID := normalizeNodeID(node.NodeID)
-			nodeIDMap[nodeID] = &node
-			*nodes = append(*nodes, node)
+			msgChan <- fmt.Sprintf("found node '%s' (%d pending tasks, %d active browse operations)",
+				browseRecord.NodeDef.BrowseName,
+				browseRecord.TaskCount,
+				browseRecord.WorkerCount)
+			nodeID := normalizeNodeID(browseRecord.NodeDef.NodeID)
+			nodeIDMap[nodeID] = &browseRecord.NodeDef
+			*nodes = append(*nodes, browseRecord.NodeDef)
 		}
 	}
 }

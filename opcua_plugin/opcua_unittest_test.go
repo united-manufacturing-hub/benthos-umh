@@ -66,7 +66,7 @@ var _ = Describe("Unit Tests", func() {
 			nodeChan         chan NodeDef
 			errChan          chan error
 			wg               *TrackedWaitGroup
-			opcuaBrowserChan chan NodeDef
+			opcuaBrowserChan chan BrowseDetails
 			visited          sync.Map
 		)
 		BeforeEach(func() {
@@ -78,7 +78,7 @@ var _ = Describe("Unit Tests", func() {
 			nodeChan = make(chan NodeDef, 100)
 			errChan = make(chan error, 100)
 			wg = &TrackedWaitGroup{}
-			opcuaBrowserChan = make(chan NodeDef, 100)
+			opcuaBrowserChan = make(chan BrowseDetails, 100)
 		})
 		AfterEach(func() {
 			cncl()
@@ -689,7 +689,7 @@ func createMockNode(id uint32, name string, nodeClass ua.NodeClass) *MockOpcuaNo
 // Ensure that the MockOpcuaNodeWraper implements the NodeBrowser interface
 var _ NodeBrowser = &MockOpcuaNodeWraper{}
 
-func startBrowsing(ctx context.Context, rootNode NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan NodeDef, visited *sync.Map) ([]NodeDef, []error) {
+func startBrowsing(ctx context.Context, rootNode NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map) ([]NodeDef, []error) {
 	wg.Add(1)
 	go func() {
 		Browse(ctx, rootNode, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
