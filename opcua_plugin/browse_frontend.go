@@ -9,7 +9,10 @@ import (
 
 	"github.com/gopcua/opcua/ua"
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"golang.org/x/time/rate"
 )
+
+var logLimiter = rate.NewLimiter(rate.Every(1*time.Second), 1) // Allows 1 message per second
 
 // BrowseDetails represents the details of a browse operation.
 type BrowseDetails struct {
@@ -90,11 +93,14 @@ func collectNodes(ctx context.Context, nodeBrowserChan chan BrowseDetails, nodeI
 		case <-ctx.Done():
 			return
 		default:
-			msgChan <- fmt.Sprintf("found node '%s' (%d pending tasks, %d active browse operations, average server response time: %v ms)",
-				browseRecord.NodeDef.BrowseName,
-				browseRecord.TaskCount,
-				browseRecord.WorkerCount,
-				browseRecord.AvgServerResponseTime)
+			if logLimiter.Allow() {
+				msgChan <- fmt.Sprintf("found node '%s' (%d pending tasks, %d active browse operations, average server response time: %v ms)",
+					browseRecord.NodeDef.BrowseName,
+					browseRecord.TaskCount,
+					browseRecord.WorkerCount,
+					browseRecord.AvgServerResponseTime)
+			}
+
 			nodeID := normalizeNodeID(browseRecord.NodeDef.NodeID)
 			nodeIDMap[nodeID] = &browseRecord.NodeDef
 			*nodes = append(*nodes, browseRecord.NodeDef)
