@@ -63,7 +63,7 @@ type Logger interface {
 
 // Browse is a public wrapper function for the browse function
 // Avoid using this function directly, use it only for testing
-func Browse(ctx context.Context, n NodeBrowser, path string, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan NodeDef, visited *sync.Map) {
+func Browse(ctx context.Context, n NodeBrowser, path string, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map) {
 	browse(ctx, n, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
 }
 
@@ -85,7 +85,7 @@ func browse(
 	nodeChan chan NodeDef,
 	errChan chan error,
 	wg *TrackedWaitGroup,
-	opcuaBrowserChan chan NodeDef,
+	opcuaBrowserChan chan BrowseDetails,
 	visited *sync.Map,
 ) {
 	metrics := NewServerMetrics()
@@ -160,7 +160,7 @@ func worker(
 	taskChan chan NodeTask,
 	nodeChan chan NodeDef,
 	errChan chan error,
-	opcuaBrowserChan chan NodeDef,
+	opcuaBrowserChan chan BrowseDetails,
 	visited *sync.Map,
 	logger Logger,
 	taskWg *TrackedWaitGroup,
@@ -246,10 +246,15 @@ func worker(
 				id, task.level, def.Path, def.NodeClass, taskWg.Count(), workerWg.Count())
 
 			// Handle browser channel
-			browserDef := def
-			browserDef.Path = join(task.path, browserDef.BrowseName)
+			browserDetails := BrowseDetails{
+				NodeDef:               def,
+				TaskCount:             taskWg.Count(),
+				WorkerCount:           workerWg.Count(),
+				AvgServerResponseTime: metrics.AverageResponseTime(),
+			}
+			browserDetails.NodeDef.Path = join(task.path, def.BrowseName)
 			select {
-			case opcuaBrowserChan <- browserDef:
+			case opcuaBrowserChan <- browserDetails:
 			default:
 				logger.Debugf("Worker %d: opcuaBrowserChan blocked, skipping", id)
 			}
@@ -364,7 +369,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	errChan := make(chan error, MaxTagsToBrowse)
 	// opcuaBrowserChan is created to just satisfy the browse function signature.
 	// The data inside opcuaBrowserChan is not so useful for this function. It is more useful for the GetNodeTree function
-	opcuaBrowserChan := make(chan NodeDef, MaxTagsToBrowse)
+	opcuaBrowserChan := make(chan BrowseDetails, MaxTagsToBrowse)
 	var wg TrackedWaitGroup
 	done := make(chan struct{})
 
@@ -464,7 +469,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			// Copied and pasted from above, just for one node
 			nodeHeartbeatChan := make(chan NodeDef, 1)
 			errChanHeartbeat := make(chan error, 1)
-			opcuaBrowserChanHeartbeat := make(chan NodeDef, 1)
+			opcuaBrowserChanHeartbeat := make(chan BrowseDetails, 1)
 			var wgHeartbeat TrackedWaitGroup
 
 			wgHeartbeat.Add(1)
