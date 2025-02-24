@@ -247,9 +247,10 @@ func worker(
 
 			// Handle browser channel
 			browserDetails := BrowseDetails{
-				NodeDef:     def,
-				TaskCount:   taskWg.Count(),
-				WorkerCount: workerWg.Count(),
+				NodeDef:               def,
+				TaskCount:             taskWg.Count(),
+				WorkerCount:           workerWg.Count(),
+				AvgServerResponseTime: metrics.AverageResponseTime(),
 			}
 			browserDetails.NodeDef.Path = join(task.path, def.BrowseName)
 			select {

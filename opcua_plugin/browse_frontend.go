@@ -13,9 +13,10 @@ import (
 
 // BrowseDetails represents the details of a browse operation.
 type BrowseDetails struct {
-	NodeDef     NodeDef
-	TaskCount   int64
-	WorkerCount int64
+	NodeDef               NodeDef
+	TaskCount             int64
+	WorkerCount           int64
+	AvgServerResponseTime time.Duration
 }
 
 // GetNodeTree returns the tree structure of the OPC UA server nodes
@@ -89,10 +90,11 @@ func collectNodes(ctx context.Context, nodeBrowserChan chan BrowseDetails, nodeI
 		case <-ctx.Done():
 			return
 		default:
-			msgChan <- fmt.Sprintf("found node '%s' (%d pending tasks, %d active browse operations)",
+			msgChan <- fmt.Sprintf("found node '%s' (%d pending tasks, %d active browse operations, average server response time: %v ms)",
 				browseRecord.NodeDef.BrowseName,
 				browseRecord.TaskCount,
-				browseRecord.WorkerCount)
+				browseRecord.WorkerCount,
+				browseRecord.AvgServerResponseTime)
 			nodeID := normalizeNodeID(browseRecord.NodeDef.NodeID)
 			nodeIDMap[nodeID] = &browseRecord.NodeDef
 			*nodes = append(*nodes, browseRecord.NodeDef)
