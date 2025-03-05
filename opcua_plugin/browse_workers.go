@@ -10,9 +10,9 @@ import (
 const (
 	MaxWorkers     = 200
 	MinWorkers     = 5
-	InitialWorkers = 10
-	SampleSize     = 5 // Number of requsts to measure response time
-	TargetLatency  = 250 * time.Millisecond
+	InitialWorkers = 25
+	SampleSize     = 5 // Number of requests to measure response time
+	TargetLatency  = 500 * time.Millisecond
 )
 
 // ServerMetrics is a struct that holds the metrics for the OPCUA server requests
@@ -83,13 +83,13 @@ func (sm *ServerMetrics) adjustWorkers(logger Logger) (toAdd, toRemove int) {
 
 	if avgResponse > sm.targetLatency {
 		// Response time is too high. Reduce workers
-		sm.currentWorkers = max(MinWorkers, sm.currentWorkers-10)
+		sm.currentWorkers = max(MinWorkers, sm.currentWorkers-20)
 		logger.Debugf("Response time is high (%v > %v target Latency), reducing workers from %d to %d", avgResponse, sm.targetLatency, oldWorkerCount, sm.currentWorkers)
 	}
 
 	if avgResponse < sm.targetLatency {
 		// Response time is too low. Increase workers
-		sm.currentWorkers = min(MaxWorkers, sm.currentWorkers+10)
+		sm.currentWorkers = min(MaxWorkers, sm.currentWorkers+20)
 		logger.Debugf("Response time is low (%v < %v target Latency), increasing workers from %d to %d", avgResponse, sm.targetLatency, oldWorkerCount, sm.currentWorkers)
 	}
 
