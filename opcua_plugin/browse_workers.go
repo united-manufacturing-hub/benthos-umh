@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	MaxWorkers     = 200
+	MaxWorkers     = 500
 	MinWorkers     = 5
 	InitialWorkers = 25
 	SampleSize     = 5 // Number of requests to measure response time
