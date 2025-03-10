@@ -32,12 +32,10 @@ var _ = Describe("OPC UA Output", func() {
 opcua:
   endpoint: "opc.tcp://localhost:4840"
   nodeMappings:
-    - nodeId: "ns=2;s=MySetpoint"
+    - nodeId: "ns=4;i=6210" # BaseTemperature
       valueFrom: "setpoint"
-    - nodeId: "ns=2;s=MyEnableFlag"
-      valueFrom: "enable_flag"
   forcedDataTypes:
-    "ns=2;s=MySetpoint": "Int32"
+    "ns=4;i=6210": "Int32"
   handshake:
     enabled: true
     readbackTimeoutMs: 2000
@@ -59,7 +57,6 @@ generate:
   mapping: |
     root = {
       "setpoint": 123,
-      "enable_flag": true
     }
   interval: "1s"
   count: 1
@@ -91,7 +88,7 @@ generate:
 opcua:
   endpoint: "opc.tcp://localhost:4840"
   nodeMappings:
-    - nodeId: "ns=2;s=MySetpoint"
+    - nodeId: "ns=4;i=6210" # BaseTemperature
       valueFrom: "setpoint"
 `)
 

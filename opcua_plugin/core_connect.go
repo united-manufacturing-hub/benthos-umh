@@ -394,6 +394,9 @@ func (g *OPCUAConnection) storeServerCertificateFingerprint(endpoint *ua.Endpoin
 	// and convert the array into a slice for encoding
 	shaFingerprint := sha3.Sum512(cert.Raw)
 
+	if g.ServerCertificates == nil {
+		g.ServerCertificates = make(map[*ua.EndpointDescription]string)
+	}
 	g.ServerCertificates[endpoint] = hex.EncodeToString(shaFingerprint[:])
 
 	return nil
