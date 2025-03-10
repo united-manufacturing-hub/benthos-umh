@@ -2,23 +2,16 @@ package opcua_plugin
 
 import (
 	"context"
+	"fmt"
+	"time"
 
-	"github.com/benthosdev/benthos/v4/public/service"
-	"github.com/gopcua/opcua"
+	"github.com/gopcua/opcua/ua"
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 // OPCUAOutput represents an OPC UA output plugin
 type OPCUAOutput struct {
-	// Connection-related fields (similar to OPCUAInput)
-	Endpoint                     string
-	Username                     string
-	Password                     string
-	SecurityMode                 string
-	SecurityPolicy               string
-	ClientCertificate            string
-	ServerCertificateFingerprint string
-	Client                       *opcua.Client
-	Log                          *service.Logger
+	*OPCUAConnection // Embed the shared connection configuration
 
 	// Output-specific fields
 	NodeMappings    []NodeMapping
@@ -29,10 +22,6 @@ type OPCUAOutput struct {
 	ReadbackTimeoutMs    int
 	MaxWriteAttempts     int
 	TimeBetweenRetriesMs int
-
-	// Reconnection settings
-	AutoReconnect              bool
-	ReconnectIntervalInSeconds int
 }
 
 // NodeMapping defines how to map message fields to OPC UA nodes
@@ -41,43 +30,11 @@ type NodeMapping struct {
 	ValueFrom string `json:"valueFrom"`
 }
 
-// TODO: double check if all paramters from opcuaInput are also implemented here
-// sessionTimeout, autoReconnect, reconnectIntervalInSeconds are missing
-// nodeIDs, subscribeEnabled, useHeartbeat, pollRate are missing but not needed for output
-// insecure, directConnect are missing but deprecated anyway
 // opcuaOutputConfig creates and returns a configuration spec for the OPC UA output
 func opcuaOutputConfig() *service.ConfigSpec {
-	return service.NewConfigSpec().
-		Summary("Writes data to an OPC UA server.").
+	return OPCUAConnectionConfigSpec.
+		Summary("OPC UA output plugin").
 		Description("The OPC UA output plugin writes data to an OPC UA server and optionally verifies the write via a read-back handshake.").
-		Field(service.NewStringField("endpoint").
-			Description("The OPC UA server endpoint to connect to.").
-			Example("opc.tcp://localhost:4840")).
-		Field(service.NewStringField("username").
-			Description("The username for authentication.").
-			Default("").
-			Advanced()).
-		Field(service.NewStringField("password").
-			Description("The password for authentication.").
-			Default("").
-			Secret().
-			Advanced()).
-		Field(service.NewStringField("securityMode").
-			Description("The security mode to use. Options: None, Sign, SignAndEncrypt").
-			Default("").
-			Advanced()).
-		Field(service.NewStringField("securityPolicy").
-			Description("The security policy to use. Options: None, Basic128Rsa15, Basic256, Basic256Sha256").
-			Default("").
-			Advanced()).
-		Field(service.NewStringField("clientCertificate").
-			Description("The client certificate to use, base64-encoded.").
-			Default("").
-			Advanced()).
-		Field(service.NewStringField("serverCertificateFingerprint").
-			Description("The server certificate fingerprint to verify, SHA3-512 hash.").
-			Default("").
-			Advanced()).
 		Field(service.NewObjectListField("nodeMappings",
 			service.NewObjectField("",
 				service.NewStringField("nodeId").
@@ -117,37 +74,15 @@ func opcuaOutputConfig() *service.ConfigSpec {
 
 // newOPCUAOutput creates a new OPC UA output based on the provided configuration
 func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.Output, error) {
+	// Parse the shared connection configuration
+	conn, err := ParseConnectionConfig(conf, mgr)
+	if err != nil {
+		return nil, err
+	}
+
 	output := &OPCUAOutput{
-		Log:             mgr.Logger(),
+		OPCUAConnection: conn,
 		ForcedDataTypes: make(map[string]string),
-	}
-
-	// Parse endpoint
-	var err error
-	if output.Endpoint, err = conf.FieldString("endpoint"); err != nil {
-		return nil, err
-	}
-
-	// Parse authentication
-	if output.Username, err = conf.FieldString("username"); err != nil {
-		return nil, err
-	}
-	if output.Password, err = conf.FieldString("password"); err != nil {
-		return nil, err
-	}
-
-	// Parse security settings
-	if output.SecurityMode, err = conf.FieldString("securityMode"); err != nil {
-		return nil, err
-	}
-	if output.SecurityPolicy, err = conf.FieldString("securityPolicy"); err != nil {
-		return nil, err
-	}
-	if output.ClientCertificate, err = conf.FieldString("clientCertificate"); err != nil {
-		return nil, err
-	}
-	if output.ServerCertificateFingerprint, err = conf.FieldString("serverCertificateFingerprint"); err != nil {
-		return nil, err
 	}
 
 	// Parse node mappings
@@ -211,16 +146,6 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		return nil, err
 	}
 
-	// Parse reconnection settings
-	reconnectConf := conf.Namespace("reconnect")
-
-	if output.AutoReconnect, err = reconnectConf.FieldBool("enabled"); err != nil {
-		return nil, err
-	}
-	if output.ReconnectIntervalInSeconds, err = reconnectConf.FieldInt("intervalInSeconds"); err != nil {
-		return nil, err
-	}
-
 	return output, nil
 }
 
@@ -230,12 +155,8 @@ func (o *OPCUAOutput) Connect(ctx context.Context) error {
 		return nil
 	}
 
-	// For now, just log a message for testing
 	o.Log.Infof("Connecting to OPC UA server at %s", o.Endpoint)
-
-	// TODO: Implement actual connection logic, reusing code from OPCUAInput
-
-	return nil
+	return o.connect(ctx)
 }
 
 // Write writes a message to the OPC UA server
@@ -247,10 +168,75 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 		}
 	}
 
-	// For now, just log a message for testing
-	o.Log.Infof("Writing message to OPC UA server")
+	// Get message content as structured data
+	content, err := msg.AsStructured()
+	if err != nil {
+		return fmt.Errorf("error getting message content: %w", err)
+	}
 
-	// TODO: Implement actual write logic with handshake verification
+	// Extract values from message
+	values := make(map[string]interface{})
+	for _, mapping := range o.NodeMappings {
+		// Try to get the value from the structured content
+		if contentMap, ok := content.(map[string]interface{}); ok {
+			if val, exists := contentMap[mapping.ValueFrom]; exists {
+				values[mapping.NodeID] = val
+			} else {
+				return fmt.Errorf("field %s not found in message", mapping.ValueFrom)
+			}
+		} else {
+			return fmt.Errorf("message content is not a map")
+		}
+	}
+
+	// Write values to OPC UA nodes
+	for _, mapping := range o.NodeMappings {
+		val := values[mapping.NodeID]
+		if val == nil {
+			return fmt.Errorf("value for node %s is nil", mapping.NodeID)
+		}
+
+		// Parse the node ID
+		nodeID, err := ua.ParseNodeID(mapping.NodeID)
+		if err != nil {
+			return fmt.Errorf("invalid node ID %s: %w", mapping.NodeID, err)
+		}
+
+		// Convert value to OPC UA variant
+		variant, err := o.convertToVariant(val, mapping.NodeID)
+		if err != nil {
+			return fmt.Errorf("error converting value for node %s: %w", mapping.NodeID, err)
+		}
+
+		// Write the value
+		req := &ua.WriteRequest{
+			NodesToWrite: []*ua.WriteValue{
+				{
+					NodeID:      nodeID,
+					AttributeID: ua.AttributeIDValue,
+					Value: &ua.DataValue{
+						Value: variant,
+					},
+				},
+			},
+		}
+
+		resp, err := o.Client.Write(ctx, req)
+		if err != nil {
+			return fmt.Errorf("error writing to node %s: %w", mapping.NodeID, err)
+		}
+
+		if resp.Results[0] != ua.StatusOK {
+			return fmt.Errorf("write failed for node %s with status %v", mapping.NodeID, resp.Results[0])
+		}
+
+		// If handshake is enabled, verify the write
+		if o.HandshakeEnabled {
+			if err := o.verifyWrite(ctx, nodeID, variant); err != nil {
+				return fmt.Errorf("handshake verification failed for node %s: %w", mapping.NodeID, err)
+			}
+		}
+	}
 
 	return nil
 }
@@ -261,12 +247,155 @@ func (o *OPCUAOutput) Close(ctx context.Context) error {
 		return nil
 	}
 
-	// For now, just log a message for testing
 	o.Log.Infof("Closing connection to OPC UA server")
+	return o.Close(ctx)
+}
 
-	// TODO: Implement actual close logic
+// convertToVariant converts a value to an OPC UA variant
+func (o *OPCUAOutput) convertToVariant(val interface{}, nodeID string) (*ua.Variant, error) {
+	// Check if we have a forced data type for this node
+	if forcedType, ok := o.ForcedDataTypes[nodeID]; ok {
+		switch forcedType {
+		case "Boolean":
+			boolVal, ok := val.(bool)
+			if !ok {
+				return nil, fmt.Errorf("value %v cannot be converted to Boolean", val)
+			}
+			variant, err := ua.NewVariant(boolVal)
+			if err != nil {
+				return nil, err
+			}
+			return variant, nil
+		case "Int32":
+			intVal, ok := val.(int32)
+			if !ok {
+				return nil, fmt.Errorf("value %v cannot be converted to Int32", val)
+			}
+			variant, err := ua.NewVariant(intVal)
+			if err != nil {
+				return nil, err
+			}
+			return variant, nil
+		case "Float":
+			floatVal, ok := val.(float32)
+			if !ok {
+				return nil, fmt.Errorf("value %v cannot be converted to Float", val)
+			}
+			variant, err := ua.NewVariant(floatVal)
+			if err != nil {
+				return nil, err
+			}
+			return variant, nil
+		case "Double":
+			doubleVal, ok := val.(float64)
+			if !ok {
+				return nil, fmt.Errorf("value %v cannot be converted to Double", val)
+			}
+			variant, err := ua.NewVariant(doubleVal)
+			if err != nil {
+				return nil, err
+			}
+			return variant, nil
+		case "String":
+			strVal, ok := val.(string)
+			if !ok {
+				return nil, fmt.Errorf("value %v cannot be converted to String", val)
+			}
+			variant, err := ua.NewVariant(strVal)
+			if err != nil {
+				return nil, err
+			}
+			return variant, nil
+		default:
+			return nil, fmt.Errorf("unsupported forced data type: %s", forcedType)
+		}
+	}
+
+	// If no forced type, try to infer the type
+	switch v := val.(type) {
+	case bool:
+		variant, err := ua.NewVariant(v)
+		if err != nil {
+			return nil, err
+		}
+		return variant, nil
+	case int32:
+		variant, err := ua.NewVariant(v)
+		if err != nil {
+			return nil, err
+		}
+		return variant, nil
+	case float32:
+		variant, err := ua.NewVariant(v)
+		if err != nil {
+			return nil, err
+		}
+		return variant, nil
+	case float64:
+		variant, err := ua.NewVariant(v)
+		if err != nil {
+			return nil, err
+		}
+		return variant, nil
+	case string:
+		variant, err := ua.NewVariant(v)
+		if err != nil {
+			return nil, err
+		}
+		return variant, nil
+	default:
+		return nil, fmt.Errorf("unsupported value type: %T", val)
+	}
+}
+
+// verifyWrite verifies that a write was successful by reading back the value
+func (o *OPCUAOutput) verifyWrite(ctx context.Context, nodeID *ua.NodeID, expected *ua.Variant) error {
+	// Create a timeout context for the read-back
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(o.ReadbackTimeoutMs)*time.Millisecond)
+	defer cancel()
+
+	// Create read request
+	req := &ua.ReadRequest{
+		NodesToRead: []*ua.ReadValueID{
+			{
+				NodeID:      nodeID,
+				AttributeID: ua.AttributeIDValue,
+			},
+		},
+	}
+
+	// Read the value
+	resp, err := o.Client.Read(ctx, req)
+	if err != nil {
+		return fmt.Errorf("error reading back value: %w", err)
+	}
+
+	if resp.Results[0].Status != ua.StatusOK {
+		return fmt.Errorf("read-back failed with status %v", resp.Results[0].Status)
+	}
+
+	// Compare the values
+	if !variantEqual(resp.Results[0].Value, expected) {
+		return fmt.Errorf("read-back value %v does not match written value %v", resp.Results[0].Value, expected)
+	}
 
 	return nil
+}
+
+// variantEqual compares two OPC UA variants for equality
+func variantEqual(v1, v2 *ua.Variant) bool {
+	// Check if either variant is nil
+	if v1 == nil || v2 == nil {
+		return v1 == v2
+	}
+
+	// Compare types first
+	if v1.Type() != v2.Type() {
+		return false
+	}
+
+	// Compare values
+	return v1.Value() == v2.Value()
 }
 
 func init() {

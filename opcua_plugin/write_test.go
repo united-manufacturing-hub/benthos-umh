@@ -6,12 +6,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/benthosdev/benthos/v4/public/service"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-var _ = Describe("OPC UA Output", func() {
+var _ = FDescribe("OPC UA Output", func() {
 
 	BeforeEach(func() {
 		testActivated := os.Getenv("TEST_OPCUA_WRITE_SIMULATOR")
@@ -30,17 +30,17 @@ var _ = Describe("OPC UA Output", func() {
 
 			err := builder.AddOutputYAML(`
 opcua:
-  endpoint: "opc.tcp://localhost:4840"
-  nodeMappings:
-    - nodeId: "ns=4;i=6210" # BaseTemperature
-      valueFrom: "setpoint"
-  forcedDataTypes:
-    "ns=4;i=6210": "Int32"
-  handshake:
-    enabled: true
-    readbackTimeoutMs: 2000
-    maxWriteAttempts: 3
-    timeBetweenRetriesMs: 1000
+    endpoint: "opc.tcp://localhost:50000"
+    nodeMappings:
+      - nodeId: "ns=4;i=6210" # BaseTemperature
+        valueFrom: "setpoint"
+    forcedDataTypes:
+      "ns=4;i=6210": "Int32"
+    handshake:
+      enabled: true
+      readbackTimeoutMs: 2000
+      maxWriteAttempts: 3
+      timeBetweenRetriesMs: 1000
 `)
 
 			Expect(err).NotTo(HaveOccurred())
@@ -56,10 +56,10 @@ opcua:
 generate:
   mapping: |
     root = {
-      "setpoint": 123,
-    }
-  interval: "1s"
-  count: 1
+        "setpoint": 123,
+      }
+    interval: "1s"
+    count: 1
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -85,11 +85,11 @@ generate:
 			builder := service.NewStreamBuilder()
 
 			err := builder.AddOutputYAML(`
-opcua:
-  endpoint: "opc.tcp://localhost:4840"
-  nodeMappings:
-    - nodeId: "ns=4;i=6210" # BaseTemperature
-      valueFrom: "setpoint"
+  opcua:
+    endpoint: "opc.tcp://localhost:50000"
+    nodeMappings:
+      - nodeId: "ns=4;i=6210" # BaseTemperature
+        valueFrom: "setpoint"
 `)
 
 			Expect(err).NotTo(HaveOccurred())
