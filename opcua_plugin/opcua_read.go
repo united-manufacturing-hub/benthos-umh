@@ -16,7 +16,6 @@ package opcua_plugin
 
 import (
 	"context"
-	"crypto/tls"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,28 +27,23 @@ import (
 	"github.com/gopcua/opcua/ua"
 )
 
-const SessionTimeout = 5 * time.Second
 const SubscribeTimeoutContext = 3 * time.Second
 const DefaultPollRate = 1000
 
-var OPCUAConfigSpec = service.NewConfigSpec().
-	Summary("Creates an input that reads data from OPC-UA servers. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
-	Field(service.NewStringField("endpoint").Description("Address of the OPC-UA server to connect with.")).
-	Field(service.NewStringField("username").Description("Username for server access. If not set, no username is used.").Default("")).
-	Field(service.NewStringField("password").Description("Password for server access. If not set, no password is used.").Default("")).
-	Field(service.NewStringField("sessionTimeout").Description("The duration in milliseconds that a OPC UA session will last. Is used to ensure that older failed sessions will timeout and that we will not get a TooManySession error.").Default(10000)).
-	Field(service.NewStringListField("nodeIDs").Description("List of OPC-UA node IDs to begin browsing.")).
-	Field(service.NewStringField("securityMode").Description("Security mode to use. If not set, a reasonable security mode will be set depending on the discovered endpoints.").Default("")).
-	Field(service.NewStringField("securityPolicy").Description("The security policy to use.  If not set, a reasonable security policy will be set depending on the discovered endpoints.").Default("")).
-	Field(service.NewBoolField("insecure").Description("Set to true to bypass secure connections, useful in case of SSL or certificate issues. Default is secure (false).").Default(false)).
-	Field(service.NewBoolField("subscribeEnabled").Description("Set to true to subscribe to OPC UA nodes instead of fetching them every seconds. Default is pulling messages every second (false).").Default(false)).
-	Field(service.NewBoolField("directConnect").Description("Set this to true to directly connect to an OPC UA endpoint. This can be necessary in cases where the OPC UA server does not allow 'endpoint discovery'. This requires having the full endpoint name in endpoint, and securityMode and securityPolicy set. Defaults to 'false'").Default(false)).
-	Field(service.NewBoolField("useHeartbeat").Description("Set to true to provide an extra message with the servers timestamp as a heartbeat").Default(false)).
-	Field(service.NewIntField("pollRate").Description("The rate in milliseconds at which to poll the OPC UA server when not using subscriptions. Defaults to 1000ms (1 second).").Default(DefaultPollRate)).
-	Field(service.NewBoolField("autoReconnect").Description("Set to true to automatically reconnect to the OPC UA server when the connection is lost. Defaults to 'false'").Default(false)).
-	Field(service.NewIntField("reconnectIntervalInSeconds").Description("The interval in seconds at which to reconnect to the OPC UA server when the connection is lost. This is only used if `autoReconnect` is set to true. Defaults to 5 seconds.").Default(5)).
-	Field(service.NewStringField("serverCertificateFingerprint").Description("Set this to the fingerprint (sha3-hash) of your OPC-UA-Servers certificate, if you're willing to connect via encryption. This checks if the client can trust the server.").Default("")).
-	Field(service.NewStringField("clientCertificate").Description("The client certificate is base64-encoded and used as an input-source to provide an already trusted certificate. Therefore you don't have to switch to the OPC-UA Server's configuration and retrust the newly generated certificate. When running the application without this field, you will get the base64-encoding of your certificate printed out and can copy/paste it.").Default(""))
+var OPCUAConfigSpec = OPCUAConnectionConfigSpec.
+	Summary("OPC UA input plugin").
+	Description("The OPC UA input plugin reads data from an OPC UA server and sends it to Benthos.").
+	Field(service.NewStringListField("nodeIDs").
+		Description("List of OPC-UA node IDs to begin browsing.")).
+	Field(service.NewBoolField("subscribeEnabled").
+		Description("Set to true to subscribe to OPC UA nodes instead of fetching them every seconds. Default is pulling messages every second (false).").
+		Default(false)).
+	Field(service.NewBoolField("useHeartbeat").
+		Description("Set to true to provide an extra message with the servers timestamp as a heartbeat").
+		Default(false)).
+	Field(service.NewIntField("pollRate").
+		Description("The rate in milliseconds at which to poll the OPC UA server when not using subscriptions. Defaults to 1000ms (1 second).").
+		Default(DefaultPollRate))
 
 func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 
@@ -70,52 +64,19 @@ func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 }
 
 func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
-	endpoint, err := conf.FieldString("endpoint")
+	// Parse the shared connection configuration
+	conn, err := ParseConnectionConfig(conf, mgr)
 	if err != nil {
 		return nil, err
 	}
 
-	securityMode, err := conf.FieldString("securityMode")
-	if err != nil {
-		return nil, err
-	}
-
-	securityPolicy, err := conf.FieldString("securityPolicy")
-	if err != nil {
-		return nil, err
-	}
-
-	username, err := conf.FieldString("username")
-	if err != nil {
-		return nil, err
-	}
-
-	password, err := conf.FieldString("password")
-	if err != nil {
-		return nil, err
-	}
-
-	insecure, err := conf.FieldBool("insecure")
-	if err != nil {
-		return nil, err
-	}
-
-	subscribeEnabled, err := conf.FieldBool("subscribeEnabled")
-	if err != nil {
-		return nil, err
-	}
-
+	// Parse input-specific fields
 	nodeIDs, err := conf.FieldStringList("nodeIDs")
 	if err != nil {
 		return nil, err
 	}
 
-	sessionTimeout, err := conf.FieldInt("sessionTimeout")
-	if err != nil {
-		return nil, err
-	}
-
-	directConnect, err := conf.FieldBool("directConnect")
+	subscribeEnabled, err := conf.FieldBool("subscribeEnabled")
 	if err != nil {
 		return nil, err
 	}
@@ -130,26 +91,6 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		return nil, err
 	}
 
-	autoReconnect, err := conf.FieldBool("autoReconnect")
-	if err != nil {
-		return nil, err
-	}
-
-	reconnectIntervalInSeconds, err := conf.FieldInt("reconnectIntervalInSeconds")
-	if err != nil {
-		return nil, err
-	}
-
-	serverCertificateFingerprint, err := conf.FieldString("serverCertificateFingerprint")
-	if err != nil {
-		return nil, err
-	}
-
-	clientCertificate, err := conf.FieldString("clientCertificate")
-	if err != nil {
-		return nil, err
-	}
-
 	// fail if no nodeIDs are provided
 	if len(nodeIDs) == 0 {
 		return nil, errors.New("no nodeIDs provided")
@@ -158,21 +99,9 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 	parsedNodeIDs := ParseNodeIDs(nodeIDs)
 
 	m := &OPCUAInput{
-		Endpoint:                     endpoint,
-		Username:                     username,
-		Password:                     password,
+		OPCUAConnection:              conn,
 		NodeIDs:                      parsedNodeIDs,
-		Log:                          mgr.Logger(),
-		SecurityMode:                 securityMode,
-		SecurityPolicy:               securityPolicy,
-		ServerCertificateFingerprint: serverCertificateFingerprint, // ServerCertificateFingerprint is the sha3 hash of the servers certificate
-		// maybe store each endpoint in a map with its corresonding fingerprint
-		ServerCertificates:           make(map[*ua.EndpointDescription]string),
-		ClientCertificate:            clientCertificate,
-		Insecure:                     insecure,
 		SubscribeEnabled:             subscribeEnabled,
-		SessionTimeout:               sessionTimeout,
-		DirectConnect:                directConnect,
 		UseHeartbeat:                 useHeartbeat,
 		LastHeartbeatMessageReceived: atomic.Uint32{},
 		LastMessageReceived:          atomic.Uint32{},
@@ -181,8 +110,6 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		PollRate:                     pollRate,
 		browseWaitGroup:              sync.WaitGroup{},
 		browseErrorChan:              make(chan error, 1),
-		AutoReconnect:                autoReconnect,
-		ReconnectIntervalInSeconds:   reconnectIntervalInSeconds,
 	}
 
 	return service.AutoRetryNacksBatched(m), nil
@@ -202,24 +129,13 @@ func init() {
 }
 
 type OPCUAInput struct {
-	Endpoint                     string
-	Username                     string
-	Password                     string
+	*OPCUAConnection // Embed the shared connection configuration
+
+	// Input-specific fields
 	NodeIDs                      []*ua.NodeID
 	NodeList                     []NodeDef
-	SecurityMode                 string
-	SecurityPolicy               string
-	ClientCertificate            string
-	ServerCertificateFingerprint string
-	ServerCertificates           map[*ua.EndpointDescription]string
-	Insecure                     bool
-	Client                       *opcua.Client
-	Log                          *service.Logger
-	// this is required for subscription
 	SubscribeEnabled             bool
 	SubNotifyChan                chan *opcua.PublishNotificationData
-	SessionTimeout               int
-	DirectConnect                bool
 	UseHeartbeat                 bool
 	LastHeartbeatMessageReceived atomic.Uint32
 	LastMessageReceived          atomic.Uint32
@@ -231,10 +147,7 @@ type OPCUAInput struct {
 	browseCancel                 context.CancelFunc
 	browseWaitGroup              sync.WaitGroup
 	browseErrorChan              chan error
-	AutoReconnect                bool
-	ReconnectIntervalInSeconds   int
 	visited                      sync.Map
-	cachedTLSCertificate         *tls.Certificate // certificate
 }
 
 // cleanupBrowsing ensures the browsing goroutine is properly stopped and cleaned up
