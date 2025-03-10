@@ -31,9 +31,11 @@ var _ = Describe("Test Against Softing OPC DataFeed", Serial, func() {
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
-				Endpoint:         "opc.tcp://10.13.37.125:4998",
-				Username:         "",
-				Password:         "",
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint: "opc.tcp://10.13.37.125:4998",
+					Username: "",
+					Password: "",
+				},
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: false,
 			}
@@ -65,9 +67,11 @@ var _ = Describe("Test Against Softing OPC DataFeed", Serial, func() {
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
-				Endpoint:         "opc.tcp://10.13.37.125:4998",
-				Username:         "",
-				Password:         "",
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint: "opc.tcp://10.13.37.125:4998",
+					Username: "",
+					Password: "",
+				},
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
 			}
@@ -202,12 +206,14 @@ var _ = Describe("Test Against Prosys Simulator", func() {
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
-				Endpoint:       endpoint,
-				Username:       "",
-				Password:       "",
-				NodeIDs:        parsedNodeIDs,
-				SecurityMode:   "None",
-				SecurityPolicy: "None",
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint:       endpoint,
+					Username:       "",
+					Password:       "",
+					SecurityMode:   "None",
+					SecurityPolicy: "None",
+				},
+				NodeIDs: parsedNodeIDs,
 			}
 
 			// Attempt to connect
@@ -302,12 +308,14 @@ opcua:
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
-				Endpoint:       endpoint,
-				Username:       "",
-				Password:       "",
-				NodeIDs:        parsedNodeIDs,
-				SecurityMode:   "None",
-				SecurityPolicy: "None",
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint:       endpoint,
+					Username:       "",
+					Password:       "",
+					SecurityMode:   "None",
+					SecurityPolicy: "None",
+				},
+				NodeIDs: parsedNodeIDs,
 			}
 
 			// Attempt to connect
@@ -346,12 +354,14 @@ opcua:
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
-				Endpoint:       endpoint,
-				Username:       "",
-				Password:       "",
-				NodeIDs:        parsedNodeIDs,
-				SecurityMode:   "SignAndEncrypt",
-				SecurityPolicy: "Basic256Sha256",
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint:       endpoint,
+					Username:       "",
+					Password:       "",
+					SecurityMode:   "SignAndEncrypt",
+					SecurityPolicy: "Basic256Sha256",
+				},
+				NodeIDs: parsedNodeIDs,
 			}
 
 			// Attempt to connect

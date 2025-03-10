@@ -45,11 +45,13 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
-				Endpoint:         "opc.tcp://localhost:50000",
-				Username:         "",
-				Password:         "",
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: false,
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint: "opc.tcp://localhost:50000",
+					Username: "",
+					Password: "",
+				},
 			}
 
 			// Attempt to connect
@@ -83,11 +85,18 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
+				var nodeIDStrings = []string{"ns=3;s=Basic"}
+
+				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
 				input := &OPCUAInput{
-					Endpoint: "opc.tcp://localhost:50000",
-					Username: "sysadmin_bad", // Incorrect username and password
-					Password: "demo",
-					NodeIDs:  nil,
+					NodeIDs:          parsedNodeIDs,
+					SubscribeEnabled: false,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "sysadmin_bad", // Incorrect username and password
+						Password: "demo",
+					},
 				}
 
 				// Attempt to connect
@@ -107,11 +116,18 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
+				var nodeIDStrings = []string{"ns=3;s=Basic"}
+
+				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
+
 				input := &OPCUAInput{
-					Endpoint: "opc.tcp://localhost:50000",
-					Username: "sysadmin", // Correct username and password
-					Password: "demo",
-					NodeIDs:  nil,
+					NodeIDs:          parsedNodeIDs,
+					SubscribeEnabled: false,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "sysadmin",
+						Password: "demo",
+					},
 				}
 
 				// Attempt to connect
@@ -133,15 +149,18 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				nodeIDStrings := []string{"ns=3;s=Fast"}
+				var nodeIDStrings = []string{"ns=3;s=Fast"}
+
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "",
+						Password: "",
+					},
 				}
 
 				// Attempt to connect
@@ -185,15 +204,18 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				nodeIDStrings := []string{"ns=6;s=DataAccess_AnalogType_Byte"}
+				var nodeIDStrings = []string{"ns=6;s=DataAccess_AnalogType_Byte"}
+
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "",
+						Password: "",
+					},
 				}
 
 				// Attempt to connect
@@ -234,7 +256,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				nodeIDStrings := []string{
+				var nodeIDStrings = []string{
 					"ns=6;s=DataAccess_AnalogType_Byte",
 					"ns=6;s=DataAccess_AnalogType_Double",
 					"ns=6;s=DataAccess_AnalogType_Float",
@@ -249,11 +271,13 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "",
+						Password: "",
+					},
 				}
 
 				// Attempt to connect
@@ -292,15 +316,18 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				nodeIDStrings := []string{"ns=6;s=DataAccess_DataItem_Null"}
+				var nodeIDStrings = []string{"ns=6;s=DataAccess_DataItem_Null"}
+
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "",
+						Password: "",
+					},
 				}
 
 				// Attempt to connect
@@ -332,15 +359,18 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				nodeIDStrings := []string{"ns=6;s=DataAccess_AnalogType_Array"}
+				var nodeIDStrings = []string{"ns=6;s=DataAccess_AnalogType_Array"}
+
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "",
+						Password: "",
+					},
 				}
 
 				// Attempt to connect
@@ -411,15 +441,18 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				nodeIDStrings := []string{"ns=6;s=DataAccess_DataItem"} // Subscribes to all values with non-null datatype.
+				var nodeIDStrings = []string{"ns=6;s=DataAccess_DataItem"} // Subscribes to all values with non-null datatype.
+
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "",
+						Password: "",
+					},
 				}
 
 				// Attempt to connect
@@ -468,17 +501,19 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				nodeIDStrings := []string{
+				var nodeIDStrings = []string{
 					"ns=3;s=Fast",
 					"ns=3;s=Slow",
 				}
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "",
+						Password: "",
+					},
 				}
 
 				// Attempt to connect
@@ -515,7 +550,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 
-				nodeIDStrings := []string{
+				var nodeIDStrings = []string{
 					"ns=6;s=Scalar_Static_Arrays_Boolean",
 					"ns=6;s=Scalar_Static_Arrays_Byte",
 					"ns=6;s=Scalar_Static_Arrays_ByteString",
@@ -547,11 +582,13 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "",
+						Password: "",
+					},
 				}
 
 				// Attempt to connect
@@ -620,15 +657,18 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				nodeIDStrings := []string{"ns=3;s=OpcPlc"}
+				var nodeIDStrings = []string{"ns=3;s=OpcPlc"}
+
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: false,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "",
+						Password: "",
+					},
 				}
 
 				// Attempt to connect
@@ -662,15 +702,18 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 				defer cancel()
 
-				nodeIDStrings := []string{"i=84"}
+				var nodeIDStrings = []string{"i=84"}
+
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "",
+						Password: "",
+					},
 				}
 
 				// Attempt to connect
@@ -704,15 +747,18 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 				defer cancel()
 
-				nodeIDStrings := []string{"i=84"}
+				var nodeIDStrings = []string{"i=84"}
+
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "",
+						Password: "",
+					},
 				}
 
 				// Attempt to connect
@@ -744,15 +790,18 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				nodeIDStrings := []string{"ns=3;s=Anomaly"}
+				var nodeIDStrings = []string{"ns=3;s=Anomaly"}
+
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: false,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "",
+						Password: "",
+					},
 				}
 
 				// Attempt to connect
@@ -784,15 +833,18 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				nodeIDStrings := []string{"ns=3;s=Basic"}
+				var nodeIDStrings = []string{"ns=3;s=Basic"}
+
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: false,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "",
+						Password: "",
+					},
 				}
 
 				// Attempt to connect
@@ -824,15 +876,18 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				nodeIDStrings := []string{"ns=3;s=Deterministic GUID"}
+				var nodeIDStrings = []string{"ns=3;s=Deterministic GUID"}
+
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: false,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "",
+						Password: "",
+					},
 				}
 
 				// Attempt to connect
@@ -864,15 +919,18 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				nodeIDStrings := []string{"ns=3;s=Fast"}
+				var nodeIDStrings = []string{"ns=3;s=Fast"}
+
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: false,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "",
+						Password: "",
+					},
 				}
 
 				// Attempt to connect
@@ -904,15 +962,18 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				nodeIDStrings := []string{"ns=3;s=Slow"}
+				var nodeIDStrings = []string{"ns=3;s=Slow"}
+
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: false,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "",
+						Password: "",
+					},
 				}
 
 				// Attempt to connect
@@ -944,15 +1005,18 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				nodeIDStrings := []string{"ns=3;s=Special"}
+				var nodeIDStrings = []string{"ns=3;s=Special"}
+
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 				input := &OPCUAInput{
-					Endpoint:         "opc.tcp://localhost:50000",
-					Username:         "",
-					Password:         "",
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: false,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint: "opc.tcp://localhost:50000",
+						Username: "",
+						Password: "",
+					},
 				}
 
 				// Attempt to connect
@@ -991,11 +1055,13 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
-				Endpoint:         "opc.tcp://localhost:50000",
-				Username:         "",
-				Password:         "",
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: false,
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint: "opc.tcp://localhost:50000",
+					Username: "",
+					Password: "",
+				},
 			}
 
 			// Attempt to connect
@@ -1053,15 +1119,18 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			ctx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel1()
 
-			nodeIDStrings := []string{"ns=3;s=SlowUInt1"}
+			var nodeIDStrings = []string{"ns=3;s=SlowUInt1"}
+
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
-				Endpoint:         "opc.tcp://localhost:50000",
-				Username:         "",
-				Password:         "",
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint: "opc.tcp://localhost:50000",
+					Username: "",
+					Password: "",
+				},
 			}
 
 			// Attempt to connect
@@ -1112,17 +1181,19 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			var nodeIDStrings []string
+			var nodeIDStrings = []string{}
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
-				Endpoint:         "opc.tcp://localhost:50000",
-				Username:         "",
-				Password:         "",
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
-				UseHeartbeat:     true,
-				HeartbeatNodeId:  ua.NewNumericNodeID(0, 2258),
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint: "opc.tcp://localhost:50000",
+					Username: "",
+					Password: "",
+				},
+				UseHeartbeat:    true,
+				HeartbeatNodeId: ua.NewNumericNodeID(0, 2258),
 			}
 
 			// Attempt to connect
@@ -1152,17 +1223,19 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			nodeIDStrings := []string{"i=2258"}
+			var nodeIDStrings = []string{"i=2258"}
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
-				Endpoint:         "opc.tcp://localhost:50000",
-				Username:         "",
-				Password:         "",
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
-				UseHeartbeat:     true,
-				HeartbeatNodeId:  ua.NewNumericNodeID(0, 2258),
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint: "opc.tcp://localhost:50000",
+					Username: "",
+					Password: "",
+				},
+				UseHeartbeat:    true,
+				HeartbeatNodeId: ua.NewNumericNodeID(0, 2258),
 			}
 
 			// Attempt to connect
@@ -1192,17 +1265,19 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			var nodeIDStrings []string
+			var nodeIDStrings = []string{}
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
-				Endpoint:         "opc.tcp://localhost:50000",
-				Username:         "",
-				Password:         "",
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
-				UseHeartbeat:     true,
-				HeartbeatNodeId:  ua.NewNumericNodeID(0, 2258),
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint: "opc.tcp://localhost:50000",
+					Username: "",
+					Password: "",
+				},
+				UseHeartbeat:    true,
+				HeartbeatNodeId: ua.NewNumericNodeID(0, 2258),
 			}
 
 			// Attempt to connect
@@ -1258,17 +1333,19 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 
 		It("does disconnect if the heartbeat does not come in regular intervals", func() {
 
-			var nodeIDStrings []string
+			var nodeIDStrings = []string{}
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
-				Endpoint:         "opc.tcp://localhost:50000",
-				Username:         "",
-				Password:         "",
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
-				UseHeartbeat:     true,
-				HeartbeatNodeId:  ua.NewNumericNodeID(0, 2259), // 2259 is State, which will not change
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint: "opc.tcp://localhost:50000",
+					Username: "",
+					Password: "",
+				},
+				UseHeartbeat:    true,
+				HeartbeatNodeId: ua.NewNumericNodeID(0, 2259), // 2259 is State, which will not change
 			}
 
 			// Attempt to connect
@@ -1404,15 +1481,18 @@ opcua:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			nodeIDStrings := []string{"ns=6;s=DataAccess_AnalogType_Byte"}
+			var nodeIDStrings = []string{"ns=6;s=DataAccess_AnalogType_Byte"}
+
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
-				Endpoint:         "opc.tcp://localhost:50000",
-				Username:         "",
-				Password:         "",
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: false,
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint: "opc.tcp://localhost:50000",
+					Username: "",
+					Password: "",
+				},
 			}
 
 			// Connect to the server

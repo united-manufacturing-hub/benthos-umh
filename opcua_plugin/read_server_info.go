@@ -7,6 +7,10 @@ import (
 	"github.com/gopcua/opcua/ua"
 )
 
+// TODO: this should be moved to core_server_info.go
+// However, there is still some OPCUAInput specific code in this file
+// which needs to be refactored.
+
 // ServerInfo holds basic information about an OPC UA server, including the manufacturer name,
 // product name, and software version.
 type ServerInfo struct {

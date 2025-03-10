@@ -42,10 +42,12 @@ var _ = Describe("Getting Nodes for a OPC Ua server in a tree datastructure", fu
 				return
 			}
 			opc := &OPCUAInput{
-				Endpoint:           endpoint,
-				Username:           username,
-				Password:           password,
-				ServerCertificates: make(map[*ua.EndpointDescription]string),
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint:           endpoint,
+					Username:           username,
+					Password:           password,
+					ServerCertificates: make(map[*ua.EndpointDescription]string),
+				},
 			}
 			msgCh := make(chan string, 100000)
 			parentNode := &Node{
@@ -112,14 +114,16 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input = &OPCUAInput{
-				Endpoint:                   endpoint,
-				Username:                   "",
-				Password:                   "",
-				ServerCertificates:         make(map[*ua.EndpointDescription]string),
-				NodeIDs:                    parsedNodeIDs,
-				SubscribeEnabled:           false,
-				AutoReconnect:              true,
-				ReconnectIntervalInSeconds: 5,
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint:                   endpoint,
+					Username:                   "",
+					Password:                   "",
+					ServerCertificates:         make(map[*ua.EndpointDescription]string),
+					AutoReconnect:              true,
+					ReconnectIntervalInSeconds: 5,
+				},
+				NodeIDs:          parsedNodeIDs,
+				SubscribeEnabled: false,
 			}
 
 			// Attempt to connect
@@ -138,14 +142,18 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input = &OPCUAInput{
-				Endpoint:           endpoint,
-				Username:           "",
-				Password:           "",
-				ServerCertificates: make(map[*ua.EndpointDescription]string),
-				NodeIDs:            parsedNodeIDs,
-				SubscribeEnabled:   false,
-				SecurityMode:       "None",
-				SecurityPolicy:     "None",
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint:                   endpoint,
+					Username:                   "",
+					Password:                   "",
+					ServerCertificates:         make(map[*ua.EndpointDescription]string),
+					SecurityMode:               "None",
+					SecurityPolicy:             "None",
+					AutoReconnect:              true,
+					ReconnectIntervalInSeconds: 5,
+				},
+				NodeIDs:          parsedNodeIDs,
+				SubscribeEnabled: false,
 			}
 
 			// Attempt to connect
@@ -169,9 +177,11 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			}
 
 			input = &OPCUAInput{
-				Endpoint:                     endpoint,
-				NodeIDs:                      nil,
-				ServerCertificateFingerprint: fingerprint, // correct certificate fingerprint
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint:                     endpoint,
+					ServerCertificateFingerprint: fingerprint, // correct certificate fingerprint
+				},
+				NodeIDs: nil,
 			}
 
 			// Attempt to connect with matching fingerprints
@@ -182,12 +192,14 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 		// this Test will work, since we don't connect, so it only checks the mismatch
 		It("should fail due to fingerprint-mismatch", func() {
 			input = &OPCUAInput{
-				Endpoint:                     endpoint,
-				NodeIDs:                      nil,
-				SecurityMode:                 "SignAndEncrypt",
-				SecurityPolicy:               "Basic256Sha256",
-				ServerCertificates:           make(map[*ua.EndpointDescription]string),
-				ServerCertificateFingerprint: "test123", // incorrect certificate fingerprint
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint:                     endpoint,
+					SecurityMode:                 "SignAndEncrypt",
+					SecurityPolicy:               "Basic256Sha256",
+					ServerCertificates:           make(map[*ua.EndpointDescription]string),
+					ServerCertificateFingerprint: "test123", // incorrect certificate fingerprint
+				},
+				NodeIDs: nil,
 			}
 
 			// Attempt to connect and fail due to fingerprint mismatch
@@ -205,12 +217,14 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input = &OPCUAInput{
-				Endpoint:           endpoint,
-				Username:           "",
-				Password:           "",
-				ServerCertificates: make(map[*ua.EndpointDescription]string),
-				NodeIDs:            parsedNodeIDs,
-				SubscribeEnabled:   false,
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint:           endpoint,
+					Username:           "",
+					Password:           "",
+					ServerCertificates: make(map[*ua.EndpointDescription]string),
+				},
+				NodeIDs:          parsedNodeIDs,
+				SubscribeEnabled: false,
 			}
 			// Attempt to connect
 			err = input.Connect(ctx)
@@ -268,11 +282,13 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 	Describe("Connect Anonymous", func() {
 		It("should connect in default mode", func() {
 			input = &OPCUAInput{
-				Endpoint:           endpoint,
-				Username:           "",
-				Password:           "",
-				ServerCertificates: make(map[*ua.EndpointDescription]string),
-				NodeIDs:            nil,
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint:           endpoint,
+					Username:           "",
+					Password:           "",
+					ServerCertificates: make(map[*ua.EndpointDescription]string),
+				},
+				NodeIDs: nil,
 			}
 
 			// Attempt to connect
@@ -282,13 +298,15 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 
 		It("should connect in no security mode", func() {
 			input = &OPCUAInput{
-				Endpoint:           endpoint,
-				Username:           "",
-				Password:           "",
-				ServerCertificates: make(map[*ua.EndpointDescription]string),
-				NodeIDs:            nil,
-				SecurityMode:       "None",
-				SecurityPolicy:     "None",
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint:           endpoint,
+					Username:           "",
+					Password:           "",
+					ServerCertificates: make(map[*ua.EndpointDescription]string),
+					SecurityMode:       "None",
+					SecurityPolicy:     "None",
+				},
+				NodeIDs: nil,
 			}
 
 			// Attempt to connect
@@ -301,12 +319,14 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 		// Test with correct fingerprint happens when trying to connect via "encryption"
 		It("should fail due to fingerprint-mismatch", func() {
 			input = &OPCUAInput{
-				Endpoint:                     endpoint,
-				NodeIDs:                      nil,
-				SecurityMode:                 "SignAndEncrypt",
-				SecurityPolicy:               "Basic256Sha256",
-				ServerCertificates:           make(map[*ua.EndpointDescription]string),
-				ServerCertificateFingerprint: "test123", // incorrect certificate fingerprint
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint:                     endpoint,
+					SecurityMode:                 "SignAndEncrypt",
+					SecurityPolicy:               "Basic256Sha256",
+					ServerCertificates:           make(map[*ua.EndpointDescription]string),
+					ServerCertificateFingerprint: "test123", // incorrect certificate fingerprint
+				},
+				NodeIDs: nil,
 			}
 
 			// Attempt to connect and fail due to fingerprint mismatch
@@ -320,12 +340,14 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			It("should fail to connect", func() {
 
 				input = &OPCUAInput{
-					Endpoint:           endpoint,
-					Username:           "123", // Incorrect username and password
-					Password:           "123",
-					ServerCertificates: make(map[*ua.EndpointDescription]string),
-					NodeIDs:            nil,
-					SessionTimeout:     1000,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint:           endpoint,
+						Username:           "123", // Incorrect username and password
+						Password:           "123",
+						ServerCertificates: make(map[*ua.EndpointDescription]string),
+						SessionTimeout:     1000,
+					},
+					NodeIDs: nil,
 				}
 				// Attempt to connect
 				err := input.Connect(ctx)
@@ -337,11 +359,13 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			It("should successfully connect", func() {
 
 				input = &OPCUAInput{
-					Endpoint:           endpoint,
-					Username:           username,
-					Password:           password,
-					ServerCertificates: make(map[*ua.EndpointDescription]string),
-					NodeIDs:            nil,
+					OPCUAConnection: &OPCUAConnection{
+						Endpoint:           endpoint,
+						Username:           username,
+						Password:           password,
+						ServerCertificates: make(map[*ua.EndpointDescription]string),
+					},
+					NodeIDs: nil,
 				}
 				// Attempt to connect
 				err := input.Connect(ctx)
@@ -361,11 +385,13 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input = &OPCUAInput{
-				Endpoint:           endpoint,
-				Username:           "",
-				Password:           "",
-				ServerCertificates: make(map[*ua.EndpointDescription]string),
-				NodeIDs:            parsedNodeIDs,
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint:           endpoint,
+					Username:           "",
+					Password:           "",
+					ServerCertificates: make(map[*ua.EndpointDescription]string),
+				},
+				NodeIDs: parsedNodeIDs,
 			}
 
 			// Attempt to connect
@@ -384,13 +410,15 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input = &OPCUAInput{
-				Endpoint:                   endpoint,
-				Username:                   "",
-				Password:                   "",
-				ServerCertificates:         make(map[*ua.EndpointDescription]string),
-				NodeIDs:                    parsedNodeIDs,
-				AutoReconnect:              true,
-				ReconnectIntervalInSeconds: 5,
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint:                   endpoint,
+					Username:                   "",
+					Password:                   "",
+					ServerCertificates:         make(map[*ua.EndpointDescription]string),
+					AutoReconnect:              true,
+					ReconnectIntervalInSeconds: 5,
+				},
+				NodeIDs: parsedNodeIDs,
 			}
 			// Attempt to connect
 			err = input.Connect(ctx)
@@ -423,12 +451,14 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input = &OPCUAInput{
-				Endpoint:           endpoint,
-				Username:           "",
-				Password:           "",
-				ServerCertificates: make(map[*ua.EndpointDescription]string),
-				NodeIDs:            parsedNodeIDs,
-				SubscribeEnabled:   true,
+				OPCUAConnection: &OPCUAConnection{
+					Endpoint:           endpoint,
+					Username:           "",
+					Password:           "",
+					ServerCertificates: make(map[*ua.EndpointDescription]string),
+				},
+				NodeIDs:          parsedNodeIDs,
+				SubscribeEnabled: true,
 			}
 			ctx := context.Background()
 			err = input.Connect(ctx)
@@ -477,12 +507,16 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 
 	},
 		Entry("should connect via Basic256Sha256", &OPCUAInput{
-			SecurityMode:   "SignAndEncrypt",
-			SecurityPolicy: "Basic256Sha256",
+			OPCUAConnection: &OPCUAConnection{
+				SecurityMode:   "SignAndEncrypt",
+				SecurityPolicy: "Basic256Sha256",
+			},
 		}),
 		Entry("should connect via Basic128Rsa15", &OPCUAInput{
-			SecurityMode:   "SignAndEncrypt",
-			SecurityPolicy: "Basic128Rsa15",
+			OPCUAConnection: &OPCUAConnection{
+				SecurityMode:   "SignAndEncrypt",
+				SecurityPolicy: "Basic128Rsa15",
+			},
 		}),
 	)
 })

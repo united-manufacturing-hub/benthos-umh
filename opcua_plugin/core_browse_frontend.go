@@ -24,7 +24,7 @@ type BrowseDetails struct {
 
 // GetNodeTree returns the tree structure of the OPC UA server nodes
 // GetNodeTree is currently used by united-manufacturing-hub/ManagementConsole repo for the BrowseOPCUA tags functionality
-func (g *OPCUAInput) GetNodeTree(ctx context.Context, msgChan chan<- string, rootNode *Node) (*Node, error) {
+func (g *OPCUAConnection) GetNodeTree(ctx context.Context, msgChan chan<- string, rootNode *Node) (*Node, error) {
 	if g.Client == nil {
 		err := g.connect(ctx)
 		if err != nil {
