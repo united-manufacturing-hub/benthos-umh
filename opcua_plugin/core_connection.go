@@ -1,7 +1,9 @@
 package opcua_plugin
 
 import (
+	"context"
 	"crypto/tls"
+	"sync"
 	"time"
 
 	"github.com/gopcua/opcua"
@@ -80,6 +82,15 @@ type OPCUAConnection struct {
 	Client                       *opcua.Client
 	CachedTLSCertificate         *tls.Certificate // certificate
 	ServerCertificates           map[*ua.EndpointDescription]string
+
+	// Custom cleanup function for write or read plugin, e.g., unsubscribe from a subscription
+	cleanup_func func(context.Context)
+
+	// for browsing
+	browseCancel    context.CancelFunc
+	browseWaitGroup sync.WaitGroup
+	browseErrorChan chan error
+	visited         sync.Map
 }
 
 // ParseConnectionConfig parses the common connection configuration from a ParsedConfig
@@ -126,5 +137,53 @@ func ParseConnectionConfig(conf *service.ParsedConfig, mgr *service.Resources) (
 		return nil, err
 	}
 
+	conn.browseWaitGroup = sync.WaitGroup{}
+	conn.browseErrorChan = make(chan error, 1)
+
 	return conn, nil
+}
+
+// cleanupBrowsing ensures the browsing goroutine is properly stopped and cleaned up
+func (g *OPCUAConnection) cleanupBrowsing() {
+	if g.browseCancel != nil {
+		g.browseCancel()
+		g.browseCancel = nil
+
+		g.Log.Infof("Waiting for browsing subroutine to finish...")
+		g.browseWaitGroup.Wait()
+		g.Log.Infof("Browsing subroutine finished")
+	}
+}
+
+// closeConnection handles the actual connection closure
+func (g *OPCUAConnection) closeConnection(ctx context.Context) {
+	// Call the custom cleanup function if set
+	if g.cleanup_func != nil {
+		g.cleanup_func(ctx)
+	}
+
+	if g.Client != nil {
+		if err := g.Client.Close(ctx); err != nil {
+			g.Log.Infof("Error closing OPC UA client: %v", err)
+		}
+		g.Client = nil
+	}
+
+}
+
+// Close terminates the OPC UA connection with error logging
+func (g *OPCUAConnection) Close(ctx context.Context) error {
+	g.Log.Errorf("Initiating closure of OPC UA client...")
+	g.cleanupBrowsing()
+	g.closeConnection(ctx)
+	g.Log.Infof("OPC UA client closed successfully.")
+	return nil
+}
+
+// CloseExpected terminates the OPC UA connection without error logging
+func (g *OPCUAConnection) CloseExpected(ctx context.Context) {
+	g.Log.Infof("Initiating expected closure of OPC UA client...")
+	g.cleanupBrowsing()
+	g.closeConnection(ctx)
+	g.Log.Infof("OPC UA client closed successfully.")
 }
