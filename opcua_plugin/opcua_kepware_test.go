@@ -307,6 +307,7 @@ var _ = Describe("Test underlying OPC-clients", FlakeAttempts(3), func() {
 		Entry("should return data changes on subscribe", &OPCUAInput{
 			NodeIDs:          ParseNodeIDs([]string{"ns=2;s=SiemensPLC_main.main.ServerInterfaces.Server _interface_1.counter"}),
 			SubscribeEnabled: true,
+			OPCUAConnection:  &OPCUAConnection{},
 		}, nil, true),
 	)
 
