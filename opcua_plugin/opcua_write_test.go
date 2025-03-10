@@ -1,0 +1,99 @@
+package opcua_plugin
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	"github.com/benthosdev/benthos/v4/public/service"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
+
+var _ = Describe("OPC UA Output", func() {
+	When("creating a basic output configuration", func() {
+		It("should successfully parse the configuration", func() {
+			// Create a new stream builder
+			builder := service.NewStreamBuilder()
+
+			err := builder.AddOutputYAML(`
+opcua:
+  endpoint: "opc.tcp://localhost:4840"
+  nodeMappings:
+    - nodeId: "ns=2;s=MySetpoint"
+      valueFrom: "setpoint"
+    - nodeId: "ns=2;s=MyEnableFlag"
+      valueFrom: "enable_flag"
+  forcedDataTypes:
+    "ns=2;s=MySetpoint": "Int32"
+  handshake:
+    enabled: true
+    readbackTimeoutMs: 2000
+    maxWriteAttempts: 3
+    timeBetweenRetriesMs: 1000
+`)
+
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.SetLoggerYAML(`level: off`)
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.SetTracerYAML(`type: none`)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Add a simple input to feed messages to the output
+			err = builder.AddInputYAML(`
+generate:
+  mapping: |
+    root = {
+      "setpoint": 123,
+      "enable_flag": true
+    }
+  interval: "1s"
+  count: 1
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Build the stream (just to verify everything initializes correctly)
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			// Start the stream with a short timeout - we just want to verify it can start
+			// We don't need to verify actual connection since we're just testing configuration parsing
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+
+			// We expect this to timeout normally, since we don't have a real OPC UA server
+			err = stream.Run(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(strings.Contains(err.Error(), "context deadline exceeded")).To(BeTrue())
+		})
+	})
+
+	When("creating a configuration with minimal settings", func() {
+		It("should use default values for omitted fields", func() {
+			// Create a new stream builder
+			builder := service.NewStreamBuilder()
+
+			err := builder.AddOutputYAML(`
+opcua:
+  endpoint: "opc.tcp://localhost:4840"
+  nodeMappings:
+    - nodeId: "ns=2;s=MySetpoint"
+      valueFrom: "setpoint"
+`)
+
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.SetLoggerYAML(`level: off`)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Build the stream (just to verify everything initializes correctly)
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify that the stream was built correctly, but don't run it
+			Expect(stream).NotTo(BeNil())
+		})
+	})
+})

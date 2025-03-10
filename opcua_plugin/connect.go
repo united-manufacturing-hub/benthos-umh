@@ -85,7 +85,7 @@ func (g *OPCUAInput) GetOPCUAClientOptions(
 	// If the endpoint's security policy is not None, we must attach a certificate
 	if selectedEndpoint.SecurityPolicyURI != ua.SecurityPolicyURINone {
 		// Only generate or parse the certificate if we don't already have one cached
-		if g.cachedTLSCertificate == nil {
+		if g.CachedTLSCertificate == nil {
 			// If ClientCertificate is provided (base64 of PEM blocks), parse it
 			if g.ClientCertificate != "" {
 				g.Log.Infof("Using base64-encoded client certificate from configuration")
@@ -95,7 +95,7 @@ func (g *OPCUAInput) GetOPCUAClientOptions(
 					g.Log.Errorf("Failed to parse the provided Base64 certificate/key: %v", err)
 					return nil, err
 				}
-				g.cachedTLSCertificate = cert
+				g.CachedTLSCertificate = cert
 
 			} else {
 				g.Log.Infof("No base64-encoded certificate provided, generating a new one...")
@@ -119,7 +119,7 @@ func (g *OPCUAInput) GetOPCUAClientOptions(
 					return nil, err
 				}
 
-				g.cachedTLSCertificate = &newTLSCert
+				g.CachedTLSCertificate = &newTLSCert
 				g.Log.Infof("The clients certificate was created, to use an encrypted "+
 					"connection please proceed to the OPC-UA Server's configuration and "+
 					"trust either all clients or the clients certificate with the client-name: "+
@@ -140,8 +140,8 @@ func (g *OPCUAInput) GetOPCUAClientOptions(
 			}
 		}
 
-		// We have g.cachedTLSCertificate set; parse out the private key for the OPC UA library
-		pk, ok := g.cachedTLSCertificate.PrivateKey.(*rsa.PrivateKey)
+		// We have g.CachedTLSCertificate set; parse out the private key for the OPC UA library
+		pk, ok := g.CachedTLSCertificate.PrivateKey.(*rsa.PrivateKey)
 		if !ok {
 			g.Log.Errorf("Invalid private key type or not RSA")
 			return nil, errors.New("invalid private key type or not RSA")
@@ -150,7 +150,7 @@ func (g *OPCUAInput) GetOPCUAClientOptions(
 		// Append the certificate and private key to the client options
 		opts = append(opts,
 			opcua.PrivateKey(pk),
-			opcua.Certificate(g.cachedTLSCertificate.Certificate[0]),
+			opcua.Certificate(g.CachedTLSCertificate.Certificate[0]),
 		)
 	}
 
