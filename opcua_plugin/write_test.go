@@ -30,19 +30,18 @@ var _ = FDescribe("OPC UA Output", func() {
 
 			err := builder.AddOutputYAML(`
 opcua:
-    endpoint: "opc.tcp://localhost:50000"
-    nodeMappings:
-      - nodeId: "ns=4;i=6210" # BaseTemperature
-        valueFrom: "setpoint"
-    forcedDataTypes:
-      "ns=4;i=6210": "Int32"
-    handshake:
-      enabled: true
-      readbackTimeoutMs: 2000
-      maxWriteAttempts: 3
-      timeBetweenRetriesMs: 1000
+  endpoint: "opc.tcp://localhost:50000"
+  nodeMappings:
+    - nodeId: "ns=4;i=6210"
+      valueFrom: "setpoint"
+  forcedDataTypes:
+    "ns=4;i=6210": "Int32"
+  handshake:
+    enabled: true
+    readbackTimeoutMs: 2000
+    maxWriteAttempts: 3
+    timeBetweenRetriesMs: 1000
 `)
-
 			Expect(err).NotTo(HaveOccurred())
 
 			err = builder.SetLoggerYAML(`level: off`)
@@ -56,10 +55,10 @@ opcua:
 generate:
   mapping: |
     root = {
-        "setpoint": 123,
-      }
-    interval: "1s"
-    count: 1
+      "setpoint": 123
+    }
+  interval: "1s"
+  count: 1
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -85,13 +84,12 @@ generate:
 			builder := service.NewStreamBuilder()
 
 			err := builder.AddOutputYAML(`
-  opcua:
-    endpoint: "opc.tcp://localhost:50000"
-    nodeMappings:
-      - nodeId: "ns=4;i=6210" # BaseTemperature
-        valueFrom: "setpoint"
+opcua:
+  endpoint: "opc.tcp://localhost:50000"
+  nodeMappings:
+    - nodeId: "ns=4;i=6210"
+      valueFrom: "setpoint"
 `)
-
 			Expect(err).NotTo(HaveOccurred())
 
 			err = builder.SetLoggerYAML(`level: off`)
