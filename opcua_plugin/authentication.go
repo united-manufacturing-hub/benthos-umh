@@ -144,6 +144,8 @@ func (g *OPCUAInput) getUserAuthenticationType() ua.UserTokenType {
 	switch {
 	case g.Username != "" && g.Password != "":
 		return ua.UserTokenTypeUserName
+	case g.UserCertificate != "":
+		return ua.UserTokenTypeCertificate
 	default:
 		return ua.UserTokenTypeAnonymous
 	}

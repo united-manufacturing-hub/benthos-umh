@@ -54,6 +54,42 @@ func parseBase64PEMBundle(b64PemBundle string) (*tls.Certificate, error) {
 	return &tlsCert, nil
 }
 
+// TODO: use this via ManagementConsole input where the user can upload the certificate
+// parseCertificateFile reads a PEM file from disk that contains both a certificate
+// and its private key, then returns a tls.Certificate.
+//func parseUserCertificateFile(filepath string) (*tls.Certificate, error) {
+//	data, err := os.ReadFile(filepath)
+//	if err != nil {
+//		return nil, fmt.Errorf("failed to read file %q: %w", filepath, err)
+//	}
+//
+//	var certPEM, keyPEM []byte
+//	rest := data
+//	for {
+//		var block *pem.Block
+//		block, rest = pem.Decode(rest)
+//		if block == nil {
+//			break
+//		}
+//		switch block.Type {
+//		case "CERTIFICATE":
+//			certPEM = append(certPEM, pem.EncodeToMemory(block)...)
+//		case "PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY":
+//			keyPEM = append(keyPEM, pem.EncodeToMemory(block)...)
+//		}
+//	}
+//
+//	if len(certPEM) == 0 || len(keyPEM) == 0 {
+//		return nil, errors.New("failed to find both certificate and private key in file")
+//	}
+//
+//	tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
+//	if err != nil {
+//		return nil, fmt.Errorf("failed to create tls.Certificate: %w", err)
+//	}
+//	return &tlsCert, nil
+//}
+
 // GetOPCUAClientOptions constructs the OPC UA client options based on the selected endpoint and authentication method.
 //
 // This function is essential for configuring the OPC UA client with the appropriate security settings,
@@ -80,6 +116,18 @@ func (g *OPCUAInput) GetOPCUAClientOptions(
 	case ua.UserTokenTypeUserName:
 		g.Log.Infof("Using username/password login")
 		opts = append(opts, opcua.AuthUsername(g.Username, g.Password))
+	case ua.UserTokenTypeCertificate:
+		g.Log.Infof("Using user-certificate login")
+
+		userTLSCert, err := parseBase64PEMBundle(g.UserCertificate)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse user certificate: %v", err)
+		}
+
+		// NOTE: reference for also using the AuthPrivateKey
+		// https://github.com/gopcua/opcua/blob/a5114dafc2e0bf4035badb6d46448aaa2ce104d6/examples/crypto/crypto.go#L291-L297
+		opts = append(opts, opcua.AuthCertificate(userTLSCert.Certificate[0]))
+		opts = append(opts, opcua.AuthPrivateKey(userTLSCert.PrivateKey.(*rsa.PrivateKey)))
 	}
 
 	// If the endpoint's security policy is not None, we must attach a certificate
