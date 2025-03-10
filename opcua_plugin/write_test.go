@@ -2,6 +2,7 @@ package opcua_plugin
 
 import (
 	"context"
+	"os"
 	"strings"
 	"time"
 
@@ -11,6 +12,17 @@ import (
 )
 
 var _ = Describe("OPC UA Output", func() {
+
+	BeforeEach(func() {
+		testActivated := os.Getenv("TEST_OPCUA_WRITE_SIMULATOR")
+
+		// Check if environment variables are set
+		if testActivated == "" {
+			Skip("Skipping write unit tests against simulator: TEST_OPCUA_WRITE_SIMULATOR not set")
+			return
+		}
+	})
+
 	When("creating a basic output configuration", func() {
 		It("should successfully parse the configuration", func() {
 			// Create a new stream builder
