@@ -1,186 +1,274 @@
+// Copyright 2023 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package opcua_plugin
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
-	"github.com/gopcua/opcua"
-	"github.com/gopcua/opcua/ua"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/gopcua/opcua"
+	"github.com/gopcua/opcua/errors"
+	"github.com/gopcua/opcua/ua"
 )
 
-// createMessageFromValue constructs a Benthos message from a given OPC UA DataValue and NodeDef.
-//
-// This function translates the OPC UA DataValue into a format suitable for Benthos, embedding relevant
-// metadata derived from the NodeDef. It handles various data types, ensuring that the message payload
-// accurately represents the OPC UA node's current value. Additionally, it marks heartbeat messages
-// when applicable, facilitating heartbeat monitoring within the system.
-func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef NodeDef) *service.Message {
-	variant := dataValue.Value
-	if variant == nil {
-		g.Log.Errorf("Variant is nil")
-		return nil
-	}
+const SubscribeTimeoutContext = 3 * time.Second
+const DefaultPollRate = 1000
 
-	if !errors.Is(dataValue.Status, ua.StatusOK) {
-		g.Log.Warnf("Received bad status %v for node %s", dataValue.Status, nodeDef.NodeID.String())
-	}
+var OPCUAConfigSpec = OPCUAConnectionConfigSpec.
+	Summary("OPC UA input plugin").
+	Description("The OPC UA input plugin reads data from an OPC UA server and sends it to Benthos.").
+	Field(service.NewStringListField("nodeIDs").
+		Description("List of OPC-UA node IDs to begin browsing.")).
+	Field(service.NewBoolField("subscribeEnabled").
+		Description("Set to true to subscribe to OPC UA nodes instead of fetching them every seconds. Default is pulling messages every second (false).").
+		Default(false)).
+	Field(service.NewBoolField("useHeartbeat").
+		Description("Set to true to provide an extra message with the servers timestamp as a heartbeat").
+		Default(false)).
+	Field(service.NewIntField("pollRate").
+		Description("The rate in milliseconds at which to poll the OPC UA server when not using subscriptions. Defaults to 1000ms (1 second).").
+		Default(DefaultPollRate))
 
-	b := make([]byte, 0)
+func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 
-	var tagType string
+	// Parse all nodeIDs to validate them.
+	// loop through all nodeIDs, parse them and put them into a slice
+	var parsedNodeIDs []*ua.NodeID
 
-	switch v := variant.Value().(type) {
-	case float32:
-		b = append(b, []byte(strconv.FormatFloat(float64(v), 'f', -1, 32))...)
-		tagType = "number"
-	case float64:
-		b = append(b, []byte(strconv.FormatFloat(v, 'f', -1, 64))...)
-		tagType = "number"
-	case string:
-		b = append(b, []byte(v)...)
-		tagType = "string"
-	case bool:
-		b = append(b, []byte(strconv.FormatBool(v))...)
-		tagType = "bool"
-	case int:
-		b = append(b, []byte(strconv.Itoa(v))...)
-		tagType = "number"
-	case int8:
-		b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
-		tagType = "number"
-	case int16:
-		b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
-		tagType = "number"
-	case int32:
-		b = append(b, []byte(strconv.FormatInt(int64(v), 10))...)
-		tagType = "number"
-	case int64:
-		b = append(b, []byte(strconv.FormatInt(v, 10))...)
-		tagType = "number"
-	case uint:
-		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
-		tagType = "number"
-	case uint8:
-		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
-		tagType = "number"
-	case uint16:
-		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
-		tagType = "number"
-	case uint32:
-		b = append(b, []byte(strconv.FormatUint(uint64(v), 10))...)
-		tagType = "number"
-	case uint64:
-		b = append(b, []byte(strconv.FormatUint(v, 10))...)
-		tagType = "number"
-	default:
-		// Convert unknown types to JSON
-		jsonBytes, err := json.Marshal(v)
+	for _, incomingNodeId := range incomingNodes {
+		parsedNodeID, err := ua.ParseNodeID(incomingNodeId)
 		if err != nil {
-			g.Log.Errorf("Error marshaling to JSON: %v", err)
 			return nil
 		}
-		b = append(b, jsonBytes...)
-		tagType = "string"
+
+		parsedNodeIDs = append(parsedNodeIDs, parsedNodeID)
 	}
 
-	if b == nil {
-		g.Log.Errorf("Could not create benthos message as payload is empty for node %s: %v", nodeDef.NodeID.String(), b)
-		return nil
-	}
-
-	message := service.NewMessage(b)
-
-	// New ones
-	message.MetaSet("opcua_source_timestamp", dataValue.SourceTimestamp.Format("2006-01-02T15:04:05.000000Z07:00"))
-	message.MetaSet("opcua_server_timestamp", dataValue.ServerTimestamp.Format("2006-01-02T15:04:05.000000Z07:00"))
-	message.MetaSet("opcua_attr_nodeid", nodeDef.NodeID.String())
-	message.MetaSet("opcua_attr_nodeclass", nodeDef.NodeClass.String())
-	message.MetaSet("opcua_attr_browsename", nodeDef.BrowseName)
-	message.MetaSet("opcua_attr_description", nodeDef.Description)
-	message.MetaSet("opcua_attr_accesslevel", nodeDef.AccessLevel.String())
-	message.MetaSet("opcua_attr_datatype", nodeDef.DataType)
-
-	tagName := sanitize(nodeDef.BrowseName)
-
-	// Tag Group
-	tagGroup := nodeDef.Path
-	// remove nodeDef.BrowseName from tagGroup
-	tagGroup = strings.Replace(tagGroup, nodeDef.BrowseName, "", 1)
-	// remove trailing dot
-	tagGroup = strings.TrimSuffix(tagGroup, ".")
-
-	// if the node is the CurrentTime node, mark is as a heartbeat message
-	if g.HeartbeatNodeId != nil && nodeDef.NodeID.Namespace() == g.HeartbeatNodeId.Namespace() && nodeDef.NodeID.IntID() == g.HeartbeatNodeId.IntID() && g.UseHeartbeat {
-		message.MetaSet("opcua_heartbeat_message", "true")
-	}
-
-	if tagGroup == "" {
-		tagGroup = tagName
-	}
-
-	message.MetaSet("opcua_tag_group", tagGroup)
-	message.MetaSet("opcua_tag_name", tagName)
-
-	// if the tag group is the same as the tag name ("root"), we don't want to have a tag path
-	if tagGroup == tagName {
-		message.MetaSet("opcua_tag_path", "")
-	} else {
-		message.MetaSet("opcua_tag_path", tagGroup)
-	}
-
-	message.MetaSet("opcua_tag_type", tagType)
-
-	return message
+	return parsedNodeIDs
 }
 
-// Read performs a synchronous read operation on the OPC UA server using the provided ReadRequest.
-//
-// This function sends a ReadRequest to the OPC UA server and handles the response. It manages
-// specific error conditions by closing the current session and signaling that the client is
-// no longer connected, prompting reconnection attempts if necessary. Successful reads return
-// the ReadResponse, while errors are appropriately logged and propagated.
-func (g *OPCUAInput) Read(ctx context.Context, req *ua.ReadRequest) (*ua.ReadResponse, error) {
-	resp, err := g.Client.Read(ctx, req)
+func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
+	// Parse the shared connection configuration
+	conn, err := ParseConnectionConfig(conf, mgr)
 	if err != nil {
-		g.Log.Errorf("Read failed: %s", err)
-		// if the error is StatusBadSessionIDInvalid, the session has been closed, and we need to reconnect.
-		switch {
-		case errors.Is(err, ua.StatusBadSessionIDInvalid):
-			_ = g.Close(ctx)
-			return nil, service.ErrNotConnected
-		case errors.Is(err, ua.StatusBadCommunicationError):
-			_ = g.Close(ctx)
-			return nil, service.ErrNotConnected
-		case errors.Is(err, ua.StatusBadConnectionClosed):
-			_ = g.Close(ctx)
-			return nil, service.ErrNotConnected
-		case errors.Is(err, ua.StatusBadTimeout):
-			_ = g.Close(ctx)
-			return nil, service.ErrNotConnected
-		case errors.Is(err, ua.StatusBadConnectionRejected):
-			_ = g.Close(ctx)
-			return nil, service.ErrNotConnected
-		case errors.Is(err, ua.StatusBadServerNotConnected):
-			_ = g.Close(ctx)
-			return nil, service.ErrNotConnected
-		}
-
-		// return error and stop executing this function.
 		return nil, err
 	}
 
-	if !errors.Is(resp.Results[0].Status, ua.StatusOK) {
-		g.Log.Errorf("Status not OK: %v", resp.Results[0].Status)
-		return nil, fmt.Errorf("status not OK: %v", resp.Results[0].Status)
+	// Parse input-specific fields
+	nodeIDs, err := conf.FieldStringList("nodeIDs")
+	if err != nil {
+		return nil, err
 	}
 
-	return resp, nil
+	subscribeEnabled, err := conf.FieldBool("subscribeEnabled")
+	if err != nil {
+		return nil, err
+	}
+
+	useHeartbeat, err := conf.FieldBool("useHeartbeat")
+	if err != nil {
+		return nil, err
+	}
+
+	pollRate, err := conf.FieldInt("pollRate")
+	if err != nil {
+		return nil, err
+	}
+
+	// fail if no nodeIDs are provided
+	if len(nodeIDs) == 0 {
+		return nil, errors.New("no nodeIDs provided")
+	}
+
+	parsedNodeIDs := ParseNodeIDs(nodeIDs)
+
+	m := &OPCUAInput{
+		OPCUAConnection:              conn,
+		NodeIDs:                      parsedNodeIDs,
+		SubscribeEnabled:             subscribeEnabled,
+		UseHeartbeat:                 useHeartbeat,
+		LastHeartbeatMessageReceived: atomic.Uint32{},
+		LastMessageReceived:          atomic.Uint32{},
+		HeartbeatManualSubscribed:    false,
+		HeartbeatNodeId:              ua.NewNumericNodeID(0, 2258), // 2258 is the nodeID for CurrentTime, only in tests this is different
+		PollRate:                     pollRate,
+	}
+
+	m.cleanup_func = func(ctx context.Context) {
+		m.unsubscribeAndResetHeartbeat(ctx)
+	}
+
+	return service.AutoRetryNacksBatched(m), nil
+}
+
+func init() {
+
+	err := service.RegisterBatchInput(
+		"opcua", OPCUAConfigSpec,
+		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
+			mgr.Logger().Infof("Created & maintained by the United Manufacturing Hub. About us: www.umh.app")
+			return newOPCUAInput(conf, mgr)
+		})
+	if err != nil {
+		panic(err)
+	}
+}
+
+type OPCUAInput struct {
+	*OPCUAConnection // Embed the shared connection configuration
+
+	// Input-specific fields
+	NodeIDs                      []*ua.NodeID
+	NodeList                     []NodeDef
+	SubscribeEnabled             bool
+	SubNotifyChan                chan *opcua.PublishNotificationData
+	UseHeartbeat                 bool
+	LastHeartbeatMessageReceived atomic.Uint32
+	LastMessageReceived          atomic.Uint32
+	HeartbeatManualSubscribed    bool
+	HeartbeatNodeId              *ua.NodeID
+	Subscription                 *opcua.Subscription
+	ServerInfo                   ServerInfo
+	PollRate                     int
+}
+
+// unsubscribeAndResetHeartbeat unsubscribes from the OPC UA subscription and resets the heartbeat
+// It is used as a cleanup function for the OPC UA connection
+func (g *OPCUAInput) unsubscribeAndResetHeartbeat(ctx context.Context) {
+	if g.SubscribeEnabled && g.Subscription != nil {
+		g.Log.Infof("Unsubscribing from OPC UA subscription...")
+		if err := g.Subscription.Cancel(ctx); err != nil {
+			g.Log.Infof("Failed to unsubscribe from OPC UA subscription: %v", err)
+		}
+		g.Subscription = nil
+	}
+
+	g.LastHeartbeatMessageReceived.Store(uint32(0))
+	g.LastMessageReceived.Store(uint32(0))
+}
+
+// startBrowsing initiates the browsing process and handles errors
+func (g *OPCUAInput) startBrowsing(ctx context.Context) {
+	browseCtx, cancel := context.WithCancel(ctx)
+	g.browseCancel = cancel
+	g.browseWaitGroup.Add(1)
+
+	go func() {
+		defer g.browseWaitGroup.Done()
+		g.Log.Infof("Please note that browsing large node trees can take some time")
+
+		if err := g.BrowseAndSubscribeIfNeeded(browseCtx); err != nil {
+			g.Log.Errorf("Failed to subscribe: %v", err)
+			g.Close(ctx) // Safe to call Close here as we're in a separate goroutine
+			return
+		}
+
+		g.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
+	}()
+}
+
+// Connect establishes a connection to the OPC UA server
+func (g *OPCUAInput) Connect(ctx context.Context) error {
+	var err error
+
+	if g.Client != nil {
+		return nil
+	}
+
+	defer func() {
+		if err != nil {
+			g.Log.Warnf("Connect failed with %v, waiting 5 seconds before retrying to prevent overloading the server", err)
+			time.Sleep(5 * time.Second)
+		}
+	}()
+
+	if err = g.connect(ctx); err != nil {
+		return err
+	}
+
+	g.Log.Infof("Connected to %s", g.Endpoint)
+
+	// Get OPC UA server information
+	if serverInfo, err := g.GetOPCUAServerInformation(ctx); err != nil {
+		g.Log.Infof("Failed to get OPC UA server information: %s", err)
+	} else {
+		g.Log.Infof("OPC UA Server Information: %v+", serverInfo)
+		g.ServerInfo = serverInfo
+	}
+
+	// Create a subscription channel if needed
+	if g.SubscribeEnabled {
+		g.SubNotifyChan = make(chan *opcua.PublishNotificationData, MaxTagsToBrowse)
+	}
+
+	g.startBrowsing(ctx)
+	return nil
+}
+
+// ReadBatch retrieves a batch of messages from the OPC UA server.
+// It either subscribes to node updates or performs a pull-based read based on the configuration.
+// The function updates heartbeat information and monitors the connection's health.
+// If no messages or heartbeats are received within the expected timeframe, it closes the connection.
+func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, ackFunc service.AckFunc, err error) {
+	if len(g.NodeList) == 0 {
+		g.Log.Debug("ReadBatch is called with empty nodelists. returning early from ReadBatch")
+		return nil, nil, nil
+	}
+
+	if g.SubscribeEnabled {
+		// Wait for maximum 3 seconds for a response from the subscription channel
+		// So that this never gets stuck
+		ctxSubscribe, cancel := context.WithTimeout(ctx, SubscribeTimeoutContext)
+		defer cancel()
+
+		msgs, ackFunc, err = g.ReadBatchSubscribe(ctxSubscribe)
+	} else {
+		msgs, ackFunc, err = g.ReadBatchPull(ctx)
+	}
+
+	// Heartbeat logic
+	msgs = g.updateHeartbeatInMessageBatch(msgs)
+
+	// if the last heartbeat message was received more than 10 seconds ago, close the connection
+	// benthos will automatically reconnect
+	if g.UseHeartbeat && g.LastHeartbeatMessageReceived.Load() < uint32(time.Now().Unix()-10) && g.LastHeartbeatMessageReceived.Load() != 0 {
+		if g.LastMessageReceived.Load() < uint32(time.Now().Unix()-10) {
+			g.Log.Error("No messages received (including heartbeat) for over 10 seconds. Closing connection.")
+			_ = g.Close(ctx)
+			return nil, nil, service.ErrNotConnected
+		} else {
+			if g.ServerInfo.ManufacturerName == "Prosys OPC Ltd." {
+				g.Log.Info("No heartbeat message (ServerTime) received for over 10 seconds. This is normal for your Prosys OPC UA server. Other messages are being received; continuing operations. ")
+			} else {
+				g.Log.Warn("No heartbeat message (ServerTime) received for over 10 seconds. Other messages are being received; continuing operations.")
+			}
+		}
+	}
+
+	// If context deadline exceeded, print it as debug and ignore it. We don't want to show this to the user.
+	if err != nil && errors.Is(err, context.DeadlineExceeded) {
+		g.Log.Debugf("ReadBatch context.DeadlineExceeded")
+		return nil, nil, nil
+	}
+
+	return
 }
 
 // ReadBatchPull performs a batch read of all OPC UA nodes in the NodeList using a pull method.
@@ -342,4 +430,58 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 		}
 		return nil, nil, err
 	}
+}
+
+// createMessageFromValue constructs a Benthos message from a given OPC UA DataValue and NodeDef.
+//
+// This function translates the OPC UA DataValue into a format suitable for Benthos, embedding relevant
+// metadata derived from the NodeDef. It handles various data types, ensuring that the message payload
+// accurately represents the OPC UA node's current value. Additionally, it marks heartbeat messages
+// when applicable, facilitating heartbeat monitoring within the system.
+func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef NodeDef) *service.Message {
+
+	b, tagType := g.getBytesFromValue(dataValue, nodeDef)
+	message := service.NewMessage(b)
+
+	// New ones
+	message.MetaSet("opcua_source_timestamp", dataValue.SourceTimestamp.Format("2006-01-02T15:04:05.000000Z07:00"))
+	message.MetaSet("opcua_server_timestamp", dataValue.ServerTimestamp.Format("2006-01-02T15:04:05.000000Z07:00"))
+	message.MetaSet("opcua_attr_nodeid", nodeDef.NodeID.String())
+	message.MetaSet("opcua_attr_nodeclass", nodeDef.NodeClass.String())
+	message.MetaSet("opcua_attr_browsename", nodeDef.BrowseName)
+	message.MetaSet("opcua_attr_description", nodeDef.Description)
+	message.MetaSet("opcua_attr_accesslevel", nodeDef.AccessLevel.String())
+	message.MetaSet("opcua_attr_datatype", nodeDef.DataType)
+
+	tagName := sanitize(nodeDef.BrowseName)
+
+	// Tag Group
+	tagGroup := nodeDef.Path
+	// remove nodeDef.BrowseName from tagGroup
+	tagGroup = strings.Replace(tagGroup, nodeDef.BrowseName, "", 1)
+	// remove trailing dot
+	tagGroup = strings.TrimSuffix(tagGroup, ".")
+
+	// if the node is the CurrentTime node, mark is as a heartbeat message
+	if g.HeartbeatNodeId != nil && nodeDef.NodeID.Namespace() == g.HeartbeatNodeId.Namespace() && nodeDef.NodeID.IntID() == g.HeartbeatNodeId.IntID() && g.UseHeartbeat {
+		message.MetaSet("opcua_heartbeat_message", "true")
+	}
+
+	if tagGroup == "" {
+		tagGroup = tagName
+	}
+
+	message.MetaSet("opcua_tag_group", tagGroup)
+	message.MetaSet("opcua_tag_name", tagName)
+
+	// if the tag group is the same as the tag name ("root"), we don't want to have a tag path
+	if tagGroup == tagName {
+		message.MetaSet("opcua_tag_path", "")
+	} else {
+		message.MetaSet("opcua_tag_path", tagGroup)
+	}
+
+	message.MetaSet("opcua_tag_type", tagType)
+
+	return message
 }

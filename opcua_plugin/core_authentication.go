@@ -11,7 +11,7 @@ import (
 // It orders endpoints by preferring those with SignAndEncrypt and Basic256Sha256 security settings,
 // and then falling back to None security settings if specified.
 // Other options are discarded. If they want to be used, they should be specified in the configuration.
-func (g *OPCUAInput) orderEndpoints(
+func (g *OPCUAConnection) orderEndpoints(
 	endpoints []*ua.EndpointDescription,
 	selectedAuthentication ua.UserTokenType,
 ) []*ua.EndpointDescription {
@@ -107,7 +107,7 @@ func isNoSecurityEndpoint(endpoint *ua.EndpointDescription) bool {
 
 // getEndpointIfExists searches within the provided endpoints for a suitable OPC UA endpoint.
 // If the endpoint is not found, it returns an error.
-func (g *OPCUAInput) getEndpointIfExists(
+func (g *OPCUAConnection) getEndpointIfExists(
 	endpoints []*ua.EndpointDescription,
 	selectedAuthentication ua.UserTokenType,
 	securityMode string,
@@ -139,7 +139,7 @@ func (g *OPCUAInput) getEndpointIfExists(
 	return nil, errors.New("no suitable endpoint found")
 }
 
-func (g *OPCUAInput) getUserAuthenticationType() ua.UserTokenType {
+func (g *OPCUAConnection) getUserAuthenticationType() ua.UserTokenType {
 	// Here we can add UserTokenTypeCertificate and UserTokenTypeIssuedToken later
 	switch {
 	case g.Username != "" && g.Password != "":
@@ -150,7 +150,7 @@ func (g *OPCUAInput) getUserAuthenticationType() ua.UserTokenType {
 }
 
 // explicitely check if security is selected + only allow specified settings
-func (g *OPCUAInput) isSecuritySelected() bool {
+func (g *OPCUAConnection) isSecuritySelected() bool {
 	var (
 		securityModeOK   bool
 		securityPolicyOK bool
