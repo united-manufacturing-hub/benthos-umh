@@ -36,15 +36,13 @@ func opcuaOutputConfig() *service.ConfigSpec {
 		Summary("OPC UA output plugin").
 		Description("The OPC UA output plugin writes data to an OPC UA server and optionally verifies the write via a read-back handshake.").
 		Field(service.NewObjectListField("nodeMappings",
-			service.NewObjectField("",
-				service.NewStringField("nodeId").
-					Description("The OPC UA node ID to write to.").
-					Example("ns=2;s=MyVariable"),
-				service.NewStringField("valueFrom").
-					Description("The field in the input message to get the value from.").
-					Example("value"),
-			),
-		).Description("Mapping of message fields to OPC UA nodes")).
+			service.NewStringField("nodeId").
+				Description("The OPC UA node ID to write to.").
+				Example("ns=2;s=MyVariable"),
+			service.NewStringField("valueFrom").
+				Description("The field in the input message to get the value from.").
+				Example("value")).
+			Description("List of node mappings defining which message fields to write to which OPC UA nodes")).
 		Field(service.NewObjectField("forcedDataTypes").
 			Description("Optional map of node IDs to data types to force for the write.").
 			Default(map[string]any{}).
@@ -61,8 +59,7 @@ func opcuaOutputConfig() *service.ConfigSpec {
 				Default(1),
 			service.NewIntField("timeBetweenRetriesMs").
 				Description("Delay between write attempts.").
-				Default(1000),
-		).
+				Default(1000)).
 			Description("Configuration for the read-back handshake.").
 			Default(map[string]any{
 				"enabled":              true,
