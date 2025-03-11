@@ -2,7 +2,10 @@ package opcua_plugin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
+	"strconv"
 	"time"
 
 	"github.com/gopcua/opcua/ua"
@@ -28,6 +31,7 @@ type OPCUAOutput struct {
 type NodeMapping struct {
 	NodeID    string `json:"nodeId"`
 	ValueFrom string `json:"valueFrom"`
+	DataType  string `json:"dataType"`
 }
 
 // opcuaOutputConfig creates and returns a configuration spec for the OPC UA output
@@ -41,12 +45,11 @@ func opcuaOutputConfig() *service.ConfigSpec {
 				Example("ns=2;s=MyVariable"),
 			service.NewStringField("valueFrom").
 				Description("The field in the input message to get the value from.").
-				Example("value")).
+				Example("value"),
+			service.NewStringField("dataType").
+				Description("The OPC UA data type for the value.").
+				Example("Int32")).
 			Description("List of node mappings defining which message fields to write to which OPC UA nodes")).
-		Field(service.NewObjectField("forcedDataTypes").
-			Description("Optional map of node IDs to data types to force for the write.").
-			Default(map[string]any{}).
-			Advanced()).
 		Field(service.NewObjectField("handshake",
 			service.NewBoolField("enabled").
 				Description("Whether to enable read-back verification after writing.").
@@ -88,43 +91,34 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		return nil, err
 	}
 
+	// Validate that we have at least one node mapping
+	if len(nodeMappingsConf) == 0 {
+		return nil, fmt.Errorf("at least one node mapping is required")
+	}
+
 	for i := 0; i < len(nodeMappingsConf); i++ {
 		mapConf := nodeMappingsConf[i]
 
 		nodeID, err := mapConf.FieldString("nodeId")
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("nodeId is required in node mapping %d: %w", i, err)
 		}
 
 		valueFrom, err := mapConf.FieldString("valueFrom")
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("valueFrom is required in node mapping %d: %w", i, err)
+		}
+
+		dataType, err := mapConf.FieldString("dataType")
+		if err != nil {
+			return nil, fmt.Errorf("dataType is required in node mapping %d: %w", i, err)
 		}
 
 		output.NodeMappings = append(output.NodeMappings, NodeMapping{
 			NodeID:    nodeID,
 			ValueFrom: valueFrom,
+			DataType:  dataType,
 		})
-	}
-
-	// Parse forced data types
-	if conf.Contains("forcedDataTypes") {
-		forcedTypes := map[string]string{}
-
-		forcedTypesObj, err := conf.FieldAny("forcedDataTypes")
-		if err != nil {
-			return nil, err
-		}
-
-		if forcedMap, ok := forcedTypesObj.(map[string]any); ok {
-			for key, val := range forcedMap {
-				if strVal, ok := val.(string); ok {
-					forcedTypes[key] = strVal
-				}
-			}
-		}
-
-		output.ForcedDataTypes = forcedTypes
 	}
 
 	// Parse handshake configuration
@@ -200,7 +194,7 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 		}
 
 		// Convert value to OPC UA variant
-		variant, err := o.convertToVariant(val, mapping.NodeID)
+		variant, err := o.convertToVariant(val, mapping.DataType)
 		if err != nil {
 			return fmt.Errorf("error converting value for node %s: %w", mapping.NodeID, err)
 		}
@@ -212,7 +206,8 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 					NodeID:      nodeID,
 					AttributeID: ua.AttributeIDValue,
 					Value: &ua.DataValue{
-						Value: variant,
+						Value:        variant,
+						EncodingMask: ua.DataValueValue,
 					},
 				},
 			},
@@ -238,110 +233,393 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 	return nil
 }
 
-// Close closes the connection to the OPC UA server
-func (o *OPCUAOutput) Close(ctx context.Context) error {
-	if o.Client == nil {
-		return nil
+// convertToVariant converts a value to an OPC UA variant with a specified type
+func (o *OPCUAOutput) convertToVariant(val interface{}, dataType string) (*ua.Variant, error) {
+	// Handle json.Number first to convert it to a numeric type
+	if jsonNum, ok := val.(json.Number); ok {
+		// Try float64 first as it's the most flexible
+		if floatVal, err := jsonNum.Float64(); err == nil {
+			val = floatVal
+		} else if intVal, err := jsonNum.Int64(); err == nil {
+			// If it's not a float, try int64
+			val = intVal
+		} else {
+			return nil, fmt.Errorf("value %v cannot be converted to a number", val)
+		}
 	}
 
-	o.Log.Infof("Closing connection to OPC UA server")
-	return o.Close(ctx)
-}
-
-// convertToVariant converts a value to an OPC UA variant
-func (o *OPCUAOutput) convertToVariant(val interface{}, nodeID string) (*ua.Variant, error) {
-	// Check if we have a forced data type for this node
-	if forcedType, ok := o.ForcedDataTypes[nodeID]; ok {
-		switch forcedType {
-		case "Boolean":
-			boolVal, ok := val.(bool)
-			if !ok {
-				return nil, fmt.Errorf("value %v cannot be converted to Boolean", val)
-			}
-			variant, err := ua.NewVariant(boolVal)
+	switch dataType {
+	case "Boolean":
+		// Convert to bool
+		var boolVal bool
+		switch v := val.(type) {
+		case bool:
+			boolVal = v
+		case int:
+			boolVal = v != 0
+		case int64:
+			boolVal = v != 0
+		case float64:
+			boolVal = v != 0
+		case string:
+			var err error
+			boolVal, err = strconv.ParseBool(v)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("value %v cannot be converted to Boolean: %w", val, err)
 			}
-			return variant, nil
-		case "Int32":
-			intVal, ok := val.(int32)
-			if !ok {
-				return nil, fmt.Errorf("value %v cannot be converted to Int32", val)
-			}
-			variant, err := ua.NewVariant(intVal)
-			if err != nil {
-				return nil, err
-			}
-			return variant, nil
-		case "Float":
-			floatVal, ok := val.(float32)
-			if !ok {
-				return nil, fmt.Errorf("value %v cannot be converted to Float", val)
-			}
-			variant, err := ua.NewVariant(floatVal)
-			if err != nil {
-				return nil, err
-			}
-			return variant, nil
-		case "Double":
-			doubleVal, ok := val.(float64)
-			if !ok {
-				return nil, fmt.Errorf("value %v cannot be converted to Double", val)
-			}
-			variant, err := ua.NewVariant(doubleVal)
-			if err != nil {
-				return nil, err
-			}
-			return variant, nil
-		case "String":
-			strVal, ok := val.(string)
-			if !ok {
-				return nil, fmt.Errorf("value %v cannot be converted to String", val)
-			}
-			variant, err := ua.NewVariant(strVal)
-			if err != nil {
-				return nil, err
-			}
-			return variant, nil
 		default:
-			return nil, fmt.Errorf("unsupported forced data type: %s", forcedType)
+			return nil, fmt.Errorf("value %v of type %T cannot be converted to Boolean", val, val)
 		}
-	}
+		return ua.NewVariant(boolVal)
 
-	// If no forced type, try to infer the type
-	switch v := val.(type) {
-	case bool:
-		variant, err := ua.NewVariant(v)
-		if err != nil {
-			return nil, err
+	case "SByte":
+		// Convert to int8
+		var int8Val int8
+		switch v := val.(type) {
+		case int8:
+			int8Val = v
+		case int:
+			if v < -128 || v > 127 {
+				return nil, fmt.Errorf("value %v is out of range for SByte", val)
+			}
+			int8Val = int8(v)
+		case int64:
+			if v < -128 || v > 127 {
+				return nil, fmt.Errorf("value %v is out of range for SByte", val)
+			}
+			int8Val = int8(v)
+		case float64:
+			if v < -128 || v > 127 {
+				return nil, fmt.Errorf("value %v is out of range for SByte", val)
+			}
+			int8Val = int8(v)
+		case string:
+			intVal, err := strconv.ParseInt(v, 10, 8)
+			if err != nil {
+				return nil, fmt.Errorf("value %v cannot be converted to SByte: %w", val, err)
+			}
+			int8Val = int8(intVal)
+		default:
+			return nil, fmt.Errorf("value %v of type %T cannot be converted to SByte", val, val)
 		}
-		return variant, nil
-	case int32:
-		variant, err := ua.NewVariant(v)
-		if err != nil {
-			return nil, err
+		return ua.NewVariant(int8Val)
+
+	case "Byte":
+		// Convert to uint8
+		var uint8Val uint8
+		switch v := val.(type) {
+		case uint8:
+			uint8Val = v
+		case int:
+			if v < 0 || v > 255 {
+				return nil, fmt.Errorf("value %v is out of range for Byte", val)
+			}
+			uint8Val = uint8(v)
+		case int64:
+			if v < 0 || v > 255 {
+				return nil, fmt.Errorf("value %v is out of range for Byte", val)
+			}
+			uint8Val = uint8(v)
+		case float64:
+			if v < 0 || v > 255 {
+				return nil, fmt.Errorf("value %v is out of range for Byte", val)
+			}
+			uint8Val = uint8(v)
+		case string:
+			uintVal, err := strconv.ParseUint(v, 10, 8)
+			if err != nil {
+				return nil, fmt.Errorf("value %v cannot be converted to Byte: %w", val, err)
+			}
+			uint8Val = uint8(uintVal)
+		default:
+			return nil, fmt.Errorf("value %v of type %T cannot be converted to Byte", val, val)
 		}
-		return variant, nil
-	case float32:
-		variant, err := ua.NewVariant(v)
-		if err != nil {
-			return nil, err
+		return ua.NewVariant(uint8Val)
+
+	case "Int16":
+		// Convert to int16
+		var int16Val int16
+		switch v := val.(type) {
+		case int16:
+			int16Val = v
+		case int:
+			if v < -32768 || v > 32767 {
+				return nil, fmt.Errorf("value %v is out of range for Int16", val)
+			}
+			int16Val = int16(v)
+		case int64:
+			if v < -32768 || v > 32767 {
+				return nil, fmt.Errorf("value %v is out of range for Int16", val)
+			}
+			int16Val = int16(v)
+		case float64:
+			if v < -32768 || v > 32767 {
+				return nil, fmt.Errorf("value %v is out of range for Int16", val)
+			}
+			int16Val = int16(v)
+		case string:
+			intVal, err := strconv.ParseInt(v, 10, 16)
+			if err != nil {
+				return nil, fmt.Errorf("value %v cannot be converted to Int16: %w", val, err)
+			}
+			int16Val = int16(intVal)
+		default:
+			return nil, fmt.Errorf("value %v of type %T cannot be converted to Int16", val, val)
 		}
-		return variant, nil
-	case float64:
-		variant, err := ua.NewVariant(v)
-		if err != nil {
-			return nil, err
+		return ua.NewVariant(int16Val)
+
+	case "UInt16":
+		// Convert to uint16
+		var uint16Val uint16
+		switch v := val.(type) {
+		case uint16:
+			uint16Val = v
+		case int:
+			if v < 0 || v > 65535 {
+				return nil, fmt.Errorf("value %v is out of range for UInt16", val)
+			}
+			uint16Val = uint16(v)
+		case int64:
+			if v < 0 || v > 65535 {
+				return nil, fmt.Errorf("value %v is out of range for UInt16", val)
+			}
+			uint16Val = uint16(v)
+		case float64:
+			if v < 0 || v > 65535 {
+				return nil, fmt.Errorf("value %v is out of range for UInt16", val)
+			}
+			uint16Val = uint16(v)
+		case string:
+			uintVal, err := strconv.ParseUint(v, 10, 16)
+			if err != nil {
+				return nil, fmt.Errorf("value %v cannot be converted to UInt16: %w", val, err)
+			}
+			uint16Val = uint16(uintVal)
+		default:
+			return nil, fmt.Errorf("value %v of type %T cannot be converted to UInt16", val, val)
 		}
-		return variant, nil
-	case string:
-		variant, err := ua.NewVariant(v)
-		if err != nil {
-			return nil, err
+		return ua.NewVariant(uint16Val)
+
+	case "Int32":
+		// Convert to int32
+		var int32Val int32
+		switch v := val.(type) {
+		case int32:
+			int32Val = v
+		case int:
+			int32Val = int32(v)
+		case int64:
+			if v > math.MaxInt32 || v < math.MinInt32 {
+				return nil, fmt.Errorf("value %v is out of range for Int32", val)
+			}
+			int32Val = int32(v)
+		case float64:
+			if v > math.MaxInt32 || v < math.MinInt32 {
+				return nil, fmt.Errorf("value %v is out of range for Int32", val)
+			}
+			int32Val = int32(v)
+		case string:
+			intVal, err := strconv.ParseInt(v, 10, 32)
+			if err != nil {
+				return nil, fmt.Errorf("value %v cannot be converted to Int32: %w", val, err)
+			}
+			int32Val = int32(intVal)
+		default:
+			return nil, fmt.Errorf("value %v of type %T cannot be converted to Int32", val, val)
 		}
-		return variant, nil
+		return ua.NewVariant(int32Val)
+
+	case "UInt32":
+		// Convert to uint32
+		var uint32Val uint32
+		switch v := val.(type) {
+		case uint32:
+			uint32Val = v
+		case int:
+			if v < 0 {
+				return nil, fmt.Errorf("value %v is out of range for UInt32", val)
+			}
+			uint32Val = uint32(v)
+		case int64:
+			if v < 0 || v > math.MaxUint32 {
+				return nil, fmt.Errorf("value %v is out of range for UInt32", val)
+			}
+			uint32Val = uint32(v)
+		case float64:
+			if v < 0 || v > math.MaxUint32 {
+				return nil, fmt.Errorf("value %v is out of range for UInt32", val)
+			}
+			uint32Val = uint32(v)
+		case string:
+			uintVal, err := strconv.ParseUint(v, 10, 32)
+			if err != nil {
+				return nil, fmt.Errorf("value %v cannot be converted to UInt32: %w", val, err)
+			}
+			uint32Val = uint32(uintVal)
+		default:
+			return nil, fmt.Errorf("value %v of type %T cannot be converted to UInt32", val, val)
+		}
+		return ua.NewVariant(uint32Val)
+
+	case "Int64":
+		// Convert to int64
+		var int64Val int64
+		switch v := val.(type) {
+		case int64:
+			int64Val = v
+		case int:
+			int64Val = int64(v)
+		case float64:
+			if v > math.MaxInt64 || v < math.MinInt64 {
+				return nil, fmt.Errorf("value %v is out of range for Int64", val)
+			}
+			int64Val = int64(v)
+		case string:
+			var err error
+			int64Val, err = strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("value %v cannot be converted to Int64: %w", val, err)
+			}
+		default:
+			return nil, fmt.Errorf("value %v of type %T cannot be converted to Int64", val, val)
+		}
+		return ua.NewVariant(int64Val)
+
+	case "UInt64":
+		// Convert to uint64
+		var uint64Val uint64
+		switch v := val.(type) {
+		case uint64:
+			uint64Val = v
+		case int:
+			if v < 0 {
+				return nil, fmt.Errorf("value %v is out of range for UInt64", val)
+			}
+			uint64Val = uint64(v)
+		case int64:
+			if v < 0 {
+				return nil, fmt.Errorf("value %v is out of range for UInt64", val)
+			}
+			uint64Val = uint64(v)
+		case float64:
+			if v < 0 || v > math.MaxUint64 {
+				return nil, fmt.Errorf("value %v is out of range for UInt64", val)
+			}
+			uint64Val = uint64(v)
+		case string:
+			var err error
+			uint64Val, err = strconv.ParseUint(v, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("value %v cannot be converted to UInt64: %w", val, err)
+			}
+		default:
+			return nil, fmt.Errorf("value %v of type %T cannot be converted to UInt64", val, val)
+		}
+		return ua.NewVariant(uint64Val)
+
+	case "Float":
+		// Convert to float32
+		var float32Val float32
+		switch v := val.(type) {
+		case float32:
+			float32Val = v
+		case int:
+			float32Val = float32(v)
+		case int64:
+			float32Val = float32(v)
+		case float64:
+			if v > math.MaxFloat32 || v < -math.MaxFloat32 {
+				return nil, fmt.Errorf("value %v is out of range for Float", val)
+			}
+			float32Val = float32(v)
+		case string:
+			float64Val, err := strconv.ParseFloat(v, 32)
+			if err != nil {
+				return nil, fmt.Errorf("value %v cannot be converted to Float: %w", val, err)
+			}
+			float32Val = float32(float64Val)
+		default:
+			return nil, fmt.Errorf("value %v of type %T cannot be converted to Float", val, val)
+		}
+		return ua.NewVariant(float32Val)
+
+	case "Double":
+		// Convert to float64
+		var float64Val float64
+		switch v := val.(type) {
+		case float64:
+			float64Val = v
+		case float32:
+			float64Val = float64(v)
+		case int:
+			float64Val = float64(v)
+		case int64:
+			float64Val = float64(v)
+		case string:
+			var err error
+			float64Val, err = strconv.ParseFloat(v, 64)
+			if err != nil {
+				return nil, fmt.Errorf("value %v cannot be converted to Double: %w", val, err)
+			}
+		default:
+			return nil, fmt.Errorf("value %v of type %T cannot be converted to Double", val, val)
+		}
+		return ua.NewVariant(float64Val)
+
+	case "String":
+		// Convert to string
+		var stringVal string
+		switch v := val.(type) {
+		case string:
+			stringVal = v
+		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool:
+			stringVal = fmt.Sprintf("%v", v)
+		case map[string]interface{}, []interface{}:
+			// Handle JSON objects and arrays by converting them to JSON strings
+			jsonBytes, err := json.Marshal(v)
+			if err != nil {
+				return nil, fmt.Errorf("value %v cannot be converted to JSON string: %w", val, err)
+			}
+			stringVal = string(jsonBytes)
+		default:
+			return nil, fmt.Errorf("value %v of type %T cannot be converted to String", val, val)
+		}
+		return ua.NewVariant(stringVal)
+
+	case "DateTime":
+		// Convert to time.Time
+		var timeVal time.Time
+		switch v := val.(type) {
+		case time.Time:
+			timeVal = v
+		case string:
+			// Try a few common formats
+			formats := []string{
+				time.RFC3339,
+				time.RFC3339Nano,
+				"2006-01-02T15:04:05",
+				"2006-01-02 15:04:05",
+				"2006-01-02",
+			}
+			var err error
+			var parsed bool
+			for _, format := range formats {
+				timeVal, err = time.Parse(format, v)
+				if err == nil {
+					parsed = true
+					break
+				}
+			}
+			if !parsed {
+				return nil, fmt.Errorf("value %v cannot be converted to DateTime: not a recognized time format", val)
+			}
+		default:
+			return nil, fmt.Errorf("value %v of type %T cannot be converted to DateTime", val, val)
+		}
+		return ua.NewVariant(timeVal)
+
 	default:
-		return nil, fmt.Errorf("unsupported value type: %T", val)
+		return nil, fmt.Errorf("unsupported data type: %s", dataType)
 	}
 }
 
