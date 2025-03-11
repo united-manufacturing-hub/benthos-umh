@@ -14,7 +14,7 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-var _ = FDescribe("OPC UA Output", func() {
+var _ = Describe("OPC UA Output", func() {
 	var builder *service.StreamBuilder
 
 	BeforeEach(func() {
@@ -91,7 +91,7 @@ opcua:
 
 	Context("opc-plc direct", func() {
 		When("writing to a simulator", func() {
-			FIt("should connect and write successfully", func() {
+			It("should connect and write successfully", func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
