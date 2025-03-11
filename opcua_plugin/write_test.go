@@ -97,7 +97,7 @@ opcua:
 
 				output := &OPCUAOutput{
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://10.13.37.102:50000",
+						Endpoint: "opc.tcp://localhost:50000",
 					},
 					NodeMappings: []NodeMapping{
 						{
@@ -133,7 +133,7 @@ opcua:
 			It("should connect and write successfully", func() {
 				err := builder.AddOutputYAML(`
 opcua:
-  endpoint: "opc.tcp://10.13.37.102:50000"
+  endpoint: "opc.tcp://localhost:50000"
   nodeMappings:
     - nodeId: "ns=4;i=6210"
       valueFrom: "setpoint"
