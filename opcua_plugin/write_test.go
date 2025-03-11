@@ -165,7 +165,7 @@ generate:
 		})
 	})
 
-	FContext("convertToVariant", func() {
+	Context("convertToVariant", func() {
 		var output *OPCUAOutput
 
 		BeforeEach(func() {
