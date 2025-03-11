@@ -315,11 +315,10 @@ output:
     nodeMappings:
       - nodeId: "ns=2;s=MySetpoint"
         valueFrom: "setpoint"   # The JSON field to write
+        dataType: "Int32"       # OPC UA data type (required)
       - nodeId: "ns=2;s=MyEnableFlag"
         valueFrom: "enable_flag"
-
-    forcedDataTypes:
-      "ns=2;s=MySetpoint": "Int32"   # override if server expects e.g. Int32
+        dataType: "Boolean"     # OPC UA data type (required)
 
     handshake:
       enabled: true               # enable read-back
@@ -329,12 +328,31 @@ output:
       timeBetweenRetriesMs: 1000  # time (ms) between write retries
 ```
 
+#### Supported Data Types
+
+The OPC UA output plugin supports the following commonly used data types for writing to OPC UA servers:
+
+- `Boolean`: True/false values
+- `Byte`: 8-bit unsigned integer (0 to 255)
+- `SByte`: 8-bit signed integer (-128 to 127)
+- `Int16`: 16-bit signed integer
+- `UInt16`: 16-bit unsigned integer
+- `Int32`: 32-bit signed integer
+- `UInt32`: 32-bit unsigned integer
+- `Int64`: 64-bit signed integer
+- `UInt64`: 64-bit unsigned integer
+- `Float`: 32-bit floating-point number
+- `Double`: 64-bit floating-point number
+- `String`: UTF-8 encoded string
+- `DateTime`: Date and time values
+
+**Note:** When selecting a data type, ensure it matches the expected type on the OPC UA server. Mismatched types may cause write operations to fail or data to be interpreted incorrectly.
+
 **Fields:**
 
 | Field                                   | Description                                                                                                                                                         |
 |-----------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **nodeMappings** (array)               | List of nodes to write to, each with:<br>- `nodeId`: The OPC UA Node ID, e.g., `"ns=2;s=MyVariable"`<br>- `valueFrom`: The JSON field name (string) in your message containing the final value. |
-| **forcedDataTypes**                     | (Optional) A map of `nodeId -> dataType`, ensuring the plugin uses that data type (e.g., `"Int32", "Boolean", "String", ...`).                                      |
+| **nodeMappings** (array)               | List of nodes to write to, each with:<br>- `nodeId`: The OPC UA Node ID, e.g., `"ns=2;s=MyVariable"`<br>- `valueFrom`: The JSON field name (string) in your message containing the final value.<br>- `dataType`: The OPC UA data type for the value (e.g., `"Boolean"`, `"Int32"`, `"Double"`, etc.) |
 | **handshake**                           | (Optional) A sub-config for read-back validation.                                                                                                                   |
 | **handshake.enabled**                  | Default `true` (for safe writes). If `true`, the plugin attempts to read the node(s) after writing. If the new value doesn’t match, the write is considered failed. |
 | **handshake.readbackTimeoutMs**         | How long to wait for the server to show the updated value. If it times out, the plugin fails (Benthos will not ACK the message).                                    |
@@ -361,11 +379,10 @@ output:
     nodeMappings:
       - nodeId: "ns=2;s=MySetpoint"
         valueFrom: "setpoint"
+        dataType: "Int32"
       - nodeId: "ns=2;s=MyEnableFlag"
         valueFrom: "enable_flag"
-
-    forcedDataTypes:
-      "ns=2;s=MySetpoint": "Int32"
+        dataType: "Boolean"
 
     handshake:
       enabled: true
