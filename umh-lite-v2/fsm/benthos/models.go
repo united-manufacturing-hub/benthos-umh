@@ -7,17 +7,56 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/fsm/utils"
 )
 
-// State constants represent the various states a Benthos instance can be in
+// LifecycleState constants represent the various lifecycle states a Benthos instance can be in
+// They will be handled before the operational states
 const (
-	// StateStarting indicates the instance is in the process of starting
-	StateStarting = "starting"
-	// StateRunning indicates the instance is running normally
-	StateRunning = "running"
-	// StateStopping indicates the instance is in the process of stopping
-	StateStopping = "stopping"
-	// StateStopped indicates the instance is not running
-	StateStopped = "stopped"
+	// LifecycleStateToBeCreated indicates the instance has not been created yet
+	LifecycleStateToBeCreated = "to_be_created"
+	// LifecycleStateCreating indicates the instance is being created
+	LifecycleStateCreating = "creating"
+	// LifecycleStateRemoving indicates the instance is being removed
+	LifecycleStateRemoving = "removing"
+	// LifecycleStateRemoved indicates the instance has been removed and can be cleaned up
+	LifecycleStateRemoved = "removed"
 )
+
+// State type checks
+func IsLifecycleState(state string) bool {
+	switch state {
+	case LifecycleStateToBeCreated,
+		LifecycleStateCreating,
+		LifecycleStateRemoving,
+		LifecycleStateRemoved:
+		return true
+	default:
+		return false
+	}
+}
+
+// OperationalState constants represent the various operational states a Benthos instance can be in
+// They will be handled after the lifecycle states
+const (
+	// OperationalStateStarting indicates the instance is in the process of starting
+	OperationalStateStarting = "starting"
+	// OperationalStateRunning indicates the instance is running normally
+	OperationalStateRunning = "running"
+	// OperationalStateStopping indicates the instance is in the process of stopping
+	OperationalStateStopping = "stopping"
+	// OperationalStateStopped indicates the instance is not running
+	OperationalStateStopped = "stopped"
+)
+
+func IsOperationalState(state string) bool {
+	switch state {
+	case OperationalStateStopped,
+		OperationalStateStarting,
+		OperationalStateRunning,
+		OperationalStateStopping:
+		return true
+	default:
+		return false
+	}
+}
 
 // Event constants represent the events that can trigger state transitions
 const (
@@ -29,6 +68,15 @@ const (
 	EventStop = "stop"
 	// EventStopDone is triggered when the instance has stopped
 	EventStopDone = "stop_done"
+
+	// EventRemove is triggered to remove an instance
+	EventRemove = "remove"
+	// EventRemoveDone is triggered when the instance has been removed
+	EventRemoveDone = "remove_done"
+	// EventCreate is triggered to create an instance
+	EventCreate = "create"
+	// EventCreateDone is triggered when the instance has been created
+	EventCreateDone = "create_done"
 )
 
 // BenthosInstance represents a single Benthos pipeline instance with a state machine
@@ -59,6 +107,18 @@ type BenthosInstance struct {
 
 	// lastError stores the last error that occurred during a transition
 	lastError error
+
+	// ExternalState contains all metrics, logs, etc.
+	// that are updated at the beginning of Reconcile and then used to
+	// determine the next state
+	ExternalState ExternalState
+}
+
+// ExternalState contains all metrics, logs, etc.
+// that are updated at the beginning of Reconcile and then used to
+// determine the next state
+type ExternalState struct {
+	IsRunning bool
 }
 
 // GetError returns the last error that occurred during a transition

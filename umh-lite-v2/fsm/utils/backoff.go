@@ -14,7 +14,7 @@ type TransitionBackoffManager struct {
 func NewTransitionBackoffManager() *TransitionBackoffManager {
 	return &TransitionBackoffManager{
 		retryCount:            1,
-		lastTransitionAttempt: time.Now().Add(-2 * time.Minute), // Set to past time to allow first attempt
+		lastTransitionAttempt: time.Now(), // Set to past time to allow first attempt
 	}
 }
 

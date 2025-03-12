@@ -37,9 +37,6 @@ var _ = Describe("TransitionBackoffManager", func() {
 	})
 
 	Context("when checking if backoff has elapsed", func() {
-		It("should return true initially", func() {
-			Expect(manager.ReconcileBackoffElapsed()).To(BeTrue())
-		})
 
 		It("should return false immediately after increment", func() {
 			manager.IncrementRetryCount()

@@ -26,7 +26,12 @@ func (b *BenthosInstance) Reconcile(ctx context.Context) error {
 	}
 
 	// Step 3: Attempt to reconcile the state.
-	return b.reconcileStateTransition(ctx)
+	err := b.reconcileStateTransition(ctx)
+	if err != nil {
+		b.SetError(err)
+		return err
+	}
+	return nil
 }
 
 // reconcileExternalChanges checks if the BenthosInstance has encountered new config
@@ -51,6 +56,9 @@ func (b *BenthosInstance) reconcileBackoffElapsed() bool {
 
 // reconcileStateTransition compares the current state with the desired state
 // and, if necessary, sends events to drive the FSM from the current to the desired state.
+// Any functions that fetch information are disallowed here and must be called in reconcileExternalChanges
+// and exist in BenthosInstanceExternalState.
+// This is to ensure full testability of the FSM.
 func (b *BenthosInstance) reconcileStateTransition(ctx context.Context) error {
 	currentState := b.GetState()
 	desiredState := b.GetDesiredState()
@@ -60,31 +68,69 @@ func (b *BenthosInstance) reconcileStateTransition(ctx context.Context) error {
 		return nil
 	}
 
+	// Handle lifecycle states first - these take precedence over operational states
+	if IsLifecycleState(currentState) {
+		return b.reconcileLifecycleStates(ctx, currentState)
+	}
+
+	// Handle operational states
+	if IsOperationalState(currentState) {
+		return b.reconcileOperationalStates(ctx, currentState, desiredState)
+	}
+
+	return fmt.Errorf("invalid state: %s", currentState)
+}
+
+// reconcileLifecycleStates handles states related to instance lifecycle (creating/removing)
+func (b *BenthosInstance) reconcileLifecycleStates(ctx context.Context, currentState string) error {
+	// Independent what the desired state is, we always need to reconcile the lifecycle states first
+	switch currentState {
+	case LifecycleStateToBeCreated:
+		if err := b.InitiateServiceCreation(ctx); err != nil {
+			return err
+		}
+		return b.sendEvent(ctx, EventCreate)
+	case LifecycleStateCreating:
+		// TODO: check if the service is created
+		return b.sendEvent(ctx, EventCreateDone)
+	case LifecycleStateRemoving:
+		if err := b.InitiateServiceRemoval(ctx); err != nil {
+			return err
+		}
+		return b.sendEvent(ctx, EventRemoveDone)
+	case LifecycleStateRemoved:
+		return fmt.Errorf("instance %s is removed", b.ID)
+	default:
+		// If we are not in a lifecycle state, just continue
+		return nil
+	}
+}
+
+// reconcileOperationalStates handles states related to instance operations (starting/stopping)
+func (b *BenthosInstance) reconcileOperationalStates(ctx context.Context, currentState string, desiredState string) error {
 	switch desiredState {
-	case StateRunning:
+	case OperationalStateRunning:
 		return b.reconcileTransitionToRunning(ctx, currentState)
-	case StateStopped:
+	case OperationalStateStopped:
 		return b.reconcileTransitionToStopped(ctx, currentState)
 	default:
 		return fmt.Errorf("invalid desired state: %s", desiredState)
 	}
-
-	return nil
 }
 
 // reconcileTransitionToRunning handles transitions when the desired state is Running.
 // It deals with moving from Stopped to Starting and then to Running.
 func (b *BenthosInstance) reconcileTransitionToRunning(ctx context.Context, currentState string) error {
-	if currentState == StateStopped {
+
+	switch currentState {
+	case OperationalStateStopped:
 		// Attempt to initiate start (e.g. perform necessary pre-start checks).
 		if err := b.InitiateBenthosStart(ctx); err != nil {
 			return err
 		}
 		// Send event to transition from Stopped to Starting.
 		return b.sendEvent(ctx, EventStart)
-	}
-
-	if currentState == StateStarting {
+	case OperationalStateStarting:
 		// If already in the process of starting, check if the instance is healthy.
 		if b.IsBenthosRunning() {
 			// Transition from Starting to Running.
@@ -92,31 +138,30 @@ func (b *BenthosInstance) reconcileTransitionToRunning(ctx context.Context, curr
 		}
 		// Otherwise, wait for the next reconcile cycle.
 		return nil
+	default:
+		return fmt.Errorf("invalid current state: %s", currentState)
 	}
-
-	return nil
 }
 
 // reconcileTransitionToStopped handles transitions when the desired state is Stopped.
 // It deals with moving from Running (or Starting) to Stopping and then to Stopped.
 func (b *BenthosInstance) reconcileTransitionToStopped(ctx context.Context, currentState string) error {
-	if currentState == StateRunning || currentState == StateStarting {
-		// Attempt to initiate a stop (e.g. perform cleanup).
+
+	switch currentState {
+	case OperationalStateRunning, OperationalStateStarting:
 		if err := b.InitiateBenthosStop(ctx); err != nil {
 			return err
 		}
 		// Send event to transition to Stopping.
 		return b.sendEvent(ctx, EventStop)
-	}
-
-	if currentState == StateStopping {
+	case OperationalStateStopping:
 		// If already stopping, verify if the instance is completely stopped.
 		if b.IsBenthosStopped() {
 			// Transition from Stopping to Stopped.
 			return b.sendEvent(ctx, EventStopDone)
 		}
 		return nil
+	default:
+		return fmt.Errorf("invalid current state: %s", currentState)
 	}
-
-	return nil
 }

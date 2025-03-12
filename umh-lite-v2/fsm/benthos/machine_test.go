@@ -2,7 +2,9 @@ package benthos_test
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -27,116 +29,140 @@ var _ = Describe("Benthos FSM State Transitions", func() {
 		instance.RegisterCallbacks()
 	})
 
-	It("should transition through states correctly when starting and stopping", func() {
-		By("verifying initial state is stopped")
-		Expect(instance.GetState()).To(Equal(benthos.StateStopped))
-		Expect(instance.GetDesiredState()).To(Equal(benthos.StateStopped))
+	Context("Lifecycle States", func() {
+		It("should handle initial creation correctly", func() {
+			By("verifying initial state is LifecycleStateToBeCreated")
+			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateToBeCreated))
 
-		By("setting desired state to running")
-		err := instance.SetDesiredState(benthos.StateRunning)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(instance.GetDesiredState()).To(Equal(benthos.StateRunning))
-
-		By("first reconciliation: transitioning from stopped to starting")
-		err = instance.Reconcile(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(instance.GetState()).To(Equal(benthos.StateStarting))
-
-		By("second reconciliation: transitioning from starting to running")
-		err = instance.Reconcile(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(instance.GetState()).To(Equal(benthos.StateRunning))
-
-		By("setting desired state back to stopped")
-		err = instance.SetDesiredState(benthos.StateStopped)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(instance.GetDesiredState()).To(Equal(benthos.StateStopped))
-
-		By("first reconciliation: transitioning from running to stopping")
-		err = instance.Reconcile(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(instance.GetState()).To(Equal(benthos.StateStopping))
-
-		By("second reconciliation: transitioning from stopping to stopped")
-		err = instance.Reconcile(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(instance.GetState()).To(Equal(benthos.StateStopped))
-	})
-
-	It("should handle rapid desired state changes", func() {
-		By("changing desired state multiple times before reconciliation")
-		err := instance.SetDesiredState(benthos.StateRunning)
-		Expect(err).NotTo(HaveOccurred())
-		err = instance.SetDesiredState(benthos.StateStopped)
-		Expect(err).NotTo(HaveOccurred())
-		err = instance.SetDesiredState(benthos.StateRunning)
-		Expect(err).NotTo(HaveOccurred())
-
-		By("reconciling should move towards the final desired state")
-		err = instance.Reconcile(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(instance.GetState()).To(Equal(benthos.StateStarting))
-
-		err = instance.Reconcile(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(instance.GetState()).To(Equal(benthos.StateRunning))
-	})
-
-	It("should handle desired state change during transition", func() {
-		By("starting the transition to running")
-		err := instance.SetDesiredState(benthos.StateRunning)
-		Expect(err).NotTo(HaveOccurred())
-		err = instance.Reconcile(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(instance.GetState()).To(Equal(benthos.StateStarting))
-
-		By("changing desired state to stopped while in starting state")
-		err = instance.SetDesiredState(benthos.StateStopped)
-		Expect(err).NotTo(HaveOccurred())
-
-		By("reconciling should keep the instance in starting state")
-		err = instance.Reconcile(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(instance.GetState()).To(Equal(benthos.StateStopping))
-
-		By("finally transition to stopped")
-		err = instance.Reconcile(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(instance.GetState()).To(Equal(benthos.StateStopped))
-	})
-
-	It("should be idempotent when desired state matches current state", func() {
-		By("setting desired state to current state (stopped)")
-		err := instance.SetDesiredState(benthos.StateStopped)
-		Expect(err).NotTo(HaveOccurred())
-
-		By("reconciling multiple times should not change state")
-		for i := 0; i < 3; i++ {
+			By("reconciling should transition from to_be_created to creating")
 			err := instance.Reconcile(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetState()).To(Equal(benthos.StateStopped))
-		}
+			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateCreating))
+		})
 
-		By("transitioning to running")
-		err = instance.SetDesiredState(benthos.StateRunning)
-		Expect(err).NotTo(HaveOccurred())
-		err = instance.Reconcile(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(instance.GetState()).To(Equal(benthos.StateStarting))
-
-		err = instance.Reconcile(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(instance.GetState()).To(Equal(benthos.StateRunning))
-
-		By("setting desired state to current state (running)")
-		err = instance.SetDesiredState(benthos.StateRunning)
-		Expect(err).NotTo(HaveOccurred())
-
-		By("reconciling multiple times should not change state")
-		for i := 0; i < 3; i++ {
+		It("should handle removal from Stopped state", func() {
+			By("getting to stopping state")
+			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateToBeCreated))
+			err := instance.Reconcile(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateCreating))
 			err = instance.Reconcile(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetState()).To(Equal(benthos.StateRunning))
-		}
+			Expect(instance.GetState()).To(Equal(benthos.OperationalStateStopped))
+
+			By("initiating removal from Stopped state")
+			err = instance.Remove(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateRemoving))
+
+			By("reconciling should handle the removal")
+			err = instance.Reconcile(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateRemoved))
+		})
+
+		It("should handle removal from Running state", func() {
+			By("getting to stopping state")
+			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateToBeCreated))
+			err := instance.Reconcile(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateCreating))
+			err = instance.Reconcile(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetState()).To(Equal(benthos.OperationalStateStopped))
+
+			By("setting desired state to running")
+			err = instance.SetDesiredState(benthos.OperationalStateRunning)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetDesiredState()).To(Equal(benthos.OperationalStateRunning))
+
+			By("first reconciliation: transitioning from stopped to starting")
+			err = instance.Reconcile(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetState()).To(Equal(benthos.OperationalStateStarting))
+
+			By("second reconciliation: instance is now running")
+			instance.SetExternalState(true) // Simulate instance running
+			err = instance.Reconcile(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetState()).To(Equal(benthos.OperationalStateRunning))
+
+			By("initiating removal from Running state")
+			err = instance.Remove(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateRemoving))
+
+			By("reconciling should handle the removal")
+			err = instance.Reconcile(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateRemoved))
+		})
+
+	})
+
+	Context("Operational States", func() {
+		It("should transition through states correctly when starting and stopping", func() {
+			By("getting to stopping state")
+			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateToBeCreated))
+			err := instance.Reconcile(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateCreating))
+			err = instance.Reconcile(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetState()).To(Equal(benthos.OperationalStateStopped))
+
+			By("setting desired state to running")
+			err = instance.SetDesiredState(benthos.OperationalStateRunning)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetDesiredState()).To(Equal(benthos.OperationalStateRunning))
+
+			By("first reconciliation: transitioning from stopped to starting")
+			err = instance.Reconcile(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetState()).To(Equal(benthos.OperationalStateStarting))
+
+			By("second reconciliation: instance is now running")
+			instance.SetExternalState(true) // Simulate instance running
+			err = instance.Reconcile(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetState()).To(Equal(benthos.OperationalStateRunning))
+
+			By("setting desired state back to stopped")
+			err = instance.SetDesiredState(benthos.OperationalStateStopped)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetDesiredState()).To(Equal(benthos.OperationalStateStopped))
+
+			By("first reconciliation: transitioning from running to stopping")
+			err = instance.Reconcile(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetState()).To(Equal(benthos.OperationalStateStopping))
+
+			By("second reconciliation: instance is now stopped")
+			instance.SetExternalState(false) // Simulate instance stopped
+			err = instance.Reconcile(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetState()).To(Equal(benthos.OperationalStateStopped))
+		})
+	})
+
+	Context("Error Handling and Backoff", func() {
+		It("should handle errors and respect backoff", func() {
+			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateToBeCreated))
+
+			// Set up an error condition
+			instance.SetError(errors.New("test error"))
+
+			By("respecting backoff period")
+			err := instance.Reconcile(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateToBeCreated)) // State shouldn't change
+
+			By("allowing retry after backoff")
+			time.Sleep(time.Millisecond) // Simulate backoff elapsed
+			instance.ClearError()        // Clear error as if backoff elapsed
+			err = instance.Reconcile(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateCreating))
+		})
 	})
 })
