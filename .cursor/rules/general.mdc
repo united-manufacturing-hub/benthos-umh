@@ -1,6 +1,6 @@
 ---
 description: This is for every response
-globs: 
+globs: **/**
 alwaysApply: false
 ---
 DO NOT GIVE ME HIGH LEVEL SHIT, IF I ASK FOR FIX OR EXPLANATION, I WANT ACTUAL CODE OR EXPLANATION! I DON'T WANT "Here's how you can blablabla"
