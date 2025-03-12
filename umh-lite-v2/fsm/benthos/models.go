@@ -7,32 +7,6 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/fsm/utils"
 )
 
-// LifecycleState constants represent the various lifecycle states a Benthos instance can be in
-// They will be handled before the operational states
-const (
-	// LifecycleStateToBeCreated indicates the instance has not been created yet
-	LifecycleStateToBeCreated = "to_be_created"
-	// LifecycleStateCreating indicates the instance is being created
-	LifecycleStateCreating = "creating"
-	// LifecycleStateRemoving indicates the instance is being removed
-	LifecycleStateRemoving = "removing"
-	// LifecycleStateRemoved indicates the instance has been removed and can be cleaned up
-	LifecycleStateRemoved = "removed"
-)
-
-// State type checks
-func IsLifecycleState(state string) bool {
-	switch state {
-	case LifecycleStateToBeCreated,
-		LifecycleStateCreating,
-		LifecycleStateRemoving,
-		LifecycleStateRemoved:
-		return true
-	default:
-		return false
-	}
-}
-
 // OperationalState constants represent the various operational states a Benthos instance can be in
 // They will be handled after the lifecycle states
 const (
@@ -68,15 +42,6 @@ const (
 	EventStop = "stop"
 	// EventStopDone is triggered when the instance has stopped
 	EventStopDone = "stop_done"
-
-	// EventRemove is triggered to remove an instance
-	EventRemove = "remove"
-	// EventRemoveDone is triggered when the instance has been removed
-	EventRemoveDone = "remove_done"
-	// EventCreate is triggered to create an instance
-	EventCreate = "create"
-	// EventCreateDone is triggered when the instance has been created
-	EventCreateDone = "create_done"
 )
 
 // BenthosInstance represents a single Benthos pipeline instance with a state machine

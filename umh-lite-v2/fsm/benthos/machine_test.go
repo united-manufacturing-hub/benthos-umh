@@ -10,6 +10,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/fsm/benthos"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/fsm/utils"
 )
 
 func TestBenthosFsm(t *testing.T) {
@@ -32,20 +33,20 @@ var _ = Describe("Benthos FSM State Transitions", func() {
 	Context("Lifecycle States", func() {
 		It("should handle initial creation correctly", func() {
 			By("verifying initial state is LifecycleStateToBeCreated")
-			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateToBeCreated))
+			Expect(instance.GetState()).To(Equal(utils.LifecycleStateToBeCreated))
 
 			By("reconciling should transition from to_be_created to creating")
 			err := instance.Reconcile(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateCreating))
+			Expect(instance.GetState()).To(Equal(utils.LifecycleStateCreating))
 		})
 
 		It("should handle removal from Stopped state", func() {
 			By("getting to stopping state")
-			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateToBeCreated))
+			Expect(instance.GetState()).To(Equal(utils.LifecycleStateToBeCreated))
 			err := instance.Reconcile(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateCreating))
+			Expect(instance.GetState()).To(Equal(utils.LifecycleStateCreating))
 			err = instance.Reconcile(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(instance.GetState()).To(Equal(benthos.OperationalStateStopped))
@@ -53,20 +54,20 @@ var _ = Describe("Benthos FSM State Transitions", func() {
 			By("initiating removal from Stopped state")
 			err = instance.Remove(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateRemoving))
+			Expect(instance.GetState()).To(Equal(utils.LifecycleStateRemoving))
 
 			By("reconciling should handle the removal")
 			err = instance.Reconcile(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateRemoved))
+			Expect(instance.GetState()).To(Equal(utils.LifecycleStateRemoved))
 		})
 
 		It("should handle removal from Running state", func() {
 			By("getting to stopping state")
-			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateToBeCreated))
+			Expect(instance.GetState()).To(Equal(utils.LifecycleStateToBeCreated))
 			err := instance.Reconcile(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateCreating))
+			Expect(instance.GetState()).To(Equal(utils.LifecycleStateCreating))
 			err = instance.Reconcile(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(instance.GetState()).To(Equal(benthos.OperationalStateStopped))
@@ -90,12 +91,12 @@ var _ = Describe("Benthos FSM State Transitions", func() {
 			By("initiating removal from Running state")
 			err = instance.Remove(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateRemoving))
+			Expect(instance.GetState()).To(Equal(utils.LifecycleStateRemoving))
 
 			By("reconciling should handle the removal")
 			err = instance.Reconcile(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateRemoved))
+			Expect(instance.GetState()).To(Equal(utils.LifecycleStateRemoved))
 		})
 
 	})
@@ -103,10 +104,10 @@ var _ = Describe("Benthos FSM State Transitions", func() {
 	Context("Operational States", func() {
 		It("should transition through states correctly when starting and stopping", func() {
 			By("getting to stopping state")
-			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateToBeCreated))
+			Expect(instance.GetState()).To(Equal(utils.LifecycleStateToBeCreated))
 			err := instance.Reconcile(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateCreating))
+			Expect(instance.GetState()).To(Equal(utils.LifecycleStateCreating))
 			err = instance.Reconcile(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(instance.GetState()).To(Equal(benthos.OperationalStateStopped))
@@ -147,7 +148,7 @@ var _ = Describe("Benthos FSM State Transitions", func() {
 
 	Context("Error Handling and Backoff", func() {
 		It("should handle errors and respect backoff", func() {
-			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateToBeCreated))
+			Expect(instance.GetState()).To(Equal(utils.LifecycleStateToBeCreated))
 
 			// Set up an error condition
 			instance.SetError(errors.New("test error"))
@@ -155,14 +156,14 @@ var _ = Describe("Benthos FSM State Transitions", func() {
 			By("respecting backoff period")
 			err := instance.Reconcile(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateToBeCreated)) // State shouldn't change
+			Expect(instance.GetState()).To(Equal(utils.LifecycleStateToBeCreated)) // State shouldn't change
 
 			By("allowing retry after backoff")
 			time.Sleep(time.Millisecond) // Simulate backoff elapsed
 			instance.ClearError()        // Clear error as if backoff elapsed
 			err = instance.Reconcile(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetState()).To(Equal(benthos.LifecycleStateCreating))
+			Expect(instance.GetState()).To(Equal(utils.LifecycleStateCreating))
 		})
 	})
 })

@@ -5,6 +5,8 @@ import (
 	"log"
 
 	"github.com/looplab/fsm"
+
+	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/fsm/utils"
 )
 
 // RegisterCallbacks registers common callbacks for state transitions
@@ -28,19 +30,19 @@ func (instance *BenthosInstance) RegisterCallbacks() {
 		log.Printf("[FSM] Benthos instance %s is running", instance.ID)
 	}
 
-	instance.callbacks["enter_"+LifecycleStateRemoved] = func(ctx context.Context, e *fsm.Event) {
+	instance.callbacks["enter_"+utils.LifecycleStateRemoved] = func(ctx context.Context, e *fsm.Event) {
 		log.Printf("[FSM] Benthos instance %s is removed", instance.ID)
 	}
 
-	instance.callbacks["enter_"+LifecycleStateCreating] = func(ctx context.Context, e *fsm.Event) {
+	instance.callbacks["enter_"+utils.LifecycleStateCreating] = func(ctx context.Context, e *fsm.Event) {
 		log.Printf("[FSM] Benthos instance %s is creating", instance.ID)
 	}
 
-	instance.callbacks["enter_"+LifecycleStateToBeCreated] = func(ctx context.Context, e *fsm.Event) {
+	instance.callbacks["enter_"+utils.LifecycleStateToBeCreated] = func(ctx context.Context, e *fsm.Event) {
 		log.Printf("[FSM] Benthos instance %s is to be created", instance.ID)
 	}
 
-	instance.callbacks["enter_"+LifecycleStateRemoving] = func(ctx context.Context, e *fsm.Event) {
+	instance.callbacks["enter_"+utils.LifecycleStateRemoving] = func(ctx context.Context, e *fsm.Event) {
 		log.Printf("[FSM] Benthos instance %s is removing", instance.ID)
 	}
 

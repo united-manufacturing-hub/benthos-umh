@@ -10,6 +10,23 @@ alwaysApply: false
    - Each subpackage (e.g. `benthos`, `redpanda`, `s6`) manages a distinct FSM for that subsystem.  
    - The pattern is a reconciliation loop that compares the current state with the desired state, issuing events to the FSM.  
 
+2. **State Types**
+   - **Lifecycle States**: Handle creation and removal
+     - Take precedence over operational states
+     - Examples: `to_be_created -> creating -> created`, `to_be_removed -> removing -> removed`
+     - Cannot be set as desired states (they are transitional)
+   - **Operational States**: Handle running state of the instance
+     - Only processed after lifecycle states are complete
+     - Examples: `stopped -> starting -> running -> stopping -> stopped`
+     - Can be set as desired states (`running` or `stopped`)
+
+2. **State Management Rules**
+   - Lifecycle states always take precedence
+   - Only operational states can be desired states
+   - State transitions must go through the reconciliation loop
+   - External state changes are detected at the start of reconciliation
+   - Backoff is checked before any state transition
+
 2. **Separation of Concerns**  
    - **`machine.go`**: Holds the states, events, and the looplab/fsm constructor. This file only sets up how the FSM transitions happen (e.g. `Stopped -> Starting -> Running`).  
    - **`fsm_callbacks.go`**: Contains short, **fail-free** callbacks attached to transitions (like `enter_running`). These callbacks log or do trivial in-memory operations. They should never block or fail.  

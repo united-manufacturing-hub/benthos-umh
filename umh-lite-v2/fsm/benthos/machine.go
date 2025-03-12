@@ -28,21 +28,19 @@ func NewBenthosInstance(id string, callbacks map[string]fsm.Callback) *BenthosIn
 
 	// Define the FSM transitions
 	instance.FSM = fsm.NewFSM(
-		LifecycleStateToBeCreated, // Initial state
+		utils.LifecycleStateToBeCreated, // Initial state
 		fsm.Events{
-			// StateToBeCreated -> Creating -> Stopped
-			{Name: EventCreate, Src: []string{LifecycleStateToBeCreated}, Dst: LifecycleStateCreating},
-			{Name: EventCreateDone, Src: []string{LifecycleStateCreating}, Dst: OperationalStateStopped},
+			// Lifecycle transitions
+			{Name: utils.LifecycleEventCreate, Src: []string{utils.LifecycleStateToBeCreated}, Dst: utils.LifecycleStateCreating},
+			{Name: utils.LifecycleEventCreateDone, Src: []string{utils.LifecycleStateCreating}, Dst: OperationalStateStopped},
+			{Name: utils.LifecycleEventRemove, Src: []string{OperationalStateStarting, OperationalStateRunning, OperationalStateStopping, OperationalStateStopped}, Dst: utils.LifecycleStateRemoving},
+			{Name: utils.LifecycleEventRemoveDone, Src: []string{utils.LifecycleStateRemoving}, Dst: utils.LifecycleStateRemoved},
 
-			// Stopped -> Starting -> Running
+			// Operational transitions
 			{Name: EventStart, Src: []string{OperationalStateStopped}, Dst: OperationalStateStarting},
 			{Name: EventStartDone, Src: []string{OperationalStateStarting}, Dst: OperationalStateRunning},
 			{Name: EventStop, Src: []string{OperationalStateRunning, OperationalStateStarting}, Dst: OperationalStateStopping},
 			{Name: EventStopDone, Src: []string{OperationalStateStopping}, Dst: OperationalStateStopped},
-
-			// Starting / Running / Stopping / Stopped -> Removing
-			{Name: EventRemove, Src: []string{OperationalStateStarting, OperationalStateRunning, OperationalStateStopping, OperationalStateStopped}, Dst: LifecycleStateRemoving},
-			{Name: EventRemoveDone, Src: []string{LifecycleStateRemoving}, Dst: LifecycleStateRemoved},
 		},
 		fsm.Callbacks{
 			"enter_state": func(ctx context.Context, e *fsm.Event) {
@@ -59,7 +57,7 @@ func NewBenthosInstance(id string, callbacks map[string]fsm.Callback) *BenthosIn
 }
 
 func (b *BenthosInstance) Remove(ctx context.Context) error {
-	return b.sendEvent(ctx, EventRemove)
+	return b.sendEvent(ctx, utils.LifecycleEventRemove)
 }
 
 // GetState safely returns the current state

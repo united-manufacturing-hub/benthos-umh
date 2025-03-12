@@ -23,23 +23,34 @@ const (
 	S6ServiceUnknown S6ServiceStatus = "unknown"
 )
 
-// State constants represent the various states a service can be in
+// Operational state constants represent the runtime states of a service
 const (
-	// StateStarting indicates the service is in the process of starting
-	StateStarting = "starting"
-	// StateRunning indicates the service is running normally
-	StateRunning = "running"
-	// StateStopping indicates the service is in the process of stopping
-	StateStopping = "stopping"
-	// StateStopped indicates the service is not running
-	StateStopped = "stopped"
-	// StateFailed indicates the service has failed
-	StateFailed = "failed"
-	// StateUnknown indicates the service status is unknown
-	StateUnknown = "unknown"
+	// OperationalStateStarting indicates the service is in the process of starting
+	OperationalStateStarting = "starting"
+	// OperationalStateRunning indicates the service is running normally
+	OperationalStateRunning = "running"
+	// OperationalStateStopping indicates the service is in the process of stopping
+	OperationalStateStopping = "stopping"
+	// OperationalStateStopped indicates the service is not running
+	OperationalStateStopped = "stopped"
+	// OperationalStateUnknown indicates the service status is unknown
+	OperationalStateUnknown = "unknown"
 )
 
-// Event constants represent the events that can trigger state transitions
+func IsOperationalState(state string) bool {
+	switch state {
+	case OperationalStateStopped,
+		OperationalStateStarting,
+		OperationalStateRunning,
+		OperationalStateStopping,
+		OperationalStateUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Operational event constants represent events related to service runtime states
 const (
 	// EventStart is triggered to start a service
 	EventStart = "start"
@@ -55,6 +66,18 @@ const (
 	EventRestart = "restart"
 )
 
+// S6ExternalState represents the state of the service as observed externally
+type S6ExternalState struct {
+	// Status represents the current observed status of the service
+	Status S6ServiceStatus
+	// LastStateChange is the timestamp of the last observed state change
+	LastStateChange int64
+	// Uptime is the service uptime in seconds (if running)
+	Uptime int64
+	// Pid is the process ID of the service (if running)
+	Pid int
+}
+
 // S6Instance represents a single S6 service instance with a state machine
 type S6Instance struct {
 	// ID is a unique identifier for this instance (service name)
@@ -66,10 +89,10 @@ type S6Instance struct {
 	// FSM is the finite state machine that manages instance state
 	FSM *fsm.FSM
 
-	// DesiredState represents the target state we want to reach
+	// DesiredState represents the target operational state we want to reach
 	DesiredState string
 
-	// CurrentState represents the current state of the instance
+	// CurrentState represents the current operational state of the instance
 	CurrentState string
 
 	// Callbacks for state transitions
@@ -84,17 +107,11 @@ type S6Instance struct {
 	// ServicePath is the path to the s6 service directory
 	ServicePath string
 
+	// ExternalState represents the observed state of the service
 	// ExternalState contains all metrics, logs, etc.
 	// that are updated at the beginning of Reconcile and then used to
 	// determine the next state
-	ExternalState ExternalState
-}
-
-// ExternalState contains all metrics, logs, etc.
-// that are updated at the beginning of Reconcile and then used to
-// determine the next state
-type ExternalState struct {
-	Status S6ServiceStatus
+	ExternalState S6ExternalState
 }
 
 // GetError returns the last error that occurred during a transition

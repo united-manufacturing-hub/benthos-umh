@@ -3,6 +3,8 @@ package benthos
 import (
 	"context"
 	"fmt"
+
+	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/fsm/utils"
 )
 
 // Reconcile examines the BenthosInstance and, in three steps:
@@ -69,7 +71,7 @@ func (b *BenthosInstance) reconcileStateTransition(ctx context.Context) error {
 	}
 
 	// Handle lifecycle states first - these take precedence over operational states
-	if IsLifecycleState(currentState) {
+	if utils.IsLifecycleState(currentState) {
 		return b.reconcileLifecycleStates(ctx, currentState)
 	}
 
@@ -85,20 +87,20 @@ func (b *BenthosInstance) reconcileStateTransition(ctx context.Context) error {
 func (b *BenthosInstance) reconcileLifecycleStates(ctx context.Context, currentState string) error {
 	// Independent what the desired state is, we always need to reconcile the lifecycle states first
 	switch currentState {
-	case LifecycleStateToBeCreated:
+	case utils.LifecycleStateToBeCreated:
 		if err := b.InitiateServiceCreation(ctx); err != nil {
 			return err
 		}
-		return b.sendEvent(ctx, EventCreate)
-	case LifecycleStateCreating:
+		return b.sendEvent(ctx, utils.LifecycleEventCreate)
+	case utils.LifecycleStateCreating:
 		// TODO: check if the service is created
-		return b.sendEvent(ctx, EventCreateDone)
-	case LifecycleStateRemoving:
+		return b.sendEvent(ctx, utils.LifecycleEventCreateDone)
+	case utils.LifecycleStateRemoving:
 		if err := b.InitiateServiceRemoval(ctx); err != nil {
 			return err
 		}
-		return b.sendEvent(ctx, EventRemoveDone)
-	case LifecycleStateRemoved:
+		return b.sendEvent(ctx, utils.LifecycleEventRemoveDone)
+	case utils.LifecycleStateRemoved:
 		return fmt.Errorf("instance %s is removed", b.ID)
 	default:
 		// If we are not in a lifecycle state, just continue
