@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -27,9 +28,21 @@ const (
 
 // ServiceInfo contains information about an S6 service
 type ServiceInfo struct {
-	Status ServiceStatus
-	Uptime int64
-	Pid    int
+	Status    ServiceStatus
+	Uptime    int64 // seconds the service has been up
+	DownTime  int64 // seconds the service has been down
+	ReadyTime int64 // seconds the service has been ready
+	Pid       int   // process ID if service is up
+	ExitCode  int   // exit code if service is down
+	WantUp    bool  // whether the service wants to be up
+	// History of exit codes
+	ExitHistory []ExitEvent
+}
+
+// ExitEvent represents a service exit event
+type ExitEvent struct {
+	Timestamp string // timestamp of the exit event
+	ExitCode  int    // exit code of the service
 }
 
 // ServiceConfig contains configuration for creating a service
@@ -275,61 +288,116 @@ func (s *DefaultService) Status(ctx context.Context, servicePath string) (Servic
 	outputStr := string(output)
 
 	// Parse the output from s6-svstat
+	// Example outputs:
+	// "up (pid 123) 45 seconds, ready 40 seconds"
+	// "down (exitcode 100) 6 seconds, ready 6 seconds"
+	// "down (exitcode 100) 0 seconds, want up, ready 0 seconds"
+
 	if strings.Contains(outputStr, "up") {
 		info.Status = ServiceUp
+
+		// Extract PID
+		if pidIndex := strings.Index(outputStr, "pid "); pidIndex >= 0 {
+			endIndex := strings.Index(outputStr[pidIndex+4:], ")") + pidIndex + 4
+			if endIndex > pidIndex+4 {
+				pidStr := outputStr[pidIndex+4 : endIndex]
+				info.Pid, _ = strconv.Atoi(pidStr)
+			}
+		}
+
+		// Extract uptime
+		if uptimeIndex := strings.Index(outputStr, ") "); uptimeIndex >= 0 {
+			endIndex := strings.Index(outputStr[uptimeIndex+2:], " seconds")
+			if endIndex > 0 {
+				uptimeStr := outputStr[uptimeIndex+2 : uptimeIndex+2+endIndex]
+				info.Uptime, _ = strconv.ParseInt(uptimeStr, 10, 64)
+			}
+		}
 	} else if strings.Contains(outputStr, "down") {
 		info.Status = ServiceDown
+
+		// Extract exit code
+		if exitIndex := strings.Index(outputStr, "exitcode "); exitIndex >= 0 {
+			endIndex := strings.Index(outputStr[exitIndex+9:], ")") + exitIndex + 9
+			if endIndex > exitIndex+9 {
+				exitStr := outputStr[exitIndex+9 : endIndex]
+				info.ExitCode, _ = strconv.Atoi(exitStr)
+			}
+		}
+
+		// Extract downtime
+		if downtimeIndex := strings.Index(outputStr, ") "); downtimeIndex >= 0 {
+			endIndex := strings.Index(outputStr[downtimeIndex+2:], " seconds")
+			if endIndex > 0 {
+				downtimeStr := outputStr[downtimeIndex+2 : downtimeIndex+2+endIndex]
+				info.DownTime, _ = strconv.ParseInt(downtimeStr, 10, 64)
+			}
+		}
 	} else if strings.Contains(outputStr, "restarting") {
 		info.Status = ServiceRestarting
 	} else {
 		info.Status = ServiceFailed
 	}
 
-	// Try to get additional information using s6-svdt
-	detailCmd := exec.CommandContext(ctx, "s6-svdt", servicePath)
-	detailOutput, err := detailCmd.CombinedOutput()
-	if err == nil {
-		// Parse output to get more details
-		detailStr := string(detailOutput)
+	// Check if service wants to be up
+	info.WantUp = strings.Contains(outputStr, "want up")
 
-		// Parse uptime
-		if uptimeIndex := strings.Index(detailStr, "uptime="); uptimeIndex >= 0 {
-			endIndex := strings.Index(detailStr[uptimeIndex:], " ")
-			if endIndex > 0 {
-				uptime := detailStr[uptimeIndex+7 : uptimeIndex+endIndex]
-				info.Uptime, _ = parseUptime(uptime)
-			}
-		}
-
-		// Parse PID
-		if pidIndex := strings.Index(detailStr, "pid="); pidIndex >= 0 {
-			endIndex := strings.Index(detailStr[pidIndex:], " ")
-			if endIndex > 0 {
-				pidStr := detailStr[pidIndex+4 : pidIndex+endIndex]
-				info.Pid, _ = parsePid(pidStr)
-			}
+	// Extract ready time
+	if readyIndex := strings.Index(outputStr, "ready "); readyIndex >= 0 {
+		endIndex := strings.Index(outputStr[readyIndex+6:], " seconds")
+		if endIndex > 0 {
+			readyStr := outputStr[readyIndex+6 : readyIndex+6+endIndex]
+			info.ReadyTime, _ = strconv.ParseInt(readyStr, 10, 64)
 		}
 	}
 
+	// Use full path to s6-svdt and point to the supervision directory
+	detailCmd := exec.CommandContext(ctx, "s6-svdt", servicePath)
+	detailOutput, err := detailCmd.CombinedOutput()
+	if err == nil {
+		// Parse output from s6-svdt
+		// Example output:
+		// @4000000067d1fcf003db4342 exitcode 100
+		// @4000000067d1fcf104d3c3a2 exitcode 100
+
+		info.ExitHistory = parseExitHistory(string(detailOutput))
+	}
+
 	return info, nil
+}
+
+// parseExitHistory parses the output of s6-svdt to extract exit history
+func parseExitHistory(output string) []ExitEvent {
+	var history []ExitEvent
+
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+
+		// Parse timestamp and exit code
+		parts := strings.Fields(line)
+		if len(parts) >= 3 && parts[1] == "exitcode" {
+			event := ExitEvent{
+				Timestamp: parts[0],
+				ExitCode:  0,
+			}
+
+			code, err := strconv.Atoi(parts[2])
+			if err == nil {
+				event.ExitCode = code
+			}
+
+			history = append(history, event)
+		}
+	}
+
+	return history
 }
 
 // ServiceExists checks if the service directory exists
 func (s *DefaultService) ServiceExists(servicePath string) bool {
 	_, err := os.Stat(servicePath)
 	return !os.IsNotExist(err)
-}
-
-// Helper functions for parsing the output
-func parseUptime(uptime string) (int64, error) {
-	var seconds int64
-	_, err := fmt.Sscanf(uptime, "%d", &seconds)
-	return seconds, err
-}
-
-// Helper function to parse PID
-func parsePid(pidStr string) (int, error) {
-	var pid int
-	_, err := fmt.Sscanf(pidStr, "%d", &pid)
-	return pid, err
 }

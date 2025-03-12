@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/internal/service/s6"
 )
@@ -114,6 +115,9 @@ func (s *S6Instance) updateObservedState(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Store the raw service info
+	s.ObservedState.ServiceInfo = info
+
 	// Map the service status to FSM status
 	switch info.Status {
 	case s6service.ServiceUp:
@@ -128,8 +132,10 @@ func (s *S6Instance) updateObservedState(ctx context.Context) error {
 		s.ObservedState.Status = S6ServiceUnknown
 	}
 
-	s.ObservedState.Uptime = info.Uptime
-	s.ObservedState.Pid = info.Pid
+	// Set LastStateChange time if this is the first update
+	if s.ObservedState.LastStateChange == 0 {
+		s.ObservedState.LastStateChange = time.Now().Unix()
+	}
 
 	return nil
 }
@@ -147,4 +153,41 @@ func (s *S6Instance) IsS6Stopped() bool {
 // HasS6Failed checks if the S6 service has failed.
 func (s *S6Instance) HasS6Failed() bool {
 	return s.ObservedState.Status == S6ServiceFailed
+}
+
+// GetServicePid gets the process ID of the running service.
+// Returns -1 if the service is not running.
+func (s *S6Instance) GetServicePid() int {
+	if s.IsS6Running() {
+		return s.ObservedState.ServiceInfo.Pid
+	}
+	return -1
+}
+
+// GetServiceUptime gets the uptime of the service in seconds.
+// Returns -1 if the service is not running.
+func (s *S6Instance) GetServiceUptime() int64 {
+	if s.IsS6Running() {
+		return s.ObservedState.ServiceInfo.Uptime
+	}
+	return -1
+}
+
+// GetExitCode gets the last exit code of the service.
+// Returns -1 if the service is running.
+func (s *S6Instance) GetExitCode() int {
+	if s.IsS6Running() {
+		return -1
+	}
+	return s.ObservedState.ServiceInfo.ExitCode
+}
+
+// IsServiceWantingUp checks if the service is attempting to start.
+func (s *S6Instance) IsServiceWantingUp() bool {
+	return s.ObservedState.ServiceInfo.WantUp
+}
+
+// GetExitHistory gets the history of service exit events.
+func (s *S6Instance) GetExitHistory() []s6service.ExitEvent {
+	return s.ObservedState.ServiceInfo.ExitHistory
 }

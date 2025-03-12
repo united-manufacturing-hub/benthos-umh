@@ -36,8 +36,11 @@ func NewS6Instance(
 			b.MaxInterval = 1 * time.Minute
 			return b
 		}(),
-		ObservedState: S6ObservedState{Status: S6ServiceUnknown},
-		service:       s6service.NewDefaultService(),
+		ObservedState: S6ObservedState{
+			Status:      S6ServiceUnknown,
+			ServiceInfo: s6service.ServiceInfo{Status: s6service.ServiceUnknown},
+		},
+		service: s6service.NewDefaultService(),
 	}
 
 	// Define the FSM transitions

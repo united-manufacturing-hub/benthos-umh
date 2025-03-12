@@ -75,10 +75,8 @@ type S6ObservedState struct {
 	Status S6ServiceStatus
 	// LastStateChange is the timestamp of the last observed state change
 	LastStateChange int64
-	// Uptime is the service uptime in seconds (if running)
-	Uptime int64
-	// Pid is the process ID of the service (if running)
-	Pid int
+	// ServiceInfo contains the actual service info from s6
+	ServiceInfo s6service.ServiceInfo
 }
 
 // S6Instance represents a single S6 service instance with a state machine

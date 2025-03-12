@@ -105,7 +105,7 @@ var _ = Describe("S6 FSM", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateRunning))
 		Expect(instance.ObservedState.Status).To(Equal(S6ServiceUp))
-		Expect(instance.ObservedState.Pid).To(Equal(1234))
+		Expect(instance.GetServicePid()).To(Equal(1234))
 	})
 
 	It("should stop the service when desired state is 'stopped'", func() {
