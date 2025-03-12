@@ -199,7 +199,7 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 			return fmt.Errorf("error converting value for node %s: %w", mapping.NodeID, err)
 		}
 
-		// Write the value
+		// Prepare write request
 		req := &ua.WriteRequest{
 			NodesToWrite: []*ua.WriteValue{
 				{
@@ -213,20 +213,57 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 			},
 		}
 
-		resp, err := o.Client.Write(ctx, req)
-		if err != nil {
-			return fmt.Errorf("error writing to node %s: %w", mapping.NodeID, err)
-		}
-
-		if resp.Results[0] != ua.StatusOK {
-			return fmt.Errorf("write failed for node %s with status %v", mapping.NodeID, resp.Results[0])
-		}
-
-		// If handshake is enabled, verify the write
-		if o.HandshakeEnabled {
-			if err := o.verifyWrite(ctx, nodeID, variant); err != nil {
-				return fmt.Errorf("handshake verification failed for node %s: %w", mapping.NodeID, err)
+		// Implement retry logic
+		var writeErr error
+		for attempt := 1; attempt <= o.MaxWriteAttempts; attempt++ {
+			// Write the value
+			resp, err := o.Client.Write(ctx, req)
+			if err != nil {
+				writeErr = fmt.Errorf("error writing to node %s (attempt %d/%d): %w",
+					mapping.NodeID, attempt, o.MaxWriteAttempts, err)
+				o.Log.Warnf("%v", writeErr)
+				if attempt < o.MaxWriteAttempts {
+					time.Sleep(time.Duration(o.TimeBetweenRetriesMs) * time.Millisecond)
+					continue
+				}
+				return writeErr
 			}
+
+			if resp.Results[0] != ua.StatusOK {
+				writeErr = fmt.Errorf("write failed for node %s with status %v (attempt %d/%d)",
+					mapping.NodeID, resp.Results[0], attempt, o.MaxWriteAttempts)
+				o.Log.Warnf("%v", writeErr)
+				if attempt < o.MaxWriteAttempts {
+					time.Sleep(time.Duration(o.TimeBetweenRetriesMs) * time.Millisecond)
+					continue
+				}
+				return writeErr
+			}
+
+			// If handshake is enabled, verify the write
+			if o.HandshakeEnabled {
+				if err := o.verifyWrite(ctx, nodeID, variant); err != nil {
+					writeErr = fmt.Errorf("handshake verification failed for node %s (attempt %d/%d): %w",
+						mapping.NodeID, attempt, o.MaxWriteAttempts, err)
+					o.Log.Warnf("%v", writeErr)
+					if attempt < o.MaxWriteAttempts {
+						time.Sleep(time.Duration(o.TimeBetweenRetriesMs) * time.Millisecond)
+						continue
+					}
+					return writeErr
+				}
+			}
+
+			// If we get here, the write was successful
+			if attempt > 1 {
+				o.Log.Infof("Successfully wrote to node %s after %d attempts", mapping.NodeID, attempt)
+			}
+			writeErr = nil
+			break
+		}
+
+		if writeErr != nil {
+			return writeErr
 		}
 	}
 

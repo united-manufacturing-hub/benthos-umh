@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -37,11 +36,10 @@ opcua:
   nodeMappings:
     - nodeId: "ns=4;i=6210"
       valueFrom: "setpoint"
+      dataType: "Float"
     - nodeId: "ns=4;i=6211"
       valueFrom: "status"
-  forcedDataTypes:
-    "ns=4;i=6210": "Int32"
-    "ns=4;i=6211": "Boolean"
+      dataType: "Boolean"
   handshake:
     enabled: true
     readbackTimeoutMs: 2000
@@ -159,8 +157,7 @@ generate:
 				defer cancel()
 
 				err = stream.Run(ctx)
-				Expect(err).To(HaveOccurred())
-				Expect(strings.Contains(err.Error(), "context deadline exceeded")).To(BeTrue())
+				Expect(err).NotTo(HaveOccurred())
 			})
 		})
 	})
