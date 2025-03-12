@@ -1,0 +1,7 @@
+input:
+  generate:
+    mapping: 'root = {"message":"hello world","id":count()}'
+    interval: 1s
+
+output:
+  stdout: {} 

@@ -1,0 +1,3 @@
+#!/command/execlineb -P
+cd /
+exec /usr/local/bin/umh-lite-v2 

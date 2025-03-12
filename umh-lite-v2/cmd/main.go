@@ -1,85 +1,104 @@
 package main
 
 import (
-	"flag"
-	"fmt"
+	"context"
 	"log"
-	"os"
-	"path/filepath"
+	"time"
 
-	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/internal/agent"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/internal/fsm/s6"
+	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/internal/service/s6"
 )
 
-var (
-	// Command line flags
-	configPath = flag.String("config", "/data/umh-lite-bootstrap.yaml", "Path to the bootstrap configuration file")
-	configDir  = flag.String("config-dir", "/data/configs", "Directory for storing configuration files")
-	logFile    = flag.String("log", "", "Path to the log file (empty for stdout)")
+const (
+	s6BaseDir = "/run/service"
 )
 
 func main() {
-	// Parse command line flags
-	flag.Parse()
+	log.Println("Starting umh-lite-v2...")
 
-	// Setup logging
-	var logger *log.Logger
-	if *logFile != "" {
-		// Log to file
-		f, err := os.OpenFile(*logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// Create a benthos service with config
+	benthosConfig := s6service.ServiceConfig{
+		Command: []string{"/usr/local/bin/benthos", "-c", "/benthos.yaml"},
+		Env: map[string]string{
+			"LOG_LEVEL": "DEBUG",
+		},
+		ConfigFiles: map[string]string{
+			// This is a path relative to service dir - will be created in /etc/s6-overlay/s6-rc.d/benthos/config/example.txt
+			"config/example.txt": "This is an example config file\n",
+			// This is an absolute path
+			"/benthos.yaml": `---
+http:
+  address: 0.0.0.0:4195
+logger:
+  level: ${LOG_LEVEL}
+  format: json
+`,
+		},
+	}
+
+	benthosService := s6.NewServiceInBaseDir(
+		"benthos",     // Service name
+		s6BaseDir,     // Base directory
+		benthosConfig, // Service configuration
+		nil,           // Callbacks (optional)
+	)
+
+	ctx := context.Background()
+	log.Println("Created S6 instances for services")
+
+	// Now test the benthos service
+	log.Println("Testing benthos service...")
+
+	// Set desired state to running
+	err := benthosService.SetDesiredFSMState(s6.OperationalStateRunning)
+	if err != nil {
+		log.Fatalf("Failed to set desired state to running: %v", err)
+	}
+
+	// Reconcile and monitor the service startup
+	for i := 0; i < 5; i++ {
+		err := benthosService.Reconcile(ctx)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to open log file: %v\n", err)
-			os.Exit(1)
+			log.Printf("Error reconciling benthos service: %s", err)
 		}
-		defer f.Close()
-		logger = log.New(f, "", log.LstdFlags)
-	} else {
-		// Log to stdout
-		logger = log.New(os.Stdout, "", log.LstdFlags)
+		log.Printf("Benthos service - Iteration %d - Current state: %s, Observed state: %+v",
+			i,
+			benthosService.GetCurrentFSMState(),
+			benthosService.ObservedState,
+		)
+		time.Sleep(2 * time.Second)
 	}
 
-	// Ensure config directory exists
-	if err := os.MkdirAll(*configDir, 0755); err != nil {
-		logger.Fatalf("Failed to create config directory: %v", err)
-	}
+	// Test stopping both services
+	log.Println("Testing service stop...")
 
-	// Ensure the config file exists
-	if _, err := os.Stat(*configPath); os.IsNotExist(err) {
-		logger.Fatalf("Configuration file does not exist: %s", *configPath)
-	}
-
-	// Create absolute paths
-	absConfigPath, err := filepath.Abs(*configPath)
+	// Stop benthos service
+	err = benthosService.SetDesiredFSMState(s6.OperationalStateStopped)
 	if err != nil {
-		logger.Fatalf("Failed to get absolute path for config file: %v", err)
+		log.Printf("Error setting benthos service to stopped state: %s", err)
 	}
 
-	absConfigDir, err := filepath.Abs(*configDir)
-	if err != nil {
-		logger.Fatalf("Failed to get absolute path for config directory: %v", err)
+	// Monitor the stopping process
+	for i := 0; i < 5; i++ {
+		// Reconcile benthos service
+		err = benthosService.Reconcile(ctx)
+		if err != nil {
+			log.Printf("Error reconciling benthos service during stop: %s", err)
+		}
+
+		log.Printf("Stop iteration %d - Benthos service state: %s",
+			i,
+			benthosService.GetCurrentFSMState(),
+		)
+
+		// Check if benthos service has stopped
+		if benthosService.GetCurrentFSMState() == s6.OperationalStateStopped {
+			log.Println("All services successfully stopped")
+			break
+		}
+
+		time.Sleep(2 * time.Second)
 	}
 
-	// Log startup information
-	logger.Printf("umh-lite-v2 starting...")
-	logger.Printf("Using configuration file: %s", absConfigPath)
-	logger.Printf("Using configuration directory: %s", absConfigDir)
-
-	// Create the agent
-	a, err := agent.NewAgent(absConfigPath, logger, absConfigDir)
-	if err != nil {
-		logger.Fatalf("Failed to create agent: %v", err)
-	}
-
-	// Set up signal handling for graceful shutdown
-	agent.SetupSignalHandler(a, logger)
-
-	// Start the agent
-	if err := a.Start(); err != nil {
-		logger.Fatalf("Failed to start agent: %v", err)
-	}
-
-	// Log startup success
-	logger.Printf("umh-lite-v2 started successfully")
-
-	// Keep the main goroutine alive (the agent runs in background goroutines)
-	select {}
+	log.Println("umh-lite-v2 test completed")
 }

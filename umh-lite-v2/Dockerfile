@@ -1,9 +1,27 @@
+FROM golang:1.23-alpine as build
+
+WORKDIR /go/src/github.com/united-manufacturing-hub/benthos-umh
+
+# Install build dependencies
+RUN apk add --no-cache \
+    gcc \
+    musl-dev
+
+# Copy go.mod first for better caching
+COPY ./umh-lite-v2/go.mod ./umh-lite-v2/
+WORKDIR /go/src/github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2
+RUN go mod download
+
+# Copy and build umh-lite-v2
+COPY ./umh-lite-v2 .
+RUN CGO_ENABLED=0 go build \
+    -ldflags "-s -w" \
+    -o umh-lite-v2 \
+    cmd/main.go
+
 FROM alpine:3.18
 
-ARG S6_OVERLAY_VERSION=3.2.0.3
-ARG TARGETARCH=amd64
-
-# Install dependencies
+# Install basic dependencies
 RUN apk add --no-cache \
     bash \
     curl \
@@ -12,54 +30,60 @@ RUN apk add --no-cache \
     ca-certificates \
     xz
 
-# Install s6-overlay for process supervision
-RUN case ${TARGETARCH} in \
-        "amd64") S6_ARCH="x86_64" ;; \
-        "arm64") S6_ARCH="aarch64" ;; \
-        "arm/v7") S6_ARCH="arm" ;; \
-        "arm/v6") S6_ARCH="armhf" ;; \
-        "386") S6_ARCH="i686" ;; \
-        "riscv64") S6_ARCH="riscv64" ;; \
-        "s390x") S6_ARCH="s390x" ;; \
-        *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
+# Set versions
+ARG S6_OVERLAY_VERSION=3.2.0.2
+ARG BENTHOS_UMH_VERSION=0.6.2
+ARG TARGETARCH=amd64
+
+# Step 1: Install s6-overlay noarch components
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp/
+RUN tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz && rm /tmp/s6-overlay-noarch.tar.xz
+
+# Step 2: Install architecture-specific s6-overlay components
+RUN case "${TARGETARCH}" in \
+    "amd64") S6_ARCH="x86_64" ;; \
+    "arm64") S6_ARCH="aarch64" ;; \
+    "arm/v7") S6_ARCH="arm" ;; \
+    *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
     esac && \
-    curl -sSL https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz | tar -Jxpf - -C / && \
-    curl -sSL https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz | tar -Jxpf - -C / && \
-    curl -sSL https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/syslogd-overlay-noarch.tar.xz | tar -Jxpf - -C /
+    echo "Using S6_ARCH: ${S6_ARCH}" && \
+    wget -O /tmp/s6-overlay-arch.tar.xz \
+    "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz" && \
+    tar -C / -Jxpf /tmp/s6-overlay-arch.tar.xz && \
+    rm /tmp/s6-overlay-arch.tar.xz
 
-# Install Benthos
-ARG BENTHOS_VERSION=4.24.0
-RUN curl -sSL https://github.com/benthosdev/benthos/releases/download/v${BENTHOS_VERSION}/benthos_${BENTHOS_VERSION}_linux_${TARGETARCH}.tar.gz | tar -xz -C /usr/local/bin benthos
+# Step 3: Install syslogd components
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/syslogd-overlay-noarch.tar.xz /tmp/
+RUN tar -C / -Jxpf /tmp/syslogd-overlay-noarch.tar.xz && rm /tmp/syslogd-overlay-noarch.tar.xz
 
-# Install Redpanda (lightweight version for edge devices)
-ARG REDPANDA_VERSION=23.3.5
-RUN mkdir -p /tmp/redpanda && \
-    curl -sSL https://github.com/redpanda-data/redpanda/releases/download/v${REDPANDA_VERSION}/rpk-linux-$([ "$TARGETARCH" = "amd64" ] && echo "amd64" || echo "arm64").tar.gz | tar -xz -C /tmp/redpanda && \
-    mv /tmp/redpanda/rpk /usr/local/bin/ && \
-    rm -rf /tmp/redpanda
+# Step 4: Install Benthos
+RUN case "${TARGETARCH}" in \
+    "amd64") BENTHOS_ARCH="amd64" ;; \
+    "arm64") BENTHOS_ARCH="arm64" ;; \
+    "arm/v7") BENTHOS_ARCH="armv7" ;; \
+    *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
+    esac && \
+    echo "Using BENTHOS_ARCH: ${BENTHOS_ARCH}" && \
+    curl -sSL -o /usr/local/bin/benthos \
+    "https://github.com/united-manufacturing-hub/benthos-umh/releases/download/v${BENTHOS_UMH_VERSION}/benthos-linux-${BENTHOS_ARCH}" && \
+    chmod +x /usr/local/bin/benthos
 
-# Create necessary directories
-RUN mkdir -p /data/configs /data/redpanda /data/state
+# Step 5: Copy the built application and set permissions
+COPY --from=build /go/src/github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/umh-lite-v2 /usr/local/bin/umh-lite-v2
+RUN chmod +x /usr/local/bin/umh-lite-v2 && \
+    ls -la /usr/local/bin/umh-lite-v2 && \
+    test -x /usr/local/bin/umh-lite-v2 || (echo "Binary not executable" && exit 1) 
 
-# Copy the application
-COPY ./umh-lite-v2/cmd/umh-lite-v2 /usr/local/bin/
+# Step 6: Copy s6 service configuration
+COPY ./umh-lite-v2/s6-base/s6-rc.d /etc/s6-overlay/s6-rc.d/
+RUN chmod +x /etc/s6-overlay/s6-rc.d/umh-lite-v2/run 
 
-# Copy s6-overlay service definitions
-COPY ./umh-lite-v2/s6-overlay/ /etc/
-
-# Set environment variables
+# Step 7: Set environment variables
 ENV S6_KEEP_ENV=1 \
     S6_BEHAVIOUR_IF_STAGE2_FAILS=2 \
-    S6_CMD_WAIT_FOR_SERVICES=1
+    S6_CMD_WAIT_FOR_SERVICES=1 \
+    S6_SERVICES_READYTIME=50
 
-# Data volume
-VOLUME ["/data"]
-
-# Expose ports
-EXPOSE 4195 9092 8080
-
-# Set s6-overlay as the entrypoint
+# Step 8: Set entrypoint
 ENTRYPOINT ["/init"]
-
-# Command will be defined by s6-overlay services
 CMD []
