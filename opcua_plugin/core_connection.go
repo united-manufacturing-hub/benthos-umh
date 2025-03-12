@@ -89,7 +89,6 @@ type OPCUAConnection struct {
 	// for browsing
 	browseCancel    context.CancelFunc
 	browseWaitGroup sync.WaitGroup
-	browseErrorChan chan error
 	visited         sync.Map
 }
 
@@ -138,7 +137,6 @@ func ParseConnectionConfig(conf *service.ParsedConfig, mgr *service.Resources) (
 	}
 
 	conn.browseWaitGroup = sync.WaitGroup{}
-	conn.browseErrorChan = make(chan error, 1)
 
 	return conn, nil
 }

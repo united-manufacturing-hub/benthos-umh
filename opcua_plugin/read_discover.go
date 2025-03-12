@@ -40,7 +40,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 			case <-done:
 				return
 			case <-timeoutCtx.Done():
-				g.Log.Warn("browse function received timeout signal after 5 minutes. Please select less nodes.")
+				g.Log.Warn("browse function received timeout signal after 1 hour. Please select less nodes.")
 				return
 			}
 		}
@@ -64,7 +64,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 
 	select {
 	case <-timeoutCtx.Done():
-		g.Log.Warn("browse function received timeout signal after 5 minutes. Please select less nodes.")
+		g.Log.Warn("browse function received timeout signal after 1 hour. Please select less nodes.")
 		return nil, nil, timeoutCtx.Err()
 	case <-done:
 	}
