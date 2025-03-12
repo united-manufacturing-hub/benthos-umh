@@ -162,10 +162,11 @@ func (s *DefaultService) createRunScript(servicePath string, command []string, e
 		return fmt.Errorf("failed to write shebang: %w", err)
 	}
 
-	// Add environment variables
+	// Add environment variables using execlineb syntax
 	if env != nil && len(env) > 0 {
 		for k, v := range env {
-			if _, err := f.WriteString(fmt.Sprintf("export %s=\"%s\"\n", k, v)); err != nil {
+			// In execlineb, environment variables are set using "envfile" or individual "export" blocks
+			if _, err := f.WriteString(fmt.Sprintf("export %s %s\n", k, v)); err != nil {
 				return fmt.Errorf("failed to write environment variable: %w", err)
 			}
 		}
@@ -175,15 +176,24 @@ func (s *DefaultService) createRunScript(servicePath string, command []string, e
 		}
 	}
 
-	// Send stdout/stderr to s6-log if needed
-	if _, err := f.WriteString("exec 2>&1\n"); err != nil {
+	// In execlineb, to redirect stderr to stdout, we use fdmove instead of exec 2>&1
+	if _, err := f.WriteString("fdmove -c 2 1\n"); err != nil {
 		return fmt.Errorf("failed to write stderr redirection: %w", err)
 	}
 
-	// Build command string
-	cmdStr := strings.Join(command, " ")
-	if _, err := f.WriteString("exec " + cmdStr); err != nil {
-		return fmt.Errorf("failed to write command: %w", err)
+	// Build command string - in execlineb we need to separate command and args
+	if len(command) > 0 {
+		// First write the command
+		if _, err := f.WriteString(command[0]); err != nil {
+			return fmt.Errorf("failed to write command: %w", err)
+		}
+
+		// Then add each argument on a new line (execlineb style)
+		for _, arg := range command[1:] {
+			if _, err := f.WriteString(" " + arg); err != nil {
+				return fmt.Errorf("failed to write command argument: %w", err)
+			}
+		}
 	}
 
 	// Make run script executable

@@ -1,3 +1,4 @@
 #!/command/execlineb -P
 cd /
-exec /usr/local/bin/umh-lite-v2 
+fdmove -c 2 1
+/usr/local/bin/umh-lite-v2 

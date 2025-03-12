@@ -27,11 +27,13 @@ func main() {
 			"config/example.txt": "This is an example config file\n",
 			// This is an absolute path
 			"/benthos.yaml": `---
-http:
-  address: 0.0.0.0:4195
-logger:
-  level: ${LOG_LEVEL}
-  format: json
+input:
+  generate:
+    mapping: root = "hello world, I am running on ${LOG_LEVEL}" # No default (required)
+    interval: 1s
+    count: 5
+output:
+  stdout: {}
 `,
 		},
 	}
@@ -56,7 +58,7 @@ logger:
 	}
 
 	// Reconcile and monitor the service startup
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 15; i++ {
 		err := benthosService.Reconcile(ctx)
 		if err != nil {
 			log.Printf("Error reconciling benthos service: %s", err)
@@ -66,7 +68,7 @@ logger:
 			benthosService.GetCurrentFSMState(),
 			benthosService.ObservedState,
 		)
-		time.Sleep(2 * time.Second)
+		time.Sleep(1 * time.Second)
 	}
 
 	// Test stopping both services
