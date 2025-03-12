@@ -3,12 +3,12 @@ package benthos
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/looplab/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/fsm/utils"
 )
-
-// TODO: states for creating and removing
 
 // NewBenthosInstance creates a new BenthosInstance with the given ID
 func NewBenthosInstance(id string, callbacks map[string]fsm.Callback) *BenthosInstance {
@@ -17,13 +17,18 @@ func NewBenthosInstance(id string, callbacks map[string]fsm.Callback) *BenthosIn
 	}
 
 	instance := &BenthosInstance{
-		ID:           id,
-		DesiredState: OperationalStateStopped,
-		callbacks:    callbacks,
-		ExternalState: ExternalState{
+		ID:              id,
+		DesiredFSMState: OperationalStateStopped,
+		callbacks:       callbacks,
+		ObservedState: ObservedState{
 			IsRunning: false,
 		},
-		backoffManager: utils.NewTransitionBackoffManager(),
+		backoff: func() *backoff.ExponentialBackOff {
+			b := backoff.NewExponentialBackOff()
+			b.InitialInterval = 100 * time.Millisecond
+			b.MaxInterval = 1 * time.Minute
+			return b
+		}(),
 	}
 
 	// Define the FSM transitions
@@ -70,7 +75,7 @@ func (b *BenthosInstance) GetState() string {
 func (b *BenthosInstance) setDesiredState(state string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.DesiredState = state
+	b.DesiredFSMState = state
 }
 
 // SetDesiredState safely updates the desired state
@@ -89,7 +94,7 @@ func (b *BenthosInstance) SetDesiredState(state string) error {
 func (b *BenthosInstance) GetDesiredState() string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	return b.DesiredState
+	return b.DesiredFSMState
 }
 
 // SendEvent sends an event to the FSM and returns whether the event was processed
@@ -97,12 +102,12 @@ func (b *BenthosInstance) sendEvent(ctx context.Context, eventName string, args 
 	return b.FSM.Event(ctx, eventName, args...)
 }
 
-// SetExternalState updates the external running state of the instance
+// SetObservedState updates the external running state of the instance
 // This should only be used by tests
-func (b *BenthosInstance) SetExternalState(isRunning bool) {
+func (b *BenthosInstance) SetObservedState(isRunning bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.ExternalState.IsRunning = isRunning
+	b.ObservedState.IsRunning = isRunning
 }
 
 // ClearError clears any error state and resets the backoff
@@ -110,7 +115,5 @@ func (b *BenthosInstance) ClearError() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.lastError = nil
-	if b.backoffManager != nil {
-		b.backoffManager.Reset()
-	}
+	b.backoff.Reset()
 }

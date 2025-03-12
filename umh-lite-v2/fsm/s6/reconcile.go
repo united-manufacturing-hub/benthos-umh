@@ -3,6 +3,8 @@ package s6
 import (
 	"context"
 	"fmt"
+	"log"
+	"time"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/fsm/utils"
 )
@@ -18,21 +20,32 @@ import (
 func (s *S6Instance) Reconcile(ctx context.Context) error {
 	// Step 1: Detect external changes.
 	if err := s.reconcileExternalChanges(ctx); err != nil {
-		return err
+		log.Printf("error reconciling external changes: %s", err)
+		return nil // We don't want to return an error here, because we want to continue reconciling
 	}
 
-	// Step 2: Check if a previous transition failed and if backoff has elapsed.
-	if !s.reconcileBackoffElapsed() {
-		// Too soon to retry; exit and try again in the next reconciliation cycle.
-		return nil
+	// Step 2: If there's a lastError, see if we've waited enough.
+	if s.lastError != nil {
+		// Check how long we are supposed to wait
+		next := s.backoff.NextBackOff() // e.g. 100ms, 200ms, 400ms...
+		if time.Since(s.suspendedTime) < next {
+			// It's still too early to retry
+			return nil
+		}
 	}
 
 	// Step 3: Attempt to reconcile the state.
 	err := s.reconcileStateTransition(ctx)
 	if err != nil {
 		s.SetError(err)
-		return err
+		log.Printf("error reconciling state: %s", err)
+		s.suspendedTime = time.Now()
+		return nil // We don't want to return an error here, because we want to continue reconciling
 	}
+
+	// It went all right, so clear the error
+	s.ClearError()
+	s.backoff.Reset()
 
 	return nil
 }
@@ -40,21 +53,11 @@ func (s *S6Instance) Reconcile(ctx context.Context) error {
 // reconcileExternalChanges checks if the S6Instance service status has changed
 // externally (e.g., if someone manually stopped or started it, or if it crashed)
 func (s *S6Instance) reconcileExternalChanges(ctx context.Context) error {
-	err := s.UpdateExternalState(ctx)
+	err := s.UpdateObservedState(ctx)
 	if err != nil {
 		return err
 	}
 	return nil
-}
-
-// reconcileBackoffElapsed returns true if no transition error is recorded or if
-// the required backoff period has elapsed since the last error. If false, we skip
-// further transitions this iteration.
-func (s *S6Instance) reconcileBackoffElapsed() bool {
-	if err := s.GetError(); err != nil {
-		return s.backoffManager.ReconcileBackoffElapsed()
-	}
-	return true
 }
 
 // reconcileStateTransition compares the current state with the desired state
@@ -63,8 +66,8 @@ func (s *S6Instance) reconcileBackoffElapsed() bool {
 // and exist in ExternalState.
 // This is to ensure full testability of the FSM.
 func (s *S6Instance) reconcileStateTransition(ctx context.Context) error {
-	currentState := s.GetState()
-	desiredState := s.GetDesiredState()
+	currentState := s.GetCurrentFSMState()
+	desiredState := s.GetDesiredFSMState()
 
 	// If already in the desired state, nothing to do.
 	if currentState == desiredState {

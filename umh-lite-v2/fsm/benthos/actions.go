@@ -70,11 +70,11 @@ func (b *BenthosInstance) InitiateBenthosStop(ctx context.Context) error {
 // IsBenthosRunning checks if the Benthos instance is running.
 // Through healthchecks, etc.
 func (b *BenthosInstance) IsBenthosRunning() bool {
-	return b.ExternalState.IsRunning
+	return b.ObservedState.IsRunning
 }
 
 // IsBenthosStopped checks if the Benthos instance is stopped.
 // Through healthchecks, etc.
 func (b *BenthosInstance) IsBenthosStopped() bool {
-	return !b.ExternalState.IsRunning
+	return !b.ObservedState.IsRunning
 }

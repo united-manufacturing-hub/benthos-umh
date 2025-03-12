@@ -2,9 +2,10 @@ package benthos
 
 import (
 	"sync"
+	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/looplab/fsm"
-	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/fsm/utils"
 )
 
 // OperationalState constants represent the various operational states a Benthos instance can be in
@@ -55,34 +56,35 @@ type BenthosInstance struct {
 	// FSM is the finite state machine that manages instance state
 	FSM *fsm.FSM
 
-	// DesiredState represents the target state we want to reach
-	DesiredState string
-
-	// CurrentState represents the current state of the instance
-	CurrentState string
-
-	// S6FSM is the FSM of the S6 service
-	S6FSM interface{}
+	// DesiredFSMState represents the target state we want to reach
+	DesiredFSMState string
 
 	// Callbacks for state transitions
 	callbacks map[string]fsm.Callback
 
-	// BackoffManager for managing retry attempts
-	backoffManager *utils.TransitionBackoffManager
+	// backoff is the backoff manager for managing retry attempts
+	backoff backoff.BackOff
+
+	// suspendedTime is the time when the last error occurred
+	// it is used in the reconcile function to check if the backoff has elapsed
+	suspendedTime time.Time
 
 	// lastError stores the last error that occurred during a transition
 	lastError error
 
-	// ExternalState contains all metrics, logs, etc.
+	// ObservedState contains all metrics, logs, etc.
 	// that are updated at the beginning of Reconcile and then used to
 	// determine the next state
-	ExternalState ExternalState
+	ObservedState ObservedState
+
+	// S6FSM is the FSM of the S6 service
+	S6FSM interface{}
 }
 
 // ExternalState contains all metrics, logs, etc.
 // that are updated at the beginning of Reconcile and then used to
 // determine the next state
-type ExternalState struct {
+type ObservedState struct {
 	IsRunning bool
 }
 

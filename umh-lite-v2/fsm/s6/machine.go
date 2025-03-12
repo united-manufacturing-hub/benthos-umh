@@ -3,9 +3,12 @@ package s6
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/looplab/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/fsm/utils"
+	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/service/s6"
 )
 
 // NewS6Instance creates a new S6Instance with the given ID and service path
@@ -15,12 +18,18 @@ func NewS6Instance(id string, servicePath string, callbacks map[string]fsm.Callb
 	}
 
 	instance := &S6Instance{
-		ID:             id,
-		DesiredState:   OperationalStateStopped,
-		callbacks:      callbacks,
-		ServicePath:    servicePath,
-		backoffManager: utils.NewTransitionBackoffManager(),
-		ExternalState:  S6ExternalState{Status: S6ServiceUnknown},
+		ID:              id,
+		DesiredFSMState: OperationalStateStopped,
+		callbacks:       callbacks,
+		ServicePath:     servicePath,
+		backoff: func() *backoff.ExponentialBackOff {
+			b := backoff.NewExponentialBackOff()
+			b.InitialInterval = 100 * time.Millisecond
+			b.MaxInterval = 1 * time.Minute
+			return b
+		}(),
+		ObservedState: S6ObservedState{Status: S6ServiceUnknown},
+		service:       s6service.NewDefaultService(),
 	}
 
 	// Define the FSM transitions
@@ -59,39 +68,54 @@ func NewS6Instance(id string, servicePath string, callbacks map[string]fsm.Callb
 	return instance
 }
 
-// GetState safely returns the current state
-func (s *S6Instance) GetState() string {
+// NewS6InstanceWithService creates a new S6Instance with a custom service implementation
+func NewS6InstanceWithService(id string, servicePath string, service s6service.Service, callbacks map[string]fsm.Callback) *S6Instance {
+	instance := NewS6Instance(id, servicePath, callbacks)
+	instance.service = service
+	return instance
+}
+
+// GetCurrentFSMState safely returns the current state
+func (s *S6Instance) GetCurrentFSMState() string {
 	return s.FSM.Current()
 }
 
-// setDesiredState safely updates the desired state
+// setDesiredFSMState safely updates the desired state
 // but does not check if the desired state is valid
-func (s *S6Instance) setDesiredState(state string) {
+func (s *S6Instance) setDesiredFSMState(state string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.DesiredState = state
+	s.DesiredFSMState = state
 }
 
-// SetDesiredState safely updates the desired state
+// SetDesiredFSMState safely updates the desired state
 // But ensures that the desired state is a valid state and that it is also a reasonable state
 // e.g., nobody wants to have an instance in the "starting" state, that is just intermediate
-func (s *S6Instance) SetDesiredState(state string) error {
+func (s *S6Instance) SetDesiredFSMState(state string) error {
 	if state != OperationalStateRunning && state != OperationalStateStopped {
 		return fmt.Errorf("invalid desired state: %s. valid states are %s and %s", state, OperationalStateRunning, OperationalStateStopped)
 	}
 
-	s.setDesiredState(state)
+	s.setDesiredFSMState(state)
 	return nil
 }
 
-// GetDesiredState safely returns the desired state
-func (s *S6Instance) GetDesiredState() string {
+// GetDesiredFSMState safely returns the desired state
+func (s *S6Instance) GetDesiredFSMState() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.DesiredState
+	return s.DesiredFSMState
 }
 
 // SendEvent sends an event to the FSM and returns whether the event was processed
 func (s *S6Instance) sendEvent(ctx context.Context, eventName string, args ...interface{}) error {
 	return s.FSM.Event(ctx, eventName, args...)
+}
+
+// ClearError clears any error state and resets the backoff
+func (s *S6Instance) ClearError() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastError = nil
+	s.backoff.Reset()
 }

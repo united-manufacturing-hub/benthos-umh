@@ -3,6 +3,7 @@ package benthos
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/fsm/utils"
 )
@@ -22,15 +23,21 @@ func (b *BenthosInstance) Reconcile(ctx context.Context) error {
 	}
 
 	// Step 2: Check if a previous transition failed and if backoff has elapsed.
-	if !b.reconcileBackoffElapsed() {
-		// Too soon to retry; exit and try again in the next reconciliation cycle.
-		return nil
+	if b.lastError != nil {
+		// Check how long we are supposed to wait
+		next := b.backoff.NextBackOff() // e.g. 100ms, 200ms, 400ms...
+		timeSinceSuspended := time.Since(b.suspendedTime)
+		if timeSinceSuspended < next {
+			// It's still too early to retry
+			return nil
+		}
 	}
 
 	// Step 3: Attempt to reconcile the state.
 	err := b.reconcileStateTransition(ctx)
 	if err != nil {
 		b.SetError(err)
+		b.suspendedTime = time.Now()
 		return err
 	}
 	return nil
@@ -44,16 +51,6 @@ func (b *BenthosInstance) reconcileExternalChanges(ctx context.Context) error {
 	//
 	// For now, it's a stub that always returns nil.
 	return nil
-}
-
-// reconcileBackoffElapsed returns true if no transition error is recorded or if
-// the required backoff period has elapsed since the last error. If false, we skip
-// further transitions this iteration.
-func (b *BenthosInstance) reconcileBackoffElapsed() bool {
-	if err := b.GetError(); err != nil {
-		return b.backoffManager.ReconcileBackoffElapsed()
-	}
-	return true
 }
 
 // reconcileStateTransition compares the current state with the desired state

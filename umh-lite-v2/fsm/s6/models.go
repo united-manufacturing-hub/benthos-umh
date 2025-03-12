@@ -2,9 +2,12 @@ package s6
 
 import (
 	"sync"
+	"time"
 
 	"github.com/looplab/fsm"
-	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/fsm/utils"
+	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/service/s6"
+
+	"github.com/cenkalti/backoff/v4"
 )
 
 // S6ServiceStatus represents the status of a service managed by s6-overlay
@@ -66,8 +69,8 @@ const (
 	EventRestart = "restart"
 )
 
-// S6ExternalState represents the state of the service as observed externally
-type S6ExternalState struct {
+// S6ObservedState represents the state of the service as observed externally
+type S6ObservedState struct {
 	// Status represents the current observed status of the service
 	Status S6ServiceStatus
 	// LastStateChange is the timestamp of the last observed state change
@@ -89,17 +92,18 @@ type S6Instance struct {
 	// FSM is the finite state machine that manages instance state
 	FSM *fsm.FSM
 
-	// DesiredState represents the target operational state we want to reach
-	DesiredState string
-
-	// CurrentState represents the current operational state of the instance
-	CurrentState string
+	// DesiredFSMState represents the target operational state we want to reach
+	DesiredFSMState string
 
 	// Callbacks for state transitions
 	callbacks map[string]fsm.Callback
 
-	// BackoffManager for managing retry attempts
-	backoffManager *utils.TransitionBackoffManager
+	// backoff is the backoff manager for managing retry attempts
+	backoff backoff.BackOff
+
+	// suspendedTime is the time when the last error occurred
+	// it is used in the reconcile function to check if the backoff has elapsed
+	suspendedTime time.Time
 
 	// lastError stores the last error that occurred during a transition
 	lastError error
@@ -107,11 +111,14 @@ type S6Instance struct {
 	// ServicePath is the path to the s6 service directory
 	ServicePath string
 
-	// ExternalState represents the observed state of the service
-	// ExternalState contains all metrics, logs, etc.
+	// ObservedState represents the observed state of the service
+	// ObservedState contains all metrics, logs, etc.
 	// that are updated at the beginning of Reconcile and then used to
 	// determine the next state
-	ExternalState S6ExternalState
+	ObservedState S6ObservedState
+
+	// service is the S6 service implementation to use
+	service s6service.Service
 }
 
 // GetError returns the last error that occurred during a transition
