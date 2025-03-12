@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gopcua/opcua/ua"
@@ -17,8 +18,7 @@ type OPCUAOutput struct {
 	*OPCUAConnection // Embed the shared connection configuration
 
 	// Output-specific fields
-	NodeMappings    []NodeMapping
-	ForcedDataTypes map[string]string
+	NodeMappings []NodeMapping
 
 	// Handshake configuration
 	HandshakeEnabled     bool
@@ -82,7 +82,6 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service
 
 	output := &OPCUAOutput{
 		OPCUAConnection: conn,
-		ForcedDataTypes: make(map[string]string),
 	}
 
 	// Parse node mappings
@@ -93,25 +92,56 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service
 
 	// Validate that we have at least one node mapping
 	if len(nodeMappingsConf) == 0 {
-		return nil, fmt.Errorf("at least one node mapping is required")
+		return nil, fmt.Errorf("at least one node mapping is required in the 'nodeMappings' configuration. Please refer to the documentation for examples")
 	}
 
 	for i := 0; i < len(nodeMappingsConf); i++ {
 		mapConf := nodeMappingsConf[i]
 
+		// Get nodeId and validate it
 		nodeID, err := mapConf.FieldString("nodeId")
 		if err != nil {
 			return nil, fmt.Errorf("nodeId is required in node mapping %d: %w", i, err)
 		}
+		if nodeID == "" {
+			return nil, fmt.Errorf("nodeId in node mapping %d cannot be empty. Please provide a valid OPC UA node ID (e.g., 'ns=2;s=MyVariable')", i)
+		}
 
+		// Validate nodeId format
+		if _, err := ua.ParseNodeID(nodeID); err != nil {
+			return nil, fmt.Errorf("invalid nodeId format in node mapping %d: %s. Expected format examples: 'ns=2;s=MyVariable', 'i=85', 'ns=3;i=1000'. Error: %v", i, nodeID, err)
+		}
+
+		// Get valueFrom and validate it
 		valueFrom, err := mapConf.FieldString("valueFrom")
 		if err != nil {
 			return nil, fmt.Errorf("valueFrom is required in node mapping %d: %w", i, err)
 		}
+		if valueFrom == "" {
+			return nil, fmt.Errorf("valueFrom in node mapping %d cannot be empty. Please specify the message field to read the value from (e.g., 'value', 'data.temperature')", i)
+		}
 
+		// Get and validate dataType
 		dataType, err := mapConf.FieldString("dataType")
 		if err != nil {
 			return nil, fmt.Errorf("dataType is required in node mapping %d: %w", i, err)
+		}
+
+		// Validate dataType is supported
+		supportedTypes := []string{
+			"Boolean", "SByte", "Byte", "Int16", "UInt16", "Int32", "UInt32",
+			"Int64", "UInt64", "Float", "Double", "String", "DateTime",
+		}
+		validType := false
+		for _, t := range supportedTypes {
+			if dataType == t {
+				validType = true
+				break
+			}
+		}
+		if !validType {
+			return nil, fmt.Errorf("unsupported dataType '%s' in node mapping %d. Supported types are: %s",
+				dataType, i, strings.Join(supportedTypes, ", "))
 		}
 
 		output.NodeMappings = append(output.NodeMappings, NodeMapping{
