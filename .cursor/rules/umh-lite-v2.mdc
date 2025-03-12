@@ -1,0 +1,73 @@
+---
+description: For designing the control loop in umh-lite-v2
+globs: umh-lite-v2/**.go
+alwaysApply: false
+---
+# Guidelines for Deterministic Single-Threaded Control Loops in Go
+
+## Ensuring Deterministic Loop Behavior  
+- **Single-Threaded Execution**: Keep the core control logic within a single goroutine (thread) to avoid nondeterministic scheduling. Running a single-threaded loop means no OS scheduler can preempt and reorder events, ensuring all decisions occur in a reproducible order ([comments by jamwt](mdc:https:/old.reddit.com/user/jamwt/comments#:~:text=The%20single%20threaded%20control%20loop,that%20can%20not%20be%20replicated)). This makes the system’s behavior consistent and easier to test, as concurrency won’t introduce heisenbugs.  
+- **Predictable Event Ordering**: Design the loop to handle one event at a time in a defined sequence. If using `select` on multiple channels, be aware that Go will choose a ready channel at random when multiple are ready simultaneously ([go - golang: Make select statemet deterministic? - Stack Overflow](mdc:https:/stackoverflow.com/questions/62314455/golang-make-select-statemet-deterministic#:~:text=realm%20of%20Go%20nondeterministic%20behavior%3A)). To maintain determinism, avoid having multiple events become ready at the exact same time or implement a priority mechanism (e.g. nested `select` or separate loop phases) so that event handling order is well-defined ([go - golang: Make select statemet deterministic? - Stack Overflow](mdc:https:/stackoverflow.com/questions/62314455/golang-make-select-statemet-deterministic#:~:text=1)).  
+- **Consistent Timing (If Required)**: If the loop runs on a timer (e.g. using `time.Ticker`), ensure the loop can complete its work within the tick interval. Go’s ticker will *“adjust the time interval or drop ticks to make up for slow receivers”* if the loop falls behind ([Careful, Go's Standard Ticker is not Realtime](mdc:https:/tylerstiene.ca/blog/careful-gos-standard-ticker-is-not-realtime/#:~:text=%2F%2F%20NewTicker%20returns%20a%20new,ticker%20to%20release%20associated%20resources)). To avoid jitter or missed iterations, keep the loop’s workload small or adjust the design (e.g. skip or queue tasks) when an iteration runs long.  
+
+## Communication via Go Channels  
+- **Share Memory by Communicating**: Prefer channels for coordination between loops instead of shared variables. Go’s idiomatic approach is *“Do not communicate by sharing memory; instead, share memory by communicating.”* Using channels to pass data ensures only one goroutine (the receiver) accesses the data at a time ([Share Memory By Communicating - The Go Programming Language](mdc:https:/go.dev/blog/codelab-share#:~:text=Go%E2%80%99s%20concurrency%20primitives%20,read%20for%20any%20Go%20programmer)). This eliminates race conditions and makes interactions between loops deterministic and easier to reason about.  
+- **One Loop, One Responsibility**: Treat each control loop (goroutine) as an independent actor that owns certain state. Other parts of the program should interact with it by sending messages (via channels) rather than directly manipulating its data. This encapsulation means each loop can proceed sequentially on its own data, greatly simplifying state management and guaranteeing that state changes aren’t interleaved unpredictably. (In practice, we often use a loop reading from one or more channels to keep a set of data confined to one goroutine, avoiding the need for locks ([Share Memory By Communicating - The Go Programming Language](mdc:https:/go.dev/blog/codelab-share#:~:text=Communicating%20Sequential%20Processes,read%20for%20any%20Go%20programmer)).)  
+- **Channel Communication Patterns**: Structure channel usage to avoid deadlocks and to clarify intent: for example, use **single sender/single receiver** channels where possible, or clearly document if multiple senders are involved. A common pattern is an **event loop with channels** – one goroutine runs a `for { select {…} }` loop handling all incoming events. This follows Go’s “channels orchestrate; mutexes serialize” philosophy, using channels to orchestrate the sequence of events in the system ([Beautiful State-Machines - FSM Part II | Findy Agency](mdc:https:/findy-network.github.io/blog/2023/06/22/beautiful-state-machines-fsm-part-ii/#:~:text=)). Each case in the `select` represents a type of event, making the loop’s behavior explicit.  
+
+## Safe State Machine Transitions  
+- **Explicit State Representation**: Model the control loop as a finite state machine (FSM) when appropriate. Define a set of states (using iota enums or constants) and events that trigger transitions ([State Machines In Golang | Restackio](mdc:https:/www.restack.io/p/state-machines-knowledge-state-machine-pattern-golang-cat-ai#:~:text=,or%20a%20map%20of%20functions)). This makes the possible transitions clear and the code more maintainable ([State Machines In Golang | Restackio](mdc:https:/www.restack.io/p/state-machines-knowledge-state-machine-pattern-golang-cat-ai#:~:text=Finite%20state%20machines%20,maintainable%20and%20easier%20to%20understand)). For each state, handle events in a controlled way (e.g. a switch on state within the loop) so that only valid transitions occur.  
+- **Controlled Transitions**: Perform state transitions within the single-threaded loop, as an atomic step of event handling. When an event is received that causes a state change, update the state and perform any entry/exit actions *in the same iteration* of the loop. This prevents partial transitions or race conditions. By keeping transitions atomic and sequential, you avoid scenarios where multiple events concurrently try to change the state.  
+- **Guarded State Changes**: Ensure that any change of state is deliberate and logged or visible for debugging. For example, if using a function to transition state, it can assert the current state and next state are allowed. This helps catch undefined transitions. Furthermore, no external goroutine should modify the FSM’s state; they must send an event into the loop to request a change. This guarantees the FSM’s integrity, since only the loop thread can change its state (following the communicate-by-channel principle) ([Share Memory By Communicating - The Go Programming Language](mdc:https:/go.dev/blog/codelab-share#:~:text=Go%E2%80%99s%20concurrency%20primitives%20,read%20for%20any%20Go%20programmer)). 
+
+## Avoiding Deadlocks, Livelocks, and Delays  
+- **Avoid Cyclic Waits**: Design communication patterns to avoid circular dependencies. For instance, if Loop A sends to Loop B via a channel, and B might need to respond to A, use a separate response channel or have A periodically check for responses rather than blocking indefinitely. Deadlock occurs when each side waits on the other. To prevent this, ensure at least one side’s wait has a timeout or is in a `select` with other cases so it can proceed if the counterpart is not ready.  
+- **Non-Blocking or Buffered Channels**: When appropriate, use buffered channels to decouple sender and receiver so that a fast sender doesn’t deadlock waiting for a slow receiver (or vice versa). A buffer allows the sending goroutine to continue if the receiving loop is momentarily busy. However, keep buffer sizes bounded and consider back-pressure mechanisms – an endlessly growing buffer can indicate a livelock or leak where the consumer isn’t keeping up. If using unbuffered channels, both sides should be orchestrated so that at least one is always ready to hand off the data (for example, the event loop is always waiting in `select` for incoming messages).  
+- **Use Timeouts and Context**: Incorporate timeouts or cancellation signals for operations that *could* block the loop. For example, if the loop waits on an external response, use a `select` with a `time.After` channel or context `Done()` channel to break out after a reasonable delay. This fails fast on unresponsive conditions and keeps the loop from stalling forever. The pattern of a `for-select-done` loop using a done channel or context for cancellation is a common idiom in Go ([Understanding Go's context Package - Philipp K. Janert, Ph.D.](mdc:https:/janert.me/blog/2024/understanding-gos-context-package/#:~:text=Once%20more%2C%20and%20as%20summary%3A,immediately%20grasp%20what%E2%80%99s%20going%20on)) – it ensures the loop can exit gracefully when needed (e.g. on program shutdown or error).  
+- **Livelock Prevention**: Ensure the loop does meaningful work each iteration and doesn’t get stuck rapidly cycling without progress. A livelock could occur, for example, if two loops constantly send signals to each other in response to the other’s last signal but never break the cycle. To avoid this, implement sensible handshakes or back-off strategies for retrying events. If a certain event causes no state change (thus no progress), consider adding a small delay or logging a warning to prevent tight spinning.  
+
+## Handling External Events Safely  
+- **Isolate External Event Handling**: When external events (like OS signals, hardware interrupts, or callbacks from other systems) occur, translate them into channel messages or other Go synchronization primitives for the control loop to handle. This decouples the external thread or interrupt from the internal state logic. For example, use `signal.Notify` to catch an interrupt signal in a separate goroutine and then send a “shutdown” event into your control loop’s channel. This way, the loop remains single-threaded in its logic, even when reacting to outside stimuli.  
+- **Offload Long Operations**: Keep the control loop responsive by offloading any long-running or blocking tasks to worker goroutines. The control loop can issue a job (e.g. read a file, compute a hash, call an external service) by sending a request to a worker or just spawning a goroutine, and later receive the result via channel. As noted in one real-world scenario, expensive operations like file hashing or I/O were moved out of the main loop thread to avoid blocking it, since those tasks were “not part of the fundamental decision-making state machine” ([comments by jamwt](mdc:https:/old.reddit.com/user/jamwt/comments#:~:text=See%20more%20here%3A%20https%3A%2F%2Fdropbox.tech%2Finfrastructure%2F)). The main loop thus stays focused on the state machine and decision logic, maintaining determinism and quick iteration, while background workers handle the rest and feed results back.  
+- **Thread-Safe External Callbacks**: If using libraries or frameworks that invoke callbacks (possibly on different threads/goroutines), do not let them modify your control loop’s state directly. Instead, have the callback function send an event into a channel that the control loop processes. This ensures the state is only touched by the loop’s single thread, preventing race conditions. It also means the external event is handled in the loop’s normal sequence, preserving deterministic ordering relative to other events.  
+- **Graceful Shutdown and Signals**: Treat a shutdown as just another event for the loop to handle. For example, a context’s cancellation or a quit channel closing can be one of the cases in your loop’s `select`, prompting the loop to exit cleanly ([Understanding Go's context Package - Philipp K. Janert, Ph.D.](mdc:https:/janert.me/blog/2024/understanding-gos-context-package/#:~:text=func%20work%28%20ctx%20context,)) ([Understanding Go's context Package - Philipp K. Janert, Ph.D.](mdc:https:/janert.me/blog/2024/understanding-gos-context-package/#:~:text=It%20should%20also%20be%20pointed,stop%20all%20of%20those%20goroutines)). When shutting down, close any channels as needed to unblock senders/receivers, and let the loop finish processing any final events in queue. This way, the system doesn’t deadlock on exit and all goroutines terminate as expected. Each loop should either be listening for a shutdown signal or be structured to finish when its work is done (e.g. loop breaks when input channel closes).  
+
+## Reconciliation Loop Patterns
+- **Level-Triggered vs Edge-Triggered Logic**: Implement level-triggered reconciliation where possible, following Kubernetes' pattern. In level-triggered systems, the control loop continuously compares the desired state against the current state and takes corrective action when they differ. This is more robust than edge-triggered systems that only react to change events, as it can recover from missed events or external changes. The reconciliation loop should be idempotent and able to handle repeated invocations safely.
+
+- **Declarative State Management**: 
+  - Define clear "desired state" and "current state" structures
+  - Make the reconciliation loop focus on converging current state to desired state
+  - Store the full state rather than just deltas or transitions
+  - Ensure the state comparison is deterministic and complete
+
+- **Eventual Consistency Strategy**:
+  - Accept that perfect consistency is impossible in distributed systems
+  - Design reconciliation to handle temporary inconsistencies gracefully
+  - Implement exponential backoff for retries when state changes fail
+  - Use optimistic locking or versioning to detect concurrent modifications
+
+- **Work Queue Management**:
+  - Implement a work queue to manage reconciliation requests
+  - De-duplicate identical reconciliation requests
+  - Use a rate limiter to prevent overwhelming the system during bursts
+  - Consider implementing "sync period" reconciliations to catch drift
+
+- **Error Handling and Requeuing**:
+  - Distinguish between permanent and temporary failures
+  - Requeue items with temporary failures with appropriate backoff
+  - Log permanent failures and move to an error state
+  - Implement circuit breakers for dependent services
+
+- **Status Updates and Progress Tracking**:
+  - Maintain a status subresource to track reconciliation progress
+  - Record conditions that represent the state of the reconciliation
+  - Include timestamps and reason fields for state transitions
+  - Provide meaningful error messages for troubleshooting
+
+- **Finalizers and Cleanup**:
+  - Implement finalizers to handle resource cleanup
+  - Ensure cleanup operations are idempotent
+  - Handle cleanup of dependent resources in the correct order
+  - Guard against premature resource deletion
+
