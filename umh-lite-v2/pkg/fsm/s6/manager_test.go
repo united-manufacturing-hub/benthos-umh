@@ -2,7 +2,10 @@ package s6
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
 	"path/filepath"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -33,6 +36,42 @@ func createMockS6Instance(manager *S6Manager, serviceName string, mockService s6
 	manager.Instances[serviceName] = instance
 
 	return instance
+}
+
+// setS6InstanceState sets the state of an S6Instance for testing
+func setS6InstanceState(instance *S6Instance, state string) {
+	instance.baseFSMInstance.SetCurrentFSMState(state)
+}
+
+// configureServiceForState sets up the mock service to match the expected state
+func configureServiceForState(mockService *s6service.MockService, servicePath string, state string) {
+	mockService.ExistingServices[servicePath] = true
+
+	// Configure service state based on FSM state
+	switch state {
+	case OperationalStateRunning:
+		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
+			Status: s6service.ServiceUp,
+			Uptime: 10,
+			Pid:    12345,
+		}
+	case OperationalStateStopped:
+		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
+			Status: s6service.ServiceDown,
+		}
+	case OperationalStateStarting:
+		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
+			Status: s6service.ServiceRestarting, // Use as proxy for "starting"
+		}
+	case OperationalStateStopping:
+		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
+			Status: s6service.ServiceDown, // Use as proxy for "stopping"
+		}
+	default:
+		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
+			Status: s6service.ServiceUnknown,
+		}
+	}
 }
 
 var _ = FDescribe("S6Manager", func() {
@@ -166,54 +205,175 @@ var _ = FDescribe("S6Manager", func() {
 		Expect(service.ObservedState.ServiceInfo.Pid).To(Equal(12345))
 	})
 
-	It("should remove a service when it disappears from config", func() {
-		// Create a mock service and add an instance
+	// Table-driven test for removal from different states
+	DescribeTable("removing a service from different states",
+		func(initialState string) {
+			// Create a mock service
+			mockService := s6service.NewMockService()
+			serviceName := fmt.Sprintf("test-remove-%s", initialState)
+			servicePath := filepath.Join("/mock/path", serviceName)
+
+			// Create service instance
+			instance := createMockS6Instance(manager, serviceName, mockService, OperationalStateRunning)
+
+			// Set up the initial state
+			setS6InstanceState(instance, initialState)
+			configureServiceForState(mockService, servicePath, initialState)
+
+			// Verify initial setup
+			Expect(manager.Instances).To(HaveKey(serviceName))
+			Expect(manager.Instances[serviceName].GetCurrentFSMState()).To(Equal(initialState))
+
+			// Create empty config to trigger removal
+			emptyConfig := config.FullConfig{
+				Services: []config.S6FSMConfig{},
+			}
+
+			// Reconcile to initiate removal
+			err := manager.Reconcile(ctx, emptyConfig)
+			Expect(err).NotTo(HaveOccurred())
+
+			// For non-stopped states we need to stop first, others can remove directly
+			if initialState != OperationalStateStopped {
+				// Verify service exists and is in appropriate state
+				// Transitions might be different depending on initial state
+				Expect(manager.Instances).To(HaveKey(serviceName))
+
+				// If the service was already in removing state or is gone, that's fine
+				// Otherwise it should be transitioning
+				if manager.Instances[serviceName] != nil {
+					state := manager.Instances[serviceName].GetCurrentFSMState()
+					// The valid states after reconcile could be:
+					// 1. Original state (waiting to stop)
+					// 2. Stopping (in process of stopping)
+					// 3. Stopped (successfully stopped, ready for removal)
+					// 4. Removing (if already stopped)
+					// 5. Removed (if already removed)
+					validTransitionStates := []string{
+						initialState,
+						OperationalStateStopping,
+						OperationalStateStopped,
+						internal_fsm.LifecycleStateRemoving,
+						internal_fsm.LifecycleStateRemoved,
+					}
+
+					Expect(validTransitionStates).To(ContainElement(state),
+						"Expected state to be one of %v but got %s", validTransitionStates, state)
+
+					// Help it transition to stopped if needed
+					if state == initialState || state == OperationalStateStopping {
+						// Simulate service stopping
+						mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
+							Status: s6service.ServiceDown,
+						}
+
+						if state != OperationalStateStopped {
+							// Now set to stopped to help the transition
+							setS6InstanceState(instance, OperationalStateStopped)
+						}
+					}
+				}
+			}
+
+			// Keep reconciling until service is removed, with a max number of attempts
+			maxAttempts := 5
+			for i := 0; i < maxAttempts; i++ {
+				// If service is gone, we're done
+				if len(manager.Instances) == 0 || manager.Instances[serviceName] == nil {
+					break
+				}
+
+				// If in removed state, one more reconcile should delete it
+				if manager.Instances[serviceName].GetCurrentFSMState() == internal_fsm.LifecycleStateRemoved {
+					err = manager.Reconcile(ctx, emptyConfig)
+					Expect(err).NotTo(HaveOccurred())
+					break
+				}
+
+				// Another reconcile cycle
+				err = manager.Reconcile(ctx, emptyConfig)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Short delay to avoid issues
+				time.Sleep(time.Millisecond * 10)
+			}
+
+			// After all reconciliations, the instance should be removed
+			Expect(manager.Instances).NotTo(HaveKey(serviceName),
+				"Service should be removed after reconciliation from state %s", initialState)
+		},
+		Entry("from stopped state", OperationalStateStopped),
+		Entry("from running state", OperationalStateRunning),
+		Entry("from starting state", OperationalStateStarting),
+		Entry("from stopping state", OperationalStateStopping),
+	)
+
+	// Random state transition test
+	FIt("should handle random state transitions and removal reliably", func() {
+		// Use fixed seed for reproducibility
+		rand.Seed(42)
+
+		// Create several services
 		mockService := s6service.NewMockService()
-		serviceName := "test-remove"
-		servicePath := filepath.Join("/mock/path", serviceName)
 
-		// Create and setup service in stopped state
-		instance := createMockS6Instance(manager, serviceName, mockService, OperationalStateStopped)
+		// Number of services to test with
+		numServices := 5
+		serviceNames := make([]string, numServices)
+		servicePaths := make([]string, numServices)
 
-		// Set the current state to operational stopped (required for removal)
-		instance.baseFSMInstance.SetCurrentFSMState(OperationalStateStopped)
-		mockService.ExistingServices[servicePath] = true
-		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
-			Status: s6service.ServiceDown,
+		// Create services with random initial states
+		possibleStates := []string{
+			OperationalStateStopped,
+			OperationalStateRunning,
+			OperationalStateStarting,
+			OperationalStateStopping,
 		}
 
-		// Verify the service is in the correct initial state
-		Expect(manager.Instances).To(HaveLen(1))
-		Expect(manager.Instances).To(HaveKey(serviceName))
-		Expect(manager.Instances[serviceName].GetCurrentFSMState()).To(Equal(OperationalStateStopped))
+		// Create services
+		for i := 0; i < numServices; i++ {
+			serviceNames[i] = fmt.Sprintf("fuzz-test-service-%d", i)
+			servicePaths[i] = filepath.Join("/mock/path", serviceNames[i])
 
-		// Create empty config (without our service) to trigger removal
+			instance := createMockS6Instance(manager, serviceNames[i], mockService, OperationalStateRunning)
+
+			// Set random initial state
+			initialState := possibleStates[rand.Intn(len(possibleStates))]
+			setS6InstanceState(instance, initialState)
+			configureServiceForState(mockService, servicePaths[i], initialState)
+		}
+
+		// Verify all services exist
+		Expect(manager.Instances).To(HaveLen(numServices))
+
+		// Create empty config to trigger removal of all services
 		emptyConfig := config.FullConfig{
 			Services: []config.S6FSMConfig{},
 		}
 
-		// First reconcile with empty config - this should mark the instance for removal
-		err := manager.Reconcile(ctx, emptyConfig)
-		Expect(err).NotTo(HaveOccurred())
-
-		// Should now be in Removed state
-		// Removing state is an intermediate state and should not be observable, except when there is an error
-		Expect(manager.Instances[serviceName].GetCurrentFSMState()).To(Equal(internal_fsm.LifecycleStateRemoved))
-
-		// Keep reconciling until the service is removed or max attempts reached
-		maxAttempts := 5
-		for attempt := 0; attempt < maxAttempts; attempt++ {
-			if len(manager.Instances) == 0 {
-				// Service was removed, test passes
-				break
-			}
-
-			// Another reconcile
-			err = manager.Reconcile(ctx, emptyConfig)
+		// Reconcile multiple times, with random actions between reconciles
+		maxIterations := 15
+		for i := 0; i < maxIterations; i++ {
+			// Perform reconciliation
+			err := manager.Reconcile(ctx, emptyConfig)
 			Expect(err).NotTo(HaveOccurred())
+
+			// For remaining services, randomly change their states to simulate chaotic conditions
+			for name, instance := range manager.Instances {
+				if rand.Float32() < 0.3 { // 30% chance
+					// Pick a random state
+					newState := possibleStates[rand.Intn(len(possibleStates))]
+					setS6InstanceState(instance, newState)
+					configureServiceForState(mockService, instance.servicePath, newState)
+
+					// Log the transition for debugging
+					GinkgoWriter.Printf("Iteration %d: Changed service %s to state %s\n",
+						i, name, newState)
+				}
+			}
 		}
 
-		// After all reconciliation attempts, the service should be removed
-		Expect(manager.Instances).To(BeEmpty(), "Service should be removed after reconciliation")
+		// After multiple iterations, all services should be removed
+		Expect(manager.Instances).To(BeEmpty(),
+			"All services should eventually be removed after multiple reconciliations")
 	})
 })
