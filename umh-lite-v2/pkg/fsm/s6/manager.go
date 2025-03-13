@@ -77,13 +77,12 @@ func (m *S6Manager) Reconcile(ctx context.Context, cfg config.FullConfig) error 
 			log.Printf("[S6Manager] instance %s is already in removing state, waiting until it is removed", instanceName)
 			continue
 		case internal_fsm.LifecycleStateRemoved:
-			log.Printf("[S6Manager] instance %s is in removed state, removing it", instanceName)
+			log.Printf("[S6Manager] instance %s is in removed state, deleting it from the manager", instanceName)
 			delete(observedState, instanceName)
 			continue
 		default:
 			log.Printf("[S6Manager] instance %s is in state %s, starting the removing process", instanceName, observedState[instanceName].GetCurrentFSMState())
 			observedState[instanceName].Remove(ctx)
-			delete(observedState, instanceName)
 		}
 
 	}

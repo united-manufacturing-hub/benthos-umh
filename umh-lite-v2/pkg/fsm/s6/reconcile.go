@@ -95,7 +95,7 @@ func (b *S6Instance) reconcileLifecycleStates(ctx context.Context, currentState 
 		if err := b.initiateS6Remove(ctx); err != nil {
 			return err
 		}
-		return b.baseFSMInstance.SendEvent(ctx, internal_fsm.LifecycleEventRemove)
+		return b.baseFSMInstance.SendEvent(ctx, internal_fsm.LifecycleEventRemoveDone)
 	case internal_fsm.LifecycleStateRemoved:
 		return fmt.Errorf("instance %s is removed", b.baseFSMInstance.ID)
 	default:

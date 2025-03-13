@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"testing"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/config"
@@ -13,11 +12,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
-
-func TestS6(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "S6 FSM Suite")
-}
 
 var _ = Describe("S6 FSM", func() {
 	var (

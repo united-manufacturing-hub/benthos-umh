@@ -1,6 +1,7 @@
 package s6
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
@@ -78,4 +79,12 @@ func (s *S6Instance) GetCurrentFSMState() string {
 // GetDesiredFSMState returns the desired state of the FSM
 func (s *S6Instance) GetDesiredFSMState() string {
 	return s.baseFSMInstance.GetDesiredFSMState()
+}
+
+func (s *S6Instance) Remove(ctx context.Context) error {
+	return s.baseFSMInstance.Remove(ctx)
+}
+
+func (s *S6Instance) IsRemoved() bool {
+	return s.baseFSMInstance.IsRemoved()
 }

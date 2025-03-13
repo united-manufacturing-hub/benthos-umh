@@ -31,10 +31,12 @@ require (
 	github.com/RuneRoven/benthosAlarm v1.0.0
 	github.com/RuneRoven/benthosSMTP v0.0.1
 	github.com/dop251/goja v0.0.0-20231014103939-873a1496dc8e
+	github.com/google/uuid v1.6.0
 	github.com/gopcua/opcua v0.5.3
 	github.com/grid-x/modbus v0.0.0-20240503115206-582f2ab60a18
 	github.com/redpanda-data/benthos/v4 v4.38.0
 	github.com/redpanda-data/connect/public/bundle/free/v4 v4.31.0
+	golang.org/x/time v0.5.0
 )
 
 require (
@@ -173,7 +175,6 @@ require (
 	github.com/google/flatbuffers v24.3.25+incompatible // indirect
 	github.com/google/pprof v0.0.0-20240424215950-a892ee059fd6 // indirect
 	github.com/google/s2a-go v0.1.7 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.2 // indirect
 	github.com/googleapis/gax-go/v2 v2.12.5 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
@@ -223,7 +224,6 @@ require (
 	github.com/lann/ps v0.0.0-20150810152359-62de8c46ede0 // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/linkedin/goavro/v2 v2.13.0 // indirect
-	github.com/looplab/fsm v1.0.2 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-runewidth v0.0.15 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
@@ -316,7 +316,6 @@ require (
 	golang.org/x/mod v0.20.0 // indirect
 	golang.org/x/oauth2 v0.22.0 // indirect
 	golang.org/x/term v0.28.0 // indirect
-	golang.org/x/time v0.5.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	google.golang.org/api v0.188.0 // indirect
 	google.golang.org/genproto v0.0.0-20240708141625-4ad9e859172b // indirect

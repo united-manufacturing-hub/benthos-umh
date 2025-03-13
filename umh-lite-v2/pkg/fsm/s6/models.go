@@ -61,10 +61,14 @@ type S6ObservedState struct {
 	ObservedS6ServiceConfig s6service.S6ServiceConfig
 }
 
+// S6Instance implements the FSMInstance interface
+// If S6Instance does not implement the FSMInstance interface, this will
+// be detected at compile time
+var _ public_fsm.FSMInstance = (*S6Instance)(nil)
+
 // S6Instance represents a single S6 service instance with a state machine
 type S6Instance struct {
 	baseFSMInstance *internal_fsm.BaseFSMInstance
-	public_fsm.FSMInstance
 
 	// ObservedState represents the observed state of the service
 	// ObservedState contains all metrics, logs, etc.
