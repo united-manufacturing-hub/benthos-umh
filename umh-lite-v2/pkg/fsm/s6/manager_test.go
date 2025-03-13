@@ -231,13 +231,12 @@ var _ = FDescribe("S6Manager", func() {
 
 		// Reconcile once to let the instance be created
 		GinkgoWriter.Printf("Reconciling once to set up mock service\n")
-		err = manager.Reconcile(ctx, configWithService)
+		err = manager.Reconcile(ctx, configWithService) // This will result once in a exec: "s6-svstat": executable file not found in $PATH error as the mock is not set up yet
 		Expect(err).NotTo(HaveOccurred())
 		Expect(manager.Instances).To(HaveKey(serviceName), "Service should be created")
 
 		// Get the instance and replace its service with our mock
 		instance := manager.Instances[serviceName]
-		GinkgoWriter.Printf("Service path is: %s\n", instance.servicePath)
 
 		// Make sure we're using the correct path in our mock
 		servicePath := instance.servicePath
@@ -255,11 +254,8 @@ var _ = FDescribe("S6Manager", func() {
 		// Replace the real service with our mock
 		instance.service = mockService
 
-		GinkgoWriter.Printf("Mock service properly configured. ExistingServices: %v\n", mockService.ExistingServices)
-
 		// Loop to bring service to running state
 		maxCreationAttempts := 10
-		serviceRunning := false
 
 		for i := 1; i <= maxCreationAttempts; i++ {
 			// Reconcile with the service config
@@ -286,16 +282,10 @@ var _ = FDescribe("S6Manager", func() {
 			if instance.baseFSMInstance.GetError() != nil {
 				GinkgoWriter.Printf("FSM Error: %v\n", instance.baseFSMInstance.GetError())
 			}
-
-			// Check if service reached running state
-			if currentState == OperationalStateRunning {
-				serviceRunning = true
-				GinkgoWriter.Printf("Service reached RUNNING state after %d iterations\n", i)
-				break
-			}
 		}
 
 		// Verify the service reached running state
+		serviceRunning := instance.GetCurrentFSMState() == OperationalStateRunning
 		Expect(serviceRunning).To(BeTrue(), "Service should have reached running state")
 		Expect(manager.Instances).To(HaveKey(serviceName))
 		Expect(manager.Instances[serviceName].GetCurrentFSMState()).To(Equal(OperationalStateRunning))
@@ -315,17 +305,6 @@ var _ = FDescribe("S6Manager", func() {
 		// Loop to remove service
 		maxRemovalAttempts := 15
 		serviceRemoved := false
-
-		// First ensure we're in the required state for removal
-		if currentState != OperationalStateStopped {
-			GinkgoWriter.Printf("Service is not in stopped state, setting desired state to stopped\n")
-			instance.SetDesiredFSMState(OperationalStateStopped)
-
-			// Extra reconcile to update desired state
-			err = manager.Reconcile(ctx, emptyConfig)
-			GinkgoWriter.Printf("After setting desired=stopped: Current=%s, Desired=%s\n",
-				instance.GetCurrentFSMState(), instance.GetDesiredFSMState())
-		}
 
 		for i := 1; i <= maxRemovalAttempts; i++ {
 			// Reconcile with empty config
