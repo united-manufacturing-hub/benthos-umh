@@ -5,8 +5,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/internal/fsm/s6"
-	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/internal/service/s6"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/fsm/s6"
+	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/service/s6"
 )
 
 const (
@@ -42,7 +42,6 @@ output:
 		"benthos",     // Service name
 		s6BaseDir,     // Base directory
 		benthosConfig, // Service configuration
-		nil,           // Callbacks (optional)
 	)
 
 	ctx := context.Background()
@@ -100,6 +99,11 @@ output:
 		}
 
 		time.Sleep(2 * time.Second)
+	}
+
+	err = benthosService.Remove(ctx)
+	if err != nil {
+		log.Printf("Error removing benthos service: %s", err)
 	}
 
 	log.Println("umh-lite-v2 test completed")

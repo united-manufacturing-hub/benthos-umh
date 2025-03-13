@@ -1,4 +1,4 @@
-package utils
+package fsm
 
 const (
 	// EventRemove is triggered to remove an instance

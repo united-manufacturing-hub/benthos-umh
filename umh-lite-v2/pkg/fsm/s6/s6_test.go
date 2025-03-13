@@ -5,9 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/looplab/fsm"
-	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/internal/fsm/utils"
-	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/internal/service/s6"
+	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/internal/fsm"
+	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/service/s6"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -32,34 +31,18 @@ var _ = Describe("S6 FSM", func() {
 		testPath = "/tmp/test-service"
 		mockService = s6service.NewMockService()
 
-		// Create callbacks for testing state transitions
-		callbacks := map[string]fsm.Callback{
-			"enter_" + utils.LifecycleStateCreating: func(ctx context.Context, e *fsm.Event) {
-				GinkgoWriter.Write([]byte("Entering creating state\n"))
-			},
-			"enter_" + OperationalStateStopped: func(ctx context.Context, e *fsm.Event) {
-				GinkgoWriter.Write([]byte("Entering stopped state\n"))
-			},
-			"enter_" + OperationalStateStarting: func(ctx context.Context, e *fsm.Event) {
-				GinkgoWriter.Write([]byte("Entering starting state\n"))
-			},
-			"enter_" + OperationalStateRunning: func(ctx context.Context, e *fsm.Event) {
-				GinkgoWriter.Write([]byte("Entering running state\n"))
-			},
-		}
-
-		instance = NewS6InstanceWithService(testID, testPath, mockService, s6service.ServiceConfig{}, callbacks)
+		instance = NewS6InstanceWithService(testID, testPath, mockService, s6service.ServiceConfig{})
 		ctx = context.Background()
 	})
 
 	It("should transition from to_be_created to stopped", func() {
 		// Initial state should be to_be_created
-		Expect(instance.GetCurrentFSMState()).To(Equal(utils.LifecycleStateToBeCreated))
+		Expect(instance.GetCurrentFSMState()).To(Equal(internal_fsm.LifecycleStateToBeCreated))
 
 		// Reconcile should trigger create event
 		err := instance.Reconcile(ctx)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(instance.GetCurrentFSMState()).To(Equal(utils.LifecycleStateCreating))
+		Expect(instance.GetCurrentFSMState()).To(Equal(internal_fsm.LifecycleStateCreating))
 		Expect(mockService.CreateCalled).To(BeTrue())
 
 		// Mock service creation success
@@ -75,7 +58,7 @@ var _ = Describe("S6 FSM", func() {
 
 	It("should start the service when desired state is 'running'", func() {
 		// Set up the instance in the stopped state
-		instance.fsm.SetState(OperationalStateStopped)
+		instance.baseFSMInstance.SetCurrentFSMState(OperationalStateStopped)
 
 		// Set service as existing
 		mockService.ExistingServices[testPath] = true
@@ -110,7 +93,7 @@ var _ = Describe("S6 FSM", func() {
 
 	It("should stop the service when desired state is 'stopped'", func() {
 		// Set up the instance in the running state
-		instance.fsm.SetState(OperationalStateRunning)
+		instance.baseFSMInstance.SetCurrentFSMState(OperationalStateRunning)
 
 		// Set service as existing and running
 		mockService.ExistingServices[testPath] = true
@@ -144,7 +127,7 @@ var _ = Describe("S6 FSM", func() {
 
 	It("should handle errors during service operations", func() {
 		// Set up the instance in the stopped state
-		instance.fsm.SetState(OperationalStateStopped)
+		instance.baseFSMInstance.SetCurrentFSMState(OperationalStateStopped)
 
 		// Set service as existing
 		mockService.ExistingServices[testPath] = true
@@ -166,8 +149,8 @@ var _ = Describe("S6 FSM", func() {
 		Expect(mockService.StartCalled).To(BeTrue())
 
 		// Check that the instance has recorded the error
-		Expect(instance.getError()).NotTo(BeNil())
-		Expect(instance.getError().Error()).To(ContainSubstring("failed to start service"))
+		Expect(instance.baseFSMInstance.GetError()).NotTo(BeNil())
+		Expect(instance.baseFSMInstance.GetError().Error()).To(ContainSubstring("failed to start service"))
 
 		// Test that backoff prevents immediate retry
 		mockService.StartCalled = false // Reset flag
@@ -176,11 +159,8 @@ var _ = Describe("S6 FSM", func() {
 		Expect(mockService.StartCalled).To(BeFalse()) // Start shouldn't be called again due to backoff
 
 		// Simulate backoff elapsing
-		instance.backoff.Reset()
-
-		// Clear the error to allow success
+		instance.baseFSMInstance.ResetState()
 		mockService.StartError = nil
-		instance.clearError()
 
 		// Mock the service as stopped
 		mockService.ServiceStates[testPath] = s6service.ServiceInfo{

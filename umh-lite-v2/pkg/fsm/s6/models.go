@@ -1,13 +1,9 @@
 package s6
 
 import (
-	"sync"
-	"time"
-
-	"github.com/looplab/fsm"
-	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/internal/service/s6"
-
-	"github.com/cenkalti/backoff/v4"
+	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/internal/fsm"
+	public_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/fsm"
+	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/service/s6"
 )
 
 // S6ServiceStatus represents the status of a service managed by s6-overlay
@@ -81,36 +77,14 @@ type S6ObservedState struct {
 
 // S6Instance represents a single S6 service instance with a state machine
 type S6Instance struct {
-	// ID is a unique identifier for this instance (service name)
-	ID string
-
-	// DesiredFSMState represents the target operational state we want to reach
-	DesiredFSMState string
+	baseFSMInstance *internal_fsm.BaseFSMInstance
+	public_fsm.FSMInstance
 
 	// ObservedState represents the observed state of the service
 	// ObservedState contains all metrics, logs, etc.
 	// that are updated at the beginning of Reconcile and then used to
 	// determine the next state
 	ObservedState S6ObservedState
-
-	// mu is a mutex for protecting concurrent access to fields
-	mu sync.RWMutex
-
-	// fsm is the finite state machine that manages instance state
-	fsm *fsm.FSM
-
-	// Callbacks for state transitions
-	callbacks map[string]fsm.Callback
-
-	// backoff is the backoff manager for managing retry attempts
-	backoff backoff.BackOff
-
-	// suspendedTime is the time when the last error occurred
-	// it is used in the reconcile function to check if the backoff has elapsed
-	suspendedTime time.Time
-
-	// lastError stores the last error that occurred during a transition
-	lastError error
 
 	// servicePath is the path to the s6 service directory
 	servicePath string
@@ -120,18 +94,4 @@ type S6Instance struct {
 
 	// config contains all the configuration for this service
 	config s6service.ServiceConfig
-}
-
-// GetError returns the last error that occurred during a transition
-func (s *S6Instance) getError() error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.lastError
-}
-
-// SetError sets the last error that occurred during a transition
-func (s *S6Instance) setError(err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.lastError = err
 }

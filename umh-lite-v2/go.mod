@@ -12,6 +12,7 @@ require (
 )
 
 require (
+	github.com/cenkalti/backoff v2.2.1+incompatible
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
