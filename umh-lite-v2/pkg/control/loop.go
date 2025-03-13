@@ -10,6 +10,7 @@ import (
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/config"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/fsm"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/fsm/s6"
 )
 
 const (
@@ -22,7 +23,16 @@ type ControlLoop struct {
 	configManager config.ConfigManager
 }
 
-func NewControlLoop(managers []fsm.FSMManager, configManager config.ConfigManager) *ControlLoop {
+func NewControlLoop() *ControlLoop {
+
+	// Create the managers
+	managers := []fsm.FSMManager{
+		s6.NewS6Manager(),
+	}
+
+	// Create the config manager
+	configManager := config.NewFileConfigManager()
+
 	return &ControlLoop{
 		managers:      managers,
 		tickerTime:    defaultTickerTime,
@@ -42,9 +52,11 @@ func (c *ControlLoop) Execute(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			// Create a timeout context for the reconcile
 			timeoutCtx, cancel := context.WithTimeout(ctx, c.tickerTime)
 			defer cancel()
 
+			// Reconcile the managers
 			err := c.Reconcile(timeoutCtx)
 
 			// Any unhandled error will result in the control loop stopping
@@ -58,17 +70,21 @@ func (c *ControlLoop) Execute(ctx context.Context) error {
 // Reconcile first fetches the config from the config manager
 // then reconciles each manager
 func (c *ControlLoop) Reconcile(ctx context.Context) error {
+	// Get the config
 	config, err := c.configManager.GetConfig(ctx)
 	if err != nil {
 		return err
 	}
 
+	// Reconcile each manager
 	for _, manager := range c.managers {
 		err := manager.Reconcile(ctx, config)
 		if err != nil {
 			return err
 		}
 	}
+
+	// Return nil if no errors occurred
 	return nil
 }
 

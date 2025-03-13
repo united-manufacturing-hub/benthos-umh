@@ -31,10 +31,9 @@ type FileConfigManager struct {
 }
 
 // NewFileConfigManager creates a new FileConfigManager
-func NewFileConfigManager(configPath string) *FileConfigManager {
-	if configPath == "" {
-		configPath = DefaultConfigPath
-	}
+func NewFileConfigManager() *FileConfigManager {
+
+	configPath := DefaultConfigPath
 
 	return &FileConfigManager{
 		configPath: configPath,
