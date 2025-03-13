@@ -21,6 +21,10 @@ func NewS6Manager() *S6Manager {
 	}
 }
 
+const (
+	baseS6Dir = "/run/service"
+)
+
 // Reconcile reconciles desired & observed states for S6 services.
 func (m *S6Manager) Reconcile(ctx context.Context, cfg config.FullConfig) error {
 
@@ -33,7 +37,7 @@ func (m *S6Manager) Reconcile(ctx context.Context, cfg config.FullConfig) error 
 
 		// If the instance does not exist, create it and set it to the desired state
 		if _, ok := observedState[instance.Name]; !ok {
-			observedState[instance.Name] = NewS6Instance(instance.Name, instance)
+			observedState[instance.Name] = NewS6Instance(baseS6Dir, instance)
 			observedState[instance.Name].SetDesiredFSMState(instance.DesiredState)
 			log.Printf("[S6Manager] created instance %s", instance.Name)
 			return nil

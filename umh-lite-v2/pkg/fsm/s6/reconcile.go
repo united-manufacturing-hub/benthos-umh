@@ -18,12 +18,19 @@ import (
 // This function is intended to be called repeatedly (e.g. in a periodic control loop).
 // Over multiple calls, it converges the actual state to the desired state. Transitions
 // that fail are retried in subsequent reconcile calls after a backoff period.
-func (s *S6Instance) Reconcile(ctx context.Context) error {
+func (s *S6Instance) Reconcile(ctx context.Context) (err error) {
+	defer func() {
+		if err != nil {
+			log.Printf("[S6Instance] error reconciling: %s", err)
+			s.PrintState()
+		}
+	}()
+
 	// Step 1: Detect external changes.
 	if err := s.reconcileExternalChanges(ctx); err != nil {
 		// If the service is not running, we don't want to return an error here, because we want to continue reconciling
 		if !errors.Is(err, s6service.ErrServiceNotExist) {
-			log.Printf("error reconciling external changes: %s", err)
+			log.Printf("[S6Instance] error reconciling external changes: %s", err)
 			return err
 		}
 
@@ -36,10 +43,10 @@ func (s *S6Instance) Reconcile(ctx context.Context) error {
 	}
 
 	// Step 3: Attempt to reconcile the state.
-	err := s.reconcileStateTransition(ctx)
+	err = s.reconcileStateTransition(ctx)
 	if err != nil {
 		s.baseFSMInstance.SetError(err)
-		log.Printf("error reconciling state: %s", err)
+		log.Printf("[S6Instance] error reconciling state: %s", err)
 		return nil // We don't want to return an error here, because we want to continue reconciling
 	}
 

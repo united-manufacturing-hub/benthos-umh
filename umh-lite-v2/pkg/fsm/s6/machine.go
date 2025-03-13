@@ -3,6 +3,7 @@ package s6
 import (
 	"context"
 	"fmt"
+	"log"
 	"path/filepath"
 
 	"github.com/looplab/fsm"
@@ -89,4 +90,10 @@ func (s *S6Instance) Remove(ctx context.Context) error {
 
 func (s *S6Instance) IsRemoved() bool {
 	return s.baseFSMInstance.IsRemoved()
+}
+
+func (s *S6Instance) PrintState() {
+	log.Printf("[S6Instance] Current state: %s", s.baseFSMInstance.GetCurrentFSMState())
+	log.Printf("[S6Instance] Desired state: %s", s.baseFSMInstance.GetDesiredFSMState())
+	log.Printf("[S6Instance] Observed state: %+v", s.ObservedState)
 }

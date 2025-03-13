@@ -26,9 +26,9 @@ type BaseFSMInstance struct {
 	// backoff is the backoff manager for managing retry attempts
 	backoff backoff.BackOff
 
-	// suspendedTime is the time when the last error occurred
+	// suspendedUntilTime is the time when the next reconcile is allowed
 	// it is used in the reconcile function to check if the backoff has elapsed
-	suspendedTime time.Time
+	suspendedUntilTime time.Time
 
 	// lastError stores the last error that occurred during a transition
 	lastError error
@@ -124,7 +124,13 @@ func (s *BaseFSMInstance) SetError(err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastError = err
-	s.suspendedTime = time.Now()
+
+	// suspend the reconcile
+	if s.suspendedUntilTime.IsZero() {
+		next := s.backoff.NextBackOff()
+		s.suspendedUntilTime = time.Now().Add(next)
+		log.Printf("[BaseFSM] suspending reconcile for %s because of error: %s", next, s.lastError)
+	}
 }
 
 // setDesiredFSMState safely updates the desired state
@@ -182,13 +188,19 @@ func (s *BaseFSMInstance) IsRemoved() bool {
 // ShouldSkipReconcileBecauseOfError returns true if the reconcile should be skipped because of an error
 // that occurred in the last reconciliation and the backoff period has not yet elapsed
 func (s *BaseFSMInstance) ShouldSkipReconcileBecauseOfError() bool {
-	if s.lastError != nil {
-		// Check how long we are supposed to wait
-		next := s.backoff.NextBackOff() // e.g. 100ms, 200ms, 400ms...
-		if time.Since(s.suspendedTime) < next {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// If there is an error and the backoff period has not yet elapsed, skip the reconcile
+	if s.lastError != nil && !s.suspendedUntilTime.IsZero() {
+		if time.Now().Before(s.suspendedUntilTime) {
+			log.Printf("[BaseFSM] skipping reconcile because of error: %s. Remaining backoff: %s", s.lastError, time.Until(s.suspendedUntilTime))
 			// It's still too early to retry
 			return true
 		}
+
+		// Reset the suspendedUntilTime so that the next error can trigger a backoff increase again
+		s.suspendedUntilTime = time.Time{}
 	}
 
 	return false
@@ -198,6 +210,7 @@ func (s *BaseFSMInstance) ShouldSkipReconcileBecauseOfError() bool {
 func (s *BaseFSMInstance) ResetState() {
 	s.ClearError()
 	s.backoff.Reset()
+	s.suspendedUntilTime = time.Time{}
 }
 
 func (s *BaseFSMInstance) GetID() string {

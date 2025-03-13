@@ -14,4 +14,6 @@ type FSMInstance interface {
 	Remove(ctx context.Context) error
 	// IsRemoved returns true if the instance has been removed
 	IsRemoved() bool
+	// PrintState prints the current state of the FSM
+	PrintState()
 }

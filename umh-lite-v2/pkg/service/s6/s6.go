@@ -146,11 +146,13 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 		}
 	}
 
-	// If command is specified, create run script
+	// s6-supervise requires a run script to function properly
 	if len(config.Command) > 0 {
 		if err := s.createS6RunScript(ctx, servicePath, config.Command, config.Env); err != nil {
 			return err
 		}
+	} else {
+		return fmt.Errorf("no command specified for service %s", servicePath)
 	}
 
 	// Create any config files specified
@@ -191,6 +193,20 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 	closeErr = f.Close()
 	if closeErr != nil {
 		return fmt.Errorf("failed to close base dependency file: %w", closeErr)
+	}
+
+	// if the supervise directory does not exist, notify s6-svscan
+	superviseDir := filepath.Join(servicePath, "supervise")
+	exists, err = s.fsService.FileExists(ctx, superviseDir)
+	if err != nil {
+		return fmt.Errorf("failed to check if supervise directory exists: %w", err)
+	}
+
+	if !exists {
+		output, err := s.fsService.ExecuteCommand(ctx, "s6-svscanctl", "-a", "/run/service")
+		if err != nil {
+			return fmt.Errorf("failed to notify s6-svscan: %w, output: %s", err, string(output))
+		}
 	}
 
 	log.Printf("[S6Service] S6 service %s created", servicePath)
