@@ -402,8 +402,6 @@ var _ = Describe("S6Manager", func() {
 		// Verify initial state is correctly set
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped), "Initial state should be stopped")
 		Expect(instance.GetDesiredFSMState()).To(Equal(OperationalStateStopped), "Initial desired state should be stopped")
-
-		// Also verify the observed state is correctly set
 		Expect(instance.ObservedState.ServiceInfo.Status).To(Equal(s6service.ServiceDown), "Service status should be down")
 
 		// Reconcile to ensure state is stable
@@ -543,5 +541,141 @@ var _ = Describe("S6Manager", func() {
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped))
 		Expect(instance.GetDesiredFSMState()).To(Equal(OperationalStateStopped))
 		Expect(instance.ObservedState.ServiceInfo.Status).To(Equal(s6service.ServiceDown))
+	})
+
+	FIt("should handle a service that stays in down state after attempting to start", func() {
+		// Create a mock service
+		mockService := s6service.NewMockService()
+		serviceName := "test-slow-start"
+
+		// Create a config with the service desired state as stopped
+		configWithStoppedService := config.FullConfig{
+			Services: []config.S6FSMConfig{
+				{
+					Name:         serviceName,
+					DesiredState: OperationalStateStopped,
+					S6ServiceConfig: s6service.S6ServiceConfig{
+						Command:     []string{"/bin/sh", "-c", "echo test"},
+						Env:         map[string]string{},
+						ConfigFiles: map[string]string{},
+					},
+				},
+			},
+		}
+
+		// Use createMockS6Instance which properly sets up the instance and mock service
+		instance := createMockS6Instance(manager, serviceName, mockService, OperationalStateStopped)
+		servicePath := instance.servicePath
+
+		// Set up the mock service as already created and stopped
+		configureServiceForState(mockService, servicePath, OperationalStateStopped)
+
+		// Force the state to be stopped (skip creation lifecycle)
+		setS6InstanceState(instance, OperationalStateStopped)
+
+		// Verify initial state is correctly set
+		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped), "Initial state should be stopped")
+		Expect(instance.GetDesiredFSMState()).To(Equal(OperationalStateStopped), "Initial desired state should be stopped")
+		Expect(instance.ObservedState.ServiceInfo.Status).To(Equal(s6service.ServiceDown), "Service status should be down")
+
+		// Reconcile 10 times to ensure state is stable
+		for i := 0; i < 10; i++ {
+			err := manager.Reconcile(ctx, configWithStoppedService)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped), "State should remain stopped after reconcile")
+
+			currentState := instance.GetCurrentFSMState()
+			desiredState := instance.GetDesiredFSMState()
+
+			serviceStatus := "unknown"
+			if info, exists := mockService.ServiceStates[servicePath]; exists {
+				serviceStatus = string(info.Status)
+			}
+
+			GinkgoWriter.Printf("Current state: %s\n", currentState)
+			GinkgoWriter.Printf("Desired state: %s\n", desiredState)
+			GinkgoWriter.Printf("Service status: %s\n", serviceStatus)
+
+			// Print the error state if any
+			if instance.baseFSMInstance.GetError() != nil {
+				GinkgoWriter.Printf("FSM Error: %v\n", instance.baseFSMInstance.GetError())
+			}
+		}
+
+		// Now modify the config to change the desired state to running
+		configWithRunningService := config.FullConfig{
+			Services: []config.S6FSMConfig{
+				{
+					Name:         serviceName,
+					DesiredState: OperationalStateRunning,
+					S6ServiceConfig: s6service.S6ServiceConfig{
+						Command:     []string{"/bin/sh", "-c", "echo test"},
+						Env:         map[string]string{},
+						ConfigFiles: map[string]string{},
+					},
+				},
+			},
+		}
+
+		// Reconcile with the updated config
+		GinkgoWriter.Printf("\n=== Changing desired state to running ===\n")
+		err := manager.Reconcile(ctx, configWithRunningService)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Verify the desired state changed but current state should still be stopped
+		Expect(instance.GetDesiredFSMState()).To(Equal(OperationalStateRunning), "Desired state should now be running")
+		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped), "Current state should still be stopped")
+
+		// First reconcile should transition to starting
+		GinkgoWriter.Printf("Reconcile after state change - should transition to starting\n")
+		err = instance.Reconcile(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStarting), "State should transition to starting")
+		Expect(mockService.StartCalled).To(BeTrue(), "Service.Start() should be called")
+
+		// The service remains in "down" state even after start command
+		// This simulates a slow-starting service
+		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
+			Status: s6service.ServiceDown,
+		}
+
+		// Reconcile and check for 10 times that the state is still starting
+		for i := 0; i < 10; i++ {
+			err = instance.Reconcile(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStarting), "State should remain in starting")
+
+			currentState := instance.GetCurrentFSMState()
+			desiredState := instance.GetDesiredFSMState()
+
+			serviceStatus := "unknown"
+			if info, exists := mockService.ServiceStates[servicePath]; exists {
+				serviceStatus = string(info.Status)
+			}
+
+			GinkgoWriter.Printf("Current state: %s\n", currentState)
+			GinkgoWriter.Printf("Desired state: %s\n", desiredState)
+			GinkgoWriter.Printf("Service status: %s\n", serviceStatus)
+
+			// Print the error state if any
+			if instance.baseFSMInstance.GetError() != nil {
+				GinkgoWriter.Printf("FSM Error: %v\n", instance.baseFSMInstance.GetError())
+			}
+		}
+
+		// Now simulate the service becoming available (up)
+		GinkgoWriter.Printf("Service now becomes available (up)\n")
+		configureServiceForState(mockService, servicePath, OperationalStateRunning)
+
+		// Next reconcile should detect the service is up and transition to running
+		GinkgoWriter.Printf("Reconcile - service now up, should transition to running\n")
+		err = instance.Reconcile(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateRunning), "State should transition to running")
+
+		// Verify final state
+		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateRunning))
+		Expect(instance.GetDesiredFSMState()).To(Equal(OperationalStateRunning))
+		Expect(instance.ObservedState.ServiceInfo.Status).To(Equal(s6service.ServiceUp))
 	})
 })
