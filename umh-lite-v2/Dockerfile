@@ -84,6 +84,8 @@ ENV S6_KEEP_ENV=1 \
     S6_CMD_WAIT_FOR_SERVICES=1 \
     S6_SERVICES_READYTIME=50
 
+VOLUME [ "/data" ]
+
 # Step 8: Set entrypoint
 ENTRYPOINT ["/init"]
 CMD []

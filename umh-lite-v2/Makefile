@@ -9,6 +9,7 @@ build:
 run: build
 	docker run \
 		--name $(IMAGE_NAME) \
+		-v $(PWD)/data:/data \
 		$(IMAGE_NAME):$(TAG)
 
 clean:
@@ -18,6 +19,14 @@ clean:
 
 test:
 	go test -v ./...
+
+test-hello: clean build
+	@mkdir -p $(PWD)/data
+	@cp $(PWD)/examples/example-config.yaml $(PWD)/data/config.yaml
+	docker run \
+		--name $(IMAGE_NAME) \
+		-v $(PWD)/data:/data \
+		$(IMAGE_NAME):$(TAG)
 
 logs:
 	docker logs -f $(IMAGE_NAME)
