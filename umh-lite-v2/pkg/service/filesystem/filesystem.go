@@ -70,7 +70,22 @@ func (s *DefaultService) EnsureDirectory(ctx context.Context, path string) error
 	if err := s.checkContext(ctx); err != nil {
 		return err
 	}
-	return os.MkdirAll(path, 0755)
+
+	// Create a channel for results
+	errCh := make(chan error, 1)
+
+	// Run operation in goroutine
+	go func() {
+		errCh <- os.MkdirAll(path, 0755)
+	}()
+
+	// Wait for either completion or context cancellation
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // ReadFile reads a file's contents respecting the context
@@ -78,7 +93,27 @@ func (s *DefaultService) ReadFile(ctx context.Context, path string) ([]byte, err
 	if err := s.checkContext(ctx); err != nil {
 		return nil, err
 	}
-	return os.ReadFile(path)
+
+	// Create a channel for results
+	type result struct {
+		data []byte
+		err  error
+	}
+	resCh := make(chan result, 1)
+
+	// Run file operation in goroutine
+	go func() {
+		data, err := os.ReadFile(path)
+		resCh <- result{data, err}
+	}()
+
+	// Wait for either completion or context cancellation
+	select {
+	case res := <-resCh:
+		return res.data, res.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // WriteFile writes data to a file respecting the context
@@ -86,7 +121,22 @@ func (s *DefaultService) WriteFile(ctx context.Context, path string, data []byte
 	if err := s.checkContext(ctx); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, perm)
+
+	// Create a channel for results
+	errCh := make(chan error, 1)
+
+	// Run file operation in goroutine
+	go func() {
+		errCh <- os.WriteFile(path, data, perm)
+	}()
+
+	// Wait for either completion or context cancellation
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // FileExists checks if a file exists
@@ -95,14 +145,34 @@ func (s *DefaultService) FileExists(ctx context.Context, path string) (bool, err
 		return false, err
 	}
 
-	_, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return false, nil
+	// Create a channel for results
+	type result struct {
+		exists bool
+		err    error
 	}
-	if err != nil {
-		return false, fmt.Errorf("failed to check if file exists: %w", err)
+	resCh := make(chan result, 1)
+
+	// Run file operation in goroutine
+	go func() {
+		_, err := os.Stat(path)
+		if os.IsNotExist(err) {
+			resCh <- result{false, nil}
+			return
+		}
+		if err != nil {
+			resCh <- result{false, fmt.Errorf("failed to check if file exists: %w", err)}
+			return
+		}
+		resCh <- result{true, nil}
+	}()
+
+	// Wait for either completion or context cancellation
+	select {
+	case res := <-resCh:
+		return res.exists, res.err
+	case <-ctx.Done():
+		return false, ctx.Err()
 	}
-	return true, nil
 }
 
 // Remove removes a file or directory
@@ -110,7 +180,22 @@ func (s *DefaultService) Remove(ctx context.Context, path string) error {
 	if err := s.checkContext(ctx); err != nil {
 		return err
 	}
-	return os.Remove(path)
+
+	// Create a channel for results
+	errCh := make(chan error, 1)
+
+	// Run file operation in goroutine
+	go func() {
+		errCh <- os.Remove(path)
+	}()
+
+	// Wait for either completion or context cancellation
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // RemoveAll removes a directory and all its contents
@@ -118,7 +203,22 @@ func (s *DefaultService) RemoveAll(ctx context.Context, path string) error {
 	if err := s.checkContext(ctx); err != nil {
 		return err
 	}
-	return os.RemoveAll(path)
+
+	// Create a channel for results
+	errCh := make(chan error, 1)
+
+	// Run file operation in goroutine
+	go func() {
+		errCh <- os.RemoveAll(path)
+	}()
+
+	// Wait for either completion or context cancellation
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // MkdirTemp creates a new temporary directory
@@ -126,7 +226,27 @@ func (s *DefaultService) MkdirTemp(ctx context.Context, dir, pattern string) (st
 	if err := s.checkContext(ctx); err != nil {
 		return "", err
 	}
-	return os.MkdirTemp(dir, pattern)
+
+	// Create a channel for results
+	type result struct {
+		path string
+		err  error
+	}
+	resCh := make(chan result, 1)
+
+	// Run file operation in goroutine
+	go func() {
+		path, err := os.MkdirTemp(dir, pattern)
+		resCh <- result{path, err}
+	}()
+
+	// Wait for either completion or context cancellation
+	select {
+	case res := <-resCh:
+		return res.path, res.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 // Stat returns file info
@@ -134,7 +254,27 @@ func (s *DefaultService) Stat(ctx context.Context, path string) (os.FileInfo, er
 	if err := s.checkContext(ctx); err != nil {
 		return nil, err
 	}
-	return os.Stat(path)
+
+	// Create a channel for results
+	type result struct {
+		info os.FileInfo
+		err  error
+	}
+	resCh := make(chan result, 1)
+
+	// Run file operation in goroutine
+	go func() {
+		info, err := os.Stat(path)
+		resCh <- result{info, err}
+	}()
+
+	// Wait for either completion or context cancellation
+	select {
+	case res := <-resCh:
+		return res.info, res.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // CreateFile creates a new file with the specified permissions
@@ -142,7 +282,27 @@ func (s *DefaultService) CreateFile(ctx context.Context, path string, perm os.Fi
 	if err := s.checkContext(ctx); err != nil {
 		return nil, err
 	}
-	return os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, perm)
+
+	// Create a channel for results
+	type result struct {
+		file *os.File
+		err  error
+	}
+	resCh := make(chan result, 1)
+
+	// Run file operation in goroutine
+	go func() {
+		file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, perm)
+		resCh <- result{file, err}
+	}()
+
+	// Wait for either completion or context cancellation
+	select {
+	case res := <-resCh:
+		return res.file, res.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // Chmod changes the mode of the named file
@@ -150,7 +310,22 @@ func (s *DefaultService) Chmod(ctx context.Context, path string, mode os.FileMod
 	if err := s.checkContext(ctx); err != nil {
 		return err
 	}
-	return os.Chmod(path, mode)
+
+	// Create a channel for results
+	errCh := make(chan error, 1)
+
+	// Run file operation in goroutine
+	go func() {
+		errCh <- os.Chmod(path, mode)
+	}()
+
+	// Wait for either completion or context cancellation
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // ReadDir reads a directory, returning all its directory entries
@@ -158,7 +333,27 @@ func (s *DefaultService) ReadDir(ctx context.Context, path string) ([]os.DirEntr
 	if err := s.checkContext(ctx); err != nil {
 		return nil, err
 	}
-	return os.ReadDir(path)
+
+	// Create a channel for results
+	type result struct {
+		entries []os.DirEntry
+		err     error
+	}
+	resCh := make(chan result, 1)
+
+	// Run file operation in goroutine
+	go func() {
+		entries, err := os.ReadDir(path)
+		resCh <- result{entries, err}
+	}()
+
+	// Wait for either completion or context cancellation
+	select {
+	case res := <-resCh:
+		return res.entries, res.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // ExecuteCommand executes a command with context
@@ -167,6 +362,7 @@ func (s *DefaultService) ExecuteCommand(ctx context.Context, name string, args .
 		return nil, err
 	}
 
+	// This method already respects context cancellation through exec.CommandContext
 	cmd := exec.CommandContext(ctx, name, args...)
 	return cmd.CombinedOutput()
 }

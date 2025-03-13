@@ -2,6 +2,7 @@ package s6
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -111,7 +112,11 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 		if err != nil {
 			return fmt.Errorf("failed to create down file: %w", err)
 		}
-		f.Close()
+
+		closeErr := f.Close()
+		if closeErr != nil {
+			return fmt.Errorf("failed to close down file: %w", closeErr)
+		}
 	}
 
 	// Create type file (required for s6-rc)
@@ -125,11 +130,20 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 		if err != nil {
 			return fmt.Errorf("failed to create type file: %w", err)
 		}
-		if _, err := f.WriteString("longrun"); err != nil {
-			f.Close()
-			return fmt.Errorf("failed to write to type file: %w", err)
+
+		writeErr := errors.New("")
+		if _, writeErr = f.WriteString("longrun"); writeErr != nil {
+			closeErr := f.Close()
+			return errors.Join(
+				fmt.Errorf("failed to write to type file: %w", writeErr),
+				errors.New(fmt.Sprintf("additional error when closing file: %v", closeErr)),
+			)
 		}
-		f.Close()
+
+		closeErr := f.Close()
+		if closeErr != nil {
+			return fmt.Errorf("failed to close type file: %w", closeErr)
+		}
 	}
 
 	// If command is specified, create run script
@@ -156,7 +170,11 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 	if err != nil {
 		return fmt.Errorf("failed to create contents file: %w", err)
 	}
-	f.Close()
+
+	closeErr := f.Close()
+	if closeErr != nil {
+		return fmt.Errorf("failed to close contents file: %w", closeErr)
+	}
 
 	// Create a dependency on base services to prevent race conditions
 	dependenciesDPath := filepath.Join(servicePath, "dependencies.d")
@@ -169,7 +187,11 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 	if err != nil {
 		return fmt.Errorf("failed to create base dependency file: %w", err)
 	}
-	f.Close()
+
+	closeErr = f.Close()
+	if closeErr != nil {
+		return fmt.Errorf("failed to close base dependency file: %w", closeErr)
+	}
 
 	log.Printf("[S6Service] S6 service %s created", servicePath)
 
@@ -183,7 +205,16 @@ func (s *DefaultService) createS6RunScript(ctx context.Context, servicePath stri
 	if err != nil {
 		return fmt.Errorf("failed to create run script: %w", err)
 	}
-	defer f.Close()
+
+	// Use deferred close with error handling
+	defer func() {
+		closeErr := f.Close()
+		if closeErr != nil && err == nil {
+			err = fmt.Errorf("failed to close run script: %w", closeErr)
+		} else if closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("additional error when closing run script: %w", closeErr))
+		}
+	}()
 
 	// Create shebang
 	if _, err := f.WriteString("#!/command/execlineb -P\n\n"); err != nil {
@@ -229,7 +260,7 @@ func (s *DefaultService) createS6RunScript(ctx context.Context, servicePath stri
 		return fmt.Errorf("failed to make run script executable: %w", err)
 	}
 
-	return nil
+	return err // Return the error that may have been set in the deferred close
 }
 
 // createConfigFiles creates config files needed by the service
