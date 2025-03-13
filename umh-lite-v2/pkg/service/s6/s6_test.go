@@ -57,17 +57,19 @@ var _ = Describe("S6 Service", func() {
 		Expect(mockService.StatusCalled).To(BeTrue())
 
 		Expect(mockService.ExistsCalled).To(BeFalse())
-		mockService.ServiceExists(testPath)
+		mockService.ServiceExists(ctx, testPath)
 		Expect(mockService.ExistsCalled).To(BeTrue())
 	})
 
 	It("should manage service state in the mock implementation", func() {
 		// Service should not exist initially
-		Expect(mockService.ServiceExists(testPath)).To(BeFalse())
+		exists, _ := mockService.ServiceExists(ctx, testPath)
+		Expect(exists).To(BeFalse())
 
 		// Create service should make it exist
 		mockService.Create(ctx, testPath, S6ServiceConfig{})
-		Expect(mockService.ServiceExists(testPath)).To(BeTrue())
+		exists, _ = mockService.ServiceExists(ctx, testPath)
+		Expect(exists).To(BeTrue())
 
 		// Set the service state to down initially
 		mockService.ServiceStates[testPath] = ServiceInfo{
@@ -96,7 +98,8 @@ var _ = Describe("S6 Service", func() {
 
 		// Remove service should make it not exist
 		mockService.Remove(ctx, testPath)
-		Expect(mockService.ServiceExists(testPath)).To(BeFalse())
+		exists, _ = mockService.ServiceExists(ctx, testPath)
+		Expect(exists).To(BeFalse())
 
 		// Status should not be available after removal
 		_, err = mockService.Status(ctx, testPath)

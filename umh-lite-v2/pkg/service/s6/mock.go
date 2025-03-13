@@ -120,9 +120,9 @@ func (m *MockService) Status(ctx context.Context, servicePath string) (ServiceIn
 }
 
 // ServiceExists mocks checking if an S6 service exists
-func (m *MockService) ServiceExists(servicePath string) bool {
+func (m *MockService) ServiceExists(ctx context.Context, servicePath string) (bool, error) {
 	m.ExistsCalled = true
-	return m.ExistingServices[servicePath]
+	return m.ExistingServices[servicePath], nil
 }
 
 // GetConfig mocks getting the config of an S6 service

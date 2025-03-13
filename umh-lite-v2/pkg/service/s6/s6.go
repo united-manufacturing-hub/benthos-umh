@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	filesystem "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/service/filesystem"
 )
 
 // S6ServiceConfig contains configuration for creating a service
@@ -68,17 +68,27 @@ type Service interface {
 	// Status gets the current status of the service
 	Status(ctx context.Context, servicePath string) (ServiceInfo, error)
 	// ServiceExists checks if the service directory exists
-	ServiceExists(servicePath string) bool
+	ServiceExists(ctx context.Context, servicePath string) (bool, error)
 	// GetConfig gets the actual service config from s6
 	GetConfig(ctx context.Context, servicePath string) (S6ServiceConfig, error)
 }
 
 // DefaultService is the default implementation of the S6 Service interface
-type DefaultService struct{}
+type DefaultService struct {
+	fsService filesystem.Service
+}
 
 // NewDefaultService creates a new default S6 service
 func NewDefaultService() Service {
-	return &DefaultService{}
+	return &DefaultService{
+		fsService: filesystem.NewDefaultService(),
+	}
+}
+
+// WithFileSystemService sets a custom filesystem service for the S6 service
+func (s *DefaultService) WithFileSystemService(fsService filesystem.Service) *DefaultService {
+	s.fsService = fsService
+	return s
 }
 
 // Create creates the S6 service with specific configuration
@@ -86,66 +96,80 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 	log.Printf("[S6Service] Creating S6 service %s", servicePath)
 
 	// Create service directory if it doesn't exist
-	if err := os.MkdirAll(servicePath, 0755); err != nil {
+	if err := s.fsService.EnsureDirectory(ctx, servicePath); err != nil {
 		return fmt.Errorf("failed to create service directory: %w", err)
 	}
 
 	// Create down file to prevent automatic startup
 	downFilePath := filepath.Join(servicePath, "down")
-	if _, err := os.Stat(downFilePath); os.IsNotExist(err) {
-		if _, err := os.Create(downFilePath); err != nil {
+	exists, err := s.fsService.FileExists(ctx, downFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to check if down file exists: %w", err)
+	}
+	if !exists {
+		f, err := s.fsService.CreateFile(ctx, downFilePath, 0644)
+		if err != nil {
 			return fmt.Errorf("failed to create down file: %w", err)
 		}
+		f.Close()
 	}
 
 	// Create type file (required for s6-rc)
 	typeFile := filepath.Join(servicePath, "type")
-	if _, err := os.Stat(typeFile); os.IsNotExist(err) {
-		tf, err := os.Create(typeFile)
+	exists, err = s.fsService.FileExists(ctx, typeFile)
+	if err != nil {
+		return fmt.Errorf("failed to check if type file exists: %w", err)
+	}
+	if !exists {
+		f, err := s.fsService.CreateFile(ctx, typeFile, 0644)
 		if err != nil {
 			return fmt.Errorf("failed to create type file: %w", err)
 		}
-		if _, err := tf.WriteString("longrun"); err != nil {
-			tf.Close()
+		if _, err := f.WriteString("longrun"); err != nil {
+			f.Close()
 			return fmt.Errorf("failed to write to type file: %w", err)
 		}
-		tf.Close()
+		f.Close()
 	}
 
 	// If command is specified, create run script
 	if len(config.Command) > 0 {
-		if err := s.createS6RunScript(servicePath, config.Command, config.Env); err != nil {
+		if err := s.createS6RunScript(ctx, servicePath, config.Command, config.Env); err != nil {
 			return err
 		}
 	}
 
 	// Create any config files specified
-	if err := s.createS6ConfigFiles(servicePath, config.ConfigFiles); err != nil {
+	if err := s.createS6ConfigFiles(ctx, servicePath, config.ConfigFiles); err != nil {
 		return err
 	}
 
 	// Register service in user/contents.d
 	serviceName := filepath.Base(servicePath)
 	userContentsDPath := filepath.Join(filepath.Dir(servicePath), "user", "contents.d")
-	if err := os.MkdirAll(userContentsDPath, 0755); err != nil {
+	if err := s.fsService.EnsureDirectory(ctx, userContentsDPath); err != nil {
 		return fmt.Errorf("failed to create user/contents.d directory: %w", err)
 	}
 
 	contentsFile := filepath.Join(userContentsDPath, serviceName)
-	if _, err := os.Create(contentsFile); err != nil {
+	f, err := s.fsService.CreateFile(ctx, contentsFile, 0644)
+	if err != nil {
 		return fmt.Errorf("failed to create contents file: %w", err)
 	}
+	f.Close()
 
 	// Create a dependency on base services to prevent race conditions
 	dependenciesDPath := filepath.Join(servicePath, "dependencies.d")
-	if err := os.MkdirAll(dependenciesDPath, 0755); err != nil {
+	if err := s.fsService.EnsureDirectory(ctx, dependenciesDPath); err != nil {
 		return fmt.Errorf("failed to create dependencies.d directory: %w", err)
 	}
 
 	baseDepFile := filepath.Join(dependenciesDPath, "base")
-	if _, err := os.Create(baseDepFile); err != nil {
+	f, err = s.fsService.CreateFile(ctx, baseDepFile, 0644)
+	if err != nil {
 		return fmt.Errorf("failed to create base dependency file: %w", err)
 	}
+	f.Close()
 
 	log.Printf("[S6Service] S6 service %s created", servicePath)
 
@@ -153,9 +177,9 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 }
 
 // createRunScript creates a run script for the service
-func (s *DefaultService) createS6RunScript(servicePath string, command []string, env map[string]string) error {
+func (s *DefaultService) createS6RunScript(ctx context.Context, servicePath string, command []string, env map[string]string) error {
 	runScript := filepath.Join(servicePath, "run")
-	f, err := os.Create(runScript)
+	f, err := s.fsService.CreateFile(ctx, runScript, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to create run script: %w", err)
 	}
@@ -201,7 +225,7 @@ func (s *DefaultService) createS6RunScript(servicePath string, command []string,
 	}
 
 	// Make run script executable
-	if err := os.Chmod(runScript, 0755); err != nil {
+	if err := s.fsService.Chmod(ctx, runScript, 0755); err != nil {
 		return fmt.Errorf("failed to make run script executable: %w", err)
 	}
 
@@ -209,7 +233,7 @@ func (s *DefaultService) createS6RunScript(servicePath string, command []string,
 }
 
 // createConfigFiles creates config files needed by the service
-func (s *DefaultService) createS6ConfigFiles(servicePath string, configFiles map[string]string) error {
+func (s *DefaultService) createS6ConfigFiles(ctx context.Context, servicePath string, configFiles map[string]string) error {
 	if len(configFiles) == 0 {
 		return nil
 	}
@@ -224,21 +248,14 @@ func (s *DefaultService) createS6ConfigFiles(servicePath string, configFiles map
 
 		// Create directory if it doesn't exist
 		dir := filepath.Dir(path)
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := s.fsService.EnsureDirectory(ctx, dir); err != nil {
 			return fmt.Errorf("failed to create directory for config file: %w", err)
 		}
 
 		// Create and write the file
-		f, err := os.Create(path)
-		if err != nil {
-			return fmt.Errorf("failed to create config file %s: %w", path, err)
-		}
-
-		if _, err := f.WriteString(content); err != nil {
-			f.Close()
+		if err := s.fsService.WriteFile(ctx, path, []byte(content), 0644); err != nil {
 			return fmt.Errorf("failed to write to config file %s: %w", path, err)
 		}
-		f.Close()
 	}
 
 	return nil
@@ -247,15 +264,20 @@ func (s *DefaultService) createS6ConfigFiles(servicePath string, configFiles map
 // Remove removes the S6 service directory structure
 func (s *DefaultService) Remove(ctx context.Context, servicePath string) error {
 	log.Printf("[S6Service] Removing S6 service %s", servicePath)
-	if !s.ServiceExists(servicePath) {
+	exists, err := s.ServiceExists(ctx, servicePath)
+	if err != nil {
+		return err
+	}
+	if !exists {
 		return ErrServiceNotExist
 	}
 
 	// Remove the service from contents.d first
 	serviceName := filepath.Base(servicePath)
 	contentsFile := filepath.Join(filepath.Dir(servicePath), "user", "contents.d", serviceName)
-	os.Remove(contentsFile) // Ignore errors - file might not exist
-	err := os.RemoveAll(servicePath)
+	s.fsService.Remove(ctx, contentsFile) // Ignore errors - file might not exist
+
+	err = s.fsService.RemoveAll(ctx, servicePath)
 	if err != nil {
 		return fmt.Errorf("failed to remove S6 service %s: %w", servicePath, err)
 	}
@@ -267,12 +289,15 @@ func (s *DefaultService) Remove(ctx context.Context, servicePath string) error {
 // Start starts the S6 service
 func (s *DefaultService) Start(ctx context.Context, servicePath string) error {
 	log.Printf("[S6Service] Starting S6 service %s", servicePath)
-	if !s.ServiceExists(servicePath) {
+	exists, err := s.ServiceExists(ctx, servicePath)
+	if err != nil {
+		return err
+	}
+	if !exists {
 		return ErrServiceNotExist
 	}
 
-	cmd := exec.CommandContext(ctx, "s6-svc", "-u", servicePath)
-	output, err := cmd.CombinedOutput()
+	output, err := s.fsService.ExecuteCommand(ctx, "s6-svc", "-u", servicePath)
 	if err != nil {
 		return fmt.Errorf("failed to start service: %w, output: %s", err, string(output))
 	}
@@ -283,12 +308,15 @@ func (s *DefaultService) Start(ctx context.Context, servicePath string) error {
 // Stop stops the S6 service
 func (s *DefaultService) Stop(ctx context.Context, servicePath string) error {
 	log.Printf("[S6Service] Stopping S6 service %s", servicePath)
-	if !s.ServiceExists(servicePath) {
+	exists, err := s.ServiceExists(ctx, servicePath)
+	if err != nil {
+		return err
+	}
+	if !exists {
 		return ErrServiceNotExist
 	}
 
-	cmd := exec.CommandContext(ctx, "s6-svc", "-d", servicePath)
-	output, err := cmd.CombinedOutput()
+	output, err := s.fsService.ExecuteCommand(ctx, "s6-svc", "-d", servicePath)
 	if err != nil {
 		return fmt.Errorf("failed to stop service: %w, output: %s", err, string(output))
 	}
@@ -297,18 +325,21 @@ func (s *DefaultService) Stop(ctx context.Context, servicePath string) error {
 }
 
 // Restart restarts the S6 service
-func (s *DefaultService) Restart(ctx context.Context, s6BaseDir string) error {
-	log.Printf("[S6Service] Restarting S6 service %s", s6BaseDir)
-	if !s.ServiceExists(s6BaseDir) {
+func (s *DefaultService) Restart(ctx context.Context, servicePath string) error {
+	log.Printf("[S6Service] Restarting S6 service %s", servicePath)
+	exists, err := s.ServiceExists(ctx, servicePath)
+	if err != nil {
+		return err
+	}
+	if !exists {
 		return ErrServiceNotExist
 	}
 
-	cmd := exec.CommandContext(ctx, "s6-svc", "-r", s6BaseDir)
-	output, err := cmd.CombinedOutput()
+	output, err := s.fsService.ExecuteCommand(ctx, "s6-svc", "-r", servicePath)
 	if err != nil {
 		return fmt.Errorf("failed to restart service: %w, output: %s", err, string(output))
 	}
-	log.Printf("[S6Service] Restarted S6 service %s", s6BaseDir)
+	log.Printf("[S6Service] Restarted S6 service %s", servicePath)
 	return nil
 }
 
@@ -320,12 +351,15 @@ func (s *DefaultService) Status(ctx context.Context, servicePath string) (Servic
 	}
 
 	// Check if service directory exists
-	if !s.ServiceExists(servicePath) {
+	exists, err := s.ServiceExists(ctx, servicePath)
+	if err != nil {
+		return info, err
+	}
+	if !exists {
 		return info, ErrServiceNotExist
 	}
 
-	cmd := exec.CommandContext(ctx, "s6-svstat", servicePath)
-	output, err := cmd.CombinedOutput()
+	output, err := s.fsService.ExecuteCommand(ctx, "s6-svstat", servicePath)
 	if err != nil {
 		return info, fmt.Errorf("failed to get status: %w, output: %s", err, string(output))
 	}
@@ -397,8 +431,7 @@ func (s *DefaultService) Status(ctx context.Context, servicePath string) (Servic
 	}
 
 	// Use full path to s6-svdt and point to the supervision directory
-	detailCmd := exec.CommandContext(ctx, "s6-svdt", servicePath)
-	detailOutput, err := detailCmd.CombinedOutput()
+	detailOutput, err := s.fsService.ExecuteCommand(ctx, "s6-svdt", servicePath)
 	if err == nil {
 		// Parse output from s6-svdt
 		// Example output:
@@ -444,26 +477,30 @@ func parseExitHistory(output string) []ExitEvent {
 }
 
 // ServiceExists checks if the service directory exists
-func (s *DefaultService) ServiceExists(servicePath string) bool {
+func (s *DefaultService) ServiceExists(ctx context.Context, servicePath string) (bool, error) {
 	log.Printf("[S6Service] Checking if S6 service %s exists", servicePath)
-	_, err := os.Stat(servicePath)
+	exists, err := s.fsService.FileExists(ctx, servicePath)
 	if err != nil {
+		log.Printf("[S6Service] Error checking if S6 service %s exists: %v", servicePath, err)
+		return false, err
+	}
+	if !exists {
 		log.Printf("[S6Service] S6 service %s does not exist", servicePath)
-		return false
+		return false, nil
 	}
 	log.Printf("[S6Service] S6 service %s exists", servicePath)
-	return true
+	return true, nil
 }
 
 // GetConfig gets the actual service config from s6
 func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6ServiceConfig, error) {
 	log.Printf("[S6Service] Getting config for S6 service %s", servicePath)
-	// Check if context is cancelled
-	if err := ctx.Err(); err != nil {
-		return S6ServiceConfig{}, fmt.Errorf("context cancelled: %w", err)
-	}
 
-	if !s.ServiceExists(servicePath) {
+	exists, err := s.ServiceExists(ctx, servicePath)
+	if err != nil {
+		return S6ServiceConfig{}, err
+	}
+	if !exists {
 		return S6ServiceConfig{}, ErrServiceNotExist
 	}
 
@@ -471,24 +508,11 @@ func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6S
 		ConfigFiles: make(map[string]string),
 	}
 
-	// Check if service directory exists
-	if _, err := os.Stat(servicePath); os.IsNotExist(err) {
-		return S6ServiceConfig{}, ErrServiceNotExist
-	}
-
 	// Fetch run script
 	runScript := filepath.Join(servicePath, "run")
-	content, err := os.ReadFile(runScript)
+	content, err := s.fsService.ReadFile(ctx, runScript)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return S6ServiceConfig{}, ErrServiceNotExist
-		}
 		return S6ServiceConfig{}, fmt.Errorf("failed to read run script: %w", err)
-	}
-
-	// Check context again before processing
-	if err := ctx.Err(); err != nil {
-		return S6ServiceConfig{}, fmt.Errorf("context cancelled: %w", err)
 	}
 
 	// Extract command and env from run script
@@ -505,34 +529,32 @@ func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6S
 
 	// Fetch config files from servicePath
 	configPath := filepath.Join(servicePath, "config")
-	configFiles, err := os.ReadDir(configPath)
+	exists, err = s.fsService.FileExists(ctx, configPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return S6ServiceConfig{}, ErrServiceConfigMapNotFound
-		}
+		return S6ServiceConfig{}, err
+	}
+	if !exists {
+		return observedS6ServiceConfig, nil
+	}
+
+	entries, err := s.fsService.ReadDir(ctx, configPath)
+	if err != nil {
 		return S6ServiceConfig{}, fmt.Errorf("failed to read config directory: %w", err)
 	}
 
-	// Check context again before processing config files
-	if err := ctx.Err(); err != nil {
-		return S6ServiceConfig{}, fmt.Errorf("context cancelled: %w", err)
-	}
-
-	// Extract config files from configFiles
-	for _, file := range configFiles {
-		if file.IsDir() {
+	// Extract config files
+	for _, entry := range entries {
+		if entry.IsDir() {
 			continue
 		}
 
-		content, err := os.ReadFile(filepath.Join(configPath, file.Name()))
+		filePath := filepath.Join(configPath, entry.Name())
+		content, err := s.fsService.ReadFile(ctx, filePath)
 		if err != nil {
-			if os.IsNotExist(err) {
-				return S6ServiceConfig{}, ErrServiceConfigMapNotFound
-			}
-			return S6ServiceConfig{}, fmt.Errorf("failed to read config file %s: %w", file.Name(), err)
+			return S6ServiceConfig{}, fmt.Errorf("failed to read config file %s: %w", entry.Name(), err)
 		}
 
-		observedS6ServiceConfig.ConfigFiles[file.Name()] = string(content)
+		observedS6ServiceConfig.ConfigFiles[entry.Name()] = string(content)
 	}
 
 	log.Printf("[S6Service] Config fetched for S6 service %s: %+v", servicePath, observedS6ServiceConfig)
