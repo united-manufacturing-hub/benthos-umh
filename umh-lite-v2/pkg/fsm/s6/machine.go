@@ -7,17 +7,17 @@ import (
 	"github.com/looplab/fsm"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/internal/fsm"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/config"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/service/s6"
 )
 
 // NewS6Instance creates a new S6Instance with the given ID and service path
 func NewS6Instance(
-	id string,
-	servicePath string,
-	config s6service.ServiceConfig) *S6Instance {
+	s6BaseDir string,
+	config config.S6FSMConfig) *S6Instance {
 
 	cfg := internal_fsm.BaseFSMInstanceConfig{
-		ID:                            id,
+		ID:                            config.Name,
 		DesiredFSMState:               OperationalStateStopped,
 		OperationalStateAfterCreate:   OperationalStateStopped,
 		OperationalStatesBeforeRemove: []string{OperationalStateStopped},
@@ -37,10 +37,9 @@ func NewS6Instance(
 
 	instance := &S6Instance{
 		baseFSMInstance: internal_fsm.NewBaseFSMInstance(cfg),
-		servicePath:     servicePath,
+		servicePath:     filepath.Join(s6BaseDir, config.Name),
 		config:          config,
 		service:         s6service.NewDefaultService(),
-		ObservedState:   S6ObservedState{Status: S6ServiceUnknown, ServiceInfo: s6service.ServiceInfo{Status: s6service.ServiceUnknown}},
 	}
 
 	instance.registerCallbacks()
@@ -48,23 +47,13 @@ func NewS6Instance(
 	return instance
 }
 
-// NewServiceInBaseDir creates a new S6Instance in the given base directory
-func NewServiceInBaseDir(
-	id string,
-	baseDir string,
-	config s6service.ServiceConfig) *S6Instance {
-	// Construct the full service path
-	servicePath := filepath.Join(baseDir, id)
-	return NewS6Instance(id, servicePath, config)
-}
-
 // NewS6InstanceWithService creates a new S6Instance with a custom service implementation
+// This is useful for testing
 func NewS6InstanceWithService(
-	id string,
-	servicePath string,
-	service s6service.Service,
-	config s6service.ServiceConfig) *S6Instance {
-	instance := NewS6Instance(id, servicePath, config)
+	s6BaseDir string,
+	config config.S6FSMConfig,
+	service s6service.Service) *S6Instance {
+	instance := NewS6Instance(s6BaseDir, config)
 	instance.service = service
 	return instance
 }

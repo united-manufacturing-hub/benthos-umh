@@ -35,15 +35,9 @@ var _ = Describe("S6 Service", func() {
 		os.RemoveAll(testPath)
 	})
 
-	It("should implement the Service interface", func() {
-		// Check that both DefaultService and MockService implement the Service interface
-		var _ Service = &DefaultService{}
-		var _ Service = &MockService{}
-	})
-
 	It("should track method calls in the mock implementation", func() {
 		Expect(mockService.CreateCalled).To(BeFalse())
-		mockService.Create(ctx, testPath, ServiceConfig{})
+		mockService.Create(ctx, testPath, S6ServiceConfig{})
 		Expect(mockService.CreateCalled).To(BeTrue())
 
 		Expect(mockService.StartCalled).To(BeFalse())
@@ -72,7 +66,7 @@ var _ = Describe("S6 Service", func() {
 		Expect(mockService.ServiceExists(testPath)).To(BeFalse())
 
 		// Create service should make it exist
-		mockService.Create(ctx, testPath, ServiceConfig{})
+		mockService.Create(ctx, testPath, S6ServiceConfig{})
 		Expect(mockService.ServiceExists(testPath)).To(BeTrue())
 
 		// Set the service state to down initially

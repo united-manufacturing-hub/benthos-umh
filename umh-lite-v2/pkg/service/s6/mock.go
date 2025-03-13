@@ -2,29 +2,31 @@ package s6
 
 import (
 	"context"
-	"fmt"
 )
 
 // MockService is a mock implementation of the S6 Service interface for testing
 type MockService struct {
 	// Tracks calls to methods
-	CreateCalled  bool
-	RemoveCalled  bool
-	StartCalled   bool
-	StopCalled    bool
-	RestartCalled bool
-	StatusCalled  bool
-	ExistsCalled  bool
+	CreateCalled    bool
+	RemoveCalled    bool
+	StartCalled     bool
+	StopCalled      bool
+	RestartCalled   bool
+	StatusCalled    bool
+	ExistsCalled    bool
+	GetConfigCalled bool
 
 	// Return values for each method
-	CreateError  error
-	RemoveError  error
-	StartError   error
-	StopError    error
-	RestartError error
-	StatusResult ServiceInfo
-	StatusError  error
-	ExistsResult bool
+	CreateError     error
+	RemoveError     error
+	StartError      error
+	StopError       error
+	RestartError    error
+	StatusResult    ServiceInfo
+	StatusError     error
+	ExistsResult    bool
+	GetConfigResult S6ServiceConfig
+	GetConfigError  error
 
 	// For more complex testing scenarios
 	ServiceStates    map[string]ServiceInfo
@@ -43,7 +45,7 @@ func NewMockService() *MockService {
 }
 
 // Create mocks creating an S6 service
-func (m *MockService) Create(ctx context.Context, servicePath string, config ServiceConfig) error {
+func (m *MockService) Create(ctx context.Context, servicePath string, config S6ServiceConfig) error {
 	m.CreateCalled = true
 	m.ExistingServices[servicePath] = true
 	return m.CreateError
@@ -62,7 +64,7 @@ func (m *MockService) Start(ctx context.Context, servicePath string) error {
 	m.StartCalled = true
 
 	if !m.ExistingServices[servicePath] {
-		return fmt.Errorf("service does not exist")
+		return ErrServiceNotExist
 	}
 
 	info := m.ServiceStates[servicePath]
@@ -77,7 +79,7 @@ func (m *MockService) Stop(ctx context.Context, servicePath string) error {
 	m.StopCalled = true
 
 	if !m.ExistingServices[servicePath] {
-		return fmt.Errorf("service does not exist")
+		return ErrServiceNotExist
 	}
 
 	info := m.ServiceStates[servicePath]
@@ -92,7 +94,7 @@ func (m *MockService) Restart(ctx context.Context, servicePath string) error {
 	m.RestartCalled = true
 
 	if !m.ExistingServices[servicePath] {
-		return fmt.Errorf("service does not exist")
+		return ErrServiceNotExist
 	}
 
 	info := m.ServiceStates[servicePath]
@@ -121,4 +123,10 @@ func (m *MockService) Status(ctx context.Context, servicePath string) (ServiceIn
 func (m *MockService) ServiceExists(servicePath string) bool {
 	m.ExistsCalled = true
 	return m.ExistingServices[servicePath]
+}
+
+// GetConfig mocks getting the config of an S6 service
+func (m *MockService) GetConfig(ctx context.Context, servicePath string) (S6ServiceConfig, error) {
+	m.GetConfigCalled = true
+	return m.GetConfigResult, m.GetConfigError
 }

@@ -2,24 +2,9 @@ package s6
 
 import (
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/internal/fsm"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/config"
 	public_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/fsm"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/service/s6"
-)
-
-// S6ServiceStatus represents the status of a service managed by s6-overlay
-type S6ServiceStatus string
-
-const (
-	// S6ServiceDown indicates the service is not running
-	S6ServiceDown S6ServiceStatus = "down"
-	// S6ServiceUp indicates the service is running
-	S6ServiceUp S6ServiceStatus = "up"
-	// S6ServiceRestarting indicates the service is restarting
-	S6ServiceRestarting S6ServiceStatus = "restarting"
-	// S6ServiceFailed indicates the service has failed
-	S6ServiceFailed S6ServiceStatus = "failed"
-	// S6ServiceUnknown indicates the service status is unknown
-	S6ServiceUnknown S6ServiceStatus = "unknown"
 )
 
 // Operational state constants represent the runtime states of a service
@@ -67,12 +52,13 @@ const (
 
 // S6ObservedState represents the state of the service as observed externally
 type S6ObservedState struct {
-	// Status represents the current observed status of the service
-	Status S6ServiceStatus
 	// LastStateChange is the timestamp of the last observed state change
 	LastStateChange int64
 	// ServiceInfo contains the actual service info from s6
 	ServiceInfo s6service.ServiceInfo
+
+	// ObservedS6ServiceConfig contains the actual service config from s6
+	ObservedS6ServiceConfig s6service.S6ServiceConfig
 }
 
 // S6Instance represents a single S6 service instance with a state machine
@@ -93,5 +79,5 @@ type S6Instance struct {
 	service s6service.Service
 
 	// config contains all the configuration for this service
-	config s6service.ServiceConfig
+	config config.S6FSMConfig
 }

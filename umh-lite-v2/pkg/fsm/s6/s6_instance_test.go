@@ -3,9 +3,11 @@ package s6
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/internal/fsm"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/config"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/service/s6"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -19,19 +21,24 @@ func TestS6(t *testing.T) {
 
 var _ = Describe("S6 FSM", func() {
 	var (
-		mockService *s6service.MockService
-		instance    *S6Instance
-		testID      string
-		testPath    string
-		ctx         context.Context
+		mockService     *s6service.MockService
+		instance        *S6Instance
+		testID          string
+		testS6BaseDir   string
+		testServicePath string
+		ctx             context.Context
 	)
 
 	BeforeEach(func() {
 		testID = "test-service"
-		testPath = "/tmp/test-service"
+		testS6BaseDir = "/run/service"
+		testServicePath = filepath.Join(testS6BaseDir, testID)
 		mockService = s6service.NewMockService()
+		mockService.ExistingServices[testS6BaseDir] = true
 
-		instance = NewS6InstanceWithService(testID, testPath, mockService, s6service.ServiceConfig{})
+		instance = NewS6InstanceWithService(testS6BaseDir, config.S6FSMConfig{
+			Name: testID,
+		}, mockService)
 		ctx = context.Background()
 	})
 
@@ -46,7 +53,7 @@ var _ = Describe("S6 FSM", func() {
 		Expect(mockService.CreateCalled).To(BeTrue())
 
 		// Mock service creation success
-		mockService.ServiceStates[testPath] = s6service.ServiceInfo{
+		mockService.ServiceStates[testServicePath] = s6service.ServiceInfo{
 			Status: s6service.ServiceDown,
 		}
 
@@ -61,8 +68,8 @@ var _ = Describe("S6 FSM", func() {
 		instance.baseFSMInstance.SetCurrentFSMState(OperationalStateStopped)
 
 		// Set service as existing
-		mockService.ExistingServices[testPath] = true
-		mockService.ServiceStates[testPath] = s6service.ServiceInfo{
+		mockService.ExistingServices[testServicePath] = true
+		mockService.ServiceStates[testServicePath] = s6service.ServiceInfo{
 			Status: s6service.ServiceDown,
 		}
 
@@ -77,7 +84,7 @@ var _ = Describe("S6 FSM", func() {
 		Expect(mockService.StartCalled).To(BeTrue())
 
 		// Mock the service as running
-		mockService.ServiceStates[testPath] = s6service.ServiceInfo{
+		mockService.ServiceStates[testServicePath] = s6service.ServiceInfo{
 			Status: s6service.ServiceUp,
 			Uptime: 10,
 			Pid:    1234,
@@ -87,7 +94,7 @@ var _ = Describe("S6 FSM", func() {
 		err = instance.Reconcile(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateRunning))
-		Expect(instance.ObservedState.Status).To(Equal(S6ServiceUp))
+		Expect(instance.ObservedState.ServiceInfo.Status).To(Equal(s6service.ServiceUp))
 		Expect(instance.GetServicePid()).To(Equal(1234))
 	})
 
@@ -96,8 +103,8 @@ var _ = Describe("S6 FSM", func() {
 		instance.baseFSMInstance.SetCurrentFSMState(OperationalStateRunning)
 
 		// Set service as existing and running
-		mockService.ExistingServices[testPath] = true
-		mockService.ServiceStates[testPath] = s6service.ServiceInfo{
+		mockService.ExistingServices[testServicePath] = true
+		mockService.ServiceStates[testServicePath] = s6service.ServiceInfo{
 			Status: s6service.ServiceUp,
 			Uptime: 60,
 			Pid:    1234,
@@ -114,7 +121,7 @@ var _ = Describe("S6 FSM", func() {
 		Expect(mockService.StopCalled).To(BeTrue())
 
 		// Mock the service as stopped
-		mockService.ServiceStates[testPath] = s6service.ServiceInfo{
+		mockService.ServiceStates[testServicePath] = s6service.ServiceInfo{
 			Status: s6service.ServiceDown,
 		}
 
@@ -122,7 +129,7 @@ var _ = Describe("S6 FSM", func() {
 		err = instance.Reconcile(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped))
-		Expect(instance.ObservedState.Status).To(Equal(S6ServiceDown))
+		Expect(instance.ObservedState.ServiceInfo.Status).To(Equal(s6service.ServiceDown))
 	})
 
 	It("should handle errors during service operations", func() {
@@ -130,8 +137,8 @@ var _ = Describe("S6 FSM", func() {
 		instance.baseFSMInstance.SetCurrentFSMState(OperationalStateStopped)
 
 		// Set service as existing
-		mockService.ExistingServices[testPath] = true
-		mockService.ServiceStates[testPath] = s6service.ServiceInfo{
+		mockService.ExistingServices[testServicePath] = true
+		mockService.ServiceStates[testServicePath] = s6service.ServiceInfo{
 			Status: s6service.ServiceDown,
 		}
 
@@ -163,7 +170,7 @@ var _ = Describe("S6 FSM", func() {
 		mockService.StartError = nil
 
 		// Mock the service as stopped
-		mockService.ServiceStates[testPath] = s6service.ServiceInfo{
+		mockService.ServiceStates[testServicePath] = s6service.ServiceInfo{
 			Status: s6service.ServiceDown, // Start with Down status
 		}
 
@@ -174,7 +181,7 @@ var _ = Describe("S6 FSM", func() {
 		Expect(mockService.StartCalled).To(BeTrue())
 
 		// Now simulate the service starting up
-		mockService.ServiceStates[testPath] = s6service.ServiceInfo{
+		mockService.ServiceStates[testServicePath] = s6service.ServiceInfo{
 			Status: s6service.ServiceUp,
 			Uptime: 10,
 			Pid:    1234,

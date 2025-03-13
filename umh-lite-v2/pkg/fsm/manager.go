@@ -5,7 +5,7 @@ package fsm
 import (
 	"context"
 
-	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/config"
+	config "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/config"
 )
 
 type FSMManager interface {

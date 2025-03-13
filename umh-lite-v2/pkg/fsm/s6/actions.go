@@ -25,17 +25,17 @@ func (s *S6Instance) initiateS6Create(ctx context.Context) error {
 	log.Printf("Starting Action: Creating S6 service %s ...", s.baseFSMInstance.ID)
 
 	// Check if we have a config with command or other settings
-	configEmpty := s.config.Command == nil && s.config.Env == nil && s.config.ConfigFiles == nil
+	configEmpty := s.config.S6ServiceConfig.Command == nil && s.config.S6ServiceConfig.Env == nil && s.config.S6ServiceConfig.ConfigFiles == nil
 
 	if !configEmpty {
 		// Create service with custom configuration
-		err := s.service.Create(ctx, s.servicePath, s.config)
+		err := s.service.Create(ctx, s.servicePath, s.config.S6ServiceConfig)
 		if err != nil {
 			return fmt.Errorf("failed to create service with config for %s: %w", s.baseFSMInstance.ID, err)
 		}
 	} else {
 		// Simple creation with no configuration, useful for testing
-		err := s.service.Create(ctx, s.servicePath, s6service.ServiceConfig{})
+		err := s.service.Create(ctx, s.servicePath, s6service.S6ServiceConfig{})
 		if err != nil {
 			return fmt.Errorf("failed to create service directory for %s: %w", s.baseFSMInstance.ID, err)
 		}
@@ -108,7 +108,7 @@ func (s *S6Instance) initiateS6Restart(ctx context.Context) error {
 func (s *S6Instance) updateObservedState(ctx context.Context) error {
 	info, err := s.service.Status(ctx, s.servicePath)
 	if err != nil {
-		s.ObservedState.Status = S6ServiceUnknown
+		s.ObservedState.ServiceInfo.Status = s6service.ServiceUnknown
 		return err
 	}
 
@@ -118,15 +118,15 @@ func (s *S6Instance) updateObservedState(ctx context.Context) error {
 	// Map the service status to FSM status
 	switch info.Status {
 	case s6service.ServiceUp:
-		s.ObservedState.Status = S6ServiceUp
+		s.ObservedState.ServiceInfo.Status = s6service.ServiceUp
 	case s6service.ServiceDown:
-		s.ObservedState.Status = S6ServiceDown
+		s.ObservedState.ServiceInfo.Status = s6service.ServiceDown
 	case s6service.ServiceRestarting:
-		s.ObservedState.Status = S6ServiceRestarting
+		s.ObservedState.ServiceInfo.Status = s6service.ServiceRestarting
 	case s6service.ServiceFailed:
-		s.ObservedState.Status = S6ServiceFailed
+		s.ObservedState.ServiceInfo.Status = s6service.ServiceFailed
 	default:
-		s.ObservedState.Status = S6ServiceUnknown
+		s.ObservedState.ServiceInfo.Status = s6service.ServiceUnknown
 	}
 
 	// Set LastStateChange time if this is the first update
@@ -134,22 +134,31 @@ func (s *S6Instance) updateObservedState(ctx context.Context) error {
 		s.ObservedState.LastStateChange = time.Now().Unix()
 	}
 
+	// Fetch the actual service config from s6
+	config, err := s.service.GetConfig(ctx, s.servicePath)
+	if err != nil {
+		return fmt.Errorf("failed to get S6 service config for %s: %w", s.baseFSMInstance.ID, err)
+	}
+	s.ObservedState.ObservedS6ServiceConfig = config
+
+	// TODO: trigger a reconcile if observed config is different from desired config
+
 	return nil
 }
 
 // IsS6Running checks if the S6 service is running.
 func (s *S6Instance) IsS6Running() bool {
-	return s.ObservedState.Status == S6ServiceUp
+	return s.ObservedState.ServiceInfo.Status == s6service.ServiceUp
 }
 
 // IsS6Stopped checks if the S6 service is stopped.
 func (s *S6Instance) IsS6Stopped() bool {
-	return s.ObservedState.Status == S6ServiceDown
+	return s.ObservedState.ServiceInfo.Status == s6service.ServiceDown
 }
 
 // HasS6Failed checks if the S6 service has failed.
 func (s *S6Instance) HasS6Failed() bool {
-	return s.ObservedState.Status == S6ServiceFailed
+	return s.ObservedState.ServiceInfo.Status == s6service.ServiceFailed
 }
 
 // GetServicePid gets the process ID of the running service.
