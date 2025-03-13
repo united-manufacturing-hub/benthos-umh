@@ -1,13 +1,16 @@
 package s6
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+	"text/template"
 
 	filesystem "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/service/filesystem"
 )
@@ -232,43 +235,29 @@ func (s *DefaultService) createS6RunScript(ctx context.Context, servicePath stri
 		}
 	}()
 
-	// Create shebang
-	if _, err := f.WriteString("#!/command/execlineb -P\n\n"); err != nil {
-		return fmt.Errorf("failed to write shebang: %w", err)
+	// Create template data
+	data := struct {
+		Command []string
+		Env     map[string]string
+	}{
+		Command: command,
+		Env:     env,
 	}
 
-	// Add environment variables using execlineb syntax
-	if env != nil && len(env) > 0 {
-		for k, v := range env {
-			// In execlineb, environment variables are set using "envfile" or individual "export" blocks
-			if _, err := f.WriteString(fmt.Sprintf("export %s %s\n", k, v)); err != nil {
-				return fmt.Errorf("failed to write environment variable: %w", err)
-			}
-		}
-		// Add an empty line
-		if _, err := f.WriteString("\n"); err != nil {
-			return fmt.Errorf("failed to write newline: %w", err)
-		}
+	// Parse and execute the template
+	tmpl, err := template.New("runscript").Parse(runScriptTemplate)
+	if err != nil {
+		return fmt.Errorf("failed to parse run script template: %w", err)
 	}
 
-	// In execlineb, to redirect stderr to stdout, we use fdmove instead of exec 2>&1
-	if _, err := f.WriteString("fdmove -c 2 1\n"); err != nil {
-		return fmt.Errorf("failed to write stderr redirection: %w", err)
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return fmt.Errorf("failed to execute run script template: %w", err)
 	}
 
-	// Build command string - in execlineb we need to separate command and args
-	if len(command) > 0 {
-		// First write the command
-		if _, err := f.WriteString(command[0]); err != nil {
-			return fmt.Errorf("failed to write command: %w", err)
-		}
-
-		// Then add each argument on a new line (execlineb style)
-		for _, arg := range command[1:] {
-			if _, err := f.WriteString(" " + arg); err != nil {
-				return fmt.Errorf("failed to write command argument: %w", err)
-			}
-		}
+	// Write the templated content to the file
+	if _, err := f.Write(buf.Bytes()); err != nil {
+		return fmt.Errorf("failed to write run script: %w", err)
 	}
 
 	// Make run script executable
@@ -553,6 +542,7 @@ func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6S
 
 	observedS6ServiceConfig := S6ServiceConfig{
 		ConfigFiles: make(map[string]string),
+		Env:         make(map[string]string),
 	}
 
 	// Fetch run script
@@ -562,14 +552,84 @@ func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6S
 		return S6ServiceConfig{}, fmt.Errorf("failed to read run script: %w", err)
 	}
 
-	// Extract command and env from run script
-	observedS6ServiceConfig.Command = strings.Split(string(content), "\n")
-	observedS6ServiceConfig.Env = make(map[string]string)
-	for _, line := range strings.Split(string(content), "\n") {
-		if strings.HasPrefix(line, "export ") {
-			parts := strings.Split(line, " ")
-			if len(parts) >= 2 {
-				observedS6ServiceConfig.Env[parts[1]] = parts[2]
+	// Parse the run script content
+	scriptContent := string(content)
+
+	// Extract environment variables using regex
+	envMatches := envVarParser.FindAllStringSubmatch(scriptContent, -1)
+	for _, match := range envMatches {
+		if len(match) == 3 {
+			key := match[1]
+			value := strings.TrimSpace(match[2])
+			// Remove any quotes
+			value = strings.Trim(value, "\"'")
+			observedS6ServiceConfig.Env[key] = value
+		}
+	}
+
+	// Extract command using regex
+	cmdMatch := runScriptParser.FindStringSubmatch(scriptContent)
+
+	if len(cmdMatch) >= 2 && cmdMatch[1] != "" {
+		// If we captured the command on the same line as fdmove
+		cmdLine := strings.TrimSpace(cmdMatch[1])
+		observedS6ServiceConfig.Command = parseCommandLine(cmdLine)
+	} else {
+		// If the command is on the line after fdmove, or regex didn't match properly
+		lines := strings.Split(scriptContent, "\n")
+		var commandLine string
+
+		// Find the fdmove line
+		for i, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "fdmove") {
+				// Check if command is on the same line after fdmove
+				if strings.Contains(line, " ") && len(line) > strings.LastIndex(line, " ")+1 {
+					parts := strings.SplitN(line, "fdmove -c 2 1", 2)
+					if len(parts) > 1 && strings.TrimSpace(parts[1]) != "" {
+						commandLine = strings.TrimSpace(parts[1])
+						break
+					}
+				}
+
+				// Otherwise, look for first non-empty line after fdmove
+				for j := i + 1; j < len(lines); j++ {
+					nextLine := strings.TrimSpace(lines[j])
+					if nextLine != "" {
+						commandLine = nextLine
+						break
+					}
+				}
+
+				if commandLine != "" {
+					break
+				}
+			}
+		}
+
+		if commandLine != "" {
+			observedS6ServiceConfig.Command = parseCommandLine(commandLine)
+		} else {
+			// Absolute fallback - try to look for the command we know should be there
+			log.Printf("[S6Service] Warning: Could not find command in run script for %s, searching for known paths", servicePath)
+			cmdRegex := regexp.MustCompile(`(/[^\s]+)`)
+			cmdMatches := cmdRegex.FindAllString(scriptContent, -1)
+
+			if len(cmdMatches) > 0 {
+				// Use the first matching path-like string we find as the command
+				cmd := cmdMatches[0]
+				args := []string{}
+
+				// Look for arguments after the command
+				argIndex := strings.Index(scriptContent, cmd) + len(cmd)
+				if argIndex < len(scriptContent) {
+					argPart := strings.TrimSpace(scriptContent[argIndex:])
+					if argPart != "" {
+						args = parseCommandLine(argPart)
+					}
+				}
+
+				observedS6ServiceConfig.Command = append([]string{cmd}, args...)
 			}
 		}
 	}
@@ -607,6 +667,35 @@ func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6S
 	log.Printf("[S6Service] Config fetched for S6 service %s: %+v", servicePath, observedS6ServiceConfig)
 
 	return observedS6ServiceConfig, nil
+}
+
+// parseCommandLine splits a command line into command and arguments, respecting quotes
+func parseCommandLine(cmdLine string) []string {
+	var cmdParts []string
+	var currentPart strings.Builder
+	inQuote := false
+
+	for i := 0; i < len(cmdLine); i++ {
+		if cmdLine[i] == '"' || cmdLine[i] == '\'' {
+			inQuote = !inQuote
+			continue
+		}
+
+		if cmdLine[i] == ' ' && !inQuote {
+			if currentPart.Len() > 0 {
+				cmdParts = append(cmdParts, currentPart.String())
+				currentPart.Reset()
+			}
+		} else {
+			currentPart.WriteByte(cmdLine[i])
+		}
+	}
+
+	if currentPart.Len() > 0 {
+		cmdParts = append(cmdParts, currentPart.String())
+	}
+
+	return cmdParts
 }
 
 // Equal checks if two S6ServiceConfigs are equal

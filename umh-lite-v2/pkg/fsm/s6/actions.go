@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"reflect"
 	"time"
 
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/service/s6"
@@ -143,6 +144,12 @@ func (s *S6Instance) updateObservedState(ctx context.Context) error {
 	s.ObservedState.ObservedS6ServiceConfig = config
 
 	// TODO: trigger a reconcile if observed config is different from desired config
+	// the easiest way to do this is causing this instance to be removed, which will trigger a re-create by the manager
+	if !reflect.DeepEqual(s.ObservedState.ObservedS6ServiceConfig, s.config.S6ServiceConfig) {
+		log.Printf("[S6Instance] Observed config is different from desired config, triggering a re-create")
+		s.logConfigDifferences(s.config.S6ServiceConfig, s.ObservedState.ObservedS6ServiceConfig)
+		s.baseFSMInstance.Remove(ctx)
+	}
 
 	return nil
 }
@@ -197,4 +204,59 @@ func (s *S6Instance) IsServiceWantingUp() bool {
 // GetExitHistory gets the history of service exit events.
 func (s *S6Instance) GetExitHistory() []s6service.ExitEvent {
 	return s.ObservedState.ServiceInfo.ExitHistory
+}
+
+// logConfigDifferences logs the specific differences between desired and observed configurations
+func (s *S6Instance) logConfigDifferences(desired, observed s6service.S6ServiceConfig) {
+	log.Printf("[S6Instance] Configuration differences for %s:", s.baseFSMInstance.GetID())
+
+	// Command differences
+	if !reflect.DeepEqual(desired.Command, observed.Command) {
+		log.Printf("[S6Instance] Command - want: %v", desired.Command)
+		log.Printf("[S6Instance] Command - is:   %v", observed.Command)
+	}
+
+	// Environment variables differences
+	if !reflect.DeepEqual(desired.Env, observed.Env) {
+		log.Printf("[S6Instance] Environment variables differences:")
+
+		// Check for keys in desired that are missing or different in observed
+		for k, v := range desired.Env {
+			if observedVal, ok := observed.Env[k]; !ok {
+				log.Printf("[S6Instance]   - %s: want: %q, is: <missing>", k, v)
+			} else if v != observedVal {
+				log.Printf("[S6Instance]   - %s: want: %q, is: %q", k, v, observedVal)
+			}
+		}
+
+		// Check for keys in observed that are not in desired
+		for k, v := range observed.Env {
+			if _, ok := desired.Env[k]; !ok {
+				log.Printf("[S6Instance]   - %s: want: <missing>, is: %q", k, v)
+			}
+		}
+	}
+
+	// Config files differences
+	if !reflect.DeepEqual(desired.ConfigFiles, observed.ConfigFiles) {
+		log.Printf("[S6Instance] Config files differences:")
+
+		// Check config files in desired that are missing or different in observed
+		for path, content := range desired.ConfigFiles {
+			if observedContent, ok := observed.ConfigFiles[path]; !ok {
+				log.Printf("[S6Instance]   - %s: want: present, is: <missing>", path)
+			} else if content != observedContent {
+				// For large config files, we don't want to log the entire content
+				// Just log that they're different
+				log.Printf("[S6Instance]   - %s: content differs", path)
+			}
+		}
+
+		// Check for config files in observed that are not in desired
+		for path := range observed.ConfigFiles {
+			if _, ok := desired.ConfigFiles[path]; !ok {
+				log.Printf("[S6Instance]   - %s: want: <missing>, is: present", path)
+			}
+		}
+	}
 }

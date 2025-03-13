@@ -58,7 +58,7 @@ func (m *S6Manager) Reconcile(ctx context.Context, cfg config.FullConfig) error 
 		}
 	}
 
-	// Step 3: Clean up any instances that are not in desiredState
+	// Step 3: Clean up any instances that are not in desiredState, or are in the removed state
 	// Before deletion, they need to be gracefully stopped and we need to wait until they are in the state removed
 	for instanceName := range observedState {
 
@@ -71,11 +71,6 @@ func (m *S6Manager) Reconcile(ctx context.Context, cfg config.FullConfig) error 
 			}
 		}
 
-		// If the instance is in desiredState, we don't need to remove it
-		if found {
-			continue
-		}
-
 		switch observedState[instanceName].GetCurrentFSMState() {
 		case internal_fsm.LifecycleStateRemoving:
 			log.Printf("[S6Manager] instance %s is already in removing state, waiting until it is removed", instanceName)
@@ -85,6 +80,12 @@ func (m *S6Manager) Reconcile(ctx context.Context, cfg config.FullConfig) error 
 			delete(observedState, instanceName)
 			continue
 		default:
+			// If the instance is in desiredState, we don't need to remove it
+			if found {
+				continue
+			}
+
+			// Otherwise, we need to remove the instance
 			log.Printf("[S6Manager] instance %s is in state %s, starting the removing process", instanceName, observedState[instanceName].GetCurrentFSMState())
 			observedState[instanceName].Remove(ctx)
 			continue
