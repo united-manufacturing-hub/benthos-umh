@@ -18,6 +18,9 @@ import (
 
 // Generates defective configurations
 func generateDefectiveConfig() config.FullConfig {
+	// Create a local random generator
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+
 	defects := []func(config.FullConfig) config.FullConfig{
 		// Empty services
 		func(cfg config.FullConfig) config.FullConfig {
@@ -57,7 +60,7 @@ func generateDefectiveConfig() config.FullConfig {
 	}
 
 	// Choose a random defect
-	defectIdx := rand.Intn(len(defects))
+	defectIdx := rng.Intn(len(defects))
 	return defects[defectIdx](config.FullConfig{})
 }
 
@@ -210,7 +213,7 @@ var _ = Describe("ControlLoop", func() {
 			Expect(atomic.LoadInt32(&callCount)).To(BeNumerically(">=", 2))
 		})
 
-		It("should stop execution if Reconcile returns an error", func() {
+		It("should stop execution if Reconcile returns a non-timeout error", func() {
 			mockManager.ReconcileError = errors.New("reconcile error")
 
 			// Start executing in a goroutine
@@ -224,6 +227,69 @@ var _ = Describe("ControlLoop", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(Equal("reconcile error"))
 		})
+
+		It("should continue execution if Reconcile returns a context timeout error", func() {
+			// Set up a mock with context deadline exceeded error
+			timeoutConfig := config.NewMockConfigManager()
+			timeoutConfig.WithConfigError(context.DeadlineExceeded)
+
+			// Track calls to verify the loop continues
+			var callCount int32
+
+			// Create a control loop with this config
+			timeoutLoop := &ControlLoop{
+				tickerTime:    5 * time.Millisecond,
+				managers:      []fsm.FSMManager{fsm.NewMockFSMManager()},
+				configManager: timeoutConfig,
+			}
+
+			// Start executing in a goroutine
+			execDone := make(chan error)
+			go func() {
+				execDone <- timeoutLoop.Execute(ctx)
+			}()
+
+			// Wait a bit to ensure the timeout error is encountered
+			time.Sleep(20 * time.Millisecond)
+
+			// Change the error to nil on the first call to track we got past the error
+			atomic.AddInt32(&callCount, 1)
+			timeoutConfig.WithConfigError(nil)
+
+			// Create a channel to detect if execution continues
+			continuedExecution := make(chan struct{})
+
+			// Set up a goroutine to monitor calls
+			go func() {
+				// Wait for the GetConfigCalled to be true again after we cleared the error
+				for i := 0; i < 50; i++ { // Try for ~50ms
+					// If GetConfigCalled becomes true after we cleared the error
+					if timeoutConfig.GetConfigCalled {
+						atomic.AddInt32(&callCount, 1)
+						continuedExecution <- struct{}{}
+						return
+					}
+					time.Sleep(1 * time.Millisecond)
+					timeoutConfig.ResetCalls()
+				}
+			}()
+
+			// Wait for continued execution or timeout
+			select {
+			case <-continuedExecution:
+				// Loop continued after timeout, which is what we want
+			case <-time.After(100 * time.Millisecond):
+				Fail("Timed out waiting for the loop to continue after timeout error")
+			}
+
+			// Cancel the context to end the test
+			cancel()
+
+			// Wait for Execute to finish without error
+			err := <-execDone
+			Expect(err).NotTo(HaveOccurred())
+			Expect(atomic.LoadInt32(&callCount)).To(BeNumerically(">", 1))
+		})
 	})
 
 	Describe("Stop", func() {
@@ -236,9 +302,12 @@ var _ = Describe("ControlLoop", func() {
 	Describe("Fuzz Testing", func() {
 		// This randomizes the behavior of the control loop
 		FuzzRandomDelays := func() {
+			// Create a local random generator
+			rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+
 			// Set up random delays in mocks
-			mockConfig.ConfigDelay = time.Duration(rand.Intn(30)) * time.Millisecond
-			mockManager.ReconcileDelay = time.Duration(rand.Intn(30)) * time.Millisecond
+			mockConfig.ConfigDelay = time.Duration(rng.Intn(30)) * time.Millisecond
+			mockManager.ReconcileDelay = time.Duration(rng.Intn(30)) * time.Millisecond
 
 			// Use a context with longer timeout for random delays
 			fuzzCtx, fuzzCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -258,8 +327,7 @@ var _ = Describe("ControlLoop", func() {
 		It("should handle random timing delays", func() {
 			// Run multiple iterations with random delays
 			for i := 0; i < 10; i++ {
-				// Set a different seed for each iteration
-				rand.Seed(time.Now().UnixNano() + int64(i))
+				// Create a local random generator for each iteration
 				mockManager.ResetCalls()
 				mockConfig.ResetCalls()
 
@@ -270,8 +338,6 @@ var _ = Describe("ControlLoop", func() {
 		It("should handle filesystem failures gracefully", func() {
 			// Run multiple iterations with different failure patterns
 			for i := 0; i < 10; i++ {
-				rand.Seed(time.Now().UnixNano() + int64(i))
-
 				// Create a new mockFS for each iteration with random failure characteristics
 				mockFS := filesystem.NewMockFileSystem().
 					WithFailureRate(0.3). // 30% chance of failure
@@ -323,7 +389,6 @@ var _ = Describe("ControlLoop", func() {
 		It("should handle defective configurations", func() {
 			// Run multiple iterations with different defective configs
 			for i := 0; i < 10; i++ {
-				rand.Seed(time.Now().UnixNano() + int64(i))
 				mockManager.ResetCalls()
 
 				FuzzDefectiveConfigs()
@@ -337,15 +402,16 @@ var _ = Describe("ControlLoop", func() {
 			defer complexCancel()
 
 			for i := 0; i < 5; i++ {
-				rand.Seed(time.Now().UnixNano() + int64(i))
+				// Create a local random generator for each iteration
+				rng := rand.New(rand.NewSource(time.Now().UnixNano() + int64(i)))
 
 				// Mix of defective configs, file system failures, and delays
 				mockConfig.Config = generateDefectiveConfig()
-				mockConfig.ConfigDelay = time.Duration(rand.Intn(30)) * time.Millisecond
-				mockManager.ReconcileDelay = time.Duration(rand.Intn(30)) * time.Millisecond
+				mockConfig.ConfigDelay = time.Duration(rng.Intn(30)) * time.Millisecond
+				mockManager.ReconcileDelay = time.Duration(rng.Intn(30)) * time.Millisecond
 
 				// Add random manager failures
-				if rand.Float64() < 0.3 {
+				if rng.Float64() < 0.3 {
 					mockManager.ReconcileError = fmt.Errorf("random manager error #%d", i)
 				} else {
 					mockManager.ReconcileError = nil

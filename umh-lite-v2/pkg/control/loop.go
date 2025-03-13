@@ -6,6 +6,8 @@ package control
 
 import (
 	"context"
+	"errors"
+	"log"
 	"time"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/config"
@@ -59,9 +61,18 @@ func (c *ControlLoop) Execute(ctx context.Context) error {
 			// Reconcile the managers
 			err := c.Reconcile(timeoutCtx)
 
-			// Any unhandled error will result in the control loop stopping
+			// Handle errors differently based on type
 			if err != nil {
-				return err
+				if errors.Is(err, context.DeadlineExceeded) {
+					// For timeouts, log warning but continue
+					log.Printf("WARNING: Control loop reconcile timed out: %v\n", err)
+				} else if errors.Is(err, context.Canceled) {
+					// For cancellation, exit the loop
+					return nil
+				} else {
+					// Any other unhandled error will result in the control loop stopping
+					return err
+				}
 			}
 		}
 	}
