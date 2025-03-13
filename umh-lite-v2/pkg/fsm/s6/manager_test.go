@@ -162,8 +162,13 @@ var _ = FDescribe("S6Manager", func() {
 			},
 		}
 
-		// First reconcile - should transition to creating
+		// econcile - should transition to LifecycleStateToBeCreated
 		err := manager.Reconcile(ctx, configWithService)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(manager.Instances[serviceName].GetCurrentFSMState()).To(Equal(internal_fsm.LifecycleStateToBeCreated))
+
+		// reconcile - should transition to LifecycleStateCreating
+		err = manager.Reconcile(ctx, configWithService)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(manager.Instances[serviceName].GetCurrentFSMState()).To(Equal(internal_fsm.LifecycleStateCreating))
 
@@ -173,12 +178,12 @@ var _ = FDescribe("S6Manager", func() {
 			Status: s6service.ServiceDown,
 		}
 
-		// Second reconcile - should transition to stopped state
+		// reconcile - should transition to stopped state
 		err = manager.Reconcile(ctx, configWithService)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(manager.Instances[serviceName].GetCurrentFSMState()).To(Equal(OperationalStateStopped))
 
-		// Third reconcile - should transition to starting
+		// reconcile - should transition to starting
 		err = manager.Reconcile(ctx, configWithService)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(manager.Instances[serviceName].GetCurrentFSMState()).To(Equal(OperationalStateStarting))
@@ -190,7 +195,7 @@ var _ = FDescribe("S6Manager", func() {
 			Pid:    12345,
 		}
 
-		// Fourth reconcile - should transition to running
+		// reconcile - should transition to running
 		err = manager.Reconcile(ctx, configWithService)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(manager.Instances[serviceName].GetCurrentFSMState()).To(Equal(OperationalStateRunning))
@@ -202,7 +207,7 @@ var _ = FDescribe("S6Manager", func() {
 		Expect(service.ObservedState.ServiceInfo.Pid).To(Equal(12345))
 	})
 
-	FIt("should demonstrate full service lifecycle from creation to removal", func() {
+	It("should demonstrate full service lifecycle from creation to removal", func() {
 		// Create a mock service for testing
 		mockService := s6service.NewMockService()
 		serviceName := "test-lifecycle"
