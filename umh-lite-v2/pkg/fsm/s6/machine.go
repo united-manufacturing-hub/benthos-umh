@@ -18,10 +18,10 @@ func NewS6Instance(
 	config config.S6FSMConfig) *S6Instance {
 
 	cfg := internal_fsm.BaseFSMInstanceConfig{
-		ID:                            config.Name,
-		DesiredFSMState:               OperationalStateStopped,
-		OperationalStateAfterCreate:   OperationalStateStopped,
-		OperationalStatesBeforeRemove: []string{OperationalStateStopped},
+		ID:                           config.Name,
+		DesiredFSMState:              OperationalStateStopped,
+		OperationalStateAfterCreate:  OperationalStateStopped,
+		OperationalStateBeforeRemove: OperationalStateStopped,
 		OperationalTransitions: []fsm.EventDesc{
 			// Operational transitions (only valid when lifecycle state is "created")
 			{Name: EventStart, Src: []string{OperationalStateStopped}, Dst: OperationalStateStarting},
@@ -81,6 +81,8 @@ func (s *S6Instance) GetDesiredFSMState() string {
 	return s.baseFSMInstance.GetDesiredFSMState()
 }
 
+// Remove starts the removal process, it is idempotent and can be called multiple times
+// Note: it is only removed once IsRemoved returns true
 func (s *S6Instance) Remove(ctx context.Context) error {
 	return s.baseFSMInstance.Remove(ctx)
 }

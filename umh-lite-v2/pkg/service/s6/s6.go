@@ -3,6 +3,7 @@ package s6
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,6 +83,7 @@ func NewDefaultService() Service {
 
 // Create creates the S6 service with specific configuration
 func (s *DefaultService) Create(ctx context.Context, servicePath string, config S6ServiceConfig) error {
+	log.Printf("[S6Service] Creating S6 service %s", servicePath)
 
 	// Create service directory if it doesn't exist
 	if err := os.MkdirAll(servicePath, 0755); err != nil {
@@ -144,6 +146,8 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 	if _, err := os.Create(baseDepFile); err != nil {
 		return fmt.Errorf("failed to create base dependency file: %w", err)
 	}
+
+	log.Printf("[S6Service] S6 service %s created", servicePath)
 
 	return nil
 }
@@ -242,6 +246,7 @@ func (s *DefaultService) createS6ConfigFiles(servicePath string, configFiles map
 
 // Remove removes the S6 service directory structure
 func (s *DefaultService) Remove(ctx context.Context, servicePath string) error {
+	log.Printf("[S6Service] Removing S6 service %s", servicePath)
 	if !s.ServiceExists(servicePath) {
 		return ErrServiceNotExist
 	}
@@ -250,12 +255,18 @@ func (s *DefaultService) Remove(ctx context.Context, servicePath string) error {
 	serviceName := filepath.Base(servicePath)
 	contentsFile := filepath.Join(filepath.Dir(servicePath), "user", "contents.d", serviceName)
 	os.Remove(contentsFile) // Ignore errors - file might not exist
+	err := os.RemoveAll(servicePath)
+	if err != nil {
+		return fmt.Errorf("failed to remove S6 service %s: %w", servicePath, err)
+	}
 
-	return os.RemoveAll(servicePath)
+	log.Printf("[S6Service] Removed S6 service %s from contents.d", servicePath)
+	return nil
 }
 
 // Start starts the S6 service
 func (s *DefaultService) Start(ctx context.Context, servicePath string) error {
+	log.Printf("[S6Service] Starting S6 service %s", servicePath)
 	if !s.ServiceExists(servicePath) {
 		return ErrServiceNotExist
 	}
@@ -265,11 +276,13 @@ func (s *DefaultService) Start(ctx context.Context, servicePath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to start service: %w, output: %s", err, string(output))
 	}
+	log.Printf("[S6Service] Started S6 service %s", servicePath)
 	return nil
 }
 
 // Stop stops the S6 service
 func (s *DefaultService) Stop(ctx context.Context, servicePath string) error {
+	log.Printf("[S6Service] Stopping S6 service %s", servicePath)
 	if !s.ServiceExists(servicePath) {
 		return ErrServiceNotExist
 	}
@@ -279,11 +292,13 @@ func (s *DefaultService) Stop(ctx context.Context, servicePath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to stop service: %w, output: %s", err, string(output))
 	}
+	log.Printf("[S6Service] Stopped S6 service %s", servicePath)
 	return nil
 }
 
 // Restart restarts the S6 service
 func (s *DefaultService) Restart(ctx context.Context, s6BaseDir string) error {
+	log.Printf("[S6Service] Restarting S6 service %s", s6BaseDir)
 	if !s.ServiceExists(s6BaseDir) {
 		return ErrServiceNotExist
 	}
@@ -293,11 +308,13 @@ func (s *DefaultService) Restart(ctx context.Context, s6BaseDir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to restart service: %w, output: %s", err, string(output))
 	}
+	log.Printf("[S6Service] Restarted S6 service %s", s6BaseDir)
 	return nil
 }
 
 // Status gets the current status of the S6 service
 func (s *DefaultService) Status(ctx context.Context, servicePath string) (ServiceInfo, error) {
+	log.Printf("[S6Service] Getting status of S6 service %s", servicePath)
 	info := ServiceInfo{
 		Status: ServiceUnknown,
 	}
@@ -391,6 +408,8 @@ func (s *DefaultService) Status(ctx context.Context, servicePath string) (Servic
 		info.ExitHistory = parseExitHistory(string(detailOutput))
 	}
 
+	log.Printf("[S6Service] Status fetched for S6 service %s: %+v", servicePath, info)
+
 	return info, nil
 }
 
@@ -426,12 +445,19 @@ func parseExitHistory(output string) []ExitEvent {
 
 // ServiceExists checks if the service directory exists
 func (s *DefaultService) ServiceExists(servicePath string) bool {
+	log.Printf("[S6Service] Checking if S6 service %s exists", servicePath)
 	_, err := os.Stat(servicePath)
-	return !os.IsNotExist(err)
+	if err != nil {
+		log.Printf("[S6Service] S6 service %s does not exist", servicePath)
+		return false
+	}
+	log.Printf("[S6Service] S6 service %s exists", servicePath)
+	return true
 }
 
 // GetConfig gets the actual service config from s6
 func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6ServiceConfig, error) {
+	log.Printf("[S6Service] Getting config for S6 service %s", servicePath)
 	// Check if context is cancelled
 	if err := ctx.Err(); err != nil {
 		return S6ServiceConfig{}, fmt.Errorf("context cancelled: %w", err)
@@ -508,6 +534,8 @@ func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6S
 
 		observedS6ServiceConfig.ConfigFiles[file.Name()] = string(content)
 	}
+
+	log.Printf("[S6Service] Config fetched for S6 service %s: %+v", servicePath, observedS6ServiceConfig)
 
 	return observedS6ServiceConfig, nil
 }

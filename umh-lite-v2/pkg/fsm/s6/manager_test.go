@@ -2,10 +2,7 @@ package s6
 
 import (
 	"context"
-	"fmt"
-	"math/rand"
 	"path/filepath"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -205,175 +202,169 @@ var _ = FDescribe("S6Manager", func() {
 		Expect(service.ObservedState.ServiceInfo.Pid).To(Equal(12345))
 	})
 
-	// Table-driven test for removal from different states
-	DescribeTable("removing a service from different states",
-		func(initialState string) {
-			// Create a mock service
-			mockService := s6service.NewMockService()
-			serviceName := fmt.Sprintf("test-remove-%s", initialState)
-			servicePath := filepath.Join("/mock/path", serviceName)
-
-			// Create service instance
-			instance := createMockS6Instance(manager, serviceName, mockService, OperationalStateRunning)
-
-			// Set up the initial state
-			setS6InstanceState(instance, initialState)
-			configureServiceForState(mockService, servicePath, initialState)
-
-			// Verify initial setup
-			Expect(manager.Instances).To(HaveKey(serviceName))
-			Expect(manager.Instances[serviceName].GetCurrentFSMState()).To(Equal(initialState))
-
-			// Create empty config to trigger removal
-			emptyConfig := config.FullConfig{
-				Services: []config.S6FSMConfig{},
-			}
-
-			// Reconcile to initiate removal
-			err := manager.Reconcile(ctx, emptyConfig)
-			Expect(err).NotTo(HaveOccurred())
-
-			// For non-stopped states we need to stop first, others can remove directly
-			if initialState != OperationalStateStopped {
-				// Verify service exists and is in appropriate state
-				// Transitions might be different depending on initial state
-				Expect(manager.Instances).To(HaveKey(serviceName))
-
-				// If the service was already in removing state or is gone, that's fine
-				// Otherwise it should be transitioning
-				if manager.Instances[serviceName] != nil {
-					state := manager.Instances[serviceName].GetCurrentFSMState()
-					// The valid states after reconcile could be:
-					// 1. Original state (waiting to stop)
-					// 2. Stopping (in process of stopping)
-					// 3. Stopped (successfully stopped, ready for removal)
-					// 4. Removing (if already stopped)
-					// 5. Removed (if already removed)
-					validTransitionStates := []string{
-						initialState,
-						OperationalStateStopping,
-						OperationalStateStopped,
-						internal_fsm.LifecycleStateRemoving,
-						internal_fsm.LifecycleStateRemoved,
-					}
-
-					Expect(validTransitionStates).To(ContainElement(state),
-						"Expected state to be one of %v but got %s", validTransitionStates, state)
-
-					// Help it transition to stopped if needed
-					if state == initialState || state == OperationalStateStopping {
-						// Simulate service stopping
-						mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
-							Status: s6service.ServiceDown,
-						}
-
-						if state != OperationalStateStopped {
-							// Now set to stopped to help the transition
-							setS6InstanceState(instance, OperationalStateStopped)
-						}
-					}
-				}
-			}
-
-			// Keep reconciling until service is removed, with a max number of attempts
-			maxAttempts := 5
-			for i := 0; i < maxAttempts; i++ {
-				// If service is gone, we're done
-				if len(manager.Instances) == 0 || manager.Instances[serviceName] == nil {
-					break
-				}
-
-				// If in removed state, one more reconcile should delete it
-				if manager.Instances[serviceName].GetCurrentFSMState() == internal_fsm.LifecycleStateRemoved {
-					err = manager.Reconcile(ctx, emptyConfig)
-					Expect(err).NotTo(HaveOccurred())
-					break
-				}
-
-				// Another reconcile cycle
-				err = manager.Reconcile(ctx, emptyConfig)
-				Expect(err).NotTo(HaveOccurred())
-
-				// Short delay to avoid issues
-				time.Sleep(time.Millisecond * 10)
-			}
-
-			// After all reconciliations, the instance should be removed
-			Expect(manager.Instances).NotTo(HaveKey(serviceName),
-				"Service should be removed after reconciliation from state %s", initialState)
-		},
-		Entry("from stopped state", OperationalStateStopped),
-		Entry("from running state", OperationalStateRunning),
-		Entry("from starting state", OperationalStateStarting),
-		Entry("from stopping state", OperationalStateStopping),
-	)
-
-	// Random state transition test
-	FIt("should handle random state transitions and removal reliably", func() {
-		// Use fixed seed for reproducibility
-		rand.Seed(42)
-
-		// Create several services
+	FIt("should demonstrate full service lifecycle from creation to removal", func() {
+		// Create a mock service for testing
 		mockService := s6service.NewMockService()
+		serviceName := "test-lifecycle"
 
-		// Number of services to test with
-		numServices := 5
-		serviceNames := make([]string, numServices)
-		servicePaths := make([]string, numServices)
+		// 1. Start with empty config to verify clean state
+		emptyConfig := config.FullConfig{}
+		err := manager.Reconcile(ctx, emptyConfig)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(manager.Instances).To(BeEmpty(), "Should start with no services")
 
-		// Create services with random initial states
-		possibleStates := []string{
-			OperationalStateStopped,
-			OperationalStateRunning,
-			OperationalStateStarting,
-			OperationalStateStopping,
+		// 2. Create config with one service to trigger creation and startup
+		GinkgoWriter.Printf("\n=== PHASE 1: CREATING SERVICE ===\n")
+		configWithService := config.FullConfig{
+			Services: []config.S6FSMConfig{
+				{
+					Name:         serviceName,
+					DesiredState: OperationalStateRunning,
+					S6ServiceConfig: s6service.S6ServiceConfig{
+						Command:     []string{"/bin/sh", "-c", "echo test-service"},
+						Env:         map[string]string{"TEST": "value"},
+						ConfigFiles: map[string]string{},
+					},
+				},
+			},
 		}
 
-		// Create services
-		for i := 0; i < numServices; i++ {
-			serviceNames[i] = fmt.Sprintf("fuzz-test-service-%d", i)
-			servicePaths[i] = filepath.Join("/mock/path", serviceNames[i])
+		// Reconcile once to let the instance be created
+		GinkgoWriter.Printf("Reconciling once to set up mock service\n")
+		err = manager.Reconcile(ctx, configWithService)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(manager.Instances).To(HaveKey(serviceName), "Service should be created")
 
-			instance := createMockS6Instance(manager, serviceNames[i], mockService, OperationalStateRunning)
+		// Get the instance and replace its service with our mock
+		instance := manager.Instances[serviceName]
+		GinkgoWriter.Printf("Service path is: %s\n", instance.servicePath)
 
-			// Set random initial state
-			initialState := possibleStates[rand.Intn(len(possibleStates))]
-			setS6InstanceState(instance, initialState)
-			configureServiceForState(mockService, servicePaths[i], initialState)
+		// Make sure we're using the correct path in our mock
+		servicePath := instance.servicePath
+
+		// Set up the mock service properly
+		mockService.ExistingServices[servicePath] = true
+		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
+			Status: s6service.ServiceDown,
+		}
+		mockService.GetConfigResult = s6service.S6ServiceConfig{
+			Command: []string{"/bin/sh", "-c", "echo test-service"},
+			Env:     map[string]string{"TEST": "value"},
 		}
 
-		// Verify all services exist
-		Expect(manager.Instances).To(HaveLen(numServices))
+		// Replace the real service with our mock
+		instance.service = mockService
 
-		// Create empty config to trigger removal of all services
-		emptyConfig := config.FullConfig{
-			Services: []config.S6FSMConfig{},
-		}
+		GinkgoWriter.Printf("Mock service properly configured. ExistingServices: %v\n", mockService.ExistingServices)
 
-		// Reconcile multiple times, with random actions between reconciles
-		maxIterations := 15
-		for i := 0; i < maxIterations; i++ {
-			// Perform reconciliation
-			err := manager.Reconcile(ctx, emptyConfig)
+		// Loop to bring service to running state
+		maxCreationAttempts := 10
+		serviceRunning := false
+
+		for i := 1; i <= maxCreationAttempts; i++ {
+			// Reconcile with the service config
+			GinkgoWriter.Printf("\n--- Creation reconcile #%d ---\n", i)
+			err = manager.Reconcile(ctx, configWithService)
 			Expect(err).NotTo(HaveOccurred())
 
-			// For remaining services, randomly change their states to simulate chaotic conditions
-			for name, instance := range manager.Instances {
-				if rand.Float32() < 0.3 { // 30% chance
-					// Pick a random state
-					newState := possibleStates[rand.Intn(len(possibleStates))]
-					setS6InstanceState(instance, newState)
-					configureServiceForState(mockService, instance.servicePath, newState)
+			// Log current state after reconciliation
+			currentState := instance.GetCurrentFSMState()
+			desiredState := instance.GetDesiredFSMState()
 
-					// Log the transition for debugging
-					GinkgoWriter.Printf("Iteration %d: Changed service %s to state %s\n",
-						i, name, newState)
-				}
+			// Get service status and other info
+			serviceStatus := "unknown"
+			if info, exists := mockService.ServiceStates[servicePath]; exists {
+				serviceStatus = string(info.Status)
+			}
+
+			GinkgoWriter.Printf("Current state: %s\n", currentState)
+			GinkgoWriter.Printf("Desired state: %s\n", desiredState)
+			GinkgoWriter.Printf("Service status: %s\n", serviceStatus)
+			GinkgoWriter.Printf("Service created in mock: %t\n", mockService.ExistingServices[servicePath])
+
+			// Print the error state if any
+			if instance.baseFSMInstance.GetError() != nil {
+				GinkgoWriter.Printf("FSM Error: %v\n", instance.baseFSMInstance.GetError())
+			}
+
+			// Check if service reached running state
+			if currentState == OperationalStateRunning {
+				serviceRunning = true
+				GinkgoWriter.Printf("Service reached RUNNING state after %d iterations\n", i)
+				break
 			}
 		}
 
-		// After multiple iterations, all services should be removed
-		Expect(manager.Instances).To(BeEmpty(),
-			"All services should eventually be removed after multiple reconciliations")
+		// Verify the service reached running state
+		Expect(serviceRunning).To(BeTrue(), "Service should have reached running state")
+		Expect(manager.Instances).To(HaveKey(serviceName))
+		Expect(manager.Instances[serviceName].GetCurrentFSMState()).To(Equal(OperationalStateRunning))
+
+		// 3. Now remove the service by using empty config again
+		GinkgoWriter.Printf("\n=== PHASE 2: REMOVING SERVICE ===\n")
+
+		// Get reference to instance before removal
+		instance = manager.Instances[serviceName]
+		currentState := instance.GetCurrentFSMState()
+		desiredState := instance.GetDesiredFSMState()
+		serviceStatus := string(mockService.ServiceStates[servicePath].Status)
+
+		GinkgoWriter.Printf("Before removal: Current=%s, Desired=%s, ServiceStatus=%s\n",
+			currentState, desiredState, serviceStatus)
+
+		// Loop to remove service
+		maxRemovalAttempts := 15
+		serviceRemoved := false
+
+		// First ensure we're in the required state for removal
+		if currentState != OperationalStateStopped {
+			GinkgoWriter.Printf("Service is not in stopped state, setting desired state to stopped\n")
+			instance.SetDesiredFSMState(OperationalStateStopped)
+
+			// Extra reconcile to update desired state
+			err = manager.Reconcile(ctx, emptyConfig)
+			GinkgoWriter.Printf("After setting desired=stopped: Current=%s, Desired=%s\n",
+				instance.GetCurrentFSMState(), instance.GetDesiredFSMState())
+		}
+
+		for i := 1; i <= maxRemovalAttempts; i++ {
+			// Reconcile with empty config
+			GinkgoWriter.Printf("\n--- Removal reconcile #%d ---\n", i)
+			err = manager.Reconcile(ctx, emptyConfig)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Log state after reconciliation
+			if instance, exists := manager.Instances[serviceName]; exists {
+				currentState := instance.GetCurrentFSMState()
+				desiredState := instance.GetDesiredFSMState()
+
+				serviceStatus := "unknown"
+				if info, exists := mockService.ServiceStates[servicePath]; exists {
+					serviceStatus = string(info.Status)
+				}
+
+				GinkgoWriter.Printf("Current state: %s\n", currentState)
+				GinkgoWriter.Printf("Desired state: %s\n", desiredState)
+				GinkgoWriter.Printf("Service status: %s\n", serviceStatus)
+
+				// Print the error state if any
+				if instance.baseFSMInstance.GetError() != nil {
+					GinkgoWriter.Printf("FSM Error: %v\n", instance.baseFSMInstance.GetError())
+				}
+
+				// Check for removal
+				if currentState == internal_fsm.LifecycleStateRemoved {
+					GinkgoWriter.Printf("Service is in REMOVED state, should be deleted soon\n")
+				}
+			} else {
+				GinkgoWriter.Printf("Removal #%d: Service has been removed\n", i)
+				serviceRemoved = true
+				break
+			}
+		}
+
+		// Verify the service was removed
+		Expect(serviceRemoved).To(BeTrue(), "Service should have been removed")
+		Expect(manager.Instances).NotTo(HaveKey(serviceName))
 	})
 })

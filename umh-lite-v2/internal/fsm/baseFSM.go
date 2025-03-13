@@ -12,11 +12,7 @@ import (
 
 // BaseFSMInstance implements the public fsm.FSM interface
 type BaseFSMInstance struct {
-	// ID is a unique identifier for this instance (service name)
-	ID string
-
-	// DesiredFSMState represents the target operational state we want to reach
-	DesiredFSMState string
+	cfg BaseFSMInstanceConfig
 
 	// mu is a mutex for protecting concurrent access to fields
 	mu sync.RWMutex
@@ -46,10 +42,9 @@ type BaseFSMInstanceConfig struct {
 
 	// OperationalStateAfterCreate is the operational state after the create event
 	OperationalStateAfterCreate string
-	// OperationalStates are the operational states of the FSM,
-	// these are the states that allow to be transitioned from into a removed state,
-	// as we always want to be able to remove the instance
-	OperationalStatesBeforeRemove []string
+	// OperationalStateBeforeRemove is the operational state before the remove event
+	// The lifecycle state removing is only allowed from this state
+	OperationalStateBeforeRemove string
 	// OperationalTransitions are the transitions that are allowed in the operational state
 	OperationalTransitions []fsm.EventDesc
 }
@@ -57,9 +52,8 @@ type BaseFSMInstanceConfig struct {
 func NewBaseFSMInstance(cfg BaseFSMInstanceConfig) *BaseFSMInstance {
 
 	baseInstance := &BaseFSMInstance{
-		ID:              cfg.ID,
-		DesiredFSMState: cfg.DesiredFSMState,
-		callbacks:       make(map[string]fsm.Callback),
+		cfg:       cfg,
+		callbacks: make(map[string]fsm.Callback),
 		backoff: func() *backoff.ExponentialBackOff {
 			b := backoff.NewExponentialBackOff()
 			b.InitialInterval = 100 * time.Millisecond
@@ -73,7 +67,7 @@ func NewBaseFSMInstance(cfg BaseFSMInstanceConfig) *BaseFSMInstance {
 		// Lifecycle transitions
 		{Name: LifecycleEventCreate, Src: []string{LifecycleStateToBeCreated}, Dst: LifecycleStateCreating},
 		{Name: LifecycleEventCreateDone, Src: []string{LifecycleStateCreating}, Dst: cfg.OperationalStateAfterCreate},
-		{Name: LifecycleEventRemove, Src: cfg.OperationalStatesBeforeRemove, Dst: LifecycleStateRemoving},
+		{Name: LifecycleEventRemove, Src: []string{cfg.OperationalStateBeforeRemove}, Dst: LifecycleStateRemoving},
 		{Name: LifecycleEventRemoveDone, Src: []string{LifecycleStateRemoving}, Dst: LifecycleStateRemoved},
 	}
 	events = append(events, cfg.OperationalTransitions...)
@@ -95,19 +89,19 @@ func NewBaseFSMInstance(cfg BaseFSMInstanceConfig) *BaseFSMInstance {
 	// Register default lifecycle callbacks
 
 	baseInstance.AddCallback("enter_"+LifecycleStateRemoved, func(ctx context.Context, e *fsm.Event) {
-		log.Printf("[FSM] Benthos instance %s is removed", baseInstance.ID)
+		log.Printf("[BaseFSM] Benthos instance %s is removed", baseInstance.cfg.ID)
 	})
 
 	baseInstance.AddCallback("enter_"+LifecycleStateCreating, func(ctx context.Context, e *fsm.Event) {
-		log.Printf("[FSM] Benthos instance %s is creating", baseInstance.ID)
+		log.Printf("[BaseFSM] Benthos instance %s is creating", baseInstance.cfg.ID)
 	})
 
 	baseInstance.AddCallback("enter_"+LifecycleStateToBeCreated, func(ctx context.Context, e *fsm.Event) {
-		log.Printf("[FSM] Benthos instance %s is to be created", baseInstance.ID)
+		log.Printf("[BaseFSM] Benthos instance %s is to be created", baseInstance.cfg.ID)
 	})
 
 	baseInstance.AddCallback("enter_"+LifecycleStateRemoving, func(ctx context.Context, e *fsm.Event) {
-		log.Printf("[FSM] Benthos instance %s is removing", baseInstance.ID)
+		log.Printf("[BaseFSM] Benthos instance %s is removing", baseInstance.cfg.ID)
 	})
 
 	return baseInstance
@@ -138,12 +132,12 @@ func (s *BaseFSMInstance) SetError(err error) {
 func (s *BaseFSMInstance) SetDesiredFSMState(state string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.DesiredFSMState = state
+	s.cfg.DesiredFSMState = state
 }
 
 // GetDesiredFSMState returns the desired state of the FSM
 func (s *BaseFSMInstance) GetDesiredFSMState() string {
-	return s.DesiredFSMState
+	return s.cfg.DesiredFSMState
 }
 
 // GetCurrentFSMState returns the current state of the FSM
@@ -172,9 +166,11 @@ func (s *BaseFSMInstance) ClearError() {
 	s.backoff.Reset()
 }
 
-// Remove starts the removal process
+// Remove starts the removal process, it is idempotent and can be called multiple times
 // Note: it is only removed once IsRemoved returns true
 func (s *BaseFSMInstance) Remove(ctx context.Context) error {
+	// Set the desired state to the state before remove
+	s.SetDesiredFSMState(s.cfg.OperationalStateBeforeRemove)
 	return s.SendEvent(ctx, LifecycleEventRemove)
 }
 
@@ -202,4 +198,8 @@ func (s *BaseFSMInstance) ShouldSkipReconcileBecauseOfError() bool {
 func (s *BaseFSMInstance) ResetState() {
 	s.ClearError()
 	s.backoff.Reset()
+}
+
+func (s *BaseFSMInstance) GetID() string {
+	return s.cfg.ID
 }

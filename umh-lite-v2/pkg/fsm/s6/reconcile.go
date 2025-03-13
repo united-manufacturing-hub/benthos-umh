@@ -2,10 +2,12 @@ package s6
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/internal/fsm"
+	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/service/s6"
 )
 
 // Reconcile examines the S6Instance and, in three steps:
@@ -19,8 +21,13 @@ import (
 func (s *S6Instance) Reconcile(ctx context.Context) error {
 	// Step 1: Detect external changes.
 	if err := s.reconcileExternalChanges(ctx); err != nil {
-		log.Printf("error reconciling external changes: %s", err)
-		return nil // We don't want to return an error here, because we want to continue reconciling
+		// If the service is not running, we don't want to return an error here, because we want to continue reconciling
+		if !errors.Is(err, s6service.ErrServiceNotExist) {
+			log.Printf("error reconciling external changes: %s", err)
+			return err
+		}
+
+		// The service does not exist, which is fine as this happens in the reconcileStateTransition
 	}
 
 	// Step 2: If there's a lastError, see if we've waited enough.
@@ -97,7 +104,7 @@ func (b *S6Instance) reconcileLifecycleStates(ctx context.Context, currentState 
 		}
 		return b.baseFSMInstance.SendEvent(ctx, internal_fsm.LifecycleEventRemoveDone)
 	case internal_fsm.LifecycleStateRemoved:
-		return fmt.Errorf("instance %s is removed", b.baseFSMInstance.ID)
+		return fmt.Errorf("instance %s is removed", b.baseFSMInstance.GetID())
 	default:
 		// If we are not in a lifecycle state, just continue
 		return nil

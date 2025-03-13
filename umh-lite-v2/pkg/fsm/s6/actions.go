@@ -22,7 +22,7 @@ import (
 
 // InitiateS6Create attempts to create the S6 service directory structure.
 func (s *S6Instance) initiateS6Create(ctx context.Context) error {
-	log.Printf("Starting Action: Creating S6 service %s ...", s.baseFSMInstance.ID)
+	log.Printf("[S6Instance] Starting Action: Creating S6 service %s ...", s.baseFSMInstance.GetID())
 
 	// Check if we have a config with command or other settings
 	configEmpty := s.config.S6ServiceConfig.Command == nil && s.config.S6ServiceConfig.Env == nil && s.config.S6ServiceConfig.ConfigFiles == nil
@@ -31,76 +31,76 @@ func (s *S6Instance) initiateS6Create(ctx context.Context) error {
 		// Create service with custom configuration
 		err := s.service.Create(ctx, s.servicePath, s.config.S6ServiceConfig)
 		if err != nil {
-			return fmt.Errorf("failed to create service with config for %s: %w", s.baseFSMInstance.ID, err)
+			return fmt.Errorf("failed to create service with config for %s: %w", s.baseFSMInstance.GetID(), err)
 		}
 	} else {
 		// Simple creation with no configuration, useful for testing
 		err := s.service.Create(ctx, s.servicePath, s6service.S6ServiceConfig{})
 		if err != nil {
-			return fmt.Errorf("failed to create service directory for %s: %w", s.baseFSMInstance.ID, err)
+			return fmt.Errorf("failed to create service directory for %s: %w", s.baseFSMInstance.GetID(), err)
 		}
 	}
 
-	log.Printf("S6 service %s directory structure created", s.baseFSMInstance.ID)
+	log.Printf("[S6Instance] S6 service %s directory structure created", s.baseFSMInstance.GetID())
 	return nil
 }
 
 // InitiateS6Remove attempts to remove the S6 service directory structure.
 // It requires the service to be stopped before removal.
 func (s *S6Instance) initiateS6Remove(ctx context.Context) error {
-	log.Printf("Starting Action: Removing S6 service %s ...", s.baseFSMInstance.ID)
+	log.Printf("[S6Instance] Starting Action: Removing S6 service %s ...", s.baseFSMInstance.GetID())
 
 	// First ensure the service is stopped
 	if s.IsS6Running() {
-		return fmt.Errorf("service %s cannot be removed while running", s.baseFSMInstance.ID)
+		return fmt.Errorf("service %s cannot be removed while running", s.baseFSMInstance.GetID())
 	}
 
 	// Remove the service directory
 	err := s.service.Remove(ctx, s.servicePath)
 	if err != nil {
-		return fmt.Errorf("failed to remove service directory for %s: %w", s.baseFSMInstance.ID, err)
+		return fmt.Errorf("failed to remove service directory for %s: %w", s.baseFSMInstance.GetID(), err)
 	}
 
-	log.Printf("S6 service %s removed", s.baseFSMInstance.ID)
+	log.Printf("[S6Instance] S6 service %s removed", s.baseFSMInstance.GetID())
 	return nil
 }
 
 // InitiateS6Start attempts to start the S6 service.
 func (s *S6Instance) initiateS6Start(ctx context.Context) error {
-	log.Printf("Starting Action: Starting S6 service %s ...", s.baseFSMInstance.ID)
+	log.Printf("[S6Instance] Starting Action: Starting S6 service %s ...", s.baseFSMInstance.GetID())
 
 	err := s.service.Start(ctx, s.servicePath)
 	if err != nil {
-		return fmt.Errorf("failed to start S6 service %s: %w", s.baseFSMInstance.ID, err)
+		return fmt.Errorf("failed to start S6 service %s: %w", s.baseFSMInstance.GetID(), err)
 	}
 
-	log.Printf("S6 service %s start command executed", s.baseFSMInstance.ID)
+	log.Printf("[S6Instance] S6 service %s start command executed", s.baseFSMInstance.GetID())
 	return nil
 }
 
 // InitiateS6Stop attempts to stop the S6 service.
 func (s *S6Instance) initiateS6Stop(ctx context.Context) error {
-	log.Printf("Starting Action: Stopping S6 service %s ...", s.baseFSMInstance.ID)
+	log.Printf("[S6Instance] Starting Action: Stopping S6 service %s ...", s.baseFSMInstance.GetID())
 
 	err := s.service.Stop(ctx, s.servicePath)
 	if err != nil {
-		return fmt.Errorf("failed to stop S6 service %s: %w", s.baseFSMInstance.ID, err)
+		return fmt.Errorf("failed to stop S6 service %s: %w", s.baseFSMInstance.GetID(), err)
 	}
 
-	log.Printf("S6 service %s stop command executed", s.baseFSMInstance.ID)
+	log.Printf("[S6Instance] S6 service %s stop command executed", s.baseFSMInstance.GetID())
 	return nil
 }
 
 // InitiateS6Restart attempts to restart the S6 service.
 func (s *S6Instance) initiateS6Restart(ctx context.Context) error {
-	log.Printf("Starting Action: Restarting S6 service %s ...", s.baseFSMInstance.ID)
+	log.Printf("[S6Instance] Starting Action: Restarting S6 service %s ...", s.baseFSMInstance.GetID())
 
 	err := s.service.Restart(ctx, s.servicePath)
 	if err != nil {
-		return fmt.Errorf("failed to restart S6 service %s: %w", s.baseFSMInstance.ID, err)
+		return fmt.Errorf("failed to restart S6 service %s: %w", s.baseFSMInstance.GetID(), err)
 	}
 
-	log.Printf("S6 service %s restart command executed", s.baseFSMInstance.ID)
+	log.Printf("[S6Instance] S6 service %s restart command executed", s.baseFSMInstance.GetID())
 	return nil
 }
 
@@ -137,7 +137,7 @@ func (s *S6Instance) updateObservedState(ctx context.Context) error {
 	// Fetch the actual service config from s6
 	config, err := s.service.GetConfig(ctx, s.servicePath)
 	if err != nil {
-		return fmt.Errorf("failed to get S6 service config for %s: %w", s.baseFSMInstance.ID, err)
+		return fmt.Errorf("failed to get S6 service config for %s: %w", s.baseFSMInstance.GetID(), err)
 	}
 	s.ObservedState.ObservedS6ServiceConfig = config
 
