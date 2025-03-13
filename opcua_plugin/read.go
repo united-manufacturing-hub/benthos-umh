@@ -44,13 +44,7 @@ var OPCUAConfigSpec = OPCUAConnectionConfigSpec.
 		Default(false)).
 	Field(service.NewIntField("pollRate").
 		Description("The rate in milliseconds at which to poll the OPC UA server when not using subscriptions. Defaults to 1000ms (1 second).").
-		Default(DefaultPollRate)).
-	Field(service.NewStringField("clientCertificate").
-		Description("Client certificate in base64 encoded format for certificate authentication.").
-		Default("")).
-	Field(service.NewStringField("clientPrivateKey").
-		Description("Client private key in base64 encoded format for certificate authentication.").
-		Default(""))
+		Default(DefaultPollRate))
 
 func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 
@@ -153,8 +147,6 @@ type OPCUAInput struct {
 	Subscription                 *opcua.Subscription
 	ServerInfo                   ServerInfo
 	PollRate                     int
-	ClientCertificate            string
-	ClientPrivateKey             string
 }
 
 // unsubscribeAndResetHeartbeat unsubscribes from the OPC UA subscription and resets the heartbeat

@@ -80,6 +80,13 @@ func (g *OPCUAConnection) GetOPCUAClientOptions(
 	case ua.UserTokenTypeUserName:
 		g.Log.Infof("Using username/password login")
 		opts = append(opts, opcua.AuthUsername(g.Username, g.Password))
+	case ua.UserTokenTypeCertificate:
+		g.Log.Info("Using User Certificate based authentication")
+		userCertificateOpts, err := g.parseUserCertificateOptions()
+		if err != nil {
+			return nil, fmt.Errorf("error while parsing user certificate options: %v", err)
+		}
+		opts = append(opts, userCertificateOpts...)
 	}
 
 	// If the endpoint's security policy is not None, we must attach a certificate
@@ -175,6 +182,71 @@ func (g *OPCUAConnection) GetOPCUAClientOptions(
 	}
 
 	return opts, nil
+}
+
+func (g *OPCUAConnection) parseUserCertificateOptions() ([]opcua.Option, error) {
+	// UserCertificate and UserPrivateKey are base64 encoded pem data
+	userCertificateData, err := base64.StdEncoding.DecodeString(g.UserCertificate)
+	if err != nil {
+		return nil, err
+	}
+
+	// Decode the pem data now
+	certBlock, _ := pem.Decode(userCertificateData)
+	if certBlock == nil {
+		return nil, fmt.Errorf("failed to decode PEM block for UserCertificate")
+	}
+
+	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		g.Log.Errorf("failed to parse X.509 Certificate from UserCertificate: %v", err)
+		return nil, err
+	}
+	privateKeyData, err := base64.StdEncoding.DecodeString(g.UserPrivateKey)
+	if err != nil {
+		return nil, err
+	}
+
+	privateKey, err := parsePrivateKey(privateKeyData)
+	if err != nil {
+		g.Log.Errorf("error parsing UserPrivateKey: %v", err)
+		return nil, err
+	}
+
+	return []opcua.Option{
+		opcua.SecurityPolicy(ua.SecurityPolicyURIBasic256Sha256),
+		opcua.SecurityMode(ua.MessageSecurityModeSignAndEncrypt),
+		opcua.AuthCertificate(cert.Raw),
+		opcua.AuthPrivateKey(privateKey),
+	}, nil
+
+}
+
+func parsePrivateKey(b []byte) (*rsa.PrivateKey, error) {
+
+	// Decode privateKey PEM Data. Handle Multiple formats
+	block, _ := pem.Decode(b)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block for PrivateKey")
+	}
+
+	// Try PKCS#1 format first
+	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err == nil {
+		return key, nil
+	}
+
+	keyInterface, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err == nil {
+		rsaKey, ok := keyInterface.(*rsa.PrivateKey)
+		if ok {
+			return rsaKey, nil
+		}
+
+		return nil, fmt.Errorf("PrivateKey is not RSA")
+	}
+
+	return nil, fmt.Errorf("unsupported PrivateKey format")
 }
 
 // LogEndpoint logs detailed information about a single OPC UA endpoint.
