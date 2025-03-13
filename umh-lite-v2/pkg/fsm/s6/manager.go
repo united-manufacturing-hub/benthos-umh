@@ -36,21 +36,21 @@ func (m *S6Manager) Reconcile(ctx context.Context, cfg config.FullConfig) error 
 			observedState[instance.Name] = NewS6Instance(instance.Name, instance)
 			observedState[instance.Name].SetDesiredFSMState(instance.DesiredState)
 			log.Printf("[S6Manager] created instance %s", instance.Name)
-			continue
+			return nil
 		}
 
 		// If the instance exists, but the config is different, update it
 		if !observedState[instance.Name].config.S6ServiceConfig.Equal(instance.S6ServiceConfig) {
 			observedState[instance.Name].config = instance
 			log.Printf("[S6Manager] updated config of instance %s", instance.Name)
-			continue
+			return nil
 		}
 
 		// If the instance exists, but the desired state is different, update it
 		if observedState[instance.Name].GetDesiredFSMState() != instance.DesiredState {
 			observedState[instance.Name].SetDesiredFSMState(instance.DesiredState)
 			log.Printf("[S6Manager] updated desired state of instance %s from %s to %s", instance.Name, observedState[instance.Name].GetDesiredFSMState(), instance.DesiredState)
-			continue
+			return nil
 		}
 	}
 
@@ -83,11 +83,13 @@ func (m *S6Manager) Reconcile(ctx context.Context, cfg config.FullConfig) error 
 		default:
 			log.Printf("[S6Manager] instance %s is in state %s, starting the removing process", instanceName, observedState[instanceName].GetCurrentFSMState())
 			observedState[instanceName].Remove(ctx)
+			continue
 		}
 
 	}
 
 	// Now call the reconcile for each instance
+	// This will only be executed if no instance was created or updated or removed
 	for _, instance := range m.Instances {
 		instance.Reconcile(ctx)
 	}

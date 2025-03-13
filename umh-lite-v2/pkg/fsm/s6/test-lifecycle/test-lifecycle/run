@@ -1,6 +1,0 @@
-#!/command/execlineb -P
-
-export TEST value
-
-fdmove -c 2 1
-/bin/sh -c echo test-service

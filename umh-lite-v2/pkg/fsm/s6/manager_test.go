@@ -231,7 +231,7 @@ var _ = FDescribe("S6Manager", func() {
 
 		// Reconcile once to let the instance be created
 		GinkgoWriter.Printf("Reconciling once to set up mock service\n")
-		err = manager.Reconcile(ctx, configWithService) // This will result once in a exec: "s6-svstat": executable file not found in $PATH error as the mock is not set up yet
+		err = manager.Reconcile(ctx, configWithService)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(manager.Instances).To(HaveKey(serviceName), "Service should be created")
 
