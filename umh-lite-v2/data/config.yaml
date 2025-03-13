@@ -18,3 +18,22 @@ services:
               count: 0 # Set to 0 for unlimited messages
           output:
             stdout: {} 
+  - name: hello-world-2
+    desiredState: running
+    s6ServiceConfig:
+      command:
+        - /usr/local/bin/benthos
+        - -c
+        - /hello-world-2.yaml
+      env:
+        LOG_LEVEL: DEBUG
+      configFiles:
+        /hello-world-2.yaml: |
+          ---
+          input:
+            generate:
+              mapping: root = "hello world from Benthos 2!" 
+              interval: 2s # Output every 2 seconds
+              count: 0 # Set to 0 for unlimited messages
+          output:
+            stdout: {} 

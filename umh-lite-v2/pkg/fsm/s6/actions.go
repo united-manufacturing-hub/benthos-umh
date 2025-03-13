@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
-	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/internal/fsm"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-lite-v2/pkg/service/s6"
 )
 
@@ -111,18 +109,6 @@ func (s *S6Instance) updateObservedState(ctx context.Context) error {
 	info, err := s.service.Status(ctx, s.servicePath)
 	if err != nil {
 		s.ObservedState.ServiceInfo.Status = s6service.ServiceUnknown
-
-		// Check if we're still in a creation state and the error is about s6-supervise not running
-		currentState := s.baseFSMInstance.GetCurrentFSMState()
-		if (currentState == internal_fsm.LifecycleStateToBeCreated ||
-			currentState == internal_fsm.LifecycleStateCreating) &&
-			(strings.Contains(fmt.Sprintf("%v", err), "s6-supervise not running")) {
-
-			log.Printf("[S6Instance] Service %s is still being created, ignoring s6-supervise not running error", s.baseFSMInstance.GetID())
-			// We'll set a default "down" status during creation
-			s.ObservedState.ServiceInfo.Status = s6service.ServiceDown
-			return nil
-		}
 
 		return err
 	}

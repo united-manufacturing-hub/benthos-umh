@@ -15,5 +15,5 @@ type S6FSMConfig struct {
 	DesiredState string `yaml:"desiredState"`
 
 	// For the S6 service
-	S6ServiceConfig s6service.S6ServiceConfig `yaml:"s6"`
+	S6ServiceConfig s6service.S6ServiceConfig `yaml:"s6ServiceConfig"`
 }
