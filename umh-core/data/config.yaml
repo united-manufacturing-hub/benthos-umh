@@ -5,7 +5,7 @@ services:
       command:
         - /usr/local/bin/benthos
         - -c
-        - /run/service/hello-world/config/hello-world.yaml2
+        - /run/service/hello-world/config/hello-world.yaml
       env:
         LOG_LEVEL: DEBUG
       configFiles:

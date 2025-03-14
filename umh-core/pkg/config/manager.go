@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	filesystem "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/filesystem"
 )
 
@@ -28,16 +30,21 @@ type FileConfigManager struct {
 
 	// fsService handles filesystem operations
 	fsService filesystem.Service
+
+	// logger is the logger for the config manager
+	logger *zap.SugaredLogger
 }
 
 // NewFileConfigManager creates a new FileConfigManager
 func NewFileConfigManager() *FileConfigManager {
 
 	configPath := DefaultConfigPath
+	logger := logger.For("config-manager")
 
 	return &FileConfigManager{
 		configPath: configPath,
 		fsService:  filesystem.NewDefaultService(),
+		logger:     logger,
 	}
 }
 
@@ -64,7 +71,7 @@ func (m *FileConfigManager) GetConfig(ctx context.Context) (FullConfig, error) {
 
 	// Return empty config if the file doesn't exist
 	if !exists {
-		return FullConfig{}, nil
+		return FullConfig{}, fmt.Errorf("config file does not exist: %s", m.configPath)
 	}
 
 	// Read the file
