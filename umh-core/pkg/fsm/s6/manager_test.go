@@ -194,6 +194,17 @@ var _ = Describe("S6Manager", func() {
 		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
 			Status: s6service.ServiceDown,
 		}
+		// Set up the mock service configuration to match what's expected
+		mockService.GetConfigResult = s6service.S6ServiceConfig{
+			Command:     []string{"/bin/sh", "-c", "echo test"},
+			Env:         map[string]string{},
+			ConfigFiles: map[string]string{},
+		}
+
+		// reconcile - should still be in creating state
+		err, _ = manager.Reconcile(ctx, configWithService)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(manager.Instances[serviceName].GetCurrentFSMState()).To(Equal(internal_fsm.LifecycleStateCreating))
 
 		// reconcile - should transition to stopped state
 		err, _ = manager.Reconcile(ctx, configWithService)
@@ -269,8 +280,9 @@ var _ = Describe("S6Manager", func() {
 			Status: s6service.ServiceDown,
 		}
 		mockService.GetConfigResult = s6service.S6ServiceConfig{
-			Command: []string{"/bin/sh", "-c", "echo test-service"},
-			Env:     map[string]string{"TEST": "value"},
+			Command:     []string{"/bin/sh", "-c", "echo test-service"},
+			Env:         map[string]string{"TEST": "value"},
+			ConfigFiles: map[string]string{},
 		}
 
 		// Replace the real service with our mock
@@ -389,6 +401,12 @@ var _ = Describe("S6Manager", func() {
 			},
 		}
 
+		mockService.GetConfigResult = s6service.S6ServiceConfig{
+			Command:     []string{"/bin/sh", "-c", "echo test"},
+			Env:         map[string]string{},
+			ConfigFiles: map[string]string{},
+		}
+
 		// Use createMockS6Instance which properly sets up the instance and mock service
 		instance := createMockS6Instance(manager, serviceName, mockService, OperationalStateStopped)
 		servicePath := instance.servicePath
@@ -492,6 +510,12 @@ var _ = Describe("S6Manager", func() {
 			},
 		}
 
+		mockService.GetConfigResult = s6service.S6ServiceConfig{
+			Command:     []string{"/bin/sh", "-c", "echo test"},
+			Env:         map[string]string{},
+			ConfigFiles: map[string]string{},
+		}
+
 		// Reconcile to ensure state is stable
 		err, _ := manager.Reconcile(ctx, configWithRunningService)
 		Expect(err).NotTo(HaveOccurred())
@@ -561,6 +585,12 @@ var _ = Describe("S6Manager", func() {
 					},
 				},
 			},
+		}
+
+		mockService.GetConfigResult = s6service.S6ServiceConfig{
+			Command:     []string{"/bin/sh", "-c", "echo test"},
+			Env:         map[string]string{},
+			ConfigFiles: map[string]string{},
 		}
 
 		// Use createMockS6Instance which properly sets up the instance and mock service
@@ -712,6 +742,12 @@ var _ = Describe("S6Manager", func() {
 					},
 				},
 			},
+		}
+
+		mockService.GetConfigResult = s6service.S6ServiceConfig{
+			Command:     []string{"/bin/sh", "-c", "echo test"},
+			Env:         map[string]string{},
+			ConfigFiles: map[string]string{},
 		}
 
 		// Reconcile to ensure state is stable

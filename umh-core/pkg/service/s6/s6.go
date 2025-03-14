@@ -155,7 +155,7 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 	// s6-supervise requires a run script to function properly
 	if len(config.Command) > 0 {
 		if err := s.createS6RunScript(ctx, servicePath, config.Command, config.Env); err != nil {
-			return err
+			return fmt.Errorf("failed to create S6 run script: %w", err)
 		}
 	} else {
 		return fmt.Errorf("no command specified for service %s", servicePath)
@@ -163,7 +163,7 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 
 	// Create any config files specified
 	if err := s.createS6ConfigFiles(ctx, servicePath, config.ConfigFiles); err != nil {
-		return err
+		return fmt.Errorf("failed to create S6 config files: %w", err)
 	}
 
 	// Register service in user/contents.d
@@ -305,7 +305,7 @@ func (s *DefaultService) Remove(ctx context.Context, servicePath string) error {
 	s.logger.Debugf("Removing S6 service %s", servicePath)
 	exists, err := s.ServiceExists(ctx, servicePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to check if service exists: %w", err)
 	}
 	if !exists {
 		return ErrServiceNotExist
@@ -330,7 +330,7 @@ func (s *DefaultService) Start(ctx context.Context, servicePath string) error {
 	s.logger.Debugf("Starting S6 service %s", servicePath)
 	exists, err := s.ServiceExists(ctx, servicePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to check if service exists: %w", err)
 	}
 	if !exists {
 		return ErrServiceNotExist
@@ -349,7 +349,7 @@ func (s *DefaultService) Stop(ctx context.Context, servicePath string) error {
 	s.logger.Debugf("Stopping S6 service %s", servicePath)
 	exists, err := s.ServiceExists(ctx, servicePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to check if service exists: %w", err)
 	}
 	if !exists {
 		return ErrServiceNotExist
@@ -368,7 +368,7 @@ func (s *DefaultService) Restart(ctx context.Context, servicePath string) error 
 	s.logger.Debugf("Restarting S6 service %s", servicePath)
 	exists, err := s.ServiceExists(ctx, servicePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to check if service exists: %w", err)
 	}
 	if !exists {
 		return ErrServiceNotExist
@@ -391,7 +391,7 @@ func (s *DefaultService) Status(ctx context.Context, servicePath string) (Servic
 	// Check if service directory exists
 	exists, err := s.ServiceExists(ctx, servicePath)
 	if err != nil {
-		return info, err
+		return info, fmt.Errorf("failed to check if service exists: %w", err)
 	}
 	if !exists {
 		return info, ErrServiceNotExist
@@ -518,7 +518,7 @@ func parseExitHistory(output string) []ExitEvent {
 func (s *DefaultService) ServiceExists(ctx context.Context, servicePath string) (bool, error) {
 	exists, err := s.fsService.FileExists(ctx, servicePath)
 	if err != nil {
-		return false, err.Wrap(err)
+		return false, fmt.Errorf("failed to check if S6 service exists: %w", err)
 	}
 	if !exists {
 		s.logger.Debugf("S6 service %s does not exist", servicePath)
@@ -531,7 +531,7 @@ func (s *DefaultService) ServiceExists(ctx context.Context, servicePath string) 
 func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6ServiceConfig, error) {
 	exists, err := s.ServiceExists(ctx, servicePath)
 	if err != nil {
-		return S6ServiceConfig{}, err
+		return S6ServiceConfig{}, fmt.Errorf("failed to check if service exists: %w", err)
 	}
 	if !exists {
 		return S6ServiceConfig{}, ErrServiceNotExist
@@ -635,7 +635,7 @@ func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6S
 	configPath := filepath.Join(servicePath, "config")
 	exists, err = s.fsService.FileExists(ctx, configPath)
 	if err != nil {
-		return S6ServiceConfig{}, err
+		return S6ServiceConfig{}, fmt.Errorf("failed to check if config directory exists: %w", err)
 	}
 	if !exists {
 		return observedS6ServiceConfig, nil

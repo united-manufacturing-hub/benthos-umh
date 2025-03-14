@@ -13,6 +13,7 @@ import (
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/filesystem"
 )
 
@@ -85,6 +86,7 @@ var _ = Describe("ControlLoop", func() {
 			tickerTime:    10 * time.Millisecond, // Fast ticker for tests
 			managers:      []fsm.FSMManager{mockManager},
 			configManager: mockConfig,
+			logger:        logger.For(logger.ComponentControlLoop),
 		}
 	})
 
@@ -241,6 +243,7 @@ var _ = Describe("ControlLoop", func() {
 				tickerTime:    5 * time.Millisecond,
 				managers:      []fsm.FSMManager{fsm.NewMockFSMManager()},
 				configManager: timeoutConfig,
+				logger:        logger.For(logger.ComponentControlLoop),
 			}
 
 			// Start executing in a goroutine

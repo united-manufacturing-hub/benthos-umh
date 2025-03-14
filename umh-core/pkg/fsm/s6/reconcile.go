@@ -20,7 +20,7 @@ import (
 func (s *S6Instance) Reconcile(ctx context.Context) (err error, reconciled bool) {
 	defer func() {
 		if err != nil {
-			s.baseFSMInstance.GetLogger().Errorf("error reconciling: %s", err)
+			s.baseFSMInstance.GetLogger().Errorf("error reconciling S6 instance %s: %s", s.baseFSMInstance.GetID(), err)
 			s.PrintState()
 		}
 	}()
@@ -29,8 +29,7 @@ func (s *S6Instance) Reconcile(ctx context.Context) (err error, reconciled bool)
 	if err := s.reconcileExternalChanges(ctx); err != nil {
 		// If the service is not running, we don't want to return an error here, because we want to continue reconciling
 		if !errors.Is(err, s6service.ErrServiceNotExist) {
-			s.baseFSMInstance.GetLogger().Errorf("error reconciling external changes: %s", err)
-			return err, false
+			return fmt.Errorf("error reconciling external changes: %w", err), false
 		}
 
 		// The service does not exist, which is fine as this happens in the reconcileStateTransition
@@ -60,7 +59,7 @@ func (s *S6Instance) Reconcile(ctx context.Context) (err error, reconciled bool)
 func (s *S6Instance) reconcileExternalChanges(ctx context.Context) error {
 	err := s.updateObservedState(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to update observed state: %w", err)
 	}
 	return nil
 }

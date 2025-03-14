@@ -215,7 +215,7 @@ func (s *DefaultService) RemoveAll(ctx context.Context, path string) error {
 	// Wait for either completion or context cancellation
 	select {
 	case err := <-errCh:
-		return err
+		return fmt.Errorf("failed to remove directory %s: %w", path, err)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -224,7 +224,7 @@ func (s *DefaultService) RemoveAll(ctx context.Context, path string) error {
 // MkdirTemp creates a new temporary directory
 func (s *DefaultService) MkdirTemp(ctx context.Context, dir, pattern string) (string, error) {
 	if err := s.checkContext(ctx); err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to check context: %w", err)
 	}
 
 	// Create a channel for results
@@ -243,7 +243,10 @@ func (s *DefaultService) MkdirTemp(ctx context.Context, dir, pattern string) (st
 	// Wait for either completion or context cancellation
 	select {
 	case res := <-resCh:
-		return res.path, res.err
+		if res.err != nil {
+			return "", fmt.Errorf("failed to create temporary directory: %w", res.err)
+		}
+		return res.path, nil
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
@@ -252,7 +255,7 @@ func (s *DefaultService) MkdirTemp(ctx context.Context, dir, pattern string) (st
 // Stat returns file info
 func (s *DefaultService) Stat(ctx context.Context, path string) (os.FileInfo, error) {
 	if err := s.checkContext(ctx); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to check context: %w", err)
 	}
 
 	// Create a channel for results
@@ -271,7 +274,10 @@ func (s *DefaultService) Stat(ctx context.Context, path string) (os.FileInfo, er
 	// Wait for either completion or context cancellation
 	select {
 	case res := <-resCh:
-		return res.info, res.err
+		if res.err != nil {
+			return nil, fmt.Errorf("failed to get file info: %w", res.err)
+		}
+		return res.info, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -280,7 +286,7 @@ func (s *DefaultService) Stat(ctx context.Context, path string) (os.FileInfo, er
 // CreateFile creates a new file with the specified permissions
 func (s *DefaultService) CreateFile(ctx context.Context, path string, perm os.FileMode) (*os.File, error) {
 	if err := s.checkContext(ctx); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to check context: %w", err)
 	}
 
 	// Create a channel for results
@@ -299,7 +305,10 @@ func (s *DefaultService) CreateFile(ctx context.Context, path string, perm os.Fi
 	// Wait for either completion or context cancellation
 	select {
 	case res := <-resCh:
-		return res.file, res.err
+		if res.err != nil {
+			return nil, fmt.Errorf("failed to create file: %w", res.err)
+		}
+		return res.file, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -308,7 +317,7 @@ func (s *DefaultService) CreateFile(ctx context.Context, path string, perm os.Fi
 // Chmod changes the mode of the named file
 func (s *DefaultService) Chmod(ctx context.Context, path string, mode os.FileMode) error {
 	if err := s.checkContext(ctx); err != nil {
-		return err
+		return fmt.Errorf("failed to check context: %w", err)
 	}
 
 	// Create a channel for results
@@ -322,7 +331,7 @@ func (s *DefaultService) Chmod(ctx context.Context, path string, mode os.FileMod
 	// Wait for either completion or context cancellation
 	select {
 	case err := <-errCh:
-		return err
+		return fmt.Errorf("failed to change mode of file %s: %w", path, err)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -331,7 +340,7 @@ func (s *DefaultService) Chmod(ctx context.Context, path string, mode os.FileMod
 // ReadDir reads a directory, returning all its directory entries
 func (s *DefaultService) ReadDir(ctx context.Context, path string) ([]os.DirEntry, error) {
 	if err := s.checkContext(ctx); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to check context: %w", err)
 	}
 
 	// Create a channel for results
@@ -350,7 +359,10 @@ func (s *DefaultService) ReadDir(ctx context.Context, path string) ([]os.DirEntr
 	// Wait for either completion or context cancellation
 	select {
 	case res := <-resCh:
-		return res.entries, res.err
+		if res.err != nil {
+			return nil, fmt.Errorf("failed to read directory %s: %w", path, res.err)
+		}
+		return res.entries, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -359,10 +371,14 @@ func (s *DefaultService) ReadDir(ctx context.Context, path string) ([]os.DirEntr
 // ExecuteCommand executes a command with context
 func (s *DefaultService) ExecuteCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
 	if err := s.checkContext(ctx); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to check context: %w", err)
 	}
 
 	// This method already respects context cancellation through exec.CommandContext
 	cmd := exec.CommandContext(ctx, name, args...)
-	return cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute command %s: %w", name, err)
+	}
+	return output, nil
 }

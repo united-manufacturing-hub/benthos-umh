@@ -2,6 +2,7 @@ package s6
 
 import (
 	"context"
+	"fmt"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
@@ -56,8 +57,8 @@ func (m *S6Manager) Reconcile(ctx context.Context, cfg config.FullConfig) (error
 
 		// If the instance exists, but the desired state is different, update it
 		if observedState[instance.Name].GetDesiredFSMState() != instance.DesiredState {
-			observedState[instance.Name].SetDesiredFSMState(instance.DesiredState)
 			m.logger.Infof("Updated desired state of instance %s from %s to %s", instance.Name, observedState[instance.Name].GetDesiredFSMState(), instance.DesiredState)
+			observedState[instance.Name].SetDesiredFSMState(instance.DesiredState)
 			return nil, true
 		}
 	}
@@ -100,7 +101,13 @@ func (m *S6Manager) Reconcile(ctx context.Context, cfg config.FullConfig) (error
 	// Now call the reconcile for each instance
 	// This will only be executed if no instance was created or updated or removed
 	for _, instance := range m.Instances {
-		instance.Reconcile(ctx)
+		err, reconciled := instance.Reconcile(ctx)
+		if err != nil {
+			return fmt.Errorf("error reconciling instance %s: %w", instance.config.Name, err), false
+		}
+		if reconciled {
+			return nil, true
+		}
 	}
 
 	return nil, false
