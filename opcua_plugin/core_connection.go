@@ -47,6 +47,14 @@ var OPCUAConnectionConfigSpec = service.NewConfigSpec().
 		Description("The server certificate fingerprint to verify, SHA3-512 hash.").
 		Default("").
 		Advanced()).
+	Field(service.NewStringField("userCertificate").
+		Description("User certificate in base64 encoded format of either PEM or DER.").
+		Default("").
+		Advanced()).
+	Field(service.NewStringField("userPrivateKey").
+		Description("User private key in base64 format of PEM for user certificate based authentication.").
+		Default("").
+		Advanced()).
 	Field(service.NewBoolField("insecure").
 		Description("Set to true to bypass secure connections, useful in case of SSL or certificate issues. Default is secure (false).").
 		Default(false).
@@ -72,6 +80,8 @@ type OPCUAConnection struct {
 	SecurityMode                 string
 	SecurityPolicy               string
 	ClientCertificate            string
+	UserCertificate              string
+	UserPrivateKey               string
 	ServerCertificateFingerprint string
 	Insecure                     bool
 	DirectConnect                bool
@@ -117,6 +127,13 @@ func ParseConnectionConfig(conf *service.ParsedConfig, mgr *service.Resources) (
 	if conn.ClientCertificate, err = conf.FieldString("clientCertificate"); err != nil {
 		return nil, err
 	}
+	if conn.UserCertificate, err = conf.FieldString("userCertificate"); err != nil {
+		return nil, err
+	}
+	if conn.UserPrivateKey, err = conf.FieldString("userPrivateKey"); err != nil {
+		return nil, err
+	}
+
 	if conn.ServerCertificateFingerprint, err = conf.FieldString("serverCertificateFingerprint"); err != nil {
 		return nil, err
 	}

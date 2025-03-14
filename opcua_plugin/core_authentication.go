@@ -142,6 +142,8 @@ func (g *OPCUAConnection) getEndpointIfExists(
 func (g *OPCUAConnection) getUserAuthenticationType() ua.UserTokenType {
 	// Here we can add UserTokenTypeCertificate and UserTokenTypeIssuedToken later
 	switch {
+	case g.UserPrivateKey != "" && g.UserCertificate != "":
+		return ua.UserTokenTypeCertificate
 	case g.Username != "" && g.Password != "":
 		return ua.UserTokenTypeUserName
 	default:
