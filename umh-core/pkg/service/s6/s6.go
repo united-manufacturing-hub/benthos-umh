@@ -39,8 +39,6 @@ const (
 	ServiceDown ServiceStatus = "down"
 	// ServiceRestarting indicates the service is restarting
 	ServiceRestarting ServiceStatus = "restarting"
-	// ServiceFailed indicates the service has failed
-	ServiceFailed ServiceStatus = "failed"
 )
 
 // ServiceInfo contains information about an S6 service

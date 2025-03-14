@@ -129,8 +129,6 @@ func (s *S6Instance) updateObservedState(ctx context.Context) error {
 		s.ObservedState.ServiceInfo.Status = s6service.ServiceDown
 	case s6service.ServiceRestarting:
 		s.ObservedState.ServiceInfo.Status = s6service.ServiceRestarting
-	case s6service.ServiceFailed:
-		s.ObservedState.ServiceInfo.Status = s6service.ServiceFailed
 	default:
 		s.ObservedState.ServiceInfo.Status = s6service.ServiceUnknown
 	}
@@ -169,11 +167,6 @@ func (s *S6Instance) IsS6Running() bool {
 // IsS6Stopped checks if the S6 service is stopped.
 func (s *S6Instance) IsS6Stopped() bool {
 	return s.ObservedState.ServiceInfo.Status == s6service.ServiceDown
-}
-
-// HasS6Failed checks if the S6 service has failed.
-func (s *S6Instance) HasS6Failed() bool {
-	return s.ObservedState.ServiceInfo.Status == s6service.ServiceFailed
 }
 
 // GetServicePid gets the process ID of the running service.

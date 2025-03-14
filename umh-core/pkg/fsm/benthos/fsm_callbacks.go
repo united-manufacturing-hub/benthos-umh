@@ -2,48 +2,61 @@ package benthos
 
 import (
 	"context"
-	"log"
 
 	"github.com/looplab/fsm"
-
-	"github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm/utils"
 )
 
 // registerCallbacks registers common callbacks for state transitions
 // These callbacks are executed synchronously and should not have any network calls or other operations that could fail
-
 func (instance *BenthosInstance) registerCallbacks() {
+	// Basic operational state callbacks
+	instance.baseFSMInstance.AddCallback("enter_"+OperationalStateStarting, func(ctx context.Context, e *fsm.Event) {
+		instance.baseFSMInstance.GetLogger().Infof("Entering starting state for %s", instance.baseFSMInstance.GetID())
+	})
 
-	instance.callbacks["enter_"+OperationalStateStarting] = func(ctx context.Context, e *fsm.Event) {
-		log.Printf("[FSM] Benthos instance %s is starting", instance.ID)
-	}
+	instance.baseFSMInstance.AddCallback("enter_"+OperationalStateStopping, func(ctx context.Context, e *fsm.Event) {
+		instance.baseFSMInstance.GetLogger().Infof("Entering stopping state for %s", instance.baseFSMInstance.GetID())
+	})
 
-	instance.callbacks["enter_"+OperationalStateStopping] = func(ctx context.Context, e *fsm.Event) {
-		log.Printf("[FSM] Benthos instance %s is stopping", instance.ID)
-	}
+	instance.baseFSMInstance.AddCallback("enter_"+OperationalStateStopped, func(ctx context.Context, e *fsm.Event) {
+		instance.baseFSMInstance.GetLogger().Infof("Entering stopped state for %s", instance.baseFSMInstance.GetID())
+	})
 
-	instance.callbacks["enter_"+OperationalStateStopped] = func(ctx context.Context, e *fsm.Event) {
-		log.Printf("[FSM] Benthos instance %s is stopped", instance.ID)
-	}
+	instance.baseFSMInstance.AddCallback("enter_"+OperationalStateRunning, func(ctx context.Context, e *fsm.Event) {
+		instance.baseFSMInstance.GetLogger().Infof("Entering running state for %s", instance.baseFSMInstance.GetID())
+	})
 
-	instance.callbacks["enter_"+OperationalStateRunning] = func(ctx context.Context, e *fsm.Event) {
-		log.Printf("[FSM] Benthos instance %s is running", instance.ID)
-	}
+	// TODO: Add callbacks for Benthos-specific states when they are finalized
+	// Example callbacks for potential states:
 
-	instance.callbacks["enter_"+utils.LifecycleStateRemoved] = func(ctx context.Context, e *fsm.Event) {
-		log.Printf("[FSM] Benthos instance %s is removed", instance.ID)
-	}
+	instance.baseFSMInstance.AddCallback("enter_"+OperationalStateConfigLoading, func(ctx context.Context, e *fsm.Event) {
+		instance.baseFSMInstance.GetLogger().Infof("Entering config loading state for %s", instance.baseFSMInstance.GetID())
+	})
 
-	instance.callbacks["enter_"+utils.LifecycleStateCreating] = func(ctx context.Context, e *fsm.Event) {
-		log.Printf("[FSM] Benthos instance %s is creating", instance.ID)
-	}
+	instance.baseFSMInstance.AddCallback("enter_"+OperationalStateConfigInvalid, func(ctx context.Context, e *fsm.Event) {
+		instance.baseFSMInstance.GetLogger().Infof("Entering config invalid state for %s", instance.baseFSMInstance.GetID())
+		// Additional logic for handling invalid configs could be added here
+	})
 
-	instance.callbacks["enter_"+utils.LifecycleStateToBeCreated] = func(ctx context.Context, e *fsm.Event) {
-		log.Printf("[FSM] Benthos instance %s is to be created", instance.ID)
-	}
+	instance.baseFSMInstance.AddCallback("enter_"+OperationalStateInitializingComponents, func(ctx context.Context, e *fsm.Event) {
+		instance.baseFSMInstance.GetLogger().Infof("Entering initializing components state for %s", instance.baseFSMInstance.GetID())
+	})
 
-	instance.callbacks["enter_"+utils.LifecycleStateRemoving] = func(ctx context.Context, e *fsm.Event) {
-		log.Printf("[FSM] Benthos instance %s is removing", instance.ID)
-	}
+	instance.baseFSMInstance.AddCallback("enter_"+OperationalStateProcessing, func(ctx context.Context, e *fsm.Event) {
+		instance.baseFSMInstance.GetLogger().Infof("Entering processing state for %s", instance.baseFSMInstance.GetID())
+	})
 
+	instance.baseFSMInstance.AddCallback("enter_"+OperationalStateProcessingWithWarnings, func(ctx context.Context, e *fsm.Event) {
+		instance.baseFSMInstance.GetLogger().Warnf("Entering processing with warnings state for %s", instance.baseFSMInstance.GetID())
+		// Additional logic for handling warnings could be added here
+	})
+
+	instance.baseFSMInstance.AddCallback("enter_"+OperationalStateProcessingWithErrors, func(ctx context.Context, e *fsm.Event) {
+		instance.baseFSMInstance.GetLogger().Errorf("Entering processing with errors state for %s", instance.baseFSMInstance.GetID())
+		// Additional logic for handling errors could be added here
+	})
+
+	instance.baseFSMInstance.AddCallback("enter_"+OperationalStateIdle, func(ctx context.Context, e *fsm.Event) {
+		instance.baseFSMInstance.GetLogger().Infof("Entering idle state for %s", instance.baseFSMInstance.GetID())
+	})
 }
