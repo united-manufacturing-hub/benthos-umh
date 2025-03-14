@@ -171,6 +171,26 @@ input:
     password: 'your-password'
 ```
 
+#### User Certificate and Private Key
+  - **Keys**: `userCertificate`, `userPrivateKey`
+  - **Description**: Credentials for User certificate-based authentication.
+  - `userCertificate`: Base64-encoded certificate in either PEM (.pem) or DER (.der) format.
+  - `userPrivateKey`: Base64-encoded private key in PEM (.pem) format only.
+  - Certificate-based authentication provides stronger security than username/password for high-security environments.
+  - Proper protection of the private key and certificate validation on both client and server are essential.
+  - **Configuration Example**:
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDs: ['ns=2;s=IoTSensors']
+    securityMode: SignAndEncrypt
+    securityPolicy: Basic256Sha256
+    userCertificate: 'base64-encoded certificate (.pem or .der)'
+    userPrivateKey: 'base64-encoded private key (.pem only)'
+```
+
 ##### Security Options
 
 > To ensure a fully secure connection, you must explicitly configure all of the following security options. However, if these settings seem overwhelming, you can leave them unspecified. In that case, **benthos-umh** will automatically scan for and connect to available endpoints until it succeeds—and then it will log the recommended security settings for your future configuration.
@@ -220,24 +240,6 @@ input:
     clientCertificate: 'your-fixed-base64-encoded-certificate' # optional but recommended
 ```
 
-- **User Certificate and Private Key**:
-  - **Keys**: `userCertificate`, `userPrivateKey`
-  - **Description**: Base64-encoded PEM certificate and private key for user authentication.
-  - When using certificate-based authentication, you must provide both a user certificate and its corresponding private key. These credentials should be provided as Base64-encoded PEM files.
-  - This approach offers stronger security than username/password authentication for scenarios requiring elevated security standards.
-  - For secure operation, ensure the private key is properly protected and that certificate validation is enabled on both client and server sides.
-  - **Configuration Example**:
-
-```yaml
-input:
-  opcua:
-    endpoint: 'opc.tcp://localhost:46010'
-    nodeIDs: ['ns=2;s=IoTSensors']
-    securityMode: SignAndEncrypt
-    securityPolicy: Basic256Sha256
-    userCertificate: 'base64-encoded-user-PEM-certificate'
-    userPrivateKey: 'base64-encoded-user-PEM-private-key'
-```
 
 ##### Insecure Mode
 
