@@ -127,6 +127,8 @@ input:
     securityPolicy: None | Basic128Rsa15 | Basic256 | Basic256Sha256  # optional (default: unset)
     serverCertificateFingerprint: 'sha3-fingerprint-of-cert' # optional (default: unset)
     clientCertificate: 'your-fixed-base64-encoded-certificate' # optional (default: unset)
+    userCertificate: 'base64-encoded-user-PEM-certificate' # optional (default: unset)
+    userPrivateKey: 'base64-encoded-user-PEM-private-key' # optional (default: unset)
     subscribeEnabled: false | true # optional (default: false)
     useHeartbeat: false | true # optional (default: false)
     pollRate: 1000 # optional (default: 1000) The rate in milliseconds at which to poll the OPC UA server when not using subscriptions
@@ -218,6 +220,25 @@ input:
     clientCertificate: 'your-fixed-base64-encoded-certificate' # optional but recommended
 ```
 
+- **User Certificate and Private Key**:
+  - **Keys**: `userCertificate`, `userPrivateKey`
+  - **Description**: Base64-encoded PEM certificate and private key for user authentication.
+  - When using certificate-based authentication, you must provide both a user certificate and its corresponding private key. These credentials should be provided as Base64-encoded PEM files.
+  - This approach offers stronger security than username/password authentication for scenarios requiring elevated security standards.
+  - For secure operation, ensure the private key is properly protected and that certificate validation is enabled on both client and server sides.
+  - **Configuration Example**:
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDs: ['ns=2;s=IoTSensors']
+    securityMode: SignAndEncrypt
+    securityPolicy: Basic256Sha256
+    userCertificate: 'base64-encoded-user-PEM-certificate'
+    userPrivateKey: 'base64-encoded-user-PEM-private-key'
+```
+
 ##### Insecure Mode
 
 This is now deprecated. By default, benthos-umh will now connect via SignAndEncrypt and Basic256Sha256 and if this fails it will fall back to insecure mode.
@@ -299,7 +320,7 @@ OPC UA Output
 
 The **OPC UA output** plugin writes data into an OPC UA server (e.g., a PLC). This plugin supports optional read-back (handshake) to confirm the write.
 
-> **Data Transformations**  
+> **Data Transformations**
 > It is recommended to perform JSON-to-field transformations _before_ this plugin (e.g., via [Node-RED JavaScript](#node-red-javascript-processor) or [Bloblang](https://www.benthos.dev/docs/guides/bloblang/about)). That way, you feed the final fields directly to this plugin without extra logic here.
 
 ---
@@ -407,7 +428,7 @@ If, for example, the `ns=2;s=MyEnableFlag` node is read-only or the server rejec
 
 By default, the plugin **reads back** each node it wrote to confirm the new value appears. This ensures:
 
-1. **Benthos Message ACK**: If the read-back fails or times out, the output plugin fails. Benthos will _not_ acknowledge the message upstream, and you can configure fallback or retry strategies.  
+1. **Benthos Message ACK**: If the read-back fails or times out, the output plugin fails. Benthos will _not_ acknowledge the message upstream, and you can configure fallback or retry strategies.
 2. **Consistent Setpoints**: If the OPC UA server discards or modifies the value, you’ll see an immediate error.
 
 > **Disable** the handshake by setting `handshake.enabled: false` if you prefer no read-back check (faster, but less safe).
@@ -425,16 +446,16 @@ The plugin will write to the OPC UA server but **not** confirm. It will “succe
 
 For many industrial use cases, you might need more than just writing a value and reading it back:
 
-1. **De-duplication**: If you re-send the same “command” multiple times, do you want the PLC to ignore duplicates?  
-   - *Now*: Implement a unique command ID (UUID) in your message and let the PLC store/ignore duplicates. Or handle it in your Benthos pipeline (e.g., a “dedupe” processor).  
+1. **De-duplication**: If you re-send the same “command” multiple times, do you want the PLC to ignore duplicates?
+   - *Now*: Implement a unique command ID (UUID) in your message and let the PLC store/ignore duplicates. Or handle it in your Benthos pipeline (e.g., a “dedupe” processor).
    - *Future*: We may add a built-in “ActionUUID” handshake, which compares a known ID in another read node.
 
-2. **Time-Window Checks**: Only accept a command if it arrives before a certain expiration.  
-   - *Now*: Use a preceding [nodered_js processor](#node-red-javascript-processor) or Bloblang to drop the message if `timestamp_now - msg.timestamp > threshold`.  
+2. **Time-Window Checks**: Only accept a command if it arrives before a certain expiration.
+   - *Now*: Use a preceding [nodered_js processor](#node-red-javascript-processor) or Bloblang to drop the message if `timestamp_now - msg.timestamp > threshold`.
    - *Future*: We might add plugin-level config like `rejectOlderThanMs` if demand arises.
 
-3. **Separate Acknowledgment Node**: Some PLCs use a separate ack node (e.g., `CommandAck`) that signals the command was _processed_.  
-   - *Now*: Implement in the PLC + a custom “double read” with a second plugin instance (or a separate input that waits for the ack).  
+3. **Separate Acknowledgment Node**: Some PLCs use a separate ack node (e.g., `CommandAck`) that signals the command was _processed_.
+   - *Now*: Implement in the PLC + a custom “double read” with a second plugin instance (or a separate input that waits for the ack).
    - *Future*: We may add an advanced handshake config that reads a different node (rather than the same node) and checks for a specific “ACK” value.
 
 With Benthos, the “at least once” acknowledgment ensures that if writing fails, the message can be retried or routed. This plugin’s minimal default handshake (read-back from the same node) is a strong start for safer OPC UA setpoints, and we’ll grow it over time if more advanced scenarios are needed.
