@@ -12,8 +12,8 @@ export {{ $key }} {{ $value }}
 {{- if .Env }}
 
 {{- end }}
-fdmove -c 2 1
-{{- range $index, $cmd := .Command }}{{ if eq $index 0 }}{{ $cmd }}{{ else }} {{ $cmd }}{{ end }}{{ end }}
+fdmove -c 2 1 
+{{ range $index, $cmd := .Command }}{{ if eq $index 0 }}{{ $cmd }}{{ else }} {{ $cmd }}{{ end }}{{ end }}
 `
 
 // runScriptParser is a regexp to extract command from the run script

@@ -381,7 +381,6 @@ func (s *DefaultService) Restart(ctx context.Context, servicePath string) error 
 
 // Status gets the current status of the S6 service
 func (s *DefaultService) Status(ctx context.Context, servicePath string) (ServiceInfo, error) {
-	log.Printf("[S6Service] Getting status of S6 service %s", servicePath)
 	info := ServiceInfo{
 		Status: ServiceUnknown,
 	}
@@ -477,7 +476,7 @@ func (s *DefaultService) Status(ctx context.Context, servicePath string) (Servic
 		info.ExitHistory = parseExitHistory(string(detailOutput))
 	}
 
-	log.Printf("[S6Service] Status fetched for S6 service %s: %+v", servicePath, info)
+	//log.Printf("[S6Service] Status fetched for S6 service %s: %+v", servicePath, info)
 
 	return info, nil
 }
@@ -514,7 +513,6 @@ func parseExitHistory(output string) []ExitEvent {
 
 // ServiceExists checks if the service directory exists
 func (s *DefaultService) ServiceExists(ctx context.Context, servicePath string) (bool, error) {
-	log.Printf("[S6Service] Checking if S6 service %s exists", servicePath)
 	exists, err := s.fsService.FileExists(ctx, servicePath)
 	if err != nil {
 		log.Printf("[S6Service] Error checking if S6 service %s exists: %v", servicePath, err)
@@ -524,14 +522,11 @@ func (s *DefaultService) ServiceExists(ctx context.Context, servicePath string) 
 		log.Printf("[S6Service] S6 service %s does not exist", servicePath)
 		return false, nil
 	}
-	log.Printf("[S6Service] S6 service %s exists", servicePath)
 	return true, nil
 }
 
 // GetConfig gets the actual service config from s6
 func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6ServiceConfig, error) {
-	log.Printf("[S6Service] Getting config for S6 service %s", servicePath)
-
 	exists, err := s.ServiceExists(ctx, servicePath)
 	if err != nil {
 		return S6ServiceConfig{}, err
@@ -663,8 +658,6 @@ func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6S
 
 		observedS6ServiceConfig.ConfigFiles[entry.Name()] = string(content)
 	}
-
-	log.Printf("[S6Service] Config fetched for S6 service %s: %+v", servicePath, observedS6ServiceConfig)
 
 	return observedS6ServiceConfig, nil
 }
