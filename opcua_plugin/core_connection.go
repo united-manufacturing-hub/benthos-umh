@@ -48,11 +48,11 @@ var OPCUAConnectionConfigSpec = service.NewConfigSpec().
 		Default("").
 		Advanced()).
 	Field(service.NewStringField("userCertificate").
-		Description("User certificate in base64 PEM encoded format for certificate based authentication.").
+		Description("User certificate in base64 encoded format of either PEM or DER.").
 		Default("").
 		Advanced()).
 	Field(service.NewStringField("userPrivateKey").
-		Description("User private key in base64 PEM encoded format for certificate based authentication.").
+		Description("User private key in base64 format of PEM for user certificate based authentication.").
 		Default("").
 		Advanced()).
 	Field(service.NewBoolField("insecure").

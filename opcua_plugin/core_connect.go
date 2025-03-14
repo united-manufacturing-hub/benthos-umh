@@ -191,13 +191,20 @@ func (g *OPCUAConnection) parseUserCertificateOptions() ([]opcua.Option, error) 
 		return nil, err
 	}
 
-	// Decode the pem data now
+	// Decode the PEM encoded certificate
 	certBlock, _ := pem.Decode(userCertificateData)
 	if certBlock == nil {
-		return nil, fmt.Errorf("failed to decode PEM block for UserCertificate")
+		g.Log.Info("failed to decode PEM format for userCertificate")
+		g.Log.Infof("will attempt decode assuming .der format")
 	}
 
-	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	// We currently allow flexibility in certificate format(it can be either .der or .pem). If the PEM block is found, we use its bytes for further parsing, otherwise we use the original binary data assuming it's already in DER format.m), but if PEM decoding fails, try to parse the certificate as .der can be directly parsed.
+	certBytes := userCertificateData
+	if certBlock != nil {
+		certBytes = certBlock.Bytes
+	}
+
+	cert, err := x509.ParseCertificate(certBytes)
 	if err != nil {
 		g.Log.Errorf("failed to parse X.509 Certificate from UserCertificate: %v", err)
 		return nil, err
