@@ -1,6 +1,8 @@
 package fsm
 
-import "context"
+import (
+	"context"
+)
 
 // FSMInstance represents a finite state machine instance
 type FSMInstance interface {

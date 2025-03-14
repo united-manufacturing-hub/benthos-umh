@@ -12,6 +12,11 @@ require (
 )
 
 require (
+	go.uber.org/multierr v1.10.0 // indirect
+	go.uber.org/zap v1.27.0 // indirect
+)
+
+require (
 	github.com/cenkalti/backoff v2.2.1+incompatible
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
@@ -18,10 +17,10 @@ import (
 // This function is intended to be called repeatedly (e.g. in a periodic control loop).
 // Over multiple calls, it converges the actual state to the desired state. Transitions
 // that fail are retried in subsequent reconcile calls after a backoff period.
-func (s *S6Instance) Reconcile(ctx context.Context) (err error) {
+func (s *S6Instance) Reconcile(ctx context.Context) (err error, reconciled bool) {
 	defer func() {
 		if err != nil {
-			log.Printf("[S6Instance] error reconciling: %s", err)
+			s.baseFSMInstance.GetLogger().Errorf("error reconciling: %s", err)
 			s.PrintState()
 		}
 	}()
@@ -30,8 +29,8 @@ func (s *S6Instance) Reconcile(ctx context.Context) (err error) {
 	if err := s.reconcileExternalChanges(ctx); err != nil {
 		// If the service is not running, we don't want to return an error here, because we want to continue reconciling
 		if !errors.Is(err, s6service.ErrServiceNotExist) {
-			log.Printf("[S6Instance] error reconciling external changes: %s", err)
-			return err
+			s.baseFSMInstance.GetLogger().Errorf("error reconciling external changes: %s", err)
+			return err, false
 		}
 
 		// The service does not exist, which is fine as this happens in the reconcileStateTransition
@@ -39,21 +38,21 @@ func (s *S6Instance) Reconcile(ctx context.Context) (err error) {
 
 	// Step 2: If there's a lastError, see if we've waited enough.
 	if s.baseFSMInstance.ShouldSkipReconcileBecauseOfError() {
-		return nil
+		return nil, false
 	}
 
 	// Step 3: Attempt to reconcile the state.
 	err = s.reconcileStateTransition(ctx)
 	if err != nil {
 		s.baseFSMInstance.SetError(err)
-		log.Printf("[S6Instance] error reconciling state: %s", err)
-		return nil // We don't want to return an error here, because we want to continue reconciling
+		s.baseFSMInstance.GetLogger().Errorf("error reconciling state: %s", err)
+		return nil, false // We don't want to return an error here, because we want to continue reconciling
 	}
 
 	// It went all right, so clear the error
 	s.baseFSMInstance.ResetState()
 
-	return nil
+	return nil, true
 }
 
 // reconcileExternalChanges checks if the S6Instance service status has changed

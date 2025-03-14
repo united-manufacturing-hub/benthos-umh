@@ -22,7 +22,7 @@ func NewMockFSMManager() *MockFSMManager {
 }
 
 // Reconcile implements the FSMManager interface
-func (m *MockFSMManager) Reconcile(ctx context.Context, cfg config.FullConfig) error {
+func (m *MockFSMManager) Reconcile(ctx context.Context, cfg config.FullConfig) (error, bool) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	m.ReconcileCalled = true
@@ -32,11 +32,11 @@ func (m *MockFSMManager) Reconcile(ctx context.Context, cfg config.FullConfig) e
 		case <-time.After(m.ReconcileDelay):
 			// Delay completed
 		case <-ctx.Done():
-			return ctx.Err()
+			return ctx.Err(), false
 		}
 	}
 
-	return m.ReconcileError
+	return m.ReconcileError, false
 }
 
 // WithReconcileError configures the mock to return the given error

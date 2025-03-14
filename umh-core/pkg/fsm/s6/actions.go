@@ -3,7 +3,6 @@ package s6
 import (
 	"context"
 	"fmt"
-	"log"
 	"reflect"
 	"time"
 
@@ -23,7 +22,7 @@ import (
 
 // InitiateS6Create attempts to create the S6 service directory structure.
 func (s *S6Instance) initiateS6Create(ctx context.Context) error {
-	log.Printf("[S6Instance] Starting Action: Creating S6 service %s ...", s.baseFSMInstance.GetID())
+	s.baseFSMInstance.GetLogger().Debugf("Starting Action: Creating S6 service %s ...", s.baseFSMInstance.GetID())
 
 	// Check if we have a config with command or other settings
 	configEmpty := s.config.S6ServiceConfig.Command == nil && s.config.S6ServiceConfig.Env == nil && s.config.S6ServiceConfig.ConfigFiles == nil
@@ -42,14 +41,14 @@ func (s *S6Instance) initiateS6Create(ctx context.Context) error {
 		}
 	}
 
-	log.Printf("[S6Instance] S6 service %s directory structure created", s.baseFSMInstance.GetID())
+	s.baseFSMInstance.GetLogger().Debugf("S6 service %s directory structure created", s.baseFSMInstance.GetID())
 	return nil
 }
 
 // InitiateS6Remove attempts to remove the S6 service directory structure.
 // It requires the service to be stopped before removal.
 func (s *S6Instance) initiateS6Remove(ctx context.Context) error {
-	log.Printf("[S6Instance] Starting Action: Removing S6 service %s ...", s.baseFSMInstance.GetID())
+	s.baseFSMInstance.GetLogger().Debugf("Starting Action: Removing S6 service %s ...", s.baseFSMInstance.GetID())
 
 	// First ensure the service is stopped
 	if s.IsS6Running() {
@@ -62,46 +61,46 @@ func (s *S6Instance) initiateS6Remove(ctx context.Context) error {
 		return fmt.Errorf("failed to remove service directory for %s: %w", s.baseFSMInstance.GetID(), err)
 	}
 
-	log.Printf("[S6Instance] S6 service %s removed", s.baseFSMInstance.GetID())
+	s.baseFSMInstance.GetLogger().Debugf("S6 service %s removed", s.baseFSMInstance.GetID())
 	return nil
 }
 
 // InitiateS6Start attempts to start the S6 service.
 func (s *S6Instance) initiateS6Start(ctx context.Context) error {
-	log.Printf("[S6Instance] Starting Action: Starting S6 service %s ...", s.baseFSMInstance.GetID())
+	s.baseFSMInstance.GetLogger().Debugf("Starting Action: Starting S6 service %s ...", s.baseFSMInstance.GetID())
 
 	err := s.service.Start(ctx, s.servicePath)
 	if err != nil {
 		return fmt.Errorf("failed to start S6 service %s: %w", s.baseFSMInstance.GetID(), err)
 	}
 
-	log.Printf("[S6Instance] S6 service %s start command executed", s.baseFSMInstance.GetID())
+	s.baseFSMInstance.GetLogger().Debugf("S6 service %s start command executed", s.baseFSMInstance.GetID())
 	return nil
 }
 
 // InitiateS6Stop attempts to stop the S6 service.
 func (s *S6Instance) initiateS6Stop(ctx context.Context) error {
-	log.Printf("[S6Instance] Starting Action: Stopping S6 service %s ...", s.baseFSMInstance.GetID())
+	s.baseFSMInstance.GetLogger().Debugf("Starting Action: Stopping S6 service %s ...", s.baseFSMInstance.GetID())
 
 	err := s.service.Stop(ctx, s.servicePath)
 	if err != nil {
 		return fmt.Errorf("failed to stop S6 service %s: %w", s.baseFSMInstance.GetID(), err)
 	}
 
-	log.Printf("[S6Instance] S6 service %s stop command executed", s.baseFSMInstance.GetID())
+	s.baseFSMInstance.GetLogger().Debugf("S6 service %s stop command executed", s.baseFSMInstance.GetID())
 	return nil
 }
 
 // InitiateS6Restart attempts to restart the S6 service.
 func (s *S6Instance) initiateS6Restart(ctx context.Context) error {
-	log.Printf("[S6Instance] Starting Action: Restarting S6 service %s ...", s.baseFSMInstance.GetID())
+	s.baseFSMInstance.GetLogger().Debugf("Starting Action: Restarting S6 service %s ...", s.baseFSMInstance.GetID())
 
 	err := s.service.Restart(ctx, s.servicePath)
 	if err != nil {
 		return fmt.Errorf("failed to restart S6 service %s: %w", s.baseFSMInstance.GetID(), err)
 	}
 
-	log.Printf("[S6Instance] S6 service %s restart command executed", s.baseFSMInstance.GetID())
+	s.baseFSMInstance.GetLogger().Debugf("S6 service %s restart command executed", s.baseFSMInstance.GetID())
 	return nil
 }
 
@@ -146,7 +145,7 @@ func (s *S6Instance) updateObservedState(ctx context.Context) error {
 	// TODO: trigger a reconcile if observed config is different from desired config
 	// the easiest way to do this is causing this instance to be removed, which will trigger a re-create by the manager
 	if !reflect.DeepEqual(s.ObservedState.ObservedS6ServiceConfig, s.config.S6ServiceConfig) {
-		log.Printf("[S6Instance] Observed config is different from desired config, triggering a re-create")
+		s.baseFSMInstance.GetLogger().Debugf("Observed config is different from desired config, triggering a re-create")
 		s.logConfigDifferences(s.config.S6ServiceConfig, s.ObservedState.ObservedS6ServiceConfig)
 		s.baseFSMInstance.Remove(ctx)
 	}
@@ -208,54 +207,54 @@ func (s *S6Instance) GetExitHistory() []s6service.ExitEvent {
 
 // logConfigDifferences logs the specific differences between desired and observed configurations
 func (s *S6Instance) logConfigDifferences(desired, observed s6service.S6ServiceConfig) {
-	log.Printf("[S6Instance] Configuration differences for %s:", s.baseFSMInstance.GetID())
+	s.baseFSMInstance.GetLogger().Infof("Configuration differences for %s:", s.baseFSMInstance.GetID())
 
 	// Command differences
 	if !reflect.DeepEqual(desired.Command, observed.Command) {
-		log.Printf("[S6Instance] Command - want: %v", desired.Command)
-		log.Printf("[S6Instance] Command - is:   %v", observed.Command)
+		s.baseFSMInstance.GetLogger().Infof("Command - want: %v", desired.Command)
+		s.baseFSMInstance.GetLogger().Infof("Command - is:   %v", observed.Command)
 	}
 
 	// Environment variables differences
 	if !reflect.DeepEqual(desired.Env, observed.Env) {
-		log.Printf("[S6Instance] Environment variables differences:")
+		s.baseFSMInstance.GetLogger().Infof("Environment variables differences:")
 
 		// Check for keys in desired that are missing or different in observed
 		for k, v := range desired.Env {
 			if observedVal, ok := observed.Env[k]; !ok {
-				log.Printf("[S6Instance]   - %s: want: %q, is: <missing>", k, v)
+				s.baseFSMInstance.GetLogger().Infof("   - %s: want: %q, is: <missing>", k, v)
 			} else if v != observedVal {
-				log.Printf("[S6Instance]   - %s: want: %q, is: %q", k, v, observedVal)
+				s.baseFSMInstance.GetLogger().Infof("   - %s: want: %q, is: %q", k, v, observedVal)
 			}
 		}
 
 		// Check for keys in observed that are not in desired
 		for k, v := range observed.Env {
 			if _, ok := desired.Env[k]; !ok {
-				log.Printf("[S6Instance]   - %s: want: <missing>, is: %q", k, v)
+				s.baseFSMInstance.GetLogger().Infof("   - %s: want: <missing>, is: %q", k, v)
 			}
 		}
 	}
 
 	// Config files differences
 	if !reflect.DeepEqual(desired.ConfigFiles, observed.ConfigFiles) {
-		log.Printf("[S6Instance] Config files differences:")
+		s.baseFSMInstance.GetLogger().Infof("Config files differences:")
 
 		// Check config files in desired that are missing or different in observed
 		for path, content := range desired.ConfigFiles {
 			if observedContent, ok := observed.ConfigFiles[path]; !ok {
-				log.Printf("[S6Instance]   - %s: want: present, is: <missing>", path)
+				s.baseFSMInstance.GetLogger().Infof("   - %s: want: present, is: <missing>", path)
 			} else if content != observedContent {
 				// For large config files, we don't want to log the entire content
 				// Just log that they're different
-				log.Printf("[S6Instance]   - %s: content differs", path)
+				s.baseFSMInstance.GetLogger().Infof("   - %s: content differs", path)
 			}
 		}
 
 		// Check for config files in observed that are not in desired
 		for path := range observed.ConfigFiles {
 			if _, ok := desired.ConfigFiles[path]; !ok {
-				log.Printf("[S6Instance]   - %s: want: <missing>, is: present", path)
+				s.baseFSMInstance.GetLogger().Infof("   - %s: want: <missing>, is: present", path)
 			}
 		}
 	}

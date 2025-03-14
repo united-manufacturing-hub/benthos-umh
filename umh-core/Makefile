@@ -26,6 +26,16 @@ test-hello: clean build
 	docker run \
 		--name $(IMAGE_NAME) \
 		-v $(PWD)/data:/data \
+		-e LOGGING_LEVEL=debug \
+		$(IMAGE_NAME):$(TAG)
+
+test-hello-100: clean build
+	@mkdir -p $(PWD)/data
+	@cp $(PWD)/examples/example-config-100.yaml $(PWD)/data/config.yaml
+	docker run \
+		--name $(IMAGE_NAME) \
+		-v $(PWD)/data:/data \
+		-e LOGGING_LEVEL=production \
 		$(IMAGE_NAME):$(TAG)
 
 logs:

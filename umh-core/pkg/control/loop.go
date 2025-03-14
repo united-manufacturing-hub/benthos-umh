@@ -7,12 +7,13 @@ package control
 import (
 	"context"
 	"errors"
-	"log"
 	"time"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
+	"go.uber.org/zap"
 )
 
 const (
@@ -23,9 +24,12 @@ type ControlLoop struct {
 	tickerTime    time.Duration
 	managers      []fsm.FSMManager
 	configManager config.ConfigManager
+	logger        *zap.SugaredLogger
 }
 
 func NewControlLoop() *ControlLoop {
+	// Get a component-specific logger
+	log := logger.For(logger.ComponentControlLoop)
 
 	// Create the managers
 	managers := []fsm.FSMManager{
@@ -39,6 +43,7 @@ func NewControlLoop() *ControlLoop {
 		managers:      managers,
 		tickerTime:    defaultTickerTime,
 		configManager: configManager,
+		logger:        log,
 	}
 }
 
@@ -65,7 +70,7 @@ func (c *ControlLoop) Execute(ctx context.Context) error {
 			if err != nil {
 				if errors.Is(err, context.DeadlineExceeded) {
 					// For timeouts, log warning but continue
-					log.Printf("WARNING: Control loop reconcile timed out: %v\n", err)
+					c.logger.Warnf("Control loop reconcile timed out: %v", err)
 				} else if errors.Is(err, context.Canceled) {
 					// For cancellation, exit the loop
 					return nil
@@ -89,9 +94,14 @@ func (c *ControlLoop) Reconcile(ctx context.Context) error {
 
 	// Reconcile each manager
 	for _, manager := range c.managers {
-		err := manager.Reconcile(ctx, config)
+		err, reconciled := manager.Reconcile(ctx, config)
 		if err != nil {
 			return err
+		}
+
+		// If the manager was reconciled, skip the reconcilation of the next managers
+		if reconciled {
+			return nil
 		}
 	}
 

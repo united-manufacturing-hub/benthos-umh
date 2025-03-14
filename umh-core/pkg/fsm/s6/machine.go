@@ -3,13 +3,13 @@ package s6
 import (
 	"context"
 	"fmt"
-	"log"
 	"path/filepath"
 
 	"github.com/looplab/fsm"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 )
 
@@ -38,7 +38,7 @@ func NewS6Instance(
 	}
 
 	instance := &S6Instance{
-		baseFSMInstance: internal_fsm.NewBaseFSMInstance(cfg),
+		baseFSMInstance: internal_fsm.NewBaseFSMInstance(cfg, logger.For(logger.ComponentS6Instance)),
 		servicePath:     filepath.Join(s6BaseDir, config.Name),
 		config:          config,
 		service:         s6service.NewDefaultService(),
@@ -93,7 +93,7 @@ func (s *S6Instance) IsRemoved() bool {
 }
 
 func (s *S6Instance) PrintState() {
-	log.Printf("[S6Instance] Current state: %s", s.baseFSMInstance.GetCurrentFSMState())
-	log.Printf("[S6Instance] Desired state: %s", s.baseFSMInstance.GetDesiredFSMState())
-	log.Printf("[S6Instance] Observed state: %+v", s.ObservedState)
+	s.baseFSMInstance.GetLogger().Debugf("Current state: %s", s.baseFSMInstance.GetCurrentFSMState())
+	s.baseFSMInstance.GetLogger().Debugf("Desired state: %s", s.baseFSMInstance.GetDesiredFSMState())
+	s.baseFSMInstance.GetLogger().Debugf("Observed state: %+v", s.ObservedState)
 }

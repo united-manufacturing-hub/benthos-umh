@@ -41,7 +41,7 @@ var _ = Describe("S6 FSM", func() {
 		Expect(instance.GetCurrentFSMState()).To(Equal(internal_fsm.LifecycleStateToBeCreated))
 
 		// Reconcile should trigger create event
-		err := instance.Reconcile(ctx)
+		err, _ := instance.Reconcile(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(internal_fsm.LifecycleStateCreating))
 		Expect(mockService.CreateCalled).To(BeTrue())
@@ -52,7 +52,7 @@ var _ = Describe("S6 FSM", func() {
 		}
 
 		// Another reconcile should complete the creation
-		err = instance.Reconcile(ctx)
+		err, _ = instance.Reconcile(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped))
 	})
@@ -72,7 +72,7 @@ var _ = Describe("S6 FSM", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		// Reconcile should trigger start
-		err = instance.Reconcile(ctx)
+		err, _ = instance.Reconcile(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStarting))
 		Expect(mockService.StartCalled).To(BeTrue())
@@ -85,7 +85,7 @@ var _ = Describe("S6 FSM", func() {
 		}
 
 		// Another reconcile should complete the start
-		err = instance.Reconcile(ctx)
+		err, _ = instance.Reconcile(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateRunning))
 		Expect(instance.ObservedState.ServiceInfo.Status).To(Equal(s6service.ServiceUp))
@@ -109,7 +109,7 @@ var _ = Describe("S6 FSM", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		// Reconcile should trigger stop
-		err = instance.Reconcile(ctx)
+		err, _ = instance.Reconcile(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopping))
 		Expect(mockService.StopCalled).To(BeTrue())
@@ -120,7 +120,7 @@ var _ = Describe("S6 FSM", func() {
 		}
 
 		// Another reconcile should complete the stop
-		err = instance.Reconcile(ctx)
+		err, _ = instance.Reconcile(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped))
 		Expect(instance.ObservedState.ServiceInfo.Status).To(Equal(s6service.ServiceDown))
@@ -144,7 +144,7 @@ var _ = Describe("S6 FSM", func() {
 		mockService.StartError = fmt.Errorf("failed to start service")
 
 		// Reconcile should attempt to start but encounter an error
-		err = instance.Reconcile(ctx)
+		err, _ = instance.Reconcile(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped)) // nothing changed
 		Expect(mockService.StartCalled).To(BeTrue())
@@ -155,7 +155,7 @@ var _ = Describe("S6 FSM", func() {
 
 		// Test that backoff prevents immediate retry
 		mockService.StartCalled = false // Reset flag
-		err = instance.Reconcile(ctx)
+		err, _ = instance.Reconcile(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(mockService.StartCalled).To(BeFalse()) // Start shouldn't be called again due to backoff
 
@@ -169,7 +169,7 @@ var _ = Describe("S6 FSM", func() {
 		}
 
 		// First reconcile should trigger the start
-		err = instance.Reconcile(ctx)
+		err, _ = instance.Reconcile(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStarting))
 		Expect(mockService.StartCalled).To(BeTrue())
@@ -182,7 +182,7 @@ var _ = Describe("S6 FSM", func() {
 		}
 
 		// Final reconcile to reach running state
-		err = instance.Reconcile(ctx)
+		err, _ = instance.Reconcile(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateRunning))
 

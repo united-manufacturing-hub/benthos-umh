@@ -9,5 +9,5 @@ import (
 )
 
 type FSMManager interface {
-	Reconcile(ctx context.Context, cfg config.FullConfig) error
+	Reconcile(ctx context.Context, cfg config.FullConfig) (error, bool)
 }

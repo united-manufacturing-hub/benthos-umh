@@ -2,12 +2,12 @@ package fsm
 
 import (
 	"context"
-	"log"
 	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff"
 	"github.com/looplab/fsm"
+	"go.uber.org/zap"
 )
 
 // BaseFSMInstance implements the public fsm.FSM interface
@@ -32,6 +32,9 @@ type BaseFSMInstance struct {
 
 	// lastError stores the last error that occurred during a transition
 	lastError error
+
+	// logger is the logger for the FSM
+	logger *zap.SugaredLogger
 }
 
 type BaseFSMInstanceConfig struct {
@@ -49,7 +52,7 @@ type BaseFSMInstanceConfig struct {
 	OperationalTransitions []fsm.EventDesc
 }
 
-func NewBaseFSMInstance(cfg BaseFSMInstanceConfig) *BaseFSMInstance {
+func NewBaseFSMInstance(cfg BaseFSMInstanceConfig, logger *zap.SugaredLogger) *BaseFSMInstance {
 
 	baseInstance := &BaseFSMInstance{
 		cfg:       cfg,
@@ -60,6 +63,7 @@ func NewBaseFSMInstance(cfg BaseFSMInstanceConfig) *BaseFSMInstance {
 			b.MaxInterval = 1 * time.Minute
 			return b
 		}(),
+		logger: logger,
 	}
 
 	// Combine lifecycle and operational transitions
@@ -89,19 +93,19 @@ func NewBaseFSMInstance(cfg BaseFSMInstanceConfig) *BaseFSMInstance {
 	// Register default lifecycle callbacks
 
 	baseInstance.AddCallback("enter_"+LifecycleStateRemoved, func(ctx context.Context, e *fsm.Event) {
-		log.Printf("[BaseFSM] Benthos instance %s is removed", baseInstance.cfg.ID)
+		baseInstance.logger.Debugf("Entering removed state for FSM %s", baseInstance.cfg.ID)
 	})
 
 	baseInstance.AddCallback("enter_"+LifecycleStateCreating, func(ctx context.Context, e *fsm.Event) {
-		log.Printf("[BaseFSM] Benthos instance %s is creating", baseInstance.cfg.ID)
+		baseInstance.logger.Debugf("Entering creating state for FSM %s", baseInstance.cfg.ID)
 	})
 
 	baseInstance.AddCallback("enter_"+LifecycleStateToBeCreated, func(ctx context.Context, e *fsm.Event) {
-		log.Printf("[BaseFSM] Benthos instance %s is to be created", baseInstance.cfg.ID)
+		baseInstance.logger.Debugf("Entering to be created state for FSM %s", baseInstance.cfg.ID)
 	})
 
 	baseInstance.AddCallback("enter_"+LifecycleStateRemoving, func(ctx context.Context, e *fsm.Event) {
-		log.Printf("[BaseFSM] Benthos instance %s is removing", baseInstance.cfg.ID)
+		baseInstance.logger.Debugf("Entering removing state for FSM %s", baseInstance.cfg.ID)
 	})
 
 	return baseInstance
@@ -129,7 +133,7 @@ func (s *BaseFSMInstance) SetError(err error) {
 	if s.suspendedUntilTime.IsZero() {
 		next := s.backoff.NextBackOff()
 		s.suspendedUntilTime = time.Now().Add(next)
-		log.Printf("[BaseFSM] suspending reconcile for %s because of error: %s", next, s.lastError)
+		s.logger.Debugf("Suspending reconcile for %s because of error: %s", next, s.lastError)
 	}
 }
 
@@ -194,7 +198,7 @@ func (s *BaseFSMInstance) ShouldSkipReconcileBecauseOfError() bool {
 	// If there is an error and the backoff period has not yet elapsed, skip the reconcile
 	if s.lastError != nil && !s.suspendedUntilTime.IsZero() {
 		if time.Now().Before(s.suspendedUntilTime) {
-			log.Printf("[BaseFSM] skipping reconcile because of error: %s. Remaining backoff: %s", s.lastError, time.Until(s.suspendedUntilTime))
+			s.logger.Debugf("Skipping reconcile because of error: %s. Remaining backoff: %s", s.lastError, time.Until(s.suspendedUntilTime))
 			// It's still too early to retry
 			return true
 		}
@@ -215,4 +219,8 @@ func (s *BaseFSMInstance) ResetState() {
 
 func (s *BaseFSMInstance) GetID() string {
 	return s.cfg.ID
+}
+
+func (s *BaseFSMInstance) GetLogger() *zap.SugaredLogger {
+	return s.logger
 }
