@@ -17,5 +17,5 @@ const (
 	ComponentS6Service = "S6Service"
 
 	// Configuration
-	ComponentConfig = "Config"
+	ComponentConfigManager = "ConfigManager"
 )

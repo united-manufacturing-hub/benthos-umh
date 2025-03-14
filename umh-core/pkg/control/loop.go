@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	defaultTickerTime = 100 * time.Millisecond
+	defaultTickerTime = 30 * time.Millisecond
 )
 
 type ControlLoop struct {

@@ -61,6 +61,7 @@ func (e *PrettyConsoleEncoder) EncodeEntry(entry zapcore.Entry, fields []zapcore
 		line.AppendByte(']')
 		line.AppendByte('\t')
 		line.AppendByte('\t')
+		line.AppendByte('\t')
 	}
 
 	// Format log message

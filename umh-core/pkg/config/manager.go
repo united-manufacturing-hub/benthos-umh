@@ -39,7 +39,7 @@ type FileConfigManager struct {
 func NewFileConfigManager() *FileConfigManager {
 
 	configPath := DefaultConfigPath
-	logger := logger.For("config-manager")
+	logger := logger.For(logger.ComponentConfigManager)
 
 	return &FileConfigManager{
 		configPath: configPath,
