@@ -38,7 +38,7 @@ func NewS6Instance(
 	}
 
 	instance := &S6Instance{
-		baseFSMInstance: internal_fsm.NewBaseFSMInstance(cfg, logger.For(logger.ComponentS6Instance)),
+		baseFSMInstance: internal_fsm.NewBaseFSMInstance(cfg, logger.For(config.Name)),
 		servicePath:     filepath.Join(s6BaseDir, config.Name),
 		config:          config,
 		service:         s6service.NewDefaultService(),

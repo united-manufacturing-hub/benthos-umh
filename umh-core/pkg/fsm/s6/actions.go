@@ -106,7 +106,12 @@ func (s *S6Instance) initiateS6Restart(ctx context.Context) error {
 
 // UpdateObservedState updates the observed state of the service
 func (s *S6Instance) updateObservedState(ctx context.Context) error {
+
+	// Measure status time
+	start := time.Now()
 	info, err := s.service.Status(ctx, s.servicePath)
+	statusTime := time.Since(start)
+	s.baseFSMInstance.GetLogger().Debugf("Status for %s took %v", s.baseFSMInstance.GetID(), statusTime)
 	if err != nil {
 		s.ObservedState.ServiceInfo.Status = s6service.ServiceUnknown
 
@@ -136,7 +141,10 @@ func (s *S6Instance) updateObservedState(ctx context.Context) error {
 	}
 
 	// Fetch the actual service config from s6
+	start = time.Now()
 	config, err := s.service.GetConfig(ctx, s.servicePath)
+	configTime := time.Since(start)
+	s.baseFSMInstance.GetLogger().Debugf("GetConfig for %s took %v", s.baseFSMInstance.GetID(), configTime)
 	if err != nil {
 		return fmt.Errorf("failed to get S6 service config for %s: %w", s.baseFSMInstance.GetID(), err)
 	}

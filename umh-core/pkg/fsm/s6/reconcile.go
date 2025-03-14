@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
@@ -25,6 +26,9 @@ func (s *S6Instance) Reconcile(ctx context.Context) (err error, reconciled bool)
 		}
 	}()
 
+	// Measure reconcile time
+	start := time.Now()
+
 	// Step 1: Detect external changes.
 	if err := s.reconcileExternalChanges(ctx); err != nil {
 		// If the service is not running, we don't want to return an error here, because we want to continue reconciling
@@ -34,12 +38,18 @@ func (s *S6Instance) Reconcile(ctx context.Context) (err error, reconciled bool)
 
 		// The service does not exist, which is fine as this happens in the reconcileStateTransition
 	}
+	externalChangesTime := time.Since(start)
+	s.baseFSMInstance.GetLogger().Debugf("Reconcile external changes took %v", externalChangesTime)
 
+	start = time.Now()
 	// Step 2: If there's a lastError, see if we've waited enough.
 	if s.baseFSMInstance.ShouldSkipReconcileBecauseOfError() {
 		return nil, false
 	}
+	skipErrorTime := time.Since(start)
+	s.baseFSMInstance.GetLogger().Debugf("Reconcile skip error took %v", skipErrorTime)
 
+	start = time.Now()
 	// Step 3: Attempt to reconcile the state.
 	err = s.reconcileStateTransition(ctx)
 	if err != nil {
@@ -47,6 +57,8 @@ func (s *S6Instance) Reconcile(ctx context.Context) (err error, reconciled bool)
 		s.baseFSMInstance.GetLogger().Errorf("error reconciling state: %s", err)
 		return nil, false // We don't want to return an error here, because we want to continue reconciling
 	}
+	reconcileStateTime := time.Since(start)
+	s.baseFSMInstance.GetLogger().Debugf("Reconcile state transition took %v", reconcileStateTime)
 
 	// It went all right, so clear the error
 	s.baseFSMInstance.ResetState()

@@ -3,6 +3,7 @@ package s6
 import (
 	"context"
 	"fmt"
+	"time"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
@@ -101,7 +102,12 @@ func (m *S6Manager) Reconcile(ctx context.Context, cfg config.FullConfig) (error
 	// Now call the reconcile for each instance
 	// This will only be executed if no instance was created or updated or removed
 	for _, instance := range m.Instances {
+
+		// Measure reconcile time
+		start := time.Now()
 		err, reconciled := instance.Reconcile(ctx)
+		reconcileTime := time.Since(start)
+		m.logger.Debugf("Reconcile for instance %s took %v", instance.config.Name, reconcileTime)
 		if err != nil {
 			return fmt.Errorf("error reconciling instance %s: %w", instance.config.Name, err), false
 		}

@@ -1,3 +1,5 @@
+github.com/cactus/tai64 v1.0.3 h1:GKdl8U1VprATgD16ob7Vjn7k+0G+rodh9roOcobjb3I=
+github.com/cactus/tai64 v1.0.3/go.mod h1:Ciis5iTJ0/vRkbGsPqBvWTOtXbJdYobxVG/C4tSP9BY=
 github.com/cenkalti/backoff v2.2.1+incompatible h1:tNowT99t7UNflLxfYYSlKYsBpXdEet03Pg2g16Swow4=
 github.com/cenkalti/backoff v2.2.1+incompatible/go.mod h1:90ReRw6GdpyfrHakVjL/QHaoyV4aDUVVkXQJJJ3NXXM=
 github.com/cenkalti/backoff/v4 v4.3.0 h1:MyRJ/UdXutAwSAT+s3wNd7MfTIcy71VQueUuFK343L8=

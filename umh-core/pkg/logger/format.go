@@ -51,35 +51,19 @@ func (e *PrettyConsoleEncoder) EncodeEntry(entry zapcore.Entry, fields []zapcore
 	line.AppendString(level)
 
 	line.AppendByte(']')
-	// Add padding based on level length
-	switch level {
-	case "DEBUG":
-		line.AppendString("  ") // 2 spaces for DEBUG
-	case "INFO":
-		line.AppendString("   ") // 3 spaces for INFO
-	case "WARN":
-		line.AppendString("   ") // 3 spaces for WARN
-	case "ERROR":
-		line.AppendString("  ") // 2 spaces for ERROR
-	case "FATAL":
-		line.AppendString("   ") // 3 spaces for FATAL
-	case "PANIC":
-		line.AppendString("   ") // 3 spaces for PANIC
-	case "DPANIC":
-		line.AppendString("  ") // 2 spaces for DPANIC
-	default:
-		line.AppendString("   ") // Default to 3 spaces
-	}
+	// Add tab after level
+	line.AppendByte('\t')
 
 	// Format component name if available
 	if entry.LoggerName != "" {
-		line.AppendString(" [")
+		line.AppendString("[")
 		line.AppendString(entry.LoggerName)
 		line.AppendByte(']')
+		line.AppendByte('\t')
+		line.AppendByte('\t')
 	}
 
 	// Format log message
-	line.AppendByte(' ')
 	line.AppendString(entry.Message)
 
 	// Add fields if any

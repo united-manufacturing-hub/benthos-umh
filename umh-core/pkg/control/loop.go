@@ -63,8 +63,12 @@ func (c *ControlLoop) Execute(ctx context.Context) error {
 			timeoutCtx, cancel := context.WithTimeout(ctx, c.tickerTime)
 			defer cancel()
 
+			// Measure reconcile time
+			start := time.Now()
 			// Reconcile the managers
 			err := c.Reconcile(timeoutCtx)
+			cycleTime := time.Since(start)
+			c.logger.Debugf("Reconcile cycle took %v", cycleTime)
 
 			// Handle errors differently based on type
 			if err != nil {
@@ -86,8 +90,16 @@ func (c *ControlLoop) Execute(ctx context.Context) error {
 // Reconcile first fetches the config from the config manager
 // then reconciles each manager
 func (c *ControlLoop) Reconcile(ctx context.Context) error {
+
+	// Measure config fetch time
+	start := time.Now()
+
 	// Get the config
 	config, err := c.configManager.GetConfig(ctx)
+
+	// Log the config fetch time
+	fetchTime := time.Since(start)
+	c.logger.Debugf("Config fetch took %v", fetchTime)
 	if err != nil {
 		return err
 	}
