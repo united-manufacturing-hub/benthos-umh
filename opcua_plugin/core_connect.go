@@ -214,8 +214,6 @@ func (g *OPCUAConnection) parseUserCertificateOptions() ([]opcua.Option, error) 
 	}
 
 	return []opcua.Option{
-		opcua.SecurityPolicy(ua.SecurityPolicyURIBasic256Sha256),
-		opcua.SecurityMode(ua.MessageSecurityModeSignAndEncrypt),
 		opcua.AuthCertificate(cert.Raw),
 		opcua.AuthPrivateKey(privateKey),
 	}, nil
