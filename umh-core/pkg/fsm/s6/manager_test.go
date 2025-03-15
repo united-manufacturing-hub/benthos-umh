@@ -96,12 +96,12 @@ var _ = Describe("S6Manager", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		manager = NewS6Manager()
+		manager = NewS6Manager("")
 	})
 
 	It("should handle empty config without errors", func() {
 		// Create empty config
-		emptyConfig := config.FullConfig{}
+		emptyConfig := []config.S6FSMConfig{}
 
 		// Reconcile with empty config
 		err, _ := manager.Reconcile(ctx, emptyConfig)
@@ -113,22 +113,20 @@ var _ = Describe("S6Manager", func() {
 
 	It("should add a service when it appears in config", func() {
 		// Start with empty config
-		emptyConfig := config.FullConfig{}
+		emptyConfig := []config.S6FSMConfig{}
 		err, _ := manager.Reconcile(ctx, emptyConfig)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(manager.Instances).To(BeEmpty())
 
 		// Create config with one service
-		configWithService := config.FullConfig{
-			Services: []config.S6FSMConfig{
-				{
-					Name:         "test-service",
-					DesiredState: OperationalStateRunning,
-					S6ServiceConfig: s6service.S6ServiceConfig{
-						Command:     []string{"/bin/sh", "-c", "echo hello"},
-						Env:         map[string]string{"TEST_ENV": "test_value"},
-						ConfigFiles: map[string]string{},
-					},
+		configWithService := []config.S6FSMConfig{
+			{
+				Name:         "test-service",
+				DesiredState: OperationalStateRunning,
+				S6ServiceConfig: s6service.S6ServiceConfig{
+					Command:     []string{"/bin/sh", "-c", "echo hello"},
+					Env:         map[string]string{"TEST_ENV": "test_value"},
+					ConfigFiles: map[string]string{},
 				},
 			},
 		}
@@ -165,16 +163,14 @@ var _ = Describe("S6Manager", func() {
 		Expect(manager.Instances[serviceName].GetCurrentFSMState()).To(Equal(internal_fsm.LifecycleStateToBeCreated))
 
 		// Create a config that includes our service to ensure it doesn't get removed
-		configWithService := config.FullConfig{
-			Services: []config.S6FSMConfig{
-				{
-					Name:         serviceName,
-					DesiredState: OperationalStateRunning,
-					S6ServiceConfig: s6service.S6ServiceConfig{
-						Command:     []string{"/bin/sh", "-c", "echo test"},
-						Env:         map[string]string{},
-						ConfigFiles: map[string]string{},
-					},
+		configWithService := []config.S6FSMConfig{
+			{
+				Name:         serviceName,
+				DesiredState: OperationalStateRunning,
+				S6ServiceConfig: s6service.S6ServiceConfig{
+					Command:     []string{"/bin/sh", "-c", "echo test"},
+					Env:         map[string]string{},
+					ConfigFiles: map[string]string{},
 				},
 			},
 		}
@@ -241,23 +237,21 @@ var _ = Describe("S6Manager", func() {
 		serviceName := "test-lifecycle"
 
 		// 1. Start with empty config to verify clean state
-		emptyConfig := config.FullConfig{}
+		emptyConfig := []config.S6FSMConfig{}
 		err, _ := manager.Reconcile(ctx, emptyConfig)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(manager.Instances).To(BeEmpty(), "Should start with no services")
 
 		// 2. Create config with one service to trigger creation and startup
 		GinkgoWriter.Printf("\n=== PHASE 1: CREATING SERVICE ===\n")
-		configWithService := config.FullConfig{
-			Services: []config.S6FSMConfig{
-				{
-					Name:         serviceName,
-					DesiredState: OperationalStateRunning,
-					S6ServiceConfig: s6service.S6ServiceConfig{
-						Command:     []string{"/bin/sh", "-c", "echo test-service"},
-						Env:         map[string]string{"TEST": "value"},
-						ConfigFiles: map[string]string{},
-					},
+		configWithService := []config.S6FSMConfig{
+			{
+				Name:         serviceName,
+				DesiredState: OperationalStateRunning,
+				S6ServiceConfig: s6service.S6ServiceConfig{
+					Command:     []string{"/bin/sh", "-c", "echo test-service"},
+					Env:         map[string]string{"TEST": "value"},
+					ConfigFiles: map[string]string{},
 				},
 			},
 		}
@@ -387,16 +381,14 @@ var _ = Describe("S6Manager", func() {
 		serviceName := "test-state-change"
 
 		// Create a config with the service desired state as stopped
-		configWithStoppedService := config.FullConfig{
-			Services: []config.S6FSMConfig{
-				{
-					Name:         serviceName,
-					DesiredState: OperationalStateStopped,
-					S6ServiceConfig: s6service.S6ServiceConfig{
-						Command:     []string{"/bin/sh", "-c", "echo test"},
-						Env:         map[string]string{},
-						ConfigFiles: map[string]string{},
-					},
+		configWithStoppedService := []config.S6FSMConfig{
+			{
+				Name:         serviceName,
+				DesiredState: OperationalStateStopped,
+				S6ServiceConfig: s6service.S6ServiceConfig{
+					Command:     []string{"/bin/sh", "-c", "echo test"},
+					Env:         map[string]string{},
+					ConfigFiles: map[string]string{},
 				},
 			},
 		}
@@ -428,16 +420,14 @@ var _ = Describe("S6Manager", func() {
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped), "State should remain stopped after reconcile")
 
 		// Now modify the config to change the desired state to running
-		configWithRunningService := config.FullConfig{
-			Services: []config.S6FSMConfig{
-				{
-					Name:         serviceName,
-					DesiredState: OperationalStateRunning,
-					S6ServiceConfig: s6service.S6ServiceConfig{
-						Command:     []string{"/bin/sh", "-c", "echo test"},
-						Env:         map[string]string{},
-						ConfigFiles: map[string]string{},
-					},
+		configWithRunningService := []config.S6FSMConfig{
+			{
+				Name:         serviceName,
+				DesiredState: OperationalStateRunning,
+				S6ServiceConfig: s6service.S6ServiceConfig{
+					Command:     []string{"/bin/sh", "-c", "echo test"},
+					Env:         map[string]string{},
+					ConfigFiles: map[string]string{},
 				},
 			},
 		}
@@ -496,16 +486,14 @@ var _ = Describe("S6Manager", func() {
 		Expect(instance.ObservedState.ServiceInfo.Status).To(Equal(s6service.ServiceUp), "Service status should be up")
 
 		// Create the running config to ensure desired state is consistently set
-		configWithRunningService := config.FullConfig{
-			Services: []config.S6FSMConfig{
-				{
-					Name:         serviceName,
-					DesiredState: OperationalStateRunning,
-					S6ServiceConfig: s6service.S6ServiceConfig{
-						Command:     []string{"/bin/sh", "-c", "echo test"},
-						Env:         map[string]string{},
-						ConfigFiles: map[string]string{},
-					},
+		configWithRunningService := []config.S6FSMConfig{
+			{
+				Name:         serviceName,
+				DesiredState: OperationalStateRunning,
+				S6ServiceConfig: s6service.S6ServiceConfig{
+					Command:     []string{"/bin/sh", "-c", "echo test"},
+					Env:         map[string]string{},
+					ConfigFiles: map[string]string{},
 				},
 			},
 		}
@@ -522,16 +510,14 @@ var _ = Describe("S6Manager", func() {
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateRunning), "State should remain running after reconcile")
 
 		// Now modify the config to change the desired state to stopped
-		configWithStoppedService := config.FullConfig{
-			Services: []config.S6FSMConfig{
-				{
-					Name:         serviceName,
-					DesiredState: OperationalStateStopped,
-					S6ServiceConfig: s6service.S6ServiceConfig{
-						Command:     []string{"/bin/sh", "-c", "echo test"},
-						Env:         map[string]string{},
-						ConfigFiles: map[string]string{},
-					},
+		configWithStoppedService := []config.S6FSMConfig{
+			{
+				Name:         serviceName,
+				DesiredState: OperationalStateStopped,
+				S6ServiceConfig: s6service.S6ServiceConfig{
+					Command:     []string{"/bin/sh", "-c", "echo test"},
+					Env:         map[string]string{},
+					ConfigFiles: map[string]string{},
 				},
 			},
 		}
@@ -573,16 +559,14 @@ var _ = Describe("S6Manager", func() {
 		serviceName := "test-slow-start"
 
 		// Create a config with the service desired state as stopped
-		configWithStoppedService := config.FullConfig{
-			Services: []config.S6FSMConfig{
-				{
-					Name:         serviceName,
-					DesiredState: OperationalStateStopped,
-					S6ServiceConfig: s6service.S6ServiceConfig{
-						Command:     []string{"/bin/sh", "-c", "echo test"},
-						Env:         map[string]string{},
-						ConfigFiles: map[string]string{},
-					},
+		configWithStoppedService := []config.S6FSMConfig{
+			{
+				Name:         serviceName,
+				DesiredState: OperationalStateStopped,
+				S6ServiceConfig: s6service.S6ServiceConfig{
+					Command:     []string{"/bin/sh", "-c", "echo test"},
+					Env:         map[string]string{},
+					ConfigFiles: map[string]string{},
 				},
 			},
 		}
@@ -633,16 +617,14 @@ var _ = Describe("S6Manager", func() {
 		}
 
 		// Now modify the config to change the desired state to running
-		configWithRunningService := config.FullConfig{
-			Services: []config.S6FSMConfig{
-				{
-					Name:         serviceName,
-					DesiredState: OperationalStateRunning,
-					S6ServiceConfig: s6service.S6ServiceConfig{
-						Command:     []string{"/bin/sh", "-c", "echo test"},
-						Env:         map[string]string{},
-						ConfigFiles: map[string]string{},
-					},
+		configWithRunningService := []config.S6FSMConfig{
+			{
+				Name:         serviceName,
+				DesiredState: OperationalStateRunning,
+				S6ServiceConfig: s6service.S6ServiceConfig{
+					Command:     []string{"/bin/sh", "-c", "echo test"},
+					Env:         map[string]string{},
+					ConfigFiles: map[string]string{},
 				},
 			},
 		}
@@ -730,16 +712,14 @@ var _ = Describe("S6Manager", func() {
 		Expect(instance.ObservedState.ServiceInfo.Status).To(Equal(s6service.ServiceUp), "Service status should be up")
 
 		// Create the running config to ensure desired state is consistently set
-		configWithRunningService := config.FullConfig{
-			Services: []config.S6FSMConfig{
-				{
-					Name:         serviceName,
-					DesiredState: OperationalStateRunning,
-					S6ServiceConfig: s6service.S6ServiceConfig{
-						Command:     []string{"/bin/sh", "-c", "echo test"},
-						Env:         map[string]string{},
-						ConfigFiles: map[string]string{},
-					},
+		configWithRunningService := []config.S6FSMConfig{
+			{
+				Name:         serviceName,
+				DesiredState: OperationalStateRunning,
+				S6ServiceConfig: s6service.S6ServiceConfig{
+					Command:     []string{"/bin/sh", "-c", "echo test"},
+					Env:         map[string]string{},
+					ConfigFiles: map[string]string{},
 				},
 			},
 		}
@@ -756,16 +736,14 @@ var _ = Describe("S6Manager", func() {
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateRunning), "State should remain running after reconcile")
 
 		// Now modify the config to change the desired state to stopped
-		configWithStoppedService := config.FullConfig{
-			Services: []config.S6FSMConfig{
-				{
-					Name:         serviceName,
-					DesiredState: OperationalStateStopped,
-					S6ServiceConfig: s6service.S6ServiceConfig{
-						Command:     []string{"/bin/sh", "-c", "echo test"},
-						Env:         map[string]string{},
-						ConfigFiles: map[string]string{},
-					},
+		configWithStoppedService := []config.S6FSMConfig{
+			{
+				Name:         serviceName,
+				DesiredState: OperationalStateStopped,
+				S6ServiceConfig: s6service.S6ServiceConfig{
+					Command:     []string{"/bin/sh", "-c", "echo test"},
+					Env:         map[string]string{},
+					ConfigFiles: map[string]string{},
 				},
 			},
 		}

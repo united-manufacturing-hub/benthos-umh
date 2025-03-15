@@ -3,20 +3,20 @@ package benthos
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 
 	"github.com/looplab/fsm"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
-	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
+	benthos_service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos"
 )
 
 // NewBenthosInstance creates a new BenthosInstance with the given ID and service path
 func NewBenthosInstance(
 	s6BaseDir string,
-	config config.S6FSMConfig) *BenthosInstance {
+	config config.BenthosConfig) *BenthosInstance {
 
 	// TODO: Replace this with proper BenthosConfig when available
 	// For now, reusing S6FSMConfig for skeleton implementation
@@ -27,26 +27,48 @@ func NewBenthosInstance(
 		OperationalStateAfterCreate:  OperationalStateStopped,
 		OperationalStateBeforeRemove: OperationalStateStopped,
 		OperationalTransitions: []fsm.EventDesc{
-			// Basic operational transitions
+			// Basic lifecycle transitions
+			// Stopped is the initial state
 			{Name: EventStart, Src: []string{OperationalStateStopped}, Dst: OperationalStateStarting},
-			{Name: EventStartDone, Src: []string{OperationalStateStarting}, Dst: OperationalStateRunning},
-			{Name: EventStop, Src: []string{OperationalStateRunning, OperationalStateStarting}, Dst: OperationalStateStopping},
-			{Name: EventStopDone, Src: []string{OperationalStateStopping}, Dst: OperationalStateStopped},
-			{Name: EventRestart, Src: []string{OperationalStateRunning, OperationalStateStopped}, Dst: OperationalStateStarting},
 
-			// TODO: Add Benthos-specific transitions for advanced states
-			// These will be added as the state machine design is finalized
+			// Starting phase transitions
+			{Name: EventS6Started, Src: []string{OperationalStateStarting}, Dst: OperationalStateStartingConfigLoading},
+			{Name: EventConfigLoaded, Src: []string{OperationalStateStartingConfigLoading}, Dst: OperationalStateStartingWaitingForHealthchecks},
+			{Name: EventHealthchecksPassed, Src: []string{OperationalStateStartingWaitingForHealthchecks}, Dst: OperationalStateStartingWaitingForServiceToRemainRunning},
+			{Name: EventStartDone, Src: []string{OperationalStateStartingWaitingForServiceToRemainRunning}, Dst: OperationalStateIdle},
+			{Name: EventStop, Src: []string{OperationalStateStarting, OperationalStateStartingConfigLoading, OperationalStateStartingWaitingForHealthchecks, OperationalStateStartingWaitingForServiceToRemainRunning}, Dst: OperationalStateStopping},
+
+			// From any starting state, we can either go back to OperationalStateStarting (e.g., if there was an error)
+			{Name: EventStartFailed, Src: []string{OperationalStateStarting, OperationalStateStartingConfigLoading, OperationalStateStartingWaitingForHealthchecks}, Dst: OperationalStateStarting},
+
+			// Running phase transitions
+			// From Idle, we can go to Active when data is processed or to Stopping
+			{Name: EventDataReceived, Src: []string{OperationalStateIdle}, Dst: OperationalStateActive},
+			{Name: EventNoDataTimeout, Src: []string{OperationalStateIdle}, Dst: OperationalStateIdle},
+			{Name: EventStop, Src: []string{OperationalStateIdle}, Dst: OperationalStateStopping},
+
+			// From Active, we can go to Idle when there's no data, to Degraded when there are issues, or to Stopping
+			{Name: EventNoDataTimeout, Src: []string{OperationalStateActive}, Dst: OperationalStateIdle},
+			{Name: EventWarningDetected, Src: []string{OperationalStateActive}, Dst: OperationalStateDegraded},
+			{Name: EventErrorDetected, Src: []string{OperationalStateActive}, Dst: OperationalStateDegraded},
+			{Name: EventStop, Src: []string{OperationalStateActive}, Dst: OperationalStateStopping},
+
+			// From Degraded, we can recover to Active, go to Idle, or to Stopping
+			{Name: EventRecovered, Src: []string{OperationalStateDegraded}, Dst: OperationalStateIdle},
+			{Name: EventStop, Src: []string{OperationalStateDegraded}, Dst: OperationalStateStopping},
+
+			// Final transition for stopping
+			{Name: EventStopDone, Src: []string{OperationalStateStopping}, Dst: OperationalStateStopped},
 		},
 	}
 
 	instance := &BenthosInstance{
 		baseFSMInstance: internal_fsm.NewBaseFSMInstance(cfg, logger.For(config.Name)),
-		servicePath:     filepath.Join(s6BaseDir, config.Name),
-		config:          config,
-		s6Service:       s6service.NewDefaultService(),
+		s6Manager:       s6.NewS6Manager(config.Name),
+		service:         benthos_service.NewDefaultBenthosService(),
+		config:          config.BenthosServiceConfig,
 		ObservedState: BenthosObservedState{
 			MetricsData: make(map[string]interface{}),
-			ConfigValid: true, // Assume valid until proven otherwise
 		},
 	}
 
@@ -55,23 +77,17 @@ func NewBenthosInstance(
 	return instance
 }
 
-// NewBenthosInstanceWithService creates a new BenthosInstance with a custom service implementation
-// This is useful for testing
-func NewBenthosInstanceWithService(
-	s6BaseDir string,
-	config config.S6FSMConfig,
-	service s6service.Service) *BenthosInstance {
-	instance := NewBenthosInstance(s6BaseDir, config)
-	instance.s6Service = service
-	return instance
-}
-
 // SetDesiredFSMState safely updates the desired state
 // But ensures that the desired state is a valid state and that it is also a reasonable state
 // e.g., nobody wants to have an instance in the "starting" state, that is just intermediate
 func (b *BenthosInstance) SetDesiredFSMState(state string) error {
-	if state != OperationalStateRunning && state != OperationalStateStopped {
-		return fmt.Errorf("invalid desired state: %s. valid states are %s and %s", state, OperationalStateRunning, OperationalStateStopped)
+	// For Benthos, we only allow setting Stopped or Active as desired states
+	if state != OperationalStateStopped &&
+		state != OperationalStateActive {
+		return fmt.Errorf("invalid desired state: %s. valid states are %s and %s",
+			state,
+			OperationalStateStopped,
+			OperationalStateActive)
 	}
 
 	b.baseFSMInstance.SetDesiredFSMState(state)

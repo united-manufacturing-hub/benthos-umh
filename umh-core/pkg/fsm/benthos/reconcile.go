@@ -59,6 +59,13 @@ func (b *BenthosInstance) Reconcile(ctx context.Context) (err error, reconciled 
 	reconcileStateTime := time.Since(start)
 	b.baseFSMInstance.GetLogger().Debugf("Reconcile state transition took %v", reconcileStateTime)
 
+	// Reconcile the s6Manager
+	err, reconciled = b.s6Manager.Reconcile(ctx, b.s6ServiceConfigs)
+	if err != nil {
+		b.baseFSMInstance.SetError(err)
+		b.baseFSMInstance.GetLogger().Errorf("error reconciling s6Manager: %s", err)
+		return nil, false // We don't want to return an error here, because we want to continue reconciling
+	}
 	// It went all right, so clear the error
 	b.baseFSMInstance.ResetState()
 
@@ -138,8 +145,8 @@ func (b *BenthosInstance) reconcileLifecycleStates(ctx context.Context, currentS
 // reconcileOperationalStates handles states related to instance operations (starting/stopping)
 func (b *BenthosInstance) reconcileOperationalStates(ctx context.Context, currentState string, desiredState string) error {
 	switch desiredState {
-	case OperationalStateRunning:
-		return b.reconcileTransitionToRunning(ctx, currentState)
+	case OperationalStateActive:
+		return b.reconcileTransitionToActive(ctx, currentState)
 	case OperationalStateStopped:
 		return b.reconcileTransitionToStopped(ctx, currentState)
 	default:
@@ -147,13 +154,10 @@ func (b *BenthosInstance) reconcileOperationalStates(ctx context.Context, curren
 	}
 }
 
-// reconcileTransitionToRunning handles transitions when the desired state is Running.
-// It deals with moving from Stopped to Starting and then to Running.
-func (b *BenthosInstance) reconcileTransitionToRunning(ctx context.Context, currentState string) error {
-	// TODO: Add Benthos-specific transition logic through more granular states
-	// like ConfigLoading, InitializingComponents, etc.
-
-	// Basic transition logic based on s6 pattern
+// reconcileTransitionToActive handles transitions when the desired state is Active.
+// It deals with moving from various states to the Active state.
+func (b *BenthosInstance) reconcileTransitionToActive(ctx context.Context, currentState string) error {
+	// If we're stopped, we need to start first
 	if currentState == OperationalStateStopped {
 		// Attempt to initiate start
 		if err := b.initiateBenthosStart(ctx); err != nil {
@@ -163,26 +167,53 @@ func (b *BenthosInstance) reconcileTransitionToRunning(ctx context.Context, curr
 		return b.baseFSMInstance.SendEvent(ctx, EventStart)
 	}
 
-	if currentState == OperationalStateStarting {
-		// If already in the process of starting, check if the service is running
-		if b.IsBenthosRunning() {
-			// TODO: Add additional health checks for Benthos
-			// For example, check if Benthos is reporting ready on its health endpoint
-
-			// Transition from Starting to Running
-			return b.baseFSMInstance.SendEvent(ctx, EventStartDone)
+	// Handle starting phase states
+	if IsStartingState(currentState) {
+		// If in the starting phase, progress through the starting states
+		switch currentState {
+		case OperationalStateStarting:
+			// Check if config is loaded
+			// TODO: Implement actual config loading check
+			return b.baseFSMInstance.SendEvent(ctx, EventConfigLoaded)
+		case OperationalStateStartingConfigLoading:
+			// Check if healthchecks are passing
+			// TODO: Implement actual healthcheck verification
+			return b.baseFSMInstance.SendEvent(ctx, EventHealthchecksPassed)
+		case OperationalStateStartingWaitingForHealthchecks:
+			// Check if the service is running
+			if b.IsBenthosRunning() {
+				// Transition to Idle first
+				return b.baseFSMInstance.SendEvent(ctx, EventStartDone)
+			}
+			// Otherwise, wait for the next reconcile cycle
+			return nil
 		}
-		// Otherwise, wait for the next reconcile cycle
-		return nil
+	}
+
+	// If we're in Idle, we need to detect data to move to Active
+	if currentState == OperationalStateIdle {
+		// Check if data is being processed
+		// TODO: Implement actual data processing detection
+		// For now, we'll simulate data being received
+		return b.baseFSMInstance.SendEvent(ctx, EventDataReceived)
+	}
+
+	// If we're in Degraded, we need to recover to move to Active
+	if currentState == OperationalStateDegraded {
+		// Check if the service has recovered
+		// TODO: Implement actual recovery detection
+		// For now, we'll simulate recovery
+		return b.baseFSMInstance.SendEvent(ctx, EventRecovered)
 	}
 
 	return nil
 }
 
 // reconcileTransitionToStopped handles transitions when the desired state is Stopped.
-// It deals with moving from Running/Starting to Stopping and then to Stopped.
+// It deals with moving from any operational state to Stopping and then to Stopped.
 func (b *BenthosInstance) reconcileTransitionToStopped(ctx context.Context, currentState string) error {
-	if currentState == OperationalStateRunning || currentState == OperationalStateStarting {
+	// If we're in any operational state except Stopped or Stopping, initiate stop
+	if currentState != OperationalStateStopped && currentState != OperationalStateStopping {
 		// Attempt to initiate a stop
 		if err := b.initiateBenthosStop(ctx); err != nil {
 			return err
@@ -191,6 +222,7 @@ func (b *BenthosInstance) reconcileTransitionToStopped(ctx context.Context, curr
 		return b.baseFSMInstance.SendEvent(ctx, EventStop)
 	}
 
+	// If we're in Stopping, check if the service has stopped
 	if currentState == OperationalStateStopping {
 		// If already stopping, verify if the instance is completely stopped
 		if b.IsBenthosStopped() {

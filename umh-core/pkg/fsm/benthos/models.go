@@ -1,120 +1,105 @@
 package benthos
 
 import (
-	"time"
-
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	public_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
-	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
+	s6_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
+	benthos_service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos"
 )
 
-// Operational state constants represent the runtime states of a Benthos service
+// Operational state constants (using internal_fsm compatible naming)
 const (
-	// Basic operational states (similar to S6)
+	// OperationalStateStopped is the initial state and also the state when the service is stopped
+	OperationalStateStopped = "stopped"
+
+	// Starting phase states
+	// OperationalStateStarting is the state when s6 is starting the service
 	OperationalStateStarting = "starting"
-	OperationalStateRunning  = "running"
-	OperationalStateStopping = "stopping"
-	OperationalStateStopped  = "stopped"
+	// OperationalStateStartingConfigLoading is the state when the process itself is running but is waiting for the config to be loaded
+	OperationalStateStartingConfigLoading = "starting_config_loading"
+	// OperationalStateStartingWaitingForHealthchecks is the state when there was no fatal config error but is waiting for the healthchecks to pass
+	OperationalStateStartingWaitingForHealthchecks = "starting_waiting_for_healthchecks"
+	// OperationalStateStartingWaitingForServiceToRemainRunning is the state when the service is running but is waiting for the service to remain running
+	OperationalStateStartingWaitingForServiceToRemainRunning = "starting_waiting_for_service_to_remain_running"
 
-	// Benthos-specific states
-	// TODO: Finalize the actual state machine design
-	// These are potential additional states that might be useful
-	OperationalStateConfigLoading          = "config_loading"
-	OperationalStateConfigInvalid          = "config_invalid"
-	OperationalStateInitializingComponents = "initializing_components"
-	OperationalStateProcessing             = "processing"
-	OperationalStateProcessingWithWarnings = "processing_with_warnings"
-	OperationalStateProcessingWithErrors   = "processing_with_errors"
-	OperationalStateIdle                   = "idle" // When running but not processing data
+	// Running phase states
+	// OperationalStateIdle is the state when the service is running but not actively processing data
+	OperationalStateIdle = "idle"
+	// OperationalStateActive is the state when the service is running and actively processing data
+	OperationalStateActive = "active"
+	// OperationalStateDegraded is the state when the service is running but has encountered issues
+	OperationalStateDegraded = "degraded"
+
+	// OperationalStateStopping is the state when the service is in the process of stopping
+	OperationalStateStopping = "stopping"
 )
 
-func IsOperationalState(state string) bool {
-	switch state {
-	case OperationalStateStopped,
-		OperationalStateStarting,
-		OperationalStateRunning,
-		OperationalStateStopping,
-		OperationalStateConfigLoading,
-		OperationalStateConfigInvalid,
-		OperationalStateInitializingComponents,
-		OperationalStateProcessing,
-		OperationalStateProcessingWithWarnings,
-		OperationalStateProcessingWithErrors,
-		OperationalStateIdle:
-		return true
-	default:
-		return false
-	}
-}
-
-// Operational event constants represent events related to service runtime states
+// Operational event constants
 const (
-	// Basic operational events (similar to S6)
+	// Basic lifecycle events
 	EventStart     = "start"
 	EventStartDone = "start_done"
 	EventStop      = "stop"
 	EventStopDone  = "stop_done"
-	EventFail      = "fail"
-	EventRestart   = "restart"
 
-	// Benthos-specific events
-	// TODO: Finalize the event list based on the state machine design
-	EventConfigValid            = "config_valid"
-	EventConfigInvalid          = "config_invalid"
-	EventComponentsInitialized  = "components_initialized"
-	EventDataReceived           = "data_received"
-	EventDataProcessingComplete = "data_processing_complete"
-	EventWarningDetected        = "warning_detected"
-	EventErrorDetected          = "error_detected"
-	EventNoDataTimeout          = "no_data_timeout"
+	// Starting phase events
+	EventS6Started          = "s6_started"
+	EventConfigLoaded       = "config_loaded"
+	EventHealthchecksPassed = "healthchecks_passed"
+	EventStartFailed        = "start_failed"
+
+	// Running phase events
+	EventDataReceived    = "data_received"
+	EventNoDataTimeout   = "no_data_timeout"
+	EventWarningDetected = "warning_detected"
+	EventErrorDetected   = "error_detected"
+	EventRecovered       = "recovered"
 )
 
-// BenthosObservedState represents the state of the Benthos service as observed externally
-type BenthosObservedState struct {
-	// Last time the state was observed to change
-	LastStateChange int64
-
-	// Underlying S6 service info
-	S6ServiceInfo s6service.ServiceInfo
-
-	// Benthos-specific observed state
-	// TODO: Determine what Benthos-specific metrics and state to track
-	MetricsData map[string]interface{}
-
-	// Health information
-	LastRestartTime       time.Time
-	RecentRestarts        int
-	WarningsCount         int
-	ErrorsCount           int
-	IsProcessingData      bool
-	LastDataProcessedTime time.Time
-
-	// Configuration validation state
-	ConfigValid  bool
-	ConfigErrors []string
+// IsOperationalState returns whether the given state is a valid operational state
+func IsOperationalState(state string) bool {
+	switch state {
+	case OperationalStateStopped,
+		OperationalStateStarting,
+		OperationalStateStartingConfigLoading,
+		OperationalStateStartingWaitingForHealthchecks,
+		OperationalStateIdle,
+		OperationalStateActive,
+		OperationalStateDegraded,
+		OperationalStateStopping:
+		return true
+	}
+	return false
 }
 
-// BenthosConfig represents the configuration for a Benthos service
-// This should be defined in the config package eventually
-// TODO: Move this to config package
-type BenthosConfig struct {
-	// Basic service configuration
-	Name         string
-	DesiredState string
+// IsStartingState returns whether the given state is a starting state
+func IsStartingState(state string) bool {
+	switch state {
+	case OperationalStateStarting,
+		OperationalStateStartingConfigLoading,
+		OperationalStateStartingWaitingForHealthchecks:
+		return true
+	}
+	return false
+}
 
-	// Benthos-specific configuration
-	Inputs     []map[string]interface{}
-	Processors []map[string]interface{}
-	Outputs    []map[string]interface{}
-	Caches     []map[string]interface{}
-	RateLimits []map[string]interface{}
-	Buffers    []map[string]interface{}
+// IsRunningState returns whether the given state is a running state
+func IsRunningState(state string) bool {
+	switch state {
+	case OperationalStateIdle,
+		OperationalStateActive,
+		OperationalStateDegraded:
+		return true
+	}
+	return false
+}
 
-	// Advanced configuration
-	MetricsPort       int // Unique port for metrics HTTP server
-	LogLevel          string
-	HTTPServerEnabled bool
+// BenthosObservedState contains the observed runtime state of a Benthos instance
+type BenthosObservedState struct {
+	ServiceAvailable bool                   `json:"serviceAvailable"` // Whether the service is available
+	ServiceHealthy   bool                   `json:"serviceHealthy"`   // Whether the service is healthy
+	MetricsData      map[string]interface{} `json:"metricsData"`      // Metrics data
 }
 
 // BenthosInstance implements the FSMInstance interface
@@ -122,25 +107,23 @@ type BenthosConfig struct {
 // be detected at compile time
 var _ public_fsm.FSMInstance = (*BenthosInstance)(nil)
 
-// BenthosInstance represents a single Benthos service instance with a state machine
+// BenthosInstance is a state-machine managed instance of a Benthos service
 type BenthosInstance struct {
-	// The base FSM instance that handles common FSM functionality
 	baseFSMInstance *internal_fsm.BaseFSMInstance
 
 	// ObservedState represents the observed state of the service
-	// Contains all metrics, logs, etc. that are updated during reconciliation
+	// ObservedState contains all metrics, logs, etc.
+	// that are updated at the beginning of Reconcile and then used to
+	// determine the next state
 	ObservedState BenthosObservedState
 
-	// servicePath is the path to the s6 service directory
-	servicePath string
+	// Benthos-specific fields
+	s6ServiceConfigs []config.S6FSMConfig
+	s6Manager        *s6_fsm.S6Manager
 
-	// Underlying S6 service that will be used to manage the Benthos process
-	s6Service s6service.Service
+	// service is the Benthos service implementation to use
+	service *benthos_service.BenthosService
 
-	// Configuration for the Benthos instance
-	// TODO: Update this when the config package has a BenthosConfig type
-	config config.S6FSMConfig // This will be replaced with BenthosConfig
-
-	// BenthosService interface would be added here once implemented
-	// benthosService BenthosService
+	// config contains all the configuration for this service
+	config benthos_service.BenthosServiceConfig
 }

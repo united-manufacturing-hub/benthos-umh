@@ -7,14 +7,16 @@ const (
 	ComponentControlLoop = "ControlLoop"
 
 	// Manager components
-	ComponentS6Manager = "S6Manager"
+	ComponentS6Manager      = "S6Manager"
+	ComponentBenthosManager = "BenthosManager"
 
 	// FSM components
 	ComponentBaseFSM    = "BaseFSM"
 	ComponentS6Instance = "S6Instance"
 
 	// Service components
-	ComponentS6Service = "S6Service"
+	ComponentS6Service      = "S6Service"
+	ComponentBenthosService = "BenthosService"
 
 	// Configuration
 	ComponentConfigManager = "ConfigManager"

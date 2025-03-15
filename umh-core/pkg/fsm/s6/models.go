@@ -44,10 +44,6 @@ const (
 	EventStop = "stop"
 	// EventStopDone is triggered when the service has stopped
 	EventStopDone = "stop_done"
-	// EventFail is triggered when the service has failed
-	EventFail = "fail"
-	// EventRestart is triggered to restart a service
-	EventRestart = "restart"
 )
 
 // S6ObservedState represents the state of the service as observed externally

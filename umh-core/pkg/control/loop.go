@@ -11,6 +11,7 @@ import (
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/benthos"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	"go.uber.org/zap"
@@ -33,7 +34,8 @@ func NewControlLoop() *ControlLoop {
 
 	// Create the managers
 	managers := []fsm.FSMManager{
-		s6.NewS6Manager(),
+		s6.NewS6Manager("Core"),
+		benthos.NewBenthosManager(),
 	}
 
 	// Create the config manager

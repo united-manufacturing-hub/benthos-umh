@@ -19,10 +19,12 @@ type S6Manager struct {
 	logger    *zap.SugaredLogger
 }
 
-func NewS6Manager() *S6Manager {
+// NewS6Manager creates a new S6Manager
+// The name is used to identify the manager in logs, as other components that leverage s6 will sue their own instance of this manager
+func NewS6Manager(name string) *S6Manager {
 	return &S6Manager{
 		Instances: make(map[string]*S6Instance),
-		logger:    logger.For(logger.ComponentS6Manager),
+		logger:    logger.For(logger.ComponentS6Manager + name),
 	}
 }
 
@@ -32,10 +34,10 @@ const (
 
 // Reconcile reconciles desired & observed states for S6 services.
 // It returns a boolean indicating if the manager was reconciled.
-func (m *S6Manager) Reconcile(ctx context.Context, cfg config.FullConfig) (error, bool) {
+// The desiredState is a list of S6FSMConfig, which contains the desired state for each instance.
+func (m *S6Manager) Reconcile(ctx context.Context, desiredState []config.S6FSMConfig) (error, bool) {
 
 	// Step 1: Detect external changes
-	desiredState := cfg.Services
 	observedState := m.Instances
 
 	// Step 2: Create or update instances

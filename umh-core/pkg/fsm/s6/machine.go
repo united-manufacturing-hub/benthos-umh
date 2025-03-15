@@ -31,9 +31,6 @@ func NewS6Instance(
 			// Running/Starting -> Stopping -> Stopped
 			{Name: EventStop, Src: []string{OperationalStateRunning, OperationalStateStarting}, Dst: OperationalStateStopping},
 			{Name: EventStopDone, Src: []string{OperationalStateStopping}, Dst: OperationalStateStopped},
-
-			// Restart from any state
-			{Name: EventRestart, Src: []string{OperationalStateRunning, OperationalStateStopped}, Dst: OperationalStateStarting},
 		},
 	}
 

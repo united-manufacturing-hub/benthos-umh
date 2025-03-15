@@ -25,7 +25,7 @@ type BenthosManager struct {
 func NewBenthosManager() *BenthosManager {
 	return &BenthosManager{
 		Instances: make(map[string]*BenthosInstance),
-		logger:    logger.For("BenthosManager"),
+		logger:    logger.For(logger.ComponentBenthosManager),
 	}
 }
 
@@ -35,18 +35,15 @@ const (
 
 // Reconcile reconciles desired & observed states for Benthos services.
 // It returns a boolean indicating if the manager was reconciled.
-func (m *BenthosManager) Reconcile(ctx context.Context, cfg config.FullConfig) (error, bool) {
+func (m *BenthosManager) Reconcile(ctx context.Context, desiredState []config.BenthosConfig) (error, bool) {
 	// TODO: Update this to use BenthosConfig when available
 	// For now, we're using S6FSMConfig for skeleton implementation
 
 	// Step 1: Detect external changes
-	desiredState := cfg.Services // TODO: Will use cfg.BenthosServices when available
 	observedState := m.Instances
 
 	// Step 2: Create or update instances
 	for _, instance := range desiredState {
-		// TODO: This is a placeholder implementation using S6 config
-		// Will be updated with Benthos-specific config
 
 		// If the instance does not exist, create it and set it to the desired state
 		if _, ok := observedState[instance.Name]; !ok {
@@ -58,11 +55,11 @@ func (m *BenthosManager) Reconcile(ctx context.Context, cfg config.FullConfig) (
 
 		// If the instance exists, but the config is different, update it
 		// TODO: Implement proper comparison for Benthos config
-		if !observedState[instance.Name].config.S6ServiceConfig.Equal(instance.S6ServiceConfig) {
-			observedState[instance.Name].config = instance
-			m.logger.Infof("Updated config of Benthos instance %s", instance.Name)
-			return nil, true
-		}
+		// if !observedState[instance.Name].config.S6ServiceConfig.Equal(instance.S6ServiceConfig) {
+		// 	observedState[instance.Name].config = instance
+		// 	m.logger.Infof("Updated config of Benthos instance %s", instance.Name)
+		// 	return nil, true
+		// }
 
 		// If the instance exists, but the desired state is different, update it
 		if observedState[instance.Name].GetDesiredFSMState() != instance.DesiredState {
