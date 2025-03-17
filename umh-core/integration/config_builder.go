@@ -43,7 +43,7 @@ func (b *Builder) AddGoldenService() *Builder {
 input:
   http_server:
     path: /
-    port: 8082
+    address: 0.0.0.0:8082
 output:
   stdout: {}
 `,

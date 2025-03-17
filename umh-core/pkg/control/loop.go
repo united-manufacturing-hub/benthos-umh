@@ -37,7 +37,7 @@ const (
 	// This value balances responsiveness with resource utilization:
 	// - Too small: could mean that the managers do not have enough time to complete their work
 	// - Too high: Delayed response to configuration changes
-	defaultTickerTime = 30 * time.Millisecond
+	defaultTickerTime = 50 * time.Millisecond
 
 	// starvationThreshold defines when to consider the control loop starved.
 	// If no reconciliation has happened for this duration, the starvation

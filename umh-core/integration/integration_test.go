@@ -58,7 +58,8 @@ func startContainer() error {
 		"--cpus=1",
 		"--memory=512m",
 		"-v", fmt.Sprintf("%s/data:/data", GetCurrentDir()), // mount local ./data to /data in container
-		"-p", "8081:8080", // map container's 8080 => localhost:8081
+		"-p", "8081:8080", // metrics port
+		"-p", "8082:8082", // golden service port
 		imageName,
 	)
 	if err != nil {
@@ -116,6 +117,16 @@ func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
 }
 
+// checkGoldenService sends a test request to the golden service and returns its status code
+func checkGoldenService() int {
+	checkResp, e := http.Post("http://localhost:8082", "application/json", bytes.NewBuffer([]byte(`{"message": "test"}`)))
+	if e != nil {
+		return 0
+	}
+	defer checkResp.Body.Close()
+	return checkResp.StatusCode
+}
+
 // ---------- Actual Ginkgo Tests ----------
 
 var _ = Describe("UMH Container Integration", Ordered, Label("integration"), func() {
@@ -153,7 +164,7 @@ benthos: []
 			body, err := io.ReadAll(resp.Body)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Example: look for "umh_core_reconcile_duration_milliseconds" to confirm it's running
+			// Check that the metrics endpoint contains the expected metrics
 			Expect(string(body)).To(ContainSubstring("umh_core_reconcile_duration_milliseconds"))
 		})
 	})
@@ -184,21 +195,14 @@ benthos: []
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(body)).To(ContainSubstring("umh_core_reconcile_duration_milliseconds"))
 
-			// Because the golden service runs Benthos listening on port 8080 inside the container
-			// (mapped to localhost:8081?), you can also do a quick check:
 			Eventually(func() int {
-				checkResp, e := http.Get("http://localhost:8082")
-				if e != nil {
-					return 0
-				}
-				defer checkResp.Body.Close()
-				return checkResp.StatusCode
+				return checkGoldenService()
 			}, 10*time.Second, 1*time.Second).Should(Equal(200),
 				"Golden service should respond with 200 OK on the mapped port")
 		})
 	})
 
-	Context("with multiple services (golden + a 'sleep' service)", func() {
+	FContext("with multiple services (golden + a 'sleep' service)", func() {
 		BeforeAll(func() {
 			// Build a config that has both the golden service and another dummy s6 service
 			extraService := config.S6FSMConfig{
@@ -225,17 +229,36 @@ benthos: []
 		})
 
 		It("should have both services active and expose metrics", func() {
-			// Just check that metrics are available:
+			// Retrieve the metrics as a string
 			resp, err := http.Get(metricsURL)
 			Expect(err).NotTo(HaveOccurred())
-			body, err := io.ReadAll(resp.Body)
+			defer resp.Body.Close()
+
+			data, err := io.ReadAll(resp.Body)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Some examples of possible checks:
-			Expect(string(body)).To(ContainSubstring("umh_core_reconcile_duration_milliseconds"))
-			// If your system logs an instance name or metric label for the 'sleepy' service:
-			// you might also check something like:
-			// Expect(string(body)).To(ContainSubstring("instance=\"sleepy\""))
+			// First check the metrics - we expect this to fail if they're unhealthy
+			checkWhetherMetricsHealthy(string(data))
+
+			// Now verify metrics are consistently healthy over time
+			Consistently(func() error {
+				// Make a fresh request each time to get updated metrics
+				resp, err := http.Get(metricsURL)
+				if err != nil {
+					return err
+				}
+				defer resp.Body.Close()
+
+				freshData, err := io.ReadAll(resp.Body)
+				if err != nil {
+					return err
+				}
+
+				// This will panic and fail the test if metrics aren't healthy
+				checkWhetherMetricsHealthy(string(freshData))
+				GinkgoWriter.Println("Metrics are healthy")
+				return nil
+			}, 5*time.Minute, 1*time.Second).Should(Succeed())
 		})
 	})
 })
