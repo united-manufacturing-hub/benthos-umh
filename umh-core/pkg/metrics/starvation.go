@@ -82,6 +82,8 @@ func (s *StarvationChecker) checkStarvationLoop() {
 				starvationTime := timeSinceLastReconcile.Seconds()
 				AddStarvationTime(starvationTime)
 				s.logger.Warnf("Control loop starvation detected: %.2f seconds since last reconcile", starvationTime)
+			} else {
+				s.logger.Infof("Control loop is healthy, last reconcile was %.2f seconds ago", timeSinceLastReconcile.Seconds())
 			}
 		}
 	}

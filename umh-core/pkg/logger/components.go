@@ -5,7 +5,7 @@ const (
 	// Core components
 	ComponentCore              = "Core"
 	ComponentControlLoop       = "ControlLoop"
-	ComponentStarvationChecker = "StarvationChecker"
+	ComponentStarvationChecker = "StarveCheck"
 
 	// Manager components
 	ComponentS6Manager      = "S6Manager"

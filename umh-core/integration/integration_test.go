@@ -446,4 +446,239 @@ benthos: []
 			GinkgoWriter.Println("Scaling test completed successfully")
 		})
 	})
+
+	Context("with comprehensive chaos test", Label("integration", "chaos"), func() {
+		BeforeAll(func() {
+			// Start with an empty config
+			emptyConfig := `
+agent:
+  metricsPort: 8080
+services: []
+benthos: []
+`
+			Expect(writeConfigFile(emptyConfig)).To(Succeed())
+			Expect(startContainer()).To(Succeed())
+			Expect(waitForMetrics()).To(Succeed(), "Metrics endpoint should be available with empty config")
+		})
+
+		AfterAll(func() {
+			Expect(stopContainer()).To(Succeed(), "Stop container after chaos test")
+		})
+
+		It("should handle random service additions, deletions, starts and stops", func() {
+			// Start monitoring goroutine
+			testDuration := 10 * time.Minute
+
+			// Create deterministic random number generator
+			r := rand.New(rand.NewSource(42))
+
+			// Add golden service as constant baseline
+			builder := NewBuilder().AddGoldenService()
+			Expect(writeConfigFile(builder.BuildYAML())).To(Succeed())
+
+			// Wait for golden service to be ready
+			Eventually(func() int {
+				return checkGoldenService()
+			}, 20*time.Second, 1*time.Second).Should(Equal(200),
+				"Golden service should respond with 200 OK")
+
+			done, errorChan := startMonitoringGoroutine(testDuration, 5*time.Second) // this needs to be after the golden service is up
+			GinkgoWriter.Println("Starting comprehensive chaos test with up to 1000 services")
+
+			// Track existing services (with their current state)
+			existingServices := map[string]string{} // serviceName -> state ("running"/"stopped")
+			maxServices := 1000
+
+			// Test runs until the duration is reached
+			startTime := time.Now()
+			actionCount := 0
+			bulkSize := 100 // Size of bulk operations
+
+			for time.Since(startTime) < testDuration {
+				actionCount++
+
+				// Randomly choose an action type with wider distribution of actions
+				// 0=add single, 1=delete single, 2=start, 3=stop, 4=bulk add, 5=bulk delete
+				actionType := r.Intn(10)
+
+				switch {
+				case actionType < 3: // Add a single service (30% chance)
+					if len(existingServices) < maxServices {
+						// Create a new service with a unique name
+						serviceName := fmt.Sprintf("chaos-svc-%d", actionCount)
+						builder.AddSleepService(serviceName, fmt.Sprintf("%d", 60+r.Intn(600)))
+						existingServices[serviceName] = "running"
+						GinkgoWriter.Printf("Chaos: ADDING service %s (total: %d)\n",
+							serviceName, len(existingServices))
+					}
+
+				case actionType < 6: // Delete a single service (30% chance)
+					if len(existingServices) > 0 {
+						// Get a random existing service
+						keys := getKeys(existingServices)
+						serviceToDelete := keys[r.Intn(len(keys))]
+
+						// Instead of using RemoveService which doesn't exist,
+						// build a new config from scratch without the deleted service
+						newBuilder := NewBuilder().AddGoldenService()
+						for svc, state := range existingServices {
+							if svc != serviceToDelete { // Skip the one being deleted
+								if state == "running" {
+									newBuilder.AddSleepService(svc, "600")
+								} else {
+									newBuilder.AddSleepService(svc, "600")
+									newBuilder.StopService(svc)
+								}
+							}
+						}
+						builder = newBuilder // Replace the builder
+						delete(existingServices, serviceToDelete)
+
+						GinkgoWriter.Printf("Chaos: DELETING service %s (remaining: %d)\n",
+							serviceToDelete, len(existingServices))
+					}
+
+				case actionType < 7: // Start a stopped service (10% chance)
+					// Find stopped services
+					stoppedServices := []string{}
+					for svc, state := range existingServices {
+						if state == "stopped" {
+							stoppedServices = append(stoppedServices, svc)
+						}
+					}
+
+					if len(stoppedServices) > 0 {
+						serviceToStart := stoppedServices[r.Intn(len(stoppedServices))]
+						builder.StartService(serviceToStart)
+						existingServices[serviceToStart] = "running"
+
+						GinkgoWriter.Printf("Chaos: STARTING service %s\n", serviceToStart)
+					}
+
+				case actionType < 8: // Stop a running service (10% chance)
+					// Find running services
+					runningServices := []string{}
+					for svc, state := range existingServices {
+						if state == "running" {
+							runningServices = append(runningServices, svc)
+						}
+					}
+
+					if len(runningServices) > 0 {
+						serviceToStop := runningServices[r.Intn(len(runningServices))]
+						builder.StopService(serviceToStop)
+						existingServices[serviceToStop] = "stopped"
+
+						GinkgoWriter.Printf("Chaos: STOPPING service %s\n", serviceToStop)
+					}
+
+				case actionType < 9: // Bulk add services (10% chance)
+					numToAdd := min(bulkSize, maxServices-len(existingServices))
+					if numToAdd > 0 {
+						GinkgoWriter.Printf("Chaos: BULK ADDING %d services\n", numToAdd)
+						for i := 0; i < numToAdd; i++ {
+							serviceName := fmt.Sprintf("bulk-add-%d-%d", actionCount, i)
+							builder.AddSleepService(serviceName, fmt.Sprintf("%d", 60+r.Intn(600)))
+							existingServices[serviceName] = "running"
+						}
+						GinkgoWriter.Printf("Chaos: BULK ADD completed (total: %d)\n", len(existingServices))
+					}
+
+				case actionType < 10: // Bulk delete services (10% chance)
+					keys := getKeys(existingServices)
+					numToDelete := min(bulkSize, len(keys))
+					if numToDelete > 0 {
+						// Recreate config without the deleted services
+						newBuilder := NewBuilder().AddGoldenService()
+
+						// Choose random services to delete
+						indicesToDelete := make(map[int]bool)
+						for i := 0; i < numToDelete; i++ {
+							for {
+								idx := r.Intn(len(keys))
+								if !indicesToDelete[idx] {
+									indicesToDelete[idx] = true
+									break
+								}
+							}
+						}
+
+						// Rebuild config without deleted services
+						GinkgoWriter.Printf("Chaos: BULK DELETING %d services\n", numToDelete)
+						for idx, svc := range keys {
+							if !indicesToDelete[idx] {
+								state := existingServices[svc]
+								if state == "running" {
+									newBuilder.AddSleepService(svc, "600")
+								} else {
+									newBuilder.AddSleepService(svc, "600")
+									newBuilder.StopService(svc)
+								}
+							} else {
+								delete(existingServices, svc)
+							}
+						}
+						builder = newBuilder
+						GinkgoWriter.Printf("Chaos: BULK DELETE completed (remaining: %d)\n", len(existingServices))
+					}
+
+				}
+
+				// Apply changes
+				Expect(writeConfigFile(builder.BuildYAML())).To(Succeed())
+
+				// Random delay between operations, shorter for smaller changes
+				var delay time.Duration
+				if actionType >= 8 { // Bulk operations get longer delays
+					delay = time.Duration(500+r.Intn(2000)) * time.Millisecond // 0.5-2.5s
+				} else {
+					delay = time.Duration(50+r.Intn(200)) * time.Millisecond // 50-250ms
+				}
+				time.Sleep(delay)
+
+				// Every 20 actions, print a status update
+				if actionCount%20 == 0 {
+					running := countRunningServices(existingServices)
+					elapsedTime := time.Since(startTime).Round(time.Second)
+					remainingTime := (testDuration - elapsedTime).Round(time.Second)
+					GinkgoWriter.Printf("Chaos test status: %d actions completed, %d services (%d running), elapsed: %v, remaining: %v\n",
+						actionCount, len(existingServices), running, elapsedTime, remainingTime)
+				}
+			}
+
+			GinkgoWriter.Printf("Chaos test actions completed (%d total actions), waiting for monitoring to complete\n", actionCount)
+
+			// Check for any errors from the monitoring goroutine
+			select {
+			case err := <-errorChan:
+				Fail(fmt.Sprintf("Error in background monitoring: %v", err))
+			case <-done:
+				GinkgoWriter.Println("Monitoring routine completed successfully")
+			}
+
+			GinkgoWriter.Println("Chaos test completed successfully")
+		})
+	})
 })
+
+// Helper functions for the chaos test
+
+// getKeys returns all keys from a map as a slice
+func getKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// countRunningServices counts how many services are in the "running" state
+func countRunningServices(services map[string]string) int {
+	count := 0
+	for _, state := range services {
+		if state == "running" {
+			count++
+		}
+	}
+	return count
+}

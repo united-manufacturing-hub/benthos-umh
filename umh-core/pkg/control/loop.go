@@ -90,9 +90,6 @@ func NewControlLoop() *ControlLoop {
 	// Create a starvation checker
 	starvationChecker := metrics.NewStarvationChecker(starvationThreshold)
 
-	// Add starvation checker as the last manager (to always run)
-	managers = append(managers, starvationChecker)
-
 	metrics.InitErrorCounter(metrics.ComponentControlLoop, "main")
 
 	return &ControlLoop{
@@ -139,9 +136,6 @@ func (c *ControlLoop) Execute(ctx context.Context) error {
 			// Record metrics for the reconcile cycle
 			cycleTime := time.Since(start)
 			metrics.ObserveReconcileTime(metrics.ComponentControlLoop, "main", cycleTime)
-
-			// Update the starvation checker's timestamp
-			c.starvationChecker.UpdateLastReconcileTime()
 
 			// Handle errors differently based on type
 			if err != nil {
@@ -192,6 +186,9 @@ func (c *ControlLoop) Reconcile(ctx context.Context) error {
 			return nil
 		}
 	}
+
+	// Check for starvation
+	c.starvationChecker.Reconcile(ctx, config)
 
 	// Return nil if no errors occurred
 	return nil
