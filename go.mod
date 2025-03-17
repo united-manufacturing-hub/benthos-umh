@@ -34,8 +34,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gopcua/opcua v0.5.3
 	github.com/grid-x/modbus v0.0.0-20240503115206-582f2ab60a18
-	github.com/redpanda-data/benthos/v4 v4.45.1
-	github.com/redpanda-data/connect/public/bundle/free/v4 v4.49.1
+	github.com/redpanda-data/benthos/v4 v4.44.1
+	github.com/redpanda-data/connect/public/bundle/free/v4 v4.31.0
 	golang.org/x/time v0.8.0
 )
 
