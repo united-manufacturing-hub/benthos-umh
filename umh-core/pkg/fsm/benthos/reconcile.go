@@ -7,6 +7,7 @@ import (
 	"time"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 )
 
 // Reconcile examines the BenthosInstance and, in three steps:
@@ -59,8 +60,9 @@ func (b *BenthosInstance) Reconcile(ctx context.Context) (err error, reconciled 
 	reconcileStateTime := time.Since(start)
 	b.baseFSMInstance.GetLogger().Debugf("Reconcile state transition took %v", reconcileStateTime)
 
-	// Reconcile the s6Manager
-	err, reconciled = b.s6Manager.Reconcile(ctx, b.s6ServiceConfigs)
+	// Reconcile the s6Manager, on purpose we pass the full config where the rest of the
+	// BenthosInstance is embedded, but the rest is removed to prevent leaking abstractions
+	err, reconciled = b.s6Manager.Reconcile(ctx, config.FullConfig{Services: b.s6ServiceConfigs})
 	if err != nil {
 		b.baseFSMInstance.SetError(err)
 		b.baseFSMInstance.GetLogger().Errorf("error reconciling s6Manager: %s", err)
@@ -176,17 +178,12 @@ func (b *BenthosInstance) reconcileTransitionToActive(ctx context.Context, curre
 			// TODO: Implement actual config loading check
 			return b.baseFSMInstance.SendEvent(ctx, EventConfigLoaded)
 		case OperationalStateStartingConfigLoading:
-			// Check if healthchecks are passing
+			// Check whether the config is loaded by checkign if it crashes immediately
+			// TODO: Implement actual healthcheck verification
+			return b.baseFSMInstance.SendEvent(ctx, EventConfigLoaded)
+		case OperationalStateStartingWaitingForHealthchecks:
 			// TODO: Implement actual healthcheck verification
 			return b.baseFSMInstance.SendEvent(ctx, EventHealthchecksPassed)
-		case OperationalStateStartingWaitingForHealthchecks:
-			// Check if the service is running
-			if b.IsBenthosRunning() {
-				// Transition to Idle first
-				return b.baseFSMInstance.SendEvent(ctx, EventStartDone)
-			}
-			// Otherwise, wait for the next reconcile cycle
-			return nil
 		}
 	}
 
@@ -224,14 +221,9 @@ func (b *BenthosInstance) reconcileTransitionToStopped(ctx context.Context, curr
 
 	// If we're in Stopping, check if the service has stopped
 	if currentState == OperationalStateStopping {
-		// If already stopping, verify if the instance is completely stopped
-		if b.IsBenthosStopped() {
-			// Transition from Stopping to Stopped
-			return b.baseFSMInstance.SendEvent(ctx, EventStopDone)
-		}
-		return nil
+		// TODO: Implement actual stopping verification
+		return b.baseFSMInstance.SendEvent(ctx, EventStopDone)
 	}
-
 	return nil
 }
 

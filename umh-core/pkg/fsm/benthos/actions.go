@@ -3,12 +3,9 @@ package benthos
 import (
 	"context"
 	"fmt"
-	"reflect"
-	"time"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	s6fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
-	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 )
 
 // The functions in this file define heavier, possibly fail-prone operations
@@ -42,8 +39,10 @@ func (b *BenthosInstance) initiateBenthosCreate(ctx context.Context) error {
 
 	// Create the S6 FSM config for this instance
 	s6FSMConfig := config.S6FSMConfig{
-		Name:            b.baseFSMInstance.GetID(),
-		DesiredState:    s6fsm.OperationalStateRunning,
+		FSMInstanceConfig: config.FSMInstanceConfig{
+			Name:            b.baseFSMInstance.GetID(),
+			DesiredFSMState: s6fsm.OperationalStateRunning,
+		},
 		S6ServiceConfig: s6Config,
 	}
 
@@ -82,7 +81,7 @@ func (b *BenthosInstance) initiateBenthosStart(ctx context.Context) error {
 	// Start the service by setting the desired state to running for the given instance
 	for i, s6Config := range b.s6ServiceConfigs {
 		if s6Config.Name == b.baseFSMInstance.GetID() {
-			b.s6ServiceConfigs[i].DesiredState = s6fsm.OperationalStateRunning
+			b.s6ServiceConfigs[i].DesiredFSMState = s6fsm.OperationalStateRunning
 			break
 		}
 	}
@@ -98,7 +97,7 @@ func (b *BenthosInstance) initiateBenthosStop(ctx context.Context) error {
 	// Stop the service by setting the desired state to stopped for the given instance
 	for i, s6Config := range b.s6ServiceConfigs {
 		if s6Config.Name == b.baseFSMInstance.GetID() {
-			b.s6ServiceConfigs[i].DesiredState = s6fsm.OperationalStateStopped
+			b.s6ServiceConfigs[i].DesiredFSMState = s6fsm.OperationalStateStopped
 			break
 		}
 	}
@@ -109,45 +108,21 @@ func (b *BenthosInstance) initiateBenthosStop(ctx context.Context) error {
 
 // updateObservedState updates the observed state of the service
 func (b *BenthosInstance) updateObservedState(ctx context.Context) error {
-	// Measure status time
-	start := time.Now()
-	info, err := b.s6Service.Status(ctx, b.servicePath)
-	statusTime := time.Since(start)
-	b.baseFSMInstance.GetLogger().Debugf("Status for %s took %v", b.baseFSMInstance.GetID(), statusTime)
-	if err != nil {
-		return err
-	}
-
-	// Lock for concurrent access
-	b.stateMutex.Lock()
-	defer b.stateMutex.Unlock()
-
-	// Update service status information
-	b.ObservedState.ServiceAvailable = info.WantUp // Service is available if it wants to be up
-	b.ObservedState.ServiceHealthy = info.Status == s6service.ServiceUp
-	b.ObservedState.ServicePID = info.Pid
 
 	// TODO: Fetch Benthos-specific metrics and health data
 	// - Collect metrics from Benthos HTTP endpoint
 	// - Check logs for warnings/errors
 	// - Update processing state based on throughput data
 
-	// Fetch the actual service config from s6
-	start = time.Now()
-	config, err := b.s6Service.GetConfig(ctx, b.servicePath)
-	configTime := time.Since(start)
-	b.baseFSMInstance.GetLogger().Debugf("GetConfig for %s took %v", b.baseFSMInstance.GetID(), configTime)
-	if err != nil {
-		return fmt.Errorf("failed to get service config for %s: %w", b.baseFSMInstance.GetID(), err)
-	}
-
-	// TODO: Update this to check against BenthosConfig when it's available
-	if !reflect.DeepEqual(config, b.config.S6ServiceConfig) {
-		b.baseFSMInstance.GetLogger().Debugf("Observed config is different from desired config, triggering a re-create")
-		b.logConfigDifferences(b.config.S6ServiceConfig, config)
-		b.baseFSMInstance.Remove(ctx)
-	}
-
+	// NOTE: Unlike S6Instance, we don't need to check for config reconciliation here.
+	// This is because:
+	// 1. Config reconciliation is already handled at the S6Instance level
+	// 2. BenthosInstance doesn't interact directly with the filesystem
+	// 3. When we modify s6ServiceConfigs, those changes propagate to the S6Manager
+	//    which handles creating/updating the actual S6Instances
+	// 4. Any config drift would be detected by the corresponding S6Instance's
+	//    updateObservedState method, making the check here redundant
+	// Instead, this method should focus on Benthos-specific metrics and health monitoring.
 	return nil
 }
 

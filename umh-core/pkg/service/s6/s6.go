@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"syscall"
@@ -779,37 +780,7 @@ func parseCommandLine(cmdLine string) []string {
 
 // Equal checks if two S6ServiceConfigs are equal
 func (c S6ServiceConfig) Equal(other S6ServiceConfig) bool {
-	// Compare Command slices
-	if len(c.Command) != len(other.Command) {
-		return false
-	}
-	for i, cmd := range c.Command {
-		if cmd != other.Command[i] {
-			return false
-		}
-	}
-
-	// Compare Env maps
-	if len(c.Env) != len(other.Env) {
-		return false
-	}
-	for k, v := range c.Env {
-		if otherV, ok := other.Env[k]; !ok || v != otherV {
-			return false
-		}
-	}
-
-	// Compare ConfigFiles maps
-	if len(c.ConfigFiles) != len(other.ConfigFiles) {
-		return false
-	}
-	for k, v := range c.ConfigFiles {
-		if otherV, ok := other.ConfigFiles[k]; !ok || v != otherV {
-			return false
-		}
-	}
-
-	return true
+	return reflect.DeepEqual(c, other)
 }
 
 // These constants define file locations and offsets for direct S6 supervision file access

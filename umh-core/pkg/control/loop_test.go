@@ -31,16 +31,20 @@ func generateDefectiveConfig() config.FullConfig {
 		// Service with empty name
 		func(cfg config.FullConfig) config.FullConfig {
 			cfg.Services = []config.S6FSMConfig{{
-				Name:         "",
-				DesiredState: "running",
+				FSMInstanceConfig: config.FSMInstanceConfig{
+					Name:            "",
+					DesiredFSMState: "running",
+				},
 			}}
 			return cfg
 		},
 		// Service with invalid desired state
 		func(cfg config.FullConfig) config.FullConfig {
 			cfg.Services = []config.S6FSMConfig{{
-				Name:         "test-service",
-				DesiredState: "invalid-state",
+				FSMInstanceConfig: config.FSMInstanceConfig{
+					Name:            "test-service",
+					DesiredFSMState: "invalid-state",
+				},
 			}}
 			return cfg
 		},
@@ -48,12 +52,16 @@ func generateDefectiveConfig() config.FullConfig {
 		func(cfg config.FullConfig) config.FullConfig {
 			cfg.Services = []config.S6FSMConfig{
 				{
-					Name:         "duplicate-service",
-					DesiredState: "running",
+					FSMInstanceConfig: config.FSMInstanceConfig{
+						Name:            "duplicate-service",
+						DesiredFSMState: "running",
+					},
 				},
 				{
-					Name:         "duplicate-service",
-					DesiredState: "stopped",
+					FSMInstanceConfig: config.FSMInstanceConfig{
+						Name:            "duplicate-service",
+						DesiredFSMState: "stopped",
+					},
 				},
 			}
 			return cfg
@@ -84,7 +92,7 @@ var _ = Describe("ControlLoop", func() {
 		// Initialize control loop with mocks
 		controlLoop = &ControlLoop{
 			tickerTime:    10 * time.Millisecond, // Fast ticker for tests
-			managers:      []fsm.FSMManager{mockManager},
+			managers:      []fsm.FSMManager[any]{mockManager},
 			configManager: mockConfig,
 			logger:        logger.For(logger.ComponentControlLoop),
 		}
@@ -109,8 +117,10 @@ var _ = Describe("ControlLoop", func() {
 			expectedConfig := config.FullConfig{
 				Services: []config.S6FSMConfig{
 					{
-						Name:         "test-service",
-						DesiredState: "running",
+						FSMInstanceConfig: config.FSMInstanceConfig{
+							Name:            "test-service",
+							DesiredFSMState: "running",
+						},
 					},
 				},
 			}
@@ -164,7 +174,7 @@ var _ = Describe("ControlLoop", func() {
 			// We'll create a new control loop specifically for this test
 			testLoop := &ControlLoop{
 				tickerTime:    5 * time.Millisecond, // Fast ticker for tests
-				managers:      []fsm.FSMManager{fsm.NewMockFSMManager()},
+				managers:      []fsm.FSMManager[any]{fsm.NewMockFSMManager()},
 				configManager: trackingConfig,
 			}
 
@@ -241,7 +251,7 @@ var _ = Describe("ControlLoop", func() {
 			// Create a control loop with this config
 			timeoutLoop := &ControlLoop{
 				tickerTime:    5 * time.Millisecond,
-				managers:      []fsm.FSMManager{fsm.NewMockFSMManager()},
+				managers:      []fsm.FSMManager[any]{fsm.NewMockFSMManager()},
 				configManager: timeoutConfig,
 				logger:        logger.For(logger.ComponentControlLoop),
 			}

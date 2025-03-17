@@ -23,7 +23,7 @@ const (
 
 type ControlLoop struct {
 	tickerTime    time.Duration
-	managers      []fsm.FSMManager
+	managers      []fsm.FSMManager[any]
 	configManager config.ConfigManager
 	logger        *zap.SugaredLogger
 }
@@ -33,9 +33,9 @@ func NewControlLoop() *ControlLoop {
 	log := logger.For(logger.ComponentControlLoop)
 
 	// Create the managers
-	managers := []fsm.FSMManager{
+	managers := []fsm.FSMManager[any]{
 		s6.NewS6Manager("Core"),
-		benthos.NewBenthosManager(),
+		benthos.NewBenthosManager("Core"),
 	}
 
 	// Create the config manager

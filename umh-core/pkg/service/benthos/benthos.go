@@ -2,7 +2,9 @@ package benthos
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"reflect"
 	"text/template"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
@@ -74,4 +76,13 @@ func (s *BenthosService) GenerateS6ConfigForBenthos(benthosConfig *BenthosServic
 	}
 
 	return s6Config, nil
+}
+
+// GetConfig returns the actual Benthos config from the S6 service
+func (s *BenthosService) GetConfig(ctx context.Context, path string) (BenthosServiceConfig, error) {
+	return BenthosServiceConfig{}, nil
+}
+
+func (c *BenthosServiceConfig) Equal(other BenthosServiceConfig) bool {
+	return reflect.DeepEqual(c, other)
 }
