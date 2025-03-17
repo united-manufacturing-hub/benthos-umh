@@ -16,7 +16,7 @@ RUN go mod download
 COPY ./umh-core .
 RUN CGO_ENABLED=0 go build \
     -ldflags "-s -w" \
-    -o umh-core \
+    -o /go/bin/umh-core \
     cmd/main.go
 
 FROM alpine:3.18
@@ -69,7 +69,7 @@ RUN case "${TARGETARCH}" in \
     chmod +x /usr/local/bin/benthos
 
 # Step 5: Copy the built application and set permissions
-COPY --from=build /go/src/github.com/united-manufacturing-hub/benthos-umh/umh-core/umh-core /usr/local/bin/umh-core
+COPY --from=build /go/bin/umh-core /usr/local/bin/umh-core
 RUN chmod +x /usr/local/bin/umh-core && \
     ls -la /usr/local/bin/umh-core && \
     test -x /usr/local/bin/umh-core || (echo "Binary not executable" && exit 1) 

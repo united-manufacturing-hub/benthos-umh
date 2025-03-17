@@ -6,8 +6,13 @@ import (
 )
 
 type FullConfig struct {
-	Services []S6FSMConfig   `yaml:"services"`
-	Benthos  []BenthosConfig `yaml:"benthos"`
+	Agent    AgentConfig     `yaml:"agent"`    // Agent config, requires restart to take effect
+	Services []S6FSMConfig   `yaml:"services"` // Services to manage, can be updated while running
+	Benthos  []BenthosConfig `yaml:"benthos"`  // Benthos services to manage, can be updated while running
+}
+
+type AgentConfig struct {
+	MetricsPort int `yaml:"metricsPort"` // Port to expose metrics on
 }
 
 // S6FSMConfig contains configuration for creating a service

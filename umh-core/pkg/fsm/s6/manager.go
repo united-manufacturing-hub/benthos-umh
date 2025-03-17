@@ -6,6 +6,7 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	public_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 )
 
 const (
@@ -20,10 +21,11 @@ type S6Manager struct {
 // NewS6Manager creates a new S6Manager
 // The name is used to identify the manager in logs, as other components that leverage s6 will sue their own instance of this manager
 func NewS6Manager(name string) *S6Manager {
-	logger := logger.For(logger.ComponentS6Manager + name)
+
+	managerName := fmt.Sprintf("%s%s", logger.ComponentS6Manager, name)
 
 	baseManager := public_fsm.NewBaseFSMManager[config.S6FSMConfig](
-		logger,
+		managerName,
 		baseS6Dir,
 		// Extract S6 configs from full config
 		func(fullConfig config.FullConfig) ([]config.S6FSMConfig, error) {
@@ -59,6 +61,8 @@ func NewS6Manager(name string) *S6Manager {
 			return nil
 		},
 	)
+
+	metrics.InitErrorCounter(metrics.ComponentS6Manager, name)
 
 	return &S6Manager{
 		BaseFSMManager: baseManager,

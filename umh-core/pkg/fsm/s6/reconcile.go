@@ -7,6 +7,7 @@ import (
 	"time"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 )
 
@@ -19,10 +20,13 @@ import (
 // Over multiple calls, it converges the actual state to the desired state. Transitions
 // that fail are retried in subsequent reconcile calls after a backoff period.
 func (s *S6Instance) Reconcile(ctx context.Context) (err error, reconciled bool) {
+	s6InstanceName := s.baseFSMInstance.GetID()
 	defer func() {
 		if err != nil {
 			s.baseFSMInstance.GetLogger().Errorf("error reconciling S6 instance %s: %s", s.baseFSMInstance.GetID(), err)
 			s.PrintState()
+			// Add metrics for error
+			metrics.IncErrorCount(metrics.ComponentS6Instance, s6InstanceName)
 		}
 	}()
 
@@ -39,7 +43,7 @@ func (s *S6Instance) Reconcile(ctx context.Context) (err error, reconciled bool)
 		// The service does not exist, which is fine as this happens in the reconcileStateTransition
 	}
 	externalChangesTime := time.Since(start)
-	s.baseFSMInstance.GetLogger().Debugf("Reconcile external changes took %v", externalChangesTime)
+	metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s6InstanceName+".external_changes", externalChangesTime)
 
 	start = time.Now()
 	// Step 2: If there's a lastError, see if we've waited enough.
@@ -47,7 +51,7 @@ func (s *S6Instance) Reconcile(ctx context.Context) (err error, reconciled bool)
 		return nil, false
 	}
 	skipErrorTime := time.Since(start)
-	s.baseFSMInstance.GetLogger().Debugf("Reconcile skip error took %v", skipErrorTime)
+	metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s6InstanceName+".skip_error", skipErrorTime)
 
 	start = time.Now()
 	// Step 3: Attempt to reconcile the state.
@@ -58,10 +62,14 @@ func (s *S6Instance) Reconcile(ctx context.Context) (err error, reconciled bool)
 		return nil, false // We don't want to return an error here, because we want to continue reconciling
 	}
 	reconcileStateTime := time.Since(start)
-	s.baseFSMInstance.GetLogger().Debugf("Reconcile state transition took %v", reconcileStateTime)
+	metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s6InstanceName+".state_transition", reconcileStateTime)
 
 	// It went all right, so clear the error
 	s.baseFSMInstance.ResetState()
+
+	// Record overall reconcile time
+	totalTime := externalChangesTime + skipErrorTime + reconcileStateTime
+	metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s6InstanceName, totalTime)
 
 	return nil, true
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	public_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 )
 
 const (
@@ -21,10 +22,10 @@ type BenthosManager struct {
 }
 
 func NewBenthosManager(name string) *BenthosManager {
-	logger := logger.For(logger.ComponentBenthosManager + name)
+	managerName := fmt.Sprintf("%s%s", logger.ComponentBenthosManager, name)
 
 	baseManager := public_fsm.NewBaseFSMManager[config.BenthosConfig](
-		logger,
+		managerName,
 		baseBenthosDir,
 		// Extract Benthos configs from full config
 		func(fullConfig config.FullConfig) ([]config.BenthosConfig, error) {
@@ -60,6 +61,8 @@ func NewBenthosManager(name string) *BenthosManager {
 			return nil
 		},
 	)
+
+	metrics.InitErrorCounter(metrics.ComponentBenthosManager, name)
 
 	return &BenthosManager{
 		BaseFSMManager: baseManager,

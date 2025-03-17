@@ -1,3 +1,6 @@
+agent:
+  metricsPort: 8080
+
 services:
   - name: hello-world
     desiredState: running

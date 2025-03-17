@@ -7,13 +7,16 @@ import (
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 	"go.uber.org/zap"
 )
 
 // / BaseFSMManager provides a generic implementation for FSM managers
 type BaseFSMManager[C any] struct {
-	instances map[string]FSMInstance
-	logger    *zap.SugaredLogger
+	instances   map[string]FSMInstance
+	logger      *zap.SugaredLogger
+	managerName string
 
 	// These methods are implemented by each concrete manager
 	extractConfigs  func(config config.FullConfig) ([]C, error)
@@ -26,7 +29,7 @@ type BaseFSMManager[C any] struct {
 
 // NewBaseFSMManager creates a new base manager with dependencies injected
 func NewBaseFSMManager[C any](
-	logger *zap.SugaredLogger,
+	managerName string,
 	baseDir string,
 	extractConfigs func(config config.FullConfig) ([]C, error),
 	getName func(C) (string, error),
@@ -35,9 +38,12 @@ func NewBaseFSMManager[C any](
 	compareConfig func(FSMInstance, C) (bool, error),
 	setConfig func(FSMInstance, C) error,
 ) *BaseFSMManager[C] {
+
+	metrics.InitErrorCounter(metrics.ComponentBaseFSMManager, managerName)
 	return &BaseFSMManager[C]{
 		instances:       make(map[string]FSMInstance),
-		logger:          logger,
+		logger:          logger.For(managerName),
+		managerName:     managerName,
 		extractConfigs:  extractConfigs,
 		getName:         getName,
 		getDesiredState: getDesiredState,
@@ -63,33 +69,53 @@ func (m *BaseFSMManager[C]) AddInstanceForTest(name string, instance FSMInstance
 	m.instances[name] = instance
 }
 
+// GetManagerName returns the name of the manager
+func (m *BaseFSMManager[C]) GetManagerName() string {
+	return m.managerName
+}
+
 // ReconcileManager implements common FSM management logic
 func (m *BaseFSMManager[C]) Reconcile(
 	ctx context.Context,
 	config config.FullConfig,
 ) (error, bool) {
+	// Start tracking metrics for the manager
+	start := time.Now()
+	defer func() {
+		// Record total reconcile time at the end
+		metrics.ObserveReconcileTime(metrics.ComponentBaseFSMManager, m.managerName, time.Since(start))
+	}()
 
 	// Step 1: Extract the specific configs from the full config
+	extractStart := time.Now()
 	desiredState, err := m.extractConfigs(config)
 	if err != nil {
+		metrics.IncErrorCount(metrics.ComponentBaseFSMManager, m.managerName)
 		return fmt.Errorf("failed to extract configs: %w", err), false
 	}
+	metrics.ObserveReconcileTime(metrics.ComponentBaseFSMManager, m.managerName+".extract_configs", time.Since(extractStart))
 
 	// Step 2: Create or update instances
 	for _, cfg := range desiredState {
 		name, err := m.getName(cfg)
 		if err != nil {
+			metrics.IncErrorCount(metrics.ComponentBaseFSMManager, m.managerName)
 			return fmt.Errorf("failed to get name: %w", err), false
 		}
 
 		// If the instance does not exist, create it and set it to the desired state
 		if _, ok := m.instances[name]; !ok {
+			createStart := time.Now()
 			instance, err := m.createInstance(cfg)
 			if err != nil {
+				metrics.IncErrorCount(metrics.ComponentBaseFSMManager, m.managerName)
 				return fmt.Errorf("failed to create instance: %w", err), false
 			}
+			metrics.ObserveReconcileTime(metrics.ComponentBaseFSMManager, m.managerName+".create_instance", time.Since(createStart))
+
 			desiredState, err := m.getDesiredState(cfg)
 			if err != nil {
+				metrics.IncErrorCount(metrics.ComponentBaseFSMManager, m.managerName)
 				return fmt.Errorf("failed to get desired state: %w", err), false
 			}
 			instance.SetDesiredFSMState(desiredState)
@@ -99,15 +125,23 @@ func (m *BaseFSMManager[C]) Reconcile(
 		}
 
 		// If the instance exists, but the config is different, update it
+		compareStart := time.Now()
 		equal, err := m.compareConfig(m.instances[name], cfg)
 		if err != nil {
+			metrics.IncErrorCount(metrics.ComponentBaseFSMManager, m.managerName)
 			return fmt.Errorf("failed to compare config: %w", err), false
 		}
+		metrics.ObserveReconcileTime(metrics.ComponentBaseFSMManager, m.managerName+".compare_config", time.Since(compareStart))
+
 		if !equal {
+			updateStart := time.Now()
 			err := m.setConfig(m.instances[name], cfg)
 			if err != nil {
+				metrics.IncErrorCount(metrics.ComponentBaseFSMManager, m.managerName)
 				return fmt.Errorf("failed to set config: %w", err), false
 			}
+			metrics.ObserveReconcileTime(metrics.ComponentBaseFSMManager, m.managerName+".set_config", time.Since(updateStart))
+
 			m.logger.Infof("Updated config of instance %s", name)
 			return nil, true
 		}
@@ -115,6 +149,7 @@ func (m *BaseFSMManager[C]) Reconcile(
 		// If the instance exists, but the desired state is different, update it
 		desiredState, err := m.getDesiredState(cfg)
 		if err != nil {
+			metrics.IncErrorCount(metrics.ComponentBaseFSMManager, m.managerName)
 			return fmt.Errorf("failed to get desired state: %w", err), false
 		}
 		if m.instances[name].GetDesiredFSMState() != desiredState {
@@ -128,12 +163,12 @@ func (m *BaseFSMManager[C]) Reconcile(
 	// Step 3: Clean up any instances that are not in desiredState, or are in the removed state
 	// Before deletion, they need to be gracefully stopped and we need to wait until they are in the state removed
 	for instanceName := range m.instances {
-
 		// If the instance is not in desiredState, start its removal process
 		found := false
 		for _, desired := range desiredState {
 			name, err := m.getName(desired)
 			if err != nil {
+				metrics.IncErrorCount(metrics.ComponentBaseFSMManager, m.managerName)
 				return fmt.Errorf("failed to get name: %w", err), false
 			}
 			if name == instanceName {
@@ -161,16 +196,17 @@ func (m *BaseFSMManager[C]) Reconcile(
 			m.instances[instanceName].Remove(ctx)
 			continue
 		}
-
 	}
 
 	// Reconcile instances
 	for name, instance := range m.instances {
-		start := time.Now()
+		reconcileStart := time.Now()
 		err, reconciled := instance.Reconcile(ctx)
-		reconcileTime := time.Since(start)
-		m.logger.Debugf("Reconcile for instance %s took %v", name, reconcileTime)
+		reconcileTime := time.Since(reconcileStart)
+		metrics.ObserveReconcileTime(metrics.ComponentBaseFSMManager, m.managerName+".instances."+name, reconcileTime)
+
 		if err != nil {
+			metrics.IncErrorCount(metrics.ComponentBaseFSMManager, m.managerName+".instances."+name)
 			return fmt.Errorf("error reconciling instance: %w", err), false
 		}
 		if reconciled {
@@ -178,5 +214,6 @@ func (m *BaseFSMManager[C]) Reconcile(
 		}
 	}
 
+	// Return nil if no errors occurred
 	return nil, false
 }

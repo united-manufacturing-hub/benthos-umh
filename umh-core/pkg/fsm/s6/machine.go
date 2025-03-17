@@ -10,6 +10,7 @@ import (
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 )
 
@@ -40,6 +41,8 @@ func NewS6Instance(
 		config:          config,
 		service:         s6service.NewDefaultService(),
 	}
+
+	metrics.InitErrorCounter(metrics.ComponentS6Instance, config.Name)
 
 	instance.registerCallbacks()
 

@@ -14,20 +14,24 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/benthos"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 	"go.uber.org/zap"
 )
 
 const (
-	defaultTickerTime = 30 * time.Millisecond
+	defaultTickerTime   = 30 * time.Millisecond
+	starvationThreshold = 2000 * time.Millisecond // Threshold at which we consider the loop starved
 )
 
 type ControlLoop struct {
-	tickerTime    time.Duration
-	managers      []fsm.FSMManager[any]
-	configManager config.ConfigManager
-	logger        *zap.SugaredLogger
+	tickerTime        time.Duration
+	managers          []fsm.FSMManager[any]
+	configManager     config.ConfigManager
+	logger            *zap.SugaredLogger
+	starvationChecker *metrics.StarvationChecker
 }
 
+// NewControlLoop creates a new control loop with all necessary managers
 func NewControlLoop() *ControlLoop {
 	// Get a component-specific logger
 	log := logger.For(logger.ComponentControlLoop)
@@ -41,11 +45,20 @@ func NewControlLoop() *ControlLoop {
 	// Create the config manager
 	configManager := config.NewFileConfigManager()
 
+	// Create a starvation checker
+	starvationChecker := metrics.NewStarvationChecker(starvationThreshold)
+
+	// Add starvation checker as the last manager (to always run)
+	managers = append(managers, starvationChecker)
+
+	metrics.InitErrorCounter(metrics.ComponentControlLoop, "main")
+
 	return &ControlLoop{
-		managers:      managers,
-		tickerTime:    defaultTickerTime,
-		configManager: configManager,
-		logger:        log,
+		managers:          managers,
+		tickerTime:        defaultTickerTime,
+		configManager:     configManager,
+		logger:            log,
+		starvationChecker: starvationChecker,
 	}
 }
 
@@ -67,13 +80,21 @@ func (c *ControlLoop) Execute(ctx context.Context) error {
 
 			// Measure reconcile time
 			start := time.Now()
+
 			// Reconcile the managers
 			err := c.Reconcile(timeoutCtx)
+
+			// Record metrics for the reconcile cycle
 			cycleTime := time.Since(start)
-			c.logger.Debugf("Reconcile cycle took %v", cycleTime)
+			metrics.ObserveReconcileTime(metrics.ComponentControlLoop, "main", cycleTime)
+
+			// Update the starvation checker's timestamp
+			c.starvationChecker.UpdateLastReconcileTime()
 
 			// Handle errors differently based on type
 			if err != nil {
+				metrics.IncErrorCount(metrics.ComponentControlLoop, "main")
+
 				if errors.Is(err, context.DeadlineExceeded) {
 					// For timeouts, log warning but continue
 					c.logger.Warnf("Control loop reconcile timed out: %v", err)
@@ -93,16 +114,11 @@ func (c *ControlLoop) Execute(ctx context.Context) error {
 // then reconciles each manager
 func (c *ControlLoop) Reconcile(ctx context.Context) error {
 
-	// Measure config fetch time
-	start := time.Now()
-
 	// Get the config
 	config, err := c.configManager.GetConfig(ctx)
 
-	// Log the config fetch time
-	fetchTime := time.Since(start)
-	c.logger.Debugf("Config fetch took %v", fetchTime)
 	if err != nil {
+		metrics.IncErrorCount(metrics.ComponentControlLoop, "config_fetch")
 		return err
 	}
 
@@ -110,6 +126,7 @@ func (c *ControlLoop) Reconcile(ctx context.Context) error {
 	for _, manager := range c.managers {
 		err, reconciled := manager.Reconcile(ctx, config)
 		if err != nil {
+			metrics.IncErrorCount(metrics.ComponentControlLoop, manager.GetManagerName())
 			return err
 		}
 
@@ -123,7 +140,10 @@ func (c *ControlLoop) Reconcile(ctx context.Context) error {
 	return nil
 }
 
+// Stop gracefully stops the control loop and metrics server
 func (c *ControlLoop) Stop(ctx context.Context) error {
+
+	// Signal the control loop to stop
 	ctx.Done()
 	return nil
 }

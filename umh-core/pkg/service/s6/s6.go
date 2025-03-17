@@ -395,12 +395,6 @@ func (s *DefaultService) Restart(ctx context.Context, servicePath string) error 
 func (s *DefaultService) Status(ctx context.Context, servicePath string) (ServiceInfo, error) {
 	s.logger.Debugf("Getting status for S6 service %s", servicePath)
 
-	// Time the status call.
-	start := time.Now()
-	defer func() {
-		s.logger.Debugf("Status for S6 service %s took %s", servicePath, time.Since(start))
-	}()
-
 	// First, check that the service exists.
 	exists, err := s.ServiceExists(ctx, servicePath)
 	if err != nil {

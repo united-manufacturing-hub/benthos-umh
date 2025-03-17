@@ -3,8 +3,9 @@ package logger
 // Component name constants for standardized logging
 const (
 	// Core components
-	ComponentCore        = "Core"
-	ComponentControlLoop = "ControlLoop"
+	ComponentCore              = "Core"
+	ComponentControlLoop       = "ControlLoop"
+	ComponentStarvationChecker = "StarvationChecker"
 
 	// Manager components
 	ComponentS6Manager      = "S6Manager"

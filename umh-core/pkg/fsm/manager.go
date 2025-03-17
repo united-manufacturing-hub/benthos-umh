@@ -12,5 +12,6 @@ import (
 type FSMManager[C any] interface {
 	// Reconcile reconciles the current state with the desired state
 	Reconcile(ctx context.Context, config config.FullConfig) (error, bool)
-	// Additional common methods
+	// GetManagerName returns the name of the manager
+	GetManagerName() string
 }

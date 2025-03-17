@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 )
 
@@ -110,13 +111,12 @@ func (s *S6Instance) updateObservedState(ctx context.Context) error {
 	// Measure status time
 	start := time.Now()
 	info, err := s.service.Status(ctx, s.servicePath)
-	statusTime := time.Since(start)
-	s.baseFSMInstance.GetLogger().Debugf("Status for %s took %v", s.baseFSMInstance.GetID(), statusTime)
 	if err != nil {
 		s.ObservedState.ServiceInfo.Status = s6service.ServiceUnknown
-
+		metrics.IncErrorCount(metrics.ComponentS6Instance, s.baseFSMInstance.GetID())
 		return err
 	}
+	metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s.baseFSMInstance.GetID()+".updateObservedState.status", time.Since(start))
 
 	// Store the raw service info
 	s.ObservedState.ServiceInfo = info
@@ -141,12 +141,11 @@ func (s *S6Instance) updateObservedState(ctx context.Context) error {
 	// Fetch the actual service config from s6
 	start = time.Now()
 	config, err := s.service.GetConfig(ctx, s.servicePath)
-	configTime := time.Since(start)
-	s.baseFSMInstance.GetLogger().Debugf("GetConfig for %s took %v", s.baseFSMInstance.GetID(), configTime)
 	if err != nil {
 		return fmt.Errorf("failed to get S6 service config for %s: %w", s.baseFSMInstance.GetID(), err)
 	}
 	s.ObservedState.ObservedS6ServiceConfig = config
+	metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s.baseFSMInstance.GetID()+".updateObservedState.config", time.Since(start))
 
 	// TODO: trigger a reconcile if observed config is different from desired config
 	// the easiest way to do this is causing this instance to be removed, which will trigger a re-create by the manager

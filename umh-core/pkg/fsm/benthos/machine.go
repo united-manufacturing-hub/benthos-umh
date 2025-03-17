@@ -10,6 +10,7 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 	benthos_service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos"
 )
 
@@ -73,6 +74,8 @@ func NewBenthosInstance(
 	}
 
 	instance.registerCallbacks()
+
+	metrics.InitErrorCounter(metrics.ComponentBenthosInstance, config.Name)
 
 	return instance
 }

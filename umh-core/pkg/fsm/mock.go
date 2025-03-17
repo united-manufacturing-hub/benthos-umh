@@ -57,3 +57,8 @@ func (m *MockFSMManager) ResetCalls() {
 	defer m.mutex.Unlock()
 	m.ReconcileCalled = false
 }
+
+// GetManagerName returns the name of the manager
+func (m *MockFSMManager) GetManagerName() string {
+	return "MockFSMManager"
+}
