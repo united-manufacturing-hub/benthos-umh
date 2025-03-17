@@ -64,7 +64,7 @@ func parseBase64PEMBundle(b64PemBundle string) (*tls.Certificate, error) {
 // - To dynamically generate client options that match the server’s security requirements.
 // - To handle different authentication methods, such as anonymous or username/password-based logins.
 // - To generate and include client certificates when using enhanced security policies like Basic256Sha256/Basic256/Basic128Rsa15
-func (g *OPCUAInput) GetOPCUAClientOptions(
+func (g *OPCUAConnection) GetOPCUAClientOptions(
 	selectedEndpoint *ua.EndpointDescription,
 	selectedAuthentication ua.UserTokenType,
 	discoveryOnly bool,
@@ -80,12 +80,19 @@ func (g *OPCUAInput) GetOPCUAClientOptions(
 	case ua.UserTokenTypeUserName:
 		g.Log.Infof("Using username/password login")
 		opts = append(opts, opcua.AuthUsername(g.Username, g.Password))
+	case ua.UserTokenTypeCertificate:
+		g.Log.Info("Using User Certificate based authentication")
+		userCertificateOpts, err := g.parseUserCertificateOptions()
+		if err != nil {
+			return nil, fmt.Errorf("error while parsing user certificate options: %v", err)
+		}
+		opts = append(opts, userCertificateOpts...)
 	}
 
 	// If the endpoint's security policy is not None, we must attach a certificate
 	if selectedEndpoint.SecurityPolicyURI != ua.SecurityPolicyURINone {
 		// Only generate or parse the certificate if we don't already have one cached
-		if g.cachedTLSCertificate == nil {
+		if g.CachedTLSCertificate == nil {
 			// If ClientCertificate is provided (base64 of PEM blocks), parse it
 			if g.ClientCertificate != "" {
 				g.Log.Infof("Using base64-encoded client certificate from configuration")
@@ -95,7 +102,7 @@ func (g *OPCUAInput) GetOPCUAClientOptions(
 					g.Log.Errorf("Failed to parse the provided Base64 certificate/key: %v", err)
 					return nil, err
 				}
-				g.cachedTLSCertificate = cert
+				g.CachedTLSCertificate = cert
 
 			} else {
 				g.Log.Infof("No base64-encoded certificate provided, generating a new one...")
@@ -119,7 +126,7 @@ func (g *OPCUAInput) GetOPCUAClientOptions(
 					return nil, err
 				}
 
-				g.cachedTLSCertificate = &newTLSCert
+				g.CachedTLSCertificate = &newTLSCert
 				g.Log.Infof("The clients certificate was created, to use an encrypted "+
 					"connection please proceed to the OPC-UA Server's configuration and "+
 					"trust either all clients or the clients certificate with the client-name: "+
@@ -140,8 +147,8 @@ func (g *OPCUAInput) GetOPCUAClientOptions(
 			}
 		}
 
-		// We have g.cachedTLSCertificate set; parse out the private key for the OPC UA library
-		pk, ok := g.cachedTLSCertificate.PrivateKey.(*rsa.PrivateKey)
+		// We have g.CachedTLSCertificate set; parse out the private key for the OPC UA library
+		pk, ok := g.CachedTLSCertificate.PrivateKey.(*rsa.PrivateKey)
 		if !ok {
 			g.Log.Errorf("Invalid private key type or not RSA")
 			return nil, errors.New("invalid private key type or not RSA")
@@ -150,7 +157,7 @@ func (g *OPCUAInput) GetOPCUAClientOptions(
 		// Append the certificate and private key to the client options
 		opts = append(opts,
 			opcua.PrivateKey(pk),
-			opcua.Certificate(g.cachedTLSCertificate.Certificate[0]),
+			opcua.Certificate(g.CachedTLSCertificate.Certificate[0]),
 		)
 	}
 
@@ -177,12 +184,82 @@ func (g *OPCUAInput) GetOPCUAClientOptions(
 	return opts, nil
 }
 
+func (g *OPCUAConnection) parseUserCertificateOptions() ([]opcua.Option, error) {
+	// UserCertificate and UserPrivateKey are base64 encoded pem data
+	userCertificateData, err := base64.StdEncoding.DecodeString(g.UserCertificate)
+	if err != nil {
+		return nil, err
+	}
+
+	// Decode the PEM encoded certificate
+	certBlock, _ := pem.Decode(userCertificateData)
+	if certBlock == nil {
+		g.Log.Info("failed to decode PEM format for userCertificate")
+		g.Log.Infof("will attempt decode assuming .der format")
+	}
+
+	// We currently allow flexibility in certificate format(it can be either .der or .pem). If the PEM block is found, we use its bytes for further parsing, otherwise we use the original binary data assuming it's already in DER format.m), but if PEM decoding fails, try to parse the certificate as .der can be directly parsed.
+	certBytes := userCertificateData
+	if certBlock != nil {
+		certBytes = certBlock.Bytes
+	}
+
+	cert, err := x509.ParseCertificate(certBytes)
+	if err != nil {
+		g.Log.Errorf("failed to parse X.509 Certificate from UserCertificate: %v", err)
+		return nil, err
+	}
+	privateKeyData, err := base64.StdEncoding.DecodeString(g.UserPrivateKey)
+	if err != nil {
+		return nil, err
+	}
+
+	privateKey, err := parsePrivateKey(privateKeyData)
+	if err != nil {
+		g.Log.Errorf("error parsing UserPrivateKey: %v", err)
+		return nil, err
+	}
+
+	return []opcua.Option{
+		opcua.AuthCertificate(cert.Raw),
+		opcua.AuthPrivateKey(privateKey),
+	}, nil
+
+}
+
+func parsePrivateKey(b []byte) (*rsa.PrivateKey, error) {
+
+	// Decode privateKey PEM Data. Handle Multiple formats
+	block, _ := pem.Decode(b)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block for PrivateKey")
+	}
+
+	// Try PKCS#1 format first
+	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err == nil {
+		return key, nil
+	}
+
+	keyInterface, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err == nil {
+		rsaKey, ok := keyInterface.(*rsa.PrivateKey)
+		if ok {
+			return rsaKey, nil
+		}
+
+		return nil, fmt.Errorf("PrivateKey is not RSA")
+	}
+
+	return nil, fmt.Errorf("unsupported PrivateKey format")
+}
+
 // LogEndpoint logs detailed information about a single OPC UA endpoint.
 //
 // This function provides comprehensive logging of an endpoint’s properties, including security
 // configurations and server details. It is useful for debugging and auditing purposes, allowing
 // developers and administrators to verify endpoint settings and ensure they meet the required standards.
-func (g *OPCUAInput) LogEndpoint(endpoint *ua.EndpointDescription) {
+func (g *OPCUAConnection) LogEndpoint(endpoint *ua.EndpointDescription) {
 	g.Log.Infof("  EndpointURL: %s", endpoint.EndpointURL)
 	g.Log.Infof("  SecurityMode: %v", endpoint.SecurityMode)
 	g.Log.Infof("  SecurityPolicyURI: %s", endpoint.SecurityPolicyURI)
@@ -224,7 +301,7 @@ func (g *OPCUAInput) LogEndpoint(endpoint *ua.EndpointDescription) {
 }
 
 // LogEndpoints logs information for a slice of OPC UA endpoints.
-func (g *OPCUAInput) LogEndpoints(endpoints []*ua.EndpointDescription) {
+func (g *OPCUAConnection) LogEndpoints(endpoints []*ua.EndpointDescription) {
 	g.Log.Infof("Fetched %d endpoints", len(endpoints))
 	for i, endpoint := range endpoints {
 		g.Log.Infof("Endpoint %d:", i+1)
@@ -237,7 +314,7 @@ func (g *OPCUAInput) LogEndpoints(endpoints []*ua.EndpointDescription) {
 // not "None". If so it returns the first endpoint. The first endpoint will
 // always be the most "secure", because we order the endpoints by their security-
 // policy and -mode.
-func (g *OPCUAInput) checkForSecurityEndpoints(
+func (g *OPCUAConnection) checkForSecurityEndpoints(
 	ctx context.Context,
 	endpoints []*ua.EndpointDescription,
 	authType ua.UserTokenType,
@@ -289,7 +366,7 @@ func (g *OPCUAInput) checkForSecurityEndpoints(
 //     using the most suitable endpoint.
 //   - To handle servers that may return limited or DNS-specific endpoint information by substituting
 //     with user-specified host details.
-func (g *OPCUAInput) FetchAllEndpoints(ctx context.Context) ([]*ua.EndpointDescription, error) {
+func (g *OPCUAConnection) FetchAllEndpoints(ctx context.Context) ([]*ua.EndpointDescription, error) {
 	g.Log.Infof("Querying OPC UA server at: %s", g.Endpoint)
 
 	endpoints, err := opcua.GetEndpoints(ctx, g.Endpoint)
@@ -328,7 +405,7 @@ func (g *OPCUAInput) FetchAllEndpoints(ctx context.Context) ([]*ua.EndpointDescr
 //   - To ensure the client connects to the correct server(when encrypted)
 //   - To inform the user using a Fingerprint of the Server's certificate would
 //     be more secure
-func (g *OPCUAInput) checkServerCertificateFingerprint(endpoint *ua.EndpointDescription) error {
+func (g *OPCUAConnection) checkServerCertificateFingerprint(endpoint *ua.EndpointDescription) error {
 
 	if g.ServerCertificates[endpoint] == "" {
 		return fmt.Errorf("The servers endpoint '%s' doesn't provide any server certificate. "+
@@ -371,7 +448,7 @@ func (g *OPCUAInput) checkServerCertificateFingerprint(endpoint *ua.EndpointDesc
 // **Why this Function is needed:**
 //   - to store each endpoint of the OPC-UA-Server and it's corresponding fingerprint
 //   - to prevent edge-cases where certificates could differ for its endpoints
-func (g *OPCUAInput) storeServerCertificateFingerprint(endpoint *ua.EndpointDescription) error {
+func (g *OPCUAConnection) storeServerCertificateFingerprint(endpoint *ua.EndpointDescription) error {
 
 	pemCert := pem.EncodeToMemory(&pem.Block{
 		Type:  "CERTIFICATE",
@@ -394,6 +471,9 @@ func (g *OPCUAInput) storeServerCertificateFingerprint(endpoint *ua.EndpointDesc
 	// and convert the array into a slice for encoding
 	shaFingerprint := sha3.Sum512(cert.Raw)
 
+	if g.ServerCertificates == nil {
+		g.ServerCertificates = make(map[*ua.EndpointDescription]string)
+	}
 	g.ServerCertificates[endpoint] = hex.EncodeToString(shaFingerprint[:])
 
 	return nil
@@ -409,7 +489,7 @@ func (g *OPCUAInput) storeServerCertificateFingerprint(endpoint *ua.EndpointDesc
 // **Why This Function is Needed:**
 // - To expand the list of available endpoints beyond the initial discovery when only one endpoint is found.
 // - To ensure comprehensive endpoint discovery, especially for servers that may not provide extensive endpoint lists.
-func (g *OPCUAInput) handleSingleEndpointDiscovery(ctx context.Context, endpoint *ua.EndpointDescription) ([]*ua.EndpointDescription, error) {
+func (g *OPCUAConnection) handleSingleEndpointDiscovery(ctx context.Context, endpoint *ua.EndpointDescription) ([]*ua.EndpointDescription, error) {
 	if endpoint == nil || endpoint.Server == nil || len(endpoint.Server.DiscoveryURLs) == 0 {
 		if endpoint != nil && endpoint.Server != nil && len(endpoint.Server.DiscoveryURLs) == 0 { // This is the edge case when there is no discovery URL
 			g.Log.Infof("No discovery URL. This is the endpoint: %v", endpoint)
@@ -463,7 +543,7 @@ func (g *OPCUAInput) handleSingleEndpointDiscovery(ctx context.Context, endpoint
 // This function iterates through a list of OPC UA endpoints and replaces their existing hostnames with a
 // new host provided by the user. This is particularly useful for addressing connectivity issues caused
 // by DNS name discrepancies or when routing through specific network configurations.
-func (g *OPCUAInput) ReplaceHostInEndpoints(endpoints []*ua.EndpointDescription, newHost string) ([]*ua.EndpointDescription, error) {
+func (g *OPCUAConnection) ReplaceHostInEndpoints(endpoints []*ua.EndpointDescription, newHost string) ([]*ua.EndpointDescription, error) {
 	var updatedEndpoints []*ua.EndpointDescription
 
 	for _, endpoint := range endpoints {
@@ -485,7 +565,7 @@ func (g *OPCUAInput) ReplaceHostInEndpoints(endpoints []*ua.EndpointDescription,
 // This function parses the provided endpoint URL, substitutes the host component with a new host, and reconstructs
 // the URL while preserving the original path and query parameters. It ensures that the modified URL remains
 // valid and compatible with OPC UA communication protocols.
-func (g *OPCUAInput) ReplaceHostInEndpointURL(endpointURL, newHost string) (string, error) {
+func (g *OPCUAConnection) ReplaceHostInEndpointURL(endpointURL, newHost string) (string, error) {
 
 	// Remove the "opc.tcp://" prefix to simplify parsing.
 	newHost = strings.TrimPrefix(newHost, "opc.tcp://")
@@ -514,7 +594,7 @@ func (g *OPCUAInput) ReplaceHostInEndpointURL(endpointURL, newHost string) (stri
 // This function decodes and parses the server’s certificate from PEM format and logs various attributes,
 // such as validity periods, DNS names, IP addresses, and URIs. It provides transparency into the security
 // credentials presented by the OPC UA server, aiding in the verification of server authenticity and trustworthiness.
-func (g *OPCUAInput) logCertificateInfo(certBytes []byte) {
+func (g *OPCUAConnection) logCertificateInfo(certBytes []byte) {
 	g.Log.Infof("  Server certificate:")
 
 	// Decode the certificate from base64 to DER format
@@ -551,7 +631,7 @@ func (g *OPCUAInput) logCertificateInfo(certBytes []byte) {
 // Returns:
 // - *opcua.Client: A pointer to the connected OPC UA client, if successful.
 // - error: An error object if the connection attempt fails.
-func (g *OPCUAInput) connectWithoutSecurity(
+func (g *OPCUAConnection) connectWithoutSecurity(
 	ctx context.Context,
 	endpoints []*ua.EndpointDescription,
 	authType ua.UserTokenType,
@@ -611,7 +691,7 @@ func (g *OPCUAInput) connectWithoutSecurity(
 // Returns:
 // - *opcua.Client - The connected OPC UA client.
 // - error - An error if the connection fails.
-func (g *OPCUAInput) encryptedConnect(
+func (g *OPCUAConnection) encryptedConnect(
 	ctx context.Context,
 	endpoints []*ua.EndpointDescription,
 	authType ua.UserTokenType,
@@ -651,7 +731,7 @@ func (g *OPCUAInput) encryptedConnect(
 // unencryptedConnect is used as a fallback, so if the user decides not to use
 // an encrypted connection this will be executed and tries to connect to any
 // endpoints ("encrypted">none-encrypted)
-func (g *OPCUAInput) unencryptedConnect(
+func (g *OPCUAConnection) unencryptedConnect(
 	ctx context.Context,
 	endpoints []*ua.EndpointDescription,
 	authType ua.UserTokenType,
@@ -683,7 +763,7 @@ func (g *OPCUAInput) unencryptedConnect(
 // connectToDirectEndpoint establishes a connection to an OPC UA server using a direct endpoint.
 // It takes a context for managing the connection lifecycle and an authentication type for user token.
 // It returns an OPC UA client instance and an error if the connection fails.
-func (g *OPCUAInput) connectToDirectEndpoint(ctx context.Context, authType ua.UserTokenType) (*opcua.Client, error) {
+func (g *OPCUAConnection) connectToDirectEndpoint(ctx context.Context, authType ua.UserTokenType) (*opcua.Client, error) {
 
 	g.Log.Infof("Directly connecting to the endpoint %s", g.Endpoint)
 
@@ -740,7 +820,7 @@ func (g *OPCUAInput) connectToDirectEndpoint(ctx context.Context, authType ua.Us
 //
 // Returns:
 // - error: An error if the connection fails, otherwise nil.
-func (g *OPCUAInput) connect(ctx context.Context) error {
+func (g *OPCUAConnection) connect(ctx context.Context) error {
 	var (
 		c         *opcua.Client
 		endpoints []*ua.EndpointDescription
@@ -809,7 +889,7 @@ func (g *OPCUAInput) connect(ctx context.Context) error {
 //
 // On failure:
 //   - it returns the error
-func (g *OPCUAInput) openConnection(
+func (g *OPCUAConnection) openConnection(
 	ctx context.Context,
 	endpoint *ua.EndpointDescription,
 	authType ua.UserTokenType,
