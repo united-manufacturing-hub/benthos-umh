@@ -41,6 +41,6 @@ jobs:
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.19.0
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.22.1
       - name: Test
         run: TEST_DEBUG_IFM_ENDPOINT=${{ secrets.TEST_DEBUG_IFM_ENDPOINT }} make test-serial
