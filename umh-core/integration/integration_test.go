@@ -4,8 +4,10 @@ package integration_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
@@ -79,7 +81,13 @@ func stopContainer() error {
 // waitForMetrics polls the /metrics endpoint until it returns 200
 func waitForMetrics() error {
 	Eventually(func() error {
-		resp, err := http.Get(metricsURL)
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, "GET", metricsURL, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return err
 		}
@@ -119,12 +127,84 @@ func parseFloat(s string) (float64, error) {
 
 // checkGoldenService sends a test request to the golden service and returns its status code
 func checkGoldenService() int {
-	checkResp, e := http.Post("http://localhost:8082", "application/json", bytes.NewBuffer([]byte(`{"message": "test"}`)))
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "POST", "http://localhost:8082", bytes.NewBuffer([]byte(`{"message": "test"}`)))
+	if err != nil {
+		return 0
+	}
+	req.Header.Set("Content-Type", "application/json")
+	checkResp, e := http.DefaultClient.Do(req)
 	if e != nil {
 		return 0
 	}
+
 	defer checkResp.Body.Close()
+
 	return checkResp.StatusCode
+}
+
+// startMonitoringGoroutine starts a goroutine that continuously monitors metrics and golden service health
+func startMonitoringGoroutine(duration time.Duration, interval time.Duration) (chan bool, chan error) {
+	done := make(chan bool)
+	errorChan := make(chan error, 10) // Buffer for errors
+	var lastMetrics string            // Store last successful metrics
+
+	go func() {
+		defer GinkgoRecover() // Required for Gomega assertions in goroutines
+
+		Consistently(func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, "GET", metricsURL, nil)
+			if err != nil {
+				errorChan <- fmt.Errorf("failed to create request: %w\nLast metrics:\n%s", err, lastMetrics)
+				return err
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				errorChan <- fmt.Errorf("failed to get metrics: %w\nLast metrics:\n%s", err, lastMetrics)
+				return err
+			}
+			defer resp.Body.Close()
+
+			data, err := io.ReadAll(resp.Body)
+			if err != nil {
+				errorChan <- fmt.Errorf("failed to read metrics: %w\nLast metrics:\n%s", err, lastMetrics)
+				return err
+			}
+
+			// Store the latest metrics
+			lastMetrics = string(data)
+
+			// Use InterceptGomegaFailures to catch any assertion failures
+			failures := InterceptGomegaFailures(func() {
+				checkWhetherMetricsHealthy(string(data))
+			})
+
+			if len(failures) > 0 {
+				err := fmt.Errorf("metrics unhealthy: %s\nLast metrics:\n%s", failures[0], lastMetrics)
+				errorChan <- err
+				return err
+			}
+
+			GinkgoWriter.Println("✅ Metrics are healthy")
+
+			status := checkGoldenService()
+			if status != 200 {
+				err := fmt.Errorf("golden service returned status %d\nLast metrics:\n%s", status, lastMetrics)
+				errorChan <- err
+				return err
+			}
+			GinkgoWriter.Println("✅ Golden service is running")
+
+			return nil
+		}, duration, interval).Should(Succeed())
+
+		done <- true
+	}()
+
+	return done, errorChan
 }
 
 // ---------- Actual Ginkgo Tests ----------
@@ -202,7 +282,7 @@ benthos: []
 		})
 	})
 
-	FContext("with multiple services (golden + a 'sleep' service)", func() {
+	Context("with multiple services (golden + a 'sleep' service)", func() {
 		BeforeAll(func() {
 			// Build a config that has both the golden service and another dummy s6 service
 			extraService := config.S6FSMConfig{
@@ -243,7 +323,13 @@ benthos: []
 			// Now verify metrics are consistently healthy over time
 			Consistently(func() error {
 				// Make a fresh request each time to get updated metrics
-				resp, err := http.Get(metricsURL)
+				ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+				defer cancel()
+				req, err := http.NewRequestWithContext(ctx, "GET", metricsURL, nil)
+				if err != nil {
+					return err
+				}
+				resp, err := http.DefaultClient.Do(req)
 				if err != nil {
 					return err
 				}
@@ -257,8 +343,107 @@ benthos: []
 				// This will panic and fail the test if metrics aren't healthy
 				checkWhetherMetricsHealthy(string(freshData))
 				GinkgoWriter.Println("Metrics are healthy")
+
+				status := checkGoldenService()
+				if status != 200 {
+					GinkgoWriter.Printf("❌ Golden service returned status %d\n", status)
+					return fmt.Errorf("golden service returned status %d", status)
+				}
+				GinkgoWriter.Println("✅ Golden service is running")
+
 				return nil
 			}, 5*time.Minute, 1*time.Second).Should(Succeed())
+		})
+	})
+
+	Context("with service scaling test", Label("integration", "scaling"), func() {
+		BeforeAll(func() {
+			// Start with an empty config
+			emptyConfig := `
+agent:
+  metricsPort: 8080
+services: []
+benthos: []
+`
+			Expect(writeConfigFile(emptyConfig)).To(Succeed())
+			Expect(startContainer()).To(Succeed())
+			Expect(waitForMetrics()).To(Succeed(), "Metrics endpoint should be available with empty config")
+		})
+
+		AfterAll(func() {
+			Expect(stopContainer()).To(Succeed(), "Stop container after scaling test")
+		})
+
+		It("should scale up to multiple services while maintaining healthy metrics", func() {
+			// Main test: Scale up to 10 services
+			GinkgoWriter.Println("Starting service scaling test")
+
+			// First add just the golden service to verify it works
+			cfg := NewBuilder().AddGoldenService().BuildYAML()
+			Expect(writeConfigFile(cfg)).To(Succeed())
+
+			// Wait for golden service to be ready
+			Eventually(func() int {
+				return checkGoldenService()
+			}, 20*time.Second, 1*time.Second).Should(Equal(200),
+				"Golden service should respond with 200 OK")
+
+			// Start monitoring goroutine
+			done, errorChan := startMonitoringGoroutine(5*time.Minute, 5*time.Second)
+
+			GinkgoWriter.Println("Golden service is up, now adding 10 services at once...")
+
+			// Create builder with golden service + 10 sleep services
+			builder := NewBuilder().AddGoldenService()
+
+			// Add all 10 "sleep" services at once
+			for i := 0; i < 10; i++ {
+				serviceName := fmt.Sprintf("sleepy-%d", i)
+
+				// Add sleeping services
+				builder.AddSleepService(serviceName, "600")
+			}
+
+			// Write single config with all services
+			fullConfig := builder.BuildYAML()
+			GinkgoWriter.Println("Generated config with 11 services (1 golden + 10 sleep services)")
+			GinkgoWriter.Println(fullConfig)
+			Expect(writeConfigFile(fullConfig)).To(Succeed())
+
+			// Create a deterministic random number generator for reproducible tests
+			r := rand.New(rand.NewSource(42))
+
+			// Chaos monkey: randomly stop and start services
+			for i := 0; i < 100; i++ { // Do 100 random actions
+				// Random service index (0-9)
+				randomIndex := r.Intn(10)
+				randomServiceName := fmt.Sprintf("sleepy-%d", randomIndex)
+
+				// Random action (stop or start)
+				action := "start"
+				if r.Float64() < 0.5 {
+					action = "stop"
+					builder.StopService(randomServiceName)
+				} else {
+					builder.StartService(randomServiceName)
+				}
+
+				GinkgoWriter.Printf("Chaos monkey: %sing service %s\n", action, randomServiceName)
+				Expect(writeConfigFile(builder.BuildYAML())).To(Succeed())
+
+				// Random delay
+				delay := time.Duration(100+r.Intn(500)) * time.Millisecond
+				time.Sleep(delay)
+			}
+
+			// Check for any errors from the monitoring goroutine
+			select {
+			case err := <-errorChan:
+				Fail(fmt.Sprintf("Error in background monitoring: %v", err))
+			case <-done:
+				GinkgoWriter.Println("A monitoring routine completed successfully")
+			}
+			GinkgoWriter.Println("Scaling test completed successfully")
 		})
 	})
 })

@@ -62,3 +62,38 @@ func (b *Builder) BuildYAML() string {
 	out, _ := yaml.Marshal(b.full)
 	return string(out)
 }
+
+func (b *Builder) AddSleepService(name string, duration string) *Builder {
+	b.full.Services = append(b.full.Services, config.S6FSMConfig{
+		FSMInstanceConfig: config.FSMInstanceConfig{
+			Name:            name,
+			DesiredFSMState: "running",
+		},
+		S6ServiceConfig: s6.S6ServiceConfig{
+			Command: []string{"sleep", duration},
+		},
+	})
+	return b
+}
+
+// StopService stops a service by name
+func (b *Builder) StopService(name string) *Builder {
+	for i, s := range b.full.Services {
+		if s.FSMInstanceConfig.Name == name {
+			b.full.Services[i].FSMInstanceConfig.DesiredFSMState = "stopped"
+			break
+		}
+	}
+	return b
+}
+
+// StartService starts a service by name
+func (b *Builder) StartService(name string) *Builder {
+	for i, s := range b.full.Services {
+		if s.FSMInstanceConfig.Name == name {
+			b.full.Services[i].FSMInstanceConfig.DesiredFSMState = "running"
+			break
+		}
+	}
+	return b
+}
