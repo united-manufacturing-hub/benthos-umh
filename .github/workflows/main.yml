@@ -36,7 +36,7 @@ jobs:
         #architecture: ["amd64", "arm64", "arm/v7"]
         architecture: ['amd64', 'arm64']
     runs-on:
-      group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || matrix.architecture == 'arm/v7' && 'arc-runners-small' || 'arc-runners-build' }}
+      #group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || matrix.architecture == 'arm/v7' && 'arc-runners-small' || 'arc-runners-build' }}
       group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || 'arc-runners-build' }}
     outputs:
       tags: ${{ steps.meta.outputs.tags }}
@@ -195,8 +195,8 @@ jobs:
           done
 
           # Define architectures
-          ARCHITECTURES=("amd64" "arm64" "arm/v7")
-
+          #ARCHITECTURES=("amd64" "arm64" "arm/v7")
+          ARCHITECTURES=("amd64" "arm64")
           # Create manifests for each base tag
           for TAG in "${TAG_ARRAY[@]}"; do
             echo "Processing tag $TAG"
@@ -251,7 +251,8 @@ jobs:
           - goos: darwin
             goarch: arm64
     runs-on:
-      group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || matrix.architecture == 'armv7' && 'arc-runners-small' || 'arc-runners-build' }}
+      #group: ${{ matrix.goarch == 'arm64' && 'arc-runners-small' || matrix.goarch == 'armv7' && 'arc-runners-small' || 'arc-runners-build' }}
+      group: ${{ matrix.goarch == 'arm64' && 'arc-runners-small' || 'arc-runners-build' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
