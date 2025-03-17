@@ -142,6 +142,8 @@ func (c *ControlLoop) Reconcile(ctx context.Context) error {
 
 // Stop gracefully stops the control loop and metrics server
 func (c *ControlLoop) Stop(ctx context.Context) error {
+	// Stop the starvation checker
+	c.starvationChecker.Stop()
 
 	// Signal the control loop to stop
 	ctx.Done()

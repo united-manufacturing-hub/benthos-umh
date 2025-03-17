@@ -27,7 +27,6 @@ test-hello: clean build
 		--name $(IMAGE_NAME) \
 		-v $(PWD)/data:/data \
 		-p 8081:8080 \
-		-e LOGGING_LEVEL=debug \
 		$(IMAGE_NAME):$(TAG)
 
 test-hello-100: clean build
