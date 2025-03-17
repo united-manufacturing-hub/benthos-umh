@@ -74,11 +74,13 @@ var _ = Describe("S6 Run Script", func() {
 
 			var buf bytes.Buffer
 			err = tmpl.Execute(&buf, struct {
-				Command []string
-				Env     map[string]string
+				Command     []string
+				Env         map[string]string
+				MemoryLimit int64
 			}{
-				Command: originalConfig.Command,
-				Env:     originalConfig.Env,
+				Command:     originalConfig.Command,
+				Env:         originalConfig.Env,
+				MemoryLimit: originalConfig.MemoryLimit,
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -146,11 +148,13 @@ var _ = Describe("S6 Run Script", func() {
 
 			var buf bytes.Buffer
 			err = tmpl.Execute(&buf, struct {
-				Command []string
-				Env     map[string]string
+				Command     []string
+				Env         map[string]string
+				MemoryLimit int64
 			}{
-				Command: complexConfig.Command,
-				Env:     complexConfig.Env,
+				Command:     complexConfig.Command,
+				Env:         complexConfig.Env,
+				MemoryLimit: complexConfig.MemoryLimit,
 			})
 			Expect(err).NotTo(HaveOccurred())
 

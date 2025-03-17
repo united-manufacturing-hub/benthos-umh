@@ -8,12 +8,12 @@ RUN apk add --no-cache \
     musl-dev
 
 # Copy go.mod first for better caching
-COPY ./umh-core/go.mod ./umh-core/
+COPY ./go.mod ./umh-core/
 WORKDIR /go/src/github.com/united-manufacturing-hub/benthos-umh/umh-core
 RUN go mod download
 
 # Copy and build umh-core
-COPY ./umh-core .
+COPY . .
 RUN CGO_ENABLED=0 go build \
     -ldflags "-s -w" \
     -o /go/bin/umh-core \
@@ -75,7 +75,7 @@ RUN chmod +x /usr/local/bin/umh-core && \
     test -x /usr/local/bin/umh-core || (echo "Binary not executable" && exit 1) 
 
 # Step 6: Copy s6 service configuration
-COPY ./umh-core/s6-base/s6-rc.d /etc/s6-overlay/s6-rc.d/
+COPY ./s6-base/s6-rc.d /etc/s6-overlay/s6-rc.d/
 RUN chmod +x /etc/s6-overlay/s6-rc.d/umh-core/run 
 
 # Step 7: Set environment variables

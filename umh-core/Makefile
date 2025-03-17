@@ -4,7 +4,7 @@ IMAGE_NAME = umh-core
 TAG = latest
 
 build:
-	docker build -t $(IMAGE_NAME):$(TAG) -f Dockerfile ..
+	docker build -t $(IMAGE_NAME):$(TAG) -f Dockerfile .
 
 run: build
 	docker run \
@@ -19,6 +19,15 @@ clean:
 
 test:
 	go test -v ./...
+
+test-empty: clean build
+	@mkdir -p $(PWD)/data
+	@cp $(PWD)/examples/example-config-empty.yaml $(PWD)/data/config.yaml
+	docker run \
+		--name $(IMAGE_NAME) \
+		-v $(PWD)/data:/data \
+		-p 8081:8080 \
+		$(IMAGE_NAME):$(TAG)
 
 test-hello: clean build
 	@mkdir -p $(PWD)/data

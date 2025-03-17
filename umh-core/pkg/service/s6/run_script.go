@@ -12,6 +12,16 @@ export {{ $key }} {{ $value }}
 {{- if .Env }}
 
 {{- end }}
+# Memory limit
+# -m for total memory
+{{- if ne .MemoryLimit 0 }}
+s6-softlimit -m {{ .MemoryLimit }}
+{{- end }}
+
+# Drop privileges
+s6-setuidgid nobody 
+
+# Keep stderr and stdout separate but both visible in logs
 fdmove -c 2 1 
 {{ range $index, $cmd := .Command }}{{ if eq $index 0 }}{{ $cmd }}{{ else }} {{ $cmd }}{{ end }}{{ end }}
 `
@@ -22,3 +32,6 @@ var runScriptParser = regexp.MustCompile(`(?m)fdmove -c 2 1(?:\s+(.+)|$)`)
 
 // envVarParser is a regexp to extract environment variables from the run script
 var envVarParser = regexp.MustCompile(`export\s+(\w+)\s+(.+)`)
+
+// memoryLimitParser is a regexp to extract the memory limit from the run script
+var memoryLimitParser = regexp.MustCompile(`s6-softlimit -m\s+(\d+)`)

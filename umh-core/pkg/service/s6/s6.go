@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/template"
@@ -26,6 +27,7 @@ type S6ServiceConfig struct {
 	Command     []string          `yaml:"command"`
 	Env         map[string]string `yaml:"env"`
 	ConfigFiles map[string]string `yaml:"configFiles"`
+	MemoryLimit int64             `yaml:"memoryLimit"` // 0 means no memory limit, see also https://skarnet.org/software/s6/s6-softlimit.html
 }
 
 // ServiceStatus represents the status of an S6 service
@@ -164,7 +166,7 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 
 	// s6-supervise requires a run script to function properly
 	if len(config.Command) > 0 {
-		if err := s.createS6RunScript(ctx, servicePath, config.Command, config.Env); err != nil {
+		if err := s.createS6RunScript(ctx, servicePath, config.Command, config.Env, config.MemoryLimit); err != nil {
 			return fmt.Errorf("failed to create S6 run script: %w", err)
 		}
 	} else {
@@ -176,23 +178,22 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 		return fmt.Errorf("failed to create S6 config files: %w", err)
 	}
 
-	// Register service in user/contents.d
-	serviceName := filepath.Base(servicePath)
-	userContentsDPath := filepath.Join(filepath.Dir(servicePath), "user", "contents.d")
-	if err := s.fsService.EnsureDirectory(ctx, userContentsDPath); err != nil {
-		return fmt.Errorf("failed to create user/contents.d directory: %w", err)
-	}
-
-	contentsFile := filepath.Join(userContentsDPath, serviceName)
-	f, err := s.fsService.CreateFile(ctx, contentsFile, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to create contents file: %w", err)
-	}
-
-	closeErr := f.Close()
-	if closeErr != nil {
-		return fmt.Errorf("failed to close contents file: %w", closeErr)
-	}
+	// There is no need to register the service in user/contents.d,
+	// as s6-overlay expects a static service configuration defined at container build time.
+	// S6-overlay works in two phases:
+	// 1. At container build time: Services are defined in /etc/s6-overlay/s6-rc.d/
+	//    (including the special "user" bundle that lists services to start)
+	// 2. At container startup: S6-overlay copies these definitions to /run/service/ and supervises them
+	//
+	// Attempting to modify /run/service/user/contents.d at runtime will cause errors because:
+	// - S6-overlay treats "user" as a special directory and tries to supervise it
+	// - This causes the "s6-supervise user: warning: unable to spawn ./run (waiting 60 seconds)" error
+	// - S6-overlay won't recognize services added after container initialization
+	//
+	// For dynamic services, it's better to:
+	// 1. Create services in their own directories under /run/service/
+	// 2. Use s6-svscanctl to notify s6 about the new service
+	// 3. Avoid modifying the special "user" directory structure
 
 	// Create a dependency on base services to prevent race conditions
 	dependenciesDPath := filepath.Join(servicePath, "dependencies.d")
@@ -201,12 +202,12 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 	}
 
 	baseDepFile := filepath.Join(dependenciesDPath, "base")
-	f, err = s.fsService.CreateFile(ctx, baseDepFile, 0644)
+	f, err := s.fsService.CreateFile(ctx, baseDepFile, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to create base dependency file: %w", err)
 	}
 
-	closeErr = f.Close()
+	closeErr := f.Close()
 	if closeErr != nil {
 		return fmt.Errorf("failed to close base dependency file: %w", closeErr)
 	}
@@ -231,7 +232,8 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 }
 
 // createRunScript creates a run script for the service
-func (s *DefaultService) createS6RunScript(ctx context.Context, servicePath string, command []string, env map[string]string) error {
+func (s *DefaultService) createS6RunScript(ctx context.Context, servicePath string, command []string, env map[string]string, memoryLimit int64) error {
+
 	runScript := filepath.Join(servicePath, "run")
 	f, err := s.fsService.CreateFile(ctx, runScript, 0644)
 	if err != nil {
@@ -250,11 +252,13 @@ func (s *DefaultService) createS6RunScript(ctx context.Context, servicePath stri
 
 	// Create template data
 	data := struct {
-		Command []string
-		Env     map[string]string
+		Command     []string
+		Env         map[string]string
+		MemoryLimit int64
 	}{
-		Command: command,
-		Env:     env,
+		Command:     command,
+		Env:         env,
+		MemoryLimit: memoryLimit,
 	}
 
 	// Parse and execute the template
@@ -619,6 +623,7 @@ func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6S
 	observedS6ServiceConfig := S6ServiceConfig{
 		ConfigFiles: make(map[string]string),
 		Env:         make(map[string]string),
+		MemoryLimit: 0,
 	}
 
 	// Fetch run script
@@ -707,6 +712,15 @@ func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6S
 
 				observedS6ServiceConfig.Command = append([]string{cmd}, args...)
 			}
+		}
+	}
+
+	// Extract memory limit using regex
+	memoryLimitMatches := memoryLimitParser.FindStringSubmatch(scriptContent)
+	if len(memoryLimitMatches) >= 2 && memoryLimitMatches[1] != "" {
+		observedS6ServiceConfig.MemoryLimit, err = strconv.ParseInt(memoryLimitMatches[1], 10, 64)
+		if err != nil {
+			return S6ServiceConfig{}, fmt.Errorf("failed to parse memory limit: %w", err)
 		}
 	}
 

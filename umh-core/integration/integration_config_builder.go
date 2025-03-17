@@ -1,0 +1,64 @@
+// builder.go (or in integration_test.go)
+package integration_test
+
+import (
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
+	"gopkg.in/yaml.v3"
+)
+
+type Builder struct {
+	full config.FullConfig
+}
+
+func NewBuilder() *Builder {
+	return &Builder{
+		full: config.FullConfig{
+			Agent: config.AgentConfig{
+				MetricsPort: 8080,
+			},
+			Services: []config.S6FSMConfig{},
+			Benthos:  []config.BenthosConfig{},
+		},
+	}
+}
+
+func (b *Builder) AddGoldenService() *Builder {
+	b.full.Services = append(b.full.Services, config.S6FSMConfig{
+		FSMInstanceConfig: config.FSMInstanceConfig{
+			Name:            "golden-service",
+			DesiredFSMState: "running",
+		},
+		S6ServiceConfig: s6.S6ServiceConfig{
+			Command: []string{
+				"/usr/local/bin/benthos",
+				"-c",
+				"/run/service/golden-service/config/golden-service.yaml",
+			},
+			Env: map[string]string{
+				"LOG_LEVEL": "DEBUG",
+			},
+			ConfigFiles: map[string]string{
+				"golden-service.yaml": `---
+input:
+  http_server:
+    path: /
+    port: 8082
+output:
+  stdout: {}
+`,
+			},
+		},
+	})
+	return b
+}
+
+func (b *Builder) AddService(s config.S6FSMConfig) *Builder {
+	b.full.Services = append(b.full.Services, s)
+	return b
+}
+
+func (b *Builder) BuildYAML() string {
+	out, _ := yaml.Marshal(b.full)
+	return string(out)
+}

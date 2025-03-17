@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 )
@@ -113,7 +114,15 @@ func (s *S6Instance) updateObservedState(ctx context.Context) error {
 	info, err := s.service.Status(ctx, s.servicePath)
 	if err != nil {
 		s.ObservedState.ServiceInfo.Status = s6service.ServiceUnknown
+
+		if s.baseFSMInstance.GetCurrentFSMState() == fsm.LifecycleStateCreating || s.baseFSMInstance.GetCurrentFSMState() == fsm.LifecycleStateToBeCreated {
+			// If the service is being created, we don't want to count this as an error
+			return s6service.ErrServiceNotExist
+		}
+
+		// Otherwise, we count this as an error
 		metrics.IncErrorCount(metrics.ComponentS6Instance, s.baseFSMInstance.GetID())
+		s.baseFSMInstance.GetLogger().Errorf("error updating observed state for %s: %s", s.baseFSMInstance.GetID(), err)
 		return err
 	}
 	metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s.baseFSMInstance.GetID()+".updateObservedState.status", time.Since(start))
@@ -257,5 +266,10 @@ func (s *S6Instance) logConfigDifferences(desired, observed s6service.S6ServiceC
 				s.baseFSMInstance.GetLogger().Infof("   - %s: want: <missing>, is: present", path)
 			}
 		}
+	}
+
+	// Memory limit differences
+	if desired.MemoryLimit != observed.MemoryLimit {
+		s.baseFSMInstance.GetLogger().Infof("Memory limit - want: %d, is: %d", desired.MemoryLimit, observed.MemoryLimit)
 	}
 }
