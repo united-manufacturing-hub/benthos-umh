@@ -26,7 +26,11 @@ target:
        -o tmp/bin/benthos \
        cmd/benthos/main.go
 
-test:
+setup-test-deps:
+	@go get -t ./...
+	@go mod tidy
+
+test: setup-test-deps
 	@ginkgo -r --output-interceptor-mode=none --github-output -vv -trace -p --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./...
 
 update-benthos:
