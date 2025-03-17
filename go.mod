@@ -32,7 +32,7 @@ require (
 	github.com/RuneRoven/benthosSMTP v0.0.1
 	github.com/dop251/goja v0.0.0-20250309171923-bcd7cc6bf64c
 	github.com/google/uuid v1.6.0
-	github.com/gopcua/opcua v0.7.1
+	github.com/gopcua/opcua v0.5.3
 	github.com/grid-x/modbus v0.0.0-20250312115347-d1d8b421f52b
 	github.com/redpanda-data/benthos/v4 v4.45.1
 	github.com/redpanda-data/connect/public/bundle/free/v4 v4.49.1
