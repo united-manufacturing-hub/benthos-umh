@@ -16,7 +16,7 @@ import (
 // NewS6Instance creates a new S6Instance with the given ID and service path
 func NewS6Instance(
 	s6BaseDir string,
-	config config.S6FSMConfig) *S6Instance {
+	config config.S6FSMConfig) (*S6Instance, error) {
 
 	cfg := internal_fsm.BaseFSMInstanceConfig{
 		ID:                           config.Name,
@@ -43,7 +43,7 @@ func NewS6Instance(
 
 	instance.registerCallbacks()
 
-	return instance
+	return instance, nil
 }
 
 // NewS6InstanceWithService creates a new S6Instance with a custom service implementation
@@ -51,10 +51,13 @@ func NewS6Instance(
 func NewS6InstanceWithService(
 	s6BaseDir string,
 	config config.S6FSMConfig,
-	service s6service.Service) *S6Instance {
-	instance := NewS6Instance(s6BaseDir, config)
+	service s6service.Service) (*S6Instance, error) {
+	instance, err := NewS6Instance(s6BaseDir, config)
+	if err != nil {
+		return nil, err
+	}
 	instance.service = service
-	return instance
+	return instance, nil
 }
 
 // SetDesiredFSMState safely updates the desired state

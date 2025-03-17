@@ -36,8 +36,6 @@ const (
 // Reconcile reconciles desired & observed states for Benthos services.
 // It returns a boolean indicating if the manager was reconciled.
 func (m *BenthosManager) Reconcile(ctx context.Context, desiredState []config.BenthosConfig) (error, bool) {
-	// TODO: Update this to use BenthosConfig when available
-	// For now, we're using S6FSMConfig for skeleton implementation
 
 	// Step 1: Detect external changes
 	observedState := m.Instances

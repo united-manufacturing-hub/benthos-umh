@@ -4,8 +4,13 @@ package fsm
 
 import (
 	"context"
+
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 )
 
-type FSMManager interface {
-	Reconcile(ctx context.Context, cfg interface{}) (error, bool)
+// FSMManager is a generic interface for managing FSM instances
+type FSMManager[C any] interface {
+	// Reconcile reconciles the current state with the desired state
+	Reconcile(ctx context.Context, config config.FullConfig) (error, bool)
+	// Additional common methods
 }

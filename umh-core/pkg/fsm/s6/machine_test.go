@@ -30,9 +30,13 @@ var _ = Describe("S6 FSM", func() {
 		mockService = s6service.NewMockService()
 		mockService.ExistingServices[testS6BaseDir] = true
 
-		instance = NewS6InstanceWithService(testS6BaseDir, config.S6FSMConfig{
-			Name: testID,
+		var err error
+		instance, err = NewS6InstanceWithService(testS6BaseDir, config.S6FSMConfig{
+			FSMInstanceConfig: config.FSMInstanceConfig{
+				Name: testID,
+			},
 		}, mockService)
+		Expect(err).NotTo(HaveOccurred())
 		ctx = context.Background()
 	})
 

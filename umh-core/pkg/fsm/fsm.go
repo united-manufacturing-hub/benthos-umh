@@ -4,7 +4,7 @@ import (
 	"context"
 )
 
-// FSMInstance represents a finite state machine instance
+// FSMInstance is the interface that all FSM instances must implement
 type FSMInstance interface {
 	// GetCurrentFSMState returns the current state of the FSM
 	GetCurrentFSMState() string
@@ -16,6 +16,8 @@ type FSMInstance interface {
 	Remove(ctx context.Context) error
 	// IsRemoved returns true if the instance has been removed
 	IsRemoved() bool
+	// Reconcile performs reconciliation of the FSM
+	Reconcile(ctx context.Context) (error, bool)
 	// PrintState prints the current state of the FSM
 	PrintState()
 }

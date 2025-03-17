@@ -78,7 +78,7 @@ var _ = Describe("ConfigManager", func() {
 
 				Expect(config.Services).To(HaveLen(1))
 				Expect(config.Services[0].Name).To(Equal("service1"))
-				Expect(config.Services[0].DesiredState).To(Equal("running"))
+				Expect(config.Services[0].FSMInstanceConfig.DesiredFSMState).To(Equal("running"))
 				Expect(config.Services[0].S6ServiceConfig.Command).To(Equal([]string{"/bin/echo", "hello world"}))
 				Expect(config.Services[0].S6ServiceConfig.Env).To(HaveKeyWithValue("KEY", "value"))
 				Expect(config.Services[0].S6ServiceConfig.ConfigFiles).To(HaveKeyWithValue("file.txt", "content"))
