@@ -1,4 +1,4 @@
-ARG VARIANT=1.23-bookworm
+ARG VARIANT=1.24-bookworm
 FROM golang:${VARIANT}
 
 RUN go install github.com/onsi/ginkgo/v2/ginkgo@v2.19.0

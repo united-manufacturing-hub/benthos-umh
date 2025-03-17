@@ -20,7 +20,7 @@ inputs:
   go_version:
     description: The Go version.
     required: false
-    default: '1.23.x'
+    default: '1.24.x'
 
 runs:
   using: composite
