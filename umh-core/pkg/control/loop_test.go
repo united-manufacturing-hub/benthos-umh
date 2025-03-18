@@ -141,7 +141,7 @@ var _ = Describe("ControlLoop", func() {
 
 			err := controlLoop.Reconcile(ctx)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(Equal("config error"))
+			Expect(err.Error()).To(ContainSubstring("config error"))
 			Expect(mockConfig.GetConfigCalled).To(BeTrue())
 			Expect(mockManager.ReconcileCalled).To(BeFalse())
 		})

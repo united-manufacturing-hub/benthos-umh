@@ -36,7 +36,6 @@ var _ = Describe("BackoffManager", func() {
 			InitialInterval: 50 * time.Millisecond,
 			MaxInterval:     200 * time.Millisecond,
 			MaxRetries:      3,
-			ComponentName:   "TestComponent",
 			Logger:          logger,
 		}
 
@@ -83,7 +82,6 @@ var _ = Describe("BackoffManager", func() {
 				InitialInterval: 10 * time.Millisecond,
 				MaxInterval:     100 * time.Millisecond,
 				MaxRetries:      2, // Set to 2 for this specific test
-				ComponentName:   "SpecialTestComponent",
 				Logger:          logger,
 			}
 			specialManager := backoff.NewBackoffManager(specialConfig)
@@ -153,7 +151,6 @@ var _ = Describe("BackoffManager", func() {
 				InitialInterval: 10 * time.Millisecond,
 				MaxInterval:     100 * time.Millisecond,
 				MaxRetries:      2, // Set to 2 for predictable behavior
-				ComponentName:   "SpecialTestComponent",
 				Logger:          logger,
 			}
 			specialManager := backoff.NewBackoffManager(specialConfig)

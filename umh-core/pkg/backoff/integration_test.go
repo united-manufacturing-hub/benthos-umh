@@ -25,7 +25,6 @@ func NewMockComponent(maxRetries uint64) *MockComponent {
 		InitialInterval: 100 * time.Millisecond, // Use larger intervals for more stability
 		MaxInterval:     500 * time.Millisecond,
 		MaxRetries:      maxRetries,
-		ComponentName:   "MockComponent",
 		Logger:          logger,
 	}
 

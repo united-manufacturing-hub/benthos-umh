@@ -5,9 +5,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cenkalti/backoff"
 	"github.com/looplab/fsm"
 	"go.uber.org/zap"
+
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/backoff"
 )
 
 // BaseFSMInstance implements the public fsm.FSM interface
@@ -23,15 +24,8 @@ type BaseFSMInstance struct {
 	// Callbacks for state transitions
 	callbacks map[string]fsm.Callback
 
-	// backoff is the backoff manager for managing retry attempts
-	backoff backoff.BackOff
-
-	// suspendedUntilTime is the time when the next reconcile is allowed
-	// it is used in the reconcile function to check if the backoff has elapsed
-	suspendedUntilTime time.Time
-
-	// lastError stores the last error that occurred during a transition
-	lastError error
+	// backoffManager is the backoff manager for handling error retries and permanent failures
+	backoffManager *backoff.BackoffManager
 
 	// logger is the logger for the FSM
 	logger *zap.SugaredLogger
@@ -57,14 +51,17 @@ func NewBaseFSMInstance(cfg BaseFSMInstanceConfig, logger *zap.SugaredLogger) *B
 	baseInstance := &BaseFSMInstance{
 		cfg:       cfg,
 		callbacks: make(map[string]fsm.Callback),
-		backoff: func() *backoff.ExponentialBackOff {
-			b := backoff.NewExponentialBackOff()
-			b.InitialInterval = 100 * time.Millisecond
-			b.MaxInterval = 1 * time.Minute
-			return b
-		}(),
-		logger: logger,
+		logger:    logger,
 	}
+
+	// Initialize backoff manager with appropriate configuration
+	backoffConfig := backoff.Config{
+		InitialInterval: 100 * time.Millisecond,
+		MaxInterval:     1 * time.Minute,
+		MaxRetries:      5, // Allow 5 retries before permanent failure
+		Logger:          logger,
+	}
+	baseInstance.backoffManager = backoff.NewBackoffManager(backoffConfig)
 
 	// Combine lifecycle and operational transitions
 	events := []fsm.EventDesc{
@@ -118,23 +115,17 @@ func (s *BaseFSMInstance) AddCallback(eventName string, callback fsm.Callback) {
 
 // GetError returns the last error that occurred during a transition
 func (s *BaseFSMInstance) GetError() error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.lastError
+	return s.backoffManager.GetLastError()
 }
 
 // SetError sets the last error that occurred during a transition
-func (s *BaseFSMInstance) SetError(err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.lastError = err
-
-	// suspend the reconcile
-	if s.suspendedUntilTime.IsZero() {
-		next := s.backoff.NextBackOff()
-		s.suspendedUntilTime = time.Now().Add(next)
-		s.logger.Debugf("Suspending reconcile for %s because of error: %s", next, s.lastError)
+// and returns true if the error is considered a permanent failure
+func (s *BaseFSMInstance) SetError(err error) bool {
+	isPermanent := s.backoffManager.SetError(err)
+	if isPermanent {
+		s.logger.Errorf("FSM %s has reached permanent failure state", s.cfg.ID)
 	}
+	return isPermanent
 }
 
 // setDesiredFSMState safely updates the desired state
@@ -170,10 +161,7 @@ func (s *BaseFSMInstance) SendEvent(ctx context.Context, eventName string, args 
 
 // ClearError clears any error state and resets the backoff
 func (s *BaseFSMInstance) ClearError() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.lastError = nil
-	s.backoff.Reset()
+	s.backoffManager.Reset()
 }
 
 // Remove starts the removal process, it is idempotent and can be called multiple times
@@ -189,32 +177,29 @@ func (s *BaseFSMInstance) IsRemoved() bool {
 	return s.fsm.Current() == LifecycleStateRemoved
 }
 
-// ShouldSkipReconcileBecauseOfError returns true if the reconcile should be skipped because of an error
-// that occurred in the last reconciliation and the backoff period has not yet elapsed
+// ShouldSkipReconcileBecauseOfError returns true if the reconcile should be skipped
+// because of an error that occurred in the last reconciliation and the backoff
+// period has not yet elapsed, or if the FSM is in permanent failure state
 func (s *BaseFSMInstance) ShouldSkipReconcileBecauseOfError() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// If there is an error and the backoff period has not yet elapsed, skip the reconcile
-	if s.lastError != nil && !s.suspendedUntilTime.IsZero() {
-		if time.Now().Before(s.suspendedUntilTime) {
-			s.logger.Debugf("Skipping reconcile because of error: %s. Remaining backoff: %s", s.lastError, time.Until(s.suspendedUntilTime))
-			// It's still too early to retry
-			return true
-		}
-
-		// Reset the suspendedUntilTime so that the next error can trigger a backoff increase again
-		s.suspendedUntilTime = time.Time{}
-	}
-
-	return false
+	return s.backoffManager.ShouldSkipOperation()
 }
 
 // ResetState clears the error and backoff after a successful reconcile
 func (s *BaseFSMInstance) ResetState() {
-	s.ClearError()
-	s.backoff.Reset()
-	s.suspendedUntilTime = time.Time{}
+	s.backoffManager.Reset()
+}
+
+// IsPermanentlyFailed returns true if the FSM has reached a permanent failure state
+// after exceeding the maximum retry attempts
+func (s *BaseFSMInstance) IsPermanentlyFailed() bool {
+	return s.backoffManager.IsPermanentlyFailed()
+}
+
+// GetBackoffError returns a structured error that includes backoff information
+// This will return a permanent failure error or a temporary backoff error
+// depending on the current state
+func (s *BaseFSMInstance) GetBackoffError() error {
+	return s.backoffManager.GetBackoffError()
 }
 
 func (s *BaseFSMInstance) GetID() string {

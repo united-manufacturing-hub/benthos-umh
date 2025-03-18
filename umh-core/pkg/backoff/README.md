@@ -25,7 +25,6 @@ config := backoff.Config{
     InitialInterval: 200 * time.Millisecond,
     MaxInterval:     30 * time.Second,
     MaxRetries:      3,
-    ComponentName:   "MyComponent",
     Logger:          logger,
 }
 manager := backoff.NewBackoffManager(config)
@@ -86,8 +85,8 @@ if err != nil {
         log.Fatal("Operation permanently failed, system needs intervention")
         return err
     }
-    
-    // Regular error handling
+
+    // Note: there are no other error types, so we can just return the error, so this code here should never be reached
     return err
 }
 ```

@@ -35,9 +35,6 @@ type BackoffManager struct {
 	// Flag indicating permanent failure state (max retries exceeded)
 	permanentFailure bool
 
-	// Component name for logging
-	componentName string
-
 	// Logger
 	logger *zap.SugaredLogger
 }
@@ -53,9 +50,6 @@ type Config struct {
 	// Maximum number of retries before permanent failure
 	MaxRetries uint64
 
-	// Component name for logging
-	ComponentName string
-
 	// Logger
 	Logger *zap.SugaredLogger
 }
@@ -66,7 +60,6 @@ func DefaultConfig(componentName string, logger *zap.SugaredLogger) Config {
 		InitialInterval: 100 * time.Millisecond,
 		MaxInterval:     1 * time.Minute,
 		MaxRetries:      5,
-		ComponentName:   componentName,
 		Logger:          logger,
 	}
 }
@@ -83,7 +76,6 @@ func NewBackoffManager(config Config) *BackoffManager {
 
 	return &BackoffManager{
 		backoff:          backoffWithMaxRetries,
-		componentName:    config.ComponentName,
 		logger:           config.Logger,
 		permanentFailure: false,
 	}
@@ -107,7 +99,7 @@ func (m *BackoffManager) SetError(err error) bool {
 
 	// Check if we've reached permanent failure (backoff.Stop)
 	if next == backoff.Stop {
-		m.logger.Errorf("%s has exceeded maximum retries, marking as permanently failed", m.componentName)
+		m.logger.Errorf("Backoff manager has exceeded maximum retries, marking as permanently failed")
 		m.permanentFailure = true
 		m.suspendedUntilTime = time.Time{} // Clear suspension time
 		return true
@@ -115,8 +107,7 @@ func (m *BackoffManager) SetError(err error) bool {
 
 	// Set the suspension time unconditionally for a new backoff period
 	m.suspendedUntilTime = time.Now().Add(next)
-	m.logger.Debugf("Suspending %s operations for %s because of error: %s",
-		m.componentName, next, err)
+	m.logger.Debugf("Suspending operations for %s because of error: %s", next, err)
 
 	return false
 }
@@ -149,8 +140,8 @@ func (m *BackoffManager) ShouldSkipOperation() bool {
 
 	// If the backoff period has not yet elapsed, skip the operation
 	if time.Now().Before(m.suspendedUntilTime) {
-		m.logger.Debugf("Skipping %s operation because of error: %s. Remaining backoff: %s",
-			m.componentName, m.lastError, time.Until(m.suspendedUntilTime))
+		m.logger.Debugf("Skipping operation because of error: %s. Remaining backoff: %s",
+			m.lastError, time.Until(m.suspendedUntilTime))
 		return true
 	}
 
