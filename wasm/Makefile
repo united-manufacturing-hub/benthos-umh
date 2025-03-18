@@ -13,6 +13,7 @@ compress-wasm:
 	gzip -9 -c ./output/benthos-umh.wasm > ./output/benthos-umh.wasm.gz && \
     ls -lh ./output/benthos-umh.wasm ./output/benthos-umh.wasm.gz
 compile:
+	go mod tidy
 	GOOS=js GOARCH=wasm go build -o ./output/benthos-umh.wasm ./...
 
 validate-wasm:
