@@ -18,7 +18,7 @@ name: main
 on:
   push:
     branches:
-      - "**"
+      - '**'
     tags:
       - v*
 env:
@@ -33,7 +33,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       matrix:
-        architecture: ["amd64", "arm64", "arm/v7"]
+        architecture: ['amd64', 'arm64', 'arm/v7']
     runs-on:
       group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || matrix.architecture == 'arm/v7' && 'arc-runners-small' || 'arc-runners-build' }}
     outputs:
@@ -308,25 +308,60 @@ jobs:
           name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ./dist/${{ env.OUTPUT_NAME }}
 
+  build-wasm:
+    runs-on:
+      group: arc-runners-build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request && github.head_ref || github.ref_name }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
+
+      - name: Build WASM
+        working-directory: ./wasm
+        run: make build
+
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ./wasm/output/benthos-umh.wasm
+            ./wasm/output/benthos-umh.wasm.gz
+            ./wasm/output/wasm_exec.js
+
   release:
-    if: needs.build-binaries.result == 'success'
-    needs: build-binaries
+    if: startsWith(github.ref, 'refs/tags/') && (needs.build-binaries.result == 'success' || needs.build-wasm.result == 'success')
+    needs: [build-binaries, build-wasm]
     permissions:
       contents: write
     runs-on:
       group: arc-runners-small
     steps:
-      - name: Download Artifacts
+      - name: Download Binary Artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: "artifact-*-${{ github.run_id }}-${{ github.run_attempt }}"
+          pattern: 'artifact-*-${{ github.run_id }}-${{ github.run_attempt }}'
           path: ./artifacts
+
+      - name: Download WASM Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ./artifacts/wasm
 
       - name: Create or Update Release
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ github.ref_name }}
-          artifacts: "./artifacts/artifact-*-${{ github.run_id }}-${{ github.run_attempt }}/*"
+          artifacts: |
+            ./artifacts/artifact-*-${{ github.run_id }}-${{ github.run_attempt }}/*
+            ./artifacts/wasm/*
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
           prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
