@@ -312,6 +312,7 @@ jobs:
           path: ./dist/${{ env.OUTPUT_NAME }}
 
   build-wasm:
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on:
       group: arc-runners-build
     steps:
