@@ -18,7 +18,7 @@ name: main
 on:
   push:
     branches:
-      - "**"
+      - '**'
     tags:
       - v*
 env:
@@ -33,9 +33,11 @@ jobs:
     timeout-minutes: 60
     strategy:
       matrix:
-        architecture: ["amd64", "arm64", "arm/v7"]
+        #architecture: ["amd64", "arm64", "arm/v7"]
+        architecture: ['amd64', 'arm64']
     runs-on:
-      group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || matrix.architecture == 'arm/v7' && 'arc-runners-small' || 'arc-runners-build' }}
+      #group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || matrix.architecture == 'arm/v7' && 'arc-runners-small' || 'arc-runners-build' }}
+      group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || 'arc-runners-build' }}
     outputs:
       tags: ${{ steps.meta.outputs.tags }}
       BASE_TAGS: ${{ steps.output-tags.outputs.BASE_TAGS }}
@@ -193,8 +195,8 @@ jobs:
           done
 
           # Define architectures
-          ARCHITECTURES=("amd64" "arm64" "arm/v7")
-
+          #ARCHITECTURES=("amd64" "arm64" "arm/v7")
+          ARCHITECTURES=("amd64" "arm64")
           # Create manifests for each base tag
           for TAG in "${TAG_ARRAY[@]}"; do
             echo "Processing tag $TAG"
@@ -249,7 +251,8 @@ jobs:
           - goos: darwin
             goarch: arm64
     runs-on:
-      group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || matrix.architecture == 'armv7' && 'arc-runners-small' || 'arc-runners-build' }}
+      #group: ${{ matrix.goarch == 'arm64' && 'arc-runners-small' || matrix.goarch == 'armv7' && 'arc-runners-small' || 'arc-runners-build' }}
+      group: ${{ matrix.goarch == 'arm64' && 'arc-runners-small' || 'arc-runners-build' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -319,14 +322,14 @@ jobs:
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: "artifact-*-${{ github.run_id }}-${{ github.run_attempt }}"
+          pattern: 'artifact-*-${{ github.run_id }}-${{ github.run_attempt }}'
           path: ./artifacts
 
       - name: Create or Update Release
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ github.ref_name }}
-          artifacts: "./artifacts/artifact-*-${{ github.run_id }}-${{ github.run_attempt }}/*"
+          artifacts: './artifacts/artifact-*-${{ github.run_id }}-${{ github.run_attempt }}/*'
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
           prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
