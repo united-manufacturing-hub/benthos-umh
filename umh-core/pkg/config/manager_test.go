@@ -44,7 +44,7 @@ var _ = Describe("ConfigManager", func() {
 			validYAML = `services:
 - name: service1
   desiredState: running
-  s6:
+  s6ServiceConfig:
     command: ["/bin/echo", "hello world"]
     env:
       KEY: value
@@ -98,7 +98,8 @@ var _ = Describe("ConfigManager", func() {
 
 			It("should return an empty config", func() {
 				config, err := configManager.GetConfig(ctx)
-				Expect(err).NotTo(HaveOccurred())
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("config file does not exist"))
 				Expect(config.Services).To(BeEmpty())
 			})
 		})

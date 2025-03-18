@@ -2,16 +2,10 @@ package integration_test
 
 import (
 	"strings"
-	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
-
-func TestMetricsParsing(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Metrics Parsing Suite")
-}
 
 var _ = Describe("Metrics Parsing", Label("metrics_parsing"), func() {
 	// Sample metrics from real system
@@ -156,7 +150,7 @@ umh_core_reconcile_starved_total_seconds 3`
 
 			highReconcileMetrics := strings.ReplaceAll(noErrorStarvedMetrics,
 				"umh_core_reconcile_duration_milliseconds{component=\"control_loop\",instance=\"main\",quantile=\"0.99\"} 16",
-				"umh_core_reconcile_duration_milliseconds{component=\"control_loop\",instance=\"main\",quantile=\"0.99\"} 30")
+				"umh_core_reconcile_duration_milliseconds{component=\"control_loop\",instance=\"main\",quantile=\"0.99\"} 50")
 
 			failures := InterceptGomegaFailures(func() {
 				checkWhetherMetricsHealthy(highReconcileMetrics)
@@ -166,7 +160,7 @@ umh_core_reconcile_starved_total_seconds 3`
 			// Check that we caught the reconcile time issue
 			foundReconcileTimeError := false
 			for _, failure := range failures {
-				if strings.Contains(failure, "reconcile time") && strings.Contains(failure, "30") {
+				if strings.Contains(failure, "reconcile time") && strings.Contains(failure, "50") {
 					foundReconcileTimeError = true
 					break
 				}

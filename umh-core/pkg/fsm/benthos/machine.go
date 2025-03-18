@@ -1,5 +1,7 @@
 package benthos
 
+// TODO: fix the reconcile loop like in s6 (added reconciled logic to prevent starvation)
+
 import (
 	"context"
 	"fmt"

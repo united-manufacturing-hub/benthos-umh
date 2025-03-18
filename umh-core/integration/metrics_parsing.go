@@ -57,7 +57,6 @@ func parseSummaryQuantile(metricsBody, metricName, quantile, component, instance
 				valStr := match[1]
 				f, err := strconv.ParseFloat(valStr, 64)
 				if err == nil {
-					GinkgoWriter.Printf("MATCHED: %s = %f\n", line, f)
 					return f, true
 				}
 			}
@@ -103,7 +102,7 @@ func checkWhetherMetricsHealthy(body string) {
 			valStr := fields[len(fields)-1]
 			val, err := strconv.ParseFloat(valStr, 64)
 			if err == nil {
-				GinkgoWriter.Printf("Checking error metric: %s = %.0f (limit: %d)\n", line, val, maxErrorCount)
+				//GinkgoWriter.Printf("Checking error metric: %s = %.0f (limit: %d)\n", line, val, maxErrorCount)
 				if val > float64(maxErrorCount) {
 					errorFound = true
 				}
@@ -117,7 +116,7 @@ func checkWhetherMetricsHealthy(body string) {
 	}
 
 	// 4) Check 99th percentile of reconcile time for control loop
-	GinkgoWriter.Println("Checking control loop reconcile time (99th percentile)...")
+	//GinkgoWriter.Println("Checking control loop reconcile time (99th percentile)...")
 	recon99, found := parseSummaryQuantile(body,
 		"umh_core_reconcile_duration_milliseconds", "0.99", "control_loop", "main")
 
@@ -129,4 +128,9 @@ func checkWhetherMetricsHealthy(body string) {
 		recon99, maxReconcileTime99th)
 	Expect(recon99).To(BeNumerically("<=", maxReconcileTime99th),
 		"99th percentile reconcile time (%.2f ms) exceeded %.1f ms", recon99, maxReconcileTime99th)
+}
+
+// parseFloat is a small helper to parse a string to float64
+func parseFloat(s string) (float64, error) {
+	return strconv.ParseFloat(s, 64)
 }

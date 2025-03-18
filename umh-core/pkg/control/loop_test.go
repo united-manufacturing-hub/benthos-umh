@@ -14,6 +14,7 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/filesystem"
 )
 
@@ -89,12 +90,15 @@ var _ = Describe("ControlLoop", func() {
 		// Set up a context with timeout
 		ctx, cancel = context.WithTimeout(context.Background(), 200*time.Millisecond)
 
+		starvationChecker := metrics.NewStarvationChecker(starvationThreshold)
+
 		// Initialize control loop with mocks
 		controlLoop = &ControlLoop{
-			tickerTime:    10 * time.Millisecond, // Fast ticker for tests
-			managers:      []fsm.FSMManager[any]{mockManager},
-			configManager: mockConfig,
-			logger:        logger.For(logger.ComponentControlLoop),
+			tickerTime:        10 * time.Millisecond, // Fast ticker for tests
+			managers:          []fsm.FSMManager[any]{mockManager},
+			configManager:     mockConfig,
+			logger:            logger.For(logger.ComponentControlLoop),
+			starvationChecker: starvationChecker,
 		}
 	})
 
@@ -170,12 +174,14 @@ var _ = Describe("ControlLoop", func() {
 		It("should call Reconcile repeatedly until context is cancelled", func() {
 			// Create a tracking config manager that we can use to monitor calls
 			trackingConfig := config.NewMockConfigManager().WithConfig(config.FullConfig{})
+			starvationChecker := metrics.NewStarvationChecker(starvationThreshold)
 
 			// We'll create a new control loop specifically for this test
 			testLoop := &ControlLoop{
-				tickerTime:    5 * time.Millisecond, // Fast ticker for tests
-				managers:      []fsm.FSMManager[any]{fsm.NewMockFSMManager()},
-				configManager: trackingConfig,
+				tickerTime:        5 * time.Millisecond, // Fast ticker for tests
+				managers:          []fsm.FSMManager[any]{fsm.NewMockFSMManager()},
+				configManager:     trackingConfig,
+				starvationChecker: starvationChecker,
 			}
 
 			// Use an atomic counter to track calls safely
@@ -248,12 +254,15 @@ var _ = Describe("ControlLoop", func() {
 			// Track calls to verify the loop continues
 			var callCount int32
 
+			starvationChecker := metrics.NewStarvationChecker(starvationThreshold)
+
 			// Create a control loop with this config
 			timeoutLoop := &ControlLoop{
-				tickerTime:    5 * time.Millisecond,
-				managers:      []fsm.FSMManager[any]{fsm.NewMockFSMManager()},
-				configManager: timeoutConfig,
-				logger:        logger.For(logger.ComponentControlLoop),
+				tickerTime:        5 * time.Millisecond,
+				managers:          []fsm.FSMManager[any]{fsm.NewMockFSMManager()},
+				configManager:     timeoutConfig,
+				logger:            logger.For(logger.ComponentControlLoop),
+				starvationChecker: starvationChecker,
 			}
 
 			// Start executing in a goroutine

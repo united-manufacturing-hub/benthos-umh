@@ -21,11 +21,11 @@ package control
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
-	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/benthos"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
@@ -44,7 +44,7 @@ const (
 	// detector will log warnings and record metrics.
 	// Starvation will take place for example when adding hundreds of new services
 	// at once.
-	starvationThreshold = 2000 * time.Millisecond
+	starvationThreshold = 5000 * time.Millisecond
 )
 
 // ControlLoop is the central orchestration component of the UMH Core.
@@ -81,7 +81,7 @@ func NewControlLoop() *ControlLoop {
 	// Create the managers
 	managers := []fsm.FSMManager[any]{
 		s6.NewS6Manager("Core"),
-		benthos.NewBenthosManager("Core"),
+		//benthos.NewBenthosManager("Core"),
 	}
 
 	// Create the config manager
@@ -166,6 +166,9 @@ func (c *ControlLoop) Execute(ctx context.Context) error {
 func (c *ControlLoop) Reconcile(ctx context.Context) error {
 
 	// Get the config
+	if c.configManager == nil {
+		return fmt.Errorf("config manager is not set")
+	}
 	config, err := c.configManager.GetConfig(ctx)
 
 	if err != nil {
@@ -187,8 +190,12 @@ func (c *ControlLoop) Reconcile(ctx context.Context) error {
 		}
 	}
 
-	// Check for starvation
-	c.starvationChecker.Reconcile(ctx, config)
+	if c.starvationChecker != nil {
+		// Check for starvation
+		c.starvationChecker.Reconcile(ctx, config)
+	} else {
+		return fmt.Errorf("starvation checker is not set")
+	}
 
 	// Return nil if no errors occurred
 	return nil
@@ -202,8 +209,13 @@ func (c *ControlLoop) Reconcile(ctx context.Context) error {
 // This should be called as part of system shutdown to prevent
 // resource leaks and ensure clean termination.
 func (c *ControlLoop) Stop(ctx context.Context) error {
-	// Stop the starvation checker
-	c.starvationChecker.Stop()
+
+	if c.starvationChecker != nil {
+		// Stop the starvation checker
+		c.starvationChecker.Stop()
+	} else {
+		return fmt.Errorf("starvation checker is not set")
+	}
 
 	// Signal the control loop to stop
 	ctx.Done()

@@ -5,13 +5,7 @@ TAG = latest
 
 build:
 	docker build -t $(IMAGE_NAME):$(TAG) -f Dockerfile .
-
-run: build
-	docker run \
-		--name $(IMAGE_NAME) \
-		-v $(PWD)/data:/data \
-		$(IMAGE_NAME):$(TAG)
-
+	
 clean:
 	docker stop $(IMAGE_NAME) || true
 	docker rm $(IMAGE_NAME) || true
@@ -37,19 +31,3 @@ test-hello: clean build
 		-v $(PWD)/data:/data \
 		-p 8081:8080 \
 		$(IMAGE_NAME):$(TAG)
-
-test-hello-100: clean build
-	@mkdir -p $(PWD)/data
-	@cp $(PWD)/examples/example-config-100.yaml $(PWD)/data/config.yaml
-	docker run \
-		--name $(IMAGE_NAME) \
-		-v $(PWD)/data:/data \
-		-p 8081:8080 \
-		-e LOGGING_LEVEL=production \
-		$(IMAGE_NAME):$(TAG)
-
-logs:
-	docker logs -f $(IMAGE_NAME)
-
-shell:
-	docker exec -it $(IMAGE_NAME) sh 
