@@ -18,7 +18,7 @@ import (
 // This function is intended to be called repeatedly (e.g. in a periodic control loop).
 // Over multiple calls, it converges the actual state to the desired state. Transitions
 // that fail are retried in subsequent reconcile calls after a backoff period.
-func (s *S6Instance) Reconcile(ctx context.Context) (err error, reconciled bool) {
+func (s *S6Instance) Reconcile(ctx context.Context, tick uint64) (err error, reconciled bool) {
 	s6InstanceName := s.baseFSMInstance.GetID()
 	defer func() {
 		if err != nil {
@@ -30,7 +30,9 @@ func (s *S6Instance) Reconcile(ctx context.Context) (err error, reconciled bool)
 	}()
 
 	// Step 1: If there's a lastError, see if we've waited enough.
-	if s.baseFSMInstance.ShouldSkipReconcileBecauseOfError() {
+	if s.baseFSMInstance.ShouldSkipReconcileBecauseOfError(tick) {
+		err := s.baseFSMInstance.GetBackoffError(tick)
+		s.baseFSMInstance.GetLogger().Debugf("Skipping reconcile for S6 service %s: %s", s.baseFSMInstance.GetID(), err)
 		return nil, false
 	}
 
@@ -38,18 +40,18 @@ func (s *S6Instance) Reconcile(ctx context.Context) (err error, reconciled bool)
 	if err := s.reconcileExternalChanges(ctx); err != nil {
 		// If the service is not running, we don't want to return an error here, because we want to continue reconciling
 		if !errors.Is(err, s6service.ErrServiceNotExist) {
-			s.baseFSMInstance.SetError(err)
+			s.baseFSMInstance.SetError(err, tick)
 			s.baseFSMInstance.GetLogger().Errorf("error reconciling external changes: %s", err)
 			return nil, false // We don't want to return an error here, because we want to continue reconciling
 		}
 
-		// The service does not exist, which is fine as this happens in the reconcileStateTransition
+		err = nil // The service does not exist, which is fine as this happens in the reconcileStateTransition
 	}
 
 	// Step 3: Attempt to reconcile the state.
 	err, reconciled = s.reconcileStateTransition(ctx)
 	if err != nil {
-		s.baseFSMInstance.SetError(err)
+		s.baseFSMInstance.SetError(err, tick)
 		s.baseFSMInstance.GetLogger().Errorf("error reconciling state: %s", err)
 		return nil, false // We don't want to return an error here, because we want to continue reconciling
 	}

@@ -86,8 +86,7 @@ if err != nil {
         return err
     }
 
-    // Note: there are no other error types, so we can just return the error, so this code here should never be reached
-    return err
+    return nil // Usually this should be nil, so the component can continue
 }
 ```
 

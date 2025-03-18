@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"os"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -16,13 +17,6 @@ import (
 // ---------- Actual Ginkgo Tests ----------
 
 var _ = Describe("UMH Container Integration", Ordered, Label("integration"), func() {
-
-	AfterEach(func() {
-		if CurrentSpecReport().Failed() {
-			fmt.Println("Test failed, printing container logs:")
-			printContainerLogs()
-		}
-	})
 
 	AfterAll(func() {
 		// Always stop container after the entire suite
@@ -140,6 +134,22 @@ benthos: []
 	})
 
 	Context("with service scaling test", Label("scaling"), func() {
+		AfterEach(func() {
+			if CurrentSpecReport().Failed() {
+				fmt.Println("Test failed, printing container logs:")
+				printContainerLogs()
+
+				// Print the latest YAML config
+				fmt.Println("\nLatest YAML config at time of failure:")
+				config, err := os.ReadFile("data/config.yaml")
+				if err != nil {
+					fmt.Printf("Failed to read config file: %v\n", err)
+				} else {
+					fmt.Println(string(config))
+				}
+			}
+		})
+
 		BeforeAll(func() {
 			By("Starting with an empty configuration")
 			cfg := NewBuilder().BuildYAML()
@@ -210,8 +220,25 @@ benthos: []
 	})
 
 	Context("with comprehensive chaos test", Label("chaos"), func() {
+
+		AfterEach(func() {
+			if CurrentSpecReport().Failed() {
+				fmt.Println("Test failed, printing container logs:")
+				printContainerLogs()
+
+				// Print the latest YAML config
+				fmt.Println("\nLatest YAML config at time of failure:")
+				config, err := os.ReadFile("data/config.yaml")
+				if err != nil {
+					fmt.Printf("Failed to read config file: %v\n", err)
+				} else {
+					fmt.Println(string(config))
+				}
+			}
+		})
+
 		BeforeAll(func() {
-			Skip("Skipping comprehensive chaos test due to time constraints")
+			//Skip("Skipping comprehensive chaos test due to time constraints")
 			// Start with an empty config
 			cfg := NewBuilder().BuildYAML()
 			Expect(writeConfigFile(cfg)).To(Succeed())
@@ -240,156 +267,216 @@ benthos: []
 			}, 20*time.Second, 1*time.Second).Should(Equal(200),
 				"Golden service should respond with 200 OK")
 
-			GinkgoWriter.Println("Starting comprehensive chaos test with up to 1000 services")
+			GinkgoWriter.Println("Starting comprehensive chaos test")
 
 			// Track existing services (with their current state)
 			existingServices := map[string]string{} // serviceName -> state ("running"/"stopped")
 			maxServices := 100
+			bulkSize := 5 + r.Intn(6) // Random bulk size between 5-10 services
 
-			// Test runs until the duration is reached
-			startTime := time.Now()
-			actionCount := 0
-			bulkSize := 2 // Size of bulk operations
+			// ---------- WARMUP PHASE: Build up to target service count ----------
+			targetServiceCount := 100
+			warmupBatchSize := 10
+			warmupDelay := 15 * time.Second
 
-			for time.Since(startTime) < testDuration {
-				actionCount++
+			GinkgoWriter.Printf("\n=== WARMUP PHASE ===\nBuilding up to %d services\n", targetServiceCount)
 
-				// Randomly choose an action type with wider distribution of actions
-				// 0=add single, 1=delete single, 2=start, 3=stop, 4=bulk add, 5=bulk delete
-				actionType := r.Intn(10)
+			// Initial warmup: Add services in batches until we reach the target
+			for len(existingServices) < targetServiceCount {
+				batchSize := min(warmupBatchSize, targetServiceCount-len(existingServices))
 
-				switch {
-				case actionType < 3: // Add a single service (30% chance)
-					if len(existingServices) < maxServices {
-						// Create a new service with a unique name
-						serviceName := fmt.Sprintf("chaos-svc-%d", actionCount)
-						builder.AddSleepService(serviceName, fmt.Sprintf("%d", 60+r.Intn(600)))
-						existingServices[serviceName] = "running"
-						GinkgoWriter.Printf("Chaos: ADDING service %s (total: %d)\n",
-							serviceName, len(existingServices))
+				builder := NewBuilder().AddGoldenService()
+				// Add existing services
+				for svc, state := range existingServices {
+					if state == "running" {
+						builder.AddSleepService(svc, "600")
+					} else {
+						builder.AddSleepService(svc, "600")
+						builder.StopService(svc)
 					}
+				}
 
-				case actionType < 6: // Delete a single service (30% chance)
-					if len(existingServices) > 0 {
-						// Get a random existing service
-						keys := getKeys(existingServices)
-						serviceToDelete := keys[r.Intn(len(keys))]
-
-						// Instead of using RemoveService which doesn't exist,
-						// build a new config from scratch without the deleted service
-						newBuilder := NewBuilder().AddGoldenService()
-						for svc, state := range existingServices {
-							if svc != serviceToDelete { // Skip the one being deleted
-								if state == "running" {
-									newBuilder.AddSleepService(svc, "600")
-								} else {
-									newBuilder.AddSleepService(svc, "600")
-									newBuilder.StopService(svc)
-								}
-							}
-						}
-						builder = newBuilder // Replace the builder
-						delete(existingServices, serviceToDelete)
-
-						GinkgoWriter.Printf("Chaos: DELETING service %s (remaining: %d)\n",
-							serviceToDelete, len(existingServices))
-					}
-
-				case actionType < 7: // Start a stopped service (10% chance)
-					// Find stopped services
-					stoppedServices := []string{}
-					for svc, state := range existingServices {
-						if state == "stopped" {
-							stoppedServices = append(stoppedServices, svc)
-						}
-					}
-
-					if len(stoppedServices) > 0 {
-						serviceToStart := stoppedServices[r.Intn(len(stoppedServices))]
-						builder.StartService(serviceToStart)
-						existingServices[serviceToStart] = "running"
-
-						GinkgoWriter.Printf("Chaos: STARTING service %s\n", serviceToStart)
-					}
-
-				case actionType < 8: // Stop a running service (10% chance)
-					// Find running services
-					runningServices := []string{}
-					for svc, state := range existingServices {
-						if state == "running" {
-							runningServices = append(runningServices, svc)
-						}
-					}
-
-					if len(runningServices) > 0 {
-						serviceToStop := runningServices[r.Intn(len(runningServices))]
-						builder.StopService(serviceToStop)
-						existingServices[serviceToStop] = "stopped"
-
-						GinkgoWriter.Printf("Chaos: STOPPING service %s\n", serviceToStop)
-					}
-
-				case actionType < 9: // Bulk add services (10% chance)
-					numToAdd := min(bulkSize, maxServices-len(existingServices))
-					if numToAdd > 0 {
-						GinkgoWriter.Printf("Chaos: BULK ADDING %d services\n", numToAdd)
-						for i := 0; i < numToAdd; i++ {
-							serviceName := fmt.Sprintf("bulk-add-%d-%d", actionCount, i)
-							builder.AddSleepService(serviceName, fmt.Sprintf("%d", 60+r.Intn(600)))
-							existingServices[serviceName] = "running"
-						}
-						GinkgoWriter.Printf("Chaos: BULK ADD completed (total: %d)\n", len(existingServices))
-					}
-
-				case actionType < 10: // Bulk delete services (10% chance)
-					keys := getKeys(existingServices)
-					numToDelete := min(bulkSize, len(keys))
-					if numToDelete > 0 {
-						// Recreate config without the deleted services
-						newBuilder := NewBuilder().AddGoldenService()
-
-						// Choose random services to delete
-						indicesToDelete := make(map[int]bool)
-						for i := 0; i < numToDelete; i++ {
-							for {
-								idx := r.Intn(len(keys))
-								if !indicesToDelete[idx] {
-									indicesToDelete[idx] = true
-									break
-								}
-							}
-						}
-
-						// Rebuild config without deleted services
-						GinkgoWriter.Printf("Chaos: BULK DELETING %d services\n", numToDelete)
-						for idx, svc := range keys {
-							if !indicesToDelete[idx] {
-								state := existingServices[svc]
-								if state == "running" {
-									newBuilder.AddSleepService(svc, "600")
-								} else {
-									newBuilder.AddSleepService(svc, "600")
-									newBuilder.StopService(svc)
-								}
-							} else {
-								delete(existingServices, svc)
-							}
-						}
-						builder = newBuilder
-						GinkgoWriter.Printf("Chaos: BULK DELETE completed (remaining: %d)\n", len(existingServices))
-					}
-
+				// Add new batch of services
+				GinkgoWriter.Printf("Adding batch of %d services\n", batchSize)
+				for i := 0; i < batchSize; i++ {
+					serviceName := fmt.Sprintf("warmup-svc-%d", len(existingServices))
+					builder.AddSleepService(serviceName, fmt.Sprintf("%d", 60+r.Intn(600)))
+					existingServices[serviceName] = "running"
 				}
 
 				// Apply changes
 				Expect(writeConfigFile(builder.BuildYAML())).To(Succeed())
 
-				// Random delay between operations, shorter for smaller changes
-				var delay time.Duration
-				if actionType >= 8 { // Bulk operations get longer delays
-					delay = time.Duration(500+r.Intn(2000)) * time.Millisecond // 0.5-2.5s
+				// Check health
+				monitorHealth()
+
+				// Allow system to stabilize after each batch
+				GinkgoWriter.Printf("Warmup: Total services now: %d - waiting for stabilization\n", len(existingServices))
+				time.Sleep(warmupDelay)
+			}
+
+			// Final stabilization after reaching target count
+			GinkgoWriter.Printf("\n=== WARMUP COMPLETE ===\nReached %d services - allowing system to stabilize for 1 minute\n", len(existingServices))
+			time.Sleep(1 * time.Minute)
+
+			// ---------- CHAOS PHASE: Begin regular chaos operations ----------
+			GinkgoWriter.Println("\n=== CHAOS PHASE BEGINNING ===")
+
+			// Test runs until the duration is reached
+			startTime := time.Now()
+			actionCount := 0
+			lastBulkOperation := time.Now()
+			stabilizationPeriod := 10 * time.Second
+
+			for time.Since(startTime) < testDuration {
+				actionCount++
+				timeSinceLastBulk := time.Since(lastBulkOperation)
+
+				// Always start with a fresh builder containing the golden service
+				builder := NewBuilder().AddGoldenService()
+
+				// If we haven't done a bulk operation recently, do one
+				if timeSinceLastBulk > stabilizationPeriod {
+					// Randomly choose between bulk add or bulk remove
+					if r.Float64() < 0.7 || len(existingServices) == 0 { // 70% chance to add, or 100% if no services
+						// Bulk add services
+						numToAdd := min(bulkSize, maxServices-len(existingServices))
+						if numToAdd > 0 {
+							GinkgoWriter.Printf("\n=== BULK ADD OPERATION ===\nAdding %d new services\n", numToAdd)
+							// Add all existing services first
+							for svc, state := range existingServices {
+								if state == "running" {
+									builder.AddSleepService(svc, "600")
+								} else {
+									builder.AddSleepService(svc, "600")
+									builder.StopService(svc)
+								}
+							}
+							// Add new services
+							for i := 0; i < numToAdd; i++ {
+								serviceName := fmt.Sprintf("bulk-add-%d-%d", actionCount, i)
+								builder.AddSleepService(serviceName, fmt.Sprintf("%d", 60+r.Intn(600)))
+								existingServices[serviceName] = "running"
+							}
+							GinkgoWriter.Printf("Bulk add completed. Total services: %d\n", len(existingServices))
+							lastBulkOperation = time.Now()
+						}
+					} else {
+						// Bulk remove services
+						keys := getKeys(existingServices)
+						numToRemove := min(bulkSize, len(keys))
+						if numToRemove > 0 {
+							GinkgoWriter.Printf("\n=== BULK REMOVE OPERATION ===\nRemoving %d services\n", numToRemove)
+							// Choose random services to remove
+							indicesToRemove := make(map[int]bool)
+							for i := 0; i < numToRemove; i++ {
+								for {
+									idx := r.Intn(len(keys))
+									if !indicesToRemove[idx] {
+										indicesToRemove[idx] = true
+										break
+									}
+								}
+							}
+
+							// Add all services except those being removed
+							for idx, svc := range keys {
+								if !indicesToRemove[idx] {
+									state := existingServices[svc]
+									if state == "running" {
+										builder.AddSleepService(svc, "600")
+									} else {
+										builder.AddSleepService(svc, "600")
+										builder.StopService(svc)
+									}
+								} else {
+									delete(existingServices, svc)
+								}
+							}
+							GinkgoWriter.Printf("Bulk remove completed. Remaining services: %d\n", len(existingServices))
+							lastBulkOperation = time.Now()
+						}
+					}
 				} else {
-					delay = time.Duration(50+r.Intn(200)) * time.Millisecond // 50-250ms
+					// During stabilization period, only do minimal operations
+					// Randomly choose between start/stop single service (30% chance)
+					if r.Float64() < 0.3 {
+						operationType := r.Float64()
+
+						// Find stopped services
+						stoppedServices := []string{}
+						for svc, state := range existingServices {
+							if state == "stopped" {
+								stoppedServices = append(stoppedServices, svc)
+							}
+						}
+
+						if operationType < 0.6 && len(stoppedServices) > 0 {
+							// 60% chance to start a stopped service if any are stopped
+							serviceToStart := stoppedServices[r.Intn(len(stoppedServices))]
+							// Add all services with their current state
+							for svc, state := range existingServices {
+								if state == "running" {
+									builder.AddSleepService(svc, "600")
+								} else {
+									builder.AddSleepService(svc, "600")
+									builder.StopService(svc)
+								}
+							}
+							builder.StartService(serviceToStart)
+							existingServices[serviceToStart] = "running"
+							GinkgoWriter.Printf("Starting service %s during stabilization period\n", serviceToStart)
+						} else if operationType >= 0.6 {
+							// 40% chance to stop a running service if more than 80% are running
+							// Collect running services
+							runningServices := []string{}
+							for svc, state := range existingServices {
+								if state == "running" && svc != "golden-service" {
+									runningServices = append(runningServices, svc)
+								}
+							}
+
+							// Only stop a service if we have plenty of running services (>80% of total)
+							runningThreshold := int(float64(len(existingServices)) * 0.8)
+							if len(runningServices) > runningThreshold && len(runningServices) > 0 {
+								serviceToStop := runningServices[r.Intn(len(runningServices))]
+
+								// Add all services with their current state
+								for svc, state := range existingServices {
+									if state == "running" {
+										builder.AddSleepService(svc, "600")
+									} else {
+										builder.AddSleepService(svc, "600")
+										builder.StopService(svc)
+									}
+								}
+
+								// Stop the selected service
+								builder.StopService(serviceToStop)
+								existingServices[serviceToStop] = "stopped"
+								GinkgoWriter.Printf("Stopping service %s during stabilization (to maintain ~80%% running)\n", serviceToStop)
+							}
+						}
+					}
+				}
+
+				// Apply changes
+				cfg := builder.BuildYAML()
+				Expect(writeConfigFile(cfg)).To(Succeed())
+
+				// Logging every 5 operations to show current state
+				if actionCount%5 == 0 {
+					running := countRunningServices(existingServices)
+					runningPercentage := float64(running) / float64(len(existingServices)) * 100
+					GinkgoWriter.Printf("Config applied, services: %d total, %d running (%.1f%%)\n",
+						len(existingServices), running, runningPercentage)
+				}
+
+				// Longer delay between operations
+				delay := time.Duration(2000+r.Intn(2000)) * time.Millisecond
+				if timeSinceLastBulk < stabilizationPeriod {
+					// During stabilization, use longer delays
+					delay = time.Duration(5000+r.Intn(5000)) * time.Millisecond
 				}
 
 				// Check the health of the system
@@ -401,8 +488,16 @@ benthos: []
 					running := countRunningServices(existingServices)
 					elapsedTime := time.Since(startTime).Round(time.Second)
 					remainingTime := (testDuration - elapsedTime).Round(time.Second)
-					GinkgoWriter.Printf("Chaos test status: %d actions completed, %d services (%d running), elapsed: %v, remaining: %v\n",
-						actionCount, len(existingServices), running, elapsedTime, remainingTime)
+					timeUntilNextBulk := (stabilizationPeriod - timeSinceLastBulk).Round(time.Second)
+					GinkgoWriter.Printf("\n=== Chaos Test Status ===\n"+
+						"Actions completed: %d\n"+
+						"Total services: %d\n"+
+						"Running services: %d\n"+
+						"Time elapsed: %v\n"+
+						"Time remaining: %v\n"+
+						"Time until next bulk operation: %v\n",
+						actionCount, len(existingServices), running,
+						elapsedTime, remainingTime, timeUntilNextBulk)
 				}
 			}
 

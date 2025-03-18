@@ -22,7 +22,7 @@ func main() {
 
 	// Load the config
 	configManager := config.NewFileConfigManager()
-	config, err := configManager.GetConfig(context.Background())
+	config, err := configManager.GetConfig(context.Background(), 0)
 	if err != nil {
 		log.Fatalf("Failed to load config: %s", err)
 	}

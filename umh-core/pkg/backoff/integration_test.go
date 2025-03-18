@@ -2,7 +2,6 @@ package backoff_test
 
 import (
 	"errors"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -21,12 +20,8 @@ type MockComponent struct {
 func NewMockComponent(maxRetries uint64) *MockComponent {
 	logger := zaptest.NewLogger(GinkgoT()).Sugar()
 
-	config := backoff.Config{
-		InitialInterval: 100 * time.Millisecond, // Use larger intervals for more stability
-		MaxInterval:     500 * time.Millisecond,
-		MaxRetries:      maxRetries,
-		Logger:          logger,
-	}
+	config := backoff.DefaultConfig("mock-component", logger)
+	config.MaxRetries = maxRetries
 
 	return &MockComponent{
 		backoffManager: backoff.NewBackoffManager(config),
@@ -38,10 +33,10 @@ func NewMockComponent(maxRetries uint64) *MockComponent {
 // DoOperation attempts an operation with backoff handling
 // Unlike the previous version, we'll make this deterministic by not relying on ShouldSkipOperation
 // Instead we'll explicitly check if we've reached our operation count or if we're permanently failed
-func (m *MockComponent) DoOperation() error {
+func (m *MockComponent) DoOperation(tick uint64) error {
 	// If permanently failed, always return permanent error
 	if m.backoffManager.IsPermanentlyFailed() {
-		return m.backoffManager.GetBackoffError()
+		return m.backoffManager.GetBackoffError(tick)
 	}
 
 	// Track operation attempts
@@ -51,12 +46,12 @@ func (m *MockComponent) DoOperation() error {
 	if m.operationCount <= m.failNextNTimes {
 		// Simulate a failure
 		err := errors.New("simulated operation failure")
-		isPermanent := m.backoffManager.SetError(err)
+		isPermanent := m.backoffManager.SetError(err, tick)
 
 		if isPermanent {
-			return m.backoffManager.GetBackoffError() // Permanent failure
+			return m.backoffManager.GetBackoffError(tick) // Permanent failure
 		}
-		return m.backoffManager.GetBackoffError() // Temporary failure
+		return m.backoffManager.GetBackoffError(tick) // Temporary failure
 	}
 
 	// Success case
@@ -88,8 +83,8 @@ func NewMockParent(component *MockComponent) *MockParent {
 	}
 }
 
-func (p *MockParent) Execute() error {
-	err := p.component.DoOperation()
+func (p *MockParent) Execute(tick uint64) error {
+	err := p.component.DoOperation(tick)
 
 	if err != nil {
 		if backoff.IsTemporaryBackoffError(err) {
@@ -112,6 +107,12 @@ func (p *MockParent) Execute() error {
 }
 
 var _ = Describe("Integration Tests", func() {
+	var tick uint64
+
+	BeforeEach(func() {
+		tick = 0
+	})
+
 	Context("when using BackoffManager in components", func() {
 		It("should handle temporary failures with retries", func() {
 			mockComponent := NewMockComponent(3)
@@ -120,17 +121,20 @@ var _ = Describe("Integration Tests", func() {
 			parent := NewMockParent(mockComponent)
 
 			// First attempt - fails (1)
-			err := parent.Execute()
+			err := parent.Execute(tick)
+			tick++
 			Expect(err).To(BeNil(), "Parent should return nil for temporary failures")
 			Expect(mockComponent.operationCount).To(Equal(1), "Should have attempted once")
 
 			// Second attempt - fails (2)
-			err = parent.Execute()
+			err = parent.Execute(tick)
+			tick++
 			Expect(err).To(BeNil())
 			Expect(mockComponent.operationCount).To(Equal(2), "Should have attempted twice")
 
 			// Third attempt - succeeds
-			err = parent.Execute()
+			err = parent.Execute(tick)
+			tick++
 			Expect(err).To(BeNil())
 			Expect(mockComponent.operationCount).To(Equal(3), "Should have attempted three times")
 			Expect(mockComponent.IsPermanentlyFailed()).To(BeFalse(), "Should not be permanently failed")
@@ -144,18 +148,21 @@ var _ = Describe("Integration Tests", func() {
 			parent := NewMockParent(mockComponent)
 
 			// First attempt - temporary failure
-			err := parent.Execute()
+			err := parent.Execute(tick)
+			tick++
 			Expect(err).To(BeNil(), "First failure should return nil")
 			Expect(mockComponent.IsPermanentlyFailed()).To(BeFalse())
 
 			// Second attempt - triggers permanent failure
-			err = parent.Execute()
+			err = parent.Execute(tick)
+			tick++
 			Expect(err).NotTo(BeNil(), "Should return error for permanent failure")
 			Expect(err.Error()).To(ContainSubstring("permanently failed"))
 			Expect(mockComponent.IsPermanentlyFailed()).To(BeTrue())
 
 			// Additional attempts - should remain permanently failed
-			err = parent.Execute()
+			err = parent.Execute(tick)
+			tick++
 			Expect(err).NotTo(BeNil(), "Should still return error for permanent failure")
 		})
 
@@ -166,12 +173,14 @@ var _ = Describe("Integration Tests", func() {
 			parent := NewMockParent(mockComponent)
 
 			// First attempt - fails
-			err := parent.Execute()
+			err := parent.Execute(tick)
+			tick++
 			Expect(err).To(BeNil())
 			Expect(mockComponent.operationCount).To(Equal(1), "Should have attempted once")
 
 			// Second attempt - succeeds
-			err = parent.Execute()
+			err = parent.Execute(tick)
+			tick++
 			Expect(err).To(BeNil())
 			Expect(mockComponent.operationCount).To(Equal(2), "Should have attempted twice")
 			Expect(mockComponent.GetLastError()).To(BeNil(), "Error should be reset after success")

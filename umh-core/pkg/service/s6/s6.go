@@ -84,6 +84,8 @@ type Service interface {
 	Restart(ctx context.Context, servicePath string) error
 	// Status gets the current status of the service
 	Status(ctx context.Context, servicePath string) (ServiceInfo, error)
+	// ExitHistory gets the exit history of the service
+	ExitHistory(ctx context.Context, superviseDir string) ([]ExitEvent, error)
 	// ServiceExists checks if the service directory exists
 	ServiceExists(ctx context.Context, servicePath string) (bool, error)
 	// GetConfig gets the actual service config from s6
@@ -397,7 +399,6 @@ func (s *DefaultService) Restart(ctx context.Context, servicePath string) error 
 }
 
 func (s *DefaultService) Status(ctx context.Context, servicePath string) (ServiceInfo, error) {
-	s.logger.Debugf("Getting status for S6 service %s", servicePath)
 
 	// First, check that the service exists.
 	exists, err := s.ServiceExists(ctx, servicePath)
@@ -521,6 +522,8 @@ func (s *DefaultService) Status(ctx context.Context, servicePath string) (Servic
 	} else {
 		return info, fmt.Errorf("failed to get exit history: %w", histErr)
 	}
+
+	s.logger.Debugf("Status for S6 service %s: %+v", servicePath, info)
 
 	return info, nil
 }

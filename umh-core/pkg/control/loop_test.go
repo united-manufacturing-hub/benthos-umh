@@ -81,6 +81,7 @@ var _ = Describe("ControlLoop", func() {
 		mockConfig  *config.MockConfigManager
 		ctx         context.Context
 		cancel      context.CancelFunc
+		tick        uint64
 	)
 
 	BeforeEach(func() {
@@ -100,6 +101,7 @@ var _ = Describe("ControlLoop", func() {
 			logger:            logger.For(logger.ComponentControlLoop),
 			starvationChecker: starvationChecker,
 		}
+		tick = uint64(0)
 	})
 
 	AfterEach(func() {
@@ -130,7 +132,8 @@ var _ = Describe("ControlLoop", func() {
 			}
 			mockConfig.Config = expectedConfig
 
-			err := controlLoop.Reconcile(ctx)
+			err := controlLoop.Reconcile(ctx, tick)
+			tick++
 			Expect(err).NotTo(HaveOccurred())
 			Expect(mockConfig.GetConfigCalled).To(BeTrue())
 			Expect(mockManager.ReconcileCalled).To(BeTrue())
@@ -139,7 +142,8 @@ var _ = Describe("ControlLoop", func() {
 		It("should return error if config manager returns error", func() {
 			mockConfig.ConfigError = errors.New("config error")
 
-			err := controlLoop.Reconcile(ctx)
+			err := controlLoop.Reconcile(ctx, tick)
+			tick++
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("config error"))
 			Expect(mockConfig.GetConfigCalled).To(BeTrue())
@@ -149,7 +153,7 @@ var _ = Describe("ControlLoop", func() {
 		It("should return error if manager returns error", func() {
 			mockManager.ReconcileError = errors.New("reconcile error")
 
-			err := controlLoop.Reconcile(ctx)
+			err := controlLoop.Reconcile(ctx, 0)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(Equal("reconcile error"))
 			Expect(mockConfig.GetConfigCalled).To(BeTrue())
@@ -164,7 +168,8 @@ var _ = Describe("ControlLoop", func() {
 			// Add delays to ensure cancellation takes effect
 			mockConfig.ConfigDelay = 50 * time.Millisecond
 
-			err := controlLoop.Reconcile(canceledCtx)
+			err := controlLoop.Reconcile(canceledCtx, tick)
+			tick++
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("context canceled"))
 		})
@@ -335,7 +340,8 @@ var _ = Describe("ControlLoop", func() {
 			fuzzCtx, fuzzCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 			defer fuzzCancel()
 
-			err := controlLoop.Reconcile(fuzzCtx)
+			err := controlLoop.Reconcile(fuzzCtx, tick)
+			tick++
 
 			// Check if error is context cancellation or timing out
 			if err != nil {
@@ -376,7 +382,8 @@ var _ = Describe("ControlLoop", func() {
 				fuzzCtx, fuzzCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 
 				// Run reconcile and expect potential errors
-				err := controlLoop.Reconcile(fuzzCtx)
+				err := controlLoop.Reconcile(fuzzCtx, tick)
+				tick++
 
 				// Clean up
 				fuzzCancel()
@@ -399,7 +406,8 @@ var _ = Describe("ControlLoop", func() {
 			defer fuzzCancel()
 
 			// Run reconcile and observe behavior
-			err := controlLoop.Reconcile(fuzzCtx)
+			err := controlLoop.Reconcile(fuzzCtx, tick)
+			tick++
 
 			// We're not expecting specific outcomes in a fuzz test
 			// Just ensure the system handles bad configs without panicking
@@ -440,7 +448,8 @@ var _ = Describe("ControlLoop", func() {
 				}
 
 				// Run the control loop
-				err := controlLoop.Reconcile(complexCtx)
+				err := controlLoop.Reconcile(complexCtx, tick)
+				tick++
 				if err != nil {
 					GinkgoWriter.Println("Complex fuzz error:", err.Error())
 				}

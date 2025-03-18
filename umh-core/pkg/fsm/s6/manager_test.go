@@ -97,11 +97,13 @@ var _ = Describe("S6Manager", func() {
 	var (
 		manager *S6Manager
 		ctx     context.Context
+		tick    uint64
 	)
 
 	BeforeEach(func() {
 		ctx = context.Background()
 		manager = NewS6Manager("")
+		tick = uint64(0)
 	})
 
 	It("should handle empty config without errors", func() {
@@ -109,7 +111,7 @@ var _ = Describe("S6Manager", func() {
 		emptyConfig := []config.S6FSMConfig{}
 
 		// Reconcile with empty config
-		err, _ := manager.Reconcile(ctx, config.FullConfig{Services: emptyConfig})
+		err, _ := manager.Reconcile(ctx, config.FullConfig{Services: emptyConfig}, 0)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Verify that no instances were created
@@ -119,7 +121,8 @@ var _ = Describe("S6Manager", func() {
 	It("should add a service when it appears in config", func() {
 		// Start with empty config
 		emptyConfig := []config.S6FSMConfig{}
-		err, _ := manager.Reconcile(ctx, config.FullConfig{Services: emptyConfig})
+		err, _ := manager.Reconcile(ctx, config.FullConfig{Services: emptyConfig}, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		Expect(manager.GetInstances()).To(BeEmpty())
 
@@ -139,7 +142,8 @@ var _ = Describe("S6Manager", func() {
 		}
 
 		// Reconcile with the new config
-		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService})
+		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService}, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 
 		// Verify service was created
@@ -196,14 +200,16 @@ var _ = Describe("S6Manager", func() {
 		}
 
 		// econcile - should transition to LifecycleStateToBeCreated
-		err, _ := manager.Reconcile(ctx, config.FullConfig{Services: configWithService})
+		err, _ := manager.Reconcile(ctx, config.FullConfig{Services: configWithService}, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		instance, ok = manager.GetInstance(serviceName)
 		Expect(ok).To(BeTrue())
 		Expect(instance.GetCurrentFSMState()).To(Equal(internal_fsm.LifecycleStateToBeCreated))
 
 		// reconcile - should transition to LifecycleStateCreating
-		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService})
+		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService}, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		instance, ok = manager.GetInstance(serviceName)
 		Expect(ok).To(BeTrue())
@@ -222,21 +228,24 @@ var _ = Describe("S6Manager", func() {
 		}
 
 		// reconcile - should still be in creating state
-		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService})
+		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService}, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		instance, ok = manager.GetInstance(serviceName)
 		Expect(ok).To(BeTrue())
 		Expect(instance.GetCurrentFSMState()).To(Equal(internal_fsm.LifecycleStateCreating))
 
 		// reconcile - should transition to stopped state
-		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService})
+		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService}, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		instance, ok = manager.GetInstance(serviceName)
 		Expect(ok).To(BeTrue())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped))
 
 		// reconcile - should transition to starting
-		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService})
+		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService}, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		instance, ok = manager.GetInstance(serviceName)
 		Expect(ok).To(BeTrue())
@@ -250,7 +259,8 @@ var _ = Describe("S6Manager", func() {
 		}
 
 		// reconcile - should transition to running
-		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService})
+		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService}, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		instance, ok = manager.GetInstance(serviceName)
 		Expect(ok).To(BeTrue())
@@ -273,7 +283,7 @@ var _ = Describe("S6Manager", func() {
 
 		// 1. Start with empty config to verify clean state
 		emptyConfig := []config.S6FSMConfig{}
-		err, _ := manager.Reconcile(ctx, config.FullConfig{Services: emptyConfig})
+		err, _ := manager.Reconcile(ctx, config.FullConfig{Services: emptyConfig}, 0)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(manager.GetInstances()).To(BeEmpty(), "Should start with no services")
 
@@ -295,7 +305,7 @@ var _ = Describe("S6Manager", func() {
 
 		// Reconcile once to let the instance be created
 		GinkgoWriter.Printf("Reconciling once to set up mock service\n")
-		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService})
+		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService}, 1)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(manager.GetInstances()).To(HaveKey(serviceName), "Service should be created")
 
@@ -325,7 +335,7 @@ var _ = Describe("S6Manager", func() {
 		for i := 1; i <= maxCreationAttempts; i++ {
 			// Reconcile with the service config
 			GinkgoWriter.Printf("\n--- Creation reconcile #%d ---\n", i)
-			err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService})
+			err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService}, uint64(1+i))
 			Expect(err).NotTo(HaveOccurred())
 
 			// Log current state after reconciliation
@@ -379,7 +389,8 @@ var _ = Describe("S6Manager", func() {
 		for i := 1; i <= maxRemovalAttempts; i++ {
 			// Reconcile with empty config
 			GinkgoWriter.Printf("\n--- Removal reconcile #%d ---\n", i)
-			err, _ = manager.Reconcile(ctx, config.FullConfig{Services: emptyConfig})
+			err, _ = manager.Reconcile(ctx, config.FullConfig{Services: emptyConfig}, tick)
+			tick++
 			Expect(err).NotTo(HaveOccurred())
 
 			// Log state after reconciliation
@@ -463,7 +474,8 @@ var _ = Describe("S6Manager", func() {
 		Expect(instance.ObservedState.ServiceInfo.Status).To(Equal(s6service.ServiceDown), "Service status should be down")
 
 		// Reconcile to ensure state is stable
-		err, _ := manager.Reconcile(ctx, config.FullConfig{Services: configWithStoppedService})
+		err, _ := manager.Reconcile(ctx, config.FullConfig{Services: configWithStoppedService}, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped), "State should remain stopped after reconcile")
 
@@ -484,7 +496,8 @@ var _ = Describe("S6Manager", func() {
 
 		// Reconcile with the updated config
 		GinkgoWriter.Printf("\n=== Changing desired state to running ===\n")
-		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithRunningService})
+		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithRunningService}, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 
 		// Verify the desired state changed but current state should still be stopped
@@ -493,7 +506,8 @@ var _ = Describe("S6Manager", func() {
 
 		// First reconcile should transition to starting
 		GinkgoWriter.Printf("First reconcile after state change - should transition to starting\n")
-		err, _ = instance.Reconcile(ctx)
+		err, _ = instance.Reconcile(ctx, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStarting), "State should transition to starting")
 		Expect(mockService.StartCalled).To(BeTrue(), "Service.Start() should be called")
@@ -503,7 +517,8 @@ var _ = Describe("S6Manager", func() {
 
 		// Second reconcile should transition to running
 		GinkgoWriter.Printf("Second reconcile after state change - should transition to running\n")
-		err, _ = instance.Reconcile(ctx)
+		err, _ = instance.Reconcile(ctx, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateRunning), "State should transition to running")
 
@@ -557,7 +572,8 @@ var _ = Describe("S6Manager", func() {
 		}
 
 		// Reconcile to ensure state is stable
-		err, _ := manager.Reconcile(ctx, config.FullConfig{Services: configWithRunningService})
+		err, _ := manager.Reconcile(ctx, config.FullConfig{Services: configWithRunningService}, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateRunning), "State should remain running after reconcile")
 
@@ -578,7 +594,8 @@ var _ = Describe("S6Manager", func() {
 
 		// Reconcile with the updated config
 		GinkgoWriter.Printf("\n=== Changing desired state to stopped ===\n")
-		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithStoppedService})
+		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithStoppedService}, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 
 		// Verify the desired state changed but current state should still be running
@@ -587,7 +604,8 @@ var _ = Describe("S6Manager", func() {
 
 		// First reconcile should transition to stopping
 		GinkgoWriter.Printf("First reconcile after state change - should transition to stopping\n")
-		err, _ = instance.Reconcile(ctx)
+		err, _ = instance.Reconcile(ctx, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopping), "State should transition to stopping")
 		Expect(mockService.StopCalled).To(BeTrue(), "Service.Stop() should be called")
@@ -597,7 +615,8 @@ var _ = Describe("S6Manager", func() {
 
 		// Second reconcile should transition to stopped
 		GinkgoWriter.Printf("Second reconcile after state change - should transition to stopped\n")
-		err, _ = instance.Reconcile(ctx)
+		err, _ = instance.Reconcile(ctx, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped), "State should transition to stopped")
 
@@ -650,7 +669,8 @@ var _ = Describe("S6Manager", func() {
 
 		// Reconcile 10 times to ensure state is stable
 		for i := 0; i < 10; i++ {
-			err, _ := manager.Reconcile(ctx, config.FullConfig{Services: configWithStoppedService})
+			err, _ := manager.Reconcile(ctx, config.FullConfig{Services: configWithStoppedService}, tick)
+			tick++
 			Expect(err).NotTo(HaveOccurred())
 			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped), "State should remain stopped after reconcile")
 
@@ -689,7 +709,8 @@ var _ = Describe("S6Manager", func() {
 
 		// Reconcile with the updated config
 		GinkgoWriter.Printf("\n=== Changing desired state to running ===\n")
-		err, _ := manager.Reconcile(ctx, config.FullConfig{Services: configWithRunningService})
+		err, _ := manager.Reconcile(ctx, config.FullConfig{Services: configWithRunningService}, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 
 		// Verify the desired state changed but current state should still be stopped
@@ -698,7 +719,8 @@ var _ = Describe("S6Manager", func() {
 
 		// First reconcile should transition to starting
 		GinkgoWriter.Printf("Reconcile after state change - should transition to starting\n")
-		err, _ = instance.Reconcile(ctx)
+		err, _ = instance.Reconcile(ctx, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStarting), "State should transition to starting")
 		Expect(mockService.StartCalled).To(BeTrue(), "Service.Start() should be called")
@@ -711,7 +733,8 @@ var _ = Describe("S6Manager", func() {
 
 		// Reconcile and check for 10 times that the state is still starting
 		for i := 0; i < 10; i++ {
-			err, _ = instance.Reconcile(ctx)
+			err, _ = instance.Reconcile(ctx, tick)
+			tick++
 			Expect(err).NotTo(HaveOccurred())
 			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStarting), "State should remain in starting")
 
@@ -739,7 +762,8 @@ var _ = Describe("S6Manager", func() {
 
 		// Next reconcile should detect the service is up and transition to running
 		GinkgoWriter.Printf("Reconcile - service now up, should transition to running\n")
-		err, _ = instance.Reconcile(ctx)
+		err, _ = instance.Reconcile(ctx, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateRunning), "State should transition to running")
 
@@ -767,6 +791,8 @@ var _ = Describe("S6Manager", func() {
 		// Verify initial state is correctly set
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateRunning), "Initial state should be running")
 		Expect(instance.GetDesiredFSMState()).To(Equal(OperationalStateRunning), "Initial desired state should be running")
+
+		// Also verify the observed state is correctly set
 		Expect(instance.ObservedState.ServiceInfo.Status).To(Equal(s6service.ServiceUp), "Service status should be up")
 
 		// Create the running config to ensure desired state is consistently set
@@ -791,7 +817,8 @@ var _ = Describe("S6Manager", func() {
 		}
 
 		// Reconcile to ensure state is stable
-		err, _ := manager.Reconcile(ctx, config.FullConfig{Services: configWithRunningService})
+		err, _ := manager.Reconcile(ctx, config.FullConfig{Services: configWithRunningService}, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateRunning), "State should remain running after reconcile")
 
@@ -812,7 +839,8 @@ var _ = Describe("S6Manager", func() {
 
 		// Reconcile with the updated config
 		GinkgoWriter.Printf("\n=== Changing desired state to stopped ===\n")
-		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithStoppedService})
+		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithStoppedService}, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 
 		// Verify the desired state changed but current state should still be running
@@ -821,7 +849,8 @@ var _ = Describe("S6Manager", func() {
 
 		// First reconcile should transition to stopping
 		GinkgoWriter.Printf("First reconcile after state change - should transition to stopping\n")
-		err, _ = instance.Reconcile(ctx)
+		err, _ = instance.Reconcile(ctx, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopping), "State should transition to stopping")
 		Expect(mockService.StopCalled).To(BeTrue(), "Service.Stop() should be called")
@@ -839,7 +868,8 @@ var _ = Describe("S6Manager", func() {
 		GinkgoWriter.Printf("Reconcile multiple times - service still up, should remain in stopping state\n")
 		for i := 0; i < 5; i++ {
 			mockService.StopCalled = false // Reset for next check
-			err, _ = instance.Reconcile(ctx)
+			err, _ = instance.Reconcile(ctx, tick)
+			tick++
 			Expect(err).NotTo(HaveOccurred())
 			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopping), "State should remain in stopping")
 
@@ -863,7 +893,8 @@ var _ = Describe("S6Manager", func() {
 
 		// Next reconcile should detect the service is down and transition to stopped
 		GinkgoWriter.Printf("Final reconcile - service now down, should transition to stopped\n")
-		err, _ = instance.Reconcile(ctx)
+		err, _ = instance.Reconcile(ctx, tick)
+		tick++
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped), "State should transition to stopped")
 

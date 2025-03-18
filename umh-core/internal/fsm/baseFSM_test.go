@@ -3,7 +3,6 @@ package fsm
 import (
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/looplab/fsm"
 	. "github.com/onsi/ginkgo/v2"
@@ -23,6 +22,7 @@ var _ = Describe("BaseFSMInstance", func() {
 	var (
 		fsmInstance *BaseFSMInstance
 		logger      *zap.Logger
+		tick        uint64
 	)
 
 	BeforeEach(func() {
@@ -41,6 +41,8 @@ var _ = Describe("BaseFSMInstance", func() {
 		}
 
 		fsmInstance = NewBaseFSMInstance(config, logger.Sugar())
+
+		tick = 0
 	})
 
 	Context("when using backoff functionality", func() {
@@ -51,17 +53,17 @@ var _ = Describe("BaseFSMInstance", func() {
 
 			// Set a temporary error
 			testErr := errors.New("test error")
-			isPermanent := fsmInstance.SetError(testErr)
+			isPermanent := fsmInstance.SetError(testErr, tick)
 			Expect(isPermanent).To(BeFalse(), "First error should not be permanent")
 			Expect(fsmInstance.GetError()).To(Equal(testErr))
 
 			// Should skip operations in backoff state
-			Expect(fsmInstance.ShouldSkipReconcileBecauseOfError()).To(BeTrue())
+			Expect(fsmInstance.ShouldSkipReconcileBecauseOfError(tick)).To(BeTrue())
 
 			// Reset the state
 			fsmInstance.ResetState()
 			Expect(fsmInstance.GetError()).To(BeNil())
-			Expect(fsmInstance.ShouldSkipReconcileBecauseOfError()).To(BeFalse())
+			Expect(fsmInstance.ShouldSkipReconcileBecauseOfError(tick)).To(BeFalse())
 		})
 
 		It("should detect permanent failure after max retries", func() {
@@ -76,42 +78,42 @@ var _ = Describe("BaseFSMInstance", func() {
 			specialInstance := NewBaseFSMInstance(config, logger.Sugar())
 
 			// Replace the default backoffManager with one that has fewer retries for testing
-			backoffConfig := backoff.Config{
-				InitialInterval: 10 * time.Millisecond,
-				MaxInterval:     100 * time.Millisecond,
-				MaxRetries:      2, // Only allow 2 retries
-				Logger:          logger.Sugar(),
-			}
+			backoffConfig := backoff.DefaultConfig(specialInstance.cfg.ID, logger.Sugar())
+			backoffConfig.MaxRetries = 2 // Only allow 2 retries
 			specialInstance.backoffManager = backoff.NewBackoffManager(backoffConfig)
 
 			testErr := errors.New("test error")
 
 			// First error - should not be permanent
-			isPermanent := specialInstance.SetError(testErr)
+			isPermanent := specialInstance.SetError(testErr, tick)
+			tick++
 			Expect(isPermanent).To(BeFalse(), "First error should not be permanent")
 			Expect(specialInstance.IsPermanentlyFailed()).To(BeFalse())
 
 			// Second error - still not permanent
-			isPermanent = specialInstance.SetError(testErr)
+			isPermanent = specialInstance.SetError(testErr, tick)
+			tick++
 			Expect(isPermanent).To(BeFalse(), "Second error should not be permanent")
 			Expect(specialInstance.IsPermanentlyFailed()).To(BeFalse())
 
 			// Third error - now should be permanent (exceeding MaxRetries of 2)
-			isPermanent = specialInstance.SetError(testErr)
+			isPermanent = specialInstance.SetError(testErr, tick)
+			tick++
 			Expect(isPermanent).To(BeTrue(), "Third error should be permanent")
 			Expect(specialInstance.IsPermanentlyFailed()).To(BeTrue())
 
 			// Check error type
-			backoffErr := specialInstance.GetBackoffError()
+			backoffErr := specialInstance.GetBackoffError(tick)
 			Expect(backoff.IsPermanentFailureError(backoffErr)).To(BeTrue())
 		})
 
 		It("should generate appropriate backoff errors", func() {
 			testErr := errors.New("reconcile failed")
-			fsmInstance.SetError(testErr)
+			fsmInstance.SetError(testErr, tick)
+			tick++
 
 			// Get the backoff error and verify its properties
-			backoffErr := fsmInstance.GetBackoffError()
+			backoffErr := fsmInstance.GetBackoffError(tick)
 			Expect(backoff.IsTemporaryBackoffError(backoffErr)).To(BeTrue())
 
 			// Extract the original error
@@ -121,18 +123,19 @@ var _ = Describe("BaseFSMInstance", func() {
 
 		It("should clear errors with ResetState", func() {
 			testErr := errors.New("test error")
-			fsmInstance.SetError(testErr)
+			fsmInstance.SetError(testErr, tick)
+			tick++
 
 			// Verify error is set
 			Expect(fsmInstance.GetError()).To(Equal(testErr))
-			Expect(fsmInstance.ShouldSkipReconcileBecauseOfError()).To(BeTrue())
+			Expect(fsmInstance.ShouldSkipReconcileBecauseOfError(tick)).To(BeTrue())
 
 			// Reset the state
 			fsmInstance.ResetState()
 
 			// Verify error is cleared
 			Expect(fsmInstance.GetError()).To(BeNil())
-			Expect(fsmInstance.ShouldSkipReconcileBecauseOfError()).To(BeFalse())
+			Expect(fsmInstance.ShouldSkipReconcileBecauseOfError(tick)).To(BeFalse())
 		})
 	})
 

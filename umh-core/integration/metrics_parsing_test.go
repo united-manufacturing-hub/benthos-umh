@@ -1,6 +1,7 @@
 package integration_test
 
 import (
+	"strconv"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -150,7 +151,7 @@ umh_core_reconcile_starved_total_seconds 3`
 
 			highReconcileMetrics := strings.ReplaceAll(noErrorStarvedMetrics,
 				"umh_core_reconcile_duration_milliseconds{component=\"control_loop\",instance=\"main\",quantile=\"0.99\"} 16",
-				"umh_core_reconcile_duration_milliseconds{component=\"control_loop\",instance=\"main\",quantile=\"0.99\"} 50")
+				"umh_core_reconcile_duration_milliseconds{component=\"control_loop\",instance=\"main\",quantile=\"0.99\"} "+strconv.FormatFloat(maxReconcileTime99th+1, 'f', -1, 64))
 
 			failures := InterceptGomegaFailures(func() {
 				checkWhetherMetricsHealthy(highReconcileMetrics)
@@ -160,7 +161,7 @@ umh_core_reconcile_starved_total_seconds 3`
 			// Check that we caught the reconcile time issue
 			foundReconcileTimeError := false
 			for _, failure := range failures {
-				if strings.Contains(failure, "reconcile time") && strings.Contains(failure, "50") {
+				if strings.Contains(failure, "reconcile time") && strings.Contains(failure, strconv.FormatFloat(maxReconcileTime99th, 'f', -1, 64)) {
 					foundReconcileTimeError = true
 					break
 				}

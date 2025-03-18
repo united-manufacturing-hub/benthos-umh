@@ -38,14 +38,14 @@ const (
 	// This value balances responsiveness with resource utilization:
 	// - Too small: could mean that the managers do not have enough time to complete their work
 	// - Too high: Delayed response to configuration changes
-	defaultTickerTime = 50 * time.Millisecond
+	defaultTickerTime = 100 * time.Millisecond
 
 	// starvationThreshold defines when to consider the control loop starved.
 	// If no reconciliation has happened for this duration, the starvation
 	// detector will log warnings and record metrics.
 	// Starvation will take place for example when adding hundreds of new services
 	// at once.
-	starvationThreshold = 5000 * time.Millisecond
+	starvationThreshold = 15 * time.Second
 )
 
 // ControlLoop is the central orchestration component of the UMH Core.
@@ -65,6 +65,7 @@ type ControlLoop struct {
 	configManager     config.ConfigManager
 	logger            *zap.SugaredLogger
 	starvationChecker *metrics.StarvationChecker
+	currentTick       uint64
 }
 
 // NewControlLoop creates a new control loop with all necessary managers.
@@ -119,11 +120,17 @@ func (c *ControlLoop) Execute(ctx context.Context) error {
 	ticker := time.NewTicker(c.tickerTime)
 	defer ticker.Stop()
 
+	// Initialize tick counter
+	c.currentTick = 0
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			// Increment tick counter on each iteration
+			c.currentTick++
+
 			// Create a timeout context for the reconcile
 			timeoutCtx, cancel := context.WithTimeout(ctx, c.tickerTime)
 			defer cancel()
@@ -132,7 +139,7 @@ func (c *ControlLoop) Execute(ctx context.Context) error {
 			start := time.Now()
 
 			// Reconcile the managers
-			err := c.Reconcile(timeoutCtx)
+			err := c.Reconcile(timeoutCtx, c.currentTick)
 
 			// Record metrics for the reconcile cycle
 			cycleTime := time.Since(start)
@@ -164,7 +171,7 @@ func (c *ControlLoop) Execute(ctx context.Context) error {
 //   - Call its Reconcile method with the configuration
 //   - If error occurs, propagate it upward
 //   - If reconciliation occurred (bool=true), skip the reconcilation of the next managers to avoid reaching the ticker interval
-func (c *ControlLoop) Reconcile(ctx context.Context) error {
+func (c *ControlLoop) Reconcile(ctx context.Context, ticker uint64) error {
 	// Get the config
 	if c.configManager == nil {
 		return fmt.Errorf("config manager is not set")
@@ -173,13 +180,13 @@ func (c *ControlLoop) Reconcile(ctx context.Context) error {
 	// Get the config, this can fail for example through filesystem errors
 	// Therefore we need a backoff here
 	// GetConfig returns a temporary backoff error or a permanent failure error
-	cfg, err := c.configManager.GetConfig(ctx)
+	cfg, err := c.configManager.GetConfig(ctx, ticker)
 	if err != nil {
 		// Handle temporary backoff errors --> we want to continue reconciling
 		if backoff.IsTemporaryBackoffError(err) {
 			c.logger.Debugf("Skipping reconcile cycle due to temporary config backoff: %v", err)
 			return nil
-		} else { // Handle permanent failure errors --> we want to stop the control loop
+		} else if backoff.IsPermanentFailureError(err) { // Handle permanent failure errors --> we want to stop the control loop
 			originalErr := backoff.ExtractOriginalError(err)
 			c.logger.Errorf("Config manager has permanently failed after max retries: %v (original error: %v)",
 				err, originalErr)
@@ -187,12 +194,16 @@ func (c *ControlLoop) Reconcile(ctx context.Context) error {
 
 			// Propagate the error to the parent component so it can potentially restart the system
 			return fmt.Errorf("config permanently failed, system needs intervention: %w", err)
+		} else {
+			// Handle other errors --> we want to continue reconciling
+			c.logger.Errorf("Config manager error: %v", err)
+			return nil
 		}
 	}
 
-	// Reconcile each manager
+	// Reconcile each manager with the current tick count
 	for _, manager := range c.managers {
-		err, reconciled := manager.Reconcile(ctx, cfg)
+		err, reconciled := manager.Reconcile(ctx, cfg, c.currentTick)
 		if err != nil {
 			metrics.IncErrorCount(metrics.ComponentControlLoop, manager.GetManagerName())
 			return err

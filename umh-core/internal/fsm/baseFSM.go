@@ -3,7 +3,6 @@ package fsm
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/looplab/fsm"
 	"go.uber.org/zap"
@@ -46,6 +45,7 @@ type BaseFSMInstanceConfig struct {
 	OperationalTransitions []fsm.EventDesc
 }
 
+// NewBaseFSMInstance creates a new FSM instance
 func NewBaseFSMInstance(cfg BaseFSMInstanceConfig, logger *zap.SugaredLogger) *BaseFSMInstance {
 
 	baseInstance := &BaseFSMInstance{
@@ -55,12 +55,7 @@ func NewBaseFSMInstance(cfg BaseFSMInstanceConfig, logger *zap.SugaredLogger) *B
 	}
 
 	// Initialize backoff manager with appropriate configuration
-	backoffConfig := backoff.Config{
-		InitialInterval: 100 * time.Millisecond,
-		MaxInterval:     1 * time.Minute,
-		MaxRetries:      5, // Allow 5 retries before permanent failure
-		Logger:          logger,
-	}
+	backoffConfig := backoff.DefaultConfig(cfg.ID, logger)
 	baseInstance.backoffManager = backoff.NewBackoffManager(backoffConfig)
 
 	// Combine lifecycle and operational transitions
@@ -120,8 +115,8 @@ func (s *BaseFSMInstance) GetError() error {
 
 // SetError sets the last error that occurred during a transition
 // and returns true if the error is considered a permanent failure
-func (s *BaseFSMInstance) SetError(err error) bool {
-	isPermanent := s.backoffManager.SetError(err)
+func (s *BaseFSMInstance) SetError(err error, tick uint64) bool {
+	isPermanent := s.backoffManager.SetError(err, tick)
 	if isPermanent {
 		s.logger.Errorf("FSM %s has reached permanent failure state", s.cfg.ID)
 	}
@@ -134,6 +129,7 @@ func (s *BaseFSMInstance) SetDesiredFSMState(state string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cfg.DesiredFSMState = state
+	s.logger.Infof("Setting desired state of FSM %s to %s", s.cfg.ID, state)
 }
 
 // GetDesiredFSMState returns the desired state of the FSM
@@ -180,8 +176,8 @@ func (s *BaseFSMInstance) IsRemoved() bool {
 // ShouldSkipReconcileBecauseOfError returns true if the reconcile should be skipped
 // because of an error that occurred in the last reconciliation and the backoff
 // period has not yet elapsed, or if the FSM is in permanent failure state
-func (s *BaseFSMInstance) ShouldSkipReconcileBecauseOfError() bool {
-	return s.backoffManager.ShouldSkipOperation()
+func (s *BaseFSMInstance) ShouldSkipReconcileBecauseOfError(tick uint64) bool {
+	return s.backoffManager.ShouldSkipOperation(tick)
 }
 
 // ResetState clears the error and backoff after a successful reconcile
@@ -198,8 +194,8 @@ func (s *BaseFSMInstance) IsPermanentlyFailed() bool {
 // GetBackoffError returns a structured error that includes backoff information
 // This will return a permanent failure error or a temporary backoff error
 // depending on the current state
-func (s *BaseFSMInstance) GetBackoffError() error {
-	return s.backoffManager.GetBackoffError()
+func (s *BaseFSMInstance) GetBackoffError(tick uint64) error {
+	return s.backoffManager.GetBackoffError(tick)
 }
 
 func (s *BaseFSMInstance) GetID() string {
@@ -208,4 +204,8 @@ func (s *BaseFSMInstance) GetID() string {
 
 func (s *BaseFSMInstance) GetLogger() *zap.SugaredLogger {
 	return s.logger
+}
+
+func (s *BaseFSMInstance) GetLastError() error {
+	return s.backoffManager.GetLastError()
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"time"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
@@ -18,13 +19,28 @@ import (
 // This function is intended to be called repeatedly (e.g. in a periodic control loop).
 // Over multiple calls, it converges the actual state to the desired state. Transitions
 // that fail are retried in subsequent reconcile calls after a backoff period.
-func (b *BenthosInstance) Reconcile(ctx context.Context) (err error, reconciled bool) {
+func (b *BenthosInstance) Reconcile(ctx context.Context, tick uint64) (err error, reconciled bool) {
+	instanceName := b.baseFSMInstance.GetID()
 	defer func() {
+		// Log errors for debugging
 		if err != nil {
-			b.baseFSMInstance.GetLogger().Errorf("error reconciling Benthos instance %s: %s", b.baseFSMInstance.GetID(), err)
+			b.baseFSMInstance.GetLogger().Errorf("error reconciling Benthos instance %s: %s", instanceName, err)
 			b.PrintState()
 		}
+
+		// Recover from panics
+		if r := recover(); r != nil {
+			b.baseFSMInstance.GetLogger().Errorf("Panic during reconcile for %s: %v", instanceName, r)
+			debug.PrintStack()
+		}
 	}()
+
+	// Skip reconciliation if in error backoff
+	if b.baseFSMInstance.ShouldSkipReconcileBecauseOfError(tick) {
+		err := b.baseFSMInstance.GetBackoffError(tick)
+		b.baseFSMInstance.GetLogger().Debugf("Skipping reconcile for Benthos pipeline %s: %s", instanceName, err)
+		return nil, false
+	}
 
 	// Measure reconcile time
 	start := time.Now()
@@ -43,7 +59,7 @@ func (b *BenthosInstance) Reconcile(ctx context.Context) (err error, reconciled 
 
 	start = time.Now()
 	// Step 2: If there's a lastError, see if we've waited enough.
-	if b.baseFSMInstance.ShouldSkipReconcileBecauseOfError() {
+	if b.baseFSMInstance.ShouldSkipReconcileBecauseOfError(tick) {
 		return nil, false
 	}
 	skipErrorTime := time.Since(start)
@@ -53,7 +69,7 @@ func (b *BenthosInstance) Reconcile(ctx context.Context) (err error, reconciled 
 	// Step 3: Attempt to reconcile the state.
 	err = b.reconcileStateTransition(ctx)
 	if err != nil {
-		b.baseFSMInstance.SetError(err)
+		b.baseFSMInstance.SetError(err, tick)
 		b.baseFSMInstance.GetLogger().Errorf("error reconciling state: %s", err)
 		return nil, false // We don't want to return an error here, because we want to continue reconciling
 	}
@@ -62,9 +78,9 @@ func (b *BenthosInstance) Reconcile(ctx context.Context) (err error, reconciled 
 
 	// Reconcile the s6Manager, on purpose we pass the full config where the rest of the
 	// BenthosInstance is embedded, but the rest is removed to prevent leaking abstractions
-	err, reconciled = b.s6Manager.Reconcile(ctx, config.FullConfig{Services: b.s6ServiceConfigs})
+	err, reconciled = b.s6Manager.Reconcile(ctx, config.FullConfig{Services: b.s6ServiceConfigs}, tick)
 	if err != nil {
-		b.baseFSMInstance.SetError(err)
+		b.baseFSMInstance.SetError(err, tick)
 		b.baseFSMInstance.GetLogger().Errorf("error reconciling s6Manager: %s", err)
 		return nil, false // We don't want to return an error here, because we want to continue reconciling
 	}

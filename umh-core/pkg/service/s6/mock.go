@@ -7,27 +7,28 @@ import (
 // MockService is a mock implementation of the S6 Service interface for testing
 type MockService struct {
 	// Tracks calls to methods
-	CreateCalled    bool
-	RemoveCalled    bool
-	StartCalled     bool
-	StopCalled      bool
-	RestartCalled   bool
-	StatusCalled    bool
-	ExistsCalled    bool
-	GetConfigCalled bool
-
+	CreateCalled      bool
+	RemoveCalled      bool
+	StartCalled       bool
+	StopCalled        bool
+	RestartCalled     bool
+	StatusCalled      bool
+	ExistsCalled      bool
+	GetConfigCalled   bool
+	ExitHistoryCalled bool
 	// Return values for each method
-	CreateError     error
-	RemoveError     error
-	StartError      error
-	StopError       error
-	RestartError    error
-	StatusResult    ServiceInfo
-	StatusError     error
-	ExistsResult    bool
-	GetConfigResult S6ServiceConfig
-	GetConfigError  error
-
+	CreateError       error
+	RemoveError       error
+	StartError        error
+	StopError         error
+	RestartError      error
+	StatusResult      ServiceInfo
+	StatusError       error
+	ExistsResult      bool
+	GetConfigResult   S6ServiceConfig
+	GetConfigError    error
+	ExitHistoryResult []ExitEvent
+	ExitHistoryError  error
 	// For more complex testing scenarios
 	ServiceStates    map[string]ServiceInfo
 	ExistingServices map[string]bool
@@ -129,4 +130,9 @@ func (m *MockService) ServiceExists(ctx context.Context, servicePath string) (bo
 func (m *MockService) GetConfig(ctx context.Context, servicePath string) (S6ServiceConfig, error) {
 	m.GetConfigCalled = true
 	return m.GetConfigResult, m.GetConfigError
+}
+
+func (m *MockService) ExitHistory(ctx context.Context, servicePath string) ([]ExitEvent, error) {
+	m.ExitHistoryCalled = true
+	return m.ExitHistoryResult, m.ExitHistoryError
 }

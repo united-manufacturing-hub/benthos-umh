@@ -21,7 +21,7 @@ const (
 // ConfigManager is the interface for config management
 type ConfigManager interface {
 	// GetConfig returns the current config
-	GetConfig(ctx context.Context) (FullConfig, error)
+	GetConfig(ctx context.Context, tick uint64) (FullConfig, error)
 }
 
 // FileConfigManager implements the ConfigManager interface by reading from a file
@@ -57,7 +57,7 @@ func (m *FileConfigManager) WithFileSystemService(fsService filesystem.Service) 
 }
 
 // GetConfig returns the current config, always reading fresh from disk
-func (m *FileConfigManager) GetConfig(ctx context.Context) (FullConfig, error) {
+func (m *FileConfigManager) GetConfig(ctx context.Context, tick uint64) (FullConfig, error) {
 	// Create the directory if it doesn't exist
 	dir := filepath.Dir(m.configPath)
 	if err := m.fsService.EnsureDirectory(ctx, dir); err != nil {
@@ -129,11 +129,11 @@ func (m *FileConfigManagerWithBackoff) WithFileSystemService(fsService filesyste
 // This is a wrapper around the FileConfigManager's GetConfig method
 // It adds backoff logic to handle temporary and permanent failures
 // It will return either a temporary backoff error or a permanent failure error
-func (m *FileConfigManagerWithBackoff) GetConfig(ctx context.Context) (FullConfig, error) {
+func (m *FileConfigManagerWithBackoff) GetConfig(ctx context.Context, tick uint64) (FullConfig, error) {
 	// Check if we should skip operation due to backoff
-	if m.backoffManager.ShouldSkipOperation() {
+	if m.backoffManager.ShouldSkipOperation(tick) {
 		// Get appropriate backoff error (temporary or permanent)
-		backoffErr := m.backoffManager.GetBackoffError()
+		backoffErr := m.backoffManager.GetBackoffError(tick)
 
 		// Log additional information for permanent failures
 		if m.backoffManager.IsPermanentlyFailed() {
@@ -144,14 +144,11 @@ func (m *FileConfigManagerWithBackoff) GetConfig(ctx context.Context) (FullConfi
 	}
 
 	// Try to fetch the config
-	config, err := m.configManager.GetConfig(ctx)
+	config, err := m.configManager.GetConfig(ctx, tick)
 	if err != nil {
 		// Record the error with the backoff manager
-		m.backoffManager.SetError(err)
-
-		// Return appropriate backoff error
-		backoffErr := m.backoffManager.GetBackoffError()
-		return FullConfig{}, backoffErr
+		m.backoffManager.SetError(err, tick)
+		return FullConfig{}, err
 	}
 
 	// Reset backoff state on successful operation

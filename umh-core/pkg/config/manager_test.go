@@ -19,6 +19,7 @@ var _ = Describe("ConfigManager", func() {
 		configManager     *FileConfigManager
 		ctx               context.Context
 		ctxWithCancelFunc context.CancelFunc
+		tick              uint64
 	)
 
 	BeforeEach(func() {
@@ -27,6 +28,7 @@ var _ = Describe("ConfigManager", func() {
 		// Create a context with a timeout for cancellation tests
 		ctx = context.Background()
 		ctxWithCancelFunc = func() {}
+		tick = uint64(0)
 	})
 
 	JustBeforeEach(func() {
@@ -73,7 +75,7 @@ var _ = Describe("ConfigManager", func() {
 			})
 
 			It("should return the parsed config", func() {
-				config, err := configManager.GetConfig(ctx)
+				config, err := configManager.GetConfig(ctx, tick)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(config.Services).To(HaveLen(1))
@@ -97,7 +99,7 @@ var _ = Describe("ConfigManager", func() {
 			})
 
 			It("should return an empty config", func() {
-				config, err := configManager.GetConfig(ctx)
+				config, err := configManager.GetConfig(ctx, tick)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("config file does not exist"))
 				Expect(config.Services).To(BeEmpty())
@@ -120,7 +122,7 @@ var _ = Describe("ConfigManager", func() {
 			})
 
 			It("should return an error", func() {
-				_, err := configManager.GetConfig(ctx)
+				_, err := configManager.GetConfig(ctx, tick)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to parse config file"))
 			})
@@ -134,7 +136,7 @@ var _ = Describe("ConfigManager", func() {
 			})
 
 			It("should return an error", func() {
-				_, err := configManager.GetConfig(ctx)
+				_, err := configManager.GetConfig(ctx, tick)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to create config directory"))
 			})
@@ -152,7 +154,7 @@ var _ = Describe("ConfigManager", func() {
 			})
 
 			It("should return an error", func() {
-				_, err := configManager.GetConfig(ctx)
+				_, err := configManager.GetConfig(ctx, tick)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(Equal("file check failed"))
 			})
@@ -174,7 +176,7 @@ var _ = Describe("ConfigManager", func() {
 			})
 
 			It("should return an error", func() {
-				_, err := configManager.GetConfig(ctx)
+				_, err := configManager.GetConfig(ctx, tick)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to read config file"))
 			})
@@ -204,7 +206,7 @@ var _ = Describe("ConfigManager", func() {
 			})
 
 			It("should respect context cancellation", func() {
-				_, err := configManager.GetConfig(ctx)
+				_, err := configManager.GetConfig(ctx, tick)
 				Expect(err).To(HaveOccurred())
 				// Check if the error contains context.Canceled by unwrapping it
 				Expect(errors.Is(err, context.Canceled)).To(BeTrue(), "Expected error to wrap context.Canceled")

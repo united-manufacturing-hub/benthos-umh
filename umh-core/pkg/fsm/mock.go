@@ -22,7 +22,7 @@ func NewMockFSMManager() *MockFSMManager {
 }
 
 // Reconcile implements the FSMManager interface
-func (m *MockFSMManager) Reconcile(ctx context.Context, cfg config.FullConfig) (error, bool) {
+func (m *MockFSMManager) Reconcile(ctx context.Context, cfg config.FullConfig, tick uint64) (error, bool) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	m.ReconcileCalled = true
@@ -61,4 +61,12 @@ func (m *MockFSMManager) ResetCalls() {
 // GetManagerName returns the name of the manager
 func (m *MockFSMManager) GetManagerName() string {
 	return "MockFSMManager"
+}
+
+func (m *MockFSMManager) GetInstances() map[string]FSMInstance {
+	return map[string]FSMInstance{}
+}
+
+func (m *MockFSMManager) GetInstance(name string) (FSMInstance, bool) {
+	return nil, false
 }

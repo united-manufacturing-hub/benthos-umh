@@ -12,6 +12,38 @@ import (
 	"go.uber.org/zap"
 )
 
+// FSMInstance defines the interface for a finite state machine instance.
+// Each instance has a current state and a desired state, and can be reconciled
+// to move toward the desired state.
+type FSMInstance interface {
+	// GetCurrentFSMState returns the current state of the instance
+	GetCurrentFSMState() string
+	// GetDesiredFSMState returns the desired state of the instance
+	GetDesiredFSMState() string
+	// SetDesiredFSMState sets the desired state of the instance
+	SetDesiredFSMState(desiredState string) error
+	// Reconcile moves the instance toward its desired state
+	// Returns an error if reconciliation fails, and a boolean indicating
+	// whether a change was made to the instance's state
+	Reconcile(ctx context.Context, tick uint64) (error, bool)
+	// Remove initiates the removal process for this instance
+	Remove(ctx context.Context) error
+}
+
+// FSMManager defines the interface for managing multiple FSM instances.
+// It provides methods for retrieving and reconciling instances.
+type FSMManager[C any] interface {
+	// GetInstances returns all instances managed by this manager
+	GetInstances() map[string]FSMInstance
+	// GetInstance returns an instance by name
+	GetInstance(name string) (FSMInstance, bool)
+	// Reconcile ensures that all instances are moving toward their desired state
+	// The tick parameter provides a counter to track operation rate limiting
+	Reconcile(ctx context.Context, config config.FullConfig, tick uint64) (error, bool)
+	// GetManagerName returns the name of this manager for logging and metrics
+	GetManagerName() string
+}
+
 // BaseFSMManager provides a generic, reusable implementation of the FSM management pattern.
 // It serves as the foundation for specialized managers like S6Manager and BenthosManager,
 // eliminating code duplication while allowing type-safe specialization through Go generics.
@@ -37,6 +69,12 @@ type BaseFSMManager[C any] struct {
 	instances   map[string]FSMInstance
 	logger      *zap.SugaredLogger
 	managerName string
+
+	// Tick tracking for rate limiting
+	lastAddTick     uint64 // Last tick when an instance was added
+	lastUpdateTick  uint64 // Last tick when an instance configuration was updated
+	lastRemoveTick  uint64 // Last tick when an instance was removed
+	lastStateChange uint64 // Last tick when an instance state was changed
 
 	// These methods are implemented by each concrete manager
 	extractConfigs  func(config config.FullConfig) ([]C, error)
@@ -142,6 +180,11 @@ func (m *BaseFSMManager[C]) GetManagerName() string {
 // Performance metrics are collected for each phase of reconciliation,
 // enabling fine-grained monitoring of system behavior.
 //
+// Parameters:
+//   - ctx: Context for cancellation and timeouts
+//   - config: The full configuration to reconcile against
+//   - tick: Current tick count for rate limiting operations
+//
 // Returns:
 //   - error: Any error encountered during reconciliation
 //   - bool: True if a change was made, indicating the control loop should not
@@ -149,6 +192,7 @@ func (m *BaseFSMManager[C]) GetManagerName() string {
 func (m *BaseFSMManager[C]) Reconcile(
 	ctx context.Context,
 	config config.FullConfig,
+	tick uint64,
 ) (error, bool) {
 	// Start tracking metrics for the manager
 	start := time.Now()
@@ -166,6 +210,14 @@ func (m *BaseFSMManager[C]) Reconcile(
 	}
 	metrics.ObserveReconcileTime(metrics.ComponentBaseFSMManager, m.managerName+".extract_configs", time.Since(extractStart))
 
+	// Constants for rate limiting
+	const (
+		TicksBeforeNextAdd    = 10 // Wait 10 ticks before adding another instance
+		TicksBeforeNextUpdate = 5  // Wait 5 ticks before updating another instance
+		TicksBeforeNextRemove = 3  // Wait 3 ticks before removing another instance
+		TicksBeforeNextState  = 2  // Wait 2 ticks before changing instance state
+	)
+
 	// Step 2: Create or update instances
 	for _, cfg := range desiredState {
 		name, err := m.getName(cfg)
@@ -176,6 +228,13 @@ func (m *BaseFSMManager[C]) Reconcile(
 
 		// If the instance does not exist, create it and set it to the desired state
 		if _, ok := m.instances[name]; !ok {
+			// Rate limit creation of new instances
+			if tick-m.lastAddTick < TicksBeforeNextAdd {
+				m.logger.Debugf("Rate limiting: Skipping creation of instance %s (waiting %d more ticks)",
+					name, TicksBeforeNextAdd-(tick-m.lastAddTick))
+				continue // Skip this instance for now, will be created on a future tick
+			}
+
 			createStart := time.Now()
 			instance, err := m.createInstance(cfg)
 			if err != nil {
@@ -189,9 +248,16 @@ func (m *BaseFSMManager[C]) Reconcile(
 				metrics.IncErrorCount(metrics.ComponentBaseFSMManager, m.managerName)
 				return fmt.Errorf("failed to get desired state: %w", err), false
 			}
-			instance.SetDesiredFSMState(desiredState)
+			err = instance.SetDesiredFSMState(desiredState)
+			if err != nil {
+				metrics.IncErrorCount(metrics.ComponentBaseFSMManager, m.managerName)
+				return fmt.Errorf("failed to set desired state: %w", err), false
+			}
 			m.instances[name] = instance
 			m.logger.Infof("Created instance %s", name)
+
+			// Update last add tick
+			m.lastAddTick = tick
 			return nil, true
 		}
 
@@ -205,6 +271,13 @@ func (m *BaseFSMManager[C]) Reconcile(
 		metrics.ObserveReconcileTime(metrics.ComponentBaseFSMManager, m.managerName+".compare_config", time.Since(compareStart))
 
 		if !equal {
+			// Rate limit updates
+			if tick-m.lastUpdateTick < TicksBeforeNextUpdate {
+				m.logger.Debugf("Rate limiting: Skipping update of instance %s (waiting %d more ticks)",
+					name, TicksBeforeNextUpdate-(tick-m.lastUpdateTick))
+				continue // Skip this update for now, will be updated on a future tick
+			}
+
 			updateStart := time.Now()
 			err := m.setConfig(m.instances[name], cfg)
 			if err != nil {
@@ -214,6 +287,8 @@ func (m *BaseFSMManager[C]) Reconcile(
 			metrics.ObserveReconcileTime(metrics.ComponentBaseFSMManager, m.managerName+".set_config", time.Since(updateStart))
 
 			m.logger.Infof("Updated config of instance %s", name)
+			// Update last update tick
+			m.lastUpdateTick = tick
 			return nil, true
 		}
 
@@ -224,15 +299,33 @@ func (m *BaseFSMManager[C]) Reconcile(
 			return fmt.Errorf("failed to get desired state: %w", err), false
 		}
 		if m.instances[name].GetDesiredFSMState() != desiredState {
+			// Rate limit state changes
+			if tick-m.lastStateChange < TicksBeforeNextState {
+				m.logger.Debugf("Rate limiting: Skipping state change of instance %s (waiting %d more ticks)",
+					name, TicksBeforeNextState-(tick-m.lastStateChange))
+				continue // Skip this state change for now, will be updated on a future tick
+			}
+
 			m.logger.Infof("Updated desired state of instance %s from %s to %s",
 				name, m.instances[name].GetDesiredFSMState(), desiredState)
-			m.instances[name].SetDesiredFSMState(desiredState)
+			err := m.instances[name].SetDesiredFSMState(desiredState)
+			if err != nil {
+				metrics.IncErrorCount(metrics.ComponentBaseFSMManager, m.managerName)
+				return fmt.Errorf("failed to set desired state: %w", err), false
+			}
+
+			// Update last state change tick
+			m.lastStateChange = tick
 			return nil, true
 		}
 	}
 
 	// Step 3: Clean up any instances that are not in desiredState, or are in the removed state
 	// Before deletion, they need to be gracefully stopped and we need to wait until they are in the state removed
+
+	// Collect instances to delete to avoid modifying map during iteration
+	instancesToDelete := make([]string, 0)
+
 	for instanceName := range m.instances {
 		// If the instance is not in desiredState, start its removal process
 		found := false
@@ -253,8 +346,8 @@ func (m *BaseFSMManager[C]) Reconcile(
 			m.logger.Debugf("instance %s is already in removing state, waiting until it is removed", instanceName)
 			continue
 		case internal_fsm.LifecycleStateRemoved:
-			m.logger.Debugf("instance %s is in removed state, deleting it from the manager", instanceName)
-			delete(m.instances, instanceName)
+			m.logger.Debugf("instance %s is in removed state, will be deleted from the manager", instanceName)
+			instancesToDelete = append(instancesToDelete, instanceName)
 			continue
 		default:
 			// If the instance is in desiredState, we don't need to remove it
@@ -262,17 +355,53 @@ func (m *BaseFSMManager[C]) Reconcile(
 				continue
 			}
 
+			// Temporary
+
+			if instanceName == "golden-service" {
+				m.logger.Errorf("instance %s is in state %s, and should be removed??", instanceName, m.instances[instanceName].GetCurrentFSMState())
+				// Log the config
+				m.logger.Infof("desiredState: %+v", desiredState)
+				m.logger.Infof("instances: %+v", m.instances)
+			}
+
+			// Rate limit removals
+			if tick-m.lastRemoveTick < TicksBeforeNextRemove {
+				m.logger.Debugf("Rate limiting: Skipping removal of instance %s (waiting %d more ticks)",
+					instanceName, TicksBeforeNextRemove-(tick-m.lastRemoveTick))
+				continue // Skip this removal for now, will be removed on a future tick
+			}
+
 			// Otherwise, we need to remove the instance
 			m.logger.Debugf("instance %s is in state %s, starting the removing process", instanceName, m.instances[instanceName].GetCurrentFSMState())
 			m.instances[instanceName].Remove(ctx)
-			continue
+
+			// Update last remove tick
+			m.lastRemoveTick = tick
+			return nil, true
+		}
+	}
+
+	// Delete collected instances after iteration
+	if len(instancesToDelete) > 0 {
+		// Rate limit bulk deletions too
+		if tick-m.lastRemoveTick < TicksBeforeNextRemove {
+			m.logger.Debugf("Rate limiting: Skipping deletion of %d instances (waiting %d more ticks)",
+				len(instancesToDelete), TicksBeforeNextRemove-(tick-m.lastRemoveTick))
+		} else {
+			for _, instanceName := range instancesToDelete {
+				m.logger.Debugf("deleting instance %s from the manager", instanceName)
+				delete(m.instances, instanceName)
+			}
+			// Update last remove tick
+			m.lastRemoveTick = tick
+			return nil, true
 		}
 	}
 
 	// Reconcile instances
 	for name, instance := range m.instances {
 		reconcileStart := time.Now()
-		err, reconciled := instance.Reconcile(ctx)
+		err, reconciled := instance.Reconcile(ctx, tick)
 		reconcileTime := time.Since(reconcileStart)
 		metrics.ObserveReconcileTime(metrics.ComponentBaseFSMManager, m.managerName+".instances."+name, reconcileTime)
 

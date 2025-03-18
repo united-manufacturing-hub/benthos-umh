@@ -3,7 +3,6 @@ package backoff_test
 import (
 	"errors"
 	"testing"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -23,6 +22,7 @@ var _ = Describe("BackoffManager", func() {
 		manager *backoff.BackoffManager
 		config  backoff.Config
 		logger  *zap.SugaredLogger
+		tick    uint64
 	)
 
 	BeforeEach(func() {
@@ -32,14 +32,10 @@ var _ = Describe("BackoffManager", func() {
 
 		// Create a config with very short but predictable intervals for testing
 		// Using fixed values to make tests more reliable
-		config = backoff.Config{
-			InitialInterval: 50 * time.Millisecond,
-			MaxInterval:     200 * time.Millisecond,
-			MaxRetries:      3,
-			Logger:          logger,
-		}
+		config = backoff.DefaultConfig("test-backoff-manager", logger)
 
 		manager = backoff.NewBackoffManager(config)
+		tick = 0
 	})
 
 	Context("when initializing", func() {
@@ -62,7 +58,8 @@ var _ = Describe("BackoffManager", func() {
 
 			// Set a temporary error
 			testErr := errors.New("test error")
-			isPermanent := manager.SetError(testErr)
+			isPermanent := manager.SetError(testErr, tick)
+			tick++
 			Expect(isPermanent).To(BeFalse()) // Not permanent on first attempt
 			Expect(manager.GetLastError()).To(Equal(testErr))
 			Expect(manager.IsPermanentlyFailed()).To(BeFalse())
@@ -70,7 +67,7 @@ var _ = Describe("BackoffManager", func() {
 			// Reset should clear the error state
 			manager.Reset()
 			Expect(manager.GetLastError()).To(BeNil())
-			Expect(manager.ShouldSkipOperation()).To(BeFalse())
+			Expect(manager.ShouldSkipOperation(tick)).To(BeFalse())
 		})
 
 		It("should detect permanent failure after max retries", func() {
@@ -78,31 +75,30 @@ var _ = Describe("BackoffManager", func() {
 
 			// Need to access the impl directly to set exact retries
 			// Create a new manager with a shorter MaxRetries for this test
-			specialConfig := backoff.Config{
-				InitialInterval: 10 * time.Millisecond,
-				MaxInterval:     100 * time.Millisecond,
-				MaxRetries:      2, // Set to 2 for this specific test
-				Logger:          logger,
-			}
+			specialConfig := backoff.DefaultConfig("test-backoff-manager", logger)
+			specialConfig.MaxRetries = 2
 			specialManager := backoff.NewBackoffManager(specialConfig)
 
 			// First error - not permanent
-			isPermanent := specialManager.SetError(testErr)
+			isPermanent := specialManager.SetError(testErr, tick)
+			tick++
 			Expect(isPermanent).To(BeFalse(), "First error should not be permanent")
 			Expect(specialManager.IsPermanentlyFailed()).To(BeFalse())
 
 			// Second error - not permanent yet (since we allow 2 retries)
-			isPermanent = specialManager.SetError(testErr)
+			isPermanent = specialManager.SetError(testErr, tick)
+			tick++
 			Expect(isPermanent).To(BeFalse(), "Second error should not be permanent")
 			Expect(specialManager.IsPermanentlyFailed()).To(BeFalse())
 
 			// Third error - now should be permanent (exceeded 2 retries)
-			isPermanent = specialManager.SetError(testErr)
+			isPermanent = specialManager.SetError(testErr, tick)
+			tick++
 			Expect(isPermanent).To(BeTrue(), "Third error should be permanent")
 			Expect(specialManager.IsPermanentlyFailed()).To(BeTrue())
 
 			// Check that we get a permanent failure error
-			backoffErr := specialManager.GetBackoffError()
+			backoffErr := specialManager.GetBackoffError(tick)
 			Expect(backoff.IsPermanentFailureError(backoffErr)).To(BeTrue(), "Error should indicate permanent failure")
 			Expect(backoff.IsTemporaryBackoffError(backoffErr)).To(BeFalse(), "Error should not indicate temporary failure")
 		})
@@ -110,27 +106,30 @@ var _ = Describe("BackoffManager", func() {
 
 	Context("when checking operation skip", func() {
 		It("should not skip operations initially", func() {
-			Expect(manager.ShouldSkipOperation()).To(BeFalse())
+			Expect(manager.ShouldSkipOperation(tick)).To(BeFalse())
 		})
 
 		It("should skip operations in backoff state", func() {
 			// Set an error to enter backoff state
 			testErr := errors.New("test error")
-			manager.SetError(testErr)
+			manager.SetError(testErr, tick)
 
 			// Now operations should be skipped
-			Expect(manager.ShouldSkipOperation()).To(BeTrue())
+			Expect(manager.ShouldSkipOperation(tick)).To(BeTrue())
+			tick++
 		})
 
 		It("should not skip operations after reset", func() {
 			// Set an error to enter backoff state
 			testErr := errors.New("test error")
-			manager.SetError(testErr)
-			Expect(manager.ShouldSkipOperation()).To(BeTrue())
+			manager.SetError(testErr, tick)
+			tick++
+			Expect(manager.ShouldSkipOperation(tick)).To(BeTrue())
 
 			// Reset and check again
 			manager.Reset()
-			Expect(manager.ShouldSkipOperation()).To(BeFalse())
+			Expect(manager.ShouldSkipOperation(tick)).To(BeFalse())
+			tick++
 		})
 	})
 
@@ -138,48 +137,50 @@ var _ = Describe("BackoffManager", func() {
 		It("should generate appropriate temporary backoff errors", func() {
 			// Set an error but not permanently failed
 			testErr := errors.New("test error")
-			manager.SetError(testErr)
+			manager.SetError(testErr, tick)
+			tick++
 
-			backoffErr := manager.GetBackoffError()
+			backoffErr := manager.GetBackoffError(tick)
+			tick++
 			Expect(backoff.IsTemporaryBackoffError(backoffErr)).To(BeTrue())
 			Expect(backoff.IsPermanentFailureError(backoffErr)).To(BeFalse())
 		})
 
 		It("should generate appropriate permanent backoff errors", func() {
 			// Need to use a manager with a specific number of retries for reliable testing
-			specialConfig := backoff.Config{
-				InitialInterval: 10 * time.Millisecond,
-				MaxInterval:     100 * time.Millisecond,
-				MaxRetries:      2, // Set to 2 for predictable behavior
-				Logger:          logger,
-			}
+			specialConfig := backoff.DefaultConfig("test-backoff-manager", logger)
+			specialConfig.MaxRetries = 2
 			specialManager := backoff.NewBackoffManager(specialConfig)
 
 			testErr := errors.New("test error")
 
 			// Set errors until we reach permanent failure
 			// First error
-			specialManager.SetError(testErr)
+			specialManager.SetError(testErr, tick)
+			tick++
 			// Second error
-			specialManager.SetError(testErr)
+			specialManager.SetError(testErr, tick)
+			tick++
 			// Third error should cause permanent failure
-			isPermanent := specialManager.SetError(testErr)
-
+			isPermanent := specialManager.SetError(testErr, tick)
+			tick++
 			// Verify permanent failure
 			Expect(isPermanent).To(BeTrue(), "Should be permanent after exceeding max retries")
 			Expect(specialManager.IsPermanentlyFailed()).To(BeTrue())
 
 			// Get error and verify it's a permanent failure error
-			backoffErr := specialManager.GetBackoffError()
+			backoffErr := specialManager.GetBackoffError(tick)
+			tick++
 			Expect(backoff.IsPermanentFailureError(backoffErr)).To(BeTrue(), "Error should be permanent failure type")
 			Expect(backoff.IsTemporaryBackoffError(backoffErr)).To(BeFalse(), "Error should not be temporary")
 		})
 
 		It("should preserve original error", func() {
 			testErr := errors.New("original test error")
-			manager.SetError(testErr)
-
-			backoffErr := manager.GetBackoffError()
+			manager.SetError(testErr, tick)
+			tick++
+			backoffErr := manager.GetBackoffError(tick)
+			tick++
 			extractedErr := backoff.ExtractOriginalError(backoffErr)
 			Expect(extractedErr).To(Equal(testErr))
 		})
@@ -216,16 +217,17 @@ var _ = Describe("BackoffManager", func() {
 
 			// Set an error to trigger backoff
 			testErr := errors.New("test error")
-			testManager.SetError(testErr)
-
+			testManager.SetError(testErr, tick)
+			tick++
 			// Should be in backoff immediately after setting error
-			Expect(testManager.ShouldSkipOperation()).To(BeTrue())
+			Expect(testManager.ShouldSkipOperation(tick)).To(BeTrue())
+			tick++
 
 			// Reset the manager to clear backoff state
 			testManager.Reset()
 
 			// Should not be in backoff after reset
-			Expect(testManager.ShouldSkipOperation()).To(BeFalse())
+			Expect(testManager.ShouldSkipOperation(tick)).To(BeFalse())
 		})
 	})
 })

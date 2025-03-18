@@ -18,6 +18,17 @@ const (
 	PermanentFailureError = "operation permanently failed after max retries"
 )
 
+// TickClock implements backoff.Clock for tick-based timing
+type TickClock struct {
+	// Since we're not using time-based backoff, we just need a dummy implementation
+	// that doesn't return nil when GetElapsedTime is called
+}
+
+// Now returns a dummy time for TickClock
+func (t *TickClock) Now() time.Time {
+	return time.Unix(0, 0) // Epoch time as a placeholder
+}
+
 // BackoffManager handles error backoff with exponential retries and permanent failure detection
 type BackoffManager struct {
 	// Mutex for thread safety
@@ -29,8 +40,9 @@ type BackoffManager struct {
 	// The backoff policy
 	backoff backoff.BackOff
 
-	// The time when operations can be resumed
-	suspendedUntilTime time.Time
+	// Tick-based backoff properties
+	suspendedUntilTick uint64
+	ticksToWait        uint64
 
 	// Flag indicating permanent failure state (max retries exceeded)
 	permanentFailure bool
@@ -41,11 +53,11 @@ type BackoffManager struct {
 
 // Config holds configuration for creating a new BackoffManager
 type Config struct {
-	// Initial backoff interval
-	InitialInterval time.Duration
+	// Initial backoff interval in ticks
+	InitialInterval uint64
 
-	// Maximum backoff interval
-	MaxInterval time.Duration
+	// Maximum backoff interval in ticks
+	MaxInterval uint64
 
 	// Maximum number of retries before permanent failure
 	MaxRetries uint64
@@ -57,8 +69,8 @@ type Config struct {
 // DefaultConfig returns a Config with sensible defaults
 func DefaultConfig(componentName string, logger *zap.SugaredLogger) Config {
 	return Config{
-		InitialInterval: 100 * time.Millisecond,
-		MaxInterval:     1 * time.Minute,
+		InitialInterval: 1,   // Start with 1 tick backoff
+		MaxInterval:     600, // Maximum of 600 ticks (1 minute at 100ms per tick)
 		MaxRetries:      5,
 		Logger:          logger,
 	}
@@ -68,8 +80,11 @@ func DefaultConfig(componentName string, logger *zap.SugaredLogger) Config {
 func NewBackoffManager(config Config) *BackoffManager {
 	// Create exponential backoff with the provided settings
 	baseBackoff := backoff.NewExponentialBackOff()
-	baseBackoff.InitialInterval = config.InitialInterval
-	baseBackoff.MaxInterval = config.MaxInterval
+	// We're using ticks, so we use time.Duration(1) to represent 1 tick
+	baseBackoff.InitialInterval = time.Duration(config.InitialInterval)
+	baseBackoff.MaxInterval = time.Duration(config.MaxInterval)
+	// Use our dummy clock instead of nil
+	baseBackoff.Clock = &TickClock{}
 
 	// Wrap with max retries - after MaxRetries failures, it will return backoff.Stop
 	backoffWithMaxRetries := backoff.WithMaxRetries(baseBackoff, config.MaxRetries)
@@ -83,7 +98,7 @@ func NewBackoffManager(config Config) *BackoffManager {
 
 // SetError records an error and updates the backoff state
 // Returns true if the backoff has reached permanent failure state
-func (m *BackoffManager) SetError(err error) bool {
+func (m *BackoffManager) SetError(err error, currentTick uint64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -94,20 +109,27 @@ func (m *BackoffManager) SetError(err error) bool {
 		return true
 	}
 
-	// Get the next backoff duration
+	// Get the next backoff duration (in this case, tick count)
 	next := m.backoff.NextBackOff()
 
 	// Check if we've reached permanent failure (backoff.Stop)
 	if next == backoff.Stop {
 		m.logger.Errorf("Backoff manager has exceeded maximum retries, marking as permanently failed")
 		m.permanentFailure = true
-		m.suspendedUntilTime = time.Time{} // Clear suspension time
+		m.suspendedUntilTick = 0 // Clear suspension tick
 		return true
 	}
 
-	// Set the suspension time unconditionally for a new backoff period
-	m.suspendedUntilTime = time.Now().Add(next)
-	m.logger.Debugf("Suspending operations for %s because of error: %s", next, err)
+	// Extract tick count
+	ticksToWait := uint64(next)
+	if ticksToWait < 1 {
+		ticksToWait = 1 // Minimum of 1 tick
+	}
+
+	m.ticksToWait = ticksToWait
+	// Set the suspension tick
+	m.suspendedUntilTick = currentTick + ticksToWait
+	m.logger.Debugf("Suspending operations for %d ticks because of error: %s", ticksToWait, err)
 
 	return false
 }
@@ -119,12 +141,12 @@ func (m *BackoffManager) Reset() {
 
 	m.lastError = nil
 	m.backoff.Reset()
-	m.suspendedUntilTime = time.Time{}
+	m.suspendedUntilTick = 0
 	m.permanentFailure = false
 }
 
 // ShouldSkipOperation returns true if operations should be skipped due to backoff
-func (m *BackoffManager) ShouldSkipOperation() bool {
+func (m *BackoffManager) ShouldSkipOperation(currentTick uint64) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -133,22 +155,20 @@ func (m *BackoffManager) ShouldSkipOperation() bool {
 		return true
 	}
 
-	// If there is no error or no suspension time, don't skip
-	if m.lastError == nil || m.suspendedUntilTime.IsZero() {
+	// If there is no error or no suspension tick, don't skip
+	if m.lastError == nil || m.suspendedUntilTick == 0 {
 		return false
 	}
 
 	// If the backoff period has not yet elapsed, skip the operation
-	if time.Now().Before(m.suspendedUntilTime) {
-		m.logger.Debugf("Skipping operation because of error: %s. Remaining backoff: %s",
-			m.lastError, time.Until(m.suspendedUntilTime))
+	if currentTick < m.suspendedUntilTick {
+		ticksRemaining := m.suspendedUntilTick - currentTick
+		m.logger.Debugf("Skipping operation because of error: %s. Remaining ticks: %d",
+			m.lastError, ticksRemaining)
 		return true
 	}
 
 	// Backoff period has elapsed, we can proceed with the operation
-	// Note: We don't reset the suspendedUntilTime here to avoid race conditions
-	// It will be explicitly reset on successful operations via Reset()
-	// or updated on new errors via SetError()
 	return false
 }
 
@@ -170,7 +190,7 @@ func (m *BackoffManager) GetLastError() error {
 // - For permanent failures, it returns a permanent failure error
 // - For temporary backoffs, it returns a temporary backoff error with retry time
 // - If no backoff is in progress, it returns nil
-func (m *BackoffManager) GetBackoffError() error {
+func (m *BackoffManager) GetBackoffError(currentTick uint64) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -178,9 +198,9 @@ func (m *BackoffManager) GetBackoffError() error {
 		return fmt.Errorf("%s: %w", PermanentFailureError, m.lastError)
 	}
 
-	if m.lastError != nil && !m.suspendedUntilTime.IsZero() && time.Now().Before(m.suspendedUntilTime) {
-		retryAfter := time.Until(m.suspendedUntilTime)
-		return fmt.Errorf("%s (retry after %v): %w", TemporaryBackoffError, retryAfter, m.lastError)
+	if m.lastError != nil && m.suspendedUntilTick > 0 && currentTick < m.suspendedUntilTick {
+		ticksRemaining := m.suspendedUntilTick - currentTick
+		return fmt.Errorf("%s (retry after %d ticks): %w", TemporaryBackoffError, ticksRemaining, m.lastError)
 	}
 
 	return nil
@@ -188,7 +208,7 @@ func (m *BackoffManager) GetBackoffError() error {
 
 // SetErrorWithBackoffForTesting is a test-only helper that allows injection of a custom backoff policy
 // This is used to create more deterministic tests
-func (m *BackoffManager) SetErrorWithBackoffForTesting(err error, customBackoff backoff.BackOff) bool {
+func (m *BackoffManager) SetErrorWithBackoffForTesting(err error, customBackoff backoff.BackOff, currentTick uint64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -196,12 +216,19 @@ func (m *BackoffManager) SetErrorWithBackoffForTesting(err error, customBackoff 
 	m.backoff = customBackoff
 
 	// Set up the backoff period
-	next := m.backoff.NextBackOff()
+	next := customBackoff.NextBackOff()
 	if next == backoff.Stop {
 		m.permanentFailure = true
 		return true
 	}
 
-	m.suspendedUntilTime = time.Now().Add(next)
+	// Extract tick count
+	ticksToWait := uint64(next)
+	if ticksToWait < 1 {
+		ticksToWait = 1 // Minimum of 1 tick
+	}
+
+	m.ticksToWait = ticksToWait
+	m.suspendedUntilTick = currentTick + ticksToWait
 	return false
 }

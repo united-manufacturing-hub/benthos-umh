@@ -81,3 +81,8 @@ type S6Instance struct {
 	// config contains all the configuration for this service
 	config config.S6FSMConfig
 }
+
+// GetError returns a structured error with backoff information
+func (s *S6Instance) GetError() error {
+	return s.baseFSMInstance.GetError()
+}
