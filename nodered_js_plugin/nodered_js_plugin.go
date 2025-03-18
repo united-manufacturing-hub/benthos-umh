@@ -113,7 +113,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		if err != nil {
 			u.messagesErrored.Incr(1)
 			u.logger.Errorf("%v\nOriginal message: %v", err, msg)
-			continue
+			return nil, err
 		}
 
 		// Add metadata to the message wrapper
@@ -124,7 +124,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		}); err != nil {
 			u.messagesErrored.Incr(1)
 			u.logger.Errorf("Failed to walk message metadata: %v\nOriginal message: %v", err, msg)
-			continue
+			return nil, err
 		}
 		jsMsg["meta"] = meta
 
@@ -132,7 +132,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		if err := u.SetupJSEnvironment(vm, jsMsg); err != nil {
 			u.messagesErrored.Incr(1)
 			u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
-			continue
+			return nil, err
 		}
 
 		// Execute the JavaScript code
@@ -140,7 +140,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		if err != nil {
 			u.messagesErrored.Incr(1)
 			u.logJSError(err, jsMsg)
-			continue
+			return nil, err
 		}
 
 		// Handle the execution result
