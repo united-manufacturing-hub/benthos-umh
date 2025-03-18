@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/backoff"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	filesystem "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/filesystem"
 )
@@ -87,4 +88,90 @@ func (m *FileConfigManager) GetConfig(ctx context.Context) (FullConfig, error) {
 	}
 
 	return config, nil
+}
+
+// FileConfigManagerWithBackoff wraps a FileConfigManager and implements backoff for GetConfig errors
+type FileConfigManagerWithBackoff struct {
+	// The wrapped file config manager
+	configManager *FileConfigManager
+
+	// Backoff manager
+	backoffManager *backoff.BackoffManager
+
+	// Logger
+	logger *zap.SugaredLogger
+}
+
+// NewFileConfigManagerWithBackoff creates a new FileConfigManagerWithBackoff with exponential backoff
+func NewFileConfigManagerWithBackoff() *FileConfigManagerWithBackoff {
+	configManager := NewFileConfigManager()
+	logger := logger.For(logger.ComponentConfigManager)
+
+	// Create backoff manager with default settings
+	backoffConfig := backoff.DefaultConfig("ConfigManager", logger)
+	backoffManager := backoff.NewBackoffManager(backoffConfig)
+
+	return &FileConfigManagerWithBackoff{
+		configManager:  configManager,
+		backoffManager: backoffManager,
+		logger:         logger,
+	}
+}
+
+// WithFileSystemService allows setting a custom filesystem service on the wrapped FileConfigManager
+// useful for testing or advanced use cases
+func (m *FileConfigManagerWithBackoff) WithFileSystemService(fsService filesystem.Service) *FileConfigManagerWithBackoff {
+	m.configManager.WithFileSystemService(fsService)
+	return m
+}
+
+// GetConfig returns the current config with backoff logic for failures
+// This is a wrapper around the FileConfigManager's GetConfig method
+// It adds backoff logic to handle temporary and permanent failures
+// It will return either a temporary backoff error or a permanent failure error
+func (m *FileConfigManagerWithBackoff) GetConfig(ctx context.Context) (FullConfig, error) {
+	// Check if we should skip operation due to backoff
+	if m.backoffManager.ShouldSkipOperation() {
+		// Get appropriate backoff error (temporary or permanent)
+		backoffErr := m.backoffManager.GetBackoffError()
+
+		// Log additional information for permanent failures
+		if m.backoffManager.IsPermanentlyFailed() {
+			m.logger.Errorf("ConfigManager is permanently failed. Last error: %v", m.backoffManager.GetLastError())
+		}
+
+		return FullConfig{}, backoffErr
+	}
+
+	// Try to fetch the config
+	config, err := m.configManager.GetConfig(ctx)
+	if err != nil {
+		// Record the error with the backoff manager
+		m.backoffManager.SetError(err)
+
+		// Return appropriate backoff error
+		backoffErr := m.backoffManager.GetBackoffError()
+		return FullConfig{}, backoffErr
+	}
+
+	// Reset backoff state on successful operation
+	m.backoffManager.Reset()
+	return config, nil
+}
+
+// Reset forcefully resets the config manager's state, including permanent failure status
+// This should be called when the parent component has taken action to address the failure
+func (m *FileConfigManagerWithBackoff) Reset() {
+	m.backoffManager.Reset()
+}
+
+// IsPermanentFailure returns true if the config manager has permanently failed
+// This can be used by consumers to distinguish between temporary and permanent failures
+func (m *FileConfigManagerWithBackoff) IsPermanentFailure() bool {
+	return m.backoffManager.IsPermanentlyFailed()
+}
+
+// GetLastError returns the last error that occurred when fetching the config
+func (m *FileConfigManagerWithBackoff) GetLastError() error {
+	return m.backoffManager.GetLastError()
 }

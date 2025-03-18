@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/backoff"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
@@ -84,8 +85,8 @@ func NewControlLoop() *ControlLoop {
 		//benthos.NewBenthosManager("Core"),
 	}
 
-	// Create the config manager
-	configManager := config.NewFileConfigManager()
+	// Create the config manager with backoff support
+	configManager := config.NewFileConfigManagerWithBackoff()
 
 	// Create a starvation checker
 	starvationChecker := metrics.NewStarvationChecker(starvationThreshold)
@@ -164,21 +165,34 @@ func (c *ControlLoop) Execute(ctx context.Context) error {
 //   - If error occurs, propagate it upward
 //   - If reconciliation occurred (bool=true), skip the reconcilation of the next managers to avoid reaching the ticker interval
 func (c *ControlLoop) Reconcile(ctx context.Context) error {
-
 	// Get the config
 	if c.configManager == nil {
 		return fmt.Errorf("config manager is not set")
 	}
-	config, err := c.configManager.GetConfig(ctx)
 
+	// Get the config, this can fail for example through filesystem errors
+	// Therefore we need a backoff here
+	// GetConfig returns a temporary backoff error or a permanent failure error
+	cfg, err := c.configManager.GetConfig(ctx)
 	if err != nil {
-		metrics.IncErrorCount(metrics.ComponentControlLoop, "config_fetch")
-		return err
+		// Handle temporary backoff errors --> we want to continue reconciling
+		if backoff.IsTemporaryBackoffError(err) {
+			c.logger.Debugf("Skipping reconcile cycle due to temporary config backoff: %v", err)
+			return nil
+		} else { // Handle permanent failure errors --> we want to stop the control loop
+			originalErr := backoff.ExtractOriginalError(err)
+			c.logger.Errorf("Config manager has permanently failed after max retries: %v (original error: %v)",
+				err, originalErr)
+			metrics.IncErrorCount(metrics.ComponentControlLoop, "config_permanent_failure")
+
+			// Propagate the error to the parent component so it can potentially restart the system
+			return fmt.Errorf("config permanently failed, system needs intervention: %w", err)
+		}
 	}
 
 	// Reconcile each manager
 	for _, manager := range c.managers {
-		err, reconciled := manager.Reconcile(ctx, config)
+		err, reconciled := manager.Reconcile(ctx, cfg)
 		if err != nil {
 			metrics.IncErrorCount(metrics.ComponentControlLoop, manager.GetManagerName())
 			return err
@@ -192,7 +206,7 @@ func (c *ControlLoop) Reconcile(ctx context.Context) error {
 
 	if c.starvationChecker != nil {
 		// Check for starvation
-		c.starvationChecker.Reconcile(ctx, config)
+		c.starvationChecker.Reconcile(ctx, cfg)
 	} else {
 		return fmt.Errorf("starvation checker is not set")
 	}
