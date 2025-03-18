@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 )
@@ -29,6 +30,11 @@ func (s *S6Instance) Reconcile(ctx context.Context, tick uint64) (err error, rec
 		}
 	}()
 
+	// Check if context is already cancelled
+	if ctx.Err() != nil {
+		return ctx.Err(), false
+	}
+
 	// Step 1: If there's a lastError, see if we've waited enough.
 	if s.baseFSMInstance.ShouldSkipReconcileBecauseOfError(tick) {
 		err := s.baseFSMInstance.GetBackoffError(tick)
@@ -51,6 +57,12 @@ func (s *S6Instance) Reconcile(ctx context.Context, tick uint64) (err error, rec
 	// Step 3: Attempt to reconcile the state.
 	err, reconciled = s.reconcileStateTransition(ctx)
 	if err != nil {
+		// If the instance is removed, we don't want to return an error here, because we want to continue reconciling
+		// Also this should not
+		if errors.Is(err, fsm.ErrInstanceRemoved) {
+			return nil, false
+		}
+
 		s.baseFSMInstance.SetError(err, tick)
 		s.baseFSMInstance.GetLogger().Errorf("error reconciling state: %s", err)
 		return nil, false // We don't want to return an error here, because we want to continue reconciling
@@ -133,7 +145,7 @@ func (b *S6Instance) reconcileLifecycleStates(ctx context.Context, currentState 
 		}
 		return b.baseFSMInstance.SendEvent(ctx, internal_fsm.LifecycleEventRemoveDone), true
 	case internal_fsm.LifecycleStateRemoved:
-		return fmt.Errorf("instance %s is removed", b.baseFSMInstance.GetID()), true
+		return fsm.ErrInstanceRemoved, true
 	default:
 		// If we are not in a lifecycle state, just continue
 		return nil, false

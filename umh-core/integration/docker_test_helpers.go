@@ -34,7 +34,7 @@ func BuildAndRunContainer(configFilePath string) error {
 		"run", "-d",
 		"--name", containerName,
 		"--cpus=1",
-		"--memory=512m",
+		"--memory=1024m",
 		"-v", fmt.Sprintf("%s/data:/data", GetCurrentDir()),
 		"-e", "LOGGING_LEVEL=debug",
 		"-p", "8081:8080",

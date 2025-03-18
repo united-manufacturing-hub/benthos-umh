@@ -58,6 +58,11 @@ func (m *FileConfigManager) WithFileSystemService(fsService filesystem.Service) 
 
 // GetConfig returns the current config, always reading fresh from disk
 func (m *FileConfigManager) GetConfig(ctx context.Context, tick uint64) (FullConfig, error) {
+	// Check if context is already cancelled
+	if ctx.Err() != nil {
+		return FullConfig{}, ctx.Err()
+	}
+
 	// Create the directory if it doesn't exist
 	dir := filepath.Dir(m.configPath)
 	if err := m.fsService.EnsureDirectory(ctx, dir); err != nil {
@@ -130,6 +135,11 @@ func (m *FileConfigManagerWithBackoff) WithFileSystemService(fsService filesyste
 // It adds backoff logic to handle temporary and permanent failures
 // It will return either a temporary backoff error or a permanent failure error
 func (m *FileConfigManagerWithBackoff) GetConfig(ctx context.Context, tick uint64) (FullConfig, error) {
+	// Check if context is already cancelled
+	if ctx.Err() != nil {
+		return FullConfig{}, ctx.Err()
+	}
+
 	// Check if we should skip operation due to backoff
 	if m.backoffManager.ShouldSkipOperation(tick) {
 		// Get appropriate backoff error (temporary or permanent)

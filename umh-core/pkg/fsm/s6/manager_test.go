@@ -143,6 +143,9 @@ var _ = Describe("S6Manager", func() {
 
 		// Reconcile with the new config
 		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService}, tick)
+		Expect(err).NotTo(HaveOccurred())
+
+		err, _ = manager.Reconcile(ctx, config.FullConfig{Services: configWithService}, tick)
 		tick++
 		Expect(err).NotTo(HaveOccurred())
 

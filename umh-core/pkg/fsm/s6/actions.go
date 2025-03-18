@@ -121,7 +121,6 @@ func (s *S6Instance) updateObservedState(ctx context.Context) error {
 		}
 
 		// Otherwise, we count this as an error
-		metrics.IncErrorCount(metrics.ComponentS6Instance, s.baseFSMInstance.GetID())
 		s.baseFSMInstance.GetLogger().Errorf("error updating observed state for %s: %s", s.baseFSMInstance.GetID(), err)
 		return err
 	}

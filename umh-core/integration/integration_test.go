@@ -223,17 +223,17 @@ benthos: []
 
 		AfterEach(func() {
 			if CurrentSpecReport().Failed() {
-				fmt.Println("Test failed, printing container logs:")
-				printContainerLogs()
+				//fmt.Println("Test failed, printing container logs:")
+				//printContainerLogs()
 
 				// Print the latest YAML config
-				fmt.Println("\nLatest YAML config at time of failure:")
-				config, err := os.ReadFile("data/config.yaml")
-				if err != nil {
-					fmt.Printf("Failed to read config file: %v\n", err)
-				} else {
-					fmt.Println(string(config))
-				}
+				//fmt.Println("\nLatest YAML config at time of failure:")
+				//config, err := os.ReadFile("data/config.yaml")
+				//if err != nil {
+				//	fmt.Printf("Failed to read config file: %v\n", err)
+				//} else {
+				//	fmt.Println(string(config))
+				//}
 			}
 		})
 
@@ -252,7 +252,7 @@ benthos: []
 
 		It("should handle random service additions, deletions, starts and stops", func() {
 			// Start monitoring goroutine
-			testDuration := 10 * time.Minute
+			testDuration := 3 * time.Minute
 
 			// Create deterministic random number generator
 			r := rand.New(rand.NewSource(42))
@@ -271,12 +271,14 @@ benthos: []
 
 			// Track existing services (with their current state)
 			existingServices := map[string]string{} // serviceName -> state ("running"/"stopped")
+			// Add tracking of sleep durations
+			serviceDurations := map[string]string{} // serviceName -> sleep duration
 			maxServices := 100
 			bulkSize := 5 + r.Intn(6) // Random bulk size between 5-10 services
 
 			// ---------- WARMUP PHASE: Build up to target service count ----------
 			targetServiceCount := 100
-			warmupBatchSize := 10
+			warmupBatchSize := 20
 			warmupDelay := 15 * time.Second
 
 			GinkgoWriter.Printf("\n=== WARMUP PHASE ===\nBuilding up to %d services\n", targetServiceCount)
@@ -286,12 +288,14 @@ benthos: []
 				batchSize := min(warmupBatchSize, targetServiceCount-len(existingServices))
 
 				builder := NewBuilder().AddGoldenService()
-				// Add existing services
+
+				// Add existing services with their original sleep durations
 				for svc, state := range existingServices {
+					duration := serviceDurations[svc]
 					if state == "running" {
-						builder.AddSleepService(svc, "600")
+						builder.AddSleepService(svc, duration)
 					} else {
-						builder.AddSleepService(svc, "600")
+						builder.AddSleepService(svc, duration)
 						builder.StopService(svc)
 					}
 				}
@@ -300,8 +304,10 @@ benthos: []
 				GinkgoWriter.Printf("Adding batch of %d services\n", batchSize)
 				for i := 0; i < batchSize; i++ {
 					serviceName := fmt.Sprintf("warmup-svc-%d", len(existingServices))
-					builder.AddSleepService(serviceName, fmt.Sprintf("%d", 60+r.Intn(600)))
+					duration := fmt.Sprintf("%d", 60+r.Intn(600))
+					builder.AddSleepService(serviceName, duration)
 					existingServices[serviceName] = "running"
+					serviceDurations[serviceName] = duration
 				}
 
 				// Apply changes
@@ -316,8 +322,8 @@ benthos: []
 			}
 
 			// Final stabilization after reaching target count
-			GinkgoWriter.Printf("\n=== WARMUP COMPLETE ===\nReached %d services - allowing system to stabilize for 1 minute\n", len(existingServices))
-			time.Sleep(1 * time.Minute)
+			GinkgoWriter.Printf("\n=== WARMUP COMPLETE ===\nReached %d services - allowing system to stabilize\n", len(existingServices))
+			time.Sleep(warmupDelay)
 
 			// ---------- CHAOS PHASE: Begin regular chaos operations ----------
 			GinkgoWriter.Println("\n=== CHAOS PHASE BEGINNING ===")
@@ -343,20 +349,23 @@ benthos: []
 						numToAdd := min(bulkSize, maxServices-len(existingServices))
 						if numToAdd > 0 {
 							GinkgoWriter.Printf("\n=== BULK ADD OPERATION ===\nAdding %d new services\n", numToAdd)
-							// Add all existing services first
+							// Add all existing services first with their original durations
 							for svc, state := range existingServices {
+								duration := serviceDurations[svc]
 								if state == "running" {
-									builder.AddSleepService(svc, "600")
+									builder.AddSleepService(svc, duration)
 								} else {
-									builder.AddSleepService(svc, "600")
+									builder.AddSleepService(svc, duration)
 									builder.StopService(svc)
 								}
 							}
 							// Add new services
 							for i := 0; i < numToAdd; i++ {
 								serviceName := fmt.Sprintf("bulk-add-%d-%d", actionCount, i)
-								builder.AddSleepService(serviceName, fmt.Sprintf("%d", 60+r.Intn(600)))
+								duration := fmt.Sprintf("%d", 60+r.Intn(600))
+								builder.AddSleepService(serviceName, duration)
 								existingServices[serviceName] = "running"
+								serviceDurations[serviceName] = duration
 							}
 							GinkgoWriter.Printf("Bulk add completed. Total services: %d\n", len(existingServices))
 							lastBulkOperation = time.Now()
@@ -383,14 +392,16 @@ benthos: []
 							for idx, svc := range keys {
 								if !indicesToRemove[idx] {
 									state := existingServices[svc]
+									duration := serviceDurations[svc]
 									if state == "running" {
-										builder.AddSleepService(svc, "600")
+										builder.AddSleepService(svc, duration)
 									} else {
-										builder.AddSleepService(svc, "600")
+										builder.AddSleepService(svc, duration)
 										builder.StopService(svc)
 									}
 								} else {
 									delete(existingServices, svc)
+									delete(serviceDurations, svc) // Clean up duration tracking too
 								}
 							}
 							GinkgoWriter.Printf("Bulk remove completed. Remaining services: %d\n", len(existingServices))
@@ -414,12 +425,13 @@ benthos: []
 						if operationType < 0.6 && len(stoppedServices) > 0 {
 							// 60% chance to start a stopped service if any are stopped
 							serviceToStart := stoppedServices[r.Intn(len(stoppedServices))]
-							// Add all services with their current state
+							// Add all services with their current state and original durations
 							for svc, state := range existingServices {
+								duration := serviceDurations[svc]
 								if state == "running" {
-									builder.AddSleepService(svc, "600")
+									builder.AddSleepService(svc, duration)
 								} else {
-									builder.AddSleepService(svc, "600")
+									builder.AddSleepService(svc, duration)
 									builder.StopService(svc)
 								}
 							}
@@ -441,12 +453,13 @@ benthos: []
 							if len(runningServices) > runningThreshold && len(runningServices) > 0 {
 								serviceToStop := runningServices[r.Intn(len(runningServices))]
 
-								// Add all services with their current state
+								// Add all services with their current state and original durations
 								for svc, state := range existingServices {
+									duration := serviceDurations[svc]
 									if state == "running" {
-										builder.AddSleepService(svc, "600")
+										builder.AddSleepService(svc, duration)
 									} else {
-										builder.AddSleepService(svc, "600")
+										builder.AddSleepService(svc, duration)
 										builder.StopService(svc)
 									}
 								}

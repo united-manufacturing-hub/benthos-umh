@@ -177,6 +177,11 @@ func (c *ControlLoop) Reconcile(ctx context.Context, ticker uint64) error {
 		return fmt.Errorf("config manager is not set")
 	}
 
+	// Check if context is already cancelled
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	// Get the config, this can fail for example through filesystem errors
 	// Therefore we need a backoff here
 	// GetConfig returns a temporary backoff error or a permanent failure error

@@ -21,7 +21,7 @@ func NewMockConfigManager() *MockConfigManager {
 }
 
 // GetConfig implements the ConfigManager interface
-func (m *MockConfigManager) GetConfig(ctx context.Context, ticker uint64) (FullConfig, error) {
+func (m *MockConfigManager) GetConfig(ctx context.Context, tick uint64) (FullConfig, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	m.GetConfigCalled = true

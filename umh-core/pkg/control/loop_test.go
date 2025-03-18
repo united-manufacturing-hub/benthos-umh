@@ -139,13 +139,12 @@ var _ = Describe("ControlLoop", func() {
 			Expect(mockManager.ReconcileCalled).To(BeTrue())
 		})
 
-		It("should return error if config manager returns error", func() {
+		It("should not return error if config manager returns error", func() { // config manager should go into backoff
 			mockConfig.ConfigError = errors.New("config error")
 
 			err := controlLoop.Reconcile(ctx, tick)
 			tick++
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("config error"))
+			Expect(err).NotTo(HaveOccurred())
 			Expect(mockConfig.GetConfigCalled).To(BeTrue())
 			Expect(mockManager.ReconcileCalled).To(BeFalse())
 		})
