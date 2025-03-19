@@ -119,7 +119,7 @@ type BenthosInstance struct {
 
 	// service is the Benthos service implementation to use
 	// It has a manager that manages the S6 service instances
-	service *benthossvc.BenthosService
+	service benthossvc.IBenthosService
 
 	// config contains all the configuration for this service
 	config config.BenthosServiceConfig

@@ -7,7 +7,7 @@ import (
 	s6_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 )
 
-// MockBenthosService is a mock implementation of the Benthos Service for testing
+// MockBenthosService is a mock implementation of the IBenthosService interface for testing
 type MockBenthosService struct {
 	// Tracks calls to methods
 	GenerateS6ConfigForBenthosCalled bool
@@ -37,6 +37,23 @@ type MockBenthosService struct {
 	ServiceStates    map[string]ServiceInfo
 	ExistingServices map[string]bool
 	S6ServiceConfigs []config.S6FSMConfig
+
+	// State control for FSM testing
+	stateFlags map[string]*ServiceStateFlags
+}
+
+// Ensure MockBenthosService implements IBenthosService
+var _ IBenthosService = (*MockBenthosService)(nil)
+
+// ServiceStateFlags contains all the state flags needed for FSM testing
+type ServiceStateFlags struct {
+	IsS6Running            bool
+	IsConfigLoaded         bool
+	IsHealthchecksPassed   bool
+	IsRunningWithoutErrors bool
+	HasProcessingActivity  bool
+	IsDegraded             bool
+	IsS6Stopped            bool
 }
 
 // NewMockBenthosService creates a new mock Benthos service
@@ -45,7 +62,24 @@ func NewMockBenthosService() *MockBenthosService {
 		ServiceStates:    make(map[string]ServiceInfo),
 		ExistingServices: make(map[string]bool),
 		S6ServiceConfigs: make([]config.S6FSMConfig, 0),
+		stateFlags:       make(map[string]*ServiceStateFlags),
 	}
+}
+
+// SetServiceState sets all state flags for a service at once
+func (m *MockBenthosService) SetServiceState(serviceName string, flags ServiceStateFlags) {
+	m.stateFlags[serviceName] = &flags
+}
+
+// GetServiceState gets the state flags for a service
+func (m *MockBenthosService) GetServiceState(serviceName string) *ServiceStateFlags {
+	if flags, exists := m.stateFlags[serviceName]; exists {
+		return flags
+	}
+	// Initialize with default flags if not exists
+	flags := &ServiceStateFlags{}
+	m.stateFlags[serviceName] = flags
+	return flags
 }
 
 // GenerateS6ConfigForBenthos mocks generating S6 config for Benthos
@@ -61,14 +95,73 @@ func (m *MockBenthosService) GetConfig(ctx context.Context, path string) (config
 }
 
 // Status mocks getting the status of a Benthos service
-func (m *MockBenthosService) Status(ctx context.Context, serviceName string) (ServiceInfo, error) {
+func (m *MockBenthosService) Status(ctx context.Context, serviceName string, metricsPort int, tick uint64) (ServiceInfo, error) {
 	m.StatusCalled = true
 
 	if state, exists := m.ServiceStates[serviceName]; exists {
+		// Update state based on flags
+		if flags := m.GetServiceState(serviceName); flags != nil {
+			state.BenthosStatus.HealthCheck.IsLive = flags.IsS6Running
+			state.BenthosStatus.HealthCheck.IsReady = flags.IsConfigLoaded && flags.IsHealthchecksPassed
+			if flags.IsDegraded {
+				state.BenthosStatus.HealthCheck.ReadyError = "Service is degraded"
+			}
+			if state.BenthosStatus.MetricsState == nil {
+				state.BenthosStatus.MetricsState = NewBenthosMetricsState()
+			}
+			state.BenthosStatus.MetricsState.IsActive = flags.HasProcessingActivity
+		}
 		return state, m.StatusError
 	}
 
 	return m.StatusResult, m.StatusError
+}
+
+// Helper methods for state checks
+func (m *MockBenthosService) IsBenthosS6Running(serviceName string) bool {
+	if flags := m.GetServiceState(serviceName); flags != nil {
+		return flags.IsS6Running
+	}
+	return false
+}
+
+func (m *MockBenthosService) IsBenthosConfigLoaded(serviceName string) bool {
+	if flags := m.GetServiceState(serviceName); flags != nil {
+		return flags.IsConfigLoaded
+	}
+	return false
+}
+
+func (m *MockBenthosService) IsBenthosHealthchecksPassed(serviceName string) bool {
+	if flags := m.GetServiceState(serviceName); flags != nil {
+		return flags.IsHealthchecksPassed
+	}
+	return false
+}
+
+func (m *MockBenthosService) IsBenthosRunningForSomeTimeWithoutErrors(serviceName string) bool {
+	if flags := m.GetServiceState(serviceName); flags != nil {
+		return flags.IsRunningWithoutErrors
+	}
+	return false
+}
+
+func (m *MockBenthosService) IsBenthosDegraded(serviceName string) bool {
+	if flags := m.GetServiceState(serviceName); flags != nil {
+		return flags.IsDegraded
+	}
+	return false
+}
+
+func (m *MockBenthosService) IsBenthosS6Stopped(serviceName string) bool {
+	if flags := m.GetServiceState(serviceName); flags != nil {
+		return flags.IsS6Stopped
+	}
+	return false
+}
+
+func (m *MockBenthosService) HasProcessingActivity(status BenthosStatus) bool {
+	return status.MetricsState != nil && status.MetricsState.IsActive
 }
 
 // AddBenthosToS6Manager mocks adding a Benthos instance to the S6 manager
@@ -174,4 +267,18 @@ func (m *MockBenthosService) StopBenthos(ctx context.Context, serviceName string
 func (m *MockBenthosService) ReconcileManager(ctx context.Context, tick uint64) (error, bool) {
 	m.ReconcileManagerCalled = true
 	return m.ReconcileManagerError, m.ReconcileManagerReconciled
+}
+
+// IsLogsFine mocks checking if the logs are fine
+func (m *MockBenthosService) IsLogsFine(logs []string) bool {
+	// For testing purposes, we'll consider logs fine if they're empty or nil
+	// This can be enhanced based on testing needs
+	return len(logs) == 0
+}
+
+// IsMetricsErrorFree mocks checking if metrics are error-free
+func (m *MockBenthosService) IsMetricsErrorFree(metrics Metrics) bool {
+	// For testing purposes, we'll consider metrics error-free
+	// This can be enhanced based on testing needs
+	return true
 }

@@ -147,10 +147,20 @@ func (b *BenthosInstance) IsBenthosHealthchecksPassed() bool {
 		b.ObservedState.ServiceInfo.BenthosStatus.HealthCheck.IsReady
 }
 
-// IsBenthosRunningForSomeTime determines if the Benthos service has been running for some time.
-func (b *BenthosInstance) IsBenthosRunningForSomeTime() bool {
+// IsBenthosRunningForSomeTimeWithoutErrors determines if the Benthos service has been running for some time.
+func (b *BenthosInstance) IsBenthosRunningForSomeTimeWithoutErrors() bool {
 	currentUptime := b.ObservedState.ServiceInfo.S6ObservedState.ServiceInfo.Uptime
 	if currentUptime < 10 {
+		return false
+	}
+
+	// Check if there are any issues in the Benthos logs
+	if !b.IsBenthosLogsFine() {
+		return false
+	}
+
+	// Check if there are any errors in the Benthos metrics
+	if !b.IsBenthosMetricsErrorFree() {
 		return false
 	}
 
@@ -171,7 +181,7 @@ func (b *BenthosInstance) IsBenthosMetricsErrorFree() bool {
 // These check everything that is checked during the starting phase
 // But it means that it once worked, and then degraded
 func (b *BenthosInstance) IsBenthosDegraded() bool {
-	if b.IsBenthosS6Running() && b.IsBenthosConfigLoaded() && b.IsBenthosHealthchecksPassed() && b.IsBenthosRunningForSomeTime() {
+	if b.IsBenthosS6Running() && b.IsBenthosConfigLoaded() && b.IsBenthosHealthchecksPassed() && b.IsBenthosRunningForSomeTimeWithoutErrors() {
 		return false
 	}
 	return true

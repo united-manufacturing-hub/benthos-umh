@@ -22,6 +22,21 @@ import (
 	s6fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 )
 
+// IBenthosService is the interface for managing Benthos services
+type IBenthosService interface {
+	GenerateS6ConfigForBenthos(benthosConfig *config.BenthosServiceConfig, name string) (config.S6ServiceConfig, error)
+	GetConfig(ctx context.Context, path string) (config.BenthosServiceConfig, error)
+	Status(ctx context.Context, serviceName string, metricsPort int, tick uint64) (ServiceInfo, error)
+	AddBenthosToS6Manager(ctx context.Context, cfg *config.BenthosServiceConfig, serviceName string) error
+	RemoveBenthosFromS6Manager(ctx context.Context, serviceName string) error
+	StartBenthos(ctx context.Context, serviceName string) error
+	StopBenthos(ctx context.Context, serviceName string) error
+	ReconcileManager(ctx context.Context, tick uint64) (error, bool)
+	IsLogsFine(logs []string) bool
+	IsMetricsErrorFree(metrics Metrics) bool
+	HasProcessingActivity(status BenthosStatus) bool
+}
+
 // HTTPClient interface for making HTTP requests
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -158,7 +173,7 @@ type connStatus struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// BenthosService is the default implementation of the S6 Service interface
+// BenthosService is the default implementation of the IBenthosService interface
 type BenthosService struct {
 	logger           *zap.SugaredLogger
 	template         *template.Template

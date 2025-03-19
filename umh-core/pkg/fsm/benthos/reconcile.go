@@ -184,84 +184,95 @@ func (b *BenthosInstance) reconcileTransitionToActive(ctx context.Context, curre
 
 	// Handle starting phase states
 	if IsStartingState(currentState) {
-		// If in the starting phase, progress through the starting states
-		switch currentState {
-		case OperationalStateStarting:
-			// First we need to ensure the S6 service is started
-
-			if !b.IsBenthosS6Running() {
-				return nil, false
-			}
-
-			return b.baseFSMInstance.SendEvent(ctx, EventS6Started), true
-		case OperationalStateStartingConfigLoading:
-			// Check if config has been loaded
-
-			// If the S6 is not running, go back to starting
-			if !b.IsBenthosS6Running() {
-				return b.baseFSMInstance.SendEvent(ctx, EventStartFailed), true
-			}
-
-			// Now check whether benthos has loaded the config
-			if !b.IsBenthosConfigLoaded() {
-				return nil, false
-			}
-
-			return b.baseFSMInstance.SendEvent(ctx, EventConfigLoaded), true
-		case OperationalStateStartingWaitingForHealthchecks:
-			// If the S6 is not running, go back to starting
-			if !b.IsBenthosS6Running() || !b.IsBenthosConfigLoaded() {
-				return b.baseFSMInstance.SendEvent(ctx, EventStartFailed), true
-			}
-
-			// Check if healthchecks have passed
-			if !b.IsBenthosHealthchecksPassed() {
-				return nil, false
-			}
-
-			return b.baseFSMInstance.SendEvent(ctx, EventHealthchecksPassed), true
-		case OperationalStateStartingWaitingForServiceToRemainRunning:
-			// If the S6 is not running, go back to starting
-			if !b.IsBenthosS6Running() || !b.IsBenthosConfigLoaded() || !b.IsBenthosHealthchecksPassed() {
-				return b.baseFSMInstance.SendEvent(ctx, EventStartFailed), true
-			}
-
-			// Check if service has been running stably for some time
-			if !b.IsBenthosRunningForSomeTime() {
-				return nil, false
-			}
-
-			return b.baseFSMInstance.SendEvent(ctx, EventStartDone), true
-		}
-	}
-
-	// Now do all the checks to check whether it is degraded
-	if b.IsBenthosDegraded() {
-		return b.baseFSMInstance.SendEvent(ctx, EventDegraded), true
-	}
-
-	// If we're in Idle, we need to detect data to move to Active
-	if currentState == OperationalStateIdle {
-		// Check if data is being processed
-		// This would be based on metrics data
-		hasActivity := b.IsBenthosWithProcessingActivity()
-		if hasActivity {
-			return b.baseFSMInstance.SendEvent(ctx, EventDataReceived), true
-		}
-		return nil, false
-	}
-
-	// If we're in Degraded, we need to recover to move to Active or Idle
-	if currentState == OperationalStateDegraded {
-		// Check if the service has recovered
-		if !b.IsBenthosDegraded() {
-			return b.baseFSMInstance.SendEvent(ctx, EventRecovered), true
-		}
-
-		return nil, false
+		return b.reconcileStartingState(ctx, currentState)
+	} else if IsRunningState(currentState) {
+		return b.reconcileRunningState(ctx, currentState)
 	}
 
 	return nil, false
+}
+
+// reconcileStartingState handles the various starting phase states when transitioning to Active.
+func (b *BenthosInstance) reconcileStartingState(ctx context.Context, currentState string) (err error, reconciled bool) {
+	switch currentState {
+	case OperationalStateStarting:
+		// First we need to ensure the S6 service is started
+		if !b.IsBenthosS6Running() {
+			return nil, false
+		}
+
+		return b.baseFSMInstance.SendEvent(ctx, EventS6Started), true
+	case OperationalStateStartingConfigLoading:
+		// Check if config has been loaded
+
+		// If the S6 is not running, go back to starting
+		if !b.IsBenthosS6Running() {
+			return b.baseFSMInstance.SendEvent(ctx, EventStartFailed), true
+		}
+
+		// Now check whether benthos has loaded the config
+		if !b.IsBenthosConfigLoaded() {
+			return nil, false
+		}
+
+		return b.baseFSMInstance.SendEvent(ctx, EventConfigLoaded), true
+	case OperationalStateStartingWaitingForHealthchecks:
+		// If the S6 is not running, go back to starting
+		if !b.IsBenthosS6Running() || !b.IsBenthosConfigLoaded() {
+			return b.baseFSMInstance.SendEvent(ctx, EventStartFailed), true
+		}
+
+		// Check if healthchecks have passed
+		if !b.IsBenthosHealthchecksPassed() {
+			return nil, false
+		}
+
+		return b.baseFSMInstance.SendEvent(ctx, EventHealthchecksPassed), true
+	case OperationalStateStartingWaitingForServiceToRemainRunning:
+		// If the S6 is not running, go back to starting
+		if !b.IsBenthosS6Running() || !b.IsBenthosConfigLoaded() || !b.IsBenthosHealthchecksPassed() {
+			return b.baseFSMInstance.SendEvent(ctx, EventStartFailed), true
+		}
+
+		// Check if service has been running stably for some time
+		if !b.IsBenthosRunningForSomeTimeWithoutErrors() {
+			return nil, false
+		}
+
+		return b.baseFSMInstance.SendEvent(ctx, EventStartDone), true
+	default:
+		return fmt.Errorf("invalid starting state: %s", currentState), false
+	}
+}
+
+// reconcileRunningState handles the various running states when transitioning to Active.
+func (b *BenthosInstance) reconcileRunningState(ctx context.Context, currentState string) (err error, reconciled bool) {
+	switch currentState {
+	case OperationalStateActive:
+		// If we're in Active, we need to check whether it is degraded
+		if b.IsBenthosDegraded() {
+			return b.baseFSMInstance.SendEvent(ctx, EventDegraded), true
+		} else if !b.IsBenthosWithProcessingActivity() { // if there is no activity, we move to Idle
+			return b.baseFSMInstance.SendEvent(ctx, EventNoDataTimeout), true
+		}
+		return nil, false
+	case OperationalStateIdle:
+		// If we're in Idle, we need to check whether it is degraded
+		if b.IsBenthosDegraded() {
+			return b.baseFSMInstance.SendEvent(ctx, EventDegraded), true
+		} else if b.IsBenthosWithProcessingActivity() { // if there is activity, we move to Active
+			return b.baseFSMInstance.SendEvent(ctx, EventDataReceived), true
+		}
+		return nil, false
+	case OperationalStateDegraded:
+		// If we're in Degraded, we need to recover to move to Idle
+		if !b.IsBenthosDegraded() {
+			return b.baseFSMInstance.SendEvent(ctx, EventRecovered), true
+		}
+		return nil, false
+	default:
+		return fmt.Errorf("invalid running state: %s", currentState), false
+	}
 }
 
 // reconcileTransitionToStopped handles transitions when the desired state is Stopped.
