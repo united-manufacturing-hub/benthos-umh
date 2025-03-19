@@ -4,7 +4,6 @@ import (
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	public_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
-	s6_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	benthos_service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos"
 )
 
@@ -117,13 +116,10 @@ type BenthosInstance struct {
 	// determine the next state
 	ObservedState BenthosObservedState
 
-	// Benthos-specific fields
-	s6ServiceConfigs []config.S6FSMConfig
-	s6Manager        *s6_fsm.S6Manager
-
 	// service is the Benthos service implementation to use
+	// It has a manager that manages the S6 service instances
 	service *benthos_service.BenthosService
 
 	// config contains all the configuration for this service
-	config benthos_service.BenthosServiceConfig
+	config config.BenthosServiceConfig
 }

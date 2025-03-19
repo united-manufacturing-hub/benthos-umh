@@ -2,6 +2,8 @@ package s6
 
 import (
 	"context"
+
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 )
 
 // MockService is a mock implementation of the S6 Service interface for testing
@@ -25,7 +27,7 @@ type MockService struct {
 	StatusResult      ServiceInfo
 	StatusError       error
 	ExistsResult      bool
-	GetConfigResult   S6ServiceConfig
+	GetConfigResult   config.S6ServiceConfig
 	GetConfigError    error
 	ExitHistoryResult []ExitEvent
 	ExitHistoryError  error
@@ -46,7 +48,7 @@ func NewMockService() *MockService {
 }
 
 // Create mocks creating an S6 service
-func (m *MockService) Create(ctx context.Context, servicePath string, config S6ServiceConfig) error {
+func (m *MockService) Create(ctx context.Context, servicePath string, config config.S6ServiceConfig) error {
 	m.CreateCalled = true
 	m.ExistingServices[servicePath] = true
 	return m.CreateError
@@ -127,7 +129,7 @@ func (m *MockService) ServiceExists(ctx context.Context, servicePath string) (bo
 }
 
 // GetConfig mocks getting the config of an S6 service
-func (m *MockService) GetConfig(ctx context.Context, servicePath string) (S6ServiceConfig, error) {
+func (m *MockService) GetConfig(ctx context.Context, servicePath string) (config.S6ServiceConfig, error) {
 	m.GetConfigCalled = true
 	return m.GetConfigResult, m.GetConfigError
 }

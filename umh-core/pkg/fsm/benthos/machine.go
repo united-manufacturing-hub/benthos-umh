@@ -1,7 +1,5 @@
 package benthos
 
-// TODO: fix the reconcile loop like in s6 (added reconciled logic to prevent starvation)
-
 import (
 	"context"
 	"fmt"
@@ -10,7 +8,6 @@ import (
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
-	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 	benthos_service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos"
@@ -67,8 +64,7 @@ func NewBenthosInstance(
 
 	instance := &BenthosInstance{
 		baseFSMInstance: internal_fsm.NewBaseFSMInstance(cfg, logger.For(config.Name)),
-		s6Manager:       s6.NewS6Manager(config.Name),
-		service:         benthos_service.NewDefaultBenthosService(),
+		service:         benthos_service.NewDefaultBenthosService(config.Name),
 		config:          config.BenthosServiceConfig,
 		ObservedState: BenthosObservedState{
 			MetricsData: make(map[string]interface{}),

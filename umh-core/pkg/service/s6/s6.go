@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,18 +16,11 @@ import (
 	"time"
 
 	"github.com/cactus/tai64"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	filesystem "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/filesystem"
 	"go.uber.org/zap"
 )
-
-// S6ServiceConfig contains configuration for creating a service
-type S6ServiceConfig struct {
-	Command     []string          `yaml:"command"`
-	Env         map[string]string `yaml:"env"`
-	ConfigFiles map[string]string `yaml:"configFiles"`
-	MemoryLimit int64             `yaml:"memoryLimit"` // 0 means no memory limit, see also https://skarnet.org/software/s6/s6-softlimit.html
-}
 
 // ServiceStatus represents the status of an S6 service
 type ServiceStatus string
@@ -73,7 +65,7 @@ type ExitEvent struct {
 // Service defines the interface for interacting with S6 services
 type Service interface {
 	// Create creates the service with specific configuration
-	Create(ctx context.Context, servicePath string, config S6ServiceConfig) error
+	Create(ctx context.Context, servicePath string, config config.S6ServiceConfig) error
 	// Remove removes the service directory structure
 	Remove(ctx context.Context, servicePath string) error
 	// Start starts the service
@@ -89,7 +81,7 @@ type Service interface {
 	// ServiceExists checks if the service directory exists
 	ServiceExists(ctx context.Context, servicePath string) (bool, error)
 	// GetConfig gets the actual service config from s6
-	GetConfig(ctx context.Context, servicePath string) (S6ServiceConfig, error)
+	GetConfig(ctx context.Context, servicePath string) (config.S6ServiceConfig, error)
 }
 
 // DefaultService is the default implementation of the S6 Service interface
@@ -113,7 +105,7 @@ func (s *DefaultService) WithFileSystemService(fsService filesystem.Service) *De
 }
 
 // Create creates the S6 service with specific configuration
-func (s *DefaultService) Create(ctx context.Context, servicePath string, config S6ServiceConfig) error {
+func (s *DefaultService) Create(ctx context.Context, servicePath string, config config.S6ServiceConfig) error {
 	s.logger.Debugf("Creating S6 service %s", servicePath)
 
 	// Create service directory if it doesn't exist
@@ -614,16 +606,16 @@ func (s *DefaultService) ServiceExists(ctx context.Context, servicePath string) 
 }
 
 // GetConfig gets the actual service config from s6
-func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6ServiceConfig, error) {
+func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (config.S6ServiceConfig, error) {
 	exists, err := s.ServiceExists(ctx, servicePath)
 	if err != nil {
-		return S6ServiceConfig{}, fmt.Errorf("failed to check if service exists: %w", err)
+		return config.S6ServiceConfig{}, fmt.Errorf("failed to check if service exists: %w", err)
 	}
 	if !exists {
-		return S6ServiceConfig{}, ErrServiceNotExist
+		return config.S6ServiceConfig{}, ErrServiceNotExist
 	}
 
-	observedS6ServiceConfig := S6ServiceConfig{
+	observedS6ServiceConfig := config.S6ServiceConfig{
 		ConfigFiles: make(map[string]string),
 		Env:         make(map[string]string),
 		MemoryLimit: 0,
@@ -633,7 +625,7 @@ func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6S
 	runScript := filepath.Join(servicePath, "run")
 	content, err := s.fsService.ReadFile(ctx, runScript)
 	if err != nil {
-		return S6ServiceConfig{}, fmt.Errorf("failed to read run script: %w", err)
+		return config.S6ServiceConfig{}, fmt.Errorf("failed to read run script: %w", err)
 	}
 
 	// Parse the run script content
@@ -723,7 +715,7 @@ func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6S
 	if len(memoryLimitMatches) >= 2 && memoryLimitMatches[1] != "" {
 		observedS6ServiceConfig.MemoryLimit, err = strconv.ParseInt(memoryLimitMatches[1], 10, 64)
 		if err != nil {
-			return S6ServiceConfig{}, fmt.Errorf("failed to parse memory limit: %w", err)
+			return config.S6ServiceConfig{}, fmt.Errorf("failed to parse memory limit: %w", err)
 		}
 	}
 
@@ -731,7 +723,7 @@ func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6S
 	configPath := filepath.Join(servicePath, "config")
 	exists, err = s.fsService.FileExists(ctx, configPath)
 	if err != nil {
-		return S6ServiceConfig{}, fmt.Errorf("failed to check if config directory exists: %w", err)
+		return config.S6ServiceConfig{}, fmt.Errorf("failed to check if config directory exists: %w", err)
 	}
 	if !exists {
 		return observedS6ServiceConfig, nil
@@ -739,7 +731,7 @@ func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6S
 
 	entries, err := s.fsService.ReadDir(ctx, configPath)
 	if err != nil {
-		return S6ServiceConfig{}, fmt.Errorf("failed to read config directory: %w", err)
+		return config.S6ServiceConfig{}, fmt.Errorf("failed to read config directory: %w", err)
 	}
 
 	// Extract config files
@@ -751,7 +743,7 @@ func (s *DefaultService) GetConfig(ctx context.Context, servicePath string) (S6S
 		filePath := filepath.Join(configPath, entry.Name())
 		content, err := s.fsService.ReadFile(ctx, filePath)
 		if err != nil {
-			return S6ServiceConfig{}, fmt.Errorf("failed to read config file %s: %w", entry.Name(), err)
+			return config.S6ServiceConfig{}, fmt.Errorf("failed to read config file %s: %w", entry.Name(), err)
 		}
 
 		observedS6ServiceConfig.ConfigFiles[entry.Name()] = string(content)
@@ -787,11 +779,6 @@ func parseCommandLine(cmdLine string) []string {
 	}
 
 	return cmdParts
-}
-
-// Equal checks if two S6ServiceConfigs are equal
-func (c S6ServiceConfig) Equal(other S6ServiceConfig) bool {
-	return reflect.DeepEqual(c, other)
 }
 
 // These constants define file locations and offsets for direct S6 supervision file access

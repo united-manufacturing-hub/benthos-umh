@@ -54,7 +54,7 @@ type S6ObservedState struct {
 	ServiceInfo s6service.ServiceInfo
 
 	// ObservedS6ServiceConfig contains the actual service config from s6
-	ObservedS6ServiceConfig s6service.S6ServiceConfig
+	ObservedS6ServiceConfig config.S6ServiceConfig
 }
 
 // S6Instance implements the FSMInstance interface

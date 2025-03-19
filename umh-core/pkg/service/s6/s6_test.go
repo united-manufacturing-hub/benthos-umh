@@ -6,6 +6,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 )
 
 var _ = Describe("S6 Service", func() {
@@ -31,7 +32,7 @@ var _ = Describe("S6 Service", func() {
 
 	It("should track method calls in the mock implementation", func() {
 		Expect(mockService.CreateCalled).To(BeFalse())
-		mockService.Create(ctx, testPath, S6ServiceConfig{})
+		mockService.Create(ctx, testPath, config.S6ServiceConfig{})
 		Expect(mockService.CreateCalled).To(BeTrue())
 
 		Expect(mockService.StartCalled).To(BeFalse())
@@ -61,7 +62,7 @@ var _ = Describe("S6 Service", func() {
 		Expect(exists).To(BeFalse())
 
 		// Create service should make it exist
-		mockService.Create(ctx, testPath, S6ServiceConfig{})
+		mockService.Create(ctx, testPath, config.S6ServiceConfig{})
 		exists, _ = mockService.ServiceExists(ctx, testPath)
 		Expect(exists).To(BeTrue())
 

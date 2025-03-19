@@ -19,7 +19,7 @@ func createMockS6Instance(manager *S6Manager, serviceName string, mockService s6
 			Name:            serviceName,
 			DesiredFSMState: desiredState,
 		},
-		S6ServiceConfig: s6service.S6ServiceConfig{
+		S6ServiceConfig: config.S6ServiceConfig{
 			Command:     []string{"/bin/sh", "-c", "echo test"},
 			Env:         map[string]string{},
 			ConfigFiles: map[string]string{},
@@ -133,7 +133,7 @@ var _ = Describe("S6Manager", func() {
 					Name:            "test-service",
 					DesiredFSMState: OperationalStateRunning,
 				},
-				S6ServiceConfig: s6service.S6ServiceConfig{
+				S6ServiceConfig: config.S6ServiceConfig{
 					Command:     []string{"/bin/sh", "-c", "echo hello"},
 					Env:         map[string]string{"TEST_ENV": "test_value"},
 					ConfigFiles: map[string]string{},
@@ -194,7 +194,7 @@ var _ = Describe("S6Manager", func() {
 					Name:            serviceName,
 					DesiredFSMState: OperationalStateRunning,
 				},
-				S6ServiceConfig: s6service.S6ServiceConfig{
+				S6ServiceConfig: config.S6ServiceConfig{
 					Command:     []string{"/bin/sh", "-c", "echo test"},
 					Env:         map[string]string{},
 					ConfigFiles: map[string]string{},
@@ -224,7 +224,7 @@ var _ = Describe("S6Manager", func() {
 			Status: s6service.ServiceDown,
 		}
 		// Set up the mock service configuration to match what's expected
-		mockService.GetConfigResult = s6service.S6ServiceConfig{
+		mockService.GetConfigResult = config.S6ServiceConfig{
 			Command:     []string{"/bin/sh", "-c", "echo test"},
 			Env:         map[string]string{},
 			ConfigFiles: map[string]string{},
@@ -298,7 +298,7 @@ var _ = Describe("S6Manager", func() {
 					Name:            serviceName,
 					DesiredFSMState: OperationalStateRunning,
 				},
-				S6ServiceConfig: s6service.S6ServiceConfig{
+				S6ServiceConfig: config.S6ServiceConfig{
 					Command:     []string{"/bin/sh", "-c", "echo test-service"},
 					Env:         map[string]string{"TEST": "value"},
 					ConfigFiles: map[string]string{},
@@ -326,7 +326,7 @@ var _ = Describe("S6Manager", func() {
 		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
 			Status: s6service.ServiceDown,
 		}
-		mockService.GetConfigResult = s6service.S6ServiceConfig{
+		mockService.GetConfigResult = config.S6ServiceConfig{
 			Command:     []string{"/bin/sh", "-c", "echo test-service"},
 			Env:         map[string]string{"TEST": "value"},
 			ConfigFiles: map[string]string{},
@@ -447,7 +447,7 @@ var _ = Describe("S6Manager", func() {
 					Name:            serviceName,
 					DesiredFSMState: OperationalStateStopped,
 				},
-				S6ServiceConfig: s6service.S6ServiceConfig{
+				S6ServiceConfig: config.S6ServiceConfig{
 					Command:     []string{"/bin/sh", "-c", "echo test"},
 					Env:         map[string]string{},
 					ConfigFiles: map[string]string{},
@@ -455,7 +455,7 @@ var _ = Describe("S6Manager", func() {
 			},
 		}
 
-		mockService.GetConfigResult = s6service.S6ServiceConfig{
+		mockService.GetConfigResult = config.S6ServiceConfig{
 			Command:     []string{"/bin/sh", "-c", "echo test"},
 			Env:         map[string]string{},
 			ConfigFiles: map[string]string{},
@@ -489,7 +489,7 @@ var _ = Describe("S6Manager", func() {
 					Name:            serviceName,
 					DesiredFSMState: OperationalStateRunning,
 				},
-				S6ServiceConfig: s6service.S6ServiceConfig{
+				S6ServiceConfig: config.S6ServiceConfig{
 					Command:     []string{"/bin/sh", "-c", "echo test"},
 					Env:         map[string]string{},
 					ConfigFiles: map[string]string{},
@@ -560,7 +560,7 @@ var _ = Describe("S6Manager", func() {
 					Name:            serviceName,
 					DesiredFSMState: OperationalStateRunning,
 				},
-				S6ServiceConfig: s6service.S6ServiceConfig{
+				S6ServiceConfig: config.S6ServiceConfig{
 					Command:     []string{"/bin/sh", "-c", "echo test"},
 					Env:         map[string]string{},
 					ConfigFiles: map[string]string{},
@@ -568,7 +568,7 @@ var _ = Describe("S6Manager", func() {
 			},
 		}
 
-		mockService.GetConfigResult = s6service.S6ServiceConfig{
+		mockService.GetConfigResult = config.S6ServiceConfig{
 			Command:     []string{"/bin/sh", "-c", "echo test"},
 			Env:         map[string]string{},
 			ConfigFiles: map[string]string{},
@@ -587,7 +587,7 @@ var _ = Describe("S6Manager", func() {
 					Name:            serviceName,
 					DesiredFSMState: OperationalStateStopped,
 				},
-				S6ServiceConfig: s6service.S6ServiceConfig{
+				S6ServiceConfig: config.S6ServiceConfig{
 					Command:     []string{"/bin/sh", "-c", "echo test"},
 					Env:         map[string]string{},
 					ConfigFiles: map[string]string{},
@@ -641,7 +641,7 @@ var _ = Describe("S6Manager", func() {
 					Name:            serviceName,
 					DesiredFSMState: OperationalStateStopped,
 				},
-				S6ServiceConfig: s6service.S6ServiceConfig{
+				S6ServiceConfig: config.S6ServiceConfig{
 					Command:     []string{"/bin/sh", "-c", "echo test"},
 					Env:         map[string]string{},
 					ConfigFiles: map[string]string{},
@@ -649,7 +649,7 @@ var _ = Describe("S6Manager", func() {
 			},
 		}
 
-		mockService.GetConfigResult = s6service.S6ServiceConfig{
+		mockService.GetConfigResult = config.S6ServiceConfig{
 			Command:     []string{"/bin/sh", "-c", "echo test"},
 			Env:         map[string]string{},
 			ConfigFiles: map[string]string{},
@@ -702,7 +702,7 @@ var _ = Describe("S6Manager", func() {
 					Name:            serviceName,
 					DesiredFSMState: OperationalStateRunning,
 				},
-				S6ServiceConfig: s6service.S6ServiceConfig{
+				S6ServiceConfig: config.S6ServiceConfig{
 					Command:     []string{"/bin/sh", "-c", "echo test"},
 					Env:         map[string]string{},
 					ConfigFiles: map[string]string{},
@@ -805,7 +805,7 @@ var _ = Describe("S6Manager", func() {
 					Name:            serviceName,
 					DesiredFSMState: OperationalStateRunning,
 				},
-				S6ServiceConfig: s6service.S6ServiceConfig{
+				S6ServiceConfig: config.S6ServiceConfig{
 					Command:     []string{"/bin/sh", "-c", "echo test"},
 					Env:         map[string]string{},
 					ConfigFiles: map[string]string{},
@@ -813,7 +813,7 @@ var _ = Describe("S6Manager", func() {
 			},
 		}
 
-		mockService.GetConfigResult = s6service.S6ServiceConfig{
+		mockService.GetConfigResult = config.S6ServiceConfig{
 			Command:     []string{"/bin/sh", "-c", "echo test"},
 			Env:         map[string]string{},
 			ConfigFiles: map[string]string{},
@@ -832,7 +832,7 @@ var _ = Describe("S6Manager", func() {
 					Name:            serviceName,
 					DesiredFSMState: OperationalStateStopped,
 				},
-				S6ServiceConfig: s6service.S6ServiceConfig{
+				S6ServiceConfig: config.S6ServiceConfig{
 					Command:     []string{"/bin/sh", "-c", "echo test"},
 					Env:         map[string]string{},
 					ConfigFiles: map[string]string{},
