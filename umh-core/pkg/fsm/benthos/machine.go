@@ -58,6 +58,9 @@ func NewBenthosInstance(
 
 			// Final transition for stopping
 			{Name: EventStopDone, Src: []string{OperationalStateStopping}, Dst: OperationalStateStopped},
+
+			// Add degraded transition from Idle
+			{Name: EventDegraded, Src: []string{OperationalStateIdle}, Dst: OperationalStateDegraded},
 		},
 	}
 

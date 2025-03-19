@@ -106,9 +106,10 @@ func (b *BenthosInstance) reconcileStateTransition(ctx context.Context) (err err
 	desiredState := b.baseFSMInstance.GetDesiredFSMState()
 
 	// If already in the desired state, nothing to do.
-	if currentState == desiredState {
-		return nil, false
-	}
+	// This is wrong, as there could be a degradation
+	// if currentState == desiredState {
+	// 	return nil, false
+	// }
 
 	// Handle lifecycle states first - these take precedence over operational states
 	if internal_fsm.IsLifecycleState(currentState) {

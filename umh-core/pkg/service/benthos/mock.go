@@ -10,14 +10,25 @@ import (
 // MockBenthosService is a mock implementation of the IBenthosService interface for testing
 type MockBenthosService struct {
 	// Tracks calls to methods
-	GenerateS6ConfigForBenthosCalled bool
-	GetConfigCalled                  bool
-	StatusCalled                     bool
-	AddBenthosToS6ManagerCalled      bool
-	RemoveBenthosFromS6ManagerCalled bool
-	StartBenthosCalled               bool
-	StopBenthosCalled                bool
-	ReconcileManagerCalled           bool
+	GenerateS6ConfigForBenthosCalled               bool
+	GetConfigCalled                                bool
+	StatusCalled                                   bool
+	AddBenthosToS6ManagerCalled                    bool
+	RemoveBenthosFromS6ManagerCalled               bool
+	StartBenthosCalled                             bool
+	StopBenthosCalled                              bool
+	ReconcileManagerCalled                         bool
+	IsBenthosConfigLoadedCalled                    bool
+	IsBenthosS6RunningCalled                       bool
+	IsBenthosS6StoppedCalled                       bool
+	IsBenthosHealthchecksPassedCalled              bool
+	IsBenthosRunningForSomeTimeWithoutErrorsCalled bool
+	IsBenthosLogsFineCalled                        bool
+	IsBenthosMetricsErrorFreeCalled                bool
+	IsBenthosDegradedCalled                        bool
+	HasProcessingActivityCalled                    bool
+	IsLogsFineCalled                               bool
+	IsMetricsErrorFreeCalled                       bool
 
 	// Return values for each method
 	GenerateS6ConfigForBenthosResult config.S6ServiceConfig
@@ -34,7 +45,7 @@ type MockBenthosService struct {
 	ReconcileManagerReconciled       bool
 
 	// For more complex testing scenarios
-	ServiceStates    map[string]ServiceInfo
+	ServiceStates    map[string]*ServiceInfo
 	ExistingServices map[string]bool
 	S6ServiceConfigs []config.S6FSMConfig
 
@@ -54,12 +65,13 @@ type ServiceStateFlags struct {
 	HasProcessingActivity  bool
 	IsDegraded             bool
 	IsS6Stopped            bool
+	S6FSMState             string
 }
 
 // NewMockBenthosService creates a new mock Benthos service
 func NewMockBenthosService() *MockBenthosService {
 	return &MockBenthosService{
-		ServiceStates:    make(map[string]ServiceInfo),
+		ServiceStates:    make(map[string]*ServiceInfo),
 		ExistingServices: make(map[string]bool),
 		S6ServiceConfigs: make([]config.S6FSMConfig, 0),
 		stateFlags:       make(map[string]*ServiceStateFlags),
@@ -68,6 +80,23 @@ func NewMockBenthosService() *MockBenthosService {
 
 // SetServiceState sets all state flags for a service at once
 func (m *MockBenthosService) SetServiceState(serviceName string, flags ServiceStateFlags) {
+	// Ensure ServiceInfo exists for this service
+	if _, exists := m.ServiceStates[serviceName]; !exists {
+		m.ServiceStates[serviceName] = &ServiceInfo{
+			BenthosStatus: BenthosStatus{
+				HealthCheck: HealthCheck{},
+			},
+		}
+	}
+
+	// Update S6FSMState based on IsS6Running
+	if flags.IsS6Running {
+		m.ServiceStates[serviceName].S6FSMState = s6_fsm.OperationalStateRunning
+	} else {
+		m.ServiceStates[serviceName].S6FSMState = s6_fsm.OperationalStateStopped
+	}
+
+	// Store the flags
 	m.stateFlags[serviceName] = &flags
 }
 
@@ -99,19 +128,8 @@ func (m *MockBenthosService) Status(ctx context.Context, serviceName string, met
 	m.StatusCalled = true
 
 	if state, exists := m.ServiceStates[serviceName]; exists {
-		// Update state based on flags
-		if flags := m.GetServiceState(serviceName); flags != nil {
-			state.BenthosStatus.HealthCheck.IsLive = flags.IsS6Running
-			state.BenthosStatus.HealthCheck.IsReady = flags.IsConfigLoaded && flags.IsHealthchecksPassed
-			if flags.IsDegraded {
-				state.BenthosStatus.HealthCheck.ReadyError = "Service is degraded"
-			}
-			if state.BenthosStatus.MetricsState == nil {
-				state.BenthosStatus.MetricsState = NewBenthosMetricsState()
-			}
-			state.BenthosStatus.MetricsState.IsActive = flags.HasProcessingActivity
-		}
-		return state, m.StatusError
+		// Preserve S6FSMState from previous updates
+		return *state, m.StatusError
 	}
 
 	return m.StatusResult, m.StatusError
@@ -119,6 +137,7 @@ func (m *MockBenthosService) Status(ctx context.Context, serviceName string, met
 
 // Helper methods for state checks
 func (m *MockBenthosService) IsBenthosS6Running(serviceName string) bool {
+	m.IsBenthosS6RunningCalled = true
 	if flags := m.GetServiceState(serviceName); flags != nil {
 		return flags.IsS6Running
 	}
@@ -126,6 +145,7 @@ func (m *MockBenthosService) IsBenthosS6Running(serviceName string) bool {
 }
 
 func (m *MockBenthosService) IsBenthosConfigLoaded(serviceName string) bool {
+	m.IsBenthosConfigLoadedCalled = true
 	if flags := m.GetServiceState(serviceName); flags != nil {
 		return flags.IsConfigLoaded
 	}
@@ -133,6 +153,7 @@ func (m *MockBenthosService) IsBenthosConfigLoaded(serviceName string) bool {
 }
 
 func (m *MockBenthosService) IsBenthosHealthchecksPassed(serviceName string) bool {
+	m.IsBenthosHealthchecksPassedCalled = true
 	if flags := m.GetServiceState(serviceName); flags != nil {
 		return flags.IsHealthchecksPassed
 	}
@@ -140,6 +161,7 @@ func (m *MockBenthosService) IsBenthosHealthchecksPassed(serviceName string) boo
 }
 
 func (m *MockBenthosService) IsBenthosRunningForSomeTimeWithoutErrors(serviceName string) bool {
+	m.IsBenthosRunningForSomeTimeWithoutErrorsCalled = true
 	if flags := m.GetServiceState(serviceName); flags != nil {
 		return flags.IsRunningWithoutErrors
 	}
@@ -147,6 +169,7 @@ func (m *MockBenthosService) IsBenthosRunningForSomeTimeWithoutErrors(serviceNam
 }
 
 func (m *MockBenthosService) IsBenthosDegraded(serviceName string) bool {
+	m.IsBenthosDegradedCalled = true
 	if flags := m.GetServiceState(serviceName); flags != nil {
 		return flags.IsDegraded
 	}
@@ -154,6 +177,7 @@ func (m *MockBenthosService) IsBenthosDegraded(serviceName string) bool {
 }
 
 func (m *MockBenthosService) IsBenthosS6Stopped(serviceName string) bool {
+	m.IsBenthosS6StoppedCalled = true
 	if flags := m.GetServiceState(serviceName); flags != nil {
 		return flags.IsS6Stopped
 	}
@@ -161,6 +185,7 @@ func (m *MockBenthosService) IsBenthosS6Stopped(serviceName string) bool {
 }
 
 func (m *MockBenthosService) HasProcessingActivity(status BenthosStatus) bool {
+	m.HasProcessingActivityCalled = true
 	return status.MetricsState != nil && status.MetricsState.IsActive
 }
 
@@ -271,6 +296,7 @@ func (m *MockBenthosService) ReconcileManager(ctx context.Context, tick uint64) 
 
 // IsLogsFine mocks checking if the logs are fine
 func (m *MockBenthosService) IsLogsFine(logs []string) bool {
+	m.IsLogsFineCalled = true
 	// For testing purposes, we'll consider logs fine if they're empty or nil
 	// This can be enhanced based on testing needs
 	return len(logs) == 0
@@ -278,6 +304,7 @@ func (m *MockBenthosService) IsLogsFine(logs []string) bool {
 
 // IsMetricsErrorFree mocks checking if metrics are error-free
 func (m *MockBenthosService) IsMetricsErrorFree(metrics Metrics) bool {
+	m.IsMetricsErrorFreeCalled = true
 	// For testing purposes, we'll consider metrics error-free
 	// This can be enhanced based on testing needs
 	return true

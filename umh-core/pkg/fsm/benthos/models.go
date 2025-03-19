@@ -62,6 +62,7 @@ func IsOperationalState(state string) bool {
 		OperationalStateStarting,
 		OperationalStateStartingConfigLoading,
 		OperationalStateStartingWaitingForHealthchecks,
+		OperationalStateStartingWaitingForServiceToRemainRunning,
 		OperationalStateIdle,
 		OperationalStateActive,
 		OperationalStateDegraded,
@@ -76,7 +77,8 @@ func IsStartingState(state string) bool {
 	switch state {
 	case OperationalStateStarting,
 		OperationalStateStartingConfigLoading,
-		OperationalStateStartingWaitingForHealthchecks:
+		OperationalStateStartingWaitingForHealthchecks,
+		OperationalStateStartingWaitingForServiceToRemainRunning:
 		return true
 	}
 	return false
