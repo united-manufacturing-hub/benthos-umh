@@ -59,7 +59,8 @@ func printContainerLogs() {
 
 // StopContainer stops and removes your container
 func StopContainer() {
-	runDockerCommand("rm", "-f", containerName) // ignoring error
+	runDockerCommand("stop", containerName)
+	// don't delete it, we want to keep the logs
 }
 
 func runDockerCommand(args ...string) (string, error) {
