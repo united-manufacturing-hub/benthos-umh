@@ -403,7 +403,7 @@ var _ = Describe("Benthos Service", func() {
 		})
 	})
 
-	Context("Tick-based throughput tracking", func() {
+	Context("Tick-based throughput tracking", Label("tick_based_throughput_tracking"), func() {
 		var (
 			service     *BenthosService
 			mockClient  *MockHTTPClient
@@ -432,45 +432,63 @@ var _ = Describe("Benthos Service", func() {
 
 		It("should calculate throughput based on ticks", func() {
 			// Mock metrics responses for two consecutive ticks
-			tick1Response := `{
-				"input": {
-					"received": 100
-				},
-				"output": {
-					"sent": 90,
-					"batch_sent": 10
-				},
-				"process": {
-					"processors": {
-						"root.pipeline.processors.0": {
-							"received": 100,
-							"sent": 95,
-							"batch_received": 10,
-							"batch_sent": 9
-						}
-					}
-				}
-			}`
+			tick1Response := `# HELP input_received Benthos Counter metric
+# TYPE input_received counter
+input_received{path="root.input"} 100
 
-			tick2Response := `{
-				"input": {
-					"received": 150
-				},
-				"output": {
-					"sent": 135,
-					"batch_sent": 15
-				},
-				"process": {
-					"processors": {
-						"root.pipeline.processors.0": {
-							"received": 150,
-							"sent": 142,
-							"batch_received": 15,
-							"batch_sent": 14
-						}
-					}
-				}
-			}`
+# HELP output_sent Benthos Counter metric
+# TYPE output_sent counter
+output_sent{path="root.output"} 90
+
+# HELP output_batch_sent Benthos Counter metric
+# TYPE output_batch_sent counter
+output_batch_sent{path="root.output"} 10
+
+# HELP processor_received Benthos Counter metric
+# TYPE processor_received counter
+processor_received{label="0",path="root.pipeline.processors.0"} 100
+
+# HELP processor_sent Benthos Counter metric
+# TYPE processor_sent counter
+processor_sent{label="0",path="root.pipeline.processors.0"} 95
+
+# HELP processor_batch_received Benthos Counter metric
+# TYPE processor_batch_received counter
+processor_batch_received{label="0",path="root.pipeline.processors.0"} 10
+
+# HELP processor_batch_sent Benthos Counter metric
+# TYPE processor_batch_sent counter
+processor_batch_sent{label="0",path="root.pipeline.processors.0"} 9
+`
+
+			tick2Response := `# HELP input_received Benthos Counter metric
+# TYPE input_received counter
+input_received{path="root.input"} 200
+
+# HELP output_sent Benthos Counter metric
+# TYPE output_sent counter
+output_sent{path="root.output"} 180
+
+# HELP output_batch_sent Benthos Counter metric
+# TYPE output_batch_sent counter
+output_batch_sent{path="root.output"} 20
+
+# HELP processor_received Benthos Counter metric
+# TYPE processor_received counter
+processor_received{label="0",path="root.pipeline.processors.0"} 200
+
+# HELP processor_sent Benthos Counter metric
+# TYPE processor_sent counter
+processor_sent{label="0",path="root.pipeline.processors.0"} 195
+
+# HELP processor_batch_received Benthos Counter metric
+# TYPE processor_batch_received counter
+processor_batch_received{label="0",path="root.pipeline.processors.0"} 20
+
+# HELP processor_batch_sent Benthos Counter metric
+# TYPE processor_batch_sent counter
+processor_batch_sent{label="0",path="root.pipeline.processors.0"} 19
+`
 
 			// Setup mock responses
 			mockClient.SetResponse("/metrics", MockResponse{
@@ -507,28 +525,26 @@ var _ = Describe("Benthos Service", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify throughput calculations
-			Expect(status2.BenthosStatus.Metrics.Input.Received).To(Equal(int64(150)))
-			Expect(status2.BenthosStatus.Metrics.Output.Sent).To(Equal(int64(135)))
-			Expect(status2.BenthosStatus.Metrics.Output.BatchSent).To(Equal(int64(15)))
-			Expect(status2.BenthosStatus.MetricsState.Input.MessagesPerTick).To(Equal(float64(50)))  // (150-100)/1
-			Expect(status2.BenthosStatus.MetricsState.Output.MessagesPerTick).To(Equal(float64(45))) // (135-90)/1
-			Expect(status2.BenthosStatus.MetricsState.Output.BatchesPerTick).To(Equal(float64(5)))   // (15-10)/1
+			Expect(status2.BenthosStatus.Metrics.Input.Received).To(Equal(int64(200)))
+			Expect(status2.BenthosStatus.Metrics.Output.Sent).To(Equal(int64(180)))
+			Expect(status2.BenthosStatus.Metrics.Output.BatchSent).To(Equal(int64(20)))
+			Expect(status2.BenthosStatus.MetricsState.Input.MessagesPerTick).To(Equal(float64(100))) // (200-100)/1
+			Expect(status2.BenthosStatus.MetricsState.Output.MessagesPerTick).To(Equal(float64(90))) // (180-90)/1
+			Expect(status2.BenthosStatus.MetricsState.Output.BatchesPerTick).To(Equal(float64(10)))  // (20-10)/1
 		})
 
 		It("should handle counter resets", func() {
 			// First tick with normal values
-			tick1Response := `{
-				"input": {
-					"received": 100
-				}
-			}`
+			tick1Response := `# HELP input_received Benthos Counter metric
+# TYPE input_received counter
+input_received{path="root.input"} 100
+`
 
 			// Second tick with reset counter (lower than previous)
-			tick2Response := `{
-				"input": {
-					"received": 30
-				}
-			}`
+			tick2Response := `# HELP input_received Benthos Counter metric
+# TYPE input_received counter
+input_received{path="root.input"} 30
+`
 
 			// Setup mock responses
 			mockClient.SetResponse("/metrics", MockResponse{
@@ -569,24 +585,24 @@ var _ = Describe("Benthos Service", func() {
 
 		It("should detect inactivity", func() {
 			// First tick with some activity
-			tick1Response := `{
-				"input": {
-					"received": 100
-				},
-				"output": {
-					"sent": 90
-				}
-			}`
+			tick1Response := `# HELP input_received Benthos Counter metric
+# TYPE input_received counter
+input_received{path="root.input"} 100
+
+# HELP output_sent Benthos Counter metric
+# TYPE output_sent counter
+output_sent{path="root.output"} 90
+`
 
 			// Second tick with no change in counters
-			tick2Response := `{
-				"input": {
-					"received": 100
-				},
-				"output": {
-					"sent": 90
-				}
-			}`
+			tick2Response := `# HELP input_received Benthos Counter metric
+# TYPE input_received counter
+input_received{path="root.input"} 100
+
+# HELP output_sent Benthos Counter metric
+# TYPE output_sent counter
+output_sent{path="root.output"} 90
+`
 
 			// Setup mock responses
 			mockClient.SetResponse("/metrics", MockResponse{
@@ -627,56 +643,64 @@ var _ = Describe("Benthos Service", func() {
 
 		It("should track component throughput", func() {
 			// First tick with initial component metrics
-			tick1Response := `{
-				"input": {
-					"received": 100
-				},
-				"output": {
-					"sent": 90
-				},
-				"process": {
-					"processors": {
-						"root.pipeline.processors.0": {
-							"received": 100,
-							"sent": 95,
-							"batch_received": 10,
-							"batch_sent": 9
-						},
-						"root.pipeline.processors.1": {
-							"received": 95,
-							"sent": 90,
-							"batch_received": 9,
-							"batch_sent": 8
-						}
-					}
-				}
-			}`
+			tick1Response := `# HELP input_received Benthos Counter metric
+# TYPE input_received counter
+input_received{path="root.input"} 100
+
+# HELP output_sent Benthos Counter metric
+# TYPE output_sent counter
+output_sent{path="root.output"} 90
+
+# HELP processor_received Benthos Counter metric
+# TYPE processor_received counter
+processor_received{label="0",path="root.pipeline.processors.0"} 100
+processor_received{label="1",path="root.pipeline.processors.1"} 95
+
+# HELP processor_sent Benthos Counter metric
+# TYPE processor_sent counter
+processor_sent{label="0",path="root.pipeline.processors.0"} 95
+processor_sent{label="1",path="root.pipeline.processors.1"} 90
+
+# HELP processor_batch_received Benthos Counter metric
+# TYPE processor_batch_received counter
+processor_batch_received{label="0",path="root.pipeline.processors.0"} 10
+processor_batch_received{label="1",path="root.pipeline.processors.1"} 9
+
+# HELP processor_batch_sent Benthos Counter metric
+# TYPE processor_batch_sent counter
+processor_batch_sent{label="0",path="root.pipeline.processors.0"} 9
+processor_batch_sent{label="1",path="root.pipeline.processors.1"} 8
+`
 
 			// Second tick with updated component metrics
-			tick2Response := `{
-				"input": {
-					"received": 200
-				},
-				"output": {
-					"sent": 180
-				},
-				"process": {
-					"processors": {
-						"root.pipeline.processors.0": {
-							"received": 200,
-							"sent": 190,
-							"batch_received": 20,
-							"batch_sent": 19
-						},
-						"root.pipeline.processors.1": {
-							"received": 190,
-							"sent": 180,
-							"batch_received": 19,
-							"batch_sent": 18
-						}
-					}
-				}
-			}`
+			tick2Response := `# HELP input_received Benthos Counter metric
+# TYPE input_received counter
+input_received{path="root.input"} 200
+
+# HELP output_sent Benthos Counter metric
+# TYPE output_sent counter
+output_sent{path="root.output"} 180
+
+# HELP processor_received Benthos Counter metric
+# TYPE processor_received counter
+processor_received{label="0",path="root.pipeline.processors.0"} 200
+processor_received{label="1",path="root.pipeline.processors.1"} 195
+
+# HELP processor_sent Benthos Counter metric
+# TYPE processor_sent counter
+processor_sent{label="0",path="root.pipeline.processors.0"} 195
+processor_sent{label="1",path="root.pipeline.processors.1"} 180
+
+# HELP processor_batch_received Benthos Counter metric
+# TYPE processor_batch_received counter
+processor_batch_received{label="0",path="root.pipeline.processors.0"} 20
+processor_batch_received{label="1",path="root.pipeline.processors.1"} 19
+
+# HELP processor_batch_sent Benthos Counter metric
+# TYPE processor_batch_sent counter
+processor_batch_sent{label="0",path="root.pipeline.processors.0"} 19
+processor_batch_sent{label="1",path="root.pipeline.processors.1"} 18
+`
 
 			// Setup mock responses for first tick
 			mockClient.SetResponse("/metrics", MockResponse{
@@ -722,12 +746,12 @@ var _ = Describe("Benthos Service", func() {
 			Expect(status2.BenthosStatus.Metrics.Process.Processors).To(HaveLen(2))
 			processor0 = status2.BenthosStatus.Metrics.Process.Processors["root.pipeline.processors.0"]
 			Expect(processor0.Received).To(Equal(int64(200)))
-			Expect(processor0.Sent).To(Equal(int64(190)))
+			Expect(processor0.Sent).To(Equal(int64(195)))
 			Expect(processor0.BatchReceived).To(Equal(int64(20)))
 			Expect(processor0.BatchSent).To(Equal(int64(19)))
 
 			processor1 = status2.BenthosStatus.Metrics.Process.Processors["root.pipeline.processors.1"]
-			Expect(processor1.Received).To(Equal(int64(190)))
+			Expect(processor1.Received).To(Equal(int64(195)))
 			Expect(processor1.Sent).To(Equal(int64(180)))
 			Expect(processor1.BatchReceived).To(Equal(int64(19)))
 			Expect(processor1.BatchSent).To(Equal(int64(18)))
@@ -738,7 +762,7 @@ var _ = Describe("Benthos Service", func() {
 			Expect(processor0State.BatchesPerTick).To(Equal(float64(10)))   // (20-10)/1
 
 			processor1State := status2.BenthosStatus.MetricsState.Processors["root.pipeline.processors.1"]
-			Expect(processor1State.MessagesPerTick).To(Equal(float64(95))) // (190-95)/1
+			Expect(processor1State.MessagesPerTick).To(Equal(float64(90))) // (180-90)/1
 			Expect(processor1State.BatchesPerTick).To(Equal(float64(10)))  // (19-9)/1
 		})
 	})
