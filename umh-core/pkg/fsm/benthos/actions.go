@@ -88,12 +88,12 @@ func (b *BenthosInstance) initiateBenthosStop(ctx context.Context) error {
 }
 
 // updateObservedState updates the observed state of the service
-func (b *BenthosInstance) updateObservedState(ctx context.Context) error {
+func (b *BenthosInstance) updateObservedState(ctx context.Context, tick uint64) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 
-	info, err := b.service.Status(ctx, b.baseFSMInstance.GetID())
+	info, err := b.service.Status(ctx, b.baseFSMInstance.GetID(), b.config.MetricsPort, tick)
 	if err != nil {
 		// TODO: Handle this error
 		return err

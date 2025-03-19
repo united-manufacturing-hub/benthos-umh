@@ -43,7 +43,7 @@ func (b *BenthosInstance) Reconcile(ctx context.Context, tick uint64) (err error
 	}
 
 	// Step 2: Detect external changes.
-	if err := b.reconcileExternalChanges(ctx); err != nil {
+	if err := b.reconcileExternalChanges(ctx, tick); err != nil {
 		// If the service is not running, we don't want to return an error here, because we want to continue reconciling
 		if !errors.Is(err, benthos_service.ErrServiceNotExist) {
 			b.baseFSMInstance.SetError(err, tick)
@@ -88,8 +88,8 @@ func (b *BenthosInstance) Reconcile(ctx context.Context, tick uint64) (err error
 
 // reconcileExternalChanges checks if the BenthosInstance service status has changed
 // externally (e.g., if someone manually stopped or started it, or if it crashed)
-func (b *BenthosInstance) reconcileExternalChanges(ctx context.Context) error {
-	err := b.updateObservedState(ctx)
+func (b *BenthosInstance) reconcileExternalChanges(ctx context.Context, tick uint64) error {
+	err := b.updateObservedState(ctx, tick)
 	if err != nil {
 		return fmt.Errorf("failed to update observed state: %w", err)
 	}

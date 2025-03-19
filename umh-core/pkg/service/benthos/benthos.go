@@ -66,6 +66,8 @@ type BenthosStatus struct {
 	HealthCheck HealthCheck
 	// Metrics contains information about the metrics of the Benthos service
 	Metrics Metrics
+	// MetricsState contains information about the metrics of the Benthos service
+	MetricsState *BenthosMetricsState
 	// Logs contains the logs of the Benthos service
 	Logs []string
 }
@@ -163,6 +165,7 @@ type BenthosService struct {
 	s6Manager        *s6fsm.S6Manager
 	s6ServiceConfigs []config.S6FSMConfig
 	httpClient       HTTPClient
+	metricsState     *BenthosMetricsState
 }
 
 // BenthosServiceOption is a function that modifies a BenthosService
@@ -179,10 +182,11 @@ func WithHTTPClient(client HTTPClient) BenthosServiceOption {
 func NewDefaultBenthosService(name string, opts ...BenthosServiceOption) *BenthosService {
 	managerName := fmt.Sprintf("%s%s", logger.ComponentBenthosService, name)
 	service := &BenthosService{
-		logger:     logger.For(managerName),
-		template:   benthosYamlTemplate,
-		s6Manager:  s6fsm.NewS6Manager(managerName),
-		httpClient: newDefaultHTTPClient(),
+		logger:       logger.For(managerName),
+		template:     benthosYamlTemplate,
+		s6Manager:    s6fsm.NewS6Manager(managerName),
+		httpClient:   newDefaultHTTPClient(),
+		metricsState: NewBenthosMetricsState(),
 	}
 
 	// Apply options
@@ -234,7 +238,7 @@ func (s *BenthosService) GetConfig(ctx context.Context, path string) (config.Ben
 }
 
 // Status checks the status of a Benthos service and returns ServiceInfo
-func (s *BenthosService) Status(ctx context.Context, serviceName string, metricsPort int) (ServiceInfo, error) {
+func (s *BenthosService) Status(ctx context.Context, serviceName string, metricsPort int, tick uint64) (ServiceInfo, error) {
 	if ctx.Err() != nil {
 		return ServiceInfo{}, ctx.Err()
 	}
@@ -257,7 +261,7 @@ func (s *BenthosService) Status(ctx context.Context, serviceName string, metrics
 	}
 
 	// Let's get the health check of the Benthos service
-	benthosStatus, err := s.GetHealthCheckAndMetrics(ctx, serviceName, metricsPort)
+	benthosStatus, err := s.GetHealthCheckAndMetrics(ctx, serviceName, metricsPort, tick)
 	if err != nil {
 		return ServiceInfo{}, fmt.Errorf("failed to get health check: %w", err)
 	}
@@ -453,7 +457,7 @@ func updateLatencyFromMetric(latency *Latency, metric *dto.Metric) {
 // by fetching the health check endpoint of the Benthos service
 // https://docs.redpanda.com/redpanda-connect/guides/monitoring/
 // https://docs.redpanda.com/redpanda-connect/components/http/about/
-func (s *BenthosService) GetHealthCheckAndMetrics(ctx context.Context, serviceName string, metricsPort int) (BenthosStatus, error) {
+func (s *BenthosService) GetHealthCheckAndMetrics(ctx context.Context, serviceName string, metricsPort int, tick uint64) (BenthosStatus, error) {
 	if ctx.Err() != nil {
 		return BenthosStatus{}, ctx.Err()
 	}
@@ -553,9 +557,17 @@ func (s *BenthosService) GetHealthCheckAndMetrics(ctx context.Context, serviceNa
 		}
 	}
 
+	// Update the metrics state
+	if s.metricsState == nil {
+		return BenthosStatus{}, fmt.Errorf("metrics state not initialized")
+	}
+
+	s.metricsState.UpdateFromMetrics(metrics, tick)
+
 	return BenthosStatus{
-		HealthCheck: healthCheck,
-		Metrics:     metrics,
+		HealthCheck:  healthCheck,
+		Metrics:      metrics,
+		MetricsState: s.metricsState,
 	}, nil
 }
 

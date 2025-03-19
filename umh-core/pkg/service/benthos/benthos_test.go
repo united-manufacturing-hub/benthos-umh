@@ -14,11 +14,13 @@ var _ = Describe("Benthos Service", func() {
 	var (
 		service *BenthosService
 		client  *MockHTTPClient
+		tick    uint64
 	)
 
 	BeforeEach(func() {
 		client = NewMockHTTPClient()
 		service = NewDefaultBenthosService("test", WithHTTPClient(client))
+		tick = 0
 	})
 
 	Describe("GetHealthCheckAndMetrics", func() {
@@ -72,7 +74,8 @@ var _ = Describe("Benthos Service", func() {
 
 			It("should return health check and metrics", func() {
 				ctx := context.Background()
-				status, err := service.GetHealthCheckAndMetrics(ctx, "test", 4195)
+				status, err := service.GetHealthCheckAndMetrics(ctx, "test", 4195, tick)
+				tick++
 				Expect(err).NotTo(HaveOccurred())
 				Expect(status.HealthCheck.IsReady).To(BeTrue())
 				Expect(status.Metrics.Input.Received).To(Equal(int64(10)))
@@ -113,7 +116,8 @@ var _ = Describe("Benthos Service", func() {
 
 			It("should return error", func() {
 				ctx := context.Background()
-				_, err := service.GetHealthCheckAndMetrics(ctx, "test", 4195)
+				_, err := service.GetHealthCheckAndMetrics(ctx, "test", 4195, tick)
+				tick++
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to check liveness: failed to execute request for /ping: connection refused"))
 			})
@@ -131,7 +135,8 @@ var _ = Describe("Benthos Service", func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 				defer cancel()
 
-				_, err := service.GetHealthCheckAndMetrics(ctx, "test", 4195)
+				_, err := service.GetHealthCheckAndMetrics(ctx, "test", 4195, tick)
+				tick++
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("context deadline exceeded"))
 			})
@@ -395,6 +400,339 @@ var _ = Describe("Benthos Service", func() {
 				}
 				Expect(service.IsMetricsErrorFree(metrics)).To(BeFalse())
 			})
+		})
+	})
+
+	Context("Tick-based throughput tracking", func() {
+		var (
+			service    *BenthosService
+			mockClient *MockHTTPClient
+			tick       uint64
+		)
+
+		BeforeEach(func() {
+			mockClient = NewMockHTTPClient()
+			service = NewDefaultBenthosService("test", WithHTTPClient(mockClient))
+			tick = 1
+
+			// Add the service to the S6 manager
+			err := service.AddBenthosToS6Manager(context.Background(), &config.BenthosServiceConfig{
+				MetricsPort: 8080,
+				LogLevel:    "info",
+			}, "test")
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should calculate throughput based on ticks", func() {
+			// Mock metrics responses for two consecutive ticks
+			tick1Response := `{
+				"input": {
+					"received": 100
+				},
+				"output": {
+					"sent": 90,
+					"batch_sent": 10
+				},
+				"process": {
+					"processors": {
+						"root.pipeline.processors.0": {
+							"received": 100,
+							"sent": 95,
+							"batch_received": 10,
+							"batch_sent": 9
+						}
+					}
+				}
+			}`
+
+			tick2Response := `{
+				"input": {
+					"received": 150
+				},
+				"output": {
+					"sent": 135,
+					"batch_sent": 15
+				},
+				"process": {
+					"processors": {
+						"root.pipeline.processors.0": {
+							"received": 150,
+							"sent": 142,
+							"batch_received": 15,
+							"batch_sent": 14
+						}
+					}
+				}
+			}`
+
+			// Setup mock responses
+			mockClient.SetResponse("/metrics", MockResponse{
+				StatusCode: 200,
+				Body:       []byte(tick1Response),
+			})
+			mockClient.SetResponse("/ready", MockResponse{
+				StatusCode: 200,
+				Body:       []byte("{}"),
+			})
+			status1, err := service.Status(context.Background(), "test", 1, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify initial state
+			Expect(status1.BenthosStatus.Metrics.Input.Received).To(Equal(int64(100)))
+			Expect(status1.BenthosStatus.Metrics.Output.Sent).To(Equal(int64(90)))
+			Expect(status1.BenthosStatus.Metrics.Output.BatchSent).To(Equal(int64(10)))
+			Expect(status1.BenthosStatus.MetricsState.Input.MessagesPerTick).To(Equal(float64(100)))
+			Expect(status1.BenthosStatus.MetricsState.Output.MessagesPerTick).To(Equal(float64(90)))
+			Expect(status1.BenthosStatus.MetricsState.Output.BatchesPerTick).To(Equal(float64(10)))
+
+			// Setup second tick response
+			mockClient.SetResponse("/metrics", MockResponse{
+				StatusCode: 200,
+				Body:       []byte(tick2Response),
+			})
+			mockClient.SetResponse("/ready", MockResponse{
+				StatusCode: 200,
+				Body:       []byte("{}"),
+			})
+			status2, err := service.Status(context.Background(), "test", 2, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify throughput calculations
+			Expect(status2.BenthosStatus.Metrics.Input.Received).To(Equal(int64(150)))
+			Expect(status2.BenthosStatus.Metrics.Output.Sent).To(Equal(int64(135)))
+			Expect(status2.BenthosStatus.Metrics.Output.BatchSent).To(Equal(int64(15)))
+			Expect(status2.BenthosStatus.MetricsState.Input.MessagesPerTick).To(Equal(float64(50)))  // (150-100)/1
+			Expect(status2.BenthosStatus.MetricsState.Output.MessagesPerTick).To(Equal(float64(45))) // (135-90)/1
+			Expect(status2.BenthosStatus.MetricsState.Output.BatchesPerTick).To(Equal(float64(5)))   // (15-10)/1
+		})
+
+		It("should handle counter resets", func() {
+			// First tick with normal values
+			tick1Response := `{
+				"input": {
+					"received": 100
+				}
+			}`
+
+			// Second tick with reset counter (lower than previous)
+			tick2Response := `{
+				"input": {
+					"received": 30
+				}
+			}`
+
+			// Setup mock responses
+			mockClient.SetResponse("/metrics", MockResponse{
+				StatusCode: 200,
+				Body:       []byte(tick1Response),
+			})
+			mockClient.SetResponse("/ready", MockResponse{
+				StatusCode: 200,
+				Body:       []byte("{}"),
+			})
+			status1, err := service.Status(context.Background(), "test", 1, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify initial state
+			Expect(status1.BenthosStatus.Metrics.Input.Received).To(Equal(int64(100)))
+			Expect(status1.BenthosStatus.MetricsState.Input.MessagesPerTick).To(Equal(float64(100)))
+			Expect(status1.BenthosStatus.MetricsState.Input.LastCount).To(Equal(int64(100)))
+
+			// Setup second tick response
+			mockClient.SetResponse("/metrics", MockResponse{
+				StatusCode: 200,
+				Body:       []byte(tick2Response),
+			})
+			mockClient.SetResponse("/ready", MockResponse{
+				StatusCode: 200,
+				Body:       []byte("{}"),
+			})
+			status2, err := service.Status(context.Background(), "test", 2, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+
+			// After reset, we should treat the new value as the baseline
+			Expect(status2.BenthosStatus.Metrics.Input.Received).To(Equal(int64(30)))
+			Expect(status2.BenthosStatus.MetricsState.Input.MessagesPerTick).To(Equal(float64(30)))
+			Expect(status2.BenthosStatus.MetricsState.Input.LastCount).To(Equal(int64(30)))
+		})
+
+		It("should detect inactivity", func() {
+			// First tick with some activity
+			tick1Response := `{
+				"input": {
+					"received": 100
+				},
+				"output": {
+					"sent": 90
+				}
+			}`
+
+			// Second tick with no change in counters
+			tick2Response := `{
+				"input": {
+					"received": 100
+				},
+				"output": {
+					"sent": 90
+				}
+			}`
+
+			// Setup mock responses
+			mockClient.SetResponse("/metrics", MockResponse{
+				StatusCode: 200,
+				Body:       []byte(tick1Response),
+			})
+			mockClient.SetResponse("/ready", MockResponse{
+				StatusCode: 200,
+				Body:       []byte("{}"),
+			})
+			status1, err := service.Status(context.Background(), "test", 1, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify initial state
+			Expect(status1.BenthosStatus.Metrics.Input.Received).To(Equal(int64(100)))
+			Expect(status1.BenthosStatus.MetricsState.Input.MessagesPerTick).To(Equal(float64(100)))
+			Expect(status1.BenthosStatus.MetricsState.IsActive).To(BeTrue())
+
+			// Setup second tick response
+			mockClient.SetResponse("/metrics", MockResponse{
+				StatusCode: 200,
+				Body:       []byte(tick2Response),
+			})
+			mockClient.SetResponse("/ready", MockResponse{
+				StatusCode: 200,
+				Body:       []byte("{}"),
+			})
+			status2, err := service.Status(context.Background(), "test", 2, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+
+			// No change in counters should indicate inactivity
+			Expect(status2.BenthosStatus.Metrics.Input.Received).To(Equal(int64(100)))
+			Expect(status2.BenthosStatus.MetricsState.Input.MessagesPerTick).To(Equal(float64(0)))
+			Expect(status2.BenthosStatus.MetricsState.IsActive).To(BeFalse())
+		})
+
+		It("should track component throughput", func() {
+			// First tick with initial component metrics
+			tick1Response := `{
+				"input": {
+					"received": 100
+				},
+				"output": {
+					"sent": 90
+				},
+				"process": {
+					"processors": {
+						"root.pipeline.processors.0": {
+							"received": 100,
+							"sent": 95,
+							"batch_received": 10,
+							"batch_sent": 9
+						},
+						"root.pipeline.processors.1": {
+							"received": 95,
+							"sent": 90,
+							"batch_received": 9,
+							"batch_sent": 8
+						}
+					}
+				}
+			}`
+
+			// Second tick with updated component metrics
+			tick2Response := `{
+				"input": {
+					"received": 200
+				},
+				"output": {
+					"sent": 180
+				},
+				"process": {
+					"processors": {
+						"root.pipeline.processors.0": {
+							"received": 200,
+							"sent": 190,
+							"batch_received": 20,
+							"batch_sent": 19
+						},
+						"root.pipeline.processors.1": {
+							"received": 190,
+							"sent": 180,
+							"batch_received": 19,
+							"batch_sent": 18
+						}
+					}
+				}
+			}`
+
+			// Setup mock responses for first tick
+			mockClient.SetResponse("/metrics", MockResponse{
+				StatusCode: 200,
+				Body:       []byte(tick1Response),
+			})
+			mockClient.SetResponse("/ready", MockResponse{
+				StatusCode: 200,
+				Body:       []byte("{}"),
+			})
+			status1, err := service.Status(context.Background(), "test", 1, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify initial component metrics
+			Expect(status1.BenthosStatus.Metrics.Process.Processors).To(HaveLen(2))
+			processor0 := status1.BenthosStatus.Metrics.Process.Processors["root.pipeline.processors.0"]
+			Expect(processor0.Received).To(Equal(int64(100)))
+			Expect(processor0.Sent).To(Equal(int64(95)))
+			Expect(processor0.BatchReceived).To(Equal(int64(10)))
+			Expect(processor0.BatchSent).To(Equal(int64(9)))
+
+			processor1 := status1.BenthosStatus.Metrics.Process.Processors["root.pipeline.processors.1"]
+			Expect(processor1.Received).To(Equal(int64(95)))
+			Expect(processor1.Sent).To(Equal(int64(90)))
+			Expect(processor1.BatchReceived).To(Equal(int64(9)))
+			Expect(processor1.BatchSent).To(Equal(int64(8)))
+
+			// Setup mock responses for second tick
+			mockClient.SetResponse("/metrics", MockResponse{
+				StatusCode: 200,
+				Body:       []byte(tick2Response),
+			})
+			mockClient.SetResponse("/ready", MockResponse{
+				StatusCode: 200,
+				Body:       []byte("{}"),
+			})
+			status2, err := service.Status(context.Background(), "test", 2, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify component throughput calculations
+			Expect(status2.BenthosStatus.Metrics.Process.Processors).To(HaveLen(2))
+			processor0 = status2.BenthosStatus.Metrics.Process.Processors["root.pipeline.processors.0"]
+			Expect(processor0.Received).To(Equal(int64(200)))
+			Expect(processor0.Sent).To(Equal(int64(190)))
+			Expect(processor0.BatchReceived).To(Equal(int64(20)))
+			Expect(processor0.BatchSent).To(Equal(int64(19)))
+
+			processor1 = status2.BenthosStatus.Metrics.Process.Processors["root.pipeline.processors.1"]
+			Expect(processor1.Received).To(Equal(int64(190)))
+			Expect(processor1.Sent).To(Equal(int64(180)))
+			Expect(processor1.BatchReceived).To(Equal(int64(19)))
+			Expect(processor1.BatchSent).To(Equal(int64(18)))
+
+			// Verify component throughput state
+			processor0State := status2.BenthosStatus.MetricsState.Processors["root.pipeline.processors.0"]
+			Expect(processor0State.MessagesPerTick).To(Equal(float64(100))) // (200-100)/1
+			Expect(processor0State.BatchesPerTick).To(Equal(float64(10)))   // (20-10)/1
+
+			processor1State := status2.BenthosStatus.MetricsState.Processors["root.pipeline.processors.1"]
+			Expect(processor1State.MessagesPerTick).To(Equal(float64(95))) // (190-95)/1
+			Expect(processor1State.BatchesPerTick).To(Equal(float64(10)))  // (19-9)/1
 		})
 	})
 })
