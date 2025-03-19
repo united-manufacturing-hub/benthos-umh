@@ -141,6 +141,50 @@ func (b *BenthosInstance) IsBenthosConfigLoaded() bool {
 	return currentUptime >= 5
 }
 
+// IsBenthosHealthchecksPassed determines if the Benthos service has passed its healthchecks.
+func (b *BenthosInstance) IsBenthosHealthchecksPassed() bool {
+	return b.ObservedState.ServiceInfo.BenthosStatus.HealthCheck.IsLive &&
+		b.ObservedState.ServiceInfo.BenthosStatus.HealthCheck.IsReady
+}
+
+// IsBenthosRunningForSomeTime determines if the Benthos service has been running for some time.
+func (b *BenthosInstance) IsBenthosRunningForSomeTime() bool {
+	currentUptime := b.ObservedState.ServiceInfo.S6ObservedState.ServiceInfo.Uptime
+	if currentUptime < 10 {
+		return false
+	}
+
+	return true
+}
+
+// IsBenthosLogsFine determines if there are any issues in the Benthos logs
+func (b *BenthosInstance) IsBenthosLogsFine() bool {
+	return b.service.IsLogsFine(b.ObservedState.ServiceInfo.BenthosStatus.Logs)
+}
+
+// IsBenthosMetricsErrorFree determines if the Benthos service has no errors in the metrics
+func (b *BenthosInstance) IsBenthosMetricsErrorFree() bool {
+	return b.service.IsMetricsErrorFree(b.ObservedState.ServiceInfo.BenthosStatus.Metrics)
+}
+
+// IsBenthosDegraded determines if the Benthos service is degraded.
+// These check everything that is checked during the starting phase
+// But it means that it once worked, and then degraded
+func (b *BenthosInstance) IsBenthosDegraded() bool {
+	if b.IsBenthosS6Running() && b.IsBenthosConfigLoaded() && b.IsBenthosHealthchecksPassed() && b.IsBenthosRunningForSomeTime() {
+		return false
+	}
+	return true
+}
+
+// IsBenthosWithProcessingActivity determines if the Benthos instance has active data processing
+// based on metrics data and possibly other observed state information
+func (b *BenthosInstance) IsBenthosWithProcessingActivity() bool {
+	// TODO: Implement actual check based on metrics data
+	// For now, return a placeholder value
+	return false
+}
+
 // TODO: Add additional Benthos-specific actions
 // For example:
 // - validateBenthosConfig - Validates Benthos configuration without starting the service

@@ -49,8 +49,7 @@ func NewBenthosInstance(
 
 			// From Active, we can go to Idle when there's no data, to Degraded when there are issues, or to Stopping
 			{Name: EventNoDataTimeout, Src: []string{OperationalStateActive}, Dst: OperationalStateIdle},
-			{Name: EventWarningDetected, Src: []string{OperationalStateActive}, Dst: OperationalStateDegraded},
-			{Name: EventErrorDetected, Src: []string{OperationalStateActive}, Dst: OperationalStateDegraded},
+			{Name: EventDegraded, Src: []string{OperationalStateActive}, Dst: OperationalStateDegraded},
 			{Name: EventStop, Src: []string{OperationalStateActive}, Dst: OperationalStateStopping},
 
 			// From Degraded, we can recover to Active, go to Idle, or to Stopping

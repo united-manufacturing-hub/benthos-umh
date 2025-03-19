@@ -49,11 +49,10 @@ const (
 	EventStartFailed        = "start_failed"
 
 	// Running phase events
-	EventDataReceived    = "data_received"
-	EventNoDataTimeout   = "no_data_timeout"
-	EventWarningDetected = "warning_detected"
-	EventErrorDetected   = "error_detected"
-	EventRecovered       = "recovered"
+	EventDataReceived  = "data_received"
+	EventNoDataTimeout = "no_data_timeout"
+	EventDegraded      = "degraded"
+	EventRecovered     = "recovered"
 )
 
 // IsOperationalState returns whether the given state is a valid operational state

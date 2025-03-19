@@ -199,7 +199,7 @@ func (b *BenthosInstance) reconcileTransitionToActive(ctx context.Context, curre
 
 			// If the S6 is not running, go back to starting
 			if !b.IsBenthosS6Running() {
-				return b.baseFSMInstance.SendEvent(ctx, EventStart), true
+				return b.baseFSMInstance.SendEvent(ctx, EventStartFailed), true
 			}
 
 			// Now check whether benthos has loaded the config
@@ -209,21 +209,42 @@ func (b *BenthosInstance) reconcileTransitionToActive(ctx context.Context, curre
 
 			return b.baseFSMInstance.SendEvent(ctx, EventConfigLoaded), true
 		case OperationalStateStartingWaitingForHealthchecks:
+			// If the S6 is not running, go back to starting
+			if !b.IsBenthosS6Running() || !b.IsBenthosConfigLoaded() {
+				return b.baseFSMInstance.SendEvent(ctx, EventStartFailed), true
+			}
+
 			// Check if healthchecks have passed
-			// This could be based on metrics data from the service
+			if !b.IsBenthosHealthchecksPassed() {
+				return nil, false
+			}
 
 			return b.baseFSMInstance.SendEvent(ctx, EventHealthchecksPassed), true
 		case OperationalStateStartingWaitingForServiceToRemainRunning:
+			// If the S6 is not running, go back to starting
+			if !b.IsBenthosS6Running() || !b.IsBenthosConfigLoaded() || !b.IsBenthosHealthchecksPassed() {
+				return b.baseFSMInstance.SendEvent(ctx, EventStartFailed), true
+			}
+
 			// Check if service has been running stably for some time
+			if !b.IsBenthosRunningForSomeTime() {
+				return nil, false
+			}
+
 			return b.baseFSMInstance.SendEvent(ctx, EventStartDone), true
 		}
+	}
+
+	// Now do all the checks to check whether it is degraded
+	if b.IsBenthosDegraded() {
+		return b.baseFSMInstance.SendEvent(ctx, EventDegraded), true
 	}
 
 	// If we're in Idle, we need to detect data to move to Active
 	if currentState == OperationalStateIdle {
 		// Check if data is being processed
 		// This would be based on metrics data
-		hasActivity := b.hasDataProcessingActivity()
+		hasActivity := b.IsBenthosWithProcessingActivity()
 		if hasActivity {
 			return b.baseFSMInstance.SendEvent(ctx, EventDataReceived), true
 		}
@@ -260,12 +281,4 @@ func (b *BenthosInstance) reconcileTransitionToStopped(ctx context.Context, curr
 	}
 
 	return nil, false
-}
-
-// hasDataProcessingActivity determines if the Benthos instance has active data processing
-// based on metrics data and possibly other observed state information
-func (b *BenthosInstance) hasDataProcessingActivity() bool {
-	// TODO: Implement actual check based on metrics data
-	// For now, return a placeholder value
-	return false
 }

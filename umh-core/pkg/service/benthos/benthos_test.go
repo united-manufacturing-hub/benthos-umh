@@ -1,286 +1,399 @@
-package benthos_test
+package benthos
 
 import (
 	"context"
-	"net/http"
 	"time"
+
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
-	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos"
 )
 
 var _ = Describe("Benthos Service", func() {
 	var (
-		mockClient *benthos.MockHTTPClient
-		service    *benthos.BenthosService
-		ctx        context.Context
+		service *BenthosService
+		client  *MockHTTPClient
 	)
 
 	BeforeEach(func() {
-		mockClient = benthos.NewMockHTTPClient()
-		service = benthos.NewDefaultBenthosService("test", benthos.WithHTTPClient(mockClient))
-		ctx = context.Background()
+		client = NewMockHTTPClient()
+		service = NewDefaultBenthosService("test", WithHTTPClient(client))
 	})
 
-	Describe("GetHealthCheck", func() {
+	Describe("GetHealthCheckAndMetrics", func() {
 		Context("with valid metrics port", func() {
-			const metricsPort = 4195
-
-			When("all services are healthy", func() {
-				It("should return healthy status", func() {
-					health, err := service.GetHealthCheck(ctx, "test-service", metricsPort)
-					Expect(err).NotTo(HaveOccurred())
-					Expect(health.IsLive).To(BeTrue())
-					Expect(health.IsReady).To(BeTrue())
-					Expect(health.Version).To(Equal("mock-version"))
-					Expect(health.ReadyError).To(BeEmpty())
-					Expect(health.ConnectionStatuses).To(HaveLen(2))
-					Expect(health.ConnectionStatuses[0].Path).To(Equal("input"))
-					Expect(health.ConnectionStatuses[0].Connected).To(BeTrue())
-					Expect(health.ConnectionStatuses[1].Path).To(Equal("output"))
-					Expect(health.ConnectionStatuses[1].Connected).To(BeTrue())
+			BeforeEach(func() {
+				client.SetReadyStatus(200, true, true, "")
+				client.SetMetricsResponse(MetricsConfig{
+					Input: MetricsConfigInput{
+						Received:     10,
+						ConnectionUp: 1,
+						LatencyNS: LatencyConfig{
+							P50:   1000000,
+							P90:   2000000,
+							P99:   3000000,
+							Sum:   1500000,
+							Count: 5,
+						},
+					},
+					Output: MetricsConfigOutput{
+						Sent:         8,
+						BatchSent:    2,
+						ConnectionUp: 1,
+						LatencyNS: LatencyConfig{
+							P50:   1000000,
+							P90:   2000000,
+							P99:   3000000,
+							Sum:   1500000,
+							Count: 5,
+						},
+					},
+					Processors: []ProcessorConfig{
+						{
+							Path:          "/pipeline/processors/0",
+							Label:         "0",
+							Received:      5,
+							BatchReceived: 1,
+							Sent:          5,
+							BatchSent:     1,
+							Error:         0,
+							LatencyNS: LatencyConfig{
+								P50:   1000000,
+								P90:   2000000,
+								P99:   3000000,
+								Sum:   1500000,
+								Count: 5,
+							},
+						},
+					},
 				})
 			})
 
-			When("input is disconnected", func() {
-				BeforeEach(func() {
-					mockClient.SetReadyStatus(
-						http.StatusServiceUnavailable,
-						false,
-						true,
-						"input disconnected",
-					)
-				})
-
-				It("should return unhealthy status with input error", func() {
-					health, err := service.GetHealthCheck(ctx, "test-service", metricsPort)
-					Expect(err).NotTo(HaveOccurred())
-					Expect(health.IsLive).To(BeTrue())
-					Expect(health.IsReady).To(BeFalse())
-					Expect(health.ReadyError).To(Equal("input disconnected"))
-					Expect(health.ConnectionStatuses).To(HaveLen(2))
-					Expect(health.ConnectionStatuses[0].Path).To(Equal("input"))
-					Expect(health.ConnectionStatuses[0].Connected).To(BeFalse())
-					Expect(health.ConnectionStatuses[1].Path).To(Equal("output"))
-					Expect(health.ConnectionStatuses[1].Connected).To(BeTrue())
-				})
-			})
-
-			When("output is disconnected", func() {
-				BeforeEach(func() {
-					mockClient.SetReadyStatus(
-						http.StatusServiceUnavailable,
-						true,
-						false,
-						"output disconnected",
-					)
-				})
-
-				It("should return unhealthy status with output error", func() {
-					health, err := service.GetHealthCheck(ctx, "test-service", metricsPort)
-					Expect(err).NotTo(HaveOccurred())
-					Expect(health.IsLive).To(BeTrue())
-					Expect(health.IsReady).To(BeFalse())
-					Expect(health.ReadyError).To(Equal("output disconnected"))
-					Expect(health.ConnectionStatuses).To(HaveLen(2))
-					Expect(health.ConnectionStatuses[0].Path).To(Equal("input"))
-					Expect(health.ConnectionStatuses[0].Connected).To(BeTrue())
-					Expect(health.ConnectionStatuses[1].Path).To(Equal("output"))
-					Expect(health.ConnectionStatuses[1].Connected).To(BeFalse())
-				})
-			})
-
-			When("context is cancelled", func() {
-				It("should return context error", func() {
-					ctx, cancel := context.WithCancel(ctx)
-					cancel()
-
-					health, err := service.GetHealthCheck(ctx, "test-service", metricsPort)
-					Expect(err).To(MatchError(context.Canceled))
-					Expect(health).To(Equal(benthos.HealthCheck{}))
-				})
-			})
-
-			When("context has timeout", func() {
-				It("should respect the timeout", func() {
-					ctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
-					defer cancel()
-
-					// Set up a mock that delays
-					mockClient.SetResponse("/ping", benthos.MockResponse{
-						StatusCode: http.StatusOK,
-						Delay:      100 * time.Millisecond,
-					})
-
-					health, err := service.GetHealthCheck(ctx, "test-service", metricsPort)
-					Expect(err).To(MatchError(context.DeadlineExceeded))
-					Expect(health).To(Equal(benthos.HealthCheck{}))
-				})
+			It("should return health check and metrics", func() {
+				ctx := context.Background()
+				status, err := service.GetHealthCheckAndMetrics(ctx, "test", 4195)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(status.HealthCheck.IsReady).To(BeTrue())
+				Expect(status.Metrics.Input.Received).To(Equal(int64(10)))
+				Expect(status.Metrics.Input.ConnectionUp).To(Equal(int64(1)))
+				Expect(status.Metrics.Output.Sent).To(Equal(int64(8)))
+				Expect(status.Metrics.Output.BatchSent).To(Equal(int64(2)))
+				Expect(status.Metrics.Process.Processors).To(HaveLen(1))
+				proc := status.Metrics.Process.Processors["/pipeline/processors/0"]
+				Expect(proc.Label).To(Equal("0"))
+				Expect(proc.Received).To(Equal(int64(5)))
+				Expect(proc.BatchReceived).To(Equal(int64(1)))
+				Expect(proc.Sent).To(Equal(int64(5)))
+				Expect(proc.BatchSent).To(Equal(int64(1)))
+				Expect(proc.Error).To(Equal(int64(0)))
+				Expect(proc.LatencyNS.P50).To(Equal(float64(1000000)))
+				Expect(proc.LatencyNS.P90).To(Equal(float64(2000000)))
+				Expect(proc.LatencyNS.P99).To(Equal(float64(3000000)))
+				Expect(proc.LatencyNS.Sum).To(Equal(float64(1500000)))
+				Expect(proc.LatencyNS.Count).To(Equal(int64(5)))
 			})
 		})
 
 		Context("with invalid metrics port", func() {
+			BeforeEach(func() {
+				client.SetResponse("/ping", MockResponse{
+					StatusCode: 500,
+					Body:       []byte("connection refused"),
+				})
+				client.SetResponse("/ready", MockResponse{
+					StatusCode: 500,
+					Body:       []byte(`{"error": "connection refused"}`),
+				})
+				client.SetResponse("/version", MockResponse{
+					StatusCode: 500,
+					Body:       []byte(`{"error": "connection refused"}`),
+				})
+			})
+
 			It("should return error", func() {
-				health, err := service.GetHealthCheck(ctx, "test-service", 0)
-				Expect(err).To(MatchError("could not find metrics port for service test-service"))
-				Expect(health).To(Equal(benthos.HealthCheck{}))
+				ctx := context.Background()
+				_, err := service.GetHealthCheckAndMetrics(ctx, "test", 4195)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("failed to check liveness: failed to execute request for /ping: connection refused"))
+			})
+		})
+
+		Context("with context cancellation", func() {
+			BeforeEach(func() {
+				client.SetResponse("/ready", MockResponse{
+					StatusCode: 200,
+					Delay:      100 * time.Millisecond,
+				})
+			})
+
+			It("should return error when context is cancelled", func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+				defer cancel()
+
+				_, err := service.GetHealthCheckAndMetrics(ctx, "test", 4195)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("context deadline exceeded"))
 			})
 		})
 	})
 
 	Describe("GenerateS6ConfigForBenthos", func() {
-		var (
-			benthosConfig *config.BenthosServiceConfig
-		)
-
-		BeforeEach(func() {
-			benthosConfig = &config.BenthosServiceConfig{
-				MetricsPort: 4195,
-				LogLevel:    "INFO",
-			}
-		})
-
 		Context("with minimal configuration", func() {
 			It("should generate valid YAML", func() {
-				yaml, err := service.GenerateS6ConfigForBenthos(benthosConfig, "test")
+				cfg := &config.BenthosServiceConfig{
+					MetricsPort: 4195,
+					LogLevel:    "INFO",
+				}
+
+				s6Config, err := service.GenerateS6ConfigForBenthos(cfg, "test")
 				Expect(err).NotTo(HaveOccurred())
-				Expect(yaml.ConfigFiles["benthos.yaml"]).To(ContainSubstring("http:\n  address: \"0.0.0.0:4195\""))
-				Expect(yaml.ConfigFiles["benthos.yaml"]).To(ContainSubstring("logger:\n  level: \"INFO\""))
+				Expect(s6Config.ConfigFiles).To(HaveKey("benthos.yaml"))
+				yaml := s6Config.ConfigFiles["benthos.yaml"]
+
+				Expect(yaml).To(ContainSubstring("input: []"))
+				Expect(yaml).To(ContainSubstring("output: []"))
+				Expect(yaml).To(ContainSubstring("pipeline: []"))
+				Expect(yaml).To(ContainSubstring("http:\n  address: \"0.0.0.0:4195\""))
+				Expect(yaml).To(ContainSubstring("logger:\n  level: \"INFO\""))
 			})
 		})
 
 		Context("with complete configuration", func() {
-			BeforeEach(func() {
-				input := []map[string]interface{}{
-					{
-						"http_server": map[string]interface{}{
-							"address": "0.0.0.0:8080",
-							"path":    "/input",
+			It("should generate valid YAML with all sections", func() {
+				cfg := &config.BenthosServiceConfig{
+					Input: []map[string]interface{}{
+						{"mqtt": map[string]interface{}{"topic": "test/topic"}},
+					},
+					Output: []map[string]interface{}{
+						{"kafka": map[string]interface{}{"topic": "test-output"}},
+					},
+					Pipeline: []map[string]interface{}{
+						{
+							"processors": []map[string]interface{}{
+								{"text": map[string]interface{}{"operator": "to_upper"}},
+							},
 						},
 					},
-				}
-				output := []map[string]interface{}{
-					{
-						"http_client": map[string]interface{}{
-							"url": "http://localhost:8081/output",
-						},
+					CacheResources: []map[string]interface{}{
+						{"memory": map[string]interface{}{"ttl": "60s"}},
 					},
+					RateLimitResources: []map[string]interface{}{
+						{"local": map[string]interface{}{"count": "100"}},
+					},
+					Buffer: []map[string]interface{}{
+						{"memory": map[string]interface{}{"limit": "10MB"}},
+					},
+					MetricsPort: 4195,
+					LogLevel:    "INFO",
 				}
-				pipeline := []map[string]interface{}{
-					{
-						"processors": []interface{}{
-							map[string]interface{}{
-								"text": map[string]interface{}{
-									"operator": "to_upper",
-								},
+
+				s6Config, err := service.GenerateS6ConfigForBenthos(cfg, "test")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(s6Config.ConfigFiles).To(HaveKey("benthos.yaml"))
+				yaml := s6Config.ConfigFiles["benthos.yaml"]
+
+				Expect(yaml).To(ContainSubstring("mqtt:\n    topic: test/topic"))
+				Expect(yaml).To(ContainSubstring("kafka:\n    topic: test-output"))
+				Expect(yaml).To(ContainSubstring("processors:\n    - text:\n        operator: to_upper"))
+				Expect(yaml).To(ContainSubstring("- memory:\n      ttl: 60s"))
+				Expect(yaml).To(ContainSubstring("- local:\n      count: 100"))
+				Expect(yaml).To(ContainSubstring("memory:\n    limit: 10MB"))
+				Expect(yaml).To(ContainSubstring("http:\n  address: \"0.0.0.0:4195\""))
+				Expect(yaml).To(ContainSubstring("logger:\n  level: \"INFO\""))
+			})
+		})
+
+		Context("with nil configuration", func() {
+			It("should return error", func() {
+				s6Config, err := service.GenerateS6ConfigForBenthos(nil, "test")
+				Expect(err).To(HaveOccurred())
+				Expect(s6Config).To(Equal(config.S6ServiceConfig{}))
+			})
+		})
+	})
+
+	Context("Log Analysis", func() {
+		var service *BenthosService
+
+		BeforeEach(func() {
+			service = NewDefaultBenthosService("test")
+		})
+
+		Context("IsLogsFine", func() {
+			It("should return true when there are no logs", func() {
+				Expect(service.IsLogsFine([]string{})).To(BeTrue())
+			})
+
+			It("should detect official Benthos error logs", func() {
+				logs := []string{
+					`level=error msg="failed to connect to broker"`,
+				}
+				Expect(service.IsLogsFine(logs)).To(BeFalse())
+			})
+
+			It("should detect critical warnings in official Benthos logs", func() {
+				logs := []string{
+					`level=warn msg="failed to process message"`,
+					`level=warn msg="connection lost to server"`,
+					`level=warn msg="unable to reach endpoint"`,
+				}
+				Expect(service.IsLogsFine(logs)).To(BeFalse())
+			})
+
+			It("should ignore non-critical warnings in official Benthos logs", func() {
+				logs := []string{
+					`level=warn msg="rate limit applied"`,
+					`level=warn msg="message batch partially processed"`,
+				}
+				Expect(service.IsLogsFine(logs)).To(BeTrue())
+			})
+
+			It("should detect configuration file read errors", func() {
+				logs := []string{
+					`configuration file read error: file not found`,
+				}
+				Expect(service.IsLogsFine(logs)).To(BeFalse())
+			})
+
+			It("should detect logger creation errors", func() {
+				logs := []string{
+					`failed to create logger: invalid log level`,
+				}
+				Expect(service.IsLogsFine(logs)).To(BeFalse())
+			})
+
+			It("should detect linter errors", func() {
+				logs := []string{
+					`Config lint error: invalid input type`,
+					`shutting down due to linter errors`,
+				}
+				Expect(service.IsLogsFine(logs)).To(BeFalse())
+			})
+
+			It("should ignore error-like strings in message content", func() {
+				logs := []string{
+					`level=info msg="Processing message: configuration file read error in payload"`,
+					`level=info msg="Log contains warning: user notification"`,
+					`level=info msg="Error rate metrics collected"`,
+				}
+				Expect(service.IsLogsFine(logs)).To(BeTrue())
+			})
+
+			It("should ignore error patterns not at start of line", func() {
+				logs := []string{
+					`level=info msg="User reported: configuration file read error"`,
+					`level=info msg="System status: failed to create logger mentioned in docs"`,
+					`level=info msg="Documentation: Config lint error examples"`,
+				}
+				Expect(service.IsLogsFine(logs)).To(BeTrue())
+			})
+
+			It("should handle mixed log types correctly", func() {
+				logs := []string{
+					`level=info msg="Starting up Benthos service"`,
+					`level=warn msg="rate limit applied"`,
+					`level=info msg="Processing message: warning in content"`,
+					`level=error msg="failed to connect"`, // This should trigger false
+				}
+				Expect(service.IsLogsFine(logs)).To(BeFalse())
+			})
+
+			It("should handle malformed Benthos logs gracefully", func() {
+				logs := []string{
+					`levelerror msg="broken log format"`,
+					`level=info missing quote`,
+					`random text with warning and error keywords`,
+				}
+				Expect(service.IsLogsFine(logs)).To(BeTrue())
+			})
+		})
+	})
+
+	Context("Metrics Analysis", func() {
+		var service *BenthosService
+
+		BeforeEach(func() {
+			service = NewDefaultBenthosService("test")
+		})
+
+		Context("IsMetricsErrorFree", func() {
+			It("should return true when there are no errors", func() {
+				metrics := Metrics{
+					Input: InputMetrics{
+						ConnectionFailed: 5, // Should be ignored now
+						ConnectionLost:   1,
+						ConnectionUp:     1,
+						Received:         100,
+					},
+					Output: OutputMetrics{
+						Error:            0,
+						ConnectionFailed: 3, // Should be ignored now
+						ConnectionLost:   0,
+						ConnectionUp:     1,
+						Sent:             90,
+						BatchSent:        10,
+					},
+					Process: ProcessMetrics{
+						Processors: map[string]ProcessorMetrics{
+							"proc1": {
+								Error:         0,
+								Received:      100,
+								Sent:          100,
+								BatchReceived: 10,
+								BatchSent:     10,
 							},
 						},
 					},
 				}
-				benthosConfig.Input = input
-				benthosConfig.Output = output
-				benthosConfig.Pipeline = pipeline
+				Expect(service.IsMetricsErrorFree(metrics)).To(BeTrue())
 			})
 
-			It("should generate valid YAML with all sections", func() {
-				yaml, err := service.GenerateS6ConfigForBenthos(benthosConfig, "test")
-				Expect(err).NotTo(HaveOccurred())
-				yamlContent := yaml.ConfigFiles["benthos.yaml"]
-
-				// Check input section
-				Expect(yamlContent).To(ContainSubstring("input:"))
-				Expect(yamlContent).To(ContainSubstring("http_server:"))
-				Expect(yamlContent).To(ContainSubstring("address: 0.0.0.0:8080"))
-				Expect(yamlContent).To(ContainSubstring("path: /input"))
-
-				// Check output section
-				Expect(yamlContent).To(ContainSubstring("output:"))
-				Expect(yamlContent).To(ContainSubstring("http_client:"))
-				Expect(yamlContent).To(ContainSubstring("url: http://localhost:8081/output"))
-
-				// Check pipeline section
-				Expect(yamlContent).To(ContainSubstring("pipeline:"))
-				Expect(yamlContent).To(ContainSubstring("processors:"))
-				Expect(yamlContent).To(ContainSubstring("text:"))
-				Expect(yamlContent).To(ContainSubstring("operator: to_upper"))
-
-				// Check standard sections
-				Expect(yamlContent).To(ContainSubstring("http:\n  address: \"0.0.0.0:4195\""))
-				Expect(yamlContent).To(ContainSubstring("logger:\n  level: \"INFO\""))
+			It("should detect output errors", func() {
+				metrics := Metrics{
+					Output: OutputMetrics{
+						Error: 1,
+					},
+				}
+				Expect(service.IsMetricsErrorFree(metrics)).To(BeFalse())
 			})
-		})
 
-		Context("with cache and rate limit resources", func() {
-			BeforeEach(func() {
-				cacheResources := []map[string]interface{}{
-					{
-						"memory": map[string]interface{}{
-							"ttl": "300s",
+			It("should ignore connection failures", func() {
+				metrics := Metrics{
+					Input: InputMetrics{
+						ConnectionFailed: 1,
+					},
+					Output: OutputMetrics{
+						ConnectionFailed: 1,
+					},
+				}
+				Expect(service.IsMetricsErrorFree(metrics)).To(BeTrue())
+			})
+
+			It("should detect processor errors", func() {
+				metrics := Metrics{
+					Process: ProcessMetrics{
+						Processors: map[string]ProcessorMetrics{
+							"proc1": {
+								Error: 1,
+							},
 						},
 					},
 				}
-				rateLimitResources := []map[string]interface{}{
-					{
-						"local": map[string]interface{}{
-							"count":    100,
-							"interval": "60s",
+				Expect(service.IsMetricsErrorFree(metrics)).To(BeFalse())
+			})
+
+			It("should detect errors in any processor", func() {
+				metrics := Metrics{
+					Process: ProcessMetrics{
+						Processors: map[string]ProcessorMetrics{
+							"proc1": {Error: 0},
+							"proc2": {Error: 1},
+							"proc3": {Error: 0},
 						},
 					},
 				}
-				benthosConfig.CacheResources = cacheResources
-				benthosConfig.RateLimitResources = rateLimitResources
-			})
-
-			It("should generate valid YAML with resources", func() {
-				yaml, err := service.GenerateS6ConfigForBenthos(benthosConfig, "test")
-				Expect(err).NotTo(HaveOccurred())
-				yamlContent := yaml.ConfigFiles["benthos.yaml"]
-
-				// Check cache resources
-				Expect(yamlContent).To(ContainSubstring("cache_resources:"))
-				Expect(yamlContent).To(ContainSubstring("memory:"))
-				Expect(yamlContent).To(ContainSubstring("ttl: 300s"))
-
-				// Check rate limit resources
-				Expect(yamlContent).To(ContainSubstring("rate_limit_resources:"))
-				Expect(yamlContent).To(ContainSubstring("local:"))
-				Expect(yamlContent).To(ContainSubstring("count: 100"))
-				Expect(yamlContent).To(ContainSubstring("interval: 60s"))
-			})
-		})
-
-		Context("with buffer configuration", func() {
-			BeforeEach(func() {
-				buffer := []map[string]interface{}{
-					{
-						"memory": map[string]interface{}{
-							"limit": 10000000,
-						},
-					},
-				}
-				benthosConfig.Buffer = buffer
-			})
-
-			It("should generate valid YAML with buffer section", func() {
-				yaml, err := service.GenerateS6ConfigForBenthos(benthosConfig, "test")
-				Expect(err).NotTo(HaveOccurred())
-				yamlContent := yaml.ConfigFiles["benthos.yaml"]
-
-				// Check buffer section
-				Expect(yamlContent).To(ContainSubstring("buffer:"))
-				Expect(yamlContent).To(ContainSubstring("memory:"))
-				Expect(yamlContent).To(ContainSubstring("limit: 10000000"))
-			})
-		})
-
-		Context("with invalid configuration", func() {
-			It("should handle nil config", func() {
-				yaml, err := service.GenerateS6ConfigForBenthos(nil, "test")
-				Expect(err).To(HaveOccurred())
-				Expect(yaml).To(Equal(config.S6ServiceConfig{}))
+				Expect(service.IsMetricsErrorFree(metrics)).To(BeFalse())
 			})
 		})
 	})
