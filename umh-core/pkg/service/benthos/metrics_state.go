@@ -44,35 +44,29 @@ func (s *BenthosMetricsState) UpdateFromMetrics(metrics Metrics, tick uint64) {
 	s.updateComponentThroughput(&s.Output, metrics.Output.Sent, metrics.Output.BatchSent, tick)
 
 	// Update processor throughput
+	newProcessors := make(map[string]ComponentThroughput)
 	for path, processor := range metrics.Process.Processors {
-		if _, exists := s.Processors[path]; !exists {
-			s.Processors[path] = ComponentThroughput{}
+		var throughput ComponentThroughput
+		if existing, exists := s.Processors[path]; exists {
+			throughput = existing
 		}
-		throughput := s.Processors[path]
 		s.updateComponentThroughput(&throughput, processor.Sent, processor.BatchSent, tick)
-		s.Processors[path] = throughput
+		newProcessors[path] = throughput
 	}
+	s.Processors = newProcessors
 
 	// Update last tick
 	s.LastTick = tick
 
-	// Update activity status
-	s.IsActive = s.Input.MessagesPerTick > 0 || s.Output.MessagesPerTick > 0
-	if !s.IsActive {
-		for _, processor := range s.Processors {
-			if processor.MessagesPerTick > 0 {
-				s.IsActive = true
-				break
-			}
-		}
-	}
+	// Update activity status based only on input activity
+	s.IsActive = s.Input.MessagesPerTick > 0
 }
 
 // updateComponentThroughput updates throughput metrics for a single component
 func (s *BenthosMetricsState) updateComponentThroughput(throughput *ComponentThroughput, count, batchCount int64, tick uint64) {
 	// If this is the first update or if the counter has reset (new count is lower than last count),
 	// treat this as the baseline
-	if throughput.LastTick == 0 || count < throughput.LastCount {
+	if (throughput.LastTick == 0 && throughput.LastCount == 0) || count < throughput.LastCount {
 		throughput.LastCount = count
 		throughput.LastBatchCount = batchCount
 		throughput.MessagesPerTick = float64(count)
@@ -80,10 +74,22 @@ func (s *BenthosMetricsState) updateComponentThroughput(throughput *ComponentThr
 	} else {
 		// Calculate messages and batches per tick
 		tickDiff := tick - throughput.LastTick
-		if tickDiff > 0 {
-			throughput.MessagesPerTick = float64(count-throughput.LastCount) / float64(tickDiff)
-			throughput.BatchesPerTick = float64(batchCount-throughput.LastBatchCount) / float64(tickDiff)
+		messagesDiff := count - throughput.LastCount
+		batchesDiff := batchCount - throughput.LastBatchCount
+
+		// If we get the same count in consecutive ticks, or there's no tick difference,
+		// there's no activity
+		if messagesDiff == 0 {
+			throughput.MessagesPerTick = 0
+		} else if tickDiff > 0 {
+			throughput.MessagesPerTick = float64(messagesDiff) / float64(tickDiff)
 		}
+		if batchesDiff == 0 {
+			throughput.BatchesPerTick = 0
+		} else if tickDiff > 0 {
+			throughput.BatchesPerTick = float64(batchesDiff) / float64(tickDiff)
+		}
+
 		throughput.LastCount = count
 		throughput.LastBatchCount = batchCount
 	}

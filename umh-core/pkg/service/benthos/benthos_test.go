@@ -405,21 +405,28 @@ var _ = Describe("Benthos Service", func() {
 
 	Context("Tick-based throughput tracking", func() {
 		var (
-			service    *BenthosService
-			mockClient *MockHTTPClient
-			tick       uint64
+			service     *BenthosService
+			mockClient  *MockHTTPClient
+			tick        uint64
+			serviceName = "test"
+			metricsPort = 8080
 		)
 
 		BeforeEach(func() {
 			mockClient = NewMockHTTPClient()
 			service = NewDefaultBenthosService("test", WithHTTPClient(mockClient))
-			tick = 1
+			tick = 0
 
 			// Add the service to the S6 manager
 			err := service.AddBenthosToS6Manager(context.Background(), &config.BenthosServiceConfig{
-				MetricsPort: 8080,
+				MetricsPort: metricsPort,
 				LogLevel:    "info",
-			}, "test")
+			}, serviceName)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Reconcile the S6 manager
+			// TODO: maybe use a mock for the S6 manager, there is one in fsm/mock.go
+			err, _ = service.ReconcileManager(context.Background(), tick)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -474,7 +481,7 @@ var _ = Describe("Benthos Service", func() {
 				StatusCode: 200,
 				Body:       []byte("{}"),
 			})
-			status1, err := service.Status(context.Background(), "test", 1, tick)
+			status1, err := service.Status(context.Background(), serviceName, metricsPort, tick)
 			tick++
 			Expect(err).NotTo(HaveOccurred())
 
@@ -495,7 +502,7 @@ var _ = Describe("Benthos Service", func() {
 				StatusCode: 200,
 				Body:       []byte("{}"),
 			})
-			status2, err := service.Status(context.Background(), "test", 2, tick)
+			status2, err := service.Status(context.Background(), serviceName, metricsPort, tick)
 			tick++
 			Expect(err).NotTo(HaveOccurred())
 
@@ -532,7 +539,7 @@ var _ = Describe("Benthos Service", func() {
 				StatusCode: 200,
 				Body:       []byte("{}"),
 			})
-			status1, err := service.Status(context.Background(), "test", 1, tick)
+			status1, err := service.Status(context.Background(), serviceName, metricsPort, tick)
 			tick++
 			Expect(err).NotTo(HaveOccurred())
 
@@ -550,7 +557,7 @@ var _ = Describe("Benthos Service", func() {
 				StatusCode: 200,
 				Body:       []byte("{}"),
 			})
-			status2, err := service.Status(context.Background(), "test", 2, tick)
+			status2, err := service.Status(context.Background(), serviceName, metricsPort, tick)
 			tick++
 			Expect(err).NotTo(HaveOccurred())
 
@@ -590,7 +597,7 @@ var _ = Describe("Benthos Service", func() {
 				StatusCode: 200,
 				Body:       []byte("{}"),
 			})
-			status1, err := service.Status(context.Background(), "test", 1, tick)
+			status1, err := service.Status(context.Background(), serviceName, metricsPort, tick)
 			tick++
 			Expect(err).NotTo(HaveOccurred())
 
@@ -608,7 +615,7 @@ var _ = Describe("Benthos Service", func() {
 				StatusCode: 200,
 				Body:       []byte("{}"),
 			})
-			status2, err := service.Status(context.Background(), "test", 2, tick)
+			status2, err := service.Status(context.Background(), serviceName, metricsPort, tick)
 			tick++
 			Expect(err).NotTo(HaveOccurred())
 
@@ -680,7 +687,7 @@ var _ = Describe("Benthos Service", func() {
 				StatusCode: 200,
 				Body:       []byte("{}"),
 			})
-			status1, err := service.Status(context.Background(), "test", 1, tick)
+			status1, err := service.Status(context.Background(), serviceName, metricsPort, tick)
 			tick++
 			Expect(err).NotTo(HaveOccurred())
 
@@ -707,7 +714,7 @@ var _ = Describe("Benthos Service", func() {
 				StatusCode: 200,
 				Body:       []byte("{}"),
 			})
-			status2, err := service.Status(context.Background(), "test", 2, tick)
+			status2, err := service.Status(context.Background(), serviceName, metricsPort, tick)
 			tick++
 			Expect(err).NotTo(HaveOccurred())
 
