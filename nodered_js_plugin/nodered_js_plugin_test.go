@@ -13,6 +13,7 @@ import (
 	_ "github.com/redpanda-data/benthos/v4/public/components/io"
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin"
 )
 
 var _ = Describe("NodeREDJS Processor", func() {
@@ -604,6 +605,36 @@ bloblang: 'root = this * 2'
 			bloblangStructured, err := bloblangLastMsg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(bloblangStructured).To(Equal(int64(1998))) // 999 * 2
+		})
+	})
+
+	Context("fail_on_error behavior", func() {
+		It("should continue processing when fail_on_error is disabled", func() {
+			processor := nodered_js_plugin.NewNodeREDJSProcessor(`
+				undefinedFunction();
+			`, nil, nil, false)
+
+			// Send message that triggers error
+			errorMsg := service.NewMessage([]byte("error"))
+			batch := service.MessageBatch{errorMsg}
+
+			batches, err := processor.ProcessBatch(context.Background(), batch)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(batches).To(BeEmpty())
+		})
+
+		It("should stop processing when fail_on_error is enabled", func() {
+			processor := nodered_js_plugin.NewNodeREDJSProcessor(`
+				undefinedFunction();
+			`, nil, nil, true)
+
+			// Send message that triggers error
+			errorMsg := service.NewMessage([]byte("error"))
+			batch := service.MessageBatch{errorMsg}
+
+			batches, err := processor.ProcessBatch(context.Background(), batch)
+			Expect(err).To(HaveOccurred())
+			Expect(batches).To(BeNil())
 		})
 	})
 })

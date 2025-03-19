@@ -322,7 +322,7 @@ jobs:
           ref: ${{ github.event.pull_request && github.head_ref || github.ref_name }}
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: '1.24'
 

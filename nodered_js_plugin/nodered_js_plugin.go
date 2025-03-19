@@ -15,16 +15,18 @@ type NodeREDJSProcessor struct {
 	messagesProcessed *service.MetricCounter
 	messagesErrored   *service.MetricCounter
 	messagesDropped   *service.MetricCounter
+	failOnError       bool
 }
 
 // NewNodeREDJSProcessor creates a new NodeREDJSProcessor instance.
-func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service.Metrics) *NodeREDJSProcessor {
+func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service.Metrics, failOnError bool) *NodeREDJSProcessor {
 	return &NodeREDJSProcessor{
 		code:              code,
 		logger:            logger,
 		messagesProcessed: metrics.NewCounter("messages_processed"),
 		messagesErrored:   metrics.NewCounter("messages_errored"),
 		messagesDropped:   metrics.NewCounter("messages_dropped"),
+		failOnError:       failOnError,
 	}
 }
 
@@ -113,7 +115,10 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		if err != nil {
 			u.messagesErrored.Incr(1)
 			u.logger.Errorf("%v\nOriginal message: %v", err, msg)
-			return nil, err
+			if u.failOnError {
+				return nil, err
+			}
+			continue
 		}
 
 		// Add metadata to the message wrapper
@@ -124,7 +129,10 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		}); err != nil {
 			u.messagesErrored.Incr(1)
 			u.logger.Errorf("Failed to walk message metadata: %v\nOriginal message: %v", err, msg)
-			return nil, err
+			if u.failOnError {
+				return nil, err
+			}
+			continue
 		}
 		jsMsg["meta"] = meta
 
@@ -132,7 +140,10 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		if err := u.SetupJSEnvironment(vm, jsMsg); err != nil {
 			u.messagesErrored.Incr(1)
 			u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
-			return nil, err
+			if u.failOnError {
+				return nil, err
+			}
+			continue
 		}
 
 		// Execute the JavaScript code
@@ -140,7 +151,10 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		if err != nil {
 			u.messagesErrored.Incr(1)
 			u.logJSError(err, jsMsg)
-			return nil, err
+			if u.failOnError {
+				return nil, err
+			}
+			continue
 		}
 
 		// Handle the execution result
@@ -148,7 +162,10 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		if err != nil {
 			u.messagesErrored.Incr(1)
 			u.logger.Errorf("%v\nMessage content: %v\nReturned value: %v", err, jsMsg, result.Export())
-			return nil, err
+			if u.failOnError {
+				return nil, err
+			}
+			continue
 		}
 		if shouldKeep {
 			resultBatch = append(resultBatch, newMsg)
@@ -223,7 +240,10 @@ console.log("Message metadata:", msg.meta);
 // Example 6: Modify metadata
 msg.meta.processed = true;
 msg.meta.count = (msg.meta.count || 0) + 1;
-return msg;`))
+return msg;`)).
+		Field(service.NewBoolField("fail_on_error").
+			Description("When enabled, processing errors will cause the processor to fail. Otherwise, errors will be logged and processing will continue.").
+			Default(false))
 
 	err := service.RegisterBatchProcessor(
 		"nodered_js",
@@ -233,13 +253,19 @@ return msg;`))
 			if err != nil {
 				return nil, err
 			}
+
+			failOnError, err := conf.FieldBool("fail_on_error")
+			if err != nil {
+				return nil, err
+			}
+
 			// Wrap the user's code in a function that handles the return value
 			wrappedCode := fmt.Sprintf(`
 				(function(){
 					%s
 				})()
 			`, code)
-			return NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics()), nil
+			return NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics(), failOnError), nil
 		})
 	if err != nil {
 		panic(err)
