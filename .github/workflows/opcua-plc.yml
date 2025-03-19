@@ -119,7 +119,7 @@ jobs:
             echo "no wago-endpoint available for testing"
             exit 1
           fi
-          make test
+          make test-opc
 
   go-test-kepware-plc:
     needs: go-test-opcua-plc
@@ -172,4 +172,4 @@ jobs:
             echo "no kepware-endpoint available for testing"
             exit 1
           fi
-          make test
+          make test-opc
