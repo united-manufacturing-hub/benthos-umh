@@ -3,6 +3,9 @@ package benthos
 import (
 	"context"
 	"fmt"
+
+	s6fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
+	benthos_service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos"
 )
 
 // The functions in this file define heavier, possibly fail-prone operations
@@ -22,6 +25,10 @@ func (b *BenthosInstance) initiateBenthosCreate(ctx context.Context) error {
 
 	err := b.service.AddBenthosToS6Manager(ctx, &b.config, b.baseFSMInstance.GetID())
 	if err != nil {
+		if err == benthos_service.ErrServiceAlreadyExists {
+			b.baseFSMInstance.GetLogger().Debugf("Benthos service %s already exists in S6 manager", b.baseFSMInstance.GetID())
+			return nil // do not throw an error, as each action is expected to be idempotent
+		}
 		return fmt.Errorf("failed to add Benthos service %s to S6 manager: %w", b.baseFSMInstance.GetID(), err)
 	}
 
@@ -37,6 +44,10 @@ func (b *BenthosInstance) initiateBenthosRemove(ctx context.Context) error {
 	// Remove the Benthos from the S6 manager
 	err := b.service.RemoveBenthosFromS6Manager(ctx, b.baseFSMInstance.GetID())
 	if err != nil {
+		if err == benthos_service.ErrServiceNotExist {
+			b.baseFSMInstance.GetLogger().Debugf("Benthos service %s not found in S6 manager", b.baseFSMInstance.GetID())
+			return nil // do not throw an error, as each action is expected to be idempotent
+		}
 		return fmt.Errorf("failed to remove Benthos service %s from S6 manager: %w", b.baseFSMInstance.GetID(), err)
 	}
 
@@ -53,6 +64,7 @@ func (b *BenthosInstance) initiateBenthosStart(ctx context.Context) error {
 	// Set the desired state to running for the given instance
 	err := b.service.StartBenthos(ctx, b.baseFSMInstance.GetID())
 	if err != nil {
+		// if the service is not there yet but we attempt to start it, we need to throw an error
 		return fmt.Errorf("failed to start Benthos service %s: %w", b.baseFSMInstance.GetID(), err)
 	}
 
@@ -67,6 +79,7 @@ func (b *BenthosInstance) initiateBenthosStop(ctx context.Context) error {
 	// Set the desired state to stopped for the given instance
 	err := b.service.StopBenthos(ctx, b.baseFSMInstance.GetID())
 	if err != nil {
+		// if the service is not there yet but we attempt to stop it, we need to throw an error
 		return fmt.Errorf("failed to stop Benthos service %s: %w", b.baseFSMInstance.GetID(), err)
 	}
 
@@ -80,10 +93,14 @@ func (b *BenthosInstance) updateObservedState(ctx context.Context) error {
 		return ctx.Err()
 	}
 
-	// TODO: Fetch Benthos-specific metrics and health data
-	// - Collect metrics from Benthos HTTP endpoint
-	// - Check logs for warnings/errors
-	// - Update processing state based on throughput data
+	info, err := b.service.Status(ctx, b.baseFSMInstance.GetID())
+	if err != nil {
+		// TODO: Handle this error
+		return err
+	}
+
+	// Store the raw service info
+	b.ObservedState.ServiceInfo = info
 
 	// NOTE: Unlike S6Instance, we don't need to check for config reconciliation here.
 	// This is because:
@@ -95,6 +112,33 @@ func (b *BenthosInstance) updateObservedState(ctx context.Context) error {
 	//    updateObservedState method, making the check here redundant
 	// Instead, this method should focus on Benthos-specific metrics and health monitoring.
 	return nil
+}
+
+// IsBenthosS6Running determines if the Benthos S6 FSM is in running state.
+// Architecture Decision: We intentionally rely only on the FSM state, not the underlying
+// service implementation details. This maintains a clean separation of concerns where:
+// 1. The FSM is the source of truth for service state
+// 2. We trust the FSM's state management completely
+// 3. Implementation details of how S6 determines running state are encapsulated away
+func (b *BenthosInstance) IsBenthosS6Running() bool {
+	return b.ObservedState.ServiceInfo.S6FSMState == s6fsm.OperationalStateRunning
+}
+
+// IsBenthosS6Stopped determines if the Benthos S6 FSM is in stopped state.
+// We follow the same architectural principle as IsBenthosS6Running - relying solely
+// on the FSM state to maintain clean separation of concerns.
+func (b *BenthosInstance) IsBenthosS6Stopped() bool {
+	return b.ObservedState.ServiceInfo.S6FSMState == s6fsm.OperationalStateStopped
+}
+
+// IsBenthosConfigLoaded determines if the Benthos service has successfully loaded its configuration.
+// Implementation: We check if the service has been running for at least 5 seconds without crashing.
+// This works because Benthos performs config validation at startup and immediately panics
+// if there are any configuration errors, causing the service to restart.
+// Therefore, if the service stays up for >= 5 seconds, we can be confident the config is valid.
+func (b *BenthosInstance) IsBenthosConfigLoaded() bool {
+	currentUptime := b.ObservedState.ServiceInfo.S6ObservedState.ServiceInfo.Uptime
+	return currentUptime >= 5
 }
 
 // TODO: Add additional Benthos-specific actions

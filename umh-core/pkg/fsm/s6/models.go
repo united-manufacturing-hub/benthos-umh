@@ -1,10 +1,10 @@
 package s6
 
 import (
-	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
+	internalfsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
-	public_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
-	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
+	publicfsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
+	s6svc "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 )
 
 // Operational state constants represent the runtime states of a service
@@ -51,20 +51,23 @@ type S6ObservedState struct {
 	// LastStateChange is the timestamp of the last observed state change
 	LastStateChange int64
 	// ServiceInfo contains the actual service info from s6
-	ServiceInfo s6service.ServiceInfo
+	ServiceInfo s6svc.ServiceInfo
 
 	// ObservedS6ServiceConfig contains the actual service config from s6
 	ObservedS6ServiceConfig config.S6ServiceConfig
 }
 
+// IsObservedState implements the ObservedState interface
+func (s S6ObservedState) IsObservedState() {}
+
 // S6Instance implements the FSMInstance interface
 // If S6Instance does not implement the FSMInstance interface, this will
 // be detected at compile time
-var _ public_fsm.FSMInstance = (*S6Instance)(nil)
+var _ publicfsm.FSMInstance = (*S6Instance)(nil)
 
 // S6Instance represents a single S6 service instance with a state machine
 type S6Instance struct {
-	baseFSMInstance *internal_fsm.BaseFSMInstance
+	baseFSMInstance *internalfsm.BaseFSMInstance
 
 	// ObservedState represents the observed state of the service
 	// ObservedState contains all metrics, logs, etc.
@@ -76,7 +79,7 @@ type S6Instance struct {
 	servicePath string
 
 	// service is the S6 service implementation to use
-	service s6service.Service
+	service s6svc.Service
 
 	// config contains all the configuration for this service
 	config config.S6FSMConfig
@@ -85,4 +88,9 @@ type S6Instance struct {
 // GetError returns a structured error with backoff information
 func (s *S6Instance) GetError() error {
 	return s.baseFSMInstance.GetError()
+}
+
+// GetLastObservedState returns the last known state of the instance
+func (s *S6Instance) GetLastObservedState() publicfsm.ObservedState {
+	return s.ObservedState
 }

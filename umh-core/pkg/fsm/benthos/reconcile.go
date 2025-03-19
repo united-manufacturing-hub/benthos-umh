@@ -188,25 +188,30 @@ func (b *BenthosInstance) reconcileTransitionToActive(ctx context.Context, curre
 		switch currentState {
 		case OperationalStateStarting:
 			// First we need to ensure the S6 service is started
-			if !b.ObservedState.ServiceAvailable {
-				// Service not started yet, wait for next reconcile
+
+			if !b.IsBenthosS6Running() {
 				return nil, false
 			}
+
 			return b.baseFSMInstance.SendEvent(ctx, EventS6Started), true
 		case OperationalStateStartingConfigLoading:
 			// Check if config has been loaded
-			if !b.ObservedState.ServiceHealthy {
-				// Config loading not complete, wait for next reconcile
+
+			// If the S6 is not running, go back to starting
+			if !b.IsBenthosS6Running() {
+				return b.baseFSMInstance.SendEvent(ctx, EventStart), true
+			}
+
+			// Now check whether benthos has loaded the config
+			if !b.IsBenthosConfigLoaded() {
 				return nil, false
 			}
+
 			return b.baseFSMInstance.SendEvent(ctx, EventConfigLoaded), true
 		case OperationalStateStartingWaitingForHealthchecks:
 			// Check if healthchecks have passed
 			// This could be based on metrics data from the service
-			if len(b.ObservedState.MetricsData) == 0 {
-				// No metrics data yet, wait for next reconcile
-				return nil, false
-			}
+
 			return b.baseFSMInstance.SendEvent(ctx, EventHealthchecksPassed), true
 		case OperationalStateStartingWaitingForServiceToRemainRunning:
 			// Check if service has been running stably for some time
@@ -228,9 +233,7 @@ func (b *BenthosInstance) reconcileTransitionToActive(ctx context.Context, curre
 	// If we're in Degraded, we need to recover to move to Active or Idle
 	if currentState == OperationalStateDegraded {
 		// Check if the service has recovered
-		if b.ObservedState.ServiceHealthy {
-			return b.baseFSMInstance.SendEvent(ctx, EventRecovered), true
-		}
+
 		return nil, false
 	}
 
@@ -250,13 +253,10 @@ func (b *BenthosInstance) reconcileTransitionToStopped(ctx context.Context, curr
 		return b.baseFSMInstance.SendEvent(ctx, EventStop), true
 	}
 
-	// If we're in Stopping, check if the service has stopped
-	if currentState == OperationalStateStopping {
-		// Check if service is actually stopped based on observed state
-		if !b.ObservedState.ServiceAvailable {
-			return b.baseFSMInstance.SendEvent(ctx, EventStopDone), true
-		}
-		return nil, false
+	// If already stopping, verify if the instance is completely stopped
+	if b.IsBenthosS6Stopped() {
+		// Transition from Stopping to Stopped
+		return b.baseFSMInstance.SendEvent(ctx, EventStopDone), true
 	}
 
 	return nil, false

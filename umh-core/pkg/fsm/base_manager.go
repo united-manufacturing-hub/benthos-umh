@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
+	internalfsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
@@ -26,6 +26,12 @@ const (
 // This enables multiple managers to operate independently without affecting each other's rate limiting.
 // Each manager maintains its own tick counter that increments on each reconciliation cycle.
 
+// ObservedState is a marker interface for type safety of state implementations
+type ObservedState interface {
+	// IsObservedState is a marker method to ensure type safety
+	IsObservedState()
+}
+
 // FSMInstance defines the interface for a finite state machine instance.
 // Each instance has a current state and a desired state, and can be reconciled
 // to move toward the desired state.
@@ -42,6 +48,9 @@ type FSMInstance interface {
 	Reconcile(ctx context.Context, tick uint64) (error, bool)
 	// Remove initiates the removal process for this instance
 	Remove(ctx context.Context) error
+	// GetLastObservedState returns the last known state of the instance
+	// This is cached data from the last reconciliation cycle
+	GetLastObservedState() ObservedState
 }
 
 // FSMManager defines the interface for managing multiple FSM instances.
@@ -369,10 +378,10 @@ func (m *BaseFSMManager[C]) Reconcile(
 		}
 
 		switch m.instances[instanceName].GetCurrentFSMState() {
-		case internal_fsm.LifecycleStateRemoving:
+		case internalfsm.LifecycleStateRemoving:
 			m.logger.Debugf("instance %s is already in removing state, waiting until it is removed", instanceName)
 			continue
-		case internal_fsm.LifecycleStateRemoved:
+		case internalfsm.LifecycleStateRemoved:
 			m.logger.Debugf("instance %s is in removed state, will be deleted from the manager", instanceName)
 			instancesToDelete = append(instancesToDelete, instanceName)
 			continue
@@ -429,4 +438,29 @@ func (m *BaseFSMManager[C]) Reconcile(
 
 	// Return nil if no errors occurred
 	return nil, false
+}
+
+// GetLastObservedStates returns the last known states of all instances
+func (m *BaseFSMManager[C]) GetLastObservedStates() map[string]ObservedState {
+	states := make(map[string]ObservedState)
+	for name, instance := range m.instances {
+		states[name] = instance.GetLastObservedState()
+	}
+	return states
+}
+
+// GetLastObservedState returns the last known state of a specific instance
+func (m *BaseFSMManager[C]) GetLastObservedState(serviceName string) (ObservedState, error) {
+	if instance, exists := m.instances[serviceName]; exists {
+		return instance.GetLastObservedState(), nil
+	}
+	return nil, fmt.Errorf("instance %s not found", serviceName)
+}
+
+// GetCurrentFSMState returns the current state of a specific instance
+func (m *BaseFSMManager[C]) GetCurrentFSMState(serviceName string) (string, error) {
+	if instance, exists := m.instances[serviceName]; exists {
+		return instance.GetCurrentFSMState(), nil
+	}
+	return "", fmt.Errorf("instance %s not found", serviceName)
 }

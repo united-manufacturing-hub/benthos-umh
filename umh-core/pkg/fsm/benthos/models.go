@@ -1,10 +1,10 @@
 package benthos
 
 import (
-	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
+	internalfsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
-	public_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
-	benthos_service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos"
+	publicfsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
+	benthossvc "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos"
 )
 
 // Operational state constants (using internal_fsm compatible naming)
@@ -96,19 +96,21 @@ func IsRunningState(state string) bool {
 
 // BenthosObservedState contains the observed runtime state of a Benthos instance
 type BenthosObservedState struct {
-	ServiceAvailable bool                   `json:"serviceAvailable"` // Whether the service is available
-	ServiceHealthy   bool                   `json:"serviceHealthy"`   // Whether the service is healthy
-	MetricsData      map[string]interface{} `json:"metricsData"`      // Metrics data
+	// ServiceInfo contains information about the S6 service
+	ServiceInfo benthossvc.ServiceInfo
 }
+
+// IsObservedState implements the ObservedState interface
+func (b BenthosObservedState) IsObservedState() {}
 
 // BenthosInstance implements the FSMInstance interface
 // If BenthosInstance does not implement the FSMInstance interface, this will
 // be detected at compile time
-var _ public_fsm.FSMInstance = (*BenthosInstance)(nil)
+var _ publicfsm.FSMInstance = (*BenthosInstance)(nil)
 
 // BenthosInstance is a state-machine managed instance of a Benthos service
 type BenthosInstance struct {
-	baseFSMInstance *internal_fsm.BaseFSMInstance
+	baseFSMInstance *internalfsm.BaseFSMInstance
 
 	// ObservedState represents the observed state of the service
 	// ObservedState contains all metrics, logs, etc.
@@ -118,8 +120,13 @@ type BenthosInstance struct {
 
 	// service is the Benthos service implementation to use
 	// It has a manager that manages the S6 service instances
-	service *benthos_service.BenthosService
+	service *benthossvc.BenthosService
 
 	// config contains all the configuration for this service
 	config config.BenthosServiceConfig
+}
+
+// GetLastObservedState returns the last known state of the instance
+func (b *BenthosInstance) GetLastObservedState() publicfsm.ObservedState {
+	return b.ObservedState
 }

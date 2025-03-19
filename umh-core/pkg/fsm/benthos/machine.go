@@ -66,9 +66,7 @@ func NewBenthosInstance(
 		baseFSMInstance: internal_fsm.NewBaseFSMInstance(cfg, logger.For(config.Name)),
 		service:         benthos_service.NewDefaultBenthosService(config.Name),
 		config:          config.BenthosServiceConfig,
-		ObservedState: BenthosObservedState{
-			MetricsData: make(map[string]interface{}),
-		},
+		ObservedState:   BenthosObservedState{},
 	}
 
 	instance.registerCallbacks()

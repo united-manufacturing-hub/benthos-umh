@@ -30,4 +30,5 @@ test-hello: clean build
 		--name $(IMAGE_NAME) \
 		-v $(PWD)/data:/data \
 		-p 8081:8080 \
+		-p 4195:4195 \
 		$(IMAGE_NAME):$(TAG)
