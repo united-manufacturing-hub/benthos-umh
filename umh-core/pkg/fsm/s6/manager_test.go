@@ -164,7 +164,7 @@ var _ = Describe("S6Manager", func() {
 		Expect(s6Instance.config.Name).To(Equal("test-service"))
 	})
 
-	FIt("should go through proper state transitions when starting a service", func() {
+	It("should go through proper state transitions when starting a service", func() {
 		// Create a mock service
 		mockService := s6service.NewMockService()
 		serviceName := "test-transition"
