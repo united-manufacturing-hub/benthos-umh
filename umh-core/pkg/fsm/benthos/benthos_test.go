@@ -459,9 +459,77 @@ var _ = Describe("Benthos FSM", func() {
 			Expect(mockService.ServiceStates[testID].BenthosStatus.MetricsState.IsActive).To(BeTrue())
 		})
 
-		// TODO: Test recovery from Degraded state
 		It("should recover from Degraded state when issues resolve", func() {
-			// To be implemented
+			// First reach Degraded state
+			tick, err := getInstanceInIdleState(testID, mockService, instance, ctx, tick)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Transition to Active then Degraded
+			mockService.SetServiceState(testID, benthossvc.ServiceStateFlags{
+				IsS6Running:            true,
+				IsConfigLoaded:         true,
+				IsHealthchecksPassed:   false,
+				IsRunningWithoutErrors: true,
+				HasProcessingActivity:  true,
+			})
+			mockService.ServiceStates[testID].BenthosStatus.HealthCheck = benthossvc.HealthCheck{
+				IsLive:  false,
+				IsReady: false,
+			}
+			err, _ = instance.Reconcile(ctx, tick)
+			tick++
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateDegraded))
+
+			// Fix the healthcheck issues
+			mockService.SetServiceState(testID, benthossvc.ServiceStateFlags{
+				IsS6Running:            true,
+				IsConfigLoaded:         true,
+				IsHealthchecksPassed:   true,
+				IsRunningWithoutErrors: true,
+				HasProcessingActivity:  true,
+			})
+			mockService.ServiceStates[testID].BenthosStatus.HealthCheck = benthossvc.HealthCheck{
+				IsLive:  true,
+				IsReady: true,
+			}
+
+			// Add stability checks (uptime > 10s)
+			mockService.ServiceStates[testID].S6ObservedState.ServiceInfo.Uptime = 15
+
+			// Trigger recovery
+			err, reconciled := instance.Reconcile(ctx, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reconciled).To(BeTrue())
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateIdle))
+
+			// Verify stable state after recovery
+			// To bring this to active, we would need to also have active metrics
+			for i := 0; i < 3; i++ {
+				err, reconciled = instance.Reconcile(ctx, tick)
+				tick++
+				Expect(err).NotTo(HaveOccurred())
+				Expect(reconciled).To(BeFalse())
+				Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateIdle))
+			}
+
+			// Now set the metrics to active
+			mockService.SetServiceState(testID, benthossvc.ServiceStateFlags{
+				IsS6Running:            true,
+				IsConfigLoaded:         true,
+				IsHealthchecksPassed:   true,
+				IsRunningWithoutErrors: true,
+				HasProcessingActivity:  true,
+			})
+			mockService.ServiceStates[testID].BenthosStatus.MetricsState = &benthossvc.BenthosMetricsState{
+				IsActive: true,
+			}
+
+			err, reconciled = instance.Reconcile(ctx, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reconciled).To(BeTrue())
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateActive))
 		})
 	})
 
