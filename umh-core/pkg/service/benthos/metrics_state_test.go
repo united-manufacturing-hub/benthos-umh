@@ -43,13 +43,13 @@ var _ = Describe("MetricsState", Label("metrics_state"), func() {
 			tick++
 
 			Expect(state.Input.LastCount).To(Equal(int64(100)))
-			Expect(state.Input.MessagesPerTick).To(Equal(float64(100)))
+			Expect(state.Input.MessagesPerTick).To(Equal(float64(100))) // First tick has throughput of input.received
 			Expect(state.Output.LastCount).To(Equal(int64(90)))
-			Expect(state.Output.MessagesPerTick).To(Equal(float64(90)))
+			Expect(state.Output.MessagesPerTick).To(Equal(float64(90))) // First tick has throughput of output.sent
 			Expect(state.Output.LastBatchCount).To(Equal(int64(10)))
-			Expect(state.Output.BatchesPerTick).To(Equal(float64(10)))
+			Expect(state.Output.BatchesPerTick).To(Equal(float64(10))) // First tick has throughput of output.batch_sent
 			Expect(state.LastTick).To(Equal(uint64(0)))
-			Expect(state.IsActive).To(BeTrue())
+			Expect(state.IsActive).To(BeTrue()) // Active since we have throughput
 		})
 
 		It("should handle counter reset", func() {
@@ -57,6 +57,14 @@ var _ = Describe("MetricsState", Label("metrics_state"), func() {
 			state.UpdateFromMetrics(benthos.Metrics{
 				Input: benthos.InputMetrics{
 					Received: 100,
+				},
+			}, tick)
+			tick++
+
+			// Second update to establish throughput
+			state.UpdateFromMetrics(benthos.Metrics{
+				Input: benthos.InputMetrics{
+					Received: 150,
 				},
 			}, tick)
 			tick++
@@ -70,7 +78,8 @@ var _ = Describe("MetricsState", Label("metrics_state"), func() {
 			tick++
 
 			Expect(state.Input.LastCount).To(Equal(int64(50)))
-			Expect(state.Input.MessagesPerTick).To(Equal(float64(50))) // Should treat as new baseline
+			Expect(state.Input.MessagesPerTick).To(Equal(float64(50))) // Should reset window and start fresh
+			Expect(state.IsActive).To(BeTrue())
 		})
 
 		It("should calculate rates correctly over multiple ticks", func() {
@@ -85,23 +94,22 @@ var _ = Describe("MetricsState", Label("metrics_state"), func() {
 				},
 			}, tick)
 			tick++
-			tick++
 
-			// Second update with 2 ticks difference
+			// Second update at tick 1
 			state.UpdateFromMetrics(benthos.Metrics{
 				Input: benthos.InputMetrics{
-					Received: 160, // +60 over 2 ticks = 30 per tick
+					Received: 160, // +60 over 1 tick = 60 per tick
 				},
 				Output: benthos.OutputMetrics{
-					Sent:      140, // +50 over 2 ticks = 25 per tick
-					BatchSent: 20,  // +10 over 2 ticks = 5 per tick
+					Sent:      140, // +50 over 1 tick = 50 per tick
+					BatchSent: 20,  // +10 over 1 tick = 10 per tick
 				},
 			}, tick)
 			tick++
 
-			Expect(state.Input.MessagesPerTick).To(Equal(float64(30)))  // (160-100)/2
-			Expect(state.Output.MessagesPerTick).To(Equal(float64(25))) // (140-90)/2
-			Expect(state.Output.BatchesPerTick).To(Equal(float64(5)))   // (20-10)/2
+			Expect(state.Input.MessagesPerTick).To(Equal(float64(60)))  // (160-100)/1
+			Expect(state.Output.MessagesPerTick).To(Equal(float64(50))) // (140-90)/1
+			Expect(state.IsActive).To(BeTrue())
 		})
 
 		It("should handle processor metrics", func() {
@@ -135,40 +143,48 @@ var _ = Describe("MetricsState", Label("metrics_state"), func() {
 			tick++
 			Expect(state.IsActive).To(BeFalse())
 
-			// Input activity
+			// First input update
 			state.UpdateFromMetrics(benthos.Metrics{
 				Input: benthos.InputMetrics{
 					Received: 100,
 				},
 			}, tick)
 			tick++
-			Expect(state.IsActive).To(BeTrue())
+			Expect(state.IsActive).To(BeTrue()) // Active since we have throughput
+
+			// Second update shows activity
+			state.UpdateFromMetrics(benthos.Metrics{
+				Input: benthos.InputMetrics{
+					Received: 200,
+				},
+			}, tick)
+			tick++
+			Expect(state.IsActive).To(BeTrue()) // Still active since we have throughput
 
 			// No new input activity (same count)
 			state.UpdateFromMetrics(benthos.Metrics{
 				Input: benthos.InputMetrics{
-					Received: 100, // Same as last tick
-				},
-				Process: benthos.ProcessMetrics{
-					Processors: map[string]benthos.ProcessorMetrics{
-						"proc1": {
-							Sent: 150, // Even with processor activity
-						},
-					},
+					Received: 200, // Same as last tick
 				},
 			}, tick)
 			tick++
-			Expect(state.IsActive).To(BeFalse())
-			Expect(state.Input.MessagesPerTick).To(BeZero())
+			Expect(state.IsActive).To(BeTrue()) // Still active as we had throughput previously
+
+			// No new input activity for a while
+			for i := uint64(0); i < benthos.ThroughputWindowSize+1; i++ {
+				state.UpdateFromMetrics(benthos.Metrics{Input: benthos.InputMetrics{Received: 200}}, tick)
+				tick++
+			}
+			Expect(state.IsActive).To(BeFalse()) // Not active as we had no throughput for a while
 
 			// New input activity
 			state.UpdateFromMetrics(benthos.Metrics{
 				Input: benthos.InputMetrics{
-					Received: 200, // New messages
+					Received: 300, // New messages
 				},
 			}, tick)
 			tick++
-			Expect(state.IsActive).To(BeTrue())
+			Expect(state.IsActive).To(BeTrue()) // Active again due to throughput
 		})
 	})
 })

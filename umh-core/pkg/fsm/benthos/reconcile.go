@@ -254,6 +254,9 @@ func (b *BenthosInstance) reconcileTransitionToActive(ctx context.Context, curre
 	// If we're in Degraded, we need to recover to move to Active or Idle
 	if currentState == OperationalStateDegraded {
 		// Check if the service has recovered
+		if !b.IsBenthosDegraded() {
+			return b.baseFSMInstance.SendEvent(ctx, EventRecovered), true
+		}
 
 		return nil, false
 	}

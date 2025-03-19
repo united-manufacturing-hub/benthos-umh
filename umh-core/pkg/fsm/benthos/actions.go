@@ -180,9 +180,10 @@ func (b *BenthosInstance) IsBenthosDegraded() bool {
 // IsBenthosWithProcessingActivity determines if the Benthos instance has active data processing
 // based on metrics data and possibly other observed state information
 func (b *BenthosInstance) IsBenthosWithProcessingActivity() bool {
-	// TODO: Implement actual check based on metrics data
-	// For now, return a placeholder value
-	return false
+	if b.ObservedState.ServiceInfo.BenthosStatus.MetricsState == nil {
+		return false
+	}
+	return b.service.HasProcessingActivity(b.ObservedState.ServiceInfo.BenthosStatus)
 }
 
 // TODO: Add additional Benthos-specific actions
