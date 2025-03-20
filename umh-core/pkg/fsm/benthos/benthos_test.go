@@ -9,6 +9,7 @@ import (
 
 	internalfsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/constants"
 	s6fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/portmanager"
 	benthossvc "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos"
@@ -24,7 +25,7 @@ func createMockBenthosInstance(name string, mockService benthossvc.IBenthosServi
 		BenthosServiceConfig: config.BenthosServiceConfig{},
 	}
 
-	instance := NewBenthosInstance("/run/service", cfg)
+	instance := NewBenthosInstance(constants.S6BaseDir, cfg)
 	instance.service = mockService
 	return instance
 }

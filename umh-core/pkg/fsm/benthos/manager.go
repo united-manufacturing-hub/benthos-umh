@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/constants"
 	public_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
@@ -13,7 +14,7 @@ import (
 )
 
 const (
-	baseBenthosDir = "/run/service" // Same as s6 for now
+	baseBenthosDir = constants.S6BaseDir
 )
 
 // BenthosManager implements FSM management for Benthos services.

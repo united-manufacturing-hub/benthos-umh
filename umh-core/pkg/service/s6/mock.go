@@ -138,3 +138,8 @@ func (m *MockService) ExitHistory(ctx context.Context, servicePath string) ([]Ex
 	m.ExitHistoryCalled = true
 	return m.ExitHistoryResult, m.ExitHistoryError
 }
+
+// CleanS6ServiceDirectory implements the Service interface
+func (m *MockService) CleanS6ServiceDirectory(ctx context.Context, path string) error {
+	return nil
+}

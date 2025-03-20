@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/constants"
 	filesystem "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/filesystem"
 )
 
@@ -29,7 +30,7 @@ var _ = Describe("S6 Run Script", func() {
 		ctx = context.Background()
 		mockFS = filesystem.NewMockFileSystem()
 		s6Service = &DefaultService{fsService: mockFS}
-		servicePath = "/run/service/test-service"
+		servicePath = constants.S6BaseDir + "/test-service"
 		runScriptPath = filepath.Join(servicePath, "run")
 		configPath = filepath.Join(servicePath, "config")
 	})

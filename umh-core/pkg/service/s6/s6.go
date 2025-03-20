@@ -17,6 +17,7 @@ import (
 
 	"github.com/cactus/tai64"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/constants"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	filesystem "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/filesystem"
 	"go.uber.org/zap"
@@ -84,6 +85,8 @@ type Service interface {
 	ServiceExists(ctx context.Context, servicePath string) (bool, error)
 	// GetConfig gets the actual service config from s6
 	GetConfig(ctx context.Context, servicePath string) (config.S6ServiceConfig, error)
+	// CleanS6ServiceDirectory cleans the S6 service directory, removing non-standard services
+	CleanS6ServiceDirectory(ctx context.Context, path string) error
 }
 
 // DefaultService is the default implementation of the S6 Service interface
@@ -221,7 +224,7 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 	}
 
 	if !exists {
-		output, err := s.fsService.ExecuteCommand(ctx, "s6-svscanctl", "-a", "/run/service")
+		output, err := s.fsService.ExecuteCommand(ctx, "s6-svscanctl", "-a", constants.S6BaseDir)
 		if err != nil {
 			return fmt.Errorf("failed to notify s6-svscan: %w, output: %s", err, string(output))
 		}
@@ -322,7 +325,10 @@ func (s *DefaultService) Remove(ctx context.Context, servicePath string) error {
 		metrics.ObserveReconcileTime(metrics.ComponentS6Service, servicePath+".remove", time.Since(start))
 	}()
 
-	s.logger.Debugf("Removing S6 service %s", servicePath)
+	if s.logger != nil {
+		s.logger.Debugf("Removing S6 service %s", servicePath)
+	}
+
 	exists, err := s.ServiceExists(ctx, servicePath)
 	if err != nil {
 		return fmt.Errorf("failed to check if service exists: %w", err)
@@ -341,7 +347,9 @@ func (s *DefaultService) Remove(ctx context.Context, servicePath string) error {
 		return fmt.Errorf("failed to remove S6 service %s: %w", servicePath, err)
 	}
 
-	s.logger.Debugf("Removed S6 service %s from contents.d", servicePath)
+	if s.logger != nil {
+		s.logger.Debugf("Removed S6 service %s from contents.d", servicePath)
+	}
 	return nil
 }
 
@@ -635,7 +643,9 @@ func (s *DefaultService) ServiceExists(ctx context.Context, servicePath string) 
 		return false, fmt.Errorf("failed to check if S6 service exists: %w", err)
 	}
 	if !exists {
-		s.logger.Debugf("S6 service %s does not exist", servicePath)
+		if s.logger != nil {
+			s.logger.Debugf("S6 service %s does not exist", servicePath)
+		}
 		return false, nil
 	}
 	return true, nil
@@ -862,3 +872,94 @@ const (
 	// As TAIN_PACK is 12 bytes, then each dtally record is 12 + 1 + 1 = 14 bytes.
 	S6_DTALLY_PACK = 14
 )
+
+// CleanS6ServiceDirectory cleans the S6 service directory except for the known services
+func (s *DefaultService) CleanS6ServiceDirectory(ctx context.Context, path string) error {
+	if ctx == nil {
+		return fmt.Errorf("context is nil")
+	}
+	if ctx.Err() != nil {
+		return fmt.Errorf("context is done: %w", ctx.Err())
+	}
+
+	// Get the list of entries in the S6 service directory
+	entries, err := s.fsService.ReadDir(ctx, path)
+	if err != nil {
+		return fmt.Errorf("failed to read S6 service directory: %w", err)
+	}
+
+	// Use safe logging that handles nil loggers
+	if s.logger != nil {
+		s.logger.Infof("Cleaning S6 service directory: %s, found %d entries", path, len(entries))
+	}
+
+	// Iterate over all directory entries
+	for _, entry := range entries {
+		// Skip files, only process directories
+		if !entry.IsDir() {
+			if s.logger != nil {
+				s.logger.Debugf("Skipping non-directory: %s", entry.Name())
+			}
+			continue
+		}
+
+		// Check if the directory is a known service that should be preserved
+		dirName := entry.Name()
+		if !s.IsKnownService(dirName) {
+			dirPath := filepath.Join(path, dirName)
+			if s.logger != nil {
+				s.logger.Infof("Removing unknown directory: %s", dirPath)
+			}
+
+			// Simply remove the directory (and its contents)
+			if err := s.fsService.RemoveAll(ctx, dirPath); err != nil {
+				if s.logger != nil {
+					s.logger.Warnf("Failed to remove directory %s: %v", dirPath, err)
+				}
+			} else if s.logger != nil {
+				s.logger.Infof("Successfully removed directory: %s", dirPath)
+			}
+		} else if s.logger != nil {
+			s.logger.Debugf("Keeping known directory: %s", dirName)
+		}
+	}
+
+	if s.logger != nil {
+		s.logger.Infof("Finished cleaning S6 service directory: %s", path)
+	}
+	return nil
+}
+
+// IsKnownService checks if a service is known
+func (s *DefaultService) IsKnownService(name string) bool {
+	// Core system services that should never be removed
+	knownServices := []string{
+		// S6 core services
+		"s6-linux-init-shutdownd",
+		"s6rc-fdholder",
+		"s6rc-oneshot-runner",
+		"syslogd",
+		"syslogd-log",
+		"umh-core",
+		// S6 internal directories
+		".s6-svscan",       // Special directory for s6-svscan control
+		"user",             // Special user bundle directory
+		"s6-rc",            // S6 runtime compiled database
+		"log-user-service", // User service logs
+	}
+
+	for _, known := range knownServices {
+		if name == known {
+			return true
+		}
+	}
+
+	// Check for standard S6 naming patterns
+	if strings.HasSuffix(name, "-log") || // Logger services
+		strings.HasSuffix(name, "-prepare") || // Preparation oneshots
+		strings.HasSuffix(name, "-log-prepare") { // Preparation oneshots for loggers
+		return true
+	}
+
+	return false
+}

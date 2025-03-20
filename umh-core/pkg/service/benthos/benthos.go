@@ -15,6 +15,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/constants"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	"go.uber.org/zap"
 
@@ -240,7 +241,7 @@ func (s *BenthosService) getS6ServiceName(name string) string {
 func (s *BenthosService) GenerateS6ConfigForBenthos(benthosConfig *config.BenthosServiceConfig, S6ServiceName string) (s6Config config.S6ServiceConfig, err error) {
 	benthosConfigFileName := "benthos.yaml"
 
-	configPath := fmt.Sprintf("/run/service/%s/config/%s", S6ServiceName, benthosConfigFileName)
+	configPath := fmt.Sprintf("%s/%s/config/%s", constants.S6BaseDir, S6ServiceName, benthosConfigFileName)
 
 	yamlConfig, err := s.generateBenthosYaml(benthosConfig)
 	if err != nil {

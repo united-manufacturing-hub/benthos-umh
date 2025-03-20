@@ -26,11 +26,13 @@ import (
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/backoff"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/constants"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/benthos"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
+	s6svc "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/starvationchecker"
 	"go.uber.org/zap"
 )
@@ -95,6 +97,15 @@ func NewControlLoop() *ControlLoop {
 	starvationChecker := starvationchecker.NewStarvationChecker(starvationThreshold)
 
 	metrics.InitErrorCounter(metrics.ComponentControlLoop, "main")
+
+	// Now clean the S6 service directory except for the known services
+	s6Service := s6svc.NewDefaultService()
+	log.Debugf("Cleaning S6 service directory: %s", constants.S6BaseDir)
+	err := s6Service.CleanS6ServiceDirectory(context.Background(), constants.S6BaseDir)
+	if err != nil {
+		log.Errorf("Failed to clean S6 service directory: %s", err)
+	}
+	log.Debugf("S6 service directory cleaned: %s", constants.S6BaseDir)
 
 	return &ControlLoop{
 		managers:          managers,

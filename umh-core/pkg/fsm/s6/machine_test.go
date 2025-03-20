@@ -7,6 +7,7 @@ import (
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/constants"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -26,7 +27,7 @@ var _ = Describe("S6 FSM", func() {
 
 	BeforeEach(func() {
 		testID = "test-service"
-		testS6BaseDir = "/run/service"
+		testS6BaseDir = constants.S6BaseDir
 		testServicePath = filepath.Join(testS6BaseDir, testID)
 		mockService = s6service.NewMockService()
 		mockService.ExistingServices[testS6BaseDir] = true

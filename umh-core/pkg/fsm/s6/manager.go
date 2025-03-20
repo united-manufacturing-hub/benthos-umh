@@ -4,13 +4,14 @@ import (
 	"fmt"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/constants"
 	public_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 )
 
 const (
-	baseS6Dir = "/run/service"
+	baseS6Dir = constants.S6BaseDir
 )
 
 // S6Manager implements FSM management for S6 services.

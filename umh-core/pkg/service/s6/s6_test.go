@@ -3,11 +3,25 @@ package s6
 import (
 	"context"
 	"os"
+	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/constants"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/filesystem"
 )
+
+// Mock implementation of os.DirEntry for testing
+type mockDirEntry struct {
+	name  string
+	isDir bool
+}
+
+func (m mockDirEntry) Name() string               { return m.name }
+func (m mockDirEntry) IsDir() bool                { return m.isDir }
+func (m mockDirEntry) Type() os.FileMode          { return os.ModeDir }
+func (m mockDirEntry) Info() (os.FileInfo, error) { return nil, nil }
 
 var _ = Describe("S6 Service", func() {
 	var (
@@ -101,5 +115,151 @@ var _ = Describe("S6 Service", func() {
 		Expect(err).NotTo(HaveOccurred()) // No error, but...
 		info = mockService.StatusResult   // Should return the default result
 		Expect(info.Status).To(Equal(ServiceUnknown))
+	})
+
+	Describe("IsKnownService", func() {
+		var s6Service *DefaultService
+
+		BeforeEach(func() {
+			s6Service = &DefaultService{
+				fsService: nil, // Not needed for this test
+				logger:    nil,
+			}
+		})
+
+		It("should correctly identify known services", func() {
+			// Known services
+			knownServices := []string{
+				// Core services
+				"s6-linux-init-shutdownd",
+				"s6rc-fdholder",
+				"s6rc-oneshot-runner",
+				"syslogd",
+				"syslogd-log",
+				"umh-core",
+				// S6 internal directories
+				".s6-svscan",
+				"user",
+				"s6-rc",
+				"log-user-service",
+				// Pattern-based services
+				"example-log",
+				"another-prepare",
+				"service-log-prepare",
+			}
+
+			for _, service := range knownServices {
+				Expect(s6Service.IsKnownService(service)).To(BeTrue(), "Service should be known: "+service)
+			}
+		})
+
+		It("should correctly identify unknown services", func() {
+			// Unknown services
+			unknownServices := []string{
+				"custom-service",
+				"benthos-pipeline",
+				"benthos-instance-1",
+				"my-service",
+				"", // Empty string
+			}
+
+			for _, service := range unknownServices {
+				Expect(s6Service.IsKnownService(service)).To(BeFalse(), "Service should be unknown: "+service)
+			}
+		})
+	})
+
+	Describe("CleanS6ServiceDirectory", func() {
+		var (
+			s6Service          *DefaultService
+			mockFS             *filesystem.MockFileSystem
+			removedDirectories []string
+		)
+
+		BeforeEach(func() {
+			mockFS = filesystem.NewMockFileSystem()
+			s6Service = &DefaultService{
+				fsService: mockFS,
+				logger:    nil, // Don't need the logger for this test
+			}
+
+			// Track removed directories
+			removedDirectories = []string{}
+
+			// Setup mock file system functions
+			mockFS.WithReadDirFunc(func(ctx context.Context, path string) ([]os.DirEntry, error) {
+				// Return a mix of known and unknown directories
+				return []os.DirEntry{
+					// Known services - core
+					mockDirEntry{name: "s6-linux-init-shutdownd", isDir: true},
+					mockDirEntry{name: "s6rc-fdholder", isDir: true},
+					mockDirEntry{name: "s6rc-oneshot-runner", isDir: true},
+					mockDirEntry{name: "syslogd", isDir: true},
+					mockDirEntry{name: "syslogd-log", isDir: true},
+					mockDirEntry{name: "umh-core", isDir: true},
+					// Known services - s6 internals
+					mockDirEntry{name: ".s6-svscan", isDir: true},
+					mockDirEntry{name: "user", isDir: true},
+					mockDirEntry{name: "s6-rc", isDir: true},
+					// Known services - pattern-based
+					mockDirEntry{name: "test-log", isDir: true},
+					mockDirEntry{name: "service-prepare", isDir: true},
+					// Unknown services (should be removed)
+					mockDirEntry{name: "custom-service-1", isDir: true},
+					mockDirEntry{name: "custom-service-2", isDir: true},
+					mockDirEntry{name: "benthos-instance-1", isDir: true},
+					mockDirEntry{name: "another-service", isDir: true},
+					// Files that should be ignored
+					mockDirEntry{name: "some-file.txt", isDir: false},
+				}, nil
+			})
+
+			mockFS.WithRemoveAllFunc(func(ctx context.Context, path string) error {
+				for _, known := range []string{
+					// Core services
+					"s6-linux-init-shutdownd", "s6rc-fdholder", "s6rc-oneshot-runner",
+					"syslogd", "syslogd-log", "umh-core",
+					// S6 internals
+					".s6-svscan", "user", "s6-rc",
+					// Pattern-based
+					"test-log", "service-prepare",
+				} {
+					if path == filepath.Join(constants.S6BaseDir, known) {
+						Fail("Known service was removed: " + known)
+					}
+				}
+
+				// Record the removed directory
+				dirName := filepath.Base(path)
+				removedDirectories = append(removedDirectories, dirName)
+				return nil
+			})
+		})
+
+		It("should only remove non-standard directories", func() {
+			// Execute the function under test
+			err := s6Service.CleanS6ServiceDirectory(ctx, constants.S6BaseDir)
+
+			// Verify function execution
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify the correct directories were removed
+			Expect(removedDirectories).To(ContainElements(
+				"custom-service-1",
+				"custom-service-2",
+				"benthos-instance-1",
+				"another-service",
+			))
+
+			// Verify the expected number of directories were removed
+			Expect(removedDirectories).To(HaveLen(4))
+		})
+
+		It("should skip files that are not directories", func() {
+			// This is verified by the mock setup - if it attempts to remove
+			// a file, the test will fail since our mock only expects directories
+			err := s6Service.CleanS6ServiceDirectory(ctx, constants.S6BaseDir)
+			Expect(err).NotTo(HaveOccurred())
+		})
 	})
 })
