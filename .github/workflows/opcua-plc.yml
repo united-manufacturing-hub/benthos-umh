@@ -123,10 +123,6 @@ jobs:
           docker ps
           docker logs $(docker ps -q -f ancestor=mcr.microsoft.com/iotedge/opc-plc:2.12.29)
 
-      - name: Inspect container network
-        run: |
-          docker exec $(docker ps -q -f ancestor=mcr.microsoft.com/iotedge/opc-plc:2.12.29) netstat -tuln
-
       - name: Test container availability
         run: |
           tcping 127.0.0.1:50000
