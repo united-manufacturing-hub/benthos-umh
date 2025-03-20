@@ -25,6 +25,14 @@ type BenthosManager struct {
 	portManager portmanager.PortManager
 }
 
+// BenthosManagerSnapshot extends the base ManagerSnapshot with Benthos-specific information
+type BenthosManagerSnapshot struct {
+	// Embed the BaseManagerSnapshot to inherit its methods
+	*public_fsm.BaseManagerSnapshot
+	// Add Benthos-specific fields
+	PortAllocations map[string]int // Maps instance name to port
+}
+
 func NewBenthosManager(name string) *BenthosManager {
 	managerName := fmt.Sprintf("%s%s", logger.ComponentBenthosManager, name)
 
@@ -179,6 +187,40 @@ func (m *BenthosManager) Reconcile(ctx context.Context, cfg config.FullConfig, t
 	}
 
 	return nil, reconciled
+}
+
+// CreateSnapshot overrides the base CreateSnapshot to include Benthos-specific information
+func (m *BenthosManager) CreateSnapshot() public_fsm.ManagerSnapshot {
+	// Get base snapshot from parent
+	baseSnapshot := m.BaseFSMManager.CreateSnapshot()
+
+	// We need to convert the interface to the concrete type
+	baseManagerSnapshot, ok := baseSnapshot.(*public_fsm.BaseManagerSnapshot)
+	if !ok {
+		logger.For(logger.ComponentBenthosManager).Errorf(
+			"Failed to convert base snapshot to BaseManagerSnapshot, using generic snapshot")
+		return baseSnapshot
+	}
+
+	// Create Benthos-specific snapshot
+	benthosSnapshot := &BenthosManagerSnapshot{
+		BaseManagerSnapshot: baseManagerSnapshot,
+		PortAllocations:     make(map[string]int),
+	}
+
+	// Add port allocations
+	for name := range baseManagerSnapshot.GetInstances() {
+		if port, exists := m.portManager.GetPort(name); exists {
+			benthosSnapshot.PortAllocations[name] = port
+		}
+	}
+
+	return benthosSnapshot
+}
+
+// IsObservedStateSnapshot implements the fsm.ObservedStateSnapshot interface
+func (s *BenthosManagerSnapshot) IsObservedStateSnapshot() {
+	// Marker method implementation
 }
 
 // PortManager is now implemented in the pkg/portmanager package

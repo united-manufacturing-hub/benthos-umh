@@ -199,6 +199,26 @@ func (m *BaseFSMManager[C]) GetManagerTick() uint64 {
 	return m.managerTick
 }
 
+// GetLastAddTick returns the last tick when an instance was added
+func (m *BaseFSMManager[C]) GetLastAddTick() uint64 {
+	return m.lastAddTick
+}
+
+// GetLastUpdateTick returns the last tick when an instance was updated
+func (m *BaseFSMManager[C]) GetLastUpdateTick() uint64 {
+	return m.lastUpdateTick
+}
+
+// GetLastRemoveTick returns the last tick when an instance was removed
+func (m *BaseFSMManager[C]) GetLastRemoveTick() uint64 {
+	return m.lastRemoveTick
+}
+
+// GetLastStateChange returns the last tick when an instance state was changed
+func (m *BaseFSMManager[C]) GetLastStateChange() uint64 {
+	return m.lastStateChange
+}
+
 // Reconcile implements the core FSM management algorithm that powers the control loop.
 // This method is called repeatedly by the control loop to ensure the system state
 // converges toward the desired state defined in configuration.
@@ -463,4 +483,44 @@ func (m *BaseFSMManager[C]) GetCurrentFSMState(serviceName string) (string, erro
 		return instance.GetCurrentFSMState(), nil
 	}
 	return "", fmt.Errorf("instance %s not found", serviceName)
+}
+
+// CreateSnapshot creates a ManagerSnapshot from the current manager state
+func (m *BaseFSMManager[C]) CreateSnapshot() ManagerSnapshot {
+	snapshot := &BaseManagerSnapshot{
+		Name:            m.managerName,
+		Instances:       make(map[string]FSMInstanceSnapshot),
+		ManagerTick:     m.managerTick,
+		LastAddTick:     m.lastAddTick,
+		LastUpdateTick:  m.lastUpdateTick,
+		LastRemoveTick:  m.lastRemoveTick,
+		LastStateChange: m.lastStateChange,
+		SnapshotTime:    time.Now(),
+	}
+
+	for name, instance := range m.instances {
+		instanceSnapshot := FSMInstanceSnapshot{
+			ID:           name,
+			CurrentState: instance.GetCurrentFSMState(),
+			DesiredState: instance.GetDesiredFSMState(),
+		}
+
+		// Add observed state if available
+		if observedState := instance.GetLastObservedState(); observedState != nil {
+			// This requires proper implementation of ObservedStateSnapshot conversion
+			// in each concrete instance type
+			if converter, ok := instance.(ObservedStateConverter); ok {
+				instanceSnapshot.LastObservedState = converter.CreateObservedStateSnapshot()
+			}
+		}
+
+		snapshot.Instances[name] = instanceSnapshot
+	}
+
+	return snapshot
+}
+
+// ObservedStateConverter is an interface for objects that can convert their observed state to a snapshot
+type ObservedStateConverter interface {
+	CreateObservedStateSnapshot() ObservedStateSnapshot
 }

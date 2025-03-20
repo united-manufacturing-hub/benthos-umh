@@ -8,6 +8,7 @@ package control
 // - Managing the reconciliation process to maintain desired system state
 // - Handling errors and ensuring system stability
 // - Monitoring performance metrics and detecting starvation conditions
+// - Creating and maintaining snapshots of system state for external consumers
 //
 // The control loop architecture follows established patterns from Kubernetes controllers,
 // where a continuous reconciliation approach gradually moves the system toward its desired state.
@@ -17,6 +18,7 @@ package control
 // - FSMManagers: Type-specific managers that handle individual services (S6, Benthos)
 // - ConfigManager: Provides the desired system state from configuration
 // - StarvationChecker: Monitors system health and detects control loop problems
+// - SnapshotManager: Maintains thread-safe snapshots of the system state
 
 import (
 	"context"
@@ -70,6 +72,7 @@ type ControlLoop struct {
 	logger            *zap.SugaredLogger
 	starvationChecker *starvationchecker.StarvationChecker
 	currentTick       uint64
+	snapshotManager   *fsm.SnapshotManager
 }
 
 // NewControlLoop creates a new control loop with all necessary managers.
@@ -77,12 +80,17 @@ type ControlLoop struct {
 // - S6 and Benthos managers for service instance management
 // - Config manager for tracking desired system state
 // - Starvation checker for detecting loop health issues
+// - Snapshot manager for sharing system state with external components
 //
 // The control loop runs at a fixed interval (defaultTickerTime) and orchestrates
 // all components according to the configuration.
 func NewControlLoop() *ControlLoop {
 	// Get a component-specific logger
 	log := logger.For(logger.ComponentControlLoop)
+	if log == nil {
+		// If logger initialization failed somehow, create a no-op logger to avoid nil panics
+		log = zap.NewNop().Sugar()
+	}
 
 	// Create the managers
 	managers := []fsm.FSMManager[any]{
@@ -95,6 +103,9 @@ func NewControlLoop() *ControlLoop {
 
 	// Create a starvation checker
 	starvationChecker := starvationchecker.NewStarvationChecker(starvationThreshold)
+
+	// Create a snapshot manager
+	snapshotManager := fsm.NewSnapshotManager()
 
 	metrics.InitErrorCounter(metrics.ComponentControlLoop, "main")
 
@@ -113,6 +124,7 @@ func NewControlLoop() *ControlLoop {
 		configManager:     configManager,
 		logger:            log,
 		starvationChecker: starvationChecker,
+		snapshotManager:   snapshotManager,
 	}
 }
 
@@ -186,6 +198,8 @@ func (c *ControlLoop) Execute(ctx context.Context) error {
 //   - Call its Reconcile method with the configuration
 //   - If error occurs, propagate it upward
 //   - If reconciliation occurred (bool=true), skip the reconcilation of the next managers to avoid reaching the ticker interval
+//
+// 3. Create a snapshot of the current system state for external consumers
 func (c *ControlLoop) Reconcile(ctx context.Context, ticker uint64) error {
 	// Get the config
 	if c.configManager == nil {
@@ -231,6 +245,8 @@ func (c *ControlLoop) Reconcile(ctx context.Context, ticker uint64) error {
 
 		// If the manager was reconciled, skip the reconcilation of the next managers
 		if reconciled {
+			// Create a snapshot after any successful reconciliation
+			c.updateSystemSnapshot(ctx, cfg)
 			return nil
 		}
 	}
@@ -242,8 +258,51 @@ func (c *ControlLoop) Reconcile(ctx context.Context, ticker uint64) error {
 		return fmt.Errorf("starvation checker is not set")
 	}
 
+	// Create a snapshot after the entire reconciliation cycle
+	c.updateSystemSnapshot(ctx, cfg)
+
 	// Return nil if no errors occurred
 	return nil
+}
+
+// updateSystemSnapshot creates a snapshot of the current system state
+func (c *ControlLoop) updateSystemSnapshot(ctx context.Context, cfg config.FullConfig) {
+	// Check if logger is nil to prevent panic
+	if c.logger == nil {
+		// If logger is nil, initialize it with a default logger
+		c.logger = logger.For(logger.ComponentControlLoop)
+	}
+
+	if c.snapshotManager == nil {
+		c.logger.Warnf("Cannot create system snapshot: snapshot manager is not set")
+		return
+	}
+
+	snapshot, err := fsm.GetManagerSnapshots(c.managers, c.currentTick, cfg)
+	if err != nil {
+		c.logger.Errorf("Failed to create system snapshot: %v", err)
+		metrics.IncErrorCount(metrics.ComponentControlLoop, "snapshot_creation")
+		return
+	}
+
+	c.snapshotManager.UpdateSnapshot(snapshot)
+	c.logger.Debugf("Updated system snapshot at tick %d", c.currentTick)
+}
+
+// GetSystemSnapshot returns the current snapshot of the system state
+// This is thread-safe and can be called from any goroutine
+func (c *ControlLoop) GetSystemSnapshot() *fsm.SystemSnapshot {
+	// Check if logger is nil to prevent panic
+	if c.logger == nil {
+		// If logger is nil, initialize it with a default logger
+		c.logger = logger.For(logger.ComponentControlLoop)
+	}
+
+	if c.snapshotManager == nil {
+		c.logger.Warnf("Cannot get system snapshot: snapshot manager is not set")
+		return nil
+	}
+	return c.snapshotManager.GetSnapshot()
 }
 
 // Stop gracefully terminates the control loop and its components.
