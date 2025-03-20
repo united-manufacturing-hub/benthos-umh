@@ -125,7 +125,8 @@ jobs:
 
       - name: Test container availability
         run: |
-          tcping opcplc:50000
+          tcping 127.0.0.1:50000
+          tcping opc.tcp://127.0.0.1:50000
 
       - name: Test
         env:
