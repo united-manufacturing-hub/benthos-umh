@@ -546,7 +546,7 @@ func (s *DefaultService) Status(ctx context.Context, servicePath string) (Servic
 		return info, fmt.Errorf("failed to get exit history: %w", histErr)
 	}
 
-	s.logger.Debugf("Status for S6 service %s: %+v", servicePath, info)
+	//s.logger.Debugf("Status for S6 service %s: %+v", servicePath, info)
 
 	return info, nil
 }
@@ -619,7 +619,7 @@ func (s *DefaultService) ExitHistory(ctx context.Context, superviseDir string) (
 		})
 	}
 
-	s.logger.Debugf("Exit history for S6 service %s: %+v", superviseDir, history)
+	//s.logger.Debugf("Exit history for S6 service %s: %+v", superviseDir, history)
 	return history, nil
 }
 

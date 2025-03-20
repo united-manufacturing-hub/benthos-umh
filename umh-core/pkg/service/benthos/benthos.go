@@ -318,7 +318,13 @@ func (s *BenthosService) Status(ctx context.Context, name string, metricsPort in
 	benthosStatus, err := s.GetHealthCheckAndMetrics(ctx, serviceName, metricsPort, tick)
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") {
-			return ServiceInfo{}, ErrHealthCheckConnectionRefused
+			return ServiceInfo{
+				S6ObservedState: s6ServiceObservedState,
+				S6FSMState:      s6FSMState, // Note for state transitions: When a service is stopped and then reactivated,
+				// this S6FSMState needs to be properly refreshed here.
+				// Otherwise, the service can not transition from stopping to stopped state
+				BenthosStatus: BenthosStatus{},
+			}, ErrHealthCheckConnectionRefused
 		}
 		return ServiceInfo{}, fmt.Errorf("failed to get health check: %w", err)
 	}

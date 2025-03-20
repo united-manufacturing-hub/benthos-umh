@@ -365,6 +365,100 @@ var _ = Describe("BenthosManager", func() {
 			// Final verification
 			Expect(manager.GetInstances()).To(BeEmpty(), "All services should be removed")
 		})
+
+		It("should transition from active to stopped and back to active", func() {
+			serviceName := "test-active-to-stopped-to-active"
+			benthosConfig := createBenthosConfig(serviceName, OperationalStateActive)
+			fullConfig := config.FullConfig{
+				Benthos: []config.BenthosConfig{benthosConfig},
+			}
+
+			// First, get to idle state
+			tick, err := transitionToIdle(ctx, manager, mockService, serviceName, fullConfig, tick)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Setup for transition to active
+			setupServiceState(mockService, serviceName, benthossvc.ServiceStateFlags{
+				IsS6Running:            true,
+				S6FSMState:             s6fsm.OperationalStateRunning,
+				IsConfigLoaded:         true,
+				IsHealthchecksPassed:   true,
+				IsRunningWithoutErrors: true,
+				HasProcessingActivity:  true,
+			})
+
+			// Wait for active state
+			tick, err = waitForStateBenthosManager(ctx, manager, fullConfig, tick, OperationalStateActive, 10)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Get the instance reference for later verification
+			instance, found := manager.GetInstance(serviceName)
+			Expect(found).To(BeTrue(), "Service should exist before changing state")
+			benthosInstance, ok := instance.(*BenthosInstance)
+			Expect(ok).To(BeTrue(), "Instance should be a BenthosInstance")
+
+			// Now change the desired state to stopped
+			GinkgoWriter.Printf("Changing %s desired state from %s to %s\n",
+				serviceName, benthosInstance.GetDesiredFSMState(), OperationalStateStopped)
+
+			fullConfig.Benthos[0].FSMInstanceConfig.DesiredFSMState = OperationalStateStopped
+
+			// Update mock service to allow transitioning to stopped
+			setupServiceState(mockService, serviceName, benthossvc.ServiceStateFlags{
+				IsS6Running:          false,
+				S6FSMState:           s6fsm.OperationalStateStopped,
+				IsConfigLoaded:       false,
+				IsHealthchecksPassed: false,
+			})
+
+			// Wait for stopped state
+			tick, err = waitForStateBenthosManager(ctx, manager, fullConfig, tick, OperationalStateStopped, 15)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify we're in stopped state
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped),
+				"Service should be in stopped state before reactivating")
+
+			// Now change desired state back to active
+			GinkgoWriter.Printf("Changing %s desired state from %s to %s\n",
+				serviceName, benthosInstance.GetDesiredFSMState(), OperationalStateActive)
+
+			err = benthosInstance.SetDesiredFSMState(OperationalStateActive)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Setup service for starting phase
+			setupServiceState(mockService, serviceName, benthossvc.ServiceStateFlags{
+				IsS6Running:            true,
+				S6FSMState:             s6fsm.OperationalStateRunning,
+				IsConfigLoaded:         true,
+				IsHealthchecksPassed:   true,
+				IsRunningWithoutErrors: true,
+			})
+
+			// Wait for instance to reach idle state first
+			tick, err = waitForStateBenthosManager(ctx, manager, fullConfig, tick, OperationalStateIdle, 20)
+			Expect(err).NotTo(HaveOccurred(), "Service should transition to idle state after reactivation")
+
+			// Setup for transition to active again
+			setupServiceState(mockService, serviceName, benthossvc.ServiceStateFlags{
+				IsS6Running:            true,
+				S6FSMState:             s6fsm.OperationalStateRunning,
+				IsConfigLoaded:         true,
+				IsHealthchecksPassed:   true,
+				IsRunningWithoutErrors: true,
+				HasProcessingActivity:  true,
+			})
+
+			// Wait for active state
+			tick, err = waitForStateBenthosManager(ctx, manager, fullConfig, tick, OperationalStateActive, 10)
+			Expect(err).NotTo(HaveOccurred(), "Service should transition back to active state")
+
+			// Verify instance state
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateActive),
+				"Service should be in active state after reactivation")
+			Expect(instance.GetDesiredFSMState()).To(Equal(OperationalStateActive),
+				"Service should retain active as desired state")
+		})
 	})
 
 	Context("Error Handling", func() {
@@ -669,7 +763,7 @@ var _ = Describe("BenthosManager", func() {
 				IsConfigLoaded:         true,
 				IsHealthchecksPassed:   false, // This will cause degradation
 				IsRunningWithoutErrors: false,
-				HasProcessingActivity:  true,
+				HasProcessingActivity:  false,
 			})
 
 			// Keep service2 healthy
@@ -679,7 +773,7 @@ var _ = Describe("BenthosManager", func() {
 				IsConfigLoaded:         true,
 				IsHealthchecksPassed:   true,
 				IsRunningWithoutErrors: true,
-				HasProcessingActivity:  true,
+				HasProcessingActivity:  false,
 			})
 
 			// Wait for service1 to degrade while service2 remains healthy
@@ -705,7 +799,6 @@ var _ = Describe("BenthosManager", func() {
 				"Service1 should be degraded")
 			Expect(service2State).To(Equal(OperationalStateIdle),
 				"Service2 should remain healthy")
-			// For some reasons this sometimes fails?? TODO
 		})
 	})
 

@@ -334,7 +334,7 @@ func (b *BenthosInstance) reconcileTransitionToStopped(ctx context.Context, curr
 	}
 
 	// If already stopping, verify if the instance is completely stopped
-	if b.IsBenthosS6Stopped() {
+	if currentState == OperationalStateStopping && b.IsBenthosS6Stopped() {
 		// Transition from Stopping to Stopped
 		return b.baseFSMInstance.SendEvent(ctx, EventStopDone), true
 	}

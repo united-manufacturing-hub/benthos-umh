@@ -109,14 +109,22 @@ func (b *BenthosInstance) updateObservedState(ctx context.Context, tick uint64) 
 			}
 
 			// Log the warning but don't treat it as a fatal error
-			b.baseFSMInstance.GetLogger().Debugf("Service %s not found, will be created during reconciliation", b.baseFSMInstance.GetID())
+			b.baseFSMInstance.GetLogger().Debugf("Service not found, will be created during reconciliation")
 			return nil
 		} else if errors.Is(err, benthos_service.ErrHealthCheckConnectionRefused) {
-			// If the service is not ready, we don't want to count this as an error
-			// The instance is likely in Starting or ToBeStarted state, so service doesn't exist yet
-			// This will be handled in the reconcileStateTransition where the service gets created
-			b.baseFSMInstance.GetLogger().Debugf("Service %s not ready, will be created during reconciliation", b.baseFSMInstance.GetID())
-			return nil
+			// If the service is currently created, or if the service itself not in the starting phase where the health cehcks have ntot passed yet, we can ignore the error
+			if internalfsm.IsLifecycleState(b.baseFSMInstance.GetCurrentFSMState()) ||
+				b.baseFSMInstance.GetCurrentFSMState() == OperationalStateStopped ||
+				b.baseFSMInstance.GetCurrentFSMState() == OperationalStateStopping ||
+				b.baseFSMInstance.GetCurrentFSMState() == OperationalStateStarting ||
+				b.baseFSMInstance.GetCurrentFSMState() == OperationalStateStartingConfigLoading ||
+				b.baseFSMInstance.GetCurrentFSMState() == OperationalStateStartingWaitingForHealthchecks {
+				b.baseFSMInstance.GetLogger().Debugf("Health check refused connection, but service is in a valid state (%s), ignoring", b.baseFSMInstance.GetCurrentFSMState())
+				b.ObservedState.ServiceInfo = info // Important for state transitions: When moving from stopping to stopped state,
+				// the healthcekc will fail, but we still need to know the fsm state
+				// this update helps refresh the S6FSMState in ObservedState.
+				return nil
+			}
 		}
 
 		// For other errors, log them and return
@@ -145,6 +153,8 @@ func (b *BenthosInstance) updateObservedState(ctx context.Context, tick uint64) 
 // 1. The FSM is the source of truth for service state
 // 2. We trust the FSM's state management completely
 // 3. Implementation details of how S6 determines running state are encapsulated away
+//
+// Note: This function requires the S6FSMState to be updated in the ObservedState.
 func (b *BenthosInstance) IsBenthosS6Running() bool {
 	return b.ObservedState.ServiceInfo.S6FSMState == s6fsm.OperationalStateRunning
 }
@@ -152,6 +162,8 @@ func (b *BenthosInstance) IsBenthosS6Running() bool {
 // IsBenthosS6Stopped determines if the Benthos S6 FSM is in stopped state.
 // We follow the same architectural principle as IsBenthosS6Running - relying solely
 // on the FSM state to maintain clean separation of concerns.
+//
+// Note: This function requires the S6FSMState to be updated in the ObservedState.
 func (b *BenthosInstance) IsBenthosS6Stopped() bool {
 	return b.ObservedState.ServiceInfo.S6FSMState == s6fsm.OperationalStateStopped
 }
