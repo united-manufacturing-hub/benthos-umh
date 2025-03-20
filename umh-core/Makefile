@@ -15,7 +15,7 @@ test:
 	go test -v ./...
 
 unit-test:
-	ginkgo -r -v --label-filter='!integration' ./...
+	ginkgo -r -v --label-filter='!integration' --fail-fast ./...
 
 test-empty: clean build
 	@mkdir -p $(PWD)/data
@@ -42,6 +42,17 @@ test-broken: clean build
 	docker run \
 		--name $(IMAGE_NAME) \
 		-v $(PWD)/data:/data \
+		-p 8081:8080 \
+		-p 4195:4195 \
+		$(IMAGE_NAME):$(TAG)
+
+test-benthos: clean build
+	@mkdir -p $(PWD)/data
+	@cp $(PWD)/examples/example-config-benthos.yaml $(PWD)/data/config.yaml
+	docker run \
+		--name $(IMAGE_NAME) \
+		-v $(PWD)/data:/data \
+		-e LOGGING_LEVEL=DEBUG \
 		-p 8081:8080 \
 		-p 4195:4195 \
 		$(IMAGE_NAME):$(TAG)

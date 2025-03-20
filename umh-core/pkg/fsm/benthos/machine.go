@@ -71,6 +71,11 @@ func NewBenthosInstance(
 		ObservedState:   BenthosObservedState{},
 	}
 
+	// Note: We intentionally do NOT initialize the S6 service here.
+	// Service creation happens during state reconciliation via initiateBenthosCreate.
+	// This maintains separation of concerns and follows the pattern used by S6.
+	// The reconcile loop will properly handle "service not found" errors.
+
 	instance.registerCallbacks()
 
 	metrics.InitErrorCounter(metrics.ComponentBenthosInstance, config.Name)

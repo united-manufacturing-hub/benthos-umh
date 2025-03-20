@@ -27,6 +27,7 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/backoff"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/benthos"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
@@ -83,7 +84,7 @@ func NewControlLoop() *ControlLoop {
 	// Create the managers
 	managers := []fsm.FSMManager[any]{
 		s6.NewS6Manager("Core"),
-		//benthos.NewBenthosManager("Core"),
+		benthos.NewBenthosManager("Core"),
 	}
 
 	// Create the config manager with backoff support
@@ -154,9 +155,11 @@ func (c *ControlLoop) Execute(ctx context.Context) error {
 					c.logger.Warnf("Control loop reconcile timed out: %v", err)
 				} else if errors.Is(err, context.Canceled) {
 					// For cancellation, exit the loop
+					c.logger.Infof("Control loop cancelled")
 					return nil
 				} else {
 					// Any other unhandled error will result in the control loop stopping
+					c.logger.Errorf("Control loop error: %v", err)
 					return err
 				}
 			}

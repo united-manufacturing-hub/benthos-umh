@@ -52,12 +52,12 @@ type BenthosConfig struct {
 // BenthosServiceConfig represents the configuration for a Benthos service
 type BenthosServiceConfig struct {
 	// Benthos-specific configuration
-	Input              []map[string]interface{} `yaml:"input"`
-	Pipeline           []map[string]interface{} `yaml:"pipeline"`
-	Output             []map[string]interface{} `yaml:"output"`
+	Input              map[string]interface{}   `yaml:"input"`
+	Pipeline           map[string]interface{}   `yaml:"pipeline"`
+	Output             map[string]interface{}   `yaml:"output"`
 	CacheResources     []map[string]interface{} `yaml:"cache_resources"`
 	RateLimitResources []map[string]interface{} `yaml:"rate_limit_resources"`
-	Buffer             []map[string]interface{} `yaml:"buffer"`
+	Buffer             map[string]interface{}   `yaml:"buffer"`
 
 	// Advanced configuration
 	MetricsPort int    `yaml:"metrics_port"`

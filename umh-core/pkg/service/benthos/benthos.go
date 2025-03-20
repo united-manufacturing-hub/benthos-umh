@@ -258,9 +258,24 @@ func (s *BenthosService) Status(ctx context.Context, serviceName string, metrics
 		return ServiceInfo{}, ctx.Err()
 	}
 
+	// First, check if the service exists in the S6 manager
+	// This is a crucial check that prevents "instance not found" errors
+	// during reconciliation when a service is being created or removed
+	if _, exists := s.s6Manager.GetInstance(serviceName); !exists {
+		s.logger.Debugf("Service %s not found in S6 manager", serviceName)
+		return ServiceInfo{}, ErrServiceNotExist
+	}
+
 	// Let's get the status of the underlying s6 service
 	s6ServiceObservedStateRaw, err := s.s6Manager.GetLastObservedState(serviceName)
 	if err != nil {
+		// If we still get an "instance not found" error despite our earlier check,
+		// it's likely that the service was removed between our check and this call
+		if strings.Contains(err.Error(), "instance "+serviceName+" not found") ||
+			strings.Contains(err.Error(), "not found") {
+			s.logger.Debugf("Service %s was removed during status check", serviceName)
+			return ServiceInfo{}, ErrServiceNotExist
+		}
 		return ServiceInfo{}, fmt.Errorf("failed to get last observed state: %w", err)
 	}
 
@@ -272,6 +287,12 @@ func (s *BenthosService) Status(ctx context.Context, serviceName string, metrics
 	// Let's get the current FSM state of the underlying s6 FSM
 	s6FSMState, err := s.s6Manager.GetCurrentFSMState(serviceName)
 	if err != nil {
+		// Similar to above, if the service was removed during our check
+		if strings.Contains(err.Error(), "instance "+serviceName+" not found") ||
+			strings.Contains(err.Error(), "not found") {
+			s.logger.Debugf("Service %s was removed during status check", serviceName)
+			return ServiceInfo{}, ErrServiceNotExist
+		}
 		return ServiceInfo{}, fmt.Errorf("failed to get current FSM state: %w", err)
 	}
 
@@ -287,12 +308,6 @@ func (s *BenthosService) Status(ctx context.Context, serviceName string, metrics
 		BenthosStatus:   benthosStatus,
 	}
 
-	// TODO: Fetch Benthos-specific metrics and health data
-
-	// TODO: Fetch Benthos-specific metrics and health data
-	// - Collect metrics from Benthos HTTP endpoint
-	// - Check logs for warnings/errors
-	// - Update processing state based on throughput data
 	return serviceInfo, nil
 }
 
@@ -475,6 +490,19 @@ func updateLatencyFromMetric(latency *Latency, metric *dto.Metric) {
 func (s *BenthosService) GetHealthCheckAndMetrics(ctx context.Context, serviceName string, metricsPort int, tick uint64) (BenthosStatus, error) {
 	if ctx.Err() != nil {
 		return BenthosStatus{}, ctx.Err()
+	}
+
+	// Skip health checks and metrics if the service doesn't exist yet
+	// This avoids unnecessary errors in Status() when the service is still being created
+	if _, exists := s.s6Manager.GetInstance(serviceName); !exists {
+		return BenthosStatus{
+			HealthCheck: HealthCheck{
+				IsLive:  false,
+				IsReady: false,
+			},
+			Metrics: Metrics{},
+			Logs:    []string{},
+		}, nil
 	}
 
 	if metricsPort == 0 {

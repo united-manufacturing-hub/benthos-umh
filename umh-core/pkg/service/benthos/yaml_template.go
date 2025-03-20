@@ -5,33 +5,28 @@ import (
 )
 
 var benthosYamlTemplate = template.Must(template.New("benthos").Parse(`input:{{if .Input}}
-{{- range .Input }}
-{{- range $key, $value := . }}
-  {{ $key }}:
-{{- range $k, $v := $value }}
-    {{ $k }}: {{ $v }}
-{{- end }}
+{{- range $component, $config := .Input }}
+  {{ $component }}:
+{{- range $key, $value := $config }}
+    {{ $key }}: {{ $value }}
 {{- end }}
 {{- end }}
 {{- else }} []{{end}}
 
 output:{{if .Output}}
-{{- range .Output }}
-{{- range $key, $value := . }}
-  {{ $key }}:
-{{- range $k, $v := $value }}
-    {{ $k }}: {{ $v }}
-{{- end }}
+{{- range $component, $config := .Output }}
+  {{ $component }}:
+{{- range $key, $value := $config }}
+    {{ $key }}: {{ $value }}
 {{- end }}
 {{- end }}
 {{- else }} []{{end}}
 
 pipeline:{{if .Pipeline}}
-{{- range .Pipeline }}
-{{- range $key, $value := . }}
-  {{ $key }}:
-{{- if eq $key "processors" }}
-{{- range $proc := $value }}
+{{- range $component, $config := .Pipeline }}
+  {{ $component }}:
+{{- if eq $component "processors" }}
+{{- range $proc := $config }}
     - {{ range $pk, $pv := $proc }}{{ $pk }}:
 {{- range $k, $v := $pv }}
         {{ $k }}: {{ $v }}
@@ -39,17 +34,16 @@ pipeline:{{if .Pipeline}}
 {{- end }}
 {{- end }}
 {{- else }}
-{{- range $k, $v := $value }}
+{{- range $k, $v := $config }}
     {{ $k }}: {{ $v }}
-{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
 {{- else }} []{{end}}
 
 cache_resources:{{if .CacheResources}}
-{{- range .CacheResources }}
-{{- range $key, $value := . }}
+{{- range $resource := .CacheResources }}
+{{- range $key, $value := $resource }}
   - {{ $key }}:
 {{- range $k, $v := $value }}
       {{ $k }}: {{ $v }}
@@ -59,8 +53,8 @@ cache_resources:{{if .CacheResources}}
 {{- else }} []{{end}}
 
 rate_limit_resources:{{if .RateLimitResources}}
-{{- range .RateLimitResources }}
-{{- range $key, $value := . }}
+{{- range $resource := .RateLimitResources }}
+{{- range $key, $value := $resource }}
   - {{ $key }}:
 {{- range $k, $v := $value }}
       {{ $k }}: {{ $v }}
@@ -70,12 +64,10 @@ rate_limit_resources:{{if .RateLimitResources}}
 {{- else }} []{{end}}
 
 buffer:{{if .Buffer}}
-{{- range .Buffer }}
-{{- range $key, $value := . }}
-  {{ $key }}:
-{{- range $k, $v := $value }}
-    {{ $k }}: {{ $v }}
-{{- end }}
+{{- range $component, $config := .Buffer }}
+  {{ $component }}:
+{{- range $key, $value := $config }}
+    {{ $key }}: {{ $value }}
 {{- end }}
 {{- end }}
 {{- else }} []{{end}}

@@ -2,8 +2,10 @@ package benthos
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	internalfsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	s6fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	benthos_service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos"
 )
@@ -95,7 +97,24 @@ func (b *BenthosInstance) updateObservedState(ctx context.Context, tick uint64) 
 
 	info, err := b.service.Status(ctx, b.baseFSMInstance.GetID(), b.config.MetricsPort, tick)
 	if err != nil {
-		// TODO: Handle this error
+		// If there's an error getting the service status, we need to distinguish between cases
+
+		if errors.Is(err, benthos_service.ErrServiceNotExist) {
+			// If the service is being created, we don't want to count this as an error
+			// The instance is likely in Creating or ToBeCreated state, so service doesn't exist yet
+			// This will be handled in the reconcileStateTransition where the service gets created
+			if b.baseFSMInstance.GetCurrentFSMState() == internalfsm.LifecycleStateCreating ||
+				b.baseFSMInstance.GetCurrentFSMState() == internalfsm.LifecycleStateToBeCreated {
+				return benthos_service.ErrServiceNotExist
+			}
+
+			// Log the warning but don't treat it as a fatal error
+			b.baseFSMInstance.GetLogger().Warnf("Service %s not found, will be created during reconciliation", b.baseFSMInstance.GetID())
+			return nil
+		}
+
+		// For other errors, log them and return
+		b.baseFSMInstance.GetLogger().Errorf("error updating observed state for %s: %s", b.baseFSMInstance.GetID(), err)
 		return err
 	}
 

@@ -167,17 +167,15 @@ var _ = Describe("Benthos Service", func() {
 		Context("with complete configuration", func() {
 			It("should generate valid YAML with all sections", func() {
 				cfg := &config.BenthosServiceConfig{
-					Input: []map[string]interface{}{
-						{"mqtt": map[string]interface{}{"topic": "test/topic"}},
+					Input: map[string]interface{}{
+						"mqtt": map[string]interface{}{"topic": "test/topic"},
 					},
-					Output: []map[string]interface{}{
-						{"kafka": map[string]interface{}{"topic": "test-output"}},
+					Output: map[string]interface{}{
+						"kafka": map[string]interface{}{"topic": "test-output"},
 					},
-					Pipeline: []map[string]interface{}{
-						{
-							"processors": []map[string]interface{}{
-								{"text": map[string]interface{}{"operator": "to_upper"}},
-							},
+					Pipeline: map[string]interface{}{
+						"processors": []map[string]interface{}{
+							{"text": map[string]interface{}{"operator": "to_upper"}},
 						},
 					},
 					CacheResources: []map[string]interface{}{
@@ -186,8 +184,8 @@ var _ = Describe("Benthos Service", func() {
 					RateLimitResources: []map[string]interface{}{
 						{"local": map[string]interface{}{"count": "100"}},
 					},
-					Buffer: []map[string]interface{}{
-						{"memory": map[string]interface{}{"limit": "10MB"}},
+					Buffer: map[string]interface{}{
+						"memory": map[string]interface{}{"limit": "10MB"},
 					},
 					MetricsPort: 4195,
 					LogLevel:    "INFO",
