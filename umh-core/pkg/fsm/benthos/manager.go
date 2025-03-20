@@ -3,6 +3,7 @@ package benthos
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	public_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
@@ -143,6 +144,8 @@ func (m *BenthosManager) HandleInstanceRemoved(instanceName string) {
 
 // Reconcile overrides the base manager's Reconcile method to add port management
 func (m *BenthosManager) Reconcile(ctx context.Context, cfg config.FullConfig, tick uint64) (error, bool) {
+	start := time.Now()
+	defer metrics.ObserveReconcileTime(logger.ComponentBenthosManager, m.BaseFSMManager.GetManagerName(), time.Since(start))
 	// Phase 1: Port Management Pre-reconciliation
 	benthosConfigs := cfg.Benthos
 	instanceNames := make([]string, len(benthosConfigs))

@@ -20,6 +20,8 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	filesystem "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/filesystem"
 	"go.uber.org/zap"
+
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 )
 
 // ServiceStatus represents the status of an S6 service
@@ -106,6 +108,11 @@ func (s *DefaultService) WithFileSystemService(fsService filesystem.Service) *De
 
 // Create creates the S6 service with specific configuration
 func (s *DefaultService) Create(ctx context.Context, servicePath string, config config.S6ServiceConfig) error {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Service, servicePath+".create", time.Since(start))
+	}()
+
 	s.logger.Debugf("Creating S6 service %s", servicePath)
 
 	// Create service directory if it doesn't exist
@@ -310,6 +317,11 @@ func (s *DefaultService) createS6ConfigFiles(ctx context.Context, servicePath st
 
 // Remove removes the S6 service directory structure
 func (s *DefaultService) Remove(ctx context.Context, servicePath string) error {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Service, servicePath+".remove", time.Since(start))
+	}()
+
 	s.logger.Debugf("Removing S6 service %s", servicePath)
 	exists, err := s.ServiceExists(ctx, servicePath)
 	if err != nil {
@@ -335,6 +347,11 @@ func (s *DefaultService) Remove(ctx context.Context, servicePath string) error {
 
 // Start starts the S6 service
 func (s *DefaultService) Start(ctx context.Context, servicePath string) error {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Service, servicePath+".start", time.Since(start))
+	}()
+
 	s.logger.Debugf("Starting S6 service %s", servicePath)
 	exists, err := s.ServiceExists(ctx, servicePath)
 	if err != nil {
@@ -354,6 +371,11 @@ func (s *DefaultService) Start(ctx context.Context, servicePath string) error {
 
 // Stop stops the S6 service
 func (s *DefaultService) Stop(ctx context.Context, servicePath string) error {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Service, servicePath+".stop", time.Since(start))
+	}()
+
 	s.logger.Debugf("Stopping S6 service %s", servicePath)
 	exists, err := s.ServiceExists(ctx, servicePath)
 	if err != nil {
@@ -373,6 +395,11 @@ func (s *DefaultService) Stop(ctx context.Context, servicePath string) error {
 
 // Restart restarts the S6 service
 func (s *DefaultService) Restart(ctx context.Context, servicePath string) error {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Service, servicePath+".restart", time.Since(start))
+	}()
+
 	s.logger.Debugf("Restarting S6 service %s", servicePath)
 	exists, err := s.ServiceExists(ctx, servicePath)
 	if err != nil {
@@ -391,6 +418,10 @@ func (s *DefaultService) Restart(ctx context.Context, servicePath string) error 
 }
 
 func (s *DefaultService) Status(ctx context.Context, servicePath string) (ServiceInfo, error) {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Service, servicePath+".status", time.Since(start))
+	}()
 
 	// First, check that the service exists.
 	exists, err := s.ServiceExists(ctx, servicePath)
@@ -594,6 +625,11 @@ func (s *DefaultService) ExitHistory(ctx context.Context, superviseDir string) (
 
 // ServiceExists checks if the service directory exists
 func (s *DefaultService) ServiceExists(ctx context.Context, servicePath string) (bool, error) {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Service, servicePath+".serviceExists", time.Since(start))
+	}()
+
 	exists, err := s.fsService.FileExists(ctx, servicePath)
 	if err != nil {
 		return false, fmt.Errorf("failed to check if S6 service exists: %w", err)

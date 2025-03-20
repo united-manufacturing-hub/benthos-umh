@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
@@ -20,13 +21,16 @@ import (
 // Over multiple calls, it converges the actual state to the desired state. Transitions
 // that fail are retried in subsequent reconcile calls after a backoff period.
 func (b *BenthosInstance) Reconcile(ctx context.Context, tick uint64) (err error, reconciled bool) {
+	start := time.Now()
 	benthosInstanceName := b.baseFSMInstance.GetID()
 	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentBenthosInstance, benthosInstanceName, time.Since(start))
 		if err != nil {
 			b.baseFSMInstance.GetLogger().Errorf("error reconciling Benthos instance %s: %s", benthosInstanceName, err)
 			b.PrintState()
 			// Add metrics for error
 			metrics.IncErrorCount(metrics.ComponentBenthosInstance, benthosInstanceName)
+
 		}
 	}()
 
@@ -89,6 +93,11 @@ func (b *BenthosInstance) Reconcile(ctx context.Context, tick uint64) (err error
 // reconcileExternalChanges checks if the BenthosInstance service status has changed
 // externally (e.g., if someone manually stopped or started it, or if it crashed)
 func (b *BenthosInstance) reconcileExternalChanges(ctx context.Context, tick uint64) error {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentBenthosInstance, b.baseFSMInstance.GetID()+".reconcileExternalChanges", time.Since(start))
+	}()
+
 	err := b.updateObservedState(ctx, tick)
 	if err != nil {
 		return fmt.Errorf("failed to update observed state: %w", err)
@@ -102,6 +111,11 @@ func (b *BenthosInstance) reconcileExternalChanges(ctx context.Context, tick uin
 // and exist in ObservedState.
 // This is to ensure full testability of the FSM.
 func (b *BenthosInstance) reconcileStateTransition(ctx context.Context) (err error, reconciled bool) {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentBenthosInstance, b.baseFSMInstance.GetID()+".reconcileStateTransition", time.Since(start))
+	}()
+
 	currentState := b.baseFSMInstance.GetCurrentFSMState()
 	desiredState := b.baseFSMInstance.GetDesiredFSMState()
 
@@ -134,6 +148,11 @@ func (b *BenthosInstance) reconcileStateTransition(ctx context.Context) (err err
 
 // reconcileLifecycleStates handles states related to instance lifecycle (creating/removing)
 func (b *BenthosInstance) reconcileLifecycleStates(ctx context.Context, currentState string) (err error, reconciled bool) {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentBenthosInstance, b.baseFSMInstance.GetID()+".reconcileLifecycleStates", time.Since(start))
+	}()
+
 	// Independent what the desired state is, we always need to reconcile the lifecycle states first
 	switch currentState {
 	case internal_fsm.LifecycleStateToBeCreated:
@@ -160,6 +179,11 @@ func (b *BenthosInstance) reconcileLifecycleStates(ctx context.Context, currentS
 
 // reconcileOperationalStates handles states related to instance operations (starting/stopping)
 func (b *BenthosInstance) reconcileOperationalStates(ctx context.Context, currentState string, desiredState string) (err error, reconciled bool) {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentBenthosInstance, b.baseFSMInstance.GetID()+".reconcileOperationalStates", time.Since(start))
+	}()
+
 	switch desiredState {
 	case OperationalStateActive:
 		return b.reconcileTransitionToActive(ctx, currentState)
@@ -173,6 +197,11 @@ func (b *BenthosInstance) reconcileOperationalStates(ctx context.Context, curren
 // reconcileTransitionToActive handles transitions when the desired state is Active.
 // It deals with moving from various states to the Active state.
 func (b *BenthosInstance) reconcileTransitionToActive(ctx context.Context, currentState string) (err error, reconciled bool) {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentBenthosInstance, b.baseFSMInstance.GetID()+".reconcileTransitionToActive", time.Since(start))
+	}()
+
 	// If we're stopped, we need to start first
 	if currentState == OperationalStateStopped {
 		// Attempt to initiate start
@@ -195,6 +224,11 @@ func (b *BenthosInstance) reconcileTransitionToActive(ctx context.Context, curre
 
 // reconcileStartingState handles the various starting phase states when transitioning to Active.
 func (b *BenthosInstance) reconcileStartingState(ctx context.Context, currentState string) (err error, reconciled bool) {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentBenthosInstance, b.baseFSMInstance.GetID()+".reconcileStartingState", time.Since(start))
+	}()
+
 	switch currentState {
 	case OperationalStateStarting:
 		// First we need to ensure the S6 service is started
@@ -248,6 +282,11 @@ func (b *BenthosInstance) reconcileStartingState(ctx context.Context, currentSta
 
 // reconcileRunningState handles the various running states when transitioning to Active.
 func (b *BenthosInstance) reconcileRunningState(ctx context.Context, currentState string) (err error, reconciled bool) {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentBenthosInstance, b.baseFSMInstance.GetID()+".reconcileRunningState", time.Since(start))
+	}()
+
 	switch currentState {
 	case OperationalStateActive:
 		// If we're in Active, we need to check whether it is degraded
@@ -279,6 +318,11 @@ func (b *BenthosInstance) reconcileRunningState(ctx context.Context, currentStat
 // reconcileTransitionToStopped handles transitions when the desired state is Stopped.
 // It deals with moving from any operational state to Stopping and then to Stopped.
 func (b *BenthosInstance) reconcileTransitionToStopped(ctx context.Context, currentState string) (err error, reconciled bool) {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentBenthosInstance, b.baseFSMInstance.GetID()+".reconcileTransitionToStopped", time.Since(start))
+	}()
+
 	// If we're in any operational state except Stopped or Stopping, initiate stop
 	if currentState != OperationalStateStopped && currentState != OperationalStateStopping {
 		// Attempt to initiate a stop

@@ -14,8 +14,8 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
-	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/filesystem"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/starvationchecker"
 )
 
 // Generates defective configurations
@@ -91,7 +91,7 @@ var _ = Describe("ControlLoop", func() {
 		// Set up a context with timeout
 		ctx, cancel = context.WithTimeout(context.Background(), 200*time.Millisecond)
 
-		starvationChecker := metrics.NewStarvationChecker(starvationThreshold)
+		starvationChecker := starvationchecker.NewStarvationChecker(starvationThreshold)
 
 		// Initialize control loop with mocks
 		controlLoop = &ControlLoop{
@@ -113,7 +113,7 @@ var _ = Describe("ControlLoop", func() {
 			loop := NewControlLoop()
 			Expect(loop).NotTo(BeNil())
 			Expect(loop.tickerTime).To(Equal(defaultTickerTime))
-			Expect(loop.managers).To(HaveLen(2))
+			Expect(loop.managers).To(HaveLen(1))
 			Expect(loop.configManager).NotTo(BeNil())
 		})
 	})
@@ -178,7 +178,7 @@ var _ = Describe("ControlLoop", func() {
 		It("should call Reconcile repeatedly until context is cancelled", func() {
 			// Create a tracking config manager that we can use to monitor calls
 			trackingConfig := config.NewMockConfigManager().WithConfig(config.FullConfig{})
-			starvationChecker := metrics.NewStarvationChecker(starvationThreshold)
+			starvationChecker := starvationchecker.NewStarvationChecker(starvationThreshold)
 
 			// We'll create a new control loop specifically for this test
 			testLoop := &ControlLoop{
@@ -258,7 +258,7 @@ var _ = Describe("ControlLoop", func() {
 			// Track calls to verify the loop continues
 			var callCount int32
 
-			starvationChecker := metrics.NewStarvationChecker(starvationThreshold)
+			starvationChecker := starvationchecker.NewStarvationChecker(starvationThreshold)
 
 			// Create a control loop with this config
 			timeoutLoop := &ControlLoop{

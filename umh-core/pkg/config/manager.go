@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/backoff"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 	filesystem "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/filesystem"
 )
 
@@ -135,6 +137,9 @@ func (m *FileConfigManagerWithBackoff) WithFileSystemService(fsService filesyste
 // It adds backoff logic to handle temporary and permanent failures
 // It will return either a temporary backoff error or a permanent failure error
 func (m *FileConfigManagerWithBackoff) GetConfig(ctx context.Context, tick uint64) (FullConfig, error) {
+	start := time.Now()
+	defer metrics.ObserveReconcileTime(logger.ComponentConfigManager, "get_config", time.Since(start))
+
 	// Check if context is already cancelled
 	if ctx.Err() != nil {
 		return FullConfig{}, ctx.Err()
@@ -156,7 +161,6 @@ func (m *FileConfigManagerWithBackoff) GetConfig(ctx context.Context, tick uint6
 	// Try to fetch the config
 	config, err := m.configManager.GetConfig(ctx, tick)
 	if err != nil {
-		// Record the error with the backoff manager
 		m.backoffManager.SetError(err, tick)
 		return FullConfig{}, err
 	}

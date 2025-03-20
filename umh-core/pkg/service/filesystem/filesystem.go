@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"time"
+
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 )
 
 // Service provides an interface for filesystem operations
@@ -388,6 +391,11 @@ func (s *DefaultService) ReadDir(ctx context.Context, path string) ([]os.DirEntr
 
 // ExecuteCommand executes a command with context
 func (s *DefaultService) ExecuteCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentFilesystem, name+".executeCommand."+name, time.Since(start))
+	}()
+
 	if err := s.checkContext(ctx); err != nil {
 		return nil, fmt.Errorf("failed to check context: %w", err)
 	}

@@ -74,6 +74,25 @@ func parseSummaryQuantile(metricsBody, metricName, quantile, component, instance
 	return 0, false
 }
 
+// printAllReconcileDurations prints all reconcile duration p99 metrics that are over a threshold
+func printAllReconcileDurations(metricsBody string, thresholdMs float64) {
+	lines := strings.Split(metricsBody, "\n")
+	GinkgoWriter.Printf("\nReconcile p99 durations over %.1f ms:\n", thresholdMs)
+	for _, line := range lines {
+		if strings.Contains(line, "umh_core_reconcile_duration_milliseconds") && strings.Contains(line, `quantile="0.99"`) {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			valStr := fields[len(fields)-1]
+			val, err := strconv.ParseFloat(valStr, 64)
+			if err == nil && val > thresholdMs {
+				GinkgoWriter.Printf("  %s\n", line)
+			}
+		}
+	}
+}
+
 // checkWhetherMetricsHealthy checks that the metrics are healthy
 func checkWhetherMetricsHealthy(body string) {
 	// 1) Check memory usage: go_memstats_alloc_bytes
@@ -115,17 +134,26 @@ func checkWhetherMetricsHealthy(body string) {
 		GinkgoWriter.Printf("✓ No errors found above limit\n")
 	}
 
-	// 4) Check 99th percentile of reconcile time for control loop
-	//GinkgoWriter.Println("Checking control loop reconcile time (99th percentile)...")
+	// 4) Check reconcile time quantiles for control loop
+	GinkgoWriter.Println("\nControl loop reconcile time quantiles:")
+	quantiles := []string{"0.5", "0.9", "0.95", "0.99"}
+	for _, q := range quantiles {
+		val, found := parseSummaryQuantile(body,
+			"umh_core_reconcile_duration_milliseconds", q, "control_loop", "main")
+		if found {
+			GinkgoWriter.Printf("  %s quantile: %.2f ms\n", q, val)
+		} else {
+			GinkgoWriter.Printf("  %s quantile: not found\n", q)
+		}
+	}
+
+	// Print all reconcile durations over 20ms for debugging
+	printAllReconcileDurations(body, 20.0)
+
+	// Still enforce the 99th percentile threshold
 	recon99, found := parseSummaryQuantile(body,
 		"umh_core_reconcile_duration_milliseconds", "0.99", "control_loop", "main")
-
-	// Always expect to find this metric
 	Expect(found).To(BeTrue(), "Expected to find 0.99 quantile for control_loop's reconcile time")
-
-	// Check the value against the threshold
-	GinkgoWriter.Printf("Control loop reconcile time 99th percentile: %.2f ms (limit: %.1f ms)\n",
-		recon99, maxReconcileTime99th)
 	Expect(recon99).To(BeNumerically("<=", maxReconcileTime99th),
 		"99th percentile reconcile time (%.2f ms) exceeded %.1f ms", recon99, maxReconcileTime99th)
 }

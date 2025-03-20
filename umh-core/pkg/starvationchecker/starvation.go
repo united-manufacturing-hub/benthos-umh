@@ -1,4 +1,4 @@
-package metrics
+package starvationchecker
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 	"go.uber.org/zap"
 )
 
@@ -80,7 +81,7 @@ func (s *StarvationChecker) checkStarvationLoop() {
 
 			if timeSinceLastReconcile > s.starvationThreshold {
 				starvationTime := timeSinceLastReconcile.Seconds()
-				AddStarvationTime(starvationTime)
+				metrics.AddStarvationTime(starvationTime)
 				s.logger.Warnf("Control loop starvation detected: %.2f seconds since last reconcile", starvationTime)
 			} else {
 				s.logger.Infof("Control loop is healthy, last reconcile was %.2f seconds ago", timeSinceLastReconcile.Seconds())

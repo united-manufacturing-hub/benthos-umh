@@ -27,10 +27,10 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/backoff"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
-	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/benthos"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/starvationchecker"
 	"go.uber.org/zap"
 )
 
@@ -65,7 +65,7 @@ type ControlLoop struct {
 	managers          []fsm.FSMManager[any]
 	configManager     config.ConfigManager
 	logger            *zap.SugaredLogger
-	starvationChecker *metrics.StarvationChecker
+	starvationChecker *starvationchecker.StarvationChecker
 	currentTick       uint64
 }
 
@@ -84,14 +84,14 @@ func NewControlLoop() *ControlLoop {
 	// Create the managers
 	managers := []fsm.FSMManager[any]{
 		s6.NewS6Manager("Core"),
-		benthos.NewBenthosManager("Core"),
+		//benthos.NewBenthosManager("Core"),
 	}
 
 	// Create the config manager with backoff support
 	configManager := config.NewFileConfigManagerWithBackoff()
 
 	// Create a starvation checker
-	starvationChecker := metrics.NewStarvationChecker(starvationThreshold)
+	starvationChecker := starvationchecker.NewStarvationChecker(starvationThreshold)
 
 	metrics.InitErrorCounter(metrics.ComponentControlLoop, "main")
 

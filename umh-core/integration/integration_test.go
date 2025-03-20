@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -247,6 +248,17 @@ benthos: []
 		})
 
 		AfterAll(func() {
+			// Get the docker logs and find any [WARN] and [ERROR] messages
+			out, err := runDockerCommand("logs", containerName)
+			if err != nil {
+				fmt.Printf("Failed to get container logs: %v\n", err)
+				return
+			}
+			for _, line := range strings.Split(out, "\n") {
+				if strings.Contains(line, "[WARN]") || strings.Contains(line, "[ERROR]") {
+					fmt.Printf("Container logs:\n%s\n", line)
+				}
+			}
 			StopContainer()
 		})
 

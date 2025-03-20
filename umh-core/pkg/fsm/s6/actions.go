@@ -25,6 +25,11 @@ import (
 
 // InitiateS6Create attempts to create the S6 service directory structure.
 func (s *S6Instance) initiateS6Create(ctx context.Context) error {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s.baseFSMInstance.GetID()+".initiateS6Create", time.Since(start))
+	}()
+
 	s.baseFSMInstance.GetLogger().Debugf("Starting Action: Creating S6 service %s ...", s.baseFSMInstance.GetID())
 
 	// Check if we have a config with command or other settings
@@ -51,6 +56,11 @@ func (s *S6Instance) initiateS6Create(ctx context.Context) error {
 // InitiateS6Remove attempts to remove the S6 service directory structure.
 // It requires the service to be stopped before removal.
 func (s *S6Instance) initiateS6Remove(ctx context.Context) error {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s.baseFSMInstance.GetID()+".initiateS6Remove", time.Since(start))
+	}()
+
 	s.baseFSMInstance.GetLogger().Debugf("Starting Action: Removing S6 service %s ...", s.baseFSMInstance.GetID())
 
 	// First ensure the service is stopped
@@ -70,6 +80,11 @@ func (s *S6Instance) initiateS6Remove(ctx context.Context) error {
 
 // InitiateS6Start attempts to start the S6 service.
 func (s *S6Instance) initiateS6Start(ctx context.Context) error {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s.baseFSMInstance.GetID()+".initiateS6Start", time.Since(start))
+	}()
+
 	s.baseFSMInstance.GetLogger().Debugf("Starting Action: Starting S6 service %s ...", s.baseFSMInstance.GetID())
 
 	err := s.service.Start(ctx, s.servicePath)
@@ -83,6 +98,11 @@ func (s *S6Instance) initiateS6Start(ctx context.Context) error {
 
 // InitiateS6Stop attempts to stop the S6 service.
 func (s *S6Instance) initiateS6Stop(ctx context.Context) error {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s.baseFSMInstance.GetID()+".initiateS6Stop", time.Since(start))
+	}()
+
 	s.baseFSMInstance.GetLogger().Debugf("Starting Action: Stopping S6 service %s ...", s.baseFSMInstance.GetID())
 
 	err := s.service.Stop(ctx, s.servicePath)
@@ -96,6 +116,11 @@ func (s *S6Instance) initiateS6Stop(ctx context.Context) error {
 
 // InitiateS6Restart attempts to restart the S6 service.
 func (s *S6Instance) initiateS6Restart(ctx context.Context) error {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s.baseFSMInstance.GetID()+".initiateS6Restart", time.Since(start))
+	}()
+
 	s.baseFSMInstance.GetLogger().Debugf("Starting Action: Restarting S6 service %s ...", s.baseFSMInstance.GetID())
 
 	err := s.service.Restart(ctx, s.servicePath)
@@ -111,7 +136,6 @@ func (s *S6Instance) initiateS6Restart(ctx context.Context) error {
 func (s *S6Instance) updateObservedState(ctx context.Context) error {
 
 	// Measure status time
-	start := time.Now()
 	info, err := s.service.Status(ctx, s.servicePath)
 	if err != nil {
 		s.ObservedState.ServiceInfo.Status = s6service.ServiceUnknown
@@ -125,7 +149,6 @@ func (s *S6Instance) updateObservedState(ctx context.Context) error {
 		s.baseFSMInstance.GetLogger().Errorf("error updating observed state for %s: %s", s.baseFSMInstance.GetID(), err)
 		return err
 	}
-	metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s.baseFSMInstance.GetID()+".updateObservedState.status", time.Since(start))
 
 	// Store the raw service info
 	s.ObservedState.ServiceInfo = info
@@ -148,13 +171,11 @@ func (s *S6Instance) updateObservedState(ctx context.Context) error {
 	}
 
 	// Fetch the actual service config from s6
-	start = time.Now()
 	config, err := s.service.GetConfig(ctx, s.servicePath)
 	if err != nil {
 		return fmt.Errorf("failed to get S6 service config for %s: %w", s.baseFSMInstance.GetID(), err)
 	}
 	s.ObservedState.ObservedS6ServiceConfig = config
-	metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s.baseFSMInstance.GetID()+".updateObservedState.config", time.Since(start))
 
 	// TODO: trigger a reconcile if observed config is different from desired config
 	// the easiest way to do this is causing this instance to be removed, which will trigger a re-create by the manager

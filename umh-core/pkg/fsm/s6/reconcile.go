@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
@@ -20,13 +21,16 @@ import (
 // Over multiple calls, it converges the actual state to the desired state. Transitions
 // that fail are retried in subsequent reconcile calls after a backoff period.
 func (s *S6Instance) Reconcile(ctx context.Context, tick uint64) (err error, reconciled bool) {
+	start := time.Now()
 	s6InstanceName := s.baseFSMInstance.GetID()
 	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s6InstanceName, time.Since(start))
 		if err != nil {
 			s.baseFSMInstance.GetLogger().Errorf("error reconciling S6 instance %s: %s", s.baseFSMInstance.GetID(), err)
 			s.PrintState()
 			// Add metrics for error
 			metrics.IncErrorCount(metrics.ComponentS6Instance, s6InstanceName)
+
 		}
 	}()
 
@@ -77,6 +81,11 @@ func (s *S6Instance) Reconcile(ctx context.Context, tick uint64) (err error, rec
 // reconcileExternalChanges checks if the S6Instance service status has changed
 // externally (e.g., if someone manually stopped or started it, or if it crashed)
 func (s *S6Instance) reconcileExternalChanges(ctx context.Context) error {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s.baseFSMInstance.GetID()+".reconcileExternalChanges", time.Since(start))
+	}()
+
 	err := s.updateObservedState(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to update observed state: %w", err)
@@ -90,6 +99,11 @@ func (s *S6Instance) reconcileExternalChanges(ctx context.Context) error {
 // and exist in ExternalState.
 // This is to ensure full testability of the FSM.
 func (s *S6Instance) reconcileStateTransition(ctx context.Context) (err error, reconciled bool) {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s.baseFSMInstance.GetID()+".reconcileStateTransition", time.Since(start))
+	}()
+
 	currentState := s.baseFSMInstance.GetCurrentFSMState()
 	desiredState := s.baseFSMInstance.GetDesiredFSMState()
 
@@ -129,6 +143,11 @@ func (s *S6Instance) reconcileStateTransition(ctx context.Context) (err error, r
 
 // reconcileLifecycleStates handles states related to instance lifecycle (creating/removing)
 func (b *S6Instance) reconcileLifecycleStates(ctx context.Context, currentState string) (err error, reconciled bool) {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Instance, b.baseFSMInstance.GetID()+".reconcileLifecycleStates", time.Since(start))
+	}()
+
 	// Independent what the desired state is, we always need to reconcile the lifecycle states first
 	switch currentState {
 	case internal_fsm.LifecycleStateToBeCreated:
@@ -154,6 +173,11 @@ func (b *S6Instance) reconcileLifecycleStates(ctx context.Context, currentState 
 
 // reconcileOperationalStates handles states related to instance operations (starting/stopping)
 func (b *S6Instance) reconcileOperationalStates(ctx context.Context, currentState string, desiredState string) (err error, reconciled bool) {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Instance, b.baseFSMInstance.GetID()+".reconcileOperationalStates", time.Since(start))
+	}()
+
 	switch desiredState {
 	case OperationalStateRunning:
 		return b.reconcileTransitionToRunning(ctx, currentState)
@@ -167,6 +191,11 @@ func (b *S6Instance) reconcileOperationalStates(ctx context.Context, currentStat
 // reconcileTransitionToRunning handles transitions when the desired state is Running.
 // It deals with moving from Stopped/Failed to Starting and then to Running.
 func (s *S6Instance) reconcileTransitionToRunning(ctx context.Context, currentState string) (err error, reconciled bool) {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s.baseFSMInstance.GetID()+".reconcileTransitionToRunning", time.Since(start))
+	}()
+
 	if currentState == OperationalStateStopped {
 		// Attempt to initiate start
 		if err := s.initiateS6Start(ctx); err != nil {
@@ -193,6 +222,11 @@ func (s *S6Instance) reconcileTransitionToRunning(ctx context.Context, currentSt
 // It deals with moving from Running/Starting/Failed to Stopping and then to Stopped.
 // It returns a boolean indicating whether the instance is stopped.
 func (s *S6Instance) reconcileTransitionToStopped(ctx context.Context, currentState string) (err error, reconciled bool) {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveReconcileTime(metrics.ComponentS6Instance, s.baseFSMInstance.GetID()+".reconcileTransitionToStopped", time.Since(start))
+	}()
+
 	if currentState == OperationalStateRunning || currentState == OperationalStateStarting {
 		// Attempt to initiate a stop
 		if err := s.initiateS6Stop(ctx); err != nil {

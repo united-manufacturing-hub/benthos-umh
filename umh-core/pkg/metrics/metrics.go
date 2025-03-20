@@ -17,6 +17,8 @@ const (
 	ComponentBenthosManager  = "benthos_manager"
 	ComponentS6Instance      = "s6_instance"
 	ComponentBenthosInstance = "benthos_instance"
+	ComponentS6Service       = "s6_service"
+	ComponentFilesystem      = "filesystem"
 )
 
 var (
