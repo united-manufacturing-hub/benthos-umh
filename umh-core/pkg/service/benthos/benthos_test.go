@@ -60,7 +60,7 @@ var _ = Describe("Benthos Service", func() {
 					Count: 5,
 				},
 			},
-			Processors: []ProcessorConfig{
+			Processors: []ProcessorMetricsConfig{
 				{
 					Path:          "/pipeline/processors/0",
 					Label:         "0",
@@ -109,7 +109,7 @@ var _ = Describe("Benthos Service", func() {
 							Count: 5,
 						},
 					},
-					Processors: []ProcessorConfig{
+					Processors: []ProcessorMetricsConfig{
 						{
 							Path:          "/pipeline/processors/0",
 							Label:         "0",
@@ -216,9 +216,10 @@ var _ = Describe("Benthos Service", func() {
 
 				Expect(yaml).To(ContainSubstring("input: []"))
 				Expect(yaml).To(ContainSubstring("output: []"))
-				Expect(yaml).To(ContainSubstring("pipeline: []"))
-				Expect(yaml).To(ContainSubstring("http:\n  address: \"0.0.0.0:4195\""))
-				Expect(yaml).To(ContainSubstring("logger:\n  level: \"INFO\""))
+				Expect(yaml).To(ContainSubstring("pipeline:"))
+				Expect(yaml).To(ContainSubstring("processors: []"))
+				Expect(yaml).To(ContainSubstring("http:\n  address: 0.0.0.0:4195"))
+				Expect(yaml).To(ContainSubstring("logger:\n  level: INFO"))
 			})
 		})
 
@@ -258,10 +259,10 @@ var _ = Describe("Benthos Service", func() {
 				Expect(yaml).To(ContainSubstring("kafka:\n    topic: test-output"))
 				Expect(yaml).To(ContainSubstring("processors:\n    - text:\n        operator: to_upper"))
 				Expect(yaml).To(ContainSubstring("- memory:\n      ttl: 60s"))
-				Expect(yaml).To(ContainSubstring("- local:\n      count: 100"))
+				Expect(yaml).To(ContainSubstring("- local:\n      count: \"100\""))
 				Expect(yaml).To(ContainSubstring("memory:\n    limit: 10MB"))
-				Expect(yaml).To(ContainSubstring("http:\n  address: \"0.0.0.0:4195\""))
-				Expect(yaml).To(ContainSubstring("logger:\n  level: \"INFO\""))
+				Expect(yaml).To(ContainSubstring("http:\n  address: 0.0.0.0:4195"))
+				Expect(yaml).To(ContainSubstring("logger:\n  level: INFO"))
 			})
 		})
 

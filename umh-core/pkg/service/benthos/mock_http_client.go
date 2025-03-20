@@ -114,7 +114,7 @@ func (m *MockHTTPClient) SetReadyStatus(statusCode int, inputConnected bool, out
 type MetricsConfig struct {
 	Input      MetricsConfigInput
 	Output     MetricsConfigOutput
-	Processors []ProcessorConfig
+	Processors []ProcessorMetricsConfig
 }
 
 // MetricsConfigInput represents input metrics configuration
@@ -137,8 +137,8 @@ type MetricsConfigOutput struct {
 	LatencyNS        LatencyConfig
 }
 
-// ProcessorConfig represents processor metrics configuration
-type ProcessorConfig struct {
+// ProcessorMetricsConfig represents processor metrics configuration
+type ProcessorMetricsConfig struct {
 	Path          string // e.g. "root.pipeline.processors.0"
 	Label         string // e.g. "0"
 	Received      int64

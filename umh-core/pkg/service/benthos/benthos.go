@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"text/template"
 	"time"
 
 	dto "github.com/prometheus/client_model/go"
@@ -176,7 +175,6 @@ type connStatus struct {
 // BenthosService is the default implementation of the IBenthosService interface
 type BenthosService struct {
 	logger           *zap.SugaredLogger
-	template         *template.Template
 	s6Manager        *s6fsm.S6Manager
 	s6ServiceConfigs []config.S6FSMConfig
 	httpClient       HTTPClient
@@ -198,7 +196,6 @@ func NewDefaultBenthosService(name string, opts ...BenthosServiceOption) *Bentho
 	managerName := fmt.Sprintf("%s%s", logger.ComponentBenthosService, name)
 	service := &BenthosService{
 		logger:       logger.For(managerName),
-		template:     benthosYamlTemplate,
 		s6Manager:    s6fsm.NewS6Manager(managerName),
 		httpClient:   newDefaultHTTPClient(),
 		metricsState: NewBenthosMetricsState(),
@@ -222,9 +219,16 @@ func (s *BenthosService) generateBenthosYaml(config *config.BenthosServiceConfig
 		config.LogLevel = "INFO"
 	}
 
-	var b bytes.Buffer
-	err := s.template.Execute(&b, config)
-	return b.String(), err
+	return RenderBenthosYAML(
+		config.Input,
+		config.Output,
+		config.Pipeline,
+		config.CacheResources,
+		config.RateLimitResources,
+		config.Buffer,
+		config.MetricsPort,
+		config.LogLevel,
+	)
 }
 
 // getS6ServiceName returns the S6 service name for a given benthos instance

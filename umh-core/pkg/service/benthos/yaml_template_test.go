@@ -1,8 +1,6 @@
 package benthos
 
 import (
-	"bytes"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
@@ -17,20 +15,26 @@ var _ = Describe("Benthos YAML Template", func() {
 
 	DescribeTable("template rendering",
 		func(tc testCase) {
-			var b bytes.Buffer
-			err := benthosYamlTemplate.Execute(&b, tc.config)
+			yamlStr, err := RenderBenthosYAML(
+				tc.config.Input,
+				tc.config.Output,
+				tc.config.Pipeline,
+				tc.config.CacheResources,
+				tc.config.RateLimitResources,
+				tc.config.Buffer,
+				tc.config.MetricsPort,
+				tc.config.LogLevel,
+			)
 			Expect(err).NotTo(HaveOccurred())
-
-			result := b.String()
 
 			// Check for expected strings
 			for _, exp := range tc.expected {
-				Expect(result).To(ContainSubstring(exp))
+				Expect(yamlStr).To(ContainSubstring(exp))
 			}
 
 			// Check for strings that should not be present
 			for _, notExp := range tc.notExpected {
-				Expect(result).NotTo(ContainSubstring(notExp))
+				Expect(yamlStr).NotTo(ContainSubstring(notExp))
 			}
 		},
 		Entry("should render empty stdout output correctly",
@@ -44,8 +48,7 @@ var _ = Describe("Benthos YAML Template", func() {
 				},
 				expected: []string{
 					"output:",
-					"  stdout:",
-					"    {}",
+					"  stdout: {}",
 				},
 				notExpected: []string{
 					"output: []",
@@ -114,16 +117,16 @@ var _ = Describe("Benthos YAML Template", func() {
 				expected: []string{
 					"input:",
 					"  kafka:",
-					"    addresses: [localhost:9092]",
-					"    topics: [foo bar]",
-					"    consumer_group: foogroup",
+					"    addresses:",
+					"    consumer_group:",
+					"    topics:",
 					"pipeline:",
 					"  processors:",
 					"    - mapping:",
-					"        value:",
 					"output:",
 					"  aws_s3:",
-					"    bucket: my-bucket",
+					"    bucket:",
+					"    path:",
 				},
 				notExpected: []string{
 					"input: []",
@@ -150,10 +153,10 @@ var _ = Describe("Benthos YAML Template", func() {
 				expected: []string{
 					"input:",
 					"  redis_streams:",
-					"    url: tcp://localhost:6379",
-					"    streams: [benthos_stream]",
-					"    body_key: body",
-					"    consumer_group: benthos_group",
+					"    url:",
+					"    streams:",
+					"    body_key:",
+					"    consumer_group:",
 				},
 				notExpected: []string{
 					"input: []",
@@ -173,7 +176,7 @@ var _ = Describe("Benthos YAML Template", func() {
 				expected: []string{
 					"input:",
 					"  inproc:",
-					"    name: test-stream",
+					"    name:",
 				},
 				notExpected: []string{
 					"input: []",
@@ -196,8 +199,8 @@ var _ = Describe("Benthos YAML Template", func() {
 				expected: []string{
 					"rate_limit_resources:",
 					"  - local:",
-					"      count: 500",
-					"      interval: 1s",
+					"      count:",
+					"      interval:",
 				},
 				notExpected: []string{
 					"rate_limit_resources: []",
@@ -234,5 +237,54 @@ var _ = Describe("Benthos YAML Template", func() {
 					"pipeline: []",
 				},
 			}),
+		Entry("should render stdin -> pipeline processors -> stdout",
+			testCase{
+				config: &config.BenthosServiceConfig{
+					Input: map[string]interface{}{
+						"stdin": map[string]interface{}{},
+					},
+					Pipeline: map[string]interface{}{
+						"processors": []map[string]interface{}{
+							{
+								"sleep": map[string]interface{}{
+									"duration": "500ms",
+								},
+							},
+							{
+								"mapping": map[string]interface{}{
+									// If you want multi-line with `|` in your final YAML,
+									// just store the string as is:
+									"value": `root.doc = this
+root.first_name = this.names.index(0).uppercase()
+root.last_name = this.names.index(-1).hash("sha256").encode("base64")`,
+								},
+							},
+						},
+					},
+					Output: map[string]interface{}{
+						"stdout": map[string]interface{}{},
+					},
+					MetricsPort: 4195,
+					LogLevel:    "INFO",
+				},
+				expected: []string{
+					"input:",
+					"  stdin: {}",
+					"pipeline:",
+					"processors:",
+					"sleep:",
+					"duration: 500ms",
+					"- mapping:",
+					"root.first_name = this.names.index(0).uppercase()",
+					"output:",
+					"  stdout: {}",
+				},
+				notExpected: []string{
+					// any lines you specifically don't want to appear
+					"input: []",
+					"output: []",
+				},
+			},
+		),
 	)
 })

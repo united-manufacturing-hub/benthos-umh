@@ -705,6 +705,7 @@ var _ = Describe("BenthosManager", func() {
 				"Service1 should be degraded")
 			Expect(service2State).To(Equal(OperationalStateIdle),
 				"Service2 should remain healthy")
+			// For some reasons this sometimes fails?? TODO
 		})
 	})
 
