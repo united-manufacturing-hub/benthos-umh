@@ -118,6 +118,11 @@ jobs:
       - name: Start docker container using docker-compose
         run: docker-compose -f tests/docker-compose.yaml up -d
 
+      - name: Debug container status
+        run: |
+          docker ps
+          docker logs $(docker ps -q -f ancestor=mcr.microsoft.com/iotedge/opc-plc:2.12.29)
+
       - name: Test
         env:
           TEST_WAGO_USERNAME: ${{ secrets.TEST_WAGO_USERNAME }}
