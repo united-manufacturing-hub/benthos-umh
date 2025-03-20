@@ -123,6 +123,10 @@ jobs:
           docker ps
           docker logs $(docker ps -q -f ancestor=mcr.microsoft.com/iotedge/opc-plc:2.12.29)
 
+      - name: Inspect container network
+        run: |
+          docker exec $(docker ps -q -f ancestor=mcr.microsoft.com/iotedge/opc-plc:2.12.29) netstat -tuln
+
       - name: Test
         env:
           TEST_WAGO_USERNAME: ${{ secrets.TEST_WAGO_USERNAME }}
