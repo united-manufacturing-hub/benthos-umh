@@ -86,12 +86,6 @@ func NewBenthosInstance(
 // SetDesiredFSMState safely updates the desired state
 // But ensures that the desired state is a valid state and that it is also a reasonable state
 // e.g., nobody wants to have an instance in the "starting" state, that is just intermediate
-//
-// Note: When transitioning from Stopped to Active, be aware that the service
-// might remain in Stopped state. This happens because ObservedState.ServiceInfo.S6FSMState
-// may not get properly refreshed during reconciliation when connection refused errors occur.
-// For reliable transitions from stopped to active, ensure proper reconciliation
-// takes place to update ObservedState.
 func (b *BenthosInstance) SetDesiredFSMState(state string) error {
 	// For Benthos, we only allow setting Stopped or Active as desired states
 	if state != OperationalStateStopped &&
