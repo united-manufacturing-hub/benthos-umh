@@ -81,13 +81,17 @@ func NewBackoffManager(config Config) *BackoffManager {
 	// Create exponential backoff with the provided settings
 	baseBackoff := backoff.NewExponentialBackOff()
 	// We're using ticks, so we use time.Duration(1) to represent 1 tick
-	baseBackoff.InitialInterval = time.Duration(config.InitialInterval)
-	baseBackoff.MaxInterval = time.Duration(config.MaxInterval)
+	baseBackoff.InitialInterval = time.Duration(config.InitialInterval) * time.Millisecond
+	baseBackoff.MaxInterval = time.Duration(config.MaxInterval) * time.Millisecond
 	// Use our dummy clock instead of nil
 	baseBackoff.Clock = &TickClock{}
 
+	// Disable jitter for better determinism in tests
+	baseBackoff.RandomizationFactor = 0
+
 	// Wrap with max retries - after MaxRetries failures, it will return backoff.Stop
 	backoffWithMaxRetries := backoff.WithMaxRetries(baseBackoff, config.MaxRetries)
+	backoffWithMaxRetries.Reset()
 
 	return &BackoffManager{
 		backoff:          backoffWithMaxRetries,
@@ -121,7 +125,8 @@ func (m *BackoffManager) SetError(err error, currentTick uint64) bool {
 	}
 
 	// Extract tick count
-	ticksToWait := uint64(next)
+	millis := next.Milliseconds()
+	ticksToWait := uint64(millis)
 	if ticksToWait < 1 {
 		ticksToWait = 1 // Minimum of 1 tick
 	}

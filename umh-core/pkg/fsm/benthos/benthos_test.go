@@ -2,6 +2,7 @@ package benthos
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -534,14 +535,103 @@ var _ = Describe("Benthos FSM", func() {
 	})
 
 	Context("Stopping Flow", func() {
-		// TODO: Test stopping from Active state
 		It("should stop gracefully from Active state", func() {
-			// To be implemented
+			// First reach Active state
+			tick, err := getInstanceInIdleState(testID, mockService, instance, ctx, tick)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Transition to Active
+			mockService.SetServiceState(testID, benthossvc.ServiceStateFlags{
+				IsS6Running:            true,
+				IsConfigLoaded:         true,
+				IsHealthchecksPassed:   true,
+				IsRunningWithoutErrors: true,
+				HasProcessingActivity:  true,
+			})
+			mockService.ServiceStates[testID].BenthosStatus.MetricsState = &benthossvc.BenthosMetricsState{
+				IsActive: true,
+			}
+			err, _ = instance.Reconcile(ctx, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateActive))
+
+			// Trigger stop
+			Expect(instance.SetDesiredFSMState(OperationalStateStopped)).To(Succeed())
+
+			// First reconcile should transition to Stopping
+			err, reconciled := instance.Reconcile(ctx, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reconciled).To(BeTrue())
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopping))
+			Expect(mockService.StopBenthosCalled).To(BeTrue())
+
+			// Simulate S6 stopping
+			mockService.SetServiceState(testID, benthossvc.ServiceStateFlags{
+				IsS6Running:            false,
+				S6FSMState:             s6fsm.OperationalStateStopped,
+				IsConfigLoaded:         false,
+				IsHealthchecksPassed:   false,
+				IsRunningWithoutErrors: false,
+			})
+
+			// Final reconcile should transition to Stopped
+			err, reconciled = instance.Reconcile(ctx, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reconciled).To(BeTrue())
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped))
 		})
 
-		// TODO: Test stopping from Degraded state
 		It("should stop gracefully from Degraded state", func() {
-			// To be implemented
+			// First reach Degraded state
+			tick, err := getInstanceInIdleState(testID, mockService, instance, ctx, tick)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Transition to Degraded
+			mockService.SetServiceState(testID, benthossvc.ServiceStateFlags{
+				IsS6Running:            true,
+				IsConfigLoaded:         true,
+				IsHealthchecksPassed:   false,
+				IsRunningWithoutErrors: false,
+				HasProcessingActivity:  true,
+			})
+			mockService.ServiceStates[testID].BenthosStatus.HealthCheck = benthossvc.HealthCheck{
+				IsLive:  false,
+				IsReady: false,
+			}
+			err, _ = instance.Reconcile(ctx, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateDegraded))
+
+			// Trigger stop
+			Expect(instance.SetDesiredFSMState(OperationalStateStopped)).To(Succeed())
+
+			// First reconcile should transition to Stopping
+			err, reconciled := instance.Reconcile(ctx, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reconciled).To(BeTrue())
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopping))
+			Expect(mockService.StopBenthosCalled).To(BeTrue())
+
+			// Simulate S6 stopping
+			mockService.SetServiceState(testID, benthossvc.ServiceStateFlags{
+				IsS6Running:            false,
+				S6FSMState:             s6fsm.OperationalStateStopped,
+				IsConfigLoaded:         false,
+				IsHealthchecksPassed:   false,
+				IsRunningWithoutErrors: false,
+			})
+
+			// Final reconcile should transition to Stopped
+			err, reconciled = instance.Reconcile(ctx, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reconciled).To(BeTrue())
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped))
 		})
 	})
 
@@ -637,14 +727,102 @@ var _ = Describe("Benthos FSM", func() {
 	})
 
 	Context("Error Handling", func() {
-		// TODO: Test startup error handling
 		It("should handle errors during startup", func() {
-			// To be implemented
+			// Simulate service creation failure
+			mockService.AddBenthosToS6ManagerError = fmt.Errorf("simulated creation error")
+
+			// Initial state: to_be_created
+			Expect(instance.GetCurrentFSMState()).To(Equal(internalfsm.LifecycleStateToBeCreated))
+
+			// First reconcile attempt - should trigger error and start backoff
+			err, reconciled := instance.Reconcile(ctx, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reconciled).To(BeFalse())
+			Expect(instance.GetCurrentFSMState()).To(Equal(internalfsm.LifecycleStateToBeCreated))
+
+			// Verify service creation was attempted
+			Expect(mockService.AddBenthosToS6ManagerCalled).To(BeTrue())
+
+			// Clear the error immediately and verify recovery
+			mockService.AddBenthosToS6ManagerError = nil
+			mockService.ServiceStates[testID] = &benthossvc.ServiceInfo{
+				S6FSMState: s6fsm.OperationalStateStopped,
+			}
+
+			// Next reconcile should succeed despite previous error
+			err, reconciled = instance.Reconcile(ctx, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reconciled).To(BeTrue())
+			Expect(instance.GetCurrentFSMState()).To(Equal(internalfsm.LifecycleStateCreating))
+
+			// Complete the creation process
+			err, reconciled = instance.Reconcile(ctx, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reconciled).To(BeTrue())
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped))
 		})
 
-		// TODO: Test runtime error handling
 		It("should handle errors during runtime", func() {
-			// To be implemented
+			// Reach Active state first
+			tick, err := getInstanceInIdleState(testID, mockService, instance, ctx, tick)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Transition to Active
+			mockService.SetServiceState(testID, benthossvc.ServiceStateFlags{
+				IsS6Running:            true,
+				IsConfigLoaded:         true,
+				IsHealthchecksPassed:   true,
+				IsRunningWithoutErrors: true,
+				HasProcessingActivity:  true,
+			})
+			mockService.ServiceStates[testID].BenthosStatus.MetricsState = &benthossvc.BenthosMetricsState{
+				IsActive: true,
+			}
+			err, _ = instance.Reconcile(ctx, tick)
+			tick++
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateActive))
+
+			// Simulate runtime failure (service crash)
+			mockService.SetServiceState(testID, benthossvc.ServiceStateFlags{
+				IsS6Running:            false,
+				S6FSMState:             s6fsm.OperationalStateStopped,
+				IsConfigLoaded:         false,
+				IsHealthchecksPassed:   false,
+				IsRunningWithoutErrors: false,
+			})
+
+			// Detect degradation
+			err, reconciled := instance.Reconcile(ctx, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reconciled).To(BeTrue())
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateDegraded))
+
+			// Verify recovery attempt
+			mockService.SetServiceState(testID, benthossvc.ServiceStateFlags{
+				IsS6Running:            true,
+				S6FSMState:             s6fsm.OperationalStateRunning,
+				IsConfigLoaded:         true,
+				IsHealthchecksPassed:   true,
+				IsRunningWithoutErrors: true,
+			})
+			mockService.ServiceStates[testID].BenthosStatus.HealthCheck = benthossvc.HealthCheck{
+				IsLive:  true,
+				IsReady: true,
+			}
+
+			// Add stability checks
+			mockService.ServiceStates[testID].S6ObservedState.ServiceInfo.Uptime = 15
+
+			// Reconcile to recover
+			err, reconciled = instance.Reconcile(ctx, tick)
+			tick++
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reconciled).To(BeTrue())
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateIdle))
 		})
 	})
 })

@@ -14,6 +14,9 @@ clean:
 test:
 	go test -v ./...
 
+unit-test:
+	ginkgo -r -v --label-filter='!integration' ./...
+
 test-empty: clean build
 	@mkdir -p $(PWD)/data
 	@cp $(PWD)/examples/example-config-empty.yaml $(PWD)/data/config.yaml

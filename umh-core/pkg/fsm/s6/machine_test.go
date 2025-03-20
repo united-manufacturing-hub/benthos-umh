@@ -166,12 +166,28 @@ var _ = Describe("S6 FSM", func() {
 		Expect(instance.baseFSMInstance.GetError()).NotTo(BeNil())
 		Expect(instance.baseFSMInstance.GetError().Error()).To(ContainSubstring("failed to start service"))
 
-		// Test that backoff prevents immediate retry
+		// One failure is not causing the backoff, only a second one will actually skip a tick
 		mockService.StartCalled = false // Reset flag
-		err, _ = instance.Reconcile(ctx, tick)
+		err, reconciled := instance.Reconcile(ctx, tick)
 		tick++
 		Expect(err).NotTo(HaveOccurred())
-		Expect(mockService.StartCalled).To(BeFalse()) // Start shouldn't be called again due to backoff
+		Expect(reconciled).To(BeFalse())
+		Expect(mockService.StartCalled).To(BeTrue()) // Start should be called again
+
+		mockService.StartCalled = false // Reset flag
+		err, reconciled = instance.Reconcile(ctx, tick)
+		tick++
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reconciled).To(BeFalse())
+		Expect(mockService.StartCalled).To(BeTrue()) // Start should be called again
+
+		// This time the backoff will kick in
+		mockService.StartCalled = false // Reset flag
+		err, reconciled = instance.Reconcile(ctx, tick)
+		tick++
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reconciled).To(BeFalse())
+		Expect(mockService.StartCalled).To(BeFalse()) // Start shouldnt be called again
 
 		// Simulate backoff elapsing
 		instance.baseFSMInstance.ResetState()

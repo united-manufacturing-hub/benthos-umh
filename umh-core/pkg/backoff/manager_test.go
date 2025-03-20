@@ -1,15 +1,14 @@
-package backoff_test
+package backoff
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
-
-	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/backoff"
 )
 
 func TestBackoff(t *testing.T) {
@@ -19,8 +18,8 @@ func TestBackoff(t *testing.T) {
 
 var _ = Describe("BackoffManager", func() {
 	var (
-		manager *backoff.BackoffManager
-		config  backoff.Config
+		manager *BackoffManager
+		config  Config
 		logger  *zap.SugaredLogger
 		tick    uint64
 	)
@@ -32,16 +31,16 @@ var _ = Describe("BackoffManager", func() {
 
 		// Create a config with very short but predictable intervals for testing
 		// Using fixed values to make tests more reliable
-		config = backoff.DefaultConfig("test-backoff-manager", logger)
+		config = DefaultConfig("test-backoff-manager", logger)
 
-		manager = backoff.NewBackoffManager(config)
+		manager = NewBackoffManager(config)
 		tick = 0
 	})
 
 	Context("when initializing", func() {
 		It("should create a manager with default config", func() {
-			defaultConfig := backoff.DefaultConfig("DefaultComponent", logger)
-			defaultManager := backoff.NewBackoffManager(defaultConfig)
+			defaultConfig := DefaultConfig("DefaultComponent", logger)
+			defaultManager := NewBackoffManager(defaultConfig)
 			Expect(defaultManager).NotTo(BeNil())
 		})
 
@@ -75,9 +74,9 @@ var _ = Describe("BackoffManager", func() {
 
 			// Need to access the impl directly to set exact retries
 			// Create a new manager with a shorter MaxRetries for this test
-			specialConfig := backoff.DefaultConfig("test-backoff-manager", logger)
+			specialConfig := DefaultConfig("test-backoff-manager", logger)
 			specialConfig.MaxRetries = 2
-			specialManager := backoff.NewBackoffManager(specialConfig)
+			specialManager := NewBackoffManager(specialConfig)
 
 			// First error - not permanent
 			isPermanent := specialManager.SetError(testErr, tick)
@@ -99,8 +98,8 @@ var _ = Describe("BackoffManager", func() {
 
 			// Check that we get a permanent failure error
 			backoffErr := specialManager.GetBackoffError(tick)
-			Expect(backoff.IsPermanentFailureError(backoffErr)).To(BeTrue(), "Error should indicate permanent failure")
-			Expect(backoff.IsTemporaryBackoffError(backoffErr)).To(BeFalse(), "Error should not indicate temporary failure")
+			Expect(IsPermanentFailureError(backoffErr)).To(BeTrue(), "Error should indicate permanent failure")
+			Expect(IsTemporaryBackoffError(backoffErr)).To(BeFalse(), "Error should not indicate temporary failure")
 		})
 	})
 
@@ -123,7 +122,6 @@ var _ = Describe("BackoffManager", func() {
 			// Set an error to enter backoff state
 			testErr := errors.New("test error")
 			manager.SetError(testErr, tick)
-			tick++
 			Expect(manager.ShouldSkipOperation(tick)).To(BeTrue())
 
 			// Reset and check again
@@ -138,19 +136,18 @@ var _ = Describe("BackoffManager", func() {
 			// Set an error but not permanently failed
 			testErr := errors.New("test error")
 			manager.SetError(testErr, tick)
-			tick++
 
 			backoffErr := manager.GetBackoffError(tick)
 			tick++
-			Expect(backoff.IsTemporaryBackoffError(backoffErr)).To(BeTrue())
-			Expect(backoff.IsPermanentFailureError(backoffErr)).To(BeFalse())
+			Expect(IsTemporaryBackoffError(backoffErr)).To(BeTrue())
+			Expect(IsPermanentFailureError(backoffErr)).To(BeFalse())
 		})
 
 		It("should generate appropriate permanent backoff errors", func() {
 			// Need to use a manager with a specific number of retries for reliable testing
-			specialConfig := backoff.DefaultConfig("test-backoff-manager", logger)
+			specialConfig := DefaultConfig("test-backoff-manager", logger)
 			specialConfig.MaxRetries = 2
-			specialManager := backoff.NewBackoffManager(specialConfig)
+			specialManager := NewBackoffManager(specialConfig)
 
 			testErr := errors.New("test error")
 
@@ -171,41 +168,39 @@ var _ = Describe("BackoffManager", func() {
 			// Get error and verify it's a permanent failure error
 			backoffErr := specialManager.GetBackoffError(tick)
 			tick++
-			Expect(backoff.IsPermanentFailureError(backoffErr)).To(BeTrue(), "Error should be permanent failure type")
-			Expect(backoff.IsTemporaryBackoffError(backoffErr)).To(BeFalse(), "Error should not be temporary")
+			Expect(IsPermanentFailureError(backoffErr)).To(BeTrue(), "Error should be permanent failure type")
+			Expect(IsTemporaryBackoffError(backoffErr)).To(BeFalse(), "Error should not be temporary")
 		})
 
 		It("should preserve original error", func() {
 			testErr := errors.New("original test error")
 			manager.SetError(testErr, tick)
-			tick++
 			backoffErr := manager.GetBackoffError(tick)
-			tick++
-			extractedErr := backoff.ExtractOriginalError(backoffErr)
+			extractedErr := ExtractOriginalError(backoffErr)
 			Expect(extractedErr).To(Equal(testErr))
 		})
 	})
 
 	Context("when using error helpers", func() {
 		It("should correctly identify temporary backoff errors", func() {
-			tempErr := errors.New(backoff.TemporaryBackoffError + ": test")
-			Expect(backoff.IsTemporaryBackoffError(tempErr)).To(BeTrue())
-			Expect(backoff.IsPermanentFailureError(tempErr)).To(BeFalse())
-			Expect(backoff.IsBackoffError(tempErr)).To(BeTrue())
+			tempErr := errors.New(TemporaryBackoffError + ": test")
+			Expect(IsTemporaryBackoffError(tempErr)).To(BeTrue())
+			Expect(IsPermanentFailureError(tempErr)).To(BeFalse())
+			Expect(IsBackoffError(tempErr)).To(BeTrue())
 		})
 
 		It("should correctly identify permanent failure errors", func() {
-			permErr := errors.New(backoff.PermanentFailureError + ": test")
-			Expect(backoff.IsTemporaryBackoffError(permErr)).To(BeFalse())
-			Expect(backoff.IsPermanentFailureError(permErr)).To(BeTrue())
-			Expect(backoff.IsBackoffError(permErr)).To(BeTrue())
+			permErr := errors.New(PermanentFailureError + ": test")
+			Expect(IsTemporaryBackoffError(permErr)).To(BeFalse())
+			Expect(IsPermanentFailureError(permErr)).To(BeTrue())
+			Expect(IsBackoffError(permErr)).To(BeTrue())
 		})
 
 		It("should not identify regular errors as backoff errors", func() {
 			regularErr := errors.New("regular error")
-			Expect(backoff.IsTemporaryBackoffError(regularErr)).To(BeFalse())
-			Expect(backoff.IsPermanentFailureError(regularErr)).To(BeFalse())
-			Expect(backoff.IsBackoffError(regularErr)).To(BeFalse())
+			Expect(IsTemporaryBackoffError(regularErr)).To(BeFalse())
+			Expect(IsPermanentFailureError(regularErr)).To(BeFalse())
+			Expect(IsBackoffError(regularErr)).To(BeFalse())
 		})
 	})
 
@@ -213,12 +208,11 @@ var _ = Describe("BackoffManager", func() {
 		It("should respect backoff delay", func() {
 			// We need a simpler test that doesn't depend on complex timing
 			// Create a fresh manager for this test
-			testManager := backoff.NewBackoffManager(config)
+			testManager := NewBackoffManager(config)
 
 			// Set an error to trigger backoff
 			testErr := errors.New("test error")
 			testManager.SetError(testErr, tick)
-			tick++
 			// Should be in backoff immediately after setting error
 			Expect(testManager.ShouldSkipOperation(tick)).To(BeTrue())
 			tick++
@@ -228,6 +222,18 @@ var _ = Describe("BackoffManager", func() {
 
 			// Should not be in backoff after reset
 			Expect(testManager.ShouldSkipOperation(tick)).To(BeFalse())
+		})
+	})
+
+	Context("when using backoff manager in FSM", func() {
+		It("should calculate reasonable backoff intervals", func() {
+			// First error
+			manager.SetError(fmt.Errorf("error1"), 0)
+			Expect(manager.suspendedUntilTick).To(Equal(uint64(1)))
+
+			// Second error
+			manager.SetError(fmt.Errorf("error2"), 1)
+			Expect(manager.suspendedUntilTick).To(BeNumerically("~", 2, 3))
 		})
 	})
 })

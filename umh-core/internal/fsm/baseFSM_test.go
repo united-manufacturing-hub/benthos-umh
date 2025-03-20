@@ -110,7 +110,6 @@ var _ = Describe("BaseFSMInstance", func() {
 		It("should generate appropriate backoff errors", func() {
 			testErr := errors.New("reconcile failed")
 			fsmInstance.SetError(testErr, tick)
-			tick++
 
 			// Get the backoff error and verify its properties
 			backoffErr := fsmInstance.GetBackoffError(tick)
@@ -124,7 +123,6 @@ var _ = Describe("BaseFSMInstance", func() {
 		It("should clear errors with ResetState", func() {
 			testErr := errors.New("test error")
 			fsmInstance.SetError(testErr, tick)
-			tick++
 
 			// Verify error is set
 			Expect(fsmInstance.GetError()).To(Equal(testErr))

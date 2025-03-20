@@ -1,4 +1,4 @@
-package backoff_test
+package backoff
 
 import (
 	"errors"
@@ -6,13 +6,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"go.uber.org/zap/zaptest"
-
-	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/backoff"
 )
 
 // MockComponent demonstrates how to use BackoffManager in a component
 type MockComponent struct {
-	backoffManager *backoff.BackoffManager
+	backoffManager *BackoffManager
 	failNextNTimes int
 	operationCount int
 }
@@ -20,11 +18,11 @@ type MockComponent struct {
 func NewMockComponent(maxRetries uint64) *MockComponent {
 	logger := zaptest.NewLogger(GinkgoT()).Sugar()
 
-	config := backoff.DefaultConfig("mock-component", logger)
+	config := DefaultConfig("mock-component", logger)
 	config.MaxRetries = maxRetries
 
 	return &MockComponent{
-		backoffManager: backoff.NewBackoffManager(config),
+		backoffManager: NewBackoffManager(config),
 		failNextNTimes: 0,
 		operationCount: 0,
 	}
@@ -87,14 +85,14 @@ func (p *MockParent) Execute(tick uint64) error {
 	err := p.component.DoOperation(tick)
 
 	if err != nil {
-		if backoff.IsTemporaryBackoffError(err) {
+		if IsTemporaryBackoffError(err) {
 			// For temporary errors, log but continue
 			return nil
 		}
 
-		if backoff.IsPermanentFailureError(err) {
+		if IsPermanentFailureError(err) {
 			// For permanent failures, extract original error for context
-			originalErr := backoff.ExtractOriginalError(err)
+			originalErr := ExtractOriginalError(err)
 			// Then return error to caller
 			return errors.New("component permanently failed: " + originalErr.Error())
 		}
