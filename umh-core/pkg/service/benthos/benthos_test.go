@@ -12,21 +12,23 @@ import (
 
 var _ = Describe("Benthos Service", func() {
 	var (
-		service *BenthosService
-		client  *MockHTTPClient
-		tick    uint64
+		service     *BenthosService
+		client      *MockHTTPClient
+		tick        uint64
+		benthosName string
+		serviceName string
 	)
 
 	BeforeEach(func() {
 		client = NewMockHTTPClient()
-		service = NewDefaultBenthosService("test", WithHTTPClient(client))
+		service = NewDefaultBenthosService(benthosName, WithHTTPClient(client))
 		tick = 0
-
+		serviceName = service.getS6ServiceName(benthosName)
 		// Add the service to the S6 manager
 		err := service.AddBenthosToS6Manager(context.Background(), &config.BenthosServiceConfig{
 			MetricsPort: 4195,
 			LogLevel:    "info",
-		}, "test")
+		}, benthosName)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Reconcile the S6 manager
@@ -130,7 +132,7 @@ var _ = Describe("Benthos Service", func() {
 
 			It("should return health check and metrics", func() {
 				ctx := context.Background()
-				status, err := service.GetHealthCheckAndMetrics(ctx, "test", 4195, tick)
+				status, err := service.GetHealthCheckAndMetrics(ctx, serviceName, 4195, tick)
 				tick++
 				Expect(err).NotTo(HaveOccurred())
 				Expect(status.HealthCheck.IsReady).To(BeTrue())
@@ -172,7 +174,7 @@ var _ = Describe("Benthos Service", func() {
 
 			It("should return error", func() {
 				ctx := context.Background()
-				_, err := service.GetHealthCheckAndMetrics(ctx, "test", 4195, tick)
+				_, err := service.GetHealthCheckAndMetrics(ctx, serviceName, 4195, tick)
 				tick++
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to check liveness: failed to execute request for /ping: connection refused"))
@@ -191,7 +193,7 @@ var _ = Describe("Benthos Service", func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 				defer cancel()
 
-				_, err := service.GetHealthCheckAndMetrics(ctx, "test", 4195, tick)
+				_, err := service.GetHealthCheckAndMetrics(ctx, serviceName, 4195, tick)
 				tick++
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("context deadline exceeded"))
@@ -459,24 +461,28 @@ var _ = Describe("Benthos Service", func() {
 
 	Context("Tick-based throughput tracking", Label("tick_based_throughput_tracking"), func() {
 		var (
-			service     *BenthosService
-			mockClient  *MockHTTPClient
-			tick        uint64
-			serviceName = "test"
-			metricsPort = 8080
+			service       *BenthosService
+			mockClient    *MockHTTPClient
+			tick          uint64
+			benthosName   = "test"
+			metricsPort   = 8080
+			s6ServiceName string
 		)
 
 		BeforeEach(func() {
 			mockClient = NewMockHTTPClient()
-			service = NewDefaultBenthosService("test", WithHTTPClient(mockClient))
+			service = NewDefaultBenthosService(benthosName, WithHTTPClient(mockClient))
 			tick = 0
 
 			// Add the service to the S6 manager
 			err := service.AddBenthosToS6Manager(context.Background(), &config.BenthosServiceConfig{
 				MetricsPort: metricsPort,
 				LogLevel:    "info",
-			}, serviceName)
+			}, benthosName)
 			Expect(err).NotTo(HaveOccurred())
+
+			s6ServiceName = service.getS6ServiceName(benthosName)
+			s6ServiceName = s6ServiceName
 
 			// Reconcile the S6 manager
 			// TODO: maybe use a mock for the S6 manager, there is one in fsm/mock.go
@@ -553,7 +559,8 @@ processor_batch_sent{label="0",path="root.pipeline.processors.0"} 19
 				StatusCode: 200,
 				Body:       []byte("{}"),
 			})
-			status1, err := service.Status(context.Background(), serviceName, metricsPort, tick)
+
+			status1, err := service.Status(context.Background(), benthosName, metricsPort, tick)
 			tick++
 			Expect(err).NotTo(HaveOccurred())
 
@@ -574,7 +581,7 @@ processor_batch_sent{label="0",path="root.pipeline.processors.0"} 19
 				StatusCode: 200,
 				Body:       []byte("{}"),
 			})
-			status2, err := service.Status(context.Background(), serviceName, metricsPort, tick)
+			status2, err := service.Status(context.Background(), benthosName, metricsPort, tick)
 			tick++
 			Expect(err).NotTo(HaveOccurred())
 
@@ -609,7 +616,7 @@ input_received{path="root.input"} 30
 				StatusCode: 200,
 				Body:       []byte("{}"),
 			})
-			status1, err := service.Status(context.Background(), serviceName, metricsPort, tick)
+			status1, err := service.Status(context.Background(), benthosName, metricsPort, tick)
 			tick++
 			Expect(err).NotTo(HaveOccurred())
 
@@ -627,7 +634,7 @@ input_received{path="root.input"} 30
 				StatusCode: 200,
 				Body:       []byte("{}"),
 			})
-			status2, err := service.Status(context.Background(), serviceName, metricsPort, tick)
+			status2, err := service.Status(context.Background(), benthosName, metricsPort, tick)
 			tick++
 			Expect(err).NotTo(HaveOccurred())
 
@@ -667,7 +674,7 @@ output_sent{path="root.output"} 90
 				StatusCode: 200,
 				Body:       []byte("{}"),
 			})
-			status1, err := service.Status(context.Background(), serviceName, metricsPort, tick)
+			status1, err := service.Status(context.Background(), benthosName, metricsPort, tick)
 			tick++
 			Expect(err).NotTo(HaveOccurred())
 
@@ -685,7 +692,7 @@ output_sent{path="root.output"} 90
 				StatusCode: 200,
 				Body:       []byte("{}"),
 			})
-			status2, err := service.Status(context.Background(), serviceName, metricsPort, tick)
+			status2, err := service.Status(context.Background(), benthosName, metricsPort, tick)
 			tick++
 			Expect(err).NotTo(HaveOccurred())
 
@@ -765,7 +772,8 @@ processor_batch_sent{label="1",path="root.pipeline.processors.1"} 18
 				StatusCode: 200,
 				Body:       []byte("{}"),
 			})
-			status1, err := service.Status(context.Background(), serviceName, metricsPort, tick)
+
+			status1, err := service.Status(context.Background(), benthosName, metricsPort, tick)
 			tick++
 			Expect(err).NotTo(HaveOccurred())
 
@@ -792,7 +800,7 @@ processor_batch_sent{label="1",path="root.pipeline.processors.1"} 18
 				StatusCode: 200,
 				Body:       []byte("{}"),
 			})
-			status2, err := service.Status(context.Background(), serviceName, metricsPort, tick)
+			status2, err := service.Status(context.Background(), benthosName, metricsPort, tick)
 			tick++
 			Expect(err).NotTo(HaveOccurred())
 

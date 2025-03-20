@@ -214,17 +214,29 @@ func NewDefaultBenthosService(name string, opts ...BenthosServiceOption) *Bentho
 
 // generateBenthosYaml generates a Benthos YAML configuration from a BenthosServiceConfig
 func (s *BenthosService) generateBenthosYaml(config *config.BenthosServiceConfig) (string, error) {
+	if config == nil {
+		return "", fmt.Errorf("config is nil")
+	}
+
+	if config.LogLevel == "" {
+		config.LogLevel = "INFO"
+	}
+
 	var b bytes.Buffer
 	err := s.template.Execute(&b, config)
 	return b.String(), err
 }
 
+// getS6ServiceName returns the S6 service name for a given benthos instance
+func (s *BenthosService) getS6ServiceName(name string) string {
+	return fmt.Sprintf("benthos-%s", name)
+}
+
 // generateS6ConfigForBenthos creates a S6 config for a given benthos instance
-func (s *BenthosService) GenerateS6ConfigForBenthos(benthosConfig *config.BenthosServiceConfig, name string) (s6Config config.S6ServiceConfig, err error) {
+func (s *BenthosService) GenerateS6ConfigForBenthos(benthosConfig *config.BenthosServiceConfig, S6ServiceName string) (s6Config config.S6ServiceConfig, err error) {
 	benthosConfigFileName := "benthos.yaml"
 
-	S6ServiceName := fmt.Sprintf("benthos-%s", name)
-	configPath := fmt.Sprintf("/run/service/%s/%s", S6ServiceName, benthosConfigFileName)
+	configPath := fmt.Sprintf("/run/service/%s/config/%s", S6ServiceName, benthosConfigFileName)
 
 	yamlConfig, err := s.generateBenthosYaml(benthosConfig)
 	if err != nil {
@@ -253,10 +265,12 @@ func (s *BenthosService) GetConfig(ctx context.Context, path string) (config.Ben
 }
 
 // Status checks the status of a Benthos service and returns ServiceInfo
-func (s *BenthosService) Status(ctx context.Context, serviceName string, metricsPort int, tick uint64) (ServiceInfo, error) {
+func (s *BenthosService) Status(ctx context.Context, name string, metricsPort int, tick uint64) (ServiceInfo, error) {
 	if ctx.Err() != nil {
 		return ServiceInfo{}, ctx.Err()
 	}
+
+	serviceName := s.getS6ServiceName(name)
 
 	// First, check if the service exists in the S6 manager
 	// This is a crucial check that prevents "instance not found" errors
@@ -299,6 +313,9 @@ func (s *BenthosService) Status(ctx context.Context, serviceName string, metrics
 	// Let's get the health check of the Benthos service
 	benthosStatus, err := s.GetHealthCheckAndMetrics(ctx, serviceName, metricsPort, tick)
 	if err != nil {
+		if strings.Contains(err.Error(), "connection refused") {
+			return ServiceInfo{}, ErrHealthCheckConnectionRefused
+		}
 		return ServiceInfo{}, fmt.Errorf("failed to get health check: %w", err)
 	}
 
@@ -615,7 +632,7 @@ func (s *BenthosService) GetHealthCheckAndMetrics(ctx context.Context, serviceNa
 }
 
 // AddBenthosToS6Manager adds a Benthos instance to the S6 manager
-func (s *BenthosService) AddBenthosToS6Manager(ctx context.Context, cfg *config.BenthosServiceConfig, serviceName string) error {
+func (s *BenthosService) AddBenthosToS6Manager(ctx context.Context, cfg *config.BenthosServiceConfig, name string) error {
 	if s.s6Manager == nil {
 		return errors.New("s6 manager not initialized")
 	}
@@ -623,6 +640,8 @@ func (s *BenthosService) AddBenthosToS6Manager(ctx context.Context, cfg *config.
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+
+	serviceName := s.getS6ServiceName(name)
 
 	// Check whether s6ServiceConfigs already contains an entry for this instance
 	for _, s6Config := range s.s6ServiceConfigs {
@@ -654,7 +673,7 @@ func (s *BenthosService) AddBenthosToS6Manager(ctx context.Context, cfg *config.
 }
 
 // RemoveBenthosFromS6Manager removes a Benthos instance from the S6 manager
-func (s *BenthosService) RemoveBenthosFromS6Manager(ctx context.Context, serviceName string) error {
+func (s *BenthosService) RemoveBenthosFromS6Manager(ctx context.Context, name string) error {
 	if s.s6Manager == nil {
 		return errors.New("s6 manager not initialized")
 	}
@@ -662,6 +681,8 @@ func (s *BenthosService) RemoveBenthosFromS6Manager(ctx context.Context, service
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+
+	serviceName := s.getS6ServiceName(name)
 
 	found := false
 
@@ -684,7 +705,7 @@ func (s *BenthosService) RemoveBenthosFromS6Manager(ctx context.Context, service
 }
 
 // StartBenthos starts a Benthos instance
-func (s *BenthosService) StartBenthos(ctx context.Context, serviceName string) error {
+func (s *BenthosService) StartBenthos(ctx context.Context, name string) error {
 	if s.s6Manager == nil {
 		return errors.New("s6 manager not initialized")
 	}
@@ -692,6 +713,8 @@ func (s *BenthosService) StartBenthos(ctx context.Context, serviceName string) e
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+
+	serviceName := s.getS6ServiceName(name)
 
 	found := false
 
@@ -712,7 +735,7 @@ func (s *BenthosService) StartBenthos(ctx context.Context, serviceName string) e
 }
 
 // StopBenthos stops a Benthos instance
-func (s *BenthosService) StopBenthos(ctx context.Context, serviceName string) error {
+func (s *BenthosService) StopBenthos(ctx context.Context, name string) error {
 	if s.s6Manager == nil {
 		return errors.New("s6 manager not initialized")
 	}
@@ -720,6 +743,8 @@ func (s *BenthosService) StopBenthos(ctx context.Context, serviceName string) er
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+
+	serviceName := s.getS6ServiceName(name)
 
 	found := false
 

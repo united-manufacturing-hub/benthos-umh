@@ -16,8 +16,12 @@ var benthosYamlTemplate = template.Must(template.New("benthos").Parse(`input:{{i
 output:{{if .Output}}
 {{- range $component, $config := .Output }}
   {{ $component }}:
+{{- if eq (len $config) 0 }}
+    {}
+{{- else }}
 {{- range $key, $value := $config }}
     {{ $key }}: {{ $value }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- else }} []{{end}}
@@ -76,4 +80,5 @@ http:
   address: "0.0.0.0:{{ .MetricsPort }}"
 
 logger:
-  level: "{{ .LogLevel }}"`))
+  level: "{{ .LogLevel }}"
+`))
