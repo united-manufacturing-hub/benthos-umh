@@ -68,3 +68,15 @@ type BenthosServiceConfig struct {
 func (c BenthosServiceConfig) Equal(other BenthosServiceConfig) bool {
 	return reflect.DeepEqual(c, other)
 }
+
+// Clone creates a deep copy of FullConfig
+func (c FullConfig) Clone() FullConfig {
+	clone := FullConfig{
+		Agent:    c.Agent,
+		Services: make([]S6FSMConfig, len(c.Services)),
+		Benthos:  make([]BenthosConfig, len(c.Benthos)),
+	}
+	copy(clone.Services, c.Services)
+	copy(clone.Benthos, c.Benthos)
+	return clone
+}

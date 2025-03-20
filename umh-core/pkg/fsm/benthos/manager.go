@@ -143,40 +143,35 @@ func (m *BenthosManager) HandleInstanceRemoved(instanceName string) {
 
 // Reconcile overrides the base manager's Reconcile method to add port management
 func (m *BenthosManager) Reconcile(ctx context.Context, cfg config.FullConfig, tick uint64) (error, bool) {
-	// First, get the current instances to track which ones get removed
-	existingInstances := m.GetInstances()
+	// Phase 1: Port Management Pre-reconciliation
+	benthosConfigs := cfg.Benthos
+	instanceNames := make([]string, len(benthosConfigs))
+	for i, cfg := range benthosConfigs {
+		instanceNames[i] = cfg.Name
+	}
 
-	// Call the base implementation first
-	err, reconciled := m.BaseFSMManager.Reconcile(ctx, cfg, tick)
+	if err := m.portManager.PreReconcile(ctx, instanceNames); err != nil {
+		return fmt.Errorf("port pre-allocation failed: %w", err), false
+	}
+
+	// Create a new config with allocated ports
+	cfgWithPorts := cfg.Clone() // Ensure you have a proper Clone method in config.FullConfig
+	for i, bc := range cfgWithPorts.Benthos {
+		if port, exists := m.portManager.GetPort(bc.Name); exists {
+			// Update the BenthosServiceConfig with the allocated port
+			cfgWithPorts.Benthos[i].BenthosServiceConfig.MetricsPort = port
+		}
+	}
+
+	// Phase 2: Base FSM Reconciliation with port-aware config
+	err, reconciled := m.BaseFSMManager.Reconcile(ctx, cfgWithPorts, tick)
 	if err != nil {
-		return err, reconciled
+		return fmt.Errorf("base reconciliation failed: %w", err), reconciled
 	}
 
-	// Get the updated instances
-	updatedInstances := m.GetInstances()
-
-	// Allocate ports for any new instances
-	for name, instance := range updatedInstances {
-		if _, exists := existingInstances[name]; !exists {
-			// This is a new instance, allocate a port
-			err := m.AllocatePortForInstance(instance)
-			if err != nil {
-				logger.For(logger.ComponentBenthosManager).Errorf("Failed to allocate port for new instance %s: %v", name, err)
-				// Don't fail reconciliation for this, we'll try again next time
-			}
-		}
-	}
-
-	// Release ports for any removed instances
-	for name := range existingInstances {
-		if _, exists := updatedInstances[name]; !exists {
-			// This instance was removed, release its port
-			err := m.ReleasePortForInstance(name)
-			if err != nil {
-				logger.For(logger.ComponentBenthosManager).Errorf("Failed to release port for removed instance %s: %v", name, err)
-				// Don't fail reconciliation for this
-			}
-		}
+	// Phase 3: Port Management Post-reconciliation
+	if err := m.portManager.PostReconcile(ctx); err != nil {
+		return fmt.Errorf("port post-reconciliation failed: %w", err), reconciled
 	}
 
 	return nil, reconciled

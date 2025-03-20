@@ -1,6 +1,7 @@
 package portmanager
 
 import (
+	"context"
 	"fmt"
 	"sync"
 )
@@ -11,17 +12,21 @@ var ErrPortInUse = fmt.Errorf("port is already in use by another service")
 // MockPortManager is a mock implementation of PortManager for testing
 type MockPortManager struct {
 	sync.Mutex
-	Ports              map[string]int
-	AllocatedPorts     map[int]string
-	ReservedPorts      map[int]bool
-	AllocatePortCalled bool
-	ReleasePortCalled  bool
-	GetPortCalled      bool
-	ReservePortCalled  bool
-	AllocatePortResult int
-	AllocatePortError  error
-	ReleasePortError   error
-	ReservePortError   error
+	Ports               map[string]int
+	AllocatedPorts      map[int]string
+	ReservedPorts       map[int]bool
+	AllocatePortCalled  bool
+	ReleasePortCalled   bool
+	GetPortCalled       bool
+	ReservePortCalled   bool
+	PreReconcileCalled  bool
+	PostReconcileCalled bool
+	AllocatePortResult  int
+	AllocatePortError   error
+	ReleasePortError    error
+	ReservePortError    error
+	PreReconcileError   error
+	PostReconcileError  error
 }
 
 // Ensure MockPortManager implements PortManager
@@ -116,6 +121,44 @@ func (m *MockPortManager) ReservePort(serviceName string, port int) error {
 	m.ReservedPorts[port] = true
 	m.Ports[serviceName] = port
 	m.AllocatedPorts[port] = serviceName
+
+	return nil
+}
+
+// PreReconcile implements the PreReconcile method for MockPortManager
+func (m *MockPortManager) PreReconcile(ctx context.Context, instanceNames []string) error {
+	m.Lock()
+	defer m.Unlock()
+
+	m.PreReconcileCalled = true
+
+	if m.PreReconcileError != nil {
+		return m.PreReconcileError
+	}
+
+	// Allocate ports directly without calling AllocatePort to avoid deadlock
+	for _, name := range instanceNames {
+		if _, exists := m.Ports[name]; !exists {
+			// Simple allocation logic matching AllocatePort's behavior
+			port := 9000 + len(m.Ports)
+			m.Ports[name] = port
+			m.AllocatedPorts[port] = name
+		}
+	}
+
+	return nil
+}
+
+// PostReconcile implements the PostReconcile method for MockPortManager
+func (m *MockPortManager) PostReconcile(ctx context.Context) error {
+	m.Lock()
+	defer m.Unlock()
+
+	m.PostReconcileCalled = true
+
+	if m.PostReconcileError != nil {
+		return m.PostReconcileError
+	}
 
 	return nil
 }

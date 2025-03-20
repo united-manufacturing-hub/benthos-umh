@@ -2,6 +2,7 @@ package benthos
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	s6_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
@@ -51,6 +52,9 @@ type MockBenthosService struct {
 
 	// State control for FSM testing
 	stateFlags map[string]*ServiceStateFlags
+
+	// HTTP client for mocking HTTP requests
+	HTTPClient HTTPClient
 }
 
 // Ensure MockBenthosService implements IBenthosService
@@ -75,6 +79,7 @@ func NewMockBenthosService() *MockBenthosService {
 		ExistingServices: make(map[string]bool),
 		S6ServiceConfigs: make([]config.S6FSMConfig, 0),
 		stateFlags:       make(map[string]*ServiceStateFlags),
+		HTTPClient:       NewMockHTTPClient(),
 	}
 }
 
@@ -83,9 +88,7 @@ func (m *MockBenthosService) SetServiceState(serviceName string, flags ServiceSt
 	// Ensure ServiceInfo exists for this service
 	if _, exists := m.ServiceStates[serviceName]; !exists {
 		m.ServiceStates[serviceName] = &ServiceInfo{
-			BenthosStatus: BenthosStatus{
-				HealthCheck: HealthCheck{},
-			},
+			BenthosStatus: BenthosStatus{},
 		}
 	}
 
@@ -132,11 +135,17 @@ func (m *MockBenthosService) Status(ctx context.Context, serviceName string, met
 		return ServiceInfo{}, ErrServiceNotExist
 	}
 
+	// Return error if metrics port is 0 (missing)
+	if metricsPort == 0 {
+		return ServiceInfo{}, fmt.Errorf("could not find metrics port for service %s", serviceName)
+	}
+
+	// If we have a state already stored, return it
 	if state, exists := m.ServiceStates[serviceName]; exists {
-		// Preserve S6FSMState from previous updates
 		return *state, m.StatusError
 	}
 
+	// If no state is stored, return the default mock result
 	return m.StatusResult, m.StatusError
 }
 

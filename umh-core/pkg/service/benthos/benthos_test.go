@@ -21,6 +21,62 @@ var _ = Describe("Benthos Service", func() {
 		client = NewMockHTTPClient()
 		service = NewDefaultBenthosService("test", WithHTTPClient(client))
 		tick = 0
+
+		// Add the service to the S6 manager
+		err := service.AddBenthosToS6Manager(context.Background(), &config.BenthosServiceConfig{
+			MetricsPort: 4195,
+			LogLevel:    "info",
+		}, "test")
+		Expect(err).NotTo(HaveOccurred())
+
+		// Reconcile the S6 manager
+		err, _ = service.ReconcileManager(context.Background(), tick)
+		Expect(err).NotTo(HaveOccurred())
+
+		client.SetReadyStatus(200, true, true, "")
+		client.SetMetricsResponse(MetricsConfig{
+			Input: MetricsConfigInput{
+				Received:     10,
+				ConnectionUp: 1,
+				LatencyNS: LatencyConfig{
+					P50:   1000000,
+					P90:   2000000,
+					P99:   3000000,
+					Sum:   1500000,
+					Count: 5,
+				},
+			},
+			Output: MetricsConfigOutput{
+				Sent:         8,
+				BatchSent:    2,
+				ConnectionUp: 1,
+				LatencyNS: LatencyConfig{
+					P50:   1000000,
+					P90:   2000000,
+					P99:   3000000,
+					Sum:   1500000,
+					Count: 5,
+				},
+			},
+			Processors: []ProcessorConfig{
+				{
+					Path:          "/pipeline/processors/0",
+					Label:         "0",
+					Received:      5,
+					BatchReceived: 1,
+					Sent:          5,
+					BatchSent:     1,
+					Error:         0,
+					LatencyNS: LatencyConfig{
+						P50:   1000000,
+						P90:   2000000,
+						P99:   3000000,
+						Sum:   1500000,
+						Count: 5,
+					},
+				},
+			},
+		})
 	})
 
 	Describe("GetHealthCheckAndMetrics", func() {

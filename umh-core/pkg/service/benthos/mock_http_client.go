@@ -82,6 +82,7 @@ func (m *MockHTTPClient) SetResponse(endpoint string, response MockResponse) {
 // SetReadyStatus sets a custom ready response
 func (m *MockHTTPClient) SetReadyStatus(statusCode int, inputConnected bool, outputConnected bool, errorMsg string) {
 	resp := readyResponse{
+		Error: errorMsg,
 		Statuses: []connStatus{
 			{
 				Label:     "",
@@ -317,4 +318,30 @@ func (m *MockHTTPClient) Do(req *http.Request) (*http.Response, error) {
 		StatusCode: http.StatusNotFound,
 		Body:       io.NopCloser(bytes.NewReader([]byte("not found"))),
 	}, nil
+}
+
+// SetLivenessProbe sets up a mock response for the liveness probe endpoint
+func (m *MockHTTPClient) SetLivenessProbe(statusCode int, alive bool) {
+	body := []byte("OK")
+	if !alive {
+		body = []byte("service unavailable")
+	}
+	m.ResponseMap["/ping"] = MockResponse{
+		StatusCode: statusCode,
+		Body:       body,
+	}
+}
+
+// SetServiceNotFound configures mock responses to simulate a non-existent service
+func (m *MockHTTPClient) SetServiceNotFound(serviceName string) {
+	// Set all endpoints to return not found
+	notFoundResponse := MockResponse{
+		StatusCode: http.StatusNotFound,
+		Body:       []byte(fmt.Sprintf("no such service: %s", serviceName)),
+	}
+
+	m.ResponseMap["/ping"] = notFoundResponse
+	m.ResponseMap["/ready"] = notFoundResponse
+	m.ResponseMap["/metrics"] = notFoundResponse
+	m.ResponseMap["/version"] = notFoundResponse
 }

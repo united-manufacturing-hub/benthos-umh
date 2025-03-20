@@ -1,7 +1,9 @@
 package portmanager
 
 import (
+	"context"
 	"errors"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -71,5 +73,41 @@ var _ = Describe("MockPortManager", func() {
 		// Try to reserve the same port for another instance
 		err = pm.ReservePort("another-instance", portToReserve)
 		Expect(err).To(HaveOccurred())
+	})
+
+	It("handles pre-reconciliation correctly", func() {
+		pm := NewMockPortManager()
+
+		// Test with multiple instances
+		instanceNames := []string{"instance-1", "instance-2", "instance-3"}
+		err := pm.PreReconcile(context.Background(), instanceNames)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pm.PreReconcileCalled).To(BeTrue())
+
+		// Verify ports were allocated
+		for _, name := range instanceNames {
+			port, exists := pm.GetPort(name)
+			Expect(exists).To(BeTrue())
+			Expect(port).To(BeNumerically(">=", 9000))
+		}
+
+		// Test error handling
+		pm.PreReconcileError = fmt.Errorf("test error")
+		err = pm.PreReconcile(context.Background(), []string{"new-instance"})
+		Expect(err).To(Equal(pm.PreReconcileError))
+	})
+
+	It("handles post-reconciliation correctly", func() {
+		pm := NewMockPortManager()
+
+		// Test normal operation
+		err := pm.PostReconcile(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pm.PostReconcileCalled).To(BeTrue())
+
+		// Test error handling
+		pm.PostReconcileError = fmt.Errorf("test error")
+		err = pm.PostReconcile(context.Background())
+		Expect(err).To(Equal(pm.PostReconcileError))
 	})
 })

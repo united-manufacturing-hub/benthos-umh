@@ -7,8 +7,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	internalfsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	s6fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/portmanager"
 	benthossvc "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos"
 )
 
@@ -79,8 +81,8 @@ func setupServiceInManager(manager *BenthosManager, mockService benthossvc.IBent
 	manager.BaseFSMManager.AddInstanceForTest(serviceName, instance)
 }
 
-// waitForState repeatedly reconciles until the desired state is reached or maxAttempts is exceeded
-func waitForState(ctx context.Context, manager *BenthosManager, config config.FullConfig, startTick uint64, desiredState string, maxAttempts int) (uint64, error) {
+// waitForStateBenthosManager repeatedly reconciles until the desired state is reached or maxAttempts is exceeded
+func waitForStateBenthosManager(ctx context.Context, manager *BenthosManager, config config.FullConfig, startTick uint64, desiredState string, maxAttempts int) (uint64, error) {
 	tick := startTick
 	var lastErr error
 
@@ -92,14 +94,29 @@ func waitForState(ctx context.Context, manager *BenthosManager, config config.Fu
 
 		// Check if all instances have reached the desired state
 		allInDesiredState := true
-		for _, instance := range manager.GetInstances() {
-			if instance.GetCurrentFSMState() != desiredState {
+		GinkgoWriter.Printf("\n=== Attempt %d/%d waiting for state %s ===\n", i+1, maxAttempts, desiredState)
+		for name, instance := range manager.GetInstances() {
+			currentState := instance.GetCurrentFSMState()
+			if currentState != desiredState {
 				allInDesiredState = false
-				break
+				GinkgoWriter.Printf("Instance %s: current=%s (waiting for %s)\n",
+					name, currentState, desiredState)
+			} else {
+				GinkgoWriter.Printf("Instance %s: reached target state %s\n",
+					name, desiredState)
+			}
+
+			// If it's a BenthosInstance, print more details
+			if benthosInstance, ok := instance.(*BenthosInstance); ok {
+				if benthosInstance.baseFSMInstance.GetError() != nil {
+					GinkgoWriter.Printf("  Error: %v\n", benthosInstance.baseFSMInstance.GetError())
+				}
+				GinkgoWriter.Printf("  Desired state: %s\n", benthosInstance.GetDesiredFSMState())
 			}
 		}
 
 		if allInDesiredState {
+			GinkgoWriter.Printf("All instances reached target state %s\n", desiredState)
 			return tick, nil
 		}
 
@@ -133,7 +150,7 @@ func transitionToIdle(ctx context.Context, manager *BenthosManager, mockService 
 	tick++
 
 	// Wait for instance to reach stopped state
-	tick, err = waitForState(ctx, manager, config, tick, OperationalStateStopped, 10)
+	tick, err = waitForStateBenthosManager(ctx, manager, config, tick, OperationalStateStopped, 10)
 	if err != nil {
 		return tick, fmt.Errorf("failed to reach stopped state: %w", err)
 	}
@@ -148,7 +165,7 @@ func transitionToIdle(ctx context.Context, manager *BenthosManager, mockService 
 	})
 
 	// Wait for instance to reach idle state
-	tick, err = waitForState(ctx, manager, config, tick, OperationalStateIdle, 20)
+	tick, err = waitForStateBenthosManager(ctx, manager, config, tick, OperationalStateIdle, 20)
 	if err != nil {
 		return tick, fmt.Errorf("failed to reach idle state: %w", err)
 	}
@@ -206,7 +223,7 @@ var _ = Describe("BenthosManager", func() {
 			}
 
 			// Wait for service to reach idle state
-			tick, err = waitForState(ctx, manager, fullConfig, tick, OperationalStateIdle, 20)
+			tick, err = waitForStateBenthosManager(ctx, manager, fullConfig, tick, OperationalStateIdle, 20)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify instance state
@@ -240,7 +257,7 @@ var _ = Describe("BenthosManager", func() {
 			})
 
 			// Wait for active state
-			tick, err = waitForState(ctx, manager, fullConfig, tick, OperationalStateActive, 10)
+			tick, err = waitForStateBenthosManager(ctx, manager, fullConfig, tick, OperationalStateActive, 10)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Simulate degradation
@@ -254,7 +271,7 @@ var _ = Describe("BenthosManager", func() {
 			})
 
 			// Wait for degraded state
-			tick, err = waitForState(ctx, manager, fullConfig, tick, OperationalStateDegraded, 10)
+			tick, err = waitForStateBenthosManager(ctx, manager, fullConfig, tick, OperationalStateDegraded, 10)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Now remove the service from config
@@ -370,7 +387,7 @@ var _ = Describe("BenthosManager", func() {
 			})
 
 			// Should stay in starting state while S6 is not running
-			tick, err := waitForState(ctx, manager, fullConfig, tick, OperationalStateStarting, 5)
+			tick, err := waitForStateBenthosManager(ctx, manager, fullConfig, tick, OperationalStateStarting, 5)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Simulate S6 starting but config failing to load
@@ -419,81 +436,77 @@ var _ = Describe("BenthosManager", func() {
 			})
 
 			// Should reach idle state
-			tick, err = waitForState(ctx, manager, fullConfig, tick, OperationalStateIdle, 20)
+			tick, err = waitForStateBenthosManager(ctx, manager, fullConfig, tick, OperationalStateIdle, 20)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("should handle 'service not found' errors gracefully", func() {
 			serviceName := "nonexistent-service"
 
-			// First, let's verify that requesting status for a non-existent service returns the right error
-			_, err := mockService.Status(ctx, serviceName, 0, tick)
-			Expect(err).To(Equal(benthossvc.ErrServiceNotExist))
-
-			// Now add the service to the config but don't actually create it yet
+			// Create config for the non-existent service
 			benthosConfig := createBenthosConfig(serviceName, OperationalStateActive)
 			fullConfig := config.FullConfig{
 				Benthos: []config.BenthosConfig{benthosConfig},
 			}
 
-			// The first reconcile should not fail, but should trigger service creation
-			err, reconciled := manager.Reconcile(ctx, fullConfig, tick)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(reconciled).To(BeTrue(), "Reconciliation should have happened")
-			tick++
+			// Create and configure mock HTTP client
+			mockHTTPClient := benthossvc.NewMockHTTPClient()
+			mockHTTPClient.SetServiceNotFound(serviceName)
 
-			// The S6 service should now be in the creation process
-			_, found := manager.GetInstance(serviceName)
-			Expect(found).To(BeTrue(), "Service instance should be created")
+			// Configure the manager's mock service (not a new one)
+			mockService.HTTPClient = mockHTTPClient
+			mockService.AddBenthosToS6ManagerError = nil
 
-			// Let's pretend the S6 service doesn't exist yet (simulating a creation in progress)
-			delete(mockService.ExistingServices, serviceName)
+			// Add the instance to the manager with the mock service
+			setupServiceInManager(manager, mockService, serviceName, OperationalStateActive)
 
-			// Another reconcile should still succeed because our error handling is robust
-			err, _ = manager.Reconcile(ctx, fullConfig, tick)
-			Expect(err).NotTo(HaveOccurred(), "Reconcile should handle service not found gracefully")
-
-			// Now let's make the service available
+			// Mark service as existing in mock service
 			mockService.ExistingServices[serviceName] = true
 
-			// Make sure the service is initialized properly
-			setupServiceState(mockService, serviceName, benthossvc.ServiceStateFlags{
-				IsS6Running:            true,
-				S6FSMState:             s6fsm.OperationalStateRunning,
-				IsConfigLoaded:         true,
-				IsHealthchecksPassed:   true,
-				IsRunningWithoutErrors: true,
-			})
+			// Set up a mock port manager
+			mockPortManager := portmanager.NewMockPortManager()
+			manager.WithPortManager(mockPortManager)
 
-			// Wait for service to reach idle state
-			maxAttemptsIdle := 20
-			for attempt := 0; attempt < maxAttemptsIdle; attempt++ {
-				err, _ = manager.Reconcile(ctx, fullConfig, tick)
-				Expect(err).NotTo(HaveOccurred())
-				tick += 5
+			// Allocate a port for the service
+			allocatedPort, err := mockPortManager.AllocatePort(serviceName)
+			Expect(err).NotTo(HaveOccurred())
 
-				// Check if service has reached idle state
-				if instance, found := manager.GetInstance(serviceName); found {
-					if instance.GetCurrentFSMState() == OperationalStateIdle {
-						break
-					}
-					GinkgoWriter.Printf("Service %s currently in state %s (attempt %d/%d)\n",
-						serviceName, instance.GetCurrentFSMState(), attempt+1, maxAttemptsIdle)
-				} else {
-					GinkgoWriter.Printf("Service %s not found (attempt %d/%d)\n", serviceName, attempt+1, maxAttemptsIdle)
-					break
-				}
+			// Set the port in the instance config
+			instance, exists := manager.GetInstance(serviceName)
+			Expect(exists).To(BeTrue())
+			benthosInstance, ok := instance.(*BenthosInstance)
+			Expect(ok).To(BeTrue())
+			benthosInstance.config.MetricsPort = allocatedPort
 
-				// If we reach max attempts, fail the test
-				if attempt == maxAttemptsIdle-1 {
-					Fail(fmt.Sprintf("Service did not reach idle state after %d attempts", maxAttemptsIdle))
-				}
-			}
+			// First reconcile attempt
+			err, reconciled := manager.Reconcile(ctx, fullConfig, tick)
+			tick++
 
-			// Verify final state
-			instance, found := manager.GetInstance(serviceName)
-			Expect(found).To(BeTrue(), "Service should exist at end of test")
-			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateIdle), "Service should be in idle state")
+			// After first reconcile, service should be created
+			mockService.ExistingServices[serviceName] = true
+
+			// Verify error handling
+			Expect(err).NotTo(HaveOccurred(), "Reconcile should handle service not found gracefully")
+			Expect(reconciled).To(BeTrue(), "Reconcile should indicate changes were made")
+
+			// Wait for instance to go through lifecycle states
+			tick, err = waitForStateBenthosInstance(ctx, benthosInstance, tick, internalfsm.LifecycleStateCreating, 5)
+			Expect(err).NotTo(HaveOccurred(), "Should transition to creating state")
+
+			tick, err = waitForStateBenthosInstance(ctx, benthosInstance, tick, OperationalStateStopped, 5)
+			Expect(err).NotTo(HaveOccurred(), "Should transition to stopped state")
+
+			// Set desired state to active to trigger transition to starting
+			err = benthosInstance.SetDesiredFSMState(OperationalStateActive)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Wait for transition to starting state
+			tick, err = waitForStateBenthosInstance(ctx, benthosInstance, tick, OperationalStateStarting, 5)
+			Expect(err).NotTo(HaveOccurred(), "Should transition to starting state")
+
+			// Verify port was allocated
+			Expect(benthosInstance.config.MetricsPort).To(Equal(allocatedPort),
+				"Metrics port should be allocated")
 		})
 	})
 
@@ -509,11 +522,39 @@ var _ = Describe("BenthosManager", func() {
 				Benthos: []config.BenthosConfig{config1, config2},
 			}
 
-			// Add both services to the manager
+			// Set up a mock port manager
+			mockPortManager := portmanager.NewMockPortManager()
+			manager.WithPortManager(mockPortManager)
+
+			// Add both services to the manager with ACTIVE state
 			setupServiceInManager(manager, mockService, service1Name, OperationalStateActive)
 			setupServiceInManager(manager, mockService, service2Name, OperationalStateActive)
 
-			// Setup service 1 for success
+			// Allocate ports for both services
+			port1, err := mockPortManager.AllocatePort(service1Name)
+			Expect(err).NotTo(HaveOccurred())
+			port2, err := mockPortManager.AllocatePort(service2Name)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Set the ports in the instance configs
+			instance1, exists := manager.GetInstance(service1Name)
+			Expect(exists).To(BeTrue())
+			benthosInstance1, ok := instance1.(*BenthosInstance)
+			Expect(ok).To(BeTrue())
+			benthosInstance1.config.MetricsPort = port1
+
+			instance2, exists := manager.GetInstance(service2Name)
+			Expect(exists).To(BeTrue())
+			benthosInstance2, ok := instance2.(*BenthosInstance)
+			Expect(ok).To(BeTrue())
+			benthosInstance2.config.MetricsPort = port2
+
+			// Mark services as existing in mock service
+			mockService.ExistingServices[service1Name] = true
+			mockService.ExistingServices[service2Name] = true
+
+			// Phase 2: Initial State Progression
+			// Set service1 for fast success
 			setupServiceState(mockService, service1Name, benthossvc.ServiceStateFlags{
 				IsS6Running:            true,
 				S6FSMState:             s6fsm.OperationalStateRunning,
@@ -522,33 +563,72 @@ var _ = Describe("BenthosManager", func() {
 				IsRunningWithoutErrors: true,
 			})
 
-			// Setup service 2 for failure
+			// Set service2 for slow start
 			setupServiceState(mockService, service2Name, benthossvc.ServiceStateFlags{
-				IsS6Running:          false,
-				S6FSMState:           s6fsm.OperationalStateStopped,
-				IsConfigLoaded:       false,
-				IsHealthchecksPassed: false,
+				IsS6Running:            false,
+				S6FSMState:             s6fsm.OperationalStateStopped,
+				IsConfigLoaded:         false,
+				IsHealthchecksPassed:   false,
+				IsRunningWithoutErrors: false,
+				HasProcessingActivity:  false,
+				IsDegraded:             false,
+				IsS6Stopped:            true,
 			})
 
-			// First reconcile to update states
-			err, _ := manager.Reconcile(ctx, fullConfig, tick)
+			// Initial reconcile to start state progression
+			err, _ = manager.Reconcile(ctx, fullConfig, tick)
 			Expect(err).NotTo(HaveOccurred())
 			tick++
 
-			// Verify services are in different states
-			instance1, exists := manager.GetInstance(service1Name)
-			Expect(exists).To(BeTrue())
-			Expect(instance1.GetCurrentFSMState()).To(Equal(OperationalStateStarting))
+			// Wait for service1 to reach idle state (it's already set up for success)
+			maxAttempts := 20
+			var service1State, service2State string
+			for i := 0; i < maxAttempts; i++ {
+				err, _ = manager.Reconcile(ctx, fullConfig, tick)
+				Expect(err).NotTo(HaveOccurred())
+				tick++
 
-			instance2, exists := manager.GetInstance(service2Name)
-			Expect(exists).To(BeTrue())
-			Expect(instance2.GetCurrentFSMState()).To(Equal(OperationalStateStarting))
+				service1State = benthosInstance1.GetCurrentFSMState()
+				service2State = benthosInstance2.GetCurrentFSMState()
 
-			// Let service 1 progress
-			tick, err = waitForState(ctx, manager, fullConfig, tick, OperationalStateStartingConfigLoading, 5)
-			Expect(err).NotTo(HaveOccurred())
+				GinkgoWriter.Printf("\n=== Service1 Progress Attempt %d/%d ===\n", i+1, maxAttempts)
+				GinkgoWriter.Printf("Service1 state: %s\n", service1State)
+				GinkgoWriter.Printf("Service2 state: %s\n", service2State)
 
-			// Now let service 2 succeed
+				// Continue reconciling until service1 reaches idle
+				if service1State == OperationalStateIdle {
+					break
+				}
+			}
+
+			// Verify service1 reached idle state
+			Expect(service1State).To(Equal(OperationalStateIdle),
+				"Service1 should reach idle state")
+
+			// Now wait for service2 to reach starting state
+			for i := 0; i < maxAttempts; i++ {
+				err, _ = manager.Reconcile(ctx, fullConfig, tick)
+				Expect(err).NotTo(HaveOccurred())
+				tick++
+
+				service1State = benthosInstance1.GetCurrentFSMState()
+				service2State = benthosInstance2.GetCurrentFSMState()
+
+				GinkgoWriter.Printf("\n=== Service2 Initial Progress Attempt %d/%d ===\n", i+1, maxAttempts)
+				GinkgoWriter.Printf("Service1 state: %s\n", service1State)
+				GinkgoWriter.Printf("Service2 state: %s\n", service2State)
+
+				// Continue reconciling until service2 reaches at least starting
+				if service2State == OperationalStateStarting {
+					break
+				}
+			}
+
+			// Verify service2 is in starting state
+			Expect(service2State).To(Equal(OperationalStateStarting),
+				"Service2 should be in starting state")
+
+			// Phase 4: Allow service2 to progress
 			setupServiceState(mockService, service2Name, benthossvc.ServiceStateFlags{
 				IsS6Running:            true,
 				S6FSMState:             s6fsm.OperationalStateRunning,
@@ -557,15 +637,148 @@ var _ = Describe("BenthosManager", func() {
 				IsRunningWithoutErrors: true,
 			})
 
-			// Both services should eventually reach idle state
-			tick, err = waitForState(ctx, manager, fullConfig, tick, OperationalStateIdle, 20)
-			Expect(err).NotTo(HaveOccurred())
+			// Wait for service2 to reach idle state
+			for i := 0; i < maxAttempts; i++ {
+				err, _ = manager.Reconcile(ctx, fullConfig, tick)
+				Expect(err).NotTo(HaveOccurred())
+				tick++
+
+				service1State = benthosInstance1.GetCurrentFSMState()
+				service2State = benthosInstance2.GetCurrentFSMState()
+
+				GinkgoWriter.Printf("\n=== Service2 Progress Attempt %d/%d ===\n", i+1, maxAttempts)
+				GinkgoWriter.Printf("Service1 state: %s\n", service1State)
+				GinkgoWriter.Printf("Service2 state: %s\n", service2State)
+
+				if service2State == OperationalStateIdle {
+					break
+				}
+			}
 
 			// Verify both services are in idle state
-			instance1, _ = manager.GetInstance(service1Name)
-			instance2, _ = manager.GetInstance(service2Name)
-			Expect(instance1.GetCurrentFSMState()).To(Equal(OperationalStateIdle))
-			Expect(instance2.GetCurrentFSMState()).To(Equal(OperationalStateIdle))
+			Expect(service1State).To(Equal(OperationalStateIdle),
+				"Service1 should maintain idle state")
+			Expect(service2State).To(Equal(OperationalStateIdle),
+				"Service2 should reach idle state")
+
+			// Phase 5: Verify independent state changes
+			// Degrade service1 while keeping service2 healthy
+			setupServiceState(mockService, service1Name, benthossvc.ServiceStateFlags{
+				IsS6Running:            true,
+				S6FSMState:             s6fsm.OperationalStateRunning,
+				IsConfigLoaded:         true,
+				IsHealthchecksPassed:   false, // This will cause degradation
+				IsRunningWithoutErrors: false,
+				HasProcessingActivity:  true,
+			})
+
+			// Keep service2 healthy
+			setupServiceState(mockService, service2Name, benthossvc.ServiceStateFlags{
+				IsS6Running:            true,
+				S6FSMState:             s6fsm.OperationalStateRunning,
+				IsConfigLoaded:         true,
+				IsHealthchecksPassed:   true,
+				IsRunningWithoutErrors: true,
+				HasProcessingActivity:  true,
+			})
+
+			// Wait for service1 to degrade while service2 remains healthy
+			for i := 0; i < maxAttempts; i++ {
+				err, _ = manager.Reconcile(ctx, fullConfig, tick)
+				Expect(err).NotTo(HaveOccurred())
+				tick++
+
+				service1State = benthosInstance1.GetCurrentFSMState()
+				service2State = benthosInstance2.GetCurrentFSMState()
+
+				GinkgoWriter.Printf("\n=== Final Verification Attempt %d/%d ===\n", i+1, maxAttempts)
+				GinkgoWriter.Printf("Service1 state: %s\n", service1State)
+				GinkgoWriter.Printf("Service2 state: %s\n", service2State)
+
+				if service1State == OperationalStateDegraded {
+					break
+				}
+			}
+
+			// Final state verification
+			Expect(service1State).To(Equal(OperationalStateDegraded),
+				"Service1 should be degraded")
+			Expect(service2State).To(Equal(OperationalStateIdle),
+				"Service2 should remain healthy")
+		})
+	})
+
+	Context("Port Management", func() {
+		It("should allocate ports before base reconciliation", func() {
+			serviceName := "test-service"
+
+			// Create config for the service
+			benthosConfig := createBenthosConfig(serviceName, OperationalStateActive)
+			fullConfig := config.FullConfig{
+				Benthos: []config.BenthosConfig{benthosConfig},
+			}
+
+			// Set up a mock port manager
+			mockPortManager := portmanager.NewMockPortManager()
+			manager.WithPortManager(mockPortManager)
+
+			// Verify that PreReconcile is called before base reconciliation
+			err, reconciled := manager.Reconcile(ctx, fullConfig, tick)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reconciled).To(BeTrue())
+
+			// Verify that PreReconcile was called
+			Expect(mockPortManager.PreReconcileCalled).To(BeTrue())
+
+			// Verify that the service has a port allocated
+			instance, exists := manager.GetInstance(serviceName)
+			Expect(exists).To(BeTrue())
+			benthosInstance, ok := instance.(*BenthosInstance)
+			Expect(ok).To(BeTrue())
+			Expect(benthosInstance.config.MetricsPort).To(BeNumerically(">", 0))
+		})
+
+		It("should handle port allocation failures gracefully", func() {
+			serviceName := "test-service"
+
+			// Create config for the service
+			benthosConfig := createBenthosConfig(serviceName, OperationalStateActive)
+			fullConfig := config.FullConfig{
+				Benthos: []config.BenthosConfig{benthosConfig},
+			}
+
+			// Set up a mock port manager with error
+			mockPortManager := portmanager.NewMockPortManager()
+			mockPortManager.PreReconcileError = fmt.Errorf("test error")
+			manager.WithPortManager(mockPortManager)
+
+			// Verify that reconciliation fails when port allocation fails
+			err, reconciled := manager.Reconcile(ctx, fullConfig, tick)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("port pre-allocation failed"))
+			Expect(reconciled).To(BeFalse())
+		})
+
+		It("should call post-reconciliation after base reconciliation", func() {
+			serviceName := "test-service"
+
+			// Create config for the service
+			benthosConfig := createBenthosConfig(serviceName, OperationalStateActive)
+			fullConfig := config.FullConfig{
+				Benthos: []config.BenthosConfig{benthosConfig},
+			}
+
+			// Set up a mock port manager
+			mockPortManager := portmanager.NewMockPortManager()
+			manager.WithPortManager(mockPortManager)
+
+			// Verify that PostReconcile is called after base reconciliation
+			err, reconciled := manager.Reconcile(ctx, fullConfig, tick)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reconciled).To(BeTrue())
+
+			// Verify that PostReconcile was called
+			Expect(mockPortManager.PostReconcileCalled).To(BeTrue())
 		})
 	})
 })

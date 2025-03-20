@@ -1,6 +1,7 @@
 package portmanager
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -120,8 +121,7 @@ var _ = Describe("PortManager", func() {
 				// Actual implementation may continue past maxPort or use a different algorithm
 				// Just verify we got a valid port
 				Expect(port).To(BeNumerically(">=", minPort))
-				// Note: The actual implementation might allocate ports outside our test range,
-				// so we don't strictly check the upper bound
+				Expect(port).To(BeNumerically("<=", maxPort))
 			})
 		})
 	})
@@ -362,6 +362,74 @@ var _ = Describe("PortManager", func() {
 			wg.Wait()
 			// If we got here without deadlock or panic, the test passes
 			Succeed()
+		})
+	})
+
+	Describe("PreReconcile", func() {
+		It("allocates ports for new instances", func() {
+			pm, err := NewDefaultPortManager(8000, 9000)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Test with multiple instances
+			instanceNames := []string{"instance-1", "instance-2", "instance-3"}
+			err = pm.PreReconcile(context.Background(), instanceNames)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify ports were allocated
+			for _, name := range instanceNames {
+				port, exists := pm.GetPort(name)
+				Expect(exists).To(BeTrue())
+				Expect(port).To(BeNumerically(">=", pm.minPort))
+				Expect(port).To(BeNumerically("<=", pm.maxPort))
+			}
+		})
+
+		It("handles instances that already have ports", func() {
+			pm, err := NewDefaultPortManager(8000, 9000)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Pre-allocate a port
+			existingInstance := "existing-instance"
+			existingPort, err := pm.AllocatePort(existingInstance)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Run PreReconcile with mix of existing and new instances
+			instanceNames := []string{existingInstance, "new-instance"}
+			err = pm.PreReconcile(context.Background(), instanceNames)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify existing instance kept its port
+			port, exists := pm.GetPort(existingInstance)
+			Expect(exists).To(BeTrue())
+			Expect(port).To(Equal(existingPort))
+
+			// Verify new instance got a port
+			port, exists = pm.GetPort("new-instance")
+			Expect(exists).To(BeTrue())
+			Expect(port).To(BeNumerically(">=", pm.minPort))
+			Expect(port).To(BeNumerically("<=", pm.maxPort))
+		})
+
+		It("handles port exhaustion", func() {
+			// Create a port manager with very limited ports
+			pm, err := NewDefaultPortManager(8000, 8001)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Try to allocate more ports than available
+			instanceNames := []string{"instance-1", "instance-2", "instance-3"}
+			err = pm.PreReconcile(context.Background(), instanceNames)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("port allocation failed"))
+		})
+	})
+
+	Describe("PostReconcile", func() {
+		It("completes without error", func() {
+			pm, err := NewDefaultPortManager(8000, 9000)
+			Expect(err).NotTo(HaveOccurred())
+
+			err = pm.PostReconcile(context.Background())
+			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 })

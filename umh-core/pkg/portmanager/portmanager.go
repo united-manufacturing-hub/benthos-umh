@@ -2,6 +2,7 @@
 package portmanager
 
 import (
+	"context"
 	"fmt"
 	"sync"
 )
@@ -23,6 +24,15 @@ type PortManager interface {
 	// ReservePort attempts to reserve a specific port for an instance
 	// Returns an error if the port is already in use
 	ReservePort(instanceName string, port int) error
+
+	// PreReconcile is called before the base FSM reconciliation to ensure ports are allocated
+	// It takes a list of instance names that should have ports allocated
+	// Returns an error if port allocation fails
+	PreReconcile(ctx context.Context, instanceNames []string) error
+
+	// PostReconcile is called after the base FSM reconciliation to clean up any orphaned ports
+	// It releases ports for instances that no longer exist
+	PostReconcile(ctx context.Context) error
 }
 
 // DefaultPortManager is a thread-safe implementation of PortManager
@@ -79,6 +89,13 @@ func (pm *DefaultPortManager) AllocatePort(instanceName string) (int, error) {
 
 	// Find an available port
 	startingPort := pm.nextPort
+	if startingPort < pm.minPort {
+		startingPort = pm.minPort
+	}
+	if startingPort > pm.maxPort {
+		startingPort = pm.maxPort
+	}
+
 	port := startingPort
 
 	for {
@@ -172,5 +189,86 @@ func (pm *DefaultPortManager) ReservePort(instanceName string, port int) error {
 	pm.instanceToPorts[instanceName] = port
 	pm.portToInstances[port] = instanceName
 
+	return nil
+}
+
+// PreReconcile implements the PreReconcile method for DefaultPortManager
+func (pm *DefaultPortManager) PreReconcile(ctx context.Context, instanceNames []string) error {
+	pm.mutex.Lock()
+	defer pm.mutex.Unlock()
+
+	// Track any errors during allocation
+	var errs []error
+
+	// Try to allocate ports for all instances that don't have one
+	for _, name := range instanceNames {
+		// Skip if instance already has a port
+		if _, exists := pm.instanceToPorts[name]; exists {
+			continue
+		}
+
+		// Try to allocate a port
+		port := pm.nextPort
+		if port < pm.minPort {
+			port = pm.minPort
+		}
+		if port > pm.maxPort {
+			port = pm.maxPort
+		}
+
+		startingPort := port
+		allocated := false
+
+		// Try to find an available port
+		for {
+			if _, exists := pm.portToInstances[port]; !exists {
+				// Found an available port, allocate it
+				pm.instanceToPorts[name] = port
+				pm.portToInstances[port] = name
+
+				// Update next port for the next allocation
+				pm.nextPort = port + 1
+				if pm.nextPort > pm.maxPort {
+					pm.nextPort = pm.minPort
+				}
+
+				allocated = true
+				break
+			}
+
+			// Try the next port
+			port++
+			if port > pm.maxPort {
+				port = pm.minPort
+			}
+
+			// If we've checked all ports, none are available
+			if port == startingPort {
+				errs = append(errs, fmt.Errorf("no available ports for instance %s", name))
+				break
+			}
+		}
+
+		if !allocated {
+			errs = append(errs, fmt.Errorf("failed to allocate port for instance %s", name))
+		}
+	}
+
+	if len(errs) > 0 {
+		// Combine all errors into a single error message
+		errMsg := "port allocation failed:"
+		for _, err := range errs {
+			errMsg += "\n  - " + err.Error()
+		}
+		return fmt.Errorf(errMsg)
+	}
+
+	return nil
+}
+
+// PostReconcile implements the PostReconcile method for DefaultPortManager
+func (pm *DefaultPortManager) PostReconcile(ctx context.Context) error {
+	// No cleanup needed for DefaultPortManager as ports are released explicitly
+	// when instances are removed via ReleasePort
 	return nil
 }
