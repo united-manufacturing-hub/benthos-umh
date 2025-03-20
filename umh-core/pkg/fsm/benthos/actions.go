@@ -109,13 +109,13 @@ func (b *BenthosInstance) updateObservedState(ctx context.Context, tick uint64) 
 			}
 
 			// Log the warning but don't treat it as a fatal error
-			b.baseFSMInstance.GetLogger().Warnf("Service %s not found, will be created during reconciliation", b.baseFSMInstance.GetID())
+			b.baseFSMInstance.GetLogger().Debugf("Service %s not found, will be created during reconciliation", b.baseFSMInstance.GetID())
 			return nil
 		} else if errors.Is(err, benthos_service.ErrHealthCheckConnectionRefused) {
 			// If the service is not ready, we don't want to count this as an error
 			// The instance is likely in Starting or ToBeStarted state, so service doesn't exist yet
 			// This will be handled in the reconcileStateTransition where the service gets created
-			b.baseFSMInstance.GetLogger().Warnf("Service %s not ready, will be created during reconciliation", b.baseFSMInstance.GetID())
+			b.baseFSMInstance.GetLogger().Debugf("Service %s not ready, will be created during reconciliation", b.baseFSMInstance.GetID())
 			return nil
 		}
 

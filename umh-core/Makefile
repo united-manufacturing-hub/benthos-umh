@@ -52,7 +52,7 @@ test-benthos: clean build
 	docker run \
 		--name $(IMAGE_NAME) \
 		-v $(PWD)/data:/data \
-		-e LOGGING_LEVEL=DEBUG \
+		-e LOGGING_LEVEL=PRODUCTION \
 		-p 8081:8080 \
 		-p 4195:4195 \
 		$(IMAGE_NAME):$(TAG)
