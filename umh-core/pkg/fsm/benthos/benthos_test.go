@@ -735,6 +735,7 @@ var _ = Describe("Benthos FSM", func() {
 			Expect(instance.GetCurrentFSMState()).To(Equal(internalfsm.LifecycleStateToBeCreated))
 
 			// First reconcile attempt - should trigger error and start backoff
+			// Backoff will be 1 tick, so it triggers immediately
 			err, reconciled := instance.Reconcile(ctx, tick)
 			tick++
 			Expect(err).NotTo(HaveOccurred())
