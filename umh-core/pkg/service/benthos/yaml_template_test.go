@@ -83,5 +83,156 @@ var _ = Describe("Benthos YAML Template", func() {
 				},
 				notExpected: nil,
 			}),
+		Entry("should render Kafka input with processor and AWS S3 output",
+			testCase{
+				config: &config.BenthosServiceConfig{
+					Input: map[string]interface{}{
+						"kafka": map[string]interface{}{
+							"addresses":      []string{"localhost:9092"},
+							"topics":         []string{"foo", "bar"},
+							"consumer_group": "foogroup",
+						},
+					},
+					Pipeline: map[string]interface{}{
+						"processors": []map[string]interface{}{
+							{
+								"mapping": map[string]interface{}{
+									"value": `"%vend".format(content().uppercase().string())`,
+								},
+							},
+						},
+					},
+					Output: map[string]interface{}{
+						"aws_s3": map[string]interface{}{
+							"bucket": "my-bucket",
+							"path":   "${! meta(\"kafka_topic\") }/${! json(\"message.id\") }.json",
+						},
+					},
+					MetricsPort: 4195,
+					LogLevel:    "INFO",
+				},
+				expected: []string{
+					"input:",
+					"  kafka:",
+					"    addresses: [localhost:9092]",
+					"    topics: [foo bar]",
+					"    consumer_group: foogroup",
+					"pipeline:",
+					"  processors:",
+					"    - mapping:",
+					"        value:",
+					"output:",
+					"  aws_s3:",
+					"    bucket: my-bucket",
+				},
+				notExpected: []string{
+					"input: []",
+					"pipeline: []",
+					"output: []",
+				},
+			}),
+		Entry("should render configuration with redis streams",
+			testCase{
+				config: &config.BenthosServiceConfig{
+					Input: map[string]interface{}{
+						"redis_streams": map[string]interface{}{
+							"url": "tcp://localhost:6379",
+							"streams": []string{
+								"benthos_stream",
+							},
+							"body_key":       "body",
+							"consumer_group": "benthos_group",
+						},
+					},
+					MetricsPort: 4195,
+					LogLevel:    "INFO",
+				},
+				expected: []string{
+					"input:",
+					"  redis_streams:",
+					"    url: tcp://localhost:6379",
+					"    streams: [benthos_stream]",
+					"    body_key: body",
+					"    consumer_group: benthos_group",
+				},
+				notExpected: []string{
+					"input: []",
+				},
+			}),
+		Entry("should render configuration with inproc",
+			testCase{
+				config: &config.BenthosServiceConfig{
+					Input: map[string]interface{}{
+						"inproc": map[string]interface{}{
+							"name": "test-stream",
+						},
+					},
+					MetricsPort: 4195,
+					LogLevel:    "INFO",
+				},
+				expected: []string{
+					"input:",
+					"  inproc:",
+					"    name: test-stream",
+				},
+				notExpected: []string{
+					"input: []",
+				},
+			}),
+		Entry("should render configuration with rate limit resources",
+			testCase{
+				config: &config.BenthosServiceConfig{
+					RateLimitResources: []map[string]interface{}{
+						{
+							"local": map[string]interface{}{
+								"count":    500,
+								"interval": "1s",
+							},
+						},
+					},
+					MetricsPort: 4195,
+					LogLevel:    "INFO",
+				},
+				expected: []string{
+					"rate_limit_resources:",
+					"  - local:",
+					"      count: 500",
+					"      interval: 1s",
+				},
+				notExpected: []string{
+					"rate_limit_resources: []",
+				},
+			}),
+		Entry("should render configuration with branch processor",
+			testCase{
+				config: &config.BenthosServiceConfig{
+					Pipeline: map[string]interface{}{
+						"processors": []map[string]interface{}{
+							{
+								"branch": map[string]interface{}{
+									"processors": []map[string]map[string]interface{}{
+										{
+											"mapping": {
+												"value": "root.foo = this.bar",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					MetricsPort: 4195,
+					LogLevel:    "INFO",
+				},
+				expected: []string{
+					"pipeline:",
+					"  processors:",
+					"    - branch:",
+					"        processors:",
+				},
+				notExpected: []string{
+					"pipeline: []",
+				},
+			}),
 	)
 })
