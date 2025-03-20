@@ -127,6 +127,10 @@ jobs:
         run: |
           docker exec $(docker ps -q -f ancestor=mcr.microsoft.com/iotedge/opc-plc:2.12.29) netstat -tuln
 
+      - name: Test container availability
+        run: |
+          tcping 127.0.0.1:50000
+
       - name: Test
         env:
           TEST_WAGO_USERNAME: ${{ secrets.TEST_WAGO_USERNAME }}
