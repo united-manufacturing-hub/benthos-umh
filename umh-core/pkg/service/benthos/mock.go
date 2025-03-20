@@ -127,6 +127,11 @@ func (m *MockBenthosService) GetConfig(ctx context.Context, path string) (config
 func (m *MockBenthosService) Status(ctx context.Context, serviceName string, metricsPort int, tick uint64) (ServiceInfo, error) {
 	m.StatusCalled = true
 
+	// Check if the service exists in the ExistingServices map
+	if exists, ok := m.ExistingServices[serviceName]; !ok || !exists {
+		return ServiceInfo{}, ErrServiceNotExist
+	}
+
 	if state, exists := m.ServiceStates[serviceName]; exists {
 		// Preserve S6FSMState from previous updates
 		return *state, m.StatusError

@@ -1,12 +1,14 @@
 package benthos
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	public_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/portmanager"
 )
 
 const (
@@ -17,8 +19,8 @@ const (
 type BenthosManager struct {
 	*public_fsm.BaseFSMManager[config.BenthosConfig]
 
-	// TODO: Add a port manager to allocate unique ports for Benthos metrics endpoints
-	// portManager PortManager
+	// portManager allocates unique ports for Benthos metrics endpoints
+	portManager portmanager.PortManager
 }
 
 func NewBenthosManager(name string) *BenthosManager {
@@ -64,14 +66,120 @@ func NewBenthosManager(name string) *BenthosManager {
 
 	metrics.InitErrorCounter(metrics.ComponentBenthosManager, name)
 
+	// Initialize port manager with default range (9000-9999)
+	var portManager portmanager.PortManager
+	defaultPortManager, err := portmanager.NewDefaultPortManager(9000, 9999)
+	if err != nil {
+		// Log error but continue with a mock port manager as fallback
+		logger.For(managerName).Errorf("Failed to initialize port manager: %v. Using mock port manager instead.", err)
+		portManager = portmanager.NewMockPortManager()
+	} else {
+		portManager = defaultPortManager
+	}
+
 	return &BenthosManager{
 		BaseFSMManager: baseManager,
+		portManager:    portManager,
 	}
 }
 
-// TODO: Add a PortManager for allocating unique ports for Benthos metrics endpoints
-// type PortManager interface {
-//     AllocatePort(instanceName string) (int, error)
-//     ReleasePort(instanceName string) error
-//     GetPort(instanceName string) (int, bool)
-// }
+// GetPortManager returns the port manager used by this Benthos manager
+func (m *BenthosManager) GetPortManager() portmanager.PortManager {
+	return m.portManager
+}
+
+// WithPortManager sets a custom port manager and returns the manager
+func (m *BenthosManager) WithPortManager(portManager portmanager.PortManager) *BenthosManager {
+	m.portManager = portManager
+	return m
+}
+
+// AllocatePortForInstance allocates a port for a service instance if needed
+func (m *BenthosManager) AllocatePortForInstance(instance public_fsm.FSMInstance) error {
+	benthosInstance, ok := instance.(*BenthosInstance)
+	if !ok {
+		return fmt.Errorf("instance is not a BenthosInstance")
+	}
+
+	// If port is already set, nothing to do
+	if benthosInstance.config.MetricsPort != 0 {
+		// Try to reserve this port just to be safe
+		err := m.portManager.ReservePort(benthosInstance.baseFSMInstance.GetID(), benthosInstance.config.MetricsPort)
+		if err != nil {
+			// Log but continue - this is best effort
+			logger.For(benthosInstance.baseFSMInstance.GetID()).Warnf("Failed to reserve port %d: %v",
+				benthosInstance.config.MetricsPort, err)
+		}
+		return nil
+	}
+
+	// Allocate a new port
+	port, err := m.portManager.AllocatePort(benthosInstance.baseFSMInstance.GetID())
+	if err != nil {
+		return fmt.Errorf("failed to allocate port for instance %s: %w",
+			benthosInstance.baseFSMInstance.GetID(), err)
+	}
+
+	// Update the instance config
+	benthosInstance.config.MetricsPort = port
+	return nil
+}
+
+// ReleasePortForInstance releases the port allocated to an instance
+func (m *BenthosManager) ReleasePortForInstance(instanceName string) error {
+	// Release the port
+	return m.portManager.ReleasePort(instanceName)
+}
+
+// HandleInstanceRemoved releases the port when an instance is removed
+func (m *BenthosManager) HandleInstanceRemoved(instanceName string) {
+	// Release the port
+	err := m.ReleasePortForInstance(instanceName)
+	if err != nil {
+		logger.For(logger.ComponentBenthosManager).Warnf("Failed to release port for instance %s: %v",
+			instanceName, err)
+	}
+}
+
+// Reconcile overrides the base manager's Reconcile method to add port management
+func (m *BenthosManager) Reconcile(ctx context.Context, cfg config.FullConfig, tick uint64) (error, bool) {
+	// First, get the current instances to track which ones get removed
+	existingInstances := m.GetInstances()
+
+	// Call the base implementation first
+	err, reconciled := m.BaseFSMManager.Reconcile(ctx, cfg, tick)
+	if err != nil {
+		return err, reconciled
+	}
+
+	// Get the updated instances
+	updatedInstances := m.GetInstances()
+
+	// Allocate ports for any new instances
+	for name, instance := range updatedInstances {
+		if _, exists := existingInstances[name]; !exists {
+			// This is a new instance, allocate a port
+			err := m.AllocatePortForInstance(instance)
+			if err != nil {
+				logger.For(logger.ComponentBenthosManager).Errorf("Failed to allocate port for new instance %s: %v", name, err)
+				// Don't fail reconciliation for this, we'll try again next time
+			}
+		}
+	}
+
+	// Release ports for any removed instances
+	for name := range existingInstances {
+		if _, exists := updatedInstances[name]; !exists {
+			// This instance was removed, release its port
+			err := m.ReleasePortForInstance(name)
+			if err != nil {
+				logger.For(logger.ComponentBenthosManager).Errorf("Failed to release port for removed instance %s: %v", name, err)
+				// Don't fail reconciliation for this
+			}
+		}
+	}
+
+	return nil, reconciled
+}
+
+// PortManager is now implemented in the pkg/portmanager package

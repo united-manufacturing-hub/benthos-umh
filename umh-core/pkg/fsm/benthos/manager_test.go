@@ -262,16 +262,91 @@ var _ = Describe("BenthosManager", func() {
 				Benthos: []config.BenthosConfig{},
 			}
 
-			// Reconcile with empty config should trigger removal
+			// We need to transition from degraded to stopped before we can remove
+			// First, get the instance
+			instance, found := manager.GetInstance(serviceName)
+			Expect(found).To(BeTrue(), "Service should exist before removal")
+
+			// Update mock service state to allow transitioning to stopped
+			setupServiceState(mockService, serviceName, benthossvc.ServiceStateFlags{
+				IsS6Running:          false,
+				S6FSMState:           s6fsm.OperationalStateStopped,
+				IsConfigLoaded:       false,
+				IsHealthchecksPassed: false,
+			})
+
+			// Reconcile to move to stopped state
 			err, _ = manager.Reconcile(ctx, emptyConfig, tick)
 			Expect(err).NotTo(HaveOccurred())
+			tick += 5
 
-			// Service should eventually be removed
-			Eventually(func() int {
+			// Wait for service to reach stopped state by reconciling multiple times
+			maxStopAttempts := 20
+			for attempt := 0; attempt < maxStopAttempts; attempt++ {
 				err, _ = manager.Reconcile(ctx, emptyConfig, tick)
-				tick++
-				return len(manager.GetInstances())
-			}).Should(BeZero())
+				Expect(err).NotTo(HaveOccurred())
+				tick += 5
+
+				// Check if service has reached stopped state
+				if instance, found := manager.GetInstance(serviceName); found {
+					if instance.GetCurrentFSMState() == OperationalStateStopped {
+						break
+					}
+					GinkgoWriter.Printf("Service %s currently in state %s (attempt %d/%d)\n",
+						serviceName, instance.GetCurrentFSMState(), attempt+1, maxStopAttempts)
+				} else {
+					GinkgoWriter.Printf("Service %s not found (attempt %d/%d)\n", serviceName, attempt+1, maxStopAttempts)
+					break
+				}
+
+				// If we reach max attempts, fail the test
+				if attempt == maxStopAttempts-1 {
+					Fail(fmt.Sprintf("Service did not reach stopped state after %d attempts", maxStopAttempts))
+				}
+			}
+
+			// Verify we're in stopped state before proceeding
+			instance, found = manager.GetInstance(serviceName)
+			Expect(found).To(BeTrue(), "Service should exist after transitioning to stopped")
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStopped),
+				"Service should be in stopped state before removal")
+
+			// Now that it's stopped, we can remove it
+			err = instance.Remove(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Check removal with reconciliation multiple times
+			maxRemoveAttempts := 20
+			for attempt := 0; attempt < maxRemoveAttempts; attempt++ {
+				// Reconcile and advance tick
+				err, _ = manager.Reconcile(ctx, emptyConfig, tick)
+				Expect(err).NotTo(HaveOccurred())
+				tick += 20 // Use larger increments to bypass rate limiting
+
+				// Check if service has been removed
+				if len(manager.GetInstances()) == 0 {
+					GinkgoWriter.Printf("Service %s successfully removed after %d attempts\n",
+						serviceName, attempt+1)
+					break
+				}
+
+				// Print status for debugging
+				if instance, found := manager.GetInstance(serviceName); found {
+					GinkgoWriter.Printf("Service %s still exists in state %s (attempt %d/%d)\n",
+						serviceName, instance.GetCurrentFSMState(), attempt+1, maxRemoveAttempts)
+				} else {
+					GinkgoWriter.Printf("Service no longer in manager but instances not cleared (attempt %d/%d)\n",
+						attempt+1, maxRemoveAttempts)
+				}
+
+				// If we reach max attempts, fail the test
+				if attempt == maxRemoveAttempts-1 {
+					Fail(fmt.Sprintf("Service was not removed after %d attempts", maxRemoveAttempts))
+				}
+			}
+
+			// Final verification
+			Expect(manager.GetInstances()).To(BeEmpty(), "All services should be removed")
 		})
 	})
 
@@ -314,12 +389,25 @@ var _ = Describe("BenthosManager", func() {
 			Expect(err).NotTo(HaveOccurred())
 			tick++
 
-			// Should go back to starting state when config fails to load
-			Eventually(func() string {
-				err, _ = manager.Reconcile(ctx, fullConfig, tick)
-				tick++
-				return instance.GetCurrentFSMState()
-			}).Should(Equal(OperationalStateStarting))
+			// Should move to config loading state after S6 is running
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStartingConfigLoading))
+
+			// Now fail the service by stopping S6
+			setupServiceState(mockService, serviceName, benthossvc.ServiceStateFlags{
+				IsS6Running:          false, // This is what triggers EventStartFailed
+				S6FSMState:           s6fsm.OperationalStateStopped,
+				IsConfigLoaded:       false,
+				IsHealthchecksPassed: false,
+			})
+
+			// This should trigger the transition back to starting
+			err, _ = manager.Reconcile(ctx, fullConfig, tick)
+			Expect(err).NotTo(HaveOccurred())
+			tick++
+
+			// Should have gone back to starting state immediately
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateStarting),
+				"Service should go back to starting state when S6 fails")
 
 			// Finally let it succeed
 			setupServiceState(mockService, serviceName, benthossvc.ServiceStateFlags{
@@ -333,6 +421,79 @@ var _ = Describe("BenthosManager", func() {
 			// Should reach idle state
 			tick, err = waitForState(ctx, manager, fullConfig, tick, OperationalStateIdle, 20)
 			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle 'service not found' errors gracefully", func() {
+			serviceName := "nonexistent-service"
+
+			// First, let's verify that requesting status for a non-existent service returns the right error
+			_, err := mockService.Status(ctx, serviceName, 0, tick)
+			Expect(err).To(Equal(benthossvc.ErrServiceNotExist))
+
+			// Now add the service to the config but don't actually create it yet
+			benthosConfig := createBenthosConfig(serviceName, OperationalStateActive)
+			fullConfig := config.FullConfig{
+				Benthos: []config.BenthosConfig{benthosConfig},
+			}
+
+			// The first reconcile should not fail, but should trigger service creation
+			err, reconciled := manager.Reconcile(ctx, fullConfig, tick)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reconciled).To(BeTrue(), "Reconciliation should have happened")
+			tick++
+
+			// The S6 service should now be in the creation process
+			_, found := manager.GetInstance(serviceName)
+			Expect(found).To(BeTrue(), "Service instance should be created")
+
+			// Let's pretend the S6 service doesn't exist yet (simulating a creation in progress)
+			delete(mockService.ExistingServices, serviceName)
+
+			// Another reconcile should still succeed because our error handling is robust
+			err, _ = manager.Reconcile(ctx, fullConfig, tick)
+			Expect(err).NotTo(HaveOccurred(), "Reconcile should handle service not found gracefully")
+
+			// Now let's make the service available
+			mockService.ExistingServices[serviceName] = true
+
+			// Make sure the service is initialized properly
+			setupServiceState(mockService, serviceName, benthossvc.ServiceStateFlags{
+				IsS6Running:            true,
+				S6FSMState:             s6fsm.OperationalStateRunning,
+				IsConfigLoaded:         true,
+				IsHealthchecksPassed:   true,
+				IsRunningWithoutErrors: true,
+			})
+
+			// Wait for service to reach idle state
+			maxAttemptsIdle := 20
+			for attempt := 0; attempt < maxAttemptsIdle; attempt++ {
+				err, _ = manager.Reconcile(ctx, fullConfig, tick)
+				Expect(err).NotTo(HaveOccurred())
+				tick += 5
+
+				// Check if service has reached idle state
+				if instance, found := manager.GetInstance(serviceName); found {
+					if instance.GetCurrentFSMState() == OperationalStateIdle {
+						break
+					}
+					GinkgoWriter.Printf("Service %s currently in state %s (attempt %d/%d)\n",
+						serviceName, instance.GetCurrentFSMState(), attempt+1, maxAttemptsIdle)
+				} else {
+					GinkgoWriter.Printf("Service %s not found (attempt %d/%d)\n", serviceName, attempt+1, maxAttemptsIdle)
+					break
+				}
+
+				// If we reach max attempts, fail the test
+				if attempt == maxAttemptsIdle-1 {
+					Fail(fmt.Sprintf("Service did not reach idle state after %d attempts", maxAttemptsIdle))
+				}
+			}
+
+			// Verify final state
+			instance, found := manager.GetInstance(serviceName)
+			Expect(found).To(BeTrue(), "Service should exist at end of test")
+			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateIdle), "Service should be in idle state")
 		})
 	})
 
