@@ -106,6 +106,10 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Start docker container for iotedge/opc-plc
+        run: |
+          docker-compose -f tests/docker-compose.yaml up -d
+
       - name: Test
         env:
           TEST_WAGO_USERNAME: ${{ secrets.TEST_WAGO_USERNAME }}
