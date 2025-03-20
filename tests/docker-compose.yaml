@@ -14,7 +14,7 @@ services:
       - --ft=uint
       - --gn=5
       - --certdnsnames=localhost
-      - --plchostname=0.0.0.0
+      - --plchostname=localhost
       - --unsecuretransport
     ports:
       - '50000:50000'
