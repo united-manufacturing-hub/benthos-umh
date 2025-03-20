@@ -31,6 +31,26 @@ jobs:
   go-test-opcua-plc:
     runs-on:
       group: arc-runners-tests
+    services:
+      opcplc:
+        image: mcr.microsoft.com/iotedge/opc-plc:2.12.29
+        ports:
+          - 50000:50000
+          - 8080:8080
+        options: >-
+          --pn=50000
+          --autoaccept
+          --sph
+          --sn=100
+          --sr=10
+          --st=uint
+          --fn=5
+          --fr=1
+          --ft=uint
+          --gn=5
+          --certdnsnames=localhost
+          --plchostname=localhost
+          --unsecuretransport
     permissions:
       packages: write
       contents: read
@@ -105,10 +125,6 @@ jobs:
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Start docker container for iotedge/opc-plc
-        run: |
-          docker-compose -f tests/docker-compose.yaml up -d
 
       - name: Test
         env:
