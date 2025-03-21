@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
+	"strings"
 
 	internalfsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	s6fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	benthos_service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos"
 )
@@ -153,34 +154,36 @@ func (b *BenthosInstance) updateObservedState(ctx context.Context, tick uint64) 
 		// Only update if we successfully got the config
 		b.ObservedState.ObservedBenthosServiceConfig = observedConfig
 	} else {
-		if errors.Is(err, benthos_service.ErrServiceNotExist) {
+		if strings.Contains(err.Error(), benthos_service.ErrServiceNotExist.Error()) {
 			// Log the error but don't fail - this might happen during creation when the config file doesn't exist yet
 			b.baseFSMInstance.GetLogger().Debugf("Service not found, will be created during reconciliation: %v", err)
+			return nil
 		} else {
 			return fmt.Errorf("failed to get observed Benthos config: %w", err)
 		}
 	}
 
 	// Detect a config change - but let the S6 manager handle the actual reconciliation
-	if !reflect.DeepEqual(b.ObservedState.ObservedBenthosServiceConfig, b.config) {
-		b.baseFSMInstance.GetLogger().Debugf("Observed Benthos config is different from desired config, updating S6 configuration")
-		// Instead of manually logging differences and calling Remove(), we update the config in the S6 manager
-		// The S6 manager's reconciliation logic will detect the change and handle the update
-		err := b.service.UpdateBenthosInS6Manager(ctx, &b.config, b.baseFSMInstance.GetID())
-		if err != nil {
-			return fmt.Errorf("failed to update Benthos service configuration: %w", err)
+	// Use new ConfigsEqual function that handles Benthos defaults properly
+	if !benthos_service.ConfigsEqual(b.config, b.ObservedState.ObservedBenthosServiceConfig) {
+		// Check if the service exists before attempting to update
+		if b.service.ServiceExists(ctx, b.baseFSMInstance.GetID()) {
+			b.baseFSMInstance.GetLogger().Debugf("Observed Benthos config is different from desired config, updating S6 configuration")
+
+			// Use the new ConfigDiff function for better debug output
+			diffStr := benthos_service.ConfigDiff(b.config, b.ObservedState.ObservedBenthosServiceConfig)
+			b.baseFSMInstance.GetLogger().Debugf("Configuration differences: %s", diffStr)
+
+			// Update the config in the S6 manager
+			err := b.service.UpdateBenthosInS6Manager(ctx, &b.config, b.baseFSMInstance.GetID())
+			if err != nil {
+				return fmt.Errorf("failed to update Benthos service configuration: %w", err)
+			}
+		} else {
+			b.baseFSMInstance.GetLogger().Debugf("Config differences detected but service does not exist yet, skipping update")
 		}
 	}
 
-	// NOTE: Unlike S6Instance, we don't need to check for config reconciliation here.
-	// This is because:
-	// 1. Config reconciliation is already handled at the S6Instance level
-	// 2. BenthosInstance doesn't interact directly with the filesystem
-	// 3. When we modify s6ServiceConfigs, those changes propagate to the S6Manager
-	//    which handles creating/updating the actual S6Instances
-	// 4. Any config drift would be detected by the corresponding S6Instance's
-	//    updateObservedState method, making the check here redundant
-	// Instead, this method should focus on Benthos-specific metrics and health monitoring.
 	return nil
 }
 
@@ -280,4 +283,15 @@ func (b *BenthosInstance) IsBenthosWithProcessingActivity() bool {
 		return false
 	}
 	return b.service.HasProcessingActivity(b.ObservedState.ServiceInfo.BenthosStatus)
+}
+
+// logConfigDifferences logs detailed information about what's different between configs
+// This helps debug why reconciliation is repeatedly detecting differences
+func (b *BenthosInstance) logConfigDifferences(desired, observed config.BenthosServiceConfig) {
+	logger := b.baseFSMInstance.GetLogger()
+
+	// Use the new ConfigDiff function for consistent and detailed differences
+	diffStr := benthos_service.ConfigDiff(desired, observed)
+	logger.Debugf("Configuration differences for %s:", b.baseFSMInstance.GetID())
+	logger.Debugf("%s", diffStr)
 }

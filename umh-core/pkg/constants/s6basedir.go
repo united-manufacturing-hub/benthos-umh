@@ -1,5 +1,6 @@
 package constants
 
 const (
-	S6BaseDir = "/run/service"
+	S6BaseDir       = "/run/service"
+	S6ConfigDirName = "config"
 )

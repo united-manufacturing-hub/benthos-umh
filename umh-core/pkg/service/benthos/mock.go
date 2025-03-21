@@ -32,6 +32,7 @@ type MockBenthosService struct {
 	HasProcessingActivityCalled                    bool
 	IsLogsFineCalled                               bool
 	IsMetricsErrorFreeCalled                       bool
+	ServiceExistsCalled                            bool
 
 	// Return values for each method
 	GenerateS6ConfigForBenthosResult config.S6ServiceConfig
@@ -47,6 +48,7 @@ type MockBenthosService struct {
 	StopBenthosError                 error
 	ReconcileManagerError            error
 	ReconcileManagerReconciled       bool
+	ServiceExistsResult              bool
 
 	// For more complex testing scenarios
 	ServiceStates    map[string]*ServiceInfo
@@ -371,4 +373,10 @@ func (m *MockBenthosService) UpdateBenthosInS6Manager(ctx context.Context, cfg *
 	}
 
 	return m.UpdateBenthosInS6ManagerError
+}
+
+// ServiceExists mocks checking if a Benthos service exists
+func (m *MockBenthosService) ServiceExists(ctx context.Context, serviceName string) bool {
+	m.ServiceExistsCalled = true
+	return m.ServiceExistsResult
 }

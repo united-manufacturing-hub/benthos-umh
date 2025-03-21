@@ -87,8 +87,8 @@ type Service interface {
 	GetConfig(ctx context.Context, servicePath string) (config.S6ServiceConfig, error)
 	// CleanS6ServiceDirectory cleans the S6 service directory, removing non-standard services
 	CleanS6ServiceDirectory(ctx context.Context, path string) error
-	// GetServiceConfigFile retrieves a config file for a service
-	GetServiceConfigFile(ctx context.Context, serviceName string, configFileName string) ([]byte, error)
+	// GetS6ConfigFile retrieves a config file for a service
+	GetS6ConfigFile(ctx context.Context, servicePath string, configFileName string) ([]byte, error)
 }
 
 // DefaultService is the default implementation of the S6 Service interface
@@ -966,14 +966,15 @@ func (s *DefaultService) IsKnownService(name string) bool {
 	return false
 }
 
-// GetServiceConfigFile retrieves the specified config file for a service
-func (s *DefaultService) GetServiceConfigFile(ctx context.Context, serviceName string, configFileName string) ([]byte, error) {
+// GetS6ConfigFile retrieves the specified config file for a service
+// servicePath should be the full path including S6BaseDir
+func (s *DefaultService) GetS6ConfigFile(ctx context.Context, servicePath string, configFileName string) ([]byte, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 
-	// Check if the service exists
-	exists, err := s.ServiceExists(ctx, serviceName)
+	// Check if the service exists with the full path
+	exists, err := s.ServiceExists(ctx, servicePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check if service exists: %w", err)
 	}
@@ -981,8 +982,8 @@ func (s *DefaultService) GetServiceConfigFile(ctx context.Context, serviceName s
 		return nil, ErrServiceNotExist
 	}
 
-	// Form the path to the config file
-	configPath := filepath.Join(constants.S6BaseDir, serviceName, "config", configFileName)
+	// Form the path to the config file using the constant
+	configPath := filepath.Join(servicePath, constants.S6ConfigDirName, configFileName)
 
 	// Check if the file exists
 	exists, err = s.fsService.FileExists(ctx, configPath)
@@ -990,13 +991,13 @@ func (s *DefaultService) GetServiceConfigFile(ctx context.Context, serviceName s
 		return nil, fmt.Errorf("failed to check if config file exists: %w", err)
 	}
 	if !exists {
-		return nil, fmt.Errorf("config file %s does not exist for service %s", configFileName, serviceName)
+		return nil, fmt.Errorf("config file %s does not exist in service directory %s", configFileName, servicePath)
 	}
 
 	// Read the file
 	content, err := s.fsService.ReadFile(ctx, configPath)
 	if err != nil {
-		return nil, fmt.Errorf("error reading config file %s for service %s: %w", configFileName, serviceName, err)
+		return nil, fmt.Errorf("error reading config file %s in service directory %s: %w", configFileName, servicePath, err)
 	}
 
 	return content, nil

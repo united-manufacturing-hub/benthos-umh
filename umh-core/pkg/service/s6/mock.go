@@ -9,31 +9,31 @@ import (
 // MockService is a mock implementation of the S6 Service interface for testing
 type MockService struct {
 	// Tracks calls to methods
-	CreateCalled               bool
-	RemoveCalled               bool
-	StartCalled                bool
-	StopCalled                 bool
-	RestartCalled              bool
-	StatusCalled               bool
-	ExistsCalled               bool
-	GetConfigCalled            bool
-	ExitHistoryCalled          bool
-	GetServiceConfigFileCalled bool
+	CreateCalled          bool
+	RemoveCalled          bool
+	StartCalled           bool
+	StopCalled            bool
+	RestartCalled         bool
+	StatusCalled          bool
+	ExistsCalled          bool
+	GetConfigCalled       bool
+	ExitHistoryCalled     bool
+	GetS6ConfigFileCalled bool
 	// Return values for each method
-	CreateError                error
-	RemoveError                error
-	StartError                 error
-	StopError                  error
-	RestartError               error
-	StatusResult               ServiceInfo
-	StatusError                error
-	ExistsResult               bool
-	GetConfigResult            config.S6ServiceConfig
-	GetConfigError             error
-	ExitHistoryResult          []ExitEvent
-	ExitHistoryError           error
-	GetServiceConfigFileResult []byte
-	GetServiceConfigFileError  error
+	CreateError           error
+	RemoveError           error
+	StartError            error
+	StopError             error
+	RestartError          error
+	StatusResult          ServiceInfo
+	StatusError           error
+	ExistsResult          bool
+	GetConfigResult       config.S6ServiceConfig
+	GetConfigError        error
+	ExitHistoryResult     []ExitEvent
+	ExitHistoryError      error
+	GetS6ConfigFileResult []byte
+	GetS6ConfigFileError  error
 	// For more complex testing scenarios
 	ServiceStates    map[string]ServiceInfo
 	ExistingServices map[string]bool
@@ -147,8 +147,8 @@ func (m *MockService) CleanS6ServiceDirectory(ctx context.Context, path string) 
 	return nil
 }
 
-// GetServiceConfigFile is a mock method
-func (m *MockService) GetServiceConfigFile(ctx context.Context, serviceName string, configFileName string) ([]byte, error) {
-	m.GetServiceConfigFileCalled = true
-	return m.GetServiceConfigFileResult, m.GetServiceConfigFileError
+// GetS6ConfigFile is a mock method
+func (m *MockService) GetS6ConfigFile(ctx context.Context, servicePath string, configFileName string) ([]byte, error) {
+	m.GetS6ConfigFileCalled = true
+	return m.GetS6ConfigFileResult, m.GetS6ConfigFileError
 }

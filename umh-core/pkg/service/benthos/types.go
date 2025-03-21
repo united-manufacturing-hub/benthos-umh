@@ -182,3 +182,17 @@ type HTTPConfig struct {
 type LoggerConfig struct {
 	Level string `yaml:"level"`
 }
+
+// extractProcessorsFromInterface extracts processors from an interface slice and adds them to the given ProcessorList
+func extractProcessorsFromInterface(procs []interface{}, processorList *ProcessorList) {
+	for _, proc := range procs {
+		if procMap, ok := proc.(map[string]interface{}); ok {
+			for pType, pConfig := range procMap {
+				*processorList = append(*processorList, Processor{
+					Type:   pType,
+					Config: pConfig,
+				})
+			}
+		}
+	}
+}

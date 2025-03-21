@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
+	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -255,12 +256,12 @@ var _ = Describe("Benthos Service", func() {
 				Expect(s6Config.ConfigFiles).To(HaveKey("benthos.yaml"))
 				yaml := s6Config.ConfigFiles["benthos.yaml"]
 
-				Expect(yaml).To(ContainSubstring("mqtt:\n    topic: test/topic"))
-				Expect(yaml).To(ContainSubstring("kafka:\n    topic: test-output"))
-				Expect(yaml).To(ContainSubstring("processors:\n    - text:\n        operator: to_upper"))
-				Expect(yaml).To(ContainSubstring("- memory:\n      ttl: 60s"))
-				Expect(yaml).To(ContainSubstring("- local:\n      count: \"100\""))
-				Expect(yaml).To(ContainSubstring("memory:\n    limit: 10MB"))
+				Expect(yaml).To(ContainSubstring("input:\n    mqtt:\n        topic: test/topic"))
+				Expect(yaml).To(ContainSubstring("output:\n    kafka:\n        topic: test-output"))
+				Expect(yaml).To(ContainSubstring("pipeline:\n    processors:\n        - text:\n            operator: to_upper"))
+				Expect(yaml).To(ContainSubstring("cache_resources:\n    - memory:\n        ttl: 60s"))
+				Expect(yaml).To(ContainSubstring("rate_limit_resources:\n    - local:\n        count: \"100\""))
+				Expect(yaml).To(ContainSubstring("buffer:\n    memory:\n        limit: 10MB"))
 				Expect(yaml).To(ContainSubstring("http:\n  address: 0.0.0.0:4195"))
 				Expect(yaml).To(ContainSubstring("logger:\n  level: INFO"))
 			})
@@ -850,6 +851,204 @@ processor_batch_sent{label="1",path="root.pipeline.processors.1"} 18
 				_, err := service.GetConfig(cancelledCtx, benthosName)
 				Expect(err).To(Equal(context.Canceled))
 			})
+		})
+	})
+
+	Describe("Configuration update and service restart", func() {
+		var (
+			service       *BenthosService
+			client        *MockHTTPClient
+			tick          uint64
+			benthosName   string
+			s6ServiceMock *s6service.MockService
+			initialConfig *config.BenthosServiceConfig
+			updatedConfig *config.BenthosServiceConfig
+		)
+
+		BeforeEach(func() {
+			// Setup mocks
+			client = NewMockHTTPClient()
+			s6ServiceMock = s6service.NewMockService()
+			benthosName = "test-benthos-service"
+			tick = 0
+
+			// Set up a mock HTTP client for Benthos health and metrics endpoints
+			client.SetReadyStatus(200, true, true, "")
+			client.SetMetricsResponse(MetricsConfig{
+				Input: MetricsConfigInput{
+					Received:     10,
+					ConnectionUp: 1,
+				},
+				Output: MetricsConfigOutput{
+					Sent:         10,
+					ConnectionUp: 1,
+				},
+			})
+
+			// Create service with mocks
+			service = NewDefaultBenthosService(benthosName,
+				WithHTTPClient(client),
+				WithS6Service(s6ServiceMock))
+
+			// Setup initial configuration
+			initialConfig = &config.BenthosServiceConfig{
+				MetricsPort: 4195,
+				LogLevel:    "info",
+				Input: map[string]interface{}{
+					"mqtt": map[string]interface{}{
+						"urls":   []string{"tcp://localhost:1883"},
+						"topics": []string{"test-topic"},
+					},
+				},
+				Output: map[string]interface{}{
+					"stdout": map[string]interface{}{},
+				},
+			}
+
+			// Setup updated configuration with different input
+			updatedConfig = &config.BenthosServiceConfig{
+				MetricsPort: 4195,
+				LogLevel:    "info",
+				Input: map[string]interface{}{
+					"mqtt": map[string]interface{}{
+						"urls":   []string{"tcp://localhost:1883"},
+						"topics": []string{"updated-topic"}, // Changed topic
+					},
+				},
+				Output: map[string]interface{}{
+					"stdout": map[string]interface{}{},
+				},
+			}
+		})
+
+		It("should restart the service when configuration changes", func() {
+			ctx := context.Background()
+
+			// Initial service creation
+			By("Adding the Benthos service to S6 manager with initial config")
+			err := service.AddBenthosToS6Manager(ctx, initialConfig, benthosName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(s6ServiceMock.CreateCalled).To(BeFalse(), "S6 service shouldn't be created directly")
+
+			// First reconciliation - creates the service
+			By("Reconciling the manager to create the service")
+			err, reconciled := service.ReconcileManager(ctx, tick)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reconciled).To(BeTrue())
+
+			// Set up the mock S6 service status to simulate running service
+			s6ServiceMock.StatusResult = s6service.ServiceInfo{
+				Status:   s6service.ServiceUp,
+				WantUp:   true,
+				Pid:      12345,
+				Uptime:   10,
+				ExitCode: 0,
+			}
+
+			// Start the service
+			By("Starting the Benthos service")
+			err = service.StartBenthos(ctx, benthosName)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Mock the GetConfig return values - first return initialConfig
+			s6ServiceMock.GetS6ConfigFileResult = []byte("initial-config-content")
+
+			// Create a mock config for the MockService.GetConfig method
+			serviceConfigYaml, err := service.generateBenthosYaml(initialConfig)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Create expected S6 config with initial Benthos config
+			s6ServiceMock.GetConfigResult = config.S6ServiceConfig{
+				ConfigFiles: map[string]string{
+					"config.yaml": serviceConfigYaml,
+				},
+				Command: []string{"benthos", "-c", "config.yaml"},
+				Env:     map[string]string{"BENTHOS_LOG_LEVEL": "info"},
+			}
+
+			// Verify service is running with initial configuration
+			By("Verifying service is running with initial configuration")
+			info, err := service.Status(ctx, benthosName, initialConfig.MetricsPort, tick)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(info.BenthosStatus.HealthCheck.IsLive).To(BeTrue())
+			Expect(info.BenthosStatus.HealthCheck.IsReady).To(BeTrue())
+
+			// Update the service configuration
+			By("Updating the Benthos service configuration")
+			err = service.UpdateBenthosInS6Manager(ctx, updatedConfig, benthosName)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second reconciliation - detects the config change and triggers restart
+			By("Reconciling the manager to apply the configuration change")
+			tick++
+			err, reconciled = service.ReconcileManager(ctx, tick)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Change the mock to return the updated config
+			updatedServiceConfigYaml, err := service.generateBenthosYaml(updatedConfig)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Create a valid YAML string that can be parsed by yaml.Unmarshal
+			validYaml := `
+input:
+  mqtt:
+    urls:
+      - tcp://localhost:1883
+    topics:
+      - updated-topic
+output:
+  stdout: {}
+metrics:
+  http:
+    address: ":4195"
+logger:
+  level: info
+`
+
+			// Update mock service to return the new config
+			s6ServiceMock.GetConfigResult = config.S6ServiceConfig{
+				ConfigFiles: map[string]string{
+					"config.yaml": updatedServiceConfigYaml,
+				},
+				Command: []string{"benthos", "-c", "config.yaml"},
+				Env:     map[string]string{"BENTHOS_LOG_LEVEL": "info"},
+			}
+			s6ServiceMock.GetS6ConfigFileResult = []byte(validYaml)
+
+			// Verify the service is running with new configuration
+			By("Verifying service is running with updated configuration")
+			info, err = service.Status(ctx, benthosName, updatedConfig.MetricsPort, tick)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(info.BenthosStatus.HealthCheck.IsLive).To(BeTrue())
+			Expect(info.BenthosStatus.HealthCheck.IsReady).To(BeTrue())
+
+			// Get the config via the service and validate it reflects the updated configuration
+			cfg, err := service.GetConfig(ctx, benthosName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Input).NotTo(BeNil(), "Config Input should not be nil")
+			Expect(cfg.Input["mqtt"]).NotTo(BeNil(), "MQTT config should not be nil")
+
+			// Ensure we're accessing the MQTT config safely, with nil checks
+			if mqttConfig, ok := cfg.Input["mqtt"].(map[string]interface{}); ok {
+				Expect(mqttConfig).NotTo(BeNil(), "MQTT config should be a valid map")
+
+				if topicsInterface, ok := mqttConfig["topics"]; ok {
+					if topics, ok := topicsInterface.([]interface{}); ok {
+						Expect(len(topics)).To(Equal(1), "Should have one topic")
+						if topicStr, ok := topics[0].(string); ok {
+							Expect(topicStr).To(Equal("updated-topic"), "The configuration should be updated to the new topic")
+						} else {
+							Fail("Topic should be a string")
+						}
+					} else {
+						Fail("Topics should be an array")
+					}
+				} else {
+					Fail("Topics key should exist in MQTT config")
+				}
+			} else {
+				Fail("MQTT config should be a map")
+			}
 		})
 	})
 })
