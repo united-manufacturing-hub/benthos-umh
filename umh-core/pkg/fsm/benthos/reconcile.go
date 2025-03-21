@@ -51,12 +51,12 @@ func (b *BenthosInstance) Reconcile(ctx context.Context, tick uint64) (err error
 			// if it is already in stopped, stopping, removing states, and it again returns a permanent error,
 			// we need to throw it to the manager as the instance itself here cannot fix it anymore
 			if b.IsRemoved() || b.IsRemoving() || b.IsStopping() || b.IsStopped() {
-				b.baseFSMInstance.GetLogger().Debugf("Benthos instance %s is already in a terminal state, force removing it", benthosInstanceName)
+				b.baseFSMInstance.GetLogger().Errorf("Benthos instance %s is already in a terminal state, force removing it", benthosInstanceName)
 				// force delete everything from the s6 file directory
 				b.service.ForceRemoveBenthos(ctx, benthosInstanceName)
 				return err, false
 			} else {
-				b.baseFSMInstance.GetLogger().Debugf("Benthos instance %s is not in a terminal state, resetting state and removing it", benthosInstanceName)
+				b.baseFSMInstance.GetLogger().Errorf("Benthos instance %s is not in a terminal state, resetting state and removing it", benthosInstanceName)
 				b.baseFSMInstance.ResetState()
 				b.Remove(ctx)
 				return nil, false // let's try to at least reconcile towards a stopped / removed state

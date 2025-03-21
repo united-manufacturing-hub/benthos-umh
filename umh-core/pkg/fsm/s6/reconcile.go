@@ -7,6 +7,7 @@ import (
 	"time"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/backoff"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
@@ -43,6 +44,24 @@ func (s *S6Instance) Reconcile(ctx context.Context, tick uint64) (err error, rec
 	if s.baseFSMInstance.ShouldSkipReconcileBecauseOfError(tick) {
 		err := s.baseFSMInstance.GetBackoffError(tick)
 		s.baseFSMInstance.GetLogger().Debugf("Skipping reconcile for S6 service %s: %s", s.baseFSMInstance.GetID(), err)
+
+		// if it is a permanent error, start the removal process and reset the error (so that we can reconcile towards a stopped / removed state)
+		if backoff.IsPermanentFailureError(err) {
+			// if it is already in stopped, stopping, removing states, and it again returns a permanent error,
+			// we need to throw it to the manager as the instance itself here cannot fix it anymore
+			if s.IsRemoved() || s.GetCurrentFSMState() == OperationalStateStopped || s.GetCurrentFSMState() == OperationalStateStopping {
+				s.baseFSMInstance.GetLogger().Errorf("S6 instance %s is already in a terminal state, force removing it", s.baseFSMInstance.GetID())
+				// force delete everything from the s6 file directory
+				s.service.ForceRemove(ctx, s.servicePath)
+				return err, false
+			} else {
+				s.baseFSMInstance.GetLogger().Errorf("S6 instance %s is not in a terminal state, resetting state and removing it", s.baseFSMInstance.GetID())
+				s.baseFSMInstance.ResetState()
+				s.Remove(ctx)
+				return nil, false // let's try to at least reconcile towards a stopped / removed state
+			}
+		}
+
 		return nil, false
 	}
 

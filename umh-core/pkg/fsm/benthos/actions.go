@@ -111,22 +111,16 @@ func (b *BenthosInstance) getServiceStatus(ctx context.Context, tick uint64) (be
 			b.baseFSMInstance.GetLogger().Debugf("Service not found, will be created during reconciliation")
 			return benthos_service.ServiceInfo{}, nil
 		} else if errors.Is(err, benthos_service.ErrHealthCheckConnectionRefused) {
-			// If the service is currently created, or if the service itself not in the starting phase where the health cehcks have ntot passed yet, we can ignore the error
-			if internalfsm.IsLifecycleState(b.baseFSMInstance.GetCurrentFSMState()) ||
-				b.baseFSMInstance.GetCurrentFSMState() == OperationalStateStopped ||
-				b.baseFSMInstance.GetCurrentFSMState() == OperationalStateStopping ||
-				b.baseFSMInstance.GetCurrentFSMState() == OperationalStateStarting ||
-				b.baseFSMInstance.GetCurrentFSMState() == OperationalStateStartingConfigLoading ||
-				b.baseFSMInstance.GetCurrentFSMState() == OperationalStateStartingWaitingForHealthchecks {
-				b.baseFSMInstance.GetLogger().Debugf("Health check refused connection, but service is in a valid state (%s), ignoring", b.baseFSMInstance.GetCurrentFSMState())
-				// Important for state transitions: When moving from stopping to stopped state,
-				// the healthcekc will fail, but we still need to know the fsm state
-				// this update helps refresh the S6FSMState in ObservedState.
-				return info, nil
-			} else {
-				b.baseFSMInstance.GetLogger().Debugf("Health check refused connection, but service is in an invalid state (%s), returning error", b.baseFSMInstance.GetCurrentFSMState())
-				return benthos_service.ServiceInfo{}, err
+			// Instead of conditional state checking, always return a ServiceInfo with failed health checks
+			// This allows the FSM to continue reconciliation and make proper state transition decisions
+			if b.baseFSMInstance.GetCurrentFSMState() != OperationalStateStopped { // no need to spam the logs if the service is already stopped
+				b.baseFSMInstance.GetLogger().Debugf("Health check refused connection for service %s, returning ServiceInfo with failed health checks", b.baseFSMInstance.GetID())
 			}
+			infoWithFailedHealthChecks := info
+			infoWithFailedHealthChecks.BenthosStatus.HealthCheck.IsLive = false
+			infoWithFailedHealthChecks.BenthosStatus.HealthCheck.IsReady = false
+			// Return ServiceInfo with health checks failed but preserve S6FSMState if available
+			return infoWithFailedHealthChecks, nil
 		}
 
 		// For other errors, log them and return
