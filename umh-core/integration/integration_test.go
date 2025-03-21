@@ -34,7 +34,7 @@ services: []
 benthos: []
 `
 			Expect(writeConfigFile(emptyConfig)).To(Succeed())
-			Expect(BuildAndRunContainer(emptyConfig)).To(Succeed())
+			Expect(BuildAndRunContainer(emptyConfig, "1024m")).To(Succeed())
 			Expect(waitForMetrics()).To(Succeed(), "Metrics endpoint should be available with empty config")
 		})
 
@@ -65,7 +65,7 @@ benthos: []
 				BuildYAML()
 
 			Expect(writeConfigFile(cfg)).To(Succeed())
-			Expect(BuildAndRunContainer(cfg)).To(Succeed())
+			Expect(BuildAndRunContainer(cfg, "1024m")).To(Succeed())
 			Expect(waitForMetrics()).To(Succeed(), "Metrics endpoint should be available with golden service config")
 		})
 
@@ -100,7 +100,7 @@ benthos: []
 
 			// Write the config and start the container with the new configuration.
 			Expect(writeConfigFile(cfg)).To(Succeed())
-			Expect(BuildAndRunContainer(cfg)).To(Succeed())
+			Expect(BuildAndRunContainer(cfg, "1024m")).To(Succeed())
 			Expect(waitForMetrics()).To(Succeed(), "Metrics endpoint should be available with golden + sleep service config")
 
 			// Verify that the golden service is ready
@@ -156,7 +156,7 @@ benthos: []
 			cfg := NewBuilder().BuildYAML()
 			// Write the empty config and start the container
 			Expect(writeConfigFile(cfg)).To(Succeed())
-			Expect(BuildAndRunContainer(cfg)).To(Succeed())
+			Expect(BuildAndRunContainer(cfg, "1024m")).To(Succeed())
 			Expect(waitForMetrics()).To(Succeed(), "Metrics endpoint should be available with empty config")
 		})
 
@@ -243,7 +243,7 @@ benthos: []
 			// Start with an empty config
 			cfg := NewBuilder().BuildYAML()
 			Expect(writeConfigFile(cfg)).To(Succeed())
-			Expect(BuildAndRunContainer(cfg)).To(Succeed())
+			Expect(BuildAndRunContainer(cfg, "1024m")).To(Succeed())
 			Expect(waitForMetrics()).To(Succeed(), "Metrics endpoint should be available with empty config")
 		})
 
@@ -528,6 +528,114 @@ benthos: []
 
 			GinkgoWriter.Printf("Chaos test actions completed (%d total actions), waiting for monitoring to complete\n", actionCount)
 			GinkgoWriter.Println("Chaos test completed successfully")
+		})
+	})
+
+	Context("with benthos scaling test", Label("benthos-scaling"), func() {
+		AfterEach(func() {
+			if CurrentSpecReport().Failed() {
+				fmt.Println("Test failed, printing container logs:")
+				printContainerLogs()
+
+				// Print the latest YAML config
+				fmt.Println("\nLatest YAML config at time of failure:")
+				config, err := os.ReadFile("data/config.yaml")
+				if err != nil {
+					fmt.Printf("Failed to read config file: %v\n", err)
+				} else {
+					fmt.Println(string(config))
+				}
+			}
+		})
+
+		BeforeAll(func() {
+			By("Starting with an empty configuration")
+			cfg := NewBuilder().BuildYAML()
+			// Write the empty config and start the container
+			Expect(writeConfigFile(cfg)).To(Succeed())
+			Expect(BuildAndRunContainer(cfg, "2048m")).To(Succeed())
+			Expect(waitForMetrics()).To(Succeed(), "Metrics endpoint should be available with empty config")
+		})
+
+		AfterAll(func() {
+			By("Stopping the container after the benthos scaling test")
+			StopContainer()
+		})
+
+		It("should scale up to multiple benthos instances while maintaining stability", func() {
+			By("Adding the golden service as a baseline")
+			builder := NewBenthosBuilder()
+			builder.AddGoldenBenthos()
+			cfg := builder.BuildYAML()
+			Expect(writeConfigFile(cfg)).To(Succeed())
+
+			By("Waiting for the golden service to become responsive")
+			Eventually(func() int {
+				return checkGoldenServiceStatusOnly()
+			}, 20*time.Second, 1*time.Second).Should(Equal(200),
+				"Golden service should respond with 200 OK")
+
+			By("Scaling up by adding 10 benthos generator services")
+			// Add 10 benthos services to the configuration
+			for i := 0; i < 10; i++ {
+				serviceName := fmt.Sprintf("benthos-%d", i)
+				builder.AddGeneratorBenthos(serviceName, fmt.Sprintf("%ds", 1+i%3)) // Varying intervals
+				cfg = builder.BuildYAML()
+				GinkgoWriter.Printf("Added benthos service %s\n", serviceName)
+				Expect(writeConfigFile(cfg)).To(Succeed())
+
+				// Allow time for service to start before adding the next one
+				time.Sleep(1 * time.Second)
+
+				// Check health periodically
+				monitorHealth()
+			}
+
+			By("Simulating random stop/start/update actions on benthos services")
+			// Create a deterministic random number generator for reproducibility
+			r := rand.New(rand.NewSource(42))
+			for i := 0; i < 50; i++ {
+				// Pick a random benthos service index (0-9)
+				randomIndex := r.Intn(10)
+				randomServiceName := fmt.Sprintf("benthos-%d", randomIndex)
+
+				// Randomly decide operation: start, stop, or update
+				opType := r.Intn(3)
+				switch opType {
+				case 0: // Start
+					GinkgoWriter.Printf("Starting benthos service %s\n", randomServiceName)
+					builder.StartBenthos(randomServiceName)
+				case 1: // Stop
+					GinkgoWriter.Printf("Stopping benthos service %s\n", randomServiceName)
+					builder.StopBenthos(randomServiceName)
+				case 2: // Update config
+					newInterval := fmt.Sprintf("%ds", 1+r.Intn(5))
+					GinkgoWriter.Printf("Updating benthos service %s with new interval %s\n", randomServiceName, newInterval)
+					builder.UpdateGeneratorBenthos(randomServiceName, newInterval)
+				}
+
+				// Apply the updated configuration
+				Expect(writeConfigFile(builder.BuildYAML())).To(Succeed())
+
+				// Random delay between operations
+				delay := time.Duration(1000+r.Intn(2000)) * time.Millisecond
+				time.Sleep(delay)
+
+				// Check the health of the system
+				monitorHealth()
+
+				// Every 10 operations, print a status update
+				if i%10 == 0 {
+					activeCount := builder.CountActiveBenthos()
+					GinkgoWriter.Printf("\n=== Benthos Scaling Test Status ===\n"+
+						"Actions completed: %d\n"+
+						"Total benthos services: %d\n"+
+						"Active benthos services: %d\n",
+						i+1, 11, activeCount) // 11 includes golden service
+				}
+			}
+
+			GinkgoWriter.Println("Benthos scaling test completed successfully")
 		})
 	})
 })

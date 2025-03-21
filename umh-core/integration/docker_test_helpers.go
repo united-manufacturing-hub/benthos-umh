@@ -18,7 +18,7 @@ const (
 )
 
 // BuildAndRunContainer rebuilds your Docker image, starts the container, etc.
-func BuildAndRunContainer(configFilePath string) error {
+func BuildAndRunContainer(configFilePath string, memory string) error {
 	// 1. Stop/Remove the old container if any
 	runDockerCommand("rm", "-f", containerName) // ignoring error
 	runDockerCommand("stop", containerName)     // ignoring error
@@ -34,7 +34,7 @@ func BuildAndRunContainer(configFilePath string) error {
 		"run", "-d",
 		"--name", containerName,
 		"--cpus=1",
-		"--memory=1024m",
+		"--memory", memory,
 		"-v", fmt.Sprintf("%s/data:/data", GetCurrentDir()),
 		"-e", "LOGGING_LEVEL=debug",
 		"-p", "8081:8080",

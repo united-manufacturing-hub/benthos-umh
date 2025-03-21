@@ -184,6 +184,18 @@ func (b *BenthosInstance) IsBenthosHealthchecksPassed() bool {
 		b.ObservedState.ServiceInfo.BenthosStatus.HealthCheck.IsReady
 }
 
+// AnyRestartsSinceCreation determines if the Benthos service has restarted since its creation.
+func (b *BenthosInstance) AnyRestartsSinceCreation() bool {
+	// We can analyse the S6 ExitHistory to determine if the service has restarted in the last seconds
+	// We need to check if any of the exit codes are 0 (which means a restart)
+	// and if the time of the restart is within the last seconds
+	if len(b.ObservedState.ServiceInfo.S6ObservedState.ServiceInfo.ExitHistory) == 0 {
+		return false
+	}
+
+	return true
+}
+
 // IsBenthosRunningForSomeTimeWithoutErrors determines if the Benthos service has been running for some time.
 func (b *BenthosInstance) IsBenthosRunningForSomeTimeWithoutErrors() bool {
 	currentUptime := b.ObservedState.ServiceInfo.S6ObservedState.ServiceInfo.Uptime
