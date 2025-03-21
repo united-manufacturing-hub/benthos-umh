@@ -113,7 +113,8 @@ jobs:
             mcr.microsoft.com/iotedge/opc-plc:2.12.29 \
             --pn=50000 --autoaccept --sph --sn=100 --sr=10 --st=uint --fn=5 --fr=1 --ft=uint --gn=5 --certdnsnames=localhost --plchostname=localhost --unsecuretransport)
           OPCSIM_PORT=$(docker inspect $OPCSIM_CONTAINER | jq '.[].NetworkSettings.Ports["50000/tcp"] | .[0].HostPort' | tr -d '"' || true)
-            echo "opcsim port: $OPCSIM_PORT"
+            echo "################# Docker Port ######################"
+            echo "Opcsim port: $OPCSIM_PORT"
             if [ -z "$OPCSIM_PORT" ]; then
               echo "Failed to get opcsim port"
               docker inspect $OPCSIM_CONTAINER
@@ -138,6 +139,7 @@ jobs:
       - name: Test container availability
         run: |
           tcping $OPCSIM_IP:$OPCSIM_PORT
+          tcping 127.0.0.1:$OPCSIM_PORT
 
       - name: Test
         env:
