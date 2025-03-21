@@ -24,6 +24,7 @@ import (
 	s6fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	"gopkg.in/yaml.v3"
 
+	benthosyaml "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos/yaml"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 )
 
@@ -255,7 +256,7 @@ func (s *BenthosService) generateBenthosYaml(config *config.BenthosServiceConfig
 		config.LogLevel = "INFO"
 	}
 
-	return RenderBenthosYAML(
+	return benthosyaml.RenderBenthosYAML(
 		config.Input,
 		config.Output,
 		config.Pipeline,
@@ -371,7 +372,7 @@ func (s *BenthosService) GetConfig(ctx context.Context, benthosName string) (con
 	}
 
 	// Normalize the config to ensure consistent defaults
-	return NormalizeBenthosConfig(result), nil
+	return benthosyaml.NormalizeBenthosConfig(result), nil
 }
 
 // extractMetricsPort safely extracts the metrics port from the config map
@@ -1058,8 +1059,9 @@ func (s *BenthosService) ServiceExists(ctx context.Context, benthosName string) 
 
 	exists, err := s.s6Service.ServiceExists(ctx, s6ServicePath)
 	if err != nil {
-		// Log error but don't fail
+		s.logger.Error("Error checking if service exists", zap.String("service", s6ServiceName), zap.Error(err))
 		return false
 	}
+
 	return exists
 }

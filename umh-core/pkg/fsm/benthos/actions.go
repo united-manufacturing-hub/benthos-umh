@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	internalfsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
-	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	s6fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	benthos_service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos"
+	benthosyaml "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos/yaml"
 )
 
 // The functions in this file define heavier, possibly fail-prone operations
@@ -123,6 +123,9 @@ func (b *BenthosInstance) getServiceStatus(ctx context.Context, tick uint64) (be
 				// the healthcekc will fail, but we still need to know the fsm state
 				// this update helps refresh the S6FSMState in ObservedState.
 				return info, nil
+			} else {
+				b.baseFSMInstance.GetLogger().Debugf("Health check refused connection, but service is in an invalid state (%s), returning error", b.baseFSMInstance.GetCurrentFSMState())
+				return benthos_service.ServiceInfo{}, err
 			}
 		}
 
@@ -165,13 +168,13 @@ func (b *BenthosInstance) updateObservedState(ctx context.Context, tick uint64) 
 
 	// Detect a config change - but let the S6 manager handle the actual reconciliation
 	// Use new ConfigsEqual function that handles Benthos defaults properly
-	if !benthos_service.ConfigsEqual(b.config, b.ObservedState.ObservedBenthosServiceConfig) {
+	if !benthosyaml.ConfigsEqual(b.config, b.ObservedState.ObservedBenthosServiceConfig) {
 		// Check if the service exists before attempting to update
 		if b.service.ServiceExists(ctx, b.baseFSMInstance.GetID()) {
 			b.baseFSMInstance.GetLogger().Debugf("Observed Benthos config is different from desired config, updating S6 configuration")
 
 			// Use the new ConfigDiff function for better debug output
-			diffStr := benthos_service.ConfigDiff(b.config, b.ObservedState.ObservedBenthosServiceConfig)
+			diffStr := benthosyaml.ConfigDiff(b.config, b.ObservedState.ObservedBenthosServiceConfig)
 			b.baseFSMInstance.GetLogger().Debugf("Configuration differences: %s", diffStr)
 
 			// Update the config in the S6 manager
@@ -283,15 +286,4 @@ func (b *BenthosInstance) IsBenthosWithProcessingActivity() bool {
 		return false
 	}
 	return b.service.HasProcessingActivity(b.ObservedState.ServiceInfo.BenthosStatus)
-}
-
-// logConfigDifferences logs detailed information about what's different between configs
-// This helps debug why reconciliation is repeatedly detecting differences
-func (b *BenthosInstance) logConfigDifferences(desired, observed config.BenthosServiceConfig) {
-	logger := b.baseFSMInstance.GetLogger()
-
-	// Use the new ConfigDiff function for consistent and detailed differences
-	diffStr := benthos_service.ConfigDiff(desired, observed)
-	logger.Debugf("Configuration differences for %s:", b.baseFSMInstance.GetID())
-	logger.Debugf("%s", diffStr)
 }
