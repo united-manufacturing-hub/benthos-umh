@@ -24,10 +24,18 @@ import (
 // opc-plc is what is running when starting up the devcontainer
 // other simulators are not running when starting up the devcontainer and are a rather manual process to start
 var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, func() {
+	// NOTE: set to localhost and 50000 for local runs but will get override whenever running in workflow
+	opcsimIp := "localhost"
+	opcsimPort := "50000"
 
 	BeforeEach(func() {
 		testActivated := os.Getenv("TEST_OPCUA_SIMULATOR")
-
+		if os.Getenv("TEST_OPCSIM_IP") != "" {
+			opcsimIp = os.Getenv("TEST_OPCSIM_IP")
+		}
+		if os.Getenv("TEST_OPCSIM_PORT") != "" {
+			opcsimPort = os.Getenv("TEST_OPCSIM_PORT")
+		}
 		// Check if environment variables are set
 		if testActivated == "" {
 			Skip("Skipping unit tests against simulator: TEST_OPCUA_SIMULATOR not set")
@@ -48,7 +56,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: false,
 				OPCUAConnection: &OPCUAConnection{
-					Endpoint: "opc.tcp://localhost:50000",
+					Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 					Username: "",
 					Password: "",
 				},
@@ -93,7 +101,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: false,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "sysadmin_bad", // Incorrect username and password
 						Password: "demo",
 					},
@@ -124,7 +132,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: false,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "sysadmin",
 						Password: "demo",
 					},
@@ -157,7 +165,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "",
 						Password: "",
 					},
@@ -213,7 +221,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "",
 						Password: "",
 					},
@@ -276,7 +284,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "",
 						Password: "",
 					},
@@ -326,7 +334,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "",
 						Password: "",
 					},
@@ -370,7 +378,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "",
 						Password: "",
 					},
@@ -453,7 +461,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "",
 						Password: "",
 					},
@@ -514,7 +522,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "",
 						Password: "",
 					},
@@ -590,7 +598,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "",
 						Password: "",
 					},
@@ -670,7 +678,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: false,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "",
 						Password: "",
 					},
@@ -715,7 +723,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "",
 						Password: "",
 					},
@@ -760,7 +768,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: true,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "",
 						Password: "",
 					},
@@ -803,7 +811,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: false,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "",
 						Password: "",
 					},
@@ -846,7 +854,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: false,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "",
 						Password: "",
 					},
@@ -889,7 +897,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: false,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "",
 						Password: "",
 					},
@@ -932,7 +940,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: false,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "",
 						Password: "",
 					},
@@ -975,7 +983,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: false,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "",
 						Password: "",
 					},
@@ -1019,7 +1027,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					NodeIDs:          parsedNodeIDs,
 					SubscribeEnabled: false,
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 						Username: "",
 						Password: "",
 					},
@@ -1064,7 +1072,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: false,
 				OPCUAConnection: &OPCUAConnection{
-					Endpoint: "opc.tcp://localhost:50000",
+					Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 					Username: "",
 					Password: "",
 				},
@@ -1133,7 +1141,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
 				OPCUAConnection: &OPCUAConnection{
-					Endpoint: "opc.tcp://localhost:50000",
+					Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 					Username: "",
 					Password: "",
 				},
@@ -1194,7 +1202,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
 				OPCUAConnection: &OPCUAConnection{
-					Endpoint: "opc.tcp://localhost:50000",
+					Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 					Username: "",
 					Password: "",
 				},
@@ -1236,7 +1244,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
 				OPCUAConnection: &OPCUAConnection{
-					Endpoint: "opc.tcp://localhost:50000",
+					Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 					Username: "",
 					Password: "",
 				},
@@ -1279,7 +1287,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
 				OPCUAConnection: &OPCUAConnection{
-					Endpoint: "opc.tcp://localhost:50000",
+					Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 					Username: "",
 					Password: "",
 				},
@@ -1348,7 +1356,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: true,
 				OPCUAConnection: &OPCUAConnection{
-					Endpoint: "opc.tcp://localhost:50000",
+					Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 					Username: "",
 					Password: "",
 				},
@@ -1497,7 +1505,7 @@ opcua:
 				NodeIDs:          parsedNodeIDs,
 				SubscribeEnabled: false,
 				OPCUAConnection: &OPCUAConnection{
-					Endpoint: "opc.tcp://localhost:50000",
+					Endpoint: "opc.tcp://" + opcsimIp + ":" + opcsimPort,
 					Username: "",
 					Password: "",
 				},
