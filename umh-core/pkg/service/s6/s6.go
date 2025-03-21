@@ -91,6 +91,8 @@ type Service interface {
 	GetS6ConfigFile(ctx context.Context, servicePath string, configFileName string) ([]byte, error)
 	// ForceRemove removes a service from the S6 manager
 	ForceRemove(ctx context.Context, servicePath string) error
+	// GetLogs gets the logs of the service
+	GetLogs(ctx context.Context, servicePath string) ([]string, error)
 }
 
 // DefaultService is the default implementation of the S6 Service interface
@@ -220,6 +222,28 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 		return fmt.Errorf("failed to close base dependency file: %w", closeErr)
 	}
 
+	// Create log service directory and run script
+	serviceName := filepath.Base(servicePath)
+	logDir := filepath.Join(constants.S6LogBaseDir, serviceName)
+	logServicePath := filepath.Join(servicePath, "log")
+
+	// Create log service directory
+	if err := s.fsService.EnsureDirectory(ctx, logServicePath); err != nil {
+		return fmt.Errorf("failed to create log service directory: %w", err)
+	}
+
+	// Create log run script
+	logRunPath := filepath.Join(logServicePath, "run")
+	logRunContent := fmt.Sprintf(`#!/command/execlineb -P
+fdmove -c 2 1
+foreground { mkdir -p %s }
+logutil-service %s
+`, logDir, logDir)
+
+	if err := s.fsService.WriteFile(ctx, logRunPath, []byte(logRunContent), 0755); err != nil {
+		return fmt.Errorf("failed to write log run script: %w", err)
+	}
+
 	// if the supervise directory does not exist, notify s6-svscan
 	superviseDir := filepath.Join(servicePath, "supervise")
 	exists, err = s.fsService.FileExists(ctx, superviseDir)
@@ -234,7 +258,7 @@ func (s *DefaultService) Create(ctx context.Context, servicePath string, config 
 		}
 	}
 
-	s.logger.Debugf("S6 service %s created", servicePath)
+	s.logger.Debugf("S6 service %s created with logging to %s", servicePath, logDir)
 
 	return nil
 }
@@ -346,13 +370,20 @@ func (s *DefaultService) Remove(ctx context.Context, servicePath string) error {
 	contentsFile := filepath.Join(filepath.Dir(servicePath), "user", "contents.d", serviceName)
 	s.fsService.Remove(ctx, contentsFile) // Ignore errors - file might not exist
 
+	// Remove the service directory
 	err = s.fsService.RemoveAll(ctx, servicePath)
 	if err != nil {
 		return fmt.Errorf("failed to remove S6 service %s: %w", servicePath, err)
 	}
 
+	// Clean up logs directory (best effort - don't block removal if this fails)
+	logDir := filepath.Join(constants.S6LogBaseDir, serviceName)
+	if logErr := s.fsService.RemoveAll(ctx, logDir); logErr != nil && s.logger != nil {
+		s.logger.Warnf("Failed to clean up log directory %s: %v", logDir, logErr)
+	}
+
 	if s.logger != nil {
-		s.logger.Debugf("Removed S6 service %s from contents.d", servicePath)
+		s.logger.Debugf("Removed S6 service %s and its logs", servicePath)
 	}
 	return nil
 }
@@ -1012,4 +1043,47 @@ func (s *DefaultService) ForceRemove(ctx context.Context, servicePath string) er
 	}
 
 	return s.fsService.RemoveAll(ctx, servicePath)
+}
+
+// GetLogs gets the logs of the service
+func (s *DefaultService) GetLogs(ctx context.Context, servicePath string) ([]string, error) {
+	serviceName := filepath.Base(servicePath)
+
+	// Check if the service exists first
+	exists, err := s.ServiceExists(ctx, servicePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check if service exists: %w", err)
+	}
+	if !exists {
+		return nil, ErrServiceNotExist
+	}
+
+	// Get the log file from /data/logs/<service-name>/current
+	logFile := filepath.Join(constants.S6LogBaseDir, serviceName, "current")
+	exists, err = s.fsService.FileExists(ctx, logFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check if log file exists: %w", err)
+	}
+	if !exists {
+		return nil, fmt.Errorf("log file %s does not exist", logFile)
+	}
+
+	// Read the log file
+	content, err := s.fsService.ReadFile(ctx, logFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read log file: %w", err)
+	}
+
+	// Split logs by newline and return
+	logs := strings.Split(strings.TrimSpace(string(content)), "\n")
+
+	// Filter out empty lines
+	var filteredLogs []string
+	for _, line := range logs {
+		if line != "" {
+			filteredLogs = append(filteredLogs, line)
+		}
+	}
+
+	return filteredLogs, nil
 }

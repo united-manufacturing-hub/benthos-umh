@@ -82,7 +82,8 @@ RUN chmod +x /etc/s6-overlay/s6-rc.d/umh-core/run
 ENV S6_KEEP_ENV=1 \
     S6_BEHAVIOUR_IF_STAGE2_FAILS=2 \
     S6_CMD_WAIT_FOR_SERVICES=1 \
-    S6_SERVICES_READYTIME=50
+    S6_SERVICES_READYTIME=50 \
+    S6_LOGGING_SCRIPT="n20 s1000000 T"
 
 VOLUME [ "/data" ]
 

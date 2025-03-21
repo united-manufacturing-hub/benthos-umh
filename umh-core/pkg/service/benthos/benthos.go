@@ -459,6 +459,15 @@ func (s *BenthosService) Status(ctx context.Context, benthosName string, metrics
 		return ServiceInfo{}, fmt.Errorf("failed to get current FSM state: %w", err)
 	}
 
+	// Let's get the logs of the Benthos service
+	//logs, err := s.s6Service.GetLogs(ctx, s6ServiceName)
+	//if err != nil {
+	//	return ServiceInfo{}, fmt.Errorf("failed to get logs: %w", err)
+	//}
+
+	// TODO
+	//logs = logs
+
 	// Let's get the health check of the Benthos service
 	benthosStatus, err := s.GetHealthCheckAndMetrics(ctx, s6ServiceName, metricsPort, tick)
 	if err != nil {

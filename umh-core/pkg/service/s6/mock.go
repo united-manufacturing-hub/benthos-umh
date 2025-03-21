@@ -20,6 +20,7 @@ type MockService struct {
 	ExitHistoryCalled     bool
 	GetS6ConfigFileCalled bool
 	ForceRemoveCalled     bool
+	GetLogsCalled         bool
 	// Return values for each method
 	CreateError           error
 	RemoveError           error
@@ -36,6 +37,8 @@ type MockService struct {
 	GetS6ConfigFileResult []byte
 	GetS6ConfigFileError  error
 	ForceRemoveError      error
+	GetLogsResult         []string
+	GetLogsError          error
 	// For more complex testing scenarios
 	ServiceStates    map[string]ServiceInfo
 	ExistingServices map[string]bool
@@ -159,4 +162,9 @@ func (m *MockService) GetS6ConfigFile(ctx context.Context, servicePath string, c
 func (m *MockService) ForceRemove(ctx context.Context, servicePath string) error {
 	m.ForceRemoveCalled = true
 	return m.ForceRemoveError
+}
+
+func (m *MockService) GetLogs(ctx context.Context, servicePath string) ([]string, error) {
+	m.GetLogsCalled = true
+	return m.GetLogsResult, m.GetLogsError
 }
