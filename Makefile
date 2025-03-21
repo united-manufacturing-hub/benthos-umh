@@ -62,7 +62,7 @@ test-s7comm:
 
 .PHONY:
 test-modbus:
-	@TEST_MODBUS_SIMULATOR=true ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./modbus_plugin/...
+	@ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./modbus_plugin/...
 
 .PHONY:
 test-opc:
