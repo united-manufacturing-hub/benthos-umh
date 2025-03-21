@@ -465,6 +465,7 @@ var _ = Describe("Benthos Service", func() {
 		var (
 			service       *BenthosService
 			mockClient    *MockHTTPClient
+			mockS6Service *s6service.MockService
 			tick          uint64
 			benthosName   = "test"
 			metricsPort   = 8080
@@ -473,7 +474,11 @@ var _ = Describe("Benthos Service", func() {
 
 		BeforeEach(func() {
 			mockClient = NewMockHTTPClient()
-			service = NewDefaultBenthosService(benthosName, WithHTTPClient(mockClient))
+			mockS6Service = s6service.NewMockService()
+			service = NewDefaultBenthosService(benthosName,
+				WithHTTPClient(mockClient),
+				WithS6Service(mockS6Service),
+			)
 			tick = 0
 
 			// Add the service to the S6 manager
@@ -484,10 +489,12 @@ var _ = Describe("Benthos Service", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			s6ServiceName = service.getS6ServiceName(benthosName)
-			s6ServiceName = s6ServiceName
+
+			// Mark the service as existing in the mock
+			mockS6Service.ExistingServices[s6ServiceName] = true
+			mockS6Service.ServiceExistsResult = true
 
 			// Reconcile the S6 manager
-			// TODO: maybe use a mock for the S6 manager, there is one in fsm/mock.go
 			err, _ = service.ReconcileManager(context.Background(), tick)
 			Expect(err).NotTo(HaveOccurred())
 		})
@@ -964,6 +971,13 @@ processor_batch_sent{label="1",path="root.pipeline.processors.1"} 18
 				},
 				Command: []string{"benthos", "-c", "config.yaml"},
 				Env:     map[string]string{"BENTHOS_LOG_LEVEL": "info"},
+			}
+
+			s6ServiceMock.GetLogsResult = []s6service.LogEntry{
+				{
+					Timestamp: time.Now(),
+					Content:   "test log",
+				},
 			}
 
 			// Verify service is running with initial configuration

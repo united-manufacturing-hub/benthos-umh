@@ -460,13 +460,19 @@ func (s *BenthosService) Status(ctx context.Context, benthosName string, metrics
 	}
 
 	// Let's get the logs of the Benthos service
-	//logs, err := s.s6Service.GetLogs(ctx, s6ServiceName)
-	//if err != nil {
-	//	return ServiceInfo{}, fmt.Errorf("failed to get logs: %w", err)
-	//}
+	s6ServicePath := filepath.Join(constants.S6BaseDir, s6ServiceName)
+	logs, err := s.s6Service.GetLogs(ctx, s6ServicePath)
+	if err != nil {
+		if errors.Is(err, s6service.ErrServiceNotExist) {
+			s.logger.Debugf("Service %s does not exist, returning empty logs", s6ServiceName)
+			return ServiceInfo{}, ErrServiceNotExist
+		} else {
+			return ServiceInfo{}, fmt.Errorf("failed to get logs: %w", err)
+		}
+	}
 
 	// TODO
-	//logs = logs
+	logs = logs
 
 	// Let's get the health check of the Benthos service
 	benthosStatus, err := s.GetHealthCheckAndMetrics(ctx, s6ServiceName, metricsPort, tick)

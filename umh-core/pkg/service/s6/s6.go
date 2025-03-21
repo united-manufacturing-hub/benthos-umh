@@ -65,6 +65,12 @@ type ExitEvent struct {
 	Signal    int       // signal number of the exit event
 }
 
+// LogEntry represents a parsed log entry from the S6 logs
+type LogEntry struct {
+	Timestamp time.Time `json:"timestamp"`
+	Content   string    `json:"content"`
+}
+
 // Service defines the interface for interacting with S6 services
 type Service interface {
 	// Create creates the service with specific configuration
@@ -92,7 +98,7 @@ type Service interface {
 	// ForceRemove removes a service from the S6 manager
 	ForceRemove(ctx context.Context, servicePath string) error
 	// GetLogs gets the logs of the service
-	GetLogs(ctx context.Context, servicePath string) ([]string, error)
+	GetLogs(ctx context.Context, servicePath string) ([]LogEntry, error)
 }
 
 // DefaultService is the default implementation of the S6 Service interface
@@ -1045,8 +1051,8 @@ func (s *DefaultService) ForceRemove(ctx context.Context, servicePath string) er
 	return s.fsService.RemoveAll(ctx, servicePath)
 }
 
-// GetLogs gets the logs of the service
-func (s *DefaultService) GetLogs(ctx context.Context, servicePath string) ([]string, error) {
+// GetStructuredLogs gets the logs of the service as structured LogEntry objects
+func (s *DefaultService) GetLogs(ctx context.Context, servicePath string) ([]LogEntry, error) {
 	serviceName := filepath.Base(servicePath)
 
 	// Check if the service exists first
@@ -1055,6 +1061,7 @@ func (s *DefaultService) GetLogs(ctx context.Context, servicePath string) ([]str
 		return nil, fmt.Errorf("failed to check if service exists: %w", err)
 	}
 	if !exists {
+		s.logger.Debugf("Service with path %s does not exist, returning empty logs", servicePath)
 		return nil, ErrServiceNotExist
 	}
 
@@ -1074,16 +1081,40 @@ func (s *DefaultService) GetLogs(ctx context.Context, servicePath string) ([]str
 		return nil, fmt.Errorf("failed to read log file: %w", err)
 	}
 
-	// Split logs by newline and return
+	// Split logs by newline
 	logs := strings.Split(strings.TrimSpace(string(content)), "\n")
 
-	// Filter out empty lines
-	var filteredLogs []string
+	// Parse each log line into structured entries
+	var entries []LogEntry
 	for _, line := range logs {
-		if line != "" {
-			filteredLogs = append(filteredLogs, line)
+		if line == "" {
+			continue
+		}
+
+		entry := parseLogLine(line)
+		if !entry.Timestamp.IsZero() {
+			entries = append(entries, entry)
 		}
 	}
 
-	return filteredLogs, nil
+	return entries, nil
+}
+
+// parseLogLine parses a log line from S6 format and returns a LogEntry
+func parseLogLine(line string) LogEntry {
+	// S6 log format with T flag: YYYY-MM-DD HH:MM:SS.NNNNNNNNN  content
+	parts := strings.SplitN(line, "  ", 2)
+	if len(parts) != 2 {
+		return LogEntry{Content: line}
+	}
+
+	timestamp, err := time.Parse("2006-01-02 15:04:05.999999999", parts[0])
+	if err != nil {
+		return LogEntry{Content: line}
+	}
+
+	return LogEntry{
+		Timestamp: timestamp,
+		Content:   parts[1],
+	}
 }

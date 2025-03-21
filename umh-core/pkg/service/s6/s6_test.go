@@ -65,9 +65,9 @@ var _ = Describe("S6 Service", func() {
 		mockService.Status(ctx, testPath)
 		Expect(mockService.StatusCalled).To(BeTrue())
 
-		Expect(mockService.ExistsCalled).To(BeFalse())
+		Expect(mockService.ServiceExistsCalled).To(BeFalse())
 		mockService.ServiceExists(ctx, testPath)
-		Expect(mockService.ExistsCalled).To(BeTrue())
+		Expect(mockService.ServiceExistsCalled).To(BeTrue())
 	})
 
 	It("should manage service state in the mock implementation", func() {

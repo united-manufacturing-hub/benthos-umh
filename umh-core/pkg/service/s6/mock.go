@@ -9,36 +9,48 @@ import (
 // MockService is a mock implementation of the S6 Service interface for testing
 type MockService struct {
 	// Tracks calls to methods
-	CreateCalled          bool
-	RemoveCalled          bool
-	StartCalled           bool
-	StopCalled            bool
-	RestartCalled         bool
-	StatusCalled          bool
-	ExistsCalled          bool
-	GetConfigCalled       bool
-	ExitHistoryCalled     bool
-	GetS6ConfigFileCalled bool
-	ForceRemoveCalled     bool
-	GetLogsCalled         bool
+	CreateCalled                  bool
+	RemoveCalled                  bool
+	StartCalled                   bool
+	StopCalled                    bool
+	RestartCalled                 bool
+	StatusCalled                  bool
+	ExitHistoryCalled             bool
+	ServiceExistsCalled           bool
+	GetConfigCalled               bool
+	CleanS6ServiceDirectoryCalled bool
+	GetS6ConfigFileCalled         bool
+	ForceRemoveCalled             bool
+	GetLogsCalled                 bool
+	GetStructuredLogsCalled       bool
 	// Return values for each method
-	CreateError           error
-	RemoveError           error
-	StartError            error
-	StopError             error
-	RestartError          error
-	StatusResult          ServiceInfo
-	StatusError           error
-	ExistsResult          bool
-	GetConfigResult       config.S6ServiceConfig
-	GetConfigError        error
-	ExitHistoryResult     []ExitEvent
-	ExitHistoryError      error
-	GetS6ConfigFileResult []byte
-	GetS6ConfigFileError  error
-	ForceRemoveError      error
-	GetLogsResult         []string
-	GetLogsError          error
+	CreateError                  error
+	RemoveError                  error
+	StartError                   error
+	StopError                    error
+	RestartError                 error
+	StatusError                  error
+	ExitHistoryError             error
+	ServiceExistsError           error
+	GetConfigError               error
+	CleanS6ServiceDirectoryError error
+	GetS6ConfigFileError         error
+	ForceRemoveError             error
+	GetLogsError                 error
+	// Results for each method
+	CreateResult                  error
+	RemoveResult                  error
+	StartResult                   error
+	StopResult                    error
+	RestartResult                 error
+	StatusResult                  ServiceInfo
+	ExitHistoryResult             []ExitEvent
+	ServiceExistsResult           bool
+	GetConfigResult               config.S6ServiceConfig
+	CleanS6ServiceDirectoryResult error
+	GetS6ConfigFileResult         []byte
+	ForceRemoveResult             error
+	GetLogsResult                 []LogEntry
 	// For more complex testing scenarios
 	ServiceStates    map[string]ServiceInfo
 	ExistingServices map[string]bool
@@ -132,8 +144,11 @@ func (m *MockService) Status(ctx context.Context, servicePath string) (ServiceIn
 
 // ServiceExists mocks checking if an S6 service exists
 func (m *MockService) ServiceExists(ctx context.Context, servicePath string) (bool, error) {
-	m.ExistsCalled = true
-	return m.ExistingServices[servicePath], nil
+	m.ServiceExistsCalled = true
+	if exists := m.ExistingServices[servicePath]; exists {
+		return true, m.ServiceExistsError
+	}
+	return false, m.ServiceExistsError
 }
 
 // GetConfig mocks getting the config of an S6 service
@@ -149,7 +164,8 @@ func (m *MockService) ExitHistory(ctx context.Context, servicePath string) ([]Ex
 
 // CleanS6ServiceDirectory implements the Service interface
 func (m *MockService) CleanS6ServiceDirectory(ctx context.Context, path string) error {
-	return nil
+	m.CleanS6ServiceDirectoryCalled = true
+	return m.CleanS6ServiceDirectoryResult
 }
 
 // GetS6ConfigFile is a mock method
@@ -164,7 +180,8 @@ func (m *MockService) ForceRemove(ctx context.Context, servicePath string) error
 	return m.ForceRemoveError
 }
 
-func (m *MockService) GetLogs(ctx context.Context, servicePath string) ([]string, error) {
+func (m *MockService) GetLogs(ctx context.Context, servicePath string) ([]LogEntry, error) {
 	m.GetLogsCalled = true
+
 	return m.GetLogsResult, m.GetLogsError
 }

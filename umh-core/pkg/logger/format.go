@@ -36,14 +36,15 @@ func (e *PrettyConsoleEncoder) Clone() zapcore.Encoder {
 func (e *PrettyConsoleEncoder) EncodeEntry(entry zapcore.Entry, fields []zapcore.Field) (*buffer.Buffer, error) {
 	line := e.pool.Get()
 
+	// not needed anymore as S6 automatically adds timestamps
 	// Format timestamp
-	line.AppendByte('[')
-	if entry.Time.IsZero() {
-		line.AppendString("no timestamp")
-	} else {
-		line.AppendString(entry.Time.Format("2006-01-02 15:04:05 MST"))
-	}
-	line.AppendByte(']')
+	// line.AppendByte('[')
+	// if entry.Time.IsZero() {
+	// 	line.AppendString("no timestamp")
+	// } else {
+	//line.AppendString(entry.Time.Format("2006-01-02 15:04:05 MST"))
+	// }
+	//line.AppendByte(']')
 
 	// Format log level with padding for alignment
 	line.AppendString(" [")
