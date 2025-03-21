@@ -18,9 +18,6 @@ func NewBenthosInstance(
 	s6BaseDir string,
 	config config.BenthosConfig) *BenthosInstance {
 
-	// TODO: Replace this with proper BenthosConfig when available
-	// For now, reusing S6FSMConfig for skeleton implementation
-
 	cfg := internal_fsm.BaseFSMInstanceConfig{
 		ID:                           config.Name,
 		DesiredFSMState:              OperationalStateStopped,

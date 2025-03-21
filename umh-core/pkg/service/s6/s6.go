@@ -87,6 +87,8 @@ type Service interface {
 	GetConfig(ctx context.Context, servicePath string) (config.S6ServiceConfig, error)
 	// CleanS6ServiceDirectory cleans the S6 service directory, removing non-standard services
 	CleanS6ServiceDirectory(ctx context.Context, path string) error
+	// GetServiceConfigFile retrieves a config file for a service
+	GetServiceConfigFile(ctx context.Context, serviceName string, configFileName string) ([]byte, error)
 }
 
 // DefaultService is the default implementation of the S6 Service interface
@@ -962,4 +964,40 @@ func (s *DefaultService) IsKnownService(name string) bool {
 	}
 
 	return false
+}
+
+// GetServiceConfigFile retrieves the specified config file for a service
+func (s *DefaultService) GetServiceConfigFile(ctx context.Context, serviceName string, configFileName string) ([]byte, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	// Check if the service exists
+	exists, err := s.ServiceExists(ctx, serviceName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check if service exists: %w", err)
+	}
+	if !exists {
+		return nil, ErrServiceNotExist
+	}
+
+	// Form the path to the config file
+	configPath := filepath.Join(constants.S6BaseDir, serviceName, "config", configFileName)
+
+	// Check if the file exists
+	exists, err = s.fsService.FileExists(ctx, configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check if config file exists: %w", err)
+	}
+	if !exists {
+		return nil, fmt.Errorf("config file %s does not exist for service %s", configFileName, serviceName)
+	}
+
+	// Read the file
+	content, err := s.fsService.ReadFile(ctx, configPath)
+	if err != nil {
+		return nil, fmt.Errorf("error reading config file %s for service %s: %w", configFileName, serviceName, err)
+	}
+
+	return content, nil
 }

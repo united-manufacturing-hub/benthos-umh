@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 
 	internalfsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	s6fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
@@ -89,12 +90,9 @@ func (b *BenthosInstance) initiateBenthosStop(ctx context.Context) error {
 	return nil
 }
 
-// updateObservedState updates the observed state of the service
-func (b *BenthosInstance) updateObservedState(ctx context.Context, tick uint64) error {
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-
+// getServiceStatus gets the status of the Benthos service
+// its main purpose is to habdle the edge cases where the service is not yet created or not yet running
+func (b *BenthosInstance) getServiceStatus(ctx context.Context, tick uint64) (benthos_service.ServiceInfo, error) {
 	info, err := b.service.Status(ctx, b.baseFSMInstance.GetID(), b.config.MetricsPort, tick)
 	if err != nil {
 		// If there's an error getting the service status, we need to distinguish between cases
@@ -105,12 +103,12 @@ func (b *BenthosInstance) updateObservedState(ctx context.Context, tick uint64) 
 			// This will be handled in the reconcileStateTransition where the service gets created
 			if b.baseFSMInstance.GetCurrentFSMState() == internalfsm.LifecycleStateCreating ||
 				b.baseFSMInstance.GetCurrentFSMState() == internalfsm.LifecycleStateToBeCreated {
-				return benthos_service.ErrServiceNotExist
+				return benthos_service.ServiceInfo{}, benthos_service.ErrServiceNotExist
 			}
 
 			// Log the warning but don't treat it as a fatal error
 			b.baseFSMInstance.GetLogger().Debugf("Service not found, will be created during reconciliation")
-			return nil
+			return benthos_service.ServiceInfo{}, nil
 		} else if errors.Is(err, benthos_service.ErrHealthCheckConnectionRefused) {
 			// If the service is currently created, or if the service itself not in the starting phase where the health cehcks have ntot passed yet, we can ignore the error
 			if internalfsm.IsLifecycleState(b.baseFSMInstance.GetCurrentFSMState()) ||
@@ -120,20 +118,59 @@ func (b *BenthosInstance) updateObservedState(ctx context.Context, tick uint64) 
 				b.baseFSMInstance.GetCurrentFSMState() == OperationalStateStartingConfigLoading ||
 				b.baseFSMInstance.GetCurrentFSMState() == OperationalStateStartingWaitingForHealthchecks {
 				b.baseFSMInstance.GetLogger().Debugf("Health check refused connection, but service is in a valid state (%s), ignoring", b.baseFSMInstance.GetCurrentFSMState())
-				b.ObservedState.ServiceInfo = info // Important for state transitions: When moving from stopping to stopped state,
+				// Important for state transitions: When moving from stopping to stopped state,
 				// the healthcekc will fail, but we still need to know the fsm state
 				// this update helps refresh the S6FSMState in ObservedState.
-				return nil
+				return info, nil
 			}
 		}
 
 		// For other errors, log them and return
 		b.baseFSMInstance.GetLogger().Errorf("error updating observed state for %s: %s", b.baseFSMInstance.GetID(), err)
+		return benthos_service.ServiceInfo{}, err
+	}
+
+	return info, nil
+}
+
+// updateObservedState updates the observed state of the service
+func (b *BenthosInstance) updateObservedState(ctx context.Context, tick uint64) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	info, err := b.getServiceStatus(ctx, tick)
+	if err != nil {
 		return err
 	}
 
 	// Store the raw service info
 	b.ObservedState.ServiceInfo = info
+
+	// Fetch the actual Benthos config from the service
+	observedConfig, err := b.service.GetConfig(ctx, b.baseFSMInstance.GetID())
+	if err == nil {
+		// Only update if we successfully got the config
+		b.ObservedState.ObservedBenthosServiceConfig = observedConfig
+	} else {
+		if errors.Is(err, benthos_service.ErrServiceNotExist) {
+			// Log the error but don't fail - this might happen during creation when the config file doesn't exist yet
+			b.baseFSMInstance.GetLogger().Debugf("Service not found, will be created during reconciliation: %v", err)
+		} else {
+			return fmt.Errorf("failed to get observed Benthos config: %w", err)
+		}
+	}
+
+	// Detect a config change - but let the S6 manager handle the actual reconciliation
+	if !reflect.DeepEqual(b.ObservedState.ObservedBenthosServiceConfig, b.config) {
+		b.baseFSMInstance.GetLogger().Debugf("Observed Benthos config is different from desired config, updating S6 configuration")
+		// Instead of manually logging differences and calling Remove(), we update the config in the S6 manager
+		// The S6 manager's reconciliation logic will detect the change and handle the update
+		err := b.service.UpdateBenthosInS6Manager(ctx, &b.config, b.baseFSMInstance.GetID())
+		if err != nil {
+			return fmt.Errorf("failed to update Benthos service configuration: %w", err)
+		}
+	}
 
 	// NOTE: Unlike S6Instance, we don't need to check for config reconciliation here.
 	// This is because:
@@ -244,9 +281,3 @@ func (b *BenthosInstance) IsBenthosWithProcessingActivity() bool {
 	}
 	return b.service.HasProcessingActivity(b.ObservedState.ServiceInfo.BenthosStatus)
 }
-
-// TODO: Add additional Benthos-specific actions
-// For example:
-// - validateBenthosConfig - Validates Benthos configuration without starting the service
-// - getBenthosMetrics - Retrieves metrics from Benthos HTTP endpoint
-// - checkBenthosLogs - Analyzes logs for warnings and errors

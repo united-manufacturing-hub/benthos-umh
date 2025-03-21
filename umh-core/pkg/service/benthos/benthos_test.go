@@ -829,4 +829,27 @@ processor_batch_sent{label="1",path="root.pipeline.processors.1"} 18
 			Expect(processor1State.BatchesPerTick).To(Equal(float64(10)))  // (19-9)/1
 		})
 	})
+
+	// TestGetConfig tests the GetConfig method with S6 service integration
+	Describe("GetConfig", func() {
+		var (
+			service     *BenthosService
+			benthosName string
+		)
+
+		BeforeEach(func() {
+			benthosName = "test-benthos"
+			service = NewDefaultBenthosService(benthosName)
+		})
+
+		Context("when context is cancelled", func() {
+			It("should return context error", func() {
+				cancelledCtx, cancel := context.WithCancel(context.Background())
+				cancel() // Cancel immediately
+
+				_, err := service.GetConfig(cancelledCtx, benthosName)
+				Expect(err).To(Equal(context.Canceled))
+			})
+		})
+	})
 })

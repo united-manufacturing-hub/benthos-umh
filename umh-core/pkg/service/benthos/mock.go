@@ -6,6 +6,7 @@ import (
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	s6_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
+	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 )
 
 // MockBenthosService is a mock implementation of the IBenthosService interface for testing
@@ -15,6 +16,7 @@ type MockBenthosService struct {
 	GetConfigCalled                                bool
 	StatusCalled                                   bool
 	AddBenthosToS6ManagerCalled                    bool
+	UpdateBenthosInS6ManagerCalled                 bool
 	RemoveBenthosFromS6ManagerCalled               bool
 	StartBenthosCalled                             bool
 	StopBenthosCalled                              bool
@@ -39,6 +41,7 @@ type MockBenthosService struct {
 	StatusResult                     ServiceInfo
 	StatusError                      error
 	AddBenthosToS6ManagerError       error
+	UpdateBenthosInS6ManagerError    error
 	RemoveBenthosFromS6ManagerError  error
 	StartBenthosError                error
 	StopBenthosError                 error
@@ -55,6 +58,9 @@ type MockBenthosService struct {
 
 	// HTTP client for mocking HTTP requests
 	HTTPClient HTTPClient
+
+	// S6 service mock
+	S6Service s6service.Service
 }
 
 // Ensure MockBenthosService implements IBenthosService
@@ -80,6 +86,7 @@ func NewMockBenthosService() *MockBenthosService {
 		S6ServiceConfigs: make([]config.S6FSMConfig, 0),
 		stateFlags:       make(map[string]*ServiceStateFlags),
 		HTTPClient:       NewMockHTTPClient(),
+		S6Service:        &s6service.MockService{},
 	}
 }
 
@@ -121,9 +128,27 @@ func (m *MockBenthosService) GenerateS6ConfigForBenthos(benthosConfig *config.Be
 }
 
 // GetConfig mocks getting the Benthos configuration
-func (m *MockBenthosService) GetConfig(ctx context.Context, path string) (config.BenthosServiceConfig, error) {
+func (m *MockBenthosService) GetConfig(ctx context.Context, serviceName string) (config.BenthosServiceConfig, error) {
 	m.GetConfigCalled = true
-	return m.GetConfigResult, m.GetConfigError
+
+	// If error is set, return it
+	if m.GetConfigError != nil {
+		return config.BenthosServiceConfig{}, m.GetConfigError
+	}
+
+	// If a result is preset, return it
+	if m.GetConfigResult.Input != nil || m.GetConfigResult.Output != nil || m.GetConfigResult.Pipeline != nil {
+		return m.GetConfigResult, nil
+	}
+
+	// Otherwise return a default config with some test values
+	return config.BenthosServiceConfig{
+		Input:       map[string]interface{}{"type": "http_server"},
+		Output:      map[string]interface{}{"type": "http_client"},
+		Pipeline:    map[string]interface{}{"processors": []interface{}{}},
+		LogLevel:    "INFO",
+		MetricsPort: 4195,
+	}, nil
 }
 
 // Status mocks getting the status of a Benthos service
@@ -322,4 +347,28 @@ func (m *MockBenthosService) IsMetricsErrorFree(metrics Metrics) bool {
 	// For testing purposes, we'll consider metrics error-free
 	// This can be enhanced based on testing needs
 	return true
+}
+
+// UpdateBenthosInS6Manager mocks updating a Benthos service configuration in the S6 manager
+func (m *MockBenthosService) UpdateBenthosInS6Manager(ctx context.Context, cfg *config.BenthosServiceConfig, serviceName string) error {
+	m.UpdateBenthosInS6ManagerCalled = true
+
+	// Check if the service exists
+	found := false
+	for i, s6Config := range m.S6ServiceConfigs {
+		if s6Config.Name == serviceName {
+			found = true
+
+			// Update the config
+			s6Config.S6ServiceConfig = m.GenerateS6ConfigForBenthosResult
+			m.S6ServiceConfigs[i] = s6Config
+			break
+		}
+	}
+
+	if !found {
+		return ErrServiceNotExist
+	}
+
+	return m.UpdateBenthosInS6ManagerError
 }

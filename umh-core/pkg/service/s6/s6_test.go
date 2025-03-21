@@ -262,4 +262,92 @@ var _ = Describe("S6 Service", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
+
+	// TestGetServiceConfigFile tests the GetServiceConfigFile method
+	Describe("GetServiceConfigFile", func() {
+		var (
+			s6Service *DefaultService
+			mockFS    *filesystem.MockFileSystem
+			ctx       context.Context
+		)
+
+		BeforeEach(func() {
+			mockFS = filesystem.NewMockFileSystem()
+			s6Service = &DefaultService{
+				fsService: mockFS,
+				logger:    nil, // Not needed for this test
+			}
+			ctx = context.Background()
+		})
+
+		Context("when the service does not exist", func() {
+			BeforeEach(func() {
+				// Setup mock file system to return service does not exist
+				mockFS.WithFileExistsFunc(func(ctx context.Context, path string) (bool, error) {
+					return false, nil
+				})
+			})
+
+			It("should return ErrServiceNotExist", func() {
+				_, err := s6Service.GetServiceConfigFile(ctx, "non-existent-service", "config.yaml")
+				Expect(err).To(Equal(ErrServiceNotExist))
+			})
+		})
+
+		Context("when the service exists but the config file does not", func() {
+			BeforeEach(func() {
+				// Setup mock file system to return service exists but file does not
+				mockFS.WithFileExistsFunc(func(ctx context.Context, path string) (bool, error) {
+					// Service directory exists
+					if path == "test-service" {
+						return true, nil
+					}
+					// But config file does not exist
+					if path == filepath.Join(constants.S6BaseDir, "test-service", "config", "config.yaml") {
+						return false, nil
+					}
+					return false, nil
+				})
+			})
+
+			It("should return an error indicating the file doesn't exist", func() {
+				_, err := s6Service.GetServiceConfigFile(ctx, "test-service", "config.yaml")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("does not exist"))
+			})
+		})
+
+		Context("when both service and config file exist", func() {
+			BeforeEach(func() {
+				// Setup mock file system to return both service and file exist
+				mockFS.WithFileExistsFunc(func(ctx context.Context, path string) (bool, error) {
+					return true, nil
+				})
+
+				// Setup mock file system to return file content
+				mockFS.WithReadFileFunc(func(ctx context.Context, path string) ([]byte, error) {
+					if path == filepath.Join(constants.S6BaseDir, "test-service", "config", "config.yaml") {
+						return []byte("key: value"), nil
+					}
+					return nil, os.ErrNotExist
+				})
+			})
+
+			It("should return the file content", func() {
+				content, err := s6Service.GetServiceConfigFile(ctx, "test-service", "config.yaml")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(content).To(Equal([]byte("key: value")))
+			})
+		})
+
+		Context("when context is cancelled", func() {
+			It("should return context error", func() {
+				cancelledCtx, cancel := context.WithCancel(context.Background())
+				cancel() // Cancel immediately
+
+				_, err := s6Service.GetServiceConfigFile(cancelledCtx, "test-service", "config.yaml")
+				Expect(err).To(Equal(context.Canceled))
+			})
+		})
+	})
 })

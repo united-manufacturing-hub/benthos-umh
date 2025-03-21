@@ -177,7 +177,6 @@ func (s *S6Instance) updateObservedState(ctx context.Context) error {
 	}
 	s.ObservedState.ObservedS6ServiceConfig = config
 
-	// TODO: trigger a reconcile if observed config is different from desired config
 	// the easiest way to do this is causing this instance to be removed, which will trigger a re-create by the manager
 	if !reflect.DeepEqual(s.ObservedState.ObservedS6ServiceConfig, s.config.S6ServiceConfig) {
 		s.baseFSMInstance.GetLogger().Debugf("Observed config is different from desired config, triggering a re-create")

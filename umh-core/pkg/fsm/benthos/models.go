@@ -99,6 +99,9 @@ func IsRunningState(state string) bool {
 type BenthosObservedState struct {
 	// ServiceInfo contains information about the S6 service
 	ServiceInfo benthossvc.ServiceInfo
+
+	// ObservedBenthosServiceConfig contains the observed Benthos service config
+	ObservedBenthosServiceConfig config.BenthosServiceConfig
 }
 
 // IsObservedState implements the ObservedState interface

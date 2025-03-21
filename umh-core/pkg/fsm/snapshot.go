@@ -129,7 +129,6 @@ func GetManagerSnapshots(managers []FSMManager[any], currentTick uint64, cfg con
 		Managers:     make(map[string]ManagerSnapshot),
 		SnapshotTime: time.Now(),
 		Tick:         currentTick,
-		// TODO: implement config hash if needed
 	}
 
 	for _, manager := range managers {
