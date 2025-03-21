@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
-	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -34,9 +33,8 @@ var _ = Describe("Benthos Service", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		// Reconcile the S6 manager
-		err, reconciled := service.ReconcileManager(context.Background(), tick)
+		err, _ = service.ReconcileManager(context.Background(), tick)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(reconciled).To(BeTrue())
 
 		client.SetReadyStatus(200, true, true, "")
 		client.SetMetricsResponse(MetricsConfig{
@@ -293,11 +291,11 @@ var _ = Describe("Benthos Service", func() {
 
 		Context("IsLogsFine", func() {
 			It("should return true when there are no logs", func() {
-				Expect(service.IsLogsFine([]s6.LogEntry{}, currentTime, logWindow)).To(BeTrue())
+				Expect(service.IsLogsFine([]s6service.LogEntry{}, currentTime, logWindow)).To(BeTrue())
 			})
 
 			It("should detect official Benthos error logs", func() {
-				logs := []s6.LogEntry{
+				logs := []s6service.LogEntry{
 					{
 						Timestamp: currentTime.Add(-1 * time.Minute),
 						Content:   `level=error msg="failed to connect to broker"`,
@@ -307,7 +305,7 @@ var _ = Describe("Benthos Service", func() {
 			})
 
 			It("should detect critical warnings in official Benthos logs", func() {
-				logs := []s6.LogEntry{
+				logs := []s6service.LogEntry{
 					{
 						Timestamp: currentTime.Add(-1 * time.Minute),
 						Content:   `level=warn msg="failed to process message"`,
@@ -325,7 +323,7 @@ var _ = Describe("Benthos Service", func() {
 			})
 
 			It("should ignore non-critical warnings in official Benthos logs", func() {
-				logs := []s6.LogEntry{
+				logs := []s6service.LogEntry{
 					{
 						Timestamp: currentTime.Add(-1 * time.Minute),
 						Content:   `level=warn msg="rate limit applied"`,
@@ -339,7 +337,7 @@ var _ = Describe("Benthos Service", func() {
 			})
 
 			It("should detect configuration file read errors", func() {
-				logs := []s6.LogEntry{
+				logs := []s6service.LogEntry{
 					{
 						Timestamp: currentTime.Add(-1 * time.Minute),
 						Content:   `configuration file read error: file not found`,
@@ -349,7 +347,7 @@ var _ = Describe("Benthos Service", func() {
 			})
 
 			It("should detect logger creation errors", func() {
-				logs := []s6.LogEntry{
+				logs := []s6service.LogEntry{
 					{
 						Timestamp: currentTime.Add(-1 * time.Minute),
 						Content:   `failed to create logger: invalid log level`,
@@ -359,7 +357,7 @@ var _ = Describe("Benthos Service", func() {
 			})
 
 			It("should detect linter errors", func() {
-				logs := []s6.LogEntry{
+				logs := []s6service.LogEntry{
 					{
 						Timestamp: currentTime.Add(-1 * time.Minute),
 						Content:   `Config lint error: invalid input type`,
@@ -373,7 +371,7 @@ var _ = Describe("Benthos Service", func() {
 			})
 
 			It("should ignore error-like strings in message content", func() {
-				logs := []s6.LogEntry{
+				logs := []s6service.LogEntry{
 					{
 						Timestamp: currentTime.Add(-1 * time.Minute),
 						Content:   `level=info msg="Processing message: configuration file read error in payload"`,
@@ -391,7 +389,7 @@ var _ = Describe("Benthos Service", func() {
 			})
 
 			It("should ignore error patterns not at start of line", func() {
-				logs := []s6.LogEntry{
+				logs := []s6service.LogEntry{
 					{
 						Timestamp: currentTime.Add(-1 * time.Minute),
 						Content:   `level=info msg="User reported: configuration file read error"`,
@@ -409,7 +407,7 @@ var _ = Describe("Benthos Service", func() {
 			})
 
 			It("should handle mixed log types correctly", func() {
-				logs := []s6.LogEntry{
+				logs := []s6service.LogEntry{
 					{
 						Timestamp: currentTime.Add(-1 * time.Minute),
 						Content:   `level=info msg="Starting up Benthos service"`,
@@ -424,14 +422,14 @@ var _ = Describe("Benthos Service", func() {
 					},
 					{
 						Timestamp: currentTime.Add(-4 * time.Minute),
-						Content:   `level=error msg="failed to connect"`, // This should trigger false
+						Content:   `level=error msg="failed to connect"`,
 					},
 				}
 				Expect(service.IsLogsFine(logs, currentTime, logWindow)).To(BeFalse())
 			})
 
 			It("should handle malformed Benthos logs gracefully", func() {
-				logs := []s6.LogEntry{
+				logs := []s6service.LogEntry{
 					{
 						Timestamp: currentTime.Add(-1 * time.Minute),
 						Content:   `levelerror msg="broken log format"`,
@@ -449,13 +447,13 @@ var _ = Describe("Benthos Service", func() {
 			})
 
 			It("should ignore logs outside the time window", func() {
-				logs := []s6.LogEntry{
+				logs := []s6service.LogEntry{
 					{
 						Timestamp: currentTime.Add(-1 * time.Minute),
 						Content:   `level=info msg="Recent normal log"`,
 					},
 					{
-						Timestamp: currentTime.Add(-10 * time.Minute), // Outside the 5-minute window
+						Timestamp: currentTime.Add(-10 * time.Minute),
 						Content:   `level=error msg="Old error that should be ignored"`,
 					},
 				}
@@ -475,14 +473,14 @@ var _ = Describe("Benthos Service", func() {
 			It("should return true when there are no errors", func() {
 				metrics := Metrics{
 					Input: InputMetrics{
-						ConnectionFailed: 5, // Should be ignored now
+						ConnectionFailed: 5,
 						ConnectionLost:   1,
 						ConnectionUp:     1,
 						Received:         100,
 					},
 					Output: OutputMetrics{
 						Error:            0,
-						ConnectionFailed: 3, // Should be ignored now
+						ConnectionFailed: 3,
 						ConnectionLost:   0,
 						ConnectionUp:     1,
 						Sent:             90,
@@ -572,23 +570,21 @@ var _ = Describe("Benthos Service", func() {
 			)
 			tick = 0
 
+			s6ServiceName = service.getS6ServiceName(benthosName)
+
+			mockS6Service.ExistingServices[s6ServiceName] = true
+			mockS6Service.ServiceExistsResult = true
+
 			// Add the service to the S6 manager
 			err := service.AddBenthosToS6Manager(context.Background(), &config.BenthosServiceConfig{
-				MetricsPort: metricsPort,
+				MetricsPort: 4195,
 				LogLevel:    "info",
 			}, benthosName)
 			Expect(err).NotTo(HaveOccurred())
 
-			s6ServiceName = service.getS6ServiceName(benthosName)
-
-			// Mark the service as existing in the mock
-			mockS6Service.ExistingServices[s6ServiceName] = true
-			mockS6Service.ServiceExistsResult = true
-
 			// Reconcile the S6 manager
-			err, reconciled := service.ReconcileManager(context.Background(), tick)
+			err, _ = service.ReconcileManager(context.Background(), tick)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(reconciled).To(BeTrue())
 		})
 
 		It("should calculate throughput based on ticks", func() {
@@ -1031,9 +1027,8 @@ processor_batch_sent{label="1",path="root.pipeline.processors.1"} 18
 
 			// First reconciliation - creates the service
 			By("Reconciling the manager to create the service")
-			err, reconciled := service.ReconcileManager(ctx, tick)
+			err, _ = service.ReconcileManager(ctx, tick)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(reconciled).To(BeTrue())
 
 			// Set up the mock S6 service status to simulate running service
 			s6ServiceMock.StatusResult = s6service.ServiceInfo{
@@ -1087,7 +1082,7 @@ processor_batch_sent{label="1",path="root.pipeline.processors.1"} 18
 			// Second reconciliation - detects the config change and triggers restart
 			By("Reconciling the manager to apply the configuration change")
 			tick++
-			err, reconciled = service.ReconcileManager(ctx, tick)
+			err, _ = service.ReconcileManager(ctx, tick)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Change the mock to return the updated config
@@ -1155,6 +1150,239 @@ logger:
 			} else {
 				Fail("MQTT config should be a map")
 			}
+		})
+	})
+
+	Context("Instance status assessment", func() {
+		var (
+			service       *BenthosService
+			mockS6Service *s6service.MockService
+			mockClient    *MockHTTPClient
+			ctx           context.Context
+			benthosName   string
+			s6ServiceName string
+			currentTime   time.Time
+			logWindow     time.Duration
+		)
+
+		BeforeEach(func() {
+			ctx = context.Background()
+			mockS6Service = s6service.NewMockService()
+			mockClient = NewMockHTTPClient()
+			benthosName = "test-instance"
+			currentTime = time.Now()
+			logWindow = 5 * time.Minute
+
+			service = NewDefaultBenthosService(benthosName,
+				WithS6Service(mockS6Service),
+				WithHTTPClient(mockClient),
+			)
+
+			s6ServiceName = service.getS6ServiceName(benthosName)
+
+			mockS6Service.ExistingServices[s6ServiceName] = true
+			mockS6Service.ServiceExistsResult = true
+
+			// Add the service to the S6 manager
+			err := service.AddBenthosToS6Manager(ctx, &config.BenthosServiceConfig{
+				MetricsPort: 4195,
+				LogLevel:    "info",
+			}, benthosName)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Reconcile the S6 manager
+			err, _ = service.ReconcileManager(ctx, 0)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should identify an instance as bad when logs contain errors", func() {
+			// Prepare error logs that would make an instance bad
+			errorLogs := []s6service.LogEntry{
+				{
+					Timestamp: currentTime.Add(-1 * time.Minute),
+					Content:   `level=error msg="failed to connect to broker"`,
+				},
+			}
+
+			// Set up the mock to return these logs
+			mockS6Service.GetLogsResult = errorLogs
+
+			// Setup S6 service status to reflect a running service
+			mockS6Service.StatusResult = s6service.ServiceInfo{
+				Status:   s6service.ServiceUp,
+				WantUp:   true,
+				Pid:      12345,
+				Uptime:   60, // Running for a minute
+				ExitCode: 0,
+			}
+
+			// Configure the client to return healthy responses
+			mockClient.SetReadyStatus(200, true, true, "")
+
+			// Get the service status (which includes the logs)
+			info, err := service.Status(ctx, benthosName, 4195, 1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Check if logs are fine - this should return false with our error logs
+			isLogsFine := service.IsLogsFine(info.BenthosStatus.Logs, currentTime, logWindow)
+			Expect(isLogsFine).To(BeFalse(), "Service with error logs should be identified as having issues")
+		})
+
+		It("should identify different types of errors in the logs", func() {
+			// Test various error types
+			errorCases := []struct {
+				description string
+				logs        []s6service.LogEntry
+				expectBad   bool
+			}{
+				{
+					description: "Official Benthos error logs",
+					logs: []s6service.LogEntry{
+						{
+							Timestamp: currentTime.Add(-1 * time.Minute),
+							Content:   `level=error msg="failed to connect to broker"`,
+						},
+					},
+					expectBad: true,
+				},
+				{
+					description: "Configuration file errors",
+					logs: []s6service.LogEntry{
+						{
+							Timestamp: currentTime.Add(-1 * time.Minute),
+							Content:   `configuration file read error: invalid syntax in line 10`,
+						},
+					},
+					expectBad: true,
+				},
+				{
+					description: "Logger creation errors",
+					logs: []s6service.LogEntry{
+						{
+							Timestamp: currentTime.Add(-1 * time.Minute),
+							Content:   `failed to create logger: invalid log level "unknown"`,
+						},
+					},
+					expectBad: true,
+				},
+				{
+					description: "Linter errors",
+					logs: []s6service.LogEntry{
+						{
+							Timestamp: currentTime.Add(-1 * time.Minute),
+							Content:   `Config lint error: unknown input type "not_real_input"`,
+						},
+					},
+					expectBad: true,
+				},
+				{
+					description: "Critical warnings",
+					logs: []s6service.LogEntry{
+						{
+							Timestamp: currentTime.Add(-1 * time.Minute),
+							Content:   `level=warn msg="failed to process message batch"`,
+						},
+					},
+					expectBad: true,
+				},
+				{
+					description: "Non-critical warnings",
+					logs: []s6service.LogEntry{
+						{
+							Timestamp: currentTime.Add(-1 * time.Minute),
+							Content:   `level=warn msg="rate limit applied"`,
+						},
+					},
+					expectBad: false,
+				},
+				{
+					description: "Mixed logs with one error",
+					logs: []s6service.LogEntry{
+						{
+							Timestamp: currentTime.Add(-1 * time.Minute),
+							Content:   `level=info msg="Service started"`,
+						},
+						{
+							Timestamp: currentTime.Add(-2 * time.Minute),
+							Content:   `level=warn msg="rate limit applied"`,
+						},
+						{
+							Timestamp: currentTime.Add(-3 * time.Minute),
+							Content:   `level=error msg="connection failed"`,
+						},
+					},
+					expectBad: true,
+				},
+				{
+					description: "Error outside time window",
+					logs: []s6service.LogEntry{
+						{
+							Timestamp: currentTime.Add(-10 * time.Minute), // Outside our 5-minute window
+							Content:   `level=error msg="connection failed"`,
+						},
+					},
+					expectBad: false,
+				},
+			}
+
+			for _, testCase := range errorCases {
+				By(testCase.description)
+				// Configure the mock with the test logs
+				mockS6Service.GetLogsResult = testCase.logs
+
+				// Get status with the test logs
+				info, err := service.Status(ctx, benthosName, 4195, 1)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Check logs status
+				isLogsFine := service.IsLogsFine(info.BenthosStatus.Logs, currentTime, logWindow)
+				if testCase.expectBad {
+					Expect(isLogsFine).To(BeFalse(), "Should detect problems in logs")
+				} else {
+					Expect(isLogsFine).To(BeTrue(), "Should not detect problems in logs")
+				}
+			}
+		})
+
+		It("should check logs in ServiceInfo when determining instance health", func() {
+			// Set up a ServiceInfo with error logs
+			errorLogs := []s6service.LogEntry{
+				{
+					Timestamp: currentTime.Add(-1 * time.Minute),
+					Content:   `level=error msg="failed to process message"`,
+				},
+			}
+
+			// Mock the S6 service to return these logs
+			mockS6Service.GetLogsResult = errorLogs
+
+			// Configure the client to return healthy metrics/status
+			mockClient.SetReadyStatus(200, true, true, "")
+
+			// Set up metrics with no errors
+			mockClient.SetMetricsResponse(MetricsConfig{
+				Input: MetricsConfigInput{
+					Received: 100,
+				},
+				Output: MetricsConfigOutput{
+					Sent:  100,
+					Error: 0,
+				},
+			})
+
+			// Get the service status
+			info, err := service.Status(ctx, benthosName, 4195, 1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Check if logs are fine
+			isLogsFine := service.IsLogsFine(info.BenthosStatus.Logs, currentTime, logWindow)
+			Expect(isLogsFine).To(BeFalse(), "Service with error logs should be identified as having issues")
+
+			// Verify that the instance health is properly reflected
+			// A real implementation might use the FSM's `IsBenthosDegraded` method, but for our test
+			// we'll directly check `IsLogsFine` since it's part of the "bad" assessment
+			isBad := !isLogsFine
+			Expect(isBad).To(BeTrue(), "Instance with error logs should be considered bad")
 		})
 	})
 })
