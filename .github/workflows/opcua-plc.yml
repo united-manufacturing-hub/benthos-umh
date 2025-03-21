@@ -158,6 +158,12 @@ jobs:
           fi
           make test-opc
 
+      - name: Cleanup docker containers
+        if: always()
+        run: |
+          docker stop $OPCSIM_CONTAINER || true
+          docker ps
+
   go-test-kepware-plc:
     needs: go-test-opcua-plc
     runs-on:
@@ -210,9 +216,3 @@ jobs:
             exit 1
           fi
           make test-opc
-
-      - name: Cleanup docker containers
-        if: always()
-        run: |
-          docker stop $OPCSIM_CONTAINER || true
-          docker ps
