@@ -54,6 +54,9 @@ type IBenthosService interface {
 	// StopBenthos stops a Benthos instance
 	// Expects benthosName (e.g. "myservice") as defined in the UMH config
 	StopBenthos(ctx context.Context, benthosName string) error
+	// ForceRemoveBenthos removes a Benthos instance from the S6 manager
+	// Expects benthosName (e.g. "myservice") as defined in the UMH config
+	ForceRemoveBenthos(ctx context.Context, benthosName string) error
 	// ServiceExists checks if a Benthos service exists
 	// Expects benthosName (e.g. "myservice") as defined in the UMH config
 	ServiceExists(ctx context.Context, benthosName string) bool
@@ -1064,4 +1067,12 @@ func (s *BenthosService) ServiceExists(ctx context.Context, benthosName string) 
 	}
 
 	return exists
+}
+
+// ForceRemoveBenthos removes a Benthos instance from the S6 manager
+// This should only be called if the Benthos instance is in a permanent failure state
+// and the instance itself cannot be stopped or removed
+// Expects benthosName (e.g. "myservice") as defined in the UMH config
+func (s *BenthosService) ForceRemoveBenthos(ctx context.Context, benthosName string) error {
+	return s.s6Service.ForceRemove(ctx, s.getS6ServiceName(benthosName))
 }

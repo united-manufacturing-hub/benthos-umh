@@ -6,6 +6,7 @@ import (
 	"time"
 
 	internalfsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/backoff"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/logger"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
@@ -449,6 +450,15 @@ func (m *BaseFSMManager[C]) Reconcile(
 
 		if err != nil {
 			metrics.IncErrorCount(metrics.ComponentBaseFSMManager, m.managerName+".instances."+name)
+
+			// If the error is a permanent failure, remove the instance from the manager
+			// so that it can be recreated in further ticks
+			if backoff.IsPermanentFailureError(err) {
+				m.logger.Errorf("Permanent failure reconciling instance %s: %w. Removing instance from manager.", name, err)
+
+				delete(m.instances, name)
+				return nil, true
+			}
 			return fmt.Errorf("error reconciling instance: %w", err), false
 		}
 		if reconciled {

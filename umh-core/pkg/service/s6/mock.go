@@ -19,6 +19,7 @@ type MockService struct {
 	GetConfigCalled       bool
 	ExitHistoryCalled     bool
 	GetS6ConfigFileCalled bool
+	ForceRemoveCalled     bool
 	// Return values for each method
 	CreateError           error
 	RemoveError           error
@@ -34,6 +35,7 @@ type MockService struct {
 	ExitHistoryError      error
 	GetS6ConfigFileResult []byte
 	GetS6ConfigFileError  error
+	ForceRemoveError      error
 	// For more complex testing scenarios
 	ServiceStates    map[string]ServiceInfo
 	ExistingServices map[string]bool
@@ -151,4 +153,10 @@ func (m *MockService) CleanS6ServiceDirectory(ctx context.Context, path string) 
 func (m *MockService) GetS6ConfigFile(ctx context.Context, servicePath string, configFileName string) ([]byte, error) {
 	m.GetS6ConfigFileCalled = true
 	return m.GetS6ConfigFileResult, m.GetS6ConfigFileError
+}
+
+// ForceRemove is a mock method
+func (m *MockService) ForceRemove(ctx context.Context, servicePath string) error {
+	m.ForceRemoveCalled = true
+	return m.ForceRemoveError
 }

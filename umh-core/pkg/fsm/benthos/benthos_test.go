@@ -8,6 +8,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	internalfsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/backoff"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/constants"
 	s6fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
@@ -862,6 +863,73 @@ var _ = Describe("Benthos FSM", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(reconciled).To(BeTrue())
 			Expect(instance.GetCurrentFSMState()).To(Equal(OperationalStateIdle))
+		})
+
+		It("should attempt self-removal when encountering a permanent error", func() {
+			// Setup instance
+			mockService := benthossvc.NewMockBenthosService()
+			instance := createMockBenthosInstance("test-permanent-error", mockService)
+			ctx := context.Background()
+			tick := uint64(0)
+
+			// Setup the service to exist
+			mockService.ExistingServices[instance.baseFSMInstance.GetID()] = true
+
+			// Setup metrics port - necessary to avoid "could not find metrics port" error
+			mockPortManager := portmanager.NewMockPortManager()
+			allocatedPort, err := mockPortManager.AllocatePort(instance.baseFSMInstance.GetID())
+			Expect(err).NotTo(HaveOccurred())
+			instance.config.MetricsPort = allocatedPort
+
+			// Set up mock service state
+			mockService.ServiceStates[instance.baseFSMInstance.GetID()] = &benthossvc.ServiceInfo{
+				S6FSMState: s6fsm.OperationalStateStopped,
+			}
+
+			// Now transition to active state to test error handling in a non-terminal state
+			instance.baseFSMInstance.SetCurrentFSMState(OperationalStateActive)
+
+			// Set up a permanent error in the instance
+			permanentError := fmt.Errorf("%s: test permanent error", backoff.PermanentFailureError)
+			instance.baseFSMInstance.SetError(permanentError, tick)
+
+			// Reconcile with the permanent error - use the same tick to ensure ShouldSkipReconcileBecauseOfError triggers
+			err, _ = instance.Reconcile(ctx, tick)
+
+			// Verify no error is returned to allow removal process
+			Expect(err).To(BeNil())
+
+			// Verify the instance initiated the removal process
+			Expect(instance.baseFSMInstance.GetDesiredFSMState()).To(Equal(OperationalStateStopped))
+			Expect(instance.baseFSMInstance.GetError()).To(BeNil())
+		})
+
+		It("should attempt forced removal when in a terminal state with a permanent error", func() {
+			// Setup instance
+			mockService := benthossvc.NewMockBenthosService()
+			instance := createMockBenthosInstance("test-permanent-error-terminal", mockService)
+			ctx := context.Background()
+			tick := uint64(0)
+
+			// Setup the service to exist
+			mockService.ExistingServices[instance.baseFSMInstance.GetID()] = true
+
+			// Put instance in a terminal state (stopped)
+			instance.baseFSMInstance.SetCurrentFSMState(OperationalStateStopped)
+
+			// Set up a permanent error in the instance
+			permanentError := fmt.Errorf("%s: test permanent error", backoff.PermanentFailureError)
+			instance.baseFSMInstance.SetError(permanentError, tick)
+
+			// Reconcile with the permanent error
+			err, _ := instance.Reconcile(ctx, tick)
+
+			// Verify error is returned to be handled by manager
+			Expect(err).NotTo(BeNil())
+			Expect(err.Error()).To(ContainSubstring(backoff.PermanentFailureError))
+
+			// Verify forced removal was attempted
+			Expect(mockService.ForceRemoveBenthosCalled).To(BeTrue())
 		})
 	})
 })

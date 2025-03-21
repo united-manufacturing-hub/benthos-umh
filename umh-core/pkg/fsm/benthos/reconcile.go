@@ -7,6 +7,7 @@ import (
 	"time"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/backoff"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 	benthos_service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos"
@@ -26,7 +27,7 @@ func (b *BenthosInstance) Reconcile(ctx context.Context, tick uint64) (err error
 	defer func() {
 		metrics.ObserveReconcileTime(metrics.ComponentBenthosInstance, benthosInstanceName, time.Since(start))
 		if err != nil {
-			b.baseFSMInstance.GetLogger().Errorf("error reconciling Benthos instance %s: %s", benthosInstanceName, err)
+			b.baseFSMInstance.GetLogger().Errorf("error reconciling Benthos instance %s: %w", benthosInstanceName, err)
 			b.PrintState()
 			// Add metrics for error
 			metrics.IncErrorCount(metrics.ComponentBenthosInstance, benthosInstanceName)
@@ -42,7 +43,25 @@ func (b *BenthosInstance) Reconcile(ctx context.Context, tick uint64) (err error
 	// Step 1: If there's a lastError, see if we've waited enough.
 	if b.baseFSMInstance.ShouldSkipReconcileBecauseOfError(tick) {
 		err := b.baseFSMInstance.GetBackoffError(tick)
-		b.baseFSMInstance.GetLogger().Debugf("Skipping reconcile for Benthos pipeline %s: %s", benthosInstanceName, err)
+		b.baseFSMInstance.GetLogger().Debugf("Skipping reconcile for Benthos pipeline %s: %w", benthosInstanceName, err)
+
+		// if it is a permanent error, start the removal process and reset the error (so that we can reconcile towards a stopped / removed state)
+		if backoff.IsPermanentFailureError(err) {
+
+			// if it is already in stopped, stopping, removing states, and it again returns a permanent error,
+			// we need to throw it to the manager as the instance itself here cannot fix it anymore
+			if b.IsRemoved() || b.IsRemoving() || b.IsStopping() || b.IsStopped() {
+				b.baseFSMInstance.GetLogger().Debugf("Benthos instance %s is already in a terminal state, force removing it", benthosInstanceName)
+				// force delete everything from the s6 file directory
+				b.service.ForceRemoveBenthos(ctx, benthosInstanceName)
+				return err, false
+			} else {
+				b.baseFSMInstance.GetLogger().Debugf("Benthos instance %s is not in a terminal state, resetting state and removing it", benthosInstanceName)
+				b.baseFSMInstance.ResetState()
+				b.Remove(ctx)
+				return nil, false // let's try to at least reconcile towards a stopped / removed state
+			}
+		}
 		return nil, false
 	}
 

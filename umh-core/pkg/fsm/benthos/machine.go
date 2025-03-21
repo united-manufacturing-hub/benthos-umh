@@ -118,6 +118,21 @@ func (b *BenthosInstance) IsRemoved() bool {
 	return b.baseFSMInstance.IsRemoved()
 }
 
+// IsRemoving returns true if the instance is in the removing state
+func (b *BenthosInstance) IsRemoving() bool {
+	return b.baseFSMInstance.IsRemoving()
+}
+
+// IsStopping returns true if the instance is in the stopping state
+func (b *BenthosInstance) IsStopping() bool {
+	return b.baseFSMInstance.GetCurrentFSMState() == OperationalStateStopping
+}
+
+// IsStopped returns true if the instance is in the stopped state
+func (b *BenthosInstance) IsStopped() bool {
+	return b.baseFSMInstance.GetCurrentFSMState() == OperationalStateStopped
+}
+
 // PrintState prints the current state of the FSM for debugging
 func (b *BenthosInstance) PrintState() {
 	b.baseFSMInstance.GetLogger().Debugf("Current state: %s", b.baseFSMInstance.GetCurrentFSMState())

@@ -166,6 +166,9 @@ func (m *BenthosManager) Reconcile(ctx context.Context, cfg config.FullConfig, t
 		return fmt.Errorf("port pre-allocation failed: %w", err), false
 	}
 
+	// Save the instance count before reconciliation to detect removals
+	countBefore := len(m.BaseFSMManager.GetInstances())
+
 	// Create a new config with allocated ports
 	cfgWithPorts := cfg.Clone() // Ensure you have a proper Clone method in config.FullConfig
 	for i, bc := range cfgWithPorts.Benthos {
@@ -177,16 +180,21 @@ func (m *BenthosManager) Reconcile(ctx context.Context, cfg config.FullConfig, t
 
 	// Phase 2: Base FSM Reconciliation with port-aware config
 	err, reconciled := m.BaseFSMManager.Reconcile(ctx, cfgWithPorts, tick)
+
+	// Check if instances were removed as part of reconciliation (e.g., due to permanent errors)
+	countAfter := len(m.BaseFSMManager.GetInstances())
+	instancesWereRemoved := countBefore > countAfter
+
 	if err != nil {
-		return fmt.Errorf("base reconciliation failed: %w", err), reconciled
+		return fmt.Errorf("base reconciliation failed: %w", err), reconciled || instancesWereRemoved
 	}
 
 	// Phase 3: Port Management Post-reconciliation
 	if err := m.portManager.PostReconcile(ctx); err != nil {
-		return fmt.Errorf("port post-reconciliation failed: %w", err), reconciled
+		return fmt.Errorf("port post-reconciliation failed: %w", err), reconciled || instancesWereRemoved
 	}
 
-	return nil, reconciled
+	return nil, reconciled || instancesWereRemoved
 }
 
 // CreateSnapshot overrides the base CreateSnapshot to include Benthos-specific information

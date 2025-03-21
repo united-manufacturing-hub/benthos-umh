@@ -173,6 +173,11 @@ func (s *BaseFSMInstance) IsRemoved() bool {
 	return s.fsm.Current() == LifecycleStateRemoved
 }
 
+// IsRemoving returns true if the instance is in the removing state
+func (s *BaseFSMInstance) IsRemoving() bool {
+	return s.fsm.Current() == LifecycleStateRemoving
+}
+
 // ShouldSkipReconcileBecauseOfError returns true if the reconcile should be skipped
 // because of an error that occurred in the last reconciliation and the backoff
 // period has not yet elapsed, or if the FSM is in permanent failure state

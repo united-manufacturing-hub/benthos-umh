@@ -8,6 +8,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	internalfsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/backoff"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	s6fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/portmanager"
@@ -601,6 +602,76 @@ var _ = Describe("BenthosManager", func() {
 			// Verify port was allocated
 			Expect(benthosInstance.config.MetricsPort).To(Equal(allocatedPort),
 				"Metrics port should be allocated")
+		})
+
+		It("should remove an instance from the manager when it encounters a permanent error in a terminal state", func() {
+			// Create a service with a name
+			serviceName := "test-permanent-error"
+
+			// Setup the manager and service
+			manager, mockService := createMockBenthosManager("test-manager")
+			ctx := context.Background()
+			tick := uint64(0)
+
+			// Create config
+			benthosConfig := createBenthosConfig(serviceName, OperationalStateActive)
+			fullConfig := config.FullConfig{
+				Benthos: []config.BenthosConfig{benthosConfig},
+			}
+
+			// First, transition to a stable state (Idle) using the helper function
+			tick, err := transitionToIdle(ctx, manager, mockService, serviceName, fullConfig, tick)
+			Expect(err).NotTo(HaveOccurred(), "Failed to transition to idle state")
+
+			// Get the instance after it's in a stable state
+			instance, exists := manager.GetInstance(serviceName)
+			Expect(exists).To(BeTrue())
+
+			// Put the instance in a stopped state
+			benthosInstance, ok := instance.(*BenthosInstance)
+			Expect(ok).To(BeTrue())
+
+			// Update desired state to stopped FIRST
+			benthosInstance.baseFSMInstance.SetDesiredFSMState(OperationalStateStopped)
+
+			// Also update the config to match the stopped state
+			fullConfig.Benthos[0].FSMInstanceConfig.DesiredFSMState = OperationalStateStopped
+
+			// Update the instance state to stopped
+			benthosInstance.baseFSMInstance.SetCurrentFSMState(OperationalStateStopped)
+
+			// Update mock service to indicate the service is stopped
+			setupServiceState(mockService, serviceName, benthossvc.ServiceStateFlags{
+				IsS6Running: false,
+				S6FSMState:  s6fsm.OperationalStateStopped,
+				IsS6Stopped: true,
+			})
+
+			// Run multiple reconciliations with larger tick increments to stabilize the state
+			// and bypass rate limiting in BaseFSMManager
+			for i := 0; i < 3; i++ {
+				err, _ = manager.Reconcile(ctx, fullConfig, tick)
+				Expect(err).NotTo(HaveOccurred())
+				tick += 20 // Large increment to bypass rate limiting
+			}
+
+			// Ensure the state is still stopped
+			Expect(benthosInstance.GetCurrentFSMState()).To(Equal(OperationalStateStopped))
+			Expect(benthosInstance.GetDesiredFSMState()).To(Equal(OperationalStateStopped))
+
+			// NOW create a permanent error and set it on the instance
+			permanentError := fmt.Errorf("%s: test permanent error", backoff.PermanentFailureError)
+			benthosInstance.baseFSMInstance.SetError(permanentError, tick)
+
+			// Run the manager reconciliation - it should detect and remove the instance
+			// Use an even larger tick increment to ensure no rate limiting interferes
+			err, reconciled := manager.Reconcile(ctx, fullConfig, tick+50)
+			Expect(err).To(BeNil())
+			Expect(reconciled).To(BeTrue())
+
+			// Verify the instance was removed from the manager
+			_, exists = manager.GetInstance(serviceName)
+			Expect(exists).To(BeFalse())
 		})
 	})
 

@@ -33,7 +33,7 @@ type MockBenthosService struct {
 	IsLogsFineCalled                               bool
 	IsMetricsErrorFreeCalled                       bool
 	ServiceExistsCalled                            bool
-
+	ForceRemoveBenthosCalled                       bool
 	// Return values for each method
 	GenerateS6ConfigForBenthosResult config.S6ServiceConfig
 	GenerateS6ConfigForBenthosError  error
@@ -49,7 +49,7 @@ type MockBenthosService struct {
 	ReconcileManagerError            error
 	ReconcileManagerReconciled       bool
 	ServiceExistsResult              bool
-
+	ForceRemoveBenthosError          error
 	// For more complex testing scenarios
 	ServiceStates    map[string]*ServiceInfo
 	ExistingServices map[string]bool
@@ -379,4 +379,10 @@ func (m *MockBenthosService) UpdateBenthosInS6Manager(ctx context.Context, cfg *
 func (m *MockBenthosService) ServiceExists(ctx context.Context, serviceName string) bool {
 	m.ServiceExistsCalled = true
 	return m.ServiceExistsResult
+}
+
+// ForceRemoveBenthos mocks removing a Benthos instance from the S6 manager
+func (m *MockBenthosService) ForceRemoveBenthos(ctx context.Context, benthosName string) error {
+	m.ForceRemoveBenthosCalled = true
+	return m.ForceRemoveBenthosError
 }

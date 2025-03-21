@@ -89,6 +89,8 @@ type Service interface {
 	CleanS6ServiceDirectory(ctx context.Context, path string) error
 	// GetS6ConfigFile retrieves a config file for a service
 	GetS6ConfigFile(ctx context.Context, servicePath string, configFileName string) ([]byte, error)
+	// ForceRemove removes a service from the S6 manager
+	ForceRemove(ctx context.Context, servicePath string) error
 }
 
 // DefaultService is the default implementation of the S6 Service interface
@@ -1001,4 +1003,13 @@ func (s *DefaultService) GetS6ConfigFile(ctx context.Context, servicePath string
 	}
 
 	return content, nil
+}
+
+// ForceRemove removes a service from the S6 manager
+func (s *DefaultService) ForceRemove(ctx context.Context, servicePath string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	return s.fsService.RemoveAll(ctx, servicePath)
 }
