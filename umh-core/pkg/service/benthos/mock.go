@@ -3,6 +3,7 @@ package benthos
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	s6_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
@@ -336,7 +337,7 @@ func (m *MockBenthosService) ReconcileManager(ctx context.Context, tick uint64) 
 }
 
 // IsLogsFine mocks checking if the logs are fine
-func (m *MockBenthosService) IsLogsFine(logs []string) bool {
+func (m *MockBenthosService) IsLogsFine(logs []s6service.LogEntry, currentTime time.Time, logWindow time.Duration) bool {
 	m.IsLogsFineCalled = true
 	// For testing purposes, we'll consider logs fine if they're empty or nil
 	// This can be enhanced based on testing needs

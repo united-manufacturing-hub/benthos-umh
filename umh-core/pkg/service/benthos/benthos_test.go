@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -33,8 +34,9 @@ var _ = Describe("Benthos Service", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		// Reconcile the S6 manager
-		err, _ = service.ReconcileManager(context.Background(), tick)
+		err, reconciled := service.ReconcileManager(context.Background(), tick)
 		Expect(err).NotTo(HaveOccurred())
+		Expect(reconciled).To(BeTrue())
 
 		client.SetReadyStatus(200, true, true, "")
 		client.SetMetricsResponse(MetricsConfig{
@@ -277,98 +279,187 @@ var _ = Describe("Benthos Service", func() {
 	})
 
 	Context("Log Analysis", func() {
-		var service *BenthosService
+		var (
+			service     *BenthosService
+			currentTime time.Time
+			logWindow   time.Duration
+		)
 
 		BeforeEach(func() {
 			service = NewDefaultBenthosService("test")
+			currentTime = time.Now()
+			logWindow = 5 * time.Minute
 		})
 
 		Context("IsLogsFine", func() {
 			It("should return true when there are no logs", func() {
-				Expect(service.IsLogsFine([]string{})).To(BeTrue())
+				Expect(service.IsLogsFine([]s6.LogEntry{}, currentTime, logWindow)).To(BeTrue())
 			})
 
 			It("should detect official Benthos error logs", func() {
-				logs := []string{
-					`level=error msg="failed to connect to broker"`,
+				logs := []s6.LogEntry{
+					{
+						Timestamp: currentTime.Add(-1 * time.Minute),
+						Content:   `level=error msg="failed to connect to broker"`,
+					},
 				}
-				Expect(service.IsLogsFine(logs)).To(BeFalse())
+				Expect(service.IsLogsFine(logs, currentTime, logWindow)).To(BeFalse())
 			})
 
 			It("should detect critical warnings in official Benthos logs", func() {
-				logs := []string{
-					`level=warn msg="failed to process message"`,
-					`level=warn msg="connection lost to server"`,
-					`level=warn msg="unable to reach endpoint"`,
+				logs := []s6.LogEntry{
+					{
+						Timestamp: currentTime.Add(-1 * time.Minute),
+						Content:   `level=warn msg="failed to process message"`,
+					},
+					{
+						Timestamp: currentTime.Add(-2 * time.Minute),
+						Content:   `level=warn msg="connection lost to server"`,
+					},
+					{
+						Timestamp: currentTime.Add(-3 * time.Minute),
+						Content:   `level=warn msg="unable to reach endpoint"`,
+					},
 				}
-				Expect(service.IsLogsFine(logs)).To(BeFalse())
+				Expect(service.IsLogsFine(logs, currentTime, logWindow)).To(BeFalse())
 			})
 
 			It("should ignore non-critical warnings in official Benthos logs", func() {
-				logs := []string{
-					`level=warn msg="rate limit applied"`,
-					`level=warn msg="message batch partially processed"`,
+				logs := []s6.LogEntry{
+					{
+						Timestamp: currentTime.Add(-1 * time.Minute),
+						Content:   `level=warn msg="rate limit applied"`,
+					},
+					{
+						Timestamp: currentTime.Add(-2 * time.Minute),
+						Content:   `level=warn msg="message batch partially processed"`,
+					},
 				}
-				Expect(service.IsLogsFine(logs)).To(BeTrue())
+				Expect(service.IsLogsFine(logs, currentTime, logWindow)).To(BeTrue())
 			})
 
 			It("should detect configuration file read errors", func() {
-				logs := []string{
-					`configuration file read error: file not found`,
+				logs := []s6.LogEntry{
+					{
+						Timestamp: currentTime.Add(-1 * time.Minute),
+						Content:   `configuration file read error: file not found`,
+					},
 				}
-				Expect(service.IsLogsFine(logs)).To(BeFalse())
+				Expect(service.IsLogsFine(logs, currentTime, logWindow)).To(BeFalse())
 			})
 
 			It("should detect logger creation errors", func() {
-				logs := []string{
-					`failed to create logger: invalid log level`,
+				logs := []s6.LogEntry{
+					{
+						Timestamp: currentTime.Add(-1 * time.Minute),
+						Content:   `failed to create logger: invalid log level`,
+					},
 				}
-				Expect(service.IsLogsFine(logs)).To(BeFalse())
+				Expect(service.IsLogsFine(logs, currentTime, logWindow)).To(BeFalse())
 			})
 
 			It("should detect linter errors", func() {
-				logs := []string{
-					`Config lint error: invalid input type`,
-					`shutting down due to linter errors`,
+				logs := []s6.LogEntry{
+					{
+						Timestamp: currentTime.Add(-1 * time.Minute),
+						Content:   `Config lint error: invalid input type`,
+					},
+					{
+						Timestamp: currentTime.Add(-2 * time.Minute),
+						Content:   `shutting down due to linter errors`,
+					},
 				}
-				Expect(service.IsLogsFine(logs)).To(BeFalse())
+				Expect(service.IsLogsFine(logs, currentTime, logWindow)).To(BeFalse())
 			})
 
 			It("should ignore error-like strings in message content", func() {
-				logs := []string{
-					`level=info msg="Processing message: configuration file read error in payload"`,
-					`level=info msg="Log contains warning: user notification"`,
-					`level=info msg="Error rate metrics collected"`,
+				logs := []s6.LogEntry{
+					{
+						Timestamp: currentTime.Add(-1 * time.Minute),
+						Content:   `level=info msg="Processing message: configuration file read error in payload"`,
+					},
+					{
+						Timestamp: currentTime.Add(-2 * time.Minute),
+						Content:   `level=info msg="Log contains warning: user notification"`,
+					},
+					{
+						Timestamp: currentTime.Add(-3 * time.Minute),
+						Content:   `level=info msg="Error rate metrics collected"`,
+					},
 				}
-				Expect(service.IsLogsFine(logs)).To(BeTrue())
+				Expect(service.IsLogsFine(logs, currentTime, logWindow)).To(BeTrue())
 			})
 
 			It("should ignore error patterns not at start of line", func() {
-				logs := []string{
-					`level=info msg="User reported: configuration file read error"`,
-					`level=info msg="System status: failed to create logger mentioned in docs"`,
-					`level=info msg="Documentation: Config lint error examples"`,
+				logs := []s6.LogEntry{
+					{
+						Timestamp: currentTime.Add(-1 * time.Minute),
+						Content:   `level=info msg="User reported: configuration file read error"`,
+					},
+					{
+						Timestamp: currentTime.Add(-2 * time.Minute),
+						Content:   `level=info msg="System status: failed to create logger mentioned in docs"`,
+					},
+					{
+						Timestamp: currentTime.Add(-3 * time.Minute),
+						Content:   `level=info msg="Documentation: Config lint error examples"`,
+					},
 				}
-				Expect(service.IsLogsFine(logs)).To(BeTrue())
+				Expect(service.IsLogsFine(logs, currentTime, logWindow)).To(BeTrue())
 			})
 
 			It("should handle mixed log types correctly", func() {
-				logs := []string{
-					`level=info msg="Starting up Benthos service"`,
-					`level=warn msg="rate limit applied"`,
-					`level=info msg="Processing message: warning in content"`,
-					`level=error msg="failed to connect"`, // This should trigger false
+				logs := []s6.LogEntry{
+					{
+						Timestamp: currentTime.Add(-1 * time.Minute),
+						Content:   `level=info msg="Starting up Benthos service"`,
+					},
+					{
+						Timestamp: currentTime.Add(-2 * time.Minute),
+						Content:   `level=warn msg="rate limit applied"`,
+					},
+					{
+						Timestamp: currentTime.Add(-3 * time.Minute),
+						Content:   `level=info msg="Processing message: warning in content"`,
+					},
+					{
+						Timestamp: currentTime.Add(-4 * time.Minute),
+						Content:   `level=error msg="failed to connect"`, // This should trigger false
+					},
 				}
-				Expect(service.IsLogsFine(logs)).To(BeFalse())
+				Expect(service.IsLogsFine(logs, currentTime, logWindow)).To(BeFalse())
 			})
 
 			It("should handle malformed Benthos logs gracefully", func() {
-				logs := []string{
-					`levelerror msg="broken log format"`,
-					`level=info missing quote`,
-					`random text with warning and error keywords`,
+				logs := []s6.LogEntry{
+					{
+						Timestamp: currentTime.Add(-1 * time.Minute),
+						Content:   `levelerror msg="broken log format"`,
+					},
+					{
+						Timestamp: currentTime.Add(-2 * time.Minute),
+						Content:   `level=info missing quote`,
+					},
+					{
+						Timestamp: currentTime.Add(-3 * time.Minute),
+						Content:   `random text with warning and error keywords`,
+					},
 				}
-				Expect(service.IsLogsFine(logs)).To(BeTrue())
+				Expect(service.IsLogsFine(logs, currentTime, logWindow)).To(BeTrue())
+			})
+
+			It("should ignore logs outside the time window", func() {
+				logs := []s6.LogEntry{
+					{
+						Timestamp: currentTime.Add(-1 * time.Minute),
+						Content:   `level=info msg="Recent normal log"`,
+					},
+					{
+						Timestamp: currentTime.Add(-10 * time.Minute), // Outside the 5-minute window
+						Content:   `level=error msg="Old error that should be ignored"`,
+					},
+				}
+				Expect(service.IsLogsFine(logs, currentTime, logWindow)).To(BeTrue())
 			})
 		})
 	})
@@ -495,8 +586,9 @@ var _ = Describe("Benthos Service", func() {
 			mockS6Service.ServiceExistsResult = true
 
 			// Reconcile the S6 manager
-			err, _ = service.ReconcileManager(context.Background(), tick)
+			err, reconciled := service.ReconcileManager(context.Background(), tick)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(reconciled).To(BeTrue())
 		})
 
 		It("should calculate throughput based on ticks", func() {

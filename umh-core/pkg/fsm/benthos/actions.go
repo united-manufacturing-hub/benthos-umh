@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	internalfsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	s6fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
@@ -234,14 +235,14 @@ func (b *BenthosInstance) AnyRestartsSinceCreation() bool {
 }
 
 // IsBenthosRunningForSomeTimeWithoutErrors determines if the Benthos service has been running for some time.
-func (b *BenthosInstance) IsBenthosRunningForSomeTimeWithoutErrors() bool {
+func (b *BenthosInstance) IsBenthosRunningForSomeTimeWithoutErrors(currentTime time.Time, logWindow time.Duration) bool {
 	currentUptime := b.ObservedState.ServiceInfo.S6ObservedState.ServiceInfo.Uptime
 	if currentUptime < 10 {
 		return false
 	}
 
 	// Check if there are any issues in the Benthos logs
-	if !b.IsBenthosLogsFine() {
+	if !b.IsBenthosLogsFine(currentTime, logWindow) {
 		return false
 	}
 
@@ -254,8 +255,8 @@ func (b *BenthosInstance) IsBenthosRunningForSomeTimeWithoutErrors() bool {
 }
 
 // IsBenthosLogsFine determines if there are any issues in the Benthos logs
-func (b *BenthosInstance) IsBenthosLogsFine() bool {
-	return b.service.IsLogsFine(b.ObservedState.ServiceInfo.BenthosStatus.Logs)
+func (b *BenthosInstance) IsBenthosLogsFine(currentTime time.Time, logWindow time.Duration) bool {
+	return b.service.IsLogsFine(b.ObservedState.ServiceInfo.BenthosStatus.Logs, currentTime, logWindow)
 }
 
 // IsBenthosMetricsErrorFree determines if the Benthos service has no errors in the metrics
@@ -266,8 +267,8 @@ func (b *BenthosInstance) IsBenthosMetricsErrorFree() bool {
 // IsBenthosDegraded determines if the Benthos service is degraded.
 // These check everything that is checked during the starting phase
 // But it means that it once worked, and then degraded
-func (b *BenthosInstance) IsBenthosDegraded() bool {
-	if b.IsBenthosS6Running() && b.IsBenthosConfigLoaded() && b.IsBenthosHealthchecksPassed() && b.IsBenthosRunningForSomeTimeWithoutErrors() {
+func (b *BenthosInstance) IsBenthosDegraded(currentTime time.Time, logWindow time.Duration) bool {
+	if b.IsBenthosS6Running() && b.IsBenthosConfigLoaded() && b.IsBenthosHealthchecksPassed() && b.IsBenthosRunningForSomeTimeWithoutErrors(currentTime, logWindow) {
 		return false
 	}
 	return true

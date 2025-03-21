@@ -61,8 +61,12 @@ type IBenthosService interface {
 	// Expects benthosName (e.g. "myservice") as defined in the UMH config
 	ServiceExists(ctx context.Context, benthosName string) bool
 	ReconcileManager(ctx context.Context, tick uint64) (error, bool)
-	IsLogsFine(logs []string) bool
+	// IsLogsFine checks if the logs of a Benthos service are fine
+	// Expects logs ([]s6service.LogEntry), currentTime (time.Time), and logWindow (time.Duration)
+	IsLogsFine(logs []s6service.LogEntry, currentTime time.Time, logWindow time.Duration) bool
+	// IsMetricsErrorFree checks if the metrics of a Benthos service are error-free
 	IsMetricsErrorFree(metrics Metrics) bool
+	// HasProcessingActivity checks if a Benthos service has processing activity
 	HasProcessingActivity(status BenthosStatus) bool
 }
 
@@ -113,7 +117,7 @@ type BenthosStatus struct {
 	// MetricsState contains information about the metrics of the Benthos service
 	MetricsState *BenthosMetricsState
 	// Logs contains the logs of the Benthos service
-	Logs []string
+	Logs []s6service.LogEntry
 }
 
 // Metrics contains information about the metrics of the Benthos service
@@ -471,9 +475,6 @@ func (s *BenthosService) Status(ctx context.Context, benthosName string, metrics
 		}
 	}
 
-	// TODO
-	logs = logs
-
 	// Let's get the health check of the Benthos service
 	benthosStatus, err := s.GetHealthCheckAndMetrics(ctx, s6ServiceName, metricsPort, tick)
 	if err != nil {
@@ -483,7 +484,9 @@ func (s *BenthosService) Status(ctx context.Context, benthosName string, metrics
 				S6FSMState:      s6FSMState, // Note for state transitions: When a service is stopped and then reactivated,
 				// this S6FSMState needs to be properly refreshed here.
 				// Otherwise, the service can not transition from stopping to stopped state
-				BenthosStatus: BenthosStatus{},
+				BenthosStatus: BenthosStatus{
+					Logs: logs,
+				},
 			}, ErrHealthCheckConnectionRefused
 		}
 		return ServiceInfo{}, fmt.Errorf("failed to get health check: %w", err)
@@ -494,6 +497,11 @@ func (s *BenthosService) Status(ctx context.Context, benthosName string, metrics
 		S6FSMState:      s6FSMState,
 		BenthosStatus:   benthosStatus,
 	}
+
+	// set the logs to the service info
+	// TODO: this is a hack to get the logs to the service info
+	// we should find a better way to do this
+	serviceInfo.BenthosStatus.Logs = logs
 
 	return serviceInfo, nil
 }
@@ -686,7 +694,7 @@ func (s *BenthosService) GetHealthCheckAndMetrics(ctx context.Context, s6Service
 				IsReady: false,
 			},
 			Metrics: Metrics{},
-			Logs:    []string{},
+			Logs:    []s6service.LogEntry{},
 		}, nil
 	}
 
@@ -999,9 +1007,17 @@ func (s *BenthosService) ReconcileManager(ctx context.Context, tick uint64) (err
 }
 
 // IsLogsFine analyzes Benthos logs to determine if there are any critical issues
-func (s *BenthosService) IsLogsFine(logs []string) bool {
+func (s *BenthosService) IsLogsFine(logs []s6service.LogEntry, currentTime time.Time, logWindow time.Duration) bool {
 	if len(logs) == 0 {
 		return true
+	}
+
+	// First, filter out by timestamp and then geenate []string from it
+	filteredLogs := []string{}
+	for _, log := range logs {
+		if log.Timestamp.After(currentTime.Add(-1 * logWindow)) {
+			filteredLogs = append(filteredLogs, log.Content)
+		}
 	}
 
 	// Compile regex patterns for different types of logs
@@ -1010,7 +1026,7 @@ func (s *BenthosService) IsLogsFine(logs []string) bool {
 	loggerErrorRegex := regexp.MustCompile(`^failed to create logger:`)
 	linterErrorRegex := regexp.MustCompile(`^Config lint error:`)
 
-	for _, log := range logs {
+	for _, log := range filteredLogs {
 		// Check for critical system errors first
 		if configErrorRegex.MatchString(log) ||
 			loggerErrorRegex.MatchString(log) ||

@@ -8,6 +8,7 @@ import (
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/backoff"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/constants"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/metrics"
 	benthos_service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/benthos"
@@ -78,7 +79,8 @@ func (b *BenthosInstance) Reconcile(ctx context.Context, tick uint64) (err error
 	}
 
 	// Step 3: Attempt to reconcile the state.
-	err, reconciled = b.reconcileStateTransition(ctx)
+	currentTime := time.Now() // this is used to check if the instance is degraded and for the log check
+	err, reconciled = b.reconcileStateTransition(ctx, currentTime)
 	if err != nil {
 		// If the instance is removed, we don't want to return an error here, because we want to continue reconciling
 		if errors.Is(err, fsm.ErrInstanceRemoved) {
@@ -129,7 +131,7 @@ func (b *BenthosInstance) reconcileExternalChanges(ctx context.Context, tick uin
 // Any functions that fetch information are disallowed here and must be called in reconcileExternalChanges
 // and exist in ObservedState.
 // This is to ensure full testability of the FSM.
-func (b *BenthosInstance) reconcileStateTransition(ctx context.Context) (err error, reconciled bool) {
+func (b *BenthosInstance) reconcileStateTransition(ctx context.Context, currentTime time.Time) (err error, reconciled bool) {
 	start := time.Now()
 	defer func() {
 		metrics.ObserveReconcileTime(metrics.ComponentBenthosInstance, b.baseFSMInstance.GetID()+".reconcileStateTransition", time.Since(start))
@@ -155,7 +157,7 @@ func (b *BenthosInstance) reconcileStateTransition(ctx context.Context) (err err
 
 	// Handle operational states
 	if IsOperationalState(currentState) {
-		err, reconciled := b.reconcileOperationalStates(ctx, currentState, desiredState)
+		err, reconciled := b.reconcileOperationalStates(ctx, currentState, desiredState, currentTime)
 		if err != nil {
 			return err, false
 		}
@@ -197,7 +199,7 @@ func (b *BenthosInstance) reconcileLifecycleStates(ctx context.Context, currentS
 }
 
 // reconcileOperationalStates handles states related to instance operations (starting/stopping)
-func (b *BenthosInstance) reconcileOperationalStates(ctx context.Context, currentState string, desiredState string) (err error, reconciled bool) {
+func (b *BenthosInstance) reconcileOperationalStates(ctx context.Context, currentState string, desiredState string, currentTime time.Time) (err error, reconciled bool) {
 	start := time.Now()
 	defer func() {
 		metrics.ObserveReconcileTime(metrics.ComponentBenthosInstance, b.baseFSMInstance.GetID()+".reconcileOperationalStates", time.Since(start))
@@ -205,7 +207,7 @@ func (b *BenthosInstance) reconcileOperationalStates(ctx context.Context, curren
 
 	switch desiredState {
 	case OperationalStateActive:
-		return b.reconcileTransitionToActive(ctx, currentState)
+		return b.reconcileTransitionToActive(ctx, currentState, currentTime)
 	case OperationalStateStopped:
 		return b.reconcileTransitionToStopped(ctx, currentState)
 	default:
@@ -215,7 +217,7 @@ func (b *BenthosInstance) reconcileOperationalStates(ctx context.Context, curren
 
 // reconcileTransitionToActive handles transitions when the desired state is Active.
 // It deals with moving from various states to the Active state.
-func (b *BenthosInstance) reconcileTransitionToActive(ctx context.Context, currentState string) (err error, reconciled bool) {
+func (b *BenthosInstance) reconcileTransitionToActive(ctx context.Context, currentState string, currentTime time.Time) (err error, reconciled bool) {
 	start := time.Now()
 	defer func() {
 		metrics.ObserveReconcileTime(metrics.ComponentBenthosInstance, b.baseFSMInstance.GetID()+".reconcileTransitionToActive", time.Since(start))
@@ -233,16 +235,16 @@ func (b *BenthosInstance) reconcileTransitionToActive(ctx context.Context, curre
 
 	// Handle starting phase states
 	if IsStartingState(currentState) {
-		return b.reconcileStartingState(ctx, currentState)
+		return b.reconcileStartingState(ctx, currentState, currentTime)
 	} else if IsRunningState(currentState) {
-		return b.reconcileRunningState(ctx, currentState)
+		return b.reconcileRunningState(ctx, currentState, currentTime)
 	}
 
 	return nil, false
 }
 
 // reconcileStartingState handles the various starting phase states when transitioning to Active.
-func (b *BenthosInstance) reconcileStartingState(ctx context.Context, currentState string) (err error, reconciled bool) {
+func (b *BenthosInstance) reconcileStartingState(ctx context.Context, currentState string, currentTime time.Time) (err error, reconciled bool) {
 	start := time.Now()
 	defer func() {
 		metrics.ObserveReconcileTime(metrics.ComponentBenthosInstance, b.baseFSMInstance.GetID()+".reconcileStartingState", time.Since(start))
@@ -289,7 +291,7 @@ func (b *BenthosInstance) reconcileStartingState(ctx context.Context, currentSta
 		}
 
 		// Check if service has been running stably for some time
-		if !b.IsBenthosRunningForSomeTimeWithoutErrors() {
+		if !b.IsBenthosRunningForSomeTimeWithoutErrors(currentTime, constants.BenthosLogWindow) {
 			return nil, false
 		}
 
@@ -300,7 +302,7 @@ func (b *BenthosInstance) reconcileStartingState(ctx context.Context, currentSta
 }
 
 // reconcileRunningState handles the various running states when transitioning to Active.
-func (b *BenthosInstance) reconcileRunningState(ctx context.Context, currentState string) (err error, reconciled bool) {
+func (b *BenthosInstance) reconcileRunningState(ctx context.Context, currentState string, currentTime time.Time) (err error, reconciled bool) {
 	start := time.Now()
 	defer func() {
 		metrics.ObserveReconcileTime(metrics.ComponentBenthosInstance, b.baseFSMInstance.GetID()+".reconcileRunningState", time.Since(start))
@@ -309,7 +311,7 @@ func (b *BenthosInstance) reconcileRunningState(ctx context.Context, currentStat
 	switch currentState {
 	case OperationalStateActive:
 		// If we're in Active, we need to check whether it is degraded
-		if b.IsBenthosDegraded() {
+		if b.IsBenthosDegraded(currentTime, constants.BenthosLogWindow) {
 			return b.baseFSMInstance.SendEvent(ctx, EventDegraded), true
 		} else if !b.IsBenthosWithProcessingActivity() { // if there is no activity, we move to Idle
 			return b.baseFSMInstance.SendEvent(ctx, EventNoDataTimeout), true
@@ -317,7 +319,7 @@ func (b *BenthosInstance) reconcileRunningState(ctx context.Context, currentStat
 		return nil, false
 	case OperationalStateIdle:
 		// If we're in Idle, we need to check whether it is degraded
-		if b.IsBenthosDegraded() {
+		if b.IsBenthosDegraded(currentTime, constants.BenthosLogWindow) {
 			return b.baseFSMInstance.SendEvent(ctx, EventDegraded), true
 		} else if b.IsBenthosWithProcessingActivity() { // if there is activity, we move to Active
 			return b.baseFSMInstance.SendEvent(ctx, EventDataReceived), true
@@ -325,7 +327,7 @@ func (b *BenthosInstance) reconcileRunningState(ctx context.Context, currentStat
 		return nil, false
 	case OperationalStateDegraded:
 		// If we're in Degraded, we need to recover to move to Idle
-		if !b.IsBenthosDegraded() {
+		if !b.IsBenthosDegraded(currentTime, constants.BenthosLogWindow) {
 			return b.baseFSMInstance.SendEvent(ctx, EventRecovered), true
 		}
 		return nil, false
