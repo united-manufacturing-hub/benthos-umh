@@ -94,3 +94,27 @@ func (s *S6Instance) GetError() error {
 func (s *S6Instance) GetLastObservedState() publicfsm.ObservedState {
 	return s.ObservedState
 }
+
+// GetServicePath returns the path to the s6 service directory
+// This is a testing-only utility to access the private field
+func (s *S6Instance) GetServicePath() string {
+	return s.servicePath
+}
+
+// GetService returns the S6 service implementation
+// This is a testing-only utility to access the private field
+func (s *S6Instance) GetService() s6svc.Service {
+	return s.service
+}
+
+// SetServicePath sets the path to the s6 service directory
+// This is a testing-only utility to access the private field
+func (s *S6Instance) SetServicePath(servicePath string) {
+	s.servicePath = servicePath
+}
+
+// SetService sets the S6 service implementation
+// This is a testing-only utility to access the private field
+func (s *S6Instance) SetService(service s6svc.Service) {
+	s.service = service
+}
