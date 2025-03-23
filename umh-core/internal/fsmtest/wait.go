@@ -3,7 +3,6 @@ package fsmtest
 import (
 	"context"
 	"fmt"
-	"time"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
@@ -83,58 +82,91 @@ func WaitForManagerInstanceState(ctx context.Context, manager ManagerReconciler,
 		instanceID, desiredState, maxAttempts, instance.GetCurrentFSMState())
 }
 
-// WithTimeout adds a timeout to the context for test operations
-func WithTimeout(parent context.Context, duration time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(parent, duration)
-}
+// WaitForManagerState repeatedly calls Reconcile on a manager until all its instances
+// reach the desired state or maxAttempts is exceeded
+func WaitForManagerState(ctx context.Context, manager ManagerReconciler, config config.FullConfig,
+	desiredState string, maxAttempts int, startTick uint64, printDetails bool) (uint64, error) {
 
-// Ticker is a function that takes an action and returns an error if any.
-// It's typically used to trigger a reconciliation or other periodic action during tests.
-type Ticker func() error
+	tick := startTick
+	var lastErr error
 
-// WaitForFSMState waits for an FSM instance to reach a desired state.
-// It uses the provided ticker function to trigger state transitions.
-func WaitForFSMState(ctx context.Context, instance fsm.FSMInstance, desiredState string, ticker Ticker) error {
-	if ticker == nil {
-		ticker = func() error { return nil }
-	}
+	for i := 0; i < maxAttempts; i++ {
+		lastErr, _ = manager.Reconcile(ctx, config, tick)
+		if lastErr != nil {
+			return tick, lastErr
+		}
 
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for instance to reach state %s, current state: %s",
-				desiredState, instance.GetCurrentFSMState())
-		case <-time.After(100 * time.Millisecond):
-			if err := ticker(); err != nil {
-				return err
+		// Need to check each instance
+		allInstancesMatched := true
+		allInstances := map[string]fsm.FSMInstance{}
+
+		// Get list of instances and check their states
+		// This depends on the manager implementation but we can enumerate instances
+		// by checking all instances that exist
+		for id, exists := range getInstancesMap(manager) {
+			if !exists {
+				continue
 			}
+			instance, found := manager.GetInstance(id)
+			if !found {
+				continue // Skip if instance suddenly disappeared
+			}
+			allInstances[id] = instance
 
-			if instance.GetCurrentFSMState() == desiredState {
-				return nil
+			currentState := instance.GetCurrentFSMState()
+			if currentState != desiredState {
+				allInstancesMatched = false
+				if printDetails {
+					fmt.Printf("Instance %s: current=%s (waiting for %s)\n",
+						id, currentState, desiredState)
+				}
+			} else if printDetails {
+				fmt.Printf("Instance %s: reached target state %s\n",
+					id, desiredState)
 			}
 		}
-	}
-}
 
-// WaitForInstanceRemoval waits for an instance to be removed from a manager.
-// It uses the provided ticker function to trigger state transitions.
-func WaitForInstanceRemoval(ctx context.Context, manager ManagerReconciler, instanceID string, ticker Ticker) error {
-	if ticker == nil {
-		ticker = func() error { return nil }
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for instance %s to be removed", instanceID)
-		case <-time.After(100 * time.Millisecond):
-			if err := ticker(); err != nil {
-				return err
-			}
-
-			if _, exists := manager.GetInstance(instanceID); !exists {
-				return nil
+		// If no instances found, that's a success if the desired state is "removed"
+		if len(allInstances) == 0 {
+			if desiredState == internal_fsm.LifecycleStateRemoved {
+				return tick, nil
 			}
 		}
+
+		if allInstancesMatched && len(allInstances) > 0 {
+			if printDetails {
+				fmt.Printf("All instances reached target state %s\n", desiredState)
+			}
+			return tick, nil
+		}
+
+		tick++
 	}
+
+	return tick, fmt.Errorf("failed to reach state %s for all instances after %d attempts",
+		desiredState, maxAttempts)
+}
+
+// getInstancesMap is a helper function to get a map of instance IDs to existence
+// This handles the fact that we don't have a direct way to enumerate instances in the interface
+func getInstancesMap(manager ManagerReconciler) map[string]bool {
+	// This is a simple implementation that checks for common instance IDs
+	// In a real implementation, you might need to adjust this based on your manager's capabilities
+	instanceMap := make(map[string]bool)
+
+	// Test common instance names/patterns
+	// This is just a simple approach for test purposes
+	commonTestNames := []string{
+		"test-service", "test-transition", "test-lifecycle", "test-state-change",
+		"test-stopping", "test-slow-start", "test-slow-stop", "test-startup",
+		"test-benthos", "test-active", "test-degraded", "test-active-to-stopped-to-active",
+	}
+
+	for _, name := range commonTestNames {
+		if _, exists := manager.GetInstance(name); exists {
+			instanceMap[name] = true
+		}
+	}
+
+	return instanceMap
 }

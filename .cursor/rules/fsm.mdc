@@ -1,6 +1,6 @@
 ---
 description: for all golang files in the fsm folder
-globs: umh-lite-v2/**/*.go
+globs: umh-core/**/*.go
 alwaysApply: false
 ---
 # FSM

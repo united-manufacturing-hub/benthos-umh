@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
+	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	s6fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
@@ -102,6 +103,65 @@ func SetS6InstanceMockService(instance interface{}, mockService *s6service.MockS
 	// Since we can't use reflection easily here, we'll use a pattern similar to createMockS6Instance in the tests
 	s6Instance.SetService(mockService)
 	s6Instance.SetServicePath(filepath.Join(servicePath))
+
+	return nil
+}
+
+// SetS6InstanceState sets the state of an S6Instance and configures the mock service to match
+func SetS6InstanceState(instance interface{}, state string) error {
+	// Type assertion to get the S6Instance
+	s6Instance, ok := instance.(*s6fsm.S6Instance)
+	if !ok {
+		return fmt.Errorf("instance is not an *s6fsm.S6Instance")
+	}
+
+	// Cannot set directly since fsm instance is not exported
+	// Instead, we'll need to manipulate the state indirectly through the service
+	mockService, ok := s6Instance.GetService().(*s6service.MockService)
+	if !ok {
+		return fmt.Errorf("service is not a *s6service.MockService")
+	}
+
+	// Set up the service path
+	servicePath := s6Instance.GetServicePath()
+
+	// Update the mock service state based on the desired FSM state
+	switch state {
+	case s6fsm.OperationalStateRunning:
+		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
+			Status: s6service.ServiceUp,
+			Uptime: 10,
+			Pid:    12345,
+		}
+		mockService.ExistingServices[servicePath] = true
+	case s6fsm.OperationalStateStopped:
+		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
+			Status: s6service.ServiceDown,
+		}
+		mockService.ExistingServices[servicePath] = true
+	case s6fsm.OperationalStateStarting:
+		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
+			Status: s6service.ServiceRestarting, // Use as proxy for "starting"
+		}
+		mockService.ExistingServices[servicePath] = true
+	case s6fsm.OperationalStateStopping:
+		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
+			Status: s6service.ServiceDown, // Use as proxy for "stopping"
+		}
+		mockService.ExistingServices[servicePath] = true
+	case internal_fsm.LifecycleStateToBeCreated:
+		mockService.ExistingServices[servicePath] = false
+		delete(mockService.ServiceStates, servicePath)
+	case internal_fsm.LifecycleStateCreating:
+		mockService.ExistingServices[servicePath] = true
+		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
+			Status: s6service.ServiceDown,
+		}
+	default:
+		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
+			Status: s6service.ServiceUnknown,
+		}
+	}
 
 	return nil
 }

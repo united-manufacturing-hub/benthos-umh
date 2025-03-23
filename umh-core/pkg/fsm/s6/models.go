@@ -118,3 +118,9 @@ func (s *S6Instance) SetServicePath(servicePath string) {
 func (s *S6Instance) SetService(service s6svc.Service) {
 	s.service = service
 }
+
+// GetConfig returns the S6FSMConfig of the instance
+// This is a testing-only utility to access the private field
+func (s *S6Instance) GetConfig() config.S6FSMConfig {
+	return s.config
+}
