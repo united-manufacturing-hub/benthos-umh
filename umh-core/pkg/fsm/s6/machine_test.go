@@ -14,6 +14,9 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+// TODO: needs to be refactored based on the test approach in umh-core/test/fsm/s6/manager_test.go
+// and then also moved in to a shared package
+
 var _ = Describe("S6 FSM", func() {
 	var (
 		mockService     *s6service.MockService

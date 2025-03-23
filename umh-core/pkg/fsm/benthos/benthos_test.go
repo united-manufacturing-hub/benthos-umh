@@ -17,6 +17,9 @@ import (
 	s6svc "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 )
 
+// TODO: needs to be refactored based on the test approach in umh-core/test/fsm/s6/manager_test.go
+// and then also moved in to a shared package
+
 // createMockBenthosInstance creates a BenthosInstance with a mock service for testing
 func createMockBenthosInstance(name string, mockService benthossvc.IBenthosService) *BenthosInstance {
 	cfg := config.BenthosConfig{
