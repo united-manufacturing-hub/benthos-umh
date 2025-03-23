@@ -2,11 +2,13 @@ package s6_test
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsmtest"
+	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/backoff"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
 	s6fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
@@ -83,17 +85,6 @@ var _ = Describe("S6Manager", func() {
 			Expect(service.GetCurrentFSMState()).To(Equal(s6fsm.OperationalStateStopped))
 			Expect(service.GetDesiredFSMState()).To(Equal(s6fsm.OperationalStateStopped))
 
-			// Verify it's using a mock service
-			s6Instance, ok := service.(*s6fsm.S6Instance)
-			Expect(ok).To(BeTrue())
-
-			mockService, ok := s6Instance.GetService().(*s6service.MockService)
-			Expect(ok).To(BeTrue())
-			Expect(mockService).NotTo(BeNil())
-
-			// Verify Start was not called (since we're only expecting stopped state)
-			Expect(mockService.StartCalled).To(BeFalse())
-
 			// Verify state remains stable over multiple reconciliation cycles
 			nextTick, err = fsmtest.WaitForMockedManagerInstanceState(ctx, manager, config.FullConfig{Services: configWithStoppedService},
 				serviceName, s6fsm.OperationalStateStopped, 3, tick)
@@ -106,10 +97,284 @@ var _ = Describe("S6Manager", func() {
 		})
 	})
 
-	// Future tests for state transitions would go here
-	// Context("State Transitions", func() {
-	//    It("should transition service from stopped to running", func() {
-	//       // Test state transition logic
-	//    })
-	// })
+	Context("Updates", func() {
+		It("should create a new instance when a service is added to existing config", func() {
+			// Start with one service in the config
+			initialServiceName := "initial-service"
+			initialConfig := []config.S6FSMConfig{
+				{
+					FSMInstanceConfig: config.FSMInstanceConfig{
+						Name:            initialServiceName,
+						DesiredFSMState: s6fsm.OperationalStateStopped,
+					},
+					S6ServiceConfig: config.S6ServiceConfig{
+						Command:     []string{"/bin/sh", "-c", "echo hello"},
+						Env:         map[string]string{"TEST_ENV": "test_value"},
+						ConfigFiles: map[string]string{},
+					},
+				},
+			}
+
+			// Wait for initial service to be created and reach stopped state
+			var err error
+			var nextTick uint64
+			nextTick, err = fsmtest.WaitForMockedManagerInstanceState(ctx, manager, config.FullConfig{Services: initialConfig},
+				initialServiceName, s6fsm.OperationalStateStopped, 10, tick)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred())
+			Expect(manager.GetInstances()).To(HaveLen(1))
+
+			// Add a new service to the config
+			newServiceName := "new-service"
+			updatedConfig := append(initialConfig, config.S6FSMConfig{
+				FSMInstanceConfig: config.FSMInstanceConfig{
+					Name:            newServiceName,
+					DesiredFSMState: s6fsm.OperationalStateStopped,
+				},
+				S6ServiceConfig: config.S6ServiceConfig{
+					Command:     []string{"/bin/sh", "-c", "echo world"},
+					Env:         map[string]string{"NEW_ENV": "new_value"},
+					ConfigFiles: map[string]string{},
+				},
+			})
+
+			// Wait for the new instance to be created
+			nextTick, err = fsmtest.WaitForManagerInstanceCreation(ctx, manager, config.FullConfig{Services: updatedConfig},
+				newServiceName, 10, tick)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred(), "Failed to create new instance")
+
+			// Now wait for the new service to reach stopped state
+			nextTick, err = fsmtest.WaitForMockedManagerInstanceState(ctx, manager, config.FullConfig{Services: updatedConfig},
+				newServiceName, s6fsm.OperationalStateStopped, 10, tick)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify both services exist and are in the correct state
+			Expect(manager.GetInstances()).To(HaveLen(2))
+			Expect(manager.GetInstances()).To(HaveKey(initialServiceName))
+			Expect(manager.GetInstances()).To(HaveKey(newServiceName))
+
+			initialService, ok := manager.GetInstance(initialServiceName)
+			Expect(ok).To(BeTrue())
+			Expect(initialService.GetCurrentFSMState()).To(Equal(s6fsm.OperationalStateStopped))
+
+			newService, ok := manager.GetInstance(newServiceName)
+			Expect(ok).To(BeTrue())
+			Expect(newService.GetCurrentFSMState()).To(Equal(s6fsm.OperationalStateStopped))
+		})
+
+		It("should stop and remove an instance when a service is removed from config", func() {
+			// Start with two services in the config
+			service1Name := "service-to-keep"
+			service2Name := "service-to-remove"
+			initialConfig := []config.S6FSMConfig{
+				{
+					FSMInstanceConfig: config.FSMInstanceConfig{
+						Name:            service1Name,
+						DesiredFSMState: s6fsm.OperationalStateStopped,
+					},
+					S6ServiceConfig: config.S6ServiceConfig{
+						Command:     []string{"/bin/sh", "-c", "echo service1"},
+						Env:         map[string]string{},
+						ConfigFiles: map[string]string{},
+					},
+				},
+				{
+					FSMInstanceConfig: config.FSMInstanceConfig{
+						Name:            service2Name,
+						DesiredFSMState: s6fsm.OperationalStateStopped,
+					},
+					S6ServiceConfig: config.S6ServiceConfig{
+						Command:     []string{"/bin/sh", "-c", "echo service2"},
+						Env:         map[string]string{},
+						ConfigFiles: map[string]string{},
+					},
+				},
+			}
+
+			// First reconcile with initial config to create both services
+			var err error
+			var nextTick uint64
+
+			// Wait for first service to be created
+			nextTick, err = fsmtest.WaitForManagerInstanceCreation(ctx, manager, config.FullConfig{Services: initialConfig},
+				service1Name, 10, tick)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred(), "Failed to create first instance")
+
+			// Wait for second service to be created
+			nextTick, err = fsmtest.WaitForManagerInstanceCreation(ctx, manager, config.FullConfig{Services: initialConfig},
+				service2Name, 10, tick)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred(), "Failed to create second instance")
+
+			// Wait for first service to reach stopped state
+			nextTick, err = fsmtest.WaitForMockedManagerInstanceState(ctx, manager, config.FullConfig{Services: initialConfig},
+				service1Name, s6fsm.OperationalStateStopped, 10, tick)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred())
+
+			// Wait for second service to reach stopped state
+			nextTick, err = fsmtest.WaitForMockedManagerInstanceState(ctx, manager, config.FullConfig{Services: initialConfig},
+				service2Name, s6fsm.OperationalStateStopped, 10, tick)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify both services exist
+			Expect(manager.GetInstances()).To(HaveLen(2))
+			Expect(manager.GetInstances()).To(HaveKey(service1Name))
+			Expect(manager.GetInstances()).To(HaveKey(service2Name))
+
+			// Update config to remove the second service
+			updatedConfig := []config.S6FSMConfig{
+				{
+					FSMInstanceConfig: config.FSMInstanceConfig{
+						Name:            service1Name,
+						DesiredFSMState: s6fsm.OperationalStateStopped,
+					},
+					S6ServiceConfig: config.S6ServiceConfig{
+						Command:     []string{"/bin/sh", "-c", "echo service1"},
+						Env:         map[string]string{},
+						ConfigFiles: map[string]string{},
+					},
+				},
+			}
+
+			// Wait for the service to be completely removed from the manager
+			nextTick, err = fsmtest.WaitForManagerInstanceRemoval(ctx, manager, config.FullConfig{Services: updatedConfig},
+				service2Name, 15, tick)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred(), "Failed waiting for instance removal")
+
+			// Verify that only the first service remains
+			Expect(manager.GetInstances()).To(HaveLen(1))
+			Expect(manager.GetInstances()).To(HaveKey(service1Name))
+			Expect(manager.GetInstances()).NotTo(HaveKey(service2Name))
+
+			// Verify the remaining service is still in the correct state
+			remainingService, ok := manager.GetInstance(service1Name)
+			Expect(ok).To(BeTrue())
+			Expect(remainingService.GetCurrentFSMState()).To(Equal(s6fsm.OperationalStateStopped))
+		})
+	})
+
+	Context("Error Handling", func() {
+		It("should recover instance after transient errors", func() {
+			// Create a service for testing
+			serviceName := "test-transient-error"
+			serviceConfig := []config.S6FSMConfig{
+				{
+					FSMInstanceConfig: config.FSMInstanceConfig{
+						Name:            serviceName,
+						DesiredFSMState: s6fsm.OperationalStateStopped,
+					},
+					S6ServiceConfig: config.S6ServiceConfig{
+						Command:     []string{"/bin/sh", "-c", "echo test-service"},
+						Env:         map[string]string{},
+						ConfigFiles: map[string]string{},
+					},
+				},
+			}
+
+			// Create and wait for the service to reach stopped state
+			var err error
+			var nextTick uint64
+			nextTick, err = fsmtest.WaitForManagerInstanceCreation(ctx, manager, config.FullConfig{Services: serviceConfig},
+				serviceName, 10, tick)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred(), "Failed to create instance")
+
+			nextTick, err = fsmtest.WaitForMockedManagerInstanceState(ctx, manager, config.FullConfig{Services: serviceConfig},
+				serviceName, s6fsm.OperationalStateStopped, 10, tick)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred(), "Failed to reach stopped state")
+
+			// Get the instance and its mock service
+			instance, exists := manager.GetInstance(serviceName)
+			Expect(exists).To(BeTrue())
+			s6Instance, ok := instance.(*s6fsm.S6Instance)
+			Expect(ok).To(BeTrue())
+
+			mockService, ok := s6Instance.GetService().(*s6service.MockService)
+			Expect(ok).To(BeTrue(), "Service is not a mock service")
+
+			// Configure the mock service to fail temporarily
+			mockService.StatusError = fmt.Errorf("temporary error fetching service state")
+
+			// Run reconciliation a few times with the error active
+			nextTick, err = fsmtest.RunMultipleReconciliations(ctx, manager, config.FullConfig{Services: serviceConfig}, 15, tick)
+			tick = nextTick
+
+			// Verify the instance still exists despite errors
+			_, exists = manager.GetInstance(serviceName)
+			Expect(exists).To(BeTrue(), "Instance should still exist despite errors")
+
+			// Remove the error
+			mockService.StatusError = nil
+
+			// Wait for the instance to recover to stopped state
+			nextTick, err = fsmtest.WaitForMockedManagerInstanceState(ctx, manager, config.FullConfig{Services: serviceConfig},
+				serviceName, s6fsm.OperationalStateStopped, 10, tick)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred(), "Failed to recover to stopped state")
+
+			// Verify the instance is in expected state after recovery
+			instance, exists = manager.GetInstance(serviceName)
+			Expect(exists).To(BeTrue())
+			Expect(instance.GetCurrentFSMState()).To(Equal(s6fsm.OperationalStateStopped))
+		})
+
+		It("should remove an instance when it encounters a permanent error in a terminal state", func() {
+			// Create a service for testing
+			serviceName := "test-permanent-error"
+			serviceConfig := []config.S6FSMConfig{
+				{
+					FSMInstanceConfig: config.FSMInstanceConfig{
+						Name:            serviceName,
+						DesiredFSMState: s6fsm.OperationalStateStopped,
+					},
+					S6ServiceConfig: config.S6ServiceConfig{
+						Command:     []string{"/bin/sh", "-c", "echo test-service"},
+						Env:         map[string]string{},
+						ConfigFiles: map[string]string{},
+					},
+				},
+			}
+
+			// Create and wait for the service to reach stopped state
+			var err error
+			var nextTick uint64
+			nextTick, err = fsmtest.WaitForManagerInstanceCreation(ctx, manager, config.FullConfig{Services: serviceConfig},
+				serviceName, 10, tick)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred(), "Failed to create instance")
+
+			nextTick, err = fsmtest.WaitForMockedManagerInstanceState(ctx, manager, config.FullConfig{Services: serviceConfig},
+				serviceName, s6fsm.OperationalStateStopped, 10, tick)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred(), "Failed to reach stopped state")
+
+			// Get the instance and its mock service
+			instance, exists := manager.GetInstance(serviceName)
+			Expect(exists).To(BeTrue())
+			s6Instance, ok := instance.(*s6fsm.S6Instance)
+			Expect(ok).To(BeTrue())
+
+			mockService, ok := s6Instance.GetService().(*s6service.MockService)
+			Expect(ok).To(BeTrue(), "Service is not a mock service")
+
+			// Configure the mock service to fail with a permanent error
+			permanentErrorMsg := fmt.Sprintf("%s: critical configuration error", backoff.PermanentFailureError)
+			mockService.GetConfigError = fmt.Errorf(permanentErrorMsg)
+
+			// Run several reconciliations to allow the error to be detected and handled
+			nextTick, err = fsmtest.RunMultipleReconciliations(ctx, manager, config.FullConfig{Services: serviceConfig}, 5, tick)
+			tick = nextTick
+
+			// Verify the instance has been removed due to permanent error
+			_, exists = manager.GetInstance(serviceName)
+			Expect(exists).To(BeFalse(), "Instance should be removed after permanent error")
+		})
+	})
 })

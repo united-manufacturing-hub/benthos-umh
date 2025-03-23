@@ -170,3 +170,85 @@ func getInstancesMap(manager ManagerReconciler) map[string]bool {
 
 	return instanceMap
 }
+
+// WaitForManagerInstanceCreation repeatedly calls Reconcile on a manager until the specified instance
+// is created (exists in the manager) or maxAttempts is exceeded.
+// This function is useful when you need to wait for initial instance creation before checking its state.
+func WaitForManagerInstanceCreation(
+	ctx context.Context,
+	manager ManagerReconciler,
+	config config.FullConfig,
+	instanceID string,
+	maxAttempts int,
+	startTick uint64,
+) (uint64, error) {
+	tick := startTick
+
+	for i := 0; i < maxAttempts; i++ {
+		err, _ := manager.Reconcile(ctx, config, tick)
+		if err != nil {
+			return tick, fmt.Errorf("error during manager reconcile: %w", err)
+		}
+		tick++
+
+		// Check if the instance exists
+		_, exists := manager.GetInstance(instanceID)
+		if exists {
+			return tick, nil
+		}
+	}
+
+	return tick, fmt.Errorf("instance %s not created after %d attempts", instanceID, maxAttempts)
+}
+
+// WaitForManagerInstanceRemoval repeatedly calls Reconcile on a manager until the specified instance
+// is completely removed (no longer exists in the manager) or maxAttempts is exceeded.
+// This function is useful when you need to wait for an instance to be fully removed from the manager.
+func WaitForManagerInstanceRemoval(
+	ctx context.Context,
+	manager ManagerReconciler,
+	config config.FullConfig,
+	instanceID string,
+	maxAttempts int,
+	startTick uint64,
+) (uint64, error) {
+	tick := startTick
+
+	for i := 0; i < maxAttempts; i++ {
+		err, _ := manager.Reconcile(ctx, config, tick)
+		if err != nil {
+			return tick, fmt.Errorf("error during manager reconcile: %w", err)
+		}
+		tick++
+
+		// Check if the instance still exists
+		_, exists := manager.GetInstance(instanceID)
+		if !exists {
+			return tick, nil // Success - instance is gone
+		}
+	}
+
+	return tick, fmt.Errorf("instance %s not removed after %d attempts", instanceID, maxAttempts)
+}
+
+// RunMultipleReconciliations runs the reconciliation process multiple times
+// This is useful when you need to run reconciliation several times without waiting for a specific state
+func RunMultipleReconciliations(
+	ctx context.Context,
+	manager ManagerReconciler,
+	config config.FullConfig,
+	numReconciliations int,
+	startTick uint64,
+) (uint64, error) {
+	tick := startTick
+
+	for i := 0; i < numReconciliations; i++ {
+		err, _ := manager.Reconcile(ctx, config, tick)
+		if err != nil {
+			return tick, fmt.Errorf("error during manager reconcile (attempt %d): %w", i+1, err)
+		}
+		tick++
+	}
+
+	return tick, nil
+}
