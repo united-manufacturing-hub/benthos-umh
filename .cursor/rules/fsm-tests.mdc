@@ -108,6 +108,15 @@ We aim to have a **M**utually **E**xclusive, **C**ollectively **E**xhaustive set
 
 No single test attempts to cover all of these transitions in one place; they’re distributed in a cohesive, non-overlapping way.
 
+### 8. Never Call Reconcile Directly
+- Tests should never call instance.Reconcile() directly
+- Instead use helper functions:
+   * TestS6StateTransition - for testing state transitions
+   * StabilizeS6Instance - for verifying state stability
+   * WaitForInstanceState - for waiting for a specific state
+- This ensures consistent handling of reconciliation, proper tick management,
+   and standard error handling across all tests
+
 ---
 
 ## Implementation Guidelines

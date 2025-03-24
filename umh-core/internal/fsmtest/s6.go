@@ -1,9 +1,9 @@
 package fsmtest
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
-	"time"
 
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/config"
@@ -36,34 +36,59 @@ func CreateS6TestConfig(name string, desiredState string) config.S6FSMConfig {
 
 // ConfigureServiceForState sets up a mock S6 service to return the given state
 func ConfigureServiceForState(mockService *s6service.MockService, servicePath string, state string) {
-	mockService.ExistingServices = make(map[string]bool)
 	if mockService.ServiceStates == nil {
 		mockService.ServiceStates = make(map[string]s6service.ServiceInfo)
 	}
-
-	mockService.ExistingServices[servicePath] = true
+	if mockService.ExistingServices == nil {
+		mockService.ExistingServices = make(map[string]bool)
+	}
 
 	// Configure service state based on FSM state
 	switch state {
+	case internal_fsm.LifecycleStateToBeCreated:
+		// Service doesn't exist for to_be_created state
+		delete(mockService.ExistingServices, servicePath)
+		delete(mockService.ServiceStates, servicePath)
+	case internal_fsm.LifecycleStateCreating:
+		// Service directory exists but isn't running
+		mockService.ExistingServices[servicePath] = true
+		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
+			Status: s6service.ServiceDown,
+		}
+	case internal_fsm.LifecycleStateRemoving:
+		// Service exists but is about to be removed
+		mockService.ExistingServices[servicePath] = true
+		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
+			Status: s6service.ServiceDown,
+		}
+	case internal_fsm.LifecycleStateRemoved:
+		// Service doesn't exist anymore
+		delete(mockService.ExistingServices, servicePath)
+		delete(mockService.ServiceStates, servicePath)
 	case s6RunningState:
+		mockService.ExistingServices[servicePath] = true
 		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
 			Status: s6service.ServiceUp,
 			Uptime: 10,
 			Pid:    12345,
 		}
 	case s6StoppedState:
+		mockService.ExistingServices[servicePath] = true
 		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
 			Status: s6service.ServiceDown,
 		}
 	case s6StartingState:
+		mockService.ExistingServices[servicePath] = true
 		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
 			Status: s6service.ServiceRestarting, // Use as proxy for "starting"
 		}
 	case s6StoppingState:
+		mockService.ExistingServices[servicePath] = true
 		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
 			Status: s6service.ServiceDown, // Use as proxy for "stopping"
 		}
 	default:
+		mockService.ExistingServices[servicePath] = true
 		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
 			Status: s6service.ServiceUnknown,
 		}
@@ -79,89 +104,189 @@ func ConfigureS6ServiceConfig(mockService *s6service.MockService) {
 	}
 }
 
-// TransitionToS6State simulates a transition to a new state
-func TransitionToS6State(mockService *s6service.MockService, servicePath string, fromState, toState string) {
-	// First configure for the current state
-	ConfigureServiceForState(mockService, servicePath, fromState)
-
-	// Then after a delay, transition to the new state
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		ConfigureServiceForState(mockService, servicePath, toState)
-	}()
-}
-
-// SetS6InstanceMockService sets the mock service on an S6Instance
-// This is a testing-only utility to replace the real service with a mock
-func SetS6InstanceMockService(instance interface{}, mockService *s6service.MockService, servicePath string) error {
-	// We need to use type assertion to access private fields
-	s6Instance, ok := instance.(*s6fsm.S6Instance)
+// ConfigureS6State sets up both the instance and its mock service for a specific state
+func ConfigureS6State(instance *s6fsm.S6Instance, targetState string) error {
+	mockService, ok := instance.GetService().(*s6service.MockService)
 	if !ok {
-		return fmt.Errorf("instance is not an *s6fsm.S6Instance")
+		return fmt.Errorf("instance doesn't use a MockService")
 	}
+	servicePath := instance.GetServicePath()
 
-	// Since we can't use reflection easily here, we'll use a pattern similar to createMockS6Instance in the tests
-	s6Instance.SetService(mockService)
-	s6Instance.SetServicePath(filepath.Join(servicePath))
+	// Configure service state
+	ConfigureServiceForState(mockService, servicePath, targetState)
 
 	return nil
 }
 
-// SetS6InstanceState sets the state of an S6Instance and configures the mock service to match
-func SetS6InstanceState(instance interface{}, state string) error {
-	// Type assertion to get the S6Instance
-	s6Instance, ok := instance.(*s6fsm.S6Instance)
+// SetupS6InstanceWithState creates and configures an S6Instance in a specific state
+func SetupS6InstanceWithState(
+	baseDir string,
+	name string,
+	initialState string,
+	desiredState string,
+) (*s6fsm.S6Instance, error) {
+	instance, _, _ := SetupS6Instance(baseDir, name, desiredState)
+
+	// Configure for initial state if different from to_be_created
+	if initialState != internal_fsm.LifecycleStateToBeCreated {
+		err := ConfigureS6State(instance, initialState)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return instance, nil
+}
+
+// waitForInstanceState is an internal helper that waits for an instance to reach a specific state
+// through repeated reconciliation. Consider using TestS6StateTransition or StabilizeS6Instance instead.
+//
+// Parameters:
+//   - ctx: Context for cancellation
+//   - instance: The S6Instance to reconcile
+//   - targetState: The desired state to reach
+//   - maxAttempts: Maximum number of reconcile cycles to attempt
+//   - startTick: The starting tick value for reconciliation
+//
+// Returns:
+//   - uint64: The final tick value after reconciliation
+//   - error: Any error that occurred during reconciliation
+func waitForInstanceState(
+	ctx context.Context,
+	instance *s6fsm.S6Instance,
+	targetState string,
+	maxAttempts int,
+	startTick uint64,
+) (uint64, error) {
+	var tick = startTick
+	var currentState string
+
+	for i := 0; i < maxAttempts; i++ {
+		currentState = instance.GetCurrentFSMState()
+		if currentState == targetState {
+			return tick, nil
+		}
+
+		// Call Reconcile to progress the state
+		_, _ = instance.Reconcile(ctx, tick)
+		tick++
+	}
+
+	return tick, fmt.Errorf("failed to reach target state %s, current: %s after %d attempts",
+		targetState, currentState, maxAttempts)
+}
+
+// StabilizeS6Instance is a simplified helper that configures the service and waits for an S6 instance
+// to reach the desired state. This is the recommended way to stabilize an S6 instance for testing.
+// Consider using TestS6StateTransition for testing full transitions.
+//
+// Parameters:
+//   - ctx: Context for cancellation
+//   - instance: The S6Instance to stabilize
+//   - targetState: The desired state to reach
+//   - maxAttempts: Maximum number of reconcile cycles to attempt
+//   - startTick: The starting tick value for reconciliation
+//
+// Returns:
+//   - uint64: The final tick value after stabilization
+//   - error: Any error that occurred during stabilization
+func StabilizeS6Instance(
+	ctx context.Context,
+	instance *s6fsm.S6Instance,
+	targetState string,
+	maxAttempts int,
+	startTick uint64,
+) (uint64, error) {
+	// Get the mock service and service path from the instance
+	mockService, ok := instance.GetService().(*s6service.MockService)
 	if !ok {
-		return fmt.Errorf("instance is not an *s6fsm.S6Instance")
+		return startTick, fmt.Errorf("instance doesn't use a MockService")
 	}
 
-	// Cannot set directly since fsm instance is not exported
-	// Instead, we'll need to manipulate the state indirectly through the service
-	mockService, ok := s6Instance.GetService().(*s6service.MockService)
-	if !ok {
-		return fmt.Errorf("service is not a *s6service.MockService")
+	servicePath := instance.GetServicePath()
+
+	// Configure the mock service for the target state
+	ConfigureServiceForState(mockService, servicePath, targetState)
+
+	// Wait for the instance to reach the target state
+	return waitForInstanceState(ctx, instance, targetState, maxAttempts, startTick)
+}
+
+// TestS6StateTransition tests a transition between two states using reconciliation.
+// This is the main testing API for S6 instance state transitions.
+//
+// Parameters:
+//   - ctx: Context for cancellation
+//   - instance: The S6Instance to test
+//   - fromState: The initial state to configure
+//   - toState: The target state to reach
+//   - maxAttempts: Maximum number of reconcile cycles to attempt
+//   - startTick: (Optional) The starting tick value for reconciliation, defaults to 0 if not provided
+//   - skipSetupDesiredState: (Optional) If true, won't set the desired state automatically
+//
+// Returns:
+//   - uint64: The final tick value after all reconciliations
+//   - error: Any error that occurred during the process
+func TestS6StateTransition(
+	ctx context.Context,
+	instance *s6fsm.S6Instance,
+	fromState string,
+	toState string,
+	maxAttempts int,
+	startTick uint64,
+	skipSetupDesiredState ...bool,
+) (uint64, error) {
+	// Configure initial state
+	err := ConfigureS6State(instance, fromState)
+	if err != nil {
+		return startTick, err
 	}
 
-	// Set up the service path
-	servicePath := s6Instance.GetServicePath()
-
-	// Update the mock service state based on the desired FSM state
-	switch state {
-	case s6fsm.OperationalStateRunning:
-		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
-			Status: s6service.ServiceUp,
-			Uptime: 10,
-			Pid:    12345,
-		}
-		mockService.ExistingServices[servicePath] = true
-	case s6fsm.OperationalStateStopped:
-		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
-			Status: s6service.ServiceDown,
-		}
-		mockService.ExistingServices[servicePath] = true
-	case s6fsm.OperationalStateStarting:
-		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
-			Status: s6service.ServiceRestarting, // Use as proxy for "starting"
-		}
-		mockService.ExistingServices[servicePath] = true
-	case s6fsm.OperationalStateStopping:
-		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
-			Status: s6service.ServiceDown, // Use as proxy for "stopping"
-		}
-		mockService.ExistingServices[servicePath] = true
-	case internal_fsm.LifecycleStateToBeCreated:
-		mockService.ExistingServices[servicePath] = false
-		delete(mockService.ServiceStates, servicePath)
-	case internal_fsm.LifecycleStateCreating:
-		mockService.ExistingServices[servicePath] = true
-		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
-			Status: s6service.ServiceDown,
-		}
-	default:
-		mockService.ServiceStates[servicePath] = s6service.ServiceInfo{
-			Status: s6service.ServiceUnknown,
+	// Setup the desired state if it's an operational state and skipSetupDesiredState is not true
+	skipDesired := len(skipSetupDesiredState) > 0 && skipSetupDesiredState[0]
+	if !skipDesired && (toState == s6fsm.OperationalStateRunning || toState == s6fsm.OperationalStateStopped) {
+		if err := instance.SetDesiredFSMState(toState); err != nil {
+			return startTick, err
 		}
 	}
 
-	return nil
+	// Use the provided tick value
+	var tick = startTick
+
+	// Run initial reconcile to trigger transition
+	_, _ = instance.Reconcile(ctx, tick)
+	tick++
+
+	// Now stabilize to the target state
+	return StabilizeS6Instance(ctx, instance, toState, maxAttempts, tick)
+}
+
+// SetupS6Instance creates a new S6Instance with a mock service
+// This is a helper function for tests to quickly set up an instance for testing
+func SetupS6Instance(
+	baseDir string,
+	name string,
+	desiredState string,
+) (*s6fsm.S6Instance, *s6service.MockService, string) {
+	mockService := s6service.NewMockService()
+
+	// Create config
+	instanceConfig := CreateS6TestConfig(name, desiredState)
+
+	// Create instance
+	instance, err := s6fsm.NewS6InstanceWithService(
+		baseDir,
+		instanceConfig,
+		mockService,
+	)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to create S6Instance: %v", err))
+	}
+
+	servicePath := filepath.Join(baseDir, name)
+
+	// Configure mock service with the test config
+	mockService.GetConfigResult = instanceConfig.S6ServiceConfig
+
+	return instance, mockService, servicePath
 }
