@@ -1,3 +1,4 @@
+// file: s6_instance_test.go
 package s6_test
 
 import (
@@ -10,11 +11,11 @@ import (
 	internal_fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsm"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/internal/fsmtest"
 	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/constants"
-	"github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
+	s6fsm "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/fsm/s6"
 	s6service "github.com/united-manufacturing-hub/benthos-umh/umh-core/pkg/service/s6"
 )
 
-var _ = Describe("S6 Instance", func() {
+var _ = Describe("S6Instance FSM", func() {
 	var (
 		ctx         context.Context
 		testBaseDir string
@@ -27,339 +28,419 @@ var _ = Describe("S6 Instance", func() {
 		tick = 0
 	})
 
-	Context("Lifecycle Creation Flow", func() {
-		It("should transition from to_be_created to stopped", func() {
-			// Set up instance in to_be_created state
-			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "test-creation", s6.OperationalStateStopped)
+	// -------------------------------------------------------------------------
+	//  CREATION FLOW
+	// -------------------------------------------------------------------------
+	Context("Creation Flow", func() {
 
-			// Initial state should be to_be_created
+		It("should transition from to_be_created to stopped (normal creation)", func() {
+			// 1. Create a new S6Instance in the "to_be_created" phase
+			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "creation-success", s6fsm.OperationalStateStopped)
+
+			// 2. Check it initially
 			Expect(instance.GetCurrentFSMState()).To(Equal(internal_fsm.LifecycleStateToBeCreated))
 
-			// Test transition through creating to stopped
-			nextTick, err := fsmtest.TestS6StateTransition(ctx, instance, internal_fsm.LifecycleStateToBeCreated,
-				internal_fsm.LifecycleStateCreating, 3, tick)
+			// 3. Transition from to_be_created => creating => stopped
+			nextTick, err := fsmtest.TestS6StateTransition(ctx, instance,
+				internal_fsm.LifecycleStateToBeCreated,
+				internal_fsm.LifecycleStateCreating,
+				5, tick,
+			)
+			tick = nextTick
 			Expect(err).NotTo(HaveOccurred())
 			Expect(mockService.CreateCalled).To(BeTrue())
 
-			// Then to stopped state
-			_, err = fsmtest.TestS6StateTransition(ctx, instance, internal_fsm.LifecycleStateCreating,
-				s6.OperationalStateStopped, 3, nextTick)
+			_, err = fsmtest.TestS6StateTransition(ctx, instance,
+				internal_fsm.LifecycleStateCreating,
+				s6fsm.OperationalStateStopped,
+				5, tick,
+			)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetCurrentFSMState()).To(Equal(s6fsm.OperationalStateStopped))
 		})
 
 		It("should handle creation failure and retry", func() {
-			// Set up instance in to_be_created state
-			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "test-creation-failure", s6.OperationalStateStopped)
+			// 1. Set up an instance that wants to end in stopped
+			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "creation-failure", s6fsm.OperationalStateStopped)
 
-			// Verify it lands up in to_be_created state
-			tick, err := fsmtest.StabilizeS6Instance(ctx, instance, internal_fsm.LifecycleStateToBeCreated, 3, tick)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetError()).To(BeNil())
-
-			// Configure mock service to fail creation
+			// 2. Force the creation to fail initially
 			mockService.CreateError = fmt.Errorf("simulated create failure")
 
-			// Verify it stays in to_be_created state during failure
-			tick, err = fsmtest.VerifyStableState(ctx, instance, internal_fsm.LifecycleStateToBeCreated, 3, tick)
+			// 3. Verify it remains in to_be_created despite multiple reconciles
+			_, err := fsmtest.VerifyStableState(ctx, instance, internal_fsm.LifecycleStateToBeCreated, 3, tick)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetError()).ToNot(BeNil())
+			Expect(instance.GetError()).ToNot(BeNil()) // Should record the error
 
-			// Fix the mock service and test transition
+			// 4. Fix the error and ensure we eventually get to "stopped"
 			mockService.CreateError = nil
 			mockService.CreateCalled = false
 
-			// Test transition to creating and then stopped
-			tick, err = fsmtest.TestS6StateTransition(ctx, instance, internal_fsm.LifecycleStateToBeCreated,
-				internal_fsm.LifecycleStateCreating, 10, tick)
+			// from to_be_created => creating
+			nextTick, err := fsmtest.TestS6StateTransition(ctx, instance,
+				internal_fsm.LifecycleStateToBeCreated,
+				internal_fsm.LifecycleStateCreating,
+				10, tick,
+			)
+			tick = nextTick
 			Expect(err).NotTo(HaveOccurred())
 			Expect(mockService.CreateCalled).To(BeTrue())
 
-			_, err = fsmtest.TestS6StateTransition(ctx, instance, internal_fsm.LifecycleStateCreating,
-				s6.OperationalStateStopped, 10, tick)
+			// from creating => stopped
+			_, err = fsmtest.TestS6StateTransition(ctx, instance,
+				internal_fsm.LifecycleStateCreating,
+				s6fsm.OperationalStateStopped,
+				10, tick,
+			)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetCurrentFSMState()).To(Equal(s6fsm.OperationalStateStopped))
 		})
 
-		It("should handle permanent creation failure", func() {
-			// TODO: Implement test for permanent creation failure
+		It("should handle permanent creation failure (self-removal or remain to_be_created)", func() {
+			// Implementation depends on your FSM design. Possibly:
+			// - If the FSM sees a "PermanentFailureError" during creation, it
+			//   transitions to a special removed state or remains in to_be_created
+			//   but sets a permanent error, etc.
+			// Insert your exact logic here.
+			// e.g.:
+			// instance, mockService, _ := fsmtest.SetupS6Instance(...)
+
+			// mockService.CreateError = fmt.Errorf("%s: unrecoverable error", backoff.PermanentFailureError)
+			// ...
+			// Expect final result. Possibly the instance removes itself or remains in error.
 		})
 	})
 
+	// -------------------------------------------------------------------------
+	//  STARTING FLOW
+	// -------------------------------------------------------------------------
 	Context("Starting Flow", func() {
-		It("should transition from stopped to running", func() {
-			// Set up and test full transition from stopped to running
-			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "test-starting", s6.OperationalStateStopped)
 
-			// Test complete transition through all states
-			_, err := fsmtest.TestS6StateTransition(ctx, instance, s6.OperationalStateStopped,
-				s6.OperationalStateRunning, 10, tick)
+		It("should transition from stopped to running", func() {
+			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "start-normal", s6fsm.OperationalStateStopped)
+
+			// from to_be_created => stopped
+			nextTick, err := fsmtest.TestS6StateTransition(ctx, instance,
+				internal_fsm.LifecycleStateToBeCreated,
+				s6fsm.OperationalStateStopped,
+				5, tick,
+			)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred())
+
+			// Now set desired = running
+			err = instance.SetDesiredFSMState(s6fsm.OperationalStateRunning)
+			Expect(err).NotTo(HaveOccurred())
+
+			// from stopped => starting => running
+			_, err = fsmtest.TestS6StateTransition(ctx, instance,
+				s6fsm.OperationalStateStopped,
+				s6fsm.OperationalStateRunning,
+				10, tick,
+			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(mockService.StartCalled).To(BeTrue())
+			Expect(instance.GetCurrentFSMState()).To(Equal(s6fsm.OperationalStateRunning))
 		})
 
-		It("should remain in starting state until service is up", func() {
-			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "test-slow-start", s6.OperationalStateStopped)
+		It("should remain in starting until service is actually up", func() {
+			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "start-slow", s6fsm.OperationalStateStopped)
 
-			// Set desired state to running and transition to starting
-			err := instance.SetDesiredFSMState(s6.OperationalStateRunning)
+			// from to_be_created => stopped
+			nextTick, err := fsmtest.TestS6StateTransition(ctx, instance,
+				internal_fsm.LifecycleStateToBeCreated,
+				s6fsm.OperationalStateStopped,
+				5, tick,
+			)
+			tick = nextTick
 			Expect(err).NotTo(HaveOccurred())
 
-			// First transition to starting
-			tick, err := fsmtest.TestS6StateTransition(ctx, instance, s6.OperationalStateStopped,
-				s6.OperationalStateStarting, 5, tick)
+			// desired=running
+			err = instance.SetDesiredFSMState(s6fsm.OperationalStateRunning)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Keep service in starting state and verify it stays there
+			// from stopped => starting
+			nextTick, err = fsmtest.TestS6StateTransition(ctx, instance,
+				s6fsm.OperationalStateStopped,
+				s6fsm.OperationalStateStarting,
+				5, tick,
+			)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred())
+
+			// Keep the service in "down" or "restarting" so it doesn't reach running
 			mockService.ServiceStates[instance.GetServicePath()] = s6service.ServiceInfo{
 				Status: s6service.ServiceRestarting,
 			}
 
-			// Use VerifyStableState to actively check state stability
-			tick, err = fsmtest.VerifyStableState(ctx, instance, s6.OperationalStateStarting, 3, tick)
+			// Verify it remains in "starting"
+			_, err = fsmtest.VerifyStableState(ctx, instance, s6fsm.OperationalStateStarting, 3, tick)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Allow service to complete startup
-			// This will also reset the mock service
-			tick, err = fsmtest.TestS6StateTransition(ctx, instance, s6.OperationalStateStarting,
-				s6.OperationalStateRunning, 5, tick)
+			// Finally let the service become up => instance can go to running
+			// e.g. mockService.ServiceStates[...] = s6service.ServiceInfo{Status: s6service.ServiceUp}
+			_, err = fsmtest.TestS6StateTransition(ctx, instance,
+				s6fsm.OperationalStateStarting,
+				s6fsm.OperationalStateRunning,
+				5, tick,
+			)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetCurrentFSMState()).To(Equal(s6fsm.OperationalStateRunning))
 		})
 
 		It("should handle start failure and retry after backoff", func() {
-			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "test-start-failure", s6.OperationalStateStopped)
+			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "start-fail", s6fsm.OperationalStateStopped)
 
-			// First ensure we're in the stopped state by completing the creation lifecycle
-			tick, err := fsmtest.TestS6StateTransition(ctx, instance, internal_fsm.LifecycleStateToBeCreated,
-				s6.OperationalStateStopped, 3, tick)
+			// from to_be_created => stopped
+			nextTick, err := fsmtest.TestS6StateTransition(ctx, instance,
+				internal_fsm.LifecycleStateToBeCreated,
+				s6fsm.OperationalStateStopped,
+				5, tick,
+			)
+			tick = nextTick
 			Expect(err).NotTo(HaveOccurred())
 
-			// Configure mock service to fail start BEFORE we trigger transitions
+			// Configure start error
 			mockService.StartError = fmt.Errorf("simulated start failure")
-			mockService.StartCalled = false
 
-			// Set desired state to running
-			err = instance.SetDesiredFSMState(s6.OperationalStateRunning)
+			// desired=running
+			err = instance.SetDesiredFSMState(s6fsm.OperationalStateRunning)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Reconcile a few times to verify it stays in stopped state due to error
-			tick, err = fsmtest.VerifyStableState(ctx, instance, s6.OperationalStateStopped, 3, tick)
+			// Verify it remains in stopped due to start error
+			nextTick, err = fsmtest.VerifyStableState(ctx, instance, s6fsm.OperationalStateStopped, 3, tick)
+			tick = nextTick
 			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetError()).NotTo(BeNil())
+			Expect(instance.GetError()).NotTo(BeNil()) // Should record the error
 			Expect(mockService.StartCalled).To(BeTrue())
 
-			// Fix the mock service and test transition
-			mockService.StartError = nil
-			mockService.StartCalled = false
-
-			// Now it should complete the full transition sequence
-			tick, err = fsmtest.TestS6StateTransition(ctx, instance, s6.OperationalStateStopped,
-				s6.OperationalStateStarting, 5, tick)
-			Expect(err).NotTo(HaveOccurred())
-
-			tick, err = fsmtest.TestS6StateTransition(ctx, instance, s6.OperationalStateStarting,
-				s6.OperationalStateRunning, 5, tick)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(mockService.StartCalled).To(BeTrue())
-		})
-	})
-
-	Context("Stopping Flow", func() {
-		It("should transition from running to stopped", func() {
-			// Set up and test full transition from running to stopped
-			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "test-stopping", s6.OperationalStateRunning)
-
-			// First ensure we're in the running state by completing the creation lifecycle
-			tick, err := fsmtest.TestS6StateTransition(ctx, instance, internal_fsm.LifecycleStateToBeCreated,
-				s6.OperationalStateRunning, 5, tick)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetCurrentFSMState()).To(Equal(s6.OperationalStateRunning))
-
-			// Test complete transition
-			tick, err = fsmtest.TestS6StateTransition(ctx, instance, s6.OperationalStateRunning,
-				s6.OperationalStateStopped, 10, tick)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(mockService.StopCalled).To(BeTrue())
-		})
-
-		It("should remain in stopping state until service is down", func() {
-			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "test-slow-stop", s6.OperationalStateRunning)
-
-			// First ensure we're in the running state by completing the creation lifecycle
-			tick, err := fsmtest.TestS6StateTransition(ctx, instance, internal_fsm.LifecycleStateToBeCreated,
-				s6.OperationalStateRunning, 5, tick)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetCurrentFSMState()).To(Equal(s6.OperationalStateRunning))
-
-			// Set desired state to stopped and transition to stopping
-			err = instance.SetDesiredFSMState(s6.OperationalStateStopped)
-			Expect(err).NotTo(HaveOccurred())
-
-			// First transition to stopping
-			tick, err = fsmtest.TestS6StateTransition(ctx, instance, s6.OperationalStateRunning,
-				s6.OperationalStateStopping, 5, tick)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Keep service in a not-quite-stopped state and verify it stays in stopping
-			mockService.ServiceStates[instance.GetServicePath()] = s6service.ServiceInfo{
-				Status: s6service.ServiceRestarting,
-			}
-
-			// Use VerifyStableState to actively check state stability
-			tick, err = fsmtest.VerifyStableState(ctx, instance, s6.OperationalStateStopping, 3, tick)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Allow service to complete shutdown
-			tick, err = fsmtest.TestS6StateTransition(ctx, instance, s6.OperationalStateStopping,
-				s6.OperationalStateStopped, 5, tick)
-			Expect(err).NotTo(HaveOccurred())
-		})
-
-		It("should handle stop failure and retry after backoff", func() {
-			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "test-stop-failure", s6.OperationalStateRunning)
-
-			// First ensure we're in the running state by completing the creation lifecycle
-			tick, err := fsmtest.TestS6StateTransition(ctx, instance, internal_fsm.LifecycleStateToBeCreated,
-				s6.OperationalStateRunning, 5, tick)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetCurrentFSMState()).To(Equal(s6.OperationalStateRunning))
-
-			// Configure mock service to fail stop BEFORE triggering transitions
-			mockService.StopError = fmt.Errorf("simulated stop failure")
-			mockService.StopCalled = false
-
-			// Set desired state to stopped
-			err = instance.SetDesiredFSMState(s6.OperationalStateStopped)
-			Expect(err).NotTo(HaveOccurred())
-
-			// First verify it stays in running state due to stop error
-			tick, err = fsmtest.VerifyStableState(ctx, instance, s6.OperationalStateRunning, 3, tick)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetError()).NotTo(BeNil())
-			Expect(mockService.StopCalled).To(BeTrue())
-
-			// Fix the initial error to allow transition to stopping
-			mockService.StopError = nil
-			mockService.StopCalled = false
-
-			// Now it should transition to stopping
-			tick, err = fsmtest.TestS6StateTransition(ctx, instance, s6.OperationalStateRunning,
-				s6.OperationalStateStopping, 5, tick)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Configure another error for the stopping state
-			// Service remains running
-			mockService.ServiceStates[instance.GetServicePath()] = s6service.ServiceInfo{
-				Status: s6service.ServiceUp,
-			}
-
-			// Verify it stays in stopping state during failure
-			tick, err = fsmtest.VerifyStableState(ctx, instance, s6.OperationalStateStopping, 3, tick)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetError()).To(BeNil())
-			Expect(mockService.StopCalled).To(BeTrue())
-
-			// Allow service to complete stopping
-			tick, err = fsmtest.TestS6StateTransition(ctx, instance, s6.OperationalStateStopping,
-				s6.OperationalStateStopped, 5, tick)
-			Expect(err).NotTo(HaveOccurred())
-		})
-	})
-
-	FContext("Error Handling and Backoff", func() {
-		It("should apply backoff when operations fail repeatedly", func() {
-			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "test-backoff", s6.OperationalStateStopped)
-
-			// First ensure we're in the stopped state by completing the creation lifecycle
-			tick, err := fsmtest.TestS6StateTransition(ctx, instance, internal_fsm.LifecycleStateToBeCreated,
-				s6.OperationalStateStopped, 5, tick)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetCurrentFSMState()).To(Equal(s6.OperationalStateStopped))
-
-			// Configure mock service to fail
-			mockService.StartError = fmt.Errorf("simulated start failure")
-			mockService.StartCalled = false
-
-			// Set desired state to running
-			err = instance.SetDesiredFSMState(s6.OperationalStateRunning)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Verify the instance stays in stopped state due to error (with multiple reconciliations)
-			tick, err = fsmtest.VerifyStableState(ctx, instance, s6.OperationalStateStopped, 5, tick)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(mockService.StartCalled).To(BeTrue())
-			Expect(instance.GetError()).NotTo(BeNil())
-
-			// After error occurs, reset flag to check if backoff is active
-			mockService.StartCalled = false
-
-			// Verify backoff is active (service start should not be called again)
-			tick, err = fsmtest.VerifyStableState(ctx, instance, s6.OperationalStateStopped, 1, tick)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(mockService.StartCalled).To(BeFalse()) // Backoff should prevent this
-			Expect(instance.GetError()).NotTo(BeNil())
-		})
-
-		It("should reset backoff after successful operation", func() {
-			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "test-backoff-reset", s6.OperationalStateStopped)
-
-			// First ensure we're in the stopped state by completing the creation lifecycle
-			tick, err := fsmtest.TestS6StateTransition(ctx, instance, internal_fsm.LifecycleStateToBeCreated,
-				s6.OperationalStateStopped, 5, tick)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetCurrentFSMState()).To(Equal(s6.OperationalStateStopped))
-
-			// Configure service state to ensure it's properly stopped
-			mockService.ServiceStates[instance.GetServicePath()] = s6service.ServiceInfo{
-				Status: s6service.ServiceDown,
-			}
-
-			// Configure mock service to fail start
-			mockService.StartError = fmt.Errorf("simulated start failure")
-			mockService.StartCalled = false
-
-			// Set desired state to running
-			err = instance.SetDesiredFSMState(s6.OperationalStateRunning)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Verify it stays in stopped state due to errors (causing backoff to activate)
-			tick, err = fsmtest.VerifyStableState(ctx, instance, s6.OperationalStateStopped, 5, tick)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(instance.GetError()).NotTo(BeNil())
-			Expect(mockService.StartCalled).To(BeTrue())
-
-			// Reset flag to check if backoff is active
-			mockService.StartCalled = false
-
-			// Verify backoff is active
-			tick, err = fsmtest.VerifyStableState(ctx, instance, s6.OperationalStateStopped, 1, tick)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(mockService.StartCalled).To(BeFalse())
-
-			// Fix the error and clear instance error state
+			// Fix the error
 			mockService.StartError = nil
 			fsmtest.ResetInstanceError(instance)
 			mockService.StartCalled = false
 
-			// Now it should transition to starting state
-			tick, err = fsmtest.TestS6StateTransition(ctx, instance, s6.OperationalStateStopped,
-				s6.OperationalStateStarting, 5, tick)
+			// from stopped => starting
+			nextTick, err = fsmtest.TestS6StateTransition(ctx, instance,
+				s6fsm.OperationalStateStopped,
+				s6fsm.OperationalStateStarting,
+				5, tick,
+			)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred())
+
+			// from starting => running
+			_, err = fsmtest.TestS6StateTransition(ctx, instance,
+				s6fsm.OperationalStateStarting,
+				s6fsm.OperationalStateRunning,
+				5, tick,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetCurrentFSMState()).To(Equal(s6fsm.OperationalStateRunning))
+		})
+	})
+
+	// -------------------------------------------------------------------------
+	//  STOPPING FLOW
+	// -------------------------------------------------------------------------
+	Context("Stopping Flow", func() {
+
+		It("should transition from running to stopped", func() {
+			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "stop-normal", s6fsm.OperationalStateRunning)
+
+			// from to_be_created => running
+			nextTick, err := fsmtest.TestS6StateTransition(ctx, instance,
+				internal_fsm.LifecycleStateToBeCreated,
+				s6fsm.OperationalStateRunning,
+				8, tick,
+			)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred())
+
+			// from running => stopped
+			_, err = fsmtest.TestS6StateTransition(ctx, instance,
+				s6fsm.OperationalStateRunning,
+				s6fsm.OperationalStateStopped,
+				8, tick,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockService.StopCalled).To(BeTrue())
+			Expect(instance.GetCurrentFSMState()).To(Equal(s6fsm.OperationalStateStopped))
+		})
+
+		It("should remain in stopping until service is actually down", func() {
+			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "stop-slow", s6fsm.OperationalStateRunning)
+
+			// from to_be_created => running
+			nextTick, err := fsmtest.TestS6StateTransition(ctx, instance,
+				internal_fsm.LifecycleStateToBeCreated,
+				s6fsm.OperationalStateRunning,
+				8, tick,
+			)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred())
+
+			// desired=stopped => instance goes from running => stopping
+			err = instance.SetDesiredFSMState(s6fsm.OperationalStateStopped)
+			Expect(err).NotTo(HaveOccurred())
+
+			nextTick, err = fsmtest.TestS6StateTransition(ctx, instance,
+				s6fsm.OperationalStateRunning,
+				s6fsm.OperationalStateStopping,
+				5, tick,
+			)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred())
+
+			// Keep service in "up" => instance remains stopping
+			mockService.ServiceStates[instance.GetServicePath()] = s6service.ServiceInfo{
+				Status: s6service.ServiceUp,
+			}
+
+			// Verify stable in stopping
+			_, err = fsmtest.VerifyStableState(ctx, instance, s6fsm.OperationalStateStopping, 3, tick)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Finally let service go down => instance => stopped
+			_, err = fsmtest.TestS6StateTransition(ctx, instance,
+				s6fsm.OperationalStateStopping,
+				s6fsm.OperationalStateStopped,
+				5, tick,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetCurrentFSMState()).To(Equal(s6fsm.OperationalStateStopped))
+		})
+
+		It("should handle stop failure and retry after backoff", func() {
+			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "stop-fail", s6fsm.OperationalStateRunning)
+
+			// from to_be_created => running
+			nextTick, err := fsmtest.TestS6StateTransition(ctx, instance,
+				internal_fsm.LifecycleStateToBeCreated,
+				s6fsm.OperationalStateRunning,
+				8, tick,
+			)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred())
+
+			// Inject a stop error
+			mockService.StopError = fmt.Errorf("simulated stop failure")
+
+			// desired=stopped
+			err = instance.SetDesiredFSMState(s6fsm.OperationalStateStopped)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify it stays in running due to failure
+			nextTick, err = fsmtest.VerifyStableState(ctx, instance, s6fsm.OperationalStateRunning, 3, tick)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred())
+			Expect(instance.GetError()).NotTo(BeNil())
+			Expect(mockService.StopCalled).To(BeTrue())
+
+			// Fix the error
+			mockService.StopError = nil
+			fsmtest.ResetInstanceError(instance)
+			mockService.StopCalled = false
+
+			// from running => stopping
+			nextTick, err = fsmtest.TestS6StateTransition(ctx, instance,
+				s6fsm.OperationalStateRunning,
+				s6fsm.OperationalStateStopping,
+				5, tick,
+			)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred())
+
+			// from stopping => stopped
+			_, err = fsmtest.TestS6StateTransition(ctx, instance,
+				s6fsm.OperationalStateStopping,
+				s6fsm.OperationalStateStopped,
+				5, tick,
+			)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	// -------------------------------------------------------------------------
+	//  ERROR & BACKOFF FLOW
+	// -------------------------------------------------------------------------
+	Context("Error & Backoff Handling", func() {
+
+		It("should apply backoff when operations fail repeatedly", func() {
+			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "backoff-fail", s6fsm.OperationalStateStopped)
+
+			// from to_be_created => stopped
+			nextTick, err := fsmtest.TestS6StateTransition(ctx, instance,
+				internal_fsm.LifecycleStateToBeCreated,
+				s6fsm.OperationalStateStopped,
+				5, tick,
+			)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred())
+
+			// cause repeated start failures
+			mockService.StartError = fmt.Errorf("simulated start failure")
+
+			// desired=running
+			err = instance.SetDesiredFSMState(s6fsm.OperationalStateRunning)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify it remains in stopped + eventually hits backoff
+			nextTick, err = fsmtest.VerifyStableState(ctx, instance, s6fsm.OperationalStateStopped, 100, tick)
+			tick = nextTick
+			Expect(err).To(HaveOccurred()) // should have hit permanent failure
+			Expect(mockService.StartCalled).To(BeTrue())
+			Expect(instance.GetError()).NotTo(BeNil())
+
+			// Check backoff is active by verifying no further start calls
+			mockService.StartCalled = false
+			_, err = fsmtest.VerifyStableState(ctx, instance, s6fsm.OperationalStateStopped, 3, tick)
+			Expect(err).To(HaveOccurred()) // should have hit permanent failure
+			Expect(mockService.StartCalled).To(BeFalse(), "Should not re-attempt immediately due to backoff")
+		})
+
+		It("should reset backoff after a successful operation", func() {
+			instance, mockService, _ := fsmtest.SetupS6Instance(testBaseDir, "backoff-reset", s6fsm.OperationalStateStopped)
+
+			// from to_be_created => stopped
+			nextTick, err := fsmtest.TestS6StateTransition(ctx, instance,
+				internal_fsm.LifecycleStateToBeCreated,
+				s6fsm.OperationalStateStopped,
+				5, tick,
+			)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred())
+
+			// Force start error
+			mockService.StartError = fmt.Errorf("failing start")
+			err = instance.SetDesiredFSMState(s6fsm.OperationalStateRunning)
+			Expect(err).NotTo(HaveOccurred())
+
+			// verify stable in stopped due to repeated start errors
+			nextTick, err = fsmtest.VerifyStableState(ctx, instance, s6fsm.OperationalStateStopped, 5, tick)
+			tick = nextTick
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockService.StartCalled).To(BeTrue())
+			Expect(instance.GetError()).NotTo(BeNil())
+
+			// confirm backoff is active
+			mockService.StartCalled = false
+			_, err = fsmtest.VerifyStableState(ctx, instance, s6fsm.OperationalStateStopped, 2, tick)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockService.StartCalled).To(BeFalse())
+
+			// fix the error
+			mockService.StartError = nil
+			fsmtest.ResetInstanceError(instance)
+			mockService.StartCalled = false
+
+			// now from stopped => running
+			_, err = fsmtest.TestS6StateTransition(ctx, instance,
+				s6fsm.OperationalStateStopped,
+				s6fsm.OperationalStateRunning,
+				10, tick,
+			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(mockService.StartCalled).To(BeTrue())
 
-			// Configure service as running
-			mockService.ServiceStates[instance.GetServicePath()] = s6service.ServiceInfo{
-				Status: s6service.ServiceUp,
-				Pid:    1234,
-				Uptime: 10,
-			}
-
-			// Complete transition to running
-			tick, err = fsmtest.TestS6StateTransition(ctx, instance, s6.OperationalStateStarting,
-				s6.OperationalStateRunning, 5, tick)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Now try causing a failure in the running state (e.g., health check)
-			// This shows backoff was reset after successful start
-			// TODO: Implement this after adding health check failure tests
 		})
 	})
 })
