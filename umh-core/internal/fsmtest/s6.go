@@ -176,6 +176,34 @@ func waitForInstanceState(
 		targetState, currentState, maxAttempts)
 }
 
+// ResetInstanceError resets the error and backoff state of an S6Instance.
+// This is especially useful in tests to clear error conditions without
+// direct access to baseFSMInstance.
+//
+// Parameters:
+//   - instance: The S6Instance to reset error state for
+func ResetInstanceError(instance *s6fsm.S6Instance) {
+	// Force a reconcile cycle with empty errors by simulating
+	// a successful operation cycle. We rely on the fact that
+	// each instance.Reconcile call will reset the error state
+	// when operations succeed.
+	mockService, ok := instance.GetService().(*s6service.MockService)
+	if !ok {
+		return
+	}
+
+	// Clear any error conditions in the mock
+	mockService.StartError = nil
+	mockService.StopError = nil
+	mockService.CreateError = nil
+	mockService.RemoveError = nil
+
+	// Force a reconcile with ctx.Done to just reset internal state
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Immediately cancel to avoid actual operations
+	instance.Reconcile(ctx, 0)
+}
+
 // StabilizeS6Instance is a simplified helper that configures the service and waits for an S6 instance
 // to reach the desired state. This is the recommended way to stabilize an S6 instance for testing.
 // Consider using TestS6StateTransition for testing full transitions.
@@ -289,4 +317,52 @@ func SetupS6Instance(
 	mockService.GetConfigResult = instanceConfig.S6ServiceConfig
 
 	return instance, mockService, servicePath
+}
+
+// VerifyStableState reconciles the instance multiple times and verifies it remains in the expected state.
+// Unlike StabilizeS6Instance, this function always performs the specified number of reconciliations
+// and verifies the instance stays in the expected state throughout.
+//
+// Parameters:
+//   - ctx: Context for cancellation
+//   - instance: The S6Instance to verify
+//   - expectedState: The state the instance should remain in
+//   - reconcileCount: Number of reconciliation cycles to perform
+//   - startTick: The starting tick value for reconciliation
+//
+// Returns:
+//   - uint64: The final tick value after reconciliations
+//   - error: Any error that occurred during verification
+func VerifyStableState(
+	ctx context.Context,
+	instance *s6fsm.S6Instance,
+	expectedState string,
+	reconcileCount int,
+	startTick uint64,
+) (uint64, error) {
+	currentTick := startTick
+
+	// Verify starting state
+	if currentState := instance.GetCurrentFSMState(); currentState != expectedState {
+		return currentTick, fmt.Errorf("instance not in expected state: got %s, want %s",
+			currentState, expectedState)
+	}
+
+	// Perform specified number of reconciliations
+	for i := 0; i < reconcileCount; i++ {
+		// Reconcile and advance tick
+		err, _ := instance.Reconcile(ctx, currentTick)
+		if err != nil {
+			return currentTick, fmt.Errorf("reconcile failed at tick %d: %w", currentTick, err)
+		}
+		currentTick++
+
+		// Verify state hasn't changed
+		if currentState := instance.GetCurrentFSMState(); currentState != expectedState {
+			return currentTick, fmt.Errorf("unexpected state transition from %s to %s at tick %d",
+				expectedState, currentState, currentTick)
+		}
+	}
+
+	return currentTick, nil
 }
