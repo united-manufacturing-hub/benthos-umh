@@ -21,7 +21,6 @@ import (
 	"log/slog"
 	"math"
 	"net"
-	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -47,7 +46,8 @@ type EIPInput struct {
 	UseMultiRead bool
 
 	// addresses for readable data either as an attribute or as a tag
-	Items []*CIPReadItem
+	Items   []*CIPReadItem
+	ItemMap map[string]any
 
 	// EIP client for communicatino
 	Client *gologix.Client
@@ -155,6 +155,14 @@ func newEthernetIPInput(conf *service.ParsedConfig, mgr *service.Resources) (ser
 		return nil, fmt.Errorf("no attributes or tags to read data from provided")
 	}
 
+	itemMap := make(map[string]any)
+	if useMultiRead {
+		itemMap, err = parseTagsIntoMap(tagsItems)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	controller, err := parseController(endpoint, path)
 	if err != nil {
 		return nil, err
@@ -169,7 +177,8 @@ func newEthernetIPInput(conf *service.ParsedConfig, mgr *service.Resources) (ser
 		Log:          mgr.Logger(),
 
 		// addresses to read data
-		Items: allItems,
+		Items:   allItems,
+		ItemMap: itemMap,
 	}
 
 	return service.AutoRetryNacksBatched(m), nil
@@ -244,65 +253,25 @@ func (g *EIPInput) logDeviceProperties() error {
 func (g *EIPInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
 	var (
 		msgs service.MessageBatch
-		resp *gologix.CIPItem
-		err  error
 	)
 
 	buffer := make([]byte, 0)
 
 	for _, item := range g.Items {
-		var data any
 
-		// if we're reading from a specified tag
-		if !item.IsAttribute {
-			//	err := g.Client.Read(item.TagName, &data)
-			//	if err != nil {
-			//		return nil, nil, err
-			//	}
-
-			// ----------------
-			val, err := g.Client.Read_single(item.TagName, item.CIPDatatype, 1)
-			if err != nil {
-				return nil, nil, err
-			}
-			refVal := reflect.ValueOf(val)
-			resp.Data = refVal.Bytes()
-			resp.Pos = 6
-
-		} else {
-			resp, err = g.Client.GetAttrSingle(item.CIPClass, item.CIPInstance, item.CIPAttribute)
-			if err != nil {
-				g.Log.Errorf("failed to get attribute - class %v, instance %v, attribute %v, err:",
-					item.CIPClass, item.CIPInstance, item.CIPAttribute, err)
-				return nil, nil, err
-			}
-		}
-		fmt.Println(resp.Pos)
-
-		data, err = item.ConverterFunc(resp)
+		// read either tags or attributes
+		dataAsString, err := g.readTagsOrAttributes(item)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		// convert the data into string
-		dataAsString := fmt.Sprintf("%v", data)
-
 		// convert the dataAsString into bytes
 		dataAsBytes := []byte(dataAsString)
-
 		buffer = append(buffer, dataAsBytes...)
 
-		msg := service.NewMessage(buffer)
-
-		// set alias as name if set
-		if item.Alias != "" {
-			msg.MetaSet("name", item.Alias)
-		} else {
-			if item.IsAttribute {
-				msg.MetaSet("name", item.AttributeName)
-			} else {
-				msg.MetaSet("name", item.TagName)
-			}
+		msg, err := createMessageFromValue(buffer, item)
+		if err != nil {
+			return nil, nil, err
 		}
 
 		// append the new message to the msgs slice

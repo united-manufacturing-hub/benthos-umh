@@ -1,0 +1,12 @@
+---
+services:
+  opcplc:
+    image: ghcr.io/led0nk/eip-server:latest
+    hostname: localhost
+    command:
+      # - --inttags = 5
+      # - --booltags = 5
+    ports:
+      - '44818:44818'
+      - '2222:2222'
+    restart: unless-stopped
