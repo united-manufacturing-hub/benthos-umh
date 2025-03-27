@@ -2,189 +2,260 @@ package eip_plugin
 
 import (
 	"fmt"
-	"math"
 
 	"github.com/danomagnum/gologix"
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-func readCIPItem(
-	client *gologix.Client,
-	item *CIPReadItem,
-) (*gologix.CIPItem, error) {
-
-	if item.IsAttribute {
-		// Simple case: we already get a CIPItem back
-		return client.GetAttrSingle(
-			item.CIPClass,
-			item.CIPInstance,
-			item.CIPAttribute,
-		)
-	}
-
-	// Otherwise, we’re reading a tag:
-	// Suppose we have a convenience method that returns an interface{} typed according
-	// to item.CIPDatatype:
-	val, err := client.Read_single(item.TagName, item.CIPDatatype, 1)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert that interface{} to a CIPItem’s Data buffer:
-	cipItem := &gologix.CIPItem{
-		// Initialize a position if you need it:
-		Pos: 0,
-		// Data to be filled below
-	}
-
-	// Now we must “pack” val into cipItem.Data based on item.CIPDatatype:
-	// (Use little-endian or big-endian according to what gologix expects internally.)
-	// Typically Rockwell is little-endian, but do check carefully in your library.
-
-	switch typedVal := val.(type) {
-	case bool:
-		// CIP BOOL is typically 1 byte
-		cipItem.Data = []byte{0}
-		if typedVal {
-			cipItem.Data[0] = 1
+func (g *EIPInput) readTagValue(item *CIPReadItem) (string, error) {
+	var value any
+	switch item.CIPDatatype {
+	case gologix.CIPTypeBOOL:
+		var v bool
+		err := g.Client.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeBYTE:
+		var v byte
+		err := g.Client.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeSINT:
+		var v int8
+		err := g.Client.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeUINT:
+		var v uint16
+		err := g.Client.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeINT:
+		var v int16
+		err := g.Client.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeUDINT:
+		var v uint32
+		err := g.Client.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeDINT:
+		var v int32
+		err := g.Client.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeLWORD:
+		var v uint64
+		err := g.Client.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeLINT:
+		var v int64
+		err := g.Client.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeREAL:
+		var v float32
+		err := g.Client.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeLREAL:
+		var v float64
+		err := g.Client.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeSTRING:
+		var v string
+		err := g.Client.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeStruct:
+		err := g.Client.Read(item.TagName, &value)
+		if err != nil {
+			return "", err
 		}
 
-	case uint16:
-		buf := make([]byte, 2)
-		// little-endian:
-		buf[0] = byte(typedVal)
-		buf[1] = byte(typedVal >> 8)
-		cipItem.Data = buf
-
-	case int16:
-		buf := make([]byte, 2)
-		// ...
-		cipItem.Data = buf
-
-	case uint32:
-		buf := make([]byte, 4)
-		// ...
-		cipItem.Data = buf
-
-	case int32:
-		buf := make([]byte, 4)
-		// ...
-		cipItem.Data = buf
-
-	case float32:
-		// you can do a math.Float32bits -> uint32 -> bytes
-		bits := math.Float32bits(typedVal)
-		buf := make([]byte, 4)
-		// ...
-		cipItem.Data = buf
-
-	case float64:
-		buf := make([]byte, 8)
-		// ...
-		cipItem.Data = buf
-
-	case string:
-		// If CIPTypeSTRING, just store it raw:
-		cipItem.Data = []byte(typedVal)
-
-	case []byte:
-		// e.g. if CIPType is “array of octet”
-		cipItem.Data = typedVal
-
 	default:
-		return nil, fmt.Errorf("unsupported read type from Read_single: %T", val)
+		return "", fmt.Errorf("not able to resolve CIP-Itemtype")
 	}
-
-	// Now we have an in-memory CIPItem that your converter can handle:
-	return cipItem, nil
+	return fmt.Sprintf("%v", value), nil
 }
 
-func readCIPItem(
-	client *gologix.Client,
-	item *CIPReadItem,
-) (*gologix.CIPItem, error) {
-
-	if item.IsAttribute {
-		// Simple case: we already get a CIPItem back
-		return client.GetAttrSingle(
-			item.CIPClass,
-			item.CIPInstance,
-			item.CIPAttribute,
-		)
-	}
-
-	// Otherwise, we’re reading a tag:
-	// Suppose we have a convenience method that returns an interface{} typed according
-	// to item.CIPDatatype:
-	val, err := client.Read_single(item.TagName, item.CIPDatatype, 1)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert that interface{} to a CIPItem’s Data buffer:
-	cipItem := &gologix.CIPItem{
-		// Initialize a position if you need it:
-		Pos: 0,
-		// Data to be filled below
-	}
-
-	// Now we must “pack” val into cipItem.Data based on item.CIPDatatype:
-	// (Use little-endian or big-endian according to what gologix expects internally.)
-	// Typically Rockwell is little-endian, but do check carefully in your library.
-
-	switch typedVal := val.(type) {
-	case bool:
-		// CIP BOOL is typically 1 byte
-		cipItem.Data = []byte{0}
-		if typedVal {
-			cipItem.Data[0] = 1
-		}
-
-	case uint16:
-		buf := make([]byte, 2)
-		// little-endian:
-		buf[0] = byte(typedVal)
-		buf[1] = byte(typedVal >> 8)
-		cipItem.Data = buf
-
-	case int16:
-		buf := make([]byte, 2)
-		// ...
-		cipItem.Data = buf
-
-	case uint32:
-		buf := make([]byte, 4)
-		// ...
-		cipItem.Data = buf
-
-	case int32:
-		buf := make([]byte, 4)
-		// ...
-		cipItem.Data = buf
-
-	case float32:
-		// you can do a math.Float32bits -> uint32 -> bytes
-		bits := math.Float32bits(typedVal)
-		buf := make([]byte, 4)
-		// ...
-		cipItem.Data = buf
-
-	case float64:
-		buf := make([]byte, 8)
-		// ...
-		cipItem.Data = buf
-
-	case string:
-		// If CIPTypeSTRING, just store it raw:
-		cipItem.Data = []byte(typedVal)
-
-	case []byte:
-		// e.g. if CIPType is “array of octet”
-		cipItem.Data = typedVal
+func createTagVar(item *CIPReadItem) (any, error) {
+	switch item.CIPDatatype {
+	case gologix.CIPTypeBOOL:
+		var v bool
+		return &v, nil
+	case gologix.CIPTypeBYTE:
+		var v byte
+		return &v, nil
+	case gologix.CIPTypeSINT:
+		var v int8
+		return &v, nil
+	case gologix.CIPTypeUINT:
+		var v uint16
+		return &v, nil
+	case gologix.CIPTypeINT:
+		var v int16
+		return &v, nil
+	case gologix.CIPTypeUDINT:
+		var v uint32
+		return &v, nil
+	case gologix.CIPTypeDINT:
+		var v int32
+		return &v, nil
+	case gologix.CIPTypeLWORD:
+		var v uint64
+		return &v, nil
+	case gologix.CIPTypeLINT:
+		var v int64
+		return &v, nil
+	case gologix.CIPTypeREAL:
+		var v float32
+		return &v, nil
+	case gologix.CIPTypeLREAL:
+		var v float64
+		return &v, nil
+	case gologix.CIPTypeSTRING:
+		var v string
+		return &v, nil
+	case gologix.CIPTypeStruct:
 
 	default:
-		return nil, fmt.Errorf("unsupported read type from Read_single: %T", val)
+		return "", fmt.Errorf("not able to resolve CIP-Itemtype")
 	}
 
-	// Now we have an in-memory CIPItem that your converter can handle:
-	return cipItem, nil
+	return nil, nil
+}
+
+func parseTagsIntoMap(items []*CIPReadItem) (map[string]any, error) {
+	itemMap := make(map[string]any)
+	for _, item := range items {
+		v, err := createTagVar(item)
+		if err != nil {
+			return nil, err
+		}
+
+		itemMap[item.TagName] = v
+
+	}
+
+	return nil, nil
+}
+
+func createMessageFromValue(rawValue []byte, item *CIPReadItem) (*service.Message, error) {
+	var tagType string
+	switch item.CIPDatatype {
+	case gologix.CIPTypeBOOL:
+		tagType = "bool"
+	case gologix.CIPTypeBYTE:
+		tagType = "byte"
+	case gologix.CIPTypeSINT:
+		tagType = "number"
+	case gologix.CIPTypeUINT:
+		tagType = "number"
+	case gologix.CIPTypeINT:
+		tagType = "number"
+	case gologix.CIPTypeUDINT:
+		tagType = "number"
+	case gologix.CIPTypeDINT:
+		tagType = "number"
+	case gologix.CIPTypeLWORD:
+		tagType = "number"
+	case gologix.CIPTypeLINT:
+		tagType = "number"
+	case gologix.CIPTypeREAL:
+		tagType = "number"
+	case gologix.CIPTypeLREAL:
+		tagType = "number"
+	case gologix.CIPTypeSTRING:
+		tagType = "string"
+	case gologix.CIPTypeStruct:
+		tagType = "string"
+
+	default:
+
+	}
+
+	msg := service.NewMessage(rawValue)
+	msg.MetaSetMut("eip_tag_name", item.TagName) // tag name
+	msg.MetaSetMut("eip_tag_datatype", tagType)  // data type - number, bool, or string
+
+	if item.IsAttribute {
+		msg.MetaSetMut("eip_tag_name", item.AttributeName) // replace tag name by attribute name
+	}
+
+	if item.Alias != "" {
+		msg.MetaSet("eip_tag_name", item.Alias) // replace tag name by alias if provided
+	}
+
+	return msg, nil
+}
+
+func (g *EIPInput) readAndConvertAttribute(item *CIPReadItem) (string, error) {
+	resp, err := g.Client.GetAttrSingle(item.CIPClass, item.CIPInstance, item.CIPAttribute)
+	if err != nil {
+		g.Log.Errorf("failed to get attribute - class %v, instance %v, attribute %v, err:",
+			item.CIPClass, item.CIPInstance, item.CIPAttribute, err)
+		return "", err
+	}
+
+	// convert the CIPItem into the corresponding data
+	data, err := item.ConverterFunc(resp)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert CIPItem to corresponding data: %v", err)
+	}
+
+	// convert the data into string
+	dataAsString := fmt.Sprintf("%v", data)
+
+	return dataAsString, nil
+}
+
+// read either Tags or Attributes
+//
+// can return early here after read - not as in ReadBatch
+// TODO: - add multiRead for Attributes
+//   - add multiRead for Tags
+func (g *EIPInput) readTagsOrAttributes(item *CIPReadItem) (string, error) {
+	if item.IsAttribute {
+		dataAsString, err := g.readAndConvertAttribute(item)
+		if err != nil {
+			return "", err
+		}
+		return dataAsString, nil
+	}
+
+	dataAsString, err := g.readTagValue(item)
+	if err != nil {
+		g.Log.Errorf("failed to read tag value: %v", err)
+		return "", err
+	}
+
+	return dataAsString, nil
 }
