@@ -168,7 +168,7 @@ func parseTagsIntoMap(items []*CIPReadItem) (map[string]any, error) {
 	return nil, nil
 }
 
-func createMessageFromValue(rawValue []byte, item *CIPReadItem) (*service.Message, error) {
+func CreateMessageFromValue(rawValue []byte, item *CIPReadItem) (*service.Message, error) {
 	var tagType string
 	switch item.CIPDatatype {
 	case gologix.CIPTypeBOOL:
