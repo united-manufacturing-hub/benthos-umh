@@ -208,6 +208,7 @@ func (g *EIPInput) Connect(ctx context.Context) error {
 		RPI:           g.PollRate,
 		SocketTimeout: socketTimeoutDefault,
 		KnownTags:     make(map[string]gologix.KnownTag),
+		// TODO:
 		// we only want to use our logs not the gologix-logs here
 		//Logger: slog.New(slog.DiscardHandler),
 		// but for now we want to see some logs here:
@@ -232,20 +233,57 @@ func (g *EIPInput) Connect(ctx context.Context) error {
 }
 
 func (g *EIPInput) logDeviceProperties() error {
-	// this should be the device Name Attribute
-	deviceNameAttribute, err := g.Client.GetAttrSingle(1, 1, 7)
+
+	vendorIDAttr, err := g.Client.GetAttrSingle(1, 1, 1)
+	if err != nil {
+		return err
+	}
+	deviceTypeAttr, err := g.Client.GetAttrSingle(1, 1, 2)
+	if err != nil {
+		return err
+	}
+	productCodeAttr, err := g.Client.GetAttrSingle(1, 1, 3)
+	if err != nil {
+		return err
+	}
+	serialAttr, err := g.Client.GetAttrSingle(1, 1, 6)
+	if err != nil {
+		return err
+	}
+	productNameAttr, err := g.Client.GetAttrSingle(1, 1, 7)
 	if err != nil {
 		return err
 	}
 
-	data, err := deviceNameAttribute.Bytes()
+	vendorID, err := vendorIDAttr.Int16()
+	if err != nil {
+		return err
+	}
+	deviceType, err := deviceTypeAttr.Int16()
+	if err != nil {
+		return err
+	}
+	productCode, err := productCodeAttr.Int16()
+	if err != nil {
+		return err
+	}
+	serial, err := serialAttr.Uint32()
+	if err != nil {
+		return err
+	}
+	deviceNameBytes, err := productNameAttr.Bytes()
 	if err != nil {
 		return err
 	}
 
-	deviceName := string(data)
-	g.Log.Infof("EIP Device Properties:")
+	deviceName := string(deviceNameBytes)
+
+	g.Log.Infof("EIP Device Information:")
 	g.Log.Infof("    Device Name: %s", deviceName)
+	g.Log.Infof("    Vendor ID: %v", vendorID)
+	g.Log.Infof("    Device Type: %v", deviceType)
+	g.Log.Infof("    Product Code: %v", productCode)
+	g.Log.Infof("    Serial: %v", serial)
 
 	return nil
 }
@@ -269,7 +307,7 @@ func (g *EIPInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 		dataAsBytes := []byte(dataAsString)
 		buffer = append(buffer, dataAsBytes...)
 
-		msg, err := createMessageFromValue(buffer, item)
+		msg, err := CreateMessageFromValue(buffer, item)
 		if err != nil {
 			return nil, nil, err
 		}
