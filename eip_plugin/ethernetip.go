@@ -98,9 +98,9 @@ var EthernetIPConfigSpec = service.NewConfigSpec().
 		service.NewStringField("alias").Description("").Optional()).
 		Description(""))
 
-// newEthernetIPInput is the constructor function for EthernetIPInput. It parses the plugin configuration,
+// NewEthernetIPInput is the constructor function for EthernetIPInput. It parses the plugin configuration,
 // establishes a connection with the Ethernet/IP device, and initializes the input plugin instance.
-func newEthernetIPInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
+func NewEthernetIPInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
 	endpoint, err := conf.FieldString("endpoint")
 	if err != nil {
 		return nil, err
@@ -188,7 +188,7 @@ func init() {
 	err := service.RegisterBatchInput(
 		"ethernetip", EthernetIPConfigSpec,
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
-			return newEthernetIPInput(conf, mgr)
+			return NewEthernetIPInput(conf, mgr)
 		})
 	if err != nil {
 		panic(err)
@@ -317,7 +317,7 @@ func (g *EIPInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 	}
 
 	// not sure if we could just set a global "pollRate" for the plc
-	time.Sleep(time.Second)
+	time.Sleep(g.PollRate)
 
 	return msgs, func(ctx context.Context, err error) error {
 		// for now
@@ -478,16 +478,22 @@ func parseCIPTypeFromString(datatype string) (gologix.CIPType, error) {
 	switch strings.ToLower(datatype) {
 	case "bool":
 		return gologix.CIPTypeBOOL, nil
+	case "byte":
+		return gologix.CIPTypeBYTE, nil
 	case "word":
 		return gologix.CIPTypeWORD, nil
 	case "dword":
 		return gologix.CIPTypeDWORD, nil
+	case "uint8":
+		return gologix.CIPTypeUSINT, nil
 	case "uint16":
 		return gologix.CIPTypeUINT, nil
 	case "uint32":
 		return gologix.CIPTypeUDINT, nil
 	case "uint64":
 		return gologix.CIPTypeULINT, nil
+	case "int8":
+		return gologix.CIPTypeSINT, nil
 	case "int16":
 		return gologix.CIPTypeINT, nil
 	case "int32":
@@ -502,6 +508,8 @@ func parseCIPTypeFromString(datatype string) (gologix.CIPType, error) {
 		return gologix.CIPTypeSTRING, nil
 	case "array of octed":
 		return gologix.CIPTypeBYTE, nil
+	case "struct":
+		return gologix.CIPTypeStruct, nil
 	default:
 		return gologix.CIPTypeUnknown, fmt.Errorf("unsupported CIP data type: %s", datatype)
 	}

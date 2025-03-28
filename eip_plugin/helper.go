@@ -31,6 +31,13 @@ func (g *EIPInput) readTagValue(item *CIPReadItem) (string, error) {
 			return "", err
 		}
 		value = v
+	case gologix.CIPTypeUSINT:
+		var v uint8
+		err := g.Client.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
 	case gologix.CIPTypeUINT:
 		var v uint16
 		err := g.Client.Read(item.TagName, &v)
@@ -59,7 +66,7 @@ func (g *EIPInput) readTagValue(item *CIPReadItem) (string, error) {
 			return "", err
 		}
 		value = v
-	case gologix.CIPTypeLWORD:
+	case gologix.CIPTypeLWORD, gologix.CIPTypeULINT:
 		var v uint64
 		err := g.Client.Read(item.TagName, &v)
 		if err != nil {
@@ -99,9 +106,8 @@ func (g *EIPInput) readTagValue(item *CIPReadItem) (string, error) {
 		if err != nil {
 			return "", err
 		}
-
 	default:
-		return "", fmt.Errorf("not able to resolve CIP-Itemtype")
+		return "", fmt.Errorf("Failed to resolve CIP-Itemtype: %v", item.CIPDatatype)
 	}
 	return fmt.Sprintf("%v", value), nil
 }
@@ -120,11 +126,17 @@ func createTagVar(item *CIPReadItem) (any, error) {
 	case gologix.CIPTypeUINT:
 		var v uint16
 		return &v, nil
+	case gologix.CIPTypeUSINT:
+		var v uint8
+		return &v, nil
 	case gologix.CIPTypeINT:
 		var v int16
 		return &v, nil
 	case gologix.CIPTypeUDINT:
 		var v uint32
+		return &v, nil
+	case gologix.CIPTypeULINT:
+		var v uint64
 		return &v, nil
 	case gologix.CIPTypeDINT:
 		var v int32
@@ -145,12 +157,11 @@ func createTagVar(item *CIPReadItem) (any, error) {
 		var v string
 		return &v, nil
 	case gologix.CIPTypeStruct:
-
+		var v any
+		return &v, nil
 	default:
-		return "", fmt.Errorf("not able to resolve CIP-Itemtype")
+		return "", fmt.Errorf("Failed to resolve CIP-Itemtype for variable creation: %v", item.CIPDatatype)
 	}
-
-	return nil, nil
 }
 
 func parseTagsIntoMap(items []*CIPReadItem) (map[string]any, error) {
@@ -175,36 +186,20 @@ func CreateMessageFromValue(rawValue []byte, item *CIPReadItem) (*service.Messag
 		tagType = "bool"
 	case gologix.CIPTypeBYTE:
 		tagType = "byte"
-	case gologix.CIPTypeSINT:
+	case gologix.CIPTypeSINT, gologix.CIPTypeUINT, gologix.CIPTypeINT, gologix.CIPTypeUDINT,
+		gologix.CIPTypeDINT, gologix.CIPTypeLWORD, gologix.CIPTypeLINT, gologix.CIPTypeREAL,
+		gologix.CIPTypeLREAL:
 		tagType = "number"
-	case gologix.CIPTypeUINT:
-		tagType = "number"
-	case gologix.CIPTypeINT:
-		tagType = "number"
-	case gologix.CIPTypeUDINT:
-		tagType = "number"
-	case gologix.CIPTypeDINT:
-		tagType = "number"
-	case gologix.CIPTypeLWORD:
-		tagType = "number"
-	case gologix.CIPTypeLINT:
-		tagType = "number"
-	case gologix.CIPTypeREAL:
-		tagType = "number"
-	case gologix.CIPTypeLREAL:
-		tagType = "number"
-	case gologix.CIPTypeSTRING:
+	case gologix.CIPTypeSTRING, gologix.CIPTypeStruct:
 		tagType = "string"
-	case gologix.CIPTypeStruct:
-		tagType = "string"
-
 	default:
-
+		tagType = "unknown"
 	}
 
 	msg := service.NewMessage(rawValue)
 	msg.MetaSetMut("eip_tag_name", item.TagName) // tag name
 	msg.MetaSetMut("eip_tag_datatype", tagType)  // data type - number, bool, or string
+	msg.MetaSetMut("eip_tag_path", item.TagName) // tag path - usually something like `Program:Gologix_Tests.ReadTest`
 
 	if item.IsAttribute {
 		msg.MetaSetMut("eip_tag_name", item.AttributeName) // replace tag name by attribute name
