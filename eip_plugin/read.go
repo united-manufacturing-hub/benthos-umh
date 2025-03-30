@@ -1,0 +1,270 @@
+// Copyright 2025 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package eip_plugin
+
+import (
+	"fmt"
+
+	"github.com/danomagnum/gologix"
+	"github.com/redpanda-data/benthos/v4/public/service"
+)
+
+func (g *EIPInput) readTagValue(item *CIPReadItem) (string, error) {
+	var value any
+	switch item.CIPDatatype {
+	case gologix.CIPTypeBOOL:
+		var v bool
+		err := g.CIP.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeBYTE:
+		var v byte
+		err := g.CIP.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeSINT:
+		var v int8
+		err := g.CIP.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeUSINT:
+		var v uint8
+		err := g.CIP.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeUINT:
+		var v uint16
+		err := g.CIP.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeINT:
+		var v int16
+		err := g.CIP.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeUDINT:
+		var v uint32
+		err := g.CIP.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeDINT:
+		var v int32
+		err := g.CIP.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeLWORD, gologix.CIPTypeULINT:
+		var v uint64
+		err := g.CIP.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeLINT:
+		var v int64
+		err := g.CIP.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeREAL:
+		var v float32
+		err := g.CIP.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeLREAL:
+		var v float64
+		err := g.CIP.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeSTRING:
+		var v string
+		err := g.CIP.Read(item.TagName, &v)
+		if err != nil {
+			return "", err
+		}
+		value = v
+	case gologix.CIPTypeStruct:
+		err := g.CIP.Read(item.TagName, &value)
+		if err != nil {
+			return "", err
+		}
+	default:
+		return "", fmt.Errorf("Failed to resolve CIP-Itemtype: %v", item.CIPDatatype)
+	}
+	return fmt.Sprintf("%v", value), nil
+}
+
+func createTagVar(item *CIPReadItem) (any, error) {
+	switch item.CIPDatatype {
+	case gologix.CIPTypeBOOL:
+		var v bool
+		return &v, nil
+	case gologix.CIPTypeBYTE:
+		var v byte
+		return &v, nil
+	case gologix.CIPTypeSINT:
+		var v int8
+		return &v, nil
+	case gologix.CIPTypeUINT:
+		var v uint16
+		return &v, nil
+	case gologix.CIPTypeUSINT:
+		var v uint8
+		return &v, nil
+	case gologix.CIPTypeINT:
+		var v int16
+		return &v, nil
+	case gologix.CIPTypeUDINT:
+		var v uint32
+		return &v, nil
+	case gologix.CIPTypeULINT:
+		var v uint64
+		return &v, nil
+	case gologix.CIPTypeDINT:
+		var v int32
+		return &v, nil
+	case gologix.CIPTypeLWORD:
+		var v uint64
+		return &v, nil
+	case gologix.CIPTypeLINT:
+		var v int64
+		return &v, nil
+	case gologix.CIPTypeREAL:
+		var v float32
+		return &v, nil
+	case gologix.CIPTypeLREAL:
+		var v float64
+		return &v, nil
+	case gologix.CIPTypeSTRING:
+		var v string
+		return &v, nil
+	case gologix.CIPTypeStruct:
+		var v any
+		return &v, nil
+	default:
+		return "", fmt.Errorf("Failed to resolve CIP-Itemtype for variable creation: %v", item.CIPDatatype)
+	}
+}
+
+func parseTagsIntoMap(items []*CIPReadItem) (map[string]any, error) {
+	itemMap := make(map[string]any)
+	for _, item := range items {
+		v, err := createTagVar(item)
+		if err != nil {
+			return nil, err
+		}
+
+		itemMap[item.TagName] = v
+
+	}
+
+	return nil, nil
+}
+
+func CreateMessageFromValue(rawValue []byte, item *CIPReadItem) (*service.Message, error) {
+	var tagType string
+	switch item.CIPDatatype {
+	case gologix.CIPTypeBOOL:
+		tagType = "bool"
+	case gologix.CIPTypeBYTE:
+		tagType = "byte"
+	case gologix.CIPTypeSINT, gologix.CIPTypeUINT, gologix.CIPTypeINT, gologix.CIPTypeUDINT,
+		gologix.CIPTypeDINT, gologix.CIPTypeLWORD, gologix.CIPTypeLINT, gologix.CIPTypeREAL,
+		gologix.CIPTypeLREAL:
+		tagType = "number"
+	case gologix.CIPTypeSTRING, gologix.CIPTypeStruct:
+		tagType = "string"
+	default:
+		tagType = "unknown"
+	}
+
+	msg := service.NewMessage(rawValue)
+	msg.MetaSetMut("eip_tag_name", item.TagName) // tag name
+	msg.MetaSetMut("eip_tag_datatype", tagType)  // data type - number, bool, or string
+	msg.MetaSetMut("eip_tag_path", item.TagName) // tag path - usually something like `Program:Gologix_Tests.ReadTest`
+
+	if item.IsAttribute {
+		msg.MetaSetMut("eip_tag_name", item.AttributeName) // replace tag name by attribute name
+	}
+
+	if item.Alias != "" {
+		msg.MetaSet("eip_tag_name", item.Alias) // replace tag name by alias if provided
+	}
+
+	return msg, nil
+}
+
+func (g *EIPInput) readAndConvertAttribute(item *CIPReadItem) (string, error) {
+	resp, err := g.CIP.GetAttrSingle(item.CIPClass, item.CIPInstance, item.CIPAttribute)
+	if err != nil {
+		g.Log.Errorf("failed to get attribute - class %v, instance %v, attribute %v, err:",
+			item.CIPClass, item.CIPInstance, item.CIPAttribute, err)
+		return "", err
+	}
+
+	// convert the CIPItem into the corresponding data
+	data, err := item.ConverterFunc(resp)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert CIPItem to corresponding data: %v", err)
+	}
+
+	// convert the data into string
+	dataAsString := fmt.Sprintf("%v", data)
+
+	return dataAsString, nil
+}
+
+// read either Tags or Attributes
+//
+// can return early here after read - not as in ReadBatch
+// TODO: - add multiRead for Attributes
+//   - add multiRead for Tags
+func (g *EIPInput) readTagsOrAttributes(item *CIPReadItem) (string, error) {
+	if item.IsAttribute {
+		dataAsString, err := g.readAndConvertAttribute(item)
+		if err != nil {
+			return "", err
+		}
+		return dataAsString, nil
+	}
+
+	dataAsString, err := g.readTagValue(item)
+	if err != nil {
+		g.Log.Errorf("failed to read tag value: %v", err)
+		return "", err
+	}
+
+	return dataAsString, nil
+}
