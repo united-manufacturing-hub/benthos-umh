@@ -133,13 +133,14 @@ func GetUnderlyingEIPInputForTest(bi service.BatchInput) *EIPInput {
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
-	field := v.FieldByName("Input")
+	field := v.FieldByName("wrapped")
 	if !field.IsValid() {
 		return nil
 	}
 	// Assert that the underlying type is *EIPInput.
-	if underlying, ok := field.Interface().(*EIPInput); ok {
-		return underlying
+	wrapped := field.Interface()
+	if eip, ok := wrapped.(*EIPInput); ok {
+		return eip
 	}
 	return nil
 }
