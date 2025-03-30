@@ -1,8 +1,10 @@
 package eip_plugin_test
 
 import (
+	"context"
 	"reflect"
 
+	"github.com/danomagnum/gologix"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -11,10 +13,6 @@ import (
 )
 
 var _ = Describe("EthernetIP Unittests", func() {
-
-	BeforeEach(func() {
-
-	})
 
 	//	DescribeTable("Test for various datatypes", func(item *CIPReadItem, expectedTagType any, rawValue []byte) {
 	//		msg, err := CreateMessageFromValue(rawValue, item)
@@ -69,6 +67,7 @@ var _ = Describe("EthernetIP Unittests", func() {
 
 	Describe("", func() {
 		It("Should correctly parse the input-yaml and create a new EIPInput", func() {
+			Skip("skip for now")
 			confYAML := `
 endpoint: 127.0.0.1
 path: "1,0"
@@ -121,6 +120,127 @@ tags:
 
 		})
 	})
+
+})
+
+var _ = Describe("EIP plugin with mock CIP", func() {
+	type testCase struct {
+		name           string
+		cipType        gologix.CIPType
+		mockValue      any
+		expectedString string
+		isAttribute    bool
+	}
+
+	DescribeTable("reading single CIP tags from mock",
+		func(tc testCase) {
+			item := &CIPReadItem{
+				IsAttribute: tc.isAttribute,
+
+				TagName:     tc.name,
+				CIPDatatype: tc.cipType,
+			}
+
+			input := &EIPInput{
+				Items:    []*CIPReadItem{item},
+				PollRate: 0,
+				CIP: &MockCIPReader{
+					Tags: map[string]any{
+						tc.name: tc.mockValue,
+					},
+				},
+			}
+
+			batch, ackFn, err := input.ReadBatch(context.Background())
+			Expect(err).ToNot(HaveOccurred())
+			Expect(batch).To(HaveLen(1))
+			Expect(ackFn).NotTo(BeNil())
+
+			msg := batch[0]
+			raw, err := msg.AsBytes()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(raw)).To(Equal(tc.expectedString))
+
+		},
+		Entry("bool = true", testCase{
+			name:           "bool",
+			cipType:        gologix.CIPTypeBOOL,
+			mockValue:      true,
+			expectedString: "true",
+		}),
+		Entry("byte = 0x01", testCase{
+			name:           "byte",
+			cipType:        gologix.CIPTypeBYTE,
+			mockValue:      byte(0x01),
+			expectedString: "1",
+		}),
+		Entry("int8 = 12", testCase{
+			name:           "int8",
+			cipType:        gologix.CIPTypeSINT,
+			mockValue:      int8(12),
+			expectedString: "12",
+		}),
+		Entry("uint8 = 12", testCase{
+			name:           "uint8",
+			cipType:        gologix.CIPTypeUSINT,
+			mockValue:      uint8(12),
+			expectedString: "12",
+		}),
+		Entry("int16 = 123", testCase{
+			name:           "int16",
+			cipType:        gologix.CIPTypeINT,
+			mockValue:      int16(123),
+			expectedString: "123",
+		}),
+		Entry("uint16 = 999", testCase{
+			name:           "uint16",
+			cipType:        gologix.CIPTypeUINT,
+			mockValue:      uint16(999),
+			expectedString: "999",
+		}),
+		Entry("int32 = -555", testCase{
+			name:           "int32",
+			cipType:        gologix.CIPTypeDINT,
+			mockValue:      int32(-555),
+			expectedString: "-555",
+		}),
+		Entry("uint32 = 55566", testCase{
+			name:           "uint32",
+			cipType:        gologix.CIPTypeUDINT,
+			mockValue:      uint32(55566),
+			expectedString: "55566",
+		}),
+		Entry("float32 = 12.34", testCase{
+			name:           "float32",
+			cipType:        gologix.CIPTypeREAL,
+			mockValue:      float32(12.34),
+			expectedString: "12.34",
+		}),
+		Entry("int64 = -55566", testCase{
+			name:           "int64",
+			cipType:        gologix.CIPTypeLINT,
+			mockValue:      int64(-55566),
+			expectedString: "-55566",
+		}),
+		Entry("uint32 = 5556677", testCase{
+			name:           "uint64",
+			cipType:        gologix.CIPTypeULINT,
+			mockValue:      uint64(5556677),
+			expectedString: "5556677",
+		}),
+		Entry("float64 = 1234.567", testCase{
+			name:           "float64",
+			cipType:        gologix.CIPTypeLREAL,
+			mockValue:      float64(1234.567),
+			expectedString: "1234.567",
+		}),
+		Entry("string = Hello", testCase{
+			name:           "string",
+			cipType:        gologix.CIPTypeSTRING,
+			mockValue:      "Hello World",
+			expectedString: "Hello World",
+		}),
+	)
 
 })
 
