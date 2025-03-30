@@ -1,256 +1,307 @@
+// Copyright 2025 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package eip_plugin
 
 import (
+	"bytes"
 	"fmt"
+	"math"
+	"net"
+	"strconv"
+	"strings"
 
 	"github.com/danomagnum/gologix"
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-func (g *EIPInput) readTagValue(item *CIPReadItem) (string, error) {
-	var value any
-	switch item.CIPDatatype {
-	case gologix.CIPTypeBOOL:
-		var v bool
-		err := g.Client.Read(item.TagName, &v)
-		if err != nil {
-			return "", err
-		}
-		value = v
-	case gologix.CIPTypeBYTE:
-		var v byte
-		err := g.Client.Read(item.TagName, &v)
-		if err != nil {
-			return "", err
-		}
-		value = v
-	case gologix.CIPTypeSINT:
-		var v int8
-		err := g.Client.Read(item.TagName, &v)
-		if err != nil {
-			return "", err
-		}
-		value = v
-	case gologix.CIPTypeUSINT:
-		var v uint8
-		err := g.Client.Read(item.TagName, &v)
-		if err != nil {
-			return "", err
-		}
-		value = v
-	case gologix.CIPTypeUINT:
-		var v uint16
-		err := g.Client.Read(item.TagName, &v)
-		if err != nil {
-			return "", err
-		}
-		value = v
-	case gologix.CIPTypeINT:
-		var v int16
-		err := g.Client.Read(item.TagName, &v)
-		if err != nil {
-			return "", err
-		}
-		value = v
-	case gologix.CIPTypeUDINT:
-		var v uint32
-		err := g.Client.Read(item.TagName, &v)
-		if err != nil {
-			return "", err
-		}
-		value = v
-	case gologix.CIPTypeDINT:
-		var v int32
-		err := g.Client.Read(item.TagName, &v)
-		if err != nil {
-			return "", err
-		}
-		value = v
-	case gologix.CIPTypeLWORD, gologix.CIPTypeULINT:
-		var v uint64
-		err := g.Client.Read(item.TagName, &v)
-		if err != nil {
-			return "", err
-		}
-		value = v
-	case gologix.CIPTypeLINT:
-		var v int64
-		err := g.Client.Read(item.TagName, &v)
-		if err != nil {
-			return "", err
-		}
-		value = v
-	case gologix.CIPTypeREAL:
-		var v float32
-		err := g.Client.Read(item.TagName, &v)
-		if err != nil {
-			return "", err
-		}
-		value = v
-	case gologix.CIPTypeLREAL:
-		var v float64
-		err := g.Client.Read(item.TagName, &v)
-		if err != nil {
-			return "", err
-		}
-		value = v
-	case gologix.CIPTypeSTRING:
-		var v string
-		err := g.Client.Read(item.TagName, &v)
-		if err != nil {
-			return "", err
-		}
-		value = v
-	case gologix.CIPTypeStruct:
-		err := g.Client.Read(item.TagName, &value)
-		if err != nil {
-			return "", err
-		}
-	default:
-		return "", fmt.Errorf("Failed to resolve CIP-Itemtype: %v", item.CIPDatatype)
+func parseController(endpoint string, pathStr string) (*gologix.Controller, error) {
+	host, portStr, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		host = endpoint
+		portStr = "44818"
 	}
-	return fmt.Sprintf("%v", value), nil
+
+	port, err := strconv.ParseUint(portStr, 10, 16)
+	if err != nil {
+		return nil, err
+	}
+
+	path, err := buildCIPPath(pathStr)
+	if err != nil {
+		return nil, err
+	}
+
+	controller := &gologix.Controller{
+		IpAddress: host,
+		Port:      uint(port),
+		Path:      path,
+	}
+	return controller, nil
 }
 
-func createTagVar(item *CIPReadItem) (any, error) {
-	switch item.CIPDatatype {
-	case gologix.CIPTypeBOOL:
-		var v bool
-		return &v, nil
-	case gologix.CIPTypeBYTE:
-		var v byte
-		return &v, nil
-	case gologix.CIPTypeSINT:
-		var v int8
-		return &v, nil
-	case gologix.CIPTypeUINT:
-		var v uint16
-		return &v, nil
-	case gologix.CIPTypeUSINT:
-		var v uint8
-		return &v, nil
-	case gologix.CIPTypeINT:
-		var v int16
-		return &v, nil
-	case gologix.CIPTypeUDINT:
-		var v uint32
-		return &v, nil
-	case gologix.CIPTypeULINT:
-		var v uint64
-		return &v, nil
-	case gologix.CIPTypeDINT:
-		var v int32
-		return &v, nil
-	case gologix.CIPTypeLWORD:
-		var v uint64
-		return &v, nil
-	case gologix.CIPTypeLINT:
-		var v int64
-		return &v, nil
-	case gologix.CIPTypeREAL:
-		var v float32
-		return &v, nil
-	case gologix.CIPTypeLREAL:
-		var v float64
-		return &v, nil
-	case gologix.CIPTypeSTRING:
-		var v string
-		return &v, nil
-	case gologix.CIPTypeStruct:
-		var v any
-		return &v, nil
-	default:
-		return "", fmt.Errorf("Failed to resolve CIP-Itemtype for variable creation: %v", item.CIPDatatype)
+func buildCIPPath(pathStr string) (*bytes.Buffer, error) {
+	if pathStr == "" {
+		return nil, fmt.Errorf("path is empty")
 	}
+
+	parts := strings.Split(pathStr, ",")
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("empty CIP Path from split strings")
+	}
+
+	path := new(bytes.Buffer)
+	for _, p := range parts {
+		val, err := strconv.ParseUint(p, 10, 8)
+		if err != nil {
+			return nil, err
+		}
+		path.WriteByte(byte(val))
+	}
+
+	return path, nil
 }
 
-func parseTagsIntoMap(items []*CIPReadItem) (map[string]any, error) {
-	itemMap := make(map[string]any)
-	for _, item := range items {
-		v, err := createTagVar(item)
+// parseAttributes parses the attributesConf into a list of CIPReadItems
+func parseAttributes(attributesConf []*service.ParsedConfig) ([]*CIPReadItem, error) {
+	var items []*CIPReadItem
+
+	for _, attribute := range attributesConf {
+		pathStr, err := attribute.FieldString("path")
+		if err != nil {
+			return nil, err
+		}
+		datatype, err := attribute.FieldString("type")
 		if err != nil {
 			return nil, err
 		}
 
-		itemMap[item.TagName] = v
+		// ignore error because it's optional
+		alias, _ := attribute.FieldString("alias")
 
-	}
-
-	return nil, nil
-}
-
-func CreateMessageFromValue(rawValue []byte, item *CIPReadItem) (*service.Message, error) {
-	var tagType string
-	switch item.CIPDatatype {
-	case gologix.CIPTypeBOOL:
-		tagType = "bool"
-	case gologix.CIPTypeBYTE:
-		tagType = "byte"
-	case gologix.CIPTypeSINT, gologix.CIPTypeUINT, gologix.CIPTypeINT, gologix.CIPTypeUDINT,
-		gologix.CIPTypeDINT, gologix.CIPTypeLWORD, gologix.CIPTypeLINT, gologix.CIPTypeREAL,
-		gologix.CIPTypeLREAL:
-		tagType = "number"
-	case gologix.CIPTypeSTRING, gologix.CIPTypeStruct:
-		tagType = "string"
-	default:
-		tagType = "unknown"
-	}
-
-	msg := service.NewMessage(rawValue)
-	msg.MetaSetMut("eip_tag_name", item.TagName) // tag name
-	msg.MetaSetMut("eip_tag_datatype", tagType)  // data type - number, bool, or string
-	msg.MetaSetMut("eip_tag_path", item.TagName) // tag path - usually something like `Program:Gologix_Tests.ReadTest`
-
-	if item.IsAttribute {
-		msg.MetaSetMut("eip_tag_name", item.AttributeName) // replace tag name by attribute name
-	}
-
-	if item.Alias != "" {
-		msg.MetaSet("eip_tag_name", item.Alias) // replace tag name by alias if provided
-	}
-
-	return msg, nil
-}
-
-func (g *EIPInput) readAndConvertAttribute(item *CIPReadItem) (string, error) {
-	resp, err := g.Client.GetAttrSingle(item.CIPClass, item.CIPInstance, item.CIPAttribute)
-	if err != nil {
-		g.Log.Errorf("failed to get attribute - class %v, instance %v, attribute %v, err:",
-			item.CIPClass, item.CIPInstance, item.CIPAttribute, err)
-		return "", err
-	}
-
-	// convert the CIPItem into the corresponding data
-	data, err := item.ConverterFunc(resp)
-	if err != nil {
-		return "", fmt.Errorf("failed to convert CIPItem to corresponding data: %v", err)
-	}
-
-	// convert the data into string
-	dataAsString := fmt.Sprintf("%v", data)
-
-	return dataAsString, nil
-}
-
-// read either Tags or Attributes
-//
-// can return early here after read - not as in ReadBatch
-// TODO: - add multiRead for Attributes
-//   - add multiRead for Tags
-func (g *EIPInput) readTagsOrAttributes(item *CIPReadItem) (string, error) {
-	if item.IsAttribute {
-		dataAsString, err := g.readAndConvertAttribute(item)
-		if err != nil {
-			return "", err
+		// expected format: "class-instance-attribute"
+		parts := strings.Split(pathStr, "-")
+		if len(parts) != 3 {
+			return nil, fmt.Errorf("invalid attribute path: %s (expected Class-Instance-Attribute)", pathStr)
 		}
-		return dataAsString, nil
-	}
 
-	dataAsString, err := g.readTagValue(item)
-	if err != nil {
-		g.Log.Errorf("failed to read tag value: %v", err)
-		return "", err
-	}
+		class, err := strconv.ParseUint(parts[0], 0, 16)
+		if err != nil {
+			return nil, fmt.Errorf("parsing CIPClass from %s: %v", parts[0], err)
+		}
+		instance, err := strconv.ParseUint(parts[1], 0, 32)
+		if err != nil {
+			return nil, fmt.Errorf("parsing CIPInstance from %s: %v", parts[1], err)
+		}
+		attribute, err := strconv.ParseUint(parts[2], 0, 16)
+		if err != nil {
+			return nil, fmt.Errorf("parsing CIPAttribute from %s: %v", parts[2], err)
+		}
 
-	return dataAsString, nil
+		// convert user string "bool", "real", etc. to CIPType
+		// not sure if we will need this later on
+		cipDatatype, err := parseCIPTypeFromString(datatype)
+		if err != nil {
+			return nil, err
+		}
+
+		item := &CIPReadItem{
+			IsAttribute:   true,
+			CIPClass:      gologix.CIPClass(class),
+			CIPInstance:   gologix.CIPInstance(instance),
+			CIPAttribute:  gologix.CIPAttribute(attribute),
+			CIPDatatype:   cipDatatype,
+			Alias:         alias,
+			AttributeName: pathStr,
+			ConverterFunc: buildConverterFunc(datatype),
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+// parseTags parses the tagsConf into a list of CIPReadItems
+func parseTags(tagsConf []*service.ParsedConfig) ([]*CIPReadItem, error) {
+	var items []*CIPReadItem
+
+	for _, tag := range tagsConf {
+		name, err := tag.FieldString("name")
+		if err != nil {
+			return nil, err
+		}
+		datatype, err := tag.FieldString("type")
+		if err != nil {
+			return nil, err
+		}
+		// ignore error because it's optional
+		alias, _ := tag.FieldString("alias")
+
+		cipDatatype, err := parseCIPTypeFromString(datatype)
+		if err != nil {
+			return nil, err
+		}
+
+		item := &CIPReadItem{
+			IsAttribute:   false,
+			TagName:       name,
+			CIPDatatype:   cipDatatype,
+			Alias:         alias,
+			ConverterFunc: buildConverterFunc(datatype),
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+// not yet sure if this is needed
+func parseCIPTypeFromString(datatype string) (gologix.CIPType, error) {
+	// put datatype string to lower because some will input "bool" or "BOOL"
+	switch strings.ToLower(datatype) {
+	case "bool":
+		return gologix.CIPTypeBOOL, nil
+	case "byte":
+		return gologix.CIPTypeBYTE, nil
+	case "word":
+		return gologix.CIPTypeWORD, nil
+	case "dword":
+		return gologix.CIPTypeDWORD, nil
+	case "uint8":
+		return gologix.CIPTypeUSINT, nil
+	case "uint16":
+		return gologix.CIPTypeUINT, nil
+	case "uint32":
+		return gologix.CIPTypeUDINT, nil
+	case "uint64":
+		return gologix.CIPTypeULINT, nil
+	case "int8":
+		return gologix.CIPTypeSINT, nil
+	case "int16":
+		return gologix.CIPTypeINT, nil
+	case "int32":
+		return gologix.CIPTypeDINT, nil
+	case "int64":
+		return gologix.CIPTypeLINT, nil
+	case "real", "float", "float32":
+		return gologix.CIPTypeREAL, nil
+	case "float64":
+		return gologix.CIPTypeLREAL, nil
+	case "string":
+		return gologix.CIPTypeSTRING, nil
+	case "array of octed":
+		return gologix.CIPTypeBYTE, nil
+	case "struct":
+		return gologix.CIPTypeStruct, nil
+	default:
+		return gologix.CIPTypeUnknown, fmt.Errorf("unsupported CIP data type: %s", datatype)
+	}
+}
+
+func buildConverterFunc(datatype string) func(*gologix.CIPItem) (any, error) {
+	// to handle "BOOL" as well as "bool" and "bOOl"
+	lowercaseDatatype := strings.ToLower(datatype)
+	switch lowercaseDatatype {
+	case "bool":
+		return func(item *gologix.CIPItem) (any, error) {
+			bit, err := item.Byte()
+			if err != nil {
+				return nil, err
+			}
+			return bit != 0, nil
+		}
+	case "uint16":
+		return func(item *gologix.CIPItem) (any, error) {
+			val, err := item.Uint16()
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}
+	case "uint32":
+		return func(item *gologix.CIPItem) (any, error) {
+			val, err := item.Uint32()
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}
+	case "uint64":
+		return func(item *gologix.CIPItem) (any, error) {
+			val, err := item.Uint64()
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}
+	case "int16":
+		return func(item *gologix.CIPItem) (any, error) {
+			val, err := item.Int16()
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}
+	case "int32":
+		return func(item *gologix.CIPItem) (any, error) {
+			val, err := item.Int32()
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}
+	case "int64":
+		return func(item *gologix.CIPItem) (any, error) {
+			val, err := item.Int64()
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}
+	case "real", "float", "float32":
+		return func(item *gologix.CIPItem) (any, error) {
+			bits, err := item.Uint32()
+			if err != nil {
+				return nil, err
+			}
+			fl := math.Float32frombits(bits)
+			return fl, nil
+		}
+	case "float64":
+		return func(item *gologix.CIPItem) (any, error) {
+			fl, err := item.Float64()
+			if err != nil {
+				return nil, err
+			}
+			return fl, nil
+		}
+	case "string":
+		return func(item *gologix.CIPItem) (any, error) {
+			val, err := item.Bytes()
+			if err != nil {
+				return nil, err
+			}
+			return string(val), nil
+		}
+	case "array of octed":
+		return func(item *gologix.CIPItem) (any, error) {
+			val, err := item.Bytes()
+			if err != nil {
+				return nil, err
+			}
+
+			return val, nil
+		}
+	default:
+		return nil
+	}
 }
