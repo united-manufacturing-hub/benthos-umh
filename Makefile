@@ -54,6 +54,7 @@ test-sensorconnect: test-serial
 test-opc-plc:
 	@TEST_OPCUA_SIMULATOR=true ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./opcua_plugin/...
 
+.PHONY:
 test-eip:
 	@ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --randomize-all --cover --coverprofile=cover.profile  ./eip_plugin/...
 
