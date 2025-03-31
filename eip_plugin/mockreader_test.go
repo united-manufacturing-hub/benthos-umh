@@ -53,13 +53,13 @@ func (m *MockCIPReader) Read(tag string, data any) error {
 	case *int8:
 		cast, ok := val.(int8)
 		if !ok {
-			return fmt.Errorf("mock CIP: tag '%s' is not bool", tag)
+			return fmt.Errorf("mock CIP: tag '%s' is not int8", tag)
 		}
 		*ptr = cast
 	case *uint8:
 		cast, ok := val.(uint8)
 		if !ok {
-			return fmt.Errorf("mock CIP: tag '%s' is not bool", tag)
+			return fmt.Errorf("mock CIP: tag '%s' is not uint8", tag)
 		}
 		*ptr = cast
 	case *int16:
@@ -216,12 +216,14 @@ func (m *MockCIPReader) Read(tag string, data any) error {
 	}
 	return nil
 }
-func (m *MockCIPReader) GetAttrSingle(cls gologix.CIPClass, inst gologix.CIPInstance, attr gologix.CIPAttribute) (*gologix.CIPItem, error) {
-	key := [3]uint16{uint16(cls), uint16(inst), uint16(attr)}
 
-	item, ok := m.Attrs[key]
-	if !ok {
-		return nil, fmt.Errorf("mock CIP: attribute not found for cls=%d, inst=%d, attr=%d", cls, inst, attr)
-	}
-	return item, fmt.Errorf("mock CIP: GetAttrSingle not implemented")
+// currently not used
+func (m *MockCIPReader) GetAttrSingle(cls gologix.CIPClass, inst gologix.CIPInstance, attr gologix.CIPAttribute) (*gologix.CIPItem, error) {
+	//	key := [3]uint16{uint16(cls), uint16(inst), uint16(attr)}
+	//
+	//	item, ok := m.Attrs[key]
+	//	if !ok {
+	//		return nil, fmt.Errorf("mock CIP: attribute not found for cls=%d, inst=%d, attr=%d", cls, inst, attr)
+	//	}
+	return nil, fmt.Errorf("mock CIP: GetAttrSingle not implemented")
 }

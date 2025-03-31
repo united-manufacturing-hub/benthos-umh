@@ -102,15 +102,15 @@ func parseAttributes(attributesConf []*service.ParsedConfig) ([]*CIPReadItem, er
 			return nil, fmt.Errorf("invalid attribute path: %s (expected Class-Instance-Attribute)", pathStr)
 		}
 
-		class, err := strconv.ParseUint(parts[0], 0, 16)
+		parsedClass, err := strconv.ParseUint(parts[0], 0, 16)
 		if err != nil {
 			return nil, fmt.Errorf("parsing CIPClass from %s: %v", parts[0], err)
 		}
-		instance, err := strconv.ParseUint(parts[1], 0, 32)
+		parsedInst, err := strconv.ParseUint(parts[1], 0, 32)
 		if err != nil {
 			return nil, fmt.Errorf("parsing CIPInstance from %s: %v", parts[1], err)
 		}
-		attribute, err := strconv.ParseUint(parts[2], 0, 16)
+		parsedAttr, err := strconv.ParseUint(parts[2], 0, 16)
 		if err != nil {
 			return nil, fmt.Errorf("parsing CIPAttribute from %s: %v", parts[2], err)
 		}
@@ -124,9 +124,9 @@ func parseAttributes(attributesConf []*service.ParsedConfig) ([]*CIPReadItem, er
 
 		item := &CIPReadItem{
 			IsAttribute:   true,
-			CIPClass:      gologix.CIPClass(class),
-			CIPInstance:   gologix.CIPInstance(instance),
-			CIPAttribute:  gologix.CIPAttribute(attribute),
+			CIPClass:      gologix.CIPClass(parsedClass),
+			CIPInstance:   gologix.CIPInstance(parsedInst),
+			CIPAttribute:  gologix.CIPAttribute(parsedAttr),
 			CIPDatatype:   cipDatatype,
 			Alias:         alias,
 			AttributeName: pathStr,
