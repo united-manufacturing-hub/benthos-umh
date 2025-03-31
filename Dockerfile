@@ -30,6 +30,7 @@ COPY ./modbus_plugin ./modbus_plugin
 COPY ./nodered_js_plugin ./nodered_js_plugin
 COPY ./tag_processor_plugin ./tag_processor_plugin
 COPY ./sensorconnect_plugin ./sensorconnect_plugin
+COPY ./eip_plugin ./eip_plugin
 
 ENV CGO_ENABLED=0
 RUN go build \
