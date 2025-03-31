@@ -255,6 +255,30 @@ func buildConverterFunc(datatype string) (func(*gologix.CIPItem) (any, error), e
 			}
 			return bit != 0, nil
 		}, nil
+	case "byte", "uint8":
+		return func(item *gologix.CIPItem) (any, error) {
+			val, err := item.Byte()
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}, nil
+	case "word":
+		return func(item *gologix.CIPItem) (any, error) {
+			val, err := item.Bytes()
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}, nil
+	case "dword":
+		return func(item *gologix.CIPItem) (any, error) {
+			val, err := item.Bytes()
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}, nil
 	case "uint16":
 		return func(item *gologix.CIPItem) (any, error) {
 			val, err := item.Uint16()
