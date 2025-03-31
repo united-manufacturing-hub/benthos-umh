@@ -28,7 +28,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  go-test-opcua-plc:
+  go-test-ethernetip:
     runs-on:
       group: arc-runners-tests
     permissions:
