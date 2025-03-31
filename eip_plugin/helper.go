@@ -26,6 +26,10 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
+// parseController is used to parse the endpoint and the specified path
+// into a *gologix.Controller struct, which is needed for connection
+// - `endpoint` consists of the ip-address and if provided the port
+// otherwise it will just use the default-port 44818
 func parseController(endpoint string, pathStr string) (*gologix.Controller, error) {
 	host, portStr, err := net.SplitHostPort(endpoint)
 	if err != nil {
@@ -51,6 +55,8 @@ func parseController(endpoint string, pathStr string) (*gologix.Controller, erro
 	return controller, nil
 }
 
+// buildCIPPath is used to parse the CIP Path, which consists of an addressing
+// like <rack,slot> and is set by default to `1,0`
 func buildCIPPath(pathStr string) (*bytes.Buffer, error) {
 	if pathStr == "" {
 		return nil, fmt.Errorf("path is empty")
@@ -180,7 +186,8 @@ func parseTags(tagsConf []*service.ParsedConfig) ([]*CIPReadItem, error) {
 	return items, nil
 }
 
-// not yet sure if this is needed
+// parseCIPTypeFromString is used to parse the datatype provided in the `input.yaml`
+// into the corresponding gologix.CIPType which is later needed for reading data
 func parseCIPTypeFromString(datatype string) (gologix.CIPType, error) {
 	// put datatype string to lower because some will input "bool" or "BOOL"
 	switch datatype {
@@ -223,6 +230,9 @@ func parseCIPTypeFromString(datatype string) (gologix.CIPType, error) {
 	}
 }
 
+// buildConverterFunc is used to build the function, which is needed to convert
+// the values into the correct datatype
+// only used for attributes
 func buildConverterFunc(datatype string) func(*gologix.CIPItem) (any, error) {
 	// to handle "BOOL" as well as "bool" and "bOOl"
 	lowercaseDatatype := strings.ToLower(datatype)
