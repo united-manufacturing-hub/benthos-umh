@@ -17,7 +17,8 @@ package eip_plugin
 import "github.com/danomagnum/gologix"
 
 // NOTE: Abstraction for the CIP calls so we can potentially mock them
-// possibly add some more calls here later on
+// possibly add some more calls here later on. The gologix.Client implements this
+// interface for our main functionality.
 type CIPReader interface {
 	Connect() error
 	Disconnect() error
