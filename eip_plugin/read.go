@@ -293,6 +293,7 @@ func parseTagsIntoMap(items []*CIPReadItem) (map[string]any, error) {
 
 	}
 
+	// should return nil for now, since not implemented
 	return nil, nil
 }
 
@@ -336,7 +337,7 @@ func CreateMessageFromValue(rawValue []byte, item *CIPReadItem) (*service.Messag
 func (g *EIPInput) readAndConvertAttribute(item *CIPReadItem) (string, error) {
 	resp, err := g.CIP.GetAttrSingle(item.CIPClass, item.CIPInstance, item.CIPAttribute)
 	if err != nil {
-		g.Log.Errorf("failed to get attribute - class %v, instance %v, attribute %v, err:",
+		g.Log.Errorf("failed to get attribute - class %v, instance %v, attribute %v, err: %v",
 			item.CIPClass, item.CIPInstance, item.CIPAttribute, err)
 		return "", err
 	}
