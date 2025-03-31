@@ -13,58 +13,6 @@ import (
 )
 
 var _ = Describe("EthernetIP Unittests", func() {
-
-	//	DescribeTable("Test for various datatypes", func(item *CIPReadItem, expectedTagType any, rawValue []byte) {
-	//		msg, err := CreateMessageFromValue(rawValue, item)
-	//		Expect(err).NotTo(HaveOccurred())
-	//
-	//		message, err := msg.AsStructuredMut()
-	//		Expect(err).NotTo(HaveOccurred())
-	//		Expect(message).To(BeAssignableToTypeOf(expectedTagType))
-	//
-	//	},
-	//		Entry("bool - true",
-	//			&CIPReadItem{
-	//				TagName:     "boolean",
-	//				CIPDatatype: gologix.CIPTypeBOOL,
-	//			},
-	//			true,
-	//			[]byte{0xc1, 0x0, 0x1},
-	//		),
-	//		Entry("int16 - 287",
-	//			json.Number("287"),
-	//			[]byte{0xc3, 0x0, 0x1f, 0x1},
-	//		),
-	//		Entry("int32 - 12345",
-	//			json.Number("12345"),
-	//			[]byte{0xc4, 0x0, 0x39, 0x30, 0x0, 0x0},
-	//		),
-	//		Entry("int64 - 12345678",
-	//			json.Number("12345678"),
-	//			[]byte{0xc5, 0x0, 0x4e, 0x61, 0xbc, 0x0, 0x0, 0x0, 0x0, 0x0},
-	//		),
-	//		// NOTE: currently not working with uint
-	//		//	Entry("uint16 - 287",
-	//		//		[]byte{0xc3, 0x0, 0x1f, 0x1},
-	//		//	),
-	//		//	Entry("uint32 - 287",
-	//		//		[]byte{0xc3, 0x0, 0x1f, 0x1},
-	//		//	),
-	//		//	Entry("uint64 - 287",
-	//		//		[]byte{0xc3, 0x0, 0x1f, 0x1},
-	//		//	),
-	//		Entry("float32 - 543.21",
-	//			json.Number("543.21"),
-	//			[]byte{0xca, 0x0, 0x71, 0xcd, 0x7, 0x44},
-	//		),
-	//		Entry("float64 - 123543.21",
-	//			json.Number("123543.21"),
-	//			[]byte{0xcb, 0x0, 0x14, 0xae, 0x47, 0xe1, 0x1a, 0xff, 0xc3, 0x40},
-	//		),
-	//		Entry("string - Hello World",
-	//			[]byte{0xa0, 0x2, 0xce, 0xf, 0xb, 0x0, 0x0, 0x0, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x57, 0x6f, 0x72, 0x6c, 0x64}),
-	//	)
-
 	Describe("", func() {
 		It("Should correctly parse the input-yaml and create a new EIPInput", func() {
 			Skip("skip for now")
@@ -130,12 +78,16 @@ var _ = Describe("EIP plugin with mock CIP", func() {
 		mockValue      any
 		expectedString string
 		isAttribute    bool
+		isArray        bool
+		arrayLength    int
 	}
 
 	DescribeTable("reading single CIP tags from mock",
 		func(tc testCase) {
 			item := &CIPReadItem{
 				IsAttribute: tc.isAttribute,
+				IsArray:     tc.isArray,
+				ArrayLength: tc.arrayLength,
 
 				TagName:     tc.name,
 				CIPDatatype: tc.cipType,
@@ -239,6 +191,86 @@ var _ = Describe("EIP plugin with mock CIP", func() {
 			cipType:        gologix.CIPTypeSTRING,
 			mockValue:      "Hello World",
 			expectedString: "Hello World",
+		}),
+		Entry("array of byte = 0x01 0x02 0x03", testCase{
+			name:           "arrayofbyte",
+			cipType:        gologix.CIPTypeBYTE,
+			mockValue:      []byte{0x01, 0x02, 0x03},
+			expectedString: "[1 2 3]",
+			isArray:        true,
+			arrayLength:    3,
+		}),
+		Entry("array of int8 = 1 2 3", testCase{
+			name:           "arrayofint8",
+			cipType:        gologix.CIPTypeSINT,
+			mockValue:      []int8{1, 2, 3},
+			expectedString: "[1 2 3]",
+			isArray:        true,
+			arrayLength:    3,
+		}),
+		Entry("array of int16 = -10 -20 -30", testCase{
+			name:           "arrayofint16",
+			cipType:        gologix.CIPTypeINT,
+			mockValue:      []int16{-10, -20, -30},
+			expectedString: "[-10 -20 -30]",
+			isArray:        true,
+			arrayLength:    3,
+		}),
+		Entry("array of uint16 = 10 20 30", testCase{
+			name:           "arrayofuint16",
+			cipType:        gologix.CIPTypeUINT,
+			mockValue:      []uint16{10, 20, 30},
+			expectedString: "[10 20 30]",
+			isArray:        true,
+			arrayLength:    3,
+		}),
+		Entry("array of int32 = -10 -20 -30", testCase{
+			name:           "arrayofint32",
+			cipType:        gologix.CIPTypeDINT,
+			mockValue:      []int32{-10, -20, -30},
+			expectedString: "[-10 -20 -30]",
+			isArray:        true,
+			arrayLength:    3,
+		}),
+		Entry("array of uint32 = 10 20 30", testCase{
+			name:           "arrayofuint32",
+			cipType:        gologix.CIPTypeUDINT,
+			mockValue:      []uint32{10, 20, 30},
+			expectedString: "[10 20 30]",
+			isArray:        true,
+			arrayLength:    3,
+		}),
+		Entry("array of int64 = -10 -20 -30", testCase{
+			name:           "arrayofint64",
+			cipType:        gologix.CIPTypeLINT,
+			mockValue:      []int64{-10, -20, -30},
+			expectedString: "[-10 -20 -30]",
+			isArray:        true,
+			arrayLength:    3,
+		}),
+		Entry("array of uint64 = 10 20 30", testCase{
+			name:           "arrayofuint64",
+			cipType:        gologix.CIPTypeULINT,
+			mockValue:      []uint64{10, 20, 30},
+			expectedString: "[10 20 30]",
+			isArray:        true,
+			arrayLength:    3,
+		}),
+		Entry("array of float32 = 10.123 20.456 30.789", testCase{
+			name:           "arrayoffloat32",
+			cipType:        gologix.CIPTypeREAL,
+			mockValue:      []float32{10.123, 20.456, 30.789},
+			expectedString: "[10.123 20.456 30.789]",
+			isArray:        true,
+			arrayLength:    3,
+		}),
+		Entry("array of float64 = 10.123 20.456 30.789", testCase{
+			name:           "arrayoffloat64",
+			cipType:        gologix.CIPTypeLREAL,
+			mockValue:      []float64{10.123, 20.456, 30.789},
+			expectedString: "[10.123 20.456 30.789]",
+			isArray:        true,
+			arrayLength:    3,
 		}),
 	)
 

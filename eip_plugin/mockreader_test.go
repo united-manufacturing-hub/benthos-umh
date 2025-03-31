@@ -102,6 +102,101 @@ func (m *MockCIPReader) Read(tag string, data any) error {
 			return fmt.Errorf("mock CIP: tag '%s' is not string", tag)
 		}
 		*ptr = cast
+	case *[]int8:
+		sliceVal, ok := val.([]int8)
+		if !ok {
+			return fmt.Errorf("mock CIP: tag '%s' is not []int8", tag)
+		}
+		// copy sliceVal into *ptr
+		if len(*ptr) != len(sliceVal) {
+			return fmt.Errorf("mock CIP: slice length mismatch. wanted %d got %d", len(*ptr), len(sliceVal))
+		}
+		copy(*ptr, sliceVal)
+	case *[]uint8:
+		sliceVal, ok := val.([]uint8)
+		if !ok {
+			return fmt.Errorf("mock CIP: tag '%s' is not []uint8", tag)
+		}
+		// copy sliceVal into *ptr
+		if len(*ptr) != len(sliceVal) {
+			return fmt.Errorf("mock CIP: slice length mismatch. wanted %d got %d", len(*ptr), len(sliceVal))
+		}
+		copy(*ptr, sliceVal)
+	case *[]int16:
+		sliceVal, ok := val.([]int16)
+		if !ok {
+			return fmt.Errorf("mock CIP: tag '%s' is not []int16", tag)
+		}
+		// copy sliceVal into *ptr
+		if len(*ptr) != len(sliceVal) {
+			return fmt.Errorf("mock CIP: slice length mismatch. wanted %d got %d", len(*ptr), len(sliceVal))
+		}
+		copy(*ptr, sliceVal)
+	case *[]uint16:
+		sliceVal, ok := val.([]uint16)
+		if !ok {
+			return fmt.Errorf("mock CIP: tag '%s' is not []uint16", tag)
+		}
+		// copy sliceVal into *ptr
+		if len(*ptr) != len(sliceVal) {
+			return fmt.Errorf("mock CIP: slice length mismatch. wanted %d got %d", len(*ptr), len(sliceVal))
+		}
+		copy(*ptr, sliceVal)
+	case *[]int32:
+		sliceVal, ok := val.([]int32)
+		if !ok {
+			return fmt.Errorf("mock CIP: tag '%s' is not []int32", tag)
+		}
+		if len(*ptr) != len(sliceVal) {
+			return fmt.Errorf("mock CIP: length mismatch. wanted %d got %d", len(*ptr), len(sliceVal))
+		}
+		copy(*ptr, sliceVal)
+	case *[]uint32:
+		sliceVal, ok := val.([]uint32)
+		if !ok {
+			return fmt.Errorf("mock CIP: tag '%s' is not []uint32", tag)
+		}
+		if len(*ptr) != len(sliceVal) {
+			return fmt.Errorf("mock CIP: length mismatch. wanted %d got %d", len(*ptr), len(sliceVal))
+		}
+		copy(*ptr, sliceVal)
+	case *[]int64:
+		sliceVal, ok := val.([]int64)
+		if !ok {
+			return fmt.Errorf("mock CIP: tag '%s' is not []int64", tag)
+		}
+		if len(*ptr) != len(sliceVal) {
+			return fmt.Errorf("mock CIP: length mismatch. wanted %d got %d", len(*ptr), len(sliceVal))
+		}
+		copy(*ptr, sliceVal)
+	case *[]uint64:
+		sliceVal, ok := val.([]uint64)
+		if !ok {
+			return fmt.Errorf("mock CIP: tag '%s' is not []uint64", tag)
+		}
+		if len(*ptr) != len(sliceVal) {
+			return fmt.Errorf("mock CIP: length mismatch. wanted %d got %d", len(*ptr), len(sliceVal))
+		}
+		copy(*ptr, sliceVal)
+	case *[]float32:
+		sliceVal, ok := val.([]float32)
+		if !ok {
+			return fmt.Errorf("mock CIP: tag '%s' is not []float32", tag)
+		}
+		if len(*ptr) != len(sliceVal) {
+			return fmt.Errorf("mock CIP: length mismatch. wanted %d got %d", len(*ptr), len(sliceVal))
+		}
+		copy(*ptr, sliceVal)
+	case *[]float64:
+		sliceVal, ok := val.([]float64)
+		if !ok {
+			return fmt.Errorf("mock CIP: tag '%s' is not []float64", tag)
+		}
+		if len(*ptr) != len(sliceVal) {
+			return fmt.Errorf("mock CIP: length mismatch. wanted %d got %d", len(*ptr), len(sliceVal))
+		}
+		copy(*ptr, sliceVal)
+
 	default:
 		return fmt.Errorf("mock CIP: reading type %T not implemented", ptr)
 	}

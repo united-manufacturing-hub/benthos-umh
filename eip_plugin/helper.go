@@ -133,7 +133,11 @@ func parseAttributes(attributesConf []*service.ParsedConfig) ([]*CIPReadItem, er
 
 // parseTags parses the tagsConf into a list of CIPReadItems
 func parseTags(tagsConf []*service.ParsedConfig) ([]*CIPReadItem, error) {
-	var items []*CIPReadItem
+	var (
+		items    []*CIPReadItem
+		isArray  bool = false
+		arrayLen int  = 1
+	)
 
 	for _, tag := range tagsConf {
 		name, err := tag.FieldString("name")
@@ -147,14 +151,26 @@ func parseTags(tagsConf []*service.ParsedConfig) ([]*CIPReadItem, error) {
 		// ignore error because it's optional
 		alias, _ := tag.FieldString("alias")
 
-		cipDatatype, err := parseCIPTypeFromString(datatype)
+		datatypeLower := strings.ToLower(datatype)
+		if strings.HasPrefix(datatypeLower, "arrayof") {
+			isArray = true
+			arrayLen, err = tag.FieldInt("length")
+			if err != nil {
+				return nil, err
+			}
+			datatypeLower = strings.TrimPrefix(datatypeLower, "arrayof")
+		}
+
+		cipDatatype, err := parseCIPTypeFromString(datatypeLower)
 		if err != nil {
 			return nil, err
 		}
 
 		item := &CIPReadItem{
 			IsAttribute:   false,
+			IsArray:       isArray,
 			TagName:       name,
+			ArrayLength:   arrayLen,
 			CIPDatatype:   cipDatatype,
 			Alias:         alias,
 			ConverterFunc: buildConverterFunc(datatype),
@@ -167,7 +183,7 @@ func parseTags(tagsConf []*service.ParsedConfig) ([]*CIPReadItem, error) {
 // not yet sure if this is needed
 func parseCIPTypeFromString(datatype string) (gologix.CIPType, error) {
 	// put datatype string to lower because some will input "bool" or "BOOL"
-	switch strings.ToLower(datatype) {
+	switch datatype {
 	case "bool":
 		return gologix.CIPTypeBOOL, nil
 	case "byte":
