@@ -21,6 +21,9 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
+// readSingleTagValue reads the value of a single tag into the specified variable
+// of the provided datatype. Therefore it's important that the type is correctly
+// set up in the `input.yaml`. Otherwise we will error here.
 func (g *EIPInput) readSingleTagValue(item *CIPReadItem) (string, error) {
 	var value any
 	switch item.CIPDatatype {
@@ -126,6 +129,9 @@ func (g *EIPInput) readSingleTagValue(item *CIPReadItem) (string, error) {
 	return fmt.Sprintf("%v", value), nil
 }
 
+// readArrayTagValue reads the values of a tag which is an array into the specified variable
+// of the provided datatype. Therefore it's important that the type is correctly
+// set up in the `input.yaml`. Otherwise we will error here.
 func (g *EIPInput) readArrayTagValue(item *CIPReadItem) (string, error) {
 	switch item.CIPDatatype {
 	case gologix.CIPTypeBYTE:
@@ -217,6 +223,9 @@ func (g *EIPInput) readArrayTagValue(item *CIPReadItem) (string, error) {
 	}
 }
 
+// createTagVar is prepared so that we can later on store the corresponding variable
+// into the tagMap, which is then used to read multiple Tags at once
+// It basically creates a variable for the corresponding datatype and returns it's pointer.
 func createTagVar(item *CIPReadItem) (any, error) {
 	switch item.CIPDatatype {
 	case gologix.CIPTypeBOOL:
@@ -269,6 +278,9 @@ func createTagVar(item *CIPReadItem) (any, error) {
 	}
 }
 
+// parseTagsIntoMap is prepared to later on read multiple data at once from the
+// tagMap, where we store the tagName as a key and the pointer to the variable
+// as the value.
 func parseTagsIntoMap(items []*CIPReadItem) (map[string]any, error) {
 	itemMap := make(map[string]any)
 	for _, item := range items {
@@ -284,6 +296,8 @@ func parseTagsIntoMap(items []*CIPReadItem) (map[string]any, error) {
 	return nil, nil
 }
 
+// CreateMessageFromValue is used to set the metadata for the eip-tags and
+// create the message from the rawValue which is read from the tags/attributes
 func CreateMessageFromValue(rawValue []byte, item *CIPReadItem) (*service.Message, error) {
 	var tagType string
 	switch item.CIPDatatype {
@@ -317,6 +331,8 @@ func CreateMessageFromValue(rawValue []byte, item *CIPReadItem) (*service.Messag
 	return msg, nil
 }
 
+// readAndConvertAttribute is used to read data from attributes and then use
+// the earlier on created ConverterFunc to convert it into the correct datatype.
 func (g *EIPInput) readAndConvertAttribute(item *CIPReadItem) (string, error) {
 	resp, err := g.CIP.GetAttrSingle(item.CIPClass, item.CIPInstance, item.CIPAttribute)
 	if err != nil {

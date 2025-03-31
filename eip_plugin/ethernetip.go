@@ -209,11 +209,11 @@ func (g *EIPInput) Connect(ctx context.Context) error {
 			RPI:           g.PollRate,
 			SocketTimeout: socketTimeoutDefault,
 			KnownTags:     make(map[string]gologix.KnownTag),
-			// TODO:
+			// NOTE:
 			// we only want to use our logs not the gologix-logs here
-			//Logger: slog.New(slog.DiscardHandler),
+			Logger: slog.New(slog.DiscardHandler),
 			// but for now we want to see some logs here:
-			Logger: slog.Default(),
+			// Logger: slog.Default(),
 		}
 	}
 
