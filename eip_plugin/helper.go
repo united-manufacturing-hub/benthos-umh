@@ -122,6 +122,11 @@ func parseAttributes(attributesConf []*service.ParsedConfig) ([]*CIPReadItem, er
 			return nil, err
 		}
 
+		converterFn, err := buildConverterFunc(datatype)
+		if err != nil {
+			return nil, err
+		}
+
 		item := &CIPReadItem{
 			IsAttribute:   true,
 			CIPClass:      gologix.CIPClass(parsedClass),
@@ -130,7 +135,7 @@ func parseAttributes(attributesConf []*service.ParsedConfig) ([]*CIPReadItem, er
 			CIPDatatype:   cipDatatype,
 			Alias:         alias,
 			AttributeName: pathStr,
-			ConverterFunc: buildConverterFunc(datatype),
+			ConverterFunc: converterFn,
 		}
 		items = append(items, item)
 	}
@@ -140,12 +145,12 @@ func parseAttributes(attributesConf []*service.ParsedConfig) ([]*CIPReadItem, er
 // parseTags parses the tagsConf into a list of CIPReadItems
 func parseTags(tagsConf []*service.ParsedConfig) ([]*CIPReadItem, error) {
 	var (
-		items    []*CIPReadItem
-		isArray  bool = false
-		arrayLen int  = 1
+		items []*CIPReadItem
 	)
 
 	for _, tag := range tagsConf {
+		isArray := false
+		arrayLen := 1
 		name, err := tag.FieldString("name")
 		if err != nil {
 			return nil, err
@@ -172,6 +177,11 @@ func parseTags(tagsConf []*service.ParsedConfig) ([]*CIPReadItem, error) {
 			return nil, err
 		}
 
+		converterFn, err := buildConverterFunc(datatype)
+		if err != nil {
+			return nil, err
+		}
+
 		item := &CIPReadItem{
 			IsAttribute:   false,
 			IsArray:       isArray,
@@ -179,7 +189,7 @@ func parseTags(tagsConf []*service.ParsedConfig) ([]*CIPReadItem, error) {
 			ArrayLength:   arrayLen,
 			CIPDatatype:   cipDatatype,
 			Alias:         alias,
-			ConverterFunc: buildConverterFunc(datatype),
+			ConverterFunc: converterFn,
 		}
 		items = append(items, item)
 	}
@@ -233,7 +243,7 @@ func parseCIPTypeFromString(datatype string) (gologix.CIPType, error) {
 // buildConverterFunc is used to build the function, which is needed to convert
 // the values into the correct datatype
 // only used for attributes
-func buildConverterFunc(datatype string) func(*gologix.CIPItem) (any, error) {
+func buildConverterFunc(datatype string) (func(*gologix.CIPItem) (any, error), error) {
 	// to handle "BOOL" as well as "bool" and "bOOl"
 	lowercaseDatatype := strings.ToLower(datatype)
 	switch lowercaseDatatype {
@@ -244,7 +254,7 @@ func buildConverterFunc(datatype string) func(*gologix.CIPItem) (any, error) {
 				return nil, err
 			}
 			return bit != 0, nil
-		}
+		}, nil
 	case "uint16":
 		return func(item *gologix.CIPItem) (any, error) {
 			val, err := item.Uint16()
@@ -252,7 +262,7 @@ func buildConverterFunc(datatype string) func(*gologix.CIPItem) (any, error) {
 				return nil, err
 			}
 			return val, nil
-		}
+		}, nil
 	case "uint32":
 		return func(item *gologix.CIPItem) (any, error) {
 			val, err := item.Uint32()
@@ -260,7 +270,7 @@ func buildConverterFunc(datatype string) func(*gologix.CIPItem) (any, error) {
 				return nil, err
 			}
 			return val, nil
-		}
+		}, nil
 	case "uint64":
 		return func(item *gologix.CIPItem) (any, error) {
 			val, err := item.Uint64()
@@ -268,7 +278,7 @@ func buildConverterFunc(datatype string) func(*gologix.CIPItem) (any, error) {
 				return nil, err
 			}
 			return val, nil
-		}
+		}, nil
 	case "int16":
 		return func(item *gologix.CIPItem) (any, error) {
 			val, err := item.Int16()
@@ -276,7 +286,7 @@ func buildConverterFunc(datatype string) func(*gologix.CIPItem) (any, error) {
 				return nil, err
 			}
 			return val, nil
-		}
+		}, nil
 	case "int32":
 		return func(item *gologix.CIPItem) (any, error) {
 			val, err := item.Int32()
@@ -284,7 +294,7 @@ func buildConverterFunc(datatype string) func(*gologix.CIPItem) (any, error) {
 				return nil, err
 			}
 			return val, nil
-		}
+		}, nil
 	case "int64":
 		return func(item *gologix.CIPItem) (any, error) {
 			val, err := item.Int64()
@@ -292,7 +302,7 @@ func buildConverterFunc(datatype string) func(*gologix.CIPItem) (any, error) {
 				return nil, err
 			}
 			return val, nil
-		}
+		}, nil
 	case "real", "float", "float32":
 		return func(item *gologix.CIPItem) (any, error) {
 			bits, err := item.Uint32()
@@ -301,7 +311,7 @@ func buildConverterFunc(datatype string) func(*gologix.CIPItem) (any, error) {
 			}
 			fl := math.Float32frombits(bits)
 			return fl, nil
-		}
+		}, nil
 	case "float64":
 		return func(item *gologix.CIPItem) (any, error) {
 			fl, err := item.Float64()
@@ -309,7 +319,7 @@ func buildConverterFunc(datatype string) func(*gologix.CIPItem) (any, error) {
 				return nil, err
 			}
 			return fl, nil
-		}
+		}, nil
 	case "string":
 		return func(item *gologix.CIPItem) (any, error) {
 			val, err := item.Bytes()
@@ -317,7 +327,7 @@ func buildConverterFunc(datatype string) func(*gologix.CIPItem) (any, error) {
 				return nil, err
 			}
 			return string(val), nil
-		}
+		}, nil
 	case "array of octed":
 		return func(item *gologix.CIPItem) (any, error) {
 			val, err := item.Bytes()
@@ -326,8 +336,8 @@ func buildConverterFunc(datatype string) func(*gologix.CIPItem) (any, error) {
 			}
 
 			return val, nil
-		}
+		}, nil
 	default:
-		return nil
+		return nil, fmt.Errorf("Failed to build converterFunc, unsupported datatype: %s", datatype)
 	}
 }
