@@ -295,8 +295,6 @@ func (g *EIPInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 		msgs service.MessageBatch
 	)
 
-	buffer := make([]byte, 0)
-
 	for _, item := range g.Items {
 
 		// read either tags or attributes
@@ -308,9 +306,8 @@ func (g *EIPInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 
 		// convert the dataAsString into bytes
 		dataAsBytes := []byte(dataAsString)
-		buffer = append(buffer, dataAsBytes...)
 
-		msg, err := CreateMessageFromValue(buffer, item)
+		msg, err := CreateMessageFromValue(dataAsBytes, item)
 		if err != nil {
 			//service.ErrNotconnected
 			return nil, nil, err
