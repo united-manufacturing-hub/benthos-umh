@@ -54,6 +54,7 @@ type EIPInput struct {
 // which is then used for addressing the data.
 type CIPReadItem struct {
 	IsAttribute bool
+	IsArray     bool
 
 	// attribute addressing
 	CIPClass     gologix.CIPClass
@@ -63,6 +64,8 @@ type CIPReadItem struct {
 	// tag addressing
 	TagName       string
 	AttributeName string
+
+	ArrayLength int
 
 	// unified fields
 	Alias string
@@ -91,6 +94,7 @@ var EthernetIPConfigSpec = service.NewConfigSpec().
 	Field(service.NewObjectListField("tags",
 		service.NewStringField("name").Description("The tag name is usually provided by something like this: `Program:Gologix.MyTagSet.TestBool`"),
 		service.NewStringField("type").Description("The type of the tag you want to read: e.g. 'bool', 'int16', 'byte'."),
+		service.NewIntField("length").Description("The Length of the array, when specified as 'arrayof...'").Default(1),
 		service.NewStringField("alias").Description("You can set an alias so the data will be stored with this alias set as name via metadata.").Optional()).
 		Description(""))
 
@@ -298,6 +302,7 @@ func (g *EIPInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 		// read either tags or attributes
 		dataAsString, err := g.readTagsOrAttributes(item)
 		if err != nil {
+			//service.ErrNotconnected
 			return nil, nil, err
 		}
 
@@ -307,6 +312,7 @@ func (g *EIPInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 
 		msg, err := CreateMessageFromValue(buffer, item)
 		if err != nil {
+			//service.ErrNotconnected
 			return nil, nil, err
 		}
 

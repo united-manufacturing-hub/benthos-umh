@@ -21,7 +21,7 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-func (g *EIPInput) readTagValue(item *CIPReadItem) (string, error) {
+func (g *EIPInput) readSingleTagValue(item *CIPReadItem) (string, error) {
 	var value any
 	switch item.CIPDatatype {
 	case gologix.CIPTypeBOOL:
@@ -121,9 +121,100 @@ func (g *EIPInput) readTagValue(item *CIPReadItem) (string, error) {
 			return "", err
 		}
 	default:
-		return "", fmt.Errorf("Failed to resolve CIP-Itemtype: %v", item.CIPDatatype)
+		return "", fmt.Errorf("Failed to read tag for not supported CIPtype: %v", item.CIPDatatype)
 	}
 	return fmt.Sprintf("%v", value), nil
+}
+
+func (g *EIPInput) readArrayTagValue(item *CIPReadItem) (string, error) {
+	switch item.CIPDatatype {
+	case gologix.CIPTypeBYTE:
+		arr := make([]byte, item.ArrayLength)
+		err := g.CIP.Read(item.TagName, &arr)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%v", arr), nil
+	case gologix.CIPTypeSINT:
+		arr := make([]int8, item.ArrayLength)
+		err := g.CIP.Read(item.TagName, &arr)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%v", arr), nil
+	case gologix.CIPTypeUSINT:
+		arr := make([]uint8, item.ArrayLength)
+		err := g.CIP.Read(item.TagName, &arr)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%v", arr), nil
+	case gologix.CIPTypeINT:
+		arr := make([]int16, item.ArrayLength)
+		err := g.CIP.Read(item.TagName, &arr)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%v", arr), nil
+	case gologix.CIPTypeUINT:
+		arr := make([]uint16, item.ArrayLength)
+		err := g.CIP.Read(item.TagName, &arr)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%v", arr), nil
+	case gologix.CIPTypeDINT:
+		arr := make([]int32, item.ArrayLength)
+		err := g.CIP.Read(item.TagName, &arr)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%v", arr), nil
+	case gologix.CIPTypeUDINT:
+		arr := make([]uint32, item.ArrayLength)
+		err := g.CIP.Read(item.TagName, &arr)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%v", arr), nil
+	case gologix.CIPTypeLINT:
+		arr := make([]int64, item.ArrayLength)
+		err := g.CIP.Read(item.TagName, &arr)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%v", arr), nil
+	case gologix.CIPTypeLWORD, gologix.CIPTypeULINT:
+		arr := make([]uint64, item.ArrayLength)
+		err := g.CIP.Read(item.TagName, &arr)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%v", arr), nil
+	case gologix.CIPTypeREAL:
+		arr := make([]float32, item.ArrayLength)
+		err := g.CIP.Read(item.TagName, &arr)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%v", arr), nil
+	case gologix.CIPTypeLREAL:
+		arr := make([]float64, item.ArrayLength)
+		err := g.CIP.Read(item.TagName, &arr)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%v", arr), nil
+	case gologix.CIPTypeSTRING:
+		arr := make([]string, item.ArrayLength)
+		err := g.CIP.Read(item.TagName, &arr)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%v", arr), nil
+	default:
+		return "", fmt.Errorf("Failed to read array for not supported CIPType: %v", item.CIPDatatype)
+	}
 }
 
 func createTagVar(item *CIPReadItem) (any, error) {
@@ -212,7 +303,7 @@ func CreateMessageFromValue(rawValue []byte, item *CIPReadItem) (*service.Messag
 
 	msg := service.NewMessage(rawValue)
 	msg.MetaSetMut("eip_tag_name", item.TagName) // tag name
-	msg.MetaSetMut("eip_tag_datatype", tagType)  // data type - number, bool, or string
+	msg.MetaSetMut("eip_tag_type", tagType)      // data type - number, bool, or string
 	msg.MetaSetMut("eip_tag_path", item.TagName) // tag path - usually something like `Program:Gologix_Tests.ReadTest`
 
 	if item.IsAttribute {
@@ -253,18 +344,12 @@ func (g *EIPInput) readAndConvertAttribute(item *CIPReadItem) (string, error) {
 //   - add multiRead for Tags
 func (g *EIPInput) readTagsOrAttributes(item *CIPReadItem) (string, error) {
 	if item.IsAttribute {
-		dataAsString, err := g.readAndConvertAttribute(item)
-		if err != nil {
-			return "", err
-		}
-		return dataAsString, nil
+		return g.readAndConvertAttribute(item)
 	}
 
-	dataAsString, err := g.readTagValue(item)
-	if err != nil {
-		g.Log.Errorf("failed to read tag value: %v", err)
-		return "", err
+	if item.IsArray {
+		return g.readArrayTagValue(item)
 	}
 
-	return dataAsString, nil
+	return g.readSingleTagValue(item)
 }
