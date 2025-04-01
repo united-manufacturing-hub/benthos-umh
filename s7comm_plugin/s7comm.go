@@ -263,8 +263,6 @@ func (g *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 		}
 
 		// Read the data from the batch and convert it using the converter function
-		buffer := make([]byte, 0)
-
 		for _, item := range b {
 			// Execute the converter function to get the converted data
 			convertedData := item.ConverterFunc(item.Item.Data)
@@ -276,13 +274,10 @@ func (g *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 			// Convert the string representation to a []byte
 			dataAsBytes := []byte(dataAsString)
 
-			// Append the converted data as bytes to the buffer
-			buffer = append(buffer, dataAsBytes...)
-
 			// Create a new message with the current state of the buffer
 			// Note: Depending on your requirements, you may want to reset the buffer
 			// after creating each message or keep accumulating data in it.
-			msg := service.NewMessage(buffer)
+			msg := service.NewMessage(dataAsBytes)
 			msg.MetaSet("s7_address", item.Address)
 
 			// Append the new message to the msgs slice
