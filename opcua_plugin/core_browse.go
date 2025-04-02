@@ -151,6 +151,7 @@ func browse(
 }
 
 type VisitedNodeInfo struct {
+	Def             NodeDef
 	LastSeen        time.Time
 	FullyDiscovered bool
 }
@@ -200,14 +201,23 @@ func worker(
 				if !ok {
 					vni = VisitedNodeInfo{}
 				}
-				// for debugging purpose
+				// to skip nodes that are already FullyDiscovered and fresh
 				if vni.FullyDiscovered && time.Since(vni.LastSeen) < StaleAfter {
 					logger.Debugf("Worker %s: node %s is fully discovered and fresh, skipping..", id, task.node.ID().String)
+					taskWg.Done()
+					continue
 				}
 
 				// set the node.ID() but not yet fully discovered if sth breaks, we can
 				// start over from here
 				visited.Store(task.node.ID(), VisitedNodeInfo{
+					Def:             vni.Def,
+					LastSeen:        time.Now(),
+					FullyDiscovered: false,
+				})
+			} else {
+				visited.Store(task.node.ID(), VisitedNodeInfo{
+					Def:             NodeDef{},
 					LastSeen:        time.Now(),
 					FullyDiscovered: false,
 				})
@@ -261,6 +271,12 @@ func worker(
 			logger.Debugf("\nWorker %d: level %d: def.Path:%s def.NodeClass:%s TaskWaitGroup count: %d WorkerWaitGroup count: %d\n",
 				id, task.level, def.Path, def.NodeClass, taskWg.Count(), workerWg.Count())
 
+			visited.Store(task.node.ID(), VisitedNodeInfo{
+				Def:             def,
+				LastSeen:        time.Now(),
+				FullyDiscovered: false,
+			})
+
 			// Handle browser channel
 			browserDetails := BrowseDetails{
 				NodeDef:               def,
@@ -297,6 +313,7 @@ func worker(
 
 			// now set the node.ID() to fully discovered
 			visited.Store(task.node.ID(), VisitedNodeInfo{
+				Def:             def,
 				LastSeen:        time.Now(),
 				FullyDiscovered: true,
 			})
