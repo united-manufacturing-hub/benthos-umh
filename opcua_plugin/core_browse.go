@@ -150,6 +150,11 @@ func browse(
 	}()
 }
 
+type VisitedNodeInfo struct {
+	LastSeen        time.Time
+	FullyDiscovered bool
+}
+
 func worker(
 	ctx context.Context,
 	id uuid.UUID,
@@ -164,6 +169,8 @@ func worker(
 	metrics *ServerMetrics,
 	stopChan chan struct{},
 ) {
+	const StaleAfter = 15 * time.Minute
+
 	defer workerWg.Done()
 	for {
 		select {
@@ -187,10 +194,23 @@ func worker(
 
 			startTime := time.Now()
 			// Skip if already visited or too deep
-			if _, exists := visited.LoadOrStore(task.node.ID(), struct{}{}); exists {
-				logger.Debugf("Worker %s: node %s already visited", id, task.node.ID().String())
-				taskWg.Done()
-				continue
+			val, found := visited.Load(task.node.ID())
+			if found {
+				vni, ok := val.(VisitedNodeInfo)
+				if !ok {
+					vni = VisitedNodeInfo{}
+				}
+				// for debugging purpose
+				if vni.FullyDiscovered && time.Since(vni.LastSeen) < StaleAfter {
+					logger.Debugf("Worker %s: node %s is fully discovered and fresh, skipping..", id, task.node.ID().String)
+				}
+
+				// set the node.ID() but not yet fully discovered if sth breaks, we can
+				// start over from here
+				visited.Store(task.node.ID(), VisitedNodeInfo{
+					LastSeen:        time.Now(),
+					FullyDiscovered: false,
+				})
 			}
 
 			if task.level > 25 {
@@ -274,6 +294,12 @@ func worker(
 					sendError(ctx, err, errChan, logger)
 				}
 			}
+
+			// now set the node.ID() to fully discovered
+			visited.Store(task.node.ID(), VisitedNodeInfo{
+				LastSeen:        time.Now(),
+				FullyDiscovered: true,
+			})
 			metrics.recordResponseTime(time.Since(startTime))
 			taskWg.Done()
 
