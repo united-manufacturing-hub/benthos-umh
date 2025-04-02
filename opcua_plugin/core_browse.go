@@ -15,6 +15,9 @@ import (
 
 const (
 	MaxTagsToBrowse = 100_000
+	// StaleTime is used to define whether a node that was discovered is marked
+	// as stale to rediscover -> if maybe an attribute changed from the previous run
+	StaleTime = 15 * time.Minute
 )
 
 type NodeDef struct {
@@ -150,6 +153,12 @@ func browse(
 	}()
 }
 
+type VisitedNodeInfo struct {
+	Def             NodeDef
+	LastSeen        time.Time
+	FullyDiscovered bool
+}
+
 func worker(
 	ctx context.Context,
 	id uuid.UUID,
@@ -164,6 +173,7 @@ func worker(
 	metrics *ServerMetrics,
 	stopChan chan struct{},
 ) {
+
 	defer workerWg.Done()
 	for {
 		select {
@@ -187,10 +197,32 @@ func worker(
 
 			startTime := time.Now()
 			// Skip if already visited or too deep
-			if _, exists := visited.LoadOrStore(task.node.ID(), struct{}{}); exists {
-				logger.Debugf("Worker %s: node %s already visited", id, task.node.ID().String())
-				taskWg.Done()
-				continue
+			val, found := visited.Load(task.node.ID())
+			if found {
+				vni, ok := val.(VisitedNodeInfo)
+				if !ok {
+					vni = VisitedNodeInfo{}
+				}
+				// to skip nodes that are already FullyDiscovered and fresh
+				if vni.FullyDiscovered && time.Since(vni.LastSeen) < StaleTime {
+					logger.Debugf("Worker %s: node %s is fully discovered and fresh, skipping..", id, task.node.ID().String)
+					taskWg.Done()
+					continue
+				}
+
+				// set the node.ID() but not yet fully discovered if sth breaks, we can
+				// start over from here
+				visited.Store(task.node.ID(), VisitedNodeInfo{
+					Def:             vni.Def,
+					LastSeen:        time.Now(),
+					FullyDiscovered: false,
+				})
+			} else {
+				visited.Store(task.node.ID(), VisitedNodeInfo{
+					Def:             NodeDef{},
+					LastSeen:        time.Now(),
+					FullyDiscovered: false,
+				})
 			}
 
 			if task.level > 25 {
@@ -241,6 +273,12 @@ func worker(
 			logger.Debugf("\nWorker %d: level %d: def.Path:%s def.NodeClass:%s TaskWaitGroup count: %d WorkerWaitGroup count: %d\n",
 				id, task.level, def.Path, def.NodeClass, taskWg.Count(), workerWg.Count())
 
+			visited.Store(task.node.ID(), VisitedNodeInfo{
+				Def:             def,
+				LastSeen:        time.Now(),
+				FullyDiscovered: false,
+			})
+
 			// Handle browser channel
 			browserDetails := BrowseDetails{
 				NodeDef:               def,
@@ -274,6 +312,13 @@ func worker(
 					sendError(ctx, err, errChan, logger)
 				}
 			}
+
+			// now set the node.ID() to fully discovered
+			visited.Store(task.node.ID(), VisitedNodeInfo{
+				Def:             def,
+				LastSeen:        time.Now(),
+				FullyDiscovered: true,
+			})
 			metrics.recordResponseTime(time.Since(startTime))
 			taskWg.Done()
 

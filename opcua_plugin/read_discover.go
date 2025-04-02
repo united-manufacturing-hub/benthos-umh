@@ -97,12 +97,21 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 // 1. **Browse Nodes:** Iterates through `NodeIDs` and concurrently browses each node to detect available nodes.
 // 2. **Add Heartbeat Node:** If heartbeats are enabled, ensures the heartbeat node (`HeartbeatNodeId`) is included in the node list.
 // 3. **Subscribe to Nodes:** If subscriptions are enabled, creates a subscription and sets up monitoring for the detected nodes.
-func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
+func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error) {
+	var nodeList []NodeDef
 
-	nodeList, _, err := g.discoverNodes(ctx)
-	if err != nil {
-		g.Log.Infof("error while getting the node list: %v", err)
-		return err
+	// if all nodeIDs are fresh and fully discovered we can avoid spawning any
+	// goroutines here
+	if g.canSkipDiscovery() {
+		g.Log.Infof("All requested nodes are fresh, skipping rebrowse. Using chaced nodelist")
+		nodeList = g.buildNodeListFromCache()
+	} else {
+		nodeList, _, err = g.discoverNodes(ctx)
+		if err != nil {
+			g.Log.Infof("error while getting the node list: %v", err)
+			return err
+		}
+
 	}
 
 	// Now add i=2258 to the nodeList, which is the CurrentTime node, which is used for heartbeats
@@ -282,4 +291,38 @@ func UpdateNodePaths(nodes []NodeDef) {
 			}
 		}
 	}
+}
+
+// buildNodeListFromCache enumerates the visited map
+// and returns a slice of NodeDef from all cached nodes.
+func (g *OPCUAInput) buildNodeListFromCache() []NodeDef {
+	var nodeList []NodeDef
+	g.visited.Range(func(k, v any) bool {
+		vni, ok := v.(VisitedNodeInfo)
+		if !ok {
+			return true
+		}
+		// skip incomplete nodes, or include them anyway:
+		// if !vni.FullyDiscovered { ... }
+		nodeList = append(nodeList, vni.Def)
+		return true
+	})
+	return nodeList
+}
+
+func (g *OPCUAInput) canSkipDiscovery() bool {
+	for _, nodeID := range g.NodeIDs {
+		val, found := g.visited.Load(nodeID)
+		if !found {
+			return false
+		}
+		vni, ok := val.(VisitedNodeInfo)
+		if !ok {
+			return false
+		}
+		if !vni.FullyDiscovered || time.Since(vni.LastSeen) > StaleTime {
+			return false
+		}
+	}
+	return true
 }
