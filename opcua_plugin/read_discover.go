@@ -316,7 +316,10 @@ func (g *OPCUAInput) canSkipDiscovery() bool {
 		if !found {
 			return false
 		}
-		vni := val.(VisitedNodeInfo)
+		vni, ok := val.(VisitedNodeInfo)
+		if !ok {
+			return false
+		}
 		if !vni.FullyDiscovered || time.Since(vni.LastSeen) > StaleTime {
 			return false
 		}
