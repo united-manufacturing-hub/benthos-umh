@@ -15,6 +15,7 @@ import (
 
 const (
 	MaxTagsToBrowse = 100_000
+	StaleAfter      = 15 * time.Minute
 )
 
 type NodeDef struct {
@@ -170,7 +171,6 @@ func worker(
 	metrics *ServerMetrics,
 	stopChan chan struct{},
 ) {
-	const StaleAfter = 15 * time.Minute
 
 	defer workerWg.Done()
 	for {
