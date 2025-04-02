@@ -15,7 +15,9 @@ import (
 
 const (
 	MaxTagsToBrowse = 100_000
-	StaleAfter      = 15 * time.Minute
+	// StaleTime is used to define whether a node that was discovered is marked
+	// as stale to rediscover -> if maybe an attribute changed from the previous run
+	StaleTime = 15 * time.Minute
 )
 
 type NodeDef struct {
@@ -202,7 +204,7 @@ func worker(
 					vni = VisitedNodeInfo{}
 				}
 				// to skip nodes that are already FullyDiscovered and fresh
-				if vni.FullyDiscovered && time.Since(vni.LastSeen) < StaleAfter {
+				if vni.FullyDiscovered && time.Since(vni.LastSeen) < StaleTime {
 					logger.Debugf("Worker %s: node %s is fully discovered and fresh, skipping..", id, task.node.ID().String)
 					taskWg.Done()
 					continue
