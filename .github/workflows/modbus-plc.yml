@@ -75,4 +75,4 @@ jobs:
             echo "no Wago device available for testing"
             exit 1
           fi
-          make test
+          make test-modbus
