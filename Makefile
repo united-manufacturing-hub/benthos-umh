@@ -66,7 +66,7 @@ test-modbus:
 
 .PHONY:
 test-opc:
-	@TEST_OPCUA_SIMULATOR=true ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./opcua_plugin/...
+	@ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./opcua_plugin/...
 
 .PHONY:
 test-eip:
@@ -74,7 +74,7 @@ test-eip:
 
 .PHONY:
 test-tag-processor:
-	@TEST_OPCUA_SIMULATOR=true ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./tag_processor_plugin/...
+	@TEST_TAG_PROCESSOR=true ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./tag_processor_plugin/...
 
 
 ##### TESTS WITH RUNNING BENTHOS-UMH
