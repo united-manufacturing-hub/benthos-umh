@@ -139,14 +139,12 @@ jobs:
 
       - name: Test container availability
         run: |
-          tcping $OPCSIM_IP:$OPCSIM_PORT
           tcping 127.0.0.1:$OPCSIM_PORT
 
       - name: Test
         env:
           TEST_WAGO_USERNAME: ${{ secrets.TEST_WAGO_USERNAME }}
           TEST_WAGO_PASSWORD: ${{ secrets.TEST_WAGO_PASSWORD }}
-          TEST_OPCSIM_IP: ${{ env.OPCSIM_IP }}
           TEST_OPCSIM_PORT: ${{ env.OPCSIM_PORT }}
           TEST_OPCUA_SIMULATOR: true
         run: |
