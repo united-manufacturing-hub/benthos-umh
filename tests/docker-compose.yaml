@@ -1,6 +1,6 @@
 services:
   opcplc:
-    image: mcr.microsoft.com/iotedge/opc-plc:2.9.11
+    image: mcr.microsoft.com/iotedge/opc-plc:2.12.29
     hostname: localhost
     command:
       - --pn=50000
@@ -17,6 +17,6 @@ services:
       - --plchostname=localhost
       - --unsecuretransport
     ports:
-      - "50000:50000"
-      - "8080:8080"
+      - '50000:50000'
+      - '8080:8080'
     restart: unless-stopped
