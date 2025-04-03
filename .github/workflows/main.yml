@@ -33,10 +33,8 @@ jobs:
     timeout-minutes: 60
     strategy:
       matrix:
-        #architecture: ["amd64", "arm64", "arm/v7"]
         architecture: ['amd64', 'arm64']
     runs-on:
-      #group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || matrix.architecture == 'arm/v7' && 'arc-runners-small' || 'arc-runners-build' }}
       group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || 'arc-runners-build' }}
     outputs:
       tags: ${{ steps.meta.outputs.tags }}
@@ -195,7 +193,6 @@ jobs:
           done
 
           # Define architectures
-          #ARCHITECTURES=("amd64" "arm64" "arm/v7")
           ARCHITECTURES=("amd64" "arm64")
           # Create manifests for each base tag
           for TAG in "${TAG_ARRAY[@]}"; do
@@ -238,20 +235,15 @@ jobs:
             goarch: amd64
           - goos: linux
             goarch: arm64
-          - goos: linux
-            goarch: armv7
           - goos: windows
             goarch: amd64
           - goos: windows
             goarch: arm64
-          - goos: windows
-            goarch: arm
           - goos: darwin
             goarch: amd64
           - goos: darwin
             goarch: arm64
     runs-on:
-      #group: ${{ matrix.goarch == 'arm64' && 'arc-runners-small' || matrix.goarch == 'armv7' && 'arc-runners-small' || 'arc-runners-build' }}
       group: ${{ matrix.goarch == 'arm64' && 'arc-runners-small' || 'arc-runners-build' }}
     steps:
       - name: Checkout
@@ -259,26 +251,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request && github.head_ref || github.ref_name }}
 
-      - name: Setup QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          image: management.umh.app/oci/tonistiigi/binfmt:latest
-
-      - name: Install Cross-Compilers
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-multilib gcc-mingw-w64
-
       - name: Set up Build Environment
         run: |
           echo "GOOS=${{ matrix.goos }}" >> $GITHUB_ENV
-
-          if [ "${{ matrix.goarch }}" == "armv7" ]; then
-            echo "GOARM=7" >> $GITHUB_ENV
-            echo "GOARCH=arm" >> $GITHUB_ENV
-          else
-            echo "GOARCH=${{ matrix.goarch }}" >> $GITHUB_ENV
-          fi
+          echo "GOARCH=${{ matrix.goarch }}" >> $GITHUB_ENV
 
           if [ "${{ matrix.goos }}" == "windows" ]; then
             FILE_EXTENSION=".exe"
