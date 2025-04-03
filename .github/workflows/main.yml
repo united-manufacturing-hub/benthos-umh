@@ -33,10 +33,8 @@ jobs:
     timeout-minutes: 60
     strategy:
       matrix:
-        #architecture: ["amd64", "arm64", "arm/v7"]
         architecture: ['amd64', 'arm64']
     runs-on:
-      #group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || matrix.architecture == 'arm/v7' && 'arc-runners-small' || 'arc-runners-build' }}
       group: ${{ matrix.architecture == 'arm64' && 'arc-runners-small' || 'arc-runners-build' }}
     outputs:
       tags: ${{ steps.meta.outputs.tags }}
@@ -238,20 +236,15 @@ jobs:
             goarch: amd64
           - goos: linux
             goarch: arm64
-          - goos: linux
-            goarch: armv7
           - goos: windows
             goarch: amd64
           - goos: windows
             goarch: arm64
-          - goos: windows
-            goarch: arm
           - goos: darwin
             goarch: amd64
           - goos: darwin
             goarch: arm64
     runs-on:
-      #group: ${{ matrix.goarch == 'arm64' && 'arc-runners-small' || matrix.goarch == 'armv7' && 'arc-runners-small' || 'arc-runners-build' }}
       group: ${{ matrix.goarch == 'arm64' && 'arc-runners-small' || 'arc-runners-build' }}
     steps:
       - name: Checkout
@@ -267,13 +260,7 @@ jobs:
       - name: Set up Build Environment
         run: |
           echo "GOOS=${{ matrix.goos }}" >> $GITHUB_ENV
-
-          if [ "${{ matrix.goarch }}" == "armv7" ]; then
-            echo "GOARM=7" >> $GITHUB_ENV
-            echo "GOARCH=arm" >> $GITHUB_ENV
-          else
-            echo "GOARCH=${{ matrix.goarch }}" >> $GITHUB_ENV
-          fi
+          echo "GOARCH=${{ matrix.goarch }}" >> $GITHUB_ENV
 
           if [ "${{ matrix.goos }}" == "windows" ]; then
             FILE_EXTENSION=".exe"
