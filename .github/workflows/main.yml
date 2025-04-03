@@ -193,7 +193,6 @@ jobs:
           done
 
           # Define architectures
-          #ARCHITECTURES=("amd64" "arm64" "arm/v7")
           ARCHITECTURES=("amd64" "arm64")
           # Create manifests for each base tag
           for TAG in "${TAG_ARRAY[@]}"; do
