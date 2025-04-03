@@ -133,7 +133,7 @@ func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics 
 		messagesProcessed: metrics.NewCounter("messages_processed"),
 		messagesErrored:   metrics.NewCounter("messages_errored"),
 		messagesDropped:   metrics.NewCounter("messages_dropped"),
-		jsProcessor:       nodered_js_plugin.NewNodeREDJSProcessor("", logger, metrics),
+		jsProcessor:       nodered_js_plugin.NewNodeREDJSProcessor("", logger, metrics, false),
 	}, nil
 }
 
