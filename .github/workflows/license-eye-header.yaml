@@ -13,29 +13,17 @@
 # limitations under the License.
 
 ---
-header:
-  license:
-    spdx-id: Apache-2.0
-    copyright-owner: UMH Systems GmbH
-    software-name: United Manufacturing Hub
-
-  paths-ignore:
-    - '**/*.md'
-    - '**/*.json'
-    - '**/*.dockerignore'
-    - '**/go.sum'
-    - '**/go.mod'
-    - '.cursor'
-    - '.devcontainer'
-    - '.git'
-    - '.gitpod'
-    - 'tests/*'
-    - 'LICENSE'
-    - 'NOTICE'
-    - 'CODEOWNERS'
-    - 'AUTHORS'
-    - 'Makefile'
-    - 'README.md'
-    - 'cover.profile'
-
-  comment: on-failure
+name: license-eye-header
+on:
+  pull_request:
+    branches:
+      - master
+jobs:
+  license-eye-header:
+    name: License Eye Header
+    runs-on:
+      group: arc-runners-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: apache/skywalking-eyes@v0.7.0
+        name: License Eye Header
