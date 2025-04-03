@@ -193,7 +193,6 @@ jobs:
           done
 
           # Define architectures
-          #ARCHITECTURES=("amd64" "arm64" "arm/v7")
           ARCHITECTURES=("amd64" "arm64")
           # Create manifests for each base tag
           for TAG in "${TAG_ARRAY[@]}"; do
@@ -251,11 +250,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request && github.head_ref || github.ref_name }}
-
-      - name: Setup QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          image: management.umh.app/oci/tonistiigi/binfmt:latest
 
       - name: Set up Build Environment
         run: |
