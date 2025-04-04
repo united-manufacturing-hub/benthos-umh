@@ -68,10 +68,11 @@ func Browse(ctx context.Context, n NodeBrowser, path string, logger Logger, pare
 
 // NodeTask represents a task for workers to process
 type NodeTask struct {
-	node         NodeBrowser
-	path         string
-	level        int
-	parentNodeId string
+	node             NodeBrowser
+	path             string
+	level            int
+	parentNodeId     string
+	maxLevelToBrowse int
 }
 
 // browse uses a worker pool pattern to process nodes
@@ -138,10 +139,11 @@ func browse(
 	// Send initial task
 	taskWg.Add(1)
 	taskChan <- NodeTask{
-		node:         startNode,
-		path:         startPath,
-		level:        0,
-		parentNodeId: parentNodeId,
+		node:             startNode,
+		path:             startPath,
+		level:            0,
+		parentNodeId:     parentNodeId,
+		maxLevelToBrowse: 25,
 	}
 
 	// Close task channel when all tasks are processed
@@ -225,7 +227,7 @@ func worker(
 				})
 			}
 
-			if task.level > 25 {
+			if task.level > task.maxLevelToBrowse {
 				logger.Debugf("Skipping node %s at browse level %d", task.node.ID().String(), task.level)
 				taskWg.Done()
 				continue
