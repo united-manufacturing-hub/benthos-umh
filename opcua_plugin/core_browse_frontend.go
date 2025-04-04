@@ -22,6 +22,40 @@ type BrowseDetails struct {
 	AvgServerResponseTime time.Duration
 }
 
+type BrowseStreamRequest struct {
+	ParentNode     ua.NodeID
+	ParentLevel    int
+	SequenceNumber int
+}
+
+type BrowseStreamResponse struct {
+	Node                  NodeDef
+	CurrentLevel          int
+	CurrentSequenceNumber int
+	ParentSequenceNumber  int
+	// TODO: Add observablitly fields
+}
+
+// GetChildNodes returns the child nodes for the given ParentNode
+// ctx passed should have a deadline
+func (g *OPCUAConnection) GetChildNodes(ctx context.Context, request BrowseStreamRequest) (responseChan BrowseStreamResponse, err error) {
+
+	if _, ok := ctx.Deadline(); !ok {
+		return BrowseStreamResponse{}, errors.New("context should have a time deadline")
+	}
+
+	// Calculate the fields for Acknowledgement
+	parentSequenceNumber := request.SequenceNumber
+	currentSequenceNumber := parentSequenceNumber + 1
+	currentLevel := request.ParentLevel + 1
+
+	return BrowseStreamResponse{
+		CurrentLevel:          currentLevel,
+		CurrentSequenceNumber: currentSequenceNumber,
+		ParentSequenceNumber:  parentSequenceNumber,
+	}, nil
+}
+
 // GetNodeTree returns the tree structure of the OPC UA server nodes
 // GetNodeTree is currently used by united-manufacturing-hub/ManagementConsole repo for the BrowseOPCUA tags functionality
 func (g *OPCUAConnection) GetNodeTree(ctx context.Context, msgChan chan<- string, rootNode *Node) (*Node, error) {
