@@ -36,8 +36,26 @@ type BrowseStreamResponse struct {
 	// TODO: Add observablitly fields
 }
 
+func (g *OPCUAConnection) DialOPCUA(ctx context.Context) error {
+	if g.Client != nil {
+		err := g.Client.Close(ctx)
+		if err != nil {
+			// This is not a serious error to return
+			// If the client cannot be closed,set the client to nil
+			g.Client = nil
+		}
+	}
+
+	if g.Client == nil {
+		return g.connect(ctx)
+	}
+	return nil
+}
+
 // GetChildNodes returns the child nodes for the given ParentNode
-// ctx passed should have a deadline
+// ctx passed should have a deadline.
+// OPCUAConnection pointer should have a valid OPC connection established before calling this method. A proper connection can be
+// established by calling the method OPCUAConnection.DialOPCUA(ctx)
 func (g *OPCUAConnection) GetChildNodes(ctx context.Context, request BrowseStreamRequest) (responseChan BrowseStreamResponse, err error) {
 
 	if _, ok := ctx.Deadline(); !ok {
