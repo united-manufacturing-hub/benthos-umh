@@ -43,4 +43,4 @@ jobs:
       - name: Install Ginkgo
         run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.22.1
       - name: Test
-        run: TEST_NODERED_JS=1 make test
+        run: make test-noderedjs
