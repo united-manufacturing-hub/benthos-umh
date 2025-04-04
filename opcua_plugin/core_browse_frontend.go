@@ -56,10 +56,13 @@ func (g *OPCUAConnection) DialOPCUA(ctx context.Context) error {
 // ctx passed should have a deadline.
 // OPCUAConnection pointer should have a valid OPC connection established before calling this method. A proper connection can be
 // established by calling the method OPCUAConnection.DialOPCUA(ctx)
-func (g *OPCUAConnection) GetChildNodes(ctx context.Context, request BrowseStreamRequest) (responseChan BrowseStreamResponse, err error) {
+func (g *OPCUAConnection) GetChildNodes(ctx context.Context, request BrowseStreamRequest) (responseChan []BrowseStreamResponse, err error) {
+
+	resp := make([]BrowseStreamResponse, 0, 100)
+	errs := make([]error, 0, 100)
 
 	if _, ok := ctx.Deadline(); !ok {
-		return BrowseStreamResponse{}, errors.New("context should have a time deadline")
+		return nil, errors.New("context should have a time deadline")
 	}
 
 	// Calculate the fields for Acknowledgement
@@ -67,11 +70,75 @@ func (g *OPCUAConnection) GetChildNodes(ctx context.Context, request BrowseStrea
 	currentSequenceNumber := parentSequenceNumber + 1
 	currentLevel := request.ParentLevel + 1
 
-	return BrowseStreamResponse{
-		CurrentLevel:          currentLevel,
-		CurrentSequenceNumber: currentSequenceNumber,
-		ParentSequenceNumber:  parentSequenceNumber,
-	}, nil
+	//
+
+	nodeChan := make(chan NodeDef, 1000)
+	errChan := make(chan error, 1000)
+	opcuaBrowserChan := make(chan BrowseDetails, 1000)
+	done := make(chan bool)
+	errDone := make(chan bool)
+
+	go func() {
+		defer func() {
+			done <- true
+		}()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case node, ok := <-opcuaBrowserChan:
+				if !ok {
+					return
+				}
+				r := BrowseStreamResponse{
+					Node:                  node.NodeDef,
+					CurrentLevel:          currentLevel,
+					CurrentSequenceNumber: currentSequenceNumber,
+					ParentSequenceNumber:  parentSequenceNumber,
+				}
+				resp = append(resp, r)
+			}
+		}
+
+	}()
+
+	go func() {
+		defer func() {
+			errDone <- true
+
+		}()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case err := <-errChan:
+				errs = append(errs, err)
+
+			}
+		}
+
+	}()
+
+	var wg TrackedWaitGroup
+	wg.Add(1)
+	Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(&request.ParentNode)), "", g.Log, request.ParentNode.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited, 0)
+	go logErrors(ctx, errChan, g.Log)
+
+	wg.Wait()
+
+	close(nodeChan)
+	close(errChan)
+	close(opcuaBrowserChan)
+
+	<-done
+	<-errDone
+
+	if len(errs) > 0 {
+		err := errors.Join(errs...)
+		return nil, err
+	}
+
+	return resp, nil
 }
 
 // GetNodeTree returns the tree structure of the OPC UA server nodes
@@ -104,7 +171,7 @@ func (g *OPCUAConnection) GetNodeTree(ctx context.Context, msgChan chan<- string
 
 	var wg TrackedWaitGroup
 	wg.Add(1)
-	Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", g.Log, rootNode.NodeId.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
+	Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", g.Log, rootNode.NodeId.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited, 1)
 	go logErrors(ctx, errChan, g.Log)
 	go collectNodes(ctx, opcuaBrowserChan, nodeIDMap, &nodes, msgChan)
 

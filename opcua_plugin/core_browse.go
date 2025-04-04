@@ -62,8 +62,11 @@ type Logger interface {
 
 // Browse is a public wrapper function for the browse function
 // Avoid using this function directly, use it only for testing
-func Browse(ctx context.Context, n NodeBrowser, path string, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map) {
-	browse(ctx, n, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
+func Browse(ctx context.Context, n NodeBrowser, path string, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map, maxLevelToVisit int) {
+	if maxLevelToVisit == 0 {
+		maxLevelToVisit = 25 // Default depth levels to visit
+	}
+	browse(ctx, n, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited, maxLevelToVisit)
 }
 
 // NodeTask represents a task for workers to process
@@ -87,6 +90,7 @@ func browse(
 	wg *TrackedWaitGroup,
 	opcuaBrowserChan chan BrowseDetails,
 	visited *sync.Map,
+	maxLevelToVisit int,
 ) {
 	metrics := NewServerMetrics()
 	var taskWg TrackedWaitGroup
@@ -143,7 +147,7 @@ func browse(
 		path:             startPath,
 		level:            0,
 		parentNodeId:     parentNodeId,
-		maxLevelToBrowse: 25,
+		maxLevelToBrowse: maxLevelToVisit,
 	}
 
 	// Close task channel when all tasks are processed
