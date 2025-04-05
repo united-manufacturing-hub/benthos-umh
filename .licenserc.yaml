@@ -28,7 +28,6 @@ header:
     - '**/go.mod'
     - '.cursor'
     - '.devcontainer'
-    - '.git'
     - '.gitpod'
     - '.idea'
     - '.gitpod.yml'
