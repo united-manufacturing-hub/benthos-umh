@@ -12,79 +12,84 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-.PHONY:
+GINKGO_CMD=ginkgo
+GINKGO_FLAGS=-r --output-interceptor-mode=none --github-output -vv -trace -p --randomize-all --cover --coverprofile=cover.profile --repeat=2
+GINKGO_SERIAL_FLAGS=$(GINKGO_FLAGS) --procs=1
+
+BENTHOS_BIN := tmp/bin/benthos
+
+.PHONY: all
+all: clean target
+
+.PHONY: clean
 clean:
 	@rm -rf target tmp/bin tmp/benthos-*.zip
 
-.PHONY:
+.PHONY: target
 target:
-	@mkdir -p tmp/bin
+	@mkdir -p $(dir $(BENTHOS_BIN))
 	@go build \
        -ldflags "-s -w \
        -X github.com/redpanda-data/benthos/v4/internal/cli.Version=temp \
-       -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-       -o tmp/bin/benthos \
+       -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt=$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+       -o $(BENTHOS_BIN) \
        cmd/benthos/main.go
 
-.PHONY:
+.PHONY: setup-test-deps
 setup-test-deps:
 	@go get -t ./...
 	@go mod tidy
 
-.PHONY:
-test: setup-test-deps
-	@ginkgo -r --output-interceptor-mode=none --github-output -vv -trace -p --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./...
-
-.PHONY:
+.PHONY: update-benthos
 update-benthos:
 	@go get github.com/redpanda-data/connect/public/bundle/free/v4@latest && \
   go get github.com/redpanda-data/connect/v4@latest && \
   go get github.com/redpanda-data/benthos/v4@latest && \
   go mod tidy
 
-# provides serial runners, which are needed to restrict data requests on sensor interface
-# Note: Serial execution will increase test duration but ensures reliable results
-.PHONY:
-test-serial:
-	@ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --procs 1 --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./...
+.PHONY: test
+test: setup-test-deps
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./...
 
-.PHONY:
-test-sensorconnect:
-	@ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --procs 1 --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./sensorconnect_plugin/...
-
-.PHONY:
-test-noderedjs:
-	@TEST_NODERED_JS=true ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./nodered_js_plugin/...
-
-.PHONY:
-test-s7comm:
-	@ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./s7comm_plugin/...
-
-.PHONY:
-test-modbus:
-	@ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./modbus_plugin/...
-
-.PHONY:
-test-opc:
-	@ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./opcua_plugin/...
-
-.PHONY:
+.PHONY: test-eip
 test-eip:
-	@ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --randomize-all --cover --coverprofile=cover.profile  ./eip_plugin/...
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./eip_plugin/...
 
-.PHONY:
+.PHONY: test-modbus
+test-modbus:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./modbus_plugin/...
+
+.PHONY: test-noderedjs
+test-noderedjs:
+	@TEST_NODERED_JS=true \
+		$(GINKGO_CMD) $(GINKGO_FLAGS) ./nodered_js_plugin/...
+
+.PHONY: test-opc
+test-opc:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./opcua_plugin/...
+
+.PHONY: test-s7comm
+test-s7comm:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./s7comm_plugin/...
+
+.PHONY: test-sensorconnect
+test-sensorconnect:
+	@$(GINKGO_CMD) $(GINKGO_SERIAL_FLAGS) ./sensorconnect_plugin/...
+
+.PHONY: test-tag-processor
 test-tag-processor:
-	@TEST_TAG_PROCESSOR=true ginkgo -r --output-interceptor-mode=none --github-output -vv -trace --randomize-all --cover --coverprofile=cover.profile --repeat=2 ./tag_processor_plugin/...
+	@TEST_TAG_PROCESSOR=true \
+		$(GINKGO_CMD) $(GINKGO_FLAGS) ./tag_processor_plugin/...
 
 
-##### TESTS WITH RUNNING BENTHOS-UMH
+###### TESTS WITH RUNNING BENTHOS-UMH #####
 # Test the tag processor with a local OPC UA server
-.PHONY:
+.PHONY: test-benthos-tag-processor
 test-benthos-tag-processor: target
-	./tmp/bin/benthos -c ./config/tag-processor-test.yaml
+	@$(BENTHOS_BIN) -c ./config/tag-processor-test.yaml
 
-	# usage:
-	# make test-sensorconnect TEST_DEBUG_IFM_ENDPOINT=(IP of sensor interface)
-.PHONY:
-test-benthos-sensorconnect: test-serial
-	./tmp/bin/benthos -c ./config/sensorconnect-test.yaml
+# USAGE:
+# make test-benthos-sensorconnect TEST_DEBUG_IFM_ENDPOINT=(IP of sensor interface)
+.PHONY: test-benthos-sensorconnect
+test-benthos-sensorconnect: target
+	@$(BENTHOS_BIN) -c ./config/sensorconnect-test.yaml
