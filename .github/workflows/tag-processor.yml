@@ -43,4 +43,6 @@ jobs:
       - name: Install Ginkgo
         run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.22.1
       - name: Test
-        run: TEST_TAG_PROCESSOR=1 make test
+        env:
+          TEST_TAG_PROCESSOR: true
+        run: make test-tag-processor
