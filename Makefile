@@ -93,3 +93,13 @@ test-benthos-tag-processor: target
 .PHONY: test-benthos-sensorconnect
 test-benthos-sensorconnect: target
 	@$(BENTHOS_BIN) -c ./config/sensorconnect-test.yaml
+
+.PHONY:
+fix-license:
+	@docker run -it --rm -v $(PWD):/github/workspace:Z apache/skywalking-eyes header fix
+
+.PHONY:
+check-license:
+	@docker run -it --rm -v $(PWD):/github/workspace:Z apache/skywalking-eyes header check
+
+
