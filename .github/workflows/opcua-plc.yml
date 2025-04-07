@@ -147,6 +147,7 @@ jobs:
           TEST_WAGO_PASSWORD: ${{ secrets.TEST_WAGO_PASSWORD }}
           TEST_OPCSIM_PORT: ${{ env.OPCSIM_PORT }}
           TEST_OPCUA_SIMULATOR: true
+          TEST_OPCUA_WRITE_SIMULATOR: true
         run: |
           if [ -z "$TEST_S7_ENDPOINT_URI" ]; then
             echo "no s7-endpoint available for testing"
