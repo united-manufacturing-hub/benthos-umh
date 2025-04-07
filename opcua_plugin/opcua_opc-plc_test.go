@@ -1429,9 +1429,9 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			builder := service.NewStreamBuilder()
 
 			// Create a new stream with 10 second poll rate on the CurrentTime node
-			err := builder.AddInputYAML(`
+			err := builder.AddInputYAML(fmt.Sprintf(`
 opcua:
-  endpoint: "opc.tcp://localhost:50000"
+  endpoint: "opc.tcp://%s:%s"
   username: ""
   password: ""
   subscribeEnabled: false
@@ -1439,7 +1439,7 @@ opcua:
   pollRate: 10000
   nodeIDs:
     - "i=2258"
-`)
+`, opcsimIp, opcsimPort))
 
 			Expect(err).NotTo(HaveOccurred())
 
