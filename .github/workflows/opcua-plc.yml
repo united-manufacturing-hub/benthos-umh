@@ -30,7 +30,7 @@ concurrency:
 jobs:
   go-test-opcua-plc:
     runs-on:
-      group: arc-runners-tests
+      group: eos
     permissions:
       packages: write
       contents: read
@@ -106,10 +106,48 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Start docker container for iotedge/opc-plc
+        run: |
+          OPCSIM_CONTAINER=$(docker run -d --rm -P \
+            --hostname localhost \
+            mcr.microsoft.com/iotedge/opc-plc:2.12.29 \
+            --pn=50000 --autoaccept --sph --sn=100 --sr=10 --st=uint --fn=5 --fr=1 --ft=uint --gn=5 --certdnsnames=localhost --plchostname=localhost --unsecuretransport)
+          OPCSIM_PORT=$(docker inspect -f '{{(index (index .NetworkSettings.Ports "50000/tcp") 0).HostPort}}' $OPCSIM_CONTAINER || true)
+          #OPCSIM_PORT=$(docker inspect $OPCSIM_CONTAINER | jq '.[].NetworkSettings.Ports["50000/tcp"] | .[0].HostPort' | tr -d '"' || true)
+            echo "################# Docker Port ######################"
+            echo "Opcsim port: $OPCSIM_PORT"
+            if [ -z "$OPCSIM_PORT" ]; then
+              echo "Failed to get opcsim port"
+              docker inspect $OPCSIM_CONTAINER
+              docker stop $OPCSIM_CONTAINER || true
+              exit 1
+            fi
+
+
+          echo "################# Docker IP ######################"
+          OPCSIM_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $OPCSIM_CONTAINER)
+          echo "Opcsim IP: $OPCSIM_IP"
+
+          echo "OPCSIM_CONTAINER=$OPCSIM_CONTAINER" >> $GITHUB_ENV
+          echo "OPCSIM_IP=$OPCSIM_IP" >> $GITHUB_ENV
+          echo "OPCSIM_PORT=$OPCSIM_PORT" >> $GITHUB_ENV
+
+      - name: Debug container status
+        run: |
+          docker ps
+          docker logs $(docker ps -q -f ancestor=mcr.microsoft.com/iotedge/opc-plc:2.12.29)
+
+      - name: Test container availability
+        run: |
+          tcping 127.0.0.1:$OPCSIM_PORT
+
       - name: Test
         env:
           TEST_WAGO_USERNAME: ${{ secrets.TEST_WAGO_USERNAME }}
           TEST_WAGO_PASSWORD: ${{ secrets.TEST_WAGO_PASSWORD }}
+          TEST_OPCSIM_PORT: ${{ env.OPCSIM_PORT }}
+          TEST_OPCUA_SIMULATOR: true
+          TEST_OPCUA_WRITE_SIMULATOR: true
         run: |
           if [ -z "$TEST_S7_ENDPOINT_URI" ]; then
             echo "no s7-endpoint available for testing"
@@ -119,7 +157,13 @@ jobs:
             echo "no wago-endpoint available for testing"
             exit 1
           fi
-          make test
+          make test-opc
+
+      - name: Cleanup docker containers
+        if: always()
+        run: |
+          docker stop $OPCSIM_CONTAINER || true
+          docker ps
 
   go-test-kepware-plc:
     needs: go-test-opcua-plc
@@ -172,4 +216,4 @@ jobs:
             echo "no kepware-endpoint available for testing"
             exit 1
           fi
-          make test
+          make test-opc
