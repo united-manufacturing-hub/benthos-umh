@@ -14,12 +14,23 @@ import (
 )
 
 var _ = Describe("OPC UA Output", func() {
-	var builder *service.StreamBuilder
+	var (
+		opcsimIp   = "localhost"
+		opcsimPort = "50000"
+
+		builder *service.StreamBuilder
+	)
 
 	BeforeEach(func() {
 		testActivated := os.Getenv("TEST_OPCUA_WRITE_SIMULATOR")
 		if testActivated == "" {
 			Skip("Skipping write unit tests against simulator: TEST_OPCUA_WRITE_SIMULATOR not set")
+		}
+		if os.Getenv("TEST_OPCSIM_IP") != "" {
+			opcsimIp = os.Getenv("TEST_OPCSIM_IP")
+		}
+		if os.Getenv("TEST_OPCSIM_PORT") != "" {
+			opcsimPort = os.Getenv("TEST_OPCSIM_PORT")
 		}
 
 		builder = service.NewStreamBuilder()
@@ -30,9 +41,9 @@ var _ = Describe("OPC UA Output", func() {
 	Context("configuration parsing", func() {
 		When("creating a configuration with all fields", func() {
 			It("should successfully parse the configuration", func() {
-				err := builder.AddOutputYAML(`
+				err := builder.AddOutputYAML(fmt.Sprintf(`
 opcua:
-  endpoint: "opc.tcp://localhost:50000"
+  endpoint: "opc.tcp://%s:%s"
   nodeMappings:
     - nodeId: "ns=4;i=6210"
       valueFrom: "setpoint"
@@ -45,7 +56,7 @@ opcua:
     readbackTimeoutMs: 2000
     maxWriteAttempts: 3
     timeBetweenRetriesMs: 1000
-`)
+`, opcsimIp, opcsimPort))
 				Expect(err).NotTo(HaveOccurred())
 
 				// Verify the configuration by building the stream
@@ -57,14 +68,14 @@ opcua:
 
 		When("creating a configuration with minimal settings", func() {
 			It("should use default values for omitted fields", func() {
-				err := builder.AddOutputYAML(`
+				err := builder.AddOutputYAML(fmt.Sprintf(`
 opcua:
-  endpoint: "opc.tcp://localhost:50000"
+  endpoint: "opc.tcp://%s:%s"
   nodeMappings:
     - nodeId: "ns=4;i=6210"
       valueFrom: "setpoint"
       dataType: "Float"
-`)
+`, opcsimIp, opcsimPort))
 				Expect(err).NotTo(HaveOccurred())
 
 				// Verify the configuration by building the stream
@@ -75,13 +86,13 @@ opcua:
 		})
 
 		It("should fail with invalid node mapping", func() {
-			err := builder.AddOutputYAML(`
+			err := builder.AddOutputYAML(fmt.Sprintf(`
 opcua:
-  endpoint: "opc.tcp://localhost:50000"
+  endpoint: "opc.tcp://%s:%s"
   nodeMappings:
     - nodeId: "ns=4;i=6210"
       # missing valueFrom field
-`)
+`, opcsimIp, opcsimPort))
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("valueFrom"))
 		})
@@ -95,7 +106,7 @@ opcua:
 
 				output := &OPCUAOutput{
 					OPCUAConnection: &OPCUAConnection{
-						Endpoint: "opc.tcp://localhost:50000",
+						Endpoint: fmt.Sprintf("opc.tcp://%s:%s", opcsimIp, opcsimPort),
 					},
 					NodeMappings: []NodeMapping{
 						{
@@ -129,14 +140,14 @@ opcua:
 	Context("opc-plc with YAML configuration", func() {
 		When("writing to a simulator", func() {
 			It("should connect and write successfully", func() {
-				err := builder.AddOutputYAML(`
+				err := builder.AddOutputYAML(fmt.Sprintf(`
 opcua:
-  endpoint: "opc.tcp://localhost:50000"
+  endpoint: "opc.tcp://%s:%s"
   nodeMappings:
     - nodeId: "ns=4;i=6210"
       valueFrom: "setpoint"
       dataType: "Float"
-`)
+`, opcsimIp, opcsimPort))
 				Expect(err).NotTo(HaveOccurred())
 
 				err = builder.AddInputYAML(`
