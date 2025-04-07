@@ -27,6 +27,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install tools
+        run: |
+          make install-tools
+
       - name: License Eye Header
         run: |
           make license-check
