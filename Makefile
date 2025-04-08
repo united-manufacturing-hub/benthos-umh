@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+include ./Makefile.Common
 
 GINKGO_CMD=ginkgo
 GINKGO_FLAGS=-r --output-interceptor-mode=none --github-output -vv -trace -p --randomize-all --cover --coverprofile=cover.profile --repeat=2
@@ -34,6 +35,14 @@ target:
        -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt=$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
        -o $(BENTHOS_BIN) \
        cmd/benthos/main.go
+
+.PHONY: license-fix
+license-fix:
+	@$(LICENSE_EYE) header fix
+
+.PHONY: license-check
+license-check:
+	@$(LICENSE_EYE) header check
 
 .PHONY: setup-test-deps
 setup-test-deps:

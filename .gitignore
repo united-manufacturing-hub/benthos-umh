@@ -24,6 +24,9 @@ dist
 package
 target
 
+# Tools directory
+.tools
+
 # Environment versions file
 .versions
 
