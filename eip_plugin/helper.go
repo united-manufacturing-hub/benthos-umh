@@ -177,19 +177,20 @@ func parseTags(tagsConf []*service.ParsedConfig) ([]*CIPReadItem, error) {
 			return nil, err
 		}
 
-		converterFn, err := buildConverterFunc(datatype)
-		if err != nil {
-			return nil, err
-		}
+		// NOTE: this is currently not needed for reading tags
+		//	converterFn, err := buildConverterFunc(datatype)
+		//	if err != nil {
+		//		return nil, err
+		//	}
 
 		item := &CIPReadItem{
-			IsAttribute:   false,
-			IsArray:       isArray,
-			TagName:       name,
-			ArrayLength:   arrayLen,
-			CIPDatatype:   cipDatatype,
-			Alias:         alias,
-			ConverterFunc: converterFn,
+			IsAttribute: false,
+			IsArray:     isArray,
+			TagName:     name,
+			ArrayLength: arrayLen,
+			CIPDatatype: cipDatatype,
+			Alias:       alias,
+			//ConverterFunc: converterFn,
 		}
 		items = append(items, item)
 	}
