@@ -3,6 +3,7 @@ package umhstreamplugin
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -11,6 +12,7 @@ import (
 const (
 	defaultOutputTopic   = "umh.v1.messages"
 	defaultBrokerAddress = "localhost:9092"
+	defaultClientID      = "umh_core"
 )
 
 func outputConfig() *service.ConfigSpec {
@@ -45,9 +47,16 @@ func (o *umhStreamOutput) Connect(ctx context.Context) error {
 
 	// Create the kafka client
 	client, err := kgo.NewClient(
-		kgo.SeedBrokers(defaultBrokerAddress),
-		kgo.AllowAutoTopicCreation(), // Allow creating the defaultOutputTopic if it doesn't exists
-		// Todo : More configs for optimisation
+		kgo.SeedBrokers(defaultBrokerAddress),       // bootstrap broker addresses
+		kgo.AllowAutoTopicCreation(),                // Allow creating the defaultOutputTopic if it doesn't exists
+		kgo.ClientID(defaultClientID),               // client id for all requests sent to the broker
+		kgo.ConnIdleTimeout(1*time.Hour),            // Rough amount of time to allow connections to be idle. Default value at franz-go is 20
+		kgo.DialTimeout(5*time.Second),              // Timeout while connecting to the broker. 5 second is more than enough to connect to a local broker
+		kgo.DefaultProduceTopic(defaultOutputTopic), // topic to produce messages to. The plugin writes messages only to a single default topic
+		kgo.RequiredAcks(kgo.LeaderAck()),           // Partition leader has to send acknowledment on successful write
+		kgo.MaxBufferedRecords(1000),                // Max amount of records hte client will buffer
+		kgo.ProduceRequestTimeout(5*time.Second),    // Produce Request Timeout
+		kgo.ProducerLinger(1*time.Second),           // Duration on how long individual partitons will linger waiting for more records before triggering a Produce request
 	)
 	if err != nil {
 		return fmt.Errorf("error while creating a kafka client: %v", err)
