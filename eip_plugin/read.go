@@ -134,86 +134,93 @@ func (g *EIPInput) readSingleTagValue(item *CIPReadItem) (string, error) {
 // set up in the `input.yaml`. Otherwise we will error here.
 func (g *EIPInput) readArrayTagValue(item *CIPReadItem) (string, error) {
 	switch item.CIPDatatype {
+	case gologix.CIPTypeBOOL:
+		arr := make([]bool, item.ArrayLength)
+		err := g.CIP.Read(item.TagName, arr)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%v", arr), nil
 	case gologix.CIPTypeBYTE:
 		arr := make([]byte, item.ArrayLength)
-		err := g.CIP.Read(item.TagName, &arr)
+		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("%v", arr), nil
 	case gologix.CIPTypeSINT:
 		arr := make([]int8, item.ArrayLength)
-		err := g.CIP.Read(item.TagName, &arr)
+		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("%v", arr), nil
 	case gologix.CIPTypeUSINT:
 		arr := make([]uint8, item.ArrayLength)
-		err := g.CIP.Read(item.TagName, &arr)
+		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("%v", arr), nil
 	case gologix.CIPTypeINT:
 		arr := make([]int16, item.ArrayLength)
-		err := g.CIP.Read(item.TagName, &arr)
+		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("%v", arr), nil
 	case gologix.CIPTypeUINT:
 		arr := make([]uint16, item.ArrayLength)
-		err := g.CIP.Read(item.TagName, &arr)
+		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("%v", arr), nil
 	case gologix.CIPTypeDINT:
 		arr := make([]int32, item.ArrayLength)
-		err := g.CIP.Read(item.TagName, &arr)
+		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("%v", arr), nil
 	case gologix.CIPTypeUDINT:
 		arr := make([]uint32, item.ArrayLength)
-		err := g.CIP.Read(item.TagName, &arr)
+		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("%v", arr), nil
 	case gologix.CIPTypeLINT:
 		arr := make([]int64, item.ArrayLength)
-		err := g.CIP.Read(item.TagName, &arr)
+		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("%v", arr), nil
 	case gologix.CIPTypeLWORD, gologix.CIPTypeULINT:
 		arr := make([]uint64, item.ArrayLength)
-		err := g.CIP.Read(item.TagName, &arr)
+		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("%v", arr), nil
 	case gologix.CIPTypeREAL:
 		arr := make([]float32, item.ArrayLength)
-		err := g.CIP.Read(item.TagName, &arr)
+		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("%v", arr), nil
 	case gologix.CIPTypeLREAL:
 		arr := make([]float64, item.ArrayLength)
-		err := g.CIP.Read(item.TagName, &arr)
+		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("%v", arr), nil
 	case gologix.CIPTypeSTRING:
 		arr := make([]string, item.ArrayLength)
-		err := g.CIP.Read(item.TagName, &arr)
+		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
