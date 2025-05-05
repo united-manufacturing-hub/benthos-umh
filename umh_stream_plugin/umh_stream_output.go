@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/redpanda-data/benthos/v4/internal/message"
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
@@ -60,7 +61,29 @@ func (o *umhStreamOutput) Connect(ctx context.Context) error {
 }
 
 // Write writes the message to the output topic
-func (u *umhStreamOutput) Write(ctx context.Context, msg *service.Message) error {
+func (o *umhStreamOutput) Write(ctx context.Context, msg *service.Message) error {
+	key, err := o.topic.TryString(msg)
+	if err != nil {
+		return fmt.Errorf("failed to resolve topic field: %v", err)
+	}
+
+	o.log.Tracef("sending message with key: %s", key)
+
+	msgAsBytes, err := msg.AsBytes()
+	if err != nil {
+		return err
+	}
+
+	record := &kgo.Record{
+		Topic: defaultOutputTopic,
+		Key:   []byte(key),
+		Value: msgAsBytes,
+	}
+
+	if err := o.client.ProduceSync(ctx, record).FirstErr(); err != nil {
+		return fmt.Errorf("failed to produce message: %v", err)
+	}
+
 	return nil
 }
 
