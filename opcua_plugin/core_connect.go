@@ -438,7 +438,7 @@ func (g *OPCUAConnection) checkServerCertificateFingerprint(endpoint *ua.Endpoin
 				"Either the server's certificate was intentionally updated, or you are connecting to the wrong server.\n"+
 				"If intentional, please set the new 'serverCertificateFingerprint' in your configuration.\n"+
 				"Otherwise, double-check your security settings.",
-				endpoint.EndpointURL, g.ServerCertificateFingerprint, g.ServerCertificates[endpoint])
+				endpoint.EndpointURL, g.ServerCertificates[endpoint], g.ServerCertificateFingerprint)
 		}
 	default:
 		// Later on we might return this as an error if we want to enforce usage of
