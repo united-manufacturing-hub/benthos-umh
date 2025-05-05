@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/redpanda-data/benthos/v4/internal/message"
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
@@ -60,6 +59,38 @@ func (o *umhStreamOutput) Connect(ctx context.Context) error {
 	return nil
 }
 
+// WriteBatch implements service.BatchOutput.
+func (o *umhStreamOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) error {
+
+	records := make([]*kgo.Record, len(msgs))
+	for _, msg := range msgs {
+		key, err := o.topic.TryString(msg)
+		if err != nil {
+			return fmt.Errorf("failed to resolve topic field: %v", err)
+		}
+
+		o.log.Tracef("sending message with key: %s", key)
+
+		msgAsBytes, err := msg.AsBytes()
+		if err != nil {
+			return err
+		}
+
+		record := &kgo.Record{
+			Topic: defaultOutputTopic,
+			Key:   []byte(key),
+			Value: msgAsBytes,
+		}
+
+		records = append(records, record)
+
+	}
+	if err := o.client.ProduceSync(ctx, records...).FirstErr(); err != nil {
+		return fmt.Errorf("error while writing batch output to kafka: %v", err)
+	}
+	return nil
+}
+
 // Write writes the message to the output topic
 func (o *umhStreamOutput) Write(ctx context.Context, msg *service.Message) error {
 	key, err := o.topic.TryString(msg)
@@ -87,15 +118,23 @@ func (o *umhStreamOutput) Write(ctx context.Context, msg *service.Message) error
 	return nil
 }
 
-func newUMHStreamOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.Output, int, error) {
+func newUMHStreamOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchOutput, service.BatchPolicy, int, error) {
+	// maximum number of messages that can be in processing simultaneously before requiring acknowledgements
+	maxInFlight := 100
+
+	batchPolicy := service.BatchPolicy{
+		Count:  100,     //max number of messages per batch
+		Period: "100ms", // timeout to ensure timely delivery even if the count aren't met
+	}
+
 	topic, err := conf.FieldInterpolatedString("topic")
 	if err != nil {
-		return nil, 0, fmt.Errorf("error while parsing topic string from the config: %v", err)
+		return nil, batchPolicy, 0, fmt.Errorf("error while parsing topic string from the config: %v", err)
 	}
 
 	return &umhStreamOutput{
 		topic: topic,
 		log:   mgr.Logger(),
-	}, 0, nil
+	}, batchPolicy, maxInFlight, nil
 
 }
