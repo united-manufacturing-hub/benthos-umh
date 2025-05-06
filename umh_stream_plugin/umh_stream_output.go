@@ -169,6 +169,10 @@ func (o *umhStreamOutput) WriteBatch(ctx context.Context, msgs service.MessageBa
 			return fmt.Errorf("failed to resolve topic field: %v", err)
 		}
 
+		if key == "" {
+			return fmt.Errorf("topic key is not set in the input message. topic is mandatory for this plugin to publish messages")
+		}
+
 		o.log.Tracef("sending message with key: %s", key)
 
 		msgAsBytes, err := msg.AsBytes()
