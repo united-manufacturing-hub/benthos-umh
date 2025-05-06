@@ -27,7 +27,7 @@ func outputConfig() *service.ConfigSpec {
 
 type umhStreamOutput struct {
 	topic  *service.InterpolatedString
-	client *kgo.Client
+	client Streamer
 	log    *service.Logger
 }
 
@@ -36,6 +36,7 @@ func (o *umhStreamOutput) Close(ctx context.Context) error {
 	o.log.Infof("Attempting to close the umh_stream kafka client")
 	if o.client != nil {
 		o.client.Close()
+		o.client = nil
 	}
 	o.log.Infof("umh_stream kafka client closed successfully")
 	return nil
@@ -45,24 +46,28 @@ func (o *umhStreamOutput) Close(ctx context.Context) error {
 func (o *umhStreamOutput) Connect(ctx context.Context) error {
 	o.log.Infof("Connecting to umh core stream kafka broker: %v", defaultBrokerAddress)
 
+	if o.client == nil {
+		o.client = NewClient()
+	}
 	// Create the kafka client
-	client, err := kgo.NewClient(
+	err := o.client.Connect(
 		kgo.SeedBrokers(defaultBrokerAddress),       // bootstrap broker addresses
 		kgo.AllowAutoTopicCreation(),                // Allow creating the defaultOutputTopic if it doesn't exists
 		kgo.ClientID(defaultClientID),               // client id for all requests sent to the broker
-		kgo.ConnIdleTimeout(1*time.Hour),            // Rough amount of time to allow connections to be idle. Default value at franz-go is 20
+		kgo.ConnIdleTimeout(15*time.Minute),         // Rough amount of time to allow connections to be idle. Default value at franz-go is 20
 		kgo.DialTimeout(5*time.Second),              // Timeout while connecting to the broker. 5 second is more than enough to connect to a local broker
 		kgo.DefaultProduceTopic(defaultOutputTopic), // topic to produce messages to. The plugin writes messages only to a single default topic
 		kgo.RequiredAcks(kgo.LeaderAck()),           // Partition leader has to send acknowledment on successful write
 		kgo.MaxBufferedRecords(1000),                // Max amount of records hte client will buffer
 		kgo.ProduceRequestTimeout(5*time.Second),    // Produce Request Timeout
 		kgo.ProducerLinger(1*time.Second),           // Duration on how long individual partitons will linger waiting for more records before triggering a Produce request
+		kgo.DisableIdempotentWrite(),                // Idempotent write is disabled since the  plugin is going to communicate with a local kafka broker where one could assume less network failures. With Idempotency enabled, RequiredAcks should be from all insync replicas which will increase the latency
 	)
 	if err != nil {
 		return fmt.Errorf("error while creating a kafka client: %v", err)
 	}
 
-	o.client = client
+	// Now the client is created, let's check for the defaultOutputTopic. Create it if it doesn't exists
 	o.log.Infof("Connection to the kafka broker %s is successful", defaultBrokerAddress)
 
 	return nil
@@ -71,7 +76,7 @@ func (o *umhStreamOutput) Connect(ctx context.Context) error {
 // WriteBatch implements service.BatchOutput.
 func (o *umhStreamOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) error {
 
-	records := make([]*kgo.Record, len(msgs))
+	records := make([]Record, len(msgs))
 	for _, msg := range msgs {
 		key, err := o.topic.TryString(msg)
 		if err != nil {
@@ -85,7 +90,7 @@ func (o *umhStreamOutput) WriteBatch(ctx context.Context, msgs service.MessageBa
 			return err
 		}
 
-		record := &kgo.Record{
+		record := Record{
 			Topic: defaultOutputTopic,
 			Key:   []byte(key),
 			Value: msgAsBytes,
@@ -94,36 +99,9 @@ func (o *umhStreamOutput) WriteBatch(ctx context.Context, msgs service.MessageBa
 		records = append(records, record)
 
 	}
-	if err := o.client.ProduceSync(ctx, records...).FirstErr(); err != nil {
+	if err := o.client.ProduceSync(ctx, records); err != nil {
 		return fmt.Errorf("error while writing batch output to kafka: %v", err)
 	}
-	return nil
-}
-
-// Write writes the message to the output topic
-func (o *umhStreamOutput) Write(ctx context.Context, msg *service.Message) error {
-	key, err := o.topic.TryString(msg)
-	if err != nil {
-		return fmt.Errorf("failed to resolve topic field: %v", err)
-	}
-
-	o.log.Tracef("sending message with key: %s", key)
-
-	msgAsBytes, err := msg.AsBytes()
-	if err != nil {
-		return err
-	}
-
-	record := &kgo.Record{
-		Topic: defaultOutputTopic,
-		Key:   []byte(key),
-		Value: msgAsBytes,
-	}
-
-	if err := o.client.ProduceSync(ctx, record).FirstErr(); err != nil {
-		return fmt.Errorf("failed to produce message: %v", err)
-	}
-
 	return nil
 }
 
@@ -142,8 +120,9 @@ func newUMHStreamOutput(conf *service.ParsedConfig, mgr *service.Resources) (ser
 	}
 
 	return &umhStreamOutput{
-		topic: topic,
-		log:   mgr.Logger(),
+		client: NewClient(),
+		topic:  topic,
+		log:    mgr.Logger(),
 	}, batchPolicy, maxInFlight, nil
 
 }
