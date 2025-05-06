@@ -28,25 +28,33 @@ import (
 type TestStreamer interface {
 	// Helper methods for Mock implementation
 	IsProduceSyncCalled() bool
+	IsCreateTopicCalled() bool
 	GetRequestedProduceMessages() []Record
 	WithConnectFunc(func(...kgo.Opt) error)
 	WithCloseFunc(func() error)
 	WithProduceFunc(func(context.Context, []Record) error)
+	WithTopicExistsFunc(func(context.Context, string) (bool, int, error))
+	WithCreateTopicFunc(func(context.Context, string, int32) error)
 	Streamer
 }
 
 type ConnectFunc func(...kgo.Opt) error
 type CloseFunc func() error
 type ProduceFunc func(context.Context, []Record) error
+type TopicExistsFunc func(context.Context, string) (bool, int, error)
+type CreateTopicFunc func(context.Context, string, int32) error
 
 type MockKafkaClient struct {
 	// Mock behaviours
-	connectFunc ConnectFunc
-	closeFunc   CloseFunc
-	produceFunc ProduceFunc
+	connectFunc     ConnectFunc
+	closeFunc       CloseFunc
+	produceFunc     ProduceFunc
+	topicExistsFunc TopicExistsFunc
+	createTopicFunc CreateTopicFunc
 
 	// Fields for test observation
 	produceSyncCalled        bool
+	createTopicCalled        bool
 	requestedProduceMessages []Record
 }
 
@@ -64,8 +72,21 @@ func (m *MockKafkaClient) ProduceSync(ctx context.Context, records []Record) err
 	return m.produceFunc(ctx, records)
 }
 
+func (m *MockKafkaClient) CreateTopic(ctx context.Context, topic string, partition int32) error {
+	m.createTopicCalled = true
+	return m.createTopicFunc(ctx, topic, partition)
+}
+
+func (m *MockKafkaClient) IsTopicExists(ctx context.Context, topic string) (bool, int, error) {
+	return m.topicExistsFunc(ctx, topic)
+}
+
 func (m *MockKafkaClient) IsProduceSyncCalled() bool {
 	return m.produceSyncCalled
+}
+
+func (m *MockKafkaClient) IsCreateTopicCalled() bool {
+	return m.createTopicCalled
 }
 
 func (m *MockKafkaClient) GetRequestedProduceMessages() []Record {
@@ -84,6 +105,14 @@ func (m *MockKafkaClient) WithProduceFunc(f func(context.Context, []Record) erro
 	m.produceFunc = f
 }
 
+func (m *MockKafkaClient) WithTopicExistsFunc(f func(context.Context, string) (bool, int, error)) {
+	m.topicExistsFunc = f
+}
+
+func (m *MockKafkaClient) WithCreateTopicFunc(f func(context.Context, string, int32) error) {
+	m.createTopicFunc = f
+}
+
 var _ = Describe("Initializing UMH stream output plugin", func() {
 	var (
 		outputPlugin    service.BatchOutput
@@ -95,6 +124,8 @@ var _ = Describe("Initializing UMH stream output plugin", func() {
 	)
 
 	BeforeEach(func() {
+		// Default mock behaviours for the happy path
+		// These functions can be overridden in the following tests
 		mockClient = &MockKafkaClient{
 			connectFunc: func(...kgo.Opt) error {
 				return nil
@@ -106,6 +137,12 @@ var _ = Describe("Initializing UMH stream output plugin", func() {
 				if len(r) == 0 {
 					return errors.New("produceSync is called with empty messages list")
 				}
+				return nil
+			},
+			topicExistsFunc: func(ctx context.Context, s string) (bool, int, error) {
+				return true, 5, nil
+			},
+			createTopicFunc: func(ctx context.Context, s string, i int32) error {
 				return nil
 			},
 		}
@@ -145,6 +182,41 @@ var _ = Describe("Initializing UMH stream output plugin", func() {
 			It("should throw the error", func() {
 				err := outputPlugin.Connect(ctx)
 				Expect(err.Error()).To(BeEquivalentTo("error while creating a kafka client: mock kafka client error: no valid seedbrokers"))
+			})
+		})
+
+		When("the default output topic does not exists", func() {
+			JustBeforeEach(func() {
+				mockClient.WithTopicExistsFunc(func(ctx context.Context, s string) (bool, int, error) {
+					return false, 0, nil
+				})
+				mockClient.WithCreateTopicFunc(func(ctx context.Context, s string, i int32) error {
+					return nil
+				})
+			})
+
+			It("should create the default output topic", func() {
+				err := outputPlugin.Connect(ctx)
+				Expect(err).To(BeNil())
+
+				client, ok := umhStreamClient.client.(TestStreamer)
+				Expect(ok).To(BeTrue())
+				Expect(client.IsCreateTopicCalled()).To(BeTrue())
+
+			})
+		})
+
+		When("the default topic exists but with an unexpected partition count", func() {
+			JustBeforeEach(func() {
+				partitionCount := 15 // a number different from the expected defaultOutputTopicPartitionCount
+				mockClient.WithTopicExistsFunc(func(ctx context.Context, s string) (bool, int, error) {
+					return true, partitionCount, nil
+				})
+			})
+
+			It("should return an error regarding the partitionCount", func() {
+				err := outputPlugin.Connect(ctx)
+				Expect(err.Error()).To(BeEquivalentTo("default output topic has a mismatched partition count. required partition count: 5, actual partition count: 15"))
 			})
 		})
 	})

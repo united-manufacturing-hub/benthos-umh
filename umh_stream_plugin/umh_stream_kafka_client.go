@@ -17,7 +17,9 @@ package umhstreamplugin
 import (
 	"context"
 	"errors"
+	"fmt"
 
+	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
@@ -31,15 +33,26 @@ type Producer interface {
 	ProduceSync(context.Context, []Record) error
 }
 
+type Admin interface {
+	// IsTopicExists checks if a topic exists in the broker and returns a boolean value. If the topic exists, then its partition count is returned as the second value. If the topic is missing, the partition count will be 0
+	IsTopicExists(context.Context, string) (bool, int, error)
+	// CreateTopic create a topic in the broker
+	// Second argument is the topic name
+	// Third argument int32 is the number of partitions
+	CreateTopic(context.Context, string, int32) error
+}
+
 type Streamer interface {
 	Connect(...kgo.Opt) error
 	Close() error
 	Producer
+	Admin
 }
 
 // Client is a wrapper for franz-go kafka client
 type Client struct {
-	client *kgo.Client
+	client      *kgo.Client
+	adminClient *kadm.Client
 }
 
 // NewClient initializes the franz-go client
@@ -54,6 +67,8 @@ func (k *Client) Connect(opts ...kgo.Opt) error {
 	if err != nil {
 		return err
 	}
+
+	k.adminClient = kadm.NewClient(k.client)
 	return nil
 }
 
@@ -84,4 +99,42 @@ func (k *Client) ProduceSync(ctx context.Context, records []Record) error {
 	}
 
 	return k.client.ProduceSync(ctx, kgoRecords...).FirstErr()
+}
+
+func (k *Client) IsTopicExists(ctx context.Context, topic string) (bool, int, error) {
+	topics, err := k.adminClient.ListTopics(ctx)
+	if err != nil {
+		return false, 0, err
+	}
+
+	for _, t := range topics {
+		if t.Topic == topic {
+			return true, len(t.Partitions.Numbers()), nil
+		}
+	}
+
+	return false, 0, nil
+}
+
+func (k *Client) CreateTopic(ctx context.Context, topic string, partition int32) error {
+	if partition < 1 {
+		return fmt.Errorf("Invalid partition %d specified to create a topic", partition)
+	}
+
+	if topic == "" {
+		return errors.New("empty topic name specified for topic creation")
+	}
+
+	//Since the plugin is going to communicate with the local broker, replication factor of 1 is a good default value
+	replicationFactor := 1
+	resp, err := k.adminClient.CreateTopic(ctx, partition, int16(replicationFactor), nil, topic)
+	if err != nil {
+		return err
+	}
+
+	if resp.Err != nil {
+		return resp.Err
+	}
+
+	return nil
 }
