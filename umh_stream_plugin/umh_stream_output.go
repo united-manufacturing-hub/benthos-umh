@@ -31,6 +31,32 @@ type umhStreamOutput struct {
 	log    *service.Logger
 }
 
+func newUMHStreamOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchOutput, service.BatchPolicy, int, error) {
+	// maximum number of messages that can be in processing simultaneously before requiring acknowledgements
+	maxInFlight := 100
+
+	batchPolicy := service.BatchPolicy{
+		Count:  100,     //max number of messages per batch
+		Period: "100ms", // timeout to ensure timely delivery even if the count aren't met
+	}
+
+	topic, err := conf.FieldInterpolatedString("topic")
+	if err != nil {
+		return nil, batchPolicy, 0, fmt.Errorf("error while parsing topic string from the config: %v", err)
+	}
+
+	return newUMHStreamOutputWithClient(NewClient(), topic, mgr.Logger()), batchPolicy, maxInFlight, nil
+}
+
+// Testable constructor that accepts client
+func newUMHStreamOutputWithClient(client Streamer, topic *service.InterpolatedString, logger *service.Logger) service.BatchOutput {
+	return &umhStreamOutput{
+		client: client,
+		topic:  topic,
+		log:    logger,
+	}
+}
+
 // Close closes the underlying kafka client
 func (o *umhStreamOutput) Close(ctx context.Context) error {
 	o.log.Infof("Attempting to close the umh_stream kafka client")
@@ -76,7 +102,7 @@ func (o *umhStreamOutput) Connect(ctx context.Context) error {
 // WriteBatch implements service.BatchOutput.
 func (o *umhStreamOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) error {
 
-	records := make([]Record, len(msgs))
+	records := make([]Record, 0, len(msgs))
 	for _, msg := range msgs {
 		key, err := o.topic.TryString(msg)
 		if err != nil {
@@ -103,26 +129,4 @@ func (o *umhStreamOutput) WriteBatch(ctx context.Context, msgs service.MessageBa
 		return fmt.Errorf("error while writing batch output to kafka: %v", err)
 	}
 	return nil
-}
-
-func newUMHStreamOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchOutput, service.BatchPolicy, int, error) {
-	// maximum number of messages that can be in processing simultaneously before requiring acknowledgements
-	maxInFlight := 100
-
-	batchPolicy := service.BatchPolicy{
-		Count:  100,     //max number of messages per batch
-		Period: "100ms", // timeout to ensure timely delivery even if the count aren't met
-	}
-
-	topic, err := conf.FieldInterpolatedString("topic")
-	if err != nil {
-		return nil, batchPolicy, 0, fmt.Errorf("error while parsing topic string from the config: %v", err)
-	}
-
-	return &umhStreamOutput{
-		client: NewClient(),
-		topic:  topic,
-		log:    mgr.Logger(),
-	}, batchPolicy, maxInFlight, nil
-
 }
