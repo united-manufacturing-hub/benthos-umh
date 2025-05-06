@@ -24,9 +24,10 @@ import (
 )
 
 const (
-	defaultOutputTopic   = "umh.v1.messages"
-	defaultBrokerAddress = "localhost:9092"
-	defaultClientID      = "umh_core"
+	defaultOutputTopic               = "umh.v1.messages"
+	defaultOutputTopicPartitionCount = 5
+	defaultBrokerAddress             = "localhost:9092"
+	defaultClientID                  = "umh_core"
 )
 
 func outputConfig() *service.ConfigSpec {
@@ -108,6 +109,24 @@ func (o *umhStreamOutput) Connect(ctx context.Context) error {
 	}
 
 	// Now the client is created, let's check for the defaultOutputTopic. Create it if it doesn't exists
+	topicExists, partition, err := o.client.IsTopicExists(ctx, defaultOutputTopic)
+	if err != nil {
+		return fmt.Errorf("error while checking if the default output topic exists: %v", err)
+	}
+
+	if topicExists && (partition != defaultOutputTopicPartitionCount) {
+		// DefaultOutputTopic exists but the partition count mismatches with what is needed. This happens if the topic is created manually without proper partition specified
+		return fmt.Errorf("default output topic has a mismatched partition count. required partition count: %d, actual partition count: %d", defaultOutputTopicPartitionCount, partition)
+	}
+
+	if !topicExists {
+		// Default output topic doesn't exists. Create it
+		err = o.client.CreateTopic(ctx, defaultOutputTopic, defaultOutputTopicPartitionCount)
+		if err != nil {
+			return fmt.Errorf("error while creating the missing default output topic: %v, err: %v", defaultOutputTopic, err)
+		}
+	}
+
 	o.log.Infof("Connection to the kafka broker %s is successful", defaultBrokerAddress)
 
 	return nil
