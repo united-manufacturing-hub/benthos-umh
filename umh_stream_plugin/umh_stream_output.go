@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package umhstreamplugin
+package umh_stream_plugin
 
 import (
 	"context"
@@ -28,16 +28,43 @@ const (
 	defaultOutputTopicPartitionCount = 5
 	defaultBrokerAddress             = "localhost:9092"
 	defaultClientID                  = "umh_core"
+	keyTemplateName                  = "topic" // this is the name of the field that should be parsed from each message and set as output message key
 )
 
 func outputConfig() *service.ConfigSpec {
 	return service.NewConfigSpec().
-		Summary("Writes to the local kafka topic, setting each message's key based on the given topic variable").
-		Description("Sends messages to the umh core kafka topic with specified key").
+		Summary("Writes messages to the UMH platform's Kafka messaging system").
+		Description(`
+The umh_stream output sends messages to the United Manufacturing Hub's Kafka messaging system.
+This output is optimized for communication with UMH core components and handles the complexities
+of Kafka configuration for you.
+
+All messages are written to a single topic (umh.v1.messages), with the key of each message
+derived from the 'topic' field specified in this configuration. This key is crucial for
+proper routing within the UMH ecosystem.
+
+By default, the plugin connects to a Kafka broker at localhost:9092 with client ID 'umh_core',
+which is suitable for most UMH deployments. These defaults work with the standard UMH
+installation where Kafka runs alongside other services.
+
+Note: This output implements batch writing to Kafka for improved performance.`).
 		Field(service.NewInterpolatedStringField("topic").
-			Description("key to use when sending messages to the output topic. Supports interpolation.").
+			Description(`
+Key used when sending messages to the UMH output topic. This value becomes the Kafka message key,
+which determines how messages are routed within the UMH ecosystem.
+
+The topic should follow the UMH naming convention: enterprise.site.area.tag
+(e.g., 'acme.berlin.assembly.temperature')
+
+This field supports interpolation, allowing you to set the key dynamically based on message
+content or metadata. Common patterns include:
+- Using metadata: ${! meta("topic") }
+- Using content: ${! json("device.location") }
+- Using a static value: enterprise.site.area.tag
+            `).
 			Example("${! meta(\"topic\") }").
-			Example("enterprise.site.area_historian"))
+			Example("enterprise.site.area.historian").
+			Default("default.umh.message"))
 }
 
 type umhStreamOutput struct {
@@ -55,7 +82,7 @@ func newUMHStreamOutput(conf *service.ParsedConfig, mgr *service.Resources) (ser
 		Period: "100ms", // timeout to ensure timely delivery even if the count aren't met
 	}
 
-	topic, err := conf.FieldInterpolatedString("topic")
+	topic, err := conf.FieldInterpolatedString(keyTemplateName)
 	if err != nil {
 		return nil, batchPolicy, 0, fmt.Errorf("error while parsing topic string from the config: %v", err)
 	}
