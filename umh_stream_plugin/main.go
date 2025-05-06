@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package umhstreamplugin
+package umh_stream_plugin
 
 import "github.com/redpanda-data/benthos/v4/public/service"
 
-func main() {
+func init() {
 	service.RegisterBatchOutput("umh_stream", outputConfig(), newUMHStreamOutput)
 }
