@@ -1,0 +1,15 @@
+input:
+  kafka_franz:
+    seed_brokers: ["localhost:9092"]
+    topics: ["umh.v1.berlin.xyz"]
+    consumer_group: "umh_core"
+
+pipeline:
+  processors:
+    - bloblang: |
+        root = this
+        root.topic = meta("kafka_topic")
+output:
+  umh_stream:
+    topic: "${! meta(\"topic\") }"
+
