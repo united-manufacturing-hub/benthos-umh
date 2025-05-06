@@ -29,30 +29,39 @@ type TestStreamer interface {
 	// Helper methods for Mock implementation
 	IsProduceSyncCalled() bool
 	GetRequestedProduceMessages() []Record
+	WithConnectFunc(func(...kgo.Opt) error)
+	WithCloseFunc(func() error)
+	WithProduceFunc(func(context.Context, []Record) error)
 	Streamer
 }
 
+type ConnectFunc func(...kgo.Opt) error
+type CloseFunc func() error
+type ProduceFunc func(context.Context, []Record) error
+
 type MockKafkaClient struct {
+	// Mock behaviours
+	connectFunc ConnectFunc
+	closeFunc   CloseFunc
+	produceFunc ProduceFunc
+
+	// Fields for test observation
 	produceSyncCalled        bool
 	requestedProduceMessages []Record
 }
 
 func (m *MockKafkaClient) Connect(...kgo.Opt) error {
-	return nil
+	return m.connectFunc()
 }
 
 func (m *MockKafkaClient) Close() error {
-	return nil
-	// return errors.New("attempting to close an nil kafka client")
+	return m.closeFunc()
 }
 
 func (m *MockKafkaClient) ProduceSync(ctx context.Context, records []Record) error {
-	if len(records) == 0 {
-		return errors.New("produceSync is called with empty messages list")
-	}
 	m.produceSyncCalled = true
 	m.requestedProduceMessages = records
-	return nil
+	return m.produceFunc(ctx, records)
 }
 
 func (m *MockKafkaClient) IsProduceSyncCalled() bool {
@@ -61,6 +70,18 @@ func (m *MockKafkaClient) IsProduceSyncCalled() bool {
 
 func (m *MockKafkaClient) GetRequestedProduceMessages() []Record {
 	return m.requestedProduceMessages
+}
+
+func (m *MockKafkaClient) WithConnectFunc(f func(...kgo.Opt) error) {
+	m.connectFunc = f
+}
+
+func (m *MockKafkaClient) WithCloseFunc(f func() error) {
+	m.closeFunc = f
+}
+
+func (m *MockKafkaClient) WithProduceFunc(f func(context.Context, []Record) error) {
+	m.produceFunc = f
 }
 
 var _ = Describe("Initializing UMH stream output plugin", func() {
@@ -74,7 +95,21 @@ var _ = Describe("Initializing UMH stream output plugin", func() {
 	)
 
 	BeforeEach(func() {
-		mockClient = &MockKafkaClient{}
+		mockClient = &MockKafkaClient{
+			connectFunc: func(...kgo.Opt) error {
+				return nil
+			},
+			closeFunc: func() error {
+				return nil
+			},
+			produceFunc: func(ctx context.Context, r []Record) error {
+				if len(r) == 0 {
+					return errors.New("produceSync is called with empty messages list")
+				}
+				return nil
+			},
+		}
+
 		topicKey, _ = service.NewInterpolatedString("topic")
 		outputPlugin = newUMHStreamOutputWithClient(mockClient, topicKey, nil)
 		umhStreamClient = outputPlugin.(*umhStreamOutput)
@@ -96,10 +131,21 @@ var _ = Describe("Initializing UMH stream output plugin", func() {
 
 	Context("calling Connect function", func() {
 		It("should initialize the kafka client", func() {
-			// client should be nil before connecting
 			err := outputPlugin.Connect(ctx)
 			Expect(err).To(BeNil())
 			Expect(umhStreamClient.client).NotTo(BeNil())
+		})
+
+		When("the internal kafka client throws error", func() {
+			JustBeforeEach(func() {
+				mockClient.WithConnectFunc(func(o ...kgo.Opt) error {
+					return errors.New("mock kafka client error: no valid seedbrokers")
+				})
+			})
+			It("should throw the error", func() {
+				err := outputPlugin.Connect(ctx)
+				Expect(err.Error()).To(BeEquivalentTo("error while creating a kafka client: mock kafka client error: no valid seedbrokers"))
+			})
 		})
 	})
 
@@ -112,19 +158,22 @@ var _ = Describe("Initializing UMH stream output plugin", func() {
 			Expect(err).To(BeNil())
 			Expect(umhStreamClient.client).To(BeNil())
 		})
+
 	})
 
 	Context("calling WriteBatch function", func() {
+		JustBeforeEach(func() {
+			// Lets group all the Connect calls
+			_ = outputPlugin.Connect(ctx)
+		})
 		When("with empty list of message", func() {
 			It("should throw error about empty message list", func() {
-				_ = outputPlugin.Connect(ctx)
 				err := outputPlugin.WriteBatch(ctx, nil)
 				Expect(err.Error()).To(BeEquivalentTo("error while writing batch output to kafka: produceSync is called with empty messages list"))
 			})
 		})
 		When("with list of messages", func() {
 			It("should call produceSync internally with the given list of messages", func() {
-				_ = outputPlugin.Connect(ctx)
 				var msgs service.MessageBatch
 				for range 10 {
 					msg := service.NewMessage(nil)
@@ -143,6 +192,29 @@ var _ = Describe("Initializing UMH stream output plugin", func() {
 				Expect(produceFuncCalled).To(BeTrue())
 				messages := client.GetRequestedProduceMessages()
 				Expect(len(messages)).To(BeNumerically("==", 10))
+			})
+		})
+
+		When("the internal kafka client throws a produce error", func() {
+			// Mock the Producefunc with an error
+			JustBeforeEach(func() {
+				mockClient.WithProduceFunc(func(ctx context.Context, r []Record) error {
+					return errors.New("leader partition not found")
+				})
+			})
+
+			It("should throw an error", func() {
+				var msgs service.MessageBatch
+				for range 10 {
+					msg := service.NewMessage(nil)
+					msg.MetaSet("topic", "umh.v1.messages")
+					msg.SetStructured(map[string]any{
+						"value": "mock message",
+					})
+					msgs = append(msgs, msg)
+				}
+				err := outputPlugin.WriteBatch(ctx, msgs)
+				Expect(err.Error()).To(BeEquivalentTo("error while writing batch output to kafka: leader partition not found"))
 			})
 		})
 	})
