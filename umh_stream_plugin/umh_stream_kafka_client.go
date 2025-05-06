@@ -83,12 +83,11 @@ func (k *Client) Close() error {
 
 // ProduceSync produces a message batch to kafka
 func (k *Client) ProduceSync(ctx context.Context, records []Record) error {
-
 	if k.client == nil {
 		return errors.New("attempt to produce using a nil kafka client")
 	}
 
-	kgoRecords := make([]*kgo.Record, len(records))
+	kgoRecords := make([]*kgo.Record, 0, len(records))
 	for _, r := range records {
 		kgoRecord := &kgo.Record{
 			Topic: r.Topic,
@@ -127,7 +126,11 @@ func (k *Client) CreateTopic(ctx context.Context, topic string, partition int32)
 
 	//Since the plugin is going to communicate with the local broker, replication factor of 1 is a good default value
 	replicationFactor := 1
-	resp, err := k.adminClient.CreateTopic(ctx, partition, int16(replicationFactor), nil, topic)
+	cleanupPolicy := "compact,delete"
+	configs := map[string]*string{
+		"cleanup.policy": &cleanupPolicy,
+	}
+	resp, err := k.adminClient.CreateTopic(ctx, partition, int16(replicationFactor), configs, topic)
 	if err != nil {
 		return err
 	}
