@@ -12,16 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package umh_stream_plugin
+package uns_plugin
 
-import (
-	"testing"
+import "github.com/redpanda-data/benthos/v4/public/service"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-)
-
-func TestUmhStreamPlugin(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "UmhStreamPlugin Suite")
+func init() {
+	service.RegisterBatchOutput("uns", outputConfig(), newUMHStreamOutput)
 }
