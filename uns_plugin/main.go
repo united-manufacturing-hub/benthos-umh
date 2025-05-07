@@ -17,5 +17,5 @@ package uns_plugin
 import "github.com/redpanda-data/benthos/v4/public/service"
 
 func init() {
-	service.RegisterBatchOutput("uns", outputConfig(), newUMHStreamOutput)
+	service.RegisterBatchOutput("uns", outputConfig(), newUnsOutput)
 }

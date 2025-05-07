@@ -68,13 +68,13 @@ content or metadata. Common patterns include:
 			Default("${! meta(\"topic\") }"))
 }
 
-type umhStreamOutput struct {
+type unsOutput struct {
 	topic  *service.InterpolatedString
-	client Streamer
+	client MessagePublisher
 	log    *service.Logger
 }
 
-func newUMHStreamOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchOutput, service.BatchPolicy, int, error) {
+func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchOutput, service.BatchPolicy, int, error) {
 	// maximum number of messages that can be in processing simultaneously before requiring acknowledgements
 	maxInFlight := 100
 
@@ -88,12 +88,12 @@ func newUMHStreamOutput(conf *service.ParsedConfig, mgr *service.Resources) (ser
 		return nil, batchPolicy, 0, fmt.Errorf("error while parsing topic string from the config: %v", err)
 	}
 
-	return newUMHStreamOutputWithClient(NewClient(), topic, mgr.Logger()), batchPolicy, maxInFlight, nil
+	return newUnsOutputWithClient(NewClient(), topic, mgr.Logger()), batchPolicy, maxInFlight, nil
 }
 
 // Testable constructor that accepts client
-func newUMHStreamOutputWithClient(client Streamer, topic *service.InterpolatedString, logger *service.Logger) service.BatchOutput {
-	return &umhStreamOutput{
+func newUnsOutputWithClient(client MessagePublisher, topic *service.InterpolatedString, logger *service.Logger) service.BatchOutput {
+	return &unsOutput{
 		client: client,
 		topic:  topic,
 		log:    logger,
@@ -101,7 +101,7 @@ func newUMHStreamOutputWithClient(client Streamer, topic *service.InterpolatedSt
 }
 
 // Close closes the underlying kafka client
-func (o *umhStreamOutput) Close(ctx context.Context) error {
+func (o *unsOutput) Close(ctx context.Context) error {
 	o.log.Infof("Attempting to close the uns kafka client")
 	if o.client != nil {
 		o.client.Close()
@@ -112,7 +112,7 @@ func (o *umhStreamOutput) Close(ctx context.Context) error {
 }
 
 // Connect initializes the kafka client
-func (o *umhStreamOutput) Connect(ctx context.Context) error {
+func (o *unsOutput) Connect(ctx context.Context) error {
 	o.log.Infof("Connecting to umh core stream kafka broker: %v", defaultBrokerAddress)
 
 	if o.client == nil {
@@ -161,7 +161,7 @@ func (o *umhStreamOutput) Connect(ctx context.Context) error {
 }
 
 // WriteBatch implements service.BatchOutput.
-func (o *umhStreamOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) error {
+func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) error {
 
 	records := make([]Record, 0, len(msgs))
 	for _, msg := range msgs {

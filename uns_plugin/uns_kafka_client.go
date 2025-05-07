@@ -43,7 +43,7 @@ type Admin interface {
 	CreateTopic(context.Context, string, int32) error
 }
 
-type Streamer interface {
+type MessagePublisher interface {
 	Connect(...kgo.Opt) error
 	Close() error
 	Producer
@@ -57,7 +57,7 @@ type Client struct {
 }
 
 // NewClient initializes the franz-go client
-func NewClient() Streamer {
+func NewClient() MessagePublisher {
 	return &Client{}
 }
 
