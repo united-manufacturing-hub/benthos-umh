@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -29,7 +30,6 @@ const (
 	defaultOutputTopicPartitionCount = 5
 	defaultBrokerAddress             = "localhost:9092"
 	defaultClientID                  = "umh_core"
-	keyTemplateName                  = "${! meta(\"topic\") }" // this is the name of the field that should be parsed from each message and set as output message key
 )
 
 func outputConfig() *service.ConfigSpec {
@@ -65,13 +65,19 @@ content or metadata. Common patterns include:
             `).
 			Example("${! meta(\"topic\") }").
 			Example("enterprise.site.area.historian").
-			Default("default.umh.message"))
+			Default("${! meta(\"topic\") }")).
+		Field(service.NewInterpolatedStringField("bridged_by").
+			Description(`bridged_by is the metadata field set by the umh protocol converters`).
+			Example("${! meta(\"bridged_by\")}").
+			Example("mqtt-kafka-bridge").
+			Default("${! meta(\"bridged_by\")}"))
 }
 
 type umhStreamOutput struct {
-	topic  *service.InterpolatedString
-	client Streamer
-	log    *service.Logger
+	bridgedBy *service.InterpolatedString
+	topic     *service.InterpolatedString
+	client    Streamer
+	log       *service.Logger
 }
 
 func newUMHStreamOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchOutput, service.BatchPolicy, int, error) {
@@ -83,20 +89,26 @@ func newUMHStreamOutput(conf *service.ParsedConfig, mgr *service.Resources) (ser
 		Period: "100ms", // timeout to ensure timely delivery even if the count aren't met
 	}
 
-	topic, err := service.NewInterpolatedString(keyTemplateName)
+	topic, err := conf.FieldInterpolatedString("topic")
 	if err != nil {
 		return nil, batchPolicy, 0, fmt.Errorf("error while parsing topic string from the config: %v", err)
 	}
 
-	return newUMHStreamOutputWithClient(NewClient(), topic, mgr.Logger()), batchPolicy, maxInFlight, nil
+	bridgedBy, err := conf.FieldInterpolatedString("bridged_by")
+	if err != nil {
+		return nil, batchPolicy, 0, fmt.Errorf("error while parsing bridgedBy string from the config: %v", err)
+	}
+
+	return newUMHStreamOutputWithClient(NewClient(), topic, bridgedBy, mgr.Logger()), batchPolicy, maxInFlight, nil
 }
 
 // Testable constructor that accepts client
-func newUMHStreamOutputWithClient(client Streamer, topic *service.InterpolatedString, logger *service.Logger) service.BatchOutput {
+func newUMHStreamOutputWithClient(client Streamer, topic *service.InterpolatedString, bridgedBy *service.InterpolatedString, logger *service.Logger) service.BatchOutput {
 	return &umhStreamOutput{
-		client: client,
-		topic:  topic,
-		log:    logger,
+		client:    client,
+		topic:     topic,
+		log:       logger,
+		bridgedBy: bridgedBy,
 	}
 }
 
@@ -182,15 +194,36 @@ func (o *umhStreamOutput) WriteBatch(ctx context.Context, msgs service.MessageBa
 
 		o.log.Tracef("sending message with key: %s", sanitizedKey)
 
+		headers := make(map[string][]byte)
+		// Optional field bridgedBy. Not an error if the field is missing
+		bridgedBy, _ := o.bridgedBy.TryString(msg)
+
+		if bridgedBy != "" && bridgedBy != "null" {
+			headers["bridged_by"] = []byte(bridgedBy)
+		}
+
+		// Preserve all the meta fields from the input message except the ones starting with the `kafka_` prefix
+		err = msg.MetaWalk(func(key, value string) error {
+			if strings.HasPrefix(key, "kafka_") {
+				return nil
+			}
+			headers[key] = []byte(value)
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("error while setting the metadata as the message header: %v", err)
+		}
+
 		msgAsBytes, err := msg.AsBytes()
 		if err != nil {
 			return err
 		}
 
 		record := Record{
-			Topic: defaultOutputTopic,
-			Key:   []byte(sanitizedKey),
-			Value: msgAsBytes,
+			Topic:   defaultOutputTopic,
+			Key:     []byte(sanitizedKey),
+			Value:   msgAsBytes,
+			Headers: headers,
 		}
 
 		records = append(records, record)
