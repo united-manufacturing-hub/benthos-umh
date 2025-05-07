@@ -147,8 +147,7 @@ var _ = Describe("Initializing UMH stream output plugin", func() {
 		}
 
 		topicKey, _ := service.NewInterpolatedString("${! meta(\"topic\") }")
-		bridgedByKey, _ := service.NewInterpolatedString("${! meta(\"bridged_by\") }")
-		outputPlugin = newUMHStreamOutputWithClient(mockClient, topicKey, bridgedByKey, nil)
+		outputPlugin = newUMHStreamOutputWithClient(mockClient, topicKey, nil)
 		umhStreamClient = outputPlugin.(*umhStreamOutput)
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	})
