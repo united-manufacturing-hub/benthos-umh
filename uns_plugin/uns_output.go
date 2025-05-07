@@ -26,8 +26,8 @@ import (
 )
 
 const (
-	defaultOutputTopic               = "umh.v1.messages" // by the current state, the output topic must not be changed for this plugin
-	defaultOutputTopicPartitionCount = 5
+	defaultOutputTopic               = "umh.v2.messages" // by the current state, the output topic must not be changed for this plugin
+	defaultOutputTopicPartitionCount = 1
 	defaultBrokerAddress             = "localhost:9092"
 	defaultClientID                  = "umh_core"
 )
@@ -40,7 +40,7 @@ The uns_plugin output sends messages to the United Manufacturing Hub's Kafka mes
 This output is optimized for communication with UMH core components and handles the complexities
 of Kafka configuration for you.
 
-All messages are written to a single topic (umh.v1.messages), with the key of each message
+All messages are written to a single topic (umh.v2.messages), with the key of each message
 derived from the 'topic' field specified in this configuration. This key is crucial for
 proper routing within the UMH ecosystem.
 
@@ -163,6 +163,7 @@ func (o *unsOutput) Connect(ctx context.Context) error {
 // WriteBatch implements service.BatchOutput.
 func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) error {
 
+	topicNameSanitizer := regexp.MustCompile(`[^a-zA-Z0-9\._\-]`)
 	records := make([]Record, 0, len(msgs))
 	for _, msg := range msgs {
 		key, err := o.topic.TryString(msg)
@@ -177,8 +178,7 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 
 		// Topic key should not contain characters other than a-zA-z0-9,dot,hypen and underscore
 		// If present replace them with an underscore
-		re := regexp.MustCompile(`[^a-zA-Z0-9\._\-]`)
-		sanitizedKey := re.ReplaceAllString(key, "_")
+		sanitizedKey := topicNameSanitizer.ReplaceAllString(key, "_")
 
 		o.log.Tracef("sending message with key: %s", sanitizedKey)
 
