@@ -289,7 +289,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 				var msgs service.MessageBatch
 				for range 10 {
 					msg := service.NewMessage(nil)
-					msg.MetaSet("topic", "umh.v1.messages")
+					msg.MetaSet("topic", "umh.v2.messages")
 					msg.SetStructured(map[string]any{
 						"value": "mock message",
 					})
