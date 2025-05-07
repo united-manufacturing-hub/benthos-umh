@@ -139,15 +139,15 @@ var _ = Describe("Initializing uns output plugin", func() {
 				return nil
 			},
 			topicExistsFunc: func(ctx context.Context, s string) (bool, int, error) {
-				return true, 5, nil
+				return true, 1, nil
 			},
 			createTopicFunc: func(ctx context.Context, s string, i int32) error {
 				return nil
 			},
 		}
 
-		topicKey, _ := service.NewInterpolatedString("${! meta(\"topic\") }")
-		outputPlugin = newUnsOutputWithClient(mockClient, topicKey, nil)
+		messageKey, _ := service.NewInterpolatedString("${! meta(\"kafka_topic\") }")
+		outputPlugin = newUnsOutputWithClient(mockClient, messageKey, nil)
 		unsClient = outputPlugin.(*unsOutput)
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	})
@@ -215,7 +215,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 
 			It("should return an error regarding the partitionCount", func() {
 				err := outputPlugin.Connect(ctx)
-				Expect(err.Error()).To(BeEquivalentTo("default output topic has a mismatched partition count. required partition count: 5, actual partition count: 15"))
+				Expect(err.Error()).To(BeEquivalentTo("default output topic has a mismatched partition count. required partition count: 1, actual partition count: 15"))
 			})
 		})
 	})
@@ -248,7 +248,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 				var msgs service.MessageBatch
 				for range 10 {
 					msg := service.NewMessage([]byte(`{"data": "test"}`))
-					msg.MetaSet("topic", "umh.v1.abc")
+					msg.MetaSet("kafka_topic", "umh.v1.abc")
 					msgs = append(msgs, msg)
 				}
 				err := outputPlugin.WriteBatch(ctx, msgs)
@@ -268,12 +268,12 @@ var _ = Describe("Initializing uns output plugin", func() {
 			})
 
 			It("should throw an error if the message does not have a topic key is missing", Label("test"), func() {
-				// The meta key topic is not set
+				// The meta key kafka_topic is not set
 				msg := service.NewMessage([]byte(`{"data": "test"}`))
 				msgs := service.MessageBatch{msg}
 				err := outputPlugin.WriteBatch(ctx, msgs)
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("topic key is not set"))
+				Expect(err.Error()).To(ContainSubstring("message key is not set in the input message. message key is mandatory for this plugin to publish messages"))
 			})
 		})
 
@@ -289,7 +289,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 				var msgs service.MessageBatch
 				for range 10 {
 					msg := service.NewMessage(nil)
-					msg.MetaSet("topic", "umh.v2.messages")
+					msg.MetaSet("kafka_topic", "umh.v2.messages")
 					msg.SetStructured(map[string]any{
 						"value": "mock message",
 					})
