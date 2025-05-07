@@ -2,7 +2,7 @@ input:
   kafka_franz:
     seed_brokers: ["localhost:9092"]
     topics: ["umh.v1.berlin.xyz"]
-    consumer_group: "cg3"
+    consumer_group: "cg-test-2"
 
 pipeline:
   processors:
@@ -12,7 +12,10 @@ pipeline:
           "foo": "bar"
         }
         meta topic = meta("kafka_topic")
-        meta bridge_by = "kafka-kafka-connector"
+        meta bridged_by = "kafka-kafka-connector"
+        meta author = "athavan"
+        meta team = "umh-dev"
+        meta kafka_topic = meta("kafka_topic")
 output:
   uns:
     topic: "${! meta(\"topic\") }"

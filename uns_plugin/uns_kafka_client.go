@@ -24,9 +24,10 @@ import (
 )
 
 type Record struct {
-	Topic string
-	Key   []byte
-	Value []byte
+	Topic   string
+	Key     []byte
+	Value   []byte
+	Headers map[string][]byte
 }
 
 type Producer interface {
@@ -94,6 +95,19 @@ func (k *Client) ProduceSync(ctx context.Context, records []Record) error {
 			Key:   r.Key,
 			Value: r.Value,
 		}
+
+		if len(r.Headers) > 0 {
+			recordHeaders := make([]kgo.RecordHeader, 0, len(r.Headers))
+			for k, v := range r.Headers {
+				header := kgo.RecordHeader{
+					Key:   k,
+					Value: v,
+				}
+				recordHeaders = append(recordHeaders, header)
+			}
+			kgoRecord.Headers = recordHeaders
+		}
+
 		kgoRecords = append(kgoRecords, kgoRecord)
 	}
 
