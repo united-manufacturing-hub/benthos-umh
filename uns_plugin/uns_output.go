@@ -41,7 +41,7 @@ This output is optimized for communication with UMH core components and handles 
 of Kafka configuration for you.
 
 All messages are written to a single topic (umh.v2.messages), with the key of each message
-derived from the 'topic' field specified in this configuration. This key is crucial for
+derived from the 'messageKey' field specified in this configuration. This key is crucial for
 proper routing within the UMH ecosystem.
 
 By default, the plugin connects to a Kafka broker at localhost:9092 with client ID 'umh_core',
@@ -49,12 +49,12 @@ which is suitable for most UMH deployments. These defaults work with the standar
 installation where Kafka runs alongside other services.
 
 Note: This output implements batch writing to Kafka for improved performance.`).
-		Field(service.NewInterpolatedStringField("topic").
+		Field(service.NewInterpolatedStringField("message_key").
 			Description(`
 Key used when sending messages to the UMH output topic. This value becomes the Kafka message key,
 which determines how messages are routed within the UMH ecosystem.
 
-The topic should follow the UMH naming convention: enterprise.site.area.tag
+The message_key should follow the UMH naming convention: enterprise.site.area.tag
 (e.g., 'acme.berlin.assembly.temperature')
 
 This field supports interpolation, allowing you to set the key dynamically based on message
@@ -65,13 +65,13 @@ content or metadata. Common patterns include:
             `).
 			Example("${! meta(\"topic\") }").
 			Example("enterprise.site.area.historian").
-			Default("${! meta(\"topic\") }"))
+			Default("${! meta(\"kafka_topic\") }"))
 }
 
 type unsOutput struct {
-	topic  *service.InterpolatedString
-	client MessagePublisher
-	log    *service.Logger
+	messageKey *service.InterpolatedString
+	client     MessagePublisher
+	log        *service.Logger
 }
 
 func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchOutput, service.BatchPolicy, int, error) {
@@ -83,20 +83,20 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 		Period: "100ms", // timeout to ensure timely delivery even if the count aren't met
 	}
 
-	topic, err := conf.FieldInterpolatedString("topic")
+	messageKey, err := conf.FieldInterpolatedString("message_key")
 	if err != nil {
-		return nil, batchPolicy, 0, fmt.Errorf("error while parsing topic string from the config: %v", err)
+		return nil, batchPolicy, 0, fmt.Errorf("error while parsing message_key string from the config: %v", err)
 	}
 
-	return newUnsOutputWithClient(NewClient(), topic, mgr.Logger()), batchPolicy, maxInFlight, nil
+	return newUnsOutputWithClient(NewClient(), messageKey, mgr.Logger()), batchPolicy, maxInFlight, nil
 }
 
 // Testable constructor that accepts client
-func newUnsOutputWithClient(client MessagePublisher, topic *service.InterpolatedString, logger *service.Logger) service.BatchOutput {
+func newUnsOutputWithClient(client MessagePublisher, messageKey *service.InterpolatedString, logger *service.Logger) service.BatchOutput {
 	return &unsOutput{
-		client: client,
-		topic:  topic,
-		log:    logger,
+		client:     client,
+		messageKey: messageKey,
+		log:        logger,
 	}
 }
 
@@ -163,22 +163,22 @@ func (o *unsOutput) Connect(ctx context.Context) error {
 // WriteBatch implements service.BatchOutput.
 func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) error {
 
-	topicNameSanitizer := regexp.MustCompile(`[^a-zA-Z0-9\._\-]`)
+	messageKeySanitizer := regexp.MustCompile(`[^a-zA-Z0-9\._\-]`)
 	records := make([]Record, 0, len(msgs))
 	for _, msg := range msgs {
-		key, err := o.topic.TryString(msg)
+		key, err := o.messageKey.TryString(msg)
 		if err != nil {
 			return fmt.Errorf("failed to resolve topic field: %v", err)
 		}
 
 		// TryString sets the key to "null" when the key is not set in the message
 		if key == "" || key == "null" {
-			return fmt.Errorf("topic key is not set in the input message. topic is mandatory for this plugin to publish messages")
+			return fmt.Errorf("message key is not set in the input message. message key is mandatory for this plugin to publish messages")
 		}
 
 		// Topic key should not contain characters other than a-zA-z0-9,dot,hypen and underscore
 		// If present replace them with an underscore
-		sanitizedKey := topicNameSanitizer.ReplaceAllString(key, "_")
+		sanitizedKey := messageKeySanitizer.ReplaceAllString(key, "_")
 
 		o.log.Tracef("sending message with key: %s", sanitizedKey)
 
