@@ -25,7 +25,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-type TestStreamer interface {
+type TestMessagePublisher interface {
 	// Helper methods for Mock implementation
 	IsProduceSyncCalled() bool
 	IsCreateTopicCalled() bool
@@ -35,7 +35,7 @@ type TestStreamer interface {
 	WithProduceFunc(func(context.Context, []Record) error)
 	WithTopicExistsFunc(func(context.Context, string) (bool, int, error))
 	WithCreateTopicFunc(func(context.Context, string, int32) error)
-	Streamer
+	MessagePublisher
 }
 
 type ConnectFunc func(...kgo.Opt) error
@@ -113,13 +113,13 @@ func (m *MockKafkaClient) WithCreateTopicFunc(f func(context.Context, string, in
 	m.createTopicFunc = f
 }
 
-var _ = Describe("Initializing UMH stream output plugin", func() {
+var _ = Describe("Initializing uns output plugin", func() {
 	var (
-		outputPlugin    service.BatchOutput
-		umhStreamClient *umhStreamOutput
-		ctx             context.Context
-		cancel          context.CancelFunc
-		mockClient      TestStreamer
+		outputPlugin service.BatchOutput
+		unsClient    *unsOutput
+		ctx          context.Context
+		cancel       context.CancelFunc
+		mockClient   TestMessagePublisher
 	)
 
 	BeforeEach(func() {
@@ -147,8 +147,8 @@ var _ = Describe("Initializing UMH stream output plugin", func() {
 		}
 
 		topicKey, _ := service.NewInterpolatedString("${! meta(\"topic\") }")
-		outputPlugin = newUMHStreamOutputWithClient(mockClient, topicKey, nil)
-		umhStreamClient = outputPlugin.(*umhStreamOutput)
+		outputPlugin = newUnsOutputWithClient(mockClient, topicKey, nil)
+		unsClient = outputPlugin.(*unsOutput)
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	})
 
@@ -169,7 +169,7 @@ var _ = Describe("Initializing UMH stream output plugin", func() {
 		It("should initialize the kafka client", func() {
 			err := outputPlugin.Connect(ctx)
 			Expect(err).To(BeNil())
-			Expect(umhStreamClient.client).NotTo(BeNil())
+			Expect(unsClient.client).NotTo(BeNil())
 		})
 
 		When("the internal kafka client throws error", func() {
@@ -198,7 +198,7 @@ var _ = Describe("Initializing UMH stream output plugin", func() {
 				err := outputPlugin.Connect(ctx)
 				Expect(err).To(BeNil())
 
-				client, ok := umhStreamClient.client.(TestStreamer)
+				client, ok := unsClient.client.(TestMessagePublisher)
 				Expect(ok).To(BeTrue())
 				Expect(client.IsCreateTopicCalled()).To(BeTrue())
 
@@ -227,7 +227,7 @@ var _ = Describe("Initializing UMH stream output plugin", func() {
 
 			err = outputPlugin.Close(ctx)
 			Expect(err).To(BeNil())
-			Expect(umhStreamClient.client).To(BeNil())
+			Expect(unsClient.client).To(BeNil())
 		})
 
 	})
@@ -254,7 +254,7 @@ var _ = Describe("Initializing UMH stream output plugin", func() {
 				err := outputPlugin.WriteBatch(ctx, msgs)
 				Expect(err).To(BeNil())
 
-				client, ok := umhStreamClient.client.(TestStreamer)
+				client, ok := unsClient.client.(TestMessagePublisher)
 				Expect(ok).To(BeTrue())
 				produceFuncCalled := client.IsProduceSyncCalled()
 				Expect(produceFuncCalled).To(BeTrue())
