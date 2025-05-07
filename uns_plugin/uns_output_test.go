@@ -147,7 +147,7 @@ var _ = Describe("Initializing UMH stream output plugin", func() {
 			},
 		}
 
-		topicKey, _ = service.NewInterpolatedString("topic")
+		topicKey, _ = service.NewInterpolatedString(keyTemplateName)
 		outputPlugin = newUMHStreamOutputWithClient(mockClient, topicKey, nil)
 		umhStreamClient = outputPlugin.(*umhStreamOutput)
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
@@ -248,11 +248,8 @@ var _ = Describe("Initializing UMH stream output plugin", func() {
 			It("should call produceSync internally with the given list of messages", func() {
 				var msgs service.MessageBatch
 				for range 10 {
-					msg := service.NewMessage(nil)
-					msg.MetaSet("topic", "umh.v1.messages")
-					msg.SetStructured(map[string]any{
-						"value": "mock message",
-					})
+					msg := service.NewMessage([]byte(`{"data": "test"}`))
+					msg.MetaSet("topic", "umh.v1.abc")
 					msgs = append(msgs, msg)
 				}
 				err := outputPlugin.WriteBatch(ctx, msgs)
@@ -264,6 +261,20 @@ var _ = Describe("Initializing UMH stream output plugin", func() {
 				Expect(produceFuncCalled).To(BeTrue())
 				messages := client.GetRequestedProduceMessages()
 				Expect(len(messages)).To(BeNumerically("==", 10))
+				for _, m := range messages {
+					Expect(m.Topic).To(BeEquivalentTo(defaultOutputTopic))
+					Expect(m.Value).To(BeEquivalentTo([]byte(`{"data": "test"}`)))
+					Expect(m.Key).To(BeEquivalentTo([]byte("umh.v1.abc")))
+				}
+			})
+
+			It("should throw an error if the message does not have a topic key is missing", Label("test"), func() {
+				// The meta key topic is not set
+				msg := service.NewMessage([]byte(`{"data": "test"}`))
+				msgs := service.MessageBatch{msg}
+				err := outputPlugin.WriteBatch(ctx, msgs)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("topic key is not set"))
 			})
 		})
 

@@ -28,7 +28,7 @@ const (
 	defaultOutputTopicPartitionCount = 5
 	defaultBrokerAddress             = "localhost:9092"
 	defaultClientID                  = "umh_core"
-	keyTemplateName                  = "topic" // this is the name of the field that should be parsed from each message and set as output message key
+	keyTemplateName                  = "${! meta(\"topic\") }" // this is the name of the field that should be parsed from each message and set as output message key
 )
 
 func outputConfig() *service.ConfigSpec {
@@ -82,7 +82,7 @@ func newUMHStreamOutput(conf *service.ParsedConfig, mgr *service.Resources) (ser
 		Period: "100ms", // timeout to ensure timely delivery even if the count aren't met
 	}
 
-	topic, err := conf.FieldInterpolatedString(keyTemplateName)
+	topic, err := service.NewInterpolatedString(keyTemplateName)
 	if err != nil {
 		return nil, batchPolicy, 0, fmt.Errorf("error while parsing topic string from the config: %v", err)
 	}
@@ -169,7 +169,8 @@ func (o *umhStreamOutput) WriteBatch(ctx context.Context, msgs service.MessageBa
 			return fmt.Errorf("failed to resolve topic field: %v", err)
 		}
 
-		if key == "" {
+		// TryString sets the key to "null" when the key is not set in the message
+		if key == "" || key == "null" {
 			return fmt.Errorf("topic key is not set in the input message. topic is mandatory for this plugin to publish messages")
 		}
 
