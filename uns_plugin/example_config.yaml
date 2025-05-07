@@ -2,18 +2,18 @@ input:
   kafka_franz:
     seed_brokers: ["localhost:9092"]
     topics: ["umh.v1.berlin.xyz"]
-    consumer_group: "cg2"
+    consumer_group: "cg3"
 
 pipeline:
   processors:
     - bloblang: |
         root = {
           "msg": this,
-          "topic": meta("kafka_topic"),
           "foo": "bar"
         }
+        meta topic = meta("kafka_topic")
+        meta bridge_by = "kafka-kafka-connector"
 output:
-  # stdout: {}
-  umh_stream:
+  uns:
     topic: "${! meta(\"topic\") }"
 

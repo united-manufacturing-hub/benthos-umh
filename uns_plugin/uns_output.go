@@ -17,6 +17,7 @@ package uns_plugin
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -35,7 +36,7 @@ func outputConfig() *service.ConfigSpec {
 	return service.NewConfigSpec().
 		Summary("Writes messages to the UMH platform's Kafka messaging system").
 		Description(`
-The umh_stream output sends messages to the United Manufacturing Hub's Kafka messaging system.
+The uns_plugin output sends messages to the United Manufacturing Hub's Kafka messaging system.
 This output is optimized for communication with UMH core components and handles the complexities
 of Kafka configuration for you.
 
@@ -101,12 +102,12 @@ func newUMHStreamOutputWithClient(client Streamer, topic *service.InterpolatedSt
 
 // Close closes the underlying kafka client
 func (o *umhStreamOutput) Close(ctx context.Context) error {
-	o.log.Infof("Attempting to close the umh_stream kafka client")
+	o.log.Infof("Attempting to close the uns kafka client")
 	if o.client != nil {
 		o.client.Close()
 		o.client = nil
 	}
-	o.log.Infof("umh_stream kafka client closed successfully")
+	o.log.Infof("uns kafka client closed successfully")
 	return nil
 }
 
@@ -128,7 +129,7 @@ func (o *umhStreamOutput) Connect(ctx context.Context) error {
 		kgo.RequiredAcks(kgo.LeaderAck()),           // Partition leader has to send acknowledment on successful write
 		kgo.MaxBufferedRecords(1000),                // Max amount of records hte client will buffer
 		kgo.ProduceRequestTimeout(5*time.Second),    // Produce Request Timeout
-		kgo.ProducerLinger(1*time.Second),           // Duration on how long individual partitons will linger waiting for more records before triggering a Produce request
+		kgo.ProducerLinger(100*time.Millisecond),    // Duration on how long individual partitons will linger waiting for more records before triggering a Produce request
 		kgo.DisableIdempotentWrite(),                // Idempotent write is disabled since the  plugin is going to communicate with a local kafka broker where one could assume less network failures. With Idempotency enabled, RequiredAcks should be from all insync replicas which will increase the latency
 	)
 	if err != nil {
@@ -174,7 +175,12 @@ func (o *umhStreamOutput) WriteBatch(ctx context.Context, msgs service.MessageBa
 			return fmt.Errorf("topic key is not set in the input message. topic is mandatory for this plugin to publish messages")
 		}
 
-		o.log.Tracef("sending message with key: %s", key)
+		// Topic key should not contain characters other than a-zA-z0-9,dot,hypen and underscore
+		// If present replace them with an underscore
+		re := regexp.MustCompile(`[^a-zA-Z0-9\._\-]`)
+		sanitizedKey := re.ReplaceAllString(key, "_")
+
+		o.log.Tracef("sending message with key: %s", sanitizedKey)
 
 		msgAsBytes, err := msg.AsBytes()
 		if err != nil {
@@ -183,7 +189,7 @@ func (o *umhStreamOutput) WriteBatch(ctx context.Context, msgs service.MessageBa
 
 		record := Record{
 			Topic: defaultOutputTopic,
-			Key:   []byte(key),
+			Key:   []byte(sanitizedKey),
 			Value: msgAsBytes,
 		}
 
