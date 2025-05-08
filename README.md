@@ -2010,7 +2010,7 @@ UNS (Unified Namespace System)
 
 The UNS output plugin is a specialized output for the United Manufacturing Hub's Unified Namespace System. It acts as a wrapper around Redpanda (a Kafka-compatible message broker) that simplifies interaction with the UNS for OT technicians by handling many implementation details automatically.
 
-With this plugin, users only need to set the topic according to the UMH data model (https://umh.docs.umh.app/docs/datacontracts/), and it will automatically store the data in Redpanda for buffering, making it easy to publish data to the Unified Namespace.
+With this plugin, users only need to set the topic according to the [UMH data model](https://umh.docs.umh.app/docs/datacontracts/), and it will automatically store the data in Redpanda for buffering, making it easy to publish data to the Unified Namespace.
 
 #### Configuration Options
 
