@@ -66,16 +66,33 @@ content or metadata. Common patterns include:
 - Using metadata: ${! meta("topic") }
 - Using content: ${! json("device.location") }
 - Using a static value: enterprise.site.area.tag
+
+Note: The key will be sanitized to remove any characters that are not alphanumeric, dots,
+underscores, or hyphens. Invalid characters will be replaced with underscores.
             `).
 			Example("${! meta(\"topic\") }").
 			Example("enterprise.site.area.historian").
-			Default("${! meta(\"kafka_topic\") }"))
+			Default("${! meta(\"kafka_topic\") }")).
+		Field(service.NewStringField("broker_address").
+			Description(`
+The Kafka broker address to connect to. This can be a single address or multiple addresses
+separated by commas. For example: "localhost:9092" or "broker1:9092,broker2:9092".
+
+In most UMH deployments, the default value is sufficient as Kafka runs on the same host.
+            `).
+			Default(defaultBrokerAddress))
+}
+
+// Config holds the configuration for the UNS output plugin
+type unsConfig struct {
+	messageKey    *service.InterpolatedString
+	brokerAddress string
 }
 
 type unsOutput struct {
-	messageKey *service.InterpolatedString
-	client     MessagePublisher
-	log        *service.Logger
+	config unsConfig
+	client MessagePublisher
+	log    *service.Logger
 }
 
 func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchOutput, service.BatchPolicy, int, error) {
@@ -87,20 +104,36 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 		Period: "100ms", // timeout to ensure timely delivery even if the count aren't met
 	}
 
+	config := unsConfig{}
+
+	// Parse message_key
 	messageKey, err := conf.FieldInterpolatedString("message_key")
 	if err != nil {
-		return nil, batchPolicy, 0, fmt.Errorf("error while parsing message_key string from the config: %v", err)
+		return nil, batchPolicy, 0, fmt.Errorf("error while parsing message_key field from the config: %v", err)
+	}
+	config.messageKey = messageKey
+
+	// Parse broker_address if provided
+	config.brokerAddress = defaultBrokerAddress
+	if conf.Contains("broker_address") {
+		brokerAddress, err := conf.FieldString("broker_address")
+		if err != nil {
+			return nil, batchPolicy, 0, fmt.Errorf("error while parsing broker_address field from the config: %v", err)
+		}
+		if brokerAddress != "" {
+			config.brokerAddress = brokerAddress
+		}
 	}
 
-	return newUnsOutputWithClient(NewClient(), messageKey, mgr.Logger()), batchPolicy, maxInFlight, nil
+	return newUnsOutputWithClient(NewClient(), config, mgr.Logger()), batchPolicy, maxInFlight, nil
 }
 
 // Testable constructor that accepts client
-func newUnsOutputWithClient(client MessagePublisher, messageKey *service.InterpolatedString, logger *service.Logger) service.BatchOutput {
+func newUnsOutputWithClient(client MessagePublisher, config unsConfig, logger *service.Logger) service.BatchOutput {
 	return &unsOutput{
-		client:     client,
-		messageKey: messageKey,
-		log:        logger,
+		client: client,
+		config: config,
+		log:    logger,
 	}
 }
 
@@ -117,14 +150,15 @@ func (o *unsOutput) Close(ctx context.Context) error {
 
 // Connect initializes the kafka client
 func (o *unsOutput) Connect(ctx context.Context) error {
-	o.log.Infof("Connecting to umh core stream kafka broker: %v", defaultBrokerAddress)
+	o.log.Infof("Connecting to uns plugin kafka broker: %v", o.config.brokerAddress)
 
 	if o.client == nil {
 		o.client = NewClient()
 	}
+
 	// Create the kafka client
 	err := o.client.Connect(
-		kgo.SeedBrokers(defaultBrokerAddress),       // bootstrap broker addresses
+		kgo.SeedBrokers(o.config.brokerAddress),     // use configured broker address
 		kgo.AllowAutoTopicCreation(),                // Allow creating the defaultOutputTopic if it doesn't exists
 		kgo.ClientID(defaultClientID),               // client id for all requests sent to the broker
 		kgo.ConnIdleTimeout(15*time.Minute),         // Rough amount of time to allow connections to be idle. Default value at franz-go is 20
@@ -134,75 +168,105 @@ func (o *unsOutput) Connect(ctx context.Context) error {
 		kgo.MaxBufferedRecords(1000),                // Max amount of records hte client will buffer
 		kgo.ProduceRequestTimeout(5*time.Second),    // Produce Request Timeout
 		kgo.ProducerLinger(100*time.Millisecond),    // Duration on how long individual partitons will linger waiting for more records before triggering a Produce request
-		kgo.DisableIdempotentWrite(),                // Idempotent write is disabled since the  plugin is going to communicate with a local kafka broker where one could assume less network failures. With Idempotency enabled, RequiredAcks should be from all insync replicas which will increase the latency
+		kgo.DisableIdempotentWrite(),                // Idempotent write is disabled since the  plugin is going to communicate with a local kafka broker where one could assume less network failures
 	)
 	if err != nil {
-		return fmt.Errorf("error while creating a kafka client: %v", err)
+		return fmt.Errorf("error while creating a kafka client with broker %s: %v", o.config.brokerAddress, err)
 	}
 
-	// Now the client is created, let's check for the defaultOutputTopic. Create it if it doesn't exists
+	// Verify topic existence and partition count
+	if err := o.verifyOutputTopic(ctx); err != nil {
+		return err
+	}
+
+	o.log.Infof("Connection to the kafka broker %s is successful", o.config.brokerAddress)
+	return nil
+}
+
+// verifyOutputTopic checks if the output topic exists and has the correct partition count
+// If the topic doesn't exist, it creates it with the correct partition count
+func (o *unsOutput) verifyOutputTopic(ctx context.Context) error {
 	topicExists, partition, err := o.client.IsTopicExists(ctx, defaultOutputTopic)
 	if err != nil {
 		return fmt.Errorf("error while checking if the default output topic exists: %v", err)
 	}
 
 	if topicExists && (partition != defaultOutputTopicPartitionCount) {
-		// DefaultOutputTopic exists but the partition count mismatches with what is needed. This happens if the topic is created manually without proper partition specified
-		return fmt.Errorf("default output topic has a mismatched partition count. required partition count: %d, actual partition count: %d", defaultOutputTopicPartitionCount, partition)
+		// DefaultOutputTopic exists but the partition count mismatches with what is needed.
+		return fmt.Errorf("default output topic '%s' has a mismatched partition count: required %d, actual %d",
+			defaultOutputTopic, defaultOutputTopicPartitionCount, partition)
 	}
 
 	if !topicExists {
 		// Default output topic doesn't exists. Create it
 		err = o.client.CreateTopic(ctx, defaultOutputTopic, defaultOutputTopicPartitionCount)
 		if err != nil {
-			return fmt.Errorf("error while creating the missing default output topic: %v, err: %v", defaultOutputTopic, err)
+			return fmt.Errorf("error while creating the missing default output topic '%s': %v", defaultOutputTopic, err)
 		}
+		o.log.Infof("Created output topic '%s' with %d partition(s)", defaultOutputTopic, defaultOutputTopicPartitionCount)
 	}
-
-	o.log.Infof("Connection to the kafka broker %s is successful", defaultBrokerAddress)
 
 	return nil
 }
 
+// sanitizeMessageKey ensures the key contains only valid characters
+// It replaces invalid characters with underscores and logs a warning if sanitization occurred
+func (o *unsOutput) sanitizeMessageKey(key string) string {
+	sanitizedKey := messageKeySanitizer.ReplaceAllString(key, "_")
+	if key != sanitizedKey {
+		o.log.Debugf("Message key contained invalid characters and was sanitized: '%s' -> '%s'", key, sanitizedKey)
+	}
+	return sanitizedKey
+}
+
+// extractHeaders extracts all metadata from a message except Kafka-specific ones
+func (o *unsOutput) extractHeaders(msg *service.Message) (map[string][]byte, error) {
+	headers := make(map[string][]byte)
+
+	err := msg.MetaWalk(func(key, value string) error {
+		// We don't want the original `kafka_` metafields generated by benthos
+		if !strings.HasPrefix(key, "kafka_") {
+			headers[key] = []byte(value)
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("error extracting message metadata: %v", err)
+	}
+
+	return headers, nil
+}
+
 // WriteBatch implements service.BatchOutput.
 func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) error {
+	if len(msgs) == 0 {
+		o.log.Tracef("Received empty batch, nothing to send")
+		return nil
+	}
 
 	records := make([]Record, 0, len(msgs))
-	for _, msg := range msgs {
-		key, err := o.messageKey.TryString(msg)
+	for i, msg := range msgs {
+		key, err := o.config.messageKey.TryString(msg)
 		if err != nil {
-			return fmt.Errorf("failed to resolve topic field: %v", err)
+			return fmt.Errorf("failed to resolve message_key field in message %d: %v", i, err)
 		}
 
 		// TryString sets the key to "null" when the key is not set in the message
 		if key == "" || key == "null" {
-			return fmt.Errorf("message key is not set in the input message. message key is mandatory for this plugin to publish messages")
+			return fmt.Errorf("message_key is not set or is empty in message %d, message_key is mandatory", i)
 		}
 
-		// Topic key should not contain characters other than a-zA-z0-9,dot,hypen and underscore
-		// If present replace them with an underscore
-		sanitizedKey := messageKeySanitizer.ReplaceAllString(key, "_")
+		sanitizedKey := o.sanitizeMessageKey(key)
 
-		o.log.Tracef("sending message with key: %s", sanitizedKey)
-
-		headers := make(map[string][]byte)
-
-		// Preserve all the meta fields from the input message except the ones starting with the `kafka_` prefix
-		err = msg.MetaWalk(func(key, value string) error {
-			// We don't want the original `kafka_` metafields generated by benthos
-			if strings.HasPrefix(key, "kafka_") {
-				return nil
-			}
-			headers[key] = []byte(value)
-			return nil
-		})
+		headers, err := o.extractHeaders(msg)
 		if err != nil {
-			return fmt.Errorf("error while setting the metadata as the message header: %v", err)
+			return fmt.Errorf("error processing message %d: %v", i, err)
 		}
 
 		msgAsBytes, err := msg.AsBytes()
 		if err != nil {
-			return err
+			return fmt.Errorf("error getting content of message %d: %v", i, err)
 		}
 
 		record := Record{
@@ -213,10 +277,13 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 		}
 
 		records = append(records, record)
+		o.log.Tracef("Message %d prepared with key: %s", i, sanitizedKey)
+	}
 
-	}
 	if err := o.client.ProduceSync(ctx, records); err != nil {
-		return fmt.Errorf("error while writing batch output to kafka: %v", err)
+		return fmt.Errorf("error writing batch output to kafka: %v", err)
 	}
+
+	o.log.Debugf("Successfully sent %d messages to topic '%s'", len(records), defaultOutputTopic)
 	return nil
 }
