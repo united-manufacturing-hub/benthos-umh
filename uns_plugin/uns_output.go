@@ -25,6 +25,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
+// init registers the "uns" batch output plugin with Benthos using its configuration and constructor.
 func init() {
 	service.RegisterBatchOutput("uns", outputConfig(), newUnsOutput)
 }
@@ -41,6 +42,13 @@ var (
 	topicSanitizer = regexp.MustCompile(`[^a-zA-Z0-9._\-]`)
 )
 
+// outputConfig returns the Benthos configuration specification for the "uns" output plugin.
+//
+// This configuration defines how messages are sent to the UMH platform's Kafka messaging system.
+// It includes fields for specifying the Kafka message key ("topic"), broker address, and the name
+// of the bridge performing data bridging ("bridged_by"). The "topic" field supports interpolation
+// and is sanitized before use as the Kafka message key. Default values are provided for all fields
+// to simplify deployment in standard UMH environments.
 func outputConfig() *service.ConfigSpec {
 	return service.NewConfigSpec().
 		Summary("Writes messages to the UMH platform's Kafka messaging system").
@@ -106,6 +114,7 @@ type unsOutput struct {
 	log    *service.Logger
 }
 
+// newUnsOutput creates a new unsOutput instance by parsing configuration fields for topic, broker address, and bridge name, returning the output, batch policy, max in-flight count, and any error encountered during parsing.
 func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchOutput, service.BatchPolicy, int, error) {
 	// maximum number of messages that can be in processing simultaneously before requiring acknowledgements
 	maxInFlight := 100
