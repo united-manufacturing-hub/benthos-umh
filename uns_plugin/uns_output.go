@@ -30,7 +30,7 @@ func init() {
 }
 
 const (
-	defaultOutputTopic               = "umh.v2.messages" // by the current state, the output topic must not be changed for this plugin
+	defaultOutputTopic               = "umh.messages" // by the current state, the output topic must not be changed for this plugin
 	defaultOutputTopicPartitionCount = 1
 	defaultBrokerAddress             = "localhost:9092"
 	defaultClientID                  = "umh_core"
@@ -48,7 +48,7 @@ The uns_plugin output sends messages to the United Manufacturing Hub's Kafka mes
 This output is optimized for communication with UMH core components and handles the complexities
 of Kafka configuration for you.
 
-All messages are written to a single topic (umh.v2.messages), with the key of each message
+All messages are written to a single topic (umh.messages), with the key of each message
 derived from the 'messageKey' field specified in this configuration. This key is crucial for
 proper routing within the UMH ecosystem.
 
@@ -62,20 +62,20 @@ Note: This output implements batch writing to Kafka for improved performance.`).
 Key used when sending messages to the UMH output topic. This value becomes the Kafka message key,
 which determines how messages are routed within the UMH ecosystem.
 
-The message_key should follow the UMH naming convention: enterprise.site.area.tag
-(e.g., 'acme.berlin.assembly.temperature')
+The message_key should follow the UMH naming convention: umh.v1.enterprise.site.area.tag
+(e.g., 'umh.v1.acme.berlin.assembly.temperature')
 
 This field supports interpolation, allowing you to set the key dynamically based on message
 content or metadata. Common patterns include:
 - Using metadata: ${! meta("topic") }
 - Using content: ${! json("device.location") }
-- Using a static value: enterprise.site.area.tag
+- Using a static value: umh.v1.enterprise.site.area.tag
 
 Note: The key will be sanitized to remove any characters that are not alphanumeric, dots,
 underscores, or hyphens. Invalid characters will be replaced with underscores.
             `).
 			Example("${! meta(\"topic\") }").
-			Example("enterprise.site.area.historian").
+			Example("umh.v1.enterprise.site.area.historian").
 			Default("${! meta(\"kafka_topic\") }")).
 		Field(service.NewStringField("broker_address").
 			Description(`
