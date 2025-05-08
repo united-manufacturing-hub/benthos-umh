@@ -240,10 +240,6 @@ func (o *unsOutput) extractHeaders(msg *service.Message) (map[string][]byte, err
 
 // WriteBatch implements service.BatchOutput.
 func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) error {
-	if len(msgs) == 0 {
-		o.log.Tracef("Received empty batch, nothing to send")
-		return nil
-	}
 
 	records := make([]Record, 0, len(msgs))
 	for i, msg := range msgs {

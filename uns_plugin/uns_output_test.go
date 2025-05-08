@@ -146,8 +146,10 @@ var _ = Describe("Initializing uns output plugin", func() {
 			},
 		}
 
+		unsConf := unsConfig{}
 		messageKey, _ := service.NewInterpolatedString("${! meta(\"kafka_topic\") }")
-		outputPlugin = newUnsOutputWithClient(mockClient, messageKey, nil)
+		unsConf.messageKey = messageKey
+		outputPlugin = newUnsOutputWithClient(mockClient, unsConf, nil)
 		unsClient = outputPlugin.(*unsOutput)
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	})
@@ -180,7 +182,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 			})
 			It("should throw the error", func() {
 				err := outputPlugin.Connect(ctx)
-				Expect(err.Error()).To(BeEquivalentTo("error while creating a kafka client: mock kafka client error: no valid seedbrokers"))
+				Expect(err.Error()).To(BeEquivalentTo("error while creating a kafka client with broker : mock kafka client error: no valid seedbrokers"))
 			})
 		})
 
@@ -215,7 +217,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 
 			It("should return an error regarding the partitionCount", func() {
 				err := outputPlugin.Connect(ctx)
-				Expect(err.Error()).To(BeEquivalentTo("default output topic has a mismatched partition count. required partition count: 1, actual partition count: 15"))
+				Expect(err.Error()).To(BeEquivalentTo("default output topic 'umh.v2.messages' has a mismatched partition count: required 1, actual 15"))
 			})
 		})
 	})
@@ -240,7 +242,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 		When("with empty list of message", func() {
 			It("should throw error about empty message list", func() {
 				err := outputPlugin.WriteBatch(ctx, nil)
-				Expect(err.Error()).To(BeEquivalentTo("error while writing batch output to kafka: produceSync is called with empty messages list"))
+				Expect(err.Error()).To(BeEquivalentTo("error writing batch output to kafka: produceSync is called with empty messages list"))
 			})
 		})
 		When("with list of messages", func() {
@@ -267,13 +269,13 @@ var _ = Describe("Initializing uns output plugin", func() {
 				}
 			})
 
-			It("should throw an error if the message does not have a topic key is missing", Label("test"), func() {
+			It("should throw an error if the message does not have a topic key", Label("test"), func() {
 				// The meta key kafka_topic is not set
 				msg := service.NewMessage([]byte(`{"data": "test"}`))
 				msgs := service.MessageBatch{msg}
 				err := outputPlugin.WriteBatch(ctx, msgs)
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("message key is not set in the input message. message key is mandatory for this plugin to publish messages"))
+				Expect(err.Error()).To(ContainSubstring("message_key is not set or is empty in message 0, message_key is mandatory"))
 			})
 		})
 
@@ -296,7 +298,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 					msgs = append(msgs, msg)
 				}
 				err := outputPlugin.WriteBatch(ctx, msgs)
-				Expect(err.Error()).To(BeEquivalentTo("error while writing batch output to kafka: leader partition not found"))
+				Expect(err.Error()).To(BeEquivalentTo("error writing batch output to kafka: leader partition not found"))
 			})
 		})
 	})
