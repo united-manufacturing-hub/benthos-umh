@@ -61,7 +61,7 @@ func NewClient() MessagePublisher {
 	return &Client{}
 }
 
-// Connect connect to the seedbroker with the given kafka client options
+// Connect connects to the seedbroker with the given kafka client options
 func (k *Client) Connect(opts ...kgo.Opt) error {
 	var err error
 	k.client, err = kgo.NewClient(opts...)
@@ -115,14 +115,14 @@ func (k *Client) ProduceSync(ctx context.Context, records []Record) error {
 }
 
 func (k *Client) IsTopicExists(ctx context.Context, topic string) (bool, int, error) {
-	topics, err := k.adminClient.ListTopics(ctx)
+	topicDetails, err := k.adminClient.ListTopics(ctx, topic)
 	if err != nil {
 		return false, 0, err
 	}
 
-	for _, t := range topics {
-		if t.Topic == topic {
-			return true, len(t.Partitions.Numbers()), nil
+	for _, td := range topicDetails {
+		if td.Topic == topic {
+			return true, len(td.Partitions.Numbers()), nil
 		}
 	}
 
