@@ -2001,6 +2001,67 @@ This is not yet implemented and currently not set to a specific timeline, but wi
 
 </details>
 
+<details>
+<summary>
+UNS (Unified Namespace System)
+</summary>
+
+### UNS (Output)
+
+The UNS output plugin is a specialized output for the United Manufacturing Hub's Unified Namespace System. It acts as a wrapper around Redpanda (a Kafka-compatible message broker) that simplifies interaction with the UNS for OT technicians by handling many implementation details automatically.
+
+With this plugin, users only need to set the topic according to the [UMH data model](https://umh.docs.umh.app/docs/datacontracts/), and it will automatically store the data in Redpanda for buffering, making it easy to publish data to the Unified Namespace.
+
+#### Configuration Options
+
+```yaml
+output:
+  uns:
+    topic: "${! meta(\"topic\") }"   # Optional (default: ${! meta("topic") }): The topic key for routing messages in the UMH ecosystem
+    broker_address: "localhost:9092"  # Optional: Kafka broker address (default: localhost:9092)
+    bridged_by: "protocol-converter-name"  # Required: Name of the bridge doing the data bridging
+```
+
+#### Configuration Parameters
+
+- **topic**: The topic key used for routing messages in the UMH ecosystem. This key becomes the Kafka message key and should follow the UMH naming convention: `umh.v1.enterprise.site.area.tag` (e.g., 'umh.v1.acme.berlin.assembly.temperature'). Supports interpolation, allowing you to set the key dynamically based on message content or metadata. Optional, defaults to `${! meta("topic") }`.
+
+- **broker_address**: The Kafka broker address to connect to (default: "localhost:9092"). This can be a single address or multiple addresses separated by commas.
+
+- **bridged_by**: (Required) The name of the bridge that does the bridging of the data. The format should be 'protocol-converter-{nodeName}-{protocol converter name}', for example "protocol-converter-plc-opcua".
+
+#### Example
+
+The following example demonstrates using the UNS output to send messages to the UMH Unified Namespace:
+
+```yaml
+pipeline:
+  processors:
+    - bloblang: |
+        # Prepare a proper topic following the UMH data model
+        meta topic = "umh.v1.enterprise.site.area._historian.temperature"
+        root = {
+          "temperature": this.value,
+          "timestamp_ms": timestamp_unix_nano() / 1000000
+        }
+
+output:
+  uns:
+    topic: "${! meta(\"topic\") }"
+    broker_address: "localhost:9092"
+    bridged_by: "protocol-converter-plc-opcua"
+```
+
+#### Notes
+
+- The UNS output always writes to a single default topic (`umh.messages`) in the Kafka broker, with the `topic` configuration parameter becoming the message key for proper routing.
+- **IMPORTANT**: Messages must contain the `topic` metadata field (accessible via `meta("topic")`) for the plugin to work correctly. If this field is missing or empty, the plugin will stop processing messages.
+- Messages are automatically validated and sanitized to ensure they follow UMH's requirements.
+- The plugin automatically handles Kafka connection details, topic creation, and metadata management.
+- All messages are sent with the `bridged_by` metadata field to indicate the source of the message.
+
+</details>
+
 ## Testing
 
 We execute automated tests and verify that benthos-umh works against various targets. All tests are started with `make test`, but might require environment parameters in order to not be skipped.

@@ -25,21 +25,30 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
+// init registers the "uns" batch output plugin with Benthos using its configuration and constructor.
 func init() {
 	service.RegisterBatchOutput("uns", outputConfig(), newUnsOutput)
 }
 
 const (
-	defaultOutputTopic               = "umh.v2.messages" // by the current state, the output topic must not be changed for this plugin
+	defaultOutputTopic               = "umh.messages" // by the current state, the output topic must not be changed for this plugin
 	defaultOutputTopicPartitionCount = 1
 	defaultBrokerAddress             = "localhost:9092"
 	defaultClientID                  = "umh_core"
+	defaultBridgeName                = "uns_default_bridge"
 )
 
 var (
-	messageKeySanitizer = regexp.MustCompile(`[^a-zA-Z0-9._\-]`)
+	topicSanitizer = regexp.MustCompile(`[^a-zA-Z0-9._\-]`)
 )
 
+// outputConfig returns the Benthos configuration specification for the "uns" output plugin.
+//
+// This configuration defines how messages are sent to the UMH platform's Kafka messaging system.
+// It includes fields for specifying the Kafka message key ("topic"), broker address, and the name
+// of the bridge performing data bridging ("bridged_by"). The "topic" field supports interpolation
+// and is sanitized before use as the Kafka message key. Default values are provided for all fields
+// to simplify deployment in standard UMH environments.
 func outputConfig() *service.ConfigSpec {
 	return service.NewConfigSpec().
 		Summary("Writes messages to the UMH platform's Kafka messaging system").
@@ -48,7 +57,7 @@ The uns_plugin output sends messages to the United Manufacturing Hub's Kafka mes
 This output is optimized for communication with UMH core components and handles the complexities
 of Kafka configuration for you.
 
-All messages are written to a single topic (umh.v2.messages), with the key of each message
+All messages are written to a single topic (umh.messages), with the key of each message
 derived from the 'messageKey' field specified in this configuration. This key is crucial for
 proper routing within the UMH ecosystem.
 
@@ -57,26 +66,26 @@ which is suitable for most UMH deployments. These defaults work with the standar
 installation where Kafka runs alongside other services.
 
 Note: This output implements batch writing to Kafka for improved performance.`).
-		Field(service.NewInterpolatedStringField("message_key").
+		Field(service.NewInterpolatedStringField("topic").
 			Description(`
 Key used when sending messages to the UMH output topic. This value becomes the Kafka message key,
 which determines how messages are routed within the UMH ecosystem.
 
-The message_key should follow the UMH naming convention: enterprise.site.area.tag
-(e.g., 'acme.berlin.assembly.temperature')
+The topic should follow the UMH naming convention: umh.v1.enterprise.site.area.tag
+(e.g., 'umh.v1.acme.berlin.assembly.temperature')
 
 This field supports interpolation, allowing you to set the key dynamically based on message
 content or metadata. Common patterns include:
 - Using metadata: ${! meta("topic") }
 - Using content: ${! json("device.location") }
-- Using a static value: enterprise.site.area.tag
+- Using a static value: umh.v1.enterprise.site.area.tag
 
 Note: The key will be sanitized to remove any characters that are not alphanumeric, dots,
 underscores, or hyphens. Invalid characters will be replaced with underscores.
             `).
 			Example("${! meta(\"topic\") }").
-			Example("enterprise.site.area.historian").
-			Default("${! meta(\"kafka_topic\") }")).
+			Example("umh.v1.enterprise.site.area.historian").
+			Default("${! meta(\"topic\") }")).
 		Field(service.NewStringField("broker_address").
 			Description(`
 The Kafka broker address to connect to. This can be a single address or multiple addresses
@@ -84,13 +93,19 @@ separated by commas. For example: "localhost:9092" or "broker1:9092,broker2:9092
 
 In most UMH deployments, the default value is sufficient as Kafka runs on the same host.
             `).
-			Default(defaultBrokerAddress))
+			Default(defaultBrokerAddress)).
+		Field(service.NewStringField("bridged_by").
+			Description(`
+	The name of the Bridges that does the bridging of the data. The format for the Bridge name should 'protocol-converter-{nodeName}-{protocol converter name}'
+			`).
+			Default(defaultBridgeName))
 }
 
 // Config holds the configuration for the UNS output plugin
 type unsConfig struct {
 	messageKey    *service.InterpolatedString
 	brokerAddress string
+	bridgedBy     string
 }
 
 type unsOutput struct {
@@ -99,6 +114,7 @@ type unsOutput struct {
 	log    *service.Logger
 }
 
+// newUnsOutput creates a new unsOutput instance by parsing configuration fields for topic, broker address, and bridge name, returning the output, batch policy, max in-flight count, and any error encountered during parsing.
 func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchOutput, service.BatchPolicy, int, error) {
 	// maximum number of messages that can be in processing simultaneously before requiring acknowledgements
 	maxInFlight := 100
@@ -110,10 +126,10 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 
 	config := unsConfig{}
 
-	// Parse message_key
-	messageKey, err := conf.FieldInterpolatedString("message_key")
+	// Parse topic
+	messageKey, err := conf.FieldInterpolatedString("topic")
 	if err != nil {
-		return nil, batchPolicy, 0, fmt.Errorf("error while parsing message_key field from the config: %v", err)
+		return nil, batchPolicy, 0, fmt.Errorf("error while parsing topic field from the config: %v", err)
 	}
 	config.messageKey = messageKey
 
@@ -126,6 +142,17 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 		}
 		if brokerAddress != "" {
 			config.brokerAddress = brokerAddress
+		}
+	}
+
+	config.bridgedBy = defaultBridgeName
+	if conf.Contains("bridged_by") {
+		bridgedBy, err := conf.FieldString("bridged_by")
+		if err != nil {
+			return nil, batchPolicy, 0, fmt.Errorf("error while parsing bridged_by field from the config: %v", err)
+		}
+		if bridgedBy != "" {
+			config.bridgedBy = bridgedBy
 		}
 	}
 
@@ -216,7 +243,7 @@ func (o *unsOutput) verifyOutputTopic(ctx context.Context) error {
 // sanitizeMessageKey ensures the key contains only valid characters
 // It replaces invalid characters with underscores and logs a warning if sanitization occurred
 func (o *unsOutput) sanitizeMessageKey(key string) string {
-	sanitizedKey := messageKeySanitizer.ReplaceAllString(key, "_")
+	sanitizedKey := topicSanitizer.ReplaceAllString(key, "_")
 	if key != sanitizedKey {
 		o.log.Debugf("Message key contained invalid characters and was sanitized: '%s' -> '%s'", key, sanitizedKey)
 	}
@@ -224,6 +251,8 @@ func (o *unsOutput) sanitizeMessageKey(key string) string {
 }
 
 // extractHeaders extracts all metadata from a message except Kafka-specific ones
+// kafka specific meta fields are injected into the header if the source node is kafka and they can be ignored
+// There could be other meta fields set by the upstream benthos processors and those meta fields should be passed down as kafka headers
 func (o *unsOutput) extractHeaders(msg *service.Message) (map[string][]byte, error) {
 	headers := make(map[string][]byte)
 
@@ -239,6 +268,9 @@ func (o *unsOutput) extractHeaders(msg *service.Message) (map[string][]byte, err
 		return nil, fmt.Errorf("error extracting message metadata: %v", err)
 	}
 
+	// Set bridged_by config to the headers
+	headers["bridged_by"] = []byte(o.config.bridgedBy)
+
 	return headers, nil
 }
 
@@ -252,12 +284,12 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 	for i, msg := range msgs {
 		key, err := o.config.messageKey.TryString(msg)
 		if err != nil {
-			return fmt.Errorf("failed to resolve message_key field in message %d: %v", i, err)
+			return fmt.Errorf("failed to resolve topic field in message %d: %v", i, err)
 		}
 
 		// TryString sets the key to "null" when the key is not set in the message
 		if key == "" || key == "null" {
-			return fmt.Errorf("message_key is not set or is empty in message %d, message_key is mandatory", i)
+			return fmt.Errorf("topic is not set or is empty in message %d, topic is mandatory", i)
 		}
 
 		sanitizedKey := o.sanitizeMessageKey(key)
