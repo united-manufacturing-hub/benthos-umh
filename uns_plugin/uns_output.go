@@ -32,6 +32,10 @@ const (
 	defaultClientID                  = "umh_core"
 )
 
+var (
+	messageKeySanitizer = regexp.MustCompile(`[^a-zA-Z0-9._\-]`)
+)
+
 func outputConfig() *service.ConfigSpec {
 	return service.NewConfigSpec().
 		Summary("Writes messages to the UMH platform's Kafka messaging system").
@@ -163,7 +167,6 @@ func (o *unsOutput) Connect(ctx context.Context) error {
 // WriteBatch implements service.BatchOutput.
 func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) error {
 
-	messageKeySanitizer := regexp.MustCompile(`[^a-zA-Z0-9\._\-]`)
 	records := make([]Record, 0, len(msgs))
 	for _, msg := range msgs {
 		key, err := o.messageKey.TryString(msg)
