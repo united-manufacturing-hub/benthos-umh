@@ -25,6 +25,10 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
+func init() {
+	service.RegisterBatchOutput("uns", outputConfig(), newUnsOutput)
+}
+
 const (
 	defaultOutputTopic               = "umh.v2.messages" // by the current state, the output topic must not be changed for this plugin
 	defaultOutputTopicPartitionCount = 1
@@ -240,6 +244,9 @@ func (o *unsOutput) extractHeaders(msg *service.Message) (map[string][]byte, err
 
 // WriteBatch implements service.BatchOutput.
 func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) error {
+	if len(msgs) == 0 {
+		return nil
+	}
 
 	records := make([]Record, 0, len(msgs))
 	for i, msg := range msgs {
