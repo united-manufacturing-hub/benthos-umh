@@ -77,6 +77,10 @@ test-noderedjs:
 test-opc:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./opcua_plugin/...
 
+.PHONY: test-uns
+test-uns:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./uns_plugin/...
+
 .PHONY: test-s7comm
 test-s7comm:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./s7comm_plugin/...
