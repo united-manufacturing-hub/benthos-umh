@@ -217,7 +217,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 
 			It("should return an error regarding the partitionCount", func() {
 				err := outputPlugin.Connect(ctx)
-				Expect(err.Error()).To(BeEquivalentTo("default output topic 'umh.v2.messages' has a mismatched partition count: required 1, actual 15"))
+				Expect(err.Error()).To(BeEquivalentTo("default output topic 'umh.messages' has a mismatched partition count: required 1, actual 15"))
 			})
 		})
 	})
@@ -291,7 +291,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 				var msgs service.MessageBatch
 				for range 10 {
 					msg := service.NewMessage(nil)
-					msg.MetaSet("kafka_topic", "umh.v2.messages")
+					msg.MetaSet("kafka_topic", "umh.v1.enterprise.messages")
 					msg.SetStructured(map[string]any{
 						"value": "mock message",
 					})
