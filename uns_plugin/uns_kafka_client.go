@@ -122,7 +122,12 @@ func (k *Client) IsTopicExists(ctx context.Context, topic string) (bool, int, er
 
 	for _, td := range topicDetails {
 		if td.Topic == topic {
+			// Case where the topic cannot be loaded
+			if td.Err != nil {
+				return false, 0, nil
+			}
 			return true, len(td.Partitions.Numbers()), nil
+
 		}
 	}
 
