@@ -146,8 +146,10 @@ var _ = Describe("Initializing uns output plugin", func() {
 			},
 		}
 
-		unsConf := unsConfig{}
-		messageKey, _ := service.NewInterpolatedString("${! meta(\"kafka_topic\") }")
+		unsConf := unsConfig{
+			bridgedBy: "default-test-bridge",
+		}
+		messageKey, _ := service.NewInterpolatedString("${! meta(\"topic\") }")
 		unsConf.messageKey = messageKey
 		outputPlugin = newUnsOutputWithClient(mockClient, unsConf, nil)
 		unsClient = outputPlugin.(*unsOutput)
@@ -217,7 +219,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 
 			It("should return an error regarding the partitionCount", func() {
 				err := outputPlugin.Connect(ctx)
-				Expect(err.Error()).To(BeEquivalentTo("default output topic 'umh.v2.messages' has a mismatched partition count: required 1, actual 15"))
+				Expect(err.Error()).To(BeEquivalentTo("default output topic 'umh.messages' has a mismatched partition count: required 1, actual 15"))
 			})
 		})
 	})
@@ -250,7 +252,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 				var msgs service.MessageBatch
 				for range 10 {
 					msg := service.NewMessage([]byte(`{"data": "test"}`))
-					msg.MetaSet("kafka_topic", "umh.v1.abc")
+					msg.MetaSet("topic", "umh.v1.abc")
 					msgs = append(msgs, msg)
 				}
 				err := outputPlugin.WriteBatch(ctx, msgs)
@@ -270,12 +272,12 @@ var _ = Describe("Initializing uns output plugin", func() {
 			})
 
 			It("should throw an error if the message does not have a topic key", Label("test"), func() {
-				// The meta key kafka_topic is not set
+				// The meta key topic is not set
 				msg := service.NewMessage([]byte(`{"data": "test"}`))
 				msgs := service.MessageBatch{msg}
 				err := outputPlugin.WriteBatch(ctx, msgs)
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("message_key is not set or is empty in message 0, message_key is mandatory"))
+				Expect(err.Error()).To(ContainSubstring("topic is not set or is empty in message 0, topic is mandatory"))
 			})
 		})
 
@@ -291,7 +293,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 				var msgs service.MessageBatch
 				for range 10 {
 					msg := service.NewMessage(nil)
-					msg.MetaSet("kafka_topic", "umh.v2.messages")
+					msg.MetaSet("topic", "umh.v1.enterprise.messages")
 					msg.SetStructured(map[string]any{
 						"value": "mock message",
 					})
