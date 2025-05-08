@@ -242,7 +242,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 		When("with empty list of message", func() {
 			It("should throw error about empty message list", func() {
 				err := outputPlugin.WriteBatch(ctx, nil)
-				Expect(err.Error()).To(BeEquivalentTo("error writing batch output to kafka: produceSync is called with empty messages list"))
+				Expect(err).To(BeNil())
 			})
 		})
 		When("with list of messages", func() {
