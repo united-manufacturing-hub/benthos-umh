@@ -102,14 +102,14 @@ In most UMH deployments, the default value is sufficient as Kafka runs on the sa
 }
 
 // Config holds the configuration for the UNS output plugin
-type unsConfig struct {
+type unsOutputConfig struct {
 	messageKey    *service.InterpolatedString
 	brokerAddress string
 	bridgedBy     string
 }
 
 type unsOutput struct {
-	config unsConfig
+	config unsOutputConfig
 	client MessagePublisher
 	log    *service.Logger
 }
@@ -124,7 +124,7 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 		Period: "100ms", // timeout to ensure timely delivery even if the count aren't met
 	}
 
-	config := unsConfig{}
+	config := unsOutputConfig{}
 
 	// Parse topic
 	messageKey, err := conf.FieldInterpolatedString("topic")
@@ -160,7 +160,7 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 }
 
 // Testable constructor that accepts client
-func newUnsOutputWithClient(client MessagePublisher, config unsConfig, logger *service.Logger) service.BatchOutput {
+func newUnsOutputWithClient(client MessagePublisher, config unsOutputConfig, logger *service.Logger) service.BatchOutput {
 	return &unsOutput{
 		client: client,
 		config: config,

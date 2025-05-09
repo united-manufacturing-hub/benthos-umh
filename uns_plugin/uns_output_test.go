@@ -146,7 +146,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 			},
 		}
 
-		unsConf := unsConfig{
+		unsConf := unsOutputConfig{
 			bridgedBy: "default-test-bridge",
 		}
 		messageKey, _ := service.NewInterpolatedString("${! meta(\"topic\") }")
