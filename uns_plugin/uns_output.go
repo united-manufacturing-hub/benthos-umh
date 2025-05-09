@@ -36,6 +36,7 @@ const (
 	defaultBrokerAddress             = "localhost:9092"
 	defaultClientID                  = "umh_core"
 	defaultBridgeName                = "uns_default_bridge"
+	defaultTopic                     = "${! meta(\"topic\") }"
 )
 
 var (
@@ -85,7 +86,7 @@ underscores, or hyphens. Invalid characters will be replaced with underscores.
             `).
 			Example("${! meta(\"topic\") }").
 			Example("umh.v1.enterprise.site.area.historian").
-			Default("${! meta(\"topic\") }")).
+			Default(defaultTopic)).
 		Field(service.NewStringField("broker_address").
 			Description(`
 The Kafka broker address to connect to. This can be a single address or multiple addresses
@@ -127,11 +128,14 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 	config := unsConfig{}
 
 	// Parse topic
-	messageKey, err := conf.FieldInterpolatedString("topic")
-	if err != nil {
-		return nil, batchPolicy, 0, fmt.Errorf("error while parsing topic field from the config: %v", err)
+	config.messageKey, _ = service.NewInterpolatedString(defaultTopic)
+	if conf.Contains("topic") {
+		messageKey, err := conf.FieldInterpolatedString("topic")
+		if err != nil {
+			return nil, batchPolicy, 0, fmt.Errorf("error while parsing topic field from the config: %v", err)
+		}
+		config.messageKey = messageKey
 	}
-	config.messageKey = messageKey
 
 	// Parse broker_address if provided
 	config.brokerAddress = defaultBrokerAddress

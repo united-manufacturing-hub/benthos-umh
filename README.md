@@ -2019,7 +2019,7 @@ output:
   uns:
     topic: "${! meta(\"topic\") }"   # Optional (default: ${! meta("topic") }): The topic key for routing messages in the UMH ecosystem
     broker_address: "localhost:9092"  # Optional: Kafka broker address (default: localhost:9092)
-    bridged_by: "protocol-converter-name"  # Required: Name of the bridge doing the data bridging
+    bridged_by: "protocol-converter-name"  # Optional: Name of the bridge doing the data bridging. (default: uns_default_bridge)
 ```
 
 #### Configuration Parameters
