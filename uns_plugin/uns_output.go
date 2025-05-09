@@ -35,7 +35,7 @@ const (
 	defaultOutputTopicPartitionCount = 1
 	defaultBrokerAddress             = "localhost:9092"
 	defaultClientID                  = "umh_core"
-	defaultBridgeName                = "uns_default_bridge"
+	defaultBridgeName                = "umh_core"
 	defaultTopic                     = "${! meta(\"topic\") }"
 )
 
