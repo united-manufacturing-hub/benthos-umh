@@ -15,12 +15,15 @@
 package uns_plugin
 
 import (
+	"context"
+	"fmt"
+
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 // init registers the "uns" batch output plugin with Benthos using its configuration and constructor.
 func init() {
-	service.RegisterBatchOutput("uns", outputConfig(), newUnsOutput)
+	service.RegisterBatchInput("uns", inputConfig(), newUnsInput)
 }
 
 func inputConfig() *service.ConfigSpec {
@@ -67,4 +70,68 @@ const (
 type unsInputConfig struct {
 	topic           string
 	inputKafkaTopic string
+	broker          string
+}
+
+type MessageConsumer interface{}
+
+type unsInput struct {
+	config unsInputConfig
+	client MessageConsumer
+	log    *service.Logger
+}
+
+func newUnsInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
+
+	config := unsInputConfig{}
+
+	// Parse topic
+	topic, err := conf.FieldString("topic")
+	if err != nil {
+		return nil, fmt.Errorf("error while parsing the 'topic' field from the plugin's config: %v", err)
+	}
+	config.topic = topic
+
+	config.inputKafkaTopic = defaultInputKafkaTopic
+	if conf.Contains("input_kafka_topic") {
+		inputKafkaTopic, err := conf.FieldString("input_kafka_topic")
+		if err != nil {
+			return nil, fmt.Errorf("error while parsing the 'input_kafka_topic' field from the plugin's config: %v", err)
+		}
+		config.inputKafkaTopic = inputKafkaTopic
+	}
+
+	config.broker = defaultBrokerAddress
+	if conf.Contains("broker_address") {
+		brokerAddr, err := conf.FieldString("broker_address")
+		if err != nil {
+			return nil, fmt.Errorf("error while parsing the 'broker_address' fro m the plugin's config: %v", err)
+		}
+		config.broker = brokerAddr
+	}
+
+	return newUnsInputWithClient(NewClient(), config, mgr.Logger()), nil
+}
+
+func newUnsInputWithClient(client MessageConsumer, config unsInputConfig, logger *service.Logger) service.BatchInput {
+	return &unsInput{
+		client: client,
+		config: config,
+		log:    logger,
+	}
+}
+
+// Close implements service.BatchInput.
+func (u *unsInput) Close(ctx context.Context) error {
+	panic("unimplemented")
+}
+
+// Connect implements service.BatchInput.
+func (u *unsInput) Connect(context.Context) error {
+	panic("unimplemented")
+}
+
+// ReadBatch implements service.BatchInput.
+func (u *unsInput) ReadBatch(context.Context) (service.MessageBatch, service.AckFunc, error) {
+	panic("unimplemented")
 }
