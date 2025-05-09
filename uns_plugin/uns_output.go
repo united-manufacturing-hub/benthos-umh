@@ -42,62 +42,80 @@ var (
 	topicSanitizer = regexp.MustCompile(`[^a-zA-Z0-9._\-]`)
 )
 
-// outputConfig returns the Benthos configuration specification for the "uns" output plugin.
+// outputConfig returns the Benthos configuration specification for the “uns”
+// batch-output plugin.
 //
-// This configuration defines how messages are sent to the UMH platform's Kafka messaging system.
-// It includes fields for specifying the Kafka message key ("topic"), broker address, and the name
-// of the bridge performing data bridging ("bridged_by"). The "topic" field supports interpolation
-// and is sanitized before use as the Kafka message key. Default values are provided for all fields
-// to simplify deployment in standard UMH environments.
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//	▶  PURPOSE
+//	    Publishes data into the United Manufacturing Hub Unified Namespace.
+//	    Every record is written to the local Redpanda topic **umh.messages**;
+//	    the *Kafka-key* (not the topic) is taken from `topic`, normally
+//	    `${! meta("topic") }`, and is ISA-95 / UMH-style (`umh.v1.<…>`).
+//
+//	▶  SCOPE
+//	    The plugin is intended to run **inside UMH Core**.  There it can be
+//	    configured with a single line:
+//
+//	        output:
+//	          uns: {}
+//
+//	    Outside UMH Core you must at least set `broker_address`.
+//
+//	▶  DEFAULTS & SAFETY
+//	    * Broker : localhost:9092 (the embedded Redpanda)
+//	    * Topic  : umh.messages (hard-wired)
+//	    * Key    : ${! meta("topic") }  – sanitized to `[a-zA-Z0-9._-]`
+//	    * Header : `bridged_by = umh-core` (auto-overwritten by the
+//	               Management Console when the container is deployed as a
+//	               protocol-converter)
+//
+//	    If umh.messages does not exist, the plugin creates it with one
+//	    partition and `cleanup.policy = compact,delete`.
+//
+// ──────────────────────────────────────────────────────────────────────────────
 func outputConfig() *service.ConfigSpec {
 	return service.NewConfigSpec().
-		Summary("Writes messages to the UMH platform's Kafka messaging system").
+		Summary("Publishes records to UMH Core’s Kafka (Redpanda) topic `umh.messages`.").
 		Description(`
-The uns_plugin output sends messages to the United Manufacturing Hub's Kafka messaging system.
-This output is optimized for communication with UMH core components and handles the complexities
-of Kafka configuration for you.
+Inside UMH Core you usually configure **nothing**:
 
-All messages are written to a single topic (umh.messages), with the key of each message
-derived from the 'messageKey' field specified in this configuration. This key is crucial for
-proper routing within the UMH ecosystem.
+    output:
+      uns: {}
 
-By default, the plugin connects to a Kafka broker at localhost:9092 with client ID 'umh_core',
-which is suitable for most UMH deployments. These defaults work with the standard UMH
-installation where Kafka runs alongside other services.
-
-Note: This output implements batch writing to Kafka for improved performance.`).
+The plugin connects to Redpanda on localhost:9092, batches 100 records
+or 100 ms, and writes them to *umh.messages*.  The Kafka key is taken
+from '${! meta("topic") }' (set automatically by the tag_processor,
+Bloblang, or Node-RED JS).  Outside UMH Core you may override the broker
+or add a custom 'bridged_by' header for traceability.
+`).
 		Field(service.NewInterpolatedStringField("topic").
 			Description(`
-Key used when sending messages to the UMH output topic. This value becomes the Kafka message key,
-which determines how messages are routed within the UMH ecosystem.
+The **Kafka key** for every record.  Must follow the UMH naming pattern
+'umh.v1.<enterprise>.<site>.<area>.<data_contract>[.<virtual_path>].<tag>'.
 
-The topic should follow the UMH naming convention: umh.v1.enterprise.site.area.tag
-(e.g., 'umh.v1.acme.berlin.assembly.temperature')
+Leave it at the default '${! meta("topic") }' if you use the tag_processor
+or set it in Bloblang / Node-RED JS.
 
-This field supports interpolation, allowing you to set the key dynamically based on message
-content or metadata. Common patterns include:
-- Using metadata: ${! meta("topic") }
-- Using content: ${! json("device.location") }
-- Using a static value: umh.v1.enterprise.site.area.tag
-
-Note: The key will be sanitized to remove any characters that are not alphanumeric, dots,
-underscores, or hyphens. Invalid characters will be replaced with underscores.
-            `).
+Any character not matching [a-zA-Z0-9._-] is replaced by '_'.
+`).
 			Example("${! meta(\"topic\") }").
-			Example("umh.v1.enterprise.site.area.historian").
+			Example("umh.v1.acme.berlin.packaging._historian.temperature").
 			Default("${! meta(\"topic\") }")).
 		Field(service.NewStringField("broker_address").
 			Description(`
-The Kafka broker address to connect to. This can be a single address or multiple addresses
-separated by commas. For example: "localhost:9092" or "broker1:9092,broker2:9092".
+Kafka / Redpanda bootstrap list.  Comma-separated if you have multiple
+brokers, e.g. "broker1:9092,broker2:9092".
 
-In most UMH deployments, the default value is sufficient as Kafka runs on the same host.
-            `).
+Default 'localhost:9092' is correct for every UMH Core installation.
+`).
 			Default(defaultBrokerAddress)).
 		Field(service.NewStringField("bridged_by").
 			Description(`
-	The name of the Bridges that does the bridging of the data. The format for the Bridge name should 'protocol-converter-{nodeName}-{protocol converter name}'
-			`).
+Traceability header.  Defaults to 'umh-core' but is automatically
+overwritten by UMH Core when the container runs as a protocol-converter:
+'protocol-converter-<INSTANCE>-<NAME>'.
+`).
 			Default(defaultBridgeName))
 }
 
