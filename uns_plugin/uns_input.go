@@ -19,6 +19,8 @@ import (
 	"fmt"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/twmb/franz-go/pkg/kgo"
+	"time"
 )
 
 // init registers the "uns" batch output plugin with Benthos using its configuration and constructor.
@@ -70,7 +72,7 @@ const (
 type unsInputConfig struct {
 	topic           string
 	inputKafkaTopic string
-	broker          string
+	brokerAddress   string
 }
 
 type unsInput struct {
@@ -99,13 +101,13 @@ func newUnsInput(conf *service.ParsedConfig, mgr *service.Resources) (service.Ba
 		config.inputKafkaTopic = inputKafkaTopic
 	}
 
-	config.broker = defaultBrokerAddress
+	config.brokerAddress = defaultBrokerAddress
 	if conf.Contains("broker_address") {
 		brokerAddr, err := conf.FieldString("broker_address")
 		if err != nil {
 			return nil, fmt.Errorf("error while parsing the 'broker_address' fro m the plugin's config: %v", err)
 		}
-		config.broker = brokerAddr
+		config.brokerAddress = brokerAddr
 	}
 
 	return newUnsInputWithClient(NewClient(), config, mgr.Logger()), nil
@@ -121,12 +123,38 @@ func newUnsInputWithClient(client MessageConsumer, config unsInputConfig, logger
 
 // Close implements service.BatchInput.
 func (u *unsInput) Close(ctx context.Context) error {
-	panic("unimplemented")
+	if u.client != nil {
+		u.client.Close()
+	}
+	return nil
 }
 
 // Connect implements service.BatchInput.
-func (u *unsInput) Connect(context.Context) error {
-	panic("unimplemented")
+func (o *unsInput) Connect(context.Context) error {
+
+	o.log.Infof("Connecting to uns plugin kafka broker: %v", o.config.brokerAddress)
+
+	if o.client == nil {
+		o.client = NewConsumerClient()
+	}
+
+	err := o.client.Connect(
+		kgo.SeedBrokers(o.config.brokerAddress),           // use configured broker address
+		kgo.AllowAutoTopicCreation(),                      // Allow creating the defaultOutputTopic if it doesn't exists
+		kgo.ClientID(defaultClientID),                     // client id for all requests sent to the broker
+		kgo.ConnIdleTimeout(15*time.Minute),               // Rough amount of time to allow connections to be idle. Default value at franz-go is 20
+		kgo.DialTimeout(5*time.Second),                    // Timeout while connecting to the broker. 5 second is more than enough to connect to a local broker
+		kgo.ConsumeRegex(),                                // Treat the name of the topics to consume as regex. This opens the world to the plugin users to consume from multiple kafka topics
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()), // Resets the offset to the earliest partition offset if the client encountres a "OffsetOutOfRange" problem
+		kgo.ConsumeTopics(o.config.inputKafkaTopic),       // Input topics to consume
+		// Todo: Set the group.id
+	)
+	if err != nil {
+		return fmt.Errorf("error while creating a kafka client with broker %s: %v", o.config.brokerAddress, err)
+	}
+
+	o.log.Infof("Connection to the kafka broker %s is successful", o.config.brokerAddress)
+	return nil
 }
 
 // ReadBatch implements service.BatchInput.
