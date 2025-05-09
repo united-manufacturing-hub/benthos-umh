@@ -104,7 +104,7 @@ In most UMH deployments, the default value is sufficient as Kafka runs on the sa
 
 // Config holds the configuration for the UNS output plugin
 type unsConfig struct {
-	messageKey    *service.InterpolatedString
+	topic         *service.InterpolatedString
 	brokerAddress string
 	bridgedBy     string
 }
@@ -128,13 +128,13 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 	config := unsConfig{}
 
 	// Parse topic
-	config.messageKey, _ = service.NewInterpolatedString(defaultTopic)
+	config.topic, _ = service.NewInterpolatedString(defaultTopic)
 	if conf.Contains("topic") {
 		messageKey, err := conf.FieldInterpolatedString("topic")
 		if err != nil {
 			return nil, batchPolicy, 0, fmt.Errorf("error while parsing topic field from the config: %v", err)
 		}
-		config.messageKey = messageKey
+		config.topic = messageKey
 	}
 
 	// Parse broker_address if provided
@@ -286,7 +286,7 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 
 	records := make([]Record, 0, len(msgs))
 	for i, msg := range msgs {
-		key, err := o.config.messageKey.TryString(msg)
+		key, err := o.config.topic.TryString(msg)
 		if err != nil {
 			return fmt.Errorf("failed to resolve topic field in message %d: %v", i, err)
 		}
