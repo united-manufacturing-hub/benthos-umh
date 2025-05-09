@@ -73,8 +73,6 @@ type unsInputConfig struct {
 	broker          string
 }
 
-type MessageConsumer interface{}
-
 type unsInput struct {
 	config unsInputConfig
 	client MessageConsumer
