@@ -50,8 +50,9 @@ func inputConfig() *service.ConfigSpec {
 	(e.g., 'umh.v1.acme.berlin.+' # regex to match all areas and tags under brelin site )
 		`).
 			Example("umh.v1.acme.berlin.assembly.temperature").
-			Example(`umh\.v1\..+`)).
-		Field(service.NewStringField("input_kafka_topic").
+			Example(`umh\.v1\..+`).
+			Default(defaultTopicKey)).
+		Field(service.NewStringField("kafka_topic").
 			Description(`
 	The input kafka topic to read messages from. By default the messages will be consumed from 'umh.messages' topic.
 			`).
@@ -64,7 +65,13 @@ separated by commas. For example: "localhost:9092" or "broker1:9092,broker2:9092
 
 In most UMH deployments, the default value is sufficient as Kafka runs on the same host.
             `).
-			Default(defaultBrokerAddress))
+			Default(defaultBrokerAddress)).
+		Field(service.NewStringField("consumer_group").
+			Description(`
+	The consumer group id to be used by the plugin. The default consumer group id is uns_plugin. This is an optional plugin input and can be used by the users if one wants to read the topic with a different consumer group discarding the previous consumed offsets.
+	`).
+			Example("uns_consumer_group").
+			Default(defaultConsumerGroup))
 }
 
 const (
@@ -83,6 +90,7 @@ type unsInputConfig struct {
 	topic           string
 	inputKafkaTopic string
 	brokerAddress   string
+	consumerGroup   string
 }
 
 type unsInput struct {
@@ -106,10 +114,10 @@ func newUnsInput(conf *service.ParsedConfig, mgr *service.Resources) (service.Ba
 	}
 
 	config.inputKafkaTopic = defaultInputKafkaTopic
-	if conf.Contains("input_kafka_topic") {
-		inputKafkaTopic, err := conf.FieldString("input_kafka_topic")
+	if conf.Contains("kafka_topic") {
+		inputKafkaTopic, err := conf.FieldString("kafka_topic")
 		if err != nil {
-			return nil, fmt.Errorf("error while parsing the 'input_kafka_topic' field from the plugin's config: %v", err)
+			return nil, fmt.Errorf("error while parsing the 'kafka_topic' field from the plugin's config: %v", err)
 		}
 		config.inputKafkaTopic = inputKafkaTopic
 	}
@@ -123,7 +131,16 @@ func newUnsInput(conf *service.ParsedConfig, mgr *service.Resources) (service.Ba
 		config.brokerAddress = brokerAddr
 	}
 
-	return newUnsInputWithClient(NewClient(), config, mgr.Logger()), nil
+	config.consumerGroup = defaultConsumerGroup
+	if conf.Contains("consumer_group") {
+		cg, err := conf.FieldString("consumer_group")
+		if err != nil {
+			return nil, fmt.Errorf("error while parsing the 'consumer_group' from the plugin's config: %v", err)
+		}
+		config.consumerGroup = cg
+	}
+
+	return newUnsInputWithClient(NewConsumerClient(), config, mgr.Logger()), nil
 }
 
 func newUnsInputWithClient(client MessageConsumer, config unsInputConfig, logger *service.Logger) service.BatchInput {
@@ -139,26 +156,30 @@ func (u *unsInput) Close(ctx context.Context) error {
 	if u.client != nil {
 		u.client.Close()
 	}
+	u.log.Infof("uns input kafka client closed successfully")
 	return nil
 }
 
 // Connect implements service.BatchInput.
-func (o *unsInput) Connect(context.Context) error {
+func (u *unsInput) Connect(context.Context) error {
 
-	o.log.Infof("Connecting to uns plugin kafka broker: %v", o.config.brokerAddress)
+	u.log.Infof("Connecting to uns plugin kafka broker: %v", u.config.brokerAddress)
 
-	if o.client == nil {
-		o.client = NewConsumerClient()
+	if u.client == nil {
+		u.client = NewConsumerClient()
 	}
 
-	err := o.client.Connect(
-		kgo.SeedBrokers(o.config.brokerAddress),           // use configured broker address
+	u.log.Infof("creating kafka client with plugin config broker: %v, input_kafka_topic: %v, topic: %v", u.config.brokerAddress, u.config.inputKafkaTopic, u.config.topic)
+
+	err := u.client.Connect(
+		kgo.SeedBrokers(u.config.brokerAddress),           // use configured broker address
 		kgo.AllowAutoTopicCreation(),                      // Allow creating the defaultOutputTopic if it doesn't exists
 		kgo.ClientID(defaultClientID),                     // client id for all requests sent to the broker
 		kgo.ConnIdleTimeout(defaultConnIdleTimeout),       // Rough amount of time to allow connections to be idle. Default value at franz-go is 20
 		kgo.DialTimeout(defaultDialTimeout),               // Timeout while connecting to the broker. 5 second is more than enough to connect to a local broker
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()), // Resets the offset to the earliest partition offset if the client encountres a "OffsetOutOfRange" problem
-		kgo.ConsumerGroup(defaultConsumerGroup),           // Set the consumer group id
+		kgo.ConsumerGroup(u.config.consumerGroup),         // Set the consumer group id
+		kgo.ConsumeTopics(u.config.inputKafkaTopic),       // Set the topics to consume
 
 		// Some high performance settings
 		kgo.FetchMaxBytes(defaultFetchMaxBytes),
@@ -167,10 +188,10 @@ func (o *unsInput) Connect(context.Context) error {
 		kgo.FetchMaxWait(defaultFetchMaxWaitTime), // Override the default 5s value and wait just only for 100 Millisecond for the min bytes
 	)
 	if err != nil {
-		return fmt.Errorf("error while creating a kafka client with broker %s: %v", o.config.brokerAddress, err)
+		return fmt.Errorf("error while creating a kafka client with broker %s: %v", u.config.brokerAddress, err)
 	}
 
-	o.log.Infof("Connection to the kafka broker %s is successful", o.config.brokerAddress)
+	u.log.Infof("Connection to the kafka broker %s is successful", u.config.brokerAddress)
 	return nil
 }
 
