@@ -26,8 +26,46 @@ type ConnectionHandler interface {
 	Close() error
 }
 
+// Fetches is a wrapper interface for kgo.Fetches to make it testable
+type Fetches interface {
+	Empty() bool
+	Err() error
+	EachRecord(fn func(*kgo.Record))
+	EachError(fn func(string, int32, error))
+	Err0() error
+}
+
+// KafkaFetchesAdapter adapts kgo.Fetches to our Fetches interface
+type KafkaFetchesAdapter struct {
+	fetches kgo.Fetches
+}
+
+func NewKafkaFetchesAdapter(fetches kgo.Fetches) Fetches {
+	return &KafkaFetchesAdapter{fetches: fetches}
+}
+
+func (k *KafkaFetchesAdapter) Empty() bool {
+	return k.fetches.Empty()
+}
+
+func (k *KafkaFetchesAdapter) Err() error {
+	return k.fetches.Err()
+}
+
+func (k *KafkaFetchesAdapter) EachRecord(fn func(*kgo.Record)) {
+	k.fetches.EachRecord(fn)
+}
+
+func (k *KafkaFetchesAdapter) EachError(fn func(string, int32, error)) {
+	k.fetches.EachError(fn)
+}
+
+func (k *KafkaFetchesAdapter) Err0() error {
+	return k.fetches.Err0()
+}
+
 type Consumer interface {
-	PollFetches(context.Context) kgo.Fetches
+	PollFetches(context.Context) Fetches
 	CommitRecords(context.Context) error
 }
 
@@ -68,8 +106,8 @@ func (k *ConsumerClient) Close() error {
 	return nil
 }
 
-func (k *ConsumerClient) PollFetches(ctx context.Context) kgo.Fetches {
-	return k.client.PollFetches(ctx)
+func (k *ConsumerClient) PollFetches(ctx context.Context) Fetches {
+	return NewKafkaFetchesAdapter(k.client.PollFetches(ctx))
 }
 
 func (k *ConsumerClient) CommitRecords(ctx context.Context) error {
