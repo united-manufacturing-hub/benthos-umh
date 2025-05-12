@@ -68,9 +68,15 @@ In most UMH deployments, the default value is sufficient as Kafka runs on the sa
 }
 
 const (
-	defaultInputKafkaTopic = "umh.messages"
-	defaultTopicKey        = ".*"
-	defaultConsumerGroup   = "uns_plugin"
+	defaultInputKafkaTopic        = "umh.messages"
+	defaultTopicKey               = ".*"
+	defaultConsumerGroup          = "uns_plugin"
+	defaultConnIdleTimeout        = 15 * time.Minute
+	defaultDialTimeout            = 5 * time.Minute
+	defaultFetchMaxBytes          = 10e6 // 10MB
+	defaultFetchMaxPartitionBytes = 10e6 // 10MB
+	defaultFetchMinBytes          = 1    // 1 Byte
+	defaultFetchMaxWaitTime       = 100 * time.Millisecond
 )
 
 type unsInputConfig struct {
@@ -149,16 +155,16 @@ func (o *unsInput) Connect(context.Context) error {
 		kgo.SeedBrokers(o.config.brokerAddress),           // use configured broker address
 		kgo.AllowAutoTopicCreation(),                      // Allow creating the defaultOutputTopic if it doesn't exists
 		kgo.ClientID(defaultClientID),                     // client id for all requests sent to the broker
-		kgo.ConnIdleTimeout(15*time.Minute),               // Rough amount of time to allow connections to be idle. Default value at franz-go is 20
-		kgo.DialTimeout(5*time.Second),                    // Timeout while connecting to the broker. 5 second is more than enough to connect to a local broker
+		kgo.ConnIdleTimeout(defaultConnIdleTimeout),       // Rough amount of time to allow connections to be idle. Default value at franz-go is 20
+		kgo.DialTimeout(defaultDialTimeout),               // Timeout while connecting to the broker. 5 second is more than enough to connect to a local broker
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()), // Resets the offset to the earliest partition offset if the client encountres a "OffsetOutOfRange" problem
 		kgo.ConsumerGroup(defaultConsumerGroup),           // Set the consumer group id
 
 		// Some high performance settings
-		kgo.FetchMaxBytes(10e6),                // 10MB max fetch size
-		kgo.FetchMaxPartitionBytes(10e6),       // 10MB max per partition
-		kgo.FetchMinBytes(1),                   // Start with atleast 1 byte
-		kgo.FetchMaxWait(100*time.Millisecond), // Override the default 5s value and wait just only for 100 Millisecond for the min bytes
+		kgo.FetchMaxBytes(defaultFetchMaxBytes),
+		kgo.FetchMaxPartitionBytes(defaultFetchMaxPartitionBytes),
+		kgo.FetchMinBytes(defaultFetchMinBytes),
+		kgo.FetchMaxWait(defaultFetchMaxWaitTime), // Override the default 5s value and wait just only for 100 Millisecond for the min bytes
 	)
 	if err != nil {
 		return fmt.Errorf("error while creating a kafka client with broker %s: %v", o.config.brokerAddress, err)
@@ -168,7 +174,7 @@ func (o *unsInput) Connect(context.Context) error {
 	return nil
 }
 
-// ReadBatch implements service.BatchInput.
+// ReadBatch reads messages from Kafka in a batch and return it to redpanda connect processing chain.
 func (u *unsInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
 	fetches := u.client.PollFetches(ctx)
 
@@ -178,12 +184,10 @@ func (u *unsInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 
 	// There could be multiple errors within fetches. But we do check only the first error to quickly see the existence of an error
 	if fetches.Err() != nil {
-		go func(ctx context.Context) {
-			fetches.EachError(func(topic string, partition int32, err error) {
-				u.log.Errorf("Error while fetching messages, topic: %v partition: %d, err: %v", topic, partition, err)
+		fetches.EachError(func(topic string, partition int32, err error) {
+			u.log.Errorf("Error while fetching messages, topic: %v partition: %d, err: %v", topic, partition, err)
 
-			})
-		}(ctx)
+		})
 		// Enough to return only the first error to notify benthos. But all theerrors are sent to the benthos logs
 		return nil, nil, fetches.Err0()
 	}
