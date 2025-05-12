@@ -199,10 +199,6 @@ func (u *unsInput) Connect(context.Context) error {
 func (u *unsInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
 	fetches := u.client.PollFetches(ctx)
 
-	if fetches.Empty() {
-		return nil, nil, nil
-	}
-
 	// There could be multiple errors within fetches. But we do check only the first error to quickly see the existence of an error
 	if fetches.Err() != nil {
 		fetches.EachError(func(topic string, partition int32, err error) {
@@ -211,6 +207,11 @@ func (u *unsInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 		})
 		// Enough to return only the first error to notify benthos. But all theerrors are sent to the benthos logs
 		return nil, nil, fetches.Err0()
+	}
+
+	if fetches.Empty() {
+		// u.log.Infof("empty fetch results for the topic: %s", u.config.inputKafkaTopic)
+		return nil, nil, nil
 	}
 
 	// Create messageBatch
