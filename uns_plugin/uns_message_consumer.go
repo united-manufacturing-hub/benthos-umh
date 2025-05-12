@@ -15,13 +15,25 @@
 package uns_plugin
 
 import (
+	"context"
+
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-type MessageConsumer interface {
+type ConnectionHandler interface {
 	Connect(...kgo.Opt) error
 	Close() error
+}
+
+type Consumer interface {
+	PollFetches(context.Context) kgo.Fetches
+	CommitRecords(context.Context) error
+}
+
+type MessageConsumer interface {
+	ConnectionHandler
+	Consumer
 }
 
 // ConsumerClient is a wrapper for franz-go kafka client optimized to consume Kafka topics
@@ -54,4 +66,13 @@ func (k *ConsumerClient) Close() error {
 		k.client.Close()
 	}
 	return nil
+}
+
+func (k *ConsumerClient) PollFetches(ctx context.Context) kgo.Fetches {
+	return k.client.PollFetches(ctx)
+}
+
+func (k *ConsumerClient) CommitRecords(ctx context.Context) error {
+	// TODO: check if we need a goroutine here. But how does ackfunction in the caller would work then
+	return k.client.CommitUncommittedOffsets(ctx)
 }

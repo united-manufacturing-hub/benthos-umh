@@ -17,10 +17,12 @@ package uns_plugin
 import (
 	"context"
 	"fmt"
+	"regexp"
+
+	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/twmb/franz-go/pkg/kgo"
-	"time"
 )
 
 // init registers the "uns" batch output plugin with Benthos using its configuration and constructor.
@@ -67,6 +69,8 @@ In most UMH deployments, the default value is sufficient as Kafka runs on the sa
 
 const (
 	defaultInputKafkaTopic = "umh.messages"
+	defaultTopicKey        = ".*"
+	defaultConsumerGroup   = "uns_plugin"
 )
 
 type unsInputConfig struct {
@@ -85,12 +89,15 @@ func newUnsInput(conf *service.ParsedConfig, mgr *service.Resources) (service.Ba
 
 	config := unsInputConfig{}
 
-	// Parse topic
-	topic, err := conf.FieldString("topic")
-	if err != nil {
-		return nil, fmt.Errorf("error while parsing the 'topic' field from the plugin's config: %v", err)
+	// Use the default Topic key .* (match any key string) to allow all messages
+	config.topic = defaultTopicKey
+	if conf.Contains("topic") {
+		topic, err := conf.FieldString("topic")
+		if err != nil {
+			return nil, fmt.Errorf("error while parsing the 'topic' field from the plugin's config: %v", err)
+		}
+		config.topic = topic
 	}
-	config.topic = topic
 
 	config.inputKafkaTopic = defaultInputKafkaTopic
 	if conf.Contains("input_kafka_topic") {
@@ -144,10 +151,14 @@ func (o *unsInput) Connect(context.Context) error {
 		kgo.ClientID(defaultClientID),                     // client id for all requests sent to the broker
 		kgo.ConnIdleTimeout(15*time.Minute),               // Rough amount of time to allow connections to be idle. Default value at franz-go is 20
 		kgo.DialTimeout(5*time.Second),                    // Timeout while connecting to the broker. 5 second is more than enough to connect to a local broker
-		kgo.ConsumeRegex(),                                // Treat the name of the topics to consume as regex. This opens the world to the plugin users to consume from multiple kafka topics
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()), // Resets the offset to the earliest partition offset if the client encountres a "OffsetOutOfRange" problem
-		kgo.ConsumeTopics(o.config.inputKafkaTopic),       // Input topics to consume
-		// Todo: Set the group.id
+		kgo.ConsumerGroup(defaultConsumerGroup),           // Set the consumer group id
+
+		// Some high performance settings
+		kgo.FetchMaxBytes(10e6),                // 10MB max fetch size
+		kgo.FetchMaxPartitionBytes(10e6),       // 10MB max per partition
+		kgo.FetchMinBytes(1),                   // Start with atleast 1 byte
+		kgo.FetchMaxWait(100*time.Millisecond), // Override the default 5s value and wait just only for 100 Millisecond for the min bytes
 	)
 	if err != nil {
 		return fmt.Errorf("error while creating a kafka client with broker %s: %v", o.config.brokerAddress, err)
@@ -158,6 +169,63 @@ func (o *unsInput) Connect(context.Context) error {
 }
 
 // ReadBatch implements service.BatchInput.
-func (u *unsInput) ReadBatch(context.Context) (service.MessageBatch, service.AckFunc, error) {
-	panic("unimplemented")
+func (u *unsInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+	fetches := u.client.PollFetches(ctx)
+
+	if fetches.Empty() {
+		return nil, nil, nil
+	}
+
+	// There could be multiple errors within fetches. But we do check only the first error to quickly see the existence of an error
+	if fetches.Err() != nil {
+		go func(ctx context.Context) {
+			fetches.EachError(func(topic string, partition int32, err error) {
+				u.log.Errorf("Error while fetching messages, topic: %v partition: %d, err: %v", topic, partition, err)
+
+			})
+		}(ctx)
+		// Enough to return only the first error to notify benthos. But all theerrors are sent to the benthos logs
+		return nil, nil, fetches.Err0()
+	}
+
+	// Create messageBatch
+	var batch service.MessageBatch
+	topicRegex, err := regexp.Compile(u.config.topic)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error compiling topic regex: %v", err)
+	}
+
+	fetches.EachRecord(func(r *kgo.Record) {
+
+		if topicRegex.Match(r.Key) {
+			msg := service.NewMessage(r.Value)
+			// Add kafka meta fields
+			msg.MetaSet("kafka_key", string(r.Key))
+			msg.MetaSet("kafka_topic", r.Topic)
+
+			// Add headers to the meta field if present
+			for _, h := range r.Headers {
+				msg.MetaSet(h.Key, string(h.Value))
+			}
+			batch = append(batch, msg)
+		}
+
+	})
+
+	// Create the ack function
+	ackFn := func(ctx context.Context, err error) error {
+		if err != nil {
+			u.log.Errorf("Error processing the batch: %v", err)
+			return err
+		}
+
+		if err := u.client.CommitRecords(ctx); err != nil {
+			u.log.Errorf("Error committing the message offsests: %v", err)
+			return err
+		}
+
+		return nil
+	}
+
+	return batch, ackFn, nil
 }
