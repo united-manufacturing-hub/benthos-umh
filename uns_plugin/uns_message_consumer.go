@@ -111,6 +111,5 @@ func (k *ConsumerClient) PollFetches(ctx context.Context) Fetches {
 }
 
 func (k *ConsumerClient) CommitRecords(ctx context.Context) error {
-	// TODO: check if we need a goroutine here. But how does ackfunction in the caller would work then
 	return k.client.CommitUncommittedOffsets(ctx)
 }

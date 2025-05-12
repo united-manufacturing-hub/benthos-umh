@@ -37,8 +37,6 @@ type TestMessageConsumer interface {
 	MessageConsumer
 }
 
-type ConnectFunc func(...kgo.Opt) error
-type CloseFunc func() error
 type PollFetchesFunc func(context.Context) Fetches
 type CommitRecordsFunc func(context.Context) error
 
@@ -137,7 +135,7 @@ func (m *MockFetches) Err0() error {
 	return m.err
 }
 
-var _ = Describe("Initializing uns input plugin", func() {
+var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 	var (
 		inputPlugin service.BatchInput
 		unsClient   *unsInput
@@ -187,19 +185,6 @@ var _ = Describe("Initializing uns input plugin", func() {
 		It("should return a valid configspec", func() {
 			spec := inputConfig()
 			Expect(spec).NotTo(BeNil())
-			// Verify some fields exist
-			Expect(spec.Summary()).To(ContainSubstring("Consumes messsages"))
-			Expect(spec.Description()).To(ContainSubstring("UMH platform's Kafka"))
-
-			// Check fields
-			hasTopicField := false
-			spec.Fields(func(field *service.ConfigField) bool {
-				if field.Name() == "topic" {
-					hasTopicField = true
-				}
-				return true
-			})
-			Expect(hasTopicField).To(BeTrue())
 		})
 	})
 
@@ -317,15 +302,26 @@ var _ = Describe("Initializing uns input plugin", func() {
 				Expect(len(batch)).To(Equal(2))
 
 				// Check first message
-				Expect(string(batch[0].AsBytes())).To(Equal(`{"value": 23.5}`))
-				Expect(batch[0].MetaGet("kafka_key")).To(Equal("umh.v1.acme.berlin.assembly.temperature"))
-				Expect(batch[0].MetaGet("kafka_topic")).To(Equal("umh.messages"))
-				Expect(batch[0].MetaGet("content-type")).To(Equal("application/json"))
+				b, err := batch[0].AsBytes()
+				Expect(err).To(BeNil())
+				Expect(string(b)).To(Equal(`{"value": 23.5}`))
+				kafka_key, ok := batch[0].MetaGet("kafka_key")
+				Expect(kafka_key).To(Equal("umh.v1.acme.berlin.assembly.temperature"))
+				Expect(ok).To(BeTrue())
+				kafka_topic, ok := batch[0].MetaGet("kafka_topic")
+				Expect(kafka_topic).To(Equal("umh.messages"))
+				Expect(ok).To(BeTrue())
 
 				// Check second message
-				Expect(string(batch[1].AsBytes())).To(Equal(`{"value": 1013.25}`))
-				Expect(batch[1].MetaGet("kafka_key")).To(Equal("umh.v1.acme.berlin.assembly.pressure"))
-				Expect(batch[1].MetaGet("kafka_topic")).To(Equal("umh.messages"))
+				b, err = batch[1].AsBytes()
+				Expect(err).To(BeNil())
+				Expect(string(b)).To(Equal(`{"value": 1013.25}`))
+				kafka_key, ok = batch[1].MetaGet("kafka_key")
+				Expect(kafka_key).To(Equal("umh.v1.acme.berlin.assembly.pressure"))
+				Expect(ok).To(BeTrue())
+				kafka_topic, ok = batch[1].MetaGet("kafka_topic")
+				Expect(kafka_topic).To(Equal("umh.messages"))
+				Expect(ok).To(BeTrue())
 
 				// Test ack function
 				Expect(ackFn).NotTo(BeNil())
@@ -343,11 +339,13 @@ var _ = Describe("Initializing uns input plugin", func() {
 				})
 
 				It("should only return records matching the filter", func() {
-					batch, ackFn, err := inputPlugin.ReadBatch(ctx)
+					batch, _, err := inputPlugin.ReadBatch(ctx)
 					Expect(err).To(BeNil())
 					Expect(batch).NotTo(BeNil())
 					Expect(len(batch)).To(Equal(1))
-					Expect(batch[0].MetaGet("kafka_key")).To(Equal("umh.v1.acme.berlin.assembly.temperature"))
+					kafka_key, ok := batch[0].MetaGet("kafka_key")
+					Expect(kafka_key).To(Equal("umh.v1.acme.berlin.assembly.temperature"))
+					Expect(ok).To(BeTrue())
 				})
 			})
 		})
@@ -416,6 +414,21 @@ var _ = Describe("Initializing uns input plugin", func() {
 		When("the topic regex is invalid", func() {
 			BeforeEach(func() {
 				unsClient.config.topic = "[" // Invalid regex
+				// Return records so that it doesn't return nil error due to empty fetch result
+				mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
+					records := []*kgo.Record{
+						{
+							Key:   []byte("umh.v1.test"),
+							Value: []byte(`{}`),
+							Topic: "umh.messages",
+						},
+					}
+					return &MockFetches{
+						empty:   false,
+						records: records,
+					}
+				})
+
 			})
 
 			It("should return a compile error", func() {

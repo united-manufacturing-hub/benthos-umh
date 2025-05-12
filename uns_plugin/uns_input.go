@@ -78,8 +78,6 @@ const (
 	defaultInputKafkaTopic        = "umh.messages"
 	defaultTopicKey               = ".*"
 	defaultConsumerGroup          = "uns_plugin"
-	defaultClientID               = "umh-uns-plugin"
-	defaultBrokerAddress          = "localhost:9092"
 	defaultConnIdleTimeout        = 15 * time.Minute
 	defaultDialTimeout            = 5 * time.Minute
 	defaultFetchMaxBytes          = 10e6 // 10MB
