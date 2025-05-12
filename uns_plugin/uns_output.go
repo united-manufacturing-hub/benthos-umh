@@ -35,7 +35,8 @@ const (
 	defaultOutputTopicPartitionCount = 1
 	defaultBrokerAddress             = "localhost:9092"
 	defaultClientID                  = "umh_core"
-	defaultBridgeName                = "uns_default_bridge"
+	defaultBridgeName                = "umh_core"
+	defaultTopic                     = "${! meta(\"topic\") }"
 )
 
 var (
@@ -100,8 +101,8 @@ or set it in Bloblang / Node-RED JS.
 Any character not matching [a-zA-Z0-9._-] is replaced by '_'.
 `).
 			Example("${! meta(\"topic\") }").
-			Example("umh.v1.acme.berlin.packaging._historian.temperature").
-			Default("${! meta(\"topic\") }")).
+			Example("umh.v1.enterprise.site.area.historian").
+			Default(defaultTopic)).
 		Field(service.NewStringField("broker_address").
 			Description(`
 Kafka / Redpanda bootstrap list.  Comma-separated if you have multiple
@@ -121,7 +122,7 @@ overwritten by UMH Core when the container runs as a protocol-converter:
 
 // Config holds the configuration for the UNS output plugin
 type unsConfig struct {
-	messageKey    *service.InterpolatedString
+	topic         *service.InterpolatedString
 	brokerAddress string
 	bridgedBy     string
 }
@@ -145,11 +146,14 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 	config := unsConfig{}
 
 	// Parse topic
-	messageKey, err := conf.FieldInterpolatedString("topic")
-	if err != nil {
-		return nil, batchPolicy, 0, fmt.Errorf("error while parsing topic field from the config: %v", err)
+	config.topic, _ = service.NewInterpolatedString(defaultTopic)
+	if conf.Contains("topic") {
+		messageKey, err := conf.FieldInterpolatedString("topic")
+		if err != nil {
+			return nil, batchPolicy, 0, fmt.Errorf("error while parsing topic field from the config: %v", err)
+		}
+		config.topic = messageKey
 	}
-	config.messageKey = messageKey
 
 	// Parse broker_address if provided
 	config.brokerAddress = defaultBrokerAddress
@@ -300,7 +304,7 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 
 	records := make([]Record, 0, len(msgs))
 	for i, msg := range msgs {
-		key, err := o.config.messageKey.TryString(msg)
+		key, err := o.config.topic.TryString(msg)
 		if err != nil {
 			return fmt.Errorf("failed to resolve topic field in message %d: %v", i, err)
 		}
