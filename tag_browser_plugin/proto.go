@@ -14,25 +14,26 @@ goos: darwin
 goarch: arm64
 pkg: github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin
 cpu: Apple M3 Pro
-BenchmarkBundleToProtobufBytes/small_bundle-11           								 2677615               436.7 ns/op           144 B/op          3 allocs/op
-BenchmarkBundleToProtobufBytes/large_bundle-11              								4407            260758 ns/op          130306 B/op       2001 allocs/op
-BenchmarkProtobufBytesToBundle/small_bundle-11           								 1935970               620.1 ns/op          1008 B/op         19 allocs/op
-BenchmarkProtobufBytesToBundle/large_bundle-11              								2644            455011 ns/op          693827 B/op      13036 allocs/op
-BenchmarkRoundTrip/small_bundle-11                      								 1000000              1073 ns/op            1152 B/op         22 allocs/op
-BenchmarkRoundTrip/large_bundle-11                          								1634            725312 ns/op          824123 B/op      15037 allocs/op
-BenchmarkBundleToProtobufBytesWithCompression/small_bundle-11               5044            211144 ns/op        10605152 B/op         11 allocs/op
-BenchmarkBundleToProtobufBytesWithCompression/large_bundle-11               2182            512726 ns/op        10865698 B/op       2009 allocs/op
-BenchmarkProtobufBytesToBundleWithCompression/small_bundle-11               5582            212213 ns/op         8391482 B/op         26 allocs/op
-BenchmarkProtobufBytesToBundleWithCompression/large_bundle-11               1873            633713 ns/op         9344402 B/op      13050 allocs/op
-BenchmarkCompressionRoundTrip/small_bundle-11                               3100            367288 ns/op        18859201 B/op         38 allocs/op
-BenchmarkCompressionRoundTrip/large_bundle-11                                920           1283569 ns/op        19816002 B/op      15061 allocs/op
-BenchmarkCompressionRatio/small_bundle-11                               1000000000               0.0000883 ns/op         1.190 compression_ratio               0 B/op          0 allocs/op
-BenchmarkCompressionRatio/large_bundle-11                               1000000000               0.001061 ns/op          0.1524 compression_ratio              0 B/op          0 allocs/op
+BenchmarkBundleToProtobufBytes/small_bundle-11           2572542               505.4 ns/op           144 B/op          3 allocs/op
+BenchmarkBundleToProtobufBytes/large_bundle-11              3853            298807 ns/op          130306 B/op       2001 allocs/op
+BenchmarkProtobufBytesToBundle/small_bundle-11           1895758               634.6 ns/op          1008 B/op         19 allocs/op
+BenchmarkProtobufBytesToBundle/large_bundle-11              2574            483978 ns/op          693808 B/op      13036 allocs/op
+BenchmarkRoundTrip/small_bundle-11                       1000000              1098 ns/op            1152 B/op         22 allocs/op
+BenchmarkRoundTrip/large_bundle-11                          1638            735684 ns/op          824119 B/op      15037 allocs/op
+BenchmarkBundleToProtobufBytesWithCompression/small_bundle-11            2705947               441.8 ns/op           144 B/op          3 allocs/op
+BenchmarkBundleToProtobufBytesWithCompression/large_bundle-11               2101            509239 ns/op         9781171 B/op       2009 allocs/op
+BenchmarkProtobufBytesToBundleWithCompression/small_bundle-11            1892642               636.0 ns/op          1008 B/op         19 allocs/op
+BenchmarkProtobufBytesToBundleWithCompression/large_bundle-11               1798            655106 ns/op         9344381 B/op      13050 allocs/op
+BenchmarkCompressionRoundTrip/small_bundle-11                            1000000              1111 ns/op            1152 B/op         22 allocs/op
+BenchmarkCompressionRoundTrip/large_bundle-11                                915           1277903 ns/op        19906191 B/op      15061 allocs/op
+BenchmarkCompressionRatio/small_bundle-11                               1000000000               0.0000082 ns/op                 1.000 compression_ratio               0 B/op          0 allocs/op
+BenchmarkCompressionRatio/large_bundle-11                               1000000000               0.001156 ns/op          0.1525 compression_ratio              0 B/op          0 allocs/op
 PASS
-ok      github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin      15.729s
+ok      github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin      17.065s
 
 
-The above bench results show, that the space efficiency vastly outranks the added time used.
+The above bench results show that the space efficiency vastly outranks the added time used.
+However, for inputs under 1024 bytes, we skip compression, as the overhead from lz4's frame would actually increase the size.
 */
 
 func BundleToProtobuf(bundle *tagbrowserpluginprotobuf.UnsBundle) ([]byte, error) {
@@ -58,11 +59,16 @@ func BundleToProtobufBytesWithCompression(bundle *tagbrowserpluginprotobuf.UnsBu
 		return []byte{}, err
 	}
 
+	if len(protoBytes) < 1024 {
+		return protoBytes, nil
+	}
+
 	// Create a buffer to store the compressed data
 	var compressedBuf bytes.Buffer
 
 	// Create an LZ4 writer
 	zw := lz4.NewWriter(&compressedBuf)
+	zw.CompressionLevel = 0
 
 	// Write the protobuf bytes to the LZ4 writer
 	_, err = zw.Write(protoBytes)
@@ -80,11 +86,17 @@ func BundleToProtobufBytesWithCompression(bundle *tagbrowserpluginprotobuf.UnsBu
 }
 
 func ProtobufBytesToBundleWithCompression(compressedBytes []byte) (*tagbrowserpluginprotobuf.UnsBundle, error) {
+	// If the compressedBytes dont start with the LZ4 magic number, return the original bytes
+	if !bytes.Equal(compressedBytes[:4], []byte{0x04, 0x22, 0x4d, 0x18}) {
+		return ProtobufBytesToBundle(compressedBytes)
+	}
+
 	// Create a reader for the compressed data
 	r := bytes.NewReader(compressedBytes)
 
 	// Create an LZ4 reader
 	zr := lz4.NewReader(r)
+	zr.CompressionLevel = 0
 
 	// Create a buffer to store the decompressed data
 	var decompressedBuf bytes.Buffer
