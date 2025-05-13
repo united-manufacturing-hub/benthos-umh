@@ -16,6 +16,7 @@ package tag_browser_plugin
 
 import (
 	"fmt"
+
 	"github.com/redpanda-data/benthos/v4/public/service"
 	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -54,7 +55,35 @@ func processTimeSeriesData(structured map[string]interface{}) (*tagbrowserplugin
 	for key, value := range structured {
 		switch key {
 		case "timestamp_ms":
-			timestampMs = value.(int64)
+			// Type safe int cast
+			switch v := value.(type) {
+			case int:
+				timestampMs = int64(v)
+			case int8:
+				timestampMs = int64(v)
+			case int16:
+				timestampMs = int64(v)
+			case int32:
+				timestampMs = int64(v)
+			case int64:
+				timestampMs = v
+			case uint:
+				timestampMs = int64(v)
+			case uint8:
+				timestampMs = int64(v)
+			case uint16:
+				timestampMs = int64(v)
+			case uint32:
+				timestampMs = int64(v)
+			case uint64:
+				timestampMs = int64(v)
+			case float32:
+				timestampMs = int64(v)
+			case float64:
+				timestampMs = int64(v)
+			default:
+				return nil, nil, fmt.Errorf("timestamp_ms must be numerical type, but was %T", v)
+			}
 		default:
 			valueName = key
 			byteValue, valueType, err := ToBytes(value)
