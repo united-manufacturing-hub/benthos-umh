@@ -119,7 +119,7 @@ func BenchmarkBundleToProtobufBytes(b *testing.B) {
 		bundle := createTestBundle()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := BundleToProtobuf(bundle)
+			_, err := bundleToProtobuf(bundle)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -130,7 +130,7 @@ func BenchmarkBundleToProtobufBytes(b *testing.B) {
 		bundle := createLargeTestBundle()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := BundleToProtobuf(bundle)
+			_, err := bundleToProtobuf(bundle)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -141,7 +141,7 @@ func BenchmarkBundleToProtobufBytes(b *testing.B) {
 		bundle := createVeryLargeTestBundle()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := BundleToProtobuf(bundle)
+			_, err := bundleToProtobuf(bundle)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -152,13 +152,13 @@ func BenchmarkBundleToProtobufBytes(b *testing.B) {
 func BenchmarkProtobufBytesToBundle(b *testing.B) {
 	b.Run("small bundle", func(b *testing.B) {
 		bundle := createTestBundle()
-		protoBytes, err := BundleToProtobuf(bundle)
+		protoBytes, err := bundleToProtobuf(bundle)
 		if err != nil {
 			b.Fatal(err)
 		}
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := ProtobufBytesToBundle(protoBytes)
+			_, err := protobufBytesToBundle(protoBytes)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -167,13 +167,13 @@ func BenchmarkProtobufBytesToBundle(b *testing.B) {
 
 	b.Run("large bundle", func(b *testing.B) {
 		bundle := createLargeTestBundle()
-		protoBytes, err := BundleToProtobuf(bundle)
+		protoBytes, err := bundleToProtobuf(bundle)
 		if err != nil {
 			b.Fatal(err)
 		}
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := ProtobufBytesToBundle(protoBytes)
+			_, err := protobufBytesToBundle(protoBytes)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -182,13 +182,13 @@ func BenchmarkProtobufBytesToBundle(b *testing.B) {
 
 	b.Run("very large bundle", func(b *testing.B) {
 		bundle := createVeryLargeTestBundle()
-		protoBytes, err := BundleToProtobuf(bundle)
+		protoBytes, err := bundleToProtobuf(bundle)
 		if err != nil {
 			b.Fatal(err)
 		}
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := ProtobufBytesToBundle(protoBytes)
+			_, err := protobufBytesToBundle(protoBytes)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -201,11 +201,11 @@ func BenchmarkRoundTrip(b *testing.B) {
 		bundle := createTestBundle()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			protoBytes, err := BundleToProtobuf(bundle)
+			protoBytes, err := bundleToProtobuf(bundle)
 			if err != nil {
 				b.Fatal(err)
 			}
-			_, err = ProtobufBytesToBundle(protoBytes)
+			_, err = protobufBytesToBundle(protoBytes)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -216,11 +216,11 @@ func BenchmarkRoundTrip(b *testing.B) {
 		bundle := createLargeTestBundle()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			protoBytes, err := BundleToProtobuf(bundle)
+			protoBytes, err := bundleToProtobuf(bundle)
 			if err != nil {
 				b.Fatal(err)
 			}
-			_, err = ProtobufBytesToBundle(protoBytes)
+			_, err = protobufBytesToBundle(protoBytes)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -231,11 +231,11 @@ func BenchmarkRoundTrip(b *testing.B) {
 		bundle := createVeryLargeTestBundle()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			protoBytes, err := BundleToProtobuf(bundle)
+			protoBytes, err := bundleToProtobuf(bundle)
 			if err != nil {
 				b.Fatal(err)
 			}
-			_, err = ProtobufBytesToBundle(protoBytes)
+			_, err = protobufBytesToBundle(protoBytes)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -375,7 +375,7 @@ func BenchmarkCompressionRoundTrip(b *testing.B) {
 func BenchmarkCompressionRatio(b *testing.B) {
 	b.Run("small bundle", func(b *testing.B) {
 		bundle := createTestBundle()
-		protoBytes, err := BundleToProtobuf(bundle)
+		protoBytes, err := bundleToProtobuf(bundle)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -391,7 +391,7 @@ func BenchmarkCompressionRatio(b *testing.B) {
 
 	b.Run("large bundle", func(b *testing.B) {
 		bundle := createLargeTestBundle()
-		protoBytes, err := BundleToProtobuf(bundle)
+		protoBytes, err := bundleToProtobuf(bundle)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -407,7 +407,7 @@ func BenchmarkCompressionRatio(b *testing.B) {
 
 	b.Run("very large bundle", func(b *testing.B) {
 		bundle := createVeryLargeTestBundle()
-		protoBytes, err := BundleToProtobuf(bundle)
+		protoBytes, err := bundleToProtobuf(bundle)
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -8,6 +8,9 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
+// MessageToUNSInfoAndEvent first extracts the topic from the message, then the event data and finally the UNS info.
+// It also sets the eventTag if necessary and generates the UnsTreeId, which is required by the frontend.
+// Finally it appends the "raw" kafka message part, including the raw message and its headers
 func MessageToUNSInfoAndEvent(message *service.Message) (*tagbrowserpluginprotobuf.UnsInfo, *tagbrowserpluginprotobuf.EventTableEntry, *string, error) {
 	topic, err := extractTopicFromMessage(message)
 	if err != nil {

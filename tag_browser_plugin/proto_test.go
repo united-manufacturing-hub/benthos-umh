@@ -9,7 +9,7 @@ import (
 )
 
 var _ = Describe("Protobuf Functions", func() {
-	Describe("BundleToProtobuf and ProtobufBytesToBundle", func() {
+	Describe("bundleToProtobuf and protobufBytesToBundle", func() {
 		It("successfully encodes and decodes a bundle with time series data", func() {
 			// Create a test bundle
 			originalBundle := &tagbrowserpluginprotobuf.UnsBundle{
@@ -37,12 +37,12 @@ var _ = Describe("Protobuf Functions", func() {
 			}
 
 			// Encode the bundle
-			protoBytes, err := BundleToProtobuf(originalBundle)
+			protoBytes, err := bundleToProtobuf(originalBundle)
 			Expect(err).To(BeNil())
 			Expect(protoBytes).NotTo(BeNil())
 
 			// Decode the bundle
-			decodedBundle, err := ProtobufBytesToBundle(protoBytes)
+			decodedBundle, err := protobufBytesToBundle(protoBytes)
 			Expect(err).To(BeNil())
 			Expect(decodedBundle).NotTo(BeNil())
 
@@ -64,12 +64,12 @@ var _ = Describe("Protobuf Functions", func() {
 			}
 
 			// Encode the bundle
-			protoBytes, err := BundleToProtobuf(originalBundle)
+			protoBytes, err := bundleToProtobuf(originalBundle)
 			Expect(err).To(BeNil())
 			Expect(protoBytes).NotTo(BeNil())
 
 			// Decode the bundle
-			decodedBundle, err := ProtobufBytesToBundle(protoBytes)
+			decodedBundle, err := protobufBytesToBundle(protoBytes)
 			Expect(err).To(BeNil())
 			Expect(decodedBundle).NotTo(BeNil())
 
@@ -118,12 +118,12 @@ var _ = Describe("Protobuf Functions", func() {
 			}
 
 			// Encode the bundle
-			protoBytes, err := BundleToProtobuf(originalBundle)
+			protoBytes, err := bundleToProtobuf(originalBundle)
 			Expect(err).To(BeNil())
 			Expect(protoBytes).NotTo(BeNil())
 
 			// Decode the bundle
-			decodedBundle, err := ProtobufBytesToBundle(protoBytes)
+			decodedBundle, err := protobufBytesToBundle(protoBytes)
 			Expect(err).To(BeNil())
 			Expect(decodedBundle).NotTo(BeNil())
 
@@ -138,7 +138,7 @@ var _ = Describe("Protobuf Functions", func() {
 		It("handles invalid protobuf bytes", func() {
 			// Try to decode invalid bytes
 			invalidBytes := []byte{0x00, 0x01, 0x02, 0x03}
-			decodedBundle, err := ProtobufBytesToBundle(invalidBytes)
+			decodedBundle, err := protobufBytesToBundle(invalidBytes)
 			Expect(err).NotTo(BeNil())
 			Expect(decodedBundle).To(BeNil())
 		})

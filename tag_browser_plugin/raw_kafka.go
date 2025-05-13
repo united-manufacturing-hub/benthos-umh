@@ -13,6 +13,7 @@ func messageToRawKafkaMsg(message *service.Message) (*tagbrowserpluginprotobuf.E
 
 	headers := make(map[string]string)
 
+	// Iterate over all headers
 	err := message.MetaWalk(func(key string, value string) error {
 		headers[key] = value
 		return nil
