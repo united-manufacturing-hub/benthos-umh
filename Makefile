@@ -27,7 +27,7 @@ clean:
 	@rm -rf target tmp/bin tmp/benthos-*.zip
 
 .PHONY: target
-target:
+target: build-protobuf
 	@mkdir -p $(dir $(BENTHOS_BIN))
 	@go build \
        -ldflags "-s -w \
@@ -106,3 +106,9 @@ test-benthos-tag-processor: target
 .PHONY: test-benthos-sensorconnect
 test-benthos-sensorconnect: target
 	@$(BENTHOS_BIN) -c ./config/sensorconnect-test.yaml
+
+
+## Generate go files from protobuf for tag browser
+build-protobuf:
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	protoc -I=tag_browser_plugin --go_out=tag_browser_plugin tag_browser_plugin/tag_browser_data.proto
