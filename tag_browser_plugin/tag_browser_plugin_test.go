@@ -19,7 +19,7 @@ var _ = Describe("TagBrowserProcessor", func() {
 		It("processes a single message successfully", func() {
 			// Create a message with basic metadata
 			msg := service.NewMessage(nil)
-			msg.MetaSet("topic", "test-topic")
+			msg.MetaSet("topic", "umh.v1.test-topic._historian")
 			msg.MetaSet("timestamp", "2024-03-20T10:00:00Z")
 			msg.MetaSet("value", "42")
 
@@ -53,12 +53,12 @@ var _ = Describe("TagBrowserProcessor", func() {
 		It("caches UNS map entries", func() {
 			// Create two messages with the same UNS tree ID
 			msg1 := service.NewMessage(nil)
-			msg1.MetaSet("topic", "test-topic")
+			msg1.MetaSet("topic", "umh.v1.test-topic._historian")
 			msg1.MetaSet("timestamp", "2024-03-20T10:00:00Z")
 			msg1.MetaSet("value", "42")
 
 			msg2 := service.NewMessage(nil)
-			msg2.MetaSet("topic", "test-topic")
+			msg2.MetaSet("topic", "umh.v1.test-topic._historian")
 			msg2.MetaSet("timestamp", "2024-03-20T10:01:00Z")
 			msg2.MetaSet("value", "43")
 
