@@ -16,13 +16,14 @@ package tag_browser_plugin
 
 import (
 	"context"
+	lru "github.com/hashicorp/golang-lru"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
 )
 
 type TagBrowserProcessor struct {
-	unsMapCache map[string]bool
+	unsMapCache *lru.Cache
 }
 
 func (t TagBrowserProcessor) Process(ctx context.Context, message *service.Message) (service.MessageBatch, error) {
@@ -60,9 +61,9 @@ func (t TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Messa
 		}
 
 		// This is safe, as unsTreeId will always be set if the error is nil
-		if _, ok := t.unsMapCache[*unsTreeId]; !ok {
+		if _, ok := t.unsMapCache.Get(*unsTreeId); !ok {
 			unsBundle.UnsMap.Entries[*unsTreeId] = unsInfo
-			t.unsMapCache[*unsTreeId] = true
+			t.unsMapCache.Add(*unsTreeId, true)
 		}
 		unsBundle.Events.Entries = append(unsBundle.Events.Entries, eventTableEntry)
 	}
@@ -82,13 +83,15 @@ func (t TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Messa
 
 func (t TagBrowserProcessor) Close(_ context.Context) error {
 	// Wipe cache
-	t.unsMapCache = make(map[string]bool)
-	return nil
+	var err error
+	t.unsMapCache, err = lru.New(1000)
+	return err
 }
 
 func NewTagBrowserProcessor() *TagBrowserProcessor {
+	l, _ := lru.New(1000) // Can only error if size is negative
 	return &TagBrowserProcessor{
-		unsMapCache: make(map[string]bool),
+		unsMapCache: l,
 	}
 }
 
