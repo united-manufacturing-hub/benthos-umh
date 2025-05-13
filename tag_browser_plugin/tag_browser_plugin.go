@@ -37,6 +37,10 @@ func (t TagBrowserProcessor) Process(ctx context.Context, message *service.Messa
 }
 
 func (t TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+	if len(batch) == 0 {
+		return nil, nil
+	}
+
 	unsBundle := &tagbrowserpluginprotobuf.UnsBundle{
 		UnsMap: &tagbrowserpluginprotobuf.UnsMap{
 			Entries: make(map[string]*tagbrowserpluginprotobuf.UnsInfo),
@@ -60,15 +64,16 @@ func (t TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Messa
 			t.unsMapCache[*unsTreeId] = true
 		}
 		unsBundle.Events.Entries = append(unsBundle.Events.Entries, eventTableEntry)
-
-		protoBytes, err := BundleToProtobufBytes(unsBundle)
-		if err != nil {
-			return nil, err
-		}
-
-		message.SetBytes(protoBytes)
-		resultBatch = append(resultBatch, message)
 	}
+
+	protoBytes, err := BundleToProtobufBytes(unsBundle)
+	if err != nil {
+		return nil, err
+	}
+
+	message := service.NewMessage(nil)
+	message.SetBytes(protoBytes)
+	resultBatch = append(resultBatch, message)
 
 	return []service.MessageBatch{resultBatch}, nil
 }
