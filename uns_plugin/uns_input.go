@@ -80,10 +80,10 @@ const (
 	defaultConsumerGroup          = "uns_plugin"
 	defaultConnIdleTimeout        = 15 * time.Minute
 	defaultDialTimeout            = 5 * time.Minute
-	defaultFetchMaxBytes          = 10e6 // 10MB
-	defaultFetchMaxPartitionBytes = 10e6 // 10MB
-	defaultFetchMinBytes          = 1    // 1 Byte
-	defaultFetchMaxWaitTime       = 100 * time.Millisecond
+	defaultFetchMaxBytes          = 100e6 // 100MB
+	defaultFetchMaxPartitionBytes = 100e6 // 100MB
+	defaultFetchMinBytes          = 1     // 1 Byte
+	defaultFetchMaxWaitTime       = 1 * time.Second
 )
 
 type unsInputConfig struct {
@@ -93,10 +93,22 @@ type unsInputConfig struct {
 	consumerGroup   string
 }
 
+type Metrics struct {
+	ConnectedGuage         *service.MetricGauge
+	ConnectionErrCounter   *service.MetricCounter
+	PollErrCounter         *service.MetricCounter
+	RecordsReceivedCounter *service.MetricCounter
+	RecordsFilteredCounter *service.MetricCounter
+	CommitTimer            *service.MetricTimer
+	ConnectionTimer        *service.MetricTimer
+	BatchProcessingTimer   *service.MetricTimer
+}
+
 type unsInput struct {
-	config unsInputConfig
-	client MessageConsumer
-	log    *service.Logger
+	config  unsInputConfig
+	client  MessageConsumer
+	log     *service.Logger
+	metrics *Metrics
 }
 
 func newUnsInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
@@ -140,14 +152,25 @@ func newUnsInput(conf *service.ParsedConfig, mgr *service.Resources) (service.Ba
 		config.consumerGroup = cg
 	}
 
-	return newUnsInputWithClient(NewConsumerClient(), config, mgr.Logger()), nil
+	return newUnsInputWithClient(NewConsumerClient(), config, mgr.Logger(), mgr.Metrics()), nil
 }
 
-func newUnsInputWithClient(client MessageConsumer, config unsInputConfig, logger *service.Logger) service.BatchInput {
+func newUnsInputWithClient(client MessageConsumer, config unsInputConfig, logger *service.Logger, metrics *service.Metrics) service.BatchInput {
+	m := &Metrics{
+		ConnectedGuage:         metrics.NewGauge("input_uns_connected"),
+		ConnectionErrCounter:   metrics.NewCounter("input_uns_connection_errors"),
+		PollErrCounter:         metrics.NewCounter("input_uns_poll_errors"),
+		RecordsReceivedCounter: metrics.NewCounter("input_uns_records_received"),
+		RecordsFilteredCounter: metrics.NewCounter("input_uns_records_filtered"),
+		CommitTimer:            metrics.NewTimer("input_uns_records_commit_time"),
+		ConnectionTimer:        metrics.NewTimer("input_uns_connection_time"),
+		BatchProcessingTimer:   metrics.NewTimer("input_uns_batch_processing_time"),
+	}
 	return &unsInput{
-		client: client,
-		config: config,
-		log:    logger,
+		client:  client,
+		config:  config,
+		log:     logger,
+		metrics: m,
 	}
 }
 
@@ -156,6 +179,7 @@ func (u *unsInput) Close(ctx context.Context) error {
 	if u.client != nil {
 		u.client.Close()
 	}
+	u.metrics.ConnectedGuage.Set(0)
 	u.log.Infof("uns input kafka client closed successfully")
 	return nil
 }
@@ -171,6 +195,7 @@ func (u *unsInput) Connect(context.Context) error {
 
 	u.log.Infof("creating kafka client with plugin config broker: %v, input_kafka_topic: %v, topic: %v", u.config.brokerAddress, u.config.inputKafkaTopic, u.config.topic)
 
+	connectStart := time.Now()
 	err := u.client.Connect(
 		kgo.SeedBrokers(u.config.brokerAddress),           // use configured broker address
 		kgo.AllowAutoTopicCreation(),                      // Allow creating the defaultOutputTopic if it doesn't exists
@@ -191,18 +216,23 @@ func (u *unsInput) Connect(context.Context) error {
 		return fmt.Errorf("error while creating a kafka client with broker %s: %v", u.config.brokerAddress, err)
 	}
 
+	u.metrics.ConnectionTimer.Timing(int64(time.Since(connectStart)))
+	u.metrics.ConnectedGuage.Set(1)
 	u.log.Infof("Connection to the kafka broker %s is successful", u.config.brokerAddress)
 	return nil
 }
 
 // ReadBatch reads messages from Kafka in a batch and return it to redpanda connect processing chain.
 func (u *unsInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+	batchStart := time.Now()
+
 	fetches := u.client.PollFetches(ctx)
 
 	// There could be multiple errors within fetches. But we do check only the first error to quickly see the existence of an error
 	if fetches.Err() != nil {
 		fetches.EachError(func(topic string, partition int32, err error) {
 			u.log.Errorf("Error while fetching messages, topic: %v partition: %d, err: %v", topic, partition, err)
+			u.metrics.PollErrCounter.Incr(int64(1))
 
 		})
 		// Enough to return only the first error to notify benthos. But all theerrors are sent to the benthos logs
@@ -222,8 +252,10 @@ func (u *unsInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 	}
 
 	fetches.EachRecord(func(r *kgo.Record) {
+		u.metrics.RecordsReceivedCounter.Incr(int64(1))
 
 		if topicRegex.Match(r.Key) {
+			u.metrics.RecordsFilteredCounter.Incr(int64(1))
 			msg := service.NewMessage(r.Value)
 			// Add kafka meta fields
 			msg.MetaSet("kafka_key", string(r.Key))
@@ -240,6 +272,7 @@ func (u *unsInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 
 	// Create the ack function
 	ackFn := func(ctx context.Context, err error) error {
+		ackStart := time.Now()
 		if err != nil {
 			u.log.Errorf("Error processing the batch: %v", err)
 			return err
@@ -249,9 +282,10 @@ func (u *unsInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 			u.log.Errorf("Error committing the message offsests: %v", err)
 			return err
 		}
-
+		u.metrics.CommitTimer.Timing(int64(time.Since(ackStart)))
 		return nil
 	}
 
+	u.metrics.BatchProcessingTimer.Timing(int64(time.Since(batchStart)))
 	return batch, ackFn, nil
 }
