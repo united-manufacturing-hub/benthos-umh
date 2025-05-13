@@ -16,6 +16,7 @@ package tag_browser_plugin
 
 import (
 	"context"
+
 	"github.com/redpanda-data/benthos/v4/public/service"
 	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
 )
@@ -96,7 +97,16 @@ func NewTagBrowserProcessor(logger *service.Logger, metrics *service.Metrics) *T
 func init() {
 	spec := service.NewConfigSpec().
 		Version("1.0.0").
-		Description("Processes messages into UNS bundles for the tag browser.").
+		Description(`The tag browser processor processes messages into UNS bundles for the tag browser.
+
+The processor will read the message headers and body to extract the UNS information and event table entries.
+
+The processor will then return a message with the UNS bundle as the body, encoded as a protobuf.
+
+The processor requires that the following metadata fields are set:
+
+- topic: The topic of the message.
+`).
 		Field(service.NewObjectField(""))
 
 	err := service.RegisterProcessor("tag_browser", spec, func(_ *service.ParsedConfig, mgr *service.Resources) (service.Processor, error) {
