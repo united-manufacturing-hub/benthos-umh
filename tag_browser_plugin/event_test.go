@@ -63,7 +63,7 @@ var _ = Describe("Event Processing", func() {
 
 				event, valueName, err := messageToEvent(msg)
 				Expect(err).To(BeNil())
-				Expect(event.IsTimeseries).To(BeTrue())
+				Expect(event.IsTimeseries).To(BeFalse())
 				Expect(event.TimestampMs).To(BeNil())
 				Expect(valueName).To(BeNil())
 			})
@@ -78,7 +78,7 @@ var _ = Describe("Event Processing", func() {
 
 				event, valueName, err := messageToEvent(msg)
 				Expect(err).To(BeNil())
-				Expect(event.IsTimeseries).To(BeTrue())
+				Expect(event.IsTimeseries).To(BeFalse())
 				Expect(event.TimestampMs).To(BeNil())
 				Expect(valueName).To(BeNil())
 			})
@@ -118,7 +118,7 @@ var _ = Describe("Event Processing", func() {
 
 				event, valueName, err := messageToEvent(msg)
 				Expect(err).To(BeNil())
-				Expect(event.IsTimeseries).To(BeTrue())
+				Expect(event.IsTimeseries).To(BeFalse())
 				Expect(event.TimestampMs).To(BeNil())
 				Expect(valueName).To(BeNil())
 				Expect(event.Value.TypeUrl).To(Equal("golang/bytes"))
@@ -131,7 +131,7 @@ var _ = Describe("Event Processing", func() {
 
 				event, valueName, err := messageToEvent(msg)
 				Expect(err).To(BeNil())
-				Expect(event.IsTimeseries).To(BeTrue())
+				Expect(event.IsTimeseries).To(BeFalse())
 				Expect(event.TimestampMs).To(BeNil())
 				Expect(valueName).To(BeNil())
 			})
@@ -177,7 +177,7 @@ var _ = Describe("Event Processing", func() {
 
 			event, valueName, err := processRelationalData(msg)
 			Expect(err).To(BeNil())
-			Expect(event.IsTimeseries).To(BeTrue())
+			Expect(event.IsTimeseries).To(BeFalse())
 			Expect(event.TimestampMs).To(BeNil())
 			Expect(valueName).To(BeNil())
 			Expect(event.Value.TypeUrl).To(Equal("golang/bytes"))

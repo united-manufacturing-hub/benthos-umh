@@ -59,6 +59,7 @@ func processTimeSeriesData(structured map[string]interface{}) (*tagbrowserplugin
 	}, &valueName, nil
 }
 
+// processRelationalData extracts the messages payload as bytes and returns that
 func processRelationalData(message *service.Message) (*tagbrowserpluginprotobuf.EventTableEntry, *string, error) {
 	valueBytes, err := message.AsBytes()
 	if err != nil {
@@ -66,7 +67,7 @@ func processRelationalData(message *service.Message) (*tagbrowserpluginprotobuf.
 		return nil, nil, err
 	}
 	return &tagbrowserpluginprotobuf.EventTableEntry{
-		IsTimeseries: true,
+		IsTimeseries: false,
 		TimestampMs:  nil,
 		Value:        &anypb.Any{TypeUrl: "golang/bytes", Value: valueBytes},
 	}, nil, nil
