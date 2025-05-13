@@ -21,6 +21,7 @@ import (
 )
 
 type TagBrowserProcessor struct {
+	unsMapCache map[string]bool
 }
 
 func (t TagBrowserProcessor) Process(ctx context.Context, message *service.Message) (service.MessageBatch, error) {
@@ -53,7 +54,10 @@ func (t TagBrowserProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		}
 
 		// This is safe, as unsTreeId will always be set if the error is nil
-		unsBundle.UnsMap.Entries[*unsTreeId] = unsInfo
+		if t.unsMapCache[*unsTreeId] == false {
+			unsBundle.UnsMap.Entries[*unsTreeId] = unsInfo
+			t.unsMapCache[*unsTreeId] = true
+		}
 		unsBundle.Events.Entries = append(unsBundle.Events.Entries, eventTableEntry)
 
 		protoBytes, err := BundleToProtobufBytes(unsBundle)
@@ -69,10 +73,12 @@ func (t TagBrowserProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 }
 
 func (t TagBrowserProcessor) Close(ctx context.Context) error {
-	//TODO implement me
-	panic("implement me")
+	t.unsMapCache = make(map[string]bool)
+	return nil
 }
 
 func NewTagBrowserProcessor() *TagBrowserProcessor {
-	return &TagBrowserProcessor{}
+	return &TagBrowserProcessor{
+		unsMapCache: make(map[string]bool),
+	}
 }
