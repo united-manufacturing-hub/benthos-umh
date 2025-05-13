@@ -17,263 +17,150 @@ package uns_plugin
 import (
 	"context"
 	"fmt"
-	"regexp"
-
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-// init registers the "uns" batch output plugin with Benthos using its configuration and constructor.
+// init registers the "uns" batch input plugin with Benthos using its configuration and constructor.
 func init() {
-	service.RegisterBatchInput("uns", inputConfig(), newUnsInput)
+	service.RegisterBatchInput("uns", RegisterConfigSpec(), newUnsInput)
 }
 
-func inputConfig() *service.ConfigSpec {
-	return service.NewConfigSpec().
-		Summary("Consumes messsages from the UMH platform's Kafka messaging system").
-		Description(`
-	The uns_plugin input consumes messages from the United Manufacturing Hub'skafka mesaging system.
-	This input plugin is optimized for communication with UMH core components and handles the complexities of Kafka for you.
-
-	All messages are read from the uns topic 'umh.messages' by default, with messages being filtered by the regular expression specified in the plugin config field 'topic'. This becomes crucial for streaming out the data of interest from the uns topic.
-
-	By default, the plugin connects to the Kafka broker at localhost:9092 with the consumer group id specified in the plugin config. The consumer group id is usually derived from the UMH workloads like protocol converter names.
-		`).
-		Field(service.NewStringField("topic").
-			Description(`
-	Key used to filter the messages. The value set for the 'topic' field will be used to compare against the message key in kafka. The 'topic' field allows regular expressions which should be compatible with RE2 regex engine.
-
-	The topic should follow the UMH naming convention: umh.v1.enterprise.site.area.tag
-	(e.g., 'umh.v1.acme.berlin.assembly.temperature')
-	(e.g., 'umh.v1.acme.berlin.+' # regex to match all areas and tags under brelin site )
-		`).
-			Example("umh.v1.acme.berlin.assembly.temperature").
-			Example(`umh\.v1\..+`).
-			Default(defaultTopicKey)).
-		Field(service.NewStringField("kafka_topic").
-			Description(`
-	The input kafka topic to read messages from. By default the messages will be consumed from 'umh.messages' topic.
-			`).
-			Example("umh.messages").
-			Default(defaultInputKafkaTopic)).
-		Field(service.NewStringField("broker_address").
-			Description(`
-The Kafka broker address to connect to. This can be a single address or multiple addresses
-separated by commas. For example: "localhost:9092" or "broker1:9092,broker2:9092".
-
-In most UMH deployments, the default value is sufficient as Kafka runs on the same host.
-            `).
-			Default(defaultBrokerAddress)).
-		Field(service.NewStringField("consumer_group").
-			Description(`
-	The consumer group id to be used by the plugin. The default consumer group id is uns_plugin. This is an optional plugin input and can be used by the users if one wants to read the topic with a different consumer group discarding the previous consumed offsets.
-	`).
-			Example("uns_consumer_group").
-			Default(defaultConsumerGroup))
+// UnsInput is the primary implementation of the UNS input plugin
+type UnsInput struct {
+	config    UnsInputConfig
+	client    MessageConsumer
+	log       *service.Logger
+	metrics   *UnsInputMetrics
+	processor *MessageProcessor
+	batchPool service.MessageBatch
 }
 
-const (
-	defaultInputKafkaTopic        = "umh.messages"
-	defaultTopicKey               = ".*"
-	defaultConsumerGroup          = "uns_plugin"
-	defaultConnIdleTimeout        = 15 * time.Minute
-	defaultDialTimeout            = 5 * time.Minute
-	defaultFetchMaxBytes          = 100e6 // 100MB
-	defaultFetchMaxPartitionBytes = 100e6 // 100MB
-	defaultFetchMinBytes          = 1     // 1 Byte
-	defaultFetchMaxWaitTime       = 1 * time.Second
-)
-
-type unsInputConfig struct {
-	topic           string
-	inputKafkaTopic string
-	brokerAddress   string
-	consumerGroup   string
-}
-
-type Metrics struct {
-	ConnectedGuage         *service.MetricGauge
-	ConnectionErrCounter   *service.MetricCounter
-	PollErrCounter         *service.MetricCounter
-	RecordsReceivedCounter *service.MetricCounter
-	RecordsFilteredCounter *service.MetricCounter
-	CommitTimer            *service.MetricTimer
-	ConnectionTimer        *service.MetricTimer
-	BatchProcessingTimer   *service.MetricTimer
-}
-
-type unsInput struct {
-	config             unsInputConfig
-	client             MessageConsumer
-	log                *service.Logger
-	metrics            *Metrics
-	topicRegexCompiler *regexp.Regexp
-	batchBuffer        service.MessageBatch
-}
-
+// newUnsInput creates a new UnsInput instance from Benthos configuration
 func newUnsInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
-
-	config := unsInputConfig{}
-
-	// Use the default Topic key .* (match any key string) to allow all messages
-	config.topic = defaultTopicKey
-	if conf.Contains("topic") {
-		topic, err := conf.FieldString("topic")
-		if err != nil {
-			return nil, fmt.Errorf("error while parsing the 'topic' field from the plugin's config: %v", err)
-		}
-		config.topic = topic
-	}
-
-	config.inputKafkaTopic = defaultInputKafkaTopic
-	if conf.Contains("kafka_topic") {
-		inputKafkaTopic, err := conf.FieldString("kafka_topic")
-		if err != nil {
-			return nil, fmt.Errorf("error while parsing the 'kafka_topic' field from the plugin's config: %v", err)
-		}
-		config.inputKafkaTopic = inputKafkaTopic
-	}
-
-	config.brokerAddress = defaultBrokerAddress
-	if conf.Contains("broker_address") {
-		brokerAddr, err := conf.FieldString("broker_address")
-		if err != nil {
-			return nil, fmt.Errorf("error while parsing the 'broker_address' fro m the plugin's config: %v", err)
-		}
-		config.brokerAddress = brokerAddr
-	}
-
-	config.consumerGroup = defaultConsumerGroup
-	if conf.Contains("consumer_group") {
-		cg, err := conf.FieldString("consumer_group")
-		if err != nil {
-			return nil, fmt.Errorf("error while parsing the 'consumer_group' from the plugin's config: %v", err)
-		}
-		config.consumerGroup = cg
-	}
-
-	return newUnsInputWithClient(NewConsumerClient(), config, mgr.Logger(), mgr.Metrics())
-}
-
-func newUnsInputWithClient(client MessageConsumer, config unsInputConfig, logger *service.Logger, metrics *service.Metrics) (service.BatchInput, error) {
-	m := &Metrics{
-		ConnectedGuage:         metrics.NewGauge("input_uns_connected"),
-		ConnectionErrCounter:   metrics.NewCounter("input_uns_connection_errors"),
-		PollErrCounter:         metrics.NewCounter("input_uns_poll_errors"),
-		RecordsReceivedCounter: metrics.NewCounter("input_uns_records_received"),
-		RecordsFilteredCounter: metrics.NewCounter("input_uns_records_filtered"),
-		CommitTimer:            metrics.NewTimer("input_uns_records_commit_time"),
-		ConnectionTimer:        metrics.NewTimer("input_uns_connection_time"),
-		BatchProcessingTimer:   metrics.NewTimer("input_uns_batch_processing_time"),
-	}
-
-	topicRegex, err := regexp.Compile(config.topic)
+	// Parse configuration
+	config, err := ParseFromBenthos(conf)
 	if err != nil {
-		return nil, fmt.Errorf("error compiling topic regex: %v", err)
+		return nil, err
 	}
-	return &unsInput{
-		client:             client,
-		config:             config,
-		log:                logger,
-		metrics:            m,
-		topicRegexCompiler: topicRegex,
-	}, nil
+
+	// Create consumer client
+	client := NewConsumerClient()
+
+	// Create the input
+	return NewUnsInput(client, config, mgr.Logger(), mgr.Metrics())
 }
 
-// Close implements service.BatchInput.
-func (u *unsInput) Close(ctx context.Context) error {
-	if u.client != nil {
-		u.client.Close()
+// NewUnsInput creates a new UnsInput with the specified dependencies
+// This constructor is more testable as it accepts interfaces instead of concrete types
+func NewUnsInput(client MessageConsumer, config UnsInputConfig, logger *service.Logger, metricsProvider *service.Metrics) (service.BatchInput, error) {
+	// Create metrics
+	metrics := NewUnsInputMetrics(metricsProvider)
+
+	// Create message processor
+	processor, err := NewMessageProcessor(config.topic, metrics)
+	if err != nil {
+		return nil, fmt.Errorf("error creating message processor: %v", err)
 	}
-	u.metrics.ConnectedGuage.Set(0)
-	u.log.Infof("uns input kafka client closed successfully")
-	return nil
+
+	// Create the UnsInput
+	input := &UnsInput{
+		config:    config,
+		client:    client,
+		log:       logger,
+		metrics:   metrics,
+		processor: processor,
+		batchPool: make(service.MessageBatch, 0, 100), // Pre-allocate with reasonable capacity
+	}
+
+	return input, nil
 }
 
-// Connect implements service.BatchInput.
-func (u *unsInput) Connect(context.Context) error {
-
+// Connect establishes a connection to the Kafka broker
+func (u *UnsInput) Connect(ctx context.Context) error {
 	u.log.Infof("Connecting to uns plugin kafka broker: %v", u.config.brokerAddress)
 
 	if u.client == nil {
 		u.client = NewConsumerClient()
 	}
 
-	u.log.Infof("creating kafka client with plugin config broker: %v, input_kafka_topic: %v, topic: %v", u.config.brokerAddress, u.config.inputKafkaTopic, u.config.topic)
+	u.log.Infof("creating kafka client with plugin config broker: %v, input_kafka_topic: %v, topic: %v",
+		u.config.brokerAddress, u.config.inputKafkaTopic, u.config.topic)
 
 	connectStart := time.Now()
 	err := u.client.Connect(
 		kgo.SeedBrokers(u.config.brokerAddress),           // use configured broker address
-		kgo.AllowAutoTopicCreation(),                      // Allow creating the defaultOutputTopic if it doesn't exists
+		kgo.AllowAutoTopicCreation(),                      // Allow creating the topic if it doesn't exist
 		kgo.ClientID(defaultClientID),                     // client id for all requests sent to the broker
-		kgo.ConnIdleTimeout(defaultConnIdleTimeout),       // Rough amount of time to allow connections to be idle. Default value at franz-go is 20
-		kgo.DialTimeout(defaultDialTimeout),               // Timeout while connecting to the broker. 5 second is more than enough to connect to a local broker
-		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()), // Resets the offset to the earliest partition offset if the client encountres a "OffsetOutOfRange" problem
+		kgo.ConnIdleTimeout(defaultConnIdleTimeout),       // Rough amount of time to allow connections to be idle
+		kgo.DialTimeout(defaultDialTimeout),               // Timeout while connecting to the broker
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()), // Resets the offset to the earliest partition offset
 		kgo.ConsumerGroup(u.config.consumerGroup),         // Set the consumer group id
 		kgo.ConsumeTopics(u.config.inputKafkaTopic),       // Set the topics to consume
 
-		// Some high performance settings
+		// High performance settings
 		kgo.FetchMaxBytes(defaultFetchMaxBytes),
 		kgo.FetchMaxPartitionBytes(defaultFetchMaxPartitionBytes),
 		kgo.FetchMinBytes(defaultFetchMinBytes),
-		kgo.FetchMaxWait(defaultFetchMaxWaitTime), // Override the default 5s value and wait just only for 100 Millisecond for the min bytes
+		kgo.FetchMaxWait(defaultFetchMaxWaitTime),
 	)
 	if err != nil {
 		return fmt.Errorf("error while creating a kafka client with broker %s: %v", u.config.brokerAddress, err)
 	}
 
-	u.metrics.ConnectionTimer.Timing(int64(time.Since(connectStart)))
-	u.metrics.ConnectedGuage.Set(1)
+	u.metrics.LogConnectionEstablished(connectStart)
 	u.log.Infof("Connection to the kafka broker %s is successful", u.config.brokerAddress)
 	return nil
 }
 
-// ReadBatch reads messages from Kafka in a batch and return it to redpanda connect processing chain.
-func (u *unsInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+// Close closes the connection to the Kafka broker
+func (u *UnsInput) Close(ctx context.Context) error {
+	if u.client != nil {
+		u.client.Close()
+	}
+	u.metrics.LogConnectionClosed()
+	u.log.Infof("uns input kafka client closed successfully")
+	return nil
+}
+
+// ReadBatch reads a batch of messages from Kafka
+func (u *UnsInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
 	batchStart := time.Now()
 
+	// Poll for messages
 	fetches := u.client.PollFetches(ctx)
 
-	// There could be multiple errors within fetches. But we do check only the first error to quickly see the existence of an error
+	// Handle errors
 	if fetches.Err() != nil {
 		fetches.EachError(func(topic string, partition int32, err error) {
 			u.log.Errorf("Error while fetching messages, topic: %v partition: %d, err: %v", topic, partition, err)
-			u.metrics.PollErrCounter.Incr(int64(1))
-
+			u.metrics.LogPollError()
 		})
-		// Enough to return only the first error to notify benthos. But all theerrors are sent to the benthos logs
 		return nil, nil, fetches.Err0()
 	}
 
+	// Handle empty fetches
 	if fetches.Empty() {
 		return nil, nil, nil
 	}
 
-	// Create messageBatch
-	u.batchBuffer = u.batchBuffer[:0]
-	fetches.EachRecord(func(r *kgo.Record) {
-		u.metrics.RecordsReceivedCounter.Incr(int64(1))
+	// Process records into message batch
+	batch := u.processor.ProcessRecords(fetches, u.batchPool)
 
-		if u.topicRegexCompiler.Match(r.Key) {
-			u.metrics.RecordsFilteredCounter.Incr(int64(1))
-			msg := service.NewMessage(r.Value)
-			// Add kafka meta fields
-			msg.MetaSet("kafka_msg_key", string(r.Key))
-			msg.MetaSet("kafka_topic", r.Topic)
+	// Create the acknowledgment function
+	ackFn := u.createAckFunction()
 
-			// Add headers to the meta field if present
-			for _, h := range r.Headers {
-				msg.MetaSet(h.Key, string(h.Value))
-			}
-			u.batchBuffer = append(u.batchBuffer, msg)
-		}
+	// Log metrics
+	u.metrics.LogBatchProcessed(batchStart)
 
-	})
+	return batch, ackFn, nil
+}
 
-	// Create the ack function
-	ackFn := func(ctx context.Context, err error) error {
+// createAckFunction creates a function that commits offsets when a batch is acknowledged
+func (u *UnsInput) createAckFunction() service.AckFunc {
+	return func(ctx context.Context, err error) error {
 		ackStart := time.Now()
 		if err != nil {
 			u.log.Errorf("Error processing the batch: %v", err)
@@ -281,13 +168,11 @@ func (u *unsInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 		}
 
 		if err := u.client.CommitRecords(ctx); err != nil {
-			u.log.Errorf("Error committing the message offsests: %v", err)
+			u.log.Errorf("Error committing the message offsets: %v", err)
 			return err
 		}
-		u.metrics.CommitTimer.Timing(int64(time.Since(ackStart)))
+
+		u.metrics.LogCommitCompleted(ackStart)
 		return nil
 	}
-
-	u.metrics.BatchProcessingTimer.Timing(int64(time.Since(batchStart)))
-	return u.batchBuffer, ackFn, nil
 }
