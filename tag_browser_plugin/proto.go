@@ -12,3 +12,12 @@ func BundleToProtobufBytes(bundle *tagbrowserpluginprotobuf.UnsBundle) ([]byte, 
 	}
 	return protoBytes, nil
 }
+
+func ProtobufBytesToBundle(protoBytes []byte) (*tagbrowserpluginprotobuf.UnsBundle, error) {
+	bundle := &tagbrowserpluginprotobuf.UnsBundle{}
+	err := proto.Unmarshal(protoBytes, bundle)
+	if err != nil {
+		return nil, err
+	}
+	return bundle, nil
+}
