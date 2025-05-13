@@ -17,6 +17,7 @@ package uns_plugin
 import (
 	"context"
 	"regexp"
+	"strconv"
 	"testing"
 	"time"
 
@@ -27,11 +28,14 @@ import (
 // BenchmarkProcessRecord measures the performance of message processing with various filtering scenarios
 func BenchmarkProcessRecord(b *testing.B) {
 	// Setup metrics
-	metrics := NewNoOpMetrics()
+	metrics := NewMockMetrics()
 
 	b.Run("MatchingTopic", func(b *testing.B) {
 		// Create processor with a specific topic regex
-		processor, _ := NewMessageProcessor("umh\\.v1\\.acme\\.berlin\\..*", metrics)
+		processor, err := NewMessageProcessor("umh\\.v1\\.acme\\.berlin\\..*", metrics)
+		if err != nil {
+			b.Fatalf("Failed to create message processor: %v", err)
+		}
 
 		// Create sample record that matches the filter
 		record := &kgo.Record{
@@ -139,7 +143,7 @@ func BenchmarkProcessRecord(b *testing.B) {
 // BenchmarkProcessRecords measures the performance of batch message processing
 func BenchmarkProcessRecords(b *testing.B) {
 	// Setup metrics
-	metrics := NewNoOpMetrics()
+	metrics := NewMockMetrics()
 
 	createMockFetches := func(recordCount int, matchingKeys bool) *MockFetches {
 		records := make([]*kgo.Record, recordCount)
@@ -170,7 +174,7 @@ func BenchmarkProcessRecords(b *testing.B) {
 	benchmarkSizes := []int{10, 100, 1000}
 
 	for _, size := range benchmarkSizes {
-		b.Run("AllMatching_"+string(rune('0'+size/10)), func(b *testing.B) {
+		b.Run("AllMatching_"+strconv.Itoa(size), func(b *testing.B) {
 			// Create processor with a topic regex that matches all records
 			processor, _ := NewMessageProcessor("umh\\.v1\\..*", metrics)
 
@@ -186,7 +190,7 @@ func BenchmarkProcessRecords(b *testing.B) {
 			}
 		})
 
-		b.Run("HalfMatching_"+string(rune('0'+size/10)), func(b *testing.B) {
+		b.Run("HalfMatching_"+strconv.Itoa(size), func(b *testing.B) {
 			// Create processor with a topic regex
 			processor, _ := NewMessageProcessor("umh\\.v1\\..*", metrics)
 
@@ -227,7 +231,7 @@ func BenchmarkRegexCompilation(b *testing.B) {
 // BenchmarkMessageProcessor_Creation measures the performance of creating a message processor
 func BenchmarkMessageProcessor_Creation(b *testing.B) {
 	// Setup metrics
-	metrics := NewNoOpMetrics()
+	metrics := NewMockMetrics()
 
 	patterns := []struct {
 		name    string
@@ -253,7 +257,7 @@ func BenchmarkUnsInput_ReadBatch(b *testing.B) {
 	sizes := []int{10, 100, 1000}
 
 	for _, size := range sizes {
-		b.Run("BatchSize_"+string(rune('0'+size/10)), func(b *testing.B) {
+		b.Run("BatchSize_"+strconv.Itoa(size), func(b *testing.B) {
 			// Setup test context
 			ctx := context.Background()
 
@@ -302,7 +306,7 @@ func BenchmarkUnsInput_ReadBatch(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				batch, ackFn, _ := input.ReadBatch(ctx)
+				_, ackFn, _ := input.ReadBatch(ctx)
 				if ackFn != nil {
 					_ = ackFn(ctx, nil)
 				}

@@ -30,12 +30,13 @@ func init() {
 
 // UnsInput is the primary implementation of the UNS input plugin
 type UnsInput struct {
-	config    UnsInputConfig
-	client    MessageConsumer
-	log       *service.Logger
-	metrics   *UnsInputMetrics
-	processor *MessageProcessor
-	batchPool service.MessageBatch
+	config      UnsInputConfig
+	client      MessageConsumer
+	log         *service.Logger
+	metrics     *UnsInputMetrics
+	processor   *MessageProcessor
+	batchPool   service.MessageBatch
+	ackFunction service.AckFunc
 }
 
 // newUnsInput creates a new UnsInput instance from Benthos configuration
@@ -74,6 +75,8 @@ func NewUnsInput(client MessageConsumer, config UnsInputConfig, logger *service.
 		processor: processor,
 		batchPool: make(service.MessageBatch, 0, 100), // Pre-allocate with reasonable capacity
 	}
+	// Create the ack function once
+	input.ackFunction = input.createAckFunction()
 
 	return input, nil
 }
@@ -149,13 +152,10 @@ func (u *UnsInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 	// Process records into message batch
 	batch := u.processor.ProcessRecords(fetches, u.batchPool)
 
-	// Create the acknowledgment function
-	ackFn := u.createAckFunction()
-
 	// Log metrics
 	u.metrics.LogBatchProcessed(batchStart)
 
-	return batch, ackFn, nil
+	return batch, u.ackFunction, nil
 }
 
 // createAckFunction creates a function that commits offsets when a batch is acknowledged

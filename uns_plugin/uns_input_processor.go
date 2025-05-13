@@ -50,15 +50,17 @@ func (p *MessageProcessor) ProcessRecord(record *kgo.Record) *service.Message {
 	}
 
 	p.metrics.LogRecordFiltered()
+
 	msg := service.NewMessage(record.Value)
 
 	// Add kafka meta fields
-	msg.MetaSet("kafka_msg_key", string(record.Key))
-	msg.MetaSet("kafka_topic", record.Topic)
+	msg.MetaSetMut("kafka_msg_key", record.Key)
+	msg.MetaSetMut("kafka_topic", record.Topic)
+	msg.MetaSetMut("topic", record.Topic) // For internal reasons, record.Topic is duplicated from the kafka_topic field. The tag_browser plugin uses this field.
 
 	// Add headers to the meta field if present
 	for _, h := range record.Headers {
-		msg.MetaSet(h.Key, string(h.Value))
+		msg.MetaSetMut(h.Key, h.Value)
 	}
 
 	return msg

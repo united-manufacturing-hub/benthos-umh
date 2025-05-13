@@ -138,7 +138,7 @@ func (m *MockFetches) Err0() error {
 var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 	var (
 		inputPlugin service.BatchInput
-		unsClient   *unsInput
+		unsClient   *UnsInput
 		ctx         context.Context
 		cancel      context.CancelFunc
 		mockClient  TestMessageConsumer
@@ -165,15 +165,15 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 			},
 		}
 
-		inputConfig := unsInputConfig{
+		inputConfig := UnsInputConfig{
 			topic:           defaultTopicKey,
 			inputKafkaTopic: defaultInputKafkaTopic,
 			brokerAddress:   defaultBrokerAddress,
 			consumerGroup:   defaultConsumerGroup,
 		}
 		resoruces = service.MockResources()
-		inputPlugin, _ = newUnsInputWithClient(mockClient, inputConfig, resoruces.Logger(), resoruces.Metrics())
-		unsClient = inputPlugin.(*unsInput)
+		inputPlugin, _ = NewUnsInput(mockClient, inputConfig, resoruces.Logger(), resoruces.Metrics())
+		unsClient = inputPlugin.(*UnsInput)
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	})
 
@@ -181,13 +181,6 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 		if cancel != nil {
 			cancel()
 		}
-	})
-
-	Context("calling inputConfig method", func() {
-		It("should return a valid configspec", func() {
-			spec := inputConfig()
-			Expect(spec).NotTo(BeNil())
-		})
 	})
 
 	Context("calling Connect function", func() {
@@ -337,15 +330,15 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 			When("specific topic filter is applied", func() {
 				BeforeEach(func() {
-					inputConfig := unsInputConfig{
+					inputConfig := UnsInputConfig{
 						topic:           "umh\\.v1\\.acme\\.berlin\\.assembly\\.temperature",
 						inputKafkaTopic: defaultInputKafkaTopic,
 						brokerAddress:   defaultBrokerAddress,
 						consumerGroup:   defaultConsumerGroup,
 					}
 					resoruces = service.MockResources()
-					inputPlugin, _ = newUnsInputWithClient(mockClient, inputConfig, resoruces.Logger(), resoruces.Metrics())
-					unsClient = inputPlugin.(*unsInput)
+					inputPlugin, _ = NewUnsInput(mockClient, inputConfig, resoruces.Logger(), resoruces.Metrics())
+					unsClient = inputPlugin.(*UnsInput)
 				})
 
 				It("should only return records matching the filter", func() {

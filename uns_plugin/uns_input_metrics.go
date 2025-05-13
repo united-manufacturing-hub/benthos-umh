@@ -82,17 +82,19 @@ func (m *UnsInputMetrics) LogCommitCompleted(startTime time.Time) {
 	m.CommitTimer.Timing(int64(time.Since(startTime)))
 }
 
-// NewNoOpMetrics creates a new metrics collection that doesn't actually record metrics
+// NewMockMetrics creates a new metrics collection that doesn't actually record metrics
 // Useful for testing when you don't need real metrics
-func NewNoOpMetrics() *UnsInputMetrics {
+func NewMockMetrics() *UnsInputMetrics {
+	mockResources := service.MockResources()
+	mockMetrics := mockResources.Metrics()
 	return &UnsInputMetrics{
-		ConnectedGuage:         &service.MetricGauge{},
-		ConnectionErrCounter:   &service.MetricCounter{},
-		PollErrCounter:         &service.MetricCounter{},
-		RecordsReceivedCounter: &service.MetricCounter{},
-		RecordsFilteredCounter: &service.MetricCounter{},
-		CommitTimer:            &service.MetricTimer{},
-		ConnectionTimer:        &service.MetricTimer{},
-		BatchProcessingTimer:   &service.MetricTimer{},
+		ConnectedGuage:         mockMetrics.NewGauge("input_uns_connected"),
+		ConnectionErrCounter:   mockMetrics.NewCounter("input_uns_connection_errors"),
+		PollErrCounter:         mockMetrics.NewCounter("input_uns_poll_errors"),
+		RecordsReceivedCounter: mockMetrics.NewCounter("input_uns_records_received"),
+		RecordsFilteredCounter: mockMetrics.NewCounter("input_uns_records_filtered"),
+		CommitTimer:            mockMetrics.NewTimer("input_uns_records_commit_time"),
+		ConnectionTimer:        mockMetrics.NewTimer("input_uns_connection_time"),
+		BatchProcessingTimer:   mockMetrics.NewTimer("input_uns_batch_processing_time"),
 	}
 }
