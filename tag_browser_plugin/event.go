@@ -8,6 +8,8 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
+// messageToEvent will convert a benthos message, into an EventTableEntry, and eventTag and an optional error
+// It checks if the incoming message is a valid time-series message, otherwise it handles it as relational data
 func messageToEvent(message *service.Message) (*tagbrowserpluginprotobuf.EventTableEntry, *string, error) {
 	structured, err := message.AsStructured()
 	if err != nil {
@@ -59,7 +61,7 @@ func processTimeSeriesData(structured map[string]interface{}) (*tagbrowserplugin
 	}, &valueName, nil
 }
 
-// processRelationalData extracts the messages payload as bytes and returns that
+// processRelationalData extracts the message payload as bytes and returns that
 func processRelationalData(message *service.Message) (*tagbrowserpluginprotobuf.EventTableEntry, *string, error) {
 	valueBytes, err := message.AsBytes()
 	if err != nil {

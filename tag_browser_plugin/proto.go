@@ -62,7 +62,8 @@ The above bench results show that the space efficiency vastly outranks the added
 However, for inputs under 1024 bytes, we skip compression, as the overhead from lz4's frame would actually increase the size.
 */
 
-func BundleToProtobuf(bundle *tagbrowserpluginprotobuf.UnsBundle) ([]byte, error) {
+// bundleToProtobuf converts an UNSBundle (containing both Topics and Events) to a protobuf representation
+func bundleToProtobuf(bundle *tagbrowserpluginprotobuf.UnsBundle) ([]byte, error) {
 	protoBytes, err := proto.Marshal(bundle)
 	if err != nil {
 		return []byte{}, err
@@ -70,7 +71,8 @@ func BundleToProtobuf(bundle *tagbrowserpluginprotobuf.UnsBundle) ([]byte, error
 	return protoBytes, nil
 }
 
-func ProtobufBytesToBundle(protoBytes []byte) (*tagbrowserpluginprotobuf.UnsBundle, error) {
+// protobufBytesToBundle converts protobuf encoded data back to an UnsBundle
+func protobufBytesToBundle(protoBytes []byte) (*tagbrowserpluginprotobuf.UnsBundle, error) {
 	bundle := &tagbrowserpluginprotobuf.UnsBundle{}
 	err := proto.Unmarshal(protoBytes, bundle)
 	if err != nil {
@@ -79,8 +81,10 @@ func ProtobufBytesToBundle(protoBytes []byte) (*tagbrowserpluginprotobuf.UnsBund
 	return bundle, nil
 }
 
+// BundleToProtobufBytesWithCompression converts an UnsBundle to compressed protobuf bytes using LZ4 if the size exceeds 1024 bytes.
+// Returns the compressed byte array or the original protobuf bytes if compression is unnecessary, along with an error if any occurs.
 func BundleToProtobufBytesWithCompression(bundle *tagbrowserpluginprotobuf.UnsBundle) ([]byte, error) {
-	protoBytes, err := BundleToProtobuf(bundle)
+	protoBytes, err := bundleToProtobuf(bundle)
 	if err != nil {
 		return []byte{}, err
 	}
@@ -94,6 +98,7 @@ func BundleToProtobufBytesWithCompression(bundle *tagbrowserpluginprotobuf.UnsBu
 
 	// Create an LZ4 writer
 	zw := lz4.NewWriter(&compressedBuf)
+	// Compression level 0 is fastest
 	zw.CompressionLevel = 0
 
 	// Write the protobuf bytes to the LZ4 writer
@@ -111,10 +116,13 @@ func BundleToProtobufBytesWithCompression(bundle *tagbrowserpluginprotobuf.UnsBu
 	return compressedBuf.Bytes(), nil
 }
 
+// ProtobufBytesToBundleWithCompression converts compressed protobuf data back to an UnsBundle, handling optional LZ4 compression.
+// If the data is not LZ4-compressed, it will fall back to normal protobuf decoding.
+// Returns the decoded UnsBundle or an error if decoding fails.
 func ProtobufBytesToBundleWithCompression(compressedBytes []byte) (*tagbrowserpluginprotobuf.UnsBundle, error) {
 	// If the compressedBytes dont start with the LZ4 magic number, return the original bytes
 	if !bytes.Equal(compressedBytes[:4], []byte{0x04, 0x22, 0x4d, 0x18}) {
-		return ProtobufBytesToBundle(compressedBytes)
+		return protobufBytesToBundle(compressedBytes)
 	}
 
 	// Create a reader for the compressed data
@@ -122,6 +130,7 @@ func ProtobufBytesToBundleWithCompression(compressedBytes []byte) (*tagbrowserpl
 
 	// Create an LZ4 reader
 	zr := lz4.NewReader(r)
+	// Compression level 0 is fastest
 	zr.CompressionLevel = 0
 
 	// Create a buffer to store the decompressed data
@@ -134,5 +143,5 @@ func ProtobufBytesToBundleWithCompression(compressedBytes []byte) (*tagbrowserpl
 	}
 
 	// Convert the decompressed data back to a protobuf bundle
-	return ProtobufBytesToBundle(decompressedBuf.Bytes())
+	return protobufBytesToBundle(decompressedBuf.Bytes())
 }

@@ -52,6 +52,7 @@ func (t TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Messa
 
 	var resultBatch service.MessageBatch
 
+	// Extract data for each message in the batch
 	for _, message := range batch {
 		unsInfo, eventTableEntry, unsTreeId, err := MessageToUNSInfoAndEvent(message)
 		if err != nil {
@@ -66,6 +67,7 @@ func (t TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Messa
 		unsBundle.Events.Entries = append(unsBundle.Events.Entries, eventTableEntry)
 	}
 
+	// Bundle data from all messages into a single one containing the protobuf
 	protoBytes, err := BundleToProtobufBytesWithCompression(unsBundle)
 	if err != nil {
 		return nil, err
