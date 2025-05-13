@@ -37,11 +37,13 @@ var _ = Describe("TagBrowserProcessor", func() {
 			Expect(outputMsg).NotTo(BeNil())
 
 			// Dump to disk for testing
-			bytes, err := outputMsg.AsBytes()
-			Expect(err).To(BeNil())
-			Expect(bytes).NotTo(BeNil())
-			err = os.WriteFile("single_message.proto", bytes, 0644)
-			Expect(err).To(BeNil())
+			/*
+				bytes, err := outputMsg.AsBytes()
+				Expect(err).To(BeNil())
+				Expect(bytes).NotTo(BeNil())
+				err = os.WriteFile("single_message.proto", bytes, 0644)
+				Expect(err).To(BeNil())
+			*/
 		})
 
 		It("handles empty batch", func() {
@@ -86,11 +88,13 @@ var _ = Describe("TagBrowserProcessor", func() {
 			Expect(outputMsg).NotTo(BeNil())
 
 			// Dump to disk for testing
-			bytes, err := outputMsg.AsBytes()
-			Expect(err).To(BeNil())
-			Expect(bytes).NotTo(BeNil())
-			err = os.WriteFile("multiple_messages.proto", bytes, 0644)
-			Expect(err).To(BeNil())
+			/*
+				bytes, err := outputMsg.AsBytes()
+				Expect(err).To(BeNil())
+				Expect(bytes).NotTo(BeNil())
+				err = os.WriteFile("multiple_messages.proto", bytes, 0644)
+				Expect(err).To(BeNil())
+			*/
 		})
 	})
 })
