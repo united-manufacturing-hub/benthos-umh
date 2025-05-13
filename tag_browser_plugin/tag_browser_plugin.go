@@ -14,7 +14,53 @@
 
 package tag_browser_plugin
 
+import (
+	"context"
+	"github.com/redpanda-data/benthos/v4/public/service"
+	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
+)
+
 type TagBrowserProcessor struct {
+}
+
+func (t TagBrowserProcessor) Process(ctx context.Context, message *service.Message) (service.MessageBatch, error) {
+	unsInfo, eventTableEntry, unsTreeId, err := MessageToUNSInfoAndEvent(message)
+	if err != nil {
+		return nil, err
+	}
+
+	unsBundle := &tagbrowserpluginprotobuf.UnsBundle{
+		UnsMap: &tagbrowserpluginprotobuf.UnsMap{
+			Entries: make(map[string]*tagbrowserpluginprotobuf.UnsInfo),
+		},
+		Events: &tagbrowserpluginprotobuf.EventTable{
+			Entries: make([]*tagbrowserpluginprotobuf.EventTableEntry, 0, 1),
+		},
+	}
+	// This is safe, as unsTreeId will always be set if the error is nil
+	unsBundle.UnsMap.Entries[*unsTreeId] = unsInfo
+	unsBundle.Events.Entries = append(unsBundle.Events.Entries, eventTableEntry)
+
+	protoBytes, err := BundleToProtobufBytes(unsBundle)
+	if err != nil {
+		return nil, err
+	}
+
+	message.SetBytes(protoBytes)
+
+	var resultBatch service.MessageBatch
+	resultBatch = append(resultBatch, message)
+	return resultBatch, nil
+}
+
+func (t TagBrowserProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (t TagBrowserProcessor) Close(ctx context.Context) error {
+	//TODO implement me
+	panic("implement me")
 }
 
 func NewTagBrowserProcessor() *TagBrowserProcessor {
