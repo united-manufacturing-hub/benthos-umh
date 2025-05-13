@@ -209,11 +209,10 @@ type EventKafka struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// This version does not contain fields like topic, key
 	// Since there cannot be a user defined key and the topic will always be umh.messages
-	Headers           map[string]string `protobuf:"bytes,1,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	InsertedTimestamp int64             `protobuf:"varint,2,opt,name=inserted_timestamp,json=insertedTimestamp,proto3" json:"inserted_timestamp,omitempty"` // As seen by kafka
-	Payload           string            `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`                                               // Raw payload of the message
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	Headers       map[string]string `protobuf:"bytes,1,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Payload       string            `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"` // Raw payload of the message
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *EventKafka) Reset() {
@@ -251,13 +250,6 @@ func (x *EventKafka) GetHeaders() map[string]string {
 		return x.Headers
 	}
 	return nil
-}
-
-func (x *EventKafka) GetInsertedTimestamp() int64 {
-	if x != nil {
-		return x.InsertedTimestamp
-	}
-	return 0
 }
 
 func (x *EventKafka) GetPayload() string {
@@ -479,12 +471,11 @@ const file_tag_browser_data_proto_rawDesc = "" +
 	"\aentries\x18\x01 \x03(\v2\x1f.umh.events.UnsMap.EntriesEntryR\aentries\x1aO\n" +
 	"\fEntriesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.umh.events.UnsInfoR\x05value:\x028\x01\"\xd0\x01\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.umh.events.UnsInfoR\x05value:\x028\x01\"\xa1\x01\n" +
 	"\n" +
 	"EventKafka\x12=\n" +
-	"\aheaders\x18\x01 \x03(\v2#.umh.events.EventKafka.HeadersEntryR\aheaders\x12-\n" +
-	"\x12inserted_timestamp\x18\x02 \x01(\x03R\x11insertedTimestamp\x12\x18\n" +
-	"\apayload\x18\x03 \x01(\tR\apayload\x1a:\n" +
+	"\aheaders\x18\x01 \x03(\v2#.umh.events.EventKafka.HeadersEntryR\aheaders\x12\x18\n" +
+	"\apayload\x18\x02 \x01(\tR\apayload\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb5\x02\n" +
