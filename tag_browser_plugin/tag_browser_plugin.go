@@ -24,11 +24,17 @@ type TagBrowserProcessor struct {
 }
 
 func (t TagBrowserProcessor) Process(ctx context.Context, message *service.Message) (service.MessageBatch, error) {
-	unsInfo, eventTableEntry, unsTreeId, err := MessageToUNSInfoAndEvent(message)
+	messageBatch, err := t.ProcessBatch(ctx, service.MessageBatch{message})
 	if err != nil {
 		return nil, err
 	}
+	if len(messageBatch) == 0 {
+		return nil, nil
+	}
+	return messageBatch[0], nil
+}
 
+func (t TagBrowserProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	unsBundle := &tagbrowserpluginprotobuf.UnsBundle{
 		UnsMap: &tagbrowserpluginprotobuf.UnsMap{
 			Entries: make(map[string]*tagbrowserpluginprotobuf.UnsInfo),
@@ -37,25 +43,29 @@ func (t TagBrowserProcessor) Process(ctx context.Context, message *service.Messa
 			Entries: make([]*tagbrowserpluginprotobuf.EventTableEntry, 0, 1),
 		},
 	}
-	// This is safe, as unsTreeId will always be set if the error is nil
-	unsBundle.UnsMap.Entries[*unsTreeId] = unsInfo
-	unsBundle.Events.Entries = append(unsBundle.Events.Entries, eventTableEntry)
-
-	protoBytes, err := BundleToProtobufBytes(unsBundle)
-	if err != nil {
-		return nil, err
-	}
-
-	message.SetBytes(protoBytes)
 
 	var resultBatch service.MessageBatch
-	resultBatch = append(resultBatch, message)
-	return resultBatch, nil
-}
 
-func (t TagBrowserProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
-	//TODO implement me
-	panic("implement me")
+	for _, message := range batch {
+		unsInfo, eventTableEntry, unsTreeId, err := MessageToUNSInfoAndEvent(message)
+		if err != nil {
+			return nil, err
+		}
+
+		// This is safe, as unsTreeId will always be set if the error is nil
+		unsBundle.UnsMap.Entries[*unsTreeId] = unsInfo
+		unsBundle.Events.Entries = append(unsBundle.Events.Entries, eventTableEntry)
+
+		protoBytes, err := BundleToProtobufBytes(unsBundle)
+		if err != nil {
+			return nil, err
+		}
+
+		message.SetBytes(protoBytes)
+		resultBatch = append(resultBatch, message)
+	}
+
+	return []service.MessageBatch{resultBatch}, nil
 }
 
 func (t TagBrowserProcessor) Close(ctx context.Context) error {
