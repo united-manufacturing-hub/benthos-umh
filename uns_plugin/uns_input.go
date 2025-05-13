@@ -105,10 +105,12 @@ type Metrics struct {
 }
 
 type unsInput struct {
-	config  unsInputConfig
-	client  MessageConsumer
-	log     *service.Logger
-	metrics *Metrics
+	config             unsInputConfig
+	client             MessageConsumer
+	log                *service.Logger
+	metrics            *Metrics
+	topicRegexCompiler *regexp.Regexp
+	batchBuffer        service.MessageBatch
 }
 
 func newUnsInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
@@ -152,10 +154,10 @@ func newUnsInput(conf *service.ParsedConfig, mgr *service.Resources) (service.Ba
 		config.consumerGroup = cg
 	}
 
-	return newUnsInputWithClient(NewConsumerClient(), config, mgr.Logger(), mgr.Metrics()), nil
+	return newUnsInputWithClient(NewConsumerClient(), config, mgr.Logger(), mgr.Metrics())
 }
 
-func newUnsInputWithClient(client MessageConsumer, config unsInputConfig, logger *service.Logger, metrics *service.Metrics) service.BatchInput {
+func newUnsInputWithClient(client MessageConsumer, config unsInputConfig, logger *service.Logger, metrics *service.Metrics) (service.BatchInput, error) {
 	m := &Metrics{
 		ConnectedGuage:         metrics.NewGauge("input_uns_connected"),
 		ConnectionErrCounter:   metrics.NewCounter("input_uns_connection_errors"),
@@ -166,12 +168,18 @@ func newUnsInputWithClient(client MessageConsumer, config unsInputConfig, logger
 		ConnectionTimer:        metrics.NewTimer("input_uns_connection_time"),
 		BatchProcessingTimer:   metrics.NewTimer("input_uns_batch_processing_time"),
 	}
-	return &unsInput{
-		client:  client,
-		config:  config,
-		log:     logger,
-		metrics: m,
+
+	topicRegex, err := regexp.Compile(config.topic)
+	if err != nil {
+		return nil, fmt.Errorf("error compiling topic regex: %v", err)
 	}
+	return &unsInput{
+		client:             client,
+		config:             config,
+		log:                logger,
+		metrics:            m,
+		topicRegexCompiler: topicRegex,
+	}, nil
 }
 
 // Close implements service.BatchInput.
@@ -245,27 +253,22 @@ func (u *unsInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 	}
 
 	// Create messageBatch
-	var batch service.MessageBatch
-	topicRegex, err := regexp.Compile(u.config.topic)
-	if err != nil {
-		return nil, nil, fmt.Errorf("error compiling topic regex: %v", err)
-	}
-
+	u.batchBuffer = u.batchBuffer[:0]
 	fetches.EachRecord(func(r *kgo.Record) {
 		u.metrics.RecordsReceivedCounter.Incr(int64(1))
 
-		if topicRegex.Match(r.Key) {
+		if u.topicRegexCompiler.Match(r.Key) {
 			u.metrics.RecordsFilteredCounter.Incr(int64(1))
 			msg := service.NewMessage(r.Value)
 			// Add kafka meta fields
-			msg.MetaSet("kafka_key", string(r.Key))
+			msg.MetaSet("kafka_msg_key", string(r.Key))
 			msg.MetaSet("kafka_topic", r.Topic)
 
 			// Add headers to the meta field if present
 			for _, h := range r.Headers {
 				msg.MetaSet(h.Key, string(h.Value))
 			}
-			batch = append(batch, msg)
+			u.batchBuffer = append(u.batchBuffer, msg)
 		}
 
 	})
@@ -287,5 +290,5 @@ func (u *unsInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 	}
 
 	u.metrics.BatchProcessingTimer.Timing(int64(time.Since(batchStart)))
-	return batch, ackFn, nil
+	return u.batchBuffer, ackFn, nil
 }
