@@ -17,16 +17,18 @@ package tag_browser_plugin
 import (
 	"context"
 	lru "github.com/hashicorp/golang-lru"
+	"sync"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
 )
 
 type TagBrowserProcessor struct {
-	unsMapCache *lru.Cache
+	unsMapCache      *lru.Cache
+	unsMapCacheMutex *sync.Mutex
 }
 
-func (t TagBrowserProcessor) Process(ctx context.Context, message *service.Message) (service.MessageBatch, error) {
+func (t *TagBrowserProcessor) Process(ctx context.Context, message *service.Message) (service.MessageBatch, error) {
 	messageBatch, err := t.ProcessBatch(ctx, service.MessageBatch{message})
 	if err != nil {
 		return nil, err
@@ -37,7 +39,7 @@ func (t TagBrowserProcessor) Process(ctx context.Context, message *service.Messa
 	return messageBatch[0], nil
 }
 
-func (t TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+func (t *TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	if len(batch) == 0 {
 		return nil, nil
 	}
@@ -54,9 +56,12 @@ func (t TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Messa
 	var resultBatch service.MessageBatch
 
 	// Extract data for each message in the batch
+	t.unsMapCacheMutex.Lock()
 	for _, message := range batch {
 		unsInfo, eventTableEntry, unsTreeId, err := MessageToUNSInfoAndEvent(message)
 		if err != nil {
+			// Unlock the mutex, when we have an error
+			t.unsMapCacheMutex.Unlock()
 			return nil, err
 		}
 
@@ -67,6 +72,7 @@ func (t TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Messa
 		}
 		unsBundle.Events.Entries = append(unsBundle.Events.Entries, eventTableEntry)
 	}
+	t.unsMapCacheMutex.Unlock()
 
 	// Bundle data from all messages into a single one containing the protobuf
 	protoBytes, err := BundleToProtobufBytesWithCompression(unsBundle)
@@ -81,11 +87,12 @@ func (t TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Messa
 	return []service.MessageBatch{resultBatch}, nil
 }
 
-func (t TagBrowserProcessor) Close(_ context.Context) error {
+func (t *TagBrowserProcessor) Close(_ context.Context) error {
 	// Wipe cache
-	var err error
-	t.unsMapCache, err = lru.New(1000)
-	return err
+	t.unsMapCacheMutex.Lock()
+	t.unsMapCache.Purge()
+	t.unsMapCacheMutex.Unlock()
+	return nil
 }
 
 func NewTagBrowserProcessor() *TagBrowserProcessor {

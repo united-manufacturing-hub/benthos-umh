@@ -115,6 +115,7 @@ var _ = Describe("Raw Kafka Message Processing", func() {
 
 			// Verify payload is converted to string correctly
 			Expect(kafkaMsg.Payload).To(Equal(string(binaryData)))
+			Expect([]byte(kafkaMsg.Payload)).To(Equal(binaryData))
 		})
 	})
 })

@@ -135,6 +135,7 @@ func BundleToProtobufBytesWithCompression(bundle *tagbrowserpluginprotobuf.UnsBu
 // Returns the decoded UnsBundle or an error if decoding fails.
 func ProtobufBytesToBundleWithCompression(compressedBytes []byte) (*tagbrowserpluginprotobuf.UnsBundle, error) {
 	// If the compressedBytes dont start with the LZ4 magic number, return the original bytes
+	// https://github.com/lz4/lz4/blob/dev/doc/lz4_Frame_format.md#general-structure-of-lz4-frame-format
 	if !bytes.Equal(compressedBytes[:4], []byte{0x04, 0x22, 0x4d, 0x18}) {
 		return protobufBytesToBundle(compressedBytes)
 	}
