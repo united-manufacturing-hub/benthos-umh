@@ -1,7 +1,9 @@
 package tag_browser_plugin
 
 import (
+	"encoding/binary"
 	"fmt"
+	"math/rand"
 	"testing"
 
 	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
@@ -67,6 +69,51 @@ func createLargeTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 	return bundle
 }
 
+func createVeryLargeTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
+	bundle := &tagbrowserpluginprotobuf.UnsBundle{
+		UnsMap: &tagbrowserpluginprotobuf.UnsMap{
+			Entries: make(map[string]*tagbrowserpluginprotobuf.UnsInfo),
+		},
+		Events: &tagbrowserpluginprotobuf.EventTable{
+			Entries: make([]*tagbrowserpluginprotobuf.EventTableEntry, 0, 100000),
+		},
+	}
+
+	// Create 10 different UNSInfo entries
+	for i := 0; i < 10; i++ {
+		topic := fmt.Sprintf("topic-%d", i)
+		bundle.UnsMap.Entries[topic] = &tagbrowserpluginprotobuf.UnsInfo{
+			Enterprise: "enterprise",
+			Schema:     "_historian",
+			EventTag:   wrapperspb.String(fmt.Sprintf("sensor-%d", i)),
+		}
+	}
+
+	// Add 100,000 entries to the bundle, randomly distributed among the 10 UNSInfo entries
+	for i := 0; i < 100000; i++ {
+		// Generate a random float64 value
+		value := rand.Float64()
+		valueBytes := make([]byte, 8)
+		binary.LittleEndian.PutUint64(valueBytes, uint64(value))
+
+		// Randomly select one of the 10 UNSInfo entries
+		topicIndex := rand.Intn(10)
+		topic := fmt.Sprintf("topic-%d", topicIndex)
+
+		bundle.Events.Entries = append(bundle.Events.Entries, &tagbrowserpluginprotobuf.EventTableEntry{
+			IsTimeseries: true,
+			TimestampMs:  wrapperspb.Int64(1647753600000 + int64(i)),
+			Value: &anypb.Any{
+				TypeUrl: "golang/float64",
+				Value:   valueBytes,
+			},
+			UnsTreeId: topic, // Use the topic as the UnsTreeId
+		})
+	}
+
+	return bundle
+}
+
 func BenchmarkBundleToProtobufBytes(b *testing.B) {
 	b.Run("small bundle", func(b *testing.B) {
 		bundle := createTestBundle()
@@ -81,6 +128,17 @@ func BenchmarkBundleToProtobufBytes(b *testing.B) {
 
 	b.Run("large bundle", func(b *testing.B) {
 		bundle := createLargeTestBundle()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, err := BundleToProtobuf(bundle)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("very large bundle", func(b *testing.B) {
+		bundle := createVeryLargeTestBundle()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_, err := BundleToProtobuf(bundle)
@@ -109,6 +167,21 @@ func BenchmarkProtobufBytesToBundle(b *testing.B) {
 
 	b.Run("large bundle", func(b *testing.B) {
 		bundle := createLargeTestBundle()
+		protoBytes, err := BundleToProtobuf(bundle)
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, err := ProtobufBytesToBundle(protoBytes)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("very large bundle", func(b *testing.B) {
+		bundle := createVeryLargeTestBundle()
 		protoBytes, err := BundleToProtobuf(bundle)
 		if err != nil {
 			b.Fatal(err)
@@ -153,6 +226,21 @@ func BenchmarkRoundTrip(b *testing.B) {
 			}
 		}
 	})
+
+	b.Run("very large bundle", func(b *testing.B) {
+		bundle := createVeryLargeTestBundle()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			protoBytes, err := BundleToProtobuf(bundle)
+			if err != nil {
+				b.Fatal(err)
+			}
+			_, err = ProtobufBytesToBundle(protoBytes)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }
 
 func BenchmarkBundleToProtobufBytesWithCompression(b *testing.B) {
@@ -169,6 +257,17 @@ func BenchmarkBundleToProtobufBytesWithCompression(b *testing.B) {
 
 	b.Run("large bundle", func(b *testing.B) {
 		bundle := createLargeTestBundle()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, err := BundleToProtobufBytesWithCompression(bundle)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("very large bundle", func(b *testing.B) {
+		bundle := createVeryLargeTestBundle()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_, err := BundleToProtobufBytesWithCompression(bundle)
@@ -197,6 +296,21 @@ func BenchmarkProtobufBytesToBundleWithCompression(b *testing.B) {
 
 	b.Run("large bundle", func(b *testing.B) {
 		bundle := createLargeTestBundle()
+		compressedBytes, err := BundleToProtobufBytesWithCompression(bundle)
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, err := ProtobufBytesToBundleWithCompression(compressedBytes)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("very large bundle", func(b *testing.B) {
+		bundle := createVeryLargeTestBundle()
 		compressedBytes, err := BundleToProtobufBytesWithCompression(bundle)
 		if err != nil {
 			b.Fatal(err)
@@ -241,6 +355,21 @@ func BenchmarkCompressionRoundTrip(b *testing.B) {
 			}
 		}
 	})
+
+	b.Run("very large bundle", func(b *testing.B) {
+		bundle := createVeryLargeTestBundle()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			compressedBytes, err := BundleToProtobufBytesWithCompression(bundle)
+			if err != nil {
+				b.Fatal(err)
+			}
+			_, err = ProtobufBytesToBundleWithCompression(compressedBytes)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }
 
 func BenchmarkCompressionRatio(b *testing.B) {
@@ -255,6 +384,9 @@ func BenchmarkCompressionRatio(b *testing.B) {
 			b.Fatal(err)
 		}
 		b.ReportMetric(float64(len(compressedBytes))/float64(len(protoBytes)), "compression_ratio")
+		b.ReportMetric(float64(len(protoBytes)), "original_size_bytes")
+		b.ReportMetric(float64(len(compressedBytes)), "compressed_size_bytes")
+		b.ReportMetric(float64(len(protoBytes)-len(compressedBytes)), "size_difference_bytes")
 	})
 
 	b.Run("large bundle", func(b *testing.B) {
@@ -268,5 +400,24 @@ func BenchmarkCompressionRatio(b *testing.B) {
 			b.Fatal(err)
 		}
 		b.ReportMetric(float64(len(compressedBytes))/float64(len(protoBytes)), "compression_ratio")
+		b.ReportMetric(float64(len(protoBytes)), "original_size_bytes")
+		b.ReportMetric(float64(len(compressedBytes)), "compressed_size_bytes")
+		b.ReportMetric(float64(len(protoBytes)-len(compressedBytes)), "size_difference_bytes")
+	})
+
+	b.Run("very large bundle", func(b *testing.B) {
+		bundle := createVeryLargeTestBundle()
+		protoBytes, err := BundleToProtobuf(bundle)
+		if err != nil {
+			b.Fatal(err)
+		}
+		compressedBytes, err := BundleToProtobufBytesWithCompression(bundle)
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.ReportMetric(float64(len(compressedBytes))/float64(len(protoBytes)), "compression_ratio")
+		b.ReportMetric(float64(len(protoBytes)), "original_size_bytes")
+		b.ReportMetric(float64(len(compressedBytes)), "compressed_size_bytes")
+		b.ReportMetric(float64(len(protoBytes)-len(compressedBytes)), "size_difference_bytes")
 	})
 }
