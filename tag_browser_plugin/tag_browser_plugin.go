@@ -22,10 +22,7 @@ import (
 )
 
 type TagBrowserProcessor struct {
-	logger            *service.Logger
-	messagesProcessed *service.MetricCounter
-	messagesErrored   *service.MetricCounter
-	unsMapCache       map[string]bool
+	unsMapCache map[string]bool
 }
 
 func (t TagBrowserProcessor) Process(ctx context.Context, message *service.Message) (service.MessageBatch, error) {
@@ -54,7 +51,6 @@ func (t TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Messa
 	for _, message := range batch {
 		unsInfo, eventTableEntry, unsTreeId, err := MessageToUNSInfoAndEvent(message)
 		if err != nil {
-			t.messagesErrored.Incr(1)
 			return nil, err
 		}
 
@@ -67,13 +63,11 @@ func (t TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Messa
 
 		protoBytes, err := BundleToProtobufBytes(unsBundle)
 		if err != nil {
-			t.messagesErrored.Incr(1)
 			return nil, err
 		}
 
 		message.SetBytes(protoBytes)
 		resultBatch = append(resultBatch, message)
-		t.messagesProcessed.Incr(1)
 	}
 
 	return []service.MessageBatch{resultBatch}, nil
@@ -85,12 +79,9 @@ func (t TagBrowserProcessor) Close(_ context.Context) error {
 	return nil
 }
 
-func NewTagBrowserProcessor(logger *service.Logger, metrics *service.Metrics) *TagBrowserProcessor {
+func NewTagBrowserProcessor() *TagBrowserProcessor {
 	return &TagBrowserProcessor{
-		logger:            logger,
-		messagesProcessed: metrics.NewCounter("messages_processed"),
-		messagesErrored:   metrics.NewCounter("messages_errored"),
-		unsMapCache:       make(map[string]bool),
+		unsMapCache: make(map[string]bool),
 	}
 }
 
@@ -109,8 +100,8 @@ The processor requires that the following metadata fields are set:
 `).
 		Field(service.NewObjectField(""))
 
-	err := service.RegisterProcessor("tag_browser", spec, func(_ *service.ParsedConfig, mgr *service.Resources) (service.Processor, error) {
-		return NewTagBrowserProcessor(mgr.Logger(), mgr.Metrics()), nil
+	err := service.RegisterProcessor("tag_browser", spec, func(_ *service.ParsedConfig, _ *service.Resources) (service.Processor, error) {
+		return NewTagBrowserProcessor(), nil
 	})
 	if err != nil {
 		panic(err)
