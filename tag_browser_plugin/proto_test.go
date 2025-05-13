@@ -9,7 +9,7 @@ import (
 )
 
 var _ = Describe("Protobuf Functions", func() {
-	Describe("BundleToProtobufBytes and ProtobufBytesToBundle", func() {
+	Describe("BundleToProtobuf and ProtobufBytesToBundle", func() {
 		It("successfully encodes and decodes a bundle with time series data", func() {
 			// Create a test bundle
 			originalBundle := &tagbrowserpluginprotobuf.UnsBundle{
@@ -37,7 +37,7 @@ var _ = Describe("Protobuf Functions", func() {
 			}
 
 			// Encode the bundle
-			protoBytes, err := BundleToProtobufBytes(originalBundle)
+			protoBytes, err := BundleToProtobuf(originalBundle)
 			Expect(err).To(BeNil())
 			Expect(protoBytes).NotTo(BeNil())
 
@@ -64,7 +64,7 @@ var _ = Describe("Protobuf Functions", func() {
 			}
 
 			// Encode the bundle
-			protoBytes, err := BundleToProtobufBytes(originalBundle)
+			protoBytes, err := BundleToProtobuf(originalBundle)
 			Expect(err).To(BeNil())
 			Expect(protoBytes).NotTo(BeNil())
 
@@ -118,7 +118,7 @@ var _ = Describe("Protobuf Functions", func() {
 			}
 
 			// Encode the bundle
-			protoBytes, err := BundleToProtobufBytes(originalBundle)
+			protoBytes, err := BundleToProtobuf(originalBundle)
 			Expect(err).To(BeNil())
 			Expect(protoBytes).NotTo(BeNil())
 
