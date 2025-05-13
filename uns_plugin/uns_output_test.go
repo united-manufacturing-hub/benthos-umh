@@ -150,7 +150,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 			bridgedBy: "default-test-bridge",
 		}
 		messageKey, _ := service.NewInterpolatedString("${! meta(\"topic\") }")
-		unsConf.messageKey = messageKey
+		unsConf.topic = messageKey
 		outputPlugin = newUnsOutputWithClient(mockClient, unsConf, nil)
 		unsClient = outputPlugin.(*unsOutput)
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
