@@ -248,7 +248,6 @@ func (u *unsInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 	}
 
 	if fetches.Empty() {
-		// u.log.Infof("empty fetch results for the topic: %s", u.config.inputKafkaTopic)
 		return nil, nil, nil
 	}
 
