@@ -66,7 +66,7 @@ func (t TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Messa
 		unsBundle.Events.Entries = append(unsBundle.Events.Entries, eventTableEntry)
 	}
 
-	protoBytes, err := BundleToProtobufBytes(unsBundle)
+	protoBytes, err := BundleToProtobufBytesWithCompression(unsBundle)
 	if err != nil {
 		return nil, err
 	}
