@@ -30,7 +30,7 @@ const (
 	defaultDialTimeout            = 5 * time.Minute
 	defaultFetchMaxBytes          = 100e6 // 100MB
 	defaultFetchMaxPartitionBytes = 100e6 // 100MB
-	defaultFetchMinBytes          = 1     // 1 Byte
+	defaultFetchMinBytes          = 50e6  // 50MB
 	defaultFetchMaxWaitTime       = 1 * time.Second
 )
 
