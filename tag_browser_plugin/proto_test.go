@@ -28,7 +28,7 @@ var _ = Describe("Protobuf Functions", func() {
 			// Create a test bundle
 			originalBundle := &tagbrowserpluginprotobuf.UnsBundle{
 				UnsMap: &tagbrowserpluginprotobuf.UnsMap{
-					Entries: map[string]*tagbrowserpluginprotobuf.UnsInfo{
+					Entries: map[string]*tagbrowserpluginprotobuf.TopicInfo{
 						"test-topic": {
 							Enterprise: "enterprise",
 							Schema:     "_historian",
@@ -70,7 +70,7 @@ var _ = Describe("Protobuf Functions", func() {
 			// Create an empty bundle
 			originalBundle := &tagbrowserpluginprotobuf.UnsBundle{
 				UnsMap: &tagbrowserpluginprotobuf.UnsMap{
-					Entries: make(map[string]*tagbrowserpluginprotobuf.UnsInfo),
+					Entries: make(map[string]*tagbrowserpluginprotobuf.TopicInfo),
 				},
 				Events: &tagbrowserpluginprotobuf.EventTable{
 					Entries: make([]*tagbrowserpluginprotobuf.EventTableEntry, 0),
@@ -96,7 +96,7 @@ var _ = Describe("Protobuf Functions", func() {
 			// Create a bundle with multiple entries
 			originalBundle := &tagbrowserpluginprotobuf.UnsBundle{
 				UnsMap: &tagbrowserpluginprotobuf.UnsMap{
-					Entries: map[string]*tagbrowserpluginprotobuf.UnsInfo{
+					Entries: map[string]*tagbrowserpluginprotobuf.TopicInfo{
 						"topic1": {
 							Enterprise: "enterprise",
 							Schema:     "_historian",

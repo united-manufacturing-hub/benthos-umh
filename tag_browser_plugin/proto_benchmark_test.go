@@ -28,7 +28,7 @@ import (
 func createTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 	return &tagbrowserpluginprotobuf.UnsBundle{
 		UnsMap: &tagbrowserpluginprotobuf.UnsMap{
-			Entries: map[string]*tagbrowserpluginprotobuf.UnsInfo{
+			Entries: map[string]*tagbrowserpluginprotobuf.TopicInfo{
 				"test-topic": {
 					Enterprise: "enterprise",
 					Schema:     "_historian",
@@ -54,7 +54,7 @@ func createTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 func createLargeTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 	bundle := &tagbrowserpluginprotobuf.UnsBundle{
 		UnsMap: &tagbrowserpluginprotobuf.UnsMap{
-			Entries: make(map[string]*tagbrowserpluginprotobuf.UnsInfo),
+			Entries: make(map[string]*tagbrowserpluginprotobuf.TopicInfo),
 		},
 		Events: &tagbrowserpluginprotobuf.EventTable{
 			Entries: make([]*tagbrowserpluginprotobuf.EventTableEntry, 0, 1000),
@@ -64,7 +64,7 @@ func createLargeTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 	// Add 1000 entries to the bundle
 	for i := 0; i < 1000; i++ {
 		topic := fmt.Sprintf("topic-%d", i)
-		bundle.UnsMap.Entries[topic] = &tagbrowserpluginprotobuf.UnsInfo{
+		bundle.UnsMap.Entries[topic] = &tagbrowserpluginprotobuf.TopicInfo{
 			Enterprise: "enterprise",
 			Schema:     "_historian",
 			EventTag:   wrapperspb.String(fmt.Sprintf("sensor-%d", i)),
@@ -86,7 +86,7 @@ func createLargeTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 func createVeryLargeTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 	bundle := &tagbrowserpluginprotobuf.UnsBundle{
 		UnsMap: &tagbrowserpluginprotobuf.UnsMap{
-			Entries: make(map[string]*tagbrowserpluginprotobuf.UnsInfo),
+			Entries: make(map[string]*tagbrowserpluginprotobuf.TopicInfo),
 		},
 		Events: &tagbrowserpluginprotobuf.EventTable{
 			Entries: make([]*tagbrowserpluginprotobuf.EventTableEntry, 0, 100000),
@@ -96,7 +96,7 @@ func createVeryLargeTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 	// Create 10 different UNSInfo entries
 	for i := 0; i < 10; i++ {
 		topic := fmt.Sprintf("topic-%d", i)
-		bundle.UnsMap.Entries[topic] = &tagbrowserpluginprotobuf.UnsInfo{
+		bundle.UnsMap.Entries[topic] = &tagbrowserpluginprotobuf.TopicInfo{
 			Enterprise: "enterprise",
 			Schema:     "_historian",
 			EventTag:   wrapperspb.String(fmt.Sprintf("sensor-%d", i)),

@@ -89,7 +89,7 @@ var _ = Describe("Uns", func() {
 		Describe("Table-driven tests for optional fields", func() {
 			type testCase struct {
 				topic           string
-				expectedInfo    *tagbrowserpluginprotobuf.UnsInfo
+				expectedInfo    *tagbrowserpluginprotobuf.TopicInfo
 				shouldHaveError bool
 			}
 
@@ -146,7 +146,7 @@ var _ = Describe("Uns", func() {
 				},
 				Entry("only enterprise and schema", testCase{
 					topic: "umh.v1.enterprise._schema",
-					expectedInfo: &tagbrowserpluginprotobuf.UnsInfo{
+					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
 						Enterprise: "enterprise",
 						Schema:     "_schema",
 					},
@@ -154,7 +154,7 @@ var _ = Describe("Uns", func() {
 				}),
 				Entry("enterprise, site, and schema", testCase{
 					topic: "umh.v1.enterprise.site._schema",
-					expectedInfo: &tagbrowserpluginprotobuf.UnsInfo{
+					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
 						Enterprise: "enterprise",
 						Site:       wrapperspb.String("site"),
 						Schema:     "_schema",
@@ -163,7 +163,7 @@ var _ = Describe("Uns", func() {
 				}),
 				Entry("enterprise, site, area, and schema", testCase{
 					topic: "umh.v1.enterprise.site.area._schema",
-					expectedInfo: &tagbrowserpluginprotobuf.UnsInfo{
+					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
 						Enterprise: "enterprise",
 						Site:       wrapperspb.String("site"),
 						Area:       wrapperspb.String("area"),
@@ -173,7 +173,7 @@ var _ = Describe("Uns", func() {
 				}),
 				Entry("enterprise, site, area, line, and schema", testCase{
 					topic: "umh.v1.enterprise.site.area.line._schema",
-					expectedInfo: &tagbrowserpluginprotobuf.UnsInfo{
+					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
 						Enterprise: "enterprise",
 						Site:       wrapperspb.String("site"),
 						Area:       wrapperspb.String("area"),
@@ -184,7 +184,7 @@ var _ = Describe("Uns", func() {
 				}),
 				Entry("enterprise, site, area, line, workcell, and schema", testCase{
 					topic: "umh.v1.enterprise.site.area.line.workcell._schema",
-					expectedInfo: &tagbrowserpluginprotobuf.UnsInfo{
+					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
 						Enterprise: "enterprise",
 						Site:       wrapperspb.String("site"),
 						Area:       wrapperspb.String("area"),
@@ -196,7 +196,7 @@ var _ = Describe("Uns", func() {
 				}),
 				Entry("enterprise, site, area, line, workcell, originid, and schema", testCase{
 					topic: "umh.v1.enterprise.site.area.line.workcell.originid._schema",
-					expectedInfo: &tagbrowserpluginprotobuf.UnsInfo{
+					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
 						Enterprise: "enterprise",
 						Site:       wrapperspb.String("site"),
 						Area:       wrapperspb.String("area"),
@@ -209,7 +209,7 @@ var _ = Describe("Uns", func() {
 				}),
 				Entry("enterprise, site, area, line, workcell, originid, schema, and event group", testCase{
 					topic: "umh.v1.enterprise.site.area.line.workcell.originid._schema.event.group",
-					expectedInfo: &tagbrowserpluginprotobuf.UnsInfo{
+					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
 						Enterprise: "enterprise",
 						Site:       wrapperspb.String("site"),
 						Area:       wrapperspb.String("area"),
@@ -223,7 +223,7 @@ var _ = Describe("Uns", func() {
 				}),
 				Entry("enterprise, site, area, line, workcell, originid, schema, and complex event group", testCase{
 					topic: "umh.v1.enterprise.site.area.line.workcell.originid._schema.event.group.subgroup",
-					expectedInfo: &tagbrowserpluginprotobuf.UnsInfo{
+					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
 						Enterprise: "enterprise",
 						Site:       wrapperspb.String("site"),
 						Area:       wrapperspb.String("area"),

@@ -34,7 +34,7 @@ func extractTopicFromMessage(message *service.Message) (string, error) {
 
 // topicToUNSInfo will extract the enterprise, site, ... data from an topic
 // It will not extract the EventTag, as that one is part of the message itself
-func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.UnsInfo, error) {
+func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.TopicInfo, error) {
 	// Check (empty topic, not beginning with "umh.v1.")
 	if len(topic) == 0 || strings.HasPrefix(topic, "umh.v1.") == false {
 		return nil, errors.New("topic does not start with umh.v1")
@@ -47,9 +47,9 @@ func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.UnsInfo, error) {
 		return nil, errors.New("topic does not have enough parts")
 	}
 
-	var unsInfo tagbrowserpluginprotobuf.UnsInfo
+	var unsInfo tagbrowserpluginprotobuf.TopicInfo
 	// Part 0 will be umh, and part 1 will be v1, so we can safely ignore them
-	unsInfo.Enterprise = parts[2]
+	unsInfo.Level0 = parts[2]
 	var hasSchema bool
 	var eventGroup strings.Builder
 	for i := 3; i < len(parts); i++ {
@@ -57,7 +57,7 @@ func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.UnsInfo, error) {
 		if parts[i][0] == '_' {
 			// We have the schema field
 			hasSchema = true
-			unsInfo.Schema = parts[i]
+			unsInfo.Datacontract = parts[i]
 			continue
 		}
 
@@ -71,15 +71,15 @@ func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.UnsInfo, error) {
 		// This is neither a schema, nor are we behind the schema field, so we can just match based on i
 		switch i {
 		case 3:
-			unsInfo.Site = wrapperspb.String(parts[i])
+			unsInfo.Level1 = wrapperspb.String(parts[i])
 		case 4:
-			unsInfo.Area = wrapperspb.String(parts[i])
+			unsInfo.Level2 = wrapperspb.String(parts[i])
 		case 5:
-			unsInfo.Line = wrapperspb.String(parts[i])
+			unsInfo.Level3 = wrapperspb.String(parts[i])
 		case 6:
-			unsInfo.WorkCell = wrapperspb.String(parts[i])
+			unsInfo.Level4 = wrapperspb.String(parts[i])
 		case 7:
-			unsInfo.OriginId = wrapperspb.String(parts[i])
+			unsInfo.Level5 = wrapperspb.String(parts[i])
 		}
 	}
 

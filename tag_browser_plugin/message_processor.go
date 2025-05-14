@@ -25,7 +25,7 @@ import (
 // MessageToUNSInfoAndEvent first extracts the topic from the message, then the event data and finally the UNS info.
 // It also sets the eventTag if necessary and generates the UnsTreeId, which is required by the frontend.
 // Finally it appends the "raw" kafka message part, including the raw message and its headers
-func MessageToUNSInfoAndEvent(message *service.Message) (*tagbrowserpluginprotobuf.UnsInfo, *tagbrowserpluginprotobuf.EventTableEntry, *string, error) {
+func MessageToUNSInfoAndEvent(message *service.Message) (*tagbrowserpluginprotobuf.TopicInfo, *tagbrowserpluginprotobuf.EventTableEntry, *string, error) {
 	topic, err := extractTopicFromMessage(message)
 	if err != nil {
 		return nil, nil, nil, err
@@ -61,7 +61,7 @@ func MessageToUNSInfoAndEvent(message *service.Message) (*tagbrowserpluginprotob
 }
 
 // HashUNSTableEntry generates an xxHash from the Enterprise, Site, ...
-func HashUNSTableEntry(info *tagbrowserpluginprotobuf.UnsInfo) string {
+func HashUNSTableEntry(info *tagbrowserpluginprotobuf.TopicInfo) string {
 	hasher := xxhash.New()
 	_, _ = hasher.Write([]byte(info.Enterprise))
 	// GetValue returns either the contained data, or "" if no value is set
