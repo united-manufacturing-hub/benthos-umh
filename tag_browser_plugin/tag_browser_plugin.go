@@ -24,6 +24,9 @@ import (
 )
 
 type TagBrowserProcessor struct {
+	// This cache keeps the number of topics
+	// transmitted to the umh-core small by trying to not re-send already reported topics.
+	// Since it is not thread safe, we need a mutex to protect it.
 	unsMapCache      *lru.Cache
 	unsMapCacheMutex *sync.Mutex
 }
@@ -45,8 +48,8 @@ func (t *TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Mess
 	}
 
 	unsBundle := &tagbrowserpluginprotobuf.UnsBundle{
-		UnsMap: &tagbrowserpluginprotobuf.UnsMap{
-			Entries: make(map[string]*tagbrowserpluginprotobuf.UnsInfo),
+		UnsMap: &tagbrowserpluginprotobuf.TopicMap{
+			Entries: make(map[string]*tagbrowserpluginprotobuf.TopicInfo),
 		},
 		Events: &tagbrowserpluginprotobuf.EventTable{
 			Entries: make([]*tagbrowserpluginprotobuf.EventTableEntry, 0, 1),
@@ -60,12 +63,13 @@ func (t *TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Mess
 	for _, message := range batch {
 		unsInfo, eventTableEntry, unsTreeId, err := MessageToUNSInfoAndEvent(message)
 		if err != nil {
-			// Unlock the mutex, when we have an error
+			// Unlock the mutex when we have an error
 			t.unsMapCacheMutex.Unlock()
 			return nil, err
 		}
 
-		// This is safe, as unsTreeId will always be set if the error is nil
+		// This is safe, as unsTreeId will always be set if the error is nil.
+		// We only want to report new topics, so we check if the topic is already in the cache.
 		if _, ok := t.unsMapCache.Get(*unsTreeId); !ok {
 			unsBundle.UnsMap.Entries[*unsTreeId] = unsInfo
 			t.unsMapCache.Add(*unsTreeId, true)
@@ -96,6 +100,9 @@ func (t *TagBrowserProcessor) Close(_ context.Context) error {
 }
 
 func NewTagBrowserProcessor() *TagBrowserProcessor {
+	// Create a new cache for topic names, which we will use to not re-report topics.
+	// If we have > 1000 topics, we might re-report some, but this will still be a small number.
+	// (Assuming that the topics have different message production rates).
 	l, _ := lru.New(1000) // Can only error if size is negative
 	return &TagBrowserProcessor{
 		unsMapCache: l,

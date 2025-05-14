@@ -52,35 +52,35 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type UnsInfo struct {
+type TopicInfo struct {
 	state         protoimpl.MessageState  `protogen:"open.v1"`
-	Enterprise    string                  `protobuf:"bytes,1,opt,name=enterprise,proto3" json:"enterprise,omitempty"`                   // This must always be set
-	Site          *wrapperspb.StringValue `protobuf:"bytes,2,opt,name=site,proto3" json:"site,omitempty"`                               // Optional
-	Area          *wrapperspb.StringValue `protobuf:"bytes,3,opt,name=area,proto3" json:"area,omitempty"`                               // Optional
-	Line          *wrapperspb.StringValue `protobuf:"bytes,4,opt,name=line,proto3" json:"line,omitempty"`                               // Optional
-	WorkCell      *wrapperspb.StringValue `protobuf:"bytes,5,opt,name=work_cell,json=workCell,proto3" json:"work_cell,omitempty"`       // Optional
-	OriginId      *wrapperspb.StringValue `protobuf:"bytes,6,opt,name=origin_id,json=originId,proto3" json:"origin_id,omitempty"`       // Optional
-	Schema        string                  `protobuf:"bytes,7,opt,name=schema,proto3" json:"schema,omitempty"`                           // This must always be set
+	Level0        string                  `protobuf:"bytes,1,opt,name=level0,proto3" json:"level0,omitempty"`                           // This must always be set
+	Level1        *wrapperspb.StringValue `protobuf:"bytes,2,opt,name=level1,proto3" json:"level1,omitempty"`                           // Optional
+	Level2        *wrapperspb.StringValue `protobuf:"bytes,3,opt,name=level2,proto3" json:"level2,omitempty"`                           // Optional
+	Level3        *wrapperspb.StringValue `protobuf:"bytes,4,opt,name=level3,proto3" json:"level3,omitempty"`                           // Optional
+	Level4        *wrapperspb.StringValue `protobuf:"bytes,5,opt,name=level4,proto3" json:"level4,omitempty"`                           // Optional
+	Level5        *wrapperspb.StringValue `protobuf:"bytes,6,opt,name=level5,proto3" json:"level5,omitempty"`                           // Optional
+	Datacontract  string                  `protobuf:"bytes,7,opt,name=datacontract,proto3" json:"datacontract,omitempty"`               // This must always be set
 	EventGroup    *wrapperspb.StringValue `protobuf:"bytes,8,opt,name=event_group,json=eventGroup,proto3" json:"event_group,omitempty"` // Optional
 	EventTag      *wrapperspb.StringValue `protobuf:"bytes,9,opt,name=event_tag,json=eventTag,proto3" json:"event_tag,omitempty"`       // Optional
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *UnsInfo) Reset() {
-	*x = UnsInfo{}
+func (x *TopicInfo) Reset() {
+	*x = TopicInfo{}
 	mi := &file_tag_browser_data_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *UnsInfo) String() string {
+func (x *TopicInfo) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*UnsInfo) ProtoMessage() {}
+func (*TopicInfo) ProtoMessage() {}
 
-func (x *UnsInfo) ProtoReflect() protoreflect.Message {
+func (x *TopicInfo) ProtoReflect() protoreflect.Message {
 	mi := &file_tag_browser_data_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -92,96 +92,97 @@ func (x *UnsInfo) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use UnsInfo.ProtoReflect.Descriptor instead.
-func (*UnsInfo) Descriptor() ([]byte, []int) {
+// Deprecated: Use TopicInfo.ProtoReflect.Descriptor instead.
+func (*TopicInfo) Descriptor() ([]byte, []int) {
 	return file_tag_browser_data_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *UnsInfo) GetEnterprise() string {
+func (x *TopicInfo) GetLevel0() string {
 	if x != nil {
-		return x.Enterprise
+		return x.Level0
 	}
 	return ""
 }
 
-func (x *UnsInfo) GetSite() *wrapperspb.StringValue {
+func (x *TopicInfo) GetLevel1() *wrapperspb.StringValue {
 	if x != nil {
-		return x.Site
+		return x.Level1
 	}
 	return nil
 }
 
-func (x *UnsInfo) GetArea() *wrapperspb.StringValue {
+func (x *TopicInfo) GetLevel2() *wrapperspb.StringValue {
 	if x != nil {
-		return x.Area
+		return x.Level2
 	}
 	return nil
 }
 
-func (x *UnsInfo) GetLine() *wrapperspb.StringValue {
+func (x *TopicInfo) GetLevel3() *wrapperspb.StringValue {
 	if x != nil {
-		return x.Line
+		return x.Level3
 	}
 	return nil
 }
 
-func (x *UnsInfo) GetWorkCell() *wrapperspb.StringValue {
+func (x *TopicInfo) GetLevel4() *wrapperspb.StringValue {
 	if x != nil {
-		return x.WorkCell
+		return x.Level4
 	}
 	return nil
 }
 
-func (x *UnsInfo) GetOriginId() *wrapperspb.StringValue {
+func (x *TopicInfo) GetLevel5() *wrapperspb.StringValue {
 	if x != nil {
-		return x.OriginId
+		return x.Level5
 	}
 	return nil
 }
 
-func (x *UnsInfo) GetSchema() string {
+func (x *TopicInfo) GetDatacontract() string {
 	if x != nil {
-		return x.Schema
+		return x.Datacontract
 	}
 	return ""
 }
 
-func (x *UnsInfo) GetEventGroup() *wrapperspb.StringValue {
+func (x *TopicInfo) GetEventGroup() *wrapperspb.StringValue {
 	if x != nil {
 		return x.EventGroup
 	}
 	return nil
 }
 
-func (x *UnsInfo) GetEventTag() *wrapperspb.StringValue {
+func (x *TopicInfo) GetEventTag() *wrapperspb.StringValue {
 	if x != nil {
 		return x.EventTag
 	}
 	return nil
 }
 
-type UnsMap struct {
+type TopicMap struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Key is the UNS Tree id, which is basically a fast hash over the UnsInfo entries
-	Entries       map[string]*UnsInfo `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Key is the UNS Tree id, which is basically a fast hash over the TopicInfo entries
+	// A hash was chosen over the full topic name, as it is smaller, while still giving good enough   uniqueness.
+	Entries       map[string]*TopicInfo `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *UnsMap) Reset() {
-	*x = UnsMap{}
+func (x *TopicMap) Reset() {
+	*x = TopicMap{}
 	mi := &file_tag_browser_data_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *UnsMap) String() string {
+func (x *TopicMap) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*UnsMap) ProtoMessage() {}
+func (*TopicMap) ProtoMessage() {}
 
-func (x *UnsMap) ProtoReflect() protoreflect.Message {
+func (x *TopicMap) ProtoReflect() protoreflect.Message {
 	mi := &file_tag_browser_data_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -193,12 +194,12 @@ func (x *UnsMap) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use UnsMap.ProtoReflect.Descriptor instead.
-func (*UnsMap) Descriptor() ([]byte, []int) {
+// Deprecated: Use TopicMap.ProtoReflect.Descriptor instead.
+func (*TopicMap) Descriptor() ([]byte, []int) {
 	return file_tag_browser_data_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *UnsMap) GetEntries() map[string]*UnsInfo {
+func (x *TopicMap) GetEntries() map[string]*TopicInfo {
 	if x != nil {
 		return x.Entries
 	}
@@ -261,7 +262,7 @@ func (x *EventKafka) GetPayload() string {
 
 type EventTableEntry struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	UnsTreeId     string                 `protobuf:"bytes,1,opt,name=uns_tree_id,json=unsTreeId,proto3" json:"uns_tree_id,omitempty"`         // Generated by the hash over it's UnsInfo
+	UnsTreeId     string                 `protobuf:"bytes,1,opt,name=uns_tree_id,json=unsTreeId,proto3" json:"uns_tree_id,omitempty"`         // Generated by the hash over it's TopicInfo
 	Value         *anypb.Any             `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`                                    // This is the inner payload of our event. Since this can be any kind of data we represent it here as such
 	TimestampMs   *wrapperspb.Int64Value `protobuf:"bytes,3,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`     // Extracted from the payload (If timeseries data)
 	IsTimeseries  bool                   `protobuf:"varint,4,opt,name=is_timeseries,json=isTimeseries,proto3" json:"is_timeseries,omitempty"` // True if time series data as defined by our payload format, false otherwise
@@ -395,10 +396,11 @@ func (x *EventTable) GetEntries() []*EventTableEntry {
 	return nil
 }
 
-// ---------- UNS Bundle ----------------------------------------------------
+// UnsBundle contains both, a map of all new topics
+// and a list of all events for those topics that where processed in this batch.
 type UnsBundle struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	UnsMap        *UnsMap                `protobuf:"bytes,1,opt,name=uns_map,json=unsMap,proto3" json:"uns_map,omitempty"`
+	UnsMap        *TopicMap              `protobuf:"bytes,1,opt,name=uns_map,json=unsMap,proto3" json:"uns_map,omitempty"`
 	Events        *EventTable            `protobuf:"bytes,2,opt,name=events,proto3" json:"events,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -434,7 +436,7 @@ func (*UnsBundle) Descriptor() ([]byte, []int) {
 	return file_tag_browser_data_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *UnsBundle) GetUnsMap() *UnsMap {
+func (x *UnsBundle) GetUnsMap() *TopicMap {
 	if x != nil {
 		return x.UnsMap
 	}
@@ -453,25 +455,23 @@ var File_tag_browser_data_proto protoreflect.FileDescriptor
 const file_tag_browser_data_proto_rawDesc = "" +
 	"\n" +
 	"\x16tag_browser_data.proto\x12\n" +
-	"umh.events\x1a\x1egoogle/protobuf/wrappers.proto\x1a\x19google/protobuf/any.proto\"\xc7\x03\n" +
-	"\aUnsInfo\x12\x1e\n" +
-	"\n" +
-	"enterprise\x18\x01 \x01(\tR\n" +
-	"enterprise\x120\n" +
-	"\x04site\x18\x02 \x01(\v2\x1c.google.protobuf.StringValueR\x04site\x120\n" +
-	"\x04area\x18\x03 \x01(\v2\x1c.google.protobuf.StringValueR\x04area\x120\n" +
-	"\x04line\x18\x04 \x01(\v2\x1c.google.protobuf.StringValueR\x04line\x129\n" +
-	"\twork_cell\x18\x05 \x01(\v2\x1c.google.protobuf.StringValueR\bworkCell\x129\n" +
-	"\torigin_id\x18\x06 \x01(\v2\x1c.google.protobuf.StringValueR\boriginId\x12\x16\n" +
-	"\x06schema\x18\a \x01(\tR\x06schema\x12=\n" +
+	"umh.events\x1a\x1egoogle/protobuf/wrappers.proto\x1a\x19google/protobuf/any.proto\"\xcf\x03\n" +
+	"\tTopicInfo\x12\x16\n" +
+	"\x06level0\x18\x01 \x01(\tR\x06level0\x124\n" +
+	"\x06level1\x18\x02 \x01(\v2\x1c.google.protobuf.StringValueR\x06level1\x124\n" +
+	"\x06level2\x18\x03 \x01(\v2\x1c.google.protobuf.StringValueR\x06level2\x124\n" +
+	"\x06level3\x18\x04 \x01(\v2\x1c.google.protobuf.StringValueR\x06level3\x124\n" +
+	"\x06level4\x18\x05 \x01(\v2\x1c.google.protobuf.StringValueR\x06level4\x124\n" +
+	"\x06level5\x18\x06 \x01(\v2\x1c.google.protobuf.StringValueR\x06level5\x12\"\n" +
+	"\fdatacontract\x18\a \x01(\tR\fdatacontract\x12=\n" +
 	"\vevent_group\x18\b \x01(\v2\x1c.google.protobuf.StringValueR\n" +
 	"eventGroup\x129\n" +
-	"\tevent_tag\x18\t \x01(\v2\x1c.google.protobuf.StringValueR\beventTag\"\x94\x01\n" +
-	"\x06UnsMap\x129\n" +
-	"\aentries\x18\x01 \x03(\v2\x1f.umh.events.UnsMap.EntriesEntryR\aentries\x1aO\n" +
+	"\tevent_tag\x18\t \x01(\v2\x1c.google.protobuf.StringValueR\beventTag\"\x9a\x01\n" +
+	"\bTopicMap\x12;\n" +
+	"\aentries\x18\x01 \x03(\v2!.umh.events.TopicMap.EntriesEntryR\aentries\x1aQ\n" +
 	"\fEntriesEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.umh.events.UnsInfoR\x05value:\x028\x01\"\xa1\x01\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12+\n" +
+	"\x05value\x18\x02 \x01(\v2\x15.umh.events.TopicInfoR\x05value:\x028\x01\"\xa1\x01\n" +
 	"\n" +
 	"EventKafka\x12=\n" +
 	"\aheaders\x18\x01 \x03(\v2#.umh.events.EventKafka.HeadersEntryR\aheaders\x12\x18\n" +
@@ -490,9 +490,9 @@ const file_tag_browser_data_proto_rawDesc = "" +
 	"bridged_by\x18\a \x03(\tR\tbridgedBy\"C\n" +
 	"\n" +
 	"EventTable\x125\n" +
-	"\aentries\x18\x01 \x03(\v2\x1b.umh.events.EventTableEntryR\aentries\"h\n" +
-	"\tUnsBundle\x12+\n" +
-	"\auns_map\x18\x01 \x01(\v2\x12.umh.events.UnsMapR\x06unsMap\x12.\n" +
+	"\aentries\x18\x01 \x03(\v2\x1b.umh.events.EventTableEntryR\aentries\"j\n" +
+	"\tUnsBundle\x12-\n" +
+	"\auns_map\x18\x01 \x01(\v2\x14.umh.events.TopicMapR\x06unsMap\x12.\n" +
 	"\x06events\x18\x02 \x01(\v2\x16.umh.events.EventTableR\x06eventsB\x1dZ\x1btag_browser_plugin.protobufb\x06proto3"
 
 var (
@@ -509,35 +509,35 @@ func file_tag_browser_data_proto_rawDescGZIP() []byte {
 
 var file_tag_browser_data_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_tag_browser_data_proto_goTypes = []any{
-	(*UnsInfo)(nil),                // 0: umh.events.UnsInfo
-	(*UnsMap)(nil),                 // 1: umh.events.UnsMap
+	(*TopicInfo)(nil),              // 0: umh.events.TopicInfo
+	(*TopicMap)(nil),               // 1: umh.events.TopicMap
 	(*EventKafka)(nil),             // 2: umh.events.EventKafka
 	(*EventTableEntry)(nil),        // 3: umh.events.EventTableEntry
 	(*EventTable)(nil),             // 4: umh.events.EventTable
 	(*UnsBundle)(nil),              // 5: umh.events.UnsBundle
-	nil,                            // 6: umh.events.UnsMap.EntriesEntry
+	nil,                            // 6: umh.events.TopicMap.EntriesEntry
 	nil,                            // 7: umh.events.EventKafka.HeadersEntry
 	(*wrapperspb.StringValue)(nil), // 8: google.protobuf.StringValue
 	(*anypb.Any)(nil),              // 9: google.protobuf.Any
 	(*wrapperspb.Int64Value)(nil),  // 10: google.protobuf.Int64Value
 }
 var file_tag_browser_data_proto_depIdxs = []int32{
-	8,  // 0: umh.events.UnsInfo.site:type_name -> google.protobuf.StringValue
-	8,  // 1: umh.events.UnsInfo.area:type_name -> google.protobuf.StringValue
-	8,  // 2: umh.events.UnsInfo.line:type_name -> google.protobuf.StringValue
-	8,  // 3: umh.events.UnsInfo.work_cell:type_name -> google.protobuf.StringValue
-	8,  // 4: umh.events.UnsInfo.origin_id:type_name -> google.protobuf.StringValue
-	8,  // 5: umh.events.UnsInfo.event_group:type_name -> google.protobuf.StringValue
-	8,  // 6: umh.events.UnsInfo.event_tag:type_name -> google.protobuf.StringValue
-	6,  // 7: umh.events.UnsMap.entries:type_name -> umh.events.UnsMap.EntriesEntry
+	8,  // 0: umh.events.TopicInfo.level1:type_name -> google.protobuf.StringValue
+	8,  // 1: umh.events.TopicInfo.level2:type_name -> google.protobuf.StringValue
+	8,  // 2: umh.events.TopicInfo.level3:type_name -> google.protobuf.StringValue
+	8,  // 3: umh.events.TopicInfo.level4:type_name -> google.protobuf.StringValue
+	8,  // 4: umh.events.TopicInfo.level5:type_name -> google.protobuf.StringValue
+	8,  // 5: umh.events.TopicInfo.event_group:type_name -> google.protobuf.StringValue
+	8,  // 6: umh.events.TopicInfo.event_tag:type_name -> google.protobuf.StringValue
+	6,  // 7: umh.events.TopicMap.entries:type_name -> umh.events.TopicMap.EntriesEntry
 	7,  // 8: umh.events.EventKafka.headers:type_name -> umh.events.EventKafka.HeadersEntry
 	9,  // 9: umh.events.EventTableEntry.value:type_name -> google.protobuf.Any
 	10, // 10: umh.events.EventTableEntry.timestamp_ms:type_name -> google.protobuf.Int64Value
 	2,  // 11: umh.events.EventTableEntry.raw_kafka_msg:type_name -> umh.events.EventKafka
 	3,  // 12: umh.events.EventTable.entries:type_name -> umh.events.EventTableEntry
-	1,  // 13: umh.events.UnsBundle.uns_map:type_name -> umh.events.UnsMap
+	1,  // 13: umh.events.UnsBundle.uns_map:type_name -> umh.events.TopicMap
 	4,  // 14: umh.events.UnsBundle.events:type_name -> umh.events.EventTable
-	0,  // 15: umh.events.UnsMap.EntriesEntry.value:type_name -> umh.events.UnsInfo
+	0,  // 15: umh.events.TopicMap.EntriesEntry.value:type_name -> umh.events.TopicInfo
 	16, // [16:16] is the sub-list for method output_type
 	16, // [16:16] is the sub-list for method input_type
 	16, // [16:16] is the sub-list for extension type_name
