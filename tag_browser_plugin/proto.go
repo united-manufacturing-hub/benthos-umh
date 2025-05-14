@@ -24,6 +24,10 @@ import (
 )
 
 /*
+	This file contains utils to encode/decode protobuf messages.
+*/
+
+/*
 goos: darwin
 goarch: arm64
 pkg: github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin

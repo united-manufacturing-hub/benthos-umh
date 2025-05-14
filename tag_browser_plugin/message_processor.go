@@ -14,6 +14,11 @@
 
 package tag_browser_plugin
 
+/*
+	This file contains a function that will create the TopicInfo and EventTableEntry from a message.
+	It also calculates the uns_tree_id and sets the EventTag if we have time series data.
+*/
+
 import (
 	"encoding/hex"
 	"github.com/cespare/xxhash/v2"
@@ -24,7 +29,7 @@ import (
 
 // MessageToUNSInfoAndEvent first extracts the topic from the message, then the event data and finally the UNS info.
 // It also sets the eventTag if necessary and generates the UnsTreeId, which is required by the frontend.
-// Finally it appends the "raw" kafka message part, including the raw message and its headers
+// Finally, it appends the "raw" kafka message part, including the raw message and its headers
 func MessageToUNSInfoAndEvent(message *service.Message) (*tagbrowserpluginprotobuf.TopicInfo, *tagbrowserpluginprotobuf.EventTableEntry, *string, error) {
 	topic, err := extractTopicFromMessage(message)
 	if err != nil {
@@ -60,17 +65,19 @@ func MessageToUNSInfoAndEvent(message *service.Message) (*tagbrowserpluginprotob
 	return unsInfo, event, &unsTreeId, nil
 }
 
-// HashUNSTableEntry generates an xxHash from the Enterprise, Site, ...
+// HashUNSTableEntry generates an xxHash from the Levels and datacontract.
+// This is used by the frontend to identify which topic an entry belongs to.
+// We use it over full topic names to reduce the amount of data we need to send to the frontend.
 func HashUNSTableEntry(info *tagbrowserpluginprotobuf.TopicInfo) string {
 	hasher := xxhash.New()
-	_, _ = hasher.Write([]byte(info.Enterprise))
+	_, _ = hasher.Write([]byte(info.Level0))
 	// GetValue returns either the contained data, or "" if no value is set
-	_, _ = hasher.Write([]byte(info.Site.GetValue()))
-	_, _ = hasher.Write([]byte(info.Area.GetValue()))
-	_, _ = hasher.Write([]byte(info.Line.GetValue()))
-	_, _ = hasher.Write([]byte(info.WorkCell.GetValue()))
-	_, _ = hasher.Write([]byte(info.OriginId.GetValue()))
-	_, _ = hasher.Write([]byte(info.Schema))
+	_, _ = hasher.Write([]byte(info.Level1.GetValue()))
+	_, _ = hasher.Write([]byte(info.Level2.GetValue()))
+	_, _ = hasher.Write([]byte(info.Level3.GetValue()))
+	_, _ = hasher.Write([]byte(info.Level4.GetValue()))
+	_, _ = hasher.Write([]byte(info.Level5.GetValue()))
+	_, _ = hasher.Write([]byte(info.Datacontract))
 	_, _ = hasher.Write([]byte(info.EventGroup.GetValue()))
 	_, _ = hasher.Write([]byte(info.EventTag.GetValue()))
 	return hex.EncodeToString(hasher.Sum(nil))

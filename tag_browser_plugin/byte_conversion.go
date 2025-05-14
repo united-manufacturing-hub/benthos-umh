@@ -14,6 +14,11 @@
 
 package tag_browser_plugin
 
+/*
+	The functions in this file allow the program to convert the Go "any" type into bytes and back.
+	This is required as the incoming data won't have any type information.
+*/
+
 import (
 	"encoding/binary"
 	"errors"
