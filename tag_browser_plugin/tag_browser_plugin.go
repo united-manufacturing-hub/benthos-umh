@@ -27,8 +27,8 @@ type TagBrowserProcessor struct {
 	// This cache keeps the number of topics
 	// transmitted to the umh-core small by trying to not re-send already reported topics.
 	// Since it is not thread safe, we need a mutex to protect it.
-	unsMapCache      *lru.Cache
-	unsMapCacheMutex *sync.Mutex
+	topicDeduplicationCache      *lru.Cache
+	topicDeduplicationCacheMutex *sync.Mutex
 }
 
 func (t *TagBrowserProcessor) Process(ctx context.Context, message *service.Message) (service.MessageBatch, error) {
@@ -42,11 +42,18 @@ func (t *TagBrowserProcessor) Process(ctx context.Context, message *service.Mess
 	return messageBatch[0], nil
 }
 
+// ProcessBatch processes 1-n messages from the uns-input and generates a single protobuf message containing all there data.
+// If we receive no data, it will early return.
+//
+// To do the processing, it first extracts the topicInfo, containing the levels and datacontract.
+// It also extracts the eventTableEntry, containing the event itself (e.g. the data inside the UNS payload) and the timestamp.
+// Once that is done for every message in the batch, it creates a protobuf encoded message containing both the deduplicated topicInfo and all eventTableEntries.
 func (t *TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	if len(batch) == 0 {
 		return nil, nil
 	}
 
+	// Construct the empty protobuf message, which we will fill with data.
 	unsBundle := &tagbrowserpluginprotobuf.UnsBundle{
 		UnsMap: &tagbrowserpluginprotobuf.TopicMap{
 			Entries: make(map[string]*tagbrowserpluginprotobuf.TopicInfo),
@@ -56,27 +63,25 @@ func (t *TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Mess
 		},
 	}
 
-	var resultBatch service.MessageBatch
-
 	// Extract data for each message in the batch
-	t.unsMapCacheMutex.Lock()
+	t.topicDeduplicationCacheMutex.Lock()
 	for _, message := range batch {
-		unsInfo, eventTableEntry, unsTreeId, err := MessageToUNSInfoAndEvent(message)
+		topicInfo, eventTableEntry, unsTreeId, err := MessageToUNSInfoAndEvent(message)
 		if err != nil {
 			// Unlock the mutex when we have an error
-			t.unsMapCacheMutex.Unlock()
+			t.topicDeduplicationCacheMutex.Unlock()
 			return nil, err
 		}
 
 		// This is safe, as unsTreeId will always be set if the error is nil.
 		// We only want to report new topics, so we check if the topic is already in the cache.
-		if _, ok := t.unsMapCache.Get(*unsTreeId); !ok {
-			unsBundle.UnsMap.Entries[*unsTreeId] = unsInfo
-			t.unsMapCache.Add(*unsTreeId, true)
+		if _, ok := t.topicDeduplicationCache.Get(*unsTreeId); !ok {
+			unsBundle.UnsMap.Entries[*unsTreeId] = topicInfo
+			t.topicDeduplicationCache.Add(*unsTreeId, true)
 		}
 		unsBundle.Events.Entries = append(unsBundle.Events.Entries, eventTableEntry)
 	}
-	t.unsMapCacheMutex.Unlock()
+	t.topicDeduplicationCacheMutex.Unlock()
 
 	// Bundle data from all messages into a single one containing the protobuf
 	protoBytes, err := BundleToProtobufBytesWithCompression(unsBundle)
@@ -86,6 +91,7 @@ func (t *TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Mess
 
 	message := service.NewMessage(nil)
 	message.SetBytes(protoBytes)
+	var resultBatch service.MessageBatch
 	resultBatch = append(resultBatch, message)
 
 	return []service.MessageBatch{resultBatch}, nil
@@ -93,9 +99,9 @@ func (t *TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Mess
 
 func (t *TagBrowserProcessor) Close(_ context.Context) error {
 	// Wipe cache
-	t.unsMapCacheMutex.Lock()
-	t.unsMapCache.Purge()
-	t.unsMapCacheMutex.Unlock()
+	t.topicDeduplicationCacheMutex.Lock()
+	t.topicDeduplicationCache.Purge()
+	t.topicDeduplicationCacheMutex.Unlock()
 	return nil
 }
 
@@ -105,7 +111,7 @@ func NewTagBrowserProcessor() *TagBrowserProcessor {
 	// (Assuming that the topics have different message production rates).
 	l, _ := lru.New(1000) // Can only error if size is negative
 	return &TagBrowserProcessor{
-		unsMapCache: l,
+		topicDeduplicationCache: l,
 	}
 }
 

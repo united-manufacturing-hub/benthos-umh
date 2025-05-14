@@ -14,6 +14,10 @@
 
 package tag_browser_plugin
 
+/*
+	The functions in this file allow the program to extract the event data (e.g timestamp, payload key/value) from the benthos message.
+*/
+
 import (
 	"fmt"
 
@@ -26,24 +30,28 @@ import (
 // messageToEvent will convert a benthos message, into an EventTableEntry, and eventTag and an optional error
 // It checks if the incoming message is a valid time-series message, otherwise it handles it as relational data
 func messageToEvent(message *service.Message) (*tagbrowserpluginprotobuf.EventTableEntry, *string, error) {
+	// 1. If we dont have structured data (e.g. no JSON), we will handle it as relational data
 	structured, err := message.AsStructured()
 	if err != nil {
 		return processRelationalData(message)
 	}
+	// 2. If the structured data is not a map, we will handle it as relational data (e.g lists)
 	structuredAsMap, ok := structured.(map[string]interface{})
 	if !ok {
 		return processRelationalData(message)
 	}
 
-	// Exactly timestamp_ms and one key/value pair are required
+	// Exactly timestamp_ms and one key/value pair are required, otherwise it is relational data
 	if len(structuredAsMap) != 2 {
 		return processRelationalData(message)
 	}
 
+	// A timestamp_ms field must be present, otherwise it is relational data
 	if _, ok := structuredAsMap["timestamp_ms"]; !ok {
 		return processRelationalData(message)
 	}
 
+	// We passed all checks, we can now process the data as time-series data
 	return processTimeSeriesData(structuredAsMap)
 }
 
@@ -52,10 +60,13 @@ func processTimeSeriesData(structured map[string]interface{}) (*tagbrowserplugin
 	var valueName string
 	var valueContent anypb.Any
 	var timestampMs int64
+
+	// We loop over all key/value pairs of the message (we previously checked that there are exactly two)
 	for key, value := range structured {
 		switch key {
 		case "timestamp_ms":
-			// Type safe int cast
+			// Since we do not know the type of the timestamp_ms field, we need to convert it to an int64
+			// But we can expect it to be some kind of numeric type, so we check it's type and convert accordingly
 			switch v := value.(type) {
 			case int:
 				timestampMs = int64(v)
@@ -85,7 +96,9 @@ func processTimeSeriesData(structured map[string]interface{}) (*tagbrowserplugin
 				return nil, nil, fmt.Errorf("timestamp_ms must be numerical type, but was %T", v)
 			}
 		default:
+			// The non-timestamp key/value pair will be handled here
 			valueName = key
+			// We need to convert the value to a protobuf Any, which is a wrapper around a byte array
 			byteValue, valueType, err := ToBytes(value)
 			if err != nil {
 				return nil, nil, err
@@ -106,6 +119,7 @@ func processTimeSeriesData(structured map[string]interface{}) (*tagbrowserplugin
 
 // processRelationalData extracts the message payload as bytes and returns that
 func processRelationalData(message *service.Message) (*tagbrowserpluginprotobuf.EventTableEntry, *string, error) {
+	// For relational data we don't do any parsing, and just extract the payload as bytes
 	valueBytes, err := message.AsBytes()
 	if err != nil {
 		// Note: This shall never happen, as AsBytes internally never returns errors
@@ -114,6 +128,6 @@ func processRelationalData(message *service.Message) (*tagbrowserpluginprotobuf.
 	return &tagbrowserpluginprotobuf.EventTableEntry{
 		IsTimeseries: false,
 		TimestampMs:  nil,
-		Value:        &anypb.Any{TypeUrl: "golang/bytes", Value: valueBytes},
+		Value:        &anypb.Any{TypeUrl: "golang/[]byte", Value: valueBytes},
 	}, nil, nil
 }

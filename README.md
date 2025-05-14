@@ -2012,7 +2012,7 @@ UNS (Output)
 > Inside UMH Core you can leave the block empty — `uns: {}`.
 > If you run the plugin elsewhere, at minimum set `broker_address`.
 
-#### 1 Quick-start (99 % of users)
+#### 1. Quick-start (99 % of users)
 
 ```yaml
 pipeline:
@@ -2039,7 +2039,7 @@ output:
 
 *Open the **Tag Browser** (Management Console → Unified Namespace) to watch the live values.*
 
-#### 2 - Optional overrides
+#### 2. Optional overrides
 
 ```yaml
 output:
@@ -2055,18 +2055,39 @@ output:
 | `broker_address` | Comma-separated Kafka/Redpanda bootstrap list. Default `localhost:9092`.                                  |
 | `bridged_by`     | Traceability header. Default `umh-core`; overridden automatically by protocol-converters inside UMH Core. |
 
-#### 3 - What the plugin does behind the scenes
+#### 3. What the plugin does behind the scenes
 
-1. **Batching** 100 messages *or* 100 ms – whichever comes first.
-2. **Sanitising** Illegal chars in the key become “\_”.
-3. **Headers** All Benthos metadata (except `kafka_*`) plus `bridged_by` are forwarded as Kafka headers.
-4. **Topic check** If `umh.messages` is missing the plugin creates it (1 partition, `compact,delete`).
+1. **Batching** 100 messages *or* 100 ms – whichever comes first.
+2. **Sanitising** Illegal chars in the key become “\_”.
+3. **Headers** All Benthos metadata (except `kafka_*`) plus `bridged_by` are forwarded as Kafka headers.
+4. **Topic check** If `umh.messages` is missing the plugin creates it (1 partition, `compact,delete`).
 
 #### Troubleshooting / FAQs
 
 * **“topic is not set or is empty”** – your pipeline never wrote `msg.meta.topic`.
   Add a `tag_processor` (auto) or a Bloblang line:
   `meta topic = "umh.v1.demo.plant1.line1._historian.temperature"`
+
+</details>
+
+<details>
+<summary>
+Tag Browser
+</summary>
+
+### Tag Browser
+
+> This plugin is designed for usage in umh-core
+
+#### 1. What does this plugin do?
+
+1. For each incoming message, this plugin extracts
+   a. There topic information (level0, level1, ..., datacontract)
+   b. Information about the payload (is it a time-series payload)
+2. If the payload is a time-series payload, the information will be further enriched by using the values' key as tagName
+3. Once every message in the incoming batch is processed, it will protobuf encode (and compress) the resulting table of topics and list of events.
+4. Finally a single message is passed on to the next processor (or output), which contains this data.
+
 
 </details>
 

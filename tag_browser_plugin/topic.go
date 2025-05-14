@@ -14,6 +14,10 @@
 
 package tag_browser_plugin
 
+/*
+	This file contains functions to extract the topic from a message and to extract the different levels
+*/
+
 import (
 	"errors"
 	"strings"
@@ -23,6 +27,7 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
+// extractTopicFromMessage looks up the "topic" meta-field from the benthos message.
 func extractTopicFromMessage(message *service.Message) (string, error) {
 	// The uns input plugin will set the "topic" meta-field
 	topic, found := message.MetaGet("topic")
@@ -32,7 +37,7 @@ func extractTopicFromMessage(message *service.Message) (string, error) {
 	return "", errors.New("unable to extract topic from message. No topic meta-field found")
 }
 
-// topicToUNSInfo will extract the enterprise, site, ... data from an topic
+// topicToUNSInfo will extract the levels and datacontract from a topic.
 // It will not extract the EventTag, as that one is part of the message itself
 func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.TopicInfo, error) {
 	// Check (empty topic, not beginning with "umh.v1.")
@@ -40,9 +45,9 @@ func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.TopicInfo, error) {
 		return nil, errors.New("topic does not start with umh.v1")
 	}
 
-	// Split by dots, to get each part of the topic
+	// Split by dots to get each part of the topic
 	parts := strings.Split(topic, ".")
-	// There must be at least 4 parts (Enterprise and schema is required)
+	// There must be at least 4 parts (umh, v1, level0, datacontract)
 	if len(parts) < 4 {
 		return nil, errors.New("topic does not have enough parts")
 	}
@@ -50,25 +55,25 @@ func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.TopicInfo, error) {
 	var unsInfo tagbrowserpluginprotobuf.TopicInfo
 	// Part 0 will be umh, and part 1 will be v1, so we can safely ignore them
 	unsInfo.Level0 = parts[2]
-	var hasSchema bool
+	var hasDatacontract bool
 	var eventGroup strings.Builder
 	for i := 3; i < len(parts); i++ {
-		// We now need to either assign to the next fields or to schema based on the content.
+		// We now need to either assign to the next fields or to datacontract based on the content.
 		if parts[i][0] == '_' {
-			// We have the schema field
-			hasSchema = true
+			// We have the datacontract field
+			hasDatacontract = true
 			unsInfo.Datacontract = parts[i]
 			continue
 		}
 
-		// If we already have a schema, group everything into an "eventGroup"
-		if hasSchema {
+		// If we already have a datacontract, group everything into an "eventGroup"
+		if hasDatacontract {
 			eventGroup.WriteString(parts[i])
 			eventGroup.WriteRune('.')
 			continue
 		}
 
-		// This is neither a schema, nor are we behind the schema field, so we can just match based on i
+		// This is neither a datacontract, nor are we behind the datacontract field, so we can just match based on i
 		switch i {
 		case 3:
 			unsInfo.Level1 = wrapperspb.String(parts[i])
