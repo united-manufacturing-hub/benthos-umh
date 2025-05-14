@@ -2077,7 +2077,7 @@ Tag Browser
 
 ### Tag Browser
 
-> This plugin is designed for usage in umh-core
+> This plugin is designed for internal usage in umh-core
 
 #### 1. What does this plugin do?
 
