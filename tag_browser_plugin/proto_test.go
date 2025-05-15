@@ -27,12 +27,12 @@ var _ = Describe("Protobuf Functions", func() {
 		It("successfully encodes and decodes a bundle with time series data", func() {
 			// Create a test bundle
 			originalBundle := &tagbrowserpluginprotobuf.UnsBundle{
-				UnsMap: &tagbrowserpluginprotobuf.UnsMap{
+				UnsMap: &tagbrowserpluginprotobuf.TopicMap{
 					Entries: map[string]*tagbrowserpluginprotobuf.TopicInfo{
 						"test-topic": {
-							Enterprise: "enterprise",
-							Schema:     "_historian",
-							EventTag:   wrapperspb.String("temperature"),
+							Level0:       "enterprise",
+							Datacontract: "_historian",
+							EventTag:     wrapperspb.String("temperature"),
 						},
 					},
 				},
@@ -62,14 +62,14 @@ var _ = Describe("Protobuf Functions", func() {
 
 			// Verify the decoded bundle matches the original
 			Expect(decodedBundle.UnsMap.Entries).To(HaveLen(1))
-			Expect(decodedBundle.UnsMap.Entries["test-topic"].Enterprise).To(Equal(originalBundle.UnsMap.Entries["test-topic"].Enterprise))
+			Expect(decodedBundle.UnsMap.Entries["test-topic"].Level0).To(Equal(originalBundle.UnsMap.Entries["test-topic"].Level0))
 			Expect(decodedBundle.Events.Entries).To(HaveLen(1))
 		})
 
 		It("handles empty bundle", func() {
 			// Create an empty bundle
 			originalBundle := &tagbrowserpluginprotobuf.UnsBundle{
-				UnsMap: &tagbrowserpluginprotobuf.UnsMap{
+				UnsMap: &tagbrowserpluginprotobuf.TopicMap{
 					Entries: make(map[string]*tagbrowserpluginprotobuf.TopicInfo),
 				},
 				Events: &tagbrowserpluginprotobuf.EventTable{
@@ -95,17 +95,17 @@ var _ = Describe("Protobuf Functions", func() {
 		It("handles bundle with multiple entries", func() {
 			// Create a bundle with multiple entries
 			originalBundle := &tagbrowserpluginprotobuf.UnsBundle{
-				UnsMap: &tagbrowserpluginprotobuf.UnsMap{
+				UnsMap: &tagbrowserpluginprotobuf.TopicMap{
 					Entries: map[string]*tagbrowserpluginprotobuf.TopicInfo{
 						"topic1": {
-							Enterprise: "enterprise",
-							Schema:     "_historian",
-							EventTag:   wrapperspb.String("temperature"),
+							Level0:       "enterprise",
+							Datacontract: "_historian",
+							EventTag:     wrapperspb.String("temperature"),
 						},
 						"topic2": {
-							Enterprise: "enterprise",
-							Schema:     "_historian",
-							EventTag:   wrapperspb.String("humidity"),
+							Level0:       "enterprise",
+							Datacontract: "_historian",
+							EventTag:     wrapperspb.String("humidity"),
 						},
 					},
 				},
@@ -143,8 +143,8 @@ var _ = Describe("Protobuf Functions", func() {
 
 			// Verify the decoded bundle matches the original
 			Expect(decodedBundle.UnsMap.Entries).To(HaveLen(2))
-			Expect(decodedBundle.UnsMap.Entries["topic1"].Enterprise).To(Equal(originalBundle.UnsMap.Entries["topic1"].Enterprise))
-			Expect(decodedBundle.UnsMap.Entries["topic2"].Enterprise).To(Equal(originalBundle.UnsMap.Entries["topic2"].Enterprise))
+			Expect(decodedBundle.UnsMap.Entries["topic1"].Level0).To(Equal(originalBundle.UnsMap.Entries["topic1"].Level0))
+			Expect(decodedBundle.UnsMap.Entries["topic2"].Level0).To(Equal(originalBundle.UnsMap.Entries["topic2"].Level0))
 			Expect(decodedBundle.UnsMap.Entries["topic2"].EventTag.GetValue()).To(Equal(originalBundle.UnsMap.Entries["topic2"].EventTag.GetValue()))
 			Expect(decodedBundle.Events.Entries).To(HaveLen(2))
 		})

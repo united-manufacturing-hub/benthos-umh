@@ -27,12 +27,12 @@ import (
 
 func createTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 	return &tagbrowserpluginprotobuf.UnsBundle{
-		UnsMap: &tagbrowserpluginprotobuf.UnsMap{
+		UnsMap: &tagbrowserpluginprotobuf.TopicMap{
 			Entries: map[string]*tagbrowserpluginprotobuf.TopicInfo{
 				"test-topic": {
-					Enterprise: "enterprise",
-					Schema:     "_historian",
-					EventTag:   wrapperspb.String("temperature"),
+					Level0:       "enterprise",
+					Datacontract: "_historian",
+					EventTag:     wrapperspb.String("temperature"),
 				},
 			},
 		},
@@ -53,7 +53,7 @@ func createTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 
 func createLargeTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 	bundle := &tagbrowserpluginprotobuf.UnsBundle{
-		UnsMap: &tagbrowserpluginprotobuf.UnsMap{
+		UnsMap: &tagbrowserpluginprotobuf.TopicMap{
 			Entries: make(map[string]*tagbrowserpluginprotobuf.TopicInfo),
 		},
 		Events: &tagbrowserpluginprotobuf.EventTable{
@@ -65,9 +65,9 @@ func createLargeTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 	for i := 0; i < 1000; i++ {
 		topic := fmt.Sprintf("topic-%d", i)
 		bundle.UnsMap.Entries[topic] = &tagbrowserpluginprotobuf.TopicInfo{
-			Enterprise: "enterprise",
-			Schema:     "_historian",
-			EventTag:   wrapperspb.String(fmt.Sprintf("sensor-%d", i)),
+			Level0:       "enterprise",
+			Datacontract: "_historian",
+			EventTag:     wrapperspb.String(fmt.Sprintf("sensor-%d", i)),
 		}
 
 		bundle.Events.Entries = append(bundle.Events.Entries, &tagbrowserpluginprotobuf.EventTableEntry{
@@ -85,7 +85,7 @@ func createLargeTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 
 func createVeryLargeTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 	bundle := &tagbrowserpluginprotobuf.UnsBundle{
-		UnsMap: &tagbrowserpluginprotobuf.UnsMap{
+		UnsMap: &tagbrowserpluginprotobuf.TopicMap{
 			Entries: make(map[string]*tagbrowserpluginprotobuf.TopicInfo),
 		},
 		Events: &tagbrowserpluginprotobuf.EventTable{
@@ -97,9 +97,9 @@ func createVeryLargeTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 	for i := 0; i < 10; i++ {
 		topic := fmt.Sprintf("topic-%d", i)
 		bundle.UnsMap.Entries[topic] = &tagbrowserpluginprotobuf.TopicInfo{
-			Enterprise: "enterprise",
-			Schema:     "_historian",
-			EventTag:   wrapperspb.String(fmt.Sprintf("sensor-%d", i)),
+			Level0:       "enterprise",
+			Datacontract: "_historian",
+			EventTag:     wrapperspb.String(fmt.Sprintf("sensor-%d", i)),
 		}
 	}
 
