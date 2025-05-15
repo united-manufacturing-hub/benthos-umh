@@ -25,7 +25,7 @@ var _ = Describe("TagBrowserProcessor", func() {
 	var processor *TagBrowserProcessor
 
 	BeforeEach(func() {
-		processor = NewTagBrowserProcessor()
+		processor = NewTagBrowserProcessor(nil, nil, 0)
 	})
 
 	Describe("ProcessBatch", func() {

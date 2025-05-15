@@ -25,15 +25,16 @@ import "google/protobuf/any.proto";
 // ---------- Topic info -------------------------------------------------------
 
 message TopicInfo {
-  string level0                           = 1; // This must always be set
-  google.protobuf.StringValue level1      = 2; // Optional
-  google.protobuf.StringValue level2      = 3; // Optional
-  google.protobuf.StringValue level3      = 4; // Optional
-  google.protobuf.StringValue level4      = 5; // Optional
-  google.protobuf.StringValue level5      = 6; // Optional
-  string datacontract                     = 7; // This must always be set
+  string level0                            = 1; // This must always be set
+  google.protobuf.StringValue level1       = 2; // Optional
+  google.protobuf.StringValue level2       = 3; // Optional
+  google.protobuf.StringValue level3       = 4; // Optional
+  google.protobuf.StringValue level4       = 5; // Optional
+  google.protobuf.StringValue level5       = 6; // Optional
+  string datacontract                      = 7; // This must always be set
   google.protobuf.StringValue virtual_path = 8; // Optional
-  google.protobuf.StringValue event_tag   = 9; // Optional
+  google.protobuf.StringValue event_tag    = 9; // Optional
+  map<string,string> metadata              = 10;// Optional. These are all the headers that where ever seen in this topic
 }
 
 message TopicMap {

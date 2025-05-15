@@ -54,15 +54,16 @@ const (
 
 type TopicInfo struct {
 	state         protoimpl.MessageState  `protogen:"open.v1"`
-	Level0        string                  `protobuf:"bytes,1,opt,name=level0,proto3" json:"level0,omitempty"`                              // This must always be set
-	Level1        *wrapperspb.StringValue `protobuf:"bytes,2,opt,name=level1,proto3" json:"level1,omitempty"`                              // Optional
-	Level2        *wrapperspb.StringValue `protobuf:"bytes,3,opt,name=level2,proto3" json:"level2,omitempty"`                              // Optional
-	Level3        *wrapperspb.StringValue `protobuf:"bytes,4,opt,name=level3,proto3" json:"level3,omitempty"`                              // Optional
-	Level4        *wrapperspb.StringValue `protobuf:"bytes,5,opt,name=level4,proto3" json:"level4,omitempty"`                              // Optional
-	Level5        *wrapperspb.StringValue `protobuf:"bytes,6,opt,name=level5,proto3" json:"level5,omitempty"`                              // Optional
-	Datacontract  string                  `protobuf:"bytes,7,opt,name=datacontract,proto3" json:"datacontract,omitempty"`                  // This must always be set
-	VirtualPath   *wrapperspb.StringValue `protobuf:"bytes,8,opt,name=virtual_path,json=virtualPath,proto3" json:"virtual_path,omitempty"` // Optional
-	EventTag      *wrapperspb.StringValue `protobuf:"bytes,9,opt,name=event_tag,json=eventTag,proto3" json:"event_tag,omitempty"`          // Optional
+	Level0        string                  `protobuf:"bytes,1,opt,name=level0,proto3" json:"level0,omitempty"`                                                                                // This must always be set
+	Level1        *wrapperspb.StringValue `protobuf:"bytes,2,opt,name=level1,proto3" json:"level1,omitempty"`                                                                                // Optional
+	Level2        *wrapperspb.StringValue `protobuf:"bytes,3,opt,name=level2,proto3" json:"level2,omitempty"`                                                                                // Optional
+	Level3        *wrapperspb.StringValue `protobuf:"bytes,4,opt,name=level3,proto3" json:"level3,omitempty"`                                                                                // Optional
+	Level4        *wrapperspb.StringValue `protobuf:"bytes,5,opt,name=level4,proto3" json:"level4,omitempty"`                                                                                // Optional
+	Level5        *wrapperspb.StringValue `protobuf:"bytes,6,opt,name=level5,proto3" json:"level5,omitempty"`                                                                                // Optional
+	Datacontract  string                  `protobuf:"bytes,7,opt,name=datacontract,proto3" json:"datacontract,omitempty"`                                                                    // This must always be set
+	VirtualPath   *wrapperspb.StringValue `protobuf:"bytes,8,opt,name=virtual_path,json=virtualPath,proto3" json:"virtual_path,omitempty"`                                                   // Optional
+	EventTag      *wrapperspb.StringValue `protobuf:"bytes,9,opt,name=event_tag,json=eventTag,proto3" json:"event_tag,omitempty"`                                                            // Optional
+	Metadata      map[string]string       `protobuf:"bytes,10,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // Optional. These are all the headers that where ever seen in this topic
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -156,6 +157,13 @@ func (x *TopicInfo) GetVirtualPath() *wrapperspb.StringValue {
 func (x *TopicInfo) GetEventTag() *wrapperspb.StringValue {
 	if x != nil {
 		return x.EventTag
+	}
+	return nil
+}
+
+func (x *TopicInfo) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
 	}
 	return nil
 }
@@ -455,7 +463,7 @@ var File_tag_browser_data_proto protoreflect.FileDescriptor
 const file_tag_browser_data_proto_rawDesc = "" +
 	"\n" +
 	"\x16tag_browser_data.proto\x12\n" +
-	"umh.events\x1a\x1egoogle/protobuf/wrappers.proto\x1a\x19google/protobuf/any.proto\"\xd1\x03\n" +
+	"umh.events\x1a\x1egoogle/protobuf/wrappers.proto\x1a\x19google/protobuf/any.proto\"\xcf\x04\n" +
 	"\tTopicInfo\x12\x16\n" +
 	"\x06level0\x18\x01 \x01(\tR\x06level0\x124\n" +
 	"\x06level1\x18\x02 \x01(\v2\x1c.google.protobuf.StringValueR\x06level1\x124\n" +
@@ -465,7 +473,12 @@ const file_tag_browser_data_proto_rawDesc = "" +
 	"\x06level5\x18\x06 \x01(\v2\x1c.google.protobuf.StringValueR\x06level5\x12\"\n" +
 	"\fdatacontract\x18\a \x01(\tR\fdatacontract\x12?\n" +
 	"\fvirtual_path\x18\b \x01(\v2\x1c.google.protobuf.StringValueR\vvirtualPath\x129\n" +
-	"\tevent_tag\x18\t \x01(\v2\x1c.google.protobuf.StringValueR\beventTag\"\x9a\x01\n" +
+	"\tevent_tag\x18\t \x01(\v2\x1c.google.protobuf.StringValueR\beventTag\x12?\n" +
+	"\bmetadata\x18\n" +
+	" \x03(\v2#.umh.events.TopicInfo.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9a\x01\n" +
 	"\bTopicMap\x12;\n" +
 	"\aentries\x18\x01 \x03(\v2!.umh.events.TopicMap.EntriesEntryR\aentries\x1aQ\n" +
 	"\fEntriesEntry\x12\x10\n" +
@@ -506,7 +519,7 @@ func file_tag_browser_data_proto_rawDescGZIP() []byte {
 	return file_tag_browser_data_proto_rawDescData
 }
 
-var file_tag_browser_data_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_tag_browser_data_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_tag_browser_data_proto_goTypes = []any{
 	(*TopicInfo)(nil),              // 0: umh.events.TopicInfo
 	(*TopicMap)(nil),               // 1: umh.events.TopicMap
@@ -514,34 +527,36 @@ var file_tag_browser_data_proto_goTypes = []any{
 	(*EventTableEntry)(nil),        // 3: umh.events.EventTableEntry
 	(*EventTable)(nil),             // 4: umh.events.EventTable
 	(*UnsBundle)(nil),              // 5: umh.events.UnsBundle
-	nil,                            // 6: umh.events.TopicMap.EntriesEntry
-	nil,                            // 7: umh.events.EventKafka.HeadersEntry
-	(*wrapperspb.StringValue)(nil), // 8: google.protobuf.StringValue
-	(*anypb.Any)(nil),              // 9: google.protobuf.Any
-	(*wrapperspb.Int64Value)(nil),  // 10: google.protobuf.Int64Value
+	nil,                            // 6: umh.events.TopicInfo.MetadataEntry
+	nil,                            // 7: umh.events.TopicMap.EntriesEntry
+	nil,                            // 8: umh.events.EventKafka.HeadersEntry
+	(*wrapperspb.StringValue)(nil), // 9: google.protobuf.StringValue
+	(*anypb.Any)(nil),              // 10: google.protobuf.Any
+	(*wrapperspb.Int64Value)(nil),  // 11: google.protobuf.Int64Value
 }
 var file_tag_browser_data_proto_depIdxs = []int32{
-	8,  // 0: umh.events.TopicInfo.level1:type_name -> google.protobuf.StringValue
-	8,  // 1: umh.events.TopicInfo.level2:type_name -> google.protobuf.StringValue
-	8,  // 2: umh.events.TopicInfo.level3:type_name -> google.protobuf.StringValue
-	8,  // 3: umh.events.TopicInfo.level4:type_name -> google.protobuf.StringValue
-	8,  // 4: umh.events.TopicInfo.level5:type_name -> google.protobuf.StringValue
-	8,  // 5: umh.events.TopicInfo.virtual_path:type_name -> google.protobuf.StringValue
-	8,  // 6: umh.events.TopicInfo.event_tag:type_name -> google.protobuf.StringValue
-	6,  // 7: umh.events.TopicMap.entries:type_name -> umh.events.TopicMap.EntriesEntry
-	7,  // 8: umh.events.EventKafka.headers:type_name -> umh.events.EventKafka.HeadersEntry
-	9,  // 9: umh.events.EventTableEntry.value:type_name -> google.protobuf.Any
-	10, // 10: umh.events.EventTableEntry.timestamp_ms:type_name -> google.protobuf.Int64Value
-	2,  // 11: umh.events.EventTableEntry.raw_kafka_msg:type_name -> umh.events.EventKafka
-	3,  // 12: umh.events.EventTable.entries:type_name -> umh.events.EventTableEntry
-	1,  // 13: umh.events.UnsBundle.uns_map:type_name -> umh.events.TopicMap
-	4,  // 14: umh.events.UnsBundle.events:type_name -> umh.events.EventTable
-	0,  // 15: umh.events.TopicMap.EntriesEntry.value:type_name -> umh.events.TopicInfo
-	16, // [16:16] is the sub-list for method output_type
-	16, // [16:16] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	9,  // 0: umh.events.TopicInfo.level1:type_name -> google.protobuf.StringValue
+	9,  // 1: umh.events.TopicInfo.level2:type_name -> google.protobuf.StringValue
+	9,  // 2: umh.events.TopicInfo.level3:type_name -> google.protobuf.StringValue
+	9,  // 3: umh.events.TopicInfo.level4:type_name -> google.protobuf.StringValue
+	9,  // 4: umh.events.TopicInfo.level5:type_name -> google.protobuf.StringValue
+	9,  // 5: umh.events.TopicInfo.virtual_path:type_name -> google.protobuf.StringValue
+	9,  // 6: umh.events.TopicInfo.event_tag:type_name -> google.protobuf.StringValue
+	6,  // 7: umh.events.TopicInfo.metadata:type_name -> umh.events.TopicInfo.MetadataEntry
+	7,  // 8: umh.events.TopicMap.entries:type_name -> umh.events.TopicMap.EntriesEntry
+	8,  // 9: umh.events.EventKafka.headers:type_name -> umh.events.EventKafka.HeadersEntry
+	10, // 10: umh.events.EventTableEntry.value:type_name -> google.protobuf.Any
+	11, // 11: umh.events.EventTableEntry.timestamp_ms:type_name -> google.protobuf.Int64Value
+	2,  // 12: umh.events.EventTableEntry.raw_kafka_msg:type_name -> umh.events.EventKafka
+	3,  // 13: umh.events.EventTable.entries:type_name -> umh.events.EventTableEntry
+	1,  // 14: umh.events.UnsBundle.uns_map:type_name -> umh.events.TopicMap
+	4,  // 15: umh.events.UnsBundle.events:type_name -> umh.events.EventTable
+	0,  // 16: umh.events.TopicMap.EntriesEntry.value:type_name -> umh.events.TopicInfo
+	17, // [17:17] is the sub-list for method output_type
+	17, // [17:17] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_tag_browser_data_proto_init() }
@@ -555,7 +570,7 @@ func file_tag_browser_data_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_tag_browser_data_proto_rawDesc), len(file_tag_browser_data_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
