@@ -142,8 +142,15 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 		ctx         context.Context
 		cancel      context.CancelFunc
 		mockClient  TestMessageConsumer
-		resoruces   *service.Resources
+		resources   *service.Resources
 	)
+
+	inputConfig := UnsInputConfig{
+		umhTopic:        defaultTopicKey,
+		inputKafkaTopic: defaultInputKafkaTopic,
+		brokerAddress:   defaultBrokerAddress,
+		consumerGroup:   defaultConsumerGroup,
+	}
 
 	BeforeEach(func() {
 		// Default mock behaviours for the happy path
@@ -165,14 +172,10 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 			},
 		}
 
-		inputConfig := UnsInputConfig{
-			umhTopic:        defaultTopicKey,
-			inputKafkaTopic: defaultInputKafkaTopic,
-			brokerAddress:   defaultBrokerAddress,
-			consumerGroup:   defaultConsumerGroup,
-		}
-		resoruces = service.MockResources()
-		inputPlugin, _ = NewUnsInput(mockClient, inputConfig, resoruces.Logger(), resoruces.Metrics())
+		resources = service.MockResources()
+		var err error
+		inputPlugin, err = NewUnsInput(mockClient, inputConfig, resources.Logger(), resources.Metrics())
+		Expect(err).To(BeNil())
 		unsClient = inputPlugin.(*UnsInput)
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	})
@@ -336,8 +339,10 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 						brokerAddress:   defaultBrokerAddress,
 						consumerGroup:   defaultConsumerGroup,
 					}
-					resoruces = service.MockResources()
-					inputPlugin, _ = NewUnsInput(mockClient, inputConfig, resoruces.Logger(), resoruces.Metrics())
+					resources = service.MockResources()
+					var err error
+					inputPlugin, err = NewUnsInput(mockClient, inputConfig, resources.Logger(), resources.Metrics())
+					Expect(err).To(BeNil())
 					unsClient = inputPlugin.(*UnsInput)
 				})
 
@@ -415,32 +420,16 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 		})
 
 		When("the topic regex is invalid", func() {
-			BeforeEach(func() {
-				unsClient.config.umhTopic = "[" // Invalid regex
-				// Return records so that it doesn't return nil error due to empty fetch result
-				mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
-					records := []*kgo.Record{
-						{
-							Key:   []byte("umh.v1.test"),
-							Value: []byte(`{}`),
-							Topic: "umh.messages",
-						},
-					}
-					return &MockFetches{
-						empty:   false,
-						records: records,
-					}
-				})
+			It("should throw an error", func() {
+				inputConfig.umhTopic = "[0-9" // Invalid regex
+
+				// We need to re-initialize the input plugin with the new config
+				var err error
+				inputPlugin, err = NewUnsInput(mockClient, inputConfig, resources.Logger(), resources.Metrics())
+				Expect(err).NotTo(BeNil())
+				Expect(err.Error()).To(ContainSubstring("error parsing regex"))
 
 			})
-
-			// It("should return a compile error", func() {
-			// 	batch, ackFn, err := inputPlugin.ReadBatch(ctx)
-			// 	Expect(err).NotTo(BeNil())
-			// 	Expect(err.Error()).To(ContainSubstring("error compiling topic regex"))
-			// 	Expect(batch).To(BeNil())
-			// 	Expect(ackFn).To(BeNil())
-			// })
 		})
 	})
 })

@@ -25,7 +25,10 @@ import (
 
 // init registers the "uns" batch input plugin with Benthos using its configuration and constructor.
 func init() {
-	service.RegisterBatchInput("uns", RegisterConfigSpec(), newUnsInput)
+	err := service.RegisterBatchInput("uns", RegisterConfigSpec(), newUnsInput)
+	if err != nil {
+		panic(err)
+	}
 }
 
 // UnsInput is the primary implementation of the UNS input plugin
@@ -60,7 +63,7 @@ func NewUnsInput(client MessageConsumer, config UnsInputConfig, logger *service.
 	// Create metrics
 	metrics := NewUnsInputMetrics(metricsProvider)
 
-	// Create message processor
+	// Create a message processor
 	processor, err := NewMessageProcessor(config.umhTopic, metrics)
 	if err != nil {
 		return nil, fmt.Errorf("error creating message processor: %v", err)
@@ -94,7 +97,7 @@ func (u *UnsInput) Connect(ctx context.Context) error {
 
 	connectStart := time.Now()
 	err := u.client.Connect(
-		kgo.SeedBrokers(u.config.brokerAddress),           // use configured broker address
+		kgo.SeedBrokers(u.config.brokerAddress),           // use the configured broker address
 		kgo.AllowAutoTopicCreation(),                      // Allow creating the topic if it doesn't exist
 		kgo.ClientID(defaultClientID),                     // client id for all requests sent to the broker
 		kgo.ConnIdleTimeout(defaultConnIdleTimeout),       // Rough amount of time to allow connections to be idle
@@ -102,12 +105,13 @@ func (u *UnsInput) Connect(ctx context.Context) error {
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()), // Resets the offset to the earliest partition offset
 		kgo.ConsumerGroup(u.config.consumerGroup),         // Set the consumer group id
 		kgo.ConsumeTopics(u.config.inputKafkaTopic),       // Set the topics to consume
+		kgo.DisableAutoCommit(),                           // Disable auto committing offsets, since we commit offsets manually via the ack function
 
-		// High performance settings
-		kgo.FetchMaxBytes(defaultFetchMaxBytes),
-		kgo.FetchMaxPartitionBytes(defaultFetchMaxPartitionBytes),
-		kgo.FetchMinBytes(defaultFetchMinBytes),
-		kgo.FetchMaxWait(defaultFetchMaxWaitTime),
+		// High-performance settings
+		kgo.FetchMaxBytes(defaultFetchMaxBytes),                   // Configures the maximum number of bytes per request the broker will return
+		kgo.FetchMaxPartitionBytes(defaultFetchMaxPartitionBytes), // Limits the maximum bytes per partition the broker will return
+		kgo.FetchMinBytes(defaultFetchMinBytes),                   // Sets the minimum bytes the broker should wait for before responding to the fetch
+		kgo.FetchMaxWait(defaultFetchMaxWaitTime),                 // Maximum time the broker will wait for FetchMinBytes to be reached before responding
 	)
 	if err != nil {
 		return fmt.Errorf("error while creating a kafka client with broker %s: %v", u.config.brokerAddress, err)
@@ -149,7 +153,7 @@ func (u *UnsInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 		return nil, nil, nil
 	}
 
-	// Process records into message batch
+	// Process records into a message batch
 	batch := u.processor.ProcessRecords(fetches, u.batchPool)
 
 	// Log metrics
