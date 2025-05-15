@@ -15,6 +15,9 @@
 package tag_browser_plugin
 
 import (
+	"fmt"
+	"math"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -173,6 +176,156 @@ var _ = Describe("Byte Conversion", func() {
 					Expect(result).To(Equal(tc))
 				}
 			}
+		})
+	})
+
+	Describe("Edge cases", func() {
+		It("handles empty string", func() {
+			bytes, typ, err := ToBytes("")
+			Expect(err).To(BeNil())
+			Expect(bytes).To(Equal([]byte("")))
+			Expect(typ).To(Equal("string"))
+
+			result, err := FromBytes(bytes, typ)
+			Expect(err).To(BeNil())
+			Expect(result).To(Equal(""))
+		})
+
+		It("handles unicode strings", func() {
+			testCases := []string{
+				"Hello, 世界",         // Basic Unicode
+				"👋🌍",                  // Emoji
+				"Hello, 世界 👋🌍",      // Mixed ASCII, Unicode, and Emoji
+				"Hello, 世界 👋🌍 你好", // Complex mixed string
+			}
+
+			for _, tc := range testCases {
+				bytes, typ, err := ToBytes(tc)
+				Expect(err).To(BeNil())
+				Expect(typ).To(Equal("string"))
+
+				result, err := FromBytes(bytes, typ)
+				Expect(err).To(BeNil())
+				Expect(result).To(Equal(tc))
+			}
+		})
+
+		It("handles numeric edge cases", func() {
+			testCases := []any{
+				math.MaxInt64,
+				math.MinInt64,
+				uint64(math.MaxUint64),
+				math.MaxFloat64,
+				math.SmallestNonzeroFloat64,
+				math.NaN(),
+				math.Inf(1),
+				math.Inf(-1),
+			}
+
+			for _, tc := range testCases {
+				bytes, typ, err := ToBytes(tc)
+				Expect(err).To(BeNil())
+
+				result, err := FromBytes(bytes, typ)
+				Expect(err).To(BeNil())
+
+				// Special handling for NaN and Inf
+				switch v := tc.(type) {
+				case float64:
+					if math.IsNaN(v) {
+						Expect(math.IsNaN(result.(float64))).To(BeTrue())
+					} else if math.IsInf(v, 0) {
+						Expect(math.IsInf(result.(float64), 0)).To(BeTrue())
+					} else {
+						Expect(result).To(Equal(tc))
+					}
+				default:
+					Expect(result).To(Equal(tc))
+				}
+			}
+		})
+
+		It("handles interface types", func() {
+			var nilInterface any
+			var nonNilInterface any = "hello"
+
+			// Test nil interface
+			bytes, typ, err := ToBytes(nilInterface)
+			Expect(err).To(BeNil())
+			Expect(typ).To(Equal("nil"))
+
+			result, err := FromBytes(bytes, typ)
+			Expect(err).To(BeNil())
+			Expect(result).To(BeNil())
+
+			// Test non-nil interface
+			bytes, typ, err = ToBytes(nonNilInterface)
+			Expect(err).To(BeNil())
+			Expect(typ).To(Equal("string"))
+
+			result, err = FromBytes(bytes, typ)
+			Expect(err).To(BeNil())
+			Expect(result).To(Equal("hello"))
+		})
+
+		It("handles map types", func() {
+			testCases := []any{
+				map[string]any{}, // Empty map
+				map[string]any{
+					"key": "value",
+					"nil": nil,
+				},
+				map[string]any{
+					"nested": map[string]any{
+						"key": "value",
+					},
+				},
+			}
+
+			for _, tc := range testCases {
+				bytes, typ, err := ToBytes(tc)
+				Expect(err).To(BeNil())
+
+				result, err := FromBytes(bytes, typ)
+				Expect(err).To(BeNil())
+				Expect(result).To(Equal(tc))
+			}
+		})
+
+		It("handles JSON edge cases", func() {
+			// Test with a struct containing a circular reference
+			type Circular struct {
+				Self *Circular
+			}
+			circular := &Circular{}
+			circular.Self = circular
+
+			_, typ, err := ToBytes(circular)
+			Expect(err).To(Not(BeNil()))
+			Expect(err.Error()).To(Equal("json: unsupported value: encountered a cycle via tag_browser_plugin.Circular"))
+
+			// Test with a very large JSON structure
+			largeMap := make(map[string]int)
+			for i := 0; i < 1000; i++ {
+				largeMap[fmt.Sprintf("key%d", i)] = i
+			}
+
+			var bytes []byte
+			bytes, typ, err = ToBytes(largeMap)
+			Expect(err).To(BeNil())
+			Expect(typ).To(Equal("map[string]int"))
+
+			result, err := FromBytes(bytes, typ)
+			Expect(err).To(BeNil())
+			resultMap, ok := result.(map[string]interface{})
+			Expect(ok).To(BeTrue(), fmt.Sprintf("result is not a map[string]int: %T", result))
+			Expect(resultMap).To(HaveLen(1000))
+
+			// For maps the conversion is best effort
+			for i := 0; i < 1000; i++ {
+				Expect(resultMap[fmt.Sprintf("key%d", i)]).To(Equal(float64(i)))
+			}
+
 		})
 	})
 })
