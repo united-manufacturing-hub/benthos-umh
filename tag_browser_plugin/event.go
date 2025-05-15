@@ -20,6 +20,7 @@ package tag_browser_plugin
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
@@ -115,7 +116,6 @@ func processRelationalData(message *service.Message) (*tagbrowserpluginprotobuf.
 		Value:        &anypb.Any{TypeUrl: "golang/[]byte", Value: valueBytes},
 	}, nil
 }
-
 func interfaceToInt64(value interface{}) (int64, error) {
 	var valueAsInt64 int64
 	switch v := value.(type) {
@@ -130,6 +130,9 @@ func interfaceToInt64(value interface{}) (int64, error) {
 	case int64:
 		valueAsInt64 = v
 	case uint:
+		if v > math.MaxInt64 {
+			return 0, fmt.Errorf("value %d out of int64 range", v)
+		}
 		valueAsInt64 = int64(v)
 	case uint8:
 		valueAsInt64 = int64(v)
@@ -138,10 +141,19 @@ func interfaceToInt64(value interface{}) (int64, error) {
 	case uint32:
 		valueAsInt64 = int64(v)
 	case uint64:
+		if v > math.MaxInt64 {
+			return 0, fmt.Errorf("value %d out of int64 range", v)
+		}
 		valueAsInt64 = int64(v)
 	case float32:
+		if v > float32(math.MaxInt64) || v < float32(math.MinInt64) {
+			return 0, fmt.Errorf("value %f out of int64 range", v)
+		}
 		valueAsInt64 = int64(v)
 	case float64:
+		if v > float64(math.MaxInt64) || v < float64(math.MinInt64) {
+			return 0, fmt.Errorf("value %f out of int64 range", v)
+		}
 		valueAsInt64 = int64(v)
 	default:
 		return 0, fmt.Errorf("timestamp_ms must be numerical type, but was %T", v)
