@@ -59,6 +59,7 @@ func messageToEvent(message *service.Message, expectedTagNameForTimeseries *wrap
 func processTimeSeriesData(structured map[string]interface{}, expectedTagNameForTimeseries *wrapperspb.StringValue) (*tagbrowserpluginprotobuf.EventTableEntry, error) {
 	var valueContent anypb.Any
 	var timestampMs int64
+	var err error
 
 	// We loop over all key/value pairs of the message's payload (we previously checked that there are exactly two)
 	for key, value := range structured {
@@ -66,33 +67,9 @@ func processTimeSeriesData(structured map[string]interface{}, expectedTagNameFor
 		case "timestamp_ms":
 			// Since we do not know the type of the timestamp_ms field, we need to convert it to an int64
 			// But we can expect it to be some kind of numeric type, so we check its type and convert accordingly
-			switch v := value.(type) {
-			case int:
-				timestampMs = int64(v)
-			case int8:
-				timestampMs = int64(v)
-			case int16:
-				timestampMs = int64(v)
-			case int32:
-				timestampMs = int64(v)
-			case int64:
-				timestampMs = v
-			case uint:
-				timestampMs = int64(v)
-			case uint8:
-				timestampMs = int64(v)
-			case uint16:
-				timestampMs = int64(v)
-			case uint32:
-				timestampMs = int64(v)
-			case uint64:
-				timestampMs = int64(v)
-			case float32:
-				timestampMs = int64(v)
-			case float64:
-				timestampMs = int64(v)
-			default:
-				return nil, fmt.Errorf("timestamp_ms must be numerical type, but was %T", v)
+			timestampMs, err = interfaceToInt64(value)
+			if err != nil {
+				return nil, err
 			}
 		default:
 			// The non-timestamp key/value pair will be handled here
@@ -104,7 +81,9 @@ func processTimeSeriesData(structured map[string]interface{}, expectedTagNameFor
 				return nil, fmt.Errorf("expected tag name for timeseries %s, but was %s", expectedTagNameForTimeseries, key)
 			}
 			// We need to convert the value to a protobuf Any, which is a wrapper around a byte array
-			byteValue, valueType, err := ToBytes(value)
+			var byteValue []byte
+			var valueType string
+			byteValue, valueType, err = ToBytes(value)
 			if err != nil {
 				return nil, err
 			}
@@ -135,4 +114,37 @@ func processRelationalData(message *service.Message) (*tagbrowserpluginprotobuf.
 		TimestampMs:  nil,
 		Value:        &anypb.Any{TypeUrl: "golang/[]byte", Value: valueBytes},
 	}, nil
+}
+
+func interfaceToInt64(value interface{}) (int64, error) {
+	var valueAsInt64 int64
+	switch v := value.(type) {
+	case int:
+		valueAsInt64 = int64(v)
+	case int8:
+		valueAsInt64 = int64(v)
+	case int16:
+		valueAsInt64 = int64(v)
+	case int32:
+		valueAsInt64 = int64(v)
+	case int64:
+		valueAsInt64 = v
+	case uint:
+		valueAsInt64 = int64(v)
+	case uint8:
+		valueAsInt64 = int64(v)
+	case uint16:
+		valueAsInt64 = int64(v)
+	case uint32:
+		valueAsInt64 = int64(v)
+	case uint64:
+		valueAsInt64 = int64(v)
+	case float32:
+		valueAsInt64 = int64(v)
+	case float64:
+		valueAsInt64 = int64(v)
+	default:
+		return 0, fmt.Errorf("timestamp_ms must be numerical type, but was %T", v)
+	}
+	return valueAsInt64, nil
 }

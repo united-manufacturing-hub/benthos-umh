@@ -59,7 +59,7 @@ var _ = Describe("Raw Kafka Message Processing", func() {
 		})
 
 		It("handles message with empty payload", func() {
-			// Create a message with headers but empty payload
+			// Create a message with headers but an empty payload
 			msg := service.NewMessage(nil)
 			msg.MetaSet("header1", "value1")
 
@@ -99,7 +99,7 @@ var _ = Describe("Raw Kafka Message Processing", func() {
 		})
 
 		It("handles message with binary payload", func() {
-			// Create a message with binary payload
+			// Create a message with a binary payload
 			binaryData := []byte{0x00, 0x01, 0x02, 0x03, 0xFF}
 			msg := service.NewMessage(binaryData)
 			msg.MetaSet("content-type", "application/octet-stream")
@@ -113,9 +113,9 @@ var _ = Describe("Raw Kafka Message Processing", func() {
 			Expect(kafkaMsg.Headers).To(HaveLen(1))
 			Expect(kafkaMsg.Headers).To(HaveKeyWithValue("content-type", "application/octet-stream"))
 
-			// Verify payload is converted to string correctly
+			// Verify the payload is converted to string correctly
 			Expect(kafkaMsg.Payload).To(Equal(binaryData))
-			Expect([]byte(kafkaMsg.Payload)).To(Equal(binaryData))
+			Expect(kafkaMsg.Payload).To(Equal(binaryData))
 		})
 	})
 })
