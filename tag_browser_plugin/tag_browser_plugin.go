@@ -12,6 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package tag_browser_plugin implements a Benthos processor plugin for the UMH Tag Browser.
+// This plugin processes incoming messages to extract and organize topic hierarchy information,
+// metadata, and event data for efficient browsing and querying in the UMH system.
+//
+// Key Features:
+// - Hierarchical topic processing (level0 through level5)
+// - Support for both timeseries and non-timeseries data
+// - Efficient metadata caching using LRU cache
+// - Message batching for reduced network traffic
+// - Thread-safe operations with mutex protection
+//
+// Usage:
+// 1. Configure as a processor in your Benthos pipeline
+// 2. Set up appropriate input (uns-input) and output plugins
+// 3. Monitor metrics for processed and failed messages
+//
+// Example configuration:
+//
+//	processors:
+//	  - tag_browser: {}
 package tag_browser_plugin
 
 import (
@@ -26,15 +46,26 @@ import (
 	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
 )
 
+// TagBrowserProcessor implements the Benthos processor interface for the Tag Browser plugin.
+// It processes messages to extract topic hierarchy, metadata, and event data while
+// maintaining an efficient cache of topic metadata to minimize network traffic.
+//
+// The processor uses an LRU cache to store topic metadata and only transmits changes
+// when the metadata has been modified. This significantly reduces the amount of data
+// sent to the UMH core system.
 type TagBrowserProcessor struct {
-	// This cache keeps the number of topics
-	// transmitted to the umh-core small by trying not to re-send already reported topics.
-	// Since it is not thread-safe, we need a mutex to protect it.
+	// topicMetadataCache stores the most recently used topic metadata to prevent
+	// re-sending unchanged topic information. The cache is thread-safe and protected
+	// by topicMetadataCacheMutex.
 	topicMetadataCache      *lru.Cache
 	topicMetadataCacheMutex *sync.Mutex
-	logger                  *service.Logger
-	messagesProcessed       *service.MetricCounter
-	messagesFailed          *service.MetricCounter
+
+	// logger provides structured logging capabilities for the processor
+	logger *service.Logger
+
+	// metrics track the number of processed and failed messages
+	messagesProcessed *service.MetricCounter
+	messagesFailed    *service.MetricCounter
 }
 
 func (t *TagBrowserProcessor) Process(ctx context.Context, message *service.Message) (service.MessageBatch, error) {
