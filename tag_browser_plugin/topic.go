@@ -55,7 +55,7 @@ func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.TopicInfo, error) {
 	// Part 0 will be umh, and part 1 will be v1, so we can safely ignore them
 	unsInfo.Level0 = parts[2]
 	var hasDatacontract bool
-	var eventGroup strings.Builder
+	var eventGroup []string
 	for i := 3; i < len(parts); i++ {
 		// We now need to either assign to the next fields or to datacontract based on the content.
 		if parts[i][0] == '_' {
@@ -67,8 +67,7 @@ func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.TopicInfo, error) {
 
 		// If we already have a datacontract, group everything into an "eventGroup"
 		if hasDatacontract {
-			eventGroup.WriteString(parts[i])
-			eventGroup.WriteRune('.')
+			eventGroup = append(eventGroup, parts[i])
 			continue
 		}
 
@@ -87,19 +86,15 @@ func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.TopicInfo, error) {
 		}
 	}
 
-	// Write the eventGroup (without the last dot)
-	eventGroupString := eventGroup.String()
-	// Split the eventGroupString, and collect in two parts
-	eventGroupParts := strings.Split(eventGroupString, ".")
-	if len(eventGroupParts) > 0 {
+	if len(eventGroup) > 0 {
 
-		if len(eventGroupParts) > 1 {
-			eventGroups := eventGroupParts[:len(eventGroupParts)-1]
-			unsInfo.EventGroup = wrapperspb.String(strings.Join(eventGroups, "."))
+		if len(eventGroup) > 1 {
+			// If there are more than 1 even inside the eventGroup, collect all except the last into VirtualPath
+			unsInfo.VirtualPath = wrapperspb.String(strings.Join(eventGroup[:len(eventGroup)-1], "."))
 		}
 
 		// Set the last part as the eventTag
-		unsInfo.EventTag = wrapperspb.String(eventGroupParts[len(eventGroupParts)-1])
+		unsInfo.EventTag = wrapperspb.String(eventGroup[len(eventGroup)-1])
 	}
 	return &unsInfo, nil
 }

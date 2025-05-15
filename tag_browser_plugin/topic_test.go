@@ -55,7 +55,7 @@ var _ = Describe("Uns", func() {
 			Expect(unsInfo.WorkCell.GetValue()).To(Equal("workcell"))
 			Expect(unsInfo.OriginId.GetValue()).To(Equal("originid"))
 			Expect(unsInfo.Schema).To(Equal("_schema"))
-			Expect(unsInfo.EventGroup.GetValue()).To(Equal("event.group"))
+			Expect(unsInfo.VirtualPath.GetValue()).To(Equal("event.group"))
 		})
 
 		It("should parse valid UNS topic with minimal fields", func() {
@@ -65,7 +65,7 @@ var _ = Describe("Uns", func() {
 			Expect(err).To(BeNil())
 			Expect(unsInfo.Enterprise).To(Equal("enterprise"))
 			Expect(unsInfo.Schema).To(Equal("_schema"))
-			Expect(unsInfo.EventGroup.GetValue()).To(BeEmpty())
+			Expect(unsInfo.VirtualPath.GetValue()).To(BeEmpty())
 		})
 
 		It("should return error for empty topic", func() {
@@ -138,10 +138,10 @@ var _ = Describe("Uns", func() {
 						Expect(unsInfo.OriginId).To(BeNil())
 					}
 
-					if tc.expectedInfo.EventGroup != nil {
-						Expect(unsInfo.EventGroup.GetValue()).To(Equal(tc.expectedInfo.EventGroup.GetValue()))
+					if tc.expectedInfo.VirtualPath != nil {
+						Expect(unsInfo.VirtualPath.GetValue()).To(Equal(tc.expectedInfo.VirtualPath.GetValue()))
 					} else {
-						Expect(unsInfo.EventGroup).To(BeNil())
+						Expect(unsInfo.VirtualPath).To(BeNil())
 					}
 				},
 				Entry("only enterprise and schema", testCase{
@@ -210,28 +210,28 @@ var _ = Describe("Uns", func() {
 				Entry("enterprise, site, area, line, workcell, originid, schema, and event group", testCase{
 					topic: "umh.v1.enterprise.site.area.line.workcell.originid._schema.event.group",
 					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
-						Enterprise: "enterprise",
-						Site:       wrapperspb.String("site"),
-						Area:       wrapperspb.String("area"),
-						Line:       wrapperspb.String("line"),
-						WorkCell:   wrapperspb.String("workcell"),
-						OriginId:   wrapperspb.String("originid"),
-						Schema:     "_schema",
-						EventGroup: wrapperspb.String("event.group"),
+						Enterprise:  "enterprise",
+						Site:        wrapperspb.String("site"),
+						Area:        wrapperspb.String("area"),
+						Line:        wrapperspb.String("line"),
+						WorkCell:    wrapperspb.String("workcell"),
+						OriginId:    wrapperspb.String("originid"),
+						Schema:      "_schema",
+						VirtualPath: wrapperspb.String("event.group"),
 					},
 					shouldHaveError: false,
 				}),
 				Entry("enterprise, site, area, line, workcell, originid, schema, and complex event group", testCase{
 					topic: "umh.v1.enterprise.site.area.line.workcell.originid._schema.event.group.subgroup",
 					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
-						Enterprise: "enterprise",
-						Site:       wrapperspb.String("site"),
-						Area:       wrapperspb.String("area"),
-						Line:       wrapperspb.String("line"),
-						WorkCell:   wrapperspb.String("workcell"),
-						OriginId:   wrapperspb.String("originid"),
-						Schema:     "_schema",
-						EventGroup: wrapperspb.String("event.group.subgroup"),
+						Enterprise:  "enterprise",
+						Site:        wrapperspb.String("site"),
+						Area:        wrapperspb.String("area"),
+						Line:        wrapperspb.String("line"),
+						WorkCell:    wrapperspb.String("workcell"),
+						OriginId:    wrapperspb.String("originid"),
+						Schema:      "_schema",
+						VirtualPath: wrapperspb.String("event.group.subgroup"),
 					},
 					shouldHaveError: false,
 				}),
