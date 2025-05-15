@@ -54,6 +54,9 @@ func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.TopicInfo, error) {
 	var unsInfo tagbrowserpluginprotobuf.TopicInfo
 	// Part 0 will be umh, and part 1 will be v1, so we can safely ignore them
 	unsInfo.Level0 = parts[2]
+	if len(unsInfo.Level0) == 0 {
+		return nil, errors.New("topic contains empty parts")
+	}
 	var hasDatacontract bool
 	var eventGroup []string
 	for i := 3; i < len(parts); i++ {
@@ -87,6 +90,9 @@ func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.TopicInfo, error) {
 		case 7:
 			unsInfo.Level5 = wrapperspb.String(parts[i])
 		}
+	}
+	if !hasDatacontract {
+		return nil, errors.New("topic does not container datacontract")
 	}
 
 	if len(eventGroup) > 0 {
