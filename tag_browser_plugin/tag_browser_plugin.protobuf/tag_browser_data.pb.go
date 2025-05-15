@@ -275,8 +275,7 @@ type EventTableEntry struct {
 	TimestampMs   *wrapperspb.Int64Value `protobuf:"bytes,3,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`     // Extracted from the payload (If timeseries data)
 	IsTimeseries  bool                   `protobuf:"varint,4,opt,name=is_timeseries,json=isTimeseries,proto3" json:"is_timeseries,omitempty"` // True if time series data as defined by our payload format, false otherwise
 	RawKafkaMsg   *EventKafka            `protobuf:"bytes,5,opt,name=raw_kafka_msg,json=rawKafkaMsg,proto3" json:"raw_kafka_msg,omitempty"`
-	Origin        string                 `protobuf:"bytes,6,opt,name=origin,proto3" json:"origin,omitempty"`                        // If present inside the messages headers
-	BridgedBy     []string               `protobuf:"bytes,7,rep,name=bridged_by,json=bridgedBy,proto3" json:"bridged_by,omitempty"` // If present inside the messages headers
+	ProcessedBy   []string               `protobuf:"bytes,6,rep,name=processed_by,json=processedBy,proto3" json:"processed_by,omitempty"` // If present inside the messages headers. In the kafka headers, this is a comma seperated list
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -346,16 +345,9 @@ func (x *EventTableEntry) GetRawKafkaMsg() *EventKafka {
 	return nil
 }
 
-func (x *EventTableEntry) GetOrigin() string {
+func (x *EventTableEntry) GetProcessedBy() []string {
 	if x != nil {
-		return x.Origin
-	}
-	return ""
-}
-
-func (x *EventTableEntry) GetBridgedBy() []string {
-	if x != nil {
-		return x.BridgedBy
+		return x.ProcessedBy
 	}
 	return nil
 }
@@ -490,16 +482,14 @@ const file_tag_browser_data_proto_rawDesc = "" +
 	"\apayload\x18\x02 \x01(\tR\apayload\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb5\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa1\x02\n" +
 	"\x0fEventTableEntry\x12\x1e\n" +
 	"\vuns_tree_id\x18\x01 \x01(\tR\tunsTreeId\x12*\n" +
 	"\x05value\x18\x02 \x01(\v2\x14.google.protobuf.AnyR\x05value\x12>\n" +
 	"\ftimestamp_ms\x18\x03 \x01(\v2\x1b.google.protobuf.Int64ValueR\vtimestampMs\x12#\n" +
 	"\ris_timeseries\x18\x04 \x01(\bR\fisTimeseries\x12:\n" +
-	"\rraw_kafka_msg\x18\x05 \x01(\v2\x16.umh.events.EventKafkaR\vrawKafkaMsg\x12\x16\n" +
-	"\x06origin\x18\x06 \x01(\tR\x06origin\x12\x1d\n" +
-	"\n" +
-	"bridged_by\x18\a \x03(\tR\tbridgedBy\"C\n" +
+	"\rraw_kafka_msg\x18\x05 \x01(\v2\x16.umh.events.EventKafkaR\vrawKafkaMsg\x12!\n" +
+	"\fprocessed_by\x18\x06 \x03(\tR\vprocessedBy\"C\n" +
 	"\n" +
 	"EventTable\x125\n" +
 	"\aentries\x18\x01 \x03(\v2\x1b.umh.events.EventTableEntryR\aentries\"j\n" +
