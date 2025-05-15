@@ -43,6 +43,6 @@ func messageToRawKafkaMsg(message *service.Message) (*tagbrowserpluginprotobuf.E
 
 	return &tagbrowserpluginprotobuf.EventKafka{
 		Headers: headers,
-		Payload: string(payload),
+		Payload: payload,
 	}, nil
 }

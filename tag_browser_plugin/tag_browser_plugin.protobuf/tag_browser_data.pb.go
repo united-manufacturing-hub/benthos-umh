@@ -219,7 +219,7 @@ type EventKafka struct {
 	// This version does not contain fields like topic, key
 	// Since there cannot be a user defined key and the topic will always be umh.messages
 	Headers       map[string]string `protobuf:"bytes,1,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Payload       string            `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"` // Raw payload of the message
+	Payload       []byte            `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"` // Raw payload of the message
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -261,11 +261,11 @@ func (x *EventKafka) GetHeaders() map[string]string {
 	return nil
 }
 
-func (x *EventKafka) GetPayload() string {
+func (x *EventKafka) GetPayload() []byte {
 	if x != nil {
 		return x.Payload
 	}
-	return ""
+	return nil
 }
 
 type EventTableEntry struct {
@@ -479,7 +479,7 @@ const file_tag_browser_data_proto_rawDesc = "" +
 	"\n" +
 	"EventKafka\x12=\n" +
 	"\aheaders\x18\x01 \x03(\v2#.umh.events.EventKafka.HeadersEntryR\aheaders\x12\x18\n" +
-	"\apayload\x18\x02 \x01(\tR\apayload\x1a:\n" +
+	"\apayload\x18\x02 \x01(\fR\apayload\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa1\x02\n" +

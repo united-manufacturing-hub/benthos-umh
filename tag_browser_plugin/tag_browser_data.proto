@@ -50,7 +50,7 @@ message EventKafka {
   // This version does not contain fields like topic, key
   // Since there cannot be a user defined key and the topic will always be umh.messages
   map<string,string> headers = 1;
-  string payload             = 2; // Raw payload of the message
+  bytes payload             = 2; // Raw payload of the message
 }
 
 // ---------- Event table ----------------------------------------------------
