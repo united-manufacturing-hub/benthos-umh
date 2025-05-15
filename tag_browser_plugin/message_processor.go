@@ -49,7 +49,7 @@ func MessageToUNSInfoAndEvent(message *service.Message) (*tagbrowserpluginprotob
 
 	// If the message is a time-series entry, we can enrich the unsInfo
 	if event.IsTimeseries {
-		unsInfo.EventTag = wrapperspb.String(*eventTag)
+		//unsInfo.EventTag = wrapperspb.String(*eventTag)
 	}
 
 	// We now have everything to calculate the uns_tree_id
