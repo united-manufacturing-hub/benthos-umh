@@ -55,7 +55,7 @@ func (t *TagBrowserProcessor) Process(ctx context.Context, message *service.Mess
 // 3. Updates topic metadata and manages the LRU cache to prevent duplicate topic transmissions
 // 4. Creates a final protobuf message if there is data to return
 //
-// The function is designed to minimize network traffic by:
+// The function is designed to minimize traffic by:
 // - Batching multiple messages into a single protobuf message
 // - Using an LRU cache to avoid re-sending unchanged topic metadata
 // - Only including topics in the output when their metadata has changed
@@ -171,7 +171,7 @@ func (t *TagBrowserProcessor) mergeTopicHeaders(topics []*tagbrowserpluginprotob
 }
 
 // shouldReportTopic determines if a topic's metadata has changed and needs to be reported.
-// This is a key optimization that prevents unnecessary network traffic by:
+// This is a key optimization that prevents unnecessary traffic by:
 // - Checking if the topic exists in the cache
 // - Comparing current headers with cached headers
 // - Only returning true when the topic is new or has changed
@@ -211,7 +211,7 @@ func (t *TagBrowserProcessor) hasDataToReturn(unsBundle *tagbrowserpluginprotobu
 
 // createFinalMessage converts the UNS bundle into a protobuf-encoded message.
 // This function:
-// - Compresses the bundle to minimize network traffic
+// - Compresses the bundle to minimize traffic
 // - Creates a new message with the encoded data
 // - Returns the message in the format expected by the Benthos framework
 func (t *TagBrowserProcessor) createFinalMessage(unsBundle *tagbrowserpluginprotobuf.UnsBundle) ([]service.MessageBatch, error) {
