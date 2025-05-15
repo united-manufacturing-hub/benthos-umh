@@ -32,7 +32,7 @@ message TopicInfo {
   google.protobuf.StringValue level4      = 5; // Optional
   google.protobuf.StringValue level5      = 6; // Optional
   string datacontract                     = 7; // This must always be set
-  google.protobuf.StringValue event_group = 8; // Optional
+  google.protobuf.StringValue virtual_path = 8; // Optional
   google.protobuf.StringValue event_tag   = 9; // Optional
 }
 

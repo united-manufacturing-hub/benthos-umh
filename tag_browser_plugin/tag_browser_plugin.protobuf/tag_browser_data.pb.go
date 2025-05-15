@@ -54,15 +54,15 @@ const (
 
 type TopicInfo struct {
 	state         protoimpl.MessageState  `protogen:"open.v1"`
-	Level0        string                  `protobuf:"bytes,1,opt,name=level0,proto3" json:"level0,omitempty"`                           // This must always be set
-	Level1        *wrapperspb.StringValue `protobuf:"bytes,2,opt,name=level1,proto3" json:"level1,omitempty"`                           // Optional
-	Level2        *wrapperspb.StringValue `protobuf:"bytes,3,opt,name=level2,proto3" json:"level2,omitempty"`                           // Optional
-	Level3        *wrapperspb.StringValue `protobuf:"bytes,4,opt,name=level3,proto3" json:"level3,omitempty"`                           // Optional
-	Level4        *wrapperspb.StringValue `protobuf:"bytes,5,opt,name=level4,proto3" json:"level4,omitempty"`                           // Optional
-	Level5        *wrapperspb.StringValue `protobuf:"bytes,6,opt,name=level5,proto3" json:"level5,omitempty"`                           // Optional
-	Datacontract  string                  `protobuf:"bytes,7,opt,name=datacontract,proto3" json:"datacontract,omitempty"`               // This must always be set
-	EventGroup    *wrapperspb.StringValue `protobuf:"bytes,8,opt,name=event_group,json=eventGroup,proto3" json:"event_group,omitempty"` // Optional
-	EventTag      *wrapperspb.StringValue `protobuf:"bytes,9,opt,name=event_tag,json=eventTag,proto3" json:"event_tag,omitempty"`       // Optional
+	Level0        string                  `protobuf:"bytes,1,opt,name=level0,proto3" json:"level0,omitempty"`                              // This must always be set
+	Level1        *wrapperspb.StringValue `protobuf:"bytes,2,opt,name=level1,proto3" json:"level1,omitempty"`                              // Optional
+	Level2        *wrapperspb.StringValue `protobuf:"bytes,3,opt,name=level2,proto3" json:"level2,omitempty"`                              // Optional
+	Level3        *wrapperspb.StringValue `protobuf:"bytes,4,opt,name=level3,proto3" json:"level3,omitempty"`                              // Optional
+	Level4        *wrapperspb.StringValue `protobuf:"bytes,5,opt,name=level4,proto3" json:"level4,omitempty"`                              // Optional
+	Level5        *wrapperspb.StringValue `protobuf:"bytes,6,opt,name=level5,proto3" json:"level5,omitempty"`                              // Optional
+	Datacontract  string                  `protobuf:"bytes,7,opt,name=datacontract,proto3" json:"datacontract,omitempty"`                  // This must always be set
+	VirtualPath   *wrapperspb.StringValue `protobuf:"bytes,8,opt,name=virtual_path,json=virtualPath,proto3" json:"virtual_path,omitempty"` // Optional
+	EventTag      *wrapperspb.StringValue `protobuf:"bytes,9,opt,name=event_tag,json=eventTag,proto3" json:"event_tag,omitempty"`          // Optional
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -146,9 +146,9 @@ func (x *TopicInfo) GetDatacontract() string {
 	return ""
 }
 
-func (x *TopicInfo) GetEventGroup() *wrapperspb.StringValue {
+func (x *TopicInfo) GetVirtualPath() *wrapperspb.StringValue {
 	if x != nil {
-		return x.EventGroup
+		return x.VirtualPath
 	}
 	return nil
 }
@@ -455,7 +455,7 @@ var File_tag_browser_data_proto protoreflect.FileDescriptor
 const file_tag_browser_data_proto_rawDesc = "" +
 	"\n" +
 	"\x16tag_browser_data.proto\x12\n" +
-	"umh.events\x1a\x1egoogle/protobuf/wrappers.proto\x1a\x19google/protobuf/any.proto\"\xcf\x03\n" +
+	"umh.events\x1a\x1egoogle/protobuf/wrappers.proto\x1a\x19google/protobuf/any.proto\"\xd1\x03\n" +
 	"\tTopicInfo\x12\x16\n" +
 	"\x06level0\x18\x01 \x01(\tR\x06level0\x124\n" +
 	"\x06level1\x18\x02 \x01(\v2\x1c.google.protobuf.StringValueR\x06level1\x124\n" +
@@ -463,9 +463,8 @@ const file_tag_browser_data_proto_rawDesc = "" +
 	"\x06level3\x18\x04 \x01(\v2\x1c.google.protobuf.StringValueR\x06level3\x124\n" +
 	"\x06level4\x18\x05 \x01(\v2\x1c.google.protobuf.StringValueR\x06level4\x124\n" +
 	"\x06level5\x18\x06 \x01(\v2\x1c.google.protobuf.StringValueR\x06level5\x12\"\n" +
-	"\fdatacontract\x18\a \x01(\tR\fdatacontract\x12=\n" +
-	"\vevent_group\x18\b \x01(\v2\x1c.google.protobuf.StringValueR\n" +
-	"eventGroup\x129\n" +
+	"\fdatacontract\x18\a \x01(\tR\fdatacontract\x12?\n" +
+	"\fvirtual_path\x18\b \x01(\v2\x1c.google.protobuf.StringValueR\vvirtualPath\x129\n" +
 	"\tevent_tag\x18\t \x01(\v2\x1c.google.protobuf.StringValueR\beventTag\"\x9a\x01\n" +
 	"\bTopicMap\x12;\n" +
 	"\aentries\x18\x01 \x03(\v2!.umh.events.TopicMap.EntriesEntryR\aentries\x1aQ\n" +
@@ -527,7 +526,7 @@ var file_tag_browser_data_proto_depIdxs = []int32{
 	8,  // 2: umh.events.TopicInfo.level3:type_name -> google.protobuf.StringValue
 	8,  // 3: umh.events.TopicInfo.level4:type_name -> google.protobuf.StringValue
 	8,  // 4: umh.events.TopicInfo.level5:type_name -> google.protobuf.StringValue
-	8,  // 5: umh.events.TopicInfo.event_group:type_name -> google.protobuf.StringValue
+	8,  // 5: umh.events.TopicInfo.virtual_path:type_name -> google.protobuf.StringValue
 	8,  // 6: umh.events.TopicInfo.event_tag:type_name -> google.protobuf.StringValue
 	6,  // 7: umh.events.TopicMap.entries:type_name -> umh.events.TopicMap.EntriesEntry
 	7,  // 8: umh.events.EventKafka.headers:type_name -> umh.events.EventKafka.HeadersEntry

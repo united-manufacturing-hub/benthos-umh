@@ -78,7 +78,7 @@ func HashUNSTableEntry(info *tagbrowserpluginprotobuf.TopicInfo) string {
 	_, _ = hasher.Write([]byte(info.Level4.GetValue()))
 	_, _ = hasher.Write([]byte(info.Level5.GetValue()))
 	_, _ = hasher.Write([]byte(info.Datacontract))
-	_, _ = hasher.Write([]byte(info.EventGroup.GetValue()))
+	_, _ = hasher.Write([]byte(info.VirtualPath.GetValue()))
 	_, _ = hasher.Write([]byte(info.EventTag.GetValue()))
 	return hex.EncodeToString(hasher.Sum(nil))
 }
