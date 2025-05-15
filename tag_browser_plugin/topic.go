@@ -37,73 +37,106 @@ func extractTopicFromMessage(message *service.Message) (string, error) {
 	return "", errors.New("unable to extract topic from message. No umh_topic meta-field found")
 }
 
-// topicToUNSInfo will extract the levels and datacontract from a topic.
+// topicToUNSInfo extracts the levels and datacontract from a UNS topic.
+// A UNS topic follows the format: umh.v1.{level0}.{level1}.{level2}.{level3}.{level4}.{level5}.{datacontract}.{virtualPath}.{eventTag}
+// where:
+// - level0 is required
+// - level1-5 are optional
+// - datacontract is required and starts with '_'
+// - virtualPath and eventTag are optional
 func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.TopicInfo, error) {
-	// Check (empty topic, not beginning with "umh.v1.")
-	if len(topic) == 0 || strings.HasPrefix(topic, "umh.v1.") == false {
-		return nil, errors.New("topic does not start with umh.v1")
+	if err := validateTopicFormat(topic); err != nil {
+		return nil, err
 	}
 
-	// Split by dots to get each part of the topic
 	parts := strings.Split(topic, ".")
-	// There must be at least 4 parts (umh, v1, level0, datacontract)
-	if len(parts) < 4 {
-		return nil, errors.New("topic does not have enough parts")
+	unsInfo := &tagbrowserpluginprotobuf.TopicInfo{
+		Level0: parts[2], // Skip "umh" and "v1"
 	}
 
-	var unsInfo tagbrowserpluginprotobuf.TopicInfo
-	// Part 0 will be umh, and part 1 will be v1, so we can safely ignore them
-	unsInfo.Level0 = parts[2]
-	if len(unsInfo.Level0) == 0 {
-		return nil, errors.New("topic contains empty parts")
+	// Find datacontract position and process levels
+	datacontractIndex, err := findDatacontractIndex(parts)
+	if err != nil {
+		return nil, err
 	}
-	var hasDatacontract bool
-	var eventGroup []string
+
+	// Process levels before datacontract
+	if err := processLevels(parts[3:datacontractIndex], unsInfo); err != nil {
+		return nil, err
+	}
+
+	// Set datacontract
+	unsInfo.Datacontract = parts[datacontractIndex]
+
+	// Process event group (virtual path and event tag)
+	if err := processEventGroup(parts[datacontractIndex+1:], unsInfo); err != nil {
+		return nil, err
+	}
+
+	return unsInfo, nil
+}
+
+// validateTopicFormat checks if the topic follows the basic UNS format requirements
+func validateTopicFormat(topic string) error {
+	if len(topic) == 0 {
+		return errors.New("topic cannot be empty")
+	}
+	if !strings.HasPrefix(topic, "umh.v1.") {
+		return errors.New("topic must start with umh.v1")
+	}
+	return nil
+}
+
+// findDatacontractIndex locates the datacontract field in the topic parts
+func findDatacontractIndex(parts []string) (int, error) {
 	for i := 3; i < len(parts); i++ {
 		if len(parts[i]) == 0 {
-			return nil, errors.New("topic contains empty parts")
+			return 0, errors.New("topic contains empty parts")
 		}
-		// We now need to either assign to the next fields or to datacontract based on the content.
-		if parts[i][0] == '_' {
-			// We have the datacontract field
-			hasDatacontract = true
-			unsInfo.Datacontract = parts[i]
-			continue
+		if strings.HasPrefix(parts[i], "_") {
+			return i, nil
+		}
+	}
+	return 0, errors.New("topic must contain datacontract")
+}
+
+// processLevels assigns level values to the TopicInfo struct
+func processLevels(levelParts []string, info *tagbrowserpluginprotobuf.TopicInfo) error {
+	for i, part := range levelParts {
+		if len(part) == 0 {
+			return errors.New("topic contains empty parts")
 		}
 
-		// If we already have a datacontract, group everything into an "eventGroup"
-		if hasDatacontract {
-			eventGroup = append(eventGroup, parts[i])
-			continue
-		}
-
-		// This is neither a datacontract, nor are we behind the datacontract field, so we can just match based on i
 		switch i {
+		case 0:
+			info.Level1 = wrapperspb.String(part)
+		case 1:
+			info.Level2 = wrapperspb.String(part)
+		case 2:
+			info.Level3 = wrapperspb.String(part)
 		case 3:
-			unsInfo.Level1 = wrapperspb.String(parts[i])
+			info.Level4 = wrapperspb.String(part)
 		case 4:
-			unsInfo.Level2 = wrapperspb.String(parts[i])
-		case 5:
-			unsInfo.Level3 = wrapperspb.String(parts[i])
-		case 6:
-			unsInfo.Level4 = wrapperspb.String(parts[i])
-		case 7:
-			unsInfo.Level5 = wrapperspb.String(parts[i])
+			info.Level5 = wrapperspb.String(part)
+		default:
+			return errors.New("too many level parts in topic")
 		}
 	}
-	if !hasDatacontract {
-		return nil, errors.New("topic does not container datacontract")
+	return nil
+}
+
+// processEventGroup handles the virtual path and event tag parts of the topic
+func processEventGroup(eventParts []string, info *tagbrowserpluginprotobuf.TopicInfo) error {
+	if len(eventParts) == 0 {
+		return nil
 	}
 
-	if len(eventGroup) > 0 {
-
-		if len(eventGroup) > 1 {
-			// If there are more than 1 even inside the eventGroup, collect all except the last into VirtualPath
-			unsInfo.VirtualPath = wrapperspb.String(strings.Join(eventGroup[:len(eventGroup)-1], "."))
-		}
-
-		// Set the last part as the eventTag
-		unsInfo.EventTag = wrapperspb.String(eventGroup[len(eventGroup)-1])
+	if len(eventParts) > 1 {
+		// All parts except the last one form the virtual path
+		info.VirtualPath = wrapperspb.String(strings.Join(eventParts[:len(eventParts)-1], "."))
 	}
-	return &unsInfo, nil
+
+	// Last part is always the event tag
+	info.EventTag = wrapperspb.String(eventParts[len(eventParts)-1])
+	return nil
 }
