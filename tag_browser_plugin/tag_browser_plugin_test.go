@@ -221,6 +221,47 @@ var _ = Describe("TagBrowserProcessor", func() {
 			outputMsg2 := result2[0][0]
 			Expect(outputMsg2).NotTo(BeNil())
 
+			// Get the bytes and decode them
+			outBytes2, err := outputMsg2.AsBytes()
+			Expect(err).To(BeNil())
+			Expect(outBytes2).NotTo(BeNil())
+
+			// Let's only focus on the 2nd lin (0a72)
+			dataLine := strings.Split(string(outBytes2), "\n")[1]
+			// Expect it to begin with 0a72
+			Expect(dataLine[:4]).To(Equal("0a72"))
+
+			// Hex decode it
+			hexDecoded, err := hex.DecodeString(dataLine)
+			Expect(err).To(BeNil())
+			Expect(hexDecoded).NotTo(BeNil())
+
+			// Decode the protobuf message
+			decoded2, err := ProtobufBytesToBundleWithCompression(hexDecoded)
+			Expect(err).To(BeNil())
+			Expect(decoded2).NotTo(BeNil())
+
+			// Verify the decoded bundle
+			Expect(decoded2.Events.Entries).To(HaveLen(1))
+			Expect(decoded2.UnsMap.Entries).To(HaveLen(1))
+
+			// Verify the topic info
+			topicInfo2 := decoded2.UnsMap.Entries["1637bdbe36d5a9bb"]
+			Expect(topicInfo2).NotTo(BeNil())
+			Expect(topicInfo2.Level0).To(Equal("test-topic"))
+			Expect(topicInfo2.Datacontract).To(Equal("_historian"))
+			Expect(topicInfo2.EventTag.GetValue()).To(Equal("some_value"))
+			Expect(topicInfo2.Metadata).To(Not(BeEmpty()))
+			Expect(topicInfo2.Metadata).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
+
+			// Verify the event
+			event := decoded2.Events.Entries[0]
+			Expect(event.TimestampMs.GetValue()).To(Equal(int64(1647753600000)))
+			Expect(event.Value.TypeUrl).To(Equal("golang/int"))
+			Expect(event.Value.Value).To(Equal([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}))
+			Expect(event.RawKafkaMsg).NotTo(BeNil())
+			Expect(event.RawKafkaMsg.Headers).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
+
 			// Dump to disk for testing
 			/*
 				bytes, err := outputMsg.AsBytes()
