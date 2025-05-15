@@ -27,9 +27,9 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
-// extractTopicFromMessage looks up the "topic" meta-field from the benthos message.
+// extractTopicFromMessage looks up the "umh_topic" meta-field from the benthos message.
 func extractTopicFromMessage(message *service.Message) (string, error) {
-	// The uns input plugin will set the "topic" meta-field
+	// The uns input plugin will set the "umh_topic" meta-field
 	topic, found := message.MetaGet("umh_topic")
 	if found {
 		return topic, nil

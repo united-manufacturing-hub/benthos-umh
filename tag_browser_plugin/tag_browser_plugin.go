@@ -18,7 +18,7 @@ import (
 	"context"
 	"errors"
 	lru "github.com/hashicorp/golang-lru"
-	"reflect"
+	"maps"
 	"sync"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -29,11 +29,11 @@ type TagBrowserProcessor struct {
 	// This cache keeps the number of topics
 	// transmitted to the umh-core small by trying to not re-send already reported topics.
 	// Since it is not thread safe, we need a mutex to protect it.
-	topicDeduplicationCache      *lru.Cache
-	topicDeduplicationCacheMutex *sync.Mutex
-	logger                       *service.Logger
-	messagesProcessed            *service.MetricCounter
-	messagesFailed               *service.MetricCounter
+	topicMetadataCache      *lru.Cache
+	topicMetadataCacheMutex *sync.Mutex
+	logger                  *service.Logger
+	messagesProcessed       *service.MetricCounter
+	messagesFailed          *service.MetricCounter
 }
 
 func (t *TagBrowserProcessor) Process(ctx context.Context, message *service.Message) (service.MessageBatch, error) {
@@ -101,25 +101,30 @@ func (t *TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Mess
 		}
 
 		// We now have the merged headers, we can check if we have a change compared to the cache
-		t.topicDeduplicationCacheMutex.Lock()
+		t.topicMetadataCacheMutex.Lock()
 		shallReport := true
-		stored, ok := t.topicDeduplicationCache.Get(unsTreeId)
+		stored, ok := t.topicMetadataCache.Get(unsTreeId)
 		if ok {
 			// A cached entry is present
 			cachedHeaders := stored.(map[string]string)
-			if reflect.DeepEqual(cachedHeaders, mergedHeaders) {
+			if maps.Equal(cachedHeaders, mergedHeaders) {
 				// Cached headers are equal to current, no need to report
 				shallReport = false
 			}
 		}
 		if shallReport {
 			// 1. Update cache
-			t.topicDeduplicationCache.Add(unsTreeId, mergedHeaders)
+			t.topicMetadataCache.Add(unsTreeId, mergedHeaders)
 			// 2. Report topic
 			t := topic[0]
 			t.Metadata = mergedHeaders
 			unsBundle.UnsMap.Entries[unsTreeId] = t
 		}
+		t.topicMetadataCacheMutex.Unlock()
+	}
+
+	if len(unsBundle.Events.Entries) == 0 && len(unsBundle.UnsMap.Entries) == 0 {
+		return nil, nil
 	}
 
 	// Bundle data from all messages into a single one containing the protobuf
@@ -129,7 +134,7 @@ func (t *TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Mess
 	}
 
 	message := service.NewMessage(nil)
-	message.SetBytes(protoBytes)
+	message.SetBytes(bytesToMessage(protoBytes))
 	var resultBatch service.MessageBatch
 	resultBatch = append(resultBatch, message)
 
@@ -138,9 +143,9 @@ func (t *TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Mess
 
 func (t *TagBrowserProcessor) Close(_ context.Context) error {
 	// Wipe cache
-	t.topicDeduplicationCacheMutex.Lock()
-	t.topicDeduplicationCache.Purge()
-	t.topicDeduplicationCacheMutex.Unlock()
+	t.topicMetadataCacheMutex.Lock()
+	t.topicMetadataCache.Purge()
+	t.topicMetadataCacheMutex.Unlock()
 	return nil
 }
 
@@ -150,11 +155,11 @@ func NewTagBrowserProcessor(logger *service.Logger, metrics *service.Metrics, lr
 	// - Store the latest version of meta-information about that topic
 	l, _ := lru.New(lruSize) // Can only error if size is negative
 	return &TagBrowserProcessor{
-		topicDeduplicationCache:      l,
-		logger:                       logger,
-		messagesProcessed:            metrics.NewCounter("messages_processed"),
-		messagesFailed:               metrics.NewCounter("messages_failed"),
-		topicDeduplicationCacheMutex: &sync.Mutex{},
+		topicMetadataCache:      l,
+		logger:                  logger,
+		messagesProcessed:       metrics.NewCounter("messages_processed"),
+		messagesFailed:          metrics.NewCounter("messages_failed"),
+		topicMetadataCacheMutex: &sync.Mutex{},
 	}
 }
 

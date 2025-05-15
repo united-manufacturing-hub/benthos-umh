@@ -56,16 +56,16 @@ var _ = Describe("Event Processing", func() {
 		Context("with time series data", func() {
 			It("processes valid time series data correctly", func() {
 				msg := service.NewMessage(nil)
+				name := "temperature"
 				msg.SetStructured(map[string]interface{}{
 					"timestamp_ms": int64(1234567890),
-					"temperature":  float64(25.5),
+					name:           float64(25.5),
 				})
 
-				event, valueName, err := messageToEvent(msg)
+				event, err := messageToEvent(msg, wrapperspb.String(name))
 				Expect(err).To(BeNil())
 				Expect(event.IsTimeseries).To(BeTrue())
 				Expect(event.TimestampMs).To(Equal(wrapperspb.Int64(1234567890)))
-				Expect(*valueName).To(Equal("temperature"))
 				Expect(event.Value.TypeUrl).To(HavePrefix("golang/float64"))
 			})
 
@@ -75,11 +75,10 @@ var _ = Describe("Event Processing", func() {
 					"temperature": float64(25.5),
 				})
 
-				event, valueName, err := messageToEvent(msg)
+				event, err := messageToEvent(msg, nil)
 				Expect(err).To(BeNil())
 				Expect(event.IsTimeseries).To(BeFalse())
 				Expect(event.TimestampMs).To(BeNil())
-				Expect(valueName).To(BeNil())
 			})
 
 			It("rejects time series data with too many fields", func() {
@@ -90,20 +89,20 @@ var _ = Describe("Event Processing", func() {
 					"humidity":     float64(60.0),
 				})
 
-				event, valueName, err := messageToEvent(msg)
+				event, err := messageToEvent(msg, nil)
 				Expect(err).To(BeNil())
 				Expect(event.IsTimeseries).To(BeFalse())
 				Expect(event.TimestampMs).To(BeNil())
-				Expect(valueName).To(BeNil())
 			})
 
-			It("handles different value types in time series data", func() {
+			It("should handle different value types", func() {
 				testCases := []struct {
 					value      interface{}
 					typePrefix string
 				}{
-					{int64(42), "golang/int64"},
-					{float64(3.14), "golang/float64"},
+					{float64(123.45), "golang/float64"},
+					{int64(123), "golang/int64"},
+					{uint64(123), "golang/uint64"},
 					{true, "golang/bool"},
 					{"test", "golang/string"},
 				}
@@ -111,15 +110,14 @@ var _ = Describe("Event Processing", func() {
 				for _, tc := range testCases {
 					msg := service.NewMessage(nil)
 					msg.SetStructured(map[string]interface{}{
-						"timestamp_ms": int64(1234567890),
+						"timestamp_ms": 1234567890,
 						"value":        tc.value,
 					})
 
-					event, valueName, err := messageToEvent(msg)
+					event, err := messageToEvent(msg, wrapperspb.String("value"))
 					Expect(err).To(BeNil())
 					Expect(event.IsTimeseries).To(BeTrue())
 					Expect(event.TimestampMs).To(Equal(wrapperspb.Int64(1234567890)))
-					Expect(*valueName).To(Equal("value"))
 					Expect(event.Value.TypeUrl).To(HavePrefix(tc.typePrefix))
 				}
 			})
@@ -130,12 +128,11 @@ var _ = Describe("Event Processing", func() {
 				rawData := []byte("raw data")
 				msg := service.NewMessage(rawData)
 
-				event, valueName, err := messageToEvent(msg)
+				event, err := messageToEvent(msg, nil)
 				Expect(err).To(BeNil())
 				Expect(event.IsTimeseries).To(BeFalse())
 				Expect(event.TimestampMs).To(BeNil())
-				Expect(valueName).To(BeNil())
-				Expect(event.Value.TypeUrl).To(Equal("golang/bytes"))
+				Expect(event.Value.TypeUrl).To(Equal("golang/[]byte"))
 				Expect(event.Value.Value).To(Equal(rawData))
 			})
 
@@ -143,11 +140,10 @@ var _ = Describe("Event Processing", func() {
 				msg := service.NewMessage(nil)
 				msg.SetStructured([]interface{}{"not", "a", "map"})
 
-				event, valueName, err := messageToEvent(msg)
+				event, err := messageToEvent(msg, nil)
 				Expect(err).To(BeNil())
 				Expect(event.IsTimeseries).To(BeFalse())
 				Expect(event.TimestampMs).To(BeNil())
-				Expect(valueName).To(BeNil())
 			})
 		})
 	})
@@ -159,11 +155,10 @@ var _ = Describe("Event Processing", func() {
 				"pressure":     float64(1013.25),
 			}
 
-			event, valueName, err := processTimeSeriesData(data, nil)
+			event, err := processTimeSeriesData(data, wrapperspb.String("pressure"))
 			Expect(err).To(BeNil())
 			Expect(event.IsTimeseries).To(BeTrue())
 			Expect(event.TimestampMs).To(Equal(wrapperspb.Int64(1234567890)))
-			Expect(*valueName).To(Equal("pressure"))
 			Expect(event.Value.TypeUrl).To(HavePrefix("golang/float64"))
 		})
 
@@ -177,10 +172,9 @@ var _ = Describe("Event Processing", func() {
 				"invalid":      Unconvertible{make(chan int)},
 			}
 
-			event, valueName, err := processTimeSeriesData(data, nil)
+			event, err := processTimeSeriesData(data, nil)
 			Expect(err).NotTo(BeNil())
 			Expect(event).To(BeNil())
-			Expect(valueName).To(BeNil())
 		})
 	})
 
@@ -189,12 +183,11 @@ var _ = Describe("Event Processing", func() {
 			rawData := []byte("raw data")
 			msg := service.NewMessage(rawData)
 
-			event, valueName, err := processRelationalData(msg)
+			event, err := processRelationalData(msg)
 			Expect(err).To(BeNil())
 			Expect(event.IsTimeseries).To(BeFalse())
 			Expect(event.TimestampMs).To(BeNil())
-			Expect(valueName).To(BeNil())
-			Expect(event.Value.TypeUrl).To(Equal("golang/bytes"))
+			Expect(event.Value.TypeUrl).To(Equal("golang/[]byte"))
 			Expect(event.Value.Value).To(Equal(rawData))
 		})
 	})

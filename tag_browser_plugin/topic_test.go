@@ -26,7 +26,7 @@ var _ = Describe("Uns", func() {
 	Describe("extractTopicFromMessage", func() {
 		It("should extract topic from message meta field", func() {
 			msg := service.NewMessage([]byte("test"))
-			msg.MetaSet("topic", "test.topic")
+			msg.MetaSet("umh_topic", "test.topic")
 
 			topic, err := extractTopicFromMessage(msg)
 			Expect(err).To(BeNil())
@@ -48,14 +48,15 @@ var _ = Describe("Uns", func() {
 
 			unsInfo, err := topicToUNSInfo(topic)
 			Expect(err).To(BeNil())
-			Expect(unsInfo.Enterprise).To(Equal("enterprise"))
-			Expect(unsInfo.Site.GetValue()).To(Equal("site"))
-			Expect(unsInfo.Area.GetValue()).To(Equal("area"))
-			Expect(unsInfo.Line.GetValue()).To(Equal("line"))
-			Expect(unsInfo.WorkCell.GetValue()).To(Equal("workcell"))
-			Expect(unsInfo.OriginId.GetValue()).To(Equal("originid"))
-			Expect(unsInfo.Schema).To(Equal("_schema"))
-			Expect(unsInfo.VirtualPath.GetValue()).To(Equal("event.group"))
+			Expect(unsInfo.Level0).To(Equal("enterprise"))
+			Expect(unsInfo.Level1.GetValue()).To(Equal("site"))
+			Expect(unsInfo.Level2.GetValue()).To(Equal("area"))
+			Expect(unsInfo.Level3.GetValue()).To(Equal("line"))
+			Expect(unsInfo.Level4.GetValue()).To(Equal("workcell"))
+			Expect(unsInfo.Level5.GetValue()).To(Equal("originid"))
+			Expect(unsInfo.Datacontract).To(Equal("_schema"))
+			Expect(unsInfo.VirtualPath.GetValue()).To(Equal("event"))
+			Expect(unsInfo.EventTag.GetValue()).To(Equal("group"))
 		})
 
 		It("should parse valid UNS topic with minimal fields", func() {
@@ -63,8 +64,8 @@ var _ = Describe("Uns", func() {
 
 			unsInfo, err := topicToUNSInfo(topic)
 			Expect(err).To(BeNil())
-			Expect(unsInfo.Enterprise).To(Equal("enterprise"))
-			Expect(unsInfo.Schema).To(Equal("_schema"))
+			Expect(unsInfo.Level0).To(Equal("enterprise"))
+			Expect(unsInfo.Datacontract).To(Equal("_schema"))
 			Expect(unsInfo.VirtualPath.GetValue()).To(BeEmpty())
 		})
 
@@ -104,134 +105,138 @@ var _ = Describe("Uns", func() {
 
 					Expect(err).To(BeNil())
 					Expect(unsInfo).ToNot(BeNil())
-					Expect(unsInfo.Enterprise).To(Equal(tc.expectedInfo.Enterprise))
-					Expect(unsInfo.Schema).To(Equal(tc.expectedInfo.Schema))
+					Expect(unsInfo.Level0).To(Equal(tc.expectedInfo.Level0))
+					Expect(unsInfo.Datacontract).To(Equal(tc.expectedInfo.Datacontract))
 
 					// Check optional fields
-					if tc.expectedInfo.Site != nil {
-						Expect(unsInfo.Site.GetValue()).To(Equal(tc.expectedInfo.Site.GetValue()))
+					if tc.expectedInfo.Level1 != nil {
+						Expect(unsInfo.Level1.GetValue()).To(Equal(tc.expectedInfo.Level1.GetValue()))
 					} else {
-						Expect(unsInfo.Site).To(BeNil())
+						Expect(unsInfo.Level1).To(BeNil())
 					}
 
-					if tc.expectedInfo.Area != nil {
-						Expect(unsInfo.Area.GetValue()).To(Equal(tc.expectedInfo.Area.GetValue()))
+					if tc.expectedInfo.Level2 != nil {
+						Expect(unsInfo.Level2.GetValue()).To(Equal(tc.expectedInfo.Level2.GetValue()))
 					} else {
-						Expect(unsInfo.Area).To(BeNil())
+						Expect(unsInfo.Level2).To(BeNil())
 					}
 
-					if tc.expectedInfo.Line != nil {
-						Expect(unsInfo.Line.GetValue()).To(Equal(tc.expectedInfo.Line.GetValue()))
+					if tc.expectedInfo.Level3 != nil {
+						Expect(unsInfo.Level3.GetValue()).To(Equal(tc.expectedInfo.Level3.GetValue()))
 					} else {
-						Expect(unsInfo.Line).To(BeNil())
+						Expect(unsInfo.Level3).To(BeNil())
 					}
 
-					if tc.expectedInfo.WorkCell != nil {
-						Expect(unsInfo.WorkCell.GetValue()).To(Equal(tc.expectedInfo.WorkCell.GetValue()))
+					if tc.expectedInfo.Level4 != nil {
+						Expect(unsInfo.Level4.GetValue()).To(Equal(tc.expectedInfo.Level4.GetValue()))
 					} else {
-						Expect(unsInfo.WorkCell).To(BeNil())
+						Expect(unsInfo.Level4).To(BeNil())
 					}
 
-					if tc.expectedInfo.OriginId != nil {
-						Expect(unsInfo.OriginId.GetValue()).To(Equal(tc.expectedInfo.OriginId.GetValue()))
+					if tc.expectedInfo.Level5 != nil {
+						Expect(unsInfo.Level5.GetValue()).To(Equal(tc.expectedInfo.Level5.GetValue()))
 					} else {
-						Expect(unsInfo.OriginId).To(BeNil())
+						Expect(unsInfo.Level5).To(BeNil())
 					}
 
 					if tc.expectedInfo.VirtualPath != nil {
 						Expect(unsInfo.VirtualPath.GetValue()).To(Equal(tc.expectedInfo.VirtualPath.GetValue()))
+						Expect(unsInfo.EventTag.GetValue()).To(Equal(tc.expectedInfo.EventTag.GetValue()))
 					} else {
 						Expect(unsInfo.VirtualPath).To(BeNil())
+						Expect(unsInfo.EventTag).To(BeNil())
 					}
 				},
 				Entry("only enterprise and schema", testCase{
 					topic: "umh.v1.enterprise._schema",
 					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
-						Enterprise: "enterprise",
-						Schema:     "_schema",
+						Level0:       "enterprise",
+						Datacontract: "_schema",
 					},
 					shouldHaveError: false,
 				}),
 				Entry("enterprise, site, and schema", testCase{
 					topic: "umh.v1.enterprise.site._schema",
 					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
-						Enterprise: "enterprise",
-						Site:       wrapperspb.String("site"),
-						Schema:     "_schema",
+						Level0:       "enterprise",
+						Level1:       wrapperspb.String("site"),
+						Datacontract: "_schema",
 					},
 					shouldHaveError: false,
 				}),
 				Entry("enterprise, site, area, and schema", testCase{
 					topic: "umh.v1.enterprise.site.area._schema",
 					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
-						Enterprise: "enterprise",
-						Site:       wrapperspb.String("site"),
-						Area:       wrapperspb.String("area"),
-						Schema:     "_schema",
+						Level0:       "enterprise",
+						Level1:       wrapperspb.String("site"),
+						Level2:       wrapperspb.String("area"),
+						Datacontract: "_schema",
 					},
 					shouldHaveError: false,
 				}),
 				Entry("enterprise, site, area, line, and schema", testCase{
 					topic: "umh.v1.enterprise.site.area.line._schema",
 					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
-						Enterprise: "enterprise",
-						Site:       wrapperspb.String("site"),
-						Area:       wrapperspb.String("area"),
-						Line:       wrapperspb.String("line"),
-						Schema:     "_schema",
+						Level0:       "enterprise",
+						Level1:       wrapperspb.String("site"),
+						Level2:       wrapperspb.String("area"),
+						Level3:       wrapperspb.String("line"),
+						Datacontract: "_schema",
 					},
 					shouldHaveError: false,
 				}),
 				Entry("enterprise, site, area, line, workcell, and schema", testCase{
 					topic: "umh.v1.enterprise.site.area.line.workcell._schema",
 					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
-						Enterprise: "enterprise",
-						Site:       wrapperspb.String("site"),
-						Area:       wrapperspb.String("area"),
-						Line:       wrapperspb.String("line"),
-						WorkCell:   wrapperspb.String("workcell"),
-						Schema:     "_schema",
+						Level0:       "enterprise",
+						Level1:       wrapperspb.String("site"),
+						Level2:       wrapperspb.String("area"),
+						Level3:       wrapperspb.String("line"),
+						Level4:       wrapperspb.String("workcell"),
+						Datacontract: "_schema",
 					},
 					shouldHaveError: false,
 				}),
 				Entry("enterprise, site, area, line, workcell, originid, and schema", testCase{
 					topic: "umh.v1.enterprise.site.area.line.workcell.originid._schema",
 					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
-						Enterprise: "enterprise",
-						Site:       wrapperspb.String("site"),
-						Area:       wrapperspb.String("area"),
-						Line:       wrapperspb.String("line"),
-						WorkCell:   wrapperspb.String("workcell"),
-						OriginId:   wrapperspb.String("originid"),
-						Schema:     "_schema",
+						Level0:       "enterprise",
+						Level1:       wrapperspb.String("site"),
+						Level2:       wrapperspb.String("area"),
+						Level3:       wrapperspb.String("line"),
+						Level4:       wrapperspb.String("workcell"),
+						Level5:       wrapperspb.String("originid"),
+						Datacontract: "_schema",
 					},
 					shouldHaveError: false,
 				}),
 				Entry("enterprise, site, area, line, workcell, originid, schema, and event group", testCase{
 					topic: "umh.v1.enterprise.site.area.line.workcell.originid._schema.event.group",
 					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
-						Enterprise:  "enterprise",
-						Site:        wrapperspb.String("site"),
-						Area:        wrapperspb.String("area"),
-						Line:        wrapperspb.String("line"),
-						WorkCell:    wrapperspb.String("workcell"),
-						OriginId:    wrapperspb.String("originid"),
-						Schema:      "_schema",
-						VirtualPath: wrapperspb.String("event.group"),
+						Level0:       "enterprise",
+						Level1:       wrapperspb.String("site"),
+						Level2:       wrapperspb.String("area"),
+						Level3:       wrapperspb.String("line"),
+						Level4:       wrapperspb.String("workcell"),
+						Level5:       wrapperspb.String("originid"),
+						Datacontract: "_schema",
+						VirtualPath:  wrapperspb.String("event"),
+						EventTag:     wrapperspb.String("group"),
 					},
 					shouldHaveError: false,
 				}),
 				Entry("enterprise, site, area, line, workcell, originid, schema, and complex event group", testCase{
 					topic: "umh.v1.enterprise.site.area.line.workcell.originid._schema.event.group.subgroup",
 					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
-						Enterprise:  "enterprise",
-						Site:        wrapperspb.String("site"),
-						Area:        wrapperspb.String("area"),
-						Line:        wrapperspb.String("line"),
-						WorkCell:    wrapperspb.String("workcell"),
-						OriginId:    wrapperspb.String("originid"),
-						Schema:      "_schema",
-						VirtualPath: wrapperspb.String("event.group.subgroup"),
+						Level0:       "enterprise",
+						Level1:       wrapperspb.String("site"),
+						Level2:       wrapperspb.String("area"),
+						Level3:       wrapperspb.String("line"),
+						Level4:       wrapperspb.String("workcell"),
+						Level5:       wrapperspb.String("originid"),
+						Datacontract: "_schema",
+						VirtualPath:  wrapperspb.String("event.group"),
+						EventTag:     wrapperspb.String("subgroup"),
 					},
 					shouldHaveError: false,
 				}),

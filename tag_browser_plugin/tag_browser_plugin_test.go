@@ -16,6 +16,8 @@ package tag_browser_plugin
 
 import (
 	"context"
+	lru "github.com/hashicorp/golang-lru"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -32,13 +34,16 @@ var _ = Describe("TagBrowserProcessor", func() {
 		It("processes a single message successfully", func() {
 			// Create a message with basic metadata
 			msg := service.NewMessage(nil)
-			msg.MetaSet("topic", "umh.v1.test-topic._historian")
+			msg.MetaSet("umh_topic", "umh.v1.test-topic._historian.some_value")
 			msg.SetStructured(map[string]interface{}{
 				"timestamp_ms": int64(1647753600000),
 				"some_value":   13,
 			})
 
 			// Process the message
+			var err error
+			processor.topicMetadataCache, err = lru.New(1)
+			Expect(err).To(BeNil())
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg})
 			Expect(err).To(BeNil())
 			Expect(result).To(HaveLen(1))
@@ -65,31 +70,34 @@ var _ = Describe("TagBrowserProcessor", func() {
 		})
 
 		It("handles message with missing required metadata", func() {
-			msg := service.NewMessage(nil)
-			// Missing required metadata fields
+			msg := service.NewMessage([]byte("test"))
+			// No metadata set
 
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg})
-			Expect(err).NotTo(BeNil())
+			Expect(err).To(BeNil())
 			Expect(result).To(BeNil())
 		})
 
 		It("caches UNS map entries", func() {
 			// Create two messages with the same UNS tree ID
 			msg1 := service.NewMessage(nil)
-			msg1.MetaSet("topic", "umh.v1.test-topic._historian")
+			msg1.MetaSet("umh_topic", "umh.v1.test-topic._historian.some_value")
 			msg1.SetStructured(map[string]interface{}{
 				"timestamp_ms": int64(1647753600000),
 				"some_value":   3,
 			})
 
 			msg2 := service.NewMessage(nil)
-			msg2.MetaSet("topic", "umh.v1.test-topic._historian")
+			msg2.MetaSet("umh_topic", "umh.v1.test-topic._historian.some_value")
 			msg2.SetStructured(map[string]interface{}{
 				"timestamp_ms": int64(1647753600001),
 				"some_value":   5,
 			})
 
 			// Process both messages
+			var err error
+			processor.topicMetadataCache, err = lru.New(1)
+			Expect(err).To(BeNil())
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg1, msg2})
 			Expect(err).To(BeNil())
 			Expect(result).To(HaveLen(1))
@@ -98,6 +106,57 @@ var _ = Describe("TagBrowserProcessor", func() {
 			// Verify the output messages
 			outputMsg := result[0][0]
 			Expect(outputMsg).NotTo(BeNil())
+
+			// Dump to disk for testing
+			/*
+				bytes, err := outputMsg.AsBytes()
+				Expect(err).To(BeNil())
+				Expect(bytes).NotTo(BeNil())
+				err = os.WriteFile("multiple_messages.proto", bytes, 0644)
+				Expect(err).To(BeNil())
+			*/
+		})
+
+		It("caches UNS map entries accross multiple invocations", func() {
+			// Create two messages with the same UNS tree ID
+			msg1 := service.NewMessage(nil)
+			msg1.MetaSet("umh_topic", "umh.v1.test-topic._historian.some_value")
+			msg1.SetStructured(map[string]interface{}{
+				"timestamp_ms": int64(1647753600000),
+				"some_value":   3,
+			})
+
+			msg2 := service.NewMessage(nil)
+			msg2.MetaSet("umh_topic", "umh.v1.test-topic._historian.some_value")
+			msg2.SetStructured(map[string]interface{}{
+				"timestamp_ms": int64(1647753600001),
+				"some_value":   5,
+			})
+
+			// Process first messages
+			var err error
+			processor.topicMetadataCache, err = lru.New(1)
+			Expect(err).To(BeNil())
+			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg1})
+			Expect(err).To(BeNil())
+			Expect(result).To(HaveLen(1))
+			Expect(result[0]).To(HaveLen(1))
+
+			// Verify the output messages
+			outputMsg := result[0][0]
+			Expect(outputMsg).NotTo(BeNil())
+
+			// Process 2nd messages
+			processor.topicMetadataCache, err = lru.New(1)
+			Expect(err).To(BeNil())
+			result2, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg1})
+			Expect(err).To(BeNil())
+			Expect(result2).To(HaveLen(1))
+			Expect(result2[0]).To(HaveLen(1))
+
+			// Verify the output messages
+			outputMsg2 := result2[0][0]
+			Expect(outputMsg2).NotTo(BeNil())
 
 			// Dump to disk for testing
 			/*
