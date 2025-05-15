@@ -24,8 +24,9 @@ import (
 	"time"
 )
 
-// bytesToMessage wraps the byte string in start & end blocks and includes a timestamp
-func bytesToMessage(protobytes []byte) []byte {
+// bytesToMessageWithStartEndBlocksAndTimestamp wraps the byte string in start & end blocks and includes a timestamp
+// This allows easy parsing on the umh-core side.
+func bytesToMessageWithStartEndBlocksAndTimestamp(protobytes []byte) []byte {
 	hexBytes := hex.EncodeToString(protobytes)
 	timestampNano := time.Now().UTC().Nanosecond()
 	return []byte("STARTSTARTSTART\n" + hexBytes + "\nENDDATAENDDATENDDATA\n" + fmt.Sprintf("%d", timestampNano) + "\nENDENDENDEND")

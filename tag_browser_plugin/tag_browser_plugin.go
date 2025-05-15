@@ -228,7 +228,8 @@ func (t *TagBrowserProcessor) updateTopicCacheAndBundle(
 	unsBundle *tagbrowserpluginprotobuf.UnsBundle,
 ) {
 	t.topicMetadataCache.Add(unsTreeId, mergedHeaders)
-	topic.Metadata = mergedHeaders
+	clone := maps.Clone(mergedHeaders)
+	topic.Metadata = clone
 	unsBundle.UnsMap.Entries[unsTreeId] = topic
 }
 
@@ -252,7 +253,7 @@ func (t *TagBrowserProcessor) createFinalMessage(unsBundle *tagbrowserpluginprot
 	}
 
 	message := service.NewMessage(nil)
-	message.SetBytes(bytesToMessage(protoBytes))
+	message.SetBytes(bytesToMessageWithStartEndBlocksAndTimestamp(protoBytes))
 
 	return []service.MessageBatch{{message}}, nil
 }

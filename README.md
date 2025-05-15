@@ -2139,12 +2139,39 @@ The downsides of that are:
 
 The new `_historianv2` datacontract only allows a single key-value pair to be present in a time-series message.
 Such a message is called a "tag".
-Therefore the new time-series tag are very simple, consisting only of a timestamp and the key-value pair.
+Therefore, the new time-series tag is straightforward, consisting only of a timestamp and the key-value pair.
 
 We also now enforce that the tagName (the very last part of the topic), is the same as the key of the message.
 For payloads not compliant with this schema, we have introduced "relational" data, which can by any format.
 
 These improvements help us build the foundation for fast, easy to use stream processors, and reduce the amount of data validation per processor.
+
+#### 6. Example in/output
+
+Inserting the following messages into `umh.v1.test-topic._historian.some_value`
+
+```json
+{
+  "timestamp_ms": 1647753600000,
+  "some_value": 3
+}
+```
+
+```json
+{
+  "timestamp_ms": 1647753600001,
+  "some_value": 5
+}
+```
+
+results in the following message:
+```
+STARTSTARTSTART
+0a720a700a1031363337626462653336643561396262125c0a0a746573742d746f7069633a0a5f686973746f7269616e4a0c0a0a736f6d655f76616c756552340a09756d685f746f7069631227756d682e76312e746573742d746f7069632e5f686973746f7269616e2e736f6d655f76616c7565129f010a9c010a103136333762646265333664356139626212160a0a676f6c616e672f696e74120803000000000000001a070880b892aefa2f20012a650a340a09756d685f746f7069631227756d682e76312e746573742d746f7069632e5f686973746f7269616e2e736f6d655f76616c7565122d7b22736f6d655f76616c7565223a332c2274696d657374616d705f6d73223a313634373735333630303030307d
+ENDDATAENDDATENDDATA
+894031000
+ENDENDENDEND
+```
 
 </details>
 
