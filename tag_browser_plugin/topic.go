@@ -34,7 +34,7 @@ func extractTopicFromMessage(message *service.Message) (string, error) {
 	if found {
 		return topic, nil
 	}
-	return "", errors.New("unable to extract topic from message. No topic meta-field found")
+	return "", errors.New("unable to extract topic from message. No umh_topic meta-field found")
 }
 
 // topicToUNSInfo will extract the levels and datacontract from a topic.
@@ -57,6 +57,9 @@ func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.TopicInfo, error) {
 	var hasDatacontract bool
 	var eventGroup []string
 	for i := 3; i < len(parts); i++ {
+		if len(parts[i]) == 0 {
+			return nil, errors.New("topic contains empty parts")
+		}
 		// We now need to either assign to the next fields or to datacontract based on the content.
 		if parts[i][0] == '_' {
 			// We have the datacontract field
