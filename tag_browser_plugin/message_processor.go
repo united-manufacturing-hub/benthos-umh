@@ -24,7 +24,6 @@ import (
 	"github.com/cespare/xxhash/v2"
 	"github.com/redpanda-data/benthos/v4/public/service"
 	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
-	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 // MessageToUNSInfoAndEvent first extracts the topic from the message, then the event data and finally the UNS info.
@@ -35,11 +34,6 @@ func MessageToUNSInfoAndEvent(message *service.Message) (*tagbrowserpluginprotob
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	// Extract Event Data
-	event, eventTag, err := messageToEvent(message)
-	if err != nil {
-		return nil, nil, nil, err
-	}
 
 	// Extract UNS Data
 	unsInfo, err := topicToUNSInfo(topic)
@@ -47,9 +41,10 @@ func MessageToUNSInfoAndEvent(message *service.Message) (*tagbrowserpluginprotob
 		return nil, nil, nil, err
 	}
 
-	// If the message is a time-series entry, we can enrich the unsInfo
-	if event.IsTimeseries {
-		//unsInfo.EventTag = wrapperspb.String(*eventTag)
+	// Extract Event Data
+	event, err := messageToEvent(message, unsInfo.EventTag)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	// We now have everything to calculate the uns_tree_id

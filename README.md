@@ -2082,12 +2082,16 @@ Tag Browser
 #### 1. What does this plugin do?
 
 1. For each incoming message, this plugin extracts
-   - There topic information (level0, level1, ..., datacontract)
+   - Their topic information (level0, level1, ..., datacontract)
    - Information about the payload (is it a time-series payload)
 2. If the payload is a time-series payload, the information will be further enriched by using the values' key as tagName
 3. Once every message in the incoming batch is processed, it will protobuf encode (and compress) the resulting table of topics and list of events.
 4. Finally, a single message is passed on to the next processor (or output), which contains this data.
 
+#### 2. Usage
+1. Select the uns-input plugin as input, without any topic filter.
+2. Use this plugin as the processor plugin.
+3. Use stdout as output plugin.
 
 </details>
 
