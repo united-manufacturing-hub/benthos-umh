@@ -22,7 +22,7 @@ import (
 
 // UnsInputMetrics provides metrics collection for the UNS input plugin
 type UnsInputMetrics struct {
-	ConnectedGuage         *service.MetricGauge
+	ConnectedGauge         *service.MetricGauge
 	ConnectionErrCounter   *service.MetricCounter
 	PollErrCounter         *service.MetricCounter
 	RecordsReceivedCounter *service.MetricCounter
@@ -35,7 +35,7 @@ type UnsInputMetrics struct {
 // NewUnsInputMetrics creates a new metrics collection for the UNS input plugin
 func NewUnsInputMetrics(metricsProvider *service.Metrics) *UnsInputMetrics {
 	return &UnsInputMetrics{
-		ConnectedGuage:         metricsProvider.NewGauge("input_uns_connected"),
+		ConnectedGauge:         metricsProvider.NewGauge("input_uns_connected"),
 		ConnectionErrCounter:   metricsProvider.NewCounter("input_uns_connection_errors"),
 		PollErrCounter:         metricsProvider.NewCounter("input_uns_poll_errors"),
 		RecordsReceivedCounter: metricsProvider.NewCounter("input_uns_records_received"),
@@ -49,12 +49,12 @@ func NewUnsInputMetrics(metricsProvider *service.Metrics) *UnsInputMetrics {
 // LogConnectionEstablished logs a successful connection and updates metrics
 func (m *UnsInputMetrics) LogConnectionEstablished(startTime time.Time) {
 	m.ConnectionTimer.Timing(int64(time.Since(startTime)))
-	m.ConnectedGuage.Set(1)
+	m.ConnectedGauge.Set(1)
 }
 
 // LogConnectionClosed logs a successful connection closure and updates metrics
 func (m *UnsInputMetrics) LogConnectionClosed() {
-	m.ConnectedGuage.Set(0)
+	m.ConnectedGauge.Set(0)
 }
 
 // LogPollError logs an error during polling and updates metrics
@@ -88,7 +88,7 @@ func NewMockMetrics() *UnsInputMetrics {
 	mockResources := service.MockResources()
 	mockMetrics := mockResources.Metrics()
 	return &UnsInputMetrics{
-		ConnectedGuage:         mockMetrics.NewGauge("input_uns_connected"),
+		ConnectedGauge:         mockMetrics.NewGauge("input_uns_connected"),
 		ConnectionErrCounter:   mockMetrics.NewCounter("input_uns_connection_errors"),
 		PollErrCounter:         mockMetrics.NewCounter("input_uns_poll_errors"),
 		RecordsReceivedCounter: mockMetrics.NewCounter("input_uns_records_received"),
