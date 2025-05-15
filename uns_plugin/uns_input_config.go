@@ -36,7 +36,7 @@ const (
 
 // UnsInputConfig holds the configuration for the UNS input plugin
 type UnsInputConfig struct {
-	topic           string
+	umhTopic        string
 	inputKafkaTopic string
 	brokerAddress   string
 	consumerGroup   string
@@ -45,7 +45,7 @@ type UnsInputConfig struct {
 // NewDefaultUnsInputConfig creates a new input config with default values
 func NewDefaultUnsInputConfig() UnsInputConfig {
 	return UnsInputConfig{
-		topic:           defaultTopicKey,
+		umhTopic:        defaultTopicKey,
 		inputKafkaTopic: defaultInputKafkaTopic,
 		brokerAddress:   defaultBrokerAddress,
 		consumerGroup:   defaultConsumerGroup,
@@ -57,12 +57,12 @@ func ParseFromBenthos(conf *service.ParsedConfig) (UnsInputConfig, error) {
 	config := NewDefaultUnsInputConfig()
 
 	// Parse topic (regex pattern for message key filtering)
-	if conf.Contains("topic") {
-		topic, err := conf.FieldString("topic")
+	if conf.Contains("umh_topic") {
+		topic, err := conf.FieldString("umh_topic")
 		if err != nil {
 			return config, fmt.Errorf("error while parsing the 'topic' field from the plugin's config: %v", err)
 		}
-		config.topic = topic
+		config.umhTopic = topic
 	}
 
 	// Parse kafka_topic (the actual Kafka topic to consume from)

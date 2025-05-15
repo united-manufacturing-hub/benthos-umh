@@ -61,7 +61,7 @@ func NewUnsInput(client MessageConsumer, config UnsInputConfig, logger *service.
 	metrics := NewUnsInputMetrics(metricsProvider)
 
 	// Create message processor
-	processor, err := NewMessageProcessor(config.topic, metrics)
+	processor, err := NewMessageProcessor(config.umhTopic, metrics)
 	if err != nil {
 		return nil, fmt.Errorf("error creating message processor: %v", err)
 	}
@@ -90,7 +90,7 @@ func (u *UnsInput) Connect(ctx context.Context) error {
 	}
 
 	u.log.Infof("creating kafka client with plugin config broker: %v, input_kafka_topic: %v, topic: %v",
-		u.config.brokerAddress, u.config.inputKafkaTopic, u.config.topic)
+		u.config.brokerAddress, u.config.inputKafkaTopic, u.config.umhTopic)
 
 	connectStart := time.Now()
 	err := u.client.Connect(

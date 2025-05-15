@@ -1,4 +1,4 @@
-// Copyright 2025 UMH Systems GmbH
+p ""// Copyright 2025 UMH Systems GmbH
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -166,7 +166,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 		}
 
 		inputConfig := UnsInputConfig{
-			topic:           defaultTopicKey,
+			umhTopic:        defaultTopicKey,
 			inputKafkaTopic: defaultInputKafkaTopic,
 			brokerAddress:   defaultBrokerAddress,
 			consumerGroup:   defaultConsumerGroup,
@@ -331,7 +331,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 			When("specific topic filter is applied", func() {
 				BeforeEach(func() {
 					inputConfig := UnsInputConfig{
-						topic:           "umh\\.v1\\.acme\\.berlin\\.assembly\\.temperature",
+						umhTopic:        "umh\\.v1\\.acme\\.berlin\\.assembly\\.temperature",
 						inputKafkaTopic: defaultInputKafkaTopic,
 						brokerAddress:   defaultBrokerAddress,
 						consumerGroup:   defaultConsumerGroup,
@@ -416,7 +416,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 		When("the topic regex is invalid", func() {
 			BeforeEach(func() {
-				unsClient.config.topic = "[" // Invalid regex
+				unsClient.config.umhTopic = "[" // Invalid regex
 				// Return records so that it doesn't return nil error due to empty fetch result
 				mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
 					records := []*kgo.Record{

@@ -293,7 +293,7 @@ func BenchmarkUnsInput_ReadBatch(b *testing.B) {
 
 			// Create UnsInput with default config
 			inputConfig := UnsInputConfig{
-				topic:           "umh\\.v1\\..*",
+				umhTopic:        "umh\\.v1\\..*",
 				inputKafkaTopic: defaultInputKafkaTopic,
 				brokerAddress:   defaultBrokerAddress,
 				consumerGroup:   defaultConsumerGroup,
@@ -368,7 +368,7 @@ func BenchmarkAckFunction(b *testing.B) {
 
 			// Create UnsInput
 			inputConfig := UnsInputConfig{
-				topic:           "umh\\.v1\\..*",
+				umhTopic:        "umh\\.v1\\..*",
 				inputKafkaTopic: defaultInputKafkaTopic,
 				brokerAddress:   defaultBrokerAddress,
 				consumerGroup:   defaultConsumerGroup,
