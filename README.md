@@ -2082,11 +2082,11 @@ Tag Browser
 #### 1. What does this plugin do?
 
 1. For each incoming message, this plugin extracts
-   a. There topic information (level0, level1, ..., datacontract)
-   b. Information about the payload (is it a time-series payload)
+   - There topic information (level0, level1, ..., datacontract)
+   - Information about the payload (is it a time-series payload)
 2. If the payload is a time-series payload, the information will be further enriched by using the values' key as tagName
 3. Once every message in the incoming batch is processed, it will protobuf encode (and compress) the resulting table of topics and list of events.
-4. Finally a single message is passed on to the next processor (or output), which contains this data.
+4. Finally, a single message is passed on to the next processor (or output), which contains this data.
 
 
 </details>
