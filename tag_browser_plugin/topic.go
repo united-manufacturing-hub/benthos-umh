@@ -30,7 +30,7 @@ import (
 // extractTopicFromMessage looks up the "topic" meta-field from the benthos message.
 func extractTopicFromMessage(message *service.Message) (string, error) {
 	// The uns input plugin will set the "topic" meta-field
-	topic, found := message.MetaGet("topic")
+	topic, found := message.MetaGet("umh_topic")
 	if found {
 		return topic, nil
 	}
@@ -38,7 +38,6 @@ func extractTopicFromMessage(message *service.Message) (string, error) {
 }
 
 // topicToUNSInfo will extract the levels and datacontract from a topic.
-// It will not extract the EventTag, as that one is part of the message itself
 func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.TopicInfo, error) {
 	// Check (empty topic, not beginning with "umh.v1.")
 	if len(topic) == 0 || strings.HasPrefix(topic, "umh.v1.") == false {
@@ -90,8 +89,17 @@ func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.TopicInfo, error) {
 
 	// Write the eventGroup (without the last dot)
 	eventGroupString := eventGroup.String()
-	if len(eventGroupString) > 0 {
-		unsInfo.EventGroup = wrapperspb.String(eventGroupString[:len(eventGroupString)-1])
+	// Split the eventGroupString, and collect in two parts
+	eventGroupParts := strings.Split(eventGroupString, ".")
+	if len(eventGroupParts) > 0 {
+
+		if len(eventGroupParts) > 1 {
+			eventGroups := eventGroupParts[:len(eventGroupParts)-1]
+			unsInfo.EventGroup = wrapperspb.String(strings.Join(eventGroups, "."))
+		}
+
+		// Set the last part as the eventTag
+		unsInfo.EventTag = wrapperspb.String(eventGroupParts[len(eventGroupParts)-1])
 	}
 	return &unsInfo, nil
 }
