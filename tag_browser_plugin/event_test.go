@@ -176,6 +176,17 @@ var _ = Describe("Event Processing", func() {
 			Expect(err).NotTo(BeNil())
 			Expect(event).To(BeNil())
 		})
+
+		It("should not panic when expectedTagNameForTimeseries is nil", func() {
+			data := map[string]interface{}{
+				"timestamp_ms": int64(1234567890),
+				"pressure":     float64(1013.25),
+			}
+
+			_, err := processTimeSeriesData(data, nil)
+			Expect(err).To(Not(BeNil()))
+			Expect(err.Error()).To(Equal("expected tag name for timeseries, but was empty"))
+		})
 	})
 
 	Describe("processRelationalData", func() {
