@@ -29,8 +29,8 @@ import (
 
 // messageToEvent will convert a benthos message, into an EventTableEntry, and eventTag and an optional error
 // It checks if the incoming message is a valid time-series message, otherwise it handles it as relational data
-func messageToEvent(message *service.Message) (*tagbrowserpluginprotobuf.EventTableEntry, *string, error) {
-	// 1. If we dont have structured data (e.g. no JSON), we will handle it as relational data
+func messageToEvent(message *service.Message, expectedTagNameForTimeseries *wrapperspb.StringValue) (*tagbrowserpluginprotobuf.EventTableEntry, error) {
+	// 1. If we don't have structured data (e.g. no JSON), we will handle it as relational data
 	structured, err := message.AsStructured()
 	if err != nil {
 		return processRelationalData(message)
@@ -52,16 +52,15 @@ func messageToEvent(message *service.Message) (*tagbrowserpluginprotobuf.EventTa
 	}
 
 	// We passed all checks, we can now process the data as time-series data
-	return processTimeSeriesData(structuredAsMap)
+	return processTimeSeriesData(structuredAsMap, expectedTagNameForTimeseries)
 }
 
 // processTimeSeriesData extracts the timestamp, value name, and value (including its type) from the structured data
-func processTimeSeriesData(structured map[string]interface{}) (*tagbrowserpluginprotobuf.EventTableEntry, *string, error) {
-	var valueName string
+func processTimeSeriesData(structured map[string]interface{}, expectedTagNameForTimeseries *wrapperspb.StringValue) (*tagbrowserpluginprotobuf.EventTableEntry, error) {
 	var valueContent anypb.Any
 	var timestampMs int64
 
-	// We loop over all key/value pairs of the message (we previously checked that there are exactly two)
+	// We loop over all key/value pairs of the message's payload (we previously checked that there are exactly two)
 	for key, value := range structured {
 		switch key {
 		case "timestamp_ms":
@@ -93,15 +92,21 @@ func processTimeSeriesData(structured map[string]interface{}) (*tagbrowserplugin
 			case float64:
 				timestampMs = int64(v)
 			default:
-				return nil, nil, fmt.Errorf("timestamp_ms must be numerical type, but was %T", v)
+				return nil, fmt.Errorf("timestamp_ms must be numerical type, but was %T", v)
 			}
 		default:
 			// The non-timestamp key/value pair will be handled here
-			valueName = key
+			expectedValue := expectedTagNameForTimeseries.GetValue()
+			if expectedValue == "" {
+				return nil, fmt.Errorf("expected tag name for timeseries, but was empty")
+			}
+			if expectedValue != key {
+				return nil, fmt.Errorf("expected tag name for timeseries %s, but was %s", expectedTagNameForTimeseries, key)
+			}
 			// We need to convert the value to a protobuf Any, which is a wrapper around a byte array
 			byteValue, valueType, err := ToBytes(value)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			valueContent = anypb.Any{
 				TypeUrl: fmt.Sprintf("golang/%s", valueType),
@@ -114,20 +119,20 @@ func processTimeSeriesData(structured map[string]interface{}) (*tagbrowserplugin
 		IsTimeseries: true,
 		TimestampMs:  wrapperspb.Int64(timestampMs),
 		Value:        &valueContent,
-	}, &valueName, nil
+	}, nil
 }
 
-// processRelationalData extracts the message payload as bytes and returns that
-func processRelationalData(message *service.Message) (*tagbrowserpluginprotobuf.EventTableEntry, *string, error) {
-	// For relational data we don't do any parsing, and just extract the payload as bytes
+// processRelationalData extracts the message payload as bytes and returns them
+func processRelationalData(message *service.Message) (*tagbrowserpluginprotobuf.EventTableEntry, error) {
+	// For relational data, we don't do any parsing and just extract the payload as bytes
 	valueBytes, err := message.AsBytes()
 	if err != nil {
 		// Note: This shall never happen, as AsBytes internally never returns errors
-		return nil, nil, err
+		return nil, err
 	}
 	return &tagbrowserpluginprotobuf.EventTableEntry{
 		IsTimeseries: false,
 		TimestampMs:  nil,
 		Value:        &anypb.Any{TypeUrl: "golang/[]byte", Value: valueBytes},
-	}, nil, nil
+	}, nil
 }

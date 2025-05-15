@@ -159,7 +159,7 @@ var _ = Describe("Event Processing", func() {
 				"pressure":     float64(1013.25),
 			}
 
-			event, valueName, err := processTimeSeriesData(data)
+			event, valueName, err := processTimeSeriesData(data, nil)
 			Expect(err).To(BeNil())
 			Expect(event.IsTimeseries).To(BeTrue())
 			Expect(event.TimestampMs).To(Equal(wrapperspb.Int64(1234567890)))
@@ -177,7 +177,7 @@ var _ = Describe("Event Processing", func() {
 				"invalid":      Unconvertible{make(chan int)},
 			}
 
-			event, valueName, err := processTimeSeriesData(data)
+			event, valueName, err := processTimeSeriesData(data, nil)
 			Expect(err).NotTo(BeNil())
 			Expect(event).To(BeNil())
 			Expect(valueName).To(BeNil())
