@@ -65,7 +65,7 @@ func processTimeSeriesData(structured map[string]interface{}, expectedTagNameFor
 		switch key {
 		case "timestamp_ms":
 			// Since we do not know the type of the timestamp_ms field, we need to convert it to an int64
-			// But we can expect it to be some kind of numeric type, so we check it's type and convert accordingly
+			// But we can expect it to be some kind of numeric type, so we check its type and convert accordingly
 			switch v := value.(type) {
 			case int:
 				timestampMs = int64(v)

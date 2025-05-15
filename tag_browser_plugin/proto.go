@@ -89,7 +89,7 @@ func bundleToProtobuf(bundle *tagbrowserpluginprotobuf.UnsBundle) ([]byte, error
 	return protoBytes, nil
 }
 
-// protobufBytesToBundle converts protobuf encoded data back to an UnsBundle
+// protobufBytesToBundle converts protobuf-encoded data back to an UnsBundle
 func protobufBytesToBundle(protoBytes []byte) (*tagbrowserpluginprotobuf.UnsBundle, error) {
 	bundle := &tagbrowserpluginprotobuf.UnsBundle{}
 	err := proto.Unmarshal(protoBytes, bundle)
@@ -138,7 +138,7 @@ func BundleToProtobufBytesWithCompression(bundle *tagbrowserpluginprotobuf.UnsBu
 // If the data is not LZ4-compressed, it will fall back to normal protobuf decoding.
 // Returns the decoded UnsBundle or an error if decoding fails.
 func ProtobufBytesToBundleWithCompression(compressedBytes []byte) (*tagbrowserpluginprotobuf.UnsBundle, error) {
-	// If the compressedBytes dont start with the LZ4 magic number, return the original bytes
+	// If the compressedBytes don't start with the LZ4 magic number, return the original bytes
 	// https://github.com/lz4/lz4/blob/dev/doc/lz4_Frame_format.md#general-structure-of-lz4-frame-format
 	if !bytes.Equal(compressedBytes[:4], []byte{0x04, 0x22, 0x4d, 0x18}) {
 		return protobufBytesToBundle(compressedBytes)

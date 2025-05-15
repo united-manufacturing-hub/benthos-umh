@@ -15,7 +15,7 @@
 package tag_browser_plugin
 
 /*
-	The functions in this file are used to create an stdout ready message from our protobuf bytes.
+	The functions in this file are used to create an stdout-ready message from our protobuf bytes.
 */
 
 import (

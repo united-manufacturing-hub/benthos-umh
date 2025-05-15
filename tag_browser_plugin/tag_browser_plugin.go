@@ -17,9 +17,10 @@ package tag_browser_plugin
 import (
 	"context"
 	"errors"
-	lru "github.com/hashicorp/golang-lru"
 	"maps"
 	"sync"
+
+	lru "github.com/hashicorp/golang-lru"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
@@ -27,8 +28,8 @@ import (
 
 type TagBrowserProcessor struct {
 	// This cache keeps the number of topics
-	// transmitted to the umh-core small by trying to not re-send already reported topics.
-	// Since it is not thread safe, we need a mutex to protect it.
+	// transmitted to the umh-core small by trying not to re-send already reported topics.
+	// Since it is not thread-safe, we need a mutex to protect it.
 	topicMetadataCache      *lru.Cache
 	topicMetadataCacheMutex *sync.Mutex
 	logger                  *service.Logger
@@ -47,12 +48,12 @@ func (t *TagBrowserProcessor) Process(ctx context.Context, message *service.Mess
 	return messageBatch[0], nil
 }
 
-// ProcessBatch processes 1-n messages from the uns-input and generates a single protobuf message containing all there data.
-// If we receive no data, it will early return.
+// ProcessBatch processes 1-n messages from the uns-input and generates a single protobuf message containing all their data.
+// If we receive no data, it will return early.
 //
 // To do the processing, it first extracts the topicInfo, containing the levels and datacontract.
 // It also extracts the eventTableEntry, containing the event itself (e.g. the data inside the UNS payload) and the timestamp.
-// Once that is done for every message in the batch, it creates a protobuf encoded message containing both the deduplicated topicInfo and all eventTableEntries.
+// Once that is done for every message in the batch, it creates a protobuf-encoded message containing both the deduplicated topicInfo and all eventTableEntries.
 func (t *TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	if len(batch) == 0 {
 		return nil, nil
@@ -177,7 +178,7 @@ The processor requires that the following metadata fields are set:
 - topic: The topic of the message.
 `).
 		Field(service.NewIntField("lru_size").
-			Description("The size of the LRU cache used to  deduplicate topic names and store topic information.").
+			Description("The size of the LRU cache used to deduplicate topic names and store topic information.").
 			Default(50_000).
 			Advanced())
 
