@@ -17,7 +17,6 @@ package tag_browser_plugin
 import (
 	"context"
 	lru "github.com/hashicorp/golang-lru"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
