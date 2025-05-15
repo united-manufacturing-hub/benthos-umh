@@ -130,9 +130,10 @@ The processor requires that the following metadata fields are set:
 `).
 		Field(service.NewObjectField(""))
 
-	err := service.RegisterProcessor("tag_browser", spec, func(_ *service.ParsedConfig, _ *service.Resources) (service.Processor, error) {
+	err := service.RegisterBatchProcessor("tag_browser", spec, func(_ *service.ParsedConfig, _ *service.Resources) (service.BatchProcessor, error) {
 		return NewTagBrowserProcessor(), nil
 	})
+
 	if err != nil {
 		panic(err)
 	}
