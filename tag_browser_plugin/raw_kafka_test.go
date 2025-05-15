@@ -39,7 +39,7 @@ var _ = Describe("Raw Kafka Message Processing", func() {
 			Expect(kafkaMsg.Headers).To(HaveKeyWithValue("header2", "value2"))
 
 			// Verify payload
-			Expect(kafkaMsg.Payload).To(Equal("test payload"))
+			Expect(kafkaMsg.Payload).To(Equal([]byte("test payload")))
 		})
 
 		It("handles message with no headers", func() {
@@ -55,7 +55,7 @@ var _ = Describe("Raw Kafka Message Processing", func() {
 			Expect(kafkaMsg.Headers).To(BeEmpty())
 
 			// Verify payload
-			Expect(kafkaMsg.Payload).To(Equal("test payload"))
+			Expect(kafkaMsg.Payload).To(Equal([]byte("test payload")))
 		})
 
 		It("handles message with empty payload", func() {
@@ -95,7 +95,7 @@ var _ = Describe("Raw Kafka Message Processing", func() {
 			Expect(kafkaMsg.Headers).To(HaveKeyWithValue("header.3", "value.3"))
 
 			// Verify payload
-			Expect(kafkaMsg.Payload).To(Equal("test payload"))
+			Expect(kafkaMsg.Payload).To(Equal([]byte("test payload")))
 		})
 
 		It("handles message with binary payload", func() {
@@ -114,7 +114,7 @@ var _ = Describe("Raw Kafka Message Processing", func() {
 			Expect(kafkaMsg.Headers).To(HaveKeyWithValue("content-type", "application/octet-stream"))
 
 			// Verify payload is converted to string correctly
-			Expect(kafkaMsg.Payload).To(Equal(string(binaryData)))
+			Expect(kafkaMsg.Payload).To(Equal(binaryData))
 			Expect([]byte(kafkaMsg.Payload)).To(Equal(binaryData))
 		})
 	})
