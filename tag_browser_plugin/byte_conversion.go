@@ -15,17 +15,18 @@
 package tag_browser_plugin
 
 /*
-	The functions in this file allow the program to convert the Go "any" type into bytes and back.
+	The functions in this file allow the programme to convert the Go "any" type into bytes and back.
 	This is required as the incoming data won't have any type information.
 */
 
 import (
 	"encoding/binary"
 	"errors"
-	"github.com/goccy/go-json"
 	"math"
 	"reflect"
 	"unsafe"
+
+	"github.com/goccy/go-json"
 )
 
 // ToBytes turns v into bytes, reports its type name, and returns
@@ -107,10 +108,10 @@ func ToBytes(v any) ([]byte, string, error) {
 	}
 }
 
-// FromBytes performs the inverse ofToBytes.
+// FromBytes performs the inverse of ToBytes.
 //
-//	b – raw data produced byToBytes
-//	typ – the type string returned byToBytes
+//	b – raw data produced by ToBytes
+//	typ – the type string returned by ToBytes
 //
 // It reconstructs the original value (or the best‑effort equivalent) and
 // returns it as any plus an (optional) error.

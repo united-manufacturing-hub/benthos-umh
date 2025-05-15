@@ -16,11 +16,12 @@ package tag_browser_plugin
 
 /*
 	This file contains a function that will create the TopicInfo and EventTableEntry from a message.
-	It also calculates the uns_tree_id and sets the EventTag if we have time series data.
+	It also calculates the uns_tree_id and sets the EventTag if we have time-series data.
 */
 
 import (
 	"encoding/hex"
+
 	"github.com/cespare/xxhash/v2"
 	"github.com/redpanda-data/benthos/v4/public/service"
 	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
@@ -28,7 +29,7 @@ import (
 
 // MessageToUNSInfoAndEvent first extracts the topic from the message, then the event data and finally the UNS info.
 // It also sets the eventTag if necessary and generates the UnsTreeId, which is required by the frontend.
-// Finally, it appends the "raw" kafka message part, including the raw message and its headers
+// Finally, it appends the "raw" Kafka message part, including the raw message and its headers
 func MessageToUNSInfoAndEvent(message *service.Message) (*tagbrowserpluginprotobuf.TopicInfo, *tagbrowserpluginprotobuf.EventTableEntry, *string, error) {
 	topic, err := extractTopicFromMessage(message)
 	if err != nil {
