@@ -16,6 +16,9 @@ package tag_browser_plugin
 
 import (
 	"context"
+	"encoding/hex"
+	"strings"
+
 	lru "github.com/hashicorp/golang-lru"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -107,6 +110,7 @@ var _ = Describe("TagBrowserProcessor", func() {
 			Expect(outputMsg).NotTo(BeNil())
 
 			// Dump to disk for testing
+
 			/*
 				bytes, err := outputMsg.AsBytes()
 				Expect(err).To(BeNil())
@@ -114,6 +118,66 @@ var _ = Describe("TagBrowserProcessor", func() {
 				err = os.WriteFile("multiple_messages.proto", bytes, 0644)
 				Expect(err).To(BeNil())
 			*/
+
+			// Parse the resulting message back
+			outBytes, err := outputMsg.AsBytes()
+			Expect(err).To(BeNil())
+			Expect(outBytes).NotTo(BeNil())
+
+			// The output shall look like this:
+			/*
+				STARTSTARTSTART
+				0a720a700a1031363337626462653336643561396262125c0a0a746573742d746f7069633a0a5f686973746f7269616e4a0c0a0a736f6d655f76616c756552340a09756d685f746f7069631227756d682e76312e746573742d746f7069632e5f686973746f7269616e2e736f6d655f76616c756512be020a9c010a103136333762646265333664356139626212160a0a676f6c616e672f696e74120803000000000000001a070880b892aefa2f20012a650a340a09756d685f746f7069631227756d682e76312e746573742d746f7069632e5f686973746f7269616e2e736f6d655f76616c7565122d7b22736f6d655f76616c7565223a332c2274696d657374616d705f6d73223a313634373735333630303030307d0a9c010a103136333762646265333664356139626212160a0a676f6c616e672f696e74120805000000000000001a070881b892aefa2f20012a650a340a09756d685f746f7069631227756d682e76312e746573742d746f7069632e5f686973746f7269616e2e736f6d655f76616c7565122d7b22736f6d655f76616c7565223a352c2274696d657374616d705f6d73223a313634373735333630303030317d
+				ENDDATAENDDATENDDATA
+				279638000
+				ENDENDENDEND
+			*/
+
+			// Let's only focus on the 2nd lin (0a72)
+			dataLine := strings.Split(string(outBytes), "\n")[1]
+			// Expect it to begin with 0a72
+			Expect(dataLine[:4]).To(Equal("0a72"))
+
+			// Hex decode it
+			hexDecoded, err := hex.DecodeString(dataLine)
+			Expect(err).To(BeNil())
+			Expect(hexDecoded).NotTo(BeNil())
+
+			// Decode it
+			decoded, err := ProtobufBytesToBundleWithCompression(hexDecoded)
+			Expect(err).To(BeNil())
+			Expect(decoded).NotTo(BeNil())
+
+			Expect(decoded.Events.Entries).To(HaveLen(2))
+			Expect(decoded.UnsMap.Entries).To(HaveLen(1))
+
+			Expect(decoded.UnsMap.Entries).To(HaveKey("1637bdbe36d5a9bb")) // uns tree id
+			topicData := decoded.UnsMap.Entries["1637bdbe36d5a9bb"]
+			Expect(topicData).NotTo(BeNil())
+			Expect(topicData.Level0).To(Equal("test-topic"))
+			Expect(topicData.Datacontract).To(Equal("_historian"))
+			Expect(topicData.EventTag.GetValue()).To(Equal("some_value"))
+			Expect(topicData.Metadata).To(Not(BeEmpty()))
+			Expect(topicData.Metadata).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
+
+			// Now some tests for the Events
+			Expect(decoded.Events.Entries).To(HaveLen(2))
+
+			// Verify first event
+			event1 := decoded.Events.Entries[0]
+			Expect(event1.TimestampMs.GetValue()).To(Equal(int64(1647753600000)))
+			Expect(event1.Value.TypeUrl).To(Equal("golang/int"))
+			Expect(event1.Value.Value).To(Equal([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}))
+			Expect(event1.RawKafkaMsg).NotTo(BeNil())
+			Expect(event1.RawKafkaMsg.Headers).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
+
+			// Verify second event
+			event2 := decoded.Events.Entries[1]
+			Expect(event2.TimestampMs.GetValue()).To(Equal(int64(1647753600001)))
+			Expect(event2.Value.TypeUrl).To(Equal("golang/int"))
+			Expect(event2.Value.Value).To(Equal([]byte{0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}))
+			Expect(event2.RawKafkaMsg).NotTo(BeNil())
+			Expect(event2.RawKafkaMsg.Headers).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
 		})
 
 		It("caches UNS map entries accross multiple invocations", func() {
