@@ -2203,7 +2203,7 @@ Tag Browser
    - Topic hierarchy information (level0 through level5)
    - Data contract information
    - Virtual path and event tag (if present)
-   - Kafka headers and metadata
+   - UNS headers and metadata
    - Payload information and type (timeseries vs non-timeseries)
 2. The plugin implements several optimizations:
    - Uses an LRU cache to prevent re-sending unchanged topic metadata
@@ -2236,7 +2236,7 @@ The plugin uses the following protobuf structures:
   - UNS tree ID (hash of the topic info)
   - Payload value
   - Timestamp (for timeseries data)
-  - Raw Kafka message data
+  - Raw UNS message data
   - Processing history
 
 #### 4. Performance Considerations
