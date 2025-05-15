@@ -27,7 +27,7 @@ const (
 	defaultTopicKey               = ".*"
 	defaultConsumerGroup          = "uns_plugin"
 	defaultConnIdleTimeout        = 15 * time.Minute
-	defaultDialTimeout            = 5 * time.Minute
+	defaultDialTimeout            = 10 * time.Second
 	defaultFetchMaxBytes          = 100e6 // 100MB
 	defaultFetchMaxPartitionBytes = 100e6 // 100MB
 	defaultFetchMinBytes          = 50e6  // 50MB
