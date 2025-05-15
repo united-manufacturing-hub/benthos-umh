@@ -61,8 +61,7 @@ message EventTableEntry {
   google.protobuf.Int64Value  timestamp_ms  = 3; // Extracted from the payload (If timeseries data)
   bool                        is_timeseries = 4; // True if time series data as defined by our payload format, false otherwise
   EventKafka                  raw_kafka_msg = 5;
-  string                      origin        = 6; // If present inside the messages headers
-  repeated string             bridged_by    = 7; // If present inside the messages headers
+  repeated string             processed_by    = 6; // If present inside the messages headers. In the kafka headers, this is a comma seperated list
 }
 
 message EventTable {

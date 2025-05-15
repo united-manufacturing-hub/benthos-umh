@@ -21,6 +21,7 @@ package tag_browser_plugin
 
 import (
 	"encoding/hex"
+	"strings"
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -56,6 +57,12 @@ func MessageToUNSInfoAndEvent(message *service.Message) (*tagbrowserpluginprotob
 	event.RawKafkaMsg, err = messageToRawKafkaMsg(message)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+
+	// If we have a processed-by header, we will extract that and set it in the event
+	// The first entry in here will be the producer of the message
+	if val, ok := event.RawKafkaMsg.Headers["processed-by"]; ok {
+		event.ProcessedBy = strings.Split(val, ",")
 	}
 
 	return unsInfo, event, &unsTreeId, nil
