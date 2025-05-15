@@ -2245,6 +2245,23 @@ The plugin uses the following protobuf structures:
 - Message batching is implemented to reduce the number of output messages
 - Topic metadata is only updated when changes are detected
 
+#### 5. Differences to the previous tag browser
+
+Previously we allowed `_historian` messages to contain 1-N key-value pairs.
+The downsides of that are:
+
+- A topic could contain multiple different tags
+- Each message would need to be recursivly parsed, increasing complexity and runtime overhead
+- Invalid data was easier to insert, and would block/bring down downstream processors
+
+The new `_historianv2` datacontract only allows a single key-value pair to be present in a time-series message.
+Therefore the new time-series messages are very simple, consisting only of a timestamp and the key-value pair.
+
+We also now enforce that the tagName (the very last part of the topic), is the same as the key of the message.
+For messages not compliant with this schema, we have introduced "relational" data, which can by any format.
+
+These improvements help us build the foundation for fast, easy to use stream processors, and reduce the amount of data validation per processor.
+
 </details>
 
 ## Testing
