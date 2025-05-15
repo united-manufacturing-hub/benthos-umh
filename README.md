@@ -2070,6 +2070,85 @@ output:
 
 </details>
 
+
+<details>
+<summary>
+Tag Browser
+</summary>
+
+### Tag Browser
+
+> This plugin is designed for internal usage in umh-core
+
+#### 1. What does this plugin do?
+
+1. For each incoming message, this plugin extracts:
+  - Topic hierarchy information (level0 through level5)
+  - Data contract information
+  - Virtual path and event tag (if present)
+  - UNS headers and metadata
+  - Payload information and type (timeseries vs non-timeseries)
+2. The plugin implements several optimizations:
+  - Uses an LRU cache to prevent re-sending unchanged topic metadata
+  - Batches multiple messages into a single protobuf message
+  - Only includes topics in the output when their metadata has changed
+3. The processed data is structured into:
+  - A topic map containing hierarchical topic information and metadata
+  - An event table containing the actual message data and timestamps
+4. The final output is a single protobuf-encoded message containing:
+  - A map of all new or changed topics
+  - A list of all events processed in the current batch
+
+#### 2. Usage
+
+1. Select the uns-input plugin as input, without any topic filter
+2. Use this plugin as the processor plugin
+3. Use stdout as output plugin
+
+#### 3. Data Structure
+
+The plugin uses the following protobuf structures:
+
+- `TopicInfo`: Contains hierarchical topic information, including:
+  - Level0-Level5
+  - Datacontract
+  - Virtual_path
+  - Event_tag
+  - Latest values for each metadata that was ever observed in this topic
+- `EventTableEntry`: Contains the actual message data, including:
+  - UNS tree ID (hash of the topic info)
+  - Payload value
+  - Timestamp (for timeseries data)
+  - Raw UNS message data
+  - Processing history
+
+#### 4. Performance Considerations
+
+- The plugin uses an LRU cache to minimize traffic by avoiding re-sending unchanged topic metadata
+- Message batching is implemented to reduce the number of output messages
+- Topic metadata is only updated when changes are detected
+
+#### 5. Differences to the previous tag browser
+
+Previously we allowed `_historian` messages to contain 1-N key-value pairs.
+The downsides of that are:
+
+- A topic could contain multiple different tags
+- Each message would need to be recursivly parsed, increasing complexity and runtime overhead
+- Invalid data was easier to insert, and would block/bring down downstream processors
+
+The new `_historianv2` datacontract only allows a single key-value pair to be present in a time-series message.
+Such a message is called a "tag".
+Therefore the new time-series tag are very simple, consisting only of a timestamp and the key-value pair.
+
+We also now enforce that the tagName (the very last part of the topic), is the same as the key of the message.
+For payloads not compliant with this schema, we have introduced "relational" data, which can by any format.
+
+These improvements help us build the foundation for fast, easy to use stream processors, and reduce the amount of data validation per processor.
+
+</details>
+
+
 ## Testing
 
 We execute automated tests and verify that benthos-umh works against various targets. All tests are started with `make test`, but might require environment parameters in order to not be skipped.
