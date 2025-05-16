@@ -2114,7 +2114,6 @@ output:
 input:
   uns:
     umh_topic:           "umh\\.v1\\.acme\\.berlin\\..*"   # only Berlin site
-    kafka_topic:     "my.custom.topic"                 # rare – default umh.messages
     broker_address:  "edge-redpanda:9092"
     consumer_group:  "analytics_reader"
 ```
@@ -2122,22 +2121,19 @@ input:
 | Field | Purpose & Default |
 |-------|-------------------|
 | `umh_topic` | Regex against the Kafka key (UMH topic). Default `.*`. |
-| `kafka_topic` | Physical Kafka topic to consume from. Default `umh.messages`. |
 | `broker_address` | Comma-separated bootstrap list. Default `localhost:9092`. |
 | `consumer_group` | Consumer-group ID (offset tracking). Default `uns_plugin`. |
 
 #### 3 What the plugin does behind the scenes
 
-1. **Poll** `umh.messages` (or your `kafka_topic`) continuously.
+1. **Poll** `umh.messages` continuously.
 
-2. **Filter** records whose Kafka key matches the topic regex (fast path if you only need a subset).
+2. **Filter** records whose umh_topic matches the topic regex (fast path if you only need a subset).
 
 3. **Convert** each record into a Benthos message:
-  - Payload → Kafka value (raw bytes).
+  - Payload → Value (raw bytes).
   - Metadata →
-    - `kafka_msg_key` – original key (UMH topic)
-    - `kafka_topic` – physical topic name
-    - every Kafka header becomes `meta(...)` for processors downstream.
+    - every header becomes `meta(...)` for processors downstream.
 
 4. **Batch-safe ACK** – commits offsets only when the whole Benthos batch succeeds.
 
