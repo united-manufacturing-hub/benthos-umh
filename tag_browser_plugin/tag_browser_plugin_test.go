@@ -212,7 +212,7 @@ var _ = Describe("TagBrowserProcessor", func() {
 			// Process 2nd messages
 			processor.topicMetadataCache, err = lru.New(1)
 			Expect(err).To(BeNil())
-			result2, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg1})
+			result2, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg2})
 			Expect(err).To(BeNil())
 			Expect(result2).To(HaveLen(1))
 			Expect(result2[0]).To(HaveLen(1))
@@ -256,9 +256,9 @@ var _ = Describe("TagBrowserProcessor", func() {
 
 			// Verify the event
 			event := decoded2.Events.Entries[0]
-			Expect(event.TimestampMs.GetValue()).To(Equal(int64(1647753600000)))
+			Expect(event.TimestampMs.GetValue()).To(Equal(int64(1647753600001)))
 			Expect(event.Value.TypeUrl).To(Equal("golang/int"))
-			Expect(event.Value.Value).To(Equal([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}))
+			Expect(event.Value.Value).To(Equal([]byte{0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}))
 			Expect(event.RawKafkaMsg).NotTo(BeNil())
 			Expect(event.RawKafkaMsg.Headers).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
 
