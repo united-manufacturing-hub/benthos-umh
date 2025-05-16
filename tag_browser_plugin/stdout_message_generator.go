@@ -28,6 +28,6 @@ import (
 // This allows easy parsing on the umh-core side.
 func bytesToMessageWithStartEndBlocksAndTimestamp(protobytes []byte) []byte {
 	hexBytes := hex.EncodeToString(protobytes)
-	timestampNano := time.Now().UTC().Nanosecond()
-	return []byte("STARTSTARTSTART\n" + hexBytes + "\nENDDATAENDDATENDDATA\n" + fmt.Sprintf("%d", timestampNano) + "\nENDENDENDEND")
+	unixTimestampMs := time.Now().UnixMilli()
+	return []byte("STARTSTARTSTART\n" + hexBytes + "\nENDDATAENDDATENDDATA\n" + fmt.Sprintf("%d", unixTimestampMs) + "\nENDENDENDEND")
 }
