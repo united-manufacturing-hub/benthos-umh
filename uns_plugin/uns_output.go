@@ -35,7 +35,7 @@ const (
 	defaultOutputTopicPartitionCount = 1
 	defaultBrokerAddress             = "localhost:9092"
 	defaultClientID                  = "umh_core"
-	defaultUMHTopic                  = "${! meta(\"topic\") }"
+	defaultUMHTopic                  = "${! meta(\"umh_topic\") }"
 )
 
 var (
