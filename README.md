@@ -1846,7 +1846,7 @@ pipeline:
 
 <details>
 <summary>
-EthernetIP (nightly)
+EthernetIP
 </summary>
 
 ### Ethernet/IP
@@ -1902,11 +1902,11 @@ The following options can be specified in the `benthos.yaml` configuration file:
 
 ```yaml
 input:
-  opcua:
-    endpoint: '127.0.0.1'
+  ethernetip:
+    endpoint: '127.0.0.1:44818'
     pollRate: 1000 # optional (default: 1000) The rate in milliseconds at which to poll the EthernetIP plc
     listAllTags: false | true # (currently not supported)
-    useMutliRead: false | true # (currently not supported)
+    useMultiRead: false | true # (currently not supported)
     attributes:
       - path: "1-1-1" # specify the path like `Class-Instance-Attribute`
         type: "int16"
@@ -1924,8 +1924,8 @@ You can specify the endpoint in the configuration file. Node endpoints are autom
 
 ```yaml
 input:
-  opcua:
-    endpoint: '127.0.0.1'
+  ethernetip:
+    endpoint: '127.0.0.1:44818'
     tags:
       - name: "tagName"
         type: "bool"
@@ -1937,8 +1937,8 @@ You can specify the Attributes in the configuration file:
 
 ```yaml
 input:
-  opcua:
-    endpoint: '127.0.0.1'
+  ethernetip:
+    endpoint: '127.0.0.1:44818'
     attributes:
       - path: "1-1-1" # specify the path like `Class-Instance-Attribute`
         type: "int16"
@@ -1964,8 +1964,8 @@ You can specify the Tags in the configuration file:
 
 ```yaml
 input:
-  opcua:
-    endpoint: '127.0.0.1'
+  ethernetip:
+    endpoint: '127.0.0.1:44818'
     tags:
       - name: "testInt16" # specify the path like `Class-Instance-Attribute`
         type: "int16"
