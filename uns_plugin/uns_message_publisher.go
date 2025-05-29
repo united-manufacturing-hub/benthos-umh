@@ -136,7 +136,7 @@ func (k *Client) IsTopicExists(ctx context.Context, topic string) (bool, int, er
 
 func (k *Client) CreateTopic(ctx context.Context, topic string, partition int32) error {
 	if partition < 1 {
-		return fmt.Errorf("Invalid partition %d specified to create a topic", partition)
+		return fmt.Errorf("invalid partition %d specified to create a topic", partition)
 	}
 
 	if topic == "" {
