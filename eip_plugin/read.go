@@ -311,16 +311,12 @@ func CreateMessageFromValue(rawValue []byte, item *CIPReadItem) (*service.Messag
 	switch item.CIPDatatype {
 	case gologix.CIPTypeBOOL:
 		tagType = "bool"
-	case gologix.CIPTypeBYTE:
-		tagType = "byte"
-	case gologix.CIPTypeSINT, gologix.CIPTypeUINT, gologix.CIPTypeINT, gologix.CIPTypeUDINT,
-		gologix.CIPTypeDINT, gologix.CIPTypeLWORD, gologix.CIPTypeLINT, gologix.CIPTypeREAL,
-		gologix.CIPTypeLREAL:
+	case gologix.CIPTypeBYTE, gologix.CIPTypeSINT, gologix.CIPTypeUINT, gologix.CIPTypeINT,
+		gologix.CIPTypeUDINT, gologix.CIPTypeDINT, gologix.CIPTypeLWORD, gologix.CIPTypeLINT,
+		gologix.CIPTypeREAL, gologix.CIPTypeLREAL:
 		tagType = "number"
-	case gologix.CIPTypeSTRING, gologix.CIPTypeStruct:
-		tagType = "string"
 	default:
-		tagType = "unknown"
+		tagType = "string"
 	}
 
 	msg := service.NewMessage(rawValue)
