@@ -43,6 +43,7 @@ type ConditionConfig struct {
 var internalKeys = map[string]bool{
 	"tag_name":         true,
 	"topic":            true,
+	"umh_topic":        true,
 	"_initialMetadata": true,
 	"_incomingKeys":    true,
 	"location_path":    true,
@@ -622,8 +623,9 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	newMsg.SetStructured(finalPayload)
 
 	// Set the topic in the new message metadata
-	topic := p.constructTopic(msg)
-	newMsg.MetaSet("topic", topic)
+	topic := p.constructUMHTopic(msg)
+	newMsg.MetaSet("topic", topic) // topic is deprecated, use umh_topic instead for easy to understand difference between MQTT Topic, Kafka Topic and UMH Topic
+	newMsg.MetaSet("umh_topic", topic)
 
 	return newMsg, nil
 }
@@ -657,8 +659,8 @@ func (p *TagProcessor) convertValue(v interface{}) interface{} {
 	}
 }
 
-// constructTopic creates the topic string from message metadata
-func (p *TagProcessor) constructTopic(msg *service.Message) string {
+// constructUMHTopic creates the topic string from message metadata
+func (p *TagProcessor) constructUMHTopic(msg *service.Message) string {
 	parts := []string{"umh", "v1"}
 
 	if value, exists := msg.MetaGet("location_path"); exists && value != "" {

@@ -1472,7 +1472,7 @@ The processor uses the following metadata fields:
 - `virtual_path`: Logical, non-physical grouping path in dot notation (e.g., "axis.x.position")
 
 **Generated Fields:**
-- `topic`: Automatically generated from the above fields in the format:
+- `umh_topic`: Automatically generated from the above fields in the format:
   ```
   umh.v1.<location_path>.<data_contract>.<virtual_path>.<tag_name>
   ```
@@ -1499,7 +1499,7 @@ Messages in the Tag Processor follow the Node-RED style format:
     virtual_path: "axis.x.position",                            // Logical grouping path
 
     // Generated field (by processor)
-    topic: "umh.v1.enterprise.site.area.line.workcell.plc123._historian.axis.x.position.temperature",
+    umh_topic: "umh.v1.enterprise.site.area.line.workcell.plc123._historian.axis.x.position.temperature",
 
     // Input-specific fields (e.g., from OPC UA)
     opcua_node_id: "ns=1;i=2245",
@@ -1543,7 +1543,7 @@ Output:
   "timestamp_ms": 1733903611000
 }
 ```
-Topic: `umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.actual`
+UMH Topic: `umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.actual`
 
 2. **OPC UA Node ID Based Processing**
 ```yaml
@@ -1572,7 +1572,7 @@ Output:
   "timestamp_ms": 1733903611000
 }
 ```
-Topic: `umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.x.position.actual`
+UMH Topic: `umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.x.position.actual`
 
 3. **Moving Folder Structures in Virtual Path**
 ```yaml
@@ -1601,7 +1601,7 @@ Input messages with OPC UA tags:
 // DataAccess_AnalogType.Max
 ```
 
-Output topics will be:
+Output UMH topics will be:
 ```
 umh.v1.enterprise.plant1.area1.machining_line.cnc5.plc123._historian.axis.x.DataAccess_AnalogType
 umh.v1.enterprise.plant1.area1.machining_line.cnc5.plc123._historian.axis.x.DataAccess_AnalogType.EURange
@@ -1652,7 +1652,7 @@ Output:
   "work_order_end_time": "2024-03-12T18:00:00Z"
 }
 ```
-Topic: `umh.v1.enterprise.site.area.line.workcell._analytics.work_order`
+UMH Topic: `umh.v1.enterprise.site.area.line.workcell._analytics.work_order`
 
 4. **Dropping Messages Based on Value**
 ```yaml
@@ -1689,7 +1689,7 @@ Output:
   "timestamp_ms": 1733903611000
 }
 ```
-Topic: `umh.v1.enterprise._historian.temperature`
+UMH Topic: `umh.v1.enterprise._historian.temperature`
 
 5. **Duplicating Messages for Different Data Contracts**
 ```yaml
@@ -1735,7 +1735,7 @@ Output 1 (Historian):
   "timestamp_ms": 1733903611000
 }
 ```
-Topic: `umh.v1.enterprise.production._historian.temperature`
+UMH Topic: `umh.v1.enterprise.production._historian.temperature`
 
 Output 2 (custom):
 ```json
@@ -1744,7 +1744,7 @@ Output 2 (custom):
   "timestamp_ms": 1733903611000
 }
 ```
-Topic: `umh.v1.enterprise.production._custom.temperature_doubled`
+UMH Topic: `umh.v1.enterprise.production._custom.temperature_doubled`
 
 6. **Processing Full MQTT Message Payload**
 ```yaml
@@ -1820,7 +1820,7 @@ Output:
   "timestamp_ms": 1733903611000
 }
 ```
-Topic: `umh.v1.enterprise.area._workorder.maintenance`
+UMH Topic: `umh.v1.enterprise.area._workorder.maintenance`
 
 **Note:** In the `tag_processor`, the resulting payload will always include `timestamp_ms` and one additional key corresponding to the `tag_name`. If you need to fully control the resulting payload structure, consider using the `nodered_js` processor instead. You can set the topic and payload manually, as shown below:
 
@@ -1830,7 +1830,7 @@ pipeline:
     - nodered_js:
         code: |
           // set kafka topic manually
-          msg.meta.topic = "umh.v1.enterprise.site.area._workorder.new"
+          msg.meta.umh_topic = "umh.v1.enterprise.site.area._workorder.new"
 
           // only take two fields from the payload
           msg.payload = {
@@ -2009,8 +2009,6 @@ UNS (Output)
 ### UNS (Output)
 
 > **Works exclusively with UMH Core**
-> Inside UMH Core you can leave the block empty — `uns: {}`.
-> If you run the plugin elsewhere, at minimum set `broker_address`.
 
 #### 1 Quick-start (99 % of users)
 
@@ -2023,19 +2021,12 @@ pipeline:
           msg.meta.location_path = "enterprise.plant1.machiningArea.cnc-line.cnc5.plc123";
           msg.meta.data_contract = "_historian";
           msg.meta.tag_name      = "value";
-          // tag_processor now auto-creates msg.meta.topic
+          // tag_processor now auto-creates msg.meta.umh_topic
           return msg;
 
 output:
-  uns: {}                       # nothing else needed on UMH Core
+  uns: {}                       # nothing else needed on UMH Core. Will automatically use msg.meta.umh_topic from the tag_processor and write to the internal redpanda.
 ```
-
-| What                    | Default inside UMH Core                                                                                                                  |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Broker address**      | `localhost:9092` (embedded Redpanda)                                                                                                     |
-| **Kafka topic**         | **`umh.messages`** (hard-wired)                                                                                                          |
-| **Kafka key**           | `${! meta("topic") }` (created by the `tag_processor` or your own mapping)                                                               |
-| **Header `bridged_by`** | `umh-core` – automatically replaced with `protocol-converter-<INSTANCE>-<NAME>` when the container is deployed by the Management Console |
 
 *Open the **Tag Browser** (Management Console → Unified Namespace) to watch the live values.*
 
@@ -2044,29 +2035,24 @@ output:
 ```yaml
 output:
   uns:
-    topic:          "${! meta(\"topic\") }"   # rarely changed
-    broker_address: "redpanda.prod.example:9092"
-    bridged_by:     "edge-gw-01"              # any free-form ID
+    umh_topic:      "${! meta(\"umh_topic\") }"   # Must follow `umh.v1.<…>` naming. If not specified, will take the `umh_topic` from the metadata fields (e.g., from msg.meta.umh_topic)
+    bridged_by:     "umh-core"                    # Traceability header. Default `umh-core`; overridden automatically by protocol-converters inside UMH Core.
 ```
-
-| Field            | Purpose & Default                                                                                         |
-| ---------------- | --------------------------------------------------------------------------------------------------------- |
-| `topic`          | The **Kafka key**. Must follow `umh.v1.<…>` naming. Default `${! meta("topic") }`.                        |
-| `broker_address` | Comma-separated Kafka/Redpanda bootstrap list. Default `localhost:9092`.                                  |
-| `bridged_by`     | Traceability header. Default `umh-core`; overridden automatically by protocol-converters inside UMH Core. |
 
 #### 3 - What the plugin does behind the scenes
 
 1. **Batching** 100 messages *or* 100 ms – whichever comes first.
 2. **Sanitising** Illegal chars in the key become “\_”.
-3. **Headers** All Benthos metadata (except `kafka_*`) plus `bridged_by` are forwarded as Kafka headers.
-4. **Topic check** If `umh.messages` is missing the plugin creates it (1 partition, `compact,delete`).
+3. **Kafka/Redpanda** Each message will be stored in the Kafka topic `umh.messages` with the Kafka key of the umh_topic
+4. **Headers** All Benthos metadata (except `kafka_*`) plus `bridged_by` are forwarded as Kafka headers.
+5. **Topic check** If `umh.messages` is missing the plugin creates it (1 partition, `compact,delete`).
 
 #### Troubleshooting / FAQs
 
-* **“topic is not set or is empty”** – your pipeline never wrote `msg.meta.topic`.
+* **“topic is not set or is empty”** – your pipeline never wrote `msg.meta.umh_topic`.
   Add a `tag_processor` (auto) or a Bloblang line:
   `meta topic = "umh.v1.demo.plant1.line1._historian.temperature"`
+* **I am not using umh-core, but I still want to use the uns output plugin. How can I do that?** - there is a configuration variable called `broker_address` which you can point to any redpanda broker.
 
 </details>
 

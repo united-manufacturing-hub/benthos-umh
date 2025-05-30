@@ -104,6 +104,10 @@ tag_processor:
 			Expect(exists).To(BeTrue())
 			Expect(topic).To(Equal("umh.v1.enterprise._historian.temperature"))
 
+			umh_topic, exists := msg.MetaGet("umh_topic")
+			Expect(exists).To(BeTrue())
+			Expect(umh_topic).To(Equal("umh.v1.enterprise._historian.temperature"))
+
 			// Check payload
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
@@ -199,6 +203,10 @@ tag_processor:
 			Expect(exists).To(BeTrue())
 			Expect(topic).To(Equal("umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.x.position.actual"))
 
+			umh_topic, exists := msg.MetaGet("umh_topic")
+			Expect(exists).To(BeTrue())
+			Expect(umh_topic).To(Equal("umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.x.position.actual"))
+
 			// Check payload
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
@@ -284,6 +292,10 @@ tag_processor:
 			topic, exists := msg.MetaGet("topic")
 			Expect(exists).To(BeTrue())
 			Expect(topic).To(Equal("umh.v1.enterprise._historian.temperature"))
+
+			umh_topic, exists := msg.MetaGet("umh_topic")
+			Expect(exists).To(BeTrue())
+			Expect(umh_topic).To(Equal("umh.v1.enterprise._historian.temperature"))
 
 			// Check payload
 			structured, err := msg.AsStructured()
@@ -427,6 +439,10 @@ tag_processor:
 			topic, exists := msg.MetaGet("topic")
 			Expect(exists).To(BeTrue())
 			Expect(topic).To(Equal("umh.v1.enterprise.OEEArea._historian.OEE.temperature"))
+
+			umh_topic, exists := msg.MetaGet("umh_topic")
+			Expect(exists).To(BeTrue())
+			Expect(umh_topic).To(Equal("umh.v1.enterprise.OEEArea._historian.OEE.temperature"))
 
 			// Check payload
 			structured, err := msg.AsStructured()
@@ -602,6 +618,10 @@ tag_processor:
 			topic, exists := msg.MetaGet("topic")
 			Expect(exists).To(BeTrue())
 			Expect(topic).To(Equal("umh.v1.enterprise._historian.temperature"))
+
+			umh_topic, exists := msg.MetaGet("umh_topic")
+			Expect(exists).To(BeTrue())
+			Expect(umh_topic).To(Equal("umh.v1.enterprise._historian.temperature"))
 
 			// Check payload
 			structured, err := msg.AsStructured()
