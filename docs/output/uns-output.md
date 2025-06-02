@@ -43,5 +43,5 @@ output:
 
 * **"topic is not set or is empty"** – your pipeline never wrote `msg.meta.umh_topic`.
   Add a `tag_processor` (auto) or a Bloblang line:
-  `meta topic = "umh.v1.demo.plant1.line1._historian.temperature"`
+  `meta umh_topic = "umh.v1.demo.plant1.line1._historian.temperature"`
 * **I am not using umh-core, but I still want to use the uns output plugin. How can I do that?** - there is a configuration variable called `broker_address` which you can point to any redpanda broker. 
