@@ -121,14 +121,14 @@ overwritten by UMH Core when the container runs as a protocol-converter:
 }
 
 // Config holds the configuration for the UNS output plugin
-type unsConfig struct {
+type unsOutputConfig struct {
 	topic         *service.InterpolatedString
 	brokerAddress string
 	bridgedBy     string
 }
 
 type unsOutput struct {
-	config unsConfig
+	config unsOutputConfig
 	client MessagePublisher
 	log    *service.Logger
 }
@@ -143,7 +143,7 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 		Period: "100ms", // timeout to ensure timely delivery even if the count aren't met
 	}
 
-	config := unsConfig{}
+	config := unsOutputConfig{}
 
 	// Parse topic
 	config.topic, _ = service.NewInterpolatedString(defaultTopic)
@@ -182,7 +182,7 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 }
 
 // Testable constructor that accepts client
-func newUnsOutputWithClient(client MessagePublisher, config unsConfig, logger *service.Logger) service.BatchOutput {
+func newUnsOutputWithClient(client MessagePublisher, config unsOutputConfig, logger *service.Logger) service.BatchOutput {
 	return &unsOutput{
 		client: client,
 		config: config,
