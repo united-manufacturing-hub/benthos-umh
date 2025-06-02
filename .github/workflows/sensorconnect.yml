@@ -30,7 +30,7 @@ concurrency:
 jobs:
   go-test-sensorconnect:
     runs-on:
-      group: arc-runners-tests
+      group: eos
     permissions:
       packages: write
       contents: read
