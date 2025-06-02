@@ -42,7 +42,7 @@ var (
 	topicSanitizer = regexp.MustCompile(`[^a-zA-Z0-9._\-]`)
 )
 
-// outputConfig returns the Benthos configuration specification for the “uns”
+// outputConfig returns the Benthos configuration specification for the "uns"
 // batch-output plugin.
 //
 // ──────────────────────────────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ var (
 // ──────────────────────────────────────────────────────────────────────────────
 func outputConfig() *service.ConfigSpec {
 	return service.NewConfigSpec().
-		Summary("Publishes records to UMH Core’s Kafka (Redpanda) topic `umh.messages`.").
+		Summary("Publishes records to UMH Core's Kafka (Redpanda) topic `umh.messages`.").
 		Description(`
 Inside UMH Core you usually configure **nothing**:
 
