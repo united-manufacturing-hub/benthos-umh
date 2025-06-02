@@ -183,13 +183,12 @@ The processor uses the following metadata fields:
 
 **Generated Fields:**
 
-*   `topic`: Automatically generated from the above fields in the format:
+* `umh_topic`: Automatically generated from the above fields in the format:
+  ```
+  umh.v1.<location_path>.<data_contract>.<virtual_path>.<tag_name>
+  ```
 
-    ```
-    umh.v1.<location_path>.<data_contract>.<virtual_path>.<tag_name>
-    ```
-
-    Empty or undefined fields are skipped, and dots are normalized.
+  Empty or undefined fields are skipped, and dots are normalized.
 
 **Message Structure**
 
@@ -212,7 +211,7 @@ Messages in the Tag Processor follow the Node-RED style format:
     virtual_path: "axis.x.position",                            // Logical grouping path
 
     // Generated field (by processor)
-    topic: "umh.v1.enterprise.site.area.line.workcell.plc123._historian.axis.x.position.temperature",
+    umh_topic: "umh.v1.enterprise.site.area.line.workcell.plc123._historian.axis.x.position.temperature",
 
     // Input-specific fields (e.g., from OPC UA)
     opcua_node_id: "ns=1;i=2245",
@@ -260,7 +259,7 @@ Output:
 }
 ```
 
-Topic: `umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.actual`
+UMH Topic: `umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.actual`
 
 2. **OPC UA Node ID Based Processing**
 
@@ -293,7 +292,7 @@ Output:
 }
 ```
 
-Topic: `umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.x.position.actual`
+UMH Topic: `umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.x.position.actual`
 
 3. **Moving Folder Structures in Virtual Path**
 
@@ -324,7 +323,7 @@ Input messages with OPC UA tags:
 // DataAccess_AnalogType.Max
 ```
 
-Output topics will be:
+Output UMH topics will be:
 
 ```
 umh.v1.enterprise.plant1.area1.machining_line.cnc5.plc123._historian.axis.x.DataAccess_AnalogType
@@ -380,7 +379,7 @@ Output:
 }
 ```
 
-Topic: `umh.v1.enterprise.site.area.line.workcell._analytics.work_order`
+UMH Topic: `umh.v1.enterprise.site.area.line.workcell._analytics.work_order`
 
 4. **Dropping Messages Based on Value**
 
@@ -422,7 +421,7 @@ Output:
 }
 ```
 
-Topic: `umh.v1.enterprise._historian.temperature`
+UMH Topic: `umh.v1.enterprise._historian.temperature`
 
 5. **Duplicating Messages for Different Data Contracts**
 
@@ -472,7 +471,7 @@ Output 1 (Historian):
 }
 ```
 
-Topic: `umh.v1.enterprise.production._historian.temperature`
+UMH Topic: `umh.v1.enterprise.production._historian.temperature`
 
 Output 2 (custom):
 
@@ -483,7 +482,7 @@ Output 2 (custom):
 }
 ```
 
-Topic: `umh.v1.enterprise.production._custom.temperature_doubled`
+UMH Topic: `umh.v1.enterprise.production._custom.temperature_doubled`
 
 6. **Processing Full MQTT Message Payload**
 
@@ -563,7 +562,7 @@ Output:
 }
 ```
 
-Topic: `umh.v1.enterprise.area._workorder.maintenance`
+UMH Topic: `umh.v1.enterprise.area._workorder.maintenance`
 
 **Note:** In the `tag_processor`, the resulting payload will always include `timestamp_ms` and one additional key corresponding to the `tag_name`. If you need to fully control the resulting payload structure, consider using the `nodered_js` processor instead. You can set the topic and payload manually, as shown below:
 
@@ -573,7 +572,7 @@ pipeline:
     - nodered_js:
         code: |
           // set kafka topic manually
-          msg.meta.topic = "umh.v1.enterprise.site.area._workorder.new"
+          msg.meta.umh_topic = "umh.v1.enterprise.site.area._workorder.new"
 
           // only take two fields from the payload
           msg.payload = {
