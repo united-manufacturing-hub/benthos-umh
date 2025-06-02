@@ -30,7 +30,7 @@ concurrency:
 jobs:
   go-test-ethernetip:
     runs-on:
-      group: arc-runners-tests
+      group: eos
     permissions:
       packages: write
       contents: read
