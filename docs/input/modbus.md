@@ -84,7 +84,7 @@ input:
       - 2
 ```
 
-For backwars compatbility there is also `slaveID: 1`, which allows setting only a single Modbus slave.
+For backward compatibility, there is also `slaveID: 1`, which allows setting only a single Modbus slave.
 
 **Retry Settings & Timeout**
 
