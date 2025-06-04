@@ -35,15 +35,14 @@ const (
 	defaultOutputTopicPartitionCount = 1
 	defaultBrokerAddress             = "localhost:9092"
 	defaultClientID                  = "umh_core"
-	defaultBridgeName                = "umh_core"
-	defaultTopic                     = "${! meta(\"topic\") }"
+	defaultUMHTopic                  = "${! meta(\"umh_topic\") }"
 )
 
 var (
 	topicSanitizer = regexp.MustCompile(`[^a-zA-Z0-9._\-]`)
 )
 
-// outputConfig returns the Benthos configuration specification for the “uns”
+// outputConfig returns the Benthos configuration specification for the "uns"
 // batch-output plugin.
 //
 // ──────────────────────────────────────────────────────────────────────────────
@@ -51,8 +50,8 @@ var (
 //	▶  PURPOSE
 //	    Publishes data into the United Manufacturing Hub Unified Namespace.
 //	    Every record is written to the local Redpanda topic **umh.messages**;
-//	    the *Kafka-key* (not the topic) is taken from `topic`, normally
-//	    `${! meta("topic") }`, and is ISA-95 / UMH-style (`umh.v1.<…>`).
+//	    the *Kafka-key* (not the topic) is taken from `umh_topic`, normally
+//	    `${! meta("umh_topic") }`, and is ISA-95 / UMH-style (`umh.v1.<…>`).
 //
 //	▶  SCOPE
 //	    The plugin is intended to run **inside UMH Core**.  There it can be
@@ -66,7 +65,7 @@ var (
 //	▶  DEFAULTS & SAFETY
 //	    * Broker : localhost:9092 (the embedded Redpanda)
 //	    * Topic  : umh.messages (hard-wired)
-//	    * Key    : ${! meta("topic") }  – sanitized to `[a-zA-Z0-9._-]`
+//	    * Key    : ${! meta("umh_topic") }  – sanitized to `[a-zA-Z0-9._-]`
 //	    * Header : `bridged_by = umh-core` (auto-overwritten by the
 //	               Management Console when the container is deployed as a
 //	               protocol-converter)
@@ -77,7 +76,7 @@ var (
 // ──────────────────────────────────────────────────────────────────────────────
 func outputConfig() *service.ConfigSpec {
 	return service.NewConfigSpec().
-		Summary("Publishes records to UMH Core’s Kafka (Redpanda) topic `umh.messages`.").
+		Summary("Publishes records to UMH Core's Kafka (Redpanda) topic `umh.messages`.").
 		Description(`
 Inside UMH Core you usually configure **nothing**:
 
@@ -86,23 +85,23 @@ Inside UMH Core you usually configure **nothing**:
 
 The plugin connects to Redpanda on localhost:9092, batches 100 records
 or 100 ms, and writes them to *umh.messages*.  The Kafka key is taken
-from '${! meta("topic") }' (set automatically by the tag_processor,
+from '${! meta("umh_topic") }' (set automatically by the tag_processor,
 Bloblang, or Node-RED JS).  Outside UMH Core you may override the broker
 or add a custom 'bridged_by' header for traceability.
 `).
-		Field(service.NewInterpolatedStringField("topic").
+		Field(service.NewInterpolatedStringField("umh_topic").
 			Description(`
 The **Kafka key** for every record.  Must follow the UMH naming pattern
 'umh.v1.<enterprise>.<site>.<area>.<data_contract>[.<virtual_path>].<tag>'.
 
-Leave it at the default '${! meta("topic") }' if you use the tag_processor
+Leave it at the default '${! meta("umh_topic") }' if you use the tag_processor
 or set it in Bloblang / Node-RED JS.
 
 Any character not matching [a-zA-Z0-9._-] is replaced by '_'.
 `).
-			Example("${! meta(\"topic\") }").
+			Example("${! meta(\"umh_topic\") }").
 			Example("umh.v1.enterprise.site.area.historian").
-			Default(defaultTopic)).
+			Default(defaultUMHTopic)).
 		Field(service.NewStringField("broker_address").
 			Description(`
 Kafka / Redpanda bootstrap list.  Comma-separated if you have multiple
@@ -117,12 +116,12 @@ Traceability header.  Defaults to 'umh-core' but is automatically
 overwritten by UMH Core when the container runs as a protocol-converter:
 'protocol-converter-<INSTANCE>-<NAME>'.
 `).
-			Default(defaultBridgeName))
+			Default(defaultClientID))
 }
 
 // Config holds the configuration for the UNS output plugin
 type unsOutputConfig struct {
-	topic         *service.InterpolatedString
+	umh_topic     *service.InterpolatedString
 	brokerAddress string
 	bridgedBy     string
 }
@@ -133,7 +132,7 @@ type unsOutput struct {
 	log    *service.Logger
 }
 
-// newUnsOutput creates a new unsOutput instance by parsing configuration fields for topic, broker address, and bridge name, returning the output, batch policy, max in-flight count, and any error encountered during parsing.
+// newUnsOutput creates a new unsOutput instance by parsing configuration fields for umh_topic, broker address, and bridge name, returning the output, batch policy, max in-flight count, and any error encountered during parsing.
 func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchOutput, service.BatchPolicy, int, error) {
 	// maximum number of messages that can be in processing simultaneously before requiring acknowledgements
 	maxInFlight := 100
@@ -146,13 +145,13 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 	config := unsOutputConfig{}
 
 	// Parse topic
-	config.topic, _ = service.NewInterpolatedString(defaultTopic)
-	if conf.Contains("topic") {
-		messageKey, err := conf.FieldInterpolatedString("topic")
+	config.umh_topic, _ = service.NewInterpolatedString(defaultUMHTopic)
+	if conf.Contains("umh_topic") {
+		messageKey, err := conf.FieldInterpolatedString("umh_topic")
 		if err != nil {
-			return nil, batchPolicy, 0, fmt.Errorf("error while parsing topic field from the config: %v", err)
+			return nil, batchPolicy, 0, fmt.Errorf("error while parsing umh_topic field from the config: %v", err)
 		}
-		config.topic = messageKey
+		config.umh_topic = messageKey
 	}
 
 	// Parse broker_address if provided
@@ -167,7 +166,7 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 		}
 	}
 
-	config.bridgedBy = defaultBridgeName
+	config.bridgedBy = defaultClientID
 	if conf.Contains("bridged_by") {
 		bridgedBy, err := conf.FieldString("bridged_by")
 		if err != nil {
@@ -304,14 +303,14 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 
 	records := make([]Record, 0, len(msgs))
 	for i, msg := range msgs {
-		key, err := o.config.topic.TryString(msg)
+		key, err := o.config.umh_topic.TryString(msg)
 		if err != nil {
-			return fmt.Errorf("failed to resolve topic field in message %d: %v", i, err)
+			return fmt.Errorf("failed to resolve umh_topic field in message %d: %v", i, err)
 		}
 
 		// TryString sets the key to "null" when the key is not set in the message
 		if key == "" || key == "null" {
-			return fmt.Errorf("topic is not set or is empty in message %d, topic is mandatory", i)
+			return fmt.Errorf("umh_topic is not set or is empty in message %d, umh_topic is mandatory", i)
 		}
 
 		sanitizedKey := o.sanitizeMessageKey(key)

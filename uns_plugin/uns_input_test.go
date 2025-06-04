@@ -421,11 +421,16 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 		When("the topic regex is invalid", func() {
 			It("should throw an error", func() {
-				inputConfig.umhTopic = "[0-9" // Invalid regex
+				invalidInputConfig := UnsInputConfig{
+					umhTopic:        "[0-9", // Invalid regex
+					inputKafkaTopic: defaultInputKafkaTopic,
+					brokerAddress:   defaultBrokerAddress,
+					consumerGroup:   defaultConsumerGroup,
+				}
 
 				// We need to re-initialize the input plugin with the new config
 				var err error
-				inputPlugin, err = NewUnsInput(mockClient, inputConfig, resources.Logger(), resources.Metrics())
+				inputPlugin, err = NewUnsInput(mockClient, invalidInputConfig, resources.Logger(), resources.Metrics())
 				Expect(err).NotTo(BeNil())
 				Expect(err.Error()).To(ContainSubstring("error parsing regex"))
 
