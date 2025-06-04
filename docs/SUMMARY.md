@@ -14,5 +14,6 @@
   * [Node-RED JavaScript Processor](processing/node-red-javascript-processor.md)
   * [More](https://docs.redpanda.com/redpanda-connect/components/processors/about/)
 * [Output](output/README.md)
+  * [UNS (Output)](output/uns-output.md)
   * [OPC UA (Output)](output/opc-ua-output.md)
   * [More](https://docs.redpanda.com/redpanda-connect/components/outputs/about/)
