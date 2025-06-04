@@ -149,9 +149,8 @@ var _ = Describe("Initializing uns output plugin", func() {
 		unsConf := unsOutputConfig{
 			bridgedBy: "default-test-bridge",
 		}
-
-		topic, _ := service.NewInterpolatedString("${! meta(\"topic\") }")
-		unsConf.topic = topic
+		umh_topic, _ := service.NewInterpolatedString("${! meta(\"umh_topic\") }")
+		unsConf.umh_topic = umh_topic
 		outputPlugin = newUnsOutputWithClient(mockClient, unsConf, nil)
 		unsClient = outputPlugin.(*unsOutput)
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
@@ -253,7 +252,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 				var msgs service.MessageBatch
 				for range 10 {
 					msg := service.NewMessage([]byte(`{"data": "test"}`))
-					msg.MetaSet("topic", "umh.v1.abc")
+					msg.MetaSet("umh_topic", "umh.v1.abc")
 					msgs = append(msgs, msg)
 				}
 				err := outputPlugin.WriteBatch(ctx, msgs)
@@ -278,7 +277,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 				msgs := service.MessageBatch{msg}
 				err := outputPlugin.WriteBatch(ctx, msgs)
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("topic is not set or is empty in message 0, topic is mandatory"))
+				Expect(err.Error()).To(ContainSubstring("umh_topic is not set or is empty in message 0, umh_topic is mandatory"))
 			})
 		})
 
@@ -294,7 +293,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 				var msgs service.MessageBatch
 				for range 10 {
 					msg := service.NewMessage(nil)
-					msg.MetaSet("topic", "umh.v1.enterprise.messages")
+					msg.MetaSet("umh_topic", "umh.v1.enterprise.messages")
 					msg.SetStructured(map[string]any{
 						"value": "mock message",
 					})
