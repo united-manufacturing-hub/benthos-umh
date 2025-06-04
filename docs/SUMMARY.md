@@ -6,6 +6,8 @@
   * [Modbus](input/modbus.md)
   * [ifm IO-Link Master / "sensorconnect"](input/ifm-io-link-master-sensorconnect.md)
   * [Beckhoff ADS (community)](input/beckhoff-ads-community.md)
+  * [Siemens S7](input/siemens-s7.md)
+  * [Ethernet/IP](input/ethernet-ip.md)
   * [More](https://docs.redpanda.com/redpanda-connect/components/inputs/about/)
 * [Processing](processing/README.md)
   * [Tag Processor](processing/tag-processor.md)
