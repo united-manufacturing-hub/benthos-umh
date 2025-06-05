@@ -1,0 +1,126 @@
+# Sparkplug B to UNS Integration
+# Recommended configuration for ingesting Sparkplug B data into UMH Unified Namespace
+
+input:
+  mqtt:
+    urls: ["tcp://localhost:1883"]
+    topics: 
+      - "spBv1.0/+/+/+"     # Node-level topics
+      - "spBv1.0/+/+/+/+"   # Device-level topics
+    client_id: benthos-sparkplug-to-uns
+    qos: 1
+
+pipeline:
+  processors:
+    # Step 1: Decode Sparkplug B protobuf payloads
+    - sparkplug_b_decode:
+        drop_birth_messages: false
+        strict_topic_validation: true
+        cache_ttl: "2h"
+
+    # Step 2: Process only DATA messages for UNS
+    - bloblang: |
+        root = if meta("sparkplug_msg_type").contains("DATA") {
+          this
+        } else {
+          deleted()
+        }
+
+    # Step 3: Split multi-metric messages into individual metrics
+    - bloblang: |
+        root = this.metrics.map_each(metric -> {
+          meta("mqtt_topic"): meta("mqtt_topic"),
+          meta("sparkplug_msg_type"): meta("sparkplug_msg_type"),
+          meta("sparkplug_device_key"): meta("sparkplug_device_key"),
+          payload: metric
+        })
+    
+    - split: {}
+
+    # Step 4: Transform to UMH format using tag_processor
+    - tag_processor:
+        defaults: |
+          // Extract Sparkplug topic information
+          let topic = msg.meta.mqtt_topic;
+          let parts = topic.split("/");
+          let group = parts[1];
+          let edge_node = parts[3];
+          let device = parts.length > 4 ? parts[4] : "";
+          
+          // Map Sparkplug groups to UMH location hierarchy
+          if (group == "Factory1") {
+            msg.meta.location_path = "enterprise.factory1.production.line1." + edge_node.toLowerCase();
+          } else if (group == "Warehouse") {
+            msg.meta.location_path = "enterprise.warehouse.logistics.zone1." + edge_node.toLowerCase();
+          } else {
+            msg.meta.location_path = "enterprise.unknown." + group.toLowerCase() + ".area1." + edge_node.toLowerCase();
+          }
+          
+          // Add device if present
+          if (device != "") {
+            msg.meta.location_path += "." + device.toLowerCase();
+          }
+          
+          // Set UMH metadata
+          msg.meta.data_contract = "_historian";
+          msg.meta.tag_name = msg.payload.name || "unknown_metric";
+          
+          return msg;
+        
+        conditions:
+          # Categorize metrics by type using virtual paths
+          - if: msg.payload.name && msg.payload.name.includes("Temperature")
+            then: |
+              msg.meta.virtual_path = "sensors.temperature";
+              msg.meta.tag_name = msg.payload.name.toLowerCase().replace(/[^a-z0-9]/g, "_");
+              return msg;
+          
+          - if: msg.payload.name && msg.payload.name.includes("Pressure")
+            then: |
+              msg.meta.virtual_path = "sensors.pressure";
+              msg.meta.tag_name = msg.payload.name.toLowerCase().replace(/[^a-z0-9]/g, "_");
+              return msg;
+          
+          - if: msg.payload.name && msg.payload.name.includes("Speed")
+            then: |
+              msg.meta.virtual_path = "actuators.motor";
+              msg.meta.tag_name = msg.payload.name.toLowerCase().replace(/[^a-z0-9]/g, "_");
+              return msg;
+        
+        advancedProcessing: |
+          // Transform Sparkplug metric to UMH value format
+          let metric = msg.payload;
+          let value = null;
+          let quality = "GOOD";
+          
+          // Extract value based on Sparkplug B datatype
+          if (metric.is_null) {
+            value = null;
+            quality = "BAD";
+          } else if (metric.floatValue) {
+            value = metric.floatValue;
+          } else if (metric.intValue) {
+            value = metric.intValue;
+          } else if (metric.doubleValue) {
+            value = metric.doubleValue;
+          } else if (metric.booleanValue) {
+            value = metric.booleanValue;
+          } else if (metric.stringValue) {
+            value = metric.stringValue;
+          } else {
+            value = metric;
+            quality = "UNCERTAIN";
+          }
+          
+          // Create UMH-compatible payload
+          msg.payload = {
+            "value": value,
+            "quality": quality,
+            "timestamp_ms": Date.now()
+          };
+          
+          return msg;
+
+# Output to UNS (Unified Namespace)
+output:
+  uns: {} 
