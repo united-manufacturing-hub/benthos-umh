@@ -18,7 +18,7 @@ This processor maintains an in-memory cache of metric name aliases from BIRTH me
 - **Auto-Split Metrics**: Automatically splits multi-metric messages into individual metric messages
 - **Data Messages Only**: Filters to only process DATA messages by default for easier UNS integration  
 - **Auto-Extract Values**: Extracts clean values with quality metadata automatically
-- **Auto-Set Metadata**: Enriches messages with `tag_name`, `group_id`, `edge_node_id`, `device_id` for easy tag_processor usage
+- **Auto-Set Metadata**: Enriches messages with `tag_name`, `sparkplug_msg_type`, `group_id`, `edge_node_id`, `device_id` (for device messages), and `sparkplug_device_key` for easy tag_processor usage
 - **Thread-safe alias caching**: Maintains metric name mappings per device
 - **Graceful error handling**: Drops malformed payloads without stopping the pipeline
 
@@ -122,7 +122,7 @@ output:
 1. **Auto-splits** multi-metric messages into individual metric messages
 2. **Auto-filters** to only process DATA messages (drops BIRTH/DEATH/CMD)
 3. **Auto-extracts** values with quality metadata
-4. **Auto-sets** metadata: `tag_name`, `group_id`, `edge_node_id`, `device_id`
+4. **Auto-sets** metadata: `tag_name`, `sparkplug_msg_type`, `group_id`, `edge_node_id`, `device_id` (for device messages), `sparkplug_device_key`
 5. **Resolves** aliases to human-readable metric names
 6. **Publishes** to UNS with proper UMH topic structure
 
