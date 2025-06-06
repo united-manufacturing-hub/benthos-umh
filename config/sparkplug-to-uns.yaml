@@ -1,5 +1,6 @@
-# Sparkplug B to UNS Integration
-# Recommended configuration for ingesting Sparkplug B data into UMH Unified Namespace
+# Simplified Sparkplug B to UNS Integration
+# This configuration demonstrates the enhanced Sparkplug B processor
+# with automatic metric splitting, filtering, and metadata extraction
 
 input:
   mqtt:
@@ -12,115 +13,62 @@ input:
 
 pipeline:
   processors:
-    # Step 1: Decode Sparkplug B protobuf payloads
+    # Step 1: Decode Sparkplug B protobuf payloads with auto-features enabled
     - sparkplug_b_decode:
-        drop_birth_messages: false
-        strict_topic_validation: true
-        cache_ttl: "2h"
+        # Auto-split metrics: Each metric becomes a separate message (default: true)
+        auto_split_metrics: true
+        
+        # Only process DATA messages, drop others (default: true)  
+        data_messages_only: true
+        
+        # Auto-extract values and set simple payload structure (default: true)
+        auto_extract_values: true
+        
+        # Advanced options (all defaults)
+        drop_birth_messages: false        # Still cache aliases but drop BIRTH messages
+        strict_topic_validation: false    # Pass through invalid topics
+        cache_ttl: ""                     # No alias cache expiration
 
-    # Step 2: Process only DATA messages for UNS
-    - bloblang: |
-        root = if meta("sparkplug_msg_type").contains("DATA") {
-          this
-        } else {
-          deleted()
-        }
-
-    # Step 3: Split multi-metric messages into individual metrics
-    - bloblang: |
-        root = this.metrics.map_each(metric -> {
-          meta("mqtt_topic"): meta("mqtt_topic"),
-          meta("sparkplug_msg_type"): meta("sparkplug_msg_type"),
-          meta("sparkplug_device_key"): meta("sparkplug_device_key"),
-          payload: metric
-        })
-    
-    - split: {}
-
-    # Step 4: Transform to UMH format using tag_processor
+    # Step 2: Transform to UMH format using tag_processor (much simpler now!)
     - tag_processor:
         defaults: |
-          // Extract Sparkplug topic information
-          let topic = msg.meta.mqtt_topic;
-          let parts = topic.split("/");
-          let group = parts[1];
-          let edge_node = parts[3];
-          let device = parts.length > 4 ? parts[4] : "";
+          # tag_name is already set by sparkplug_b_decode processor
+          # device_id, group_id, edge_node_id are already set as metadata
           
-          // Map Sparkplug groups to UMH location hierarchy
-          if (group == "Factory1") {
-            msg.meta.location_path = "enterprise.factory1.production.line1." + edge_node.toLowerCase();
-          } else if (group == "Warehouse") {
-            msg.meta.location_path = "enterprise.warehouse.logistics.zone1." + edge_node.toLowerCase();
-          } else {
-            msg.meta.location_path = "enterprise.unknown." + group.toLowerCase() + ".area1." + edge_node.toLowerCase();
-          }
-          
-          // Add device if present
-          if (device != "") {
-            msg.meta.location_path += "." + device.toLowerCase();
-          }
-          
-          // Set UMH metadata
           msg.meta.data_contract = "_historian";
-          msg.meta.tag_name = msg.payload.name || "unknown_metric";
+          
+          # Use device hierarchy from Sparkplug topic structure
+          msg.meta.location_path = msg.meta.group_id + "." + msg.meta.edge_node_id;
+          if msg.meta.device_id != "" {
+            msg.meta.location_path = msg.meta.location_path + "." + msg.meta.device_id;
+          }
+          
+          # Set default virtual path - can be customized based on tag patterns
+          msg.meta.virtual_path = "sensors.generic";
           
           return msg;
         
         conditions:
-          # Categorize metrics by type using virtual paths
-          - if: msg.payload.name && msg.payload.name.includes("Temperature")
+          # Categorize metrics by name patterns using virtual paths
+          - if: msg.meta.tag_name && msg.meta.tag_name.includes("temp")
             then: |
               msg.meta.virtual_path = "sensors.temperature";
-              msg.meta.tag_name = msg.payload.name.toLowerCase().replace(/[^a-z0-9]/g, "_");
               return msg;
           
-          - if: msg.payload.name && msg.payload.name.includes("Pressure")
+          - if: msg.meta.tag_name && msg.meta.tag_name.includes("press")
             then: |
               msg.meta.virtual_path = "sensors.pressure";
-              msg.meta.tag_name = msg.payload.name.toLowerCase().replace(/[^a-z0-9]/g, "_");
               return msg;
           
-          - if: msg.payload.name && msg.payload.name.includes("Speed")
+          - if: msg.meta.tag_name && (msg.meta.tag_name.includes("speed") || msg.meta.tag_name.includes("rpm"))
             then: |
               msg.meta.virtual_path = "actuators.motor";
-              msg.meta.tag_name = msg.payload.name.toLowerCase().replace(/[^a-z0-9]/g, "_");
               return msg;
-        
-        advancedProcessing: |
-          // Transform Sparkplug metric to UMH value format
-          let metric = msg.payload;
-          let value = null;
-          let quality = "GOOD";
           
-          // Extract value based on Sparkplug B datatype
-          if (metric.is_null) {
-            value = null;
-            quality = "BAD";
-          } else if (metric.floatValue) {
-            value = metric.floatValue;
-          } else if (metric.intValue) {
-            value = metric.intValue;
-          } else if (metric.doubleValue) {
-            value = metric.doubleValue;
-          } else if (metric.booleanValue) {
-            value = metric.booleanValue;
-          } else if (metric.stringValue) {
-            value = metric.stringValue;
-          } else {
-            value = metric;
-            quality = "UNCERTAIN";
-          }
-          
-          // Create UMH-compatible payload
-          msg.payload = {
-            "value": value,
-            "quality": quality,
-            "timestamp_ms": Date.now()
-          };
-          
-          return msg;
+          - if: msg.meta.tag_name && msg.meta.tag_name.includes("vibr")
+            then: |
+              msg.meta.virtual_path = "sensors.vibration";
+              return msg;
 
-# Output to UNS (Unified Namespace)
 output:
   uns: {} 
