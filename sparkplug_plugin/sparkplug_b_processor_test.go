@@ -38,6 +38,110 @@ func TestSparkplugBProcessor(t *testing.T) {
 var _ = Describe("Sparkplug B Processor", func() {
 	Describe("Integration Tests - Real Benthos Pipeline", func() {
 		Context("Processing Sparkplug B messages through pipeline", func() {
+			It("should use default configuration with all auto-features enabled", func() {
+				// Create a simple payload with multiple metrics to test all defaults
+				payload := &sproto.Payload{
+					Timestamp: uint64Ptr(1672531200000),
+					Metrics: []*sproto.Payload_Metric{
+						{
+							Name: stringPtr("Temperature"),
+							Value: &sproto.Payload_Metric_FloatValue{
+								FloatValue: 22.5,
+							},
+						},
+						{
+							Name: stringPtr("Pressure"),
+							Value: &sproto.Payload_Metric_FloatValue{
+								FloatValue: 1013.25,
+							},
+						},
+					},
+				}
+
+				payloadBytes, err := proto.Marshal(payload)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Create Benthos pipeline with DEFAULT configuration (empty config)
+				builder := service.NewStreamBuilder()
+
+				var msgHandler service.MessageHandlerFunc
+				msgHandler, err = builder.AddProducerFunc()
+				Expect(err).NotTo(HaveOccurred())
+
+				// Use empty config to test defaults
+				err = builder.AddProcessorYAML(`
+sparkplug_b_decode: {}  # All auto-features enabled by default
+`)
+				Expect(err).NotTo(HaveOccurred())
+
+				var messages []*service.Message
+				err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+					messages = append(messages, msg)
+					return nil
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				stream, err := builder.Build()
+				Expect(err).NotTo(HaveOccurred())
+
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+
+				go func() {
+					_ = stream.Run(ctx)
+				}()
+
+				// Send NDATA message (should pass through with defaults: data_messages_only=true)
+				testMsg := service.NewMessage(payloadBytes)
+				testMsg.MetaSetMut("mqtt_topic", "spBv1.0/Factory1/NDATA/EdgeNode1")
+				err = msgHandler(ctx, testMsg)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Should get 2 messages due to auto_split_metrics=true by default
+				Eventually(func() int {
+					return len(messages)
+				}).Should(Equal(2))
+
+				// Verify both messages have auto-extracted metadata
+				for i, msg := range messages {
+					// Check auto-set metadata
+					msgType, exists := msg.MetaGet("sparkplug_msg_type")
+					Expect(exists).To(BeTrue())
+					Expect(msgType).To(Equal("NDATA"))
+
+					groupID, exists := msg.MetaGet("group_id")
+					Expect(exists).To(BeTrue())
+					Expect(groupID).To(Equal("Factory1"))
+
+					edgeNodeID, exists := msg.MetaGet("edge_node_id")
+					Expect(exists).To(BeTrue())
+					Expect(edgeNodeID).To(Equal("EdgeNode1"))
+
+					tagName, exists := msg.MetaGet("tag_name")
+					Expect(exists).To(BeTrue())
+					if i == 0 {
+						Expect(tagName).To(Or(Equal("Temperature"), Equal("Pressure")))
+					} else {
+						Expect(tagName).To(Or(Equal("Temperature"), Equal("Pressure")))
+					}
+
+					// With auto_extract_values=true by default, check the payload structure
+					structured, err := msg.AsStructured()
+					Expect(err).NotTo(HaveOccurred())
+
+					// The processor splits metrics but still returns full payload structure
+					payloadMap, ok := structured.(map[string]interface{})
+					Expect(ok).To(BeTrue())
+
+					metricsInterface, exists := payloadMap["metrics"]
+					Expect(exists).To(BeTrue())
+
+					metrics, ok := metricsInterface.([]interface{})
+					Expect(ok).To(BeTrue())
+					Expect(metrics).To(HaveLen(2)) // Original metric + quality metric
+				}
+			})
+
 			It("should process NBIRTH message and add metadata", func() {
 				// Create NBIRTH payload
 				payload := &sproto.Payload{
