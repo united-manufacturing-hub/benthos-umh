@@ -84,7 +84,7 @@ pipeline:
     - tag_processor:
         defaults: |
           # tag_name, device_id, group_id, edge_node_id already set by sparkplug_b_decode
-          msg.meta.data_contract = "_historian";
+          msg.meta.data_contract = "_raw_";
           
           # Build location path from auto-extracted metadata
           msg.meta.location_path = msg.meta.group_id + "." + msg.meta.edge_node_id;
@@ -126,19 +126,8 @@ output:
 5. **Resolves** aliases to human-readable metric names
 6. **Publishes** to UNS with proper UMH topic structure
 
-**Configuration Simplification:**
-- **Before**: 6 processors + 85+ lines of complex logic
-- **After**: 2 processors + 25 lines of simple configuration
-- **Result**: 70%+ reduction in complexity
-
 **Resulting UMH Topics:**
-- `umh.v1.[group].[edge_node].[device]._historian.sensors.temperature.[tag_name]`
-- `umh.v1.[group].[edge_node].[device]._historian.actuators.motor.[tag_name]`
-
-## Performance Considerations
-
-- **Memory Usage**: The processor maintains an in-memory cache of aliases per device
-- **Thread Safety**: All cache operations are thread-safe using read-write mutexes
-- **Cache Eviction**: Consider setting `cache_ttl` in environments with many devices to prevent memory leaks
+- `umh.v1.[group].[edge_node].[device]._raw.sensors.temperature.[tag_name]`
+- `umh.v1.[group].[edge_node].[device]._raw.actuators.motor.[tag_name]`
 
  
