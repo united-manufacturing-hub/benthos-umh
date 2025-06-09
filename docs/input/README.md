@@ -4,6 +4,8 @@ This section covers Benthos input plugins for collecting data from various indus
 
 ## Available Input Plugins
 
+- **[Sparkplug B Input](sparkplug-b-input.md)** - Acts as a Primary SCADA Host in the Sparkplug B ecosystem. Provides comprehensive MQTT-based industrial IoT data collection with session lifecycle management, rebirth requests, and death certificate handling.
+
 - **[OPC UA Input](opc-ua-input.md)** - Connects to OPC UA servers to browse and subscribe to nodes. Supports various data types, authentication methods, and provides comprehensive metadata for each message.
 
 - **[Modbus](modbus.md)** - Communicates with Modbus devices supporting coils, discrete inputs, holding registers, and input registers. Features register optimization, device-specific workarounds, and extensive configuration options.
@@ -16,6 +18,7 @@ This section covers Benthos input plugins for collecting data from various indus
 
 ## Choosing the Right Input Plugin
 
+- Use **Sparkplug B Input** for MQTT-based industrial IoT systems following the Sparkplug B specification
 - Use **OPC UA Input** for modern industrial systems that support the OPC UA standard
 - Use **Modbus** for legacy industrial devices and PLCs that communicate via Modbus protocol
 - Use **ifm IO-Link Master** when working with ifm electronic's IO-Link infrastructure and sensors

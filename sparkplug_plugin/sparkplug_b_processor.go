@@ -26,6 +26,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// init registers the sparkplug_b_decode processor with the Benthos plugin registry.
+// This processor provides comprehensive Sparkplug B protocol support for decoding,
+// alias resolution, and message transformation within Benthos data pipelines.
 func init() {
 	spec := service.NewConfigSpec().
 		Version("1.0.0").
@@ -120,26 +123,57 @@ The processor is stateful and maintains alias mappings in memory per device key
 	}
 }
 
+// sparkplugProcessor implements the Sparkplug B protocol decoder processor.
+// It maintains stateful alias mappings and provides configurable message processing
+// options for integration with the UMH Unified Namespace.
+//
+// The processor handles:
+//   - BIRTH message alias caching
+//   - DATA message alias resolution
+//   - Message splitting for individual metric processing
+//   - Metadata extraction for UNS integration
+//   - Configurable filtering and transformation options
 type sparkplugProcessor struct {
-	dropBirthMessages     bool
-	strictTopicValidation bool
-	cacheTTL              string
-	autoSplitMetrics      bool
-	dataMessagesOnly      bool
-	autoExtractValues     bool
-	logger                *service.Logger
-	aliasCache            map[string]map[uint64]string // deviceKey → (alias → metric name)
-	mu                    sync.RWMutex
+	// Configuration options
+	dropBirthMessages     bool   // Whether to drop BIRTH messages after alias extraction
+	strictTopicValidation bool   // Whether to validate Sparkplug topic format strictly
+	cacheTTL              string // Time-to-live for alias cache entries
+	autoSplitMetrics      bool   // Whether to split multi-metric messages
+	dataMessagesOnly      bool   // Whether to only process DATA messages
+	autoExtractValues     bool   // Whether to extract metric values automatically
 
-	// Metrics
-	messagesProcessed  *service.MetricCounter
-	messagesDropped    *service.MetricCounter
-	messagesErrored    *service.MetricCounter
-	birthMessagesCache *service.MetricCounter
-	aliasResolutions   *service.MetricCounter
-	topicParseErrors   *service.MetricCounter
+	// Runtime components
+	logger *service.Logger
+
+	// State management
+	aliasCache map[string]map[uint64]string // deviceKey → (alias → metric name)
+	mu         sync.RWMutex                 // Protects aliasCache
+
+	// Metrics for monitoring and observability
+	messagesProcessed  *service.MetricCounter // Total messages processed
+	messagesDropped    *service.MetricCounter // Messages dropped due to filtering/errors
+	messagesErrored    *service.MetricCounter // Messages that caused processing errors
+	birthMessagesCache *service.MetricCounter // BIRTH messages processed for alias caching
+	aliasResolutions   *service.MetricCounter // Number of alias resolutions performed
+	topicParseErrors   *service.MetricCounter // Topic parsing failures
 }
 
+// newSparkplugProcessor creates a new Sparkplug B processor instance with the specified configuration.
+// It initializes the alias cache, metrics collectors, and validates configuration parameters.
+//
+// Parameters:
+//   - dropBirthMessages: If true, BIRTH messages are dropped after alias extraction
+//   - strictTopicValidation: If true, invalid topics cause message drops
+//   - cacheTTL: Time-to-live for alias cache entries (empty string = no expiration)
+//   - autoSplitMetrics: If true, multi-metric messages are split into individual messages
+//   - dataMessagesOnly: If true, only DATA messages are processed
+//   - autoExtractValues: If true, metric values are extracted and simplified
+//   - logger: Benthos logger instance for debug/error output
+//   - metrics: Benthos metrics registry for monitoring
+//
+// Returns:
+//   - *sparkplugProcessor: Configured processor instance
+//   - error: Configuration validation error, if any
 func newSparkplugProcessor(
 	dropBirthMessages, strictTopicValidation bool,
 	cacheTTL string,
@@ -165,6 +199,24 @@ func newSparkplugProcessor(
 	}, nil
 }
 
+// Process processes a single message through the Sparkplug B decoder pipeline.
+// This is the main entry point for message processing and handles:
+//   - MQTT topic validation and parsing
+//   - Sparkplug payload unmarshaling
+//   - BIRTH message alias caching
+//   - DATA message alias resolution
+//   - Message filtering based on configuration
+//   - Message splitting and metadata enrichment
+//
+// The method is thread-safe and maintains alias state across calls.
+//
+// Parameters:
+//   - ctx: Processing context for cancellation
+//   - m: Input message with MQTT topic metadata and Sparkplug protobuf payload
+//
+// Returns:
+//   - service.MessageBatch: Processed messages (may be empty if dropped)
+//   - error: Processing error that should stop the pipeline
 func (s *sparkplugProcessor) Process(ctx context.Context, m *service.Message) (service.MessageBatch, error) {
 	// Get the MQTT topic from metadata
 	topic, exists := m.MetaGet("mqtt_topic")
@@ -259,7 +311,16 @@ func (s *sparkplugProcessor) Process(ctx context.Context, m *service.Message) (s
 	return s.createSingleMessage(m, &payload, msgType, deviceKey, topicInfo)
 }
 
-// cacheAliases extracts and stores alias → name mappings from BIRTH message metrics
+// cacheAliases extracts and stores alias → name mappings from BIRTH message metrics.
+// This method is thread-safe and builds the alias resolution cache that enables
+// DATA messages to be enriched with human-readable metric names.
+//
+// Parameters:
+//   - deviceKey: Unique device identifier (Group/EdgeNode[/Device])
+//   - metrics: List of metrics from a BIRTH message containing name-alias pairs
+//
+// Returns:
+//   - int: Number of aliases successfully cached
 func (s *sparkplugProcessor) cacheAliases(deviceKey string, metrics []*sproto.Payload_Metric) int {
 	if deviceKey == "" || len(metrics) == 0 {
 		return 0
@@ -289,7 +350,16 @@ func (s *sparkplugProcessor) cacheAliases(deviceKey string, metrics []*sproto.Pa
 	return count
 }
 
-// resolveAliases enriches DATA message metrics by replacing aliases with cached names
+// resolveAliases enriches DATA message metrics by replacing aliases with cached names.
+// This method looks up previously cached alias mappings and populates the metric
+// name field for metrics that only contain aliases.
+//
+// Parameters:
+//   - deviceKey: Unique device identifier to look up cached aliases
+//   - metrics: List of metrics from a DATA message that may contain aliases
+//
+// Returns:
+//   - int: Number of aliases successfully resolved to names
 func (s *sparkplugProcessor) resolveAliases(deviceKey string, metrics []*sproto.Payload_Metric) int {
 	if deviceKey == "" || len(metrics) == 0 {
 		return 0
@@ -361,11 +431,15 @@ func (s *sparkplugProcessor) Close(ctx context.Context) error {
 	return nil
 }
 
-// TopicInfo contains parsed Sparkplug topic information
+// TopicInfo contains parsed Sparkplug topic information extracted from MQTT topics.
+// This structure represents the hierarchical addressing scheme used in Sparkplug B
+// for organizing edge nodes and devices within groups.
+//
+// Topic format: spBv1.0/<Group>/<MsgType>/<EdgeNode>[/<Device>]
 type TopicInfo struct {
-	Group    string
-	EdgeNode string
-	Device   string
+	Group    string // Sparkplug Group ID (e.g., "FactoryA")
+	EdgeNode string // Edge Node ID within the group (e.g., "Line1")
+	Device   string // Device ID under the edge node (empty for node-level messages)
 }
 
 // parseSparkplugTopicDetailed parses a Sparkplug topic and returns (messageType, deviceKey, topicInfo)
