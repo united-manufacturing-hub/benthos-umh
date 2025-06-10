@@ -31,6 +31,10 @@ func init() {
 type DeadbandAlgorithm struct {
 	threshold   float64
 	maxInterval time.Duration
+
+	// Internal state
+	lastKeptValue interface{}
+	lastKeptTime  time.Time
 }
 
 // NewDeadbandAlgorithm creates a new deadband algorithm instance
@@ -76,41 +80,48 @@ func NewDeadbandAlgorithm(config map[string]interface{}) (DownsampleAlgorithm, e
 	}, nil
 }
 
-// ShouldKeep determines if a data point should be kept based on deadband logic
-func (d *DeadbandAlgorithm) ShouldKeep(current, previous interface{}, currentTime, prevTime time.Time) (bool, error) {
-	// First point is always kept
-	if previous == nil {
-		return true, nil
-	}
-
-	// Check max interval if configured
-	if d.maxInterval > 0 && !prevTime.IsZero() {
-		if currentTime.Sub(prevTime) >= d.maxInterval {
-			return true, nil
-		}
-	}
-
-	// Convert values to numeric for comparison
-	currentVal, err := d.toFloat64(current)
+// ProcessPoint processes a new data point and returns whether it should be kept
+func (d *DeadbandAlgorithm) ProcessPoint(value interface{}, timestamp time.Time) (bool, error) {
+	// Validate that we can convert to numeric first
+	currentVal, err := d.toFloat64(value)
 	if err != nil {
 		return false, fmt.Errorf("cannot convert current value to numeric: %v", err)
 	}
 
-	prevVal, err := d.toFloat64(previous)
-	if err != nil {
-		return false, fmt.Errorf("cannot convert previous value to numeric: %v", err)
+	// First point is always kept
+	if d.lastKeptValue == nil {
+		d.lastKeptValue = value
+		d.lastKeptTime = timestamp
+		return true, nil
 	}
 
-	// Calculate absolute difference
-	diff := math.Abs(currentVal - prevVal)
+	// Check maximum interval constraint
+	if d.maxInterval > 0 && timestamp.Sub(d.lastKeptTime) >= d.maxInterval {
+		d.lastKeptValue = value
+		d.lastKeptTime = timestamp
+		return true, nil
+	}
 
-	// Keep if change exceeds threshold
-	return diff >= d.threshold, nil
+	// Check threshold constraint
+	lastVal, err := d.toFloat64(d.lastKeptValue)
+	if err != nil {
+		return false, fmt.Errorf("cannot convert last kept value to numeric: %v", err)
+	}
+
+	delta := math.Abs(currentVal - lastVal)
+	if delta >= d.threshold {
+		d.lastKeptValue = value
+		d.lastKeptTime = timestamp
+		return true, nil
+	}
+
+	return false, nil
 }
 
-// Reset clears the algorithm's internal state (deadband is stateless)
+// Reset clears the algorithm's internal state
 func (d *DeadbandAlgorithm) Reset() {
-	// Deadband algorithm doesn't maintain internal state
+	d.lastKeptValue = nil
+	d.lastKeptTime = time.Time{}
 }
 
 // GetMetadata returns metadata string for annotation

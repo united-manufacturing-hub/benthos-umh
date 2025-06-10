@@ -18,8 +18,10 @@ import "time"
 
 // DownsampleAlgorithm defines the interface for downsampling algorithms
 type DownsampleAlgorithm interface {
-	// ShouldKeep determines if a data point should be kept or filtered out
-	ShouldKeep(current, previous interface{}, currentTime, prevTime time.Time) (bool, error)
+	// ProcessPoint processes a new data point and returns whether it should be kept.
+	// This method is called for every point in sequence, allowing stateful algorithms
+	// like SDT to maintain internal state across all points.
+	ProcessPoint(value interface{}, timestamp time.Time) (bool, error)
 
 	// Reset clears the algorithm's internal state
 	Reset()
