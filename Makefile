@@ -94,6 +94,10 @@ test-tag-processor:
 	@TEST_TAG_PROCESSOR=true \
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./tag_processor_plugin/...
 
+.PHONY: test-downsampler
+test-downsampler:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./downsampler_plugin/...
+
 
 ###### TESTS WITH RUNNING BENTHOS-UMH #####
 # Test the tag processor with a local OPC UA server
