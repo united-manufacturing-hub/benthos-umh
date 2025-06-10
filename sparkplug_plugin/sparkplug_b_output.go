@@ -51,45 +51,52 @@ Key features:
 The output connects to an MQTT broker, publishes BIRTH certificates to announce available metrics,
 and then publishes DATA messages as Benthos messages flow through the pipeline.`).
 		// MQTT Transport Configuration
-		Field(service.NewStringListField("broker_urls").
-			Description("List of MQTT broker URLs to connect to").
-			Example([]string{"tcp://localhost:1883", "ssl://broker.hivemq.com:8883"}).
-			Default([]string{"tcp://localhost:1883"})).
-		Field(service.NewStringField("client_id").
-			Description("MQTT client ID for this edge node").
-			Default("benthos-sparkplug-node")).
-		Field(service.NewStringField("username").
-			Description("MQTT username for authentication").
-			Default("").
-			Optional()).
-		Field(service.NewStringField("password").
-			Description("MQTT password for authentication").
-			Default("").
-			Secret().
-			Optional()).
-		Field(service.NewIntField("qos").
-			Description("QoS level for MQTT publishing (0, 1, or 2)").
-			Default(1)).
-		Field(service.NewDurationField("keep_alive").
-			Description("MQTT keep alive interval").
-			Default("30s")).
-		Field(service.NewDurationField("connect_timeout").
-			Description("MQTT connection timeout").
-			Default("10s")).
-		Field(service.NewBoolField("clean_session").
-			Description("MQTT clean session flag").
-			Default(true)).
+		Field(service.NewObjectField("mqtt",
+			service.NewStringListField("urls").
+				Description("List of MQTT broker URLs to connect to").
+				Example([]string{"tcp://localhost:1883", "ssl://broker.hivemq.com:8883"}).
+				Default([]string{"tcp://localhost:1883"}),
+			service.NewStringField("client_id").
+				Description("MQTT client ID for this edge node").
+				Default("benthos-sparkplug-node"),
+			service.NewObjectField("credentials",
+				service.NewStringField("username").
+					Description("MQTT username for authentication").
+					Default("").
+					Optional(),
+				service.NewStringField("password").
+					Description("MQTT password for authentication").
+					Default("").
+					Secret().
+					Optional()).
+				Description("MQTT authentication credentials").
+				Optional(),
+			service.NewIntField("qos").
+				Description("QoS level for MQTT publishing (0, 1, or 2)").
+				Default(1),
+			service.NewDurationField("keep_alive").
+				Description("MQTT keep alive interval").
+				Default("30s"),
+			service.NewDurationField("connect_timeout").
+				Description("MQTT connection timeout").
+				Default("10s"),
+			service.NewBoolField("clean_session").
+				Description("MQTT clean session flag").
+				Default(true)).
+			Description("MQTT transport configuration")).
 		// Sparkplug Identity Configuration
-		Field(service.NewStringField("group_id").
-			Description("Sparkplug Group ID (e.g., 'FactoryA')").
-			Example("FactoryA")).
-		Field(service.NewStringField("edge_node_id").
-			Description("Edge Node ID within the group (e.g., 'Line3')").
-			Example("Line3")).
-		Field(service.NewStringField("device_id").
-			Description("Device ID under the edge node (optional, if not specified publishes as node-level)").
-			Default("").
-			Optional()).
+		Field(service.NewObjectField("identity",
+			service.NewStringField("group_id").
+				Description("Sparkplug Group ID (e.g., 'FactoryA')").
+				Example("FactoryA"),
+			service.NewStringField("edge_node_id").
+				Description("Edge Node ID within the group (e.g., 'Line3')").
+				Example("Line3"),
+			service.NewStringField("device_id").
+				Description("Device ID under the edge node (optional, if not specified publishes as node-level)").
+				Default("").
+				Optional()).
+			Description("Sparkplug identity configuration")).
 		// Role Configuration - Fixed for output plugin
 		Field(service.NewStringField("role").
 			Description("Sparkplug role: 'edge_node' (default for output plugin), 'hybrid' (publish + receive capabilities)").
@@ -106,14 +113,18 @@ and then publishes DATA messages as Benthos messages flow through the pipeline.`
 			service.NewStringField("value_from").
 				Description("JSONPath or field name in the message to extract value from").
 				Default("value")).
-			Description("Metric definitions for BIRTH messages and alias mapping")).
+			Description("Metric definitions for BIRTH messages and alias mapping").
+			Optional()).
 		// Behaviour Configuration
-		Field(service.NewBoolField("auto_extract_tag_name").
-			Description("Whether to automatically extract tag_name from message metadata").
-			Default(true)).
-		Field(service.NewBoolField("retain_last_values").
-			Description("Whether to retain last known values for BIRTH messages after reconnection").
-			Default(true))
+		Field(service.NewObjectField("behaviour",
+			service.NewBoolField("auto_extract_tag_name").
+				Description("Whether to automatically extract tag_name from message metadata").
+				Default(true),
+			service.NewBoolField("retain_last_values").
+				Description("Whether to retain last known values for BIRTH messages after reconnection").
+				Default(true)).
+			Description("Processing behavior configuration").
+			Optional())
 
 	err := service.RegisterOutput(
 		"sparkplug_b",
@@ -184,6 +195,19 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 		return nil, err
 	}
 
+	// Parse credentials section if present
+	if mqttConf.Contains("credentials") {
+		credsConf := mqttConf.Namespace("credentials")
+		username, err := credsConf.FieldString("username")
+		if err == nil {
+			config.MQTT.Credentials.Username = username
+		}
+		password, err := credsConf.FieldString("password")
+		if err == nil {
+			config.MQTT.Credentials.Password = password
+		}
+	}
+
 	qosInt, err := mqttConf.FieldInt("qos")
 	if err != nil {
 		return nil, err
@@ -204,11 +228,6 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 	if err != nil {
 		return nil, err
 	}
-
-	// Parse credentials sub-section if present
-	credsConf := mqttConf.Namespace("credentials")
-	config.MQTT.Credentials.Username, _ = credsConf.FieldString("username")
-	config.MQTT.Credentials.Password, _ = credsConf.FieldString("password")
 
 	// Parse identity section using namespace
 	identityConf := conf.Namespace("identity")
@@ -231,21 +250,31 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 	}
 	config.Role = Role(roleStr)
 
-	// Parse output-specific behavior
-	autoExtractTagName, err := conf.FieldBool("auto_extract_tag_name")
-	if err != nil {
-		return nil, err
+	// Parse behaviour section using namespace (optional)
+	var autoExtractTagName, retainLastValues bool
+	if conf.Contains("behaviour") {
+		behaviourConf := conf.Namespace("behaviour")
+		autoExtractTagName, err = behaviourConf.FieldBool("auto_extract_tag_name")
+		if err != nil {
+			autoExtractTagName = true // default
+		}
+		retainLastValues, err = behaviourConf.FieldBool("retain_last_values")
+		if err != nil {
+			retainLastValues = true // default
+		}
+	} else {
+		// Use defaults
+		autoExtractTagName = true
+		retainLastValues = true
 	}
 
-	retainLastValues, err := conf.FieldBool("retain_last_values")
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse metric configurations
-	metricObjs, err := conf.FieldObjectList("metrics")
-	if err != nil {
-		return nil, err
+	// Parse metric configurations (optional)
+	var metricObjs []*service.ParsedConfig
+	if conf.Contains("metrics") {
+		metricObjs, err = conf.FieldObjectList("metrics")
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var metrics []MetricConfig

@@ -1,9 +1,14 @@
 # Sparkplug B (Output)
 
-The Sparkplug B output plugin acts as an **Edge Node** in the Sparkplug B ecosystem, publishing industrial IoT data using the standardized MQTT-based Sparkplug B protocol with protobuf encoding and alias management.
+The Sparkplug B output plugin acts as an **Edge Node** or **Hybrid** node in the Sparkplug B ecosystem, publishing industrial IoT data using the standardized MQTT-based Sparkplug B protocol with protobuf encoding and alias management.
 
-Sparkplug B is an open standard for MQTT-based industrial IoT communication that minimizes bandwidth usage through metric aliases and efficient protobuf encoding. This plugin implements the Edge Node role, which is responsible for:
+Sparkplug B is an open standard for MQTT-based industrial IoT communication that minimizes bandwidth usage through metric aliases and efficient protobuf encoding. This plugin supports multiple roles:
 
+**Roles:**
+- **edge_node**: Acts as Edge Node publishing data to SCADA/Primary Applications
+- **hybrid**: Combines edge publishing with primary host capabilities (rare, for gateways)
+
+**Key Responsibilities:**
 - Publishing BIRTH certificates to establish metric definitions and aliases
 - Sending DATA messages with current sensor/actuator values
 - Managing session lifecycle with death certificates
@@ -32,38 +37,51 @@ spBv1.0/<Group>/<MsgType>/<EdgeNode>[/<Device>]
 
 ```yaml
 output:
-  sparkplug_output:
-    broker_urls: ["tcp://localhost:1883"]
-    client_id: "benthos-edge-node"
-    group_id: "Factory"
-    edge_node_id: "Line1-PLC"
-    device_id: "Sensor-Array-01"    # optional for device-level messages
+  sparkplug_b:
+    # MQTT Transport Configuration
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+      client_id: "benthos-edge-node"
+      credentials:
+        username: "edge-node"
+        password: "secure-password"
+      qos: 1
+      keep_alive: "60s"
+      connect_timeout: "30s"
+      clean_session: true
+    
+    # Sparkplug Identity Configuration
+    identity:
+      group_id: "Factory"
+      edge_node_id: "Line1-PLC"
+      device_id: "Sensor-Array-01"    # optional for device-level messages
+    
+    # Role Configuration
+    role: "edge_node"
+    
+    # Behavior Configuration
+    behaviour:
+      auto_extract_tag_name: true     # Extract tag_name from message metadata
+      retain_last_values: true        # Retain last values for comparison
     
     # Define metrics with aliases for bandwidth optimization
     metrics:
       - name: "Temperature"
         alias: 1
-        data_type: "Float"
-        value_from: "temp_celsius"
+        type: "float"
+        value_from: "temperature"
       - name: "Pressure"
         alias: 2
-        data_type: "Double"
-        value_from: "pressure_bar"
+        type: "double"
+        value_from: "pressure"
       - name: "Motor_Speed"
         alias: 3
-        data_type: "UInt32"
-        value_from: "rpm"
+        type: "uint32"
+        value_from: "motor_rpm"
       - name: "System_Status"
         alias: 4
-        data_type: "String"
+        type: "string"
         value_from: "status"
-    
-    # Optional MQTT settings
-    username: "edge-node"
-    password: "secure-password"
-    qos: 1
-    retain: false
-    keep_alive: 60
 ```
 
 ## Supported Data Types
@@ -86,21 +104,40 @@ The Sparkplug B output plugin supports all standard Sparkplug B data types with 
 
 ## Configuration Fields
 
+### MQTT Section
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| **broker_urls** | `[]string` | **required** | List of MQTT broker URLs |
-| **client_id** | `string` | **required** | MQTT client identifier |
-| **group_id** | `string` | **required** | Sparkplug B Group ID |
-| **edge_node_id** | `string` | **required** | Edge Node ID within the group |
-| **device_id** | `string` | `""` | Optional Device ID for device-level messages |
-| **metrics** | `[]object` | **required** | List of metric definitions |
-| **username** | `string` | `""` | MQTT username |
-| **password** | `string` | `""` | MQTT password |
-| **qos** | `int` | `1` | MQTT QoS level |
-| **retain** | `bool` | `false` | Whether to retain messages |
-| **keep_alive** | `int` | `60` | MQTT keep alive interval (seconds) |
-| **birth_on_connect** | `bool` | `true` | Send BIRTH message on connection |
-| **death_on_disconnect** | `bool` | `true` | Send DEATH message on disconnection |
+| `mqtt.urls` | `[]string` | **required** | List of MQTT broker URLs |
+| `mqtt.client_id` | `string` | `"benthos-sparkplug"` | MQTT client identifier |
+| `mqtt.credentials.username` | `string` | `""` | MQTT username |
+| `mqtt.credentials.password` | `string` | `""` | MQTT password |
+| `mqtt.qos` | `int` | `1` | MQTT QoS level |
+| `mqtt.keep_alive` | `duration` | `"30s"` | MQTT keep alive interval |
+| `mqtt.connect_timeout` | `duration` | `"10s"` | Connection timeout |
+| `mqtt.clean_session` | `bool` | `true` | MQTT clean session flag |
+
+### Identity Section
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `identity.group_id` | `string` | **required** | Sparkplug B Group ID |
+| `identity.edge_node_id` | `string` | **required** | Edge Node ID within the group |
+| `identity.device_id` | `string` | `""` | Device ID (empty for node-level messages) |
+
+### Role Configuration
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `role` | `string` | `"edge_node"` | Role: `edge_node` or `hybrid` |
+
+### Behaviour Section
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `behaviour.auto_extract_tag_name` | `bool` | `true` | Extract tag_name from message metadata |
+| `behaviour.retain_last_values` | `bool` | `true` | Retain last values for comparison |
+
+### Output Configuration
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `metrics` | `[]object` | **required** | List of metric definitions |
 
 ### Metric Definition
 
@@ -110,7 +147,7 @@ Each metric in the `metrics` array supports:
 |-------|------|----------|-------------|
 | **name** | `string` | **yes** | Human-readable metric name |
 | **alias** | `uint64` | **yes** | Unique numeric alias (1-65535) |
-| **data_type** | `string` | **yes** | Sparkplug B data type |
+| **type** | `string` | **yes** | Sparkplug B data type |
 | **value_from** | `string` | **yes** | JSON field name containing the value |
 | **units** | `string` | no | Engineering units (e.g., "°C", "bar") |
 | **is_historical** | `bool` | no | Whether this is historical data |
@@ -133,22 +170,29 @@ Each metric in the `metrics` array supports:
 **Configuration:**
 ```yaml
 output:
-  sparkplug_output:
-    broker_urls: ["tcp://mqtt.factory.com:1883"]
-    client_id: "temp-sensor-001"
-    group_id: "Factory"
-    edge_node_id: "Building-A"
-    device_id: "TMP001"
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://mqtt.factory.com:1883"]
+      client_id: "temp-sensor-001"
+    identity:
+      group_id: "Factory"
+      edge_node_id: "Building-A"
+      device_id: "TMP001"
+    role: "edge_node"
+    
+    behaviour:
+      auto_extract_tag_name: true
+      retain_last_values: true
     
     metrics:
       - name: "Temperature"
         alias: 1
-        data_type: "Float"
+        type: "float"
         value_from: "temperature"
         units: "°C"
       - name: "Humidity"
         alias: 2
-        data_type: "Float"
+        type: "float"
         value_from: "humidity"
         units: "%RH"
 ```
@@ -170,12 +214,19 @@ output:
 **Configuration:**
 ```yaml
 output:
-  sparkplug_output:
-    broker_urls: ["tcp://localhost:1883"]
-    client_id: "motor-controller-01"
-    group_id: "Production"
-    edge_node_id: "Line-1"
-    device_id: "Motor-01"
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+      client_id: "motor-controller-01"
+    identity:
+      group_id: "Production"
+      edge_node_id: "Line-1"
+      device_id: "Motor-01"
+    role: "edge_node"
+    
+    behaviour:
+      auto_extract_tag_name: true
+      retain_last_values: true
     
     metrics:
       - name: "RPM"
@@ -214,12 +265,19 @@ For publishing data from multiple devices through a single edge node:
 ```yaml
 # First device output
 output:
-  sparkplug_output:
-    broker_urls: ["tcp://localhost:1883"]
-    client_id: "plc-gateway"
-    group_id: "Factory"
-    edge_node_id: "PLC-Gateway-01"
-    device_id: "Conveyor-Belt"
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+      client_id: "plc-gateway"
+    identity:
+      group_id: "Factory"
+      edge_node_id: "PLC-Gateway-01"
+      device_id: "Conveyor-Belt"
+    role: "edge_node"
+    
+    behaviour:
+      auto_extract_tag_name: true
+      retain_last_values: true
     
     metrics:
       - name: "Belt_Speed"
@@ -291,11 +349,18 @@ pipeline:
         root.asset = this.meta.asset
 
 output:
-  sparkplug_output:
-    broker_urls: ["tcp://sparkplug-broker:1883"]
-    client_id: "uns-to-sparkplug-bridge"
-    group_id: "UNS-Bridge"
-    edge_node_id: "Factory-Gateway"
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://sparkplug-broker:1883"]
+      client_id: "uns-to-sparkplug-bridge"
+    identity:
+      group_id: "UNS-Bridge"
+      edge_node_id: "Factory-Gateway"
+    role: "edge_node"
+    
+    behaviour:
+      auto_extract_tag_name: true
+      retain_last_values: true
     
     metrics:
       - name: "Temperature"
@@ -397,7 +462,7 @@ pipeline:
     - sparkplug_b_decode: {} # Local UNS
 
 output:
-  sparkplug_output: {}    # Publish to cloud SCADA
+  sparkplug_b: {}    # Publish to cloud SCADA
 ```
 
 ### Multi-Protocol Bridge
@@ -415,7 +480,7 @@ pipeline:
         root.quality = if this.meta.opcua_status == "Good" { "GOOD" } else { "BAD" }
 
 output:
-  sparkplug_output: {}
+  sparkplug_b: {}
 ```
 
 This creates a robust, standards-compliant Sparkplug B edge node implementation that integrates seamlessly with the broader UMH ecosystem. 

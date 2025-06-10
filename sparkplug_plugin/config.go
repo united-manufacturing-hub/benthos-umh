@@ -26,6 +26,11 @@ type Identity struct {
 	DeviceID   string `yaml:"device_id"` // empty means node-level
 }
 
+// Subscription configuration for primary_host role
+type Subscription struct {
+	Groups []string `yaml:"groups"` // Groups to subscribe to. Empty means all groups (+)
+}
+
 // Role defines the Sparkplug behavior mode
 type Role string
 
@@ -52,10 +57,11 @@ type Behaviour struct {
 
 // Config is the complete Sparkplug B configuration structure
 type Config struct {
-	MQTT      MQTT      `yaml:"mqtt"`
-	Identity  Identity  `yaml:"identity"`
-	Role      Role      `yaml:"role"`
-	Behaviour Behaviour `yaml:"behaviour"`
+	MQTT         MQTT         `yaml:"mqtt"`
+	Identity     Identity     `yaml:"identity"`
+	Role         Role         `yaml:"role"`
+	Subscription Subscription `yaml:"subscription"`
+	Behaviour    Behaviour    `yaml:"behaviour"`
 }
 
 // GetSubscriptionTopics returns the MQTT topics to subscribe to based on role
@@ -65,10 +71,26 @@ func (c *Config) GetSubscriptionTopics() []string {
 		// Edge nodes only listen to their own group
 		return []string{"spBv1.0/" + c.Identity.GroupID + "/#"}
 	case RolePrimaryHost:
-		// Primary hosts listen to all groups for complete visibility
+		// Primary hosts can filter by specific groups or listen to all
+		if len(c.Subscription.Groups) > 0 {
+			var topics []string
+			for _, group := range c.Subscription.Groups {
+				topics = append(topics, "spBv1.0/"+group+"/#")
+			}
+			return topics
+		}
+		// Default: listen to all groups for complete visibility
 		return []string{"spBv1.0/+/#"}
 	case RoleHybrid:
-		// Hybrid mode listens to all groups
+		// Hybrid mode uses same logic as primary_host
+		if len(c.Subscription.Groups) > 0 {
+			var topics []string
+			for _, group := range c.Subscription.Groups {
+				topics = append(topics, "spBv1.0/"+group+"/#")
+			}
+			return topics
+		}
+		// Default: listen to all groups
 		return []string{"spBv1.0/+/#"}
 	default:
 		// Default to primary host behavior
