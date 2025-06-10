@@ -109,6 +109,16 @@ func (d *DeadbandAlgorithm) ProcessPoint(value interface{}, timestamp time.Time)
 	}
 
 	delta := math.Abs(currentVal - lastVal)
+
+	// Special handling for boolean values: treat any boolean change as significant
+	_, currentIsBool := value.(bool)
+	_, lastIsBool := d.lastKeptValue.(bool)
+	if currentIsBool && lastIsBool && delta > 0 {
+		d.lastKeptValue = value
+		d.lastKeptTime = timestamp
+		return true, nil
+	}
+
 	if delta >= d.threshold {
 		d.lastKeptValue = value
 		d.lastKeptTime = timestamp
