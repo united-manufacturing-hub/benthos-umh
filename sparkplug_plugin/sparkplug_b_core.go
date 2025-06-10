@@ -28,7 +28,16 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
-// Note: TopicInfo and MetricConfig are defined in other files to avoid redeclaration
+// TopicInfo contains parsed Sparkplug topic information extracted from MQTT topics.
+// This structure represents the hierarchical addressing scheme used in Sparkplug B
+// for organizing edge nodes and devices within groups.
+//
+// Topic format: spBv1.0/<Group>/<MsgType>/<EdgeNode>[/<Device>]
+type TopicInfo struct {
+	Group    string // Sparkplug Group ID (e.g., "FactoryA")
+	EdgeNode string // Edge Node ID within the group (e.g., "Line1")
+	Device   string // Device ID under the edge node (empty for node-level messages)
+}
 
 // NodeState tracks the state of a Sparkplug node/device for sequence management.
 type NodeState struct {
@@ -636,59 +645,171 @@ func (tc *TypeConverter) convertToString(value interface{}) (string, bool) {
 	return "", false
 }
 
-// MQTTClientBuilder provides utilities for building MQTT clients with common patterns.
-type MQTTClientBuilder struct{}
-
-// NewMQTTClientBuilder creates a new MQTT client builder.
-func NewMQTTClientBuilder() *MQTTClientBuilder {
-	return &MQTTClientBuilder{}
+// MQTTClientBuilder provides a Benthos-style abstraction for creating MQTT clients.
+// This builder wraps Paho MQTT functionality with Benthos patterns for configuration,
+// logging, metrics, and resource management.
+type MQTTClientBuilder struct {
+	logger  *service.Logger
+	metrics *MQTTClientMetrics
 }
 
-// BuildClientOptions creates MQTT client options with common Sparkplug B settings.
-func (mcb *MQTTClientBuilder) BuildClientOptions(
-	brokerURLs []string,
-	clientID, username, password string,
-	keepAlive, connectTimeout time.Duration,
-	cleanSession bool,
-	willTopic string,
-	willPayload []byte,
-	willQoS byte,
-	onConnect mqtt.OnConnectHandler,
-	onConnectionLost mqtt.ConnectionLostHandler,
-) *mqtt.ClientOptions {
+// MQTTClientMetrics holds metrics for MQTT client operations.
+type MQTTClientMetrics struct {
+	ConnectionAttempts *service.MetricCounter
+	ConnectionFailures *service.MetricCounter
+	ConnectionsActive  *service.MetricGauge
+	MessagesPublished  *service.MetricCounter
+	MessagesReceived   *service.MetricCounter
+	PublishFailures    *service.MetricCounter
+	SubscriptionErrors *service.MetricCounter
+}
+
+// MQTTClientConfig holds configuration for MQTT client creation.
+type MQTTClientConfig struct {
+	BrokerURLs     []string
+	ClientID       string
+	Username       string
+	Password       string
+	KeepAlive      time.Duration
+	ConnectTimeout time.Duration
+	CleanSession   bool
+
+	// Last Will Testament
+	WillTopic   string
+	WillPayload []byte
+	WillQoS     byte
+	WillRetain  bool
+
+	// Connection handlers
+	OnConnect        func(client mqtt.Client)
+	OnConnectionLost func(client mqtt.Client, err error)
+	MessageHandler   func(client mqtt.Client, msg mqtt.Message)
+}
+
+// NewMQTTClientBuilder creates a new MQTT client builder with Benthos integration.
+func NewMQTTClientBuilder(mgr *service.Resources) *MQTTClientBuilder {
+	metrics := &MQTTClientMetrics{
+		ConnectionAttempts: mgr.Metrics().NewCounter("mqtt_connection_attempts"),
+		ConnectionFailures: mgr.Metrics().NewCounter("mqtt_connection_failures"),
+		ConnectionsActive:  mgr.Metrics().NewGauge("mqtt_connections_active"),
+		MessagesPublished:  mgr.Metrics().NewCounter("mqtt_messages_published"),
+		MessagesReceived:   mgr.Metrics().NewCounter("mqtt_messages_received"),
+		PublishFailures:    mgr.Metrics().NewCounter("mqtt_publish_failures"),
+		SubscriptionErrors: mgr.Metrics().NewCounter("mqtt_subscription_errors"),
+	}
+
+	return &MQTTClientBuilder{
+		logger:  mgr.Logger(),
+		metrics: metrics,
+	}
+}
+
+// CreateClient creates an MQTT client with Benthos-style configuration and monitoring.
+func (mcb *MQTTClientBuilder) CreateClient(config MQTTClientConfig) (mqtt.Client, error) {
 	opts := mqtt.NewClientOptions()
 
 	// Set broker URLs
-	for _, url := range brokerURLs {
+	if len(config.BrokerURLs) == 0 {
+		return nil, fmt.Errorf("at least one broker URL is required")
+	}
+	for _, url := range config.BrokerURLs {
 		opts.AddBroker(url)
 	}
 
 	// Set basic connection options
-	opts.SetClientID(clientID)
-	opts.SetKeepAlive(keepAlive)
-	opts.SetConnectTimeout(connectTimeout)
-	opts.SetCleanSession(cleanSession)
+	opts.SetClientID(config.ClientID)
+	opts.SetKeepAlive(config.KeepAlive)
+	opts.SetConnectTimeout(config.ConnectTimeout)
+	opts.SetCleanSession(config.CleanSession)
 
 	// Set authentication if provided
-	if username != "" {
-		opts.SetUsername(username)
-		if password != "" {
-			opts.SetPassword(password)
+	if config.Username != "" {
+		opts.SetUsername(config.Username)
+		if config.Password != "" {
+			opts.SetPassword(config.Password)
 		}
 	}
 
 	// Set Last Will Testament if provided
-	if willTopic != "" && willPayload != nil {
-		opts.SetWill(willTopic, string(willPayload), willQoS, false)
+	if config.WillTopic != "" && config.WillPayload != nil {
+		opts.SetWill(config.WillTopic, string(config.WillPayload), config.WillQoS, config.WillRetain)
 	}
 
-	// Set event handlers
-	if onConnect != nil {
-		opts.SetOnConnectHandler(onConnect)
-	}
-	if onConnectionLost != nil {
-		opts.SetConnectionLostHandler(onConnectionLost)
+	// Wrap connection handlers with metrics
+	if config.OnConnect != nil {
+		opts.SetOnConnectHandler(func(client mqtt.Client) {
+			mcb.metrics.ConnectionsActive.Set(1)
+			mcb.logger.Debug("MQTT client connected")
+			config.OnConnect(client)
+		})
 	}
 
-	return opts
+	if config.OnConnectionLost != nil {
+		opts.SetConnectionLostHandler(func(client mqtt.Client, err error) {
+			mcb.metrics.ConnectionsActive.Set(0)
+			mcb.logger.Errorf("MQTT connection lost: %v", err)
+			config.OnConnectionLost(client, err)
+		})
+	}
+
+	// Set default message handler with metrics
+	if config.MessageHandler != nil {
+		opts.SetDefaultPublishHandler(func(client mqtt.Client, msg mqtt.Message) {
+			mcb.metrics.MessagesReceived.Incr(1)
+			config.MessageHandler(client, msg)
+		})
+	}
+
+	client := mqtt.NewClient(opts)
+	return client, nil
+}
+
+// ConnectWithRetry connects an MQTT client with Benthos-style retry and monitoring.
+func (mcb *MQTTClientBuilder) ConnectWithRetry(client mqtt.Client, timeout time.Duration) error {
+	mcb.metrics.ConnectionAttempts.Incr(1)
+	mcb.logger.Debug("Attempting MQTT connection")
+
+	token := client.Connect()
+	if !token.WaitTimeout(timeout) {
+		mcb.metrics.ConnectionFailures.Incr(1)
+		return fmt.Errorf("MQTT connection timeout after %v", timeout)
+	}
+
+	if err := token.Error(); err != nil {
+		mcb.metrics.ConnectionFailures.Incr(1)
+		return fmt.Errorf("MQTT connection failed: %w", err)
+	}
+
+	mcb.logger.Debug("MQTT connection successful")
+	return nil
+}
+
+// PublishWithMetrics publishes a message with automatic metrics tracking.
+func (mcb *MQTTClientBuilder) PublishWithMetrics(client mqtt.Client, topic string, qos byte, retained bool, payload interface{}) error {
+	token := client.Publish(topic, qos, retained, payload)
+	if token.Wait() && token.Error() != nil {
+		mcb.metrics.PublishFailures.Incr(1)
+		return token.Error()
+	}
+
+	mcb.metrics.MessagesPublished.Incr(1)
+	return nil
+}
+
+// SubscribeWithMetrics subscribes to topics with automatic metrics tracking.
+func (mcb *MQTTClientBuilder) SubscribeWithMetrics(client mqtt.Client, topicFilter string, qos byte, callback mqtt.MessageHandler) error {
+	// Wrap the callback with metrics
+	wrappedCallback := func(client mqtt.Client, msg mqtt.Message) {
+		mcb.metrics.MessagesReceived.Incr(1)
+		callback(client, msg)
+	}
+
+	token := client.Subscribe(topicFilter, qos, wrappedCallback)
+	if token.Wait() && token.Error() != nil {
+		mcb.metrics.SubscriptionErrors.Incr(1)
+		return token.Error()
+	}
+
+	mcb.logger.Debugf("Successfully subscribed to MQTT topic: %s", topicFilter)
+	return nil
 }

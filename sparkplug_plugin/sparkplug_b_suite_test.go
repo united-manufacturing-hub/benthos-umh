@@ -15,12 +15,10 @@
 package sparkplug_plugin_test
 
 import (
-	"context"
 	"fmt"
 	"testing"
 	"time"
 
-	mqtt "github.com/eclipse/paho.mqtt.golang"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	_ "github.com/redpanda-data/benthos/v4/public/components/io"
@@ -232,48 +230,6 @@ func ExpectJSONField(msg *service.Message, fieldPath string, expectedValue inter
 	actualValue, exists := structMap[fieldPath]
 	Expect(exists).To(BeTrue(), fmt.Sprintf("Expected field '%s' to exist in message", fieldPath))
 	Expect(actualValue).To(Equal(expectedValue), fmt.Sprintf("Expected field '%s' to be '%v', got '%v'", fieldPath, expectedValue, actualValue))
-}
-
-// CreateProcessorPipeline creates a Benthos pipeline with sparkplug_b_decode processor
-func CreateProcessorPipeline(processorConfig string) (*service.StreamBuilder, service.MessageHandlerFunc, *[]*service.Message, error) {
-	builder := service.NewStreamBuilder()
-
-	msgHandler, err := builder.AddProducerFunc()
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	err = builder.AddProcessorYAML(processorConfig)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	var messages []*service.Message
-	err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
-		messages = append(messages, msg)
-		return nil
-	})
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	return builder, msgHandler, &messages, nil
-}
-
-// RunPipelineWithTimeout runs a pipeline for a specified timeout
-func RunPipelineWithTimeout(builder *service.StreamBuilder, timeout time.Duration) (context.Context, context.CancelFunc, error) {
-	stream, err := builder.Build()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-
-	go func() {
-		_ = stream.Run(ctx)
-	}()
-
-	return ctx, cancel, nil
 }
 
 var _ = Describe("Sparkplug B Test Suite Helpers", func() {
@@ -776,66 +732,72 @@ var _ = Describe("Sparkplug B Core Components", func() {
 
 	Describe("MQTTClientBuilder", func() {
 		var builder *sparkplug_plugin.MQTTClientBuilder
+		var mgr *service.Resources
 
 		BeforeEach(func() {
-			builder = sparkplug_plugin.NewMQTTClientBuilder()
+			mgr = service.MockResources()
+			builder = sparkplug_plugin.NewMQTTClientBuilder(mgr)
 		})
 
-		Context("Client options construction", func() {
-			It("should build basic client options", func() {
-				brokerURLs := []string{"tcp://localhost:1883", "ssl://broker.test:8883"}
-				clientID := "test-client"
-				keepAlive := 30 * time.Second
-				connectTimeout := 10 * time.Second
-
-				opts := builder.BuildClientOptions(
-					brokerURLs, clientID, "", "",
-					keepAlive, connectTimeout, true,
-					"", nil, 0, nil, nil,
-				)
-
-				Expect(opts.ClientID).To(Equal(clientID))
-				Expect(opts.KeepAlive).To(Equal(int64(30)))
-				Expect(opts.ConnectTimeout).To(Equal(connectTimeout))
-				Expect(opts.CleanSession).To(BeTrue())
-			})
-
-			It("should build client options with authentication", func() {
-				opts := builder.BuildClientOptions(
-					[]string{"tcp://localhost:1883"}, "test-client", "user", "pass",
-					30*time.Second, 10*time.Second, true,
-					"", nil, 0, nil, nil,
-				)
-
-				Expect(opts.Username).To(Equal("user"))
-				Expect(opts.Password).To(Equal("pass"))
-			})
-
-			It("should build client options with Last Will Testament", func() {
-				willTopic := "test/lwt"
-				willPayload := []byte("offline")
-				willQoS := byte(1)
-
-				onConnect := func(client mqtt.Client) {
-					// Test callback
-				}
-				onConnectionLost := func(client mqtt.Client, err error) {
-					// Test callback
+		Context("Client creation", func() {
+			It("should create MQTT client with basic configuration", func() {
+				config := sparkplug_plugin.MQTTClientConfig{
+					BrokerURLs:     []string{"tcp://localhost:1883", "ssl://broker.test:8883"},
+					ClientID:       "test-client",
+					KeepAlive:      30 * time.Second,
+					ConnectTimeout: 10 * time.Second,
+					CleanSession:   true,
 				}
 
-				opts := builder.BuildClientOptions(
-					[]string{"tcp://localhost:1883"}, "test-client", "", "",
-					30*time.Second, 10*time.Second, true,
-					willTopic, willPayload, willQoS, onConnect, onConnectionLost,
-				)
+				client, err := builder.CreateClient(config)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(client).ToNot(BeNil())
+			})
 
-				Expect(opts.WillTopic).To(Equal(willTopic))
-				Expect(opts.WillPayload).To(Equal(willPayload))
-				Expect(opts.WillQos).To(Equal(willQoS))
+			It("should create client with authentication", func() {
+				config := sparkplug_plugin.MQTTClientConfig{
+					BrokerURLs:     []string{"tcp://localhost:1883"},
+					ClientID:       "test-client",
+					Username:       "user",
+					Password:       "pass",
+					KeepAlive:      30 * time.Second,
+					ConnectTimeout: 10 * time.Second,
+					CleanSession:   true,
+				}
 
-				// Test that event handlers are set (we can't easily test the actual functions without creating an MQTT client)
-				Expect(opts.OnConnect).ToNot(BeNil())
-				Expect(opts.OnConnectionLost).ToNot(BeNil())
+				client, err := builder.CreateClient(config)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(client).ToNot(BeNil())
+			})
+
+			It("should create client with Last Will Testament", func() {
+				config := sparkplug_plugin.MQTTClientConfig{
+					BrokerURLs:     []string{"tcp://localhost:1883"},
+					ClientID:       "test-client",
+					KeepAlive:      30 * time.Second,
+					ConnectTimeout: 10 * time.Second,
+					CleanSession:   true,
+					WillTopic:      "test/will",
+					WillPayload:    []byte("offline"),
+					WillQoS:        1,
+					WillRetain:     true,
+				}
+
+				client, err := builder.CreateClient(config)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(client).ToNot(BeNil())
+			})
+
+			It("should fail with empty broker URLs", func() {
+				config := sparkplug_plugin.MQTTClientConfig{
+					BrokerURLs: []string{},
+					ClientID:   "test-client",
+				}
+
+				client, err := builder.CreateClient(config)
+				Expect(err).To(HaveOccurred())
+				Expect(client).To(BeNil())
+				Expect(err.Error()).To(ContainSubstring("at least one broker URL is required"))
 			})
 		})
 	})

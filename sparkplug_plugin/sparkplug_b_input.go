@@ -30,67 +30,101 @@ import (
 
 func init() {
 	inputSpec := service.NewConfigSpec().
-		Version("1.0.0").
-		Summary("Sparkplug B MQTT input acting as Primary SCADA Host").
-		Description(`The Sparkplug B input acts as a Primary SCADA Host, subscribing to Sparkplug MQTT topics 
-and managing the complete session lifecycle. It handles BIRTH/DEATH messages, maintains STATE topic 
-for primary application coordination, and automatically requests rebirths when needed.
+		Version("2.0.0").
+		Summary("Sparkplug B MQTT input with idiomatic configuration").
+		Description(`A Sparkplug B input that supports multiple roles and configuration styles:
+
+ROLES:
+- primary_host: Acts as SCADA/Primary Application, subscribes to all groups (spBv1.0/+/#)
+- edge_node: Acts as Edge Node, subscribes only to its own group (spBv1.0/{group}/#)  
+- hybrid: Combines both behaviors (rare, but useful for gateways)
+
+CONFIGURATION STYLES:
+- Idiomatic: Uses mqtt/identity/role/behaviour sections for clean organization
+- Legacy: Supports existing flat configuration for backward compatibility
 
 Key features:
-- Primary application STATE topic management with LWT
-- Automatic subscription to spBv1.0/<Group>/# topics  
-- Session state tracking and rebirth coordination
-- Sequence number validation and out-of-order detection
+- Clean configuration structure with mqtt/identity/role/behaviour sections
+- Automatic STATE topic management with LWT
+- Role-based subscription behavior (all groups vs single group)
+- Sequence number validation and rebirth coordination
 - Alias resolution using BIRTH message metadata
-- Automatic message splitting for individual metric processing
-- Comprehensive metadata extraction for UNS integration
-
-The input connects to an MQTT broker, declares itself as the primary application via STATE topic,
-and processes all Sparkplug messages from edge nodes and devices in the specified group.`).
-		Field(service.NewStringListField("broker_urls").
-			Description("List of MQTT broker URLs to connect to").
-			Example([]string{"tcp://localhost:1883", "ssl://broker.hivemq.com:8883"}).
-			Default([]string{"tcp://localhost:1883"})).
-		Field(service.NewStringField("client_id").
-			Description("MQTT client ID for this primary application").
-			Default("benthos-sparkplug-host")).
-		Field(service.NewStringField("username").
-			Description("MQTT username for authentication").
-			Default("").
-			Optional()).
-		Field(service.NewStringField("password").
-			Description("MQTT password for authentication").
-			Default("").
-			Secret().
-			Optional()).
-		Field(service.NewStringField("group_id").
-			Description("Sparkplug Group ID to subscribe to (e.g., 'FactoryA')").
-			Example("FactoryA")).
-		Field(service.NewStringField("primary_host_id").
-			Description("Primary Host ID for STATE topic (defaults to client_id)").
-			Default("").
-			Optional()).
-		Field(service.NewBoolField("split_metrics").
-			Description("Whether to split multi-metric messages into individual metric messages").
-			Default(true)).
-		Field(service.NewBoolField("enable_rebirth_requests").
-			Description("Whether to automatically send rebirth requests on sequence gaps").
-			Default(true)).
-		Field(service.NewIntField("qos").
-			Description("QoS level for MQTT subscriptions (0, 1, or 2)").
-			Default(1)).
-		Field(service.NewDurationField("keep_alive").
-			Description("MQTT keep alive interval").
-			Default("30s")).
-		Field(service.NewDurationField("connect_timeout").
-			Description("MQTT connection timeout").
-			Default("10s")).
-		Field(service.NewBoolField("clean_session").
-			Description("MQTT clean session flag").
-			Default(true))
+- Configurable message processing (splitting, extraction, filtering)
+- Comprehensive metrics and monitoring`).
+		// MQTT Transport Configuration
+		Field(service.NewObjectField("mqtt",
+			service.NewStringListField("urls").
+				Description("List of MQTT broker URLs").
+				Example([]string{"tcp://localhost:1883", "ssl://broker.hivemq.com:8883"}).
+				Default([]string{"tcp://localhost:1883"}),
+			service.NewStringField("client_id").
+				Description("MQTT client ID").
+				Default("benthos-sparkplug"),
+			service.NewObjectField("credentials",
+				service.NewStringField("username").
+					Description("MQTT username").
+					Default(""),
+				service.NewStringField("password").
+					Description("MQTT password").
+					Secret().
+					Default("")).
+				Description("MQTT authentication credentials").
+				Optional(),
+			service.NewIntField("qos").
+				Description("QoS level for MQTT operations (0, 1, or 2)").
+				Default(1),
+			service.NewDurationField("keep_alive").
+				Description("MQTT keep alive interval").
+				Default("60s"),
+			service.NewDurationField("connect_timeout").
+				Description("MQTT connection timeout").
+				Default("30s"),
+			service.NewBoolField("clean_session").
+				Description("MQTT clean session flag").
+				Default(true)).
+			Description("MQTT transport configuration")).
+		// Sparkplug Identity Configuration
+		Field(service.NewObjectField("identity",
+			service.NewStringField("group_id").
+				Description("Sparkplug Group ID (e.g., 'SCADA', 'FactoryA')").
+				Example("SCADA"),
+			service.NewStringField("edge_node_id").
+				Description("Edge Node ID for this application").
+				Example("Primary-Host-01"),
+			service.NewStringField("device_id").
+				Description("Device ID (empty for node-level identity)").
+				Default("").
+				Optional()).
+			Description("Sparkplug B identity configuration")).
+		// Role Configuration
+		Field(service.NewStringField("role").
+			Description("Sparkplug role: 'primary_host' (subscribe to all groups), 'edge_node' (own group only), or 'hybrid' (both)").
+			Default("primary_host")).
+		// Behaviour Configuration
+		Field(service.NewObjectField("behaviour",
+			service.NewBoolField("auto_split_metrics").
+				Description("Split multi-metric messages into individual metric messages").
+				Default(true),
+			service.NewBoolField("data_messages_only").
+				Description("Only process DATA messages (drop BIRTH/DEATH after processing)").
+				Default(false),
+			service.NewBoolField("enable_rebirth_req").
+				Description("Send rebirth requests on sequence gaps").
+				Default(true),
+			service.NewBoolField("drop_birth_messages").
+				Description("Drop BIRTH messages after alias extraction").
+				Default(false),
+			service.NewBoolField("strict_topic_validation").
+				Description("Strictly validate Sparkplug topic format").
+				Default(false),
+			service.NewBoolField("auto_extract_values").
+				Description("Extract metric values as message payload").
+				Default(true)).
+			Description("Processing behavior configuration").
+			Optional())
 
 	err := service.RegisterBatchInput(
-		"sparkplug_input",
+		"sparkplug_b",
 		inputSpec,
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
 			return newSparkplugInput(conf, mgr)
@@ -101,19 +135,8 @@ and processes all Sparkplug messages from edge nodes and devices in the specifie
 }
 
 type sparkplugInput struct {
-	brokerURLs        []string
-	clientID          string
-	username          string
-	password          string
-	groupID           string
-	primaryHostID     string
-	splitMetrics      bool
-	enableRebirthReqs bool
-	qos               byte
-	keepAlive         time.Duration
-	connectTimeout    time.Duration
-	cleanSession      bool
-	logger            *service.Logger
+	config Config
+	logger *service.Logger
 
 	// MQTT client and state
 	client   mqtt.Client
@@ -121,13 +144,25 @@ type sparkplugInput struct {
 	mu       sync.RWMutex
 	closed   bool
 
-	// Sparkplug state management
-	nodeStates map[string]*nodeState        // deviceKey -> state
-	aliasCache map[string]map[uint64]string // deviceKey -> (alias -> metric name)
-	stateMu    sync.RWMutex
+	// Sparkplug state management using core components
+	nodeStates map[string]*nodeState // deviceKey -> state
+
+	// Core components for shared functionality
+	aliasCache        *AliasCache
+	topicParser       *TopicParser
+	messageProcessor  *MessageProcessor
+	typeConverter     *TypeConverter
+	mqttClientBuilder *MQTTClientBuilder
+
+	// Legacy alias cache for backward compatibility during transition
+	legacyAliasCache map[string]map[uint64]string // deviceKey -> (alias -> metric name)
+	stateMu          sync.RWMutex
 
 	// Metrics
 	messagesReceived  *service.MetricCounter
+	messagesProcessed *service.MetricCounter
+	messagesDropped   *service.MetricCounter
+	messagesErrored   *service.MetricCounter
 	birthsProcessed   *service.MetricCounter
 	deathsProcessed   *service.MetricCounter
 	rebirthsRequested *service.MetricCounter
@@ -148,128 +183,140 @@ type nodeState struct {
 }
 
 func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*sparkplugInput, error) {
-	brokerURLs, err := conf.FieldStringList("broker_urls")
+	// Parse the idiomatic configuration structure using namespace approach
+	var config Config
+
+	// Parse MQTT section using namespace
+	mqttConf := conf.Namespace("mqtt")
+	urls, err := mqttConf.FieldStringList("urls")
+	if err != nil {
+		return nil, err
+	}
+	config.MQTT.URLs = urls
+
+	config.MQTT.ClientID, err = mqttConf.FieldString("client_id")
 	if err != nil {
 		return nil, err
 	}
 
-	clientID, err := conf.FieldString("client_id")
+	qosInt, err := mqttConf.FieldInt("qos")
+	if err != nil {
+		return nil, err
+	}
+	config.MQTT.QoS = byte(qosInt)
+
+	config.MQTT.KeepAlive, err = mqttConf.FieldDuration("keep_alive")
 	if err != nil {
 		return nil, err
 	}
 
-	username, _ := conf.FieldString("username")
-	password, _ := conf.FieldString("password")
-
-	groupID, err := conf.FieldString("group_id")
+	config.MQTT.ConnectTimeout, err = mqttConf.FieldDuration("connect_timeout")
 	if err != nil {
 		return nil, err
 	}
 
-	primaryHostID, _ := conf.FieldString("primary_host_id")
-	if primaryHostID == "" {
-		primaryHostID = clientID
-	}
-
-	splitMetrics, err := conf.FieldBool("split_metrics")
+	config.MQTT.CleanSession, err = mqttConf.FieldBool("clean_session")
 	if err != nil {
 		return nil, err
 	}
 
-	enableRebirthReqs, err := conf.FieldBool("enable_rebirth_requests")
+	// Parse credentials sub-section if present
+	credsConf := mqttConf.Namespace("credentials")
+	config.MQTT.Credentials.Username, _ = credsConf.FieldString("username")
+	config.MQTT.Credentials.Password, _ = credsConf.FieldString("password")
+
+	// Parse identity section using namespace
+	identityConf := conf.Namespace("identity")
+	config.Identity.GroupID, err = identityConf.FieldString("group_id")
 	if err != nil {
 		return nil, err
 	}
 
-	qosInt, err := conf.FieldInt("qos")
-	if err != nil {
-		return nil, err
-	}
-	qos := byte(qosInt)
-
-	keepAlive, err := conf.FieldDuration("keep_alive")
+	config.Identity.EdgeNodeID, err = identityConf.FieldString("edge_node_id")
 	if err != nil {
 		return nil, err
 	}
 
-	connectTimeout, err := conf.FieldDuration("connect_timeout")
-	if err != nil {
-		return nil, err
-	}
+	config.Identity.DeviceID, _ = identityConf.FieldString("device_id")
 
-	cleanSession, err := conf.FieldBool("clean_session")
+	// Parse role
+	roleStr, err := conf.FieldString("role")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse role: %w", err)
 	}
+	config.Role = Role(roleStr)
 
-	return &sparkplugInput{
-		brokerURLs:        brokerURLs,
-		clientID:          clientID,
-		username:          username,
-		password:          password,
-		groupID:           groupID,
-		primaryHostID:     primaryHostID,
-		splitMetrics:      splitMetrics,
-		enableRebirthReqs: enableRebirthReqs,
-		qos:               qos,
-		keepAlive:         keepAlive,
-		connectTimeout:    connectTimeout,
-		cleanSession:      cleanSession,
+	// Parse behaviour section using namespace
+	behaviourConf := conf.Namespace("behaviour")
+	config.Behaviour.AutoSplitMetrics, _ = behaviourConf.FieldBool("auto_split_metrics")
+	config.Behaviour.DataMessagesOnly, _ = behaviourConf.FieldBool("data_messages_only")
+	config.Behaviour.EnableRebirthReq, _ = behaviourConf.FieldBool("enable_rebirth_req")
+	config.Behaviour.DropBirthMessages, _ = behaviourConf.FieldBool("drop_birth_messages")
+	config.Behaviour.StrictTopicValidation, _ = behaviourConf.FieldBool("strict_topic_validation")
+	config.Behaviour.AutoExtractValues, _ = behaviourConf.FieldBool("auto_extract_values")
+
+	si := &sparkplugInput{
+		config:            config,
 		logger:            mgr.Logger(),
 		messages:          make(chan mqttMessage, 1000),
 		nodeStates:        make(map[string]*nodeState),
-		aliasCache:        make(map[string]map[uint64]string),
+		legacyAliasCache:  make(map[string]map[uint64]string),
+		aliasCache:        NewAliasCache(),
+		topicParser:       NewTopicParser(),
+		messageProcessor:  NewMessageProcessor(mgr.Logger()),
+		typeConverter:     NewTypeConverter(),
+		mqttClientBuilder: NewMQTTClientBuilder(mgr),
 		messagesReceived:  mgr.Metrics().NewCounter("messages_received"),
+		messagesProcessed: mgr.Metrics().NewCounter("messages_processed"),
+		messagesDropped:   mgr.Metrics().NewCounter("messages_dropped"),
+		messagesErrored:   mgr.Metrics().NewCounter("messages_errored"),
 		birthsProcessed:   mgr.Metrics().NewCounter("births_processed"),
 		deathsProcessed:   mgr.Metrics().NewCounter("deaths_processed"),
 		rebirthsRequested: mgr.Metrics().NewCounter("rebirths_requested"),
 		sequenceErrors:    mgr.Metrics().NewCounter("sequence_errors"),
 		aliasResolutions:  mgr.Metrics().NewCounter("alias_resolutions"),
-	}, nil
+	}
+
+	return si, nil
 }
 
 func (s *sparkplugInput) Connect(ctx context.Context) error {
-	opts := mqtt.NewClientOptions()
+	s.logger.Infof("Connecting Sparkplug B input (role: %s)", s.config.Role)
 
-	// Add broker URLs
-	for _, url := range s.brokerURLs {
-		opts.AddBroker(url)
+	// Prepare MQTT client configuration
+	stateTopic := s.config.GetStateTopic()
+	statePayload := []byte("OFFLINE")
+
+	mqttConfig := MQTTClientConfig{
+		BrokerURLs:       s.config.MQTT.URLs,
+		ClientID:         s.config.MQTT.ClientID,
+		Username:         s.config.MQTT.Credentials.Username,
+		Password:         s.config.MQTT.Credentials.Password,
+		KeepAlive:        s.config.MQTT.KeepAlive,
+		ConnectTimeout:   s.config.MQTT.ConnectTimeout,
+		CleanSession:     s.config.MQTT.CleanSession,
+		WillTopic:        stateTopic,
+		WillPayload:      statePayload,
+		WillQoS:          s.config.MQTT.QoS,
+		WillRetain:       false,
+		OnConnect:        s.onConnect,
+		OnConnectionLost: s.onConnectionLost,
+		MessageHandler: func(client mqtt.Client, msg mqtt.Message) {
+			s.logger.Warnf("Received message on unhandled topic: %s", msg.Topic())
+		},
 	}
 
-	opts.SetClientID(s.clientID)
-	opts.SetKeepAlive(s.keepAlive)
-	opts.SetCleanSession(s.cleanSession)
-	opts.SetConnectTimeout(s.connectTimeout)
-
-	if s.username != "" {
-		opts.SetUsername(s.username)
-		if s.password != "" {
-			opts.SetPassword(s.password)
-		}
+	// Create MQTT client using Benthos-integrated builder
+	client, err := s.mqttClientBuilder.CreateClient(mqttConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create MQTT client: %w", err)
 	}
+	s.client = client
 
-	// Set up STATE topic Last Will Testament
-	stateTopic := fmt.Sprintf("spBv1.0/%s/STATE/%s", s.groupID, s.primaryHostID)
-	opts.SetWill(stateTopic, "OFFLINE", s.qos, false)
-
-	// Set connection handlers
-	opts.SetOnConnectHandler(s.onConnect)
-	opts.SetConnectionLostHandler(s.onConnectionLost)
-
-	// Set default message handler (should not be called if we subscribe properly)
-	opts.SetDefaultPublishHandler(func(client mqtt.Client, msg mqtt.Message) {
-		s.logger.Warnf("Received message on unhandled topic: %s", msg.Topic())
-	})
-
-	s.client = mqtt.NewClient(opts)
-
-	s.logger.Infof("Connecting to Sparkplug MQTT brokers: %v", s.brokerURLs)
-	token := s.client.Connect()
-	if !token.WaitTimeout(s.connectTimeout) {
-		return fmt.Errorf("connection timeout")
-	}
-	if err := token.Error(); err != nil {
-		return fmt.Errorf("failed to connect to MQTT broker: %w", err)
+	// Connect with Benthos-style retry and monitoring
+	s.logger.Infof("Connecting to MQTT brokers: %v", s.config.MQTT.URLs)
+	if err := s.mqttClientBuilder.ConnectWithRetry(client, s.config.MQTT.ConnectTimeout); err != nil {
+		return err
 	}
 
 	s.logger.Info("Successfully connected to Sparkplug MQTT broker")
@@ -279,25 +326,31 @@ func (s *sparkplugInput) Connect(ctx context.Context) error {
 func (s *sparkplugInput) onConnect(client mqtt.Client) {
 	s.logger.Info("MQTT client connected, setting up Sparkplug subscriptions")
 
-	// Subscribe to all Sparkplug topics for this group
-	topicFilter := fmt.Sprintf("spBv1.0/%s/#", s.groupID)
-	token := client.Subscribe(topicFilter, s.qos, s.messageHandler)
-	if token.Wait() && token.Error() != nil {
-		s.logger.Errorf("Failed to subscribe to Sparkplug topics: %v", token.Error())
-		return
+	// Get subscription topics based on role
+	topics := s.config.GetSubscriptionTopics()
+
+	s.logger.Infof("Operating as %s - subscribing to: %v", s.config.Role, topics)
+
+	// Subscribe to all required topics
+	for _, topic := range topics {
+		err := s.mqttClientBuilder.SubscribeWithMetrics(client, topic, s.config.MQTT.QoS, s.messageHandler)
+		if err != nil {
+			s.logger.Errorf("Failed to subscribe to topic %s: %v", topic, err)
+			return
+		}
+		s.logger.Infof("Subscribed to Sparkplug topic: %s", topic)
 	}
 
-	s.logger.Infof("Subscribed to Sparkplug topics: %s", topicFilter)
-
-	// Publish STATE ONLINE to announce this primary application is ready
-	stateTopic := fmt.Sprintf("spBv1.0/%s/STATE/%s", s.groupID, s.primaryHostID)
-	token = client.Publish(stateTopic, s.qos, false, "ONLINE")
-	if token.Wait() && token.Error() != nil {
-		s.logger.Errorf("Failed to publish STATE ONLINE: %v", token.Error())
-		return
+	// Publish STATE ONLINE for primary host and hybrid roles
+	if s.config.Role == RolePrimaryHost || s.config.Role == RoleHybrid {
+		stateTopic := s.config.GetStateTopic()
+		err := s.mqttClientBuilder.PublishWithMetrics(client, stateTopic, s.config.MQTT.QoS, false, "ONLINE")
+		if err != nil {
+			s.logger.Errorf("Failed to publish STATE ONLINE: %v", err)
+			return
+		}
+		s.logger.Infof("Published STATE ONLINE on topic: %s", stateTopic)
 	}
-
-	s.logger.Infof("Published STATE ONLINE on topic: %s", stateTopic)
 }
 
 func (s *sparkplugInput) onConnectionLost(client mqtt.Client, err error) {
@@ -358,7 +411,7 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 		s.processBirthMessage(deviceKey, msgType, &payload)
 		s.birthsProcessed.Incr(1)
 
-		if s.splitMetrics {
+		if s.config.Behaviour.AutoSplitMetrics {
 			batch = s.createSplitMessages(&payload, msgType, deviceKey, topicInfo, mqttMsg.topic)
 		} else {
 			batch = s.createSingleMessage(&payload, msgType, deviceKey, topicInfo, mqttMsg.topic)
@@ -366,7 +419,7 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 	} else if isDataMessage {
 		s.processDataMessage(deviceKey, msgType, &payload)
 
-		if s.splitMetrics {
+		if s.config.Behaviour.AutoSplitMetrics {
 			batch = s.createSplitMessages(&payload, msgType, deviceKey, topicInfo, mqttMsg.topic)
 		} else {
 			batch = s.createSingleMessage(&payload, msgType, deviceKey, topicInfo, mqttMsg.topic)
@@ -435,7 +488,7 @@ func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *
 			s.sequenceErrors.Incr(1)
 
 			// Send rebirth request if enabled
-			if s.enableRebirthReqs {
+			if s.config.Behaviour.EnableRebirthReq {
 				s.sendRebirthRequest(deviceKey)
 			}
 		}
@@ -466,10 +519,12 @@ func (s *sparkplugInput) Close(ctx context.Context) error {
 	s.mu.Unlock()
 
 	if s.client != nil && s.client.IsConnected() {
-		// Publish STATE OFFLINE before disconnecting
-		stateTopic := fmt.Sprintf("spBv1.0/%s/STATE/%s", s.groupID, s.primaryHostID)
-		token := s.client.Publish(stateTopic, s.qos, false, "OFFLINE")
-		token.WaitTimeout(5 * time.Second)
+		// Publish STATE OFFLINE before disconnecting (for primary host and hybrid roles)
+		if s.config.Role == RolePrimaryHost || s.config.Role == RoleHybrid {
+			stateTopic := s.config.GetStateTopic()
+			token := s.client.Publish(stateTopic, s.config.MQTT.QoS, false, "OFFLINE")
+			token.WaitTimeout(5 * time.Second)
+		}
 
 		s.client.Disconnect(1000)
 	}
@@ -482,24 +537,16 @@ func (s *sparkplugInput) Close(ctx context.Context) error {
 
 // Helper methods that delegate to the existing processor logic where possible
 func (s *sparkplugInput) cacheAliases(deviceKey string, metrics []*sproto.Payload_Metric) {
-	// Use existing processor logic
-	processor := &sparkplugProcessor{
-		aliasCache: s.aliasCache,
-		logger:     s.logger,
-	}
-	count := processor.cacheAliases(deviceKey, metrics)
+	// Use core component instead of processor
+	count := s.aliasCache.CacheAliases(deviceKey, metrics)
 	if count > 0 {
 		s.logger.Debugf("Cached %d aliases for device %s", count, deviceKey)
 	}
 }
 
 func (s *sparkplugInput) resolveAliases(deviceKey string, metrics []*sproto.Payload_Metric) {
-	// Use existing processor logic
-	processor := &sparkplugProcessor{
-		aliasCache: s.aliasCache,
-		logger:     s.logger,
-	}
-	count := processor.resolveAliases(deviceKey, metrics)
+	// Use core component instead of processor
+	count := s.aliasCache.ResolveAliases(deviceKey, metrics)
 	if count > 0 {
 		s.aliasResolutions.Incr(int64(count))
 		s.logger.Debugf("Resolved %d aliases for device %s", count, deviceKey)
@@ -507,9 +554,8 @@ func (s *sparkplugInput) resolveAliases(deviceKey string, metrics []*sproto.Payl
 }
 
 func (s *sparkplugInput) parseSparkplugTopicDetailed(topic string) (string, string, *TopicInfo) {
-	// Use existing processor logic
-	processor := &sparkplugProcessor{}
-	return processor.parseSparkplugTopicDetailed(topic)
+	// Use core component instead of processor
+	return s.topicParser.ParseSparkplugTopicDetailed(topic)
 }
 
 // Message creation methods
@@ -778,7 +824,7 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 		return
 	}
 
-	token := s.client.Publish(topic, s.qos, false, payloadBytes)
+	token := s.client.Publish(topic, s.config.MQTT.QoS, false, payloadBytes)
 	if token.Wait() && token.Error() != nil {
 		s.logger.Errorf("Failed to publish rebirth command: %v", token.Error())
 		return
