@@ -609,31 +609,64 @@ func (p *DownsamplerProcessor) shouldKeepMessage(state *SeriesState, value inter
 
 			return shouldKeep, nil
 		}
+		return true, nil // First value always kept
 	}
 
-	// Use algorithm to determine if point should be kept
-	shouldKeep, err := state.algorithm.ProcessPoint(value, timestamp)
-
-	// If algorithm fails due to non-numeric value, fall back to equality check
-	if err != nil && strings.Contains(err.Error(), "cannot convert") {
+	// Handle boolean values with simple equality logic (never send to numeric algorithms)
+	if _, isBool := value.(bool); isBool {
 		if state.lastOutput != nil {
 			isEqual := p.areEqual(value, state.lastOutput)
 			shouldKeep := !isEqual // Keep if values are different
 
-			// Log fallback behavior
+			// Log boolean handling
 			if p.logger != nil {
-				p.logger.Debug(fmt.Sprintf("Algorithm error (%v), falling back to equality check for value: %v", err, value))
+				if shouldKeep {
+					p.logger.Debug(fmt.Sprintf("Boolean value changed: %v -> %v (kept)", state.lastOutput, value))
+				} else {
+					p.logger.Debug(fmt.Sprintf("Boolean value unchanged: %v (dropped)", value))
+				}
 			}
 
 			return shouldKeep, nil
 		} else {
-			// First value is always kept
+			// First boolean value is always kept
+			if p.logger != nil {
+				p.logger.Debug(fmt.Sprintf("First boolean value: %v (kept)", value))
+			}
 			return true, nil
 		}
 	}
 
+	// Handle string values with simple equality logic (never send to numeric algorithms)
+	if _, isString := value.(string); isString {
+		if state.lastOutput != nil {
+			isEqual := p.areEqual(value, state.lastOutput)
+			shouldKeep := !isEqual // Keep if values are different
+
+			// Log string handling
+			if p.logger != nil {
+				if shouldKeep {
+					p.logger.Debug(fmt.Sprintf("String value changed: %v -> %v (kept)", state.lastOutput, value))
+				} else {
+					p.logger.Debug(fmt.Sprintf("String value unchanged: %v (dropped)", value))
+				}
+			}
+
+			return shouldKeep, nil
+		} else {
+			// First string value is always kept
+			if p.logger != nil {
+				p.logger.Debug(fmt.Sprintf("First string value: %v (kept)", value))
+			}
+			return true, nil
+		}
+	}
+
+	// For numeric values, use the configured algorithm
+	shouldKeep, err := state.algorithm.ProcessPoint(value, timestamp)
+
 	if err == nil && !shouldKeep && p.logger != nil {
-		p.logger.Debug(fmt.Sprintf("Algorithm dropped value: %v", value))
+		p.logger.Debug(fmt.Sprintf("Algorithm dropped numeric value: %v", value))
 	}
 
 	return shouldKeep, err

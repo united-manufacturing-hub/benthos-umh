@@ -52,7 +52,7 @@ input:
         {"temperature": 20.6, "timestamp_ms": 2000},  # +0.6°C > 0.5 threshold → KEEP
         {"temperature": 20.8, "timestamp_ms": 3000},  # +0.2°C < 0.5 threshold → DROP
         {"temperature": 21.2, "timestamp_ms": 4000}   # +0.4°C from last kept < 0.5 → DROP
-      ].index(count("generated"))
+      ].index(count("generated") % 4)
       meta data_contract = "_historian"
       meta umh_topic = "test.temperature"
     count: 4
@@ -93,7 +93,7 @@ input:
         {"temperature": 25.1, "timestamp_ms": 3000},  # -0.2°C < 0.5 threshold → DROP
         {"temperature": 24.7, "timestamp_ms": 4000},  # -0.3°C < 0.5 threshold → DROP
         {"temperature": 24.4, "timestamp_ms": 5000}   # -0.6°C > 0.5 threshold → KEEP
-      ].index(count("generated"))
+      ].index(count("generated") % 5)
       meta data_contract = "_historian"
       meta umh_topic = "test.temperature"
     count: 5
@@ -136,7 +136,7 @@ input:
         {"pressure": 1003.0, "timestamp_ms": 3000},  # +3.0 Pa > 2.0 threshold → KEEP
         {"pressure": 1004.0, "timestamp_ms": 4000},  # +1.0 Pa < 2.0 threshold → DROP
         {"pressure": 1006.0, "timestamp_ms": 5000}   # +3.0 Pa > 2.0 threshold → KEEP
-      ].index(count("generated"))
+      ].index(count("generated") % 5)
       meta data_contract = "_historian"
       meta umh_topic = "test.pressure"  
     count: 5
@@ -181,7 +181,7 @@ input:
         {"status": "STOPPED", "timestamp_ms": 3000},  # Different → KEEP (threshold ignored)
         {"status": "STOPPED", "timestamp_ms": 4000},  # Same → DROP (threshold ignored)
         {"status": "RUNNING", "timestamp_ms": 5000}   # Different → KEEP (threshold ignored)
-      ].index(count("generated"))
+      ].index(count("generated") % 5)
       meta data_contract = "_historian"
       meta umh_topic = "test.status"
     count: 5
@@ -222,7 +222,7 @@ input:
         {"mode": "AUTO", "timestamp_ms": 3000},  # Same → DROP  
         {"mode": "AUTO", "timestamp_ms": 4000},  # Same → DROP
         {"mode": "AUTO", "timestamp_ms": 5000}   # Same → DROP
-      ].index(count("generated"))
+      ].index(count("generated") % 5)
       meta data_contract = "_historian"
       meta umh_topic = "test.mode"
     count: 5
@@ -308,7 +308,7 @@ input:
         {"alarm": false, "timestamp_ms": 3000},  # Same → DROP
         {"alarm": false, "timestamp_ms": 4000},  # Same → DROP
         {"alarm": false, "timestamp_ms": 5000}   # Same → DROP
-      ].index(count("generated"))
+      ].index(count("generated") % 5)
       meta data_contract = "_historian"
       meta umh_topic = "test.alarm"
     count: 5
@@ -355,7 +355,7 @@ input:
         {"pressure": 1000.0, "timestamp_ms": 5000, "topic": "plant.line1.pressure"},
         {"pressure": 1001.0, "timestamp_ms": 6000, "topic": "plant.line1.pressure"}     # +1.0 Pa < 2.0 → DROP
       ]
-      let msg = $messages.index(count("generated"))
+      let msg = $messages.index(count("generated") % $messages.length())
       root = msg.without("topic")
       meta data_contract = "_historian"
       meta umh_topic = $msg.topic
@@ -407,7 +407,7 @@ input:
         {"value": "OFFLINE", "timestamp_ms": 3000}, # String → KEEP (type change)
         {"value": "OFFLINE", "timestamp_ms": 4000}, # String same → DROP
         {"value": 45.0, "timestamp_ms": 5000}       # Numeric → KEEP (type change)
-      ].index(count("generated"))
+      ].index(count("generated") % 5)
       meta data_contract = "_historian"
       meta umh_topic = "test.mixed"
     count: 5
@@ -451,7 +451,7 @@ input:
         {"value": 10.0, "timestamp_ms": 2000},       # Exact same → DROP
         {"value": 10.000001, "timestamp_ms": 3000},  # Tiny diff > 0 threshold → KEEP
         {"value": 10.000001, "timestamp_ms": 4000}   # Exact same → DROP
-      ].index(count("generated"))
+      ].index(count("generated") % 4)
       meta data_contract = "_historian"
       meta umh_topic = "test.zero_threshold"
     count: 4
@@ -493,7 +493,7 @@ input:
         {"value": 50.0, "timestamp_ms": 2000},   # +50 < 100 threshold → DROP
         {"value": 75.0, "timestamp_ms": 3000},   # +75 < 100 threshold → DROP
         {"value": 150.0, "timestamp_ms": 4000}   # +150 > 100 threshold → KEEP
-      ].index(count("generated"))
+      ].index(count("generated") % 4)
       meta data_contract = "_historian"
       meta umh_topic = "test.large_threshold"
     count: 4

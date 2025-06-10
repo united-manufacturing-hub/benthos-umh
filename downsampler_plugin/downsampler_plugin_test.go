@@ -906,6 +906,180 @@ downsampler:
 		})
 	})
 
+	When("handling boolean values", func() {
+		It("should keep boolean changes and drop identical booleans", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+downsampler:
+  algorithm: "deadband"
+  threshold: 0.5
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Send first boolean message (baseline - always kept)
+			msg1 := service.NewMessage(nil)
+			msg1.SetStructured(map[string]interface{}{
+				"timestamp_ms": 1609459200000,
+				"value":        true,
+			})
+			msg1.MetaSet("data_contract", "_historian")
+			msg1.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.pump_active")
+			err = msgHandler(ctx, msg1)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			// Send identical boolean - should be filtered
+			msg2 := service.NewMessage(nil)
+			msg2.SetStructured(map[string]interface{}{
+				"timestamp_ms": 1609459201000,
+				"value":        true, // Same as previous
+			})
+			msg2.MetaSet("data_contract", "_historian")
+			msg2.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.pump_active")
+			err = msgHandler(ctx, msg2)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should still be only one message (second filtered out)
+			Consistently(func() int {
+				return len(messages)
+			}, 500*time.Millisecond).Should(Equal(1))
+
+			// Send changed boolean - should be kept
+			msg3 := service.NewMessage(nil)
+			msg3.SetStructured(map[string]interface{}{
+				"timestamp_ms": 1609459202000,
+				"value":        false, // Changed from true to false
+			})
+			msg3.MetaSet("data_contract", "_historian")
+			msg3.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.pump_active")
+			err = msgHandler(ctx, msg3)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(2))
+
+			// Send another identical boolean - should be filtered
+			msg4 := service.NewMessage(nil)
+			msg4.SetStructured(map[string]interface{}{
+				"timestamp_ms": 1609459203000,
+				"value":        false, // Same as previous
+			})
+			msg4.MetaSet("data_contract", "_historian")
+			msg4.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.pump_active")
+			err = msgHandler(ctx, msg4)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should still be only two messages (fourth filtered out)
+			Consistently(func() int {
+				return len(messages)
+			}, 500*time.Millisecond).Should(Equal(2))
+		})
+
+		It("should handle string values with equality logic", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+downsampler:
+  algorithm: "swinging_door"
+  comp_dev: 1.0
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Send first string message
+			msg1 := service.NewMessage(nil)
+			msg1.SetStructured(map[string]interface{}{
+				"timestamp_ms": 1609459200000,
+				"value":        "running",
+			})
+			msg1.MetaSet("data_contract", "_historian")
+			msg1.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.status")
+			err = msgHandler(ctx, msg1)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			// Send identical string - should be filtered
+			msg2 := service.NewMessage(nil)
+			msg2.SetStructured(map[string]interface{}{
+				"timestamp_ms": 1609459201000,
+				"value":        "running", // Same as previous
+			})
+			msg2.MetaSet("data_contract", "_historian")
+			msg2.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.status")
+			err = msgHandler(ctx, msg2)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should still be only one message (second filtered out)
+			Consistently(func() int {
+				return len(messages)
+			}, 500*time.Millisecond).Should(Equal(1))
+
+			// Send changed string - should be kept
+			msg3 := service.NewMessage(nil)
+			msg3.SetStructured(map[string]interface{}{
+				"timestamp_ms": 1609459202000,
+				"value":        "stopped", // Changed from "running" to "stopped"
+			})
+			msg3.MetaSet("data_contract", "_historian")
+			msg3.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.status")
+			err = msgHandler(ctx, msg3)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(2))
+		})
+	})
+
 	When("handling errors gracefully", func() {
 		It("should pass through messages with missing umh_topic", func() {
 			builder := service.NewStreamBuilder()
