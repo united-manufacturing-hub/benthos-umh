@@ -39,9 +39,14 @@ type TopicThreshold struct {
 // DownsamplerConfig holds the configuration for the downsampler processor
 type DownsamplerConfig struct {
 	Algorithm       string           `json:"algorithm" yaml:"algorithm"`
-	Threshold       float64          `json:"threshold" yaml:"threshold"` // Default threshold
+	Threshold       float64          `json:"threshold" yaml:"threshold"` // Default threshold (deadband)
 	MaxInterval     time.Duration    `json:"max_interval,omitempty" yaml:"max_interval,omitempty"`
 	TopicThresholds []TopicThreshold `json:"topic_thresholds,omitempty" yaml:"topic_thresholds,omitempty"` // Topic-specific thresholds
+
+	// Swinging Door specific parameters
+	CompDev     float64       `json:"comp_dev,omitempty" yaml:"comp_dev,omitempty"`           // CompDev - max vertical error
+	CompMinTime time.Duration `json:"comp_min_time,omitempty" yaml:"comp_min_time,omitempty"` // CompMinTime - min Δt below which all points are dropped
+	CompMaxTime time.Duration `json:"comp_max_time,omitempty" yaml:"comp_max_time,omitempty"` // CompMaxTime - hard limit that forces a keep
 }
 
 // SeriesState holds the state for a single time series
@@ -71,11 +76,9 @@ to determine whether each data point represents a significant change worth prese
 
 Currently supported algorithms:
 - deadband: Filters out changes smaller than a configured threshold
-
-Future algorithms planned:
-- swinging_door: Dynamic compression maintaining trend fidelity`).
+- swinging_door: Dynamic compression maintaining trend fidelity using Swinging Door Trending (SDT)`).
 		Field(service.NewStringField("algorithm").
-			Description("Downsampling algorithm to use. Currently supported: 'deadband'").
+			Description("Downsampling algorithm to use. Supported: 'deadband', 'swinging_door'").
 			Default("deadband")).
 		Field(service.NewFloatField("threshold").
 			Description("Default threshold for determining significant changes. For deadband algorithm, this is the minimum absolute change required to keep a data point.").
@@ -93,6 +96,16 @@ Future algorithms planned:
 			service.NewFloatField("threshold").
 				Description("Threshold value for this topic/pattern")).
 			Description("List of topic-specific thresholds. Allows different thresholds for different metric types.").
+			Optional()).
+		Field(service.NewFloatField("comp_dev").
+			Description("CompDev - Maximum vertical error tolerance for swinging door algorithm. Must be positive.").
+			Default(0.5).
+			Optional()).
+		Field(service.NewDurationField("comp_min_time").
+			Description("CompMinTime - Minimum time interval below which all points are dropped (de-noising) for swinging door.").
+			Optional()).
+		Field(service.NewDurationField("comp_max_time").
+			Description("CompMaxTime - Hard time limit that forces a keep even if error is small for swinging door.").
 			Optional())
 
 	err := service.RegisterBatchProcessor(
@@ -112,6 +125,31 @@ Future algorithms planned:
 			var maxInterval time.Duration
 			if conf.Contains("max_interval") {
 				maxInterval, err = conf.FieldDuration("max_interval")
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			// Parse swinging door specific parameters
+			var compDev float64
+			if conf.Contains("comp_dev") {
+				compDev, err = conf.FieldFloat("comp_dev")
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			var compMinTime time.Duration
+			if conf.Contains("comp_min_time") {
+				compMinTime, err = conf.FieldDuration("comp_min_time")
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			var compMaxTime time.Duration
+			if conf.Contains("comp_max_time") {
+				compMaxTime, err = conf.FieldDuration("comp_max_time")
 				if err != nil {
 					return nil, err
 				}
@@ -167,6 +205,9 @@ Future algorithms planned:
 				Threshold:       threshold,
 				MaxInterval:     maxInterval,
 				TopicThresholds: topicThresholds,
+				CompDev:         compDev,
+				CompMinTime:     compMinTime,
+				CompMaxTime:     compMaxTime,
 			}
 
 			return newDownsamplerProcessor(config, mgr.Logger(), mgr.Metrics())
@@ -518,10 +559,26 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string) (*SeriesS
 		return state, nil
 	}
 
-	// Create algorithm instance
-	algorithmConfig := map[string]interface{}{
-		"threshold":    p.getThresholdForTopic(seriesID),
-		"max_interval": p.config.MaxInterval,
+	// Create algorithm instance with appropriate configuration
+	var algorithmConfig map[string]interface{}
+	switch p.config.Algorithm {
+	case "deadband":
+		algorithmConfig = map[string]interface{}{
+			"threshold":    p.getThresholdForTopic(seriesID),
+			"max_interval": p.config.MaxInterval,
+		}
+	case "swinging_door":
+		algorithmConfig = map[string]interface{}{
+			"comp_dev":      p.config.CompDev,
+			"comp_min_time": p.config.CompMinTime,
+			"comp_max_time": p.config.CompMaxTime,
+		}
+	default:
+		// Default to deadband for unknown algorithms
+		algorithmConfig = map[string]interface{}{
+			"threshold":    p.getThresholdForTopic(seriesID),
+			"max_interval": p.config.MaxInterval,
+		}
 	}
 
 	algorithm, err := algorithms.Create(p.config.Algorithm, algorithmConfig)
@@ -539,37 +596,44 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string) (*SeriesS
 
 // shouldKeepMessage determines if a message should be kept based on the algorithm
 func (p *DownsamplerProcessor) shouldKeepMessage(state *SeriesState, value interface{}, timestamp time.Time) (bool, error) {
-	state.mutex.RLock()
-	lastOutput := state.lastOutput
-	lastOutputTime := state.lastOutputTime
-	state.mutex.RUnlock()
+	// Handle "none" algorithm - no filtering
+	if state.algorithm == nil {
+		if state.lastOutput != nil {
+			isEqual := p.areEqual(value, state.lastOutput)
+			shouldKeep := !isEqual // Keep if values are different
 
-	// First point is always kept
-	if lastOutput == nil {
-		return true, nil
-	}
+			// Log dropped message if configured
+			if !shouldKeep && p.logger != nil {
+				p.logger.Debug(fmt.Sprintf("Dropped identical value: %v", value))
+			}
 
-	// For non-numeric types (strings, booleans), ignore thresholds and use equality check only
-	// Thresholds are ignored for strings, booleans, and other non-numeric types
-	if p.isNonNumericType(value) || p.isNonNumericType(lastOutput) {
-		// At least one value is non-numeric, use equality comparison only
-		isEqual := p.areEqual(value, lastOutput)
-		shouldKeep := !isEqual // Keep if values are different
-
-		// Log non-numeric handling
-		if !shouldKeep && p.logger != nil {
-			p.logger.Debugf("Message dropped: non-numeric value unchanged (current: %v, previous: %v)", value, lastOutput)
+			return shouldKeep, nil
 		}
-
-		return shouldKeep, nil
 	}
 
-	// Both values are numeric - delegate to algorithm for threshold-based logic
-	shouldKeep, err := state.algorithm.ShouldKeep(value, lastOutput, timestamp, lastOutputTime)
+	// Use algorithm to determine if point should be kept
+	shouldKeep, err := state.algorithm.ProcessPoint(value, timestamp)
 
-	// Add detailed debug logging for dropped messages
+	// If algorithm fails due to non-numeric value, fall back to equality check
+	if err != nil && strings.Contains(err.Error(), "cannot convert") {
+		if state.lastOutput != nil {
+			isEqual := p.areEqual(value, state.lastOutput)
+			shouldKeep := !isEqual // Keep if values are different
+
+			// Log fallback behavior
+			if p.logger != nil {
+				p.logger.Debug(fmt.Sprintf("Algorithm error (%v), falling back to equality check for value: %v", err, value))
+			}
+
+			return shouldKeep, nil
+		} else {
+			// First value is always kept
+			return true, nil
+		}
+	}
+
 	if err == nil && !shouldKeep && p.logger != nil {
-		p.logDropReason(state, value, lastOutput, timestamp, lastOutputTime)
+		p.logger.Debug(fmt.Sprintf("Algorithm dropped value: %v", value))
 	}
 
 	return shouldKeep, err
@@ -612,6 +676,8 @@ func (p *DownsamplerProcessor) logDropReason(state *SeriesState, currentValue, p
 	switch algorithmName {
 	case "deadband":
 		p.logDeadbandDropReason(currentValue, previousValue, currentTime, previousTime, threshold)
+	case "swinging_door":
+		p.logSwingingDoorDropReason(currentValue, previousValue, currentTime, previousTime)
 	default:
 		p.logger.Debugf("Message dropped by %s algorithm: current=%v, previous=%v",
 			algorithmName, currentValue, previousValue)
@@ -657,6 +723,38 @@ func (p *DownsamplerProcessor) logDeadbandDropReason(currentValue, previousValue
 	if absDiff < threshold {
 		p.logger.Debugf("Drop reason: absolute difference (%.6f) below threshold (%.6f)", absDiff, threshold)
 	}
+}
+
+// logSwingingDoorDropReason provides specific logging for swinging door algorithm drops
+func (p *DownsamplerProcessor) logSwingingDoorDropReason(currentValue, previousValue interface{}, currentTime, previousTime time.Time) {
+	// First message case
+	if previousValue == nil {
+		p.logger.Debugf("Message kept: first message in series")
+		return
+	}
+
+	// Try to convert to numeric values for detailed comparison
+	currentFloat, currentErr := p.toFloat64(currentValue)
+	previousFloat, previousErr := p.toFloat64(previousValue)
+
+	if currentErr != nil || previousErr != nil {
+		// Non-numeric comparison
+		if currentErr != nil {
+			p.logger.Debugf("Message dropped: could not convert current value to numeric (%v), using fail-open", currentErr)
+		} else if previousErr != nil {
+			p.logger.Debugf("Message dropped: could not convert previous value to numeric (%v), treating as different", previousErr)
+		}
+		return
+	}
+
+	// Time since last output
+	timeSinceLastOutput := currentTime.Sub(previousTime)
+
+	// Detailed logging with all relevant information
+	p.logger.Debugf("Message dropped by swinging_door: current=%.6f, previous=%.6f, timeSince=%v",
+		currentFloat, previousFloat, timeSinceLastOutput)
+
+	p.logger.Debugf("Drop reason: point remained within swinging door bounds")
 }
 
 // extractThresholdFromMetadata extracts threshold value from algorithm metadata string
