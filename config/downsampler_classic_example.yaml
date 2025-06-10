@@ -48,19 +48,20 @@ pipeline:
   processors:
     - downsampler:
         algorithm: deadband
-        threshold: 2.0  # Default threshold for numeric values
-        max_interval: 30s
-        topic_thresholds:
+        default:
+          threshold: 2.0     # Default threshold for numeric values
+          max_interval: 30s  # Default max interval
+        overrides:
           - pattern: "*.temperature"
-            threshold: 0.5              # Fine-grained for temperature
+            threshold: 0.5   # Fine-grained for temperature
           - pattern: "*.humidity" 
-            threshold: 1.0              # Medium sensitivity for humidity
+            threshold: 1.0   # Medium sensitivity for humidity
           - pattern: "*.pressure"
-            threshold: 5.0              # Coarser for pressure 
+            threshold: 5.0   # Coarser for pressure 
           - pattern: "*.status"
-            threshold: 0.1              # Ignored for strings - uses equality
+            threshold: 0.1   # Ignored for strings - uses equality
           - pattern: "*.machine_enabled"
-            threshold: 0.1              # Ignored for booleans - uses equality
+            threshold: 0.1   # Ignored for booleans - uses equality
 
 output:
   stdout:
