@@ -63,62 +63,6 @@ type DownsamplerConfig struct {
 	Overrides []OverrideConfig `json:"overrides,omitempty" yaml:"overrides,omitempty"`
 }
 
-// getConfigForTopic returns the effective configuration for a given topic by applying overrides
-func (c *DownsamplerConfig) getConfigForTopic(topic string) map[string]interface{} {
-	// Start with defaults
-	config := map[string]interface{}{
-		"threshold":     c.Default.Threshold,
-		"max_interval":  c.Default.MaxInterval,
-		"comp_dev":      c.Default.CompDev,
-		"comp_min_time": c.Default.CompMinTime,
-		"comp_max_time": c.Default.CompMaxTime,
-	}
-
-	// Apply overrides in order (first match wins)
-	for _, override := range c.Overrides {
-		matched := false
-
-		if override.Topic != "" {
-			matched = (override.Topic == topic)
-		} else if len(override.Pattern) > 0 {
-			// Use filepath.Match for wildcard patterns (supports * and ?)
-			if m, err := filepath.Match(override.Pattern, topic); err == nil && m {
-				matched = true
-			} else {
-				// Also check against just the field name (last part after last dot)
-				parts := strings.Split(topic, ".")
-				if len(parts) > 0 {
-					fieldName := parts[len(parts)-1]
-					if m, err := filepath.Match(override.Pattern, fieldName); err == nil && m {
-						matched = true
-					}
-				}
-			}
-		}
-
-		if matched {
-			if override.Threshold != nil {
-				config["threshold"] = *override.Threshold
-			}
-			if override.MaxInterval != nil {
-				config["max_interval"] = *override.MaxInterval
-			}
-			if override.CompDev != nil {
-				config["comp_dev"] = *override.CompDev
-			}
-			if override.CompMinTime != nil {
-				config["comp_min_time"] = *override.CompMinTime
-			}
-			if override.CompMaxTime != nil {
-				config["comp_max_time"] = *override.CompMaxTime
-			}
-			break
-		}
-	}
-
-	return config
-}
-
 // SeriesState holds the state for a single time series
 type SeriesState struct {
 	algorithm      algorithms.DownsampleAlgorithm
@@ -203,13 +147,130 @@ Currently supported algorithms:
 				return nil, err
 			}
 
-			// For now, use simple defaults until we can properly parse the new configuration structure
-			// TODO: Implement proper defaults + overrides parsing
+			// Parse default configuration
 			var defaultConfig DefaultConfig
-			defaultConfig.Threshold = 0.0
-			defaultConfig.CompDev = 0.5
+			if conf.Contains("default") {
+				defaultConfigParsed, err := conf.FieldObject("default")
+				if err != nil {
+					return nil, err
+				}
 
+				if defaultConfigParsed.Contains("threshold") {
+					defaultConfig.Threshold, err = defaultConfigParsed.FieldFloat("threshold")
+					if err != nil {
+						return nil, fmt.Errorf("default.threshold: %w", err)
+					}
+				}
+
+				if defaultConfigParsed.Contains("max_interval") {
+					defaultConfig.MaxInterval, err = defaultConfigParsed.FieldDuration("max_interval")
+					if err != nil {
+						return nil, fmt.Errorf("default.max_interval: %w", err)
+					}
+				}
+
+				if defaultConfigParsed.Contains("comp_dev") {
+					defaultConfig.CompDev, err = defaultConfigParsed.FieldFloat("comp_dev")
+					if err != nil {
+						return nil, fmt.Errorf("default.comp_dev: %w", err)
+					}
+				}
+
+				if defaultConfigParsed.Contains("comp_min_time") {
+					defaultConfig.CompMinTime, err = defaultConfigParsed.FieldDuration("comp_min_time")
+					if err != nil {
+						return nil, fmt.Errorf("default.comp_min_time: %w", err)
+					}
+				}
+
+				if defaultConfigParsed.Contains("comp_max_time") {
+					defaultConfig.CompMaxTime, err = defaultConfigParsed.FieldDuration("comp_max_time")
+					if err != nil {
+						return nil, fmt.Errorf("default.comp_max_time: %w", err)
+					}
+				}
+			}
+
+			// Parse overrides configuration
 			var overrides []OverrideConfig
+			if conf.Contains("overrides") {
+				overrideConfs, err := conf.FieldObjectList("overrides")
+				if err != nil {
+					return nil, err
+				}
+
+				for i, overrideConf := range overrideConfs {
+					var override OverrideConfig
+
+					// Get pattern or topic (mutually exclusive)
+					hasPattern := overrideConf.Contains("pattern")
+					hasTopic := overrideConf.Contains("topic")
+
+					if hasPattern && hasTopic {
+						return nil, fmt.Errorf("overrides[%d]: 'pattern' and 'topic' are mutually exclusive", i)
+					}
+					if !hasPattern && !hasTopic {
+						return nil, fmt.Errorf("overrides[%d]: either 'pattern' or 'topic' must be specified", i)
+					}
+
+					if hasPattern {
+						override.Pattern, err = overrideConf.FieldString("pattern")
+						if err != nil {
+							return nil, fmt.Errorf("overrides[%d].pattern: %w", i, err)
+						}
+					}
+
+					if hasTopic {
+						override.Topic, err = overrideConf.FieldString("topic")
+						if err != nil {
+							return nil, fmt.Errorf("overrides[%d].topic: %w", i, err)
+						}
+					}
+
+					// Parse optional parameters using pointers
+					if overrideConf.Contains("threshold") {
+						threshold, err := overrideConf.FieldFloat("threshold")
+						if err != nil {
+							return nil, fmt.Errorf("overrides[%d].threshold: %w", i, err)
+						}
+						override.Threshold = &threshold
+					}
+
+					if overrideConf.Contains("max_interval") {
+						maxInterval, err := overrideConf.FieldDuration("max_interval")
+						if err != nil {
+							return nil, fmt.Errorf("overrides[%d].max_interval: %w", i, err)
+						}
+						override.MaxInterval = &maxInterval
+					}
+
+					if overrideConf.Contains("comp_dev") {
+						compDev, err := overrideConf.FieldFloat("comp_dev")
+						if err != nil {
+							return nil, fmt.Errorf("overrides[%d].comp_dev: %w", i, err)
+						}
+						override.CompDev = &compDev
+					}
+
+					if overrideConf.Contains("comp_min_time") {
+						compMinTime, err := overrideConf.FieldDuration("comp_min_time")
+						if err != nil {
+							return nil, fmt.Errorf("overrides[%d].comp_min_time: %w", i, err)
+						}
+						override.CompMinTime = &compMinTime
+					}
+
+					if overrideConf.Contains("comp_max_time") {
+						compMaxTime, err := overrideConf.FieldDuration("comp_max_time")
+						if err != nil {
+							return nil, fmt.Errorf("overrides[%d].comp_max_time: %w", i, err)
+						}
+						override.CompMaxTime = &compMaxTime
+					}
+
+					overrides = append(overrides, override)
+				}
+			}
 
 			config := DownsamplerConfig{
 				Algorithm: algorithm,
@@ -250,11 +311,38 @@ func newDownsamplerProcessor(config DownsamplerConfig, logger *service.Logger, m
 
 // getThresholdForTopic returns the appropriate threshold for a given topic
 func (p *DownsamplerProcessor) getThresholdForTopic(topic string) float64 {
-	config := p.config.getConfigForTopic(topic)
-	if threshold, ok := config["threshold"].(float64); ok {
-		return threshold
+	// Check topic-specific thresholds
+	for _, topicThreshold := range p.config.TopicThresholds {
+		if topicThreshold.Topic != "" {
+			// Exact topic match
+			if topicThreshold.Topic == topic {
+				return topicThreshold.Threshold
+			}
+		} else if topicThreshold.Pattern != "" {
+			// Pattern match using filepath.Match (supports * wildcards)
+			matched, err := filepath.Match(topicThreshold.Pattern, topic)
+			if err != nil {
+				p.logger.Warnf("Invalid pattern '%s': %v", topicThreshold.Pattern, err)
+				continue
+			}
+			if matched {
+				return topicThreshold.Threshold
+			}
+
+			// Also try matching just the last part of the topic (metric name)
+			topicParts := strings.Split(topic, ".")
+			if len(topicParts) > 0 {
+				lastPart := topicParts[len(topicParts)-1]
+				matched, err = filepath.Match(topicThreshold.Pattern, lastPart)
+				if err == nil && matched {
+					return topicThreshold.Threshold
+				}
+			}
+		}
 	}
-	return 0.0 // Default fallback
+
+	// Return default threshold if no match found
+	return p.config.Threshold
 }
 
 // ProcessBatch processes a batch of messages, applying downsampling to time-series data
@@ -539,8 +627,27 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string) (*SeriesS
 		return state, nil
 	}
 
-	// Get algorithm configuration for this topic
-	algorithmConfig := p.config.getConfigForTopic(seriesID)
+	// Create algorithm instance with appropriate configuration
+	var algorithmConfig map[string]interface{}
+	switch p.config.Algorithm {
+	case "deadband":
+		algorithmConfig = map[string]interface{}{
+			"threshold":    p.getThresholdForTopic(seriesID),
+			"max_interval": p.config.MaxInterval,
+		}
+	case "swinging_door":
+		algorithmConfig = map[string]interface{}{
+			"comp_dev":      p.config.CompDev,
+			"comp_min_time": p.config.CompMinTime,
+			"comp_max_time": p.config.CompMaxTime,
+		}
+	default:
+		// Default to deadband for unknown algorithms
+		algorithmConfig = map[string]interface{}{
+			"threshold":    p.getThresholdForTopic(seriesID),
+			"max_interval": p.config.MaxInterval,
+		}
+	}
 
 	algorithm, err := algorithms.Create(p.config.Algorithm, algorithmConfig)
 	if err != nil {

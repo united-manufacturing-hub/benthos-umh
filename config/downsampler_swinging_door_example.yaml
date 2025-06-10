@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Benthos Downsampler Plugin Example
-# This configuration demonstrates the downsampler processor plugin with deadband algorithm
+# This configuration demonstrates the downsampler processor plugin with swinging door algorithm
 # Testing multiple metrics with different thresholds and data types
 
 logger:
@@ -61,44 +61,28 @@ input:
       meta umh_topic = $topics.index($metric_index)
     interval: 120ms
     count: 100
-
 pipeline:
   processors:
     - downsampler:
-        algorithm: deadband
+        algorithm: swinging_door
         default:
-          threshold: 2.0     # Default threshold for numeric values
-          max_interval: 30s  # Default max interval
+          comp_dev: 0.5        # Default compression deviation
+          comp_min_time: 5s    # Default minimum time interval 
+          comp_max_time: 1h    # Default maximum time interval
         overrides:
-          - pattern: "*.temperature"
-            threshold: 0.5   # Fine-grained for temperature (numeric)
-          - pattern: "*.humidity" 
-            threshold: 1.0   # Medium sensitivity for humidity (numeric)
-          - pattern: "*.status"
-            threshold: 0.1   # Ignored for strings - uses equality check only
-          - pattern: "*.machine_state" 
-            threshold: 0.1   # Ignored for booleans - uses equality check only
-          # Pressure will use default threshold of 2.0 (numeric)
+          - pattern: ".+_counter"     # Counter metrics need no compression
+            comp_dev: 0.0
+            comp_min_time: 0s
+            comp_max_time: 0s
+          - pattern: "^temp_"         # Temperature sensors - tighter deviation
+            comp_dev: 0.25
+          - topic: "pressure.sensor.001"  # Specific sensor override
+            comp_dev: 1.0
+            comp_max_time: 30m
+          - pattern: ".*_alarm"       # Alarm states - immediate transmission
+            comp_dev: 0.0
+            comp_min_time: 0s
 
 output:
   stdout:
     codec: lines
-
-# This configuration will:
-# 1. Generate five types of simulated sensor data:
-#    - Temperature: 20-30°C (custom threshold: 0.5°C for numeric comparison)
-#    - Humidity: 30-70% (custom threshold: 1.0% for numeric comparison)  
-#    - Pressure: 1000-1100 Pa (default threshold: 2.0 Pa for numeric comparison)
-#    - Status: Constant "RUNNING" string (threshold ignored, uses equality comparison)
-#    - Machine State: Boolean with 90% true (threshold ignored, uses equality comparison)
-# 2. Apply different deadband thresholds based on metric type (numeric values only)
-# 3. For strings and booleans: ignore thresholds, use equality comparison only
-# 4. Demonstrate constant value filtering behavior
-# 5. Output detailed debug logs showing threshold decisions
-#
-# Expected results: 
-# - Numeric values filtered based on configured thresholds
-# - String values kept only when they change (equality check)
-# - Boolean values kept only when they change (equality check)
-# - Constant string filtered after first message regardless of threshold
-# - Boolean changes kept when false/true transitions occur 
