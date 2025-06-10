@@ -1,0 +1,89 @@
+# Benthos Downsampler Plugin Example
+# This configuration demonstrates the downsampler processor plugin with deadband algorithm
+# Testing multiple metrics with different thresholds and data types
+
+logger:
+  level: DEBUG
+  add_timestamp: true
+  static_fields:
+    "@service": benthos
+
+input:
+  generate:
+    mapping: |
+      let metric_index = counter() % 5
+      let topics = [
+        "umh.v1.plant1.line1._historian.temperature",
+        "umh.v1.plant1.line1._historian.humidity", 
+        "umh.v1.plant1.line1._historian.pressure",
+        "umh.v1.plant1.line1._historian.status",
+        "umh.v1.plant1.line1._historian.machine_state"
+      ]
+      
+      root = match $metric_index {
+        0 => {
+          "temperature": (20 + random_int(max: 1000) / 100.0),
+          "timestamp_ms": timestamp_unix_milli()
+        },
+        1 => {
+          "humidity": (30 + random_int(max: 4000) / 100.0),
+          "timestamp_ms": timestamp_unix_milli()
+        },
+        2 => {
+          "pressure": (1000 + random_int(max: 10000) / 100.0),
+          "timestamp_ms": timestamp_unix_milli()
+        },
+        3 => {
+          "status": "RUNNING",  # Constant string value
+          "timestamp_ms": timestamp_unix_milli()
+        },
+        4 => {
+          "machine_state": (random_int(max: 100) < 90),  # 90% chance of true
+          "timestamp_ms": timestamp_unix_milli()
+        }
+      }
+      
+      meta data_contract = "_historian"
+      meta umh_topic = $topics.index($metric_index)
+    interval: 120ms
+    count: 100
+
+pipeline:
+  processors:
+    - downsampler:
+        algorithm: deadband
+        threshold: 2.0  # Default threshold for numeric values only
+        max_interval: 30s
+        topic_thresholds:
+          - pattern: "*.temperature"
+            threshold: 0.5              # Custom threshold for temperature (numeric)
+          - pattern: "*.humidity" 
+            threshold: 1.0              # Custom threshold for humidity (numeric)
+          - pattern: "*.status"
+            threshold: 0.1              # Ignored for strings - uses equality check only
+          - pattern: "*.machine_state" 
+            threshold: 0.1              # Ignored for booleans - uses equality check only
+          # Pressure will use default threshold of 2.0 (numeric)
+
+output:
+  stdout:
+    codec: lines
+
+# This configuration will:
+# 1. Generate five types of simulated sensor data:
+#    - Temperature: 20-30°C (custom threshold: 0.5°C for numeric comparison)
+#    - Humidity: 30-70% (custom threshold: 1.0% for numeric comparison)  
+#    - Pressure: 1000-1100 Pa (default threshold: 2.0 Pa for numeric comparison)
+#    - Status: Constant "RUNNING" string (threshold ignored, uses equality comparison)
+#    - Machine State: Boolean with 90% true (threshold ignored, uses equality comparison)
+# 2. Apply different deadband thresholds based on metric type (numeric values only)
+# 3. For strings and booleans: ignore thresholds, use equality comparison only
+# 4. Demonstrate constant value filtering behavior
+# 5. Output detailed debug logs showing threshold decisions
+#
+# Expected results: 
+# - Numeric values filtered based on configured thresholds
+# - String values kept only when they change (equality check)
+# - Boolean values kept only when they change (equality check)
+# - Constant string filtered after first message regardless of threshold
+# - Boolean changes kept when false/true transitions occur 

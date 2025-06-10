@@ -106,3 +106,11 @@ test-benthos-tag-processor: target
 .PHONY: test-benthos-sensorconnect
 test-benthos-sensorconnect: target
 	@$(BENTHOS_BIN) -c ./config/sensorconnect-test.yaml
+
+.PHONY: test-benthos-downsampler
+test-benthos-downsampler: target
+	@$(BENTHOS_BIN) -c ./config/downsampler_example.yaml
+
+.PHONY: test-benthos-downsampler-classic
+test-benthos-downsampler-classic: target
+	@$(BENTHOS_BIN) -c ./config/downsampler_classic_example.yaml
