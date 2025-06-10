@@ -59,6 +59,11 @@ func NewDeadbandAlgorithm(config map[string]interface{}) (DownsampleAlgorithm, e
 		}
 	}
 
+	// Validate threshold is not negative
+	if threshold < 0 {
+		return nil, fmt.Errorf("threshold cannot be negative: %v", threshold)
+	}
+
 	if mi, ok := config["max_interval"]; ok {
 		switch v := mi.(type) {
 		case time.Duration:

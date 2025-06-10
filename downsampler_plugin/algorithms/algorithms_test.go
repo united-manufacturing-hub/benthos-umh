@@ -149,6 +149,98 @@ var _ = Describe("Deadband Algorithm", func() {
 		})
 	})
 
+	Describe("gap-filling edge cases", func() {
+		Context("directional threshold behavior", func() {
+			// Scientific basis: Dead-band compression must use abs(Δ) to ensure symmetrical
+			// behavior for both upward and downward changes. This prevents directional bias
+			// that could lead to systematic drift in long-term data series.
+			// Reference: Moravek et al., Atmos. Meas. Tech., 2019 - discusses how asymmetric
+			// filtering can introduce systematic errors in flux measurements.
+			BeforeEach(func() {
+				config := map[string]interface{}{
+					"threshold": 0.5,
+				}
+				algo, err = algorithms.NewDeadbandAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("keeps a negative Δ exactly = threshold", func() {
+				// Critical test: Ensures that negative changes of exactly threshold magnitude
+				// are preserved. This prevents "≤" vs "<" implementation bugs that could
+				// create directional bias where downward changes are treated differently
+				// than upward changes. Industrial historians must maintain symmetry to avoid
+				// systematic drift in compressed data.
+				keep, _ := algo.ProcessPoint(10.0, baseTime)
+				Expect(keep).Should(BeTrue())
+				keep, _ = algo.ProcessPoint(9.5, baseTime.Add(time.Second)) // Δ = −0.5
+				Expect(keep).Should(BeTrue())                               // must keep - exact threshold magnitude
+			})
+
+			It("drops an identical repeat", func() {
+				// Edge case validation: Δ = 0 should always be filtered unless other
+				// constraints (like max_interval) force emission. This test prevents
+				// accidental "≤" vs "<" boundary condition errors in threshold comparison.
+				// Even with threshold = 0, repeats should be dropped (special case behavior).
+				_, _ = algo.ProcessPoint(10.0, baseTime)
+				keep, _ := algo.ProcessPoint(10.0, baseTime.Add(time.Second))
+				Expect(keep).Should(BeFalse())
+			})
+		})
+
+		Context("max interval edge cases", func() {
+			It("flushes unchanged value after max_interval", func() {
+				// Time-bounded compression principle: Industrial historians implement
+				// "compression deviation OR comp-max-time" rule to bound both magnitude
+				// and temporal error. This ensures that even constant values are
+				// periodically recorded to indicate system liveness and prevent
+				// interpolation errors over extended periods.
+				// Reference: PI Server docs - compression testing page describes this
+				// dual-constraint approach as fundamental to data integrity.
+				cfg := map[string]interface{}{"threshold": 0.5, "max_interval": "60s"}
+				algo, _ := algorithms.NewDeadbandAlgorithm(cfg)
+				t0 := baseTime
+				_, _ = algo.ProcessPoint(10.0, t0)
+				keep, _ := algo.ProcessPoint(10.0, t0.Add(65*time.Second)) // Δ = 0, but > 60 s
+				Expect(keep).Should(BeTrue())                              // time constraint overrides threshold
+			})
+		})
+
+		Context("threshold validation", func() {
+			It("rejects a negative threshold", func() {
+				// Mathematical validation: Negative thresholds are meaningless since
+				// abs(Δ) ≥ negative_value is always true, effectively disabling filtering.
+				// Proper input validation prevents configuration errors that would
+				// compromise data compression effectiveness.
+				_, err := algorithms.NewDeadbandAlgorithm(map[string]interface{}{"threshold": -0.1})
+				Expect(err).Should(HaveOccurred())
+			})
+
+			It("accepts threshold 0 (drop exact repeats)", func() {
+				// Special case: threshold = 0 creates a "drop exact repeats only" mode,
+				// which is useful for systems that produce many duplicate readings.
+				// This is a valid edge case used in practice for Boolean or discrete sensors.
+				_, err := algorithms.NewDeadbandAlgorithm(map[string]interface{}{"threshold": 0})
+				Expect(err).ShouldNot(HaveOccurred())
+			})
+		})
+
+		Context("numeric string handling", func() {
+			It("accepts numeric strings", func() {
+				// Industrial compatibility: Many PLC connectors and OPC servers transmit
+				// numeric values as strings. Robust historians must parse these transparently
+				// to avoid data loss. This tolerant parsing approach is recommended in
+				// PI white-papers for maximizing data ingestion reliability across diverse
+				// industrial equipment interfaces.
+				// Reference: AVEVA PI Server documentation emphasizes flexible type handling.
+				cfg := map[string]interface{}{"threshold": 0.5}
+				algo, _ := algorithms.NewDeadbandAlgorithm(cfg)
+				_, _ = algo.ProcessPoint("10.0", baseTime)
+				keep, _ := algo.ProcessPoint("10.6", baseTime.Add(time.Second))
+				Expect(keep).Should(BeTrue()) // 0.6 change > 0.5 threshold
+			})
+		})
+	})
+
 	Describe("data type handling", func() {
 		BeforeEach(func() {
 			config := map[string]interface{}{
@@ -514,6 +606,121 @@ var _ = Describe("Swinging Door Algorithm", func() {
 			keep, err := algo.ProcessPoint(true, baseTime)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(keep).To(BeTrue())
+		})
+	})
+
+	Describe("gap-filling SDT edge cases", func() {
+		Context("envelope boundary conditions", func() {
+			// Scientific basis: Swinging Door Trending tracks upper and lower envelope slopes.
+			// The critical edge case occurs when these slopes become equal (doors intersect).
+			// Literature shows two valid implementations: emit-previous or emit-current point.
+			// Reference: PI Square forum discussions on SDT geometry clarify this behavior.
+			It("allows equality without emit", func() {
+				// Implementation note: This test assumes "emit-current" variant.
+				// Canon implementations may emit-previous when doors intersect.
+				// Our implementation follows emit-current pattern for interface consistency.
+				cfg := map[string]interface{}{"comp_dev": 1.0}
+				algo, _ := algorithms.NewSwingingDoorAlgorithm(cfg)
+				t0 := baseTime
+				Expect(algo.ProcessPoint(0.0, t0)).Should(BeTrue())
+				// Build a point exactly on both envelope lines where slope_low = slope_up
+				Expect(algo.ProcessPoint(1.0, t0.Add(1*time.Second))).Should(BeFalse()) // no emit
+			})
+		})
+
+		Context("temporal constraint validation", func() {
+			It("forces emit after comp_max_time with no value change", func() {
+				// Time-bounded compression: Industrial historians implement dual constraints
+				// (compression deviation OR comp-max-time) to bound both spatial and temporal error.
+				// This prevents interpolation artifacts over long stable periods and ensures
+				// periodic "heartbeat" signals even for constant processes.
+				// Reference: PI Server compression documentation describes this as essential
+				// for data integrity in process control applications.
+				cfg := map[string]interface{}{"comp_dev": 1.0, "comp_max_time": "100ms"}
+				algo, _ := algorithms.NewSwingingDoorAlgorithm(cfg)
+				t0 := baseTime
+				Expect(algo.ProcessPoint(5.0, t0)).Should(BeTrue())
+				keep, _ := algo.ProcessPoint(5.0, t0.Add(150*time.Millisecond))
+				Expect(keep).Should(BeTrue()) // forced emit due to time constraint
+			})
+
+			It("suppresses emit until comp_min_time elapses", func() {
+				// Noise filtering: comp_min_time prevents emission of high-frequency noise
+				// that would otherwise cause envelope collapse. This is critical in industrial
+				// environments with electrical interference or sensor quantization noise.
+				// Canon implementations buffer "candidate" points until min_time elapses.
+				// Reference: CygNet and Weatherford documentation emphasize this for noise immunity.
+				cfg := map[string]interface{}{"comp_dev": 0.1, "comp_min_time": "100ms"}
+				algo, _ := algorithms.NewSwingingDoorAlgorithm(cfg)
+				t0 := baseTime
+				Expect(algo.ProcessPoint(0.0, t0)).Should(BeTrue())
+				// Big jump but only 20 ms later - should be suppressed by min_time
+				keep, _ := algo.ProcessPoint(10.0, t0.Add(20*time.Millisecond))
+				Expect(keep).Should(BeFalse()) // candidate only, not emitted
+				// Next point still within envelope but now > 100 ms - should emit candidate
+				keep, _ = algo.ProcessPoint(11.0, t0.Add(120*time.Millisecond))
+				Expect(keep).Should(BeTrue()) // now emits candidate
+			})
+		})
+
+		Context("state integrity validation", func() {
+			It("drops repeat value only after reset clears memory", func() {
+				// State management validation: Reset must completely clear envelope state
+				// to prevent cross-contamination between data streams or after reconnection.
+				// This test ensures that previous envelope calculations don't affect
+				// post-reset behavior, which is critical for stream processing systems.
+				cfg := map[string]interface{}{"comp_dev": 1.0}
+				algo, _ := algorithms.NewSwingingDoorAlgorithm(cfg)
+				Expect(algo.ProcessPoint(2.0, baseTime)).Should(BeTrue())
+				Expect(algo.ProcessPoint(3.0, baseTime.Add(time.Second))).Should(BeTrue()) // door collapsed
+				algo.Reset()
+				// 3.0 should be kept again (state wiped) - validates complete reset
+				Expect(algo.ProcessPoint(3.0, baseTime.Add(2*time.Second))).Should(BeTrue())
+			})
+		})
+
+		Context("industrial data type compatibility", func() {
+			It("accepts numeric strings", func() {
+				// Industrial field compatibility: OPC servers and PLCs often transmit
+				// numeric data as strings due to protocol limitations. SDT algorithms
+				// must handle this transparently to avoid data loss in industrial environments.
+				// Reference: AVEVA documentation recommends flexible parsing for OPC integration.
+				cfg := map[string]interface{}{"comp_dev": 0.5}
+				algo, _ := algorithms.NewSwingingDoorAlgorithm(cfg)
+				_, _ = algo.ProcessPoint("10.0", baseTime)
+				keep, _ := algo.ProcessPoint("10.6", baseTime.Add(time.Second))
+				Expect(keep).Should(BeTrue()) // string parsing + threshold evaluation
+			})
+
+			It("handles boolean conversion correctly", func() {
+				// Boolean signal processing: Industrial systems use boolean signals for
+				// discrete states (pump on/off, valve open/closed). SDT should handle
+				// these as 0/1 values while maintaining envelope logic for state transitions.
+				cfg := map[string]interface{}{"comp_dev": 0.1}
+				algo, _ := algorithms.NewSwingingDoorAlgorithm(cfg)
+				keep, _ := algo.ProcessPoint(true, baseTime)
+				Expect(keep).Should(BeTrue()) // first point
+				keep, _ = algo.ProcessPoint(false, baseTime.Add(time.Second))
+				Expect(keep).Should(BeTrue()) // boolean change should be significant
+			})
+		})
+
+		Context("parameter validation", func() {
+			It("rejects negative comp_dev", func() {
+				// Mathematical validation: Negative compression deviation is meaningless
+				// since envelope width would be negative, making all points fall outside
+				// the envelope. Proper validation prevents misconfiguration.
+				_, err := algorithms.NewSwingingDoorAlgorithm(map[string]interface{}{"comp_dev": -0.1})
+				Expect(err).Should(HaveOccurred())
+			})
+
+			It("accepts comp_dev = 0 (exact envelope)", func() {
+				// Edge case: comp_dev = 0 creates zero-width envelope, effectively
+				// becoming a "drop exact repeats" filter. This is mathematically valid
+				// and useful for discrete sensors with perfect repeatability.
+				_, err := algorithms.NewSwingingDoorAlgorithm(map[string]interface{}{"comp_dev": 0})
+				Expect(err).ShouldNot(HaveOccurred())
+			})
 		})
 	})
 

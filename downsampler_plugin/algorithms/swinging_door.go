@@ -66,9 +66,9 @@ func NewSwingingDoorAlgorithm(config map[string]interface{}) (DownsampleAlgorith
 		}
 	}
 
-	// Validate comp_dev is positive
-	if compDev <= 0 {
-		return nil, fmt.Errorf("comp_dev must be positive, got: %f", compDev)
+	// Validate comp_dev is not negative
+	if compDev < 0 {
+		return nil, fmt.Errorf("comp_dev cannot be negative, got: %f", compDev)
 	}
 
 	if cmin, ok := config["comp_min_time"]; ok {
