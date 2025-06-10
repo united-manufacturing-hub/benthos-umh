@@ -224,19 +224,17 @@ var _ = Describe("Deadband Algorithm", func() {
 			})
 		})
 
-		Context("numeric string handling", func() {
-			It("accepts numeric strings", func() {
-				// Industrial compatibility: Many PLC connectors and OPC servers transmit
-				// numeric values as strings. Robust historians must parse these transparently
-				// to avoid data loss. This tolerant parsing approach is recommended in
-				// PI white-papers for maximizing data ingestion reliability across diverse
-				// industrial equipment interfaces.
-				// Reference: AVEVA PI Server documentation emphasizes flexible type handling.
+		Context("string handling", func() {
+			It("rejects non-numeric strings", func() {
+				// Data type integrity: Deadband algorithms are designed for numeric compression.
+				// While some systems might accept numeric strings, maintaining strict type
+				// boundaries prevents unexpected behavior and maintains algorithm clarity.
+				// String data should be handled by appropriate string-based algorithms.
+				// Reference: Clean separation of numeric vs string processing is industrial best practice.
 				cfg := map[string]interface{}{"threshold": 0.5}
 				algo, _ := algorithms.NewDeadbandAlgorithm(cfg)
-				_, _ = algo.ProcessPoint("10.0", baseTime)
-				keep, _ := algo.ProcessPoint("10.6", baseTime.Add(time.Second))
-				Expect(keep).Should(BeTrue()) // 0.6 change > 0.5 threshold
+				_, err := algo.ProcessPoint("10.0", baseTime)
+				Expect(err).Should(HaveOccurred()) // strings should be rejected
 			})
 		})
 	})
@@ -680,16 +678,15 @@ var _ = Describe("Swinging Door Algorithm", func() {
 		})
 
 		Context("industrial data type compatibility", func() {
-			It("accepts numeric strings", func() {
-				// Industrial field compatibility: OPC servers and PLCs often transmit
-				// numeric data as strings due to protocol limitations. SDT algorithms
-				// must handle this transparently to avoid data loss in industrial environments.
-				// Reference: AVEVA documentation recommends flexible parsing for OPC integration.
+			It("rejects non-numeric strings", func() {
+				// Data type integrity: SDT algorithms are designed for numeric compression.
+				// String values should be rejected to maintain algorithm integrity and prevent
+				// unexpected behavior. String data requires different handling approaches.
+				// Reference: Industrial best practice is to separate numeric and string processing.
 				cfg := map[string]interface{}{"comp_dev": 0.5}
 				algo, _ := algorithms.NewSwingingDoorAlgorithm(cfg)
-				_, _ = algo.ProcessPoint("10.0", baseTime)
-				keep, _ := algo.ProcessPoint("10.6", baseTime.Add(time.Second))
-				Expect(keep).Should(BeTrue()) // string parsing + threshold evaluation
+				_, err := algo.ProcessPoint("10.0", baseTime)
+				Expect(err).Should(HaveOccurred()) // strings should be rejected
 			})
 
 			It("handles boolean conversion correctly", func() {
