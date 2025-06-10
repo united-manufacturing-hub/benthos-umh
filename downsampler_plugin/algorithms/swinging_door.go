@@ -38,10 +38,11 @@ type SwingingDoorAlgorithm struct {
 	compMaxTime time.Duration // Maximum time interval
 
 	// Internal state - similar to deadband pattern
-	basePoint     *Point  // Current base point (start of segment)
-	lastKeptPoint *Point  // Last point that was kept
-	maxLowerSlope float64 // Maximum slope of lower door
-	minUpperSlope float64 // Minimum slope of upper door
+	basePoint      *Point  // Current base point (start of segment)
+	lastKeptPoint  *Point  // Last point that was kept
+	candidatePoint *Point  // Buffered point waiting for comp_min_time to elapse
+	maxLowerSlope  float64 // Maximum slope of lower door
+	minUpperSlope  float64 // Minimum slope of upper door
 }
 
 // NewSwingingDoorAlgorithm creates a new SDT algorithm instance
@@ -130,11 +131,29 @@ func (s *SwingingDoorAlgorithm) ProcessPoint(value interface{}, timestamp time.T
 		return true, nil
 	}
 
+	// Check if we have a candidate point that can now be processed
+	if s.candidatePoint != nil {
+		elapsed := currentPoint.Timestamp.Sub(s.lastKeptPoint.Timestamp)
+		if elapsed >= s.compMinTime {
+			// Process the buffered candidate point now that enough time has elapsed
+			candidate := s.candidatePoint
+			s.candidatePoint = nil
+
+			// Process the candidate as if it just arrived
+			shouldKeep, _ := s.processCandidatePoint(candidate)
+			if shouldKeep {
+				return true, nil
+			}
+			// If candidate wasn't kept, continue processing current point
+		}
+	}
+
 	// Check maximum time constraint
 	if s.compMaxTime > 0 {
 		elapsed := currentPoint.Timestamp.Sub(s.lastKeptPoint.Timestamp)
 		if elapsed >= s.compMaxTime {
 			// Force keep due to max time
+			s.candidatePoint = nil // Clear any buffered candidate
 			s.basePoint = s.lastKeptPoint
 			s.lastKeptPoint = currentPoint
 			s.maxLowerSlope = math.Inf(-1)
@@ -143,15 +162,53 @@ func (s *SwingingDoorAlgorithm) ProcessPoint(value interface{}, timestamp time.T
 		}
 	}
 
-	// Check minimum time constraint
-	if s.compMinTime > 0 {
-		elapsed := currentPoint.Timestamp.Sub(s.lastKeptPoint.Timestamp)
-		if elapsed < s.compMinTime {
-			// Too soon to keep another point
-			return false, nil
-		}
+	// Process current point with envelope logic
+	return s.processPointWithEnvelope(currentPoint)
+}
+
+// processCandidatePoint processes a buffered candidate point
+func (s *SwingingDoorAlgorithm) processCandidatePoint(candidate *Point) (bool, error) {
+	// Calculate time difference from base
+	deltaTime := candidate.Timestamp.Sub(s.basePoint.Timestamp).Seconds()
+	if deltaTime <= 0 {
+		return false, nil
 	}
 
+	// Calculate slopes to candidate point's deviation bounds
+	lowerSlope := (candidate.Value - s.compDev - s.basePoint.Value) / deltaTime
+	upperSlope := (candidate.Value + s.compDev - s.basePoint.Value) / deltaTime
+
+	// Update envelope bounds with candidate point
+	newMaxLowerSlope := math.Max(s.maxLowerSlope, lowerSlope)
+	newMinUpperSlope := math.Min(s.minUpperSlope, upperSlope)
+
+	// Check if doors would intersect (envelope would collapse)
+	if newMaxLowerSlope > newMinUpperSlope {
+		// Candidate violates envelope, so keep it and start new segment
+		s.basePoint = s.lastKeptPoint
+		s.lastKeptPoint = candidate
+
+		// Recalculate envelope from new base to candidate
+		newDeltaTime := candidate.Timestamp.Sub(s.basePoint.Timestamp).Seconds()
+		if newDeltaTime > 0 {
+			s.maxLowerSlope = (candidate.Value - s.compDev - s.basePoint.Value) / newDeltaTime
+			s.minUpperSlope = (candidate.Value + s.compDev - s.basePoint.Value) / newDeltaTime
+		} else {
+			s.maxLowerSlope = math.Inf(-1)
+			s.minUpperSlope = math.Inf(1)
+		}
+
+		return true, nil
+	}
+
+	// Candidate fits within envelope - update envelope but don't keep
+	s.maxLowerSlope = newMaxLowerSlope
+	s.minUpperSlope = newMinUpperSlope
+	return false, nil
+}
+
+// processPointWithEnvelope processes a point using envelope logic with comp_min_time consideration
+func (s *SwingingDoorAlgorithm) processPointWithEnvelope(currentPoint *Point) (bool, error) {
 	// Calculate time difference from base
 	deltaTime := currentPoint.Timestamp.Sub(s.basePoint.Timestamp).Seconds()
 	if deltaTime <= 0 {
@@ -159,6 +216,7 @@ func (s *SwingingDoorAlgorithm) ProcessPoint(value interface{}, timestamp time.T
 		return false, nil
 	}
 
+	// Regular envelope logic
 	// Calculate slopes to current point's deviation bounds
 	lowerSlope := (currentPoint.Value - s.compDev - s.basePoint.Value) / deltaTime
 	upperSlope := (currentPoint.Value + s.compDev - s.basePoint.Value) / deltaTime
@@ -169,8 +227,19 @@ func (s *SwingingDoorAlgorithm) ProcessPoint(value interface{}, timestamp time.T
 
 	// Check if doors would intersect (envelope would collapse)
 	if newMaxLowerSlope > newMinUpperSlope {
-		// Doors intersect - this point violates the envelope, so keep it
-		// and start a new segment
+		// This point would violate the envelope
+
+		// Check minimum time constraint before keeping
+		if s.compMinTime > 0 {
+			elapsed := currentPoint.Timestamp.Sub(s.lastKeptPoint.Timestamp)
+			if elapsed < s.compMinTime {
+				// Buffer this point as candidate and don't emit it yet
+				s.candidatePoint = currentPoint
+				return false, nil
+			}
+		}
+
+		// Keep the point and start a new segment
 		s.basePoint = s.lastKeptPoint
 		s.lastKeptPoint = currentPoint
 
@@ -197,6 +266,7 @@ func (s *SwingingDoorAlgorithm) ProcessPoint(value interface{}, timestamp time.T
 func (s *SwingingDoorAlgorithm) Reset() {
 	s.basePoint = nil
 	s.lastKeptPoint = nil
+	s.candidatePoint = nil
 	s.maxLowerSlope = math.Inf(-1)
 	s.minUpperSlope = math.Inf(1)
 }

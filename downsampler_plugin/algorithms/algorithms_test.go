@@ -683,7 +683,7 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				cfg := map[string]interface{}{"comp_dev": 1.0}
 				algo, _ := algorithms.NewSwingingDoorAlgorithm(cfg)
 				Expect(algo.ProcessPoint(2.0, baseTime)).Should(BeTrue())
-				Expect(algo.ProcessPoint(3.0, baseTime.Add(time.Second))).Should(BeTrue()) // door collapsed
+				Expect(algo.ProcessPoint(3.0, baseTime.Add(time.Second))).Should(BeFalse()) // within envelope, not kept
 				algo.Reset()
 				// 3.0 should be kept again (state wiped) - validates complete reset
 				Expect(algo.ProcessPoint(3.0, baseTime.Add(2*time.Second))).Should(BeTrue())
