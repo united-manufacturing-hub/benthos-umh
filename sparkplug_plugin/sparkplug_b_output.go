@@ -50,6 +50,7 @@ Key features:
 
 The output connects to an MQTT broker, publishes BIRTH certificates to announce available metrics,
 and then publishes DATA messages as Benthos messages flow through the pipeline.`).
+		// MQTT Transport Configuration
 		Field(service.NewStringListField("broker_urls").
 			Description("List of MQTT broker URLs to connect to").
 			Example([]string{"tcp://localhost:1883", "ssl://broker.hivemq.com:8883"}).
@@ -66,28 +67,6 @@ and then publishes DATA messages as Benthos messages flow through the pipeline.`
 			Default("").
 			Secret().
 			Optional()).
-		Field(service.NewStringField("group_id").
-			Description("Sparkplug Group ID (e.g., 'FactoryA')").
-			Example("FactoryA")).
-		Field(service.NewStringField("edge_node_id").
-			Description("Edge Node ID within the group (e.g., 'Line3')").
-			Example("Line3")).
-		Field(service.NewStringField("device_id").
-			Description("Device ID under the edge node (optional, if not specified publishes as node-level)").
-			Default("").
-			Optional()).
-		Field(service.NewObjectListField("metrics",
-			service.NewStringField("name").
-				Description("Metric name as it will appear in BIRTH messages"),
-			service.NewIntField("alias").
-				Description("Numeric alias for this metric (1-65535)"),
-			service.NewStringField("type").
-				Description("Data type: int8, int16, int32, int64, uint8, uint16, uint32, uint64, float, double, boolean, string").
-				Default("double"),
-			service.NewStringField("value_from").
-				Description("JSONPath or field name in the message to extract value from").
-				Default("value")).
-			Description("Metric definitions for BIRTH messages and alias mapping")).
 		Field(service.NewIntField("qos").
 			Description("QoS level for MQTT publishing (0, 1, or 2)").
 			Default(1)).
@@ -100,6 +79,35 @@ and then publishes DATA messages as Benthos messages flow through the pipeline.`
 		Field(service.NewBoolField("clean_session").
 			Description("MQTT clean session flag").
 			Default(true)).
+		// Sparkplug Identity Configuration
+		Field(service.NewStringField("group_id").
+			Description("Sparkplug Group ID (e.g., 'FactoryA')").
+			Example("FactoryA")).
+		Field(service.NewStringField("edge_node_id").
+			Description("Edge Node ID within the group (e.g., 'Line3')").
+			Example("Line3")).
+		Field(service.NewStringField("device_id").
+			Description("Device ID under the edge node (optional, if not specified publishes as node-level)").
+			Default("").
+			Optional()).
+		// Role Configuration - Fixed for output plugin
+		Field(service.NewStringField("role").
+			Description("Sparkplug role: 'edge_node' (default for output plugin), 'hybrid' (publish + receive capabilities)").
+			Default("edge_node")).
+		// Output-specific Configuration
+		Field(service.NewObjectListField("metrics",
+			service.NewStringField("name").
+				Description("Metric name as it will appear in BIRTH messages"),
+			service.NewIntField("alias").
+				Description("Numeric alias for this metric (1-65535)"),
+			service.NewStringField("type").
+				Description("Data type: int8, int16, int32, int64, uint8, uint16, uint32, uint64, float, double, boolean, string").
+				Default("double"),
+			service.NewStringField("value_from").
+				Description("JSONPath or field name in the message to extract value from").
+				Default("value")).
+			Description("Metric definitions for BIRTH messages and alias mapping")).
+		// Behaviour Configuration
 		Field(service.NewBoolField("auto_extract_tag_name").
 			Description("Whether to automatically extract tag_name from message metadata").
 			Default(true)).
@@ -108,7 +116,7 @@ and then publishes DATA messages as Benthos messages flow through the pipeline.`
 			Default(true))
 
 	err := service.RegisterOutput(
-		"sparkplug_output",
+		"sparkplug_b",
 		outputSpec,
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.Output, int, error) {
 			output, err := newSparkplugOutput(conf, mgr)
@@ -130,18 +138,8 @@ type MetricConfig struct {
 }
 
 type sparkplugOutput struct {
-	brokerURLs         []string
-	clientID           string
-	username           string
-	password           string
-	groupID            string
-	edgeNodeID         string
-	deviceID           string
+	config             Config
 	metrics            []MetricConfig
-	qos                byte
-	keepAlive          time.Duration
-	connectTimeout     time.Duration
-	cleanSession       bool
 	autoExtractTagName bool
 	retainLastValues   bool
 	logger             *service.Logger
@@ -158,6 +156,9 @@ type sparkplugOutput struct {
 	lastValues    map[string]interface{} // metric name -> last value
 	stateMu       sync.RWMutex
 
+	// Core components
+	mqttClientBuilder *MQTTClientBuilder
+
 	// Metrics
 	messagesPublished *service.MetricCounter
 	birthsPublished   *service.MetricCounter
@@ -167,52 +168,70 @@ type sparkplugOutput struct {
 }
 
 func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sparkplugOutput, error) {
-	brokerURLs, err := conf.FieldStringList("broker_urls")
+	// Parse the idiomatic configuration structure using namespace approach
+	var config Config
+
+	// Parse MQTT section using namespace
+	mqttConf := conf.Namespace("mqtt")
+	urls, err := mqttConf.FieldStringList("urls")
+	if err != nil {
+		return nil, err
+	}
+	config.MQTT.URLs = urls
+
+	config.MQTT.ClientID, err = mqttConf.FieldString("client_id")
 	if err != nil {
 		return nil, err
 	}
 
-	clientID, err := conf.FieldString("client_id")
+	qosInt, err := mqttConf.FieldInt("qos")
+	if err != nil {
+		return nil, err
+	}
+	config.MQTT.QoS = byte(qosInt)
+
+	config.MQTT.KeepAlive, err = mqttConf.FieldDuration("keep_alive")
 	if err != nil {
 		return nil, err
 	}
 
-	username, _ := conf.FieldString("username")
-	password, _ := conf.FieldString("password")
-
-	groupID, err := conf.FieldString("group_id")
+	config.MQTT.ConnectTimeout, err = mqttConf.FieldDuration("connect_timeout")
 	if err != nil {
 		return nil, err
 	}
 
-	edgeNodeID, err := conf.FieldString("edge_node_id")
+	config.MQTT.CleanSession, err = mqttConf.FieldBool("clean_session")
 	if err != nil {
 		return nil, err
 	}
 
-	deviceID, _ := conf.FieldString("device_id")
+	// Parse credentials sub-section if present
+	credsConf := mqttConf.Namespace("credentials")
+	config.MQTT.Credentials.Username, _ = credsConf.FieldString("username")
+	config.MQTT.Credentials.Password, _ = credsConf.FieldString("password")
 
-	qosInt, err := conf.FieldInt("qos")
-	if err != nil {
-		return nil, err
-	}
-	qos := byte(qosInt)
-
-	keepAlive, err := conf.FieldDuration("keep_alive")
-	if err != nil {
-		return nil, err
-	}
-
-	connectTimeout, err := conf.FieldDuration("connect_timeout")
+	// Parse identity section using namespace
+	identityConf := conf.Namespace("identity")
+	config.Identity.GroupID, err = identityConf.FieldString("group_id")
 	if err != nil {
 		return nil, err
 	}
 
-	cleanSession, err := conf.FieldBool("clean_session")
+	config.Identity.EdgeNodeID, err = identityConf.FieldString("edge_node_id")
 	if err != nil {
 		return nil, err
 	}
 
+	config.Identity.DeviceID, _ = identityConf.FieldString("device_id")
+
+	// Parse role
+	roleStr, err := conf.FieldString("role")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse role: %w", err)
+	}
+	config.Role = Role(roleStr)
+
+	// Parse output-specific behavior
 	autoExtractTagName, err := conf.FieldBool("auto_extract_tag_name")
 	if err != nil {
 		return nil, err
@@ -274,18 +293,8 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 	bdSeq := bdSeqBig.Uint64()
 
 	return &sparkplugOutput{
-		brokerURLs:         brokerURLs,
-		clientID:           clientID,
-		username:           username,
-		password:           password,
-		groupID:            groupID,
-		edgeNodeID:         edgeNodeID,
-		deviceID:           deviceID,
+		config:             config,
 		metrics:            metrics,
-		qos:                qos,
-		keepAlive:          keepAlive,
-		connectTimeout:     connectTimeout,
-		cleanSession:       cleanSession,
 		autoExtractTagName: autoExtractTagName,
 		retainLastValues:   retainLastValues,
 		logger:             mgr.Logger(),
@@ -294,6 +303,7 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 		metricAliases:      metricAliases,
 		metricTypes:        metricTypes,
 		lastValues:         make(map[string]interface{}),
+		mqttClientBuilder:  NewMQTTClientBuilder(mgr),
 		messagesPublished:  mgr.Metrics().NewCounter("messages_published"),
 		birthsPublished:    mgr.Metrics().NewCounter("births_published"),
 		deathsPublished:    mgr.Metrics().NewCounter("deaths_published"),
@@ -303,42 +313,38 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 }
 
 func (s *sparkplugOutput) Connect(ctx context.Context) error {
-	opts := mqtt.NewClientOptions()
-
-	// Add broker URLs
-	for _, url := range s.brokerURLs {
-		opts.AddBroker(url)
-	}
-
-	opts.SetClientID(s.clientID)
-	opts.SetKeepAlive(s.keepAlive)
-	opts.SetCleanSession(s.cleanSession)
-	opts.SetConnectTimeout(s.connectTimeout)
-
-	if s.username != "" {
-		opts.SetUsername(s.username)
-		if s.password != "" {
-			opts.SetPassword(s.password)
-		}
-	}
+	s.logger.Infof("Connecting Sparkplug B output (role: %s)", s.config.Role)
 
 	// Set up DEATH Last Will Testament
 	deathTopic, deathPayload := s.createDeathMessage()
-	opts.SetWill(deathTopic, string(deathPayload), s.qos, false)
 
-	// Set connection handlers
-	opts.SetOnConnectHandler(s.onConnect)
-	opts.SetConnectionLostHandler(s.onConnectionLost)
-
-	s.client = mqtt.NewClient(opts)
-
-	s.logger.Infof("Connecting to Sparkplug MQTT brokers: %v", s.brokerURLs)
-	token := s.client.Connect()
-	if !token.WaitTimeout(s.connectTimeout) {
-		return fmt.Errorf("connection timeout")
+	mqttConfig := MQTTClientConfig{
+		BrokerURLs:       s.config.MQTT.URLs,
+		ClientID:         s.config.MQTT.ClientID,
+		Username:         s.config.MQTT.Credentials.Username,
+		Password:         s.config.MQTT.Credentials.Password,
+		KeepAlive:        s.config.MQTT.KeepAlive,
+		ConnectTimeout:   s.config.MQTT.ConnectTimeout,
+		CleanSession:     s.config.MQTT.CleanSession,
+		WillTopic:        deathTopic,
+		WillPayload:      deathPayload,
+		WillQoS:          s.config.MQTT.QoS,
+		WillRetain:       false,
+		OnConnect:        s.onConnect,
+		OnConnectionLost: s.onConnectionLost,
 	}
-	if err := token.Error(); err != nil {
-		return fmt.Errorf("failed to connect to MQTT broker: %w", err)
+
+	// Create MQTT client using Benthos-integrated builder
+	client, err := s.mqttClientBuilder.CreateClient(mqttConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create MQTT client: %w", err)
+	}
+	s.client = client
+
+	// Connect with Benthos-style retry and monitoring
+	s.logger.Infof("Connecting to MQTT brokers: %v", s.config.MQTT.URLs)
+	if err := s.mqttClientBuilder.ConnectWithRetry(client, s.config.MQTT.ConnectTimeout); err != nil {
+		return err
 	}
 
 	s.logger.Info("Successfully connected to Sparkplug MQTT broker")
@@ -399,7 +405,7 @@ func (s *sparkplugOutput) Close(ctx context.Context) error {
 	if s.client != nil && s.client.IsConnected() {
 		// Publish DEATH message before disconnecting gracefully
 		deathTopic, deathPayload := s.createDeathMessage()
-		token := s.client.Publish(deathTopic, s.qos, false, deathPayload)
+		token := s.client.Publish(deathTopic, s.config.MQTT.QoS, false, deathPayload)
 		token.WaitTimeout(5 * time.Second)
 
 		if token.Error() == nil {
@@ -417,10 +423,10 @@ func (s *sparkplugOutput) Close(ctx context.Context) error {
 // Private methods for the rest of the implementation...
 func (s *sparkplugOutput) createDeathMessage() (string, []byte) {
 	var topic string
-	if s.deviceID != "" {
-		topic = fmt.Sprintf("spBv1.0/%s/DDEATH/%s/%s", s.groupID, s.edgeNodeID, s.deviceID)
+	if s.config.Identity.DeviceID != "" {
+		topic = fmt.Sprintf("spBv1.0/%s/DDEATH/%s/%s", s.config.Identity.GroupID, s.config.Identity.EdgeNodeID, s.config.Identity.DeviceID)
 	} else {
-		topic = fmt.Sprintf("spBv1.0/%s/NDEATH/%s", s.groupID, s.edgeNodeID)
+		topic = fmt.Sprintf("spBv1.0/%s/NDEATH/%s", s.config.Identity.GroupID, s.config.Identity.EdgeNodeID)
 	}
 
 	bdSeqMetric := &sproto.Payload_Metric{
@@ -447,10 +453,10 @@ func (s *sparkplugOutput) createDeathMessage() (string, []byte) {
 
 func (s *sparkplugOutput) publishBirthMessage() error {
 	var topic string
-	if s.deviceID != "" {
-		topic = fmt.Sprintf("spBv1.0/%s/DBIRTH/%s/%s", s.groupID, s.edgeNodeID, s.deviceID)
+	if s.config.Identity.DeviceID != "" {
+		topic = fmt.Sprintf("spBv1.0/%s/DBIRTH/%s/%s", s.config.Identity.GroupID, s.config.Identity.EdgeNodeID, s.config.Identity.DeviceID)
 	} else {
-		topic = fmt.Sprintf("spBv1.0/%s/NBIRTH/%s", s.groupID, s.edgeNodeID)
+		topic = fmt.Sprintf("spBv1.0/%s/NBIRTH/%s", s.config.Identity.GroupID, s.config.Identity.EdgeNodeID)
 	}
 
 	var metrics []*sproto.Payload_Metric
@@ -500,7 +506,7 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 		return fmt.Errorf("failed to marshal BIRTH payload: %w", err)
 	}
 
-	token := s.client.Publish(topic, s.qos, false, payloadBytes)
+	token := s.client.Publish(topic, s.config.MQTT.QoS, false, payloadBytes)
 	if token.Wait() && token.Error() != nil {
 		return fmt.Errorf("failed to publish BIRTH message: %w", token.Error())
 	}
@@ -560,10 +566,10 @@ func (s *sparkplugOutput) extractValueFromPath(structured interface{}, path stri
 
 func (s *sparkplugOutput) publishDataMessage(data map[string]interface{}) error {
 	var topic string
-	if s.deviceID != "" {
-		topic = fmt.Sprintf("spBv1.0/%s/DDATA/%s/%s", s.groupID, s.edgeNodeID, s.deviceID)
+	if s.config.Identity.DeviceID != "" {
+		topic = fmt.Sprintf("spBv1.0/%s/DDATA/%s/%s", s.config.Identity.GroupID, s.config.Identity.EdgeNodeID, s.config.Identity.DeviceID)
 	} else {
-		topic = fmt.Sprintf("spBv1.0/%s/NDATA/%s", s.groupID, s.edgeNodeID)
+		topic = fmt.Sprintf("spBv1.0/%s/NDATA/%s", s.config.Identity.GroupID, s.config.Identity.EdgeNodeID)
 	}
 
 	s.stateMu.Lock()
@@ -615,7 +621,7 @@ func (s *sparkplugOutput) publishDataMessage(data map[string]interface{}) error 
 		return fmt.Errorf("failed to marshal DATA payload: %w", err)
 	}
 
-	token := s.client.Publish(topic, s.qos, false, payloadBytes)
+	token := s.client.Publish(topic, s.config.MQTT.QoS, false, payloadBytes)
 	if token.Wait() && token.Error() != nil {
 		return fmt.Errorf("failed to publish DATA message: %w", token.Error())
 	}

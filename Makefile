@@ -94,6 +94,10 @@ test-tag-processor:
 	@TEST_TAG_PROCESSOR=true \
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./tag_processor_plugin/...
 
+.PHONY: test-sparkplug
+test-sparkplug:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./sparkplug_plugin/...
+
 
 ###### TESTS WITH RUNNING BENTHOS-UMH #####
 # Test the tag processor with a local OPC UA server
@@ -106,3 +110,8 @@ test-benthos-tag-processor: target
 .PHONY: test-benthos-sensorconnect
 test-benthos-sensorconnect: target
 	@$(BENTHOS_BIN) -c ./config/sensorconnect-test.yaml
+
+# Test Sparkplug device discovery on broker.hivemq.com
+.PHONY: test-benthos-sparkplug-device-discovery
+test-benthos-sparkplug-device-discovery:
+	@$(GINKGO_CMD) -r --output-interceptor-mode=none --github-output -vv -trace --tags=integration --focus="Device Discovery" ./sparkplug_plugin/...
