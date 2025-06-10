@@ -252,9 +252,7 @@ func (s *SwingingDoorAlgorithm) toFloat64(val interface{}) (float64, error) {
 		}
 		return 0.0, nil
 	case string:
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			return f, nil
-		}
+		// Reject strings - they should be handled by string-appropriate algorithms
 		return 0, fmt.Errorf("cannot convert string to number: %s", v)
 	default:
 		return 0, fmt.Errorf("cannot convert type %T to float64", val)
