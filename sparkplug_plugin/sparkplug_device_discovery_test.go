@@ -60,11 +60,14 @@ input:
       clean_session: true
     
     identity:
-      group_id: "SCADA"           # Our group ID for STATE topic
+      group_id: "benthos"           # Our group ID for STATE topic
       edge_node_id: "device-discovery"  # Our edge node ID  
       device_id: ""               # Node-level identity
     
     role: "primary_host"          # Subscribe to all groups (spBv1.0/+/#)
+    
+    subscription:
+      groups: ["benthos"]         # Only subscribe to benthos group for testing
     
     behaviour:
       auto_split_metrics: true    # Split metrics for easier processing
@@ -121,9 +124,9 @@ pipeline:
 
 	Context("Device Discovery", func() {
 		It("should connect to HiveMQ and discover active Sparkplug devices using Benthos stream", func() {
-			fmt.Printf("\n🔍 Starting Sparkplug Device Discovery on broker.hivemq.com\n")
-			fmt.Printf("📡 Using Benthos Stream Builder for realistic testing\n")
-			fmt.Printf("🎯 Listening for Sparkplug B messages for 60 seconds...\n\n")
+			GinkgoWriter.Printf("\n🔍 Starting Sparkplug Device Discovery on broker.hivemq.com\n")
+			GinkgoWriter.Printf("📡 Using Benthos Stream Builder for realistic testing\n")
+			GinkgoWriter.Printf("🎯 Listening for Sparkplug B messages for 60 seconds...\n\n")
 
 			// Track devices and their last activity
 			deviceActivity := make(map[string]time.Time)
@@ -139,10 +142,10 @@ pipeline:
 			// Give the stream time to connect and start receiving messages
 			time.Sleep(2 * time.Second)
 
-			fmt.Printf("✅ Benthos stream started and connected to broker.hivemq.com\n")
-			fmt.Printf("📊 Primary Application (role: primary_host) subscribing to all Sparkplug groups (spBv1.0/+/#)\n")
-			fmt.Printf("🏭 Identity: Group=SCADA, EdgeNode=device-discovery (node-level)\n")
-			fmt.Printf("📍 STATE topic: spBv1.0/SCADA/STATE/device-discovery\n\n")
+			GinkgoWriter.Printf("✅ Benthos stream started and connected to broker.hivemq.com\n")
+			GinkgoWriter.Printf("📊 Primary Application (role: primary_host) subscribing to benthos group (spBv1.0/benthos/#)\n")
+			GinkgoWriter.Printf("🏭 Identity: Group=benthos, EdgeNode=device-discovery (node-level)\n")
+			GinkgoWriter.Printf("📍 STATE topic: spBv1.0/benthos/STATE/device-discovery\n\n")
 
 			// Start message processing in goroutine
 			go func() {
@@ -168,15 +171,15 @@ pipeline:
 			select {
 			case err := <-streamDone:
 				if err != nil && err.Error() != "context canceled" {
-					fmt.Printf("⚠️  Stream ended with error: %v\n", err)
+					GinkgoWriter.Printf("⚠️  Stream ended with error: %v\n", err)
 				}
 			default:
 				// Stream still running, which is expected
 			}
 
 			// Print discovery results
-			fmt.Printf("\n📊 Device Discovery Results:\n")
-			fmt.Printf("%s\n", "====================================================")
+			GinkgoWriter.Printf("\n📊 Device Discovery Results:\n")
+			GinkgoWriter.Printf("%s\n", "====================================================")
 
 			deviceCount := 0
 			discoveredDevices.Range(func(key, value interface{}) bool {
@@ -187,26 +190,26 @@ pipeline:
 				lastSeen := deviceActivity[deviceKey]
 				activityMutex.Unlock()
 
-				fmt.Printf("\n🏭 Device: %s\n", deviceKey)
-				fmt.Printf("   📍 Group: %s\n", deviceInfo.Group)
-				fmt.Printf("   🔗 Edge Node: %s\n", deviceInfo.EdgeNode)
+				GinkgoWriter.Printf("\n🏭 Device: %s\n", deviceKey)
+				GinkgoWriter.Printf("   📍 Group: %s\n", deviceInfo.Group)
+				GinkgoWriter.Printf("   🔗 Edge Node: %s\n", deviceInfo.EdgeNode)
 				if deviceInfo.Device != "" {
-					fmt.Printf("   📱 Device ID: %s\n", deviceInfo.Device)
+					GinkgoWriter.Printf("   📱 Device ID: %s\n", deviceInfo.Device)
 				}
-				fmt.Printf("   📡 Message Type: %s\n", deviceInfo.LastMessageType)
-				fmt.Printf("   🕐 Last Seen: %s\n", lastSeen.Format("15:04:05"))
+				GinkgoWriter.Printf("   📡 Message Type: %s\n", deviceInfo.LastMessageType)
+				GinkgoWriter.Printf("   🕐 Last Seen: %s\n", lastSeen.Format("15:04:05"))
 				if len(deviceInfo.Metrics) > 0 {
-					fmt.Printf("   📈 Metrics: %d available\n", len(deviceInfo.Metrics))
+					GinkgoWriter.Printf("   📈 Metrics: %d available\n", len(deviceInfo.Metrics))
 					// Show first few metrics as examples
 					count := 0
 					for metric := range deviceInfo.Metrics {
 						if count < 3 {
-							fmt.Printf("      - %s\n", metric)
+							GinkgoWriter.Printf("      - %s\n", metric)
 						}
 						count++
 					}
 					if count > 3 {
-						fmt.Printf("      ... and %d more\n", count-3)
+						GinkgoWriter.Printf("      ... and %d more\n", count-3)
 					}
 				}
 
@@ -214,20 +217,20 @@ pipeline:
 				return true
 			})
 
-			fmt.Printf("\n🎯 Total Devices Discovered: %d\n", deviceCount)
-			fmt.Printf("🚀 Stream-based discovery completed successfully!\n")
+			GinkgoWriter.Printf("\n🎯 Total Devices Discovered: %d\n", deviceCount)
+			GinkgoWriter.Printf("🚀 Stream-based discovery completed successfully!\n")
 
 			if deviceCount == 0 {
-				fmt.Printf("\n💡 No Sparkplug devices found. This could mean:\n")
-				fmt.Printf("   • No devices are currently publishing to this broker\n")
-				fmt.Printf("   • Devices are using different group IDs\n")
-				fmt.Printf("   • Devices might be on private broker instances\n")
-				fmt.Printf("   • Network connectivity issues in test environment\n")
-				fmt.Printf("\n🔧 Try running this test when you know devices are active,\n")
-				fmt.Printf("   or modify the group_id to target specific Sparkplug groups.\n")
+				GinkgoWriter.Printf("\n💡 No Sparkplug devices found. This could mean:\n")
+				GinkgoWriter.Printf("   • No devices are currently publishing to this broker\n")
+				GinkgoWriter.Printf("   • Devices are using different group IDs\n")
+				GinkgoWriter.Printf("   • Devices might be on private broker instances\n")
+				GinkgoWriter.Printf("   • Network connectivity issues in test environment\n")
+				GinkgoWriter.Printf("\n🔧 Try running this test when you know devices are active,\n")
+				GinkgoWriter.Printf("   or modify the group_id to target specific Sparkplug groups.\n")
 			} else {
-				fmt.Printf("\n✅ Success! Stream builder successfully discovered active devices\n")
-				fmt.Printf("🎉 This confirms the Sparkplug input component works in real streams\n")
+				GinkgoWriter.Printf("\n✅ Success! Stream builder successfully discovered active devices\n")
+				GinkgoWriter.Printf("🎉 This confirms the Sparkplug input component works in real streams\n")
 			}
 		})
 	})

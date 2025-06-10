@@ -115,3 +115,16 @@ test-benthos-sensorconnect: target
 .PHONY: test-benthos-sparkplug-device-discovery
 test-benthos-sparkplug-device-discovery:
 	@$(GINKGO_CMD) -r --output-interceptor-mode=none --github-output -vv -trace --tags=integration --focus="Device Discovery" ./sparkplug_plugin/...
+
+# Test Sparkplug device publishing on broker.hivemq.com
+.PHONY: test-benthos-sparkplug-device-publisher
+test-benthos-sparkplug-device-publisher:
+	@$(GINKGO_CMD) -r --output-interceptor-mode=none --github-output -vv -trace --tags=integration --focus="Device Publisher" ./sparkplug_plugin/...
+
+# Test both Sparkplug discovery and publishing in parallel
+.PHONY: test-benthos-sparkplug-parallel
+test-benthos-sparkplug-parallel:
+	@echo "🚀 Running Sparkplug discovery and publishing tests in parallel..."
+	@echo "📡 Discovery test will listen for devices while publisher test publishes data"
+	@echo "🔄 This tests real-world Sparkplug B communication between components"
+	$(GINKGO_CMD) -r --output-interceptor-mode=none --github-output -v -trace --tags=integration --focus="Sparkplug.*Integration Test" --procs=2 ./sparkplug_plugin/...

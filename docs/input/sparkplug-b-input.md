@@ -1,13 +1,20 @@
 # Sparkplug B (Input)
 
-The Sparkplug B input plugin acts as a **Primary SCADA Host** in the Sparkplug B ecosystem, providing comprehensive MQTT-based industrial IoT data collection with session lifecycle management, rebirth requests, and death certificate handling.
+The Sparkplug B input plugin provides comprehensive MQTT-based industrial IoT data collection with multiple role support, session lifecycle management, rebirth requests, and death certificate handling.
 
-Sparkplug B is an open standard for MQTT-based industrial IoT communication that uses protobuf encoding and hierarchical topic structures to organize edge nodes and devices. This plugin implements the Primary SCADA Host role, which is responsible for:
+Sparkplug B is an open standard for MQTT-based industrial IoT communication that uses protobuf encoding and hierarchical topic structures to organize edge nodes and devices. This plugin supports multiple roles:
 
-- Subscribing to all Sparkplug B message types from edge nodes
+**Roles:**
+- **primary_host**: Acts as SCADA/Primary Application, subscribes to all groups (`spBv1.0/+/#`) or specific groups with filtering
+- **edge_node**: Acts as Edge Node, subscribes only to its own group (`spBv1.0/{group}/#`)  
+- **hybrid**: Combines both behaviors (rare, but useful for gateways), supports group filtering like primary_host
+
+**Key Responsibilities:**
+- Role-based subscription behavior (all groups vs single group)
 - Managing MQTT session lifecycle and tracking edge node states
 - Automatically requesting rebirth certificates when detecting sequence gaps
 - Handling death certificates and session state transitions
+- Automatic message processing with alias resolution and metric splitting
 - Providing comprehensive metadata for downstream processing
 
 ## Sparkplug B Protocol Overview
@@ -28,12 +35,14 @@ spBv1.0/<Group>/<MsgType>/<EdgeNode>[/<Device>]
 
 ## Key Features
 
-- **Primary SCADA Host Role**: Complete implementation of Sparkplug B host responsibilities
+- **Multiple Role Support**: Support for primary_host, edge_node, and hybrid deployment patterns
+- **Idiomatic Configuration**: Clean organization with mqtt/identity/role/behaviour sections
+- **Integrated Processing**: Built-in alias resolution, metric splitting, and value extraction
 - **Session Lifecycle Management**: Tracks edge node states and handles reconnections
 - **Automatic Rebirth Requests**: Detects sequence number gaps and requests rebirth certificates
 - **Death Certificate Handling**: Processes node/device death messages and state transitions
 - **Comprehensive Metadata**: Extracts and provides rich metadata for downstream processing
-- **Flexible Filtering**: Configurable message type filtering for specific use cases
+- **Flexible Behavior**: Configurable message processing, filtering, and transformation
 - **Sequence Number Validation**: Tracks and validates message sequence numbers
 - **Industrial-Grade Reliability**: Handles edge cases and connection failures gracefully
 
@@ -48,6 +57,7 @@ The plugin provides comprehensive metadata for each message that can be used for
 | `group_id` | Sparkplug B Group ID |
 | `edge_node_id` | Edge Node ID within the group |
 | `device_id` | Device ID under the edge node (only for device-level messages) |
+| `tag_name` | Metric name (when auto_split_metrics is enabled) |
 | `mqtt_topic` | Original MQTT topic |
 | `sequence_number` | Message sequence number (for NDATA/DDATA messages) |
 | `session_established` | Whether the session is established for this edge node |
@@ -57,41 +67,70 @@ The plugin provides comprehensive metadata for each message that can be used for
 
 ```yaml
 input:
-  sparkplug_input:
-    broker_urls: ["tcp://localhost:1883"]
-    client_id: "benthos-sparkplug-host"
-    group_id: "MyGroup"
-    edge_node_id: "MyHost"
-    username: "admin"          # optional
-    password: "password"       # optional
-    qos: 1                     # optional (default: 1)
-    retain: true              # optional (default: true)
-    clean_session: true       # optional (default: true)
-    keep_alive: 60            # optional (default: 60)
-    connect_timeout: "10s"    # optional (default: "10s")
-    message_types:            # optional (default: all types)
-      - "NBIRTH"
-      - "NDATA"
-      - "DBIRTH"
-      - "DDATA"
-      - "NDEATH"
-      - "DDEATH"
-    rebirth_request_timeout: "30s"  # optional (default: "30s")
-    session_timeout: "60s"          # optional (default: "60s")
-    max_sequence_gap: 5             # optional (default: 5)
+  sparkplug_b:
+    # MQTT Transport Configuration
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+      client_id: "benthos-sparkplug"
+      credentials:                    # optional
+        username: "admin"
+        password: "password"
+      qos: 1                          # optional (default: 1)
+      keep_alive: "60s"               # optional (default: "60s")
+      connect_timeout: "30s"          # optional (default: "30s")
+      clean_session: true             # optional (default: true)
+    
+    # Sparkplug Identity Configuration
+    identity:
+      group_id: "SCADA"
+      edge_node_id: "Primary-Host-01"
+      device_id: ""                   # optional (empty for node-level identity)
+    
+    # Role Configuration
+    role: "primary_host"              # primary_host, edge_node, or hybrid
+    
+    # Subscription Configuration (optional for primary_host and hybrid roles)
+    subscription:                     # optional
+      groups: ["benthos", "factory1"] # specific groups to subscribe to (empty = all groups)
+    
+    # Processing Behavior Configuration
+    behaviour:                        # optional
+      auto_split_metrics: true        # optional (default: true)
+      data_messages_only: false       # optional (default: false)
+      enable_rebirth_req: true        # optional (default: true)
+      drop_birth_messages: false      # optional (default: false)
+      strict_topic_validation: false  # optional (default: false)
+      auto_extract_values: true       # optional (default: true)
 ```
 
 ## Required Configuration
 
-### Basic MQTT Connection
+### Basic Configuration (Primary Host)
 
 ```yaml
 input:
-  sparkplug_input:
-    broker_urls: ["tcp://localhost:1883"]
-    client_id: "benthos-sparkplug-host"
-    group_id: "MyGroup"
-    edge_node_id: "MyHost"
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+      client_id: "scada-host-01"
+    identity:
+      group_id: "SCADA"
+      edge_node_id: "Primary-Host-01"
+    role: "primary_host"
+```
+
+### Edge Node Configuration
+
+```yaml
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+      client_id: "edge-listener"
+    identity:
+      group_id: "Factory1"
+      edge_node_id: "Line1-Gateway"
+    role: "edge_node"
 ```
 
 ### Authentication
@@ -100,63 +139,127 @@ If your MQTT broker requires authentication:
 
 ```yaml
 input:
-  sparkplug_input:
-    broker_urls: ["tcp://localhost:1883"]
-    client_id: "benthos-sparkplug-host"
-    group_id: "MyGroup"
-    edge_node_id: "MyHost"
-    username: "admin"
-    password: "password"
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+      client_id: "benthos-sparkplug"
+      credentials:
+        username: "admin"
+        password: "password"
+    identity:
+      group_id: "SCADA"
+      edge_node_id: "Primary-Host-01"
+    role: "primary_host"
 ```
 
-### Message Type Filtering
+### Subscription Filtering
 
-To subscribe only to specific message types:
+For primary_host and hybrid roles, you can filter subscriptions to specific groups instead of monitoring all groups:
 
 ```yaml
 input:
-  sparkplug_input:
-    broker_urls: ["tcp://localhost:1883"]
-    client_id: "benthos-sparkplug-host"
-    group_id: "MyGroup"
-    edge_node_id: "MyHost"
-    message_types:
-      - "NDATA"
-      - "DDATA"
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+      client_id: "department-scada"
+    identity:
+      group_id: "SCADA"
+      edge_node_id: "Department-Host"
+    role: "primary_host"
+    subscription:
+      groups: ["factory_a", "warehouse", "quality_lab"]
+```
+
+**Group Filtering Examples:**
+
+```yaml
+# Monitor only test environments
+subscription:
+  groups: ["test", "development", "staging"]
+
+# Monitor specific factory departments  
+subscription:
+  groups: ["assembly_line", "packaging", "shipping"]
+
+# Monitor security zones
+subscription:
+  groups: ["secure_zone_1", "critical_systems"]
+
+# Monitor everything (default behavior)
+subscription:
+  groups: []  # Empty list = all groups (spBv1.0/+/#)
+```
+
+**Use Cases:**
+- **Production Segregation**: Different SCADA systems for different departments
+- **Security Zones**: Isolate monitoring by security classification
+- **Testing Environments**: Separate test/development from production
+- **Departmental Monitoring**: Factory floor vs office systems
+- **Performance Optimization**: Reduce message volume by filtering relevant groups
+
+### Processing Behavior
+
+To configure message processing behavior:
+
+```yaml
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+      client_id: "benthos-sparkplug"
+    identity:
+      group_id: "SCADA"
+      edge_node_id: "Primary-Host-01"
+    role: "primary_host"
+    behaviour:
+      auto_split_metrics: true        # Split multi-metric messages
+      data_messages_only: true        # Only process DATA messages
+      enable_rebirth_req: true        # Send rebirth requests on gaps
+      auto_extract_values: true       # Extract metric values
 ```
 
 ## Complete Example: Sparkplug B to UNS Integration
 
-Here's a complete example showing how to use the Sparkplug B input with the processor and UNS output:
+Here's a complete example showing how to use the Sparkplug B input with integrated processing and UNS output:
 
 ```yaml
 input:
-  sparkplug_input:
-    broker_urls: ["tcp://localhost:1883"]
-    client_id: "benthos-sparkplug-host"
-    group_id: "Factory"
-    edge_node_id: "SCADA-Host-01"
-    username: "admin"
-    password: "admin123"
-    qos: 1
-    retain: true
-    message_types:
-      - "NBIRTH"
-      - "NDATA"
-      - "DBIRTH"
-      - "DDATA"
-      - "NDEATH"
-      - "DDEATH"
+  sparkplug_b:
+    # MQTT Configuration
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+      client_id: "benthos-sparkplug-scada"
+      credentials:
+        username: "admin"
+        password: "admin123"
+      qos: 1
+      keep_alive: "60s"
+      connect_timeout: "30s"
+      clean_session: true
+    
+    # Sparkplug Identity
+    identity:
+      group_id: "Factory"
+      edge_node_id: "SCADA-Host-01"
+    
+    # Primary Host Role
+    role: "primary_host"
+    
+    # Subscribe only to Factory group (optional)
+    subscription:
+      groups: ["Factory"]             # Filter to Factory group only
+    
+    # Processing Behavior
+    behaviour:
+      auto_split_metrics: true        # Split metrics for individual processing
+      data_messages_only: true        # Focus on DATA messages for UNS
+      enable_rebirth_req: true        # Handle sequence gaps
+      auto_extract_values: true       # Extract clean values
+      drop_birth_messages: false      # Keep BIRTH for alias resolution
 
 pipeline:
   processors:
-    # Step 1: Decode Sparkplug B payloads with auto-features
-    - sparkplug_b_decode:
-        auto_split_metrics: true
-        data_messages_only: true
-        auto_extract_values: true
-    
-    # Step 2: Transform to UMH format
+    # Transform to UMH format using built-in metadata
     - tag_processor:
         defaults: |
           msg.meta.data_contract = "_raw_";
@@ -210,23 +313,44 @@ When NDEATH/DDEATH messages are received:
 
 ## Configuration Fields
 
+### MQTT Section
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `broker_urls` | `[]string` | **required** | List of MQTT broker URLs |
-| `client_id` | `string` | **required** | MQTT client identifier |
-| `group_id` | `string` | **required** | Sparkplug B Group ID for this host |
-| `edge_node_id` | `string` | **required** | Edge Node ID for this host |
-| `username` | `string` | `""` | MQTT username |
-| `password` | `string` | `""` | MQTT password |
-| `qos` | `int` | `1` | MQTT QoS level |
-| `retain` | `bool` | `true` | Whether to retain STATE messages |
-| `clean_session` | `bool` | `true` | MQTT clean session flag |
-| `keep_alive` | `int` | `60` | MQTT keep alive interval (seconds) |
-| `connect_timeout` | `string` | `"10s"` | Connection timeout |
-| `message_types` | `[]string` | all types | List of message types to subscribe to |
-| `rebirth_request_timeout` | `string` | `"30s"` | Timeout for rebirth requests |
-| `session_timeout` | `string` | `"60s"` | Session timeout for edge nodes |
-| `max_sequence_gap` | `int` | `5` | Maximum allowed sequence number gap |
+| `mqtt.urls` | `[]string` | **required** | List of MQTT broker URLs |
+| `mqtt.client_id` | `string` | `"benthos-sparkplug"` | MQTT client identifier |
+| `mqtt.credentials.username` | `string` | `""` | MQTT username |
+| `mqtt.credentials.password` | `string` | `""` | MQTT password |
+| `mqtt.qos` | `int` | `1` | MQTT QoS level |
+| `mqtt.keep_alive` | `duration` | `"60s"` | MQTT keep alive interval |
+| `mqtt.connect_timeout` | `duration` | `"30s"` | Connection timeout |
+| `mqtt.clean_session` | `bool` | `true` | MQTT clean session flag |
+
+### Identity Section
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `identity.group_id` | `string` | **required** | Sparkplug B Group ID |
+| `identity.edge_node_id` | `string` | **required** | Edge Node ID for this application |
+| `identity.device_id` | `string` | `""` | Device ID (empty for node-level identity) |
+
+### Role Configuration
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `role` | `string` | `"primary_host"` | Role: `primary_host`, `edge_node`, or `hybrid` |
+
+### Subscription Section
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `subscription.groups` | `[]string` | `[]` | Specific groups to subscribe to for primary_host/hybrid roles. Empty = all groups |
+
+### Behaviour Section
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `behaviour.auto_split_metrics` | `bool` | `true` | Split multi-metric messages into individual messages |
+| `behaviour.data_messages_only` | `bool` | `false` | Only process DATA messages (drop others after processing) |
+| `behaviour.enable_rebirth_req` | `bool` | `true` | Send rebirth requests on sequence gaps |
+| `behaviour.drop_birth_messages` | `bool` | `false` | Drop BIRTH messages after alias extraction |
+| `behaviour.strict_topic_validation` | `bool` | `false` | Strictly validate Sparkplug topic format |
+| `behaviour.auto_extract_values` | `bool` | `true` | Extract metric values as message payload |
 
 ## Troubleshooting
 
@@ -274,9 +398,9 @@ The plugin provides comprehensive logging and metrics:
 
 The Sparkplug B input is designed to work seamlessly with other UMH components:
 
-- **Sparkplug B Processor**: Automatically decodes and enriches messages
-- **Tag Processor**: Transforms metadata for UNS integration
+- **Built-in Processing**: Automatically decodes, enriches, and transforms messages
+- **Tag Processor**: Further transforms metadata for UNS integration
 - **UNS Output**: Publishes to the Unified Namespace
 - **Historian**: Stores historical data with proper metadata
 
-This creates a complete industrial IoT data pipeline from Sparkplug B edge devices to the Unified Namespace and beyond. 
+This creates a complete industrial IoT data pipeline from Sparkplug B edge devices to the Unified Namespace and beyond. The integrated processing capabilities eliminate the need for separate decoding processors while providing comprehensive metadata extraction and transformation features. 

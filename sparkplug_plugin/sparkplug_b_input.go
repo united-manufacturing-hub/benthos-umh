@@ -100,6 +100,15 @@ Key features:
 		Field(service.NewStringField("role").
 			Description("Sparkplug role: 'primary_host' (subscribe to all groups), 'edge_node' (own group only), or 'hybrid' (both)").
 			Default("primary_host")).
+		// Subscription Configuration
+		Field(service.NewObjectField("subscription",
+			service.NewStringListField("groups").
+				Description("Specific groups to subscribe to for primary_host and hybrid roles. Empty means all groups (+)").
+				Example([]string{"benthos", "factory1", "test"}).
+				Default([]string{}).
+				Optional()).
+			Description("Subscription filtering configuration for primary_host role").
+			Optional()).
 		// Behaviour Configuration
 		Field(service.NewObjectField("behaviour",
 			service.NewBoolField("auto_split_metrics").
@@ -245,6 +254,15 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 		return nil, fmt.Errorf("failed to parse role: %w", err)
 	}
 	config.Role = Role(roleStr)
+
+	// Parse subscription section using namespace (optional)
+	if conf.Contains("subscription") {
+		subscriptionConf := conf.Namespace("subscription")
+		groups, err := subscriptionConf.FieldStringList("groups")
+		if err == nil {
+			config.Subscription.Groups = groups
+		}
+	}
 
 	// Parse behaviour section using namespace
 	behaviourConf := conf.Namespace("behaviour")
