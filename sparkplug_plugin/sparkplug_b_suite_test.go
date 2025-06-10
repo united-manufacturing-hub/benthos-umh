@@ -20,11 +20,13 @@ import (
 	"testing"
 	"time"
 
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	_ "github.com/redpanda-data/benthos/v4/public/components/io"
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin" // Import to trigger init()
 	"github.com/weekaung/sparkplugb-client/sproto"
 	"google.golang.org/protobuf/proto"
@@ -36,6 +38,13 @@ func TestSparkplugBSuite(t *testing.T) {
 }
 
 // Helper functions for creating test data (additional to existing ones)
+func stringPtr(s string) *string {
+	return &s
+}
+
+func uint64Ptr(u uint64) *uint64 {
+	return &u
+}
 
 func uint32Ptr(u uint32) *uint32 {
 	return &u
@@ -304,6 +313,530 @@ var _ = Describe("Sparkplug B Test Suite Helpers", func() {
 			err = proto.Unmarshal(msgBytes, &payload)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(payload.Metrics).To(HaveLen(4))
+		})
+	})
+})
+
+var _ = Describe("Sparkplug B Core Components", func() {
+
+	Describe("AliasCache", func() {
+		var cache *sparkplug_plugin.AliasCache
+
+		BeforeEach(func() {
+			cache = sparkplug_plugin.NewAliasCache()
+		})
+
+		Context("Basic operations", func() {
+			It("should cache aliases from BIRTH metrics", func() {
+				metrics := []*sproto.Payload_Metric{
+					{
+						Name:  stringPtr("Temperature"),
+						Alias: uint64Ptr(100),
+					},
+					{
+						Name:  stringPtr("Pressure"),
+						Alias: uint64Ptr(101),
+					},
+					{
+						Name:  stringPtr("Speed"),
+						Alias: uint64Ptr(200),
+					},
+				}
+
+				count := cache.CacheAliases("TestFactory/Line1", metrics)
+				Expect(count).To(Equal(3))
+			})
+
+			It("should resolve aliases in DATA metrics", func() {
+				// First cache aliases
+				birthMetrics := []*sproto.Payload_Metric{
+					{
+						Name:  stringPtr("Temperature"),
+						Alias: uint64Ptr(100),
+					},
+					{
+						Name:  stringPtr("Pressure"),
+						Alias: uint64Ptr(101),
+					},
+				}
+				cache.CacheAliases("TestFactory/Line1", birthMetrics)
+
+				// Now test alias resolution
+				dataMetrics := []*sproto.Payload_Metric{
+					{
+						Alias: uint64Ptr(100), // Should resolve to "Temperature"
+						Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: 25.5},
+					},
+					{
+						Alias: uint64Ptr(101), // Should resolve to "Pressure"
+						Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: 1013.25},
+					},
+				}
+
+				count := cache.ResolveAliases("TestFactory/Line1", dataMetrics)
+				Expect(count).To(Equal(2))
+				Expect(*dataMetrics[0].Name).To(Equal("Temperature"))
+				Expect(*dataMetrics[1].Name).To(Equal("Pressure"))
+			})
+
+			It("should handle empty device key", func() {
+				metrics := []*sproto.Payload_Metric{
+					{
+						Name:  stringPtr("Temperature"),
+						Alias: uint64Ptr(100),
+					},
+				}
+
+				count := cache.CacheAliases("", metrics)
+				Expect(count).To(Equal(0))
+			})
+
+			It("should handle nil metrics", func() {
+				count := cache.CacheAliases("TestFactory/Line1", nil)
+				Expect(count).To(Equal(0))
+			})
+
+			It("should skip metrics without name or alias", func() {
+				metrics := []*sproto.Payload_Metric{
+					{
+						Name: stringPtr("Temperature"), // Missing alias
+					},
+					{
+						Alias: uint64Ptr(100), // Missing name
+					},
+					{
+						Name:  stringPtr(""), // Empty name
+						Alias: uint64Ptr(101),
+					},
+					{
+						Name:  stringPtr("ValidMetric"),
+						Alias: uint64Ptr(102),
+					},
+				}
+
+				count := cache.CacheAliases("TestFactory/Line1", metrics)
+				Expect(count).To(Equal(1)) // Only ValidMetric should be cached
+			})
+
+			It("should clear all aliases", func() {
+				metrics := []*sproto.Payload_Metric{
+					{
+						Name:  stringPtr("Temperature"),
+						Alias: uint64Ptr(100),
+					},
+				}
+				cache.CacheAliases("TestFactory/Line1", metrics)
+
+				cache.Clear()
+
+				// Verify cache is empty by trying to resolve
+				dataMetrics := []*sproto.Payload_Metric{
+					{
+						Alias: uint64Ptr(100),
+						Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: 25.5},
+					},
+				}
+				count := cache.ResolveAliases("TestFactory/Line1", dataMetrics)
+				Expect(count).To(Equal(0))
+			})
+		})
+
+		Context("Multiple devices", func() {
+			It("should maintain separate alias caches per device", func() {
+				// Cache aliases for Line1
+				line1Metrics := []*sproto.Payload_Metric{
+					{
+						Name:  stringPtr("Line1_Temperature"),
+						Alias: uint64Ptr(100),
+					},
+				}
+				cache.CacheAliases("TestFactory/Line1", line1Metrics)
+
+				// Cache aliases for Line2 (same alias, different name)
+				line2Metrics := []*sproto.Payload_Metric{
+					{
+						Name:  stringPtr("Line2_Temperature"),
+						Alias: uint64Ptr(100),
+					},
+				}
+				cache.CacheAliases("TestFactory/Line2", line2Metrics)
+
+				// Test that each device resolves to its own metric name
+				line1Data := []*sproto.Payload_Metric{
+					{
+						Alias: uint64Ptr(100),
+						Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: 25.5},
+					},
+				}
+				count1 := cache.ResolveAliases("TestFactory/Line1", line1Data)
+				Expect(count1).To(Equal(1))
+				Expect(*line1Data[0].Name).To(Equal("Line1_Temperature"))
+
+				line2Data := []*sproto.Payload_Metric{
+					{
+						Alias: uint64Ptr(100),
+						Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: 30.0},
+					},
+				}
+				count2 := cache.ResolveAliases("TestFactory/Line2", line2Data)
+				Expect(count2).To(Equal(1))
+				Expect(*line2Data[0].Name).To(Equal("Line2_Temperature"))
+			})
+		})
+	})
+
+	Describe("TopicParser", func() {
+		var parser *sparkplug_plugin.TopicParser
+
+		BeforeEach(func() {
+			parser = sparkplug_plugin.NewTopicParser()
+		})
+
+		Context("Topic parsing", func() {
+			It("should parse valid node-level topics", func() {
+				topic := "spBv1.0/TestFactory/NBIRTH/Line1"
+				msgType, deviceKey, topicInfo := parser.ParseSparkplugTopicDetailed(topic)
+
+				Expect(msgType).To(Equal("NBIRTH"))
+				Expect(deviceKey).To(Equal("TestFactory/Line1"))
+				Expect(topicInfo.Group).To(Equal("TestFactory"))
+				Expect(topicInfo.EdgeNode).To(Equal("Line1"))
+				Expect(topicInfo.Device).To(Equal(""))
+			})
+
+			It("should parse valid device-level topics", func() {
+				topic := "spBv1.0/TestFactory/DBIRTH/Line1/Machine1"
+				msgType, deviceKey, topicInfo := parser.ParseSparkplugTopicDetailed(topic)
+
+				Expect(msgType).To(Equal("DBIRTH"))
+				Expect(deviceKey).To(Equal("TestFactory/Line1/Machine1"))
+				Expect(topicInfo.Group).To(Equal("TestFactory"))
+				Expect(topicInfo.EdgeNode).To(Equal("Line1"))
+				Expect(topicInfo.Device).To(Equal("Machine1"))
+			})
+
+			It("should return empty values for invalid topics", func() {
+				invalidTopics := []string{
+					"",                              // Empty
+					"invalid/topic/format",          // Wrong namespace
+					"spBv1.0/Group",                 // Too few parts
+					"spBv1.0/Group/MSG",             // Still too few
+					"spBv2.0/Group/NBIRTH/EdgeNode", // Wrong version
+				}
+
+				for _, topic := range invalidTopics {
+					By(fmt.Sprintf("testing invalid topic: %s", topic), func() {
+						msgType, deviceKey, topicInfo := parser.ParseSparkplugTopicDetailed(topic)
+						Expect(msgType).To(Equal(""))
+						Expect(deviceKey).To(Equal(""))
+						Expect(topicInfo).To(BeNil())
+					})
+				}
+			})
+		})
+
+		Context("Topic construction", func() {
+			It("should build node-level topics", func() {
+				topic := parser.BuildTopic("TestFactory", "NBIRTH", "Line1", "")
+				Expect(topic).To(Equal("spBv1.0/TestFactory/NBIRTH/Line1"))
+			})
+
+			It("should build device-level topics", func() {
+				topic := parser.BuildTopic("TestFactory", "DBIRTH", "Line1", "Machine1")
+				Expect(topic).To(Equal("spBv1.0/TestFactory/DBIRTH/Line1/Machine1"))
+			})
+		})
+
+		Context("Message type validation", func() {
+			It("should validate message types correctly", func() {
+				validTypes := []string{"NBIRTH", "NDATA", "NDEATH", "DBIRTH", "DDATA", "DDEATH", "NCMD", "DCMD", "STATE"}
+				for _, msgType := range validTypes {
+					By(fmt.Sprintf("validating message type: %s", msgType), func() {
+						Expect(parser.IsValidMessageType(msgType)).To(BeTrue())
+					})
+				}
+
+				invalidTypes := []string{"INVALID", "BIRTH", "DATA", ""}
+				for _, msgType := range invalidTypes {
+					By(fmt.Sprintf("invalidating message type: %s", msgType), func() {
+						Expect(parser.IsValidMessageType(msgType)).To(BeFalse())
+					})
+				}
+			})
+
+			It("should identify message type categories", func() {
+				// BIRTH messages
+				Expect(parser.IsBirthMessage("NBIRTH")).To(BeTrue())
+				Expect(parser.IsBirthMessage("DBIRTH")).To(BeTrue())
+				Expect(parser.IsBirthMessage("NDATA")).To(BeFalse())
+
+				// DATA messages
+				Expect(parser.IsDataMessage("NDATA")).To(BeTrue())
+				Expect(parser.IsDataMessage("DDATA")).To(BeTrue())
+				Expect(parser.IsDataMessage("NBIRTH")).To(BeFalse())
+
+				// DEATH messages
+				Expect(parser.IsDeathMessage("NDEATH")).To(BeTrue())
+				Expect(parser.IsDeathMessage("DDEATH")).To(BeTrue())
+				Expect(parser.IsDeathMessage("NDATA")).To(BeFalse())
+
+				// CMD messages
+				Expect(parser.IsCommandMessage("NCMD")).To(BeTrue())
+				Expect(parser.IsCommandMessage("DCMD")).To(BeTrue())
+				Expect(parser.IsCommandMessage("NDATA")).To(BeFalse())
+
+				// Node vs Device
+				Expect(parser.IsNodeMessage("NBIRTH")).To(BeTrue())
+				Expect(parser.IsNodeMessage("DBIRTH")).To(BeFalse())
+				Expect(parser.IsDeviceMessage("DBIRTH")).To(BeTrue())
+				Expect(parser.IsDeviceMessage("NBIRTH")).To(BeFalse())
+			})
+		})
+	})
+
+	Describe("SequenceManager", func() {
+		var seqMgr *sparkplug_plugin.SequenceManager
+
+		BeforeEach(func() {
+			seqMgr = sparkplug_plugin.NewSequenceManager()
+		})
+
+		Context("Sequence generation", func() {
+			It("should generate incrementing sequence numbers", func() {
+				seq1 := seqMgr.NextSequence()
+				seq2 := seqMgr.NextSequence()
+				seq3 := seqMgr.NextSequence()
+
+				Expect(seq1).To(Equal(uint8(0)))
+				Expect(seq2).To(Equal(uint8(1)))
+				Expect(seq3).To(Equal(uint8(2)))
+			})
+
+			It("should wrap around at 256", func() {
+				// Set sequence to near the limit
+				seqMgr.SetSequence(254)
+
+				seq1 := seqMgr.NextSequence()
+				seq2 := seqMgr.NextSequence()
+				seq3 := seqMgr.NextSequence()
+
+				Expect(seq1).To(Equal(uint8(254)))
+				Expect(seq2).To(Equal(uint8(255)))
+				Expect(seq3).To(Equal(uint8(0))) // Wrapped around
+			})
+
+			It("should validate sequence numbers correctly", func() {
+				// Test normal increment
+				Expect(seqMgr.IsSequenceValid(5, 6)).To(BeTrue())
+				Expect(seqMgr.IsSequenceValid(5, 7)).To(BeFalse())
+				Expect(seqMgr.IsSequenceValid(5, 4)).To(BeFalse())
+
+				// Test wrap-around
+				Expect(seqMgr.IsSequenceValid(255, 0)).To(BeTrue())
+				Expect(seqMgr.IsSequenceValid(255, 1)).To(BeFalse())
+			})
+
+			It("should get current sequence without increment", func() {
+				seqMgr.SetSequence(42)
+
+				current1 := seqMgr.GetCurrent()
+				current2 := seqMgr.GetCurrent()
+
+				Expect(current1).To(Equal(uint8(42)))
+				Expect(current2).To(Equal(uint8(42))) // Should not increment
+
+				next := seqMgr.NextSequence()
+				Expect(next).To(Equal(uint8(42))) // Now it increments
+
+				current3 := seqMgr.GetCurrent()
+				Expect(current3).To(Equal(uint8(43)))
+			})
+		})
+	})
+
+	Describe("TypeConverter", func() {
+		var converter *sparkplug_plugin.TypeConverter
+
+		BeforeEach(func() {
+			converter = sparkplug_plugin.NewTypeConverter()
+		})
+
+		Context("Data type mapping", func() {
+			It("should return correct Sparkplug data types", func() {
+				typeTests := map[string]uint32{
+					"int8":    1,
+					"int16":   2,
+					"int32":   3,
+					"int64":   4,
+					"uint8":   5,
+					"uint16":  6,
+					"uint32":  7,
+					"uint64":  8,
+					"float":   9,
+					"double":  10,
+					"boolean": 11,
+					"string":  12,
+				}
+
+				for typeStr, expectedValue := range typeTests {
+					By(fmt.Sprintf("testing type: %s", typeStr), func() {
+						dataType := converter.GetSparkplugDataType(typeStr)
+						Expect(*dataType).To(Equal(expectedValue))
+					})
+				}
+
+				// Test default case
+				unknownType := converter.GetSparkplugDataType("unknown")
+				Expect(*unknownType).To(Equal(uint32(10))) // Should default to double
+			})
+		})
+
+		Context("Value conversion", func() {
+			It("should convert values to int32", func() {
+				tests := map[interface{}]uint32{
+					int(42):     42,
+					int32(42):   42,
+					int64(42):   42,
+					uint32(42):  42,
+					uint64(42):  42,
+					float32(42): 42,
+					float64(42): 42,
+					"42":        42,
+				}
+
+				for input, expected := range tests {
+					By(fmt.Sprintf("converting %v (%T) to int32", input, input), func() {
+						result, ok := converter.ConvertToInt32(input)
+						Expect(ok).To(BeTrue())
+						Expect(result).To(Equal(expected))
+					})
+				}
+
+				// Test invalid conversion
+				_, ok := converter.ConvertToInt32("invalid")
+				Expect(ok).To(BeFalse())
+			})
+
+			It("should convert values to bool", func() {
+				tests := map[interface{}]bool{
+					true:       true,
+					false:      false,
+					int(1):     true,
+					int(0):     false,
+					float64(1): true,
+					float64(0): false,
+					"true":     true,
+					"false":    false,
+					"1":        true,
+					"0":        false,
+					"1.5":      true,
+					"0.0":      false,
+				}
+
+				for input, expected := range tests {
+					By(fmt.Sprintf("converting %v (%T) to bool", input, input), func() {
+						result, ok := converter.ConvertToBool(input)
+						Expect(ok).To(BeTrue())
+						Expect(result).To(Equal(expected))
+					})
+				}
+
+				// Test invalid conversion
+				_, ok := converter.ConvertToBool("invalid")
+				Expect(ok).To(BeFalse())
+			})
+
+			It("should set metric values based on type", func() {
+				metric := &sproto.Payload_Metric{}
+
+				// Test setting different value types
+				converter.SetMetricValue(metric, 42.5, "double")
+				Expect(metric.Value).To(BeAssignableToTypeOf(&sproto.Payload_Metric_DoubleValue{}))
+				doubleVal := metric.Value.(*sproto.Payload_Metric_DoubleValue)
+				Expect(doubleVal.DoubleValue).To(Equal(42.5))
+
+				// Test setting boolean
+				converter.SetMetricValue(metric, true, "boolean")
+				Expect(metric.Value).To(BeAssignableToTypeOf(&sproto.Payload_Metric_BooleanValue{}))
+				boolVal := metric.Value.(*sproto.Payload_Metric_BooleanValue)
+				Expect(boolVal.BooleanValue).To(BeTrue())
+
+				// Test setting string
+				converter.SetMetricValue(metric, "test", "string")
+				Expect(metric.Value).To(BeAssignableToTypeOf(&sproto.Payload_Metric_StringValue{}))
+				stringVal := metric.Value.(*sproto.Payload_Metric_StringValue)
+				Expect(stringVal.StringValue).To(Equal("test"))
+
+				// Test setting null value
+				converter.SetMetricValue(metric, nil, "double")
+				Expect(*metric.IsNull).To(BeTrue())
+			})
+		})
+	})
+
+	Describe("MQTTClientBuilder", func() {
+		var builder *sparkplug_plugin.MQTTClientBuilder
+
+		BeforeEach(func() {
+			builder = sparkplug_plugin.NewMQTTClientBuilder()
+		})
+
+		Context("Client options construction", func() {
+			It("should build basic client options", func() {
+				brokerURLs := []string{"tcp://localhost:1883", "ssl://broker.test:8883"}
+				clientID := "test-client"
+				keepAlive := 30 * time.Second
+				connectTimeout := 10 * time.Second
+
+				opts := builder.BuildClientOptions(
+					brokerURLs, clientID, "", "",
+					keepAlive, connectTimeout, true,
+					"", nil, 0, nil, nil,
+				)
+
+				Expect(opts.ClientID).To(Equal(clientID))
+				Expect(opts.KeepAlive).To(Equal(int64(30)))
+				Expect(opts.ConnectTimeout).To(Equal(connectTimeout))
+				Expect(opts.CleanSession).To(BeTrue())
+			})
+
+			It("should build client options with authentication", func() {
+				opts := builder.BuildClientOptions(
+					[]string{"tcp://localhost:1883"}, "test-client", "user", "pass",
+					30*time.Second, 10*time.Second, true,
+					"", nil, 0, nil, nil,
+				)
+
+				Expect(opts.Username).To(Equal("user"))
+				Expect(opts.Password).To(Equal("pass"))
+			})
+
+			It("should build client options with Last Will Testament", func() {
+				willTopic := "test/lwt"
+				willPayload := []byte("offline")
+				willQoS := byte(1)
+
+				onConnect := func(client mqtt.Client) {
+					// Test callback
+				}
+				onConnectionLost := func(client mqtt.Client, err error) {
+					// Test callback
+				}
+
+				opts := builder.BuildClientOptions(
+					[]string{"tcp://localhost:1883"}, "test-client", "", "",
+					30*time.Second, 10*time.Second, true,
+					willTopic, willPayload, willQoS, onConnect, onConnectionLost,
+				)
+
+				Expect(opts.WillTopic).To(Equal(willTopic))
+				Expect(opts.WillPayload).To(Equal(willPayload))
+				Expect(opts.WillQos).To(Equal(willQoS))
+
+				// Test that event handlers are set (we can't easily test the actual functions without creating an MQTT client)
+				Expect(opts.OnConnect).ToNot(BeNil())
+				Expect(opts.OnConnectionLost).ToNot(BeNil())
+			})
 		})
 	})
 })

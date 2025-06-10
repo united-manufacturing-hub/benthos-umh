@@ -17,7 +17,6 @@ package sparkplug_plugin_test
 import (
 	"context"
 	"encoding/json"
-	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -29,11 +28,6 @@ import (
 	"github.com/weekaung/sparkplugb-client/sproto"
 	"google.golang.org/protobuf/proto"
 )
-
-func TestSparkplugBProcessor(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Sparkplug B Processor Suite")
-}
 
 var _ = Describe("Sparkplug B Processor", func() {
 	Describe("Integration Tests - Real Benthos Pipeline", func() {
@@ -574,10 +568,4 @@ sparkplug_b_decode:
 })
 
 // Helper functions for creating pointers
-func stringPtr(s string) *string {
-	return &s
-}
-
-func uint64Ptr(u uint64) *uint64 {
-	return &u
-}
+// Helper functions are defined in sparkplug_b_suite_test.go
