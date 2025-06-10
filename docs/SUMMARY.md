@@ -9,6 +9,7 @@
   * [More](https://docs.redpanda.com/redpanda-connect/components/inputs/about/)
 * [Processing](processing/README.md)
   * [Tag Processor](processing/tag-processor.md)
+  * [Downsampler](processing/downsampler.md)
   * [Node-RED JavaScript Processor](processing/node-red-javascript-processor.md)
   * [More](https://docs.redpanda.com/redpanda-connect/components/processors/about/)
 * [Output](output/README.md)
