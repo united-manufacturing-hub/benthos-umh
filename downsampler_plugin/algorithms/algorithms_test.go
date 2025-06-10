@@ -248,20 +248,27 @@ var _ = Describe("Deadband Algorithm", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should handle different data types", func() {
-			// First boolean
-			keep, err := algo.ProcessPoint(true, baseTime)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue(), "First point should be kept")
-
-			// Integer value
-			keep, err = algo.ProcessPoint(11, baseTime.Add(2*time.Second))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue(), "Integer change (true->11 = 10.0) should be kept")
+		It("should reject non-numeric data types", func() {
+			// Boolean values should be rejected - handled by plugin-level equality
+			_, err := algo.ProcessPoint(true, baseTime)
+			Expect(err).To(HaveOccurred(), "Boolean values should be rejected")
 
 			// String value - should error for non-convertible strings
-			_, err = algo.ProcessPoint("stopped", baseTime.Add(3*time.Second))
+			_, err = algo.ProcessPoint("stopped", baseTime)
 			Expect(err).To(HaveOccurred(), "Non-numeric strings should cause error")
+
+			// Reset and test with numeric values
+			algo.Reset()
+
+			// First numeric point
+			keep, err := algo.ProcessPoint(1.0, baseTime)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keep).To(BeTrue(), "First numeric point should be kept")
+
+			// Integer value (converts to float)
+			keep, err = algo.ProcessPoint(11, baseTime.Add(2*time.Second))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keep).To(BeTrue(), "Integer change (1.0->11 = 10.0) should be kept")
 		})
 
 		It("should handle string sequence", func() {
@@ -286,13 +293,20 @@ var _ = Describe("Deadband Algorithm", func() {
 				Expect(err).NotTo(HaveOccurred())
 			})
 
-			It("should handle boolean and integer conversion", func() {
-				// Test boolean conversion
-				keep, err := algo.ProcessPoint(true, baseTime)
+			It("should reject boolean values and handle integer conversion", func() {
+				// Boolean values should be rejected - they're handled by plugin-level equality
+				_, err := algo.ProcessPoint(true, baseTime)
+				Expect(err).To(HaveOccurred())
+
+				// Reset for integer test
+				algo.Reset()
+
+				// Test int conversion - first int
+				keep, err := algo.ProcessPoint(1, baseTime)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(keep).To(BeTrue())
 
-				// Test int conversion
+				// Test another int conversion
 				keep, err = algo.ProcessPoint(11, baseTime.Add(2*time.Second))
 				Expect(err).NotTo(HaveOccurred())
 				Expect(keep).To(BeTrue()) // |11 - 1| = 10 > 0.5
@@ -600,10 +614,9 @@ var _ = Describe("Swinging Door Algorithm", func() {
 			_, err = algo.ProcessPoint("error", baseTime)
 			Expect(err).To(HaveOccurred())
 
-			// Test boolean conversion
-			keep, err := algo.ProcessPoint(true, baseTime)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue())
+			// Test boolean rejection - should be handled by plugin-level equality
+			_, err = algo.ProcessPoint(true, baseTime)
+			Expect(err).To(HaveOccurred(), "Boolean values should be rejected")
 		})
 	})
 
@@ -689,16 +702,15 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				Expect(err).Should(HaveOccurred()) // strings should be rejected
 			})
 
-			It("handles boolean conversion correctly", func() {
+			It("rejects boolean values", func() {
 				// Boolean signal processing: Industrial systems use boolean signals for
-				// discrete states (pump on/off, valve open/closed). SDT should handle
-				// these as 0/1 values while maintaining envelope logic for state transitions.
+				// discrete states (pump on/off, valve open/closed). These should be handled
+				// by plugin-level equality logic rather than numeric compression algorithms.
+				// This ensures clean separation between discrete and continuous data processing.
 				cfg := map[string]interface{}{"comp_dev": 0.1}
 				algo, _ := algorithms.NewSwingingDoorAlgorithm(cfg)
-				keep, _ := algo.ProcessPoint(true, baseTime)
-				Expect(keep).Should(BeTrue()) // first point
-				keep, _ = algo.ProcessPoint(false, baseTime.Add(time.Second))
-				Expect(keep).Should(BeTrue()) // boolean change should be significant
+				_, err := algo.ProcessPoint(true, baseTime)
+				Expect(err).Should(HaveOccurred()) // booleans should be rejected
 			})
 		})
 

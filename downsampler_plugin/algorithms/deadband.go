@@ -180,11 +180,8 @@ func (d *DeadbandAlgorithm) toFloat64(val interface{}) (float64, error) {
 	case uint64:
 		return float64(v), nil
 	case bool:
-		// Convert boolean to 0/1
-		if v {
-			return 1.0, nil
-		}
-		return 0.0, nil
+		// Reject booleans - they should be handled by the plugin's equality logic
+		return 0, fmt.Errorf("cannot convert boolean to number: %v", v)
 	case string:
 		// Reject strings - they should be handled by string-appropriate algorithms
 		return 0, fmt.Errorf("cannot convert string to number: %s", v)
