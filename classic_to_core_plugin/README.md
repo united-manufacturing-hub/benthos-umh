@@ -20,6 +20,8 @@ classic_to_core:
   target_data_contract: _raw # Target data contract. If empty, uses input's contract
   exclude_fields: [] # List of fields to exclude from conversion
   preserve_meta: true # Whether to preserve original metadata
+  max_recursion_depth: 10 # Maximum recursion depth for flattening nested tag groups
+  max_tags_per_message: 1000 # Maximum number of tags to extract from a single message
 ```
 
 ## Examples
@@ -206,6 +208,17 @@ The processor sets the following metadata fields:
 - `virtual_path`: Original context (if present)
 
 When `preserve_meta: true` (default), original metadata is preserved alongside new fields.
+
+## Performance & Reliability
+
+The processor includes several safeguards for production use:
+
+- **Recursion Limit**: `max_recursion_depth` prevents stack overflow from deeply nested tag groups
+- **Message Size Limit**: `max_tags_per_message` prevents memory exhaustion from overly large messages
+- **Topic Validation**: Strict UMH v1 topic format validation with proper error handling
+- **Comprehensive Metrics**: Tracks processing counts, errors, and limit violations for monitoring
+
+All limits are configurable with sensible defaults (10 levels, 1000 tags) suitable for most industrial use cases.
 
 ## Error Handling
 

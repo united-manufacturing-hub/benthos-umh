@@ -29,6 +29,8 @@ type ClassicToCoreConfig struct {
 	ExcludeFields      []string `json:"exclude_fields" yaml:"exclude_fields"`
 	TargetDataContract string   `json:"target_data_contract" yaml:"target_data_contract"`
 	PreserveMeta       bool     `json:"preserve_meta" yaml:"preserve_meta"`
+	MaxRecursionDepth  int      `json:"max_recursion_depth" yaml:"max_recursion_depth"`
+	MaxTagsPerMessage  int      `json:"max_tags_per_message" yaml:"max_tags_per_message"`
 }
 
 func init() {
@@ -69,7 +71,15 @@ The processor will:
 			Optional()).
 		Field(service.NewBoolField("preserve_meta").
 			Description("Whether to preserve original metadata from source message").
-			Default(true))
+			Default(true)).
+		Field(service.NewIntField("max_recursion_depth").
+			Description("Maximum recursion depth for flattening nested tag groups (default: 10)").
+			Default(10).
+			Optional()).
+		Field(service.NewIntField("max_tags_per_message").
+			Description("Maximum number of tags to extract from a single input message (default: 1000)").
+			Default(1000).
+			Optional())
 
 	err := service.RegisterBatchProcessor(
 		"classic_to_core",
@@ -92,11 +102,23 @@ The processor will:
 				return nil, err
 			}
 
+			maxRecursionDepth, err := conf.FieldInt("max_recursion_depth")
+			if err != nil {
+				return nil, err
+			}
+
+			maxTagsPerMessage, err := conf.FieldInt("max_tags_per_message")
+			if err != nil {
+				return nil, err
+			}
+
 			config := ClassicToCoreConfig{
 				TimestampField:     timestampField,
 				ExcludeFields:      excludeFields,
 				TargetDataContract: targetDataContract,
 				PreserveMeta:       preserveMeta,
+				MaxRecursionDepth:  maxRecursionDepth,
+				MaxTagsPerMessage:  maxTagsPerMessage,
 			}
 
 			return newClassicToCoreProcessor(config, mgr.Logger(), mgr.Metrics())
@@ -113,6 +135,8 @@ type ClassicToCoreProcessor struct {
 	messagesErrored   *service.MetricCounter
 	messagesExpanded  *service.MetricCounter
 	messagesDropped   *service.MetricCounter
+	recursionLimitHit *service.MetricCounter
+	tagLimitExceeded  *service.MetricCounter
 	excludeFieldsMap  map[string]bool
 }
 
@@ -131,6 +155,8 @@ func newClassicToCoreProcessor(config ClassicToCoreConfig, logger *service.Logge
 		messagesErrored:   metrics.NewCounter("messages_errored"),
 		messagesExpanded:  metrics.NewCounter("messages_expanded"),
 		messagesDropped:   metrics.NewCounter("messages_dropped"),
+		recursionLimitHit: metrics.NewCounter("recursion_limit_hit"),
+		tagLimitExceeded:  metrics.NewCounter("tag_limit_exceeded"),
 		excludeFieldsMap:  excludeFieldsMap,
 	}, nil
 }
@@ -141,77 +167,24 @@ func (p *ClassicToCoreProcessor) ProcessBatch(ctx context.Context, batch service
 	for _, msg := range batch {
 		p.messagesProcessed.Incr(1)
 
-		// Get the structured payload
-		structured, err := msg.AsStructured()
+		// Process single message and add results to output batch
+		expandedMessages, err := p.processMessage(msg)
 		if err != nil {
-			p.logger.Errorf("Failed to parse message as structured data: %v", err)
+			p.logger.Errorf("Failed to process message: %v", err)
 			p.messagesErrored.Incr(1)
 			continue
 		}
 
-		payload, ok := structured.(map[string]interface{})
-		if !ok {
-			p.logger.Errorf("Message payload is not a JSON object")
-			p.messagesErrored.Incr(1)
+		// Check tag limit per message
+		if len(expandedMessages) > p.config.MaxTagsPerMessage {
+			p.logger.Errorf("Message produced %d tags, exceeding limit of %d", len(expandedMessages), p.config.MaxTagsPerMessage)
+			p.tagLimitExceeded.Incr(1)
+			p.messagesDropped.Incr(1)
 			continue
 		}
 
-		// Extract timestamp
-		timestampValue, timestampExists := payload[p.config.TimestampField]
-		if !timestampExists {
-			p.logger.Errorf("Timestamp field '%s' not found in payload", p.config.TimestampField)
-			p.messagesErrored.Incr(1)
-			continue
-		}
-
-		timestamp, err := p.extractTimestamp(timestampValue)
-		if err != nil {
-			p.logger.Errorf("Failed to parse timestamp: %v", err)
-			p.messagesErrored.Incr(1)
-			continue
-		}
-
-		// Get original topic for reconstruction
-		originalTopic, topicExists := msg.MetaGet("topic")
-		if !topicExists {
-			// Try to get it from umh_topic
-			if umhTopic, exists := msg.MetaGet("umh_topic"); exists {
-				originalTopic = umhTopic
-			} else {
-				p.logger.Errorf("No topic found in message metadata")
-				p.messagesErrored.Incr(1)
-				continue
-			}
-		}
-
-		// Parse the original topic to extract components
-		topicComponents, err := p.parseClassicTopic(originalTopic)
-		if err != nil {
-			p.logger.Errorf("Failed to parse classic topic '%s': %v", originalTopic, err)
-			p.messagesErrored.Incr(1)
-			continue
-		}
-
-		// Flatten payload to handle tag groups (nested objects)
-		flattenedTags := p.flattenPayload(payload, "")
-
-		// Process each flattened tag (excluding timestamp and excluded fields)
-		for tagName, tagValue := range flattenedTags {
-			if p.excludeFieldsMap[tagName] {
-				continue
-			}
-
-			// Create new message for this tag
-			newMsg, err := p.createCoreMessage(msg, tagName, tagValue, timestamp, topicComponents)
-			if err != nil {
-				p.logger.Errorf("Failed to create Core message for tag '%s': %v", tagName, err)
-				p.messagesErrored.Incr(1)
-				continue
-			}
-
-			outputBatch = append(outputBatch, newMsg)
-			p.messagesExpanded.Incr(1)
-		}
+		outputBatch = append(outputBatch, expandedMessages...)
+		p.messagesExpanded.Incr(int64(len(expandedMessages)))
 	}
 
 	if len(outputBatch) == 0 {
@@ -219,6 +192,97 @@ func (p *ClassicToCoreProcessor) ProcessBatch(ctx context.Context, batch service
 	}
 
 	return []service.MessageBatch{outputBatch}, nil
+}
+
+// processMessage handles the conversion of a single input message to multiple Core format messages
+func (p *ClassicToCoreProcessor) processMessage(msg *service.Message) ([]*service.Message, error) {
+	// Parse and validate payload
+	payload, err := p.parsePayload(msg)
+	if err != nil {
+		return nil, fmt.Errorf("payload parsing failed: %w", err)
+	}
+
+	// Extract and validate timestamp
+	timestamp, err := p.validateAndExtractTimestamp(payload)
+	if err != nil {
+		return nil, fmt.Errorf("timestamp validation failed: %w", err)
+	}
+
+	// Parse and validate topic
+	topicComponents, err := p.validateAndParseTopic(msg)
+	if err != nil {
+		return nil, fmt.Errorf("topic parsing failed: %w", err)
+	}
+
+	// Flatten payload with recursion limit
+	flattenedTags := p.flattenPayload(payload, "", 0)
+
+	// Convert to Core messages
+	var expandedMessages []*service.Message
+	for tagName, tagValue := range flattenedTags {
+		if p.excludeFieldsMap[tagName] {
+			continue
+		}
+
+		newMsg, err := p.createCoreMessage(msg, tagName, tagValue, timestamp, topicComponents)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Core message for tag '%s': %w", tagName, err)
+		}
+
+		expandedMessages = append(expandedMessages, newMsg)
+	}
+
+	return expandedMessages, nil
+}
+
+// parsePayload extracts and validates the JSON payload from the message
+func (p *ClassicToCoreProcessor) parsePayload(msg *service.Message) (map[string]interface{}, error) {
+	structured, err := msg.AsStructured()
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse as structured data: %w", err)
+	}
+
+	payload, ok := structured.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("payload is not a JSON object")
+	}
+
+	return payload, nil
+}
+
+// validateAndExtractTimestamp validates the timestamp field exists and extracts its value
+func (p *ClassicToCoreProcessor) validateAndExtractTimestamp(payload map[string]interface{}) (int64, error) {
+	timestampValue, exists := payload[p.config.TimestampField]
+	if !exists {
+		return 0, fmt.Errorf("timestamp field '%s' not found in payload", p.config.TimestampField)
+	}
+
+	timestamp, err := p.extractTimestamp(timestampValue)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse timestamp: %w", err)
+	}
+
+	return timestamp, nil
+}
+
+// validateAndParseTopic extracts and validates the topic from message metadata
+func (p *ClassicToCoreProcessor) validateAndParseTopic(msg *service.Message) (*TopicComponents, error) {
+	originalTopic, exists := msg.MetaGet("topic")
+	if !exists {
+		// Try to get it from umh_topic as fallback
+		if umhTopic, exists := msg.MetaGet("umh_topic"); exists {
+			originalTopic = umhTopic
+		} else {
+			return nil, fmt.Errorf("no topic found in message metadata")
+		}
+	}
+
+	topicComponents, err := p.parseClassicTopic(originalTopic)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse topic '%s': %w", originalTopic, err)
+	}
+
+	return topicComponents, nil
 }
 
 // TopicComponents represents the parsed parts of a UMH topic
@@ -232,13 +296,18 @@ type TopicComponents struct {
 func (p *ClassicToCoreProcessor) parseClassicTopic(topic string) (*TopicComponents, error) {
 	parts := strings.Split(topic, ".")
 	if len(parts) < 4 {
-		return nil, fmt.Errorf("invalid topic structure: %s", topic)
+		return nil, fmt.Errorf("invalid topic structure, expected at least 4 parts: %s", topic)
+	}
+
+	// Validate UMH topic prefix
+	if len(parts) < 2 || parts[0] != "umh" || parts[1] != "v1" {
+		return nil, fmt.Errorf("invalid UMH topic prefix, expected 'umh.v1': %s", topic)
 	}
 
 	// Find the data contract (starts with underscore)
 	var dataContractIndex = -1
-	for i, part := range parts {
-		if strings.HasPrefix(part, "_") {
+	for i := 2; i < len(parts); i++ { // Start from index 2 (after umh.v1)
+		if strings.HasPrefix(parts[i], "_") {
 			dataContractIndex = i
 			break
 		}
@@ -246,6 +315,10 @@ func (p *ClassicToCoreProcessor) parseClassicTopic(topic string) (*TopicComponen
 
 	if dataContractIndex == -1 {
 		return nil, fmt.Errorf("no data contract found in topic: %s", topic)
+	}
+
+	if dataContractIndex == 2 {
+		return nil, fmt.Errorf("missing location path in topic: %s", topic)
 	}
 
 	// Reconstruct components
@@ -335,8 +408,15 @@ func (p *ClassicToCoreProcessor) constructCoreTopic(components *TopicComponents,
 
 // flattenPayload recursively flattens nested objects using . as separator
 // This creates intuitive dot-notation paths for nested tag groups
-func (p *ClassicToCoreProcessor) flattenPayload(payload map[string]interface{}, prefix string) map[string]interface{} {
+func (p *ClassicToCoreProcessor) flattenPayload(payload map[string]interface{}, prefix string, depth int) map[string]interface{} {
 	result := make(map[string]interface{})
+
+	// Check recursion depth limit
+	if depth >= p.config.MaxRecursionDepth {
+		p.recursionLimitHit.Incr(1)
+		p.logger.Warnf("Recursion depth limit (%d) reached at prefix '%s', stopping further flattening", p.config.MaxRecursionDepth, prefix)
+		return result
+	}
 
 	for key, value := range payload {
 		// Skip the timestamp field as it's handled separately
@@ -353,8 +433,8 @@ func (p *ClassicToCoreProcessor) flattenPayload(payload map[string]interface{}, 
 
 		// Check if value is a nested object (tag group)
 		if nestedMap, ok := value.(map[string]interface{}); ok {
-			// Recursively flatten nested objects
-			nestedResults := p.flattenPayload(nestedMap, fullKey)
+			// Recursively flatten nested objects with incremented depth
+			nestedResults := p.flattenPayload(nestedMap, fullKey, depth+1)
 			for nestedKey, nestedValue := range nestedResults {
 				result[nestedKey] = nestedValue
 			}
