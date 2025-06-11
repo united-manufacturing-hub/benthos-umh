@@ -19,30 +19,67 @@ import (
 	"time"
 )
 
-// ProcessorWrapper handles type conversion, ordering, and special data type logic
-// before delegating to the underlying compression algorithms.
+// ProcessorWrapper provides a high-level interface for compression algorithms that
+// handles type conversion, out-of-order data, and special data types automatically.
+//
+// The wrapper sits between your application and the core compression algorithms,
+// providing these conveniences:
+//
+// Type Conversion:
+//   - Automatically converts int, float32, uint64, etc. to float64 for algorithms
+//   - Rejects unsupported types (complex numbers, structs, etc.) with clear errors
+//
+// Special Data Types:
+//   - Handles booleans using change-based logic (keep when value changes)
+//   - Handles strings using change-based logic (keep when value changes)
+//   - Bypasses numeric algorithms for these types completely
+//
+// Out-of-Order Data:
+//   - Can drop out-of-order data (PassThrough=false) to maintain algorithm assumptions
+//   - Can pass through out-of-order data (PassThrough=true) for special use cases
+//   - Tracks last timestamp to detect ordering violations
+//
+// When to use ProcessorWrapper vs direct algorithms:
+//   - Use ProcessorWrapper for most applications (recommended)
+//   - Use direct algorithms when you guarantee float64 input and chronological ordering
+//   - Use direct algorithms for maximum performance in high-throughput scenarios
+//
+// Thread safety: NOT goroutine-safe. Use separate instances for concurrent processing.
 type ProcessorWrapper struct {
 	algorithm     DownsampleAlgorithm
 	passThrough   bool // If true, pass older data through; if false, drop it
 	lastTimestamp time.Time
 
-	// Boolean handling
+	// Boolean handling state
 	lastBoolValue *bool
 	lastBoolTime  time.Time
 
-	// String handling
+	// String handling state
 	lastStringValue *string
 	lastStringTime  time.Time
 }
 
-// ProcessorConfig configures the processor wrapper
+// ProcessorConfig configures the processor wrapper behavior.
+//
+// Fields:
+//   - Algorithm: name of the underlying compression algorithm ("deadband", "swinging_door")
+//   - AlgorithmConfig: configuration parameters passed to the algorithm
+//   - PassThrough: how to handle out-of-order data (false=drop, true=pass through)
 type ProcessorConfig struct {
-	Algorithm       string                 `json:"algorithm"`
-	AlgorithmConfig map[string]interface{} `json:"algorithm_config"`
-	PassThrough     bool                   `json:"pass_through"` // Default: false (drop out-of-order data)
+	Algorithm       string                 `json:"algorithm"`        // Algorithm name to use
+	AlgorithmConfig map[string]interface{} `json:"algorithm_config"` // Algorithm-specific configuration
+	PassThrough     bool                   `json:"pass_through"`     // Default: false (drop out-of-order data)
 }
 
-// NewProcessorWrapper creates a new processor wrapper
+// NewProcessorWrapper creates a new processor wrapper instance.
+//
+// The wrapper will create the underlying algorithm using the provided configuration
+// and prepare to handle mixed data types and ordering issues.
+//
+// Returns error if:
+//   - Algorithm name is not registered
+//   - Algorithm configuration is invalid
+//   - Algorithm factory function fails
 func NewProcessorWrapper(config ProcessorConfig) (*ProcessorWrapper, error) {
 	// Create the underlying algorithm
 	algo, err := Create(config.Algorithm, config.AlgorithmConfig)

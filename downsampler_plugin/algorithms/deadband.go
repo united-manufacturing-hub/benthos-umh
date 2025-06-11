@@ -12,15 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// TODO: The calling package needs to handle boolean values appropriately before
-// passing them to these algorithms, as boolean logic should not be implemented
-// at the algorithm level.
-
-// Package algorithms provides data compression algorithms for downsampling.
-//
-// The deadband algorithm only supports numeric values (int, float types).
-// Boolean values and other non-numeric types should be handled by the calling
-// package before invoking the algorithm.
 package algorithms
 
 import (
@@ -34,11 +25,23 @@ func init() {
 	Register("deadband", NewDeadbandAlgorithm)
 }
 
-// DeadbandAlgorithm implements deadband filtering for numeric values only.
+// DeadbandAlgorithm implements deadband filtering for numeric time-series data.
 //
-// Boolean values are NOT supported - they should be handled by the calling package.
-// This algorithm maintains state and is NOT goroutine-safe. Use separate instances
-// for concurrent processing or add external synchronization.
+// The deadband algorithm keeps data points only when they differ from the last
+// kept value by more than the configured threshold. This provides simple but
+// effective compression for slowly changing values with noise.
+//
+// Algorithm behavior:
+//   - First point is always kept
+//   - Subsequent points are kept if: abs(value - lastKeptValue) >= threshold
+//   - Optional max_time constraint forces periodic emission regardless of value change
+//   - Special case: threshold=0 keeps any change but drops exact repeats
+//
+// Configuration parameters:
+//   - threshold (required): minimum change magnitude to keep a point
+//   - max_time (optional): maximum time between kept points for heartbeat emission
+//
+// Thread safety: NOT goroutine-safe. Use separate instances for concurrent processing.
 type DeadbandAlgorithm struct {
 	threshold float64
 	maxTime   time.Duration
@@ -47,13 +50,18 @@ type DeadbandAlgorithm struct {
 	lastKeptValue float64
 	lastKeptTime  time.Time
 	hasKeptValue  bool // Track if we have kept any value yet
-
-	// Mutex for thread safety - currently commented out for performance
-	// Uncomment if goroutine safety is needed
-	// mu sync.Mutex
 }
 
-// NewDeadbandAlgorithm creates a new deadband algorithm instance
+// NewDeadbandAlgorithm creates a new deadband algorithm instance.
+//
+// Configuration map keys:
+//   - "threshold": float64, int, or string - minimum change required (>= 0)
+//   - "max_time": time.Duration or string - maximum time between emissions (optional)
+//
+// Returns error for:
+//   - Missing or invalid threshold values
+//   - Negative threshold values
+//   - Invalid max_time duration strings
 func NewDeadbandAlgorithm(config map[string]interface{}) (DownsampleAlgorithm, error) {
 	threshold := 0.0
 	var maxInterval time.Duration
