@@ -31,15 +31,15 @@ import (
 
 // DeadbandConfig holds deadband algorithm parameters
 type DeadbandConfig struct {
-	Threshold   float64       `json:"threshold,omitempty" yaml:"threshold,omitempty"`
-	MaxInterval time.Duration `json:"max_interval,omitempty" yaml:"max_interval,omitempty"`
+	Threshold float64       `json:"threshold,omitempty" yaml:"threshold,omitempty"`
+	MaxTime   time.Duration `json:"max_time,omitempty" yaml:"max_time,omitempty"`
 }
 
 // SwingingDoorConfig holds swinging door algorithm parameters
 type SwingingDoorConfig struct {
-	CompDev     float64       `json:"comp_dev,omitempty" yaml:"comp_dev,omitempty"`
-	CompMinTime time.Duration `json:"comp_min_time,omitempty" yaml:"comp_min_time,omitempty"`
-	CompMaxTime time.Duration `json:"comp_max_time,omitempty" yaml:"comp_max_time,omitempty"`
+	Threshold float64       `json:"threshold,omitempty" yaml:"threshold,omitempty"`
+	MinTime   time.Duration `json:"min_time,omitempty" yaml:"min_time,omitempty"`
+	MaxTime   time.Duration `json:"max_time,omitempty" yaml:"max_time,omitempty"`
 }
 
 // DefaultConfig holds the default algorithm parameters
@@ -68,18 +68,21 @@ type DownsamplerConfig struct {
 func (c *DownsamplerConfig) getConfigForTopic(topic string) (string, map[string]interface{}) {
 	// Start with defaults
 	config := map[string]interface{}{
-		"threshold":     c.Default.Deadband.Threshold,
-		"max_interval":  c.Default.Deadband.MaxInterval,
-		"comp_dev":      c.Default.SwingingDoor.CompDev,
-		"comp_min_time": c.Default.SwingingDoor.CompMinTime,
-		"comp_max_time": c.Default.SwingingDoor.CompMaxTime,
+		"threshold": c.Default.Deadband.Threshold,
+		"max_time":  c.Default.Deadband.MaxTime,
+		"min_time":  c.Default.SwingingDoor.MinTime,
+	}
+
+	// Use swinging door max_time if deadband max_time is not set
+	if c.Default.Deadband.MaxTime == 0 && c.Default.SwingingDoor.MaxTime != 0 {
+		config["max_time"] = c.Default.SwingingDoor.MaxTime
 	}
 
 	// Determine default algorithm based on which default config has values
 	algorithm := "deadband" // Default fallback
-	if c.Default.SwingingDoor.CompDev != 0 || c.Default.SwingingDoor.CompMinTime != 0 || c.Default.SwingingDoor.CompMaxTime != 0 {
+	if c.Default.SwingingDoor.Threshold != 0 || c.Default.SwingingDoor.MinTime != 0 || c.Default.SwingingDoor.MaxTime != 0 {
 		algorithm = "swinging_door"
-	} else if c.Default.Deadband.Threshold != 0 || c.Default.Deadband.MaxInterval != 0 {
+	} else if c.Default.Deadband.Threshold != 0 || c.Default.Deadband.MaxTime != 0 {
 		algorithm = "deadband"
 	}
 
@@ -112,22 +115,22 @@ func (c *DownsamplerConfig) getConfigForTopic(topic string) (string, map[string]
 				if override.Deadband.Threshold != 0 {
 					config["threshold"] = override.Deadband.Threshold
 				}
-				if override.Deadband.MaxInterval != 0 {
-					config["max_interval"] = override.Deadband.MaxInterval
+				if override.Deadband.MaxTime != 0 {
+					config["max_time"] = override.Deadband.MaxTime
 				}
 			}
 
 			// Apply swinging door overrides
 			if override.SwingingDoor != nil {
 				algorithm = "swinging_door"
-				if override.SwingingDoor.CompDev != 0 {
-					config["comp_dev"] = override.SwingingDoor.CompDev
+				if override.SwingingDoor.Threshold != 0 {
+					config["threshold"] = override.SwingingDoor.Threshold
 				}
-				if override.SwingingDoor.CompMinTime != 0 {
-					config["comp_min_time"] = override.SwingingDoor.CompMinTime
+				if override.SwingingDoor.MinTime != 0 {
+					config["min_time"] = override.SwingingDoor.MinTime
 				}
-				if override.SwingingDoor.CompMaxTime != 0 {
-					config["comp_max_time"] = override.SwingingDoor.CompMaxTime
+				if override.SwingingDoor.MaxTime != 0 {
+					config["max_time"] = override.SwingingDoor.MaxTime
 				}
 			}
 			break
@@ -171,20 +174,20 @@ Currently supported algorithms:
 					Description("Default threshold for deadband algorithm.").
 					Default(0.0).
 					Optional(),
-				service.NewDurationField("max_interval").
+				service.NewDurationField("max_time").
 					Description("Default maximum time interval for deadband algorithm.").
 					Optional()).
 				Description("Default deadband algorithm parameters.").
 				Optional(),
 			service.NewObjectField("swinging_door",
-				service.NewFloatField("comp_dev").
+				service.NewFloatField("threshold").
 					Description("Default compression deviation for swinging door algorithm.").
 					Default(0.5).
 					Optional(),
-				service.NewDurationField("comp_min_time").
+				service.NewDurationField("min_time").
 					Description("Default minimum time interval for swinging door algorithm.").
 					Optional(),
-				service.NewDurationField("comp_max_time").
+				service.NewDurationField("max_time").
 					Description("Default maximum time interval for swinging door algorithm.").
 					Optional()).
 				Description("Default swinging door algorithm parameters.").
@@ -202,19 +205,19 @@ Currently supported algorithms:
 				service.NewFloatField("threshold").
 					Description("Override threshold for deadband algorithm.").
 					Optional(),
-				service.NewDurationField("max_interval").
+				service.NewDurationField("max_time").
 					Description("Override maximum time interval for deadband algorithm.").
 					Optional()).
 				Description("Deadband algorithm parameter overrides.").
 				Optional(),
 			service.NewObjectField("swinging_door",
-				service.NewFloatField("comp_dev").
+				service.NewFloatField("threshold").
 					Description("Override compression deviation for swinging door algorithm.").
 					Optional(),
-				service.NewDurationField("comp_min_time").
+				service.NewDurationField("min_time").
 					Description("Override minimum time interval for swinging door algorithm.").
 					Optional(),
-				service.NewDurationField("comp_max_time").
+				service.NewDurationField("max_time").
 					Description("Override maximum time interval for swinging door algorithm.").
 					Optional()).
 				Description("Swinging door algorithm parameter overrides.").
@@ -234,21 +237,21 @@ Currently supported algorithms:
 				if threshold, err := defaultParsed.FieldFloat("threshold"); err == nil {
 					defaultConfig.Deadband.Threshold = threshold
 				}
-				if maxInterval, err := defaultParsed.FieldDuration("max_interval"); err == nil {
-					defaultConfig.Deadband.MaxInterval = maxInterval
+				if maxTime, err := defaultParsed.FieldDuration("max_time"); err == nil {
+					defaultConfig.Deadband.MaxTime = maxTime
 				}
 			}
 
 			// Parse swinging door defaults
 			if defaultParsed := conf.Namespace("default", "swinging_door"); defaultParsed.Contains() {
-				if compDev, err := defaultParsed.FieldFloat("comp_dev"); err == nil {
-					defaultConfig.SwingingDoor.CompDev = compDev
+				if threshold, err := defaultParsed.FieldFloat("threshold"); err == nil {
+					defaultConfig.SwingingDoor.Threshold = threshold
 				}
-				if compMinTime, err := defaultParsed.FieldDuration("comp_min_time"); err == nil {
-					defaultConfig.SwingingDoor.CompMinTime = compMinTime
+				if minTime, err := defaultParsed.FieldDuration("min_time"); err == nil {
+					defaultConfig.SwingingDoor.MinTime = minTime
 				}
-				if compMaxTime, err := defaultParsed.FieldDuration("comp_max_time"); err == nil {
-					defaultConfig.SwingingDoor.CompMaxTime = compMaxTime
+				if maxTime, err := defaultParsed.FieldDuration("max_time"); err == nil {
+					defaultConfig.SwingingDoor.MaxTime = maxTime
 				}
 			}
 
@@ -271,22 +274,22 @@ Currently supported algorithms:
 						if threshold, err := deadbandParsed.FieldFloat("threshold"); err == nil {
 							override.Deadband.Threshold = threshold
 						}
-						if maxInterval, err := deadbandParsed.FieldDuration("max_interval"); err == nil {
-							override.Deadband.MaxInterval = maxInterval
+						if maxTime, err := deadbandParsed.FieldDuration("max_time"); err == nil {
+							override.Deadband.MaxTime = maxTime
 						}
 					}
 
 					// Parse swinging door overrides
 					if swingingDoorParsed := overrideConf.Namespace("swinging_door"); swingingDoorParsed.Contains() {
 						override.SwingingDoor = &SwingingDoorConfig{}
-						if compDev, err := swingingDoorParsed.FieldFloat("comp_dev"); err == nil {
-							override.SwingingDoor.CompDev = compDev
+						if threshold, err := swingingDoorParsed.FieldFloat("threshold"); err == nil {
+							override.SwingingDoor.Threshold = threshold
 						}
-						if compMinTime, err := swingingDoorParsed.FieldDuration("comp_min_time"); err == nil {
-							override.SwingingDoor.CompMinTime = compMinTime
+						if minTime, err := swingingDoorParsed.FieldDuration("min_time"); err == nil {
+							override.SwingingDoor.MinTime = minTime
 						}
-						if compMaxTime, err := swingingDoorParsed.FieldDuration("comp_max_time"); err == nil {
-							override.SwingingDoor.CompMaxTime = compMaxTime
+						if maxTime, err := swingingDoorParsed.FieldDuration("max_time"); err == nil {
+							override.SwingingDoor.MaxTime = maxTime
 						}
 					}
 
@@ -835,7 +838,7 @@ func (p *DownsamplerProcessor) logSwingingDoorDropReason(currentValue, previousV
 
 // extractThresholdFromMetadata extracts threshold value from algorithm metadata string
 func (p *DownsamplerProcessor) extractThresholdFromMetadata(metadata string) float64 {
-	// Parse metadata string like "deadband(threshold=0.500,max_interval=30s)" or "deadband(threshold=0.500)"
+	// Parse metadata string like "deadband(threshold=0.500,max_time=30s)" or "deadband(threshold=0.500)"
 	// This is a simple parser - in production you might want something more robust
 	start := strings.Index(metadata, "threshold=")
 	if start == -1 {

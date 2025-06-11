@@ -35,7 +35,7 @@ For classic format messages, the downsampler processes each non-timestamp field 
 
 ## Configuration
 
-The downsampler uses a **defaults + overrides** configuration pattern for flexible multi-signal management:
+The downsampler uses a **defaults + overrides** configuration pattern for flexible multi-signal management with **algorithm-specific sections**:
 
 ```yaml
 pipeline:
@@ -43,39 +43,90 @@ pipeline:
     - tag_processor:
         # ... tag processor configuration
     - downsampler:
-        algorithm: "deadband"        # Algorithm: "deadband" or "swinging_door"
         default:                     # Default parameters for all signals
-          threshold: 2.0             # Default deadband threshold
-          max_interval: 30s          # Default maximum time interval
-          comp_dev: 0.5              # Default swinging door deviation
-          comp_min_time: 5s          # Default minimum time interval
-          comp_max_time: 1h          # Default maximum time interval
+          deadband:                  # Deadband algorithm parameters
+            threshold: 0.2           # 2× typical sensor noise
+            max_time: 1h             # Auditor heartbeat interval
+          swinging_door:             # Swinging door algorithm parameters
+            threshold: 0.2           # Same threshold concept as deadband
+            min_time: 5s             # Noise reduction for fast processes
+            max_time: 1h             # Auditor heartbeat interval
         overrides:                   # Signal-specific overrides
           - pattern: "*.temperature"
-            threshold: 0.5           # Fine-grained for temperature
-            comp_dev: 0.25
+            deadband:
+              threshold: 0.1         # Fine-grained for temperature (±0.05°C noise)
+            swinging_door:
+              threshold: 0.1         # Consistent threshold naming
           - pattern: ".+_counter"
-            comp_dev: 0              # No compression for counters
+            swinging_door:
+              threshold: 0           # No compression for counters
           - pattern: "^temp_"
-            threshold: 0.25          # Very sensitive temp sensors
+            deadband:
+              threshold: 0.05        # Very sensitive temp sensors
 ```
 
 ### Configuration Structure
 
 **Algorithm Selection:**
-- `algorithm`: Choose between `"deadband"` or `"swinging_door"`
+The algorithm is automatically determined by which configuration section contains values:
+- If only `deadband` parameters are configured → uses deadband algorithm
+- If only `swinging_door` parameters are configured → uses swinging door algorithm
+- If both sections have parameters → defaults to deadband, but overrides can specify different algorithms per pattern
 
 **Default Parameters:**
-- `default.threshold`: Default deadband threshold for significant changes
-- `default.max_interval`: Default maximum time before forced output (deadband only)
-- `default.comp_dev`: Default compression deviation for swinging door algorithm
-- `default.comp_min_time`: Default minimum time between points (swinging door only)
-- `default.comp_max_time`: Default maximum time before forced output (swinging door only)
+- `default.deadband.threshold`: Default threshold for significant changes (2× sensor noise)
+- `default.deadband.max_time`: Default maximum time before forced output (auditor heartbeat)
+- `default.swinging_door.threshold`: Default threshold for envelope deviation (same concept as deadband)
+- `default.swinging_door.min_time`: Default minimum time between points (noise reduction)
+- `default.swinging_door.max_time`: Default maximum time before forced output (auditor heartbeat)
 
 **Override Patterns:**
 - `overrides[].pattern`: Regex pattern to match topics (e.g., `"*.temperature"`, `".+_counter"`, `"^temp_"`)
 - `overrides[].topic`: Exact topic match (mutually exclusive with pattern)
 - Override any default parameter with signal-specific values
+- Each override can specify different algorithms by including different config sections
+
+### Algorithm Selection Examples
+
+```yaml
+# Pure deadband configuration
+downsampler:
+  default:
+    deadband:
+      threshold: 0.2           # 2× sensor noise
+      max_time: 1h             # Auditor heartbeat
+  overrides:
+    - pattern: "*.temperature"
+      deadband:
+        threshold: 0.1         # Fine-grained temperature monitoring
+
+# Pure swinging door configuration  
+downsampler:
+  default:
+    swinging_door:
+      threshold: 0.2           # Same threshold concept
+      min_time: 5s             # Process-aware noise reduction
+      max_time: 1h             # Auditor heartbeat
+  overrides:
+    - pattern: "*.temperature"
+      swinging_door:
+        threshold: 0.1         # Consistent threshold naming
+
+# Mixed algorithm configuration
+downsampler:
+  default:
+    deadband:                  # Default algorithm
+      threshold: 0.2           # Standard noise threshold
+      max_time: 1h             # Auditor compliance
+  overrides:
+    - pattern: "*.temperature"
+      deadband:                # Override with deadband
+        threshold: 0.1         # Temperature precision
+    - pattern: "*.vibration"
+      swinging_door:           # Override with swinging door
+        threshold: 0.01        # Sensitive vibration monitoring
+        min_time: 1s           # High-frequency vibration data
+```
 
 ### Pattern Matching Examples
 
@@ -83,39 +134,46 @@ pipeline:
 overrides:
   # Wildcard patterns (using filepath.Match)
   - pattern: "*.temperature"        # Any topic ending in "temperature"
-    threshold: 0.5
+    deadband:
+      threshold: 0.1                # Fine temperature control
   - pattern: "plant1.*"             # Any topic starting with "plant1."
-    comp_dev: 0.25
+    swinging_door:
+      threshold: 0.05               # High precision for plant1
   
   # Regex patterns (for complex matching)
   - pattern: ".+_counter"           # Any topic ending in "_counter"
-    comp_dev: 0                     # No compression for counters
+    swinging_door:
+      threshold: 0                  # No compression for counters
   - pattern: "^temp_"               # Any topic starting with "temp_"
-    threshold: 0.1
+    deadband:
+      threshold: 0.05               # Very sensitive temperature sensors
   - pattern: "(vibration|accelerometer)"  # Multiple alternatives
-    comp_dev: 0.01
+    swinging_door:
+      threshold: 0.01               # Sensitive vibration monitoring
+      min_time: 1s                  # High-frequency vibration data
   
   # Exact topic matching
   - topic: "umh.v1.plant1.line1._historian.critical_temperature"
-    threshold: 0.1                  # Very sensitive critical sensor
+    deadband:
+      threshold: 0.02               # Very sensitive critical sensor
 ```
 
 ## Algorithms
 
 ### Deadband Algorithm
 
-The deadband algorithm filters out changes smaller than a configured threshold by comparing each new value to the last output value.
+The deadband algorithm filters out changes smaller than a configured threshold by comparing each new value to the last output value. It's ideal for **simple noise filtering** and **discrete signal monitoring**.
 
 **Parameters:**
-- `threshold`: Minimum absolute change required to keep a data point
-- `max_interval`: Maximum time before forcing output regardless of threshold
+- `threshold`: Minimum absolute change required to keep a data point *(equivalent to noise floor)*
+- `max_time`: Maximum time before forcing output regardless of threshold *(auditor heartbeat)*
 
 **How it works:**
 1. **First Point**: Always kept (establishes baseline)
 2. **Subsequent Points**: Compare to last kept value
    - If `|current_value - last_output| >= threshold` → **Keep**
    - If `|current_value - last_output| < threshold` → **Filter out**
-3. **Max Interval**: Forces output after time limit regardless of threshold
+3. **Max Time**: Forces output after time limit regardless of threshold (ensures auditor requirements)
 
 **Example** (threshold = 0.5):
 | Time | Input | Last Output | Change (Δ) | Decision | Reason |
@@ -124,321 +182,47 @@ The deadband algorithm filters out changes smaller than a configured threshold b
 | 00:01 | 10.3 | 10.0 | 0.3 | Filter | 0.3 < 0.5 |
 | 00:02 | 10.6 | 10.0 | 0.6 | **Keep** | 0.6 ≥ 0.5 |
 
+**Tuning Recommendations:**
+- **Threshold**: Set to **2× sensor noise level** (e.g., ±0.1 noise → threshold = 0.2)
+- **Max Time**: Default **1 hour** for auditor compliance (periodic heartbeat)
+- **Use Cases**: Boolean signals, simple analog filtering, discrete state monitoring
+
 ### Swinging Door Trending (SDT) Algorithm
 
-The SDT algorithm maintains an "envelope" or "corridor" around the trend line from the last stored point, storing new points only when they would exceed the envelope boundaries.
+The SDT algorithm maintains an "envelope" or "corridor" around the trend line from the last stored point, storing new points only when they would exceed the envelope boundaries. It provides **superior compression** for **continuous analog signals**.
 
 **Parameters:**
-- `comp_dev`: Maximum vertical deviation from the trend line (compression deviation)
-- `comp_min_time`: Minimum time between stored points (noise filtering)
-- `comp_max_time`: Maximum time before forcing output (prevents stale data)
+- `threshold`: Maximum vertical deviation from the trend line *(same concept as deadband threshold)*
+- `min_time`: Minimum time between stored points *(noise reduction for high-frequency processes)*
+- `max_time`: Maximum time before forcing output *(auditor heartbeat, same as deadband)*
 
 **How it works:**
 1. **Start Segment**: First point establishes the base of a new segment
 2. **Envelope Calculation**: For each new point, calculate upper and lower trend lines from base point
-3. **Boundary Check**: If the point falls outside the envelope (±comp_dev), end current segment
+3. **Boundary Check**: If the point falls outside the envelope (±threshold), end current segment
 4. **Segment End**: Store the previous point as segment end, start new segment from there
+5. **Min Time Filter**: Points arriving faster than `min_time` are buffered/evaluated but not immediately stored
 
 **Benefits over Deadband:**
 - **Better Trend Preservation**: Maintains slope information, not just magnitude
-- **Higher Compression**: Can achieve better compression ratios while preserving signal shape
+- **Higher Compression**: Can achieve 95-99% reduction vs 90-95% for deadband
 - **Temporal Awareness**: Considers time progression in compression decisions
+- **Process-Aware**: `min_time` prevents false triggers from processes that can't change rapidly
 
-## Signal Type Recommendations
+**Tuning Recommendations:**
+- **Threshold**: Set to **2× sensor noise level** (same principle as deadband)
+- **Min Time**: Set to **fastest meaningful process change time** (0 = disabled, 5s typical)
+- **Max Time**: Default **1 hour** for auditor compliance (periodic heartbeat)
+- **Use Cases**: Continuous analog processes, temperature control, flow rates, pressure monitoring
 
-Based on industrial best practices, here are recommended starting parameters:
+**Out-of-Order & Bulk Processing:**
+Both algorithms process messages **in timestamp order**. If messages arrive out-of-order:
+- **Small delays** (seconds): Buffered and reordered automatically  
+- **Large delays** (minutes): May cause envelope reset in SDT or threshold recalculation
+- **Bulk arrivals**: Each message processed sequentially maintaining state integrity
 
-### Analog Process Variables
-
-**Temperature, Pressure, Flow, Level Sensors:**
-
-```yaml
-default:
-  threshold: 2.0          # Start with ~0.2% of span
-  comp_dev: 0.5           # ~0.5% of span for SDT
-  max_interval: 8h        # Force periodic archival
-  comp_max_time: 8h
-overrides:
-  - pattern: "*.temperature"
-    threshold: 0.5        # ±0.5°C for temperature
-    comp_dev: 0.25        # Tight control for temperature
-  - pattern: "*.pressure"
-    threshold: 50.0       # ±50 Pa for pressure
-    comp_dev: 25.0
-  - pattern: "*.flow_rate"
-    threshold: 2.0        # ±2 L/min for flow
-    comp_dev: 1.0
-```
-
-**Guidelines:**
-- Start with **0.1-0.5% of instrument span**
-- Set threshold **≈ instrument noise level**
-- Use SDT `comp_dev` about **2× deadband threshold**
-- Consider instrument precision and process criticality
-
-### Discrete Signals
-
-**Boolean States, Digital I/O:**
-
-```yaml
-default:
-  threshold: 0.5          # Catch all boolean changes (0→1 = Δ1.0)
-  comp_dev: 0             # No SDT compression for discrete
-overrides:
-  - pattern: "*.status"
-    threshold: 0          # Capture every state change
-  - pattern: "*.alarm"
-    threshold: 0          # Never miss alarms
-  - pattern: "*.enabled"
-    threshold: 0          # Track all enable/disable events
-```
-
-**Key Points:**
-- **Capture every state change** - use threshold ≤ 0.5 for boolean signals
-- SDT not typically used for discrete signals
-- Boolean changes always have magnitude 1.0 (false=0, true=1)
-
-### Counters and Totals
-
-**Production Counters, Flow Totals, Accumulating Values:**
-
-```yaml
-default:
-  threshold: 1.0          # Minimum meaningful increment
-  comp_dev: 0.5           # Very tight SDT compression
-overrides:
-  - pattern: ".+_counter"
-    threshold: 1.0        # Log every count change
-    comp_dev: 0           # Disable SDT to preserve all increments
-  - pattern: "*.total"
-    threshold: 5.0        # Allow small totalizer variations
-    comp_dev: 2.0         # Minimal compression for totals
-```
-
-**Critical Considerations:**
-- **Avoid losing increments** - ensure threshold captures meaningful counts
-- For critical counts, consider **disabling compression** entirely
-- Monitor compression effectiveness to ensure totals remain accurate
-
-## Tuning Guidelines
-
-### Starting Parameters
-
-**Conservative Defaults (High Fidelity):**
-```yaml
-default:
-  threshold: 0.1          # Very sensitive - captures small changes
-  comp_dev: 0.05          # Tight SDT envelope
-  max_interval: 1h        # Frequent periodic updates
-  comp_max_time: 1h
-```
-
-**Aggressive Compression (High Efficiency):**
-```yaml
-default:
-  threshold: 1.0          # Less sensitive - filters minor changes
-  comp_dev: 0.5           # Wider SDT envelope
-  max_interval: 8h        # Infrequent periodic updates
-  comp_max_time: 8h
-```
-
-### Iterative Tuning Process
-
-1. **Start Conservative**: Begin with small thresholds (0.1-0.5% of span)
-2. **Monitor Compression**: Check data volume reduction (aim for 90-99%)
-3. **Verify Fidelity**: Compare compressed vs. raw signals for key events
-4. **Adjust Gradually**: Increase thresholds if too noisy, decrease if missing events
-5. **Document Settings**: Record final parameters and rationale
-
-### Percentage of Span Formula
-
-For instruments with known ranges:
-
-```yaml
-# Example: 0-100°C temperature sensor
-# Target: 0.2% of span = 0.2°C threshold
-overrides:
-  - pattern: "*.temperature"
-    threshold: 0.2        # 0.2% of 100°C span
-    comp_dev: 0.1         # Half the threshold for SDT
-```
-
-### Noise-Based Tuning
-
-For noisy signals:
-
-```yaml
-# Example: Sensor with ±0.1 unit noise
-# Set threshold just above noise level
-overrides:
-  - pattern: "*.noisy_sensor"
-    threshold: 0.15       # Slightly above ±0.1 noise
-    comp_dev: 0.075       # Half threshold for SDT
-```
-
-## Configuration Examples
-
-### Basic Multi-Signal Plant
-
-```yaml
-downsampler:
-  algorithm: "deadband"
-  default:
-    threshold: 1.0
-    max_interval: 4h
-  overrides:
-    - pattern: "*.temperature"
-      threshold: 0.5      # ±0.5°C sensitivity
-    - pattern: "*.pressure"
-      threshold: 50.0     # ±50 Pa sensitivity
-    - pattern: "*.humidity"
-      threshold: 1.0      # ±1% RH sensitivity
-    - pattern: "*.status"
-      threshold: 0        # Capture all state changes
-```
-
-### Advanced SDT Configuration
-
-```yaml
-downsampler:
-  algorithm: "swinging_door"
-  default:
-    comp_dev: 0.5
-    comp_min_time: 5s
-    comp_max_time: 8h
-  overrides:
-    - pattern: "*.temperature"
-      comp_dev: 0.25      # Tight temperature control
-      comp_max_time: 2h   # More frequent temperature updates
-    - pattern: ".+_counter"
-      comp_dev: 0         # No compression for counters
-    - pattern: "*.vibration"
-      comp_dev: 0.01      # Very sensitive vibration monitoring
-      comp_min_time: 1s   # Allow rapid vibration changes
-```
-
-### Production Line Monitoring
-
-```yaml
-downsampler:
-  algorithm: "deadband"
-  default:
-    threshold: 1.0
-    max_interval: 6h
-  overrides:
-    # Critical production parameters
-    - pattern: "production.line1.*"
-      threshold: 0.1      # High sensitivity for main line
-    - pattern: "quality.*"
-      threshold: 0.05     # Very sensitive quality metrics
-    
-    # Utility monitoring
-    - pattern: "utility.*"
-      threshold: 2.0      # Less sensitive for utilities
-    
-    # State monitoring
-    - pattern: "*.running"
-      threshold: 0        # Never miss state changes
-    - pattern: "*.alarm"
-      threshold: 0        # Never miss alarms
-```
-
-## Testing and Validation
-
-### Built-in Examples
-
-The downsampler includes comprehensive test configurations:
-
-```bash
-# Test deadband algorithm with classic format
-make test-benthos-downsampler-classic
-
-# Test deadband algorithm with multi-signal generation
-make test-benthos-downsampler
-
-# Test swinging door algorithm
-make test-benthos-downsampler-swinging-door
-```
-
-### Validation Checklist
-
-**Data Fidelity:**
-- [ ] Critical events (alarms, state changes) are always captured
-- [ ] Trend direction and magnitude are preserved
-- [ ] No significant process changes are filtered out
-
-**Compression Effectiveness:**
-- [ ] Data volume reduced by 90-99% where appropriate
-- [ ] Storage and bandwidth costs reduced
-- [ ] Processing performance improved
-
-**Signal-Specific Verification:**
-- [ ] Boolean signals capture every state change
-- [ ] Counter increments are not lost
-- [ ] Analog signals filter noise but preserve trends
-- [ ] Critical sensors use appropriate thresholds
-
-## Error Handling and Resilience
-
-The downsampler follows a **fail-open** design philosophy:
-
-**Error Conditions:**
-- Invalid configuration → use safe defaults
-- Missing metadata → pass through unchanged
-- Algorithm errors → pass through unchanged
-- Invalid data types → attempt conversion, pass through on failure
-
-**Logging and Debugging:**
-- Filtered messages logged at DEBUG level
-- Configuration parsing logged at INFO level
-- Errors logged at ERROR level with context
-- Per-algorithm debug messages for tuning
-
-**Performance Monitoring:**
-- Track compression ratios per signal type
-- Monitor processing latency
-- Alert on unexpected pass-through rates
-
-## Advanced Topics
-
-### Multi-Tenant Configuration
-
-```yaml
-downsampler:
-  algorithm: "deadband"
-  default:
-    threshold: 1.0
-  overrides:
-    # Tenant-specific configurations
-    - pattern: "tenant1.*"
-      threshold: 0.1      # High-precision tenant
-    - pattern: "tenant2.*"
-      threshold: 2.0      # Cost-optimized tenant
-```
-
-### Algorithm Comparison
-
-| Aspect | Deadband | Swinging Door |
-|--------|----------|---------------|
-| **Compression** | Good (90-95%) | Better (95-99%) |
-| **Trend Preservation** | Magnitude only | Magnitude + slope |
-| **Configuration** | Simple (threshold) | Complex (deviation + times) |
-| **CPU Usage** | Low | Medium |
-| **Best For** | Simple filtering | Complex signal shapes |
-
-### Performance Considerations
-
-**Memory Usage:**
-- Each unique topic maintains algorithm state
-- SDT requires more state than deadband
-- Consider memory limits with thousands of signals
-
-**Processing Overhead:**
-- Deadband: O(1) per point
-- SDT: O(1) per point, but higher constant factor
-- Pattern matching: O(n) where n = number of override patterns
-
-**Scalability:**
-- Tested with 10,000+ concurrent time series
-- State cleanup on inactivity prevents memory leaks
-- Consider horizontal scaling for extreme loads
+**Auditor Requirements:**
+The `max_time` parameter ensures **regulatory compliance** by forcing periodic data storage regardless of signal changes:
+- **Heartbeat Function**: Guarantees data points at least every `max_time` interval
+- **Audit Trail**: Proves system was operational even during stable periods
+- **Compliance**: Meets FDA 21 CFR Part 11, GxP, and similar requirements for continuous monitoring

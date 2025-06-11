@@ -29,8 +29,8 @@ func init() {
 
 // DeadbandAlgorithm implements deadband filtering
 type DeadbandAlgorithm struct {
-	threshold   float64
-	maxInterval time.Duration
+	threshold float64
+	maxTime   time.Duration
 
 	// Internal state
 	lastKeptValue interface{}
@@ -64,7 +64,7 @@ func NewDeadbandAlgorithm(config map[string]interface{}) (DownsampleAlgorithm, e
 		return nil, fmt.Errorf("threshold cannot be negative: %v", threshold)
 	}
 
-	if mi, ok := config["max_interval"]; ok {
+	if mi, ok := config["max_time"]; ok {
 		switch v := mi.(type) {
 		case time.Duration:
 			maxInterval = v
@@ -72,16 +72,16 @@ func NewDeadbandAlgorithm(config map[string]interface{}) (DownsampleAlgorithm, e
 			var err error
 			maxInterval, err = time.ParseDuration(v)
 			if err != nil {
-				return nil, fmt.Errorf("invalid max_interval value: %v", mi)
+				return nil, fmt.Errorf("invalid max_time value: %v", mi)
 			}
 		default:
-			return nil, fmt.Errorf("invalid max_interval type: %T", mi)
+			return nil, fmt.Errorf("invalid max_time type: %T", mi)
 		}
 	}
 
 	return &DeadbandAlgorithm{
-		threshold:   threshold,
-		maxInterval: maxInterval,
+		threshold: threshold,
+		maxTime:   maxInterval,
 	}, nil
 }
 
@@ -101,7 +101,7 @@ func (d *DeadbandAlgorithm) ProcessPoint(value interface{}, timestamp time.Time)
 	}
 
 	// Check maximum interval constraint
-	if d.maxInterval > 0 && timestamp.Sub(d.lastKeptTime) >= d.maxInterval {
+	if d.maxTime > 0 && timestamp.Sub(d.lastKeptTime) >= d.maxTime {
 		d.lastKeptValue = value
 		d.lastKeptTime = timestamp
 		return true, nil
@@ -141,8 +141,8 @@ func (d *DeadbandAlgorithm) Reset() {
 
 // GetMetadata returns metadata string for annotation
 func (d *DeadbandAlgorithm) GetMetadata() string {
-	if d.maxInterval > 0 {
-		return fmt.Sprintf("deadband(threshold=%.3f,max_interval=%v)", d.threshold, d.maxInterval)
+	if d.maxTime > 0 {
+		return fmt.Sprintf("deadband(threshold=%.3f,max_time=%v)", d.threshold, d.maxTime)
 	}
 	return fmt.Sprintf("deadband(threshold=%.3f)", d.threshold)
 }

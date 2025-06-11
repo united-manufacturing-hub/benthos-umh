@@ -33,79 +33,79 @@ type Point struct {
 
 // SwingingDoorAlgorithm implements the Swinging Door Trending (SDT) algorithm
 type SwingingDoorAlgorithm struct {
-	compDev     float64       // Compression deviation threshold
-	compMinTime time.Duration // Minimum time interval
-	compMaxTime time.Duration // Maximum time interval
+	threshold float64       // Compression deviation threshold
+	minTime   time.Duration // Minimum time interval
+	maxTime   time.Duration // Maximum time interval
 
 	// Internal state - similar to deadband pattern
 	basePoint      *Point  // Current base point (start of segment)
 	lastKeptPoint  *Point  // Last point that was kept
-	candidatePoint *Point  // Buffered point waiting for comp_min_time to elapse
+	candidatePoint *Point  // Buffered point waiting for min_time to elapse
 	maxLowerSlope  float64 // Maximum slope of lower door
 	minUpperSlope  float64 // Minimum slope of upper door
 }
 
 // NewSwingingDoorAlgorithm creates a new SDT algorithm instance
 func NewSwingingDoorAlgorithm(config map[string]interface{}) (DownsampleAlgorithm, error) {
-	compDev := 1.0
-	var compMinTime, compMaxTime time.Duration
+	threshold := 1.0
+	var minTime, maxTime time.Duration
 
-	if cd, ok := config["comp_dev"]; ok {
+	if cd, ok := config["threshold"]; ok {
 		switch v := cd.(type) {
 		case float64:
-			compDev = v
+			threshold = v
 		case int:
-			compDev = float64(v)
+			threshold = float64(v)
 		case string:
 			var err error
-			compDev, err = strconv.ParseFloat(v, 64)
+			threshold, err = strconv.ParseFloat(v, 64)
 			if err != nil {
-				return nil, fmt.Errorf("invalid comp_dev value: %v", cd)
+				return nil, fmt.Errorf("invalid threshold value: %v", cd)
 			}
 		default:
-			return nil, fmt.Errorf("invalid comp_dev type: %T", cd)
+			return nil, fmt.Errorf("invalid threshold type: %T", cd)
 		}
 	}
 
-	// Validate comp_dev is not negative
-	if compDev < 0 {
-		return nil, fmt.Errorf("comp_dev cannot be negative, got: %f", compDev)
+	// Validate threshold is not negative
+	if threshold < 0 {
+		return nil, fmt.Errorf("threshold cannot be negative, got: %f", threshold)
 	}
 
-	if cmin, ok := config["comp_min_time"]; ok {
+	if cmin, ok := config["min_time"]; ok {
 		switch v := cmin.(type) {
 		case time.Duration:
-			compMinTime = v
+			minTime = v
 		case string:
 			var err error
-			compMinTime, err = time.ParseDuration(v)
+			minTime, err = time.ParseDuration(v)
 			if err != nil {
-				return nil, fmt.Errorf("invalid comp_min_time value: %v", cmin)
+				return nil, fmt.Errorf("invalid min_time value: %v", cmin)
 			}
 		default:
-			return nil, fmt.Errorf("invalid comp_min_time type: %T", cmin)
+			return nil, fmt.Errorf("invalid min_time type: %T", cmin)
 		}
 	}
 
-	if cmax, ok := config["comp_max_time"]; ok {
+	if cmax, ok := config["max_time"]; ok {
 		switch v := cmax.(type) {
 		case time.Duration:
-			compMaxTime = v
+			maxTime = v
 		case string:
 			var err error
-			compMaxTime, err = time.ParseDuration(v)
+			maxTime, err = time.ParseDuration(v)
 			if err != nil {
-				return nil, fmt.Errorf("invalid comp_max_time value: %v", cmax)
+				return nil, fmt.Errorf("invalid max_time value: %v", cmax)
 			}
 		default:
-			return nil, fmt.Errorf("invalid comp_max_time type: %T", cmax)
+			return nil, fmt.Errorf("invalid max_time type: %T", cmax)
 		}
 	}
 
 	return &SwingingDoorAlgorithm{
-		compDev:     compDev,
-		compMinTime: compMinTime,
-		compMaxTime: compMaxTime,
+		threshold: threshold,
+		minTime:   minTime,
+		maxTime:   maxTime,
 	}, nil
 }
 
@@ -134,7 +134,7 @@ func (s *SwingingDoorAlgorithm) ProcessPoint(value interface{}, timestamp time.T
 	// Check if we have a candidate point that can now be processed
 	if s.candidatePoint != nil {
 		elapsed := currentPoint.Timestamp.Sub(s.lastKeptPoint.Timestamp)
-		if elapsed >= s.compMinTime {
+		if elapsed >= s.minTime {
 			// Process the buffered candidate point now that enough time has elapsed
 			candidate := s.candidatePoint
 			s.candidatePoint = nil
@@ -149,9 +149,9 @@ func (s *SwingingDoorAlgorithm) ProcessPoint(value interface{}, timestamp time.T
 	}
 
 	// Check maximum time constraint
-	if s.compMaxTime > 0 {
+	if s.maxTime > 0 {
 		elapsed := currentPoint.Timestamp.Sub(s.lastKeptPoint.Timestamp)
-		if elapsed >= s.compMaxTime {
+		if elapsed >= s.maxTime {
 			// Force keep due to max time
 			s.candidatePoint = nil // Clear any buffered candidate
 			s.basePoint = s.lastKeptPoint
@@ -175,8 +175,8 @@ func (s *SwingingDoorAlgorithm) processCandidatePoint(candidate *Point) (bool, e
 	}
 
 	// Calculate slopes to candidate point's deviation bounds
-	lowerSlope := (candidate.Value - s.compDev - s.basePoint.Value) / deltaTime
-	upperSlope := (candidate.Value + s.compDev - s.basePoint.Value) / deltaTime
+	lowerSlope := (candidate.Value - s.threshold - s.basePoint.Value) / deltaTime
+	upperSlope := (candidate.Value + s.threshold - s.basePoint.Value) / deltaTime
 
 	// Update envelope bounds with candidate point
 	newMaxLowerSlope := math.Max(s.maxLowerSlope, lowerSlope)
@@ -191,8 +191,8 @@ func (s *SwingingDoorAlgorithm) processCandidatePoint(candidate *Point) (bool, e
 		// Recalculate envelope from new base to candidate
 		newDeltaTime := candidate.Timestamp.Sub(s.basePoint.Timestamp).Seconds()
 		if newDeltaTime > 0 {
-			s.maxLowerSlope = (candidate.Value - s.compDev - s.basePoint.Value) / newDeltaTime
-			s.minUpperSlope = (candidate.Value + s.compDev - s.basePoint.Value) / newDeltaTime
+			s.maxLowerSlope = (candidate.Value - s.threshold - s.basePoint.Value) / newDeltaTime
+			s.minUpperSlope = (candidate.Value + s.threshold - s.basePoint.Value) / newDeltaTime
 		} else {
 			s.maxLowerSlope = math.Inf(-1)
 			s.minUpperSlope = math.Inf(1)
@@ -201,53 +201,51 @@ func (s *SwingingDoorAlgorithm) processCandidatePoint(candidate *Point) (bool, e
 		return true, nil
 	}
 
-	// Candidate fits within envelope - update envelope but don't keep
+	// Candidate fits within envelope, update bounds but don't keep
 	s.maxLowerSlope = newMaxLowerSlope
 	s.minUpperSlope = newMinUpperSlope
 	return false, nil
 }
 
-// processPointWithEnvelope processes a point using envelope logic with comp_min_time consideration
+// processPointWithEnvelope processes a point using envelope logic
 func (s *SwingingDoorAlgorithm) processPointWithEnvelope(currentPoint *Point) (bool, error) {
 	// Calculate time difference from base
 	deltaTime := currentPoint.Timestamp.Sub(s.basePoint.Timestamp).Seconds()
 	if deltaTime <= 0 {
-		// Same or earlier timestamp than base
 		return false, nil
 	}
 
-	// Regular envelope logic
 	// Calculate slopes to current point's deviation bounds
-	lowerSlope := (currentPoint.Value - s.compDev - s.basePoint.Value) / deltaTime
-	upperSlope := (currentPoint.Value + s.compDev - s.basePoint.Value) / deltaTime
+	lowerSlope := (currentPoint.Value - s.threshold - s.basePoint.Value) / deltaTime
+	upperSlope := (currentPoint.Value + s.threshold - s.basePoint.Value) / deltaTime
 
-	// Update envelope bounds with this point
+	// Update envelope bounds with current point
 	newMaxLowerSlope := math.Max(s.maxLowerSlope, lowerSlope)
 	newMinUpperSlope := math.Min(s.minUpperSlope, upperSlope)
 
 	// Check if doors would intersect (envelope would collapse)
 	if newMaxLowerSlope > newMinUpperSlope {
-		// This point would violate the envelope
+		// Current point violates envelope
 
-		// Check minimum time constraint before keeping
-		if s.compMinTime > 0 {
+		// Check min_time constraint before keeping
+		if s.minTime > 0 {
 			elapsed := currentPoint.Timestamp.Sub(s.lastKeptPoint.Timestamp)
-			if elapsed < s.compMinTime {
-				// Buffer this point as candidate and don't emit it yet
+			if elapsed < s.minTime {
+				// Buffer this point for later processing
 				s.candidatePoint = currentPoint
 				return false, nil
 			}
 		}
 
-		// Keep the point and start a new segment
+		// Keep the point and start new segment
 		s.basePoint = s.lastKeptPoint
 		s.lastKeptPoint = currentPoint
 
 		// Recalculate envelope from new base to current point
 		newDeltaTime := currentPoint.Timestamp.Sub(s.basePoint.Timestamp).Seconds()
 		if newDeltaTime > 0 {
-			s.maxLowerSlope = (currentPoint.Value - s.compDev - s.basePoint.Value) / newDeltaTime
-			s.minUpperSlope = (currentPoint.Value + s.compDev - s.basePoint.Value) / newDeltaTime
+			s.maxLowerSlope = (currentPoint.Value - s.threshold - s.basePoint.Value) / newDeltaTime
+			s.minUpperSlope = (currentPoint.Value + s.threshold - s.basePoint.Value) / newDeltaTime
 		} else {
 			s.maxLowerSlope = math.Inf(-1)
 			s.minUpperSlope = math.Inf(1)
@@ -256,7 +254,7 @@ func (s *SwingingDoorAlgorithm) processPointWithEnvelope(currentPoint *Point) (b
 		return true, nil
 	}
 
-	// Point fits within current envelope - update envelope but don't keep point
+	// Point fits within envelope, update bounds but don't keep
 	s.maxLowerSlope = newMaxLowerSlope
 	s.minUpperSlope = newMinUpperSlope
 	return false, nil
@@ -273,12 +271,12 @@ func (s *SwingingDoorAlgorithm) Reset() {
 
 // GetMetadata returns metadata string for annotation
 func (s *SwingingDoorAlgorithm) GetMetadata() string {
-	metadata := fmt.Sprintf("swinging_door(comp_dev=%.3f", s.compDev)
-	if s.compMinTime > 0 {
-		metadata += fmt.Sprintf(",comp_min_time=%v", s.compMinTime)
+	metadata := fmt.Sprintf("swinging_door(threshold=%.3f", s.threshold)
+	if s.minTime > 0 {
+		metadata += fmt.Sprintf(",min_time=%v", s.minTime)
 	}
-	if s.compMaxTime > 0 {
-		metadata += fmt.Sprintf(",comp_max_time=%v", s.compMaxTime)
+	if s.maxTime > 0 {
+		metadata += fmt.Sprintf(",max_time=%v", s.maxTime)
 	}
 	metadata += ")"
 	return metadata
