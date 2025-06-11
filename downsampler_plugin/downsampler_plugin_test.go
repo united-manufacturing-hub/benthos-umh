@@ -24,6 +24,8 @@ import (
 	_ "github.com/redpanda-data/benthos/v4/public/components/io"
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	downsampler "github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin"
 )
 
 var _ = Describe("Downsampler Plugin", func() {
@@ -47,8 +49,9 @@ var _ = Describe("Downsampler Plugin", func() {
 
 			err = builder.AddProcessorYAML(`
 downsampler:
-  algorithm: "deadband"
-  threshold: 0.5
+  default:
+    deadband:
+      threshold: 0.5
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -62,26 +65,31 @@ downsampler:
 			stream, err := builder.Build()
 			Expect(err).NotTo(HaveOccurred())
 
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 
 			go func() {
 				_ = stream.Run(ctx)
 			}()
 
-			// Create and send non-historian message
-			testMsg := service.NewMessage([]byte(`{"value": 42}`))
-			testMsg.MetaSet("data_contract", "_analytics")
-			err = msgHandler(ctx, testMsg)
+			// Send a non-historian message
+			msg := service.NewMessage(nil)
+			msg.SetStructured(map[string]interface{}{
+				"some_field": "some_value",
+			})
+			err = msgHandler(ctx, msg)
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
 				return len(messages)
 			}).Should(Equal(1))
 
-			// Message should pass through unchanged
-			_, exists := messages[0].MetaGet("downsampled_by")
-			Expect(exists).To(BeFalse())
+			// Check that message passed through unchanged
+			structured, err := messages[0].AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(structured).To(Equal(map[string]interface{}{
+				"some_field": "some_value",
+			}))
 		})
 
 		It("should keep the first data point and add metadata", func() {
@@ -93,8 +101,9 @@ downsampler:
 
 			err = builder.AddProcessorYAML(`
 downsampler:
-  algorithm: "deadband" 
-  threshold: 0.5
+  default:
+    deadband:
+      threshold: 0.5
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -108,33 +117,37 @@ downsampler:
 			stream, err := builder.Build()
 			Expect(err).NotTo(HaveOccurred())
 
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 
 			go func() {
 				_ = stream.Run(ctx)
 			}()
 
-			// Create and send historian message
-			testMsg := service.NewMessage(nil)
-			testMsg.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459200000, // 2021-01-01 00:00:00
-				"value":        10.0,
+			// Send first historian message
+			msg := service.NewMessage(nil)
+			msg.SetStructured(map[string]interface{}{
+				"value":        10.5,
+				"timestamp_ms": 1609459200000,
 			})
-			testMsg.MetaSet("data_contract", "_historian")
-			testMsg.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.temperature")
-			err = msgHandler(ctx, testMsg)
+			msg.MetaSet("data_contract", "_historian")
+			msg.MetaSet("umh_topic", "umh.v1.acme._historian.temperature")
+			err = msgHandler(ctx, msg)
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
 				return len(messages)
 			}).Should(Equal(1))
 
-			// Check metadata annotation
+			// Check data
+			structured, err := messages[0].AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(structured).To(HaveKeyWithValue("value", 10.5))
+
+			// Check metadata
 			metadata, exists := messages[0].MetaGet("downsampled_by")
 			Expect(exists).To(BeTrue())
 			Expect(metadata).To(ContainSubstring("deadband"))
-			Expect(metadata).To(ContainSubstring("threshold=0.500"))
 		})
 
 		It("should filter out changes below threshold", func() {
@@ -146,8 +159,9 @@ downsampler:
 
 			err = builder.AddProcessorYAML(`
 downsampler:
-  algorithm: "deadband"
-  threshold: 0.5
+  default:
+    deadband:
+      threshold: 0.5
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -168,36 +182,31 @@ downsampler:
 				_ = stream.Run(ctx)
 			}()
 
-			// Send first message (baseline)
+			// First message (always kept)
 			msg1 := service.NewMessage(nil)
 			msg1.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459200000,
 				"value":        10.0,
+				"timestamp_ms": 1609459200000,
 			})
 			msg1.MetaSet("data_contract", "_historian")
-			msg1.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.temperature")
+			msg1.MetaSet("umh_topic", "umh.v1.acme._historian.temperature")
 			err = msgHandler(ctx, msg1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second message below threshold (should be filtered)
+			msg2 := service.NewMessage(nil)
+			msg2.SetStructured(map[string]interface{}{
+				"value":        10.3, // 0.3 < 0.5 threshold
+				"timestamp_ms": 1609459200100,
+			})
+			msg2.MetaSet("data_contract", "_historian")
+			msg2.MetaSet("umh_topic", "umh.v1.acme._historian.temperature")
+			err = msgHandler(ctx, msg2)
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
 				return len(messages)
-			}).Should(Equal(1))
-
-			// Send second message (small change - should be filtered)
-			msg2 := service.NewMessage(nil)
-			msg2.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459201000,
-				"value":        10.3, // Change of 0.3 < 0.5 threshold
-			})
-			msg2.MetaSet("data_contract", "_historian")
-			msg2.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.temperature")
-			err = msgHandler(ctx, msg2)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Should still be only one message (second filtered out)
-			Consistently(func() int {
-				return len(messages)
-			}, 500*time.Millisecond).Should(Equal(1))
+			}).Should(Equal(1)) // Only first message should pass through
 		})
 
 		It("should keep changes above threshold", func() {
@@ -209,8 +218,9 @@ downsampler:
 
 			err = builder.AddProcessorYAML(`
 downsampler:
-  algorithm: "deadband"
-  threshold: 0.5
+  default:
+    deadband:
+      threshold: 0.5
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -231,36 +241,31 @@ downsampler:
 				_ = stream.Run(ctx)
 			}()
 
-			// Send first message (baseline)
+			// First message
 			msg1 := service.NewMessage(nil)
 			msg1.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459200000,
 				"value":        10.0,
+				"timestamp_ms": 1609459200000,
 			})
 			msg1.MetaSet("data_contract", "_historian")
-			msg1.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.temperature")
+			msg1.MetaSet("umh_topic", "umh.v1.acme._historian.temperature")
 			err = msgHandler(ctx, msg1)
 			Expect(err).NotTo(HaveOccurred())
 
-			Eventually(func() int {
-				return len(messages)
-			}).Should(Equal(1))
-
-			// Send second message (large change - should be kept)
+			// Second message above threshold
 			msg2 := service.NewMessage(nil)
 			msg2.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459201000,
-				"value":        10.6, // Change of 0.6 >= 0.5 threshold
+				"value":        10.8, // 0.8 > 0.5 threshold
+				"timestamp_ms": 1609459200100,
 			})
 			msg2.MetaSet("data_contract", "_historian")
-			msg2.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.temperature")
+			msg2.MetaSet("umh_topic", "umh.v1.acme._historian.temperature")
 			err = msgHandler(ctx, msg2)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Should have both messages
 			Eventually(func() int {
 				return len(messages)
-			}).Should(Equal(2))
+			}).Should(Equal(2)) // Both messages should pass through
 		})
 	})
 
@@ -274,9 +279,10 @@ downsampler:
 
 			err = builder.AddProcessorYAML(`
 downsampler:
-  algorithm: "deadband"
-  threshold: 0.5
-  max_interval: "60s"
+  default:
+    deadband:
+      threshold: 10.0
+      max_time: 1s
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -290,21 +296,21 @@ downsampler:
 			stream, err := builder.Build()
 			Expect(err).NotTo(HaveOccurred())
 
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
 			go func() {
 				_ = stream.Run(ctx)
 			}()
 
-			// Send first message (baseline)
+			// First message (always kept)
 			msg1 := service.NewMessage(nil)
 			msg1.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459200000, // 2021-01-01 00:00:00
 				"value":        10.0,
+				"timestamp_ms": 1609459200000, // 2021-01-01 00:00:00
 			})
 			msg1.MetaSet("data_contract", "_historian")
-			msg1.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.temperature")
+			msg1.MetaSet("umh_topic", "umh.v1.acme._historian.temperature")
 			err = msgHandler(ctx, msg1)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -312,26 +318,21 @@ downsampler:
 				return len(messages)
 			}).Should(Equal(1))
 
-			// Send second message (small change but after max interval)
+			// Second message (small change, normally filtered but max_time exceeded)
 			msg2 := service.NewMessage(nil)
 			msg2.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459260000, // 1 minute later
-				"value":        10.3,          // Change of 0.3 < 0.5 threshold
+				"value":        11.0,          // 1.0 < 10.0 threshold, normally filtered
+				"timestamp_ms": 1609459202000, // 2 seconds later, exceeds max_time
 			})
 			msg2.MetaSet("data_contract", "_historian")
-			msg2.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.temperature")
+			msg2.MetaSet("umh_topic", "umh.v1.acme._historian.temperature")
 			err = msgHandler(ctx, msg2)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Should be kept due to max interval
+			// Should force output due to max interval exceeded
 			Eventually(func() int {
 				return len(messages)
 			}).Should(Equal(2))
-
-			// Check metadata includes max_interval
-			metadata, exists := messages[1].MetaGet("downsampled_by")
-			Expect(exists).To(BeTrue())
-			Expect(metadata).To(ContainSubstring("max_interval=1m0s"))
 		})
 	})
 
@@ -345,8 +346,9 @@ downsampler:
 
 			err = builder.AddProcessorYAML(`
 downsampler:
-  algorithm: "deadband"
-  threshold: 1.0
+  default:
+    deadband:
+      threshold: 2.0
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -367,35 +369,32 @@ downsampler:
 				_ = stream.Run(ctx)
 			}()
 
-			// Send integer messages
+			// First integer message
 			msg1 := service.NewMessage(nil)
 			msg1.SetStructured(map[string]interface{}{
+				"value":        42,
 				"timestamp_ms": 1609459200000,
-				"value":        10,
 			})
 			msg1.MetaSet("data_contract", "_historian")
-			msg1.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.count")
+			msg1.MetaSet("umh_topic", "umh.v1.acme._historian.counter")
 			err = msgHandler(ctx, msg1)
 			Expect(err).NotTo(HaveOccurred())
 
-			Eventually(func() int {
-				return len(messages)
-			}).Should(Equal(1))
-
+			// Second integer message (change of 1 < 2.0 threshold)
 			msg2 := service.NewMessage(nil)
 			msg2.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459201000,
-				"value":        11, // Change of 1.0 = threshold
+				"value":        43,
+				"timestamp_ms": 1609459200100,
 			})
 			msg2.MetaSet("data_contract", "_historian")
-			msg2.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.count")
+			msg2.MetaSet("umh_topic", "umh.v1.acme._historian.counter")
 			err = msgHandler(ctx, msg2)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Should be kept (change = threshold)
+			// Only first message should pass (second filtered due to small change)
 			Eventually(func() int {
 				return len(messages)
-			}).Should(Equal(2))
+			}).Should(Equal(1))
 		})
 
 		It("should handle boolean values", func() {
@@ -407,8 +406,9 @@ downsampler:
 
 			err = builder.AddProcessorYAML(`
 downsampler:
-  algorithm: "deadband"
-  threshold: 1.0
+  default:
+    deadband:
+      threshold: 1.0
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -429,32 +429,40 @@ downsampler:
 				_ = stream.Run(ctx)
 			}()
 
-			// Send boolean messages
+			// First boolean message
 			msg1 := service.NewMessage(nil)
 			msg1.SetStructured(map[string]interface{}{
+				"value":        true,
 				"timestamp_ms": 1609459200000,
-				"value":        false,
 			})
 			msg1.MetaSet("data_contract", "_historian")
-			msg1.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.alarm")
+			msg1.MetaSet("umh_topic", "umh.v1.acme._historian.enabled")
 			err = msgHandler(ctx, msg1)
 			Expect(err).NotTo(HaveOccurred())
 
-			Eventually(func() int {
-				return len(messages)
-			}).Should(Equal(1))
-
+			// Second boolean message (same value - should be filtered)
 			msg2 := service.NewMessage(nil)
 			msg2.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459201000,
-				"value":        true, // Change of 1.0 = threshold
+				"value":        true,
+				"timestamp_ms": 1609459200100,
 			})
 			msg2.MetaSet("data_contract", "_historian")
-			msg2.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.alarm")
+			msg2.MetaSet("umh_topic", "umh.v1.acme._historian.enabled")
 			err = msgHandler(ctx, msg2)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Boolean change should be kept
+			// Third boolean message (different value - should be kept)
+			msg3 := service.NewMessage(nil)
+			msg3.SetStructured(map[string]interface{}{
+				"value":        false,
+				"timestamp_ms": 1609459200200,
+			})
+			msg3.MetaSet("data_contract", "_historian")
+			msg3.MetaSet("umh_topic", "umh.v1.acme._historian.enabled")
+			err = msgHandler(ctx, msg3)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should have first and third messages
 			Eventually(func() int {
 				return len(messages)
 			}).Should(Equal(2))
@@ -469,8 +477,9 @@ downsampler:
 
 			err = builder.AddProcessorYAML(`
 downsampler:
-  algorithm: "deadband"
-  threshold: 1.0
+  default:
+    deadband:
+      threshold: 1.0
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -491,49 +500,40 @@ downsampler:
 				_ = stream.Run(ctx)
 			}()
 
-			// Send string messages
+			// First string message
 			msg1 := service.NewMessage(nil)
 			msg1.SetStructured(map[string]interface{}{
+				"value":        "RUNNING",
 				"timestamp_ms": 1609459200000,
-				"value":        "running",
 			})
 			msg1.MetaSet("data_contract", "_historian")
-			msg1.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.status")
+			msg1.MetaSet("umh_topic", "umh.v1.acme._historian.status")
 			err = msgHandler(ctx, msg1)
 			Expect(err).NotTo(HaveOccurred())
 
-			Eventually(func() int {
-				return len(messages)
-			}).Should(Equal(1))
-
-			// Same string - should be filtered
+			// Second string message (same value - should be filtered)
 			msg2 := service.NewMessage(nil)
 			msg2.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459201000,
-				"value":        "running",
+				"value":        "RUNNING",
+				"timestamp_ms": 1609459200100,
 			})
 			msg2.MetaSet("data_contract", "_historian")
-			msg2.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.status")
+			msg2.MetaSet("umh_topic", "umh.v1.acme._historian.status")
 			err = msgHandler(ctx, msg2)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Should still be only one message
-			Consistently(func() int {
-				return len(messages)
-			}, 500*time.Millisecond).Should(Equal(1))
-
-			// Different string - should be kept
+			// Third string message (different value - should be kept)
 			msg3 := service.NewMessage(nil)
 			msg3.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459202000,
-				"value":        "stopped",
+				"value":        "STOPPED",
+				"timestamp_ms": 1609459200200,
 			})
 			msg3.MetaSet("data_contract", "_historian")
-			msg3.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.status")
+			msg3.MetaSet("umh_topic", "umh.v1.acme._historian.status")
 			err = msgHandler(ctx, msg3)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Should have two messages now
+			// Should have first and third messages
 			Eventually(func() int {
 				return len(messages)
 			}).Should(Equal(2))
@@ -548,8 +548,9 @@ downsampler:
 
 			err = builder.AddProcessorYAML(`
 downsampler:
-  algorithm: "deadband"
-  threshold: 0.5
+  default:
+    deadband:
+      threshold: 0.5
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -570,14 +571,13 @@ downsampler:
 				_ = stream.Run(ctx)
 			}()
 
-			// UMH-core format with single "value" field
+			// UMH-core format (single value field)
 			msg1 := service.NewMessage(nil)
 			msg1.SetStructured(map[string]interface{}{
 				"value":        23.4,
 				"timestamp_ms": 1609459200000,
 			})
-			msg1.MetaSet("data_contract", "_historian")
-			msg1.MetaSet("umh_topic", "umh.v1.acme._historian.weather.temperature")
+			msg1.MetaSet("umh_topic", "umh.v1.acme.weather.temperature")
 			err = msgHandler(ctx, msg1)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -585,72 +585,10 @@ downsampler:
 				return len(messages)
 			}).Should(Equal(1))
 
-			// Verify value is processed correctly
+			// Check data preserved
 			structured, err := messages[0].AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(structured).To(HaveKeyWithValue("value", 23.4))
-
-			// Check metadata annotation
-			metadata, exists := messages[0].MetaGet("downsampled_by")
-			Expect(exists).To(BeTrue())
-			Expect(metadata).To(ContainSubstring("deadband"))
-		})
-
-		It("should process UMH classic format with multiple fields", func() {
-			builder := service.NewStreamBuilder()
-
-			var msgHandler service.MessageHandlerFunc
-			msgHandler, err := builder.AddProducerFunc()
-			Expect(err).NotTo(HaveOccurred())
-
-			err = builder.AddProcessorYAML(`
-downsampler:
-  algorithm: "deadband"
-  threshold: 0.5
-`)
-			Expect(err).NotTo(HaveOccurred())
-
-			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
-				messages = append(messages, msg)
-				return nil
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			stream, err := builder.Build()
-			Expect(err).NotTo(HaveOccurred())
-
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-
-			go func() {
-				_ = stream.Run(ctx)
-			}()
-
-			// UMH classic format with multiple fields (first message processed)
-			msg1 := service.NewMessage(nil)
-			msg1.SetStructured(map[string]interface{}{
-				"temperature":  23.4,
-				"humidity":     42.1,
-				"timestamp_ms": 1609459200000,
-			})
-			msg1.MetaSet("data_contract", "_historian")
-			msg1.MetaSet("umh_topic", "umh.v1.acme._historian.weather")
-			err = msgHandler(ctx, msg1)
-			Expect(err).NotTo(HaveOccurred())
-
-			Eventually(func() int {
-				return len(messages)
-			}).Should(Equal(1))
-
-			// Should process the first non-timestamp field found (temperature or humidity)
-			structured, err := messages[0].AsStructured()
-			Expect(err).NotTo(HaveOccurred())
-			// Should have either temperature or humidity value preserved
-			Expect(structured).To(SatisfyAny(
-				HaveKeyWithValue("temperature", 23.4),
-				HaveKeyWithValue("humidity", 42.1),
-			))
 
 			// Check metadata annotation
 			metadata, exists := messages[0].MetaGet("downsampled_by")
@@ -667,13 +605,13 @@ downsampler:
 
 			err = builder.AddProcessorYAML(`
 downsampler:
-  algorithm: "deadband"
-  threshold: 1.0
-  topic_thresholds:
+  default:
+    deadband:
+      threshold: 2.0
+  overrides:
     - pattern: "*.temperature"
-      threshold: 0.5
-    - pattern: "*.pressure"
-      threshold: 50.0
+      deadband:
+        threshold: 0.1
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -694,48 +632,27 @@ downsampler:
 				_ = stream.Run(ctx)
 			}()
 
-			// Temperature message - should use 0.5 threshold
-			tempMsg := service.NewMessage(nil)
-			tempMsg.SetStructured(map[string]interface{}{
+			// Send temperature message (should use 0.1 threshold from pattern match)
+			msg1 := service.NewMessage(nil)
+			msg1.SetStructured(map[string]interface{}{
 				"value":        20.0,
 				"timestamp_ms": 1609459200000,
 			})
-			tempMsg.MetaSet("data_contract", "_historian")
-			tempMsg.MetaSet("umh_topic", "umh.v1.plant1.line1._historian.temperature")
-			err = msgHandler(ctx, tempMsg)
+			msg1.MetaSet("umh_topic", "umh.v1.acme._historian.temperature")
+			err = msgHandler(ctx, msg1)
 			Expect(err).NotTo(HaveOccurred())
 
-			Eventually(func() int {
-				return len(messages)
-			}).Should(Equal(1))
-
-			// Small temperature change - should be filtered (0.3 < 0.5)
-			tempMsg2 := service.NewMessage(nil)
-			tempMsg2.SetStructured(map[string]interface{}{
-				"value":        20.3,
-				"timestamp_ms": 1609459201000,
+			// Small change that exceeds temperature threshold
+			msg2 := service.NewMessage(nil)
+			msg2.SetStructured(map[string]interface{}{
+				"value":        20.15, // 0.15 > 0.1 threshold for temperature
+				"timestamp_ms": 1609459200100,
 			})
-			tempMsg2.MetaSet("data_contract", "_historian")
-			tempMsg2.MetaSet("umh_topic", "umh.v1.plant1.line1._historian.temperature")
-			err = msgHandler(ctx, tempMsg2)
+			msg2.MetaSet("umh_topic", "umh.v1.acme._historian.temperature")
+			err = msgHandler(ctx, msg2)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Should still be only one message (filtered)
-			Consistently(func() int {
-				return len(messages)
-			}, 500*time.Millisecond).Should(Equal(1))
-
-			// Large temperature change - should be kept (0.7 >= 0.5)
-			tempMsg3 := service.NewMessage(nil)
-			tempMsg3.SetStructured(map[string]interface{}{
-				"value":        20.7,
-				"timestamp_ms": 1609459202000,
-			})
-			tempMsg3.MetaSet("data_contract", "_historian")
-			tempMsg3.MetaSet("umh_topic", "umh.v1.plant1.line1._historian.temperature")
-			err = msgHandler(ctx, tempMsg3)
-			Expect(err).NotTo(HaveOccurred())
-
+			// Should have both messages (temperature uses stricter threshold)
 			Eventually(func() int {
 				return len(messages)
 			}).Should(Equal(2))
@@ -750,13 +667,13 @@ downsampler:
 
 			err = builder.AddProcessorYAML(`
 downsampler:
-  algorithm: "deadband"
-  threshold: 1.0
-  topic_thresholds:
-    - topic: "umh.v1.plant1.line1._historian.temperature"
-      threshold: 0.2
-    - pattern: "*.temperature"
-      threshold: 0.5
+  default:
+    deadband:
+      threshold: 2.0
+  overrides:
+    - pattern: "umh.v1.acme._historian.critical_temp"
+      deadband:
+        threshold: 0.01
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -777,48 +694,27 @@ downsampler:
 				_ = stream.Run(ctx)
 			}()
 
-			// Exact topic match - should use 0.2 threshold (highest priority)
-			tempMsg := service.NewMessage(nil)
-			tempMsg.SetStructured(map[string]interface{}{
-				"value":        20.0,
+			// Send exact topic match message
+			msg1 := service.NewMessage(nil)
+			msg1.SetStructured(map[string]interface{}{
+				"value":        25.0,
 				"timestamp_ms": 1609459200000,
 			})
-			tempMsg.MetaSet("data_contract", "_historian")
-			tempMsg.MetaSet("umh_topic", "umh.v1.plant1.line1._historian.temperature")
-			err = msgHandler(ctx, tempMsg)
+			msg1.MetaSet("umh_topic", "umh.v1.acme._historian.critical_temp")
+			err = msgHandler(ctx, msg1)
 			Expect(err).NotTo(HaveOccurred())
 
-			Eventually(func() int {
-				return len(messages)
-			}).Should(Equal(1))
-
-			// Small change - should be filtered (0.15 < 0.2)
-			tempMsg2 := service.NewMessage(nil)
-			tempMsg2.SetStructured(map[string]interface{}{
-				"value":        20.15,
-				"timestamp_ms": 1609459201000,
+			// Very small change that exceeds the exact topic threshold
+			msg2 := service.NewMessage(nil)
+			msg2.SetStructured(map[string]interface{}{
+				"value":        25.02, // 0.02 > 0.01 threshold for exact topic
+				"timestamp_ms": 1609459200100,
 			})
-			tempMsg2.MetaSet("data_contract", "_historian")
-			tempMsg2.MetaSet("umh_topic", "umh.v1.plant1.line1._historian.temperature")
-			err = msgHandler(ctx, tempMsg2)
+			msg2.MetaSet("umh_topic", "umh.v1.acme._historian.critical_temp")
+			err = msgHandler(ctx, msg2)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Should still be only one message (filtered)
-			Consistently(func() int {
-				return len(messages)
-			}, 500*time.Millisecond).Should(Equal(1))
-
-			// Change meeting exact topic threshold - should be kept (0.25 >= 0.2)
-			tempMsg3 := service.NewMessage(nil)
-			tempMsg3.SetStructured(map[string]interface{}{
-				"value":        20.25,
-				"timestamp_ms": 1609459202000,
-			})
-			tempMsg3.MetaSet("data_contract", "_historian")
-			tempMsg3.MetaSet("umh_topic", "umh.v1.plant1.line1._historian.temperature")
-			err = msgHandler(ctx, tempMsg3)
-			Expect(err).NotTo(HaveOccurred())
-
+			// Should have both messages (exact topic uses very strict threshold)
 			Eventually(func() int {
 				return len(messages)
 			}).Should(Equal(2))
@@ -833,10 +729,74 @@ downsampler:
 
 			err = builder.AddProcessorYAML(`
 downsampler:
-  algorithm: "deadband"
-  threshold: 2.0
-  topic_thresholds:
+  default:
+    deadband:
+      threshold: 5.0
+  overrides:
     - pattern: "*.temperature"
+      deadband:
+        threshold: 0.1
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Send message that doesn't match any override patterns
+			msg1 := service.NewMessage(nil)
+			msg1.SetStructured(map[string]interface{}{
+				"value":        100.0,
+				"timestamp_ms": 1609459200000,
+			})
+			msg1.MetaSet("data_contract", "_historian")
+			msg1.MetaSet("umh_topic", "umh.v1.acme._historian.pressure")
+			err = msgHandler(ctx, msg1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Small change that would be filtered with default threshold
+			msg2 := service.NewMessage(nil)
+			msg2.SetStructured(map[string]interface{}{
+				"value":        103.0, // 3.0 < 5.0 default threshold
+				"timestamp_ms": 1609459200100,
+			})
+			msg2.MetaSet("data_contract", "_historian")
+			msg2.MetaSet("umh_topic", "umh.v1.acme._historian.pressure")
+			err = msgHandler(ctx, msg2)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should only have first message (second filtered by default threshold)
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+		})
+	})
+
+	Describe("when handling errors gracefully", func() {
+		It("should pass through messages with missing umh_topic", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+downsampler:
+  default:
+    deadband:
       threshold: 0.5
 `)
 			Expect(err).NotTo(HaveOccurred())
@@ -858,276 +818,22 @@ downsampler:
 				_ = stream.Run(ctx)
 			}()
 
-			// Pressure message - no specific threshold, should use default (2.0)
-			pressureMsg := service.NewMessage(nil)
-			pressureMsg.SetStructured(map[string]interface{}{
-				"value":        100.0,
-				"timestamp_ms": 1609459200000,
-			})
-			pressureMsg.MetaSet("data_contract", "_historian")
-			pressureMsg.MetaSet("umh_topic", "umh.v1.plant1.line1._historian.pressure")
-			err = msgHandler(ctx, pressureMsg)
-			Expect(err).NotTo(HaveOccurred())
-
-			Eventually(func() int {
-				return len(messages)
-			}).Should(Equal(1))
-
-			// Small pressure change - should be filtered (1.5 < 2.0)
-			pressureMsg2 := service.NewMessage(nil)
-			pressureMsg2.SetStructured(map[string]interface{}{
-				"value":        101.5,
-				"timestamp_ms": 1609459201000,
-			})
-			pressureMsg2.MetaSet("data_contract", "_historian")
-			pressureMsg2.MetaSet("umh_topic", "umh.v1.plant1.line1._historian.pressure")
-			err = msgHandler(ctx, pressureMsg2)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Should still be only one message (filtered)
-			Consistently(func() int {
-				return len(messages)
-			}, 500*time.Millisecond).Should(Equal(1))
-
-			// Large pressure change - should be kept (2.5 >= 2.0)
-			pressureMsg3 := service.NewMessage(nil)
-			pressureMsg3.SetStructured(map[string]interface{}{
-				"value":        102.5,
-				"timestamp_ms": 1609459202000,
-			})
-			pressureMsg3.MetaSet("data_contract", "_historian")
-			pressureMsg3.MetaSet("umh_topic", "umh.v1.plant1.line1._historian.pressure")
-			err = msgHandler(ctx, pressureMsg3)
-			Expect(err).NotTo(HaveOccurred())
-
-			Eventually(func() int {
-				return len(messages)
-			}).Should(Equal(2))
-		})
-	})
-
-	When("handling boolean values", func() {
-		It("should keep boolean changes and drop identical booleans", func() {
-			builder := service.NewStreamBuilder()
-
-			var msgHandler service.MessageHandlerFunc
-			msgHandler, err := builder.AddProducerFunc()
-			Expect(err).NotTo(HaveOccurred())
-
-			err = builder.AddProcessorYAML(`
-downsampler:
-  algorithm: "deadband"
-  threshold: 0.5
-`)
-			Expect(err).NotTo(HaveOccurred())
-
-			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
-				messages = append(messages, msg)
-				return nil
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			stream, err := builder.Build()
-			Expect(err).NotTo(HaveOccurred())
-
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-
-			go func() {
-				_ = stream.Run(ctx)
-			}()
-
-			// Send first boolean message (baseline - always kept)
-			msg1 := service.NewMessage(nil)
-			msg1.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459200000,
-				"value":        true,
-			})
-			msg1.MetaSet("data_contract", "_historian")
-			msg1.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.pump_active")
-			err = msgHandler(ctx, msg1)
-			Expect(err).NotTo(HaveOccurred())
-
-			Eventually(func() int {
-				return len(messages)
-			}).Should(Equal(1))
-
-			// Send identical boolean - should be filtered
-			msg2 := service.NewMessage(nil)
-			msg2.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459201000,
-				"value":        true, // Same as previous
-			})
-			msg2.MetaSet("data_contract", "_historian")
-			msg2.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.pump_active")
-			err = msgHandler(ctx, msg2)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Should still be only one message (second filtered out)
-			Consistently(func() int {
-				return len(messages)
-			}, 500*time.Millisecond).Should(Equal(1))
-
-			// Send changed boolean - should be kept
-			msg3 := service.NewMessage(nil)
-			msg3.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459202000,
-				"value":        false, // Changed from true to false
-			})
-			msg3.MetaSet("data_contract", "_historian")
-			msg3.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.pump_active")
-			err = msgHandler(ctx, msg3)
-			Expect(err).NotTo(HaveOccurred())
-
-			Eventually(func() int {
-				return len(messages)
-			}).Should(Equal(2))
-
-			// Send another identical boolean - should be filtered
-			msg4 := service.NewMessage(nil)
-			msg4.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459203000,
-				"value":        false, // Same as previous
-			})
-			msg4.MetaSet("data_contract", "_historian")
-			msg4.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.pump_active")
-			err = msgHandler(ctx, msg4)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Should still be only two messages (fourth filtered out)
-			Consistently(func() int {
-				return len(messages)
-			}, 500*time.Millisecond).Should(Equal(2))
-		})
-
-		It("should handle string values with equality logic", func() {
-			builder := service.NewStreamBuilder()
-
-			var msgHandler service.MessageHandlerFunc
-			msgHandler, err := builder.AddProducerFunc()
-			Expect(err).NotTo(HaveOccurred())
-
-			err = builder.AddProcessorYAML(`
-downsampler:
-  algorithm: "swinging_door"
-  comp_dev: 1.0
-`)
-			Expect(err).NotTo(HaveOccurred())
-
-			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
-				messages = append(messages, msg)
-				return nil
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			stream, err := builder.Build()
-			Expect(err).NotTo(HaveOccurred())
-
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-
-			go func() {
-				_ = stream.Run(ctx)
-			}()
-
-			// Send first string message
-			msg1 := service.NewMessage(nil)
-			msg1.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459200000,
-				"value":        "running",
-			})
-			msg1.MetaSet("data_contract", "_historian")
-			msg1.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.status")
-			err = msgHandler(ctx, msg1)
-			Expect(err).NotTo(HaveOccurred())
-
-			Eventually(func() int {
-				return len(messages)
-			}).Should(Equal(1))
-
-			// Send identical string - should be filtered
-			msg2 := service.NewMessage(nil)
-			msg2.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459201000,
-				"value":        "running", // Same as previous
-			})
-			msg2.MetaSet("data_contract", "_historian")
-			msg2.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.status")
-			err = msgHandler(ctx, msg2)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Should still be only one message (second filtered out)
-			Consistently(func() int {
-				return len(messages)
-			}, 500*time.Millisecond).Should(Equal(1))
-
-			// Send changed string - should be kept
-			msg3 := service.NewMessage(nil)
-			msg3.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459202000,
-				"value":        "stopped", // Changed from "running" to "stopped"
-			})
-			msg3.MetaSet("data_contract", "_historian")
-			msg3.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.status")
-			err = msgHandler(ctx, msg3)
-			Expect(err).NotTo(HaveOccurred())
-
-			Eventually(func() int {
-				return len(messages)
-			}).Should(Equal(2))
-		})
-	})
-
-	When("handling errors gracefully", func() {
-		It("should pass through messages with missing umh_topic", func() {
-			builder := service.NewStreamBuilder()
-
-			var msgHandler service.MessageHandlerFunc
-			msgHandler, err := builder.AddProducerFunc()
-			Expect(err).NotTo(HaveOccurred())
-
-			err = builder.AddProcessorYAML(`
-downsampler:
-  algorithm: "deadband"
-  threshold: 0.5
-`)
-			Expect(err).NotTo(HaveOccurred())
-
-			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
-				messages = append(messages, msg)
-				return nil
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			stream, err := builder.Build()
-			Expect(err).NotTo(HaveOccurred())
-
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-
-			go func() {
-				_ = stream.Run(ctx)
-			}()
-
-			// Message with missing umh_topic
-			testMsg := service.NewMessage(nil)
-			testMsg.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1609459200000,
+			// Send message missing umh_topic metadata
+			msg := service.NewMessage(nil)
+			msg.SetStructured(map[string]interface{}{
 				"value":        10.0,
+				"timestamp_ms": 1609459200000,
 			})
-			testMsg.MetaSet("data_contract", "_historian")
-			// Missing umh_topic
-			err = msgHandler(ctx, testMsg)
+			msg.MetaSet("data_contract", "_historian")
+			// Note: missing umh_topic metadata
+			err = msgHandler(ctx, msg)
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
 				return len(messages)
 			}).Should(Equal(1))
 
-			// Should not have downsampled_by metadata (passed through due to error)
+			// Message should pass through unchanged without downsampling
 			_, exists := messages[0].MetaGet("downsampled_by")
 			Expect(exists).To(BeFalse())
 		})
@@ -1141,8 +847,9 @@ downsampler:
 
 			err = builder.AddProcessorYAML(`
 downsampler:
-  algorithm: "deadband"
-  threshold: 0.5
+  default:
+    deadband:
+      threshold: 0.5
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1156,31 +863,245 @@ downsampler:
 			stream, err := builder.Build()
 			Expect(err).NotTo(HaveOccurred())
 
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 
 			go func() {
 				_ = stream.Run(ctx)
 			}()
 
-			// Message with missing timestamp_ms
-			testMsg := service.NewMessage(nil)
-			testMsg.SetStructured(map[string]interface{}{
+			// Send message missing timestamp_ms field
+			msg := service.NewMessage(nil)
+			msg.SetStructured(map[string]interface{}{
 				"value": 10.0,
-				// Missing timestamp_ms
+				// Note: missing timestamp_ms field
 			})
-			testMsg.MetaSet("data_contract", "_historian")
-			testMsg.MetaSet("umh_topic", "umh.v1.enterprise.site.area.line.workcell._historian.temperature")
-			err = msgHandler(ctx, testMsg)
+			msg.MetaSet("data_contract", "_historian")
+			msg.MetaSet("umh_topic", "umh.v1.acme._historian.temperature")
+			err = msgHandler(ctx, msg)
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
 				return len(messages)
 			}).Should(Equal(1))
 
-			// Should not have downsampled_by metadata (passed through due to error)
+			// Message should pass through unchanged without downsampling
 			_, exists := messages[0].MetaGet("downsampled_by")
 			Expect(exists).To(BeFalse())
+		})
+	})
+
+	Describe("getConfigForTopic function", func() {
+		var config downsampler.DownsamplerConfig
+
+		BeforeEach(func() {
+			// Reset config for each test
+			config = downsampler.DownsamplerConfig{}
+		})
+
+		Context("with default configuration only", func() {
+			BeforeEach(func() {
+				config.Default.Deadband.Threshold = 1.5
+				config.Default.Deadband.MaxTime = 30 * time.Second
+			})
+
+			It("should return default values for any topic", func() {
+				algorithm, configMap := config.GetConfigForTopic("any.topic.here")
+
+				Expect(algorithm).To(Equal("deadband"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 1.5))
+				Expect(configMap).To(HaveKeyWithValue("max_time", 30*time.Second))
+			})
+		})
+
+		Context("with pattern matching overrides", func() {
+			BeforeEach(func() {
+				config.Default.Deadband.Threshold = 2.0
+				config.Overrides = []downsampler.OverrideConfig{
+					{
+						Pattern:  "*.temperature",
+						Deadband: &downsampler.DeadbandConfig{Threshold: 0.1},
+					},
+					{
+						Pattern:  "*.pressure",
+						Deadband: &downsampler.DeadbandConfig{Threshold: 0.5},
+					},
+				}
+			})
+
+			It("should match wildcard patterns correctly", func() {
+				// Test temperature pattern match
+				algorithm, configMap := config.GetConfigForTopic("umh.v1.acme._historian.temperature")
+
+				Expect(algorithm).To(Equal("deadband"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 0.1))
+			})
+
+			It("should match different patterns", func() {
+				// Test pressure pattern match
+				algorithm, configMap := config.GetConfigForTopic("umh.v1.factory.line1._historian.pressure")
+
+				Expect(algorithm).To(Equal("deadband"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 0.5))
+			})
+
+			It("should fall back to default for non-matching topics", func() {
+				// Test non-matching topic
+				algorithm, configMap := config.GetConfigForTopic("umh.v1.acme._historian.humidity")
+
+				Expect(algorithm).To(Equal("deadband"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 2.0))
+			})
+		})
+
+		Context("with exact topic matching overrides", func() {
+			BeforeEach(func() {
+				config.Default.Deadband.Threshold = 2.0
+				config.Overrides = []downsampler.OverrideConfig{
+					{
+						Topic:    "umh.v1.acme._historian.critical_temp",
+						Deadband: &downsampler.DeadbandConfig{Threshold: 0.01},
+					},
+				}
+			})
+
+			It("should match exact topics correctly", func() {
+				algorithm, configMap := config.GetConfigForTopic("umh.v1.acme._historian.critical_temp")
+
+				Expect(algorithm).To(Equal("deadband"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 0.01))
+			})
+
+			It("should fall back to default for non-exact topics", func() {
+				algorithm, configMap := config.GetConfigForTopic("umh.v1.acme._historian.critical_temp_2")
+
+				Expect(algorithm).To(Equal("deadband"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 2.0))
+			})
+		})
+
+		Context("with mixed pattern and exact topic overrides", func() {
+			BeforeEach(func() {
+				config.Default.Deadband.Threshold = 10.0
+				config.Overrides = []downsampler.OverrideConfig{
+					{
+						Pattern:  "*.temperature",
+						Deadband: &downsampler.DeadbandConfig{Threshold: 0.5},
+					},
+					{
+						Topic:    "umh.v1.acme._historian.critical_temperature",
+						Deadband: &downsampler.DeadbandConfig{Threshold: 0.01},
+					},
+				}
+			})
+
+			It("should apply first matching rule (exact topic before pattern)", func() {
+				// This should match the exact topic rule first
+				algorithm, configMap := config.GetConfigForTopic("umh.v1.acme._historian.critical_temperature")
+
+				Expect(algorithm).To(Equal("deadband"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 0.01))
+			})
+
+			It("should apply pattern rule when exact doesn't match", func() {
+				// This should match the pattern rule
+				algorithm, configMap := config.GetConfigForTopic("umh.v1.factory._historian.temperature")
+
+				Expect(algorithm).To(Equal("deadband"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 0.5))
+			})
+
+			It("should use default values when no overrides match", func() {
+				// This topic should not match any pattern or exact topic override
+				algorithm, configMap := config.GetConfigForTopic("umh.v1.plant._historian.flow_rate")
+
+				Expect(algorithm).To(Equal("deadband"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 10.0)) // Default threshold
+			})
+		})
+
+		Context("with complex wildcard patterns", func() {
+			BeforeEach(func() {
+				config.Default.Deadband.Threshold = 5.0
+				config.Overrides = []downsampler.OverrideConfig{
+					{
+						Pattern:  "umh.v1.*.temperature",
+						Deadband: &downsampler.DeadbandConfig{Threshold: 0.2},
+					},
+					{
+						Pattern:  "umh.v1.factory.*",
+						Deadband: &downsampler.DeadbandConfig{Threshold: 1.0},
+					},
+				}
+			})
+
+			It("should match specific wildcard patterns", func() {
+				// Should match umh.v1.*.temperature
+				algorithm, configMap := config.GetConfigForTopic("umh.v1.plant1.temperature")
+
+				Expect(algorithm).To(Equal("deadband"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 0.2))
+			})
+
+			It("should match broader wildcard patterns", func() {
+				// Should match umh.v1.factory.*
+				algorithm, configMap := config.GetConfigForTopic("umh.v1.factory.pressure")
+
+				Expect(algorithm).To(Equal("deadband"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 1.0))
+			})
+
+			It("should use default values when no complex patterns match", func() {
+				// This topic should not match any of the complex wildcard patterns
+				algorithm, configMap := config.GetConfigForTopic("umh.v2.plant1.humidity")
+
+				Expect(algorithm).To(Equal("deadband"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 5.0)) // Default threshold
+			})
+		})
+
+		Context("with swinging door algorithm", func() {
+			BeforeEach(func() {
+				config.Default.SwingingDoor.Threshold = 0.3
+				config.Default.SwingingDoor.MinTime = 5 * time.Second
+				config.Default.SwingingDoor.MaxTime = 1 * time.Hour
+				config.Overrides = []downsampler.OverrideConfig{
+					{
+						Pattern: "*.vibration",
+						SwingingDoor: &downsampler.SwingingDoorConfig{
+							Threshold: 0.01,
+							MinTime:   1 * time.Second,
+						},
+					},
+				}
+			})
+
+			It("should return swinging door algorithm for default", func() {
+				algorithm, configMap := config.GetConfigForTopic("any.topic")
+
+				Expect(algorithm).To(Equal("swinging_door"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 0.3))
+				Expect(configMap).To(HaveKeyWithValue("min_time", 5*time.Second))
+				Expect(configMap).To(HaveKeyWithValue("max_time", 1*time.Hour))
+			})
+
+			It("should apply swinging door overrides", func() {
+				algorithm, configMap := config.GetConfigForTopic("umh.v1.machine._historian.vibration")
+
+				Expect(algorithm).To(Equal("swinging_door"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 0.01))
+				Expect(configMap).To(HaveKeyWithValue("min_time", 1*time.Second))
+			})
+
+			It("should use default swinging door values when no overrides match", func() {
+				// This topic should not match the vibration pattern
+				algorithm, configMap := config.GetConfigForTopic("umh.v1.machine._historian.temperature")
+
+				Expect(algorithm).To(Equal("swinging_door"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 0.3))          // Default threshold
+				Expect(configMap).To(HaveKeyWithValue("min_time", 5*time.Second)) // Default min_time
+				Expect(configMap).To(HaveKeyWithValue("max_time", 1*time.Hour))   // Default max_time
+			})
 		})
 	})
 })

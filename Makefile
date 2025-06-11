@@ -122,3 +122,7 @@ test-benthos-downsampler-classic: target
 .PHONY: test-benthos-downsampler-swinging-door
 test-benthos-downsampler-swinging-door: target
 	@$(BENTHOS_BIN) -c ./config/downsampler_swinging_door_example.yaml
+
+.PHONY: test-benthos-downsampler-example-one
+test-benthos-downsampler-example-one: target
+	@$(BENTHOS_BIN) -c ./config/downsampler_example_one.yaml

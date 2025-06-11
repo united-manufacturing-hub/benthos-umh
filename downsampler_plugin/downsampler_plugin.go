@@ -69,18 +69,27 @@ type DownsamplerConfig struct {
 	Overrides []OverrideConfig `json:"overrides,omitempty" yaml:"overrides,omitempty"`
 }
 
-// getConfigForTopic returns the effective configuration for a given topic by applying overrides
-func (c *DownsamplerConfig) getConfigForTopic(topic string) (string, map[string]interface{}) {
-	// Start with defaults
-	config := map[string]interface{}{
-		"threshold": c.Default.Deadband.Threshold,
-		"max_time":  c.Default.Deadband.MaxTime,
-		"min_time":  c.Default.SwingingDoor.MinTime,
+// GetConfigForTopic returns the effective configuration for a given topic by applying overrides
+func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]interface{}) {
+	// Determine default algorithm based on which default config has values
+	algorithm := "deadband" // Default fallback
+	if c.Default.SwingingDoor.Threshold != 0 || c.Default.SwingingDoor.MinTime != 0 || c.Default.SwingingDoor.MaxTime != 0 {
+		algorithm = "swinging_door"
+	} else if c.Default.Deadband.Threshold != 0 || c.Default.Deadband.MaxTime != 0 {
+		algorithm = "deadband"
 	}
 
-	// Use swinging door max_time if deadband max_time is not set
-	if c.Default.Deadband.MaxTime == 0 && c.Default.SwingingDoor.MaxTime != 0 {
+	// Start with defaults based on the determined algorithm
+	config := map[string]interface{}{}
+
+	if algorithm == "swinging_door" {
+		config["threshold"] = c.Default.SwingingDoor.Threshold
+		config["min_time"] = c.Default.SwingingDoor.MinTime
 		config["max_time"] = c.Default.SwingingDoor.MaxTime
+	} else {
+		config["threshold"] = c.Default.Deadband.Threshold
+		config["max_time"] = c.Default.Deadband.MaxTime
+		config["min_time"] = c.Default.SwingingDoor.MinTime // Deadband doesn't use min_time but include for consistency
 	}
 
 	// Add late policy defaults
@@ -89,14 +98,6 @@ func (c *DownsamplerConfig) getConfigForTopic(topic string) (string, map[string]
 		latePolicy = c.Default.LatePolicy.LatePolicy
 	}
 	config["late_policy"] = latePolicy
-
-	// Determine default algorithm based on which default config has values
-	algorithm := "deadband" // Default fallback
-	if c.Default.SwingingDoor.Threshold != 0 || c.Default.SwingingDoor.MinTime != 0 || c.Default.SwingingDoor.MaxTime != 0 {
-		algorithm = "swinging_door"
-	} else if c.Default.Deadband.Threshold != 0 || c.Default.Deadband.MaxTime != 0 {
-		algorithm = "deadband"
-	}
 
 	// Apply overrides in order (first match wins)
 	for _, override := range c.Overrides {
@@ -173,13 +174,12 @@ func init() {
 		Summary("Downsamples time-series data using configurable algorithms").
 		Description(`The downsampler reduces data volume by filtering out insignificant changes in time-series data using configurable algorithms.
 
-It processes both UMH-core time-series data and UMH classic _historian messages with data_contract "_historian", 
+It processes UMH-core time-series data with data_contract "_historian", 
 passing all other messages through unchanged. Each message that passes the downsampling filter is annotated 
 with metadata indicating the algorithm used.
 
-Supported formats:
+Supported format:
 - UMH-core: Single "value" field with timestamp (one tag, one message, one topic)
-- UMH classic: Multiple fields in one JSON object with shared timestamp
 
 The plugin maintains separate state for each time series (identified by umh_topic) and applies the configured algorithm
 to determine whether each data point represents a significant change worth preserving.
@@ -383,7 +383,7 @@ func newDownsamplerProcessor(config DownsamplerConfig, logger *service.Logger, m
 
 // getThresholdForTopic returns the appropriate threshold for a given topic
 func (p *DownsamplerProcessor) getThresholdForTopic(topic string) float64 {
-	_, config := p.config.getConfigForTopic(topic)
+	_, config := p.config.GetConfigForTopic(topic)
 	if threshold, ok := config["threshold"].(float64); ok {
 		return threshold
 	}
@@ -395,7 +395,7 @@ func (p *DownsamplerProcessor) ProcessBatch(ctx context.Context, batch service.M
 	var outBatch service.MessageBatch
 
 	for _, msg := range batch {
-		// Process both UMH-core time-series and classic _historian messages
+		// Process UMH-core time-series messages
 		if !p.isTimeSeriesMessage(msg) {
 			outBatch = append(outBatch, msg)
 			p.messagesPassed.Incr(1)
@@ -431,33 +431,17 @@ func (p *DownsamplerProcessor) ProcessBatch(ctx context.Context, batch service.M
 			continue
 		}
 
-		// Detect message format and process accordingly
-		if p.isUMHCoreFormat(dataMap) {
-			// UMH-core format: single "value" field - process as before
-			processedMsg, err := p.processUMHCoreMessage(msg, dataMap, timestamp)
-			if err != nil {
-				p.messagesErrored.Incr(1)
-				p.logger.Errorf("Failed to process UMH-core message: %v", err)
-				// Fail open - pass message through on error
-				outBatch = append(outBatch, msg)
-				continue
-			}
-			if processedMsg != nil {
-				outBatch = append(outBatch, processedMsg)
-			}
-		} else {
-			// UMH classic _historian format: multiple fields - process per key
-			processedMsg, err := p.processUMHClassicMessage(msg, dataMap, timestamp)
-			if err != nil {
-				p.messagesErrored.Incr(1)
-				p.logger.Errorf("Failed to process UMH classic message: %v", err)
-				// Fail open - pass message through on error
-				outBatch = append(outBatch, msg)
-				continue
-			}
-			if processedMsg != nil {
-				outBatch = append(outBatch, processedMsg)
-			}
+		// Process as UMH-core format (single "value" field)
+		processedMsg, err := p.processUMHCoreMessage(msg, dataMap, timestamp)
+		if err != nil {
+			p.messagesErrored.Incr(1)
+			p.logger.Errorf("Failed to process UMH-core message: %v", err)
+			// Fail open - pass message through on error
+			outBatch = append(outBatch, msg)
+			continue
+		}
+		if processedMsg != nil {
+			outBatch = append(outBatch, processedMsg)
 		}
 	}
 
@@ -468,23 +452,32 @@ func (p *DownsamplerProcessor) ProcessBatch(ctx context.Context, batch service.M
 }
 
 // isTimeSeriesMessage determines if a message should be processed for downsampling
-// Returns true for:
-// - UMH-core time-series data (data_contract = "_historian" with structured payload)
-// - UMH classic _historian data (data_contract = "_historian" with any structured payload)
+// Returns true for UMH-core time-series data (JSON with timestamp_ms and value fields, plus umh_topic metadata)
 func (p *DownsamplerProcessor) isTimeSeriesMessage(msg *service.Message) bool {
-	contract, exists := msg.MetaGet("data_contract")
-	if !exists {
+	// Check for umh_topic metadata (required for UMH-core)
+	_, hasUmhTopic := msg.MetaGet("umh_topic")
+	if !hasUmhTopic {
 		return false
 	}
 
-	// Both UMH-core and classic use _historian data contract for time-series data
-	return contract == "_historian"
-}
+	// UMH-core format: structured payload with timestamp_ms and value fields
+	dataMap, err := msg.AsStructured()
+	if err != nil {
+		return false
+	}
 
-// isUMHCoreFormat checks if the message uses UMH-core format (single "value" field)
-func (p *DownsamplerProcessor) isUMHCoreFormat(dataMap map[string]interface{}) bool {
-	_, hasValue := dataMap["value"]
-	return hasValue
+	// Convert to map[string]interface{} for field access
+	data, ok := dataMap.(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	// Check for required UMH-core fields
+	_, hasTimestamp := data["timestamp_ms"]
+	_, hasValue := data["value"]
+
+	// Require both timestamp_ms and value fields for UMH-core format
+	return hasTimestamp && hasValue
 }
 
 // extractTimestamp extracts and converts timestamp from message data
@@ -566,136 +559,6 @@ func (p *DownsamplerProcessor) processUMHCoreMessage(msg *service.Message, dataM
 	}
 }
 
-// processUMHClassicMessage processes a UMH classic _historian format message (multiple fields)
-func (p *DownsamplerProcessor) processUMHClassicMessage(msg *service.Message, dataMap map[string]interface{}, timestamp time.Time) (*service.Message, error) {
-	// Get base topic for series identification
-	baseTopic, exists := msg.MetaGet("umh_topic")
-	if !exists {
-		return nil, errors.New("missing umh_topic metadata")
-	}
-
-	// Create output payload with timestamp
-	outputData := map[string]interface{}{
-		"timestamp_ms": dataMap["timestamp_ms"],
-	}
-
-	// Track processing results
-	keysProcessed := 0
-	keysKept := 0
-	keysDropped := 0
-
-	// Process each field individually (excluding timestamp_ms and meta)
-	for key, value := range dataMap {
-		if p.isExcludedKey(key) {
-			continue
-		}
-
-		keysProcessed++
-
-		// Create series ID for this specific metric
-		seriesID := p.createSeriesID(baseTopic, key)
-
-		// Get or create series state for this metric
-		state, err := p.getOrCreateSeriesState(seriesID)
-		if err != nil {
-			p.logger.Errorf("Failed to get series state for %s: %v", seriesID, err)
-			// Fail open - keep the field
-			outputData[key] = value
-			keysKept++
-			continue
-		}
-
-		// Check for late arrival and handle according to policy
-		handled, err := p.handleLateArrival(seriesID, state, timestamp, msg)
-		if err != nil {
-			p.logger.Errorf("Late arrival handling error for series %s: %v", seriesID, err)
-			// Fail open - keep the field
-			outputData[key] = value
-			keysKept++
-			continue
-		}
-		if handled {
-			// Message was handled by late arrival policy
-			if _, exists := msg.MetaGet("late_oos"); exists {
-				// Passthrough case - keep this field unchanged
-				outputData[key] = value
-				keysKept++
-				p.logger.Debugf("Key kept (late passthrough): %s=%v in message", key, value)
-			} else {
-				// Drop case - skip this field
-				keysDropped++
-				p.logger.Debugf("Key dropped (late drop): %s=%v from message", key, value)
-			}
-			continue
-		}
-
-		// Apply downsampling algorithm to this field
-		shouldKeep, err := p.shouldKeepMessage(state, value, timestamp)
-		if err != nil {
-			p.logger.Errorf("Algorithm error for series %s: %v", seriesID, err)
-			// Fail open - keep the field
-			outputData[key] = value
-			keysKept++
-			continue
-		}
-
-		if shouldKeep {
-			// Keep this field
-			p.updateSeriesState(state, value, timestamp)
-			outputData[key] = value
-			keysKept++
-			p.logger.Debugf("Key kept: %s=%v in message", key, value)
-		} else {
-			// Drop this field - update processed time for late arrival detection
-			p.updateProcessedTime(state, timestamp)
-			keysDropped++
-			p.logger.Debugf("Key dropped: %s=%v from message", key, value)
-		}
-	}
-
-	// Log processing summary
-	p.logger.Debugf("Message processed: %d keys total, %d kept, %d dropped", keysProcessed, keysKept, keysDropped)
-
-	// Update metrics
-	if keysKept > 0 {
-		p.messagesProcessed.Incr(1)
-	}
-	if keysDropped > 0 {
-		p.messagesFiltered.Incr(1)
-	}
-
-	// If no measurement fields remain (only timestamp_ms), drop the entire message
-	if keysKept == 0 {
-		p.logger.Debugf("Entire message dropped: no measurement fields remaining")
-		return nil, nil
-	}
-
-	// Create new message with filtered data
-	newMsg := msg.Copy()
-	newMsg.SetStructured(outputData)
-
-	// Add metadata annotation
-	newMsg.MetaSet("downsampled_by", fmt.Sprintf("downsampler(filtered_%d_of_%d_keys)", keysKept, keysProcessed))
-
-	return newMsg, nil
-}
-
-// isExcludedKey checks if a key should be excluded from processing
-func (p *DownsamplerProcessor) isExcludedKey(key string) bool {
-	excludedKeys := map[string]bool{
-		"timestamp_ms": true,
-		"meta":         true,
-	}
-	return excludedKeys[key]
-}
-
-// createSeriesID creates a unique series identifier for a specific metric within a message
-func (p *DownsamplerProcessor) createSeriesID(baseTopic, metricKey string) string {
-	// For classic _historian format, append the metric key to create unique series
-	// Example: "umh.v1.plant1.line1._historian" + ".temperature" = "umh.v1.plant1.line1._historian.temperature"
-	return baseTopic + "." + metricKey
-}
-
 // getOrCreateSeriesState retrieves or creates the state for a time series
 func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string) (*SeriesState, error) {
 	p.stateMutex.RLock()
@@ -716,7 +579,7 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string) (*SeriesS
 	}
 
 	// Get algorithm configuration for this topic
-	algorithmType, algorithmConfig := p.config.getConfigForTopic(seriesID)
+	algorithmType, algorithmConfig := p.config.GetConfigForTopic(seriesID)
 
 	algorithm, err := algorithms.Create(algorithmType, algorithmConfig)
 	if err != nil {
@@ -739,7 +602,7 @@ func (p *DownsamplerProcessor) handleLateArrival(seriesID string, state *SeriesS
 	}
 
 	// Get late policy configuration for this topic
-	_, config := p.config.getConfigForTopic(seriesID)
+	_, config := p.config.GetConfigForTopic(seriesID)
 	latePolicy, _ := config["late_policy"].(string)
 
 	// Default values if not configured
@@ -840,16 +703,6 @@ func (p *DownsamplerProcessor) shouldKeepMessage(state *SeriesState, value inter
 	}
 
 	return shouldKeep, err
-}
-
-// isNonNumericType checks if a value is a non-numeric type (string, boolean, etc.)
-func (p *DownsamplerProcessor) isNonNumericType(value interface{}) bool {
-	switch value.(type) {
-	case string, bool:
-		return true
-	default:
-		return false
-	}
 }
 
 // areEqual checks if two values are equal (used for non-numeric types)
