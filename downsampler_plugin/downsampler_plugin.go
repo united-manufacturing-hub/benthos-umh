@@ -42,20 +42,26 @@ type SwingingDoorConfig struct {
 	MaxTime   time.Duration `json:"max_time,omitempty" yaml:"max_time,omitempty"`
 }
 
+// LatePolicyConfig holds late arrival handling parameters
+type LatePolicyConfig struct {
+	LatePolicy  string        `json:"late_policy,omitempty" yaml:"late_policy,omitempty"`
+	MaxBackfill time.Duration `json:"max_backfill,omitempty" yaml:"max_backfill,omitempty"`
+}
+
 // DefaultConfig holds the default algorithm parameters
 type DefaultConfig struct {
 	Deadband     DeadbandConfig     `json:"deadband,omitempty" yaml:"deadband,omitempty"`
 	SwingingDoor SwingingDoorConfig `json:"swinging_door,omitempty" yaml:"swinging_door,omitempty"`
+	LatePolicy   LatePolicyConfig   `json:"late_policy,omitempty" yaml:"late_policy,omitempty"`
 }
 
 // OverrideConfig defines algorithm parameter overrides for specific topics or patterns
 type OverrideConfig struct {
-	Pattern string `json:"pattern,omitempty" yaml:"pattern,omitempty"` // Regex pattern to match topics
-	Topic   string `json:"topic,omitempty" yaml:"topic,omitempty"`     // Exact topic match
-
-	// Algorithm-specific configurations
+	Pattern      string              `json:"pattern,omitempty" yaml:"pattern,omitempty"`
+	Topic        string              `json:"topic,omitempty" yaml:"topic,omitempty"`
 	Deadband     *DeadbandConfig     `json:"deadband,omitempty" yaml:"deadband,omitempty"`
 	SwingingDoor *SwingingDoorConfig `json:"swinging_door,omitempty" yaml:"swinging_door,omitempty"`
+	LatePolicy   *LatePolicyConfig   `json:"late_policy,omitempty" yaml:"late_policy,omitempty"`
 }
 
 // DownsamplerConfig holds the configuration for the downsampler processor
@@ -77,6 +83,18 @@ func (c *DownsamplerConfig) getConfigForTopic(topic string) (string, map[string]
 	if c.Default.Deadband.MaxTime == 0 && c.Default.SwingingDoor.MaxTime != 0 {
 		config["max_time"] = c.Default.SwingingDoor.MaxTime
 	}
+
+	// Add late policy defaults
+	latePolicy := "passthrough"   // Default policy
+	maxBackfill := 24 * time.Hour // Default backfill window
+	if c.Default.LatePolicy.LatePolicy != "" {
+		latePolicy = c.Default.LatePolicy.LatePolicy
+	}
+	if c.Default.LatePolicy.MaxBackfill != 0 {
+		maxBackfill = c.Default.LatePolicy.MaxBackfill
+	}
+	config["late_policy"] = latePolicy
+	config["max_backfill"] = maxBackfill
 
 	// Determine default algorithm based on which default config has values
 	algorithm := "deadband" // Default fallback
@@ -133,6 +151,16 @@ func (c *DownsamplerConfig) getConfigForTopic(topic string) (string, map[string]
 					config["max_time"] = override.SwingingDoor.MaxTime
 				}
 			}
+
+			// Apply late policy overrides
+			if override.LatePolicy != nil {
+				if override.LatePolicy.LatePolicy != "" {
+					config["late_policy"] = override.LatePolicy.LatePolicy
+				}
+				if override.LatePolicy.MaxBackfill != 0 {
+					config["max_backfill"] = override.LatePolicy.MaxBackfill
+				}
+			}
 			break
 		}
 	}
@@ -142,10 +170,11 @@ func (c *DownsamplerConfig) getConfigForTopic(topic string) (string, map[string]
 
 // SeriesState holds the state for a single time series
 type SeriesState struct {
-	algorithm      algorithms.DownsampleAlgorithm
-	lastOutput     interface{}
-	lastOutputTime time.Time
-	mutex          sync.RWMutex
+	algorithm         algorithms.DownsampleAlgorithm
+	lastOutput        interface{}
+	lastOutputTime    time.Time
+	lastProcessedTime time.Time // Track the last processed timestamp for late arrival detection
+	mutex             sync.RWMutex
 }
 
 func init() {
@@ -191,6 +220,17 @@ Currently supported algorithms:
 					Description("Default maximum time interval for swinging door algorithm.").
 					Optional()).
 				Description("Default swinging door algorithm parameters.").
+				Optional(),
+			service.NewObjectField("late_policy",
+				service.NewStringEnumField("late_policy", "passthrough", "drop").
+					Description("Default policy for handling late-arriving messages (passthrough=forward unchanged, drop=discard with warning).").
+					Default("passthrough").
+					Optional(),
+				service.NewDurationField("max_backfill").
+					Description("Default maximum age for considering a message 'late' (older messages trigger late_policy).").
+					Default("24h").
+					Optional()).
+				Description("Default late arrival handling parameters.").
 				Optional()).
 			Description("Default algorithm parameters applied to all topics unless overridden.")).
 		Field(service.NewObjectListField("overrides",
@@ -221,6 +261,15 @@ Currently supported algorithms:
 					Description("Override maximum time interval for swinging door algorithm.").
 					Optional()).
 				Description("Swinging door algorithm parameter overrides.").
+				Optional(),
+			service.NewObjectField("late_policy",
+				service.NewStringEnumField("late_policy", "passthrough", "drop").
+					Description("Override policy for handling late-arriving messages (passthrough=forward unchanged, drop=discard with warning).").
+					Optional(),
+				service.NewDurationField("max_backfill").
+					Description("Override maximum age for considering a message 'late' (older messages trigger late_policy).").
+					Optional()).
+				Description("Late arrival handling parameter overrides.").
 				Optional()).
 			Description("Topic-specific parameter overrides. Supports regex patterns and exact topic matching.").
 			Optional())
@@ -252,6 +301,16 @@ Currently supported algorithms:
 				}
 				if maxTime, err := defaultParsed.FieldDuration("max_time"); err == nil {
 					defaultConfig.SwingingDoor.MaxTime = maxTime
+				}
+			}
+
+			// Parse late policy defaults
+			if defaultParsed := conf.Namespace("default", "late_policy"); defaultParsed.Contains() {
+				if latePolicy, err := defaultParsed.FieldString("late_policy"); err == nil {
+					defaultConfig.LatePolicy.LatePolicy = latePolicy
+				}
+				if maxBackfill, err := defaultParsed.FieldDuration("max_backfill"); err == nil {
+					defaultConfig.LatePolicy.MaxBackfill = maxBackfill
 				}
 			}
 
@@ -290,6 +349,17 @@ Currently supported algorithms:
 						}
 						if maxTime, err := swingingDoorParsed.FieldDuration("max_time"); err == nil {
 							override.SwingingDoor.MaxTime = maxTime
+						}
+					}
+
+					// Parse late policy overrides
+					if latePolicyParsed := overrideConf.Namespace("late_policy"); latePolicyParsed.Contains() {
+						override.LatePolicy = &LatePolicyConfig{}
+						if latePolicy, err := latePolicyParsed.FieldString("late_policy"); err == nil {
+							override.LatePolicy.LatePolicy = latePolicy
+						}
+						if maxBackfill, err := latePolicyParsed.FieldDuration("max_backfill"); err == nil {
+							override.LatePolicy.MaxBackfill = maxBackfill
 						}
 					}
 
@@ -481,6 +551,23 @@ func (p *DownsamplerProcessor) processUMHCoreMessage(msg *service.Message, dataM
 		return nil, fmt.Errorf("failed to get series state: %w", err)
 	}
 
+	// Check for late arrival and handle according to policy
+	handled, err := p.handleLateArrival(umhTopic, state, timestamp, msg)
+	if err != nil {
+		return nil, fmt.Errorf("late arrival handling error for series %s: %w", umhTopic, err)
+	}
+	if handled {
+		// Message was handled by late arrival policy (either dropped or passed through)
+		if _, exists := msg.MetaGet("late_oos"); exists {
+			// Passthrough case - return the message unchanged
+			p.messagesPassed.Incr(1)
+			return msg, nil
+		}
+		// Drop case - return nil
+		p.messagesFiltered.Incr(1)
+		return nil, nil
+	}
+
 	// Apply downsampling algorithm
 	shouldKeep, err := p.shouldKeepMessage(state, value, timestamp)
 	if err != nil {
@@ -494,7 +581,8 @@ func (p *DownsamplerProcessor) processUMHCoreMessage(msg *service.Message, dataM
 		p.messagesProcessed.Incr(1)
 		return msg, nil
 	} else {
-		// Message filtered
+		// Message filtered - update processed time for late arrival detection
+		p.updateProcessedTime(state, timestamp)
 		p.messagesFiltered.Incr(1)
 		return nil, nil
 	}
@@ -539,6 +627,30 @@ func (p *DownsamplerProcessor) processUMHClassicMessage(msg *service.Message, da
 			continue
 		}
 
+		// Check for late arrival and handle according to policy
+		handled, err := p.handleLateArrival(seriesID, state, timestamp, msg)
+		if err != nil {
+			p.logger.Errorf("Late arrival handling error for series %s: %v", seriesID, err)
+			// Fail open - keep the field
+			outputData[key] = value
+			keysKept++
+			continue
+		}
+		if handled {
+			// Message was handled by late arrival policy
+			if _, exists := msg.MetaGet("late_oos"); exists {
+				// Passthrough case - keep this field unchanged
+				outputData[key] = value
+				keysKept++
+				p.logger.Debugf("Key kept (late passthrough): %s=%v in message", key, value)
+			} else {
+				// Drop case - skip this field
+				keysDropped++
+				p.logger.Debugf("Key dropped (late drop): %s=%v from message", key, value)
+			}
+			continue
+		}
+
 		// Apply downsampling algorithm to this field
 		shouldKeep, err := p.shouldKeepMessage(state, value, timestamp)
 		if err != nil {
@@ -556,7 +668,8 @@ func (p *DownsamplerProcessor) processUMHClassicMessage(msg *service.Message, da
 			keysKept++
 			p.logger.Debugf("Key kept: %s=%v in message", key, value)
 		} else {
-			// Drop this field
+			// Drop this field - update processed time for late arrival detection
+			p.updateProcessedTime(state, timestamp)
 			keysDropped++
 			p.logger.Debugf("Key dropped: %s=%v from message", key, value)
 		}
@@ -638,6 +751,44 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string) (*SeriesS
 
 	p.seriesState[seriesID] = state
 	return state, nil
+}
+
+// handleLateArrival checks if a message is late and handles it according to the late policy
+func (p *DownsamplerProcessor) handleLateArrival(seriesID string, state *SeriesState, timestamp time.Time, msg *service.Message) (bool, error) {
+	// Skip late arrival check for first message
+	if state.lastProcessedTime.IsZero() {
+		return false, nil // Not late, continue processing
+	}
+
+	// Get late policy configuration for this topic
+	_, config := p.config.getConfigForTopic(seriesID)
+	latePolicy, _ := config["late_policy"].(string)
+	maxBackfill, _ := config["max_backfill"].(time.Duration)
+
+	// Default values if not configured
+	if latePolicy == "" {
+		latePolicy = "passthrough"
+	}
+	if maxBackfill == 0 {
+		maxBackfill = 24 * time.Hour
+	}
+
+	// Check if message is late (older than last processed timestamp minus max backfill window)
+	cutoffTime := state.lastProcessedTime.Add(-maxBackfill)
+	if timestamp.Before(cutoffTime) {
+		switch latePolicy {
+		case "drop":
+			p.logger.Warnf("Late point %s %v dropped (>%v old, policy=%s)", seriesID, timestamp, maxBackfill, latePolicy)
+			return true, nil // Message handled (dropped)
+		case "passthrough":
+			p.logger.Debugf("Late point %s %v passed through unchanged (>%v old, policy=%s)", seriesID, timestamp, maxBackfill, latePolicy)
+			// Add metadata to indicate this is a late out-of-order message
+			msg.MetaSet("late_oos", "true")
+			return true, nil // Message handled (passthrough)
+		}
+	}
+
+	return false, nil // Not late, continue normal processing
 }
 
 // shouldKeepMessage determines if a message should be kept based on the algorithm
@@ -909,6 +1060,21 @@ func (p *DownsamplerProcessor) updateSeriesState(state *SeriesState, value inter
 
 	state.lastOutput = value
 	state.lastOutputTime = timestamp
+	// Always update lastProcessedTime regardless of whether message was kept
+	// This is crucial for late arrival detection
+	state.lastProcessedTime = timestamp
+}
+
+// updateProcessedTime updates only the lastProcessedTime (for messages that were processed but not kept)
+func (p *DownsamplerProcessor) updateProcessedTime(state *SeriesState, timestamp time.Time) {
+	state.mutex.Lock()
+	defer state.mutex.Unlock()
+
+	// Only update lastProcessedTime for late arrival detection
+	// Don't update lastOutput/lastOutputTime since message wasn't kept
+	if timestamp.After(state.lastProcessedTime) {
+		state.lastProcessedTime = timestamp
+	}
 }
 
 // Close cleans up resources

@@ -226,3 +226,132 @@ The `max_time` parameter ensures **regulatory compliance** by forcing periodic d
 - **Heartbeat Function**: Guarantees data points at least every `max_time` interval
 - **Audit Trail**: Proves system was operational even during stable periods
 - **Compliance**: Meets FDA 21 CFR Part 11, GxP, and similar requirements for continuous monitoring
+
+## Late Arrival Policy (`late_policy`)
+
+### Why Late Arrival Handling is Critical
+
+Real-world Kafka topics occasionally deliver messages whose timestamps are older than previously processed messages. This creates **out-of-order (OoO) arrival** scenarios that can break compression algorithms:
+
+- **Deadband and Swinging Door algorithms assume strictly increasing timestamps** per time series
+- **Feeding an out-of-order sample into the algorithm** would either silently violate error guarantees or corrupt slope calculations
+- **Database connectors may create duplicates** if late data overwrites existing compressed points
+
+The late arrival policy defines what happens **when `timestamp < last_processed_timestamp - max_backfill`**.
+
+### Policy Options
+
+| Policy | Behavior | Use Case | Metadata Added |
+|--------|----------|----------|----------------|
+| **`passthrough`** (default) | Skip compression, forward unchanged | Standard live ingest: nothing lost, minimal compression impact | `late_oos=true` |
+| **`drop`** | Log warning and discard message | High-rate sensors where stale data is worthless | None (dropped) |
+
+### Configuration Example
+
+```yaml
+pipeline:
+  processors:
+    - downsampler:
+        default:
+          deadband:
+            threshold: 0.2
+            max_time: 1h
+          late_policy:
+            late_policy: passthrough    # Default behavior
+            max_backfill: 24h          # Messages >24h old are "late"
+        overrides:
+          - pattern: "*.alarm"
+            late_policy:
+              late_policy: drop        # Drop late alarms - time sensitive
+              max_backfill: 5m         # Very strict for alarms
+          - pattern: "historical_.*"
+            late_policy:
+              late_policy: passthrough # Allow historical reprocessing
+              max_backfill: 8760h      # 1 year window for batch jobs
+```
+
+### Technical Implementation
+
+**Late Detection Logic:**
+```
+cutoff_time = last_processed_timestamp - max_backfill
+if message_timestamp < cutoff_time:
+    # Message is late, apply policy
+```
+
+**Per-Series State Tracking:**
+- Each time series tracks `lastProcessedTime` independently
+- Late detection works per-topic/metric, not globally
+- State persists across algorithm resets
+
+**Database Integration:**
+- `passthrough` adds `late_oos=true` metadata flag
+- Downstream connectors can use this for deduplication:
+  ```sql
+  INSERT INTO measurements (...) 
+  ON CONFLICT (topic, timestamp_ms) DO NOTHING
+  ```
+
+### Industrial Use Cases
+
+**Live Production Monitoring (passthrough):**
+- **Scenario**: Occasional network hiccups cause 30-second delays
+- **Policy**: `passthrough` with `max_backfill: 1h`
+- **Result**: Late data preserved, compression ratio slightly reduced (95% → 94%)
+
+**High-Frequency Sensor Data (drop):**
+- **Scenario**: Vibration sensors at 1kHz with occasional minute-old duplicates
+- **Policy**: `drop` with `max_backfill: 30s`
+- **Result**: Storage costs optimized, no stale vibration data
+
+**Historical Batch Reprocessing (passthrough):**
+- **Scenario**: Re-compressing 6 months of exported data
+- **Policy**: `passthrough` with `max_backfill: 8760h` (1 year)
+- **Result**: All historical data processed regardless of order
+
+**Critical Alarm Systems (drop):**
+- **Scenario**: Safety alarms must reflect current state only
+- **Policy**: `drop` with `max_backfill: 1m`
+- **Result**: Only recent alarms stored, no false historical triggers
+
+### Streaming vs Offline Processing
+
+**Why No "apply" Mode in Streaming?**
+
+An `apply` mode would attempt to **retroactively recompress** when late data arrives:
+1. **Retract** previously emitted compressed points
+2. **Recompute** compression with late data included  
+3. **Re-emit** new compressed timeline
+
+This is **impossible in streaming scenarios** because:
+- **Kafka topics are append-only** - cannot retract published messages
+- **Databases have already stored** the compressed points
+- **Downstream systems** have already acted on the data
+
+**Offline "apply" Solution:**
+For perfect compression on historical data:
+1. **Export** raw data to file system
+2. **Sort** by timestamp and topic
+3. **Run downsampler** with late_policy disabled
+4. **Bulk load** perfectly compressed results
+
+This achieves **optimal compression ratios** (99%+) for archival storage.
+
+### Best Practices
+
+**Default Configuration:**
+- Use `passthrough` with `max_backfill: 24h` for most live scenarios
+- Adds minimal overhead while preserving all data
+
+**Critical Systems:**
+- Use `drop` with short `max_backfill` (5m-1h) for time-sensitive data
+- Log monitoring recommended to detect data loss
+
+**Batch Reprocessing:**
+- Increase `max_backfill` to data range duration
+- Consider disabling late policy entirely for pre-sorted data
+
+**Monitoring:**
+- Track `late_oos=true` metadata frequency
+- Alert on excessive late arrivals (may indicate upstream issues)
+- Monitor compression ratio changes due to passthrough events
