@@ -155,6 +155,12 @@ func (d *DeadbandAlgorithm) ProcessPoint(value float64, timestamp time.Time) (bo
 	return false, nil
 }
 
+// Flush returns any pending final point (deadband has no pending points)
+func (d *DeadbandAlgorithm) Flush() (*Point, error) {
+	// Deadband algorithm doesn't buffer points, so nothing to flush
+	return nil, nil
+}
+
 // Reset clears the algorithm's internal state
 func (d *DeadbandAlgorithm) Reset() {
 	d.lastKeptValue = 0

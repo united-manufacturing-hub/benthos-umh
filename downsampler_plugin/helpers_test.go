@@ -17,6 +17,7 @@ package downsampler_plugin_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -31,6 +32,25 @@ type BehaviorTestCase struct {
 	InputMessages  []TestMessage
 	ExpectedKept   int
 	ExpectedValues []interface{}
+}
+
+// StreamTestCase represents an enhanced test case for comprehensive behavior testing
+type StreamTestCase struct {
+	Name            string
+	Description     string
+	Config          string
+	Input           []TestMessage
+	ExpectedOutput  []ExpectedMessage
+	ExpectedMetrics map[string]int
+}
+
+// ExpectedMessage represents expected output message properties
+type ExpectedMessage struct {
+	Value         interface{}
+	TimestampMs   int64
+	Topic         string
+	HasMetadata   map[string]string
+	ShouldContain []string // For partial metadata checks
 }
 
 // TestMessage represents an input message
@@ -85,6 +105,9 @@ func SendTestMessage(msgHandler service.MessageHandlerFunc, testMsg TestMessage)
 	if testMsg.Topic != "" {
 		msg.MetaSet("umh_topic", testMsg.Topic)
 	}
+
+	fmt.Printf("      📤 SENDING: value=%v, timestamp=%d, topic=%s\n",
+		testMsg.Value, testMsg.TimestampMs, testMsg.Topic)
 
 	err := msgHandler(context.Background(), msg)
 	Expect(err).NotTo(HaveOccurred())
@@ -163,6 +186,116 @@ downsampler:
 	}
 
 	return Entry(description, testCase)
+}
+
+// RunStreamTestCase executes a comprehensive stream test case
+func RunStreamTestCase(testCase StreamTestCase) {
+	By(fmt.Sprintf("Running test case: %s - %s", testCase.Name, testCase.Description))
+
+	fmt.Printf("\n🧪 TEST CASE: %s\n", testCase.Name)
+	fmt.Printf("📋 DESCRIPTION: %s\n", testCase.Description)
+	fmt.Printf("⚙️  CONFIG:\n%s\n", testCase.Config)
+
+	By("Setting up the downsampler stream")
+	msgHandler, messages, cleanup := SetupDownsamplerStream(testCase.Config)
+	DeferCleanup(cleanup)
+
+	By("Sending all input messages")
+	fmt.Printf("📤 SENDING %d INPUT MESSAGES:\n", len(testCase.Input))
+	for i, inputMsg := range testCase.Input {
+		fmt.Printf("  Input[%d]: ", i)
+		SendTestMessage(msgHandler, inputMsg)
+	}
+
+	By("Verifying the expected number of messages are kept")
+	Eventually(func() int {
+		currentCount := len(*messages)
+		fmt.Printf("📊 CURRENT MESSAGE COUNT: %d (expecting %d)\n", currentCount, len(testCase.ExpectedOutput))
+		if currentCount > 0 {
+			fmt.Printf("📥 RECEIVED MESSAGES SO FAR:\n")
+			for i, msg := range *messages {
+				structured, _ := msg.AsStructured()
+				if payload, ok := structured.(map[string]interface{}); ok {
+					topic, _ := msg.MetaGet("umh_topic")
+					metadata, _ := msg.MetaGet("downsampled_by")
+					fmt.Printf("  [%d] value=%v, timestamp=%v, topic=%s, metadata=%s\n",
+						i, payload["value"], payload["timestamp_ms"], topic, metadata)
+				}
+			}
+		}
+		return currentCount
+	}).Should(Equal(len(testCase.ExpectedOutput)),
+		"Expected %d messages to be kept, got %d", len(testCase.ExpectedOutput), len(*messages))
+
+	By("Verifying the kept message values and metadata")
+	fmt.Printf("✅ VERIFYING %d EXPECTED MESSAGES:\n", len(testCase.ExpectedOutput))
+
+	for i, expectedMsg := range testCase.ExpectedOutput {
+		fmt.Printf("  Expected[%d]: value=%v, timestamp=%d, topic=%s\n",
+			i, expectedMsg.Value, expectedMsg.TimestampMs, expectedMsg.Topic)
+
+		Expect(i).To(BeNumerically("<", len(*messages)),
+			"Not enough messages received")
+
+		structured, err := (*messages)[i].AsStructured()
+		Expect(err).NotTo(HaveOccurred())
+
+		payload := structured.(map[string]interface{})
+
+		fmt.Printf("  Actual[%d]:   value=%v, timestamp=%v", i, payload["value"], payload["timestamp_ms"])
+		if topic, exists := (*messages)[i].MetaGet("umh_topic"); exists {
+			fmt.Printf(", topic=%s", topic)
+		}
+		fmt.Printf("\n")
+
+		Expect(payload["value"]).To(Equal(expectedMsg.Value),
+			"Message %d value should match expected", i)
+
+		// Verify timestamp remains constant
+		if expectedMsg.TimestampMs != 0 {
+			Expect(payload["timestamp_ms"]).To(Equal(expectedMsg.TimestampMs),
+				"Message %d timestamp_ms should match expected", i)
+		}
+
+		// Verify topic remains constant
+		if expectedMsg.Topic != "" {
+			actualTopic, exists := (*messages)[i].MetaGet("umh_topic")
+			Expect(exists).To(BeTrue(), "Message %d should have umh_topic metadata", i)
+			Expect(actualTopic).To(Equal(expectedMsg.Topic),
+				"Message %d topic should match expected", i)
+		}
+
+		// Verify required metadata
+		for key, expectedValue := range expectedMsg.HasMetadata {
+			actualValue, exists := (*messages)[i].MetaGet(key)
+			Expect(exists).To(BeTrue(), "Message %d should have metadata %s", i, key)
+			if expectedValue != "" {
+				Expect(actualValue).To(ContainSubstring(expectedValue),
+					"Message %d metadata %s should contain %s, got %s", i, key, expectedValue, actualValue)
+			}
+		}
+
+		// Verify partial metadata contains
+		for _, shouldContain := range expectedMsg.ShouldContain {
+			found := false
+			// Check all metadata keys for the substring
+			(*messages)[i].MetaWalk(func(key, value string) error {
+				if strings.Contains(value, shouldContain) {
+					found = true
+				}
+				return nil
+			})
+			Expect(found).To(BeTrue(),
+				"Message %d should have metadata containing '%s'", i, shouldContain)
+		}
+	}
+
+	// Note: Metrics verification would require access to processor metrics
+	// For now, we skip metrics verification as it requires more complex setup
+	if len(testCase.ExpectedMetrics) > 0 {
+		By("Metrics verification would be implemented with processor access")
+		// This could be enhanced by exposing processor metrics or using a test double
+	}
 }
 
 // StringBehaviorEntry creates a DescribeTable Entry for string equality testing

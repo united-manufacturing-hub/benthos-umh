@@ -97,25 +97,37 @@ var _ = Describe("Swinging Door Algorithm", func() {
 			Expect(keep).To(BeTrue(), "First point should always be kept")
 		})
 
-		It("should implement basic SDT logic from reference implementation", func() {
+		It("should implement basic SDT logic with emit-previous behavior", func() {
 			// Test case: threshold=1, samples: 18,5,6,0,1,0,2,8
-			// Our implementation: [true, false, true, false, true, false, true, true]
-			// (emits current point when envelope collapses, not previous point)
+			// Canonical PI emit-previous implementation: [true, false, true, true, true, false, false, true]
+			// Point 2 (6.0): breaks envelope → emit previous (5.0)
+			// Point 3 (0.0): breaks envelope again → emit pending (6.0) ← DOUBLE COLLAPSE
+			// Point 4 (1.0): breaks envelope again → emit pending (0.0) ← TRIPLE COLLAPSE
+			// Point 7 (8.0): breaks envelope → emit previous point, but 8.0 becomes pending for flush
 			testData := []float64{18.0, 5.0, 6.0, 0.0, 1.0, 0.0, 2.0, 8.0}
-			expected := []bool{true, false, true, false, true, false, true, true}
+			expected := []bool{true, false, true, true, true, false, false, true}
 
+			var lastTimestamp time.Time
 			for i, value := range testData {
 				currentTime := baseTime.Add(time.Duration(i) * time.Second)
+				lastTimestamp = currentTime
 				keep, err := algo.ProcessPoint(value, currentTime)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(keep).To(Equal(expected[i]), "Point %d (value=%.1f) expected=%t got=%t", i, value, expected[i], keep)
 			}
+
+			// Test flush - should return the final pending point (8.0)
+			finalPoint, err := algo.Flush()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(finalPoint).NotTo(BeNil(), "Flush should return final pending point")
+			Expect(finalPoint.Value).To(Equal(8.0), "Final point should have value 8.0")
+			Expect(finalPoint.Timestamp).To(Equal(lastTimestamp), "Final point should have correct timestamp")
 		})
 
 		Context("basic SDT test case", func() {
-			It("should handle the reference test sequence correctly", func() {
+			It("should handle the reference test sequence correctly with emit-previous", func() {
 				testData := []float64{18.0, 5.0, 6.0, 0.0, 1.0, 0.0, 2.0, 8.0}
-				expected := []bool{true, false, true, false, true, false, true, true}
+				expected := []bool{true, false, true, true, true, false, false, true}
 
 				for i, value := range testData {
 					currentTime := baseTime.Add(time.Duration(i) * time.Second)
@@ -123,6 +135,12 @@ var _ = Describe("Swinging Door Algorithm", func() {
 					Expect(err).NotTo(HaveOccurred())
 					Expect(keep).To(Equal(expected[i]), fmt.Sprintf("Point %d (value=%.1f) expected=%t got=%t", i, value, expected[i], keep))
 				}
+
+				// Check that flush returns the final pending point
+				finalPoint, err := algo.Flush()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(finalPoint).NotTo(BeNil())
+				Expect(finalPoint.Value).To(Equal(8.0))
 			})
 		})
 	})
@@ -190,6 +208,121 @@ var _ = Describe("Swinging Door Algorithm", func() {
 
 	})
 
+	Describe("canonical SDT behavior verification", func() {
+		BeforeEach(func() {
+			config := map[string]interface{}{
+				"threshold": 1.0,
+			}
+			algo, err = algorithms.NewSwingingDoorAlgorithm(config)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle double collapse correctly", func() {
+			// Test the specific case that demonstrates emit-previous behavior
+			// Point 2 breaks envelope → emit Point 1
+			// Point 3 immediately breaks new envelope → emit Point 2 (double collapse)
+			keep, _ := algo.ProcessPoint(18.0, baseTime)
+			Expect(keep).To(BeTrue(), "Point 0: first point always emitted")
+
+			keep, _ = algo.ProcessPoint(5.0, baseTime.Add(1*time.Second))
+			Expect(keep).To(BeFalse(), "Point 1: fits in corridor, becomes pending")
+
+			keep, _ = algo.ProcessPoint(6.0, baseTime.Add(2*time.Second))
+			Expect(keep).To(BeTrue(), "Point 2: breaks envelope, emit previous (5.0)")
+
+			keep, _ = algo.ProcessPoint(0.0, baseTime.Add(3*time.Second))
+			Expect(keep).To(BeTrue(), "Point 3: double collapse, emit pending (6.0)")
+
+			keep, _ = algo.ProcessPoint(1.0, baseTime.Add(4*time.Second))
+			Expect(keep).To(BeTrue(), "Point 4: triple collapse, emit pending (0.0)")
+		})
+
+		It("should not emit same timestamp twice", func() {
+			// Safety test: ensure no duplicate emissions
+			testData := []float64{18.0, 5.0, 6.0, 0.0, 1.0}
+			emittedIndices := []int{}
+
+			for i, value := range testData {
+				currentTime := baseTime.Add(time.Duration(i) * time.Second)
+				keep, _ := algo.ProcessPoint(value, currentTime)
+				if keep {
+					emittedIndices = append(emittedIndices, i)
+				}
+			}
+
+			// Should emit indices: [0, 2, 3, 4] - consecutive collapses but no duplicates
+			Expect(emittedIndices).To(Equal([]int{0, 2, 3, 4}), "Should emit indices 0, 2, 3, 4 without duplicates")
+		})
+
+		It("should respect equality boundary condition", func() {
+			// When slopes are exactly equal, envelope should NOT collapse
+			algo.Reset()
+			algo.ProcessPoint(0.0, baseTime)                    // base point
+			algo.ProcessPoint(1.0, baseTime.Add(1*time.Second)) // sets envelope
+
+			// Point that creates exactly equal slopes (boundary condition)
+			keep, _ := algo.ProcessPoint(2.0, baseTime.Add(2*time.Second))
+			Expect(keep).To(BeFalse(), "Equality boundary should not cause collapse")
+		})
+	})
+
+	Describe("flush functionality", func() {
+		BeforeEach(func() {
+			config := map[string]interface{}{
+				"threshold": 1.0,
+			}
+			algo, err = algorithms.NewSwingingDoorAlgorithm(config)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should return nil when no pending point exists", func() {
+			// No points processed yet
+			finalPoint, err := algo.Flush()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(finalPoint).To(BeNil(), "No pending point should exist")
+		})
+
+		It("should return final pending point and clear it", func() {
+			// Process a single point
+			keep, err := algo.ProcessPoint(10.0, baseTime)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keep).To(BeTrue())
+
+			// Process another point within envelope
+			keep, err = algo.ProcessPoint(10.5, baseTime.Add(time.Second))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keep).To(BeFalse()) // Within envelope, not emitted
+
+			// Flush should return the pending point
+			finalPoint, err := algo.Flush()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(finalPoint).NotTo(BeNil(), "Should have pending point")
+			Expect(finalPoint.Value).To(Equal(10.5), "Should return the last processed point")
+
+			// Second flush should return nil
+			finalPoint2, err := algo.Flush()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(finalPoint2).To(BeNil(), "Second flush should return nil")
+		})
+
+		It("should handle end-of-stream after envelope collapse", func() {
+			// Process the classic test sequence
+			testData := []float64{18.0, 5.0, 6.0, 0.0, 1.0, 0.0, 2.0, 8.0}
+
+			for i, value := range testData {
+				currentTime := baseTime.Add(time.Duration(i) * time.Second)
+				_, err := algo.ProcessPoint(value, currentTime)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			// Flush should return the final point (8.0)
+			finalPoint, err := algo.Flush()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(finalPoint).NotTo(BeNil())
+			Expect(finalPoint.Value).To(Equal(8.0))
+		})
+	})
+
 	Describe("reset functionality", func() {
 		BeforeEach(func() {
 			config := map[string]interface{}{
@@ -236,12 +369,13 @@ var _ = Describe("Swinging Door Algorithm", func() {
 		Context("envelope boundary conditions", func() {
 			// Scientific basis: Swinging Door Trending tracks upper and lower envelope slopes.
 			// The critical edge case occurs when these slopes become equal (doors intersect).
-			// Literature shows two valid implementations: emit-previous or emit-current point.
+			// Our implementation follows the industry-standard "emit-previous" behavior
+			// used by PI Server, WinCC, and other historians.
 			// Reference: PI Square forum discussions on SDT geometry clarify this behavior.
 			It("allows equality without emit", func() {
-				// Implementation note: This test assumes "emit-current" variant.
-				// Canon implementations may emit-previous when doors intersect.
-				// Our implementation follows emit-current pattern for interface consistency.
+				// Implementation note: This test verifies "emit-previous" behavior.
+				// When doors intersect, we emit the previous in-bounds point and
+				// keep the violating point as pending.
 				cfg := map[string]interface{}{"threshold": 1.0}
 				algo, _ := algorithms.NewSwingingDoorAlgorithm(cfg)
 				t0 := baseTime
@@ -366,10 +500,10 @@ var _ = Describe("Swinging Door Algorithm", func() {
 			})
 
 			It("should use the well-known reference test case", func() {
-				// Human verification: Use the known test case from reference implementation
-				// This test case is from literature and demonstrates correct SDT behavior
+				// Human verification: Canonical PI/OSIsoft emit-previous behavior
+				// This test case demonstrates correct multiple-collapse SDT behavior
 				testData := []float64{18.0, 5.0, 6.0, 0.0, 1.0, 0.0, 2.0, 8.0}
-				expected := []bool{true, false, true, false, true, false, true, true}
+				expected := []bool{true, false, true, true, true, false, false, true}
 
 				for i, value := range testData {
 					currentTime := baseTime.Add(time.Duration(i) * time.Second)

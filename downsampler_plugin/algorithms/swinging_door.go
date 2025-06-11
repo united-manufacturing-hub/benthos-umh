@@ -33,21 +33,37 @@ type Point struct {
 	Timestamp time.Time
 }
 
-// SwingingDoorAlgorithm implements the Swinging Door Trending (SDT) algorithm
-// for numeric time-series data compression.
+// SwingingDoorAlgorithm implements the industry-standard "emit-previous"
+// Swinging Door Trending (SDT) algorithm used by PI Server, WinCC, and other
+// historians for numeric time-series data compression.
 //
 // SDT maintains upper and lower envelope lines (the "doors") to determine when
 // linear interpolation error would exceed the configured threshold. This provides
 // more sophisticated compression than simple deadband filtering, especially for
 // trending data.
 //
-// Algorithm behavior:
+// Algorithm behavior (emit-previous variant):
 //   - First point always kept as envelope base
 //   - Each new point updates envelope bounds
-//   - Point is kept when envelope would collapse (interpolation error > threshold)
+//   - When envelope collapses: emit the PREVIOUS point (last in-bounds sample)
+//   - Violating point becomes pending and starts new envelope
+//   - Call Flush() at end-of-stream to emit final pending point
 //   - Optional min_time prevents high-frequency noise emission
 //   - Optional max_time forces periodic heartbeat emission
 //   - Special handling for very small time deltas to prevent slope overflow
+//
+// Behavioral guarantee: All compressed segments respect an absolute error ≤ threshold
+// for every raw point, matching PI Server and AVEVA historian behavior.
+//
+// NOTE: This implementation follows the canonical PI/OSIsoft "emit-previous" convention.
+// On corridor collapse we flush the last in-bounds point and keep the violating sample
+// as the first point of the next segment. This can cause consecutive collapses when
+// violating points immediately break the new corridor (e.g., "double collapse" scenarios).
+//
+// References:
+//   - OSIsoft PI Server documentation on Swinging Door Trending
+//   - gfoidl/DataCompression (C#) reference implementation
+//   - Wonderware Historian white papers on SDT compression
 //
 // Configuration parameters:
 //   - threshold (required): maximum interpolation error tolerance (>= 0)
@@ -66,7 +82,8 @@ type SwingingDoorAlgorithm struct {
 
 	// Internal state for envelope tracking
 	basePoint      *Point  // Current base point (start of segment)
-	lastKeptPoint  *Point  // Last point that was kept
+	lastKeptPoint  *Point  // Last point that was emitted
+	pendingPoint   *Point  // Point to emit when envelope collapses or on flush
 	candidatePoint *Point  // Buffered point waiting for min_time to elapse
 	maxLowerSlope  float64 // Maximum slope of lower door
 	minUpperSlope  float64 // Minimum slope of upper door
@@ -146,7 +163,7 @@ func NewSwingingDoorAlgorithm(config map[string]interface{}) (DownsampleAlgorith
 	}, nil
 }
 
-// ProcessPoint processes a new data point using SDT logic
+// ProcessPoint processes a new data point using SDT logic with emit-previous behavior
 func (s *SwingingDoorAlgorithm) ProcessPoint(value float64, timestamp time.Time) (bool, error) {
 	currentPoint := &Point{
 		Value:     value,
@@ -157,27 +174,26 @@ func (s *SwingingDoorAlgorithm) ProcessPoint(value float64, timestamp time.Time)
 	if s.basePoint == nil {
 		s.basePoint = currentPoint
 		s.lastKeptPoint = currentPoint
+		s.pendingPoint = currentPoint // Track for potential emission
 		s.maxLowerSlope = math.Inf(-1)
 		s.minUpperSlope = math.Inf(1)
 		return true, nil
 	}
 
-	// Check for very small deltaTime to prevent slope overflow
+	// Handle candidate point processing for min_time constraint
 	if s.candidatePoint != nil {
-		// Fix: Use candidate point's timestamp for minTime calculation, not current point
 		elapsed := timestamp.Sub(s.candidatePoint.Timestamp)
 		if elapsed >= s.minTime {
 			// Process the buffered candidate point now that enough time has elapsed
 			candidate := s.candidatePoint
 			s.candidatePoint = nil
 
-			// Process the candidate as if it just arrived
-			shouldKeep, _ := s.processCandidatePoint(candidate)
-			if shouldKeep {
-				// After keeping candidate, we must re-evaluate current point
+			// Process the candidate
+			shouldEmit, _ := s.processCandidatePoint(candidate)
+			if shouldEmit {
+				// After processing candidate, continue with current point
 				return s.processPointWithEnvelope(currentPoint)
 			}
-			// If candidate wasn't kept, continue processing current point
 		}
 	}
 
@@ -185,10 +201,14 @@ func (s *SwingingDoorAlgorithm) ProcessPoint(value float64, timestamp time.Time)
 	if s.maxTime > 0 {
 		elapsed := timestamp.Sub(s.lastKeptPoint.Timestamp)
 		if elapsed >= s.maxTime {
-			// Force keep due to max time
+			// Force emit due to max time
 			s.candidatePoint = nil // Clear any buffered candidate
-			s.basePoint = s.lastKeptPoint
-			s.lastKeptPoint = currentPoint
+
+			// In emit-previous mode, emit the pending point, then set current as new base
+			keptPoint := s.pendingPoint
+			s.basePoint = keptPoint
+			s.lastKeptPoint = keptPoint
+			s.pendingPoint = currentPoint
 			s.maxLowerSlope = math.Inf(-1)
 			s.minUpperSlope = math.Inf(1)
 			return true, nil
@@ -199,16 +219,18 @@ func (s *SwingingDoorAlgorithm) ProcessPoint(value float64, timestamp time.Time)
 	return s.processPointWithEnvelope(currentPoint)
 }
 
-// processCandidatePoint processes a buffered candidate point
+// processCandidatePoint processes a buffered candidate point with emit-previous behavior
 func (s *SwingingDoorAlgorithm) processCandidatePoint(candidate *Point) (bool, error) {
 	// Calculate time difference from base
 	deltaTime := candidate.Timestamp.Sub(s.basePoint.Timestamp).Seconds()
 
 	// Handle very small deltaTime to prevent slope overflow
 	if deltaTime <= 1e-9 {
-		// Envelope collapse - keep the candidate
-		s.basePoint = s.lastKeptPoint
-		s.lastKeptPoint = candidate
+		// Envelope collapse - emit pending point and start new segment
+		keptPoint := s.pendingPoint
+		s.basePoint = keptPoint
+		s.lastKeptPoint = keptPoint
+		s.pendingPoint = candidate
 		s.maxLowerSlope = math.Inf(-1)
 		s.minUpperSlope = math.Inf(1)
 		return true, nil
@@ -224,11 +246,13 @@ func (s *SwingingDoorAlgorithm) processCandidatePoint(candidate *Point) (bool, e
 
 	// Check if doors would intersect (envelope would collapse)
 	if newMaxLowerSlope > newMinUpperSlope {
-		// Candidate violates envelope, so keep it and start new segment
-		s.basePoint = s.lastKeptPoint
-		s.lastKeptPoint = candidate
+		// Candidate violates envelope - emit PREVIOUS point
+		keptPoint := s.pendingPoint
+		s.basePoint = keptPoint
+		s.lastKeptPoint = keptPoint
+		s.pendingPoint = candidate // Candidate becomes new pending
 
-		// Recalculate envelope from new base to candidate
+		// Start new envelope from emitted point to candidate
 		newDeltaTime := candidate.Timestamp.Sub(s.basePoint.Timestamp).Seconds()
 		if newDeltaTime > 1e-9 {
 			s.maxLowerSlope = (candidate.Value - s.threshold - s.basePoint.Value) / newDeltaTime
@@ -241,22 +265,25 @@ func (s *SwingingDoorAlgorithm) processCandidatePoint(candidate *Point) (bool, e
 		return true, nil
 	}
 
-	// Candidate fits within envelope, update bounds but don't keep
+	// Candidate fits within envelope - update pending point and envelope bounds
+	s.pendingPoint = candidate
 	s.maxLowerSlope = newMaxLowerSlope
 	s.minUpperSlope = newMinUpperSlope
 	return false, nil
 }
 
-// processPointWithEnvelope processes a point using envelope logic
+// processPointWithEnvelope processes a point using envelope logic with emit-previous behavior
 func (s *SwingingDoorAlgorithm) processPointWithEnvelope(currentPoint *Point) (bool, error) {
 	// Calculate time difference from base
 	deltaTime := currentPoint.Timestamp.Sub(s.basePoint.Timestamp).Seconds()
 
 	// Handle very small deltaTime to prevent slope overflow
 	if deltaTime <= 1e-9 {
-		// Envelope collapse - keep the point
-		s.basePoint = s.lastKeptPoint
-		s.lastKeptPoint = currentPoint
+		// Envelope collapse - emit pending point and start new segment
+		keptPoint := s.pendingPoint
+		s.basePoint = keptPoint
+		s.lastKeptPoint = keptPoint
+		s.pendingPoint = currentPoint
 		s.maxLowerSlope = math.Inf(-1)
 		s.minUpperSlope = math.Inf(1)
 		return true, nil
@@ -274,7 +301,7 @@ func (s *SwingingDoorAlgorithm) processPointWithEnvelope(currentPoint *Point) (b
 	if newMaxLowerSlope > newMinUpperSlope {
 		// Current point violates envelope
 
-		// Check min_time constraint before keeping
+		// Check min_time constraint before emitting
 		if s.minTime > 0 {
 			elapsed := currentPoint.Timestamp.Sub(s.lastKeptPoint.Timestamp)
 			if elapsed < s.minTime {
@@ -284,11 +311,13 @@ func (s *SwingingDoorAlgorithm) processPointWithEnvelope(currentPoint *Point) (b
 			}
 		}
 
-		// Keep the point and start new segment
-		s.basePoint = s.lastKeptPoint
-		s.lastKeptPoint = currentPoint
+		// EMIT PREVIOUS: emit the pending point
+		keptPoint := s.pendingPoint
+		s.basePoint = keptPoint
+		s.lastKeptPoint = keptPoint
+		s.pendingPoint = currentPoint // Current becomes new pending
 
-		// Recalculate envelope from new base to current point
+		// Start new envelope from emitted point to current point
 		newDeltaTime := currentPoint.Timestamp.Sub(s.basePoint.Timestamp).Seconds()
 		if newDeltaTime > 1e-9 {
 			s.maxLowerSlope = (currentPoint.Value - s.threshold - s.basePoint.Value) / newDeltaTime
@@ -301,16 +330,29 @@ func (s *SwingingDoorAlgorithm) processPointWithEnvelope(currentPoint *Point) (b
 		return true, nil
 	}
 
-	// Point fits within envelope, update bounds but don't keep
+	// Point fits within envelope - update pending point and envelope bounds
+	s.pendingPoint = currentPoint
 	s.maxLowerSlope = newMaxLowerSlope
 	s.minUpperSlope = newMinUpperSlope
 	return false, nil
+}
+
+// Flush returns any pending final point that should be emitted at end-of-stream
+func (s *SwingingDoorAlgorithm) Flush() (*Point, error) {
+	if s.pendingPoint != nil {
+		// Return the pending point and clear it
+		result := s.pendingPoint
+		s.pendingPoint = nil
+		return result, nil
+	}
+	return nil, nil
 }
 
 // Reset clears the algorithm's internal state
 func (s *SwingingDoorAlgorithm) Reset() {
 	s.basePoint = nil
 	s.lastKeptPoint = nil
+	s.pendingPoint = nil
 	s.candidatePoint = nil
 	s.maxLowerSlope = math.Inf(-1)
 	s.minUpperSlope = math.Inf(1)

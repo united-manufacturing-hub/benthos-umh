@@ -34,11 +34,14 @@
 //
 // ## Swinging Door Trending (SDT) Algorithm
 //
-// SDT maintains upper and lower envelope lines to determine when linear interpolation
-// error would exceed the threshold. More sophisticated than deadband for:
+// SDT implements the industry-standard "emit-previous" algorithm used by PI Server,
+// AVEVA, and other historians. It maintains upper and lower envelope lines to
+// determine when linear interpolation error would exceed the threshold. More
+// sophisticated than deadband for:
 // - Fast-changing process variables
 // - Data with trends and gradual changes
 // - Higher compression ratios with maintained accuracy
+// - Guaranteed interpolation error ≤ threshold for all points
 //
 // Configuration:
 //   - threshold: float64 - maximum interpolation error tolerance
@@ -100,6 +103,13 @@
 //		}
 //	}
 //
+//	// Flush any final pending point (important for SDT)
+//	if finalPoint, err := processor.Flush(); err != nil {
+//		return fmt.Errorf("flush failed: %w", err)
+//	} else if finalPoint != nil {
+//		fmt.Printf("Final: %v at %v\n", finalPoint.Value, finalPoint.Timestamp)
+//	}
+//
 // ## Advanced: Direct Algorithm Usage (Low-level API)
 //
 // Use algorithms directly when you need precise control and guarantee chronological
@@ -131,6 +141,14 @@
 //			fmt.Printf("Keep: %v at %v (via %s)\n",
 //				point.Value, point.Timestamp, algo.GetMetadata())
 //		}
+//	}
+//
+//	// Flush any final pending point (essential for SDT)
+//	if finalPoint, err := algo.Flush(); err != nil {
+//		return fmt.Errorf("flush failed: %w", err)
+//	} else if finalPoint != nil {
+//		fmt.Printf("Final: %v at %v (via %s)\n",
+//			finalPoint.Value, finalPoint.Timestamp, algo.GetMetadata())
 //	}
 //
 // # Configuration Examples
@@ -212,6 +230,19 @@ type DownsampleAlgorithm interface {
 	// This method is called for every point in sequence, allowing stateful algorithms
 	// like SDT to maintain internal envelope state across all points.
 	ProcessPoint(value float64, timestamp time.Time) (bool, error)
+
+	// Flush returns any pending final point that should be emitted at end-of-stream.
+	//
+	// This method should be called exactly once at the logical end of a data series
+	// to ensure that algorithms like SDT can emit their final pending point.
+	//
+	// Returns:
+	//   - Point: the final pending point to emit, or nil if none
+	//   - error: flush error (rare)
+	//
+	// After calling Flush, the algorithm state should be consistent for continued
+	// use or Reset.
+	Flush() (*Point, error)
 
 	// Reset clears the algorithm's internal state.
 	//

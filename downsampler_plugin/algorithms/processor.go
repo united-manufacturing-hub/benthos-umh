@@ -224,3 +224,8 @@ func (p *ProcessorWrapper) GetMetadata() string {
 func (p *ProcessorWrapper) GetName() string {
 	return p.algorithm.GetName()
 }
+
+// Flush returns any pending final point from the underlying algorithm
+func (p *ProcessorWrapper) Flush() (*Point, error) {
+	return p.algorithm.Flush()
+}
