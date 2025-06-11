@@ -44,8 +44,7 @@ type SwingingDoorConfig struct {
 
 // LatePolicyConfig holds late arrival handling parameters
 type LatePolicyConfig struct {
-	LatePolicy  string        `json:"late_policy,omitempty" yaml:"late_policy,omitempty"`
-	MaxBackfill time.Duration `json:"max_backfill,omitempty" yaml:"max_backfill,omitempty"`
+	LatePolicy string `json:"late_policy,omitempty" yaml:"late_policy,omitempty"`
 }
 
 // DefaultConfig holds the default algorithm parameters
@@ -85,16 +84,11 @@ func (c *DownsamplerConfig) getConfigForTopic(topic string) (string, map[string]
 	}
 
 	// Add late policy defaults
-	latePolicy := "passthrough"   // Default policy
-	maxBackfill := 24 * time.Hour // Default backfill window
+	latePolicy := "passthrough" // Default policy
 	if c.Default.LatePolicy.LatePolicy != "" {
 		latePolicy = c.Default.LatePolicy.LatePolicy
 	}
-	if c.Default.LatePolicy.MaxBackfill != 0 {
-		maxBackfill = c.Default.LatePolicy.MaxBackfill
-	}
 	config["late_policy"] = latePolicy
-	config["max_backfill"] = maxBackfill
 
 	// Determine default algorithm based on which default config has values
 	algorithm := "deadband" // Default fallback
@@ -157,14 +151,10 @@ func (c *DownsamplerConfig) getConfigForTopic(topic string) (string, map[string]
 				if override.LatePolicy.LatePolicy != "" {
 					config["late_policy"] = override.LatePolicy.LatePolicy
 				}
-				if override.LatePolicy.MaxBackfill != 0 {
-					config["max_backfill"] = override.LatePolicy.MaxBackfill
-				}
 			}
 			break
 		}
 	}
-
 	return algorithm, config
 }
 
@@ -211,7 +201,6 @@ Currently supported algorithms:
 			service.NewObjectField("swinging_door",
 				service.NewFloatField("threshold").
 					Description("Default compression deviation for swinging door algorithm.").
-					Default(0.5).
 					Optional(),
 				service.NewDurationField("min_time").
 					Description("Default minimum time interval for swinging door algorithm.").
@@ -226,10 +215,7 @@ Currently supported algorithms:
 					Description("Default policy for handling late-arriving messages (passthrough=forward unchanged, drop=discard with warning).").
 					Default("passthrough").
 					Optional(),
-				service.NewDurationField("max_backfill").
-					Description("Default maximum age for considering a message 'late' (older messages trigger late_policy).").
-					Default("24h").
-					Optional()).
+			).
 				Description("Default late arrival handling parameters.").
 				Optional()).
 			Description("Default algorithm parameters applied to all topics unless overridden.")).
@@ -266,9 +252,7 @@ Currently supported algorithms:
 				service.NewStringEnumField("late_policy", "passthrough", "drop").
 					Description("Override policy for handling late-arriving messages (passthrough=forward unchanged, drop=discard with warning).").
 					Optional(),
-				service.NewDurationField("max_backfill").
-					Description("Override maximum age for considering a message 'late' (older messages trigger late_policy).").
-					Optional()).
+			).
 				Description("Late arrival handling parameter overrides.").
 				Optional()).
 			Description("Topic-specific parameter overrides. Supports regex patterns and exact topic matching.").
@@ -308,9 +292,6 @@ Currently supported algorithms:
 			if defaultParsed := conf.Namespace("default", "late_policy"); defaultParsed.Contains() {
 				if latePolicy, err := defaultParsed.FieldString("late_policy"); err == nil {
 					defaultConfig.LatePolicy.LatePolicy = latePolicy
-				}
-				if maxBackfill, err := defaultParsed.FieldDuration("max_backfill"); err == nil {
-					defaultConfig.LatePolicy.MaxBackfill = maxBackfill
 				}
 			}
 
@@ -357,9 +338,6 @@ Currently supported algorithms:
 						override.LatePolicy = &LatePolicyConfig{}
 						if latePolicy, err := latePolicyParsed.FieldString("late_policy"); err == nil {
 							override.LatePolicy.LatePolicy = latePolicy
-						}
-						if maxBackfill, err := latePolicyParsed.FieldDuration("max_backfill"); err == nil {
-							override.LatePolicy.MaxBackfill = maxBackfill
 						}
 					}
 
@@ -763,25 +741,20 @@ func (p *DownsamplerProcessor) handleLateArrival(seriesID string, state *SeriesS
 	// Get late policy configuration for this topic
 	_, config := p.config.getConfigForTopic(seriesID)
 	latePolicy, _ := config["late_policy"].(string)
-	maxBackfill, _ := config["max_backfill"].(time.Duration)
 
 	// Default values if not configured
 	if latePolicy == "" {
 		latePolicy = "passthrough"
 	}
-	if maxBackfill == 0 {
-		maxBackfill = 24 * time.Hour
-	}
 
-	// Check if message is late (older than last processed timestamp minus max backfill window)
-	cutoffTime := state.lastProcessedTime.Add(-maxBackfill)
-	if timestamp.Before(cutoffTime) {
+	// Check if message is late (older than last processed timestamp)
+	if timestamp.Before(state.lastProcessedTime) {
 		switch latePolicy {
 		case "drop":
-			p.logger.Warnf("Late point %s %v dropped (>%v old, policy=%s)", seriesID, timestamp, maxBackfill, latePolicy)
+			p.logger.Warnf("Late point %s %v dropped (older than last processed %v, policy=%s)", seriesID, timestamp, state.lastProcessedTime, latePolicy)
 			return true, nil // Message handled (dropped)
 		case "passthrough":
-			p.logger.Debugf("Late point %s %v passed through unchanged (>%v old, policy=%s)", seriesID, timestamp, maxBackfill, latePolicy)
+			p.logger.Debugf("Late point %s %v passed through unchanged (older than last processed %v, policy=%s)", seriesID, timestamp, state.lastProcessedTime, latePolicy)
 			// Add metadata to indicate this is a late out-of-order message
 			msg.MetaSet("late_oos", "true")
 			return true, nil // Message handled (passthrough)

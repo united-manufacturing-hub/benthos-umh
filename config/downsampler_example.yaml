@@ -71,7 +71,6 @@ pipeline:
             max_time: 30s        # Default max interval
           late_policy:
             late_policy: passthrough  # Default: forward late messages unchanged (vs drop)
-            max_backfill: 24h         # Consider messages late if >24h old
         overrides:
           - pattern: "*.temperature"
             deadband:
@@ -88,7 +87,6 @@ pipeline:
           - pattern: "*.critical_sensor"
             late_policy:
               late_policy: drop   # Drop late data for critical sensors
-              max_backfill: 1h    # Stricter late detection for critical sensors
           # Pressure will use default threshold of 2.0 (numeric)
 
 output:
