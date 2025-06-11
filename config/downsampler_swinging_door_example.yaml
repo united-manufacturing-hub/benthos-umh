@@ -69,6 +69,9 @@ pipeline:
             threshold: 0.5       # Default compression deviation
             min_time: 5s         # Default minimum time interval 
             max_time: 1h         # Default maximum time interval
+          late_policy:
+            late_policy: passthrough  # Default: forward late messages unchanged (vs drop)
+            max_backfill: 24h         # Consider messages late if >24h old
         overrides:
           - pattern: ".+_counter"     # Counter metrics need no compression
             swinging_door:
@@ -86,6 +89,13 @@ pipeline:
             swinging_door:
               threshold: 0.0
               min_time: 0s
+            late_policy:
+              late_policy: drop       # Drop late alarms - they're time sensitive
+              max_backfill: 5m        # Very strict late detection for alarms
+          - pattern: "historical_.*"  # Historical reprocessing data
+            late_policy:
+              late_policy: passthrough  # Always allow historical data through
+              max_backfill: 8760h       # 1 year backfill window for historical data
 
 output:
   stdout:
