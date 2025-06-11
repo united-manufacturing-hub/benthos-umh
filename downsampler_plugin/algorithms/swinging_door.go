@@ -12,6 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package algorithms provides data compression algorithms for downsampling.
+//
+// The swinging door algorithm only supports numeric values (int, float types).
+// Boolean values and other non-numeric types should be handled by the calling
+// package before invoking the algorithm.
 package algorithms
 
 import (
@@ -32,6 +37,11 @@ type Point struct {
 }
 
 // SwingingDoorAlgorithm implements the Swinging Door Trending (SDT) algorithm
+// for numeric values only.
+//
+// Boolean values are NOT supported - they should be handled by the calling package.
+// This algorithm maintains state and is NOT goroutine-safe. Use separate instances
+// for concurrent processing or add external synchronization.
 type SwingingDoorAlgorithm struct {
 	threshold float64       // Compression deviation threshold
 	minTime   time.Duration // Minimum time interval
@@ -110,15 +120,9 @@ func NewSwingingDoorAlgorithm(config map[string]interface{}) (DownsampleAlgorith
 }
 
 // ProcessPoint processes a new data point using SDT logic
-func (s *SwingingDoorAlgorithm) ProcessPoint(value interface{}, timestamp time.Time) (bool, error) {
-	// Convert value to float64
-	floatVal, err := s.toFloat64(value)
-	if err != nil {
-		return false, fmt.Errorf("cannot convert value to numeric: %v", err)
-	}
-
+func (s *SwingingDoorAlgorithm) ProcessPoint(value float64, timestamp time.Time) (bool, error) {
 	currentPoint := &Point{
-		Value:     floatVal,
+		Value:     value,
 		Timestamp: timestamp,
 	}
 
@@ -131,9 +135,10 @@ func (s *SwingingDoorAlgorithm) ProcessPoint(value interface{}, timestamp time.T
 		return true, nil
 	}
 
-	// Check if we have a candidate point that can now be processed
+	// Check for very small deltaTime to prevent slope overflow
 	if s.candidatePoint != nil {
-		elapsed := currentPoint.Timestamp.Sub(s.lastKeptPoint.Timestamp)
+		// Fix: Use candidate point's timestamp for minTime calculation, not current point
+		elapsed := timestamp.Sub(s.candidatePoint.Timestamp)
 		if elapsed >= s.minTime {
 			// Process the buffered candidate point now that enough time has elapsed
 			candidate := s.candidatePoint
@@ -142,7 +147,8 @@ func (s *SwingingDoorAlgorithm) ProcessPoint(value interface{}, timestamp time.T
 			// Process the candidate as if it just arrived
 			shouldKeep, _ := s.processCandidatePoint(candidate)
 			if shouldKeep {
-				return true, nil
+				// After keeping candidate, we must re-evaluate current point
+				return s.processPointWithEnvelope(currentPoint)
 			}
 			// If candidate wasn't kept, continue processing current point
 		}
@@ -150,7 +156,7 @@ func (s *SwingingDoorAlgorithm) ProcessPoint(value interface{}, timestamp time.T
 
 	// Check maximum time constraint
 	if s.maxTime > 0 {
-		elapsed := currentPoint.Timestamp.Sub(s.lastKeptPoint.Timestamp)
+		elapsed := timestamp.Sub(s.lastKeptPoint.Timestamp)
 		if elapsed >= s.maxTime {
 			// Force keep due to max time
 			s.candidatePoint = nil // Clear any buffered candidate
@@ -170,8 +176,15 @@ func (s *SwingingDoorAlgorithm) ProcessPoint(value interface{}, timestamp time.T
 func (s *SwingingDoorAlgorithm) processCandidatePoint(candidate *Point) (bool, error) {
 	// Calculate time difference from base
 	deltaTime := candidate.Timestamp.Sub(s.basePoint.Timestamp).Seconds()
-	if deltaTime <= 0 {
-		return false, nil
+
+	// Handle very small deltaTime to prevent slope overflow
+	if deltaTime <= 1e-9 {
+		// Envelope collapse - keep the candidate
+		s.basePoint = s.lastKeptPoint
+		s.lastKeptPoint = candidate
+		s.maxLowerSlope = math.Inf(-1)
+		s.minUpperSlope = math.Inf(1)
+		return true, nil
 	}
 
 	// Calculate slopes to candidate point's deviation bounds
@@ -190,7 +203,7 @@ func (s *SwingingDoorAlgorithm) processCandidatePoint(candidate *Point) (bool, e
 
 		// Recalculate envelope from new base to candidate
 		newDeltaTime := candidate.Timestamp.Sub(s.basePoint.Timestamp).Seconds()
-		if newDeltaTime > 0 {
+		if newDeltaTime > 1e-9 {
 			s.maxLowerSlope = (candidate.Value - s.threshold - s.basePoint.Value) / newDeltaTime
 			s.minUpperSlope = (candidate.Value + s.threshold - s.basePoint.Value) / newDeltaTime
 		} else {
@@ -211,8 +224,15 @@ func (s *SwingingDoorAlgorithm) processCandidatePoint(candidate *Point) (bool, e
 func (s *SwingingDoorAlgorithm) processPointWithEnvelope(currentPoint *Point) (bool, error) {
 	// Calculate time difference from base
 	deltaTime := currentPoint.Timestamp.Sub(s.basePoint.Timestamp).Seconds()
-	if deltaTime <= 0 {
-		return false, nil
+
+	// Handle very small deltaTime to prevent slope overflow
+	if deltaTime <= 1e-9 {
+		// Envelope collapse - keep the point
+		s.basePoint = s.lastKeptPoint
+		s.lastKeptPoint = currentPoint
+		s.maxLowerSlope = math.Inf(-1)
+		s.minUpperSlope = math.Inf(1)
+		return true, nil
 	}
 
 	// Calculate slopes to current point's deviation bounds
@@ -243,7 +263,7 @@ func (s *SwingingDoorAlgorithm) processPointWithEnvelope(currentPoint *Point) (b
 
 		// Recalculate envelope from new base to current point
 		newDeltaTime := currentPoint.Timestamp.Sub(s.basePoint.Timestamp).Seconds()
-		if newDeltaTime > 0 {
+		if newDeltaTime > 1e-9 {
 			s.maxLowerSlope = (currentPoint.Value - s.threshold - s.basePoint.Value) / newDeltaTime
 			s.minUpperSlope = (currentPoint.Value + s.threshold - s.basePoint.Value) / newDeltaTime
 		} else {
@@ -285,42 +305,4 @@ func (s *SwingingDoorAlgorithm) GetMetadata() string {
 // GetName returns the algorithm name
 func (s *SwingingDoorAlgorithm) GetName() string {
 	return "swinging_door"
-}
-
-// toFloat64 converts various numeric types to float64
-func (s *SwingingDoorAlgorithm) toFloat64(val interface{}) (float64, error) {
-	switch v := val.(type) {
-	case float64:
-		return v, nil
-	case float32:
-		return float64(v), nil
-	case int:
-		return float64(v), nil
-	case int8:
-		return float64(v), nil
-	case int16:
-		return float64(v), nil
-	case int32:
-		return float64(v), nil
-	case int64:
-		return float64(v), nil
-	case uint:
-		return float64(v), nil
-	case uint8:
-		return float64(v), nil
-	case uint16:
-		return float64(v), nil
-	case uint32:
-		return float64(v), nil
-	case uint64:
-		return float64(v), nil
-	case bool:
-		// Reject booleans - they should be handled by the plugin's equality logic
-		return 0, fmt.Errorf("cannot convert boolean to number: %v", v)
-	case string:
-		// Reject strings - they should be handled by string-appropriate algorithms
-		return 0, fmt.Errorf("cannot convert string to number: %s", v)
-	default:
-		return 0, fmt.Errorf("cannot convert type %T to float64", val)
-	}
 }
