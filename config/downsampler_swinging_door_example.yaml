@@ -66,26 +66,26 @@ pipeline:
     - downsampler:
         default:
           swinging_door:
-            comp_dev: 0.5        # Default compression deviation
-            comp_min_time: 5s    # Default minimum time interval 
-            comp_max_time: 1h    # Default maximum time interval
+            threshold: 0.5       # Default compression deviation
+            min_time: 5s         # Default minimum time interval 
+            max_time: 1h         # Default maximum time interval
         overrides:
           - pattern: ".+_counter"     # Counter metrics need no compression
             swinging_door:
-              comp_dev: 0.0
-              comp_min_time: 0s
-              comp_max_time: 0s
+              threshold: 0.0
+              min_time: 0s
+              max_time: 0s
           - pattern: "^temp_"         # Temperature sensors - tighter deviation
             swinging_door:
-              comp_dev: 0.25
+              threshold: 0.25
           - topic: "pressure.sensor.001"  # Specific sensor override
             swinging_door:
-              comp_dev: 1.0
-              comp_max_time: 30m
+              threshold: 1.0
+              max_time: 30m
           - pattern: ".*_alarm"       # Alarm states - immediate transmission
             swinging_door:
-              comp_dev: 0.0
-              comp_min_time: 0s
+              threshold: 0.0
+              min_time: 0s
 
 output:
   stdout:
