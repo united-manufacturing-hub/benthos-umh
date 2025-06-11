@@ -29,16 +29,23 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin/algorithms"
 )
 
-// DefaultConfig holds the default algorithm parameters
-type DefaultConfig struct {
-	// Deadband parameters
+// DeadbandConfig holds deadband algorithm parameters
+type DeadbandConfig struct {
 	Threshold   float64       `json:"threshold,omitempty" yaml:"threshold,omitempty"`
 	MaxInterval time.Duration `json:"max_interval,omitempty" yaml:"max_interval,omitempty"`
+}
 
-	// Swinging Door parameters
+// SwingingDoorConfig holds swinging door algorithm parameters
+type SwingingDoorConfig struct {
 	CompDev     float64       `json:"comp_dev,omitempty" yaml:"comp_dev,omitempty"`
 	CompMinTime time.Duration `json:"comp_min_time,omitempty" yaml:"comp_min_time,omitempty"`
 	CompMaxTime time.Duration `json:"comp_max_time,omitempty" yaml:"comp_max_time,omitempty"`
+}
+
+// DefaultConfig holds the default algorithm parameters
+type DefaultConfig struct {
+	Deadband     DeadbandConfig     `json:"deadband,omitempty" yaml:"deadband,omitempty"`
+	SwingingDoor SwingingDoorConfig `json:"swinging_door,omitempty" yaml:"swinging_door,omitempty"`
 }
 
 // OverrideConfig defines algorithm parameter overrides for specific topics or patterns
@@ -46,32 +53,34 @@ type OverrideConfig struct {
 	Pattern string `json:"pattern,omitempty" yaml:"pattern,omitempty"` // Regex pattern to match topics
 	Topic   string `json:"topic,omitempty" yaml:"topic,omitempty"`     // Exact topic match
 
-	// Deadband parameters
-	Threshold   *float64       `json:"threshold,omitempty" yaml:"threshold,omitempty"`
-	MaxInterval *time.Duration `json:"max_interval,omitempty" yaml:"max_interval,omitempty"`
-
-	// Swinging Door parameters
-	CompDev     *float64       `json:"comp_dev,omitempty" yaml:"comp_dev,omitempty"`
-	CompMinTime *time.Duration `json:"comp_min_time,omitempty" yaml:"comp_min_time,omitempty"`
-	CompMaxTime *time.Duration `json:"comp_max_time,omitempty" yaml:"comp_max_time,omitempty"`
+	// Algorithm-specific configurations
+	Deadband     *DeadbandConfig     `json:"deadband,omitempty" yaml:"deadband,omitempty"`
+	SwingingDoor *SwingingDoorConfig `json:"swinging_door,omitempty" yaml:"swinging_door,omitempty"`
 }
 
 // DownsamplerConfig holds the configuration for the downsampler processor
 type DownsamplerConfig struct {
-	Algorithm string           `json:"algorithm" yaml:"algorithm"`
 	Default   DefaultConfig    `json:"default" yaml:"default"`
 	Overrides []OverrideConfig `json:"overrides,omitempty" yaml:"overrides,omitempty"`
 }
 
 // getConfigForTopic returns the effective configuration for a given topic by applying overrides
-func (c *DownsamplerConfig) getConfigForTopic(topic string) map[string]interface{} {
+func (c *DownsamplerConfig) getConfigForTopic(topic string) (string, map[string]interface{}) {
 	// Start with defaults
 	config := map[string]interface{}{
-		"threshold":     c.Default.Threshold,
-		"max_interval":  c.Default.MaxInterval,
-		"comp_dev":      c.Default.CompDev,
-		"comp_min_time": c.Default.CompMinTime,
-		"comp_max_time": c.Default.CompMaxTime,
+		"threshold":     c.Default.Deadband.Threshold,
+		"max_interval":  c.Default.Deadband.MaxInterval,
+		"comp_dev":      c.Default.SwingingDoor.CompDev,
+		"comp_min_time": c.Default.SwingingDoor.CompMinTime,
+		"comp_max_time": c.Default.SwingingDoor.CompMaxTime,
+	}
+
+	// Determine default algorithm based on which default config has values
+	algorithm := "deadband" // Default fallback
+	if c.Default.SwingingDoor.CompDev != 0 || c.Default.SwingingDoor.CompMinTime != 0 || c.Default.SwingingDoor.CompMaxTime != 0 {
+		algorithm = "swinging_door"
+	} else if c.Default.Deadband.Threshold != 0 || c.Default.Deadband.MaxInterval != 0 {
+		algorithm = "deadband"
 	}
 
 	// Apply overrides in order (first match wins)
@@ -97,26 +106,35 @@ func (c *DownsamplerConfig) getConfigForTopic(topic string) map[string]interface
 		}
 
 		if matched {
-			if override.Threshold != nil {
-				config["threshold"] = *override.Threshold
+			// Apply deadband overrides
+			if override.Deadband != nil {
+				algorithm = "deadband"
+				if override.Deadband.Threshold != 0 {
+					config["threshold"] = override.Deadband.Threshold
+				}
+				if override.Deadband.MaxInterval != 0 {
+					config["max_interval"] = override.Deadband.MaxInterval
+				}
 			}
-			if override.MaxInterval != nil {
-				config["max_interval"] = *override.MaxInterval
-			}
-			if override.CompDev != nil {
-				config["comp_dev"] = *override.CompDev
-			}
-			if override.CompMinTime != nil {
-				config["comp_min_time"] = *override.CompMinTime
-			}
-			if override.CompMaxTime != nil {
-				config["comp_max_time"] = *override.CompMaxTime
+
+			// Apply swinging door overrides
+			if override.SwingingDoor != nil {
+				algorithm = "swinging_door"
+				if override.SwingingDoor.CompDev != 0 {
+					config["comp_dev"] = override.SwingingDoor.CompDev
+				}
+				if override.SwingingDoor.CompMinTime != 0 {
+					config["comp_min_time"] = override.SwingingDoor.CompMinTime
+				}
+				if override.SwingingDoor.CompMaxTime != 0 {
+					config["comp_max_time"] = override.SwingingDoor.CompMaxTime
+				}
 			}
 			break
 		}
 	}
 
-	return config
+	return algorithm, config
 }
 
 // SeriesState holds the state for a single time series
@@ -147,26 +165,29 @@ to determine whether each data point represents a significant change worth prese
 Currently supported algorithms:
 - deadband: Filters out changes smaller than a configured threshold
 - swinging_door: Dynamic compression maintaining trend fidelity using Swinging Door Trending (SDT)`).
-		Field(service.NewStringField("algorithm").
-			Description("Downsampling algorithm to use. Supported: 'deadband', 'swinging_door'").
-			Default("deadband")).
 		Field(service.NewObjectField("default",
-			service.NewFloatField("threshold").
-				Description("Default threshold for deadband algorithm.").
-				Default(0.0).
+			service.NewObjectField("deadband",
+				service.NewFloatField("threshold").
+					Description("Default threshold for deadband algorithm.").
+					Default(0.0).
+					Optional(),
+				service.NewDurationField("max_interval").
+					Description("Default maximum time interval for deadband algorithm.").
+					Optional()).
+				Description("Default deadband algorithm parameters.").
 				Optional(),
-			service.NewDurationField("max_interval").
-				Description("Default maximum time interval for deadband algorithm.").
-				Optional(),
-			service.NewFloatField("comp_dev").
-				Description("Default compression deviation for swinging door algorithm.").
-				Default(0.5).
-				Optional(),
-			service.NewDurationField("comp_min_time").
-				Description("Default minimum time interval for swinging door algorithm.").
-				Optional(),
-			service.NewDurationField("comp_max_time").
-				Description("Default maximum time interval for swinging door algorithm.").
+			service.NewObjectField("swinging_door",
+				service.NewFloatField("comp_dev").
+					Description("Default compression deviation for swinging door algorithm.").
+					Default(0.5).
+					Optional(),
+				service.NewDurationField("comp_min_time").
+					Description("Default minimum time interval for swinging door algorithm.").
+					Optional(),
+				service.NewDurationField("comp_max_time").
+					Description("Default maximum time interval for swinging door algorithm.").
+					Optional()).
+				Description("Default swinging door algorithm parameters.").
 				Optional()).
 			Description("Default algorithm parameters applied to all topics unless overridden.")).
 		Field(service.NewObjectListField("overrides",
@@ -176,20 +197,27 @@ Currently supported algorithms:
 			service.NewStringField("topic").
 				Description("Exact topic to match. Mutually exclusive with 'pattern'.").
 				Optional(),
-			service.NewFloatField("threshold").
-				Description("Override threshold for deadband algorithm.").
+
+			service.NewObjectField("deadband",
+				service.NewFloatField("threshold").
+					Description("Override threshold for deadband algorithm.").
+					Optional(),
+				service.NewDurationField("max_interval").
+					Description("Override maximum time interval for deadband algorithm.").
+					Optional()).
+				Description("Deadband algorithm parameter overrides.").
 				Optional(),
-			service.NewDurationField("max_interval").
-				Description("Override maximum time interval for deadband algorithm.").
-				Optional(),
-			service.NewFloatField("comp_dev").
-				Description("Override compression deviation for swinging door algorithm.").
-				Optional(),
-			service.NewDurationField("comp_min_time").
-				Description("Override minimum time interval for swinging door algorithm.").
-				Optional(),
-			service.NewDurationField("comp_max_time").
-				Description("Override maximum time interval for swinging door algorithm.").
+			service.NewObjectField("swinging_door",
+				service.NewFloatField("comp_dev").
+					Description("Override compression deviation for swinging door algorithm.").
+					Optional(),
+				service.NewDurationField("comp_min_time").
+					Description("Override minimum time interval for swinging door algorithm.").
+					Optional(),
+				service.NewDurationField("comp_max_time").
+					Description("Override maximum time interval for swinging door algorithm.").
+					Optional()).
+				Description("Swinging door algorithm parameter overrides.").
 				Optional()).
 			Description("Topic-specific parameter overrides. Supports regex patterns and exact topic matching.").
 			Optional())
@@ -198,21 +226,75 @@ Currently supported algorithms:
 		"downsampler",
 		spec,
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
-			algorithm, err := conf.FieldString("algorithm")
-			if err != nil {
-				return nil, err
+			// Parse default configuration
+			var defaultConfig DefaultConfig
+
+			// Parse deadband defaults
+			if defaultParsed := conf.Namespace("default", "deadband"); defaultParsed.Contains() {
+				if threshold, err := defaultParsed.FieldFloat("threshold"); err == nil {
+					defaultConfig.Deadband.Threshold = threshold
+				}
+				if maxInterval, err := defaultParsed.FieldDuration("max_interval"); err == nil {
+					defaultConfig.Deadband.MaxInterval = maxInterval
+				}
 			}
 
-			// For now, use simple defaults until we can properly parse the new configuration structure
-			// TODO: Implement proper defaults + overrides parsing
-			var defaultConfig DefaultConfig
-			defaultConfig.Threshold = 0.0
-			defaultConfig.CompDev = 0.5
+			// Parse swinging door defaults
+			if defaultParsed := conf.Namespace("default", "swinging_door"); defaultParsed.Contains() {
+				if compDev, err := defaultParsed.FieldFloat("comp_dev"); err == nil {
+					defaultConfig.SwingingDoor.CompDev = compDev
+				}
+				if compMinTime, err := defaultParsed.FieldDuration("comp_min_time"); err == nil {
+					defaultConfig.SwingingDoor.CompMinTime = compMinTime
+				}
+				if compMaxTime, err := defaultParsed.FieldDuration("comp_max_time"); err == nil {
+					defaultConfig.SwingingDoor.CompMaxTime = compMaxTime
+				}
+			}
 
+			// Parse overrides
 			var overrides []OverrideConfig
+			if overridesList, err := conf.FieldObjectList("overrides"); err == nil {
+				for _, overrideConf := range overridesList {
+					var override OverrideConfig
+
+					if pattern, err := overrideConf.FieldString("pattern"); err == nil {
+						override.Pattern = pattern
+					}
+					if topic, err := overrideConf.FieldString("topic"); err == nil {
+						override.Topic = topic
+					}
+
+					// Parse deadband overrides
+					if deadbandParsed := overrideConf.Namespace("deadband"); deadbandParsed.Contains() {
+						override.Deadband = &DeadbandConfig{}
+						if threshold, err := deadbandParsed.FieldFloat("threshold"); err == nil {
+							override.Deadband.Threshold = threshold
+						}
+						if maxInterval, err := deadbandParsed.FieldDuration("max_interval"); err == nil {
+							override.Deadband.MaxInterval = maxInterval
+						}
+					}
+
+					// Parse swinging door overrides
+					if swingingDoorParsed := overrideConf.Namespace("swinging_door"); swingingDoorParsed.Contains() {
+						override.SwingingDoor = &SwingingDoorConfig{}
+						if compDev, err := swingingDoorParsed.FieldFloat("comp_dev"); err == nil {
+							override.SwingingDoor.CompDev = compDev
+						}
+						if compMinTime, err := swingingDoorParsed.FieldDuration("comp_min_time"); err == nil {
+							override.SwingingDoor.CompMinTime = compMinTime
+						}
+						if compMaxTime, err := swingingDoorParsed.FieldDuration("comp_max_time"); err == nil {
+							override.SwingingDoor.CompMaxTime = compMaxTime
+						}
+					}
+
+					overrides = append(overrides, override)
+				}
+			}
 
 			config := DownsamplerConfig{
-				Algorithm: algorithm,
 				Default:   defaultConfig,
 				Overrides: overrides,
 			}
@@ -250,7 +332,7 @@ func newDownsamplerProcessor(config DownsamplerConfig, logger *service.Logger, m
 
 // getThresholdForTopic returns the appropriate threshold for a given topic
 func (p *DownsamplerProcessor) getThresholdForTopic(topic string) float64 {
-	config := p.config.getConfigForTopic(topic)
+	_, config := p.config.getConfigForTopic(topic)
 	if threshold, ok := config["threshold"].(float64); ok {
 		return threshold
 	}
@@ -499,7 +581,7 @@ func (p *DownsamplerProcessor) processUMHClassicMessage(msg *service.Message, da
 	newMsg.SetStructured(outputData)
 
 	// Add metadata annotation
-	newMsg.MetaSet("downsampled_by", fmt.Sprintf("%s(filtered_%d_of_%d_keys)", p.config.Algorithm, keysKept, keysProcessed))
+	newMsg.MetaSet("downsampled_by", fmt.Sprintf("downsampler(filtered_%d_of_%d_keys)", keysKept, keysProcessed))
 
 	return newMsg, nil
 }
@@ -540,11 +622,11 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string) (*SeriesS
 	}
 
 	// Get algorithm configuration for this topic
-	algorithmConfig := p.config.getConfigForTopic(seriesID)
+	algorithmType, algorithmConfig := p.config.getConfigForTopic(seriesID)
 
-	algorithm, err := algorithms.Create(p.config.Algorithm, algorithmConfig)
+	algorithm, err := algorithms.Create(algorithmType, algorithmConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create algorithm %s: %w", p.config.Algorithm, err)
+		return nil, fmt.Errorf("failed to create algorithm %s: %w", algorithmType, err)
 	}
 
 	state = &SeriesState{

@@ -35,14 +35,15 @@ var _ = Describe("Downsampler Processor - UMH Classic Format", func() {
 			func(tc testCase) {
 				// Create fresh processor for each test case to avoid state contamination
 				config := DownsamplerConfig{
-					Algorithm: "deadband",
 					Default: DefaultConfig{
-						Threshold: 2.0, // Default threshold
+						Deadband: DeadbandConfig{
+							Threshold: 2.0, // Default threshold
+						},
 					},
 					Overrides: []OverrideConfig{
-						{Pattern: "*.temperature", Threshold: func(v float64) *float64 { return &v }(0.5)},
-						{Pattern: "*.humidity", Threshold: func(v float64) *float64 { return &v }(1.0)},
-						{Pattern: "*.pressure", Threshold: func(v float64) *float64 { return &v }(5.0)},
+						{Pattern: "*.temperature", Deadband: &DeadbandConfig{Threshold: 0.5}},
+						{Pattern: "*.humidity", Deadband: &DeadbandConfig{Threshold: 1.0}},
+						{Pattern: "*.pressure", Deadband: &DeadbandConfig{Threshold: 5.0}},
 					},
 				}
 
@@ -271,9 +272,10 @@ var _ = Describe("Downsampler Processor - UMH Classic Format", func() {
 
 		BeforeEach(func() {
 			config = DownsamplerConfig{
-				Algorithm: "deadband",
 				Default: DefaultConfig{
-					Threshold: 1.0,
+					Deadband: DeadbandConfig{
+						Threshold: 1.0,
+					},
 				},
 			}
 
@@ -344,9 +346,10 @@ var _ = Describe("Downsampler Processor - UMH Classic Format", func() {
 
 		BeforeEach(func() {
 			config = DownsamplerConfig{
-				Algorithm: "deadband",
 				Default: DefaultConfig{
-					Threshold: 1.0,
+					Deadband: DeadbandConfig{
+						Threshold: 1.0,
+					},
 				},
 			}
 
@@ -419,9 +422,10 @@ var _ = Describe("Downsampler Processor - UMH Classic Format", func() {
 
 		BeforeEach(func() {
 			config = DownsamplerConfig{
-				Algorithm: "deadband",
 				Default: DefaultConfig{
-					Threshold: 1.0,
+					Deadband: DeadbandConfig{
+						Threshold: 1.0,
+					},
 				},
 			}
 
