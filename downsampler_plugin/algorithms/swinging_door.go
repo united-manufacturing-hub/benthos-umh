@@ -12,11 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package algorithms provides data compression algorithms for downsampling.
-//
-// The swinging door algorithm only supports numeric values (int, float types).
-// Boolean values and other non-numeric types should be handled by the calling
-// package before invoking the algorithm.
 package algorithms
 
 import (
@@ -30,24 +25,46 @@ func init() {
 	Register("swinging_door", NewSwingingDoorAlgorithm)
 }
 
-// Point represents a data point with value and timestamp
+// Point represents a data point with value and timestamp.
+//
+// This is used internally by the SDT algorithm to track envelope calculations.
 type Point struct {
 	Value     float64
 	Timestamp time.Time
 }
 
 // SwingingDoorAlgorithm implements the Swinging Door Trending (SDT) algorithm
-// for numeric values only.
+// for numeric time-series data compression.
 //
-// Boolean values are NOT supported - they should be handled by the calling package.
-// This algorithm maintains state and is NOT goroutine-safe. Use separate instances
-// for concurrent processing or add external synchronization.
+// SDT maintains upper and lower envelope lines (the "doors") to determine when
+// linear interpolation error would exceed the configured threshold. This provides
+// more sophisticated compression than simple deadband filtering, especially for
+// trending data.
+//
+// Algorithm behavior:
+//   - First point always kept as envelope base
+//   - Each new point updates envelope bounds
+//   - Point is kept when envelope would collapse (interpolation error > threshold)
+//   - Optional min_time prevents high-frequency noise emission
+//   - Optional max_time forces periodic heartbeat emission
+//   - Special handling for very small time deltas to prevent slope overflow
+//
+// Configuration parameters:
+//   - threshold (required): maximum interpolation error tolerance (>= 0)
+//   - min_time (optional): minimum time between emissions for noise filtering
+//   - max_time (optional): maximum time between emissions for heartbeat
+//
+// References:
+//   - Swinging Door Trending (SDT) in PI System documentation
+//   - "Data Compression" by E. S. Bristol, Control Engineering, 1989
+//
+// Thread safety: NOT goroutine-safe. Use separate instances for concurrent processing.
 type SwingingDoorAlgorithm struct {
 	threshold float64       // Compression deviation threshold
 	minTime   time.Duration // Minimum time interval
 	maxTime   time.Duration // Maximum time interval
 
-	// Internal state - similar to deadband pattern
+	// Internal state for envelope tracking
 	basePoint      *Point  // Current base point (start of segment)
 	lastKeptPoint  *Point  // Last point that was kept
 	candidatePoint *Point  // Buffered point waiting for min_time to elapse
@@ -55,7 +72,17 @@ type SwingingDoorAlgorithm struct {
 	minUpperSlope  float64 // Minimum slope of upper door
 }
 
-// NewSwingingDoorAlgorithm creates a new SDT algorithm instance
+// NewSwingingDoorAlgorithm creates a new SDT algorithm instance.
+//
+// Configuration map keys:
+//   - "threshold": float64, int, or string - maximum interpolation error (>= 0)
+//   - "min_time": time.Duration or string - minimum emission interval (optional)
+//   - "max_time": time.Duration or string - maximum emission interval (optional)
+//
+// Returns error for:
+//   - Missing or invalid threshold values
+//   - Negative threshold values
+//   - Invalid time duration strings
 func NewSwingingDoorAlgorithm(config map[string]interface{}) (DownsampleAlgorithm, error) {
 	threshold := 1.0
 	var minTime, maxTime time.Duration
