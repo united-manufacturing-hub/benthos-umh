@@ -24,6 +24,9 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
+// ClassicToCoreConfig holds the configuration for the Classic to Core processor.
+// It defines how messages should be converted from UMH Historian Data Contract
+// format to Core format, including field handling, limits, and metadata preservation.
 type ClassicToCoreConfig struct {
 	TimestampField     string   `json:"timestamp_field" yaml:"timestamp_field"`
 	ExcludeFields      []string `json:"exclude_fields" yaml:"exclude_fields"`
@@ -128,6 +131,9 @@ The processor will:
 	}
 }
 
+// ClassicToCoreProcessor processes UMH Historian Data Contract messages and converts
+// them to Core format. It maintains configuration, metrics, and efficient field lookups
+// to handle the transformation of single multi-value messages into multiple single-value messages.
 type ClassicToCoreProcessor struct {
 	config            ClassicToCoreConfig
 	logger            *service.Logger
@@ -140,6 +146,10 @@ type ClassicToCoreProcessor struct {
 	excludeFieldsMap  map[string]bool
 }
 
+// newClassicToCoreProcessor creates a new instance of the Classic to Core processor.
+// It initializes the processor with the provided configuration, sets up metrics,
+// and creates an optimized field exclusion map for fast lookup during processing.
+// The timestamp field is automatically added to the exclusion map since it's handled separately.
 func newClassicToCoreProcessor(config ClassicToCoreConfig, logger *service.Logger, metrics *service.Metrics) (*ClassicToCoreProcessor, error) {
 	// Create exclude fields map for fast lookup
 	excludeFieldsMap := make(map[string]bool)
@@ -161,6 +171,10 @@ func newClassicToCoreProcessor(config ClassicToCoreConfig, logger *service.Logge
 	}, nil
 }
 
+// ProcessBatch processes a batch of messages, converting each UMH Historian Data Contract
+// message into multiple Core format messages. It applies tag limits, handles errors gracefully,
+// and tracks comprehensive metrics. Each input message can produce multiple output messages
+// (one per data field), following the "one tag, one message, one topic" principle.
 func (p *ClassicToCoreProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var outputBatch service.MessageBatch
 
@@ -194,7 +208,10 @@ func (p *ClassicToCoreProcessor) ProcessBatch(ctx context.Context, batch service
 	return []service.MessageBatch{outputBatch}, nil
 }
 
-// processMessage handles the conversion of a single input message to multiple Core format messages
+// processMessage handles the conversion of a single input message to multiple Core format messages.
+// It orchestrates the entire conversion process: parsing payload, extracting timestamp, validating topic,
+// flattening nested tag groups, and creating individual Core messages for each data field.
+// This is the core transformation logic that converts "one message, many values" to "many messages, one value each".
 func (p *ClassicToCoreProcessor) processMessage(msg *service.Message) ([]*service.Message, error) {
 	// Parse and validate payload
 	payload, err := p.parsePayload(msg)
@@ -235,7 +252,9 @@ func (p *ClassicToCoreProcessor) processMessage(msg *service.Message) ([]*servic
 	return expandedMessages, nil
 }
 
-// parsePayload extracts and validates the JSON payload from the message
+// parsePayload extracts and validates the JSON payload from the message.
+// It ensures the message contains valid JSON structured data that can be processed as a map.
+// This is the first validation step that determines if a message can be converted to Core format.
 func (p *ClassicToCoreProcessor) parsePayload(msg *service.Message) (map[string]interface{}, error) {
 	structured, err := msg.AsStructured()
 	if err != nil {
@@ -250,7 +269,9 @@ func (p *ClassicToCoreProcessor) parsePayload(msg *service.Message) (map[string]
 	return payload, nil
 }
 
-// validateAndExtractTimestamp validates the timestamp field exists and extracts its value
+// validateAndExtractTimestamp validates the timestamp field exists and extracts its value.
+// It ensures the configured timestamp field is present in the payload and converts it to a numeric timestamp.
+// The timestamp is critical for Core format messages as it provides the temporal context for each data point.
 func (p *ClassicToCoreProcessor) validateAndExtractTimestamp(payload map[string]interface{}) (int64, error) {
 	timestampValue, exists := payload[p.config.TimestampField]
 	if !exists {
@@ -265,7 +286,10 @@ func (p *ClassicToCoreProcessor) validateAndExtractTimestamp(payload map[string]
 	return timestamp, nil
 }
 
-// validateAndParseTopic extracts and validates the topic from message metadata
+// validateAndParseTopic extracts and validates the topic from message metadata.
+// It retrieves the topic from metadata (trying "topic" first, then "umh_topic" as fallback)
+// and parses it into components needed for Core topic reconstruction. This ensures the input
+// follows the expected UMH topic structure before proceeding with conversion.
 func (p *ClassicToCoreProcessor) validateAndParseTopic(msg *service.Message) (*TopicComponents, error) {
 	originalTopic, exists := msg.MetaGet("topic")
 	if !exists {
@@ -285,7 +309,10 @@ func (p *ClassicToCoreProcessor) validateAndParseTopic(msg *service.Message) (*T
 	return topicComponents, nil
 }
 
-// TopicComponents represents the parsed parts of a UMH topic
+// TopicComponents represents the parsed parts of a UMH topic.
+// This structure breaks down the hierarchical UMH topic format into its constituent parts,
+// enabling reconstruction of Core format topics by appending field names to the appropriate components.
+// The parsing follows UMH topic conventions: umh.v1.<location>.<data_contract>.<context>
 type TopicComponents struct {
 	Prefix       string // "umh.v1"
 	LocationPath string // "enterprise.site.area"
@@ -293,6 +320,10 @@ type TopicComponents struct {
 	Context      string // Additional context after data contract
 }
 
+// parseClassicTopic parses a UMH Historian Data Contract topic into its components.
+// It validates the topic structure, ensures it follows UMH v1 conventions, and extracts
+// the location path, data contract, and context. This parsing is essential for reconstructing
+// proper Core format topics that maintain the original hierarchical structure while adding field names.
 func (p *ClassicToCoreProcessor) parseClassicTopic(topic string) (*TopicComponents, error) {
 	parts := strings.Split(topic, ".")
 	if len(parts) < 4 {
@@ -339,6 +370,10 @@ func (p *ClassicToCoreProcessor) parseClassicTopic(topic string) (*TopicComponen
 	}, nil
 }
 
+// createCoreMessage creates a single Core format message from a field extracted from the original payload.
+// It constructs the Core payload format ({"value": <field_value>, "timestamp_ms": <timestamp>}),
+// generates the appropriate Core topic, and sets up all required metadata fields.
+// This function embodies the "one tag, one message" principle of Core format.
 func (p *ClassicToCoreProcessor) createCoreMessage(originalMsg *service.Message, fieldName string, fieldValue interface{}, timestamp int64, topicComponents *TopicComponents) (*service.Message, error) {
 	// Create Core format payload
 	corePayload := map[string]interface{}{
@@ -390,6 +425,10 @@ func (p *ClassicToCoreProcessor) createCoreMessage(originalMsg *service.Message,
 	return newMsg, nil
 }
 
+// constructCoreTopic builds a Core format topic from the parsed topic components and field name.
+// It maintains the UMH hierarchical structure while adapting it for Core format by using the
+// target data contract and appending the field name. The resulting topic follows the pattern:
+// umh.v1.<location>.<target_contract>.<context>.<field_name>
 func (p *ClassicToCoreProcessor) constructCoreTopic(components *TopicComponents, fieldName string, targetDataContract string) string {
 	parts := []string{
 		components.Prefix,
@@ -406,8 +445,10 @@ func (p *ClassicToCoreProcessor) constructCoreTopic(components *TopicComponents,
 	return strings.Join(parts, ".")
 }
 
-// flattenPayload recursively flattens nested objects using . as separator
-// This creates intuitive dot-notation paths for nested tag groups
+// flattenPayload recursively flattens nested objects using dot separator to create intuitive paths.
+// It converts complex tag group structures into flat key-value pairs with dot-notation names.
+// For example: {"axis": {"x": 1.0, "y": 2.0}} becomes {"axis.x": 1.0, "axis.y": 2.0}.
+// The function respects recursion depth limits to prevent stack overflow and infinite loops.
 func (p *ClassicToCoreProcessor) flattenPayload(payload map[string]interface{}, prefix string, depth int) map[string]interface{} {
 	result := make(map[string]interface{})
 
@@ -447,6 +488,10 @@ func (p *ClassicToCoreProcessor) flattenPayload(payload map[string]interface{}, 
 	return result
 }
 
+// extractTimestamp converts various timestamp formats to a standardized int64 value.
+// It handles multiple input types commonly found in JSON: float64, int64, int, json.Number, and string.
+// This flexibility allows the processor to work with timestamps from different sources and formats
+// while ensuring all Core messages have consistent timestamp representation.
 func (p *ClassicToCoreProcessor) extractTimestamp(value interface{}) (int64, error) {
 	switch v := value.(type) {
 	case float64:
@@ -470,6 +515,10 @@ func (p *ClassicToCoreProcessor) extractTimestamp(value interface{}) (int64, err
 	}
 }
 
+// Close gracefully shuts down the processor and releases any resources.
+// Currently, the processor doesn't maintain any persistent resources that require cleanup,
+// but this method satisfies the BatchProcessor interface and provides a clean shutdown hook
+// for future resource management needs.
 func (p *ClassicToCoreProcessor) Close(ctx context.Context) error {
 	return nil
 }
