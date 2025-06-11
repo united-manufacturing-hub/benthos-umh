@@ -1,0 +1,37 @@
+# Example Benthos configuration using the classic_to_core processor
+# This config migrates UMH Historian Data Contract messages to Core format
+
+input:
+  # Consume from Kafka topics matching Historian Data Contract format
+  kafka:
+    addresses: ['localhost:9092']
+    topics: ['umh.v1.+.+.+._historian.+']
+    consumer_group: 'historian-to-core-migration'
+    start_from_oldest: true
+
+pipeline:
+  processors:
+    # Convert Historian Data Contract format to Core format
+    - classic_to_core:
+        timestamp_field: timestamp_ms
+        # Uses input data contract (_historian) if target not specified
+        preserve_meta: true
+        exclude_fields:
+          - _quality
+          - _debug_info
+
+output:
+  # Publish to individual Core topics using UNS output
+  uns_output:
+    kafka:
+      addresses: ['localhost:9092']
+      key: ${! meta("location_path") }-${! meta("tag_name") }
+
+logger:
+  level: INFO
+  format: json
+
+metrics:
+  prometheus:
+    path: /metrics
+    port: 8080
