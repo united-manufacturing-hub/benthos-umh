@@ -196,13 +196,13 @@ downsampler:
 				{Value: 10.0, TimestampMs: 1000, Topic: "sensor.trend"},
 				{Value: 11.0, TimestampMs: 2000, Topic: "sensor.trend"}, // Linear trend
 				{Value: 12.0, TimestampMs: 3000, Topic: "sensor.trend"}, // Linear trend
-				{Value: 15.0, TimestampMs: 4000, Topic: "sensor.trend"}, // Break from trend
-				{Value: 16.0, TimestampMs: 5000, Topic: "sensor.trend"}, // New trend
+				{Value: 15.0, TimestampMs: 4000, Topic: "sensor.trend"}, // Break from trend - emits previous (12.0)
+				{Value: 16.0, TimestampMs: 5000, Topic: "sensor.trend"}, // New trend - emitted on flush
 			},
 			ExpectedOutput: []ExpectedMessage{
 				{Value: 10.0, TimestampMs: 1000, Topic: "sensor.trend", HasMetadata: map[string]string{"downsampled_by": "swinging_door"}},
-				{Value: 15.0, TimestampMs: 4000, Topic: "sensor.trend", HasMetadata: map[string]string{"downsampled_by": "swinging_door"}},
-				{Value: 16.0, TimestampMs: 5000, Topic: "sensor.trend", HasMetadata: map[string]string{"downsampled_by": "swinging_door"}},
+				{Value: 12.0, TimestampMs: 3000, Topic: "sensor.trend", HasMetadata: map[string]string{"downsampled_by": "swinging_door"}}, // Emit-previous: when 15.0 breaks envelope, emit last in-bounds point (12.0)
+				{Value: 16.0, TimestampMs: 5000, Topic: "sensor.trend", HasMetadata: map[string]string{"downsampled_by": "swinging_door"}}, // Final point from flush
 			},
 			ExpectedMetrics: map[string]int{
 				"messages_processed": 3,

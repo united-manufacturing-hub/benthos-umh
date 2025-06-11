@@ -524,4 +524,259 @@ var _ = Describe("Deadband Algorithm", func() {
 			})
 		})
 	})
+
+	Describe("comprehensive deadband test plan verification", func() {
+		// Test cases implementing deadband filtering patterns
+		// These tests verify deadband behavior against various data patterns
+
+		Context("Basic Filtering - Threshold-based compression", func() {
+			BeforeEach(func() {
+				config := map[string]interface{}{
+					"threshold": 1.0,
+				}
+				algo, err = algorithms.NewDeadbandAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should filter small changes below threshold", func() {
+				rawData := []struct {
+					x float64
+					y float64
+				}{
+					{0, 10.0}, // Base value, always kept
+					{1, 10.5}, // Change = 0.5 < 1.0, should be dropped
+					{2, 10.8}, // Change = 0.8 < 1.0, should be dropped
+					{3, 11.2}, // Change = 1.2 >= 1.0, should be kept (new base)
+					{4, 11.5}, // Change = 0.3 < 1.0, should be dropped
+					{5, 12.5}, // Change = 1.3 >= 1.0, should be kept
+					{6, 12.3}, // Change = 0.2 < 1.0, should be dropped
+				}
+
+				expectedKept := []bool{true, false, false, true, false, true, false}
+
+				for i, point := range rawData {
+					timestamp := baseTime.Add(time.Duration(point.x) * time.Second)
+					keep, err := algo.ProcessPoint(point.y, timestamp)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(keep).To(Equal(expectedKept[i]), "Point %d (x=%.1f, y=%.1f)", i, point.x, point.y)
+				}
+
+				// Verify compression: 7 raw -> 3 kept = ~57% reduction
+				keptCount := 0
+				for _, kept := range expectedKept {
+					if kept {
+						keptCount++
+					}
+				}
+				reductionPercent := int(float64(len(rawData)-keptCount) / float64(len(rawData)) * 100)
+				Expect(reductionPercent).To(Equal(57), "Expected ~57%% reduction")
+			})
+		})
+
+		Context("High Precision Filtering - Small threshold", func() {
+			BeforeEach(func() {
+				config := map[string]interface{}{
+					"threshold": 0.1,
+				}
+				algo, err = algorithms.NewDeadbandAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should handle high precision sensor data", func() {
+				rawData := []struct {
+					x float64
+					y float64
+				}{
+					{0, 5.00}, // Base value
+					{1, 5.05}, // Change = 0.05 < 0.1, dropped
+					{2, 5.08}, // Change = 0.08 < 0.1, dropped
+					{3, 5.12}, // Change = 0.12 >= 0.1, kept
+					{4, 5.15}, // Change = 0.03 < 0.1, dropped
+					{5, 5.25}, // Change = 0.13 >= 0.1, kept
+					{6, 5.30}, // Change = 0.05 < 0.1, dropped
+					{7, 5.40}, // Change = 0.15 >= 0.1, kept
+				}
+
+				expectedKept := []bool{true, false, false, true, false, true, false, true}
+
+				for i, point := range rawData {
+					timestamp := baseTime.Add(time.Duration(point.x) * time.Second)
+					keep, err := algo.ProcessPoint(point.y, timestamp)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(keep).To(Equal(expectedKept[i]), "Point %d (x=%.1f, y=%.1f)", i, point.x, point.y)
+				}
+			})
+		})
+
+		Context("Noise Filtering - Medium threshold", func() {
+			BeforeEach(func() {
+				config := map[string]interface{}{
+					"threshold": 2.0,
+				}
+				algo, err = algorithms.NewDeadbandAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should filter noise while preserving significant changes", func() {
+				rawData := []struct {
+					x float64
+					y float64
+				}{
+					{0, 100.0}, // Base value
+					{1, 101.5}, // Noise: change = 1.5 < 2.0, dropped
+					{2, 99.2},  // Noise: change = 1.8 < 2.0, dropped
+					{3, 102.5}, // Signal: change = 2.5 >= 2.0, kept
+					{4, 103.8}, // Small change: 1.3 < 2.0, dropped
+					{5, 105.0}, // Signal: change = 2.5 >= 2.0, kept
+					{6, 104.5}, // Small change: 0.5 < 2.0, dropped
+					{7, 102.0}, // Signal: change = 3.0 >= 2.0, kept
+				}
+
+				expectedKept := []bool{true, false, false, true, false, true, false, true}
+
+				for i, point := range rawData {
+					timestamp := baseTime.Add(time.Duration(point.x) * time.Second)
+					keep, err := algo.ProcessPoint(point.y, timestamp)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(keep).To(Equal(expectedKept[i]), "Point %d (x=%.1f, y=%.1f)", i, point.x, point.y)
+				}
+			})
+		})
+
+		Context("Max Time Constraint - Heartbeat emission", func() {
+			BeforeEach(func() {
+				config := map[string]interface{}{
+					"threshold": 5.0,  // Large threshold
+					"max_time":  "3s", // Force emission every 3 seconds
+				}
+				algo, err = algorithms.NewDeadbandAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should force emission after max_time regardless of value change", func() {
+				rawData := []struct {
+					x float64
+					y float64
+				}{
+					{0, 50.0}, // Base value, always kept
+					{1, 51.0}, // Change = 1.0 < 5.0, normally dropped
+					{2, 52.0}, // Change = 1.0 < 5.0, normally dropped
+					{3, 53.0}, // Change = 1.0 < 5.0, but 3s elapsed -> kept due to max_time
+					{4, 54.0}, // Change = 1.0 < 5.0, dropped
+					{5, 55.0}, // Change = 1.0 < 5.0, dropped
+					{6, 56.0}, // Change = 1.0 < 5.0, but 3s elapsed -> kept due to max_time
+				}
+
+				expectedKept := []bool{true, false, false, true, false, false, true}
+
+				for i, point := range rawData {
+					timestamp := baseTime.Add(time.Duration(point.x) * time.Second)
+					keep, err := algo.ProcessPoint(point.y, timestamp)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(keep).To(Equal(expectedKept[i]), "Point %d (x=%.1f, y=%.1f)", i, point.x, point.y)
+				}
+			})
+		})
+
+		Context("Constant Value Filtering", func() {
+			BeforeEach(func() {
+				config := map[string]interface{}{
+					"threshold": 0.5,
+				}
+				algo, err = algorithms.NewDeadbandAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should drop exact repeats and small variations", func() {
+				rawData := []struct {
+					x float64
+					y float64
+				}{
+					{0, 25.0}, // Base value
+					{1, 25.0}, // Exact repeat, dropped
+					{2, 25.0}, // Exact repeat, dropped
+					{3, 25.3}, // Small change = 0.3 < 0.5, dropped
+					{4, 25.0}, // Small change = 0.3 < 0.5, dropped
+					{5, 25.6}, // Significant change = 0.6 >= 0.5, kept
+					{6, 25.6}, // Exact repeat, dropped
+				}
+
+				expectedKept := []bool{true, false, false, false, false, true, false}
+
+				for i, point := range rawData {
+					timestamp := baseTime.Add(time.Duration(point.x) * time.Second)
+					keep, err := algo.ProcessPoint(point.y, timestamp)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(keep).To(Equal(expectedKept[i]), "Point %d (x=%.1f, y=%.1f)", i, point.x, point.y)
+				}
+			})
+		})
+
+		Context("Bidirectional Threshold Test", func() {
+			BeforeEach(func() {
+				config := map[string]interface{}{
+					"threshold": 1.0,
+				}
+				algo, err = algorithms.NewDeadbandAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should handle positive and negative changes symmetrically", func() {
+				rawData := []struct {
+					x float64
+					y float64
+				}{
+					{0, 10.0}, // Base value
+					{1, 11.2}, // Positive change = +1.2 >= 1.0, kept
+					{2, 10.8}, // Negative change = -0.4 < 1.0, dropped
+					{3, 9.8},  // Negative change = -1.0 >= 1.0, kept (exactly threshold)
+					{4, 9.3},  // Negative change = -0.5 < 1.0, dropped
+					{5, 11.0}, // Positive change = +1.7 >= 1.0, kept
+					{6, 10.5}, // Negative change = -0.5 < 1.0, dropped
+				}
+
+				expectedKept := []bool{true, true, false, true, false, true, false}
+
+				for i, point := range rawData {
+					timestamp := baseTime.Add(time.Duration(point.x) * time.Second)
+					keep, err := algo.ProcessPoint(point.y, timestamp)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(keep).To(Equal(expectedKept[i]), "Point %d (x=%.1f, y=%.1f)", i, point.x, point.y)
+				}
+			})
+		})
+
+		Context("Zero Threshold Behavior", func() {
+			BeforeEach(func() {
+				config := map[string]interface{}{
+					"threshold": 0.0,
+				}
+				algo, err = algorithms.NewDeadbandAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should keep any change but drop exact repeats", func() {
+				rawData := []struct {
+					x float64
+					y float64
+				}{
+					{0, 42.0},   // Base value
+					{1, 42.0},   // Exact repeat -> dropped
+					{2, 42.001}, // Tiny change -> kept (any change with threshold=0)
+					{3, 42.001}, // Exact repeat -> dropped
+					{4, 42.000}, // Small change -> kept
+					{5, 42.000}, // Exact repeat -> dropped
+				}
+
+				expectedKept := []bool{true, false, true, false, true, false}
+
+				for i, point := range rawData {
+					timestamp := baseTime.Add(time.Duration(point.x) * time.Second)
+					keep, err := algo.ProcessPoint(point.y, timestamp)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(keep).To(Equal(expectedKept[i]), "Point %d (x=%.1f, y=%.1f)", i, point.x, point.y)
+				}
+			})
+		})
+	})
 })

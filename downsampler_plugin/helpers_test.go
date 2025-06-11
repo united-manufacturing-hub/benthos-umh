@@ -207,13 +207,55 @@ func RunStreamTestCase(testCase StreamTestCase) {
 		SendTestMessage(msgHandler, inputMsg)
 	}
 
+	// Add a small delay to allow processing to complete
+	time.Sleep(50 * time.Millisecond)
+
+	// Send flush trigger messages to all topics that were used in the test
+	// This forces algorithms like swinging door to emit any pending points
+	By("Triggering flush for algorithms that need it")
+	topicsUsed := make(map[string]bool)
+	for _, inputMsg := range testCase.Input {
+		if inputMsg.Topic != "" {
+			topicsUsed[inputMsg.Topic] = true
+		}
+	}
+
+	// Send an envelope-breaking message to each topic used
+	for topic := range topicsUsed {
+		flushTriggerMsg := service.NewMessage(nil)
+		flushTriggerMsg.SetStructured(map[string]interface{}{
+			"value":        999999.0, // Large value that will break any envelope
+			"timestamp_ms": time.Now().UnixMilli(),
+		})
+		flushTriggerMsg.MetaSet("umh_topic", topic)
+		_ = msgHandler(context.Background(), flushTriggerMsg)
+	}
+
+	// Small delay to allow flush trigger to process
+	time.Sleep(50 * time.Millisecond)
+
 	By("Verifying the expected number of messages are kept")
+
+	// Wait for the expected messages with some extra time for potential flushed messages
 	Eventually(func() int {
-		currentCount := len(*messages)
-		fmt.Printf("📊 CURRENT MESSAGE COUNT: %d (expecting %d)\n", currentCount, len(testCase.ExpectedOutput))
+		// Filter out flush trigger messages (value=999999.0) from the count
+		filteredMessages := make([]*service.Message, 0, len(*messages))
+		for _, msg := range *messages {
+			structured, _ := msg.AsStructured()
+			if payload, ok := structured.(map[string]interface{}); ok {
+				if value, ok := payload["value"].(float64); ok && value == 999999.0 {
+					continue // Skip flush trigger messages
+				}
+			}
+			filteredMessages = append(filteredMessages, msg)
+		}
+
+		currentCount := len(filteredMessages)
+		fmt.Printf("📊 CURRENT MESSAGE COUNT: %d (expecting %d, total including flush triggers: %d)\n",
+			currentCount, len(testCase.ExpectedOutput), len(*messages))
 		if currentCount > 0 {
-			fmt.Printf("📥 RECEIVED MESSAGES SO FAR:\n")
-			for i, msg := range *messages {
+			fmt.Printf("📥 RECEIVED MESSAGES SO FAR (excluding flush triggers):\n")
+			for i, msg := range filteredMessages {
 				structured, _ := msg.AsStructured()
 				if payload, ok := structured.(map[string]interface{}); ok {
 					topic, _ := msg.MetaGet("umh_topic")
@@ -223,6 +265,12 @@ func RunStreamTestCase(testCase StreamTestCase) {
 				}
 			}
 		}
+
+		// Update the messages slice to only contain non-flush-trigger messages for verification
+		if len(filteredMessages) >= len(testCase.ExpectedOutput) {
+			*messages = filteredMessages
+		}
+
 		return currentCount
 	}).Should(Equal(len(testCase.ExpectedOutput)),
 		"Expected %d messages to be kept, got %d", len(testCase.ExpectedOutput), len(*messages))

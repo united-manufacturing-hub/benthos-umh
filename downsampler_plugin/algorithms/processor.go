@@ -114,8 +114,9 @@ func (p *ProcessorWrapper) ProcessPoint(value interface{}, timestamp time.Time) 
 	// Handle ordering - algorithms expect monotonic timestamps
 	if !p.lastTimestamp.IsZero() && timestamp.Before(p.lastTimestamp) {
 		if p.passThrough {
-			// Pass through older data to the algorithm
-			return p.algorithm.ProcessPoint(floatVal, timestamp)
+			// PassThrough=true means bypass algorithm and always keep out-of-order data
+			// This ensures out-of-order messages are passed through unchanged
+			return true, nil
 		} else {
 			// Drop out-of-order data
 			return false, nil
@@ -123,7 +124,10 @@ func (p *ProcessorWrapper) ProcessPoint(value interface{}, timestamp time.Time) 
 	}
 
 	// Update last timestamp and process
-	p.lastTimestamp = timestamp
+	// Only update lastTimestamp for in-order data to maintain proper ordering detection
+	if p.lastTimestamp.IsZero() || !timestamp.Before(p.lastTimestamp) {
+		p.lastTimestamp = timestamp
+	}
 	return p.algorithm.ProcessPoint(floatVal, timestamp)
 }
 
