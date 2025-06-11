@@ -72,11 +72,17 @@ type DownsamplerConfig struct {
 // GetConfigForTopic returns the effective configuration for a given topic by applying overrides
 func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]interface{}) {
 	// Determine default algorithm based on which default config has values
+	// Prioritize deadband as the simpler algorithm
 	algorithm := "deadband" // Default fallback
-	if c.Default.SwingingDoor.Threshold != 0 || c.Default.SwingingDoor.MinTime != 0 || c.Default.SwingingDoor.MaxTime != 0 {
-		algorithm = "swinging_door"
-	} else if c.Default.Deadband.Threshold != 0 || c.Default.Deadband.MaxTime != 0 {
+
+	// Only use swinging_door if explicitly configured and deadband is not
+	hasDeadbandConfig := c.Default.Deadband.Threshold != 0 || c.Default.Deadband.MaxTime != 0
+	hasSwingingDoorConfig := c.Default.SwingingDoor.Threshold != 0 || c.Default.SwingingDoor.MinTime != 0 || c.Default.SwingingDoor.MaxTime != 0
+
+	if hasDeadbandConfig {
 		algorithm = "deadband"
+	} else if hasSwingingDoorConfig {
+		algorithm = "swinging_door"
 	}
 
 	// Start with defaults based on the determined algorithm
@@ -122,8 +128,11 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 		}
 
 		if matched {
-			// Apply deadband overrides
-			if override.Deadband != nil {
+			fmt.Printf("      🎯 OVERRIDE MATCHED for topic='%s', pattern='%s'\n", topic, override.Pattern)
+
+			// Apply deadband overrides (only if actually configured with meaningful values)
+			if override.Deadband != nil && (override.Deadband.Threshold != 0 || override.Deadband.MaxTime != 0) {
+				fmt.Printf("      🎯 APPLYING DEADBAND override: threshold=%v\n", override.Deadband.Threshold)
 				algorithm = "deadband"
 				if override.Deadband.Threshold != 0 {
 					config["threshold"] = override.Deadband.Threshold
@@ -133,8 +142,9 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 				}
 			}
 
-			// Apply swinging door overrides
-			if override.SwingingDoor != nil {
+			// Apply swinging door overrides (only if actually configured with meaningful values)
+			if override.SwingingDoor != nil && (override.SwingingDoor.Threshold != 0 || override.SwingingDoor.MinTime != 0 || override.SwingingDoor.MaxTime != 0) {
+				fmt.Printf("      🎯 APPLYING SWINGING_DOOR override: threshold=%v\n", override.SwingingDoor.Threshold)
 				algorithm = "swinging_door"
 				if override.SwingingDoor.Threshold != 0 {
 					config["threshold"] = override.SwingingDoor.Threshold
@@ -156,14 +166,14 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 			break
 		}
 	}
+
+	fmt.Printf("      ⚙️  FINAL CONFIG for topic='%s': algorithm=%s, config=%+v\n", topic, algorithm, config)
 	return algorithm, config
 }
 
 // SeriesState holds the state for a single time series
 type SeriesState struct {
-	algorithm         algorithms.DownsampleAlgorithm
-	lastOutput        interface{}
-	lastOutputTime    time.Time
+	processor         *algorithms.ProcessorWrapper
 	lastProcessedTime time.Time // Track the last processed timestamp for late arrival detection
 	mutex             sync.RWMutex
 }
@@ -522,22 +532,7 @@ func (p *DownsamplerProcessor) processUMHCoreMessage(msg *service.Message, dataM
 		return nil, fmt.Errorf("failed to get series state: %w", err)
 	}
 
-	// Check for late arrival and handle according to policy
-	handled, err := p.handleLateArrival(umhTopic, state, timestamp, msg)
-	if err != nil {
-		return nil, fmt.Errorf("late arrival handling error for series %s: %w", umhTopic, err)
-	}
-	if handled {
-		// Message was handled by late arrival policy (either dropped or passed through)
-		if _, exists := msg.MetaGet("late_oos"); exists {
-			// Passthrough case - return the message unchanged
-			p.messagesPassed.Incr(1)
-			return msg, nil
-		}
-		// Drop case - return nil
-		p.messagesFiltered.Incr(1)
-		return nil, nil
-	}
+	// ProcessorWrapper handles late arrival internally based on PassThrough setting
 
 	// Apply downsampling algorithm
 	shouldKeep, err := p.shouldKeepMessage(state, value, timestamp)
@@ -548,7 +543,7 @@ func (p *DownsamplerProcessor) processUMHCoreMessage(msg *service.Message, dataM
 	if shouldKeep {
 		// Update state and return message
 		p.updateSeriesState(state, value, timestamp)
-		msg.MetaSet("downsampled_by", state.algorithm.GetMetadata())
+		msg.MetaSet("downsampled_by", state.processor.GetMetadata())
 		p.messagesProcessed.Incr(1)
 		return msg, nil
 	} else {
@@ -581,13 +576,34 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string) (*SeriesS
 	// Get algorithm configuration for this topic
 	algorithmType, algorithmConfig := p.config.GetConfigForTopic(seriesID)
 
-	algorithm, err := algorithms.Create(algorithmType, algorithmConfig)
+	// Map late policy to PassThrough parameter
+	latePolicy, _ := algorithmConfig["late_policy"].(string)
+	passThrough := true // Default to passthrough
+	if latePolicy == "drop" {
+		passThrough = false
+	}
+
+	// Remove late_policy from algorithm config as it's handled by ProcessorWrapper
+	algConfig := make(map[string]interface{})
+	for k, v := range algorithmConfig {
+		if k != "late_policy" {
+			algConfig[k] = v
+		}
+	}
+
+	processorConfig := algorithms.ProcessorConfig{
+		Algorithm:       algorithmType,
+		AlgorithmConfig: algConfig,
+		PassThrough:     passThrough,
+	}
+
+	processor, err := algorithms.NewProcessorWrapper(processorConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create algorithm %s: %w", algorithmType, err)
+		return nil, fmt.Errorf("failed to create processor %s: %w", algorithmType, err)
 	}
 
 	state = &SeriesState{
-		algorithm: algorithm,
+		processor: processor,
 	}
 
 	p.seriesState[seriesID] = state
@@ -629,77 +645,11 @@ func (p *DownsamplerProcessor) handleLateArrival(seriesID string, state *SeriesS
 
 // shouldKeepMessage determines if a message should be kept based on the algorithm
 func (p *DownsamplerProcessor) shouldKeepMessage(state *SeriesState, value interface{}, timestamp time.Time) (bool, error) {
-	// Handle "none" algorithm - no filtering
-	if state.algorithm == nil {
-		if state.lastOutput != nil {
-			isEqual := p.areEqual(value, state.lastOutput)
-			shouldKeep := !isEqual // Keep if values are different
-
-			// Log dropped message if configured
-			if !shouldKeep && p.logger != nil {
-				p.logger.Debug(fmt.Sprintf("Dropped identical value: %v", value))
-			}
-
-			return shouldKeep, nil
-		}
-		return true, nil // First value always kept
-	}
-
-	// Handle boolean values with simple equality logic (never send to numeric algorithms)
-	if _, isBool := value.(bool); isBool {
-		if state.lastOutput != nil {
-			isEqual := p.areEqual(value, state.lastOutput)
-			shouldKeep := !isEqual // Keep if values are different
-
-			// Log boolean handling
-			if p.logger != nil {
-				if shouldKeep {
-					p.logger.Debug(fmt.Sprintf("Boolean value changed: %v -> %v (kept)", state.lastOutput, value))
-				} else {
-					p.logger.Debug(fmt.Sprintf("Boolean value unchanged: %v (dropped)", value))
-				}
-			}
-
-			return shouldKeep, nil
-		} else {
-			// First boolean value is always kept
-			if p.logger != nil {
-				p.logger.Debug(fmt.Sprintf("First boolean value: %v (kept)", value))
-			}
-			return true, nil
-		}
-	}
-
-	// Handle string values with simple equality logic (never send to numeric algorithms)
-	if _, isString := value.(string); isString {
-		if state.lastOutput != nil {
-			isEqual := p.areEqual(value, state.lastOutput)
-			shouldKeep := !isEqual // Keep if values are different
-
-			// Log string handling
-			if p.logger != nil {
-				if shouldKeep {
-					p.logger.Debug(fmt.Sprintf("String value changed: %v -> %v (kept)", state.lastOutput, value))
-				} else {
-					p.logger.Debug(fmt.Sprintf("String value unchanged: %v (dropped)", value))
-				}
-			}
-
-			return shouldKeep, nil
-		} else {
-			// First string value is always kept
-			if p.logger != nil {
-				p.logger.Debug(fmt.Sprintf("First string value: %v (kept)", value))
-			}
-			return true, nil
-		}
-	}
-
-	// For numeric values, use the configured algorithm
-	shouldKeep, err := state.algorithm.ProcessPoint(value, timestamp)
+	// ProcessorWrapper handles all type conversion, boolean/string logic, and algorithm processing
+	shouldKeep, err := state.processor.ProcessPoint(value, timestamp)
 
 	if err == nil && !shouldKeep && p.logger != nil {
-		p.logger.Debug(fmt.Sprintf("Algorithm dropped numeric value: %v", value))
+		p.logger.Debug(fmt.Sprintf("ProcessorWrapper dropped value: %v", value))
 	}
 
 	return shouldKeep, err
@@ -724,10 +674,10 @@ func (p *DownsamplerProcessor) areEqual(a, b interface{}) bool {
 
 // logDropReason provides detailed logging about why a message was dropped
 func (p *DownsamplerProcessor) logDropReason(state *SeriesState, currentValue, previousValue interface{}, currentTime, previousTime time.Time) {
-	algorithmName := state.algorithm.GetName()
+	algorithmName := state.processor.GetName()
 
 	// Extract threshold for current algorithm (assuming deadband for now)
-	threshold := p.extractThresholdFromMetadata(state.algorithm.GetMetadata())
+	threshold := p.extractThresholdFromMetadata(state.processor.GetMetadata())
 
 	switch algorithmName {
 	case "deadband":
@@ -884,10 +834,8 @@ func (p *DownsamplerProcessor) updateSeriesState(state *SeriesState, value inter
 	state.mutex.Lock()
 	defer state.mutex.Unlock()
 
-	state.lastOutput = value
-	state.lastOutputTime = timestamp
-	// Always update lastProcessedTime regardless of whether message was kept
-	// This is crucial for late arrival detection
+	// ProcessorWrapper maintains its own internal state
+	// We only need to track lastProcessedTime for late arrival detection
 	state.lastProcessedTime = timestamp
 }
 
@@ -910,7 +858,7 @@ func (p *DownsamplerProcessor) Close(ctx context.Context) error {
 	defer p.stateMutex.Unlock()
 
 	for _, state := range p.seriesState {
-		state.algorithm.Reset()
+		state.processor.Reset()
 	}
 	p.seriesState = make(map[string]*SeriesState)
 
