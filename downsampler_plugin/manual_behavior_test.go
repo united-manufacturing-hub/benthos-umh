@@ -60,8 +60,9 @@ input:
 pipeline:
   processors:
     - downsampler:
-        algorithm: deadband
-        threshold: 0.5
+        default:
+          deadband:
+            threshold: 0.5
 
 output:
   drop: {}
@@ -101,8 +102,9 @@ input:
 pipeline:
   processors:
     - downsampler:
-        algorithm: deadband
-        threshold: 0.5
+        default:
+          deadband:
+            threshold: 0.5
 
 output:
   drop: {}
@@ -126,44 +128,100 @@ output:
 
 		Context("Pressure with 2.0 Pa threshold", func() {
 			It("should handle larger threshold correctly", func() {
-				spec := `
-input:
-  generate:
-    mapping: |
-      root = [
-        {"pressure": 1000.0, "timestamp_ms": 1000},
-        {"pressure": 1001.5, "timestamp_ms": 2000},  # +1.5 Pa < 2.0 threshold → DROP
-        {"pressure": 1003.0, "timestamp_ms": 3000},  # +3.0 Pa > 2.0 threshold → KEEP
-        {"pressure": 1004.0, "timestamp_ms": 4000},  # +1.0 Pa < 2.0 threshold → DROP
-        {"pressure": 1006.0, "timestamp_ms": 5000}   # +3.0 Pa > 2.0 threshold → KEEP
-      ].index(count("generated") % 5)
-      meta data_contract = "_historian"
-      meta umh_topic = "test.pressure"  
-    count: 5
+				builder := service.NewStreamBuilder()
 
-pipeline:
-  processors:
-    - downsampler:
-        algorithm: deadband
-        threshold: 2.0
+				// Add producer function
+				var msgHandler service.MessageHandlerFunc
+				msgHandler, err := builder.AddProducerFunc()
+				Expect(err).NotTo(HaveOccurred())
 
-output:
-  drop: {}
-`
+				err = builder.AddProcessorYAML(`
+downsampler:
+  default:
+    deadband:
+      threshold: 2.0
+`)
+				Expect(err).NotTo(HaveOccurred())
 
-				env := service.NewEnvironment()
-				builder := env.NewStreamBuilder()
-				Expect(builder.SetYAML(spec)).To(Succeed())
+				var messages []*service.Message
+				err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+					messages = append(messages, msg)
+					return nil
+				})
+				Expect(err).NotTo(HaveOccurred())
 
 				stream, err := builder.Build()
-				Expect(err).ToNot(HaveOccurred())
+				Expect(err).NotTo(HaveOccurred())
 
-				go func() { _ = stream.Run(ctx) }()
-				time.Sleep(100 * time.Millisecond)
-				stream.Stop(ctx)
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
 
-				// Expected: 3 messages kept (1000.0 first, 1003.0, 1006.0 exceed threshold)
-				// Expected: 2 messages dropped (1001.5, 1004.0 within threshold)
+				go func() {
+					_ = stream.Run(ctx)
+				}()
+
+				// Send test messages in UMH-core format
+				testMessages := []struct {
+					value       float64
+					timestamp   int64
+					shouldKeep  bool
+					description string
+				}{
+					{1000.0, 1000, true, "first value (always kept)"},
+					{1001.5, 2000, false, "+1.5 Pa < 2.0 threshold → DROP"},
+					{1003.0, 3000, true, "+3.0 Pa > 2.0 threshold → KEEP"},
+					{1004.0, 4000, false, "+1.0 Pa < 2.0 threshold → DROP"},
+					{1006.0, 5000, true, "+3.0 Pa > 2.0 threshold → KEEP"},
+				}
+
+				for _, tm := range testMessages {
+					testMsg := service.NewMessage(nil)
+					testMsg.SetStructured(map[string]interface{}{
+						"value":        tm.value,
+						"timestamp_ms": tm.timestamp,
+					})
+					testMsg.MetaSet("umh_topic", "test.pressure")
+
+					err = msgHandler(ctx, testMsg)
+					Expect(err).NotTo(HaveOccurred())
+				}
+
+				// Expected: 3 messages kept (1000.0 first, 1003.0 exceeds threshold, 1006.0 exceeds threshold)
+				Eventually(func() int {
+					return len(messages)
+				}).Should(Equal(3), "Should keep 3 messages: first value + 2 that exceed threshold")
+
+				// Verify the kept values and their order
+				Expect(len(messages)).To(Equal(3))
+
+				// First message should be 1000.0 (always keep first)
+				structured, err := messages[0].AsStructured()
+				Expect(err).NotTo(HaveOccurred())
+				payload, ok := structured.(map[string]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(payload["value"]).To(BeNumerically("==", 1000.0))
+
+				// Second message should be 1003.0 (exceeds threshold)
+				structured, err = messages[1].AsStructured()
+				Expect(err).NotTo(HaveOccurred())
+				payload, ok = structured.(map[string]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(payload["value"]).To(BeNumerically("==", 1003.0))
+
+				// Third message should be 1006.0 (exceeds threshold)
+				structured, err = messages[2].AsStructured()
+				Expect(err).NotTo(HaveOccurred())
+				payload, ok = structured.(map[string]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(payload["value"]).To(BeNumerically("==", 1006.0))
+
+				// Verify all messages have downsampler metadata
+				for i, msg := range messages {
+					downsampledBy, exists := msg.MetaGet("downsampled_by")
+					Expect(exists).To(BeTrue(), "Message %d should have downsampled_by metadata", i)
+					// The metadata includes threshold info, so check that it starts with "deadband"
+					Expect(downsampledBy).To(HavePrefix("deadband"), "Message %d should be downsampled by deadband algorithm", i)
+				}
 			})
 		})
 	})
@@ -176,21 +234,21 @@ input:
   generate:
     mapping: |
       root = [
-        {"status": "RUNNING", "timestamp_ms": 1000},
-        {"status": "RUNNING", "timestamp_ms": 2000},   # Same → DROP (threshold ignored)
-        {"status": "STOPPED", "timestamp_ms": 3000},  # Different → KEEP (threshold ignored)
-        {"status": "STOPPED", "timestamp_ms": 4000},  # Same → DROP (threshold ignored)
-        {"status": "RUNNING", "timestamp_ms": 5000}   # Different → KEEP (threshold ignored)
+        {"value": "RUNNING", "timestamp_ms": 1000},
+        {"value": "RUNNING", "timestamp_ms": 2000},   # Same → DROP (threshold ignored)
+        {"value": "STOPPED", "timestamp_ms": 3000},  # Different → KEEP (threshold ignored)
+        {"value": "STOPPED", "timestamp_ms": 4000},  # Same → DROP (threshold ignored)
+        {"value": "RUNNING", "timestamp_ms": 5000}   # Different → KEEP (threshold ignored)
       ].index(count("generated") % 5)
-      meta data_contract = "_historian"
       meta umh_topic = "test.status"
     count: 5
 
 pipeline:
   processors:
     - downsampler:
-        algorithm: deadband
-        threshold: 999.0  # High threshold should be ignored for strings
+        default:
+          deadband:
+            threshold: 999.0  # High threshold should be ignored for strings
 
 output:
   drop: {}
@@ -205,7 +263,8 @@ output:
 
 				go func() { _ = stream.Run(ctx) }()
 				time.Sleep(100 * time.Millisecond)
-				stream.Stop(ctx)
+				err = stream.Stop(ctx)
+				Expect(err).ToNot(HaveOccurred(), "Stream should run without errors")
 
 				// Expected: 3 messages kept ("RUNNING" first, "STOPPED", "RUNNING" again)
 				// Expected: 2 messages dropped (duplicate "RUNNING", duplicate "STOPPED")
@@ -217,21 +276,21 @@ input:
   generate:
     mapping: |
       root = [
-        {"mode": "AUTO", "timestamp_ms": 1000},
-        {"mode": "AUTO", "timestamp_ms": 2000},  # Same → DROP
-        {"mode": "AUTO", "timestamp_ms": 3000},  # Same → DROP  
-        {"mode": "AUTO", "timestamp_ms": 4000},  # Same → DROP
-        {"mode": "AUTO", "timestamp_ms": 5000}   # Same → DROP
+        {"value": "AUTO", "timestamp_ms": 1000},
+        {"value": "AUTO", "timestamp_ms": 2000},  # Same → DROP
+        {"value": "AUTO", "timestamp_ms": 3000},  # Same → DROP  
+        {"value": "AUTO", "timestamp_ms": 4000},  # Same → DROP
+        {"value": "AUTO", "timestamp_ms": 5000}   # Same → DROP
       ].index(count("generated") % 5)
-      meta data_contract = "_historian"
       meta umh_topic = "test.mode"
     count: 5
 
 pipeline:
   processors:
     - downsampler:
-        algorithm: deadband
-        threshold: 0.1  # Low threshold should be ignored for strings
+        default:
+          deadband:
+            threshold: 0.1  # Low threshold should be ignored for strings
 
 output:
   drop: {}
@@ -246,7 +305,8 @@ output:
 
 				go func() { _ = stream.Run(ctx) }()
 				time.Sleep(100 * time.Millisecond)
-				stream.Stop(ctx)
+				err = stream.Stop(ctx)
+				Expect(err).ToNot(HaveOccurred(), "Stream should run without errors")
 
 				// Expected: 1 message kept ("AUTO" first)
 				// Expected: 4 messages dropped (all duplicates)
@@ -262,21 +322,21 @@ input:
   generate:
     mapping: |
       root = [
-        {"enabled": true, "timestamp_ms": 1000},
-        {"enabled": true, "timestamp_ms": 2000},   # Same → DROP (threshold ignored)
-        {"enabled": false, "timestamp_ms": 3000}, # Different → KEEP (threshold ignored)
-        {"enabled": false, "timestamp_ms": 4000}, # Same → DROP (threshold ignored)
-        {"enabled": true, "timestamp_ms": 5000}   # Different → KEEP (threshold ignored)
+        {"value": true, "timestamp_ms": 1000},
+        {"value": true, "timestamp_ms": 2000},   # Same → DROP (threshold ignored)
+        {"value": false, "timestamp_ms": 3000}, # Different → KEEP (threshold ignored)
+        {"value": false, "timestamp_ms": 4000}, # Same → DROP (threshold ignored)
+        {"value": true, "timestamp_ms": 5000}   # Different → KEEP (threshold ignored)
       ].index(count("generated"))
-      meta data_contract = "_historian"
       meta umh_topic = "test.enabled"
     count: 5
 
 pipeline:
   processors:
     - downsampler:
-        algorithm: deadband
-        threshold: 999.0  # High threshold should be ignored for booleans
+        default:
+          deadband:
+            threshold: 999.0  # High threshold should be ignored for booleans
 
 output:
   drop: {}
@@ -303,21 +363,21 @@ input:
   generate:
     mapping: |
       root = [
-        {"alarm": false, "timestamp_ms": 1000},
-        {"alarm": false, "timestamp_ms": 2000},  # Same → DROP
-        {"alarm": false, "timestamp_ms": 3000},  # Same → DROP
-        {"alarm": false, "timestamp_ms": 4000},  # Same → DROP
-        {"alarm": false, "timestamp_ms": 5000}   # Same → DROP
+        {"value": false, "timestamp_ms": 1000},
+        {"value": false, "timestamp_ms": 2000},  # Same → DROP
+        {"value": false, "timestamp_ms": 3000},  # Same → DROP
+        {"value": false, "timestamp_ms": 4000},  # Same → DROP
+        {"value": false, "timestamp_ms": 5000}   # Same → DROP
       ].index(count("generated") % 5)
-      meta data_contract = "_historian"
       meta umh_topic = "test.alarm"
     count: 5
 
 pipeline:
   processors:
     - downsampler:
-        algorithm: deadband
-        threshold: 0.1  # Low threshold should be ignored for booleans
+        default:
+          deadband:
+            threshold: 0.1  # Low threshold should be ignored for booleans
 
 output:
   drop: {}
@@ -343,53 +403,187 @@ output:
 	Describe("Topic-Specific Thresholds", func() {
 		Context("Different thresholds per metric type", func() {
 			It("should apply correct threshold based on topic pattern", func() {
-				spec := `
-input:
-  generate:
-    mapping: |
-      let messages = [
-        {"temperature": 20.0, "timestamp_ms": 1000, "topic": "plant.line1.temperature"},
-        {"temperature": 20.3, "timestamp_ms": 2000, "topic": "plant.line1.temperature"},  # +0.3°C < 0.5 → DROP
-        {"humidity": 50.0, "timestamp_ms": 3000, "topic": "plant.line1.humidity"},
-        {"humidity": 50.7, "timestamp_ms": 4000, "topic": "plant.line1.humidity"},       # +0.7% < 1.0 → DROP
-        {"pressure": 1000.0, "timestamp_ms": 5000, "topic": "plant.line1.pressure"},
-        {"pressure": 1001.0, "timestamp_ms": 6000, "topic": "plant.line1.pressure"}     # +1.0 Pa < 2.0 → DROP
-      ]
-      let msg = $messages.index(count("generated") % $messages.length())
-      root = msg.without("topic")
-      meta data_contract = "_historian"
-      meta umh_topic = $msg.topic
-    count: 6
+				builder := service.NewStreamBuilder()
 
-pipeline:
-  processors:
-    - downsampler:
-        algorithm: deadband
-        threshold: 2.0  # Default
-        topic_thresholds:
-          - pattern: "*.temperature"
-            threshold: 0.5
-          - pattern: "*.humidity"
-            threshold: 1.0
-          # pressure uses default 2.0
+				// Add producer function
+				var msgHandler service.MessageHandlerFunc
+				msgHandler, err := builder.AddProducerFunc()
+				Expect(err).NotTo(HaveOccurred())
 
-output:
-  drop: {}
-`
+				err = builder.AddProcessorYAML(`
+downsampler:
+  default:
+    deadband:
+      threshold: 2.0  # Default threshold
+  overrides:
+    - pattern: "*.temperature"
+      deadband:
+        threshold: 0.5  # Sensitive temperature threshold
+    - pattern: "*.humidity"
+      deadband:
+        threshold: 1.0  # Moderate humidity threshold
+    - pattern: "*.pressure"
+      deadband:
+        threshold: 3.0  # Less sensitive pressure threshold
+`)
+				Expect(err).NotTo(HaveOccurred())
 
-				env := service.NewEnvironment()
-				builder := env.NewStreamBuilder()
-				Expect(builder.SetYAML(spec)).To(Succeed())
+				var messages []*service.Message
+				err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+					messages = append(messages, msg)
+					return nil
+				})
+				Expect(err).NotTo(HaveOccurred())
 
 				stream, err := builder.Build()
-				Expect(err).ToNot(HaveOccurred())
+				Expect(err).NotTo(HaveOccurred())
 
-				go func() { _ = stream.Run(ctx) }()
-				time.Sleep(100 * time.Millisecond)
-				stream.Stop(ctx)
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
 
-				// Expected: 3 messages kept (first of each metric type)
-				// Expected: 3 messages dropped (all within their respective thresholds)
+				go func() {
+					_ = stream.Run(ctx)
+				}()
+
+				// Test temperature with 0.5 threshold
+				tempMessages := []struct {
+					value      float64
+					timestamp  int64
+					topic      string
+					shouldKeep bool
+					reason     string
+				}{
+					{20.0, 1000, "plant.line1.temperature", true, "first temperature value"},
+					{20.3, 2000, "plant.line1.temperature", false, "+0.3°C < 0.5 threshold → DROP"},
+					{20.6, 3000, "plant.line1.temperature", true, "+0.6°C > 0.5 threshold → KEEP"},
+				}
+
+				// Test humidity with 1.0 threshold
+				humMessages := []struct {
+					value      float64
+					timestamp  int64
+					topic      string
+					shouldKeep bool
+					reason     string
+				}{
+					{50.0, 4000, "plant.line1.humidity", true, "first humidity value"},
+					{50.7, 5000, "plant.line1.humidity", false, "+0.7% < 1.0 threshold → DROP"},
+					{51.2, 6000, "plant.line1.humidity", true, "+1.2% > 1.0 threshold → KEEP"},
+				}
+
+				// Test pressure with 3.0 threshold
+				pressMessages := []struct {
+					value      float64
+					timestamp  int64
+					topic      string
+					shouldKeep bool
+					reason     string
+				}{
+					{1000.0, 7000, "plant.line1.pressure", true, "first pressure value"},
+					{1002.0, 8000, "plant.line1.pressure", false, "+2.0 Pa < 3.0 threshold → DROP"},
+					{1004.0, 9000, "plant.line1.pressure", true, "+4.0 Pa > 3.0 threshold → KEEP"},
+				}
+
+				allMessages := []struct {
+					value      float64
+					timestamp  int64
+					topic      string
+					shouldKeep bool
+					reason     string
+				}{}
+				allMessages = append(allMessages, tempMessages...)
+				allMessages = append(allMessages, humMessages...)
+				allMessages = append(allMessages, pressMessages...)
+
+				// Send all test messages
+				for _, tm := range allMessages {
+					testMsg := service.NewMessage(nil)
+					testMsg.SetStructured(map[string]interface{}{
+						"value":        tm.value,
+						"timestamp_ms": tm.timestamp,
+					})
+					testMsg.MetaSet("umh_topic", tm.topic)
+
+					err = msgHandler(ctx, testMsg)
+					Expect(err).NotTo(HaveOccurred())
+				}
+
+				// Expected: 6 messages kept (2 temp + 2 humid + 2 pressure)
+				// - Temperature: 20.0 (first), 20.6 (>0.5)
+				// - Humidity: 50.0 (first), 51.2 (>1.0)
+				// - Pressure: 1000.0 (first), 1004.0 (>3.0)
+				Eventually(func() int {
+					return len(messages)
+				}).Should(Equal(6), "Should keep 6 messages: 2 per metric type (first + threshold exceeded)")
+
+				// Verify the kept messages in order
+				Expect(len(messages)).To(Equal(6))
+
+				// Group messages by topic for easier verification
+				messagesByTopic := map[string][]*service.Message{}
+				for _, msg := range messages {
+					topic, exists := msg.MetaGet("umh_topic")
+					Expect(exists).To(BeTrue())
+					messagesByTopic[topic] = append(messagesByTopic[topic], msg)
+				}
+
+				// Verify temperature messages (threshold 0.5)
+				tempMsgs := messagesByTopic["plant.line1.temperature"]
+				Expect(len(tempMsgs)).To(Equal(2), "Should have 2 temperature messages")
+
+				structured, err := tempMsgs[0].AsStructured()
+				Expect(err).NotTo(HaveOccurred())
+				payload, ok := structured.(map[string]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(payload["value"]).To(BeNumerically("==", 20.0))
+
+				structured, err = tempMsgs[1].AsStructured()
+				Expect(err).NotTo(HaveOccurred())
+				payload, ok = structured.(map[string]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(payload["value"]).To(BeNumerically("==", 20.6))
+
+				// Verify humidity messages (threshold 1.0)
+				humMsgs := messagesByTopic["plant.line1.humidity"]
+				Expect(len(humMsgs)).To(Equal(2), "Should have 2 humidity messages")
+
+				structured, err = humMsgs[0].AsStructured()
+				Expect(err).NotTo(HaveOccurred())
+				payload, ok = structured.(map[string]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(payload["value"]).To(BeNumerically("==", 50.0))
+
+				structured, err = humMsgs[1].AsStructured()
+				Expect(err).NotTo(HaveOccurred())
+				payload, ok = structured.(map[string]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(payload["value"]).To(BeNumerically("==", 51.2))
+
+				// Verify pressure messages (threshold 3.0)
+				pressMsgs := messagesByTopic["plant.line1.pressure"]
+				Expect(len(pressMsgs)).To(Equal(2), "Should have 2 pressure messages")
+
+				structured, err = pressMsgs[0].AsStructured()
+				Expect(err).NotTo(HaveOccurred())
+				payload, ok = structured.(map[string]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(payload["value"]).To(BeNumerically("==", 1000.0))
+
+				structured, err = pressMsgs[1].AsStructured()
+				Expect(err).NotTo(HaveOccurred())
+				payload, ok = structured.(map[string]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(payload["value"]).To(BeNumerically("==", 1004.0))
+
+				// Verify all messages have correct downsampler metadata
+				for topic, topicMsgs := range messagesByTopic {
+					for i, msg := range topicMsgs {
+						downsampledBy, exists := msg.MetaGet("downsampled_by")
+						Expect(exists).To(BeTrue(), "Message %d for topic %s should have downsampled_by metadata", i, topic)
+						// The metadata includes threshold info, so check that it starts with "deadband"
+						Expect(downsampledBy).To(HavePrefix("deadband"), "Message %d should be downsampled by deadband algorithm", i)
+					}
+				}
 			})
 		})
 	})
@@ -408,15 +602,15 @@ input:
         {"value": "OFFLINE", "timestamp_ms": 4000}, # String same → DROP
         {"value": 45.0, "timestamp_ms": 5000}       # Numeric → KEEP (type change)
       ].index(count("generated") % 5)
-      meta data_contract = "_historian"
       meta umh_topic = "test.mixed"
     count: 5
 
 pipeline:
   processors:
     - downsampler:
-        algorithm: deadband
-        threshold: 1.0
+        default:
+          deadband:
+            threshold: 1.0
 
 output:
   drop: {}
@@ -459,8 +653,9 @@ input:
 pipeline:
   processors:
     - downsampler:
-        algorithm: deadband
-        threshold: 0.0
+        default:
+          deadband:
+            threshold: 0.0
 
 output:
   drop: {}
@@ -501,8 +696,9 @@ input:
 pipeline:
   processors:
     - downsampler:
-        algorithm: deadband
-        threshold: 100.0
+        default:
+          deadband:
+            threshold: 100.0
 
 output:
   drop: {}

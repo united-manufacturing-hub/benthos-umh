@@ -36,23 +36,23 @@ input:
       
       root = match $metric_index {
         0 => {
-          "temperature": (20 + random_int(max: 1000) / 100.0),
+          "value": (20 + random_int(max: 1000) / 100.0),
           "timestamp_ms": timestamp_unix_milli()
         },
         1 => {
-          "humidity": (30 + random_int(max: 4000) / 100.0),
+          "value": (30 + random_int(max: 4000) / 100.0),
           "timestamp_ms": timestamp_unix_milli()
         },
         2 => {
-          "pressure": (1000 + random_int(max: 10000) / 100.0),
+          "value": (1000 + random_int(max: 10000) / 100.0),
           "timestamp_ms": timestamp_unix_milli()
         },
         3 => {
-          "status": "RUNNING",  # Constant string value
+          "value": "RUNNING",  # Constant string value
           "timestamp_ms": timestamp_unix_milli()
         },
         4 => {
-          "machine_state": (random_int(max: 100) < 90),  # 90% chance of true
+          "value": (random_int(max: 100) < 90),  # 90% chance of true
           "timestamp_ms": timestamp_unix_milli()
         }
       }
