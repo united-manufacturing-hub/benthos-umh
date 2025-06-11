@@ -179,7 +179,7 @@ var _ = Describe("Swinging Door Algorithm", func() {
 		})
 	})
 
-	Describe("type conversion", func() {
+	Describe("data type handling", func() {
 		BeforeEach(func() {
 			config := map[string]interface{}{
 				"threshold": 1.0,
@@ -188,33 +188,6 @@ var _ = Describe("Swinging Door Algorithm", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should handle integer values", func() {
-			keep, err := algo.ProcessPoint(10, baseTime)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue())
-
-			keep, err = algo.ProcessPoint(11, baseTime.Add(time.Second))
-			Expect(err).NotTo(HaveOccurred())
-			// Could be true or false depending on SDT logic
-			_ = keep
-		})
-
-		It("should handle float32 values", func() {
-			keep, err := algo.ProcessPoint(float32(10.5), baseTime)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue())
-		})
-
-		It("should handle mixed types", func() {
-			keep, err := algo.ProcessPoint(10.0, baseTime)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue())
-
-			keep, err = algo.ProcessPoint(11, baseTime.Add(time.Second))
-			Expect(err).NotTo(HaveOccurred())
-			// Could be true or false depending on SDT logic
-			_ = keep
-		})
 	})
 
 	Describe("reset functionality", func() {
@@ -256,26 +229,6 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(keep).To(BeTrue())
 			})
-		})
-	})
-
-	Describe("error handling", func() {
-		BeforeEach(func() {
-			config := map[string]interface{}{
-				"threshold": 1.0,
-			}
-			algo, err = algorithms.NewSwingingDoorAlgorithm(config)
-			Expect(err).NotTo(HaveOccurred())
-		})
-
-		It("should handle conversion errors", func() {
-			// Test string that can't be converted
-			_, err = algo.ProcessPoint("error", baseTime)
-			Expect(err).To(HaveOccurred())
-
-			// Test boolean rejection - should be handled by plugin-level equality
-			_, err = algo.ProcessPoint(true, baseTime)
-			Expect(err).To(HaveOccurred(), "Boolean values should be rejected")
 		})
 	})
 
@@ -348,47 +301,23 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				Expect(algo.ProcessPoint(3.0, baseTime.Add(2*time.Second))).Should(BeTrue())
 			})
 		})
+	})
 
-		Context("industrial data type compatibility", func() {
-			It("rejects non-numeric strings", func() {
-				// Data type integrity: SDT algorithms are designed for numeric compression.
-				// String values should be rejected to maintain algorithm integrity and prevent
-				// unexpected behavior. String data requires different handling approaches.
-				// Reference: Industrial best practice is to separate numeric and string processing.
-				cfg := map[string]interface{}{"threshold": 0.5}
-				algo, _ := algorithms.NewSwingingDoorAlgorithm(cfg)
-				_, err := algo.ProcessPoint("10.0", baseTime)
-				Expect(err).Should(HaveOccurred()) // strings should be rejected
-			})
-
-			It("rejects boolean values", func() {
-				// Boolean signal processing: Industrial systems use boolean signals for
-				// discrete states (pump on/off, valve open/closed). These should be handled
-				// by plugin-level equality logic rather than numeric compression algorithms.
-				// This ensures clean separation between discrete and continuous data processing.
-				cfg := map[string]interface{}{"threshold": 0.1}
-				algo, _ := algorithms.NewSwingingDoorAlgorithm(cfg)
-				_, err := algo.ProcessPoint(true, baseTime)
-				Expect(err).Should(HaveOccurred()) // booleans should be rejected
-			})
+	Context("parameter validation", func() {
+		It("rejects negative threshold", func() {
+			// Mathematical validation: Negative compression deviation is meaningless
+			// since envelope width would be negative, making all points fall outside
+			// the envelope. Proper validation prevents misconfiguration.
+			_, err := algorithms.NewSwingingDoorAlgorithm(map[string]interface{}{"threshold": -0.1})
+			Expect(err).Should(HaveOccurred())
 		})
 
-		Context("parameter validation", func() {
-			It("rejects negative threshold", func() {
-				// Mathematical validation: Negative compression deviation is meaningless
-				// since envelope width would be negative, making all points fall outside
-				// the envelope. Proper validation prevents misconfiguration.
-				_, err := algorithms.NewSwingingDoorAlgorithm(map[string]interface{}{"threshold": -0.1})
-				Expect(err).Should(HaveOccurred())
-			})
-
-			It("accepts threshold = 0 (exact envelope)", func() {
-				// Edge case: threshold = 0 creates zero-width envelope, effectively
-				// becoming a "drop exact repeats" filter. This is mathematically valid
-				// and useful for discrete sensors with perfect repeatability.
-				_, err := algorithms.NewSwingingDoorAlgorithm(map[string]interface{}{"threshold": 0})
-				Expect(err).ShouldNot(HaveOccurred())
-			})
+		It("accepts threshold = 0 (exact envelope)", func() {
+			// Edge case: threshold = 0 creates zero-width envelope, effectively
+			// becoming a "drop exact repeats" filter. This is mathematically valid
+			// and useful for discrete sensors with perfect repeatability.
+			_, err := algorithms.NewSwingingDoorAlgorithm(map[string]interface{}{"threshold": 0})
+			Expect(err).ShouldNot(HaveOccurred())
 		})
 	})
 

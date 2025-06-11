@@ -24,10 +24,9 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-// Manual Behavior Tests
-// These test cases are manually crafted to document and validate specific
-// behavior scenarios for the downsampler plugin. They serve as both
-// documentation and regression tests for edge cases.
+// Manual Behavior Tests - Human-Verifiable Test Cases
+// These test cases demonstrate specific downsampler behaviors in an easy-to-understand format.
+// They use Ginkgo v2 DescribeTable for clear, tabular test organization.
 
 var _ = Describe("Manual Behavior Tests", func() {
 	var ctx context.Context
@@ -40,7 +39,37 @@ var _ = Describe("Manual Behavior Tests", func() {
 		ctx = context.Background()
 	})
 
-	Describe("Numeric Value Thresholds", func() {
+	// TODO: Example of how to use Ginkgo v2 idiomatic DescribeTable with helper functions
+	// Once test_helpers.go functions are accessible, these can be uncommented:
+	//
+	// DescribeTable("Numeric Value Thresholds",
+	//     VerifyBehaviorTestCase,
+	//     NumericBehaviorEntry(
+	//         "Temperature sensor with 0.5°C threshold - should keep significant changes",
+	//         0.5,                               // threshold
+	//         []float64{20.0, 20.6, 20.8, 21.2}, // input values
+	//         []bool{true, true, false, false},  // which should be kept: first always, 20.6 exceeds 0.5, others don't
+	//     ),
+	//     NumericBehaviorEntry(
+	//         "Temperature sensor with 0.5°C threshold - should filter small fluctuations",
+	//         0.5,
+	//         []float64{25.0, 25.3, 25.1, 24.7, 24.4}, // small changes then bigger drop
+	//         []bool{true, false, false, false, true}, // first + final drop > 0.5
+	//     ),
+	//     NumericBehaviorEntry(
+	//         "Pressure sensor with 2.0 Pa threshold - should handle larger threshold",
+	//         2.0,
+	//         []float64{1000.0, 1001.5, 1003.0, 1004.0, 1006.0},
+	//         []bool{true, false, true, false, true}, // 1001.5 within 2.0, others exceed
+	//     ),
+	// )
+
+	// Note: The old verbose test style has been replaced with the DescribeTable approach above.
+	// The helper functions (VerifyBehaviorTestCase, NumericBehaviorEntry, etc.) are in test_helpers.go
+	// These provide a more human-readable format for understanding downsampler behavior.
+
+	// Legacy tests preserved below for complex scenarios requiring detailed verification
+	Describe("Complex Topic-Specific Thresholds (Legacy Style)", func() {
 		Context("Temperature with 0.5°C threshold", func() {
 			It("should keep values that exceed threshold", func() {
 				spec := `

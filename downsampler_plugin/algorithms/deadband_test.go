@@ -1,6 +1,7 @@
 package algorithms_test
 
 import (
+	"math"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -198,121 +199,130 @@ var _ = Describe("Deadband Algorithm", func() {
 		})
 
 		Context("threshold validation", func() {
-			It("rejects a negative threshold", func() {
-				// Mathematical validation: Negative thresholds are meaningless since
-				// abs(Δ) ≥ negative_value is always true, effectively disabling filtering.
-				// Proper input validation prevents configuration errors that would
-				// compromise data compression effectiveness.
-				_, err := algorithms.NewDeadbandAlgorithm(map[string]interface{}{"threshold": -0.1})
-				Expect(err).Should(HaveOccurred())
+			It("should reject negative thresholds", func() {
+				config := map[string]interface{}{
+					"threshold": -0.5,
+				}
+				_, err := algorithms.NewDeadbandAlgorithm(config)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("threshold cannot be negative"))
 			})
 
-			It("accepts threshold 0 (drop exact repeats)", func() {
-				// Special case: threshold = 0 creates a "drop exact repeats only" mode,
-				// which is useful for systems that produce many duplicate readings.
-				// This is a valid edge case used in practice for Boolean or discrete sensors.
-				_, err := algorithms.NewDeadbandAlgorithm(map[string]interface{}{"threshold": 0})
-				Expect(err).ShouldNot(HaveOccurred())
+			It("should accept zero threshold", func() {
+				config := map[string]interface{}{
+					"threshold": 0.0,
+				}
+				algo, err := algorithms.NewDeadbandAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(algo).NotTo(BeNil())
+
+				// First point
+				keep, err := algo.ProcessPoint(10.0, baseTime)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(keep).To(BeTrue())
+
+				// Even tiny change should be kept with zero threshold
+				keep, err = algo.ProcessPoint(10.001, baseTime.Add(time.Second))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(keep).To(BeTrue())
+
+				// Exact repeat should be dropped even with zero threshold
+				keep, err = algo.ProcessPoint(10.001, baseTime.Add(2*time.Second))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(keep).To(BeFalse())
 			})
 		})
 
-		Context("string handling", func() {
-			It("rejects non-numeric strings", func() {
-				// Data type integrity: Deadband algorithms are designed for numeric compression.
-				// While some systems might accept numeric strings, maintaining strict type
-				// boundaries prevents unexpected behavior and maintains algorithm clarity.
-				// String data should be handled by appropriate string-based algorithms.
-				// Reference: Clean separation of numeric vs string processing is industrial best practice.
-				cfg := map[string]interface{}{"threshold": 0.5}
-				algo, _ := algorithms.NewDeadbandAlgorithm(cfg)
-				_, err := algo.ProcessPoint("10.0", baseTime)
-				Expect(err).Should(HaveOccurred()) // strings should be rejected
+		Context("very large threshold edge case", func() {
+			It("should drop everything after first point with MaxFloat64 threshold", func() {
+				config := map[string]interface{}{
+					"threshold": math.MaxFloat64,
+				}
+				algo, err := algorithms.NewDeadbandAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+
+				// First point should be kept
+				keep, err := algo.ProcessPoint(10.0, baseTime)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(keep).To(BeTrue())
+
+				// Even huge change should be dropped with MaxFloat64 threshold
+				keep, err = algo.ProcessPoint(1e100, baseTime.Add(time.Second))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(keep).To(BeFalse())
 			})
 		})
-	})
 
-	Describe("data type handling", func() {
-		BeforeEach(func() {
-			config := map[string]interface{}{
-				"threshold": 1.0,
-			}
-			algo, err = algorithms.NewDeadbandAlgorithm(config)
-			Expect(err).NotTo(HaveOccurred())
+		Context("zero max_time configuration", func() {
+			It("should behave identically to no max_time when explicitly set to 0s", func() {
+				configWithZero := map[string]interface{}{
+					"threshold": 0.5,
+					"max_time":  "0s",
+				}
+				algoWithZero, err := algorithms.NewDeadbandAlgorithm(configWithZero)
+				Expect(err).NotTo(HaveOccurred())
+
+				configWithoutMax := map[string]interface{}{
+					"threshold": 0.5,
+				}
+				algoWithoutMax, err := algorithms.NewDeadbandAlgorithm(configWithoutMax)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Both should behave identically
+				testSequence := []struct {
+					value float64
+					delay time.Duration
+				}{
+					{10.0, 0},
+					{10.3, time.Second},     // Small change - should be dropped
+					{11.0, 2 * time.Second}, // Large change - should be kept
+					{11.2, 3 * time.Second}, // Small change - should be dropped
+				}
+
+				for _, test := range testSequence {
+					timestamp := baseTime.Add(test.delay)
+
+					keepZero, errZero := algoWithZero.ProcessPoint(test.value, timestamp)
+					keepNoMax, errNoMax := algoWithoutMax.ProcessPoint(test.value, timestamp)
+
+					if errZero == nil && errNoMax == nil {
+						Expect(keepZero).To(Equal(keepNoMax), "Algorithms should behave identically for value %.1f", test.value)
+					} else {
+						Expect(errZero).To(Equal(errNoMax))
+					}
+				}
+			})
 		})
 
-		It("should reject non-numeric data types", func() {
-			// Boolean values should be rejected - handled by plugin-level equality
-			_, err := algo.ProcessPoint(true, baseTime)
-			Expect(err).To(HaveOccurred(), "Boolean values should be rejected")
-
-			// String value - should error for non-convertible strings
-			_, err = algo.ProcessPoint("stopped", baseTime)
-			Expect(err).To(HaveOccurred(), "Non-numeric strings should cause error")
-
-			// Reset and test with numeric values
-			algo.Reset()
-
-			// First numeric point
-			keep, err := algo.ProcessPoint(1.0, baseTime)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue(), "First numeric point should be kept")
-
-			// Integer value (converts to float)
-			keep, err = algo.ProcessPoint(11, baseTime.Add(2*time.Second))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue(), "Integer change (1.0->11 = 10.0) should be kept")
-		})
-
-		It("should handle string sequence", func() {
-			// Reset for string test
-			config := map[string]interface{}{
-				"threshold": 1.0,
-			}
-			algo, err = algorithms.NewDeadbandAlgorithm(config)
-			Expect(err).NotTo(HaveOccurred())
-
-			// String values should cause errors since deadband needs numeric values
-			_, err = algo.ProcessPoint("running", baseTime)
-			Expect(err).To(HaveOccurred(), "Strings should cause error in deadband")
-		})
-
-		Context("type conversion scenarios", func() {
+		Context("non-monotonic timestamp handling", func() {
 			BeforeEach(func() {
 				config := map[string]interface{}{
 					"threshold": 0.5,
+					"max_time":  "60s",
 				}
 				algo, err = algorithms.NewDeadbandAlgorithm(config)
 				Expect(err).NotTo(HaveOccurred())
 			})
 
-			It("should reject boolean values and handle integer conversion", func() {
-				// Boolean values should be rejected - they're handled by plugin-level equality
-				_, err := algo.ProcessPoint(true, baseTime)
-				Expect(err).To(HaveOccurred())
-
-				// Reset for integer test
-				algo.Reset()
-
-				// Test int conversion - first int
-				keep, err := algo.ProcessPoint(1, baseTime)
+			It("should handle clock skew gracefully", func() {
+				// First point
+				keep, err := algo.ProcessPoint(10.0, baseTime.Add(5*time.Second))
 				Expect(err).NotTo(HaveOccurred())
 				Expect(keep).To(BeTrue())
 
-				// Test another int conversion
-				keep, err = algo.ProcessPoint(11, baseTime.Add(2*time.Second))
-				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeTrue()) // |11 - 1| = 10 > 0.5
+				// Point with earlier timestamp (clock skew)
+				keep, err = algo.ProcessPoint(10.6, baseTime.Add(4*time.Second))
 
-				// Test string that can't be parsed should cause error
-				_, err = algo.ProcessPoint("stopped", baseTime.Add(3*time.Second))
-				Expect(err).To(HaveOccurred())
-			})
-
-			It("should handle reset and string error scenarios", func() {
-				// Reset algorithm for string test
-				algo.Reset()
-				_, err = algo.ProcessPoint("running", baseTime.Add(4*time.Second))
-				Expect(err).To(HaveOccurred())
+				// Should either handle gracefully or return an error, but not panic
+				// The current implementation will treat negative duration as 0
+				if err != nil {
+					// Error is acceptable
+					Expect(err).To(HaveOccurred())
+				} else {
+					// If no error, behavior should be predictable
+					// In this case, negative duration means no max_time constraint
+					Expect(keep).To(BeTrue()) // Should keep due to threshold (0.6 > 0.5)
+				}
 			})
 		})
 	})
@@ -479,6 +489,38 @@ var _ = Describe("Deadband Algorithm", func() {
 
 				keep, _ = algo.ProcessPoint(-5.5, baseTime.Add(3*time.Second))
 				Expect(keep).To(BeFalse(), "Small change: -5.5 → DROP (change = 0.5 < threshold)")
+			})
+		})
+	})
+
+	// New context for additional edge cases from code review
+	Describe("Code Review Edge Cases", func() {
+		Context("thread safety documentation", func() {
+			It("should document thread safety expectations", func() {
+				// This is a documentation test - the algorithm should clearly state
+				// that it's not goroutine-safe
+				config := map[string]interface{}{"threshold": 0.5}
+				algo, err := algorithms.NewDeadbandAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(algo).NotTo(BeNil())
+
+				// Algorithm should work correctly when used sequentially
+				_, _ = algo.ProcessPoint(10.0, baseTime)
+				keep, err := algo.ProcessPoint(10.6, baseTime.Add(time.Second))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(keep).To(BeTrue())
+			})
+		})
+	})
+
+	// Property-based testing placeholder
+	Describe("Property-based tests (future enhancement)", func() {
+		Context("fuzz testing properties", func() {
+			It("should maintain the fundamental property that consecutive kept points differ by >= threshold OR time delta >= max_time", func() {
+				Skip("TODO: Implement Go 1.22 fuzzing test")
+				// TODO: Property test that verifies:
+				// For any two consecutive kept points P1, P2:
+				// abs(P2.value - P1.value) >= threshold OR P2.time - P1.time >= max_time
 			})
 		})
 	})

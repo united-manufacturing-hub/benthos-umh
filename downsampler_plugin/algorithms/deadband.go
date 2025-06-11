@@ -12,13 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// TODO: The calling package needs to handle boolean values appropriately before
+// passing them to these algorithms, as boolean logic should not be implemented
+// at the algorithm level.
+
+// Package algorithms provides data compression algorithms for downsampling.
+//
+// The deadband algorithm only supports numeric values (int, float types).
+// Boolean values and other non-numeric types should be handled by the calling
+// package before invoking the algorithm.
 package algorithms
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
-	"reflect"
 	"strconv"
 	"time"
 )
@@ -27,14 +34,23 @@ func init() {
 	Register("deadband", NewDeadbandAlgorithm)
 }
 
-// DeadbandAlgorithm implements deadband filtering
+// DeadbandAlgorithm implements deadband filtering for numeric values only.
+//
+// Boolean values are NOT supported - they should be handled by the calling package.
+// This algorithm maintains state and is NOT goroutine-safe. Use separate instances
+// for concurrent processing or add external synchronization.
 type DeadbandAlgorithm struct {
 	threshold float64
 	maxTime   time.Duration
 
 	// Internal state
-	lastKeptValue interface{}
+	lastKeptValue float64
 	lastKeptTime  time.Time
+	hasKeptValue  bool // Track if we have kept any value yet
+
+	// Mutex for thread safety - currently commented out for performance
+	// Uncomment if goroutine safety is needed
+	// mu sync.Mutex
 }
 
 // NewDeadbandAlgorithm creates a new deadband algorithm instance
@@ -86,15 +102,17 @@ func NewDeadbandAlgorithm(config map[string]interface{}) (DownsampleAlgorithm, e
 }
 
 // ProcessPoint processes a new data point and returns whether it should be kept
-func (d *DeadbandAlgorithm) ProcessPoint(value interface{}, timestamp time.Time) (bool, error) {
-	// Validate that we can convert to numeric first
-	currentVal, err := d.toFloat64(value)
-	if err != nil {
-		return false, fmt.Errorf("cannot convert current value to numeric: %v", err)
+func (d *DeadbandAlgorithm) ProcessPoint(value float64, timestamp time.Time) (bool, error) {
+	// First point is always kept
+	if !d.hasKeptValue {
+		d.lastKeptValue = value
+		d.lastKeptTime = timestamp
+		d.hasKeptValue = true
+		return true, nil
 	}
 
-	// First point is always kept
-	if d.lastKeptValue == nil {
+	// Handle time overflow and duration limits
+	if d.lastKeptTime.IsZero() {
 		d.lastKeptValue = value
 		d.lastKeptTime = timestamp
 		return true, nil
@@ -108,20 +126,16 @@ func (d *DeadbandAlgorithm) ProcessPoint(value interface{}, timestamp time.Time)
 	}
 
 	// Check threshold constraint
-	lastVal, err := d.toFloat64(d.lastKeptValue)
-	if err != nil {
-		return false, fmt.Errorf("cannot convert last kept value to numeric: %v", err)
-	}
+	delta := math.Abs(value - d.lastKeptValue)
 
-	delta := math.Abs(currentVal - lastVal)
-
-	// Special handling for boolean values: treat any boolean change as significant
-	_, currentIsBool := value.(bool)
-	_, lastIsBool := d.lastKeptValue.(bool)
-	if currentIsBool && lastIsBool && delta > 0 {
-		d.lastKeptValue = value
-		d.lastKeptTime = timestamp
-		return true, nil
+	// Special case for zero threshold: keep any change, drop exact repeats
+	if d.threshold == 0 {
+		if delta > 0 {
+			d.lastKeptValue = value
+			d.lastKeptTime = timestamp
+			return true, nil
+		}
+		return false, nil
 	}
 
 	if delta >= d.threshold {
@@ -135,8 +149,9 @@ func (d *DeadbandAlgorithm) ProcessPoint(value interface{}, timestamp time.Time)
 
 // Reset clears the algorithm's internal state
 func (d *DeadbandAlgorithm) Reset() {
-	d.lastKeptValue = nil
+	d.lastKeptValue = 0
 	d.lastKeptTime = time.Time{}
+	d.hasKeptValue = false
 }
 
 // GetMetadata returns metadata string for annotation
@@ -150,76 +165,4 @@ func (d *DeadbandAlgorithm) GetMetadata() string {
 // GetName returns the algorithm name
 func (d *DeadbandAlgorithm) GetName() string {
 	return "deadband"
-}
-
-// toFloat64 converts various numeric types to float64
-func (d *DeadbandAlgorithm) toFloat64(val interface{}) (float64, error) {
-	switch v := val.(type) {
-	case float64:
-		return v, nil
-	case float32:
-		return float64(v), nil
-	case int:
-		return float64(v), nil
-	case int8:
-		return float64(v), nil
-	case int16:
-		return float64(v), nil
-	case int32:
-		return float64(v), nil
-	case int64:
-		return float64(v), nil
-	case uint:
-		return float64(v), nil
-	case uint8:
-		return float64(v), nil
-	case uint16:
-		return float64(v), nil
-	case uint32:
-		return float64(v), nil
-	case uint64:
-		return float64(v), nil
-	case bool:
-		// Reject booleans - they should be handled by the plugin's equality logic
-		return 0, fmt.Errorf("cannot convert boolean to number: %v", v)
-	case string:
-		// Reject strings - they should be handled by string-appropriate algorithms
-		return 0, fmt.Errorf("cannot convert string to number: %s", v)
-	default:
-		return 0, fmt.Errorf("cannot convert type %T to float64", val)
-	}
-}
-
-// areEqual checks if two values are equal (for non-numeric types)
-func (d *DeadbandAlgorithm) areEqual(a, b interface{}) bool {
-	// First try numeric conversion
-	aFloat, aErr := d.toFloat64(a)
-	bFloat, bErr := d.toFloat64(b)
-
-	if aErr == nil && bErr == nil {
-		return aFloat == bFloat
-	}
-
-	// Handle complex types (maps, slices, etc.) using reflection
-	if reflect.TypeOf(a) != reflect.TypeOf(b) {
-		return false
-	}
-
-	// Use deep equal for complex types
-	if reflect.TypeOf(a).Kind() == reflect.Map ||
-		reflect.TypeOf(a).Kind() == reflect.Slice ||
-		reflect.TypeOf(a).Kind() == reflect.Array {
-		return reflect.DeepEqual(a, b)
-	}
-
-	// For simple types, try JSON comparison as fallback
-	aJSON, aJSONErr := json.Marshal(a)
-	bJSON, bJSONErr := json.Marshal(b)
-
-	if aJSONErr == nil && bJSONErr == nil {
-		return string(aJSON) == string(bJSON)
-	}
-
-	// Last resort: use reflect.DeepEqual
-	return reflect.DeepEqual(a, b)
 }

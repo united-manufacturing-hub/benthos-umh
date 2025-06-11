@@ -17,21 +17,12 @@ Use the `downsampler` to reduce storage and transmission costs for high-frequenc
 
 ## Supported Data Formats
 
-The downsampler processes both UMH time-series data formats:
+The downsampler processes in UMH core time-series data formats:
 
-### UMH-Core Time-Series Format
 Single "value" field with timestamp following the "one tag, one message, one topic" principle.  
 📖 **Format details**: [UMH-Core Payload Formats](https://docs.umh.app/usage/unified-namespace/payload-formats)
 
-### UMH Classic _historian Format  
-Multiple fields in one JSON object with shared timestamp, identified by `data_contract: "_historian"`.  
-📖 **Format details**: [UMH Classic Historian Data Contract](https://umh.docs.umh.app/docs/datacontracts/historian/)
-
-For classic format messages, the downsampler processes each non-timestamp field as a separate data point with **per-key filtering**:
-- Each metric field is evaluated independently against its specific configuration
-- Keys that don't meet their threshold are **removed** from the message
-- Keys that meet their threshold are **kept** in the message  
-- Only if **all** measurement keys are dropped is the entire message dropped
+In order to use the UMH classic _historian format, convert multi-metric payloads into single-metric payloads.
 
 ## Configuration
 
