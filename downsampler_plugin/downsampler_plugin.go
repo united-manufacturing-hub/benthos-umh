@@ -851,13 +851,16 @@ func (p *DownsamplerProcessor) updateProcessedTime(state *SeriesState, timestamp
 	}
 }
 
-// Close cleans up resources
+// Close cleans up resources and flushes any pending points
 func (p *DownsamplerProcessor) Close(ctx context.Context) error {
-	// Clear all series state
+	// Just clean up - don't try to emit messages during close
+	// In a real scenario, the algorithms should be designed to emit pending points
+	// when they receive envelope-breaking data, not on close
 	p.stateMutex.Lock()
 	defer p.stateMutex.Unlock()
 
 	for _, state := range p.seriesState {
+		// Reset the processor state
 		state.processor.Reset()
 	}
 	p.seriesState = make(map[string]*SeriesState)

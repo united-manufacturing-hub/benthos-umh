@@ -10,6 +10,58 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin/algorithms"
 )
 
+// Helper function to test swinging door compression with flush handling
+func testSwingingDoorCompression(algo algorithms.DownsampleAlgorithm, rawData []struct{ x, y float64 }, baseTime time.Time) []int {
+	emittedPoints := []int{}
+
+	// Process all points and track immediate emissions
+	for i, point := range rawData {
+		timestamp := baseTime.Add(time.Duration(point.x) * time.Second)
+		keep, err := algo.ProcessPoint(point.y, timestamp)
+		Expect(err).NotTo(HaveOccurred())
+
+		if keep {
+			emittedPoints = append(emittedPoints, i)
+		}
+	}
+
+	// Check for final pending point via flush
+	finalPoint, err := algo.Flush()
+	Expect(err).NotTo(HaveOccurred())
+	if finalPoint != nil {
+		// Find the index of the final point in rawData
+		for i, point := range rawData {
+			if point.y == finalPoint.Value && baseTime.Add(time.Duration(point.x)*time.Second).Equal(finalPoint.Timestamp) {
+				emittedPoints = append(emittedPoints, i)
+				break
+			}
+		}
+	}
+
+	return emittedPoints
+}
+
+// Helper function to verify expected compression results
+func verifyCompressionResults(actualIndices, expectedIndices []int, rawDataLen int, expectedReductionPercent int) {
+	Expect(len(actualIndices)).To(Equal(len(expectedIndices)), "Should emit %d total points", len(expectedIndices))
+
+	// Verify we get the expected compression (may be in different order due to flush)
+	for _, expectedIdx := range expectedIndices {
+		found := false
+		for _, actualIdx := range actualIndices {
+			if actualIdx == expectedIdx {
+				found = true
+				break
+			}
+		}
+		Expect(found).To(BeTrue(), "Expected point index %d to be emitted", expectedIdx)
+	}
+
+	// Verify compression ratio
+	reductionPercent := int(float64(rawDataLen-len(actualIndices)) / float64(rawDataLen) * 100)
+	Expect(reductionPercent).To(Equal(expectedReductionPercent), "Expected %d%% reduction", expectedReductionPercent)
+}
+
 var _ = Describe("Swinging Door Algorithm", func() {
 	var algo algorithms.DownsampleAlgorithm
 	var err error
@@ -593,6 +645,229 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				// Any deviation breaks zero-width envelope
 				keep, _ = algo.ProcessPoint(10.1, baseTime.Add(3*time.Second))
 				Expect(keep).To(BeTrue(), "Tiny change: 10.1 → KEEP (zero tolerance exceeded)")
+			})
+		})
+	})
+
+	Describe("comprehensive test plan verification", func() {
+		// Test cases derived from gfoidl DataCompression library test suite
+		// These tests verify the swinging door algorithm against known reference implementations
+
+		Context("Trend - Basic trend following test case", func() {
+			BeforeEach(func() {
+				config := map[string]interface{}{
+					"threshold": 1.0,
+					// No max_time or min_time constraints
+				}
+				algo, err = algorithms.NewSwingingDoorAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should compress trend data correctly", func() {
+				// Raw data points
+				rawData := []struct {
+					x float64
+					y float64
+				}{
+					{2, 2},
+					{4, 3},
+					{6, 2.5},
+					{8, 3.5},
+					{10, 5.5},
+					{12, 2.5},
+					{14, 1},
+					{16, 1},
+				}
+
+				actualIndices := testSwingingDoorCompression(algo, rawData, baseTime)
+				expectedIndices := []int{0, 3, 4, 6, 7} // Points at x: 2, 8, 10, 14, 16
+
+				verifyCompressionResults(actualIndices, expectedIndices, len(rawData), 37)
+			})
+		})
+
+		Context("Trend1 - High precision trend test", func() {
+			BeforeEach(func() {
+				config := map[string]interface{}{
+					"threshold": 0.1, // Small compression deviation
+				}
+				algo, err = algorithms.NewSwingingDoorAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should handle high precision filtering", func() {
+				rawData := []struct {
+					x float64
+					y float64
+				}{
+					{0, 1},
+					{1, 1.1},
+					{2, 1.2},
+					{3, 1.6},
+					{4, 2},
+					{5, 2},
+					{6, 2},
+					{7, 1.2},
+				}
+
+				emittedPoints := testSwingingDoorCompression(algo, rawData, baseTime)
+				expectedIndices := []int{0, 2, 4, 6, 7} // Points at x: 0, 2, 4, 6, 7
+
+				verifyCompressionResults(emittedPoints, expectedIndices, len(rawData), 37)
+			})
+		})
+
+		Context("Trend2 - High precision with plateau behavior", func() {
+			BeforeEach(func() {
+				config := map[string]interface{}{
+					"threshold": 0.1,
+				}
+				algo, err = algorithms.NewSwingingDoorAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should handle plateau behavior correctly", func() {
+				rawData := []struct {
+					x float64
+					y float64
+				}{
+					{0, 1},
+					{1, 1.1},
+					{2, 1.2},
+					{3, 1.6},
+					{4, 2},
+					{5, 2},
+					{6, 2},
+					{7, 2},
+				}
+
+				emittedPoints := testSwingingDoorCompression(algo, rawData, baseTime)
+				expectedIndices := []int{0, 2, 4, 7} // Points at x: 0, 2, 4, 7
+				verifyCompressionResults(emittedPoints, expectedIndices, len(rawData), 50)
+			})
+		})
+
+		Context("Trend3 - Large deviation with dramatic changes", func() {
+			BeforeEach(func() {
+				config := map[string]interface{}{
+					"threshold": 2.0, // Large deviation tolerance
+				}
+				algo, err = algorithms.NewSwingingDoorAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should handle dramatic value changes", func() {
+				rawData := []struct {
+					x float64
+					y float64
+				}{
+					{1, 0},
+					{2, 1},
+					{3, 2},
+					{4, 5},
+					{5, -2},
+					{6, 5},
+					{7, 4},
+					{8, 3},
+					{9, 5},
+				}
+
+				emittedPoints := testSwingingDoorCompression(algo, rawData, baseTime)
+				expectedIndices := []int{0, 3, 4, 5, 7, 8} // Points at x: 1, 4, 5, 6, 8, 9
+				verifyCompressionResults(emittedPoints, expectedIndices, len(rawData), 33)
+			})
+		})
+
+		Context("Trend3 Mini - Minimal reproduction", func() {
+			BeforeEach(func() {
+				config := map[string]interface{}{
+					"threshold": 2.0,
+				}
+				algo, err = algorithms.NewSwingingDoorAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should handle minimal reproduction case", func() {
+				rawData := []struct {
+					x float64
+					y float64
+				}{
+					{5, -2},
+					{6, 5},
+					{7, 4},
+					{8, 3},
+					{9, 5},
+				}
+
+				emittedPoints := testSwingingDoorCompression(algo, rawData, baseTime)
+				expectedIndices := []int{0, 1, 3, 4} // Points at x: 5, 6, 8, 9
+				verifyCompressionResults(emittedPoints, expectedIndices, len(rawData), 20)
+			})
+		})
+
+		Context("MaxDelta - Maximum X distance enforcement", func() {
+			BeforeEach(func() {
+				config := map[string]interface{}{
+					"threshold": 1.0,
+					"max_time":  "6s", // Forces archiving every 6 time units
+				}
+				algo, err = algorithms.NewSwingingDoorAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should force archiving based on max time constraint", func() {
+				rawData := []struct {
+					x float64
+					y float64
+				}{
+					{2, 2},
+					{4, 3},
+					{6, 3},
+					{8, 3.5},
+					{10, 3.5},
+					{12, 4.5},
+					{14, 4},
+					{16, 4.5},
+					{18, 1.5},
+					{20, 2.5},
+				}
+
+				emittedPoints := testSwingingDoorCompression(algo, rawData, baseTime)
+				expectedIndices := []int{0, 3, 6, 7, 8, 9} // Points at x: 2, 8, 14, 16, 18, 20
+				verifyCompressionResults(emittedPoints, expectedIndices, len(rawData), 40)
+			})
+		})
+
+		Context("MinDeltaX - Minimum X distance constraint", func() {
+			BeforeEach(func() {
+				config := map[string]interface{}{
+					"threshold": 1.0,
+					"min_time":  "1s", // No values recorded within 1 time unit
+				}
+				algo, err = algorithms.NewSwingingDoorAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should suppress archiving within minimum time distance", func() {
+				rawData := []struct {
+					x float64
+					y float64
+				}{
+					{0, 2},
+					{1, 2},
+					{2, 2},
+					{3, 2},
+					{4, 2},
+					{5, 10}, // Large jump
+					{6, 3},
+					{7, 3},
+					{8, 3},
+					{9, 3},
+				}
+
+				emittedPoints := testSwingingDoorCompression(algo, rawData, baseTime)
+				expectedIndices := []int{0, 4, 5, 7, 9} // Respecting min_time constraint
+				verifyCompressionResults(emittedPoints, expectedIndices, len(rawData), 50)
 			})
 		})
 	})
