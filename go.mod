@@ -38,6 +38,8 @@ require (
 	github.com/redpanda-data/benthos/v4 v4.49.0
 	github.com/redpanda-data/connect/public/bundle/free/v4 v4.49.1
 	github.com/robinson/gos7 v0.0.0-20241205073040-7ea1d6fb9d20
+	github.com/twmb/franz-go v1.18.1
+	github.com/twmb/franz-go/pkg/kadm v1.15.0
 	golang.org/x/crypto v0.37.0
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394
 	golang.org/x/time v0.11.0
@@ -342,8 +344,6 @@ require (
 	github.com/tilinna/z85 v1.0.0 // indirect
 	github.com/timeplus-io/proton-go-driver/v2 v2.0.19 // indirect
 	github.com/trinodb/trino-go-client v0.322.0 // indirect
-	github.com/twmb/franz-go v1.18.1 // indirect
-	github.com/twmb/franz-go/pkg/kadm v1.15.0 // indirect
 	github.com/twmb/franz-go/pkg/kmsg v1.9.0 // indirect
 	github.com/twmb/franz-go/pkg/sr v1.3.0 // indirect
 	github.com/urfave/cli/v2 v2.27.6 // indirect
