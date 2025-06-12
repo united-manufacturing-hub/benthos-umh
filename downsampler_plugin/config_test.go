@@ -84,7 +84,7 @@ var _ = Describe("Configuration Logic", func() {
 				config.Default.Deadband.Threshold = 2.0
 				config.Overrides = []downsampler.OverrideConfig{
 					{
-						Topic:    "umh.v1.plant._historian.critical_temp",
+						Pattern:  "umh.v1.plant._historian.critical_temp",
 						Deadband: &downsampler.DeadbandConfig{Threshold: 0.01},
 					},
 				}
@@ -103,7 +103,7 @@ var _ = Describe("Configuration Logic", func() {
 			})
 		})
 
-		Context("with mixed pattern and exact topic overrides", func() {
+		Context("with wildcard and exact pattern overrides", func() {
 			BeforeEach(func() {
 				config.Default.Deadband.Threshold = 10.0
 				config.Overrides = []downsampler.OverrideConfig{
@@ -112,22 +112,22 @@ var _ = Describe("Configuration Logic", func() {
 						Deadband: &downsampler.DeadbandConfig{Threshold: 0.5},
 					},
 					{
-						Topic:    "umh.v1.acme._historian.critical_temperature",
+						Pattern:  "umh.v1.acme._historian.critical_temperature",
 						Deadband: &downsampler.DeadbandConfig{Threshold: 0.01},
 					},
 				}
 			})
 
-			It("should apply first matching rule (exact topic before pattern)", func() {
-				// This should match the exact topic rule first
+			It("should apply first matching rule (exact pattern before wildcard)", func() {
+				// This should match the exact pattern rule first
 				algorithm, configMap := config.GetConfigForTopic("umh.v1.acme._historian.critical_temperature")
 
 				Expect(algorithm).To(Equal("deadband"))
 				Expect(configMap).To(HaveKeyWithValue("threshold", 0.01))
 			})
 
-			It("should apply pattern rule when exact doesn't match", func() {
-				// This should match the pattern rule
+			It("should apply wildcard pattern when exact doesn't match", func() {
+				// This should match the wildcard pattern rule
 				algorithm, configMap := config.GetConfigForTopic("umh.v1.factory._historian.temperature")
 
 				Expect(algorithm).To(Equal("deadband"))
@@ -135,7 +135,7 @@ var _ = Describe("Configuration Logic", func() {
 			})
 
 			It("should use default values when no overrides match", func() {
-				// This topic should not match any pattern or exact topic override
+				// This topic should not match any pattern override
 				algorithm, configMap := config.GetConfigForTopic("umh.v1.plant._historian.flow_rate")
 
 				Expect(algorithm).To(Equal("deadband"))

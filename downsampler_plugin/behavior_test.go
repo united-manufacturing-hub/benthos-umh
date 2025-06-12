@@ -286,7 +286,7 @@ downsampler:
     deadband:
       threshold: 1.0
   overrides:
-    - topic: "sensor.precise"
+    - pattern: "sensor.precise"
       deadband:
         threshold: 0.1`,
 				Input: []TestMessage{

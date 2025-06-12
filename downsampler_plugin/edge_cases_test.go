@@ -62,7 +62,7 @@ downsampler:
       threshold: 1.0
       max_time: 5s
   overrides:
-    - topic: "fast.sensor"
+    - pattern: "fast.sensor"
       deadband:
         threshold: 1.0
         max_time: 1s`,

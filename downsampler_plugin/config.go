@@ -15,7 +15,6 @@
 package downsampler_plugin
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -46,13 +45,19 @@ type DefaultConfig struct {
 	LatePolicy   LatePolicyConfig   `json:"late_policy,omitempty" yaml:"late_policy,omitempty"`
 }
 
-// OverrideConfig defines algorithm parameter overrides for specific topics or patterns
+// OverrideConfig defines algorithm parameter overrides for topic patterns.
+//
+// The pattern field supports both exact topic matching and wildcard patterns:
+// - Exact match: "umh.v1.acme._historian.temperature.sensor1"
+// - Wildcard patterns: "*.temperature.*", "*sensor*", "umh.v1.acme.*"
+//
+// This unified approach simplifies configuration by eliminating the need for
+// separate "topic" and "pattern" fields while maintaining full functionality.
 type OverrideConfig struct {
-	Pattern      string              `json:"pattern,omitempty" yaml:"pattern,omitempty"`
-	Topic        string              `json:"topic,omitempty" yaml:"topic,omitempty"`
-	Deadband     *DeadbandConfig     `json:"deadband,omitempty" yaml:"deadband,omitempty"`
-	SwingingDoor *SwingingDoorConfig `json:"swinging_door,omitempty" yaml:"swinging_door,omitempty"`
-	LatePolicy   *LatePolicyConfig   `json:"late_policy,omitempty" yaml:"late_policy,omitempty"`
+	Pattern      string              `json:"pattern" yaml:"pattern"`                                 // Topic pattern (exact match or wildcards with * and ?)
+	Deadband     *DeadbandConfig     `json:"deadband,omitempty" yaml:"deadband,omitempty"`           // Deadband algorithm overrides
+	SwingingDoor *SwingingDoorConfig `json:"swinging_door,omitempty" yaml:"swinging_door,omitempty"` // Swinging door algorithm overrides
+	LatePolicy   *LatePolicyConfig   `json:"late_policy,omitempty" yaml:"late_policy,omitempty"`     // Late arrival policy overrides
 }
 
 // DownsamplerConfig holds the configuration for the downsampler processor
@@ -61,7 +66,35 @@ type DownsamplerConfig struct {
 	Overrides []OverrideConfig `json:"overrides,omitempty" yaml:"overrides,omitempty"`
 }
 
-// GetConfigForTopic returns the effective configuration for a given topic by applying overrides
+// GetConfigForTopic returns the effective configuration for a given topic by applying pattern-based overrides.
+//
+// This function implements a simplified pattern matching system that supports both exact topic matches
+// and flexible wildcard patterns using a single configuration field.
+//
+// ## Pattern Matching Strategy
+//
+// The function uses Go's filepath.Match() which supports:
+// - **Exact matches**: "umh.v1.acme._historian.temperature.sensor1" matches only that specific topic
+// - **Wildcard patterns**: "*.temperature.*" matches any topic containing "temperature"
+// - **Shell-style patterns**: "*sensor*", "temp_*", "*.pressure" for flexible matching
+//
+// ## Fallback Matching
+//
+// For additional flexibility, the function also attempts to match patterns against the
+// final segment of the topic (after the last dot). This allows patterns like "temperature"
+// to match topics ending in temperature without requiring full path specification.
+//
+// ## Override Priority
+//
+// Overrides are processed in configuration order with first-match-wins semantics.
+// More specific patterns should be placed before more general ones in the configuration.
+//
+// Parameters:
+//   - topic: The UMH topic to find configuration for (e.g., "umh.v1.acme._historian.temperature.sensor1")
+//
+// Returns:
+//   - string: The selected algorithm name ("deadband" or "swinging_door")
+//   - map[string]interface{}: The effective configuration parameters for the algorithm
 func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]interface{}) {
 	// Determine default algorithm based on which default config has values
 	// Prioritize deadband as the simpler algorithm
@@ -101,14 +134,13 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 	for _, override := range c.Overrides {
 		matched := false
 
-		if override.Topic != "" {
-			matched = (override.Topic == topic)
-		} else if len(override.Pattern) > 0 {
-			// Use filepath.Match for wildcard patterns (supports * and ?)
+		// Use unified pattern matching for both exact matches and wildcards
+		if len(override.Pattern) > 0 {
+			// Primary match: full topic against pattern
 			if m, err := filepath.Match(override.Pattern, topic); err == nil && m {
 				matched = true
 			} else {
-				// Also check against just the field name (last part after last dot)
+				// Fallback match: pattern against final topic segment (field name)
 				parts := strings.Split(topic, ".")
 				if len(parts) > 0 {
 					fieldName := parts[len(parts)-1]
@@ -120,11 +152,8 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 		}
 
 		if matched {
-			fmt.Printf("      🎯 OVERRIDE MATCHED for topic='%s', pattern='%s'\n", topic, override.Pattern)
-
 			// Apply deadband overrides (only if actually configured with meaningful values)
 			if override.Deadband != nil && (override.Deadband.Threshold != 0 || override.Deadband.MaxTime != 0) {
-				fmt.Printf("      🎯 APPLYING DEADBAND override: threshold=%v\n", override.Deadband.Threshold)
 				algorithm = "deadband"
 				if override.Deadband.Threshold != 0 {
 					config["threshold"] = override.Deadband.Threshold
@@ -136,7 +165,6 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 
 			// Apply swinging door overrides (only if actually configured with meaningful values)
 			if override.SwingingDoor != nil && (override.SwingingDoor.Threshold != 0 || override.SwingingDoor.MinTime != 0 || override.SwingingDoor.MaxTime != 0) {
-				fmt.Printf("      🎯 APPLYING SWINGING_DOOR override: threshold=%v\n", override.SwingingDoor.Threshold)
 				algorithm = "swinging_door"
 				if override.SwingingDoor.Threshold != 0 {
 					config["threshold"] = override.SwingingDoor.Threshold
@@ -159,6 +187,5 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 		}
 	}
 
-	fmt.Printf("      ⚙️  FINAL CONFIG for topic='%s': algorithm=%s, config=%+v\n", topic, algorithm, config)
 	return algorithm, config
 }

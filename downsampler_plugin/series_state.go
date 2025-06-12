@@ -47,7 +47,6 @@ type SeriesState struct {
 	// Existing fields for late arrival detection and output tracking
 	lastProcessedTime time.Time
 	lastOutput        interface{}
-	lastOutputTime    time.Time
 
 	// ACK buffering fields for emit-previous algorithm support
 	candidateMsg *service.Message // The buffered message (copied to prevent mutation)
