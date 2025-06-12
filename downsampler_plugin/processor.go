@@ -23,19 +23,29 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin/algorithms"
 )
 
-// MessageProcessor handles the processing of individual messages
+// MessageProcessor handles the processing of individual messages within a batch.
+// It provides the core message processing logic that integrates with Benthos
+// message handling patterns while maintaining series state and ACK buffering.
 type MessageProcessor struct {
 	processor *DownsamplerProcessor
 }
 
-// NewMessageProcessor creates a new message processor
+// NewMessageProcessor creates a new message processor that wraps the given
+// DownsamplerProcessor to handle individual message processing operations.
 func NewMessageProcessor(processor *DownsamplerProcessor) *MessageProcessor {
 	return &MessageProcessor{
 		processor: processor,
 	}
 }
 
-// ProcessMessage processes a single message and returns the result
+// ProcessMessage processes a single message from a batch and returns the processing result.
+// This is the main entry point for individual message processing, handling:
+//   - UMH-core time-series message detection and filtering
+//   - Structured payload parsing and validation
+//   - Timestamp extraction and series identification
+//   - Integration with downsampling algorithms via ACK buffering
+//
+// Returns MessageProcessingResult containing either processed messages, error, or filter status.
 func (mp *MessageProcessor) ProcessMessage(msg *service.Message, index int) MessageProcessingResult {
 	result := MessageProcessingResult{
 		OriginalMessage: msg,
@@ -114,7 +124,12 @@ func (mp *MessageProcessor) ProcessMessage(msg *service.Message, index int) Mess
 	return result
 }
 
-// isTimeSeriesMessage determines if a message should be processed for downsampling
+// isTimeSeriesMessage determines if a message should be processed for downsampling.
+// UMH-core time-series messages must have:
+//   - umh_topic metadata field (used as series identifier)
+//   - Structured JSON payload with timestamp_ms and value fields
+//
+// Non-time-series messages are passed through unchanged to preserve data flow.
 func (mp *MessageProcessor) isTimeSeriesMessage(msg *service.Message) bool {
 	// Check for umh_topic metadata (required for UMH-core)
 	_, hasUmhTopic := msg.MetaGet("umh_topic")
@@ -138,13 +153,18 @@ func (mp *MessageProcessor) isTimeSeriesMessage(msg *service.Message) bool {
 	_, hasTimestamp := data["timestamp_ms"]
 	_, hasValue := data["value"]
 
-	// TODO: check that there are no other fields
+	// Validate UMH-core strict format: only timestamp_ms and value fields allowed
+	if len(data) != 2 {
+		return false // UMH-core format must have exactly 2 fields
+	}
 
 	// Require both timestamp_ms and value fields for UMH-core format
 	return hasTimestamp && hasValue
 }
 
-// extractTimestamp extracts and converts timestamp from message data
+// extractTimestamp extracts and validates the timestamp_ms field from message data.
+// Supports multiple numeric types (float64, int, int64) and converts to time.Time
+// for consistent internal processing across different data sources.
 func (mp *MessageProcessor) extractTimestamp(dataMap map[string]interface{}) (time.Time, error) {
 	timestampMs, ok := dataMap["timestamp_ms"]
 	if !ok {
@@ -166,7 +186,9 @@ func (mp *MessageProcessor) extractTimestamp(dataMap map[string]interface{}) (ti
 	return time.Unix(0, ts*int64(time.Millisecond)), nil
 }
 
-// processUMHCoreMessage processes a single UMH-core format message
+// processUMHCoreMessage processes a validated UMH-core format message through
+// the downsampling pipeline. Handles series identification, value extraction,
+// and state management integration.
 func (mp *MessageProcessor) processUMHCoreMessage(msg *service.Message, dataMap map[string]interface{}, timestamp time.Time) (*service.Message, error) {
 	// Extract series ID
 	seriesID, err := mp.extractSeriesID(msg)
@@ -190,8 +212,9 @@ func (mp *MessageProcessor) processUMHCoreMessage(msg *service.Message, dataMap 
 	return mp.processWithState(msg, dataMap, value, timestamp, seriesID, state)
 }
 
-// extractSeriesID extracts the series ID from the message metadata
-// The umh_topic metadata field is required for UMH-core time-series processing
+// extractSeriesID extracts the series identifier from umh_topic metadata.
+// The umh_topic serves as the unique series identifier for time-series processing
+// and configuration matching (pattern overrides, algorithm selection).
 func (mp *MessageProcessor) extractSeriesID(msg *service.Message) (string, error) {
 	seriesID, exists := msg.MetaGet("umh_topic")
 	if !exists {
@@ -205,7 +228,9 @@ func (mp *MessageProcessor) extractSeriesID(msg *service.Message) (string, error
 	return seriesID, nil
 }
 
-// extractValue extracts the value from the message data
+// extractValue extracts the value field from the message payload.
+// Supports any JSON-serializable value type (numeric, string, boolean)
+// as required by the UMH-core data contract.
 func (mp *MessageProcessor) extractValue(dataMap map[string]interface{}) (interface{}, error) {
 	value, exists := dataMap["value"]
 	if !exists {
@@ -214,7 +239,14 @@ func (mp *MessageProcessor) extractValue(dataMap map[string]interface{}) (interf
 	return value, nil
 }
 
-// processWithState processes the message using the series state with ACK buffering
+// processWithState processes the message using series-specific state and algorithm.
+// Implements the core ACK buffering strategy for emit-previous algorithms:
+//   - Handles duplicate timestamp detection and filtering
+//   - Manages message stashing/releasing for SDT and similar algorithms
+//   - Provides immediate ACK for deadband algorithms that don't need buffering
+//   - Coordinates between algorithm output and Benthos message lifecycle
+//
+// This function is the heart of the downsampling processor's ACK buffering architecture.
 func (mp *MessageProcessor) processWithState(msg *service.Message, dataMap map[string]interface{}, value interface{}, timestamp time.Time, seriesID string, state *SeriesState) (*service.Message, error) {
 	state.mutex.Lock()
 	defer state.mutex.Unlock()
@@ -338,9 +370,9 @@ func (mp *MessageProcessor) processWithState(msg *service.Message, dataMap map[s
 	}
 }
 
-// createOutputMessage creates the output message from emitted points
-// If multiple points are emitted, only the first one is used (most common case)
-// The caller should handle multiple points if needed
+// createOutputMessage creates the final output message from algorithm-emitted points.
+// Preserves original message structure and metadata while updating value and timestamp
+// with the downsampled data. Adds algorithm metadata for traceability.
 func (mp *MessageProcessor) createOutputMessage(msg *service.Message, dataMap map[string]interface{}, emittedPoints []algorithms.GenericPoint, state *SeriesState) (*service.Message, error) {
 	if len(emittedPoints) == 0 {
 		return nil, fmt.Errorf("no points to emit")
@@ -370,7 +402,9 @@ func (mp *MessageProcessor) createOutputMessage(msg *service.Message, dataMap ma
 	return outputMsg, nil
 }
 
-// cloneTemplate creates a new message from a buffered message template and algorithm point
+// cloneTemplate creates a new output message from a buffered message template.
+// Used when emit-previous algorithms release buffered messages with algorithm point data.
+// This enables proper message metadata preservation while updating the payload.
 func (mp *MessageProcessor) cloneTemplate(templateMsg *service.Message, point algorithms.GenericPoint, state *SeriesState) (*service.Message, error) {
 	// Get the structured data from the template message
 	templateData, err := templateMsg.AsStructured()
@@ -404,7 +438,9 @@ func (mp *MessageProcessor) cloneTemplate(templateMsg *service.Message, point al
 	return outputMsg, nil
 }
 
-// addAlgorithmMetadata adds downsampling algorithm metadata to the message metadata
+// addAlgorithmMetadata adds downsampling metadata to output messages.
+// Provides traceability by recording which algorithm processed the message
+// and its configuration for debugging and monitoring purposes.
 func (mp *MessageProcessor) addAlgorithmMetadata(outputMsg *service.Message, state *SeriesState) {
 	// Get algorithm name for metadata
 	algorithmName := state.processor.Name()

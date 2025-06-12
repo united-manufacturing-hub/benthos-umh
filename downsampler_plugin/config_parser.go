@@ -120,12 +120,9 @@ func (cp *ConfigurationParser) parseOverrides(conf *service.ParsedConfig, config
 func (cp *ConfigurationParser) parseOverrideConfig(overrideConf *service.ParsedConfig) (OverrideConfig, error) {
 	var override OverrideConfig
 
-	// Parse pattern and topic
+	// Parse pattern (unified field for both exact matches and wildcards)
 	if pattern, err := overrideConf.FieldString("pattern"); err == nil {
 		override.Pattern = pattern
-	}
-	if topic, err := overrideConf.FieldString("topic"); err == nil {
-		override.Topic = topic
 	}
 
 	// Parse algorithm overrides
