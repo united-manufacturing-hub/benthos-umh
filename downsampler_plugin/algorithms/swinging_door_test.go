@@ -290,7 +290,7 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				Description: "Test minimum time between emissions - prevents archiving more frequently than every 1 time unit",
 				Config: map[string]interface{}{
 					"threshold": 1.0,
-					"min_time":  "10s", // Prevents archiving more frequently than every 1.5 time unit
+					"min_time":  "10s", // Prevents archiving more frequently than every 10 time units
 				},
 				InputPoints: []TestPoint{
 					{TimeSeconds: 0, Value: 2},
@@ -309,7 +309,7 @@ var _ = Describe("Swinging Door Algorithm", func() {
 					{TimeSeconds: 40, Value: 2},
 					{TimeSeconds: 80, Value: 3},
 				},
-				ExpectedReduction: 70, // 3 out of 10 points filtered = 30% reduction
+				ExpectedReduction: 70, // 3 out of 10 points filtered = 70% reduction
 			}),
 		)
 	})

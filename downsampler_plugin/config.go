@@ -24,7 +24,6 @@ import (
 type DeadbandConfig struct {
 	Threshold float64       `json:"threshold,omitempty" yaml:"threshold,omitempty"`
 	MaxTime   time.Duration `json:"max_time,omitempty" yaml:"max_time,omitempty"`
-	MinTime   time.Duration `json:"min_time,omitempty" yaml:"min_time,omitempty"`
 }
 
 // SwingingDoorConfig holds swinging door algorithm parameters
@@ -103,7 +102,7 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 
 	// Only use swinging_door if explicitly configured and deadband is not
 	hasDeadbandConfig := c.Default.Deadband.Threshold != 0 || c.Default.Deadband.MaxTime != 0
-	hasSwingingDoorConfig := c.Default.SwingingDoor.Threshold != 0 || c.Default.SwingingDoor.MaxTime != 0
+	hasSwingingDoorConfig := c.Default.SwingingDoor.Threshold != 0 || c.Default.SwingingDoor.MaxTime != 0 || c.Default.SwingingDoor.MinTime != 0
 
 	if hasDeadbandConfig {
 		algorithm = "deadband"
@@ -126,9 +125,6 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 		config["threshold"] = c.Default.Deadband.Threshold
 		if c.Default.Deadband.MaxTime > 0 {
 			config["max_time"] = c.Default.Deadband.MaxTime.String()
-		}
-		if c.Default.Deadband.MinTime > 0 {
-			config["min_time"] = c.Default.Deadband.MinTime.String()
 		}
 	}
 
@@ -162,16 +158,13 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 
 		if matched {
 			// Apply deadband overrides (only if actually configured with meaningful values)
-			if override.Deadband != nil && (override.Deadband.Threshold != 0 || override.Deadband.MaxTime != 0 || override.Deadband.MinTime != 0) {
+			if override.Deadband != nil && (override.Deadband.Threshold != 0 || override.Deadband.MaxTime != 0) {
 				algorithm = "deadband"
 				if override.Deadband.Threshold != 0 {
 					config["threshold"] = override.Deadband.Threshold
 				}
 				if override.Deadband.MaxTime != 0 {
 					config["max_time"] = override.Deadband.MaxTime.String()
-				}
-				if override.Deadband.MinTime != 0 {
-					config["min_time"] = override.Deadband.MinTime.String()
 				}
 			}
 
