@@ -46,7 +46,7 @@ import (
 //
 // Thread safety: NOT goroutine-safe. Use separate instances for concurrent processing.
 type ProcessorWrapper struct {
-	algorithm     DownsampleAlgorithm
+	algorithm     StreamCompressor
 	passThrough   bool // If true, pass older data through; if false, drop it
 	lastTimestamp time.Time
 
@@ -93,8 +93,8 @@ func NewProcessorWrapper(config ProcessorConfig) (*ProcessorWrapper, error) {
 	}, nil
 }
 
-// ProcessPoint processes a data point with automatic type conversion and ordering
-func (p *ProcessorWrapper) ProcessPoint(value interface{}, timestamp time.Time) (bool, error) {
+// Ingest processes a data point with automatic type conversion and ordering
+func (p *ProcessorWrapper) Ingest(value interface{}, timestamp time.Time) ([]Point, error) {
 	// Handle boolean values with special logic
 	if boolVal, isBool := value.(bool); isBool {
 		return p.processBooleanValue(boolVal, timestamp)
@@ -108,7 +108,7 @@ func (p *ProcessorWrapper) ProcessPoint(value interface{}, timestamp time.Time) 
 	// Convert to float64
 	floatVal, err := p.toFloat64(value)
 	if err != nil {
-		return false, fmt.Errorf("type conversion failed: %w", err)
+		return []Point{}, fmt.Errorf("type conversion failed: %w", err)
 	}
 
 	// Handle ordering - algorithms expect monotonic timestamps
@@ -116,10 +116,10 @@ func (p *ProcessorWrapper) ProcessPoint(value interface{}, timestamp time.Time) 
 		if p.passThrough {
 			// PassThrough=true means bypass algorithm and always keep out-of-order data
 			// This ensures out-of-order messages are passed through unchanged
-			return true, nil
+			return []Point{{Value: floatVal, Timestamp: timestamp}}, nil
 		} else {
 			// Drop out-of-order data
-			return false, nil
+			return []Point{}, nil
 		}
 	}
 
@@ -128,47 +128,57 @@ func (p *ProcessorWrapper) ProcessPoint(value interface{}, timestamp time.Time) 
 	if p.lastTimestamp.IsZero() || !timestamp.Before(p.lastTimestamp) {
 		p.lastTimestamp = timestamp
 	}
-	return p.algorithm.ProcessPoint(floatVal, timestamp)
+	return p.algorithm.Ingest(floatVal, timestamp)
 }
 
 // processBooleanValue handles boolean values with change-based logic
-func (p *ProcessorWrapper) processBooleanValue(value bool, timestamp time.Time) (bool, error) {
+func (p *ProcessorWrapper) processBooleanValue(value bool, timestamp time.Time) ([]Point, error) {
+	// Convert bool to float64 for Point (0.0 = false, 1.0 = true)
+	floatVal := 0.0
+	if value {
+		floatVal = 1.0
+	}
+
 	// First boolean value is always kept
 	if p.lastBoolValue == nil {
 		p.lastBoolValue = &value
 		p.lastBoolTime = timestamp
-		return true, nil
+		return []Point{{Value: floatVal, Timestamp: timestamp}}, nil
 	}
 
 	// Keep if value changed
 	if *p.lastBoolValue != value {
 		p.lastBoolValue = &value
 		p.lastBoolTime = timestamp
-		return true, nil
+		return []Point{{Value: floatVal, Timestamp: timestamp}}, nil
 	}
 
 	// Drop if no change
-	return false, nil
+	return []Point{}, nil
 }
 
 // processStringValue handles string values with change-based logic
-func (p *ProcessorWrapper) processStringValue(value string, timestamp time.Time) (bool, error) {
+func (p *ProcessorWrapper) processStringValue(value string, timestamp time.Time) ([]Point, error) {
+	// Convert string to float64 for Point (hash of string for consistency)
+	// This is a simple approach - could be enhanced with better string-to-numeric mapping
+	floatVal := float64(len(value)) // Simple length-based conversion
+
 	// First string value is always kept
 	if p.lastStringValue == nil {
 		p.lastStringValue = &value
 		p.lastStringTime = timestamp
-		return true, nil
+		return []Point{{Value: floatVal, Timestamp: timestamp}}, nil
 	}
 
 	// Keep if value changed
 	if *p.lastStringValue != value {
 		p.lastStringValue = &value
 		p.lastStringTime = timestamp
-		return true, nil
+		return []Point{{Value: floatVal, Timestamp: timestamp}}, nil
 	}
 
 	// Drop if no change
-	return false, nil
+	return []Point{}, nil
 }
 
 // toFloat64 converts various numeric types to float64
@@ -199,11 +209,11 @@ func (p *ProcessorWrapper) toFloat64(val interface{}) (float64, error) {
 	case uint64:
 		return float64(v), nil
 	default:
-		return 0, fmt.Errorf("cannot convert type %T to float64", val)
+		return 0, fmt.Errorf("unsupported type: %T", val)
 	}
 }
 
-// Reset resets both the wrapper and underlying algorithm state
+// Reset clears the wrapper's internal state including the underlying algorithm
 func (p *ProcessorWrapper) Reset() {
 	p.algorithm.Reset()
 	p.lastTimestamp = time.Time{}
@@ -213,23 +223,17 @@ func (p *ProcessorWrapper) Reset() {
 	p.lastStringTime = time.Time{}
 }
 
-// GetMetadata returns metadata from the underlying algorithm
-func (p *ProcessorWrapper) GetMetadata() string {
-	metadata := p.algorithm.GetMetadata()
-	if p.passThrough {
-		metadata += ",out_of_order_handling=pass_through"
-	} else {
-		metadata += ",out_of_order_handling=drop"
-	}
-	return metadata
+// Config returns the underlying algorithm's configuration string
+func (p *ProcessorWrapper) Config() string {
+	return p.algorithm.Config()
 }
 
-// GetName returns the underlying algorithm name
-func (p *ProcessorWrapper) GetName() string {
-	return p.algorithm.GetName()
+// Name returns the underlying algorithm's name
+func (p *ProcessorWrapper) Name() string {
+	return p.algorithm.Name()
 }
 
-// Flush returns any pending final point from the underlying algorithm
-func (p *ProcessorWrapper) Flush() (*Point, error) {
+// Flush returns any pending final points from the underlying algorithm
+func (p *ProcessorWrapper) Flush() ([]Point, error) {
 	return p.algorithm.Flush()
 }
