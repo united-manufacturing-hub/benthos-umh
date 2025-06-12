@@ -122,17 +122,21 @@ func (sd *SwingingDoorAlgorithm) Ingest(v float64, ts time.Time) ([]Point, error
 		sd.base.Value, sd.base.Timestamp.Format("15:04:05"),
 		sd.candString(), sd.slopeMin, sd.slopeMax)
 
-	// ---- heartbeat first --------------------------------------------------
+	// ---------------------------------------------------------------
+	// 2. heartbeat (comp-max-time) – runs on *every* call after start
+	// ---------------------------------------------------------------
+	debugLog("HEARTBEAT CHECK: Δt=%v   maxTime=%v", ts.Sub(sd.lastEmitTime), sd.maxTime)
 	if sd.maxTime > 0 && ts.Sub(sd.lastEmitTime) >= sd.maxTime {
 		p := Point{Value: v, Timestamp: ts}
-		out = append(out, p)
+
 		sd.base = p
 		sd.lastEmitTime = ts
-		sd.cand = nil
-		sd.openDoor()
-		debugLog("MAX_TIME EMIT (before candidate): emit current point=(%.1f, %s)",
-			p.Value, p.Timestamp.Format("15:04:05"))
-		return out, nil // done – heartbeat satisfied
+		sd.cand = nil // discard any pending candidate
+		sd.openDoor() // reset envelope
+
+		debugLog("HEARTBEAT fired: Δt=%v   maxTime=%v", ts.Sub(sd.lastEmitTime), sd.maxTime)
+
+		return append(out, p), nil
 	}
 
 	// ---- establish candidate if none yet ----------------------------------
@@ -147,24 +151,6 @@ func (sd *SwingingDoorAlgorithm) Ingest(v float64, ts time.Time) ([]Point, error
 	// ---- decide if we must emit the candidate -----------------------------
 	emitNeeded := sd.mustEmit(v, ts)
 	debugLog("EMIT CHECK: emitNeeded=%t", emitNeeded)
-
-	// ---- max_time heartbeat ----------------------------------------------
-	if sd.maxTime > 0 && ts.Sub(sd.lastEmitTime) >= sd.maxTime {
-		debugLog("MAX_TIME TRIGGER: elapsed=%v >= maxTime=%v, emit current point",
-			ts.Sub(sd.lastEmitTime), sd.maxTime)
-
-		currentPoint := Point{Value: v, Timestamp: ts}
-		out = append(out, currentPoint)
-		sd.base = currentPoint
-		sd.lastEmitTime = ts
-		debugLog("MAX_TIME EMIT: emit current point=(%.1f, %s)",
-			currentPoint.Value, currentPoint.Timestamp.Format("15:04:05"))
-
-		// Reset candidate / door
-		sd.cand = nil
-		sd.openDoor()
-		return out, nil
-	}
 
 	// ---- emit the candidate if required -----------------------------------
 	if emitNeeded {

@@ -114,10 +114,14 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 
 	if algorithm == "swinging_door" {
 		config["threshold"] = c.Default.SwingingDoor.Threshold
-		config["max_time"] = c.Default.SwingingDoor.MaxTime
+		if c.Default.SwingingDoor.MaxTime > 0 {
+			config["max_time"] = c.Default.SwingingDoor.MaxTime.String()
+		}
 	} else {
 		config["threshold"] = c.Default.Deadband.Threshold
-		config["max_time"] = c.Default.Deadband.MaxTime
+		if c.Default.Deadband.MaxTime > 0 {
+			config["max_time"] = c.Default.Deadband.MaxTime.String()
+		}
 	}
 
 	// Add late policy defaults
@@ -156,7 +160,7 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 					config["threshold"] = override.Deadband.Threshold
 				}
 				if override.Deadband.MaxTime != 0 {
-					config["max_time"] = override.Deadband.MaxTime
+					config["max_time"] = override.Deadband.MaxTime.String()
 				}
 			}
 
@@ -167,7 +171,7 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 					config["threshold"] = override.SwingingDoor.Threshold
 				}
 				if override.SwingingDoor.MaxTime != 0 {
-					config["max_time"] = override.SwingingDoor.MaxTime
+					config["max_time"] = override.SwingingDoor.MaxTime.String()
 				}
 			}
 

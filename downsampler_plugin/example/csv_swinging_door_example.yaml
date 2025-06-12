@@ -54,8 +54,8 @@ pipeline:
     - downsampler:
         default:
           deadband:
-            threshold: 5        # Swinging door threshold
-            max_time: 30s        # Maximum time interval
+            threshold: 0.5        # Swinging door threshold
+            max_time: "30s"        # Maximum time interval
             
     # Convert back to readable timestamp and format as CSV
     - mapping: |
