@@ -1,25 +1,32 @@
 ## Downsampler in a Nutshell
 
-The UMH **Downsampler** sits between raw field traffic and your storage layer and does one thing only: **drops points that add no information**.
-It offers two proven modes:
+The UMH **Downsampler** sits between the field bus and your persistence layer and performs one task with provable bounds: **it discards samples that do not contribute new information**.
 
-* **Dead-band** – keeps every *change*, drops byte-for-byte repeats, and (optionally) emits a watchdog heartbeat after `max_time`.
-* **Swinging-Door Trending (SDT)** – follows the *trend* itself; a sample is forwarded only if it would violate an error-bounded, slope-aware “door”.
+### Supported compression modes
 
-Because the plug-in lets you stack wildcard overrides on top of a safe default, you can start with *zero-risk* settings—`deadband {threshold: 0}`—and tighten the rules where it pays off.
+* **Dead-band** – forwards every *value change*, suppresses byte-for-byte repeats, and—if `max_time` is set—adds an audit heartbeat.
+* **Swinging-Door Trending (SDT)** – maintains a slope-aware envelope; a sample is forwarded only when it would exceed a fixed vertical error bound.
 
-**Where it makes sense to deploy**
+Wildcard overrides let you apply a conservative baseline (`deadband {threshold: 0}`) and refine it only where tighter compression is beneficial.
 
-1. **First hop into the Unified Namespace** – use dead-band with `threshold: 0` and a 30 min heartbeat. You simply de-bounce duplicates while proving the pipe is alive; no data are ever delayed.
-2. **Sensor-noise cleanup anywhere in the pipe** – raise the dead-band to `2 × σ_noise` (twice the sensor manufacturer’s stated noise) and keep the 1 h heartbeat
-3. **Last stop before the historian** – switch to SDT with the same `2 × σ_noise` error band, add a physics-based `min_time` (fastest plausible change), and keep the 1 h heartbeat. You retain slope fidelity yet routinely see 95–99 % compression.
+### Recommended deployment points
 
-Counters, binary alarms and similar discrete tags should *stay* on dead-band (`threshold: 0`); SDT’s internal buffering could hide a state flip too long for real-time alerting.
+1. **First hop into the Unified Namespace**
+   *Configuration:* `deadband {threshold: 0, max_time: 30m}`
+   *Effect:* Removes pure duplicates while guaranteeing one confirmatory message every 30 min. No latency is introduced.
 
-Why this beats the usual “stick a dead-band in Node-RED” trick?
-*Per-tag state*, safe ACK-buffering, slope-aware compression, audit heartbeats and pattern-based overrides come baked in—no custom code, no hidden duplicates, no stair-step artefacts on slow ramps.
+2. **Noise suppression anywhere in the stream**
+   *Configuration:* `deadband {threshold: 2 × σ_noise, max_time: 1h}`
+   *Effect:* Removes fluctuations beneath the sensor’s specified noise floor yet retains all legitimate steps.
 
-> **Compliance footnote** – SDT and dead-band guarantee an absolute error bound and an audit heartbeat, but they do discard data.  If your GxP / 21 CFR Part 11 regime demands the unfiltered stream, archive the raw UMH-core topic in parallel.
+3. **Final stage before the historian**
+   *Configuration:* `swinging_door {threshold: 2 × σ_noise, min_time: physics_limit, max_time: 1h}`
+   *Effect:* Achieves 95–99 % volume reduction while preserving slope integrity and audit heartbeat. Introduces latency of up to `max_time` as the algorithm needs to buffer the last point before it can be emitted.
+
+Discrete counters and alarms should remain on `deadband {threshold: 0}`; SDT’s emit-previous logic could delay a critical state change.
+
+> **Compliance note** – Both algorithms enforce an absolute error bound and maintain a heartbeat, but they still remove data. If your GxP / 21 CFR Part 11 process mandates a full raw stream, archive the unfiltered UMH-core topic in parallel.
+
 
 ---
 
@@ -132,3 +139,18 @@ The same mechanism ensures a graceful shutdown: during a Benthos drain, every bu
 | Clock skew (non-monotonic timestamps) | Logged and routed through late-arrival policy; compression continues.  |
 
 With these guards the Downsampler behaves deterministically across PLC glitches, network jitter and even deliberate fuzz-test assaults—yet still errs on the side of passing the data through rather than dropping it.
+
+## Further Reading & Learning Materials for Swinging-Door Trending
+
+| Topic                                                             | Resource                                                                                                                       | Why it’s worth your time                                                                         |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| Step-by-step animations of the envelope closing and segment flush | **emrumo/swingingdoor** – GIF-heavy GitHub repo that visualises each decision the algorithm makes. ([pisquare.osisoft.com][1]) | Watch the “doors” rotate in real time and see exactly why a point is (not) kept.                 |                                                   |
+| Original historian context & glossary                             | AVEVA (OSIsoft) PI documentation page on *swinging-door compression*. ([docs.aveva.com][4])                                    | Shows how SDT is wired into a production-grade historian and why `max_time` exists.              |
+| Academic analysis & tuning guidance                               | “Swinging Door Trending Compression Algorithm for IoT Environments,” IEEE/ResearchGate. ([researchgate.net][5])                | Explains error bounds, calibration of `threshold`, and benchmark results on real sensor streams. |
+| Historical patent background                                      | US Patent 5,437,030 – the original 1990s PI Swinging-Door patent (expired). ([github.com][7])                                  | Good trivia and helps you understand why older systems look the way they do.                     |
+
+[1]: https://pisquare.osisoft.com/0D51I00004UHdq2SAD?utm_source=chatgpt.com "swinging door compression algorithm - PI Square"
+[4]: https://docs.aveva.com/bundle/glossary/page/1457222.html?utm_source=chatgpt.com "swinging-door compression - AVEVA™ Documentation"
+[5]: https://www.researchgate.net/publication/337361831_Swinging_Door_Trending_Compression_Algorithm_for_IoT_Environments?utm_source=chatgpt.com "Swinging Door Trending Compression Algorithm for IoT Environments"
+[6]: https://github.com/apache/streampipes/discussions/1285?utm_source=chatgpt.com "The Swinging Door Trending (SDT) Filter Processor #1285 - GitHub"
+[7]: https://github.com/gfoidl/DataCompression/blob/master/api-doc/articles/SwingingDoor.md?utm_source=chatgpt.com "DataCompression/api-doc/articles/SwingingDoor.md at master"
