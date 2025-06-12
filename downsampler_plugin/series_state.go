@@ -52,6 +52,11 @@ type SeriesState struct {
 	// ACK buffering fields for emit-previous algorithm support
 	candidateMsg *service.Message // The buffered message (copied to prevent mutation)
 	candidateTs  int64            // Timestamp when message was buffered (Unix milliseconds)
+
+	// Optimization: Only buffer messages for algorithms that need emit-previous behavior
+	// This eliminates unnecessary memory usage and idle-flush complexity for algorithms
+	// like deadband that never emit historical points.
+	holdsPrev bool // true if algorithm needs emit-previous buffering (e.g., SDT), false otherwise (e.g., deadband)
 }
 
 // stash stores a message as a candidate for potential later emission

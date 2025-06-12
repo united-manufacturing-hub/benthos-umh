@@ -286,6 +286,22 @@ type StreamCompressor interface {
 	//
 	// This should match the name used in Create() calls.
 	Name() string
+
+	// NeedsPreviousPoint reports whether the algorithm ever emits the previous point.
+	//
+	// This method is used to optimize ACK buffering behavior:
+	// - Algorithms that return true (like SDT) require message buffering to support
+	//   emit-previous semantics without losing ACK safety or creating duplicates.
+	// - Algorithms that return false (like deadband) can ACK filtered messages
+	//   immediately since they never emit historical points.
+	//
+	// Returns:
+	//   - true: Algorithm may emit previous points, requires ACK buffering
+	//   - false: Algorithm only emits current/newer points, no buffering needed
+	//
+	// This optimization reduces memory usage and eliminates idle-flush complexity
+	// for algorithms that don't need emit-previous functionality.
+	NeedsPreviousPoint() bool
 }
 
 // AlgorithmFactory creates new algorithm instances from configuration.

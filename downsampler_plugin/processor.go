@@ -242,11 +242,20 @@ func (mp *MessageProcessor) processWithState(msg *service.Message, dataMap map[s
 	// Handle different emission scenarios
 	switch len(emittedPoints) {
 	case 0:
-		// Algorithm filtered - stash message as candidate
-		state.stash(msg)
-		mp.processor.metrics.IncrementFiltered()
-		mp.processor.logger.Debugf("Message filtered and stashed for series '%s': value=%v, timestamp=%v", seriesID, value, timestamp)
-		return nil, nil // No immediate output
+		// Algorithm filtered - handle based on whether algorithm needs emit-previous buffering
+		if !state.holdsPrev {
+			// Deadband and other algorithms that never emit previous points:
+			// ACK the message immediately since it will never be needed again
+			mp.processor.metrics.IncrementFiltered()
+			mp.processor.logger.Debugf("Message filtered and ACKed immediately for series '%s' (algorithm doesn't need buffering): value=%v, timestamp=%v", seriesID, value, timestamp)
+			return nil, nil // Return nil to let Benthos ACK the message automatically
+		} else {
+			// SDT and other emit-previous algorithms: stash message as candidate
+			state.stash(msg)
+			mp.processor.metrics.IncrementFiltered()
+			mp.processor.logger.Debugf("Message filtered and stashed for series '%s' (algorithm needs buffering): value=%v, timestamp=%v", seriesID, value, timestamp)
+			return nil, nil // No immediate output
+		}
 
 	case 1:
 		// Single point emitted - this could be current or previous point
