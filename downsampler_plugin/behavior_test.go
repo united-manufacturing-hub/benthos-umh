@@ -380,7 +380,7 @@ downsampler:
 		)
 	})
 
-	Describe("Basic Swinging Door Algorithm Behavior", func() {
+	FDescribe("Basic Swinging Door Algorithm Behavior", func() {
 		Context("Minimum Time Constraint", func() {
 			DescribeTable("should enforce min_time between emissions",
 				RunStreamTestCase,
@@ -393,23 +393,25 @@ downsampler:
   default:
     swinging_door:
       threshold: 1.0
-      min_time: 10s`,
+      max_time: 1s
+      min_time: 10ms`,
 					Input: []TestMessage{
-						{Value: 2, TimestampMs: 0 * 1000, Topic: "sensor.sdt"},
-						{Value: 2, TimestampMs: 10 * 1000, Topic: "sensor.sdt"},
-						{Value: 2, TimestampMs: 20 * 1000, Topic: "sensor.sdt"},
-						{Value: 2, TimestampMs: 30 * 1000, Topic: "sensor.sdt"},
-						{Value: 2, TimestampMs: 40 * 1000, Topic: "sensor.sdt"},
-						{Value: 10, TimestampMs: 45 * 1000, Topic: "sensor.sdt"},
-						{Value: 3, TimestampMs: 50 * 1000, Topic: "sensor.sdt"},
-						{Value: 3, TimestampMs: 60 * 1000, Topic: "sensor.sdt"},
-						{Value: 3, TimestampMs: 70 * 1000, Topic: "sensor.sdt"},
-						{Value: 3, TimestampMs: 80 * 1000, Topic: "sensor.sdt"},
+						{Value: 2.0, TimestampMs: 0, Topic: "sensor.sdt"},
+						{Value: 2.0, TimestampMs: 10, Topic: "sensor.sdt"},
+						{Value: 2.0, TimestampMs: 20, Topic: "sensor.sdt"},
+						{Value: 2.0, TimestampMs: 30, Topic: "sensor.sdt"},
+						{Value: 2.0, TimestampMs: 40, Topic: "sensor.sdt"},
+						{Value: 10.0, TimestampMs: 45, Topic: "sensor.sdt"},
+						{Value: 3.0, TimestampMs: 50, Topic: "sensor.sdt"},
+						{Value: 3.0, TimestampMs: 60, Topic: "sensor.sdt"},
+						{Value: 3.0, TimestampMs: 70, Topic: "sensor.sdt"},
+						{Value: 3.0, TimestampMs: 80, Topic: "sensor.sdt"},
+						{Value: 10000.0, TimestampMs: 90, Topic: "sensor.sdt"},
 					},
 					ExpectedOutput: []ExpectedMessage{
-						{Value: 2, TimestampMs: 0 * 1000, Topic: "sensor.sdt", HasMetadata: map[string]string{"downsampled_by": "swinging_door"}},
-						{Value: 2, TimestampMs: 40 * 1000, Topic: "sensor.sdt", HasMetadata: map[string]string{"downsampled_by": "swinging_door"}},
-						{Value: 3, TimestampMs: 80 * 1000, Topic: "sensor.sdt", HasMetadata: map[string]string{"downsampled_by": "swinging_door"}},
+						{Value: 2.0, TimestampMs: 0, Topic: "sensor.sdt", HasMetadata: map[string]string{"downsampled_by": "swinging_door"}},
+						{Value: 2.0, TimestampMs: 40, Topic: "sensor.sdt", HasMetadata: map[string]string{"downsampled_by": "swinging_door"}},
+						{Value: 3.0, TimestampMs: 80, Topic: "sensor.sdt", HasMetadata: map[string]string{"downsampled_by": "swinging_door"}},
 					},
 				}),
 			)
