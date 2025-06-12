@@ -17,6 +17,8 @@ package algorithms
 import (
 	"fmt"
 	"time"
+
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 // ProcessorWrapper provides a high-level interface for compression algorithms that
@@ -49,6 +51,8 @@ type ProcessorWrapper struct {
 	algorithm     StreamCompressor
 	passThrough   bool // If true, pass older data through; if false, drop it
 	lastTimestamp time.Time
+	logger        *service.Logger
+	seriesID      string // For debug logging context
 
 	// Boolean handling state
 	lastBoolValue *bool
@@ -65,10 +69,14 @@ type ProcessorWrapper struct {
 //   - Algorithm: name of the underlying compression algorithm ("deadband", "swinging_door")
 //   - AlgorithmConfig: configuration parameters passed to the algorithm
 //   - PassThrough: how to handle out-of-order data (false=drop, true=pass through)
+//   - Logger: benthos logger for debug output (optional)
+//   - SeriesID: series identifier for debug context (optional)
 type ProcessorConfig struct {
 	Algorithm       string                 `json:"algorithm"`        // Algorithm name to use
 	AlgorithmConfig map[string]interface{} `json:"algorithm_config"` // Algorithm-specific configuration
 	PassThrough     bool                   `json:"pass_through"`     // Default: false (drop out-of-order data)
+	Logger          *service.Logger        `json:"-"`                // Logger for debug output
+	SeriesID        string                 `json:"-"`                // Series identifier for debug context
 }
 
 // NewProcessorWrapper creates a new processor wrapper instance.
@@ -90,6 +98,8 @@ func NewProcessorWrapper(config ProcessorConfig) (*ProcessorWrapper, error) {
 	return &ProcessorWrapper{
 		algorithm:   algo,
 		passThrough: config.PassThrough,
+		logger:      config.Logger,
+		seriesID:    config.SeriesID,
 	}, nil
 }
 
@@ -108,6 +118,10 @@ func (p *ProcessorWrapper) Ingest(value interface{}, timestamp time.Time) ([]Gen
 	// Convert to float64
 	floatVal, err := p.toFloat64(value)
 	if err != nil {
+		if p.logger != nil {
+			p.logger.Debugf("Type conversion failed for series '%s': value %v (type %T) cannot be converted to float64: %v",
+				p.seriesID, value, value, err)
+		}
 		return []GenericPoint{}, fmt.Errorf("type conversion failed: %w", err)
 	}
 
@@ -116,9 +130,19 @@ func (p *ProcessorWrapper) Ingest(value interface{}, timestamp time.Time) ([]Gen
 		if p.passThrough {
 			// PassThrough=true means bypass algorithm and always keep out-of-order data
 			// This ensures out-of-order messages are passed through unchanged
+			if p.logger != nil {
+				timeDiff := p.lastTimestamp.Sub(timestamp)
+				p.logger.Debugf("Late arrival passthrough for series '%s': message timestamp %v is %v behind last processed %v - passing through unchanged",
+					p.seriesID, timestamp, timeDiff, p.lastTimestamp)
+			}
 			return []GenericPoint{{Value: floatVal, Timestamp: timestamp}}, nil
 		} else {
 			// Drop out-of-order data
+			if p.logger != nil {
+				timeDiff := p.lastTimestamp.Sub(timestamp)
+				p.logger.Debugf("Late arrival drop for series '%s': message timestamp %v is %v behind last processed %v - dropping message",
+					p.seriesID, timestamp, timeDiff, p.lastTimestamp)
+			}
 			return []GenericPoint{}, nil
 		}
 	}
@@ -153,6 +177,9 @@ func (p *ProcessorWrapper) processBooleanValue(value bool, timestamp time.Time) 
 	if p.lastBoolValue == nil {
 		p.lastBoolValue = &value
 		p.lastBoolTime = timestamp
+		if p.logger != nil {
+			p.logger.Debugf("Boolean value kept for series '%s': first value %v at %v", p.seriesID, value, timestamp)
+		}
 		return []GenericPoint{{Value: value, Timestamp: timestamp}}, nil
 	}
 
@@ -160,10 +187,16 @@ func (p *ProcessorWrapper) processBooleanValue(value bool, timestamp time.Time) 
 	if *p.lastBoolValue != value {
 		p.lastBoolValue = &value
 		p.lastBoolTime = timestamp
+		if p.logger != nil {
+			p.logger.Debugf("Boolean value kept for series '%s': changed from %v to %v at %v", p.seriesID, *p.lastBoolValue, value, timestamp)
+		}
 		return []GenericPoint{{Value: value, Timestamp: timestamp}}, nil
 	}
 
 	// Drop if no change
+	if p.logger != nil {
+		p.logger.Debugf("Boolean value dropped for series '%s': unchanged value %v at %v", p.seriesID, value, timestamp)
+	}
 	return []GenericPoint{}, nil
 }
 
@@ -173,17 +206,27 @@ func (p *ProcessorWrapper) processStringValue(value string, timestamp time.Time)
 	if p.lastStringValue == nil {
 		p.lastStringValue = &value
 		p.lastStringTime = timestamp
+		if p.logger != nil {
+			p.logger.Debugf("String value kept for series '%s': first value '%s' at %v", p.seriesID, value, timestamp)
+		}
 		return []GenericPoint{{Value: value, Timestamp: timestamp}}, nil
 	}
 
 	// Keep if value changed
 	if *p.lastStringValue != value {
+		oldValue := *p.lastStringValue
 		p.lastStringValue = &value
 		p.lastStringTime = timestamp
+		if p.logger != nil {
+			p.logger.Debugf("String value kept for series '%s': changed from '%s' to '%s' at %v", p.seriesID, oldValue, value, timestamp)
+		}
 		return []GenericPoint{{Value: value, Timestamp: timestamp}}, nil
 	}
 
 	// Drop if no change
+	if p.logger != nil {
+		p.logger.Debugf("String value dropped for series '%s': unchanged value '%s' at %v", p.seriesID, value, timestamp)
+	}
 	return []GenericPoint{}, nil
 }
 
