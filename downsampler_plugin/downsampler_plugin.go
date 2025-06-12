@@ -179,6 +179,9 @@ overrides:
 					Optional(),
 				service.NewDurationField("max_time").
 					Description("Default maximum time interval for deadband algorithm.").
+					Optional(),
+				service.NewDurationField("min_time").
+					Description("Default minimum time between emissions for deadband algorithm.").
 					Optional()).
 				Description("Default deadband algorithm parameters.").
 				Optional(),
@@ -188,6 +191,9 @@ overrides:
 					Optional(),
 				service.NewDurationField("max_time").
 					Description("Default maximum time interval for swinging door algorithm.").
+					Optional(),
+				service.NewDurationField("min_time").
+					Description("Default minimum time between emissions for swinging door algorithm.").
 					Optional()).
 				Description("Default swinging door algorithm parameters.").
 				Optional(),
@@ -210,6 +216,9 @@ overrides:
 					Optional(),
 				service.NewDurationField("max_time").
 					Description("Override maximum time interval for deadband algorithm.").
+					Optional(),
+				service.NewDurationField("min_time").
+					Description("Override minimum time between emissions for deadband algorithm.").
 					Optional()).
 				Description("Deadband algorithm parameter overrides.").
 				Optional(),
@@ -219,6 +228,9 @@ overrides:
 					Optional(),
 				service.NewDurationField("max_time").
 					Description("Override maximum time interval for swinging door algorithm.").
+					Optional(),
+				service.NewDurationField("min_time").
+					Description("Override minimum time between emissions for swinging door algorithm.").
 					Optional()).
 				Description("Swinging door algorithm parameter overrides.").
 				Optional(),
