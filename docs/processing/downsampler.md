@@ -1,251 +1,134 @@
-# Downsampler
+## Downsampler in a Nutshell
 
-The Downsampler processor reduces time-series data volume by filtering out insignificant changes using configurable algorithms. It integrates seamlessly with UMH's data pipeline after the tag_processor to compress historian data while preserving significant trends and changes.
+The UMH **Downsampler** sits between raw field traffic and your storage layer and does one thing only: **drops points that add no information**.
+It offers two proven modes:
 
-Use the `downsampler` to reduce storage and transmission costs for high-frequency time-series data while maintaining data quality. This processor supports both UMH-core time-series format and UMH classic _historian format, automatically passing through non-historian messages unchanged.
+* **Dead-band** – keeps every *change*, drops byte-for-byte repeats, and (optionally) emits a watchdog heartbeat after `max_time`.
+* **Swinging-Door Trending (SDT)** – follows the *trend* itself; a sample is forwarded only if it would violate an error-bounded, slope-aware “door”.
 
-## Key Features
+Because the plug-in lets you stack wildcard overrides on top of a safe default, you can start with *zero-risk* settings—`deadband {threshold: 0}`—and tighten the rules where it pays off.
 
-- **Dual Algorithm Support**: Deadband and Swinging Door Trending (SDT) algorithms
-- **Flexible Configuration**: Defaults + overrides pattern for easy multi-signal management
-- **Pattern Matching**: Wildcard and regex patterns for topic-specific configuration
-- **Data Type Handling**: Intelligent handling of numeric, boolean, and string values
-- **Per-Key Filtering**: Independent processing of each field in multi-field messages
-- **Industrial Best Practices**: Built-in parameter recommendations for various signal types
-- **High Compression**: Achieve 90-99%+ data reduction while preserving signal fidelity
-- **Fail-Safe Design**: Passes messages through unchanged on errors
+**Where it makes sense to deploy**
 
-## Supported Data Formats
+1. **First hop into the Unified Namespace** – use dead-band with `threshold: 0` and a 30 min heartbeat. You simply de-bounce duplicates while proving the pipe is alive; no data are ever delayed.
+2. **Sensor-noise cleanup anywhere in the pipe** – raise the dead-band to `2 × σ_noise` (twice the sensor manufacturer’s stated noise) and keep the 1 h heartbeat
+3. **Last stop before the historian** – switch to SDT with the same `2 × σ_noise` error band, add a physics-based `min_time` (fastest plausible change), and keep the 1 h heartbeat. You retain slope fidelity yet routinely see 95–99 % compression.
 
-The downsampler processes in UMH core time-series data formats:
+Counters, binary alarms and similar discrete tags should *stay* on dead-band (`threshold: 0`); SDT’s internal buffering could hide a state flip too long for real-time alerting.
 
-Single "value" field with timestamp following the "one tag, one message, one topic" principle.  
-📖 **Format details**: [UMH-Core Payload Formats](https://docs.umh.app/usage/unified-namespace/payload-formats)
+Why this beats the usual “stick a dead-band in Node-RED” trick?
+*Per-tag state*, safe ACK-buffering, slope-aware compression, audit heartbeats and pattern-based overrides come baked in—no custom code, no hidden duplicates, no stair-step artefacts on slow ramps.
 
-In order to use the UMH classic _historian format, convert multi-metric payloads into single-metric payloads.
+> **Compliance footnote** – SDT and dead-band guarantee an absolute error bound and an audit heartbeat, but they do discard data.  If your GxP / 21 CFR Part 11 regime demands the unfiltered stream, archive the raw UMH-core topic in parallel.
 
-## Configuration
+---
 
-The downsampler uses a **defaults + overrides** configuration pattern for flexible multi-signal management with **algorithm-specific sections**:
+## 1  Quick-start Configuration
 
 ```yaml
-pipeline:
-  processors:
-    - tag_processor:
-        # ... tag processor configuration
-    - downsampler:
-        default:                     # Default parameters for all signals
-          deadband:                  # Deadband algorithm parameters
-            threshold: 0.2           # 2× typical sensor noise
-            max_time: 1h             # Auditor heartbeat interval
-          swinging_door:             # Swinging door algorithm parameters
-            threshold: 0.2           # Same threshold concept as deadband
-            max_time: 1h             # Auditor heartbeat interval
-        overrides:                   # Signal-specific overrides
-          - pattern: "*.temperature"
-            deadband:
-              threshold: 0.1         # Fine-grained for temperature (±0.05°C noise)
-            swinging_door:
-              threshold: 0.1         # Consistent threshold naming
-          - pattern: ".+_counter"
-            swinging_door:
-              threshold: 0           # No compression for counters
-          - pattern: "^temp_"
-            deadband:
-              threshold: 0.05        # Very sensitive temp sensors
-```
-
-### Configuration Structure
-
-**Algorithm Selection:**
-The algorithm is automatically determined by which configuration section contains values:
-- If only `deadband` parameters are configured → uses deadband algorithm
-- If only `swinging_door` parameters are configured → uses swinging door algorithm
-- If both sections have parameters → defaults to deadband, but overrides can specify different algorithms per pattern
-
-**Default Parameters:**
-- `default.deadband.threshold`: Default threshold for significant changes (2× sensor noise)
-- `default.deadband.max_time`: Default maximum time before forced output (auditor heartbeat)
-- `default.swinging_door.threshold`: Default threshold for envelope deviation (same concept as deadband)
-- `default.swinging_door.max_time`: Default maximum time before forced output (auditor heartbeat)
-
-**Override Patterns:**
-- `overrides[].pattern`: Regex pattern to match topics (e.g., `"*.temperature"`, `".+_counter"`, `"^temp_"`)
-- `overrides[].topic`: Exact topic match (mutually exclusive with pattern)
-- Override any default parameter with signal-specific values
-- Each override can specify different algorithms by including different config sections
-
-### Algorithm Selection Examples
-
-```yaml
-# Pure deadband configuration
-downsampler:
-  default:
-    deadband:
-      threshold: 0.2           # 2× sensor noise
-      max_time: 1h             # Auditor heartbeat
-  overrides:
-    - pattern: "*.temperature"
-      deadband:
-        threshold: 0.1         # Fine-grained temperature monitoring
-
-# Pure swinging door configuration  
-downsampler:
-  default:
-    swinging_door:
-      threshold: 0.2           # Same threshold concept
-      max_time: 1h             # Auditor heartbeat
-  overrides:
-    - pattern: "*.temperature"
-      swinging_door:
-        threshold: 0.1         # Consistent threshold naming
-
-# Mixed algorithm configuration
-downsampler:
-  default:
-    deadband:                  # Default algorithm
-      threshold: 0.2           # Standard noise threshold
-      max_time: 1h             # Auditor compliance
-  overrides:
-    - pattern: "*.temperature"
-      deadband:                # Override with deadband
-        threshold: 0.1         # Temperature precision
-    - pattern: "*.vibration"
-      swinging_door:           # Override with swinging door
-        threshold: 0.01        # Sensitive vibration monitoring
-```
-
-### Pattern Matching Examples
-
-```yaml
-overrides:
-  # Wildcard patterns (using filepath.Match)
-  - pattern: "*.temperature"        # Any topic ending in "temperature"
-    deadband:
-      threshold: 0.1                # Fine temperature control
-  - pattern: "plant1.*"             # Any topic starting with "plant1."
-    swinging_door:
-      threshold: 0.05               # High precision for plant1
-  
-  # Regex patterns (for complex matching)
-  - pattern: ".+_counter"           # Any topic ending in "_counter"
-    swinging_door:
-      threshold: 0                  # No compression for counters
-  - pattern: "^temp_"               # Any topic starting with "temp_"
-    deadband:
-      threshold: 0.05               # Very sensitive temperature sensors
-  - pattern: "(vibration|accelerometer)"  # Multiple alternatives
-    swinging_door:
-      threshold: 0.01               # Sensitive vibration monitoring
-      min_time: 1s                  # High-frequency vibration data
-  
-  # Exact topic matching
-  - topic: "umh.v1.plant1.line1._historian.critical_temperature"
-    deadband:
-      threshold: 0.02               # Very sensitive critical sensor
-```
-
-## Algorithms
-
-### Deadband Algorithm
-
-The deadband algorithm filters out changes smaller than a configured threshold by comparing each new value to the last output value. It's ideal for **simple noise filtering** and **discrete signal monitoring**.
-
-**Parameters:**
-- `threshold`: Minimum absolute change required to keep a data point *(equivalent to noise floor)*
-- `max_time`: Maximum time before forcing output regardless of threshold *(auditor heartbeat)*
-
-**How it works:**
-1. **First Point**: Always kept (establishes baseline)
-2. **Subsequent Points**: Compare to last kept value
-   - If `|current_value - last_output| >= threshold` → **Keep**
-   - If `|current_value - last_output| < threshold` → **Filter out**
-3. **Max Time**: Forces output after time limit regardless of threshold (ensures auditor requirements)
-
-**Example** (threshold = 0.5):
-| Time | Input | Last Output | Change (Δ) | Decision | Reason |
-|------|-------|-------------|------------|----------|---------|
-| 00:00 | 10.0 | *none* | – | **Keep** | First point |
-| 00:01 | 10.3 | 10.0 | 0.3 | Filter | 0.3 < 0.5 |
-| 00:02 | 10.6 | 10.0 | 0.6 | **Keep** | 0.6 ≥ 0.5 |
-
-**Tuning Recommendations:**
-- **Threshold**: Set to **2× sensor noise level** (e.g., ±0.1 noise → threshold = 0.2)
-- **Max Time**: Default **1 hour** for auditor compliance (periodic heartbeat)
-- **Use Cases**: Boolean signals, simple analog filtering, discrete state monitoring
-
-### Swinging Door Trending (SDT) Algorithm
-
-The SDT algorithm maintains an "envelope" or "corridor" around the trend line from the last stored point, storing new points only when they would exceed the envelope boundaries. It provides **superior compression** for **continuous analog signals**.
-
-**Parameters:**
-- `threshold`: Maximum vertical deviation from the trend line *(same concept as deadband threshold)*
-- `max_time`: Maximum time before forcing output *(auditor heartbeat, same as deadband)*
-
-**How it works:**
-1. **Start Segment**: First point establishes the base of a new segment
-2. **Envelope Calculation**: For each new point, calculate upper and lower trend lines from base point
-3. **Boundary Check**: If the point falls outside the envelope (±threshold), end current segment
-4. **Segment End**: Store the previous point as segment end, start new segment from there
-
-**Benefits over Deadband:**
-- **Better Trend Preservation**: Maintains slope information, not just magnitude
-- **Higher Compression**: Can achieve 95-99% reduction vs 90-95% for deadband
-- **Temporal Awareness**: Considers time progression in compression decisions
-
-**Tuning Recommendations:**
-- **Threshold**: Set to **2× sensor noise level** (same principle as deadband)
-- **Max Time**: Default **1 hour** for auditor compliance (periodic heartbeat)
-- **Use Cases**: Continuous analog processes, temperature control, flow rates, pressure monitoring
-
-**Out-of-Order & Bulk Processing:**
-Both algorithms process messages **in timestamp order**. If messages arrive out-of-order:
-- **Small delays** (seconds): Buffered and reordered automatically  
-- **Large delays** (minutes): May cause envelope reset in SDT or threshold recalculation
-- **Bulk arrivals**: Each message processed sequentially maintaining state integrity
-
-**Auditor Requirements:**
-The `max_time` parameter ensures **regulatory compliance** by forcing periodic data storage regardless of signal changes:
-- **Heartbeat Function**: Guarantees data points at least every `max_time` interval
-- **Audit Trail**: Proves system was operational even during stable periods
-- **Compliance**: Meets FDA 21 CFR Part 11, GxP, and similar requirements for continuous monitoring
-
-## Late Arrival Policy (`late_policy`)
-
-### Why Late Arrival Handling is Critical
-
-Real-world Kafka topics occasionally deliver messages whose timestamps are older than previously processed messages. This creates **out-of-order (OoO) arrival** scenarios that can break compression algorithms:
-
-- **Deadband and Swinging Door algorithms assume strictly increasing timestamps** per time series
-- **Feeding an out-of-order sample into the algorithm** would either silently violate error guarantees or corrupt slope calculations
-- **Database connectors may create duplicates** if late data overwrites existing compressed points
-
-The late arrival policy defines what happens **when `timestamp < last_processed_timestamp`**.
-
-### Policy Options
-
-| Policy | Behavior | Use Case | Metadata Added |
-|--------|----------|----------|----------------|
-| **`passthrough`** (default) | Skip compression, forward unchanged | Standard live ingest: nothing lost, minimal compression impact | `late_oos=true` |
-| **`drop`** | Log warning and discard message | High-rate sensors where stale data is worthless | None (dropped) |
-
-### Configuration Example
-
-```yaml
-pipeline:
-  processors:
-    - downsampler:
-        default:
+processors:
+  - downsampler:
+      default:                     # safe baseline for every topic
+        deadband:
+          threshold: 0             # keep every change
+          max_time: 30m            # 30-minute heartbeat
+      overrides:                   # finer control
+        - pattern: "*.temperature"
           deadband:
-            threshold: 0.2
+            threshold: 0.1         # 2 × 0.05 °C noise
+        - pattern: "*.furnace*"
+          swinging_door:
+            threshold: 0.1
+            min_time: 5s
             max_time: 1h
-          late_policy:
-            late_policy: passthrough    # Default behavior
-        overrides:
-          - pattern: "*.alarm"
-            late_policy:
-              late_policy: drop        # Drop late alarms - time sensitive
-          - pattern: "historical_.*"
-            late_policy:
-              late_policy: passthrough # Allow historical reprocessing
 ```
+
+*Nothing else is required.*
+Messages that aren’t strict UMH-core time-series (`value` + `timestamp_ms`) pass straight through.
+
+---
+
+## Algorithm & Parameter Deep Dive
+
+The Downsampler exposes just four parameters; once you understand their purpose you can configure the system with confidence.
+
+
+| Parameter     | Purpose                                                                                          | Typical setting                                                                            | Issue it prevents                                                               |
+| ------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `threshold`   | Maximum absolute deviation allowed before a new point must be stored (same units as the signal). | **2 × sensor-noise σ** · If σ is unknown, inspect a steady period and take ± peak spread   | Removes pure measurement noise without masking genuine step changes.            |
+| `min_time`    | Smallest physically realistic interval between meaningful changes. Available only on `swinging_door`                               | Fastest credible process period (e.g. 1 s for furnaces, 50 ms for servo torque). `0` = off | Suppresses transients caused by bursty drivers or unstable links.               |
+| `max_time`    | Heart-beat that forces an output even during flat periods; also flushes any SDT buffer.          | 15 min – 1 h (aligns with 21 CFR §11 “system liveness”).                                   | Ensures line-flat sensors remain visible and internal buffers stay bounded.     |
+| `late_policy` | Action for out-of-order samples.                                                                 | `passthrough` (default) or `drop`.                                                         | Lets you balance historical accuracy against traffic volume on skewed networks. |     |
+
+### Dead-band
+
+* **Rule** Emit when `|v − last| ≥ threshold` or when `max_time` expires.
+* **Best suited to** Duplicate removal, discrete states, counters, Boolean flags.
+* **Tuning notes**
+
+  * `threshold = 2 × σ_noise` removes sensor noise yet preserves real transitions.
+  * `threshold = 0` provides safe, universal de-duplication.
+  * Keep `max_time` within 15 – 60 min to satisfy audit requirements.
+
+### Swinging-Door Trending (SDT)
+
+* **Rule** Maintain rotating upper and lower “doors” that bound the current slope; emit the **previous** point when a new sample would violate the envelope.
+* **Additional parameters**
+
+  * `threshold` – vertical tolerance (same intuition as for dead-band).
+  * `min_time` – enforces physical plausibility for fast-changing signals.
+  * `max_time` – still provides the audit heart-beat and buffer flush.
+* **Why choose SDT** Captures long ramps with just two points, eliminating the stair-step pattern created by naïve dead-band on slow trends, while mathematically guaranteeing the reconstruction error remains ≤ `threshold`.
+
+## Edge-case Handling & Internal Behaviour
+
+The Downsampler runs each series in its own finite-state machine and guards two invariants:
+
+1. **No silent loss** A point is acknowledged only after it—or the predecessor that still sits in the buffer—has been forwarded downstream.
+2. **Bounded memory** At most **one** candidate is stored per series; an idle-flush watchdog empties it after `max_time`.
+
+---
+
+### How incoming records are routed
+
+| Payload type            | Processing path                                    | Reasoning                                                                                 |
+| ----------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| *Numeric* (int / float) | Selected algorithm (`deadband` or `swinging_door`) | These are the signals where compression counts.                                           |
+| *Boolean, string*       | Change detector (`value ≠ last_value`)             | For states and text, only transitions matter; thresholds are irrelevant.                  |
+| Other JSON structures   | **Bypass** (fail-open)                             | Complex objects could hide multiple semantics—forward untouched rather than risk pruning. |
+
+---
+
+### Late-arrival strategy
+
+*The timestamp of each processed sample is compared with the most recent one already seen for that series.*
+
+* `passthrough` (default) Forward the late sample raw, flagging it with `meta:late_oos=true`.
+* `drop` Discard and increment a metric counter—useful when stale data has no value but bandwidth is critical.
+
+Both modes preserve at-least-once delivery for in-order traffic; only you decide what to do with stragglers.
+
+---
+
+### Buffered-emit logic (needed by SDT)
+
+1. A candidate point is retained while the doors stay open.
+2. When a violation occurs, the **previous** candidate is released and the new sample becomes the fresh candidate.
+3. If traffic stops before the doors close, the watchdog flushes the last candidate after `max_time` to guarantee visibility.
+
+The same mechanism ensures a graceful shutdown: during a Benthos drain, every buffered point is emitted before the plug-in confirms closure.
+
+---
+
+### Numerical edge cases covered in tests
+
+| Scenario                              | Guard rail in code                                                     |
+| ------------------------------------- | ---------------------------------------------------------------------- |
+| `threshold < 0`                       | Configuration rejected at startup.                                     |
+| `threshold = 0`                       | Legal—drops exact repeats, keeps any change.                           |
+| `max_time = 0`                        | Treated as *unset* (no heart-beat, but still at-least-once buffering). |
+| `min_time > max_time`                 | Validation error to prevent deadlocks.                                 |
+| IEEE-754 extremes (`±Inf`, `NaN`)     | Sample is bypassed with a warning; counting metrics record the event.  |
+| Clock skew (non-monotonic timestamps) | Logged and routed through late-arrival policy; compression continues.  |
+
+With these guards the Downsampler behaves deterministically across PLC glitches, network jitter and even deliberate fuzz-test assaults—yet still errs on the side of passing the data through rather than dropping it.
