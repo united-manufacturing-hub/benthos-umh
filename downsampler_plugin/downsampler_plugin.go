@@ -12,6 +12,40 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// -----------------------------------------------------------------------------
+// Downsampler plugin – high‑level contract (applies to entire package)
+// -----------------------------------------------------------------------------
+//
+// 1.  Data contract (input ↦ output)
+//     • Accept only UMH‑core time‑series messages
+//       { "value": <scalar>, "timestamp_ms": <unix‑ms> }      (one tag, one topic)
+//     • Require metadata key `umh_topic`                      (series identity)
+//     • Emit message unaltered except for     _downsampler.algorithm_ metadata.
+//
+// 2.  Purpose                                                  *WHY?*
+//     • Compress noisy or low‑value data points (Deadband, SDT).
+//     • Guarantee *at‑least‑once* delivery even when algorithms
+//       delay or reorder emissions (ACK buffering, idle flush).
+//
+// 3.  Critical safety levers
+//     • Dual use of `max_time`
+//         – Algorithm heartbeat: forces a periodic output even if no
+//           threshold exceeded.
+//         – Idle flush timer : guarantees buffered points are freed and
+//           ACKed if a series goes quiet.
+//     • Late‑arrival policy (`passthrough` | `drop`) keeps historical
+//       accuracy configurable per topic.
+//
+// 4.  Configuration tiers
+//     • default   – global baseline for every topic.
+//     • overrides – wildcard or exact topic patterns.
+//
+// 5.  Error policy
+//     • *Fail‑open*: on any processing error, forward the raw message
+//       unchanged and log – never lose data.
+//
+// -----------------------------------------------------------------------------
+
 package downsampler_plugin
 
 import (
@@ -26,21 +60,20 @@ import (
 
 // SeriesState is now defined in series_state.go with ACK buffering capabilities
 
-// MessageProcessingResult encapsulates the outcome of processing a single message through the downsampling pipeline.
+// -----------------------------------------------------------------------------
+// MessageProcessingResult – single‑message outcome
+// -----------------------------------------------------------------------------
 //
-// This structure supports the complex ACK buffering semantics required by "emit-previous" algorithms like
-// Swinging Door Trending (SDT), where a message might be:
-// - Immediately emitted (ProcessedMessages contains 1 message)
-// - Filtered and buffered for later emission (ProcessedMessages empty, WasFiltered true)
-// - Trigger emission of a previously buffered message (ProcessedMessages contains buffered message)
+// Mutually exclusive states:
 //
-// The distinction between filtering and errors is crucial for proper ACK handling:
-// - Filtered messages (WasFiltered=true) are intentionally not emitted but may be buffered
-// - Error messages (Error!=nil) indicate processing failures and trigger fail-open behavior
+//	a) Emitted immediately           ⇒ len(ProcessedMessages) == 1
+//	b) Buffered (emit‑previous algo) ⇒ WasFiltered == true, Error == nil
+//	c) Failed                        ⇒ Error != nil            (fail‑open)
 //
-// Design rationale: This structure enables at-least-once delivery semantics by clearly separating
-// successful filtering from actual processing errors, allowing the processor to make informed
-// ACK decisions based on algorithm behavior.
+// WHY:
+//   - Distinguishing (b) from (c) is essential – only real errors should
+//     block ACKs; filtered messages may be ACKed once their buffered
+//     predecessor is emitted.
 type MessageProcessingResult struct {
 	OriginalMessage   *service.Message   // The input message for ACK tracking
 	ProcessedMessages []*service.Message // Output messages (empty if filtered, may contain buffered messages)
@@ -48,156 +81,16 @@ type MessageProcessingResult struct {
 	Error             error              // Non-nil if processing failed (triggers fail-open)
 }
 
-// init registers the downsampler plugin with the Benthos processor registry and defines its configuration schema.
+// -----------------------------------------------------------------------------
+// init – Benthos registration
+// -----------------------------------------------------------------------------
 //
-// This function serves as the integration point between the downsampler implementation and the Benthos
-// plugin system, establishing the configuration contract and processor factory function.
+// MECE breakdown:
 //
-// ## Plugin Registration Philosophy
-//
-// The downsampler follows Benthos plugin conventions by:
-// - **Declarative configuration**: Complex behavior configured through YAML/JSON schemas
-// - **Self-documenting**: Extensive inline documentation in the configuration spec
-// - **Validation-first**: Configuration validation happens before processor creation
-// - **Factory pattern**: Processor instances created through factory function with validated config
-//
-// ## UMH-Core Integration Context
-//
-// The plugin is specifically designed for UMH-core time-series data processing, implementing the
-// "one tag, one message, one topic" philosophy documented at:
-// https://docs.umh.app/usage/unified-namespace/payload-formats
-//
-// **Expected Data Format**:
-// ```json
-//
-//	{
-//	  "value": 23.4,           // Scalar value (numeric, boolean, or string)
-//	  "timestamp_ms": 1717083000000  // Unix epoch milliseconds
-//	}
-//
-// ```
-//
-// **Required Metadata**:
-// - `umh_topic`: Topic identifier for series state management (e.g., "umh.v1.acme._historian.temperature")
-//
-// ## Configuration Schema Design
-//
-// The configuration schema implements a two-tier approach with simplified pattern matching:
-//
-// **Default Configuration**: Provides baseline algorithm parameters applied to all topics
-// ```yaml
-// default:
-//
-//	deadband:
-//	  threshold: 1.0
-//	  max_time: "5m"
-//	swinging_door:
-//	  threshold: 0.5
-//	  min_time: "1s"
-//	  max_time: "10m"
-//	late_policy:
-//	  late_policy: "passthrough"  # or "drop"
-//
-// ```
-//
-// **Override Configuration**: Allows topic-specific parameter customization using unified patterns
-// ```yaml
-// overrides:
-//   - pattern: "*.temperature.*"              # Wildcard pattern for all temperature sensors
-//     deadband:
-//     threshold: 2.0
-//   - pattern: "umh.v1.acme._historian.temp.sensor1"  # Exact topic match
-//     swinging_door:
-//     threshold: 1.0
-//   - pattern: "*pressure*"                   # Match any topic containing "pressure"
-//     deadband:
-//     max_time: "30s"
-//
-// ```
-//
-// ## Unified Pattern Matching
-//
-// The simplified pattern system supports both use cases through a single field:
-// - **Exact matches**: Full topic strings without wildcards (e.g., "umh.v1.acme._historian.temp.sensor1")
-// - **Wildcard patterns**: Shell-style patterns with * and ? (e.g., "*.temperature.*", "*sensor*")
-// - **Fallback matching**: Patterns also match against the final topic segment for convenience
-//
-// This eliminates the complexity of separate "topic" and "pattern" fields while maintaining full functionality.
-//
-// ## Algorithm Support Strategy
-//
-// The configuration supports multiple algorithms with different characteristics:
-//
-// **Deadband Algorithm**:
-// - **Behavior**: Filters changes smaller than threshold
-// - **ACK handling**: Immediate ACK for filtered messages (no buffering needed)
-// - **Use cases**: Noisy sensors, steady-state monitoring
-// - **Configuration**: `threshold` (float), `max_time` (duration)
-//
-// **Swinging Door Trending (SDT)**:
-// - **Behavior**: Dynamic compression maintaining trend fidelity
-// - **ACK handling**: Requires message buffering for emit-previous semantics
-// - **Use cases**: Trend analysis, efficient compression with accuracy preservation
-// - **Configuration**: `threshold` (float), `min_time` (duration), `max_time` (duration)
-//
-// ## Late Arrival Policy Framework
-//
-// The plugin implements configurable late arrival handling:
-//
-// **Passthrough Policy** (`late_policy: "passthrough"`):
-// - Out-of-order messages are forwarded unchanged
-// - Bypasses algorithm processing to preserve data integrity
-// - Suitable for systems where late data is acceptable
-//
-// **Drop Policy** (`late_policy: "drop"`):
-// - Out-of-order messages are discarded with warning logs
-// - Maintains strict temporal ordering for algorithms
-// - Suitable for real-time systems where late data is problematic
-//
-// ## Configuration Validation & Error Handling
-//
-// The Benthos framework handles configuration validation before processor creation:
-// - **Schema enforcement**: Field types, ranges, and relationships validated
-// - **Required fields**: Missing configuration detected early
-// - **Default values**: Sensible defaults applied for optional parameters
-// - **Error propagation**: Invalid configurations prevent processor startup
-//
-// ## Factory Function Integration
-//
-// The factory function bridges Benthos configuration parsing with processor creation:
-// ```go
-// func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error)
-// ```
-//
-// **Configuration Processing**: Delegates complex configuration parsing to `ConfigurationParser`
-// **Resource Integration**: Provides logger and metrics from Benthos resource manager
-// **Error Handling**: Configuration or creation errors prevent plugin initialization
-//
-// ## Plugin Metadata & Documentation
-//
-// The configuration spec includes extensive metadata:
-// - **Version**: Semantic versioning for configuration compatibility
-// - **Summary**: Brief description for plugin discovery
-// - **Description**: Comprehensive usage documentation with examples
-// - **Field documentation**: Detailed parameter descriptions with context
-//
-// This documentation is accessible through Benthos introspection tools and serves as
-// the primary reference for operators configuring the plugin.
-//
-// ## Error Handling Philosophy
-//
-// The init function uses panic for registration failures because:
-// - Plugin registration errors indicate programming/deployment issues
-// - Failed registration should prevent system startup
-// - Early failure is preferable to runtime confusion about missing plugins
-//
-// ## Integration with UMH Ecosystem
-//
-// The downsampler is designed to integrate with other UMH-core components:
-// - **Upstream**: Expects data from `tag_processor` plugin in time-series format
-// - **Downstream**: Outputs to TimescaleDB, InfluxDB, or other time-series databases
-// - **Monitoring**: Provides Prometheus metrics for operational visibility
-// - **Configuration**: Aligns with UMH-core configuration patterns and conventions
+//   - Registration          – binds "downsampler" to Benthos.
+//   - Config schema         – declares default + overrides tier.
+//   - Validation upfront    – Benthos rejects invalid configs before runtime.
+//   - Panic on failure      – plugin absence is a deployment bug; crash fast.
 func init() {
 	spec := service.NewConfigSpec().
 		Version("1.0.0").
@@ -363,40 +256,25 @@ overrides:
 	}
 }
 
-// DownsamplerProcessor implements intelligent time-series data reduction for UMH-core time-series data.
+// -----------------------------------------------------------------------------
+// DownsamplerProcessor – runtime structure
+// -----------------------------------------------------------------------------
 //
-// ## Architecture Overview
+// A. Stateless members
+//   - config, logger, metrics
 //
-// This processor implements the UMH-core philosophy of "One tag, one message, one topic" by processing
-// time-series data in the standard time-series format: `{"value": <scalar>, "timestamp_ms": <epoch_ms>}`.
-// It applies configurable downsampling algorithms to reduce data volume while preserving significant changes.
+// B. Per‑series state (guarded by RW mutex)
+//   - SeriesState{ processor, candidate msg, timestamps, holdsPrev }
 //
-// ## ACK Buffering & Data Safety Design
+// C. Background idle‑flush
+//   - flushTicker      – period = min(max_time) across all configs.
+//   - closeChan        – graceful shutdown.
+//   - shutdownBatch    – drained first in ProcessBatch.
 //
-// The processor implements sophisticated ACK buffering to support "emit-previous" algorithms like
-// Swinging Door Trending (SDT) without compromising at-least-once delivery guarantees:
-//
-// **Problem**: SDT algorithms may need to emit a previously received data point when a new point
-// arrives, but Benthos expects immediate ACK/NACK decisions per message.
-//
-// **Solution**: Internal message buffering with the following safety guarantees:
-// - Messages are only ACKed after successful processing AND emission
-// - Buffered messages are automatically flushed on idle timeout (max_time)
-// - All buffered messages are properly emitted during graceful shutdown
-// - Memory usage is O(series-count) - only one message buffered per time series
-//
-// ## Algorithm Integration Strategy
-//
-// Different algorithms require different ACK handling strategies:
-// - **Deadband**: Never emits previous points → immediate ACK for filtered messages
-// - **SDT**: May emit previous points → requires ACK buffering for filtered messages
-//
-// The processor optimizes memory usage by checking `algorithm.NeedsPreviousPoint()` to
-// determine whether buffering is required for each time series.
-//
-// This unified approach reduces configuration complexity while managing buffered data efficiently.
-// References:
-// - UMH-core payload formats: https://docs.umh.app/usage/unified-namespace/payload-formats
+// WHY idle flush?
+//  1. Memory cap: only one buffered point per quiet series.
+//  2. Liveness : ensures every message is eventually ACKed.
+//  3. Consistency with algorithm heartbeat (same max_time source).
 type DownsamplerProcessor struct {
 	config           DownsamplerConfig       // Downsampling algorithm configuration
 	logger           *service.Logger         // Benthos logger for debugging and monitoring
@@ -447,32 +325,16 @@ func newDownsamplerProcessor(config DownsamplerConfig, logger *service.Logger, m
 	return processor, nil
 }
 
-// calculateFlushInterval determines the optimal background flush frequency based on algorithm configurations.
+// -----------------------------------------------------------------------------
+// calculateFlushInterval – derives idle‑flush period
+// -----------------------------------------------------------------------------
 //
-// This function implements a critical buffering mechanism by calculating how frequently
-// the background goroutine should check for idle buffered messages that need to be flushed.
+// Algorithm (exhaustive):
+//  1. Scan default + overrides for the smallest non‑zero max_time.
+//  2. Fallback to 4h if none set.
 //
-// ## Design Rationale
-//
-// The flush interval is derived from algorithm `max_time` settings because these represent the maximum
-// time users are willing to wait for data emission. Using this existing configuration:
-// 1. **Reduces complexity**: No additional configuration parameters needed
-// 2. **Maintains consistency**: Flush behavior aligns with algorithm heartbeat expectations
-// 3. **Efficient memory use**: Prevents buffered messages from being held longer than algorithm timeouts
-//
-// ## Algorithm
-//
-// 1. Scan all default and override configurations for `max_time` values
-// 2. Select the minimum non-zero `max_time` across all algorithms
-// 3. Fall back to 4 hours if no explicit `max_time` is configured
-// 4. Return this value as the flush check frequency
-//
-// ## Why Minimum Selection
-//
-// Using the minimum ensures that no buffered message is held longer than its specific algorithm's
-// `max_time` setting, providing consistent buffering behavior across all configured time series.
-//
-// Returns the calculated flush interval duration.
+// WHY minimum?
+//   - Guarantees no series waits longer than its own SLA before a flush.
 func calculateFlushInterval(config DownsamplerConfig) time.Duration {
 	minMaxTime := 4 * time.Hour // Default fallback
 
@@ -497,50 +359,20 @@ func calculateFlushInterval(config DownsamplerConfig) time.Duration {
 	return minMaxTime
 }
 
-// idleFlushLoop runs the background goroutine responsible for preventing indefinite message buffering of rarely-changing data.
+// -----------------------------------------------------------------------------
+// idleFlushLoop & flushIdleCandidates
+// -----------------------------------------------------------------------------
 //
-// This goroutine implements a critical memory management and buffering mechanism by periodically checking
-// for "idle" buffered messages that should be flushed based on their age relative to algorithm-specific
-// `max_time` configurations.
+// Responsibility matrix:
 //
-// ## Background Context
+//	idleFlushLoop
+//	  • Run flushIdleCandidates every   flushTicker.C
+//	  • Stop on closeChan.
 //
-// UMH-core time-series data follows the "one tag, one message, one topic" philosophy, where each
-// time series may stop sending data or send very infrequent updates (slow-changing processes, steady-state systems).
-// Without this mechanism, messages buffered by "emit-previous" algorithms like SDT could be held
-// indefinitely when series become idle or change very rarely.
+// WHY separated goroutine?
 //
-// ## Purpose
-//
-// The idle flush mechanism serves two key purposes:
-// 1. **Memory management**: Prevents keeping points that change very rarely in memory indefinitely
-// 2. **Timely emission**: Ensures old buffered data points are emitted when no new data arrives
-//
-// Note: Data loss prevention is handled separately by the ACK system - messages are only ACKed
-// after successful processing and emission.
-//
-// ## Operation
-//
-// The goroutine operates on a timer interval (calculated by calculateFlushInterval) and:
-// 1. **Scans for candidates**: Only examines series with buffered messages
-// 2. **Applies per-series rules**: Uses each series' specific `max_time` configuration
-// 3. **Flushes aged messages**: Emits buffered messages that exceed their time limits
-// 4. **Resets algorithm state**: Ensures next message is treated as a fresh start
-//
-// ## Why Background Processing
-//
-// Processing messages in a background goroutine (rather than in the main processing path) provides:
-// - **Consistent throughput**: Doesn't block incoming message processing
-// - **Predictable timing**: Regular checks independent of message arrival patterns
-// - **Clean separation**: Idle flushing logic is separate from algorithm logic
-//
-// ## Lifecycle Management
-//
-// The goroutine runs until:
-// - `p.closeChan` is closed (during processor shutdown)
-// - `p.flushTicker` is stopped (during cleanup)
-//
-// This ensures graceful shutdown without goroutine leaks.
+//	– Keeps main path latency constant.
+//	– Allows deterministic flush cadence independent of traffic.
 func (p *DownsamplerProcessor) idleFlushLoop() {
 	for {
 		select {
@@ -552,49 +384,10 @@ func (p *DownsamplerProcessor) idleFlushLoop() {
 	}
 }
 
-// flushIdleCandidates examines buffered messages and flushes those that have exceeded their series-specific max_time.
-//
-// This function implements the core logic of the idle flush mechanism by applying
-// time-based eviction rules to prevent indefinite buffering of rarely-changing data.
-//
-// ## Design Strategy
-//
-// The function uses a two-phase approach for efficiency and thread safety:
-//
-// **Phase 1 - Candidate Collection** (under read lock):
-// - Quickly scan all series state to identify those with buffered messages
-// - Only collect series that use "emit-previous" algorithms (holdsPrev=true)
-// - Release read lock early to minimize contention with message processing
-//
-// **Phase 2 - Age Evaluation** (per-series locks):
-// - Check each candidate against its specific `max_time` configuration
-// - Use fine-grained locking to avoid blocking concurrent message processing
-// - Emit messages that exceed their time thresholds
-//
-// ## Algorithm-Specific max_time Handling
-//
-// Each time series may have different `max_time` values based on:
-// - Default configuration settings
-// - Topic-specific overrides (exact topic match)
-// - Pattern-based overrides (regex matching)
-//
-// The function respects these per-series configurations to provide appropriate
-// flush timing for different data types (e.g., fast sensors vs. slow batch processes).
-//
-// ## State Reset After Flush
-//
-// When a message is flushed due to age, the function also calls `state.processor.Reset()`
-// to clear the algorithm's internal state. This ensures that:
-// - The next message for this series is treated as a fresh start
-// - No stale algorithm state affects future processing
-// - Consistent behavior regardless of whether series resume or remain idle
-//
-// ## Memory Safety & Performance
-//
-// - **Bounded iteration**: Only examines series that actually have buffered messages
-// - **Concurrent-safe**: Uses appropriate locking strategy for read-heavy workload
-// - **Memory release**: Flushed messages are removed from internal buffers immediately
-// - **Batch emission**: Multiple flushed messages are sent as a single batch for efficiency
+// flushIdleCandidates
+//   - Gather candidates               (read lock)
+//   - Per‑series age check            (fine‑grained lock)
+//   - Emit & reset algorithm if age ≥ max_time
 func (p *DownsamplerProcessor) flushIdleCandidates() {
 	p.stateMutex.RLock()
 	seriesStates := make([]*SeriesState, 0, len(p.seriesState))
@@ -654,69 +447,22 @@ func (p *DownsamplerProcessor) flushIdleCandidates() {
 	}
 }
 
-// ProcessBatch implements the main message processing pipeline with at-least-once delivery semantics and fail-open behavior.
+// -----------------------------------------------------------------------------
+// ProcessBatch – main pipeline
+// -----------------------------------------------------------------------------
 //
-// This function represents the core integration point with Benthos, processing batches of messages
-// while maintaining strict data safety guarantees and optimal performance characteristics.
+// Ordered steps (MECE):
+//  1. Drain any idle‑flush batch (older ⇒ must be emitted first).
+//  2. For each message
+//     – route through per‑series algorithm
+//     – branch: emit / buffer / fail‑open
+//  3. Aggregate successful outputs.
+//  4. Log but do NOT return errors (fail‑open keeps flow).
 //
-// ## Processing Pipeline Architecture
-//
-// The batch processing follows a structured pipeline:
-//
-// ```
-// Input Batch → Idle Flush Check → Per-Message Processing → Error Handling → Output Batches
-//
-//	     ↓              ↓                    ↓                    ↓              ↓
-//	N messages    Background flush    Individual filtering    Fail-open      M batches
-//	                 messages         + ACK buffering        policy        (M ≥ 0)
-//
-// ```
-//
-// ## At-Least-Once Delivery Guarantees
-//
-// The function implements comprehensive at-least-once semantics:
-//
-// **ACK Safety**: Messages are only ACKed by Benthos after:
-// - Successful processing through the algorithm pipeline
-// - Any required buffering operations completed
-// - Output messages successfully added to return batches
-//
-// **Error Handling**: Processing errors trigger fail-open behavior where:
-// - Original message is passed through unchanged to prevent data loss
-// - Error is logged for debugging but doesn't block the batch
-// - Metrics are updated to track error rates
-//
-// **Background Flushing**: Idle messages from previous processing cycles are:
-// - Checked before processing the current batch
-// - Emitted as separate batches to maintain temporal ordering
-// - Handled independently of current batch success/failure
-//
-// ## Fail-Open Policy Rationale
-//
-// The processor implements fail-open rather than fail-closed behavior because:
-// - **Data preservation**: Industrial time-series data is often irreplaceable
-// - **System resilience**: Configuration or algorithm errors shouldn't stop data flow
-// - **Operational visibility**: Errors are logged and metrics tracked for troubleshooting
-// - **Graceful degradation**: System continues operating with reduced functionality rather than total failure
-//
-// ## Batch Output Strategy
-//
-// The function may return multiple output batches:
-// 1. **Idle flush batch**: Messages flushed from previous processing (if any)
-// 2. **Main processing batch**: Results from processing the current input batch
-//
-// This separation ensures:
-// - **Temporal ordering**: Older messages are emitted before newer ones
-// - **ACK coordination**: Different batches can be ACKed independently
-// - **Performance optimization**: Multiple batches can be processed in parallel downstream
-//
-// Parameters:
-//   - ctx: Benthos context for cancellation and tracing
-//   - batch: Input messages to process (may contain time-series and non-time-series data)
-//
-// Returns:
-//   - []service.MessageBatch: Zero or more output batches (empty if all messages filtered)
-//   - error: Always nil due to fail-open policy (errors logged but not returned)
+// WHY this structure?
+//   - Temporal ordering: previous flush before current batch.
+//   - ACK correctness  : Benthos sees zero‑error path; we record metrics.
+//   - Performance      : minimal locking, single pass.
 func (p *DownsamplerProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var outBatches []service.MessageBatch
 	var outBatch service.MessageBatch
@@ -883,43 +629,19 @@ func (p *DownsamplerProcessor) updateProcessedTime(state *SeriesState, timestamp
 	}
 }
 
-// Close implements graceful shutdown with comprehensive cleanup and final message emission.
+// -----------------------------------------------------------------------------
+// Close – graceful shutdown
+// -----------------------------------------------------------------------------
 //
-// This function coordinates the shutdown sequence for the downsampler processor, ensuring that
-// no data is lost during termination and all resources are properly cleaned up.
+// Shutdown checklist (collectively exhaustive):
+//  1. Stop ticker & goroutine.
+//  2. Release any buffered candidate per series.
+//  3. Try algorithm.Flush()
+//  4. Queue remaining messages on shutdownBatch.
+//  5. Clear maps, return nil.
 //
-// ## ACK Buffer Safety
-//
-// The function prioritizes data safety by ensuring all buffered messages are emitted:
-//
-// **Buffered Message Handling**: For algorithms that use ACK buffering (holdsPrev=true):
-// - All candidate messages are released from internal buffers
-// - Messages are queued for emission through the shutdown batch channel
-// - This ensures no messages are lost due to processor termination
-//
-// **Algorithm State Flushing**: Some algorithms maintain internal pending points:
-// - `state.processor.Flush()` extracts these points from algorithm state
-// - Currently logged as TODO due to template message requirement
-// - Production systems should implement proper emission of these points
-//
-// ## Known Limitations & Future Work
-//
-// **Algorithm Flush Points**: The current implementation logs algorithm flush points as TODO
-// because creating synthetic messages requires:
-// - Template message structure for metadata propagation
-// - Proper topic and timestamp handling
-// - Integration with downstream systems expecting standard message format
-//
-// **Production Considerations**: For production deployments, consider implementing:
-// - Dead letter queue for algorithm flush points
-// - Synthetic message creation with minimal required fields
-// - Configurable timeout for shutdown completion
-//
-// Parameters:
-//   - ctx: Benthos context for shutdown coordination (timeout handling)
-//
-// Returns:
-//   - error: Always nil - cleanup failures are logged but not propagated
+// WHY still fail‑open here?
+//   - Better to risk duplicate data than to drop final points.
 func (p *DownsamplerProcessor) Close(ctx context.Context) error {
 	// Stop the idle flush goroutine if not already stopped
 	if p.closeChan != nil {
