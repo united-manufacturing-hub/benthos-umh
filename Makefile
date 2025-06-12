@@ -115,14 +115,10 @@ test-benthos-sensorconnect: target
 test-benthos-downsampler: target
 	@$(BENTHOS_BIN) -c ./config/downsampler_example.yaml
 
-.PHONY: test-benthos-downsampler-classic
-test-benthos-downsampler-classic: target
-	@$(BENTHOS_BIN) -c ./config/downsampler_classic_example.yaml
-
-.PHONY: test-benthos-downsampler-swinging-door
-test-benthos-downsampler-swinging-door: target
-	@$(BENTHOS_BIN) -c ./config/downsampler_swinging_door_example.yaml
-
 .PHONY: test-benthos-downsampler-example-one
 test-benthos-downsampler-example-one: target
 	@$(BENTHOS_BIN) -c ./config/downsampler_example_one.yaml
+
+.PHONY: test-benthos-downsampler-example-one-timeout
+test-benthos-downsampler-example-one-timeout: target
+	@$(BENTHOS_BIN) -c ./config/downsampler_example_one_timeout.yaml
