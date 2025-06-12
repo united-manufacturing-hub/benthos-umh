@@ -185,3 +185,15 @@ func (d *DeadbandAlgorithm) Config() string {
 func (d *DeadbandAlgorithm) Name() string {
 	return "deadband"
 }
+
+// NeedsPreviousPoint returns false because deadband never emits previous points.
+//
+// Deadband filtering only compares against the last kept value and either:
+// - Emits the current point (if change >= threshold), or
+// - Filters the current point (if change < threshold)
+//
+// It never needs to emit a historical point that was previously buffered,
+// making ACK buffering unnecessary for this algorithm.
+func (d *DeadbandAlgorithm) NeedsPreviousPoint() bool {
+	return false
+}

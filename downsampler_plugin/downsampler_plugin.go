@@ -288,7 +288,9 @@ func (p *DownsamplerProcessor) flushIdleCandidates() {
 	seriesIDs := make([]string, 0, len(p.seriesState))
 
 	for id, state := range p.seriesState {
-		if state.hasCandidate() {
+		// Only check series that can have candidates (emit-previous algorithms)
+		// This optimization skips deadband and other non-buffering algorithms
+		if state.holdsPrev && state.hasCandidate() {
 			seriesStates = append(seriesStates, state)
 			seriesIDs = append(seriesIDs, id)
 		}
@@ -445,8 +447,21 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string) (*SeriesS
 		return nil, fmt.Errorf("failed to create processor %s: %w", algorithmType, err)
 	}
 
+	// Determine if this algorithm needs emit-previous buffering
+	// This optimization eliminates unnecessary memory usage for algorithms like deadband
+	// that never emit historical points, while preserving ACK safety for algorithms like SDT
+	needsBuffering := false
+	if algorithm, createErr := algorithms.Create(algorithmType, algConfig); createErr == nil {
+		needsBuffering = algorithm.NeedsPreviousPoint()
+		p.logger.Debugf("Series %s using algorithm %s: holdsPrev=%v", seriesID, algorithmType, needsBuffering)
+	} else {
+		p.logger.Warnf("Could not determine buffering needs for algorithm %s, defaulting to safe mode (buffering enabled): %v", algorithmType, createErr)
+		needsBuffering = true // Fail safe - enable buffering if we can't determine algorithm behavior
+	}
+
 	state = &SeriesState{
 		processor: processor,
+		holdsPrev: needsBuffering,
 	}
 
 	p.seriesState[seriesID] = state
@@ -486,7 +501,8 @@ func (p *DownsamplerProcessor) Close(ctx context.Context) error {
 		state.mutex.Lock()
 
 		// Release any buffered candidate message and add to final batch
-		if state.hasCandidate() {
+		// Only check series that can have candidates (emit-previous algorithms)
+		if state.holdsPrev && state.hasCandidate() {
 			p.logger.Infof("Releasing buffered candidate for series %s on close", seriesID)
 			if msg := state.releaseCandidate(); msg != nil {
 				finalBatch = append(finalBatch, msg)
