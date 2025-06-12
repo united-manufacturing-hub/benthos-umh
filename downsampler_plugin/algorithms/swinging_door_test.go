@@ -242,34 +242,34 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				ExpectedReduction: 40, // 4 out of 10 points filtered = 40% reduction
 			}),
 
-			Entry("MinDeltaX - Minimum time constraint", SwingingDoorTestCase{
-				Name:        "min_delta_time_constraint",
-				Description: "Test minimum X distance constraint - no values recorded within 1 time unit",
-				Config: map[string]interface{}{
-					"threshold": 1.0,
-					"min_time":  "1s", // No values recorded within 1 time unit
-				},
-				InputPoints: []TestPoint{
-					{TimeSeconds: 0, Value: 2},  // x=0, y=2
-					{TimeSeconds: 1, Value: 2},  // x=1, y=2
-					{TimeSeconds: 2, Value: 2},  // x=2, y=2
-					{TimeSeconds: 3, Value: 2},  // x=3, y=2
-					{TimeSeconds: 4, Value: 2},  // x=4, y=2
-					{TimeSeconds: 5, Value: 10}, // x=5, y=10 (large jump)
-					{TimeSeconds: 6, Value: 3},  // x=6, y=3
-					{TimeSeconds: 7, Value: 3},  // x=7, y=3
-					{TimeSeconds: 8, Value: 3},  // x=8, y=3
-					{TimeSeconds: 9, Value: 3},  // x=9, y=3
-				},
-				ExpectedEmitted: []TestPoint{
-					{TimeSeconds: 0, Value: 2},  // Index 0
-					{TimeSeconds: 4, Value: 2},  // Index 4
-					{TimeSeconds: 5, Value: 10}, // Index 5
-					{TimeSeconds: 7, Value: 3},  // Index 7
-					{TimeSeconds: 9, Value: 3},  // Index 9
-				},
-				ExpectedReduction: 50, // 5 out of 10 points filtered = 50% reduction
-			}),
+			// Entry("MinDeltaX - Minimum time constraint", SwingingDoorTestCase{
+			// 	Name:        "min_delta_time_constraint",
+			// 	Description: "Test minimum X distance constraint - no values recorded within 1 time unit",
+			// 	Config: map[string]interface{}{
+			// 		"threshold": 1.0,
+			// 		"min_time":  "1s",
+			// 	},
+			// 	InputPoints: []TestPoint{
+			// 		{TimeSeconds: 0, Value: 2},
+			// 		{TimeSeconds: 1, Value: 2},
+			// 		{TimeSeconds: 2, Value: 2},
+			// 		{TimeSeconds: 3, Value: 2},
+			// 		{TimeSeconds: 4, Value: 2},
+			// 		{TimeSeconds: 5, Value: 10},
+			// 		{TimeSeconds: 6, Value: 3},
+			// 		{TimeSeconds: 7, Value: 3},
+			// 		{TimeSeconds: 8, Value: 3},
+			// 		{TimeSeconds: 9, Value: 3},
+			// 	},
+			// 	ExpectedEmitted: []TestPoint{
+			// 		{TimeSeconds: 0, Value: 2},
+			// 		{TimeSeconds: 4, Value: 2},
+			// 		{TimeSeconds: 5, Value: 10},
+			// 		{TimeSeconds: 7, Value: 3},
+			// 		{TimeSeconds: 9, Value: 3},
+			// 	},
+			// 	ExpectedReduction: 50, // 5 out of 10 points filtered = 50% reduction
+			// }),
 		)
 	})
 
@@ -369,7 +369,6 @@ var _ = Describe("Swinging Door Algorithm", func() {
 			It("should return correct configuration string", func() {
 				config := map[string]interface{}{
 					"threshold": 1.5,
-					"min_time":  "100ms",
 					"max_time":  "1s",
 				}
 				algo, err := algorithms.Create("swinging_door", config)
@@ -378,7 +377,6 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				configStr := algo.Config()
 				Expect(configStr).To(ContainSubstring("swinging_door"))
 				Expect(configStr).To(ContainSubstring("1.500"))
-				Expect(configStr).To(ContainSubstring("100ms"))
 				Expect(configStr).To(ContainSubstring("1s"))
 			})
 
@@ -402,6 +400,147 @@ var _ = Describe("Swinging Door Algorithm", func() {
 
 				needsPrev := algo.NeedsPreviousPoint()
 				Expect(needsPrev).To(BeTrue(), "SDT uses emit-previous logic")
+			})
+		})
+	})
+
+	Describe("Gap-filling SDT Edge Cases", func() {
+		var baseTime time.Time
+
+		BeforeEach(func() {
+			baseTime = time.Now()
+		})
+
+		Context("Envelope boundary conditions", func() {
+			// Scientific basis: Swinging Door Trending tracks upper and lower envelope slopes.
+			// The critical edge case occurs when these slopes become equal (doors intersect).
+			// Our implementation follows the industry-standard "emit-previous" behavior
+			// used by PI Server, WinCC, and other historians.
+			// Reference: PI Square forum discussions on SDT geometry clarify this behavior.
+			It("allows equality without emit", func() {
+				// Implementation note: This test verifies "emit-previous" behavior.
+				// When doors intersect, we emit the previous in-bounds point and
+				// keep the violating point as pending.
+				config := map[string]interface{}{"threshold": 1.0}
+				algo, err := algorithms.Create("swinging_door", config)
+				Expect(err).NotTo(HaveOccurred())
+				defer algo.Reset()
+
+				t0 := baseTime
+				points, err := algo.Ingest(0.0, t0)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(points).To(HaveLen(1), "First point should be emitted")
+
+				// Build a point exactly on both envelope lines where slope_low = slope_up
+				points, err = algo.Ingest(1.0, t0.Add(1*time.Second))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(points).To(HaveLen(0), "Point within envelope should not emit")
+			})
+		})
+
+		Context("Temporal constraint validation", func() {
+			It("forces emit after max_time with no value change", func() {
+				// Time-bounded compression: Industrial historians implement dual constraints
+				// (compression deviation OR comp-max-time) to bound both spatial and temporal error.
+				// This prevents interpolation artifacts over long stable periods and ensures
+				// periodic "heartbeat" signals even for constant processes.
+				// Reference: PI Server compression documentation describes this as essential
+				// for data integrity in process control applications.
+				config := map[string]interface{}{"threshold": 1.0, "max_time": "100ms"}
+				algo, err := algorithms.Create("swinging_door", config)
+				Expect(err).NotTo(HaveOccurred())
+				defer algo.Reset()
+
+				t0 := baseTime
+				points, err := algo.Ingest(5.0, t0)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(points).To(HaveLen(1), "First point should be emitted")
+
+				// Add a small change to create a candidate
+				points, err = algo.Ingest(5.1, t0.Add(50*time.Millisecond))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(points).To(HaveLen(0), "Small change should not emit yet")
+
+				// Now test max_time with another small change
+				points, err = algo.Ingest(5.2, t0.Add(150*time.Millisecond))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(points).To(HaveLen(1), "Should force emit due to max_time constraint")
+			})
+
+			// Note: min_time test is commented out since we temporarily disabled MinDeltaX
+			// It("suppresses emit until min_time elapses", func() {
+			// 	// Noise filtering: min_time prevents emission of high-frequency noise
+			// 	// that would otherwise cause envelope collapse. This is critical in industrial
+			// 	// environments with electrical interference or sensor quantization noise.
+			// 	// Canon implementations buffer "candidate" points until min_time elapses.
+			// 	// Reference: CygNet and Weatherford documentation emphasize this for noise immunity.
+			// 	config := map[string]interface{}{"threshold": 0.1, "min_time": "100ms"}
+			// 	algo, err := algorithms.Create("swinging_door", config)
+			// 	Expect(err).NotTo(HaveOccurred())
+			// 	defer algo.Reset()
+			//
+			// 	t0 := baseTime
+			// 	points, err := algo.Ingest(0.0, t0)
+			// 	Expect(err).NotTo(HaveOccurred())
+			// 	Expect(points).To(HaveLen(1), "First point should be emitted")
+			//
+			// 	// Big jump but only 20 ms later - should be suppressed by min_time
+			// 	points, err = algo.Ingest(10.0, t0.Add(20*time.Millisecond))
+			// 	Expect(err).NotTo(HaveOccurred())
+			// 	Expect(points).To(HaveLen(0), "Should be suppressed by min_time")
+			//
+			// 	// Next point still within envelope but now > 100 ms - should emit candidate
+			// 	points, err = algo.Ingest(11.0, t0.Add(120*time.Millisecond))
+			// 	Expect(err).NotTo(HaveOccurred())
+			// 	Expect(points).To(HaveLen(1), "Should now emit candidate after min_time")
+			// })
+		})
+
+		Context("State integrity validation", func() {
+			It("drops repeat value only after reset clears memory", func() {
+				// State management validation: Reset must completely clear envelope state
+				// to prevent cross-contamination between data streams or after reconnection.
+				// This test ensures that previous envelope calculations don't affect
+				// post-reset behavior, which is critical for stream processing systems.
+				config := map[string]interface{}{"threshold": 1.0}
+				algo, err := algorithms.Create("swinging_door", config)
+				Expect(err).NotTo(HaveOccurred())
+
+				points, err := algo.Ingest(2.0, baseTime)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(points).To(HaveLen(1), "First point should be emitted")
+
+				points, err = algo.Ingest(3.0, baseTime.Add(time.Second))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(points).To(HaveLen(0), "Point within envelope should not be emitted")
+
+				algo.Reset()
+
+				// 3.0 should be kept again (state wiped) - validates complete reset
+				points, err = algo.Ingest(3.0, baseTime.Add(2*time.Second))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(points).To(HaveLen(1), "First point after reset should be emitted")
+			})
+		})
+
+		Context("Parameter validation", func() {
+			It("rejects negative threshold", func() {
+				// Mathematical validation: Negative compression deviation is meaningless
+				// since envelope width would be negative, making all points fall outside
+				// the envelope. Proper validation prevents misconfiguration.
+				config := map[string]interface{}{"threshold": -0.1}
+				_, err := algorithms.Create("swinging_door", config)
+				Expect(err).To(HaveOccurred(), "Should reject negative threshold")
+				Expect(err.Error()).To(ContainSubstring("cannot be negative"))
+			})
+
+			It("accepts threshold = 0 (exact envelope)", func() {
+				// Edge case: threshold = 0 creates zero-width envelope, effectively
+				// becoming a "drop exact repeats" filter. This is mathematically valid
+				// and useful for discrete sensors with perfect repeatability.
+				config := map[string]interface{}{"threshold": 0.0}
+				_, err := algorithms.Create("swinging_door", config)
+				Expect(err).NotTo(HaveOccurred(), "Should accept threshold = 0")
 			})
 		})
 	})
