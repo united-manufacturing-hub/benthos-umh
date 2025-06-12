@@ -51,6 +51,23 @@ Supported format:
 The plugin maintains separate state for each time series (identified by umh_topic) and applies the configured algorithm
 to determine whether each data point represents a significant change worth preserving.
 
+## Data Type Handling
+
+The downsampler handles different data types as follows:
+
+- **Numeric values** (int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64): 
+  Converted to float64 for algorithm processing and output. This ensures consistent precision and compatibility 
+  with all downsampling algorithms.
+
+- **Boolean values** (true, false): 
+  Preserved as-is. Uses change-based logic - only emits when the boolean value changes.
+
+- **String values**: 
+  Preserved as-is. Uses change-based logic - only emits when the string value changes.
+
+- **Other types**: 
+  Rejected with an error to ensure data integrity.
+
 ## ACK Buffering & Data Safety
 
 The downsampler implements internal message buffering to support "emit-previous" algorithms like Swinging Door Trending.
@@ -419,6 +436,8 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string) (*SeriesS
 		Algorithm:       algorithmType,
 		AlgorithmConfig: algConfig,
 		PassThrough:     passThrough,
+		Logger:          p.logger,
+		SeriesID:        seriesID,
 	}
 
 	processor, err := algorithms.NewProcessorWrapper(processorConfig)

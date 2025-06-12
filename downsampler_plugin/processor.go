@@ -45,6 +45,35 @@ func (mp *MessageProcessor) ProcessMessage(msg *service.Message, index int) Mess
 	if !mp.isTimeSeriesMessage(msg) {
 		result.ProcessedMessages = []*service.Message{msg}
 		mp.processor.metrics.IncrementPassed()
+
+		// Debug log why message was passed through
+		if umhTopic, hasUmhTopic := msg.MetaGet("umh_topic"); !hasUmhTopic {
+			mp.processor.logger.Debugf("Message passed through: missing umh_topic metadata")
+		} else if umhTopic == "" {
+			mp.processor.logger.Debugf("Message passed through: empty umh_topic metadata")
+		} else {
+			// Has umh_topic but missing required fields
+			data, err := msg.AsStructured()
+			if err != nil {
+				mp.processor.logger.Debugf("Message passed through: failed to parse structured data: %v", err)
+			} else if dataMap, ok := data.(map[string]interface{}); !ok {
+				mp.processor.logger.Debugf("Message passed through: payload is not a JSON object")
+			} else {
+				missingFields := []string{}
+				if _, hasTimestamp := dataMap["timestamp_ms"]; !hasTimestamp {
+					missingFields = append(missingFields, "timestamp_ms")
+				}
+				if _, hasValue := dataMap["value"]; !hasValue {
+					missingFields = append(missingFields, "value")
+				}
+				if len(missingFields) > 0 {
+					mp.processor.logger.Debugf("Message passed through for topic '%s': missing required fields: %v", umhTopic, missingFields)
+				} else {
+					mp.processor.logger.Debugf("Message passed through for topic '%s': has all fields but failed isTimeSeriesMessage check", umhTopic)
+				}
+			}
+		}
+
 		return result
 	}
 
@@ -190,6 +219,17 @@ func (mp *MessageProcessor) processWithState(msg *service.Message, dataMap map[s
 	state.mutex.Lock()
 	defer state.mutex.Unlock()
 
+	// Check for same timestamp as last processed message
+	if !state.lastProcessedTime.IsZero() && timestamp.Equal(state.lastProcessedTime) {
+		mp.processor.logger.Warnf("Dropping message with duplicate timestamp %v for series '%s' - subsequent messages with identical timestamps are not allowed",
+			timestamp, seriesID)
+		mp.processor.metrics.IncrementFiltered()
+		return nil, nil // Drop the message
+	}
+
+	// Update lastProcessedTime for all messages that reach this point (for late arrival detection)
+	mp.processor.updateProcessedTime(state, timestamp)
+
 	// Use ProcessorWrapper to process the value and get emitted points
 	emittedPoints, err := state.processor.Ingest(value, timestamp)
 	if err != nil {
@@ -205,7 +245,7 @@ func (mp *MessageProcessor) processWithState(msg *service.Message, dataMap map[s
 		// Algorithm filtered - stash message as candidate
 		state.stash(msg)
 		mp.processor.metrics.IncrementFiltered()
-		mp.processor.logger.Debug(fmt.Sprintf("Message filtered and stashed for series %s: value=%v", seriesID, value))
+		mp.processor.logger.Debugf("Message filtered and stashed for series '%s': value=%v, timestamp=%v", seriesID, value, timestamp)
 		return nil, nil // No immediate output
 
 	case 1:
@@ -218,6 +258,7 @@ func (mp *MessageProcessor) processWithState(msg *service.Message, dataMap map[s
 			state.releaseCandidate() // ACK the buffered message if any
 			mp.processor.metrics.IncrementProcessed()
 			mp.processor.updateProcessedTime(state, emittedPoint.Timestamp)
+			mp.processor.logger.Debugf("Current point emitted for series '%s': value=%v, timestamp=%v", seriesID, emittedPoint.Value, emittedPoint.Timestamp)
 			return mp.createOutputMessage(msg, dataMap, emittedPoints, state)
 		} else {
 			// Previous point emitted - emit buffered candidate, then stash current
@@ -232,10 +273,11 @@ func (mp *MessageProcessor) processWithState(msg *service.Message, dataMap map[s
 				state.stash(msg)
 				mp.processor.metrics.IncrementProcessed()
 				mp.processor.updateProcessedTime(state, emittedPoint.Timestamp)
+				mp.processor.logger.Debugf("Previous point emitted for series '%s': value=%v, timestamp=%v (current stashed: %v)", seriesID, emittedPoint.Value, emittedPoint.Timestamp, value)
 				return outputMsg, nil
 			} else {
 				// No buffered message - this shouldn't happen in normal operation
-				mp.processor.logger.Warnf("Algorithm emitted previous point but no candidate was buffered for series %s", seriesID)
+				mp.processor.logger.Warnf("Algorithm emitted previous point but no candidate was buffered for series '%s' - this indicates a potential algorithm issue", seriesID)
 				state.stash(msg)
 				return nil, nil
 			}
@@ -257,10 +299,11 @@ func (mp *MessageProcessor) processWithState(msg *service.Message, dataMap map[s
 			state.stash(msg)
 			mp.processor.metrics.IncrementProcessed()
 			mp.processor.updateProcessedTime(state, previousPoint.Timestamp)
+			mp.processor.logger.Debugf("Two points emitted for series '%s': emitting previous point value=%v, timestamp=%v (current stashed: %v)", seriesID, previousPoint.Value, previousPoint.Timestamp, currentPoint.Value)
 			return outputMsg, nil
 		} else {
 			// No buffered message - emit current point directly
-			mp.processor.logger.Warnf("Algorithm emitted two points but no candidate was buffered for series %s", seriesID)
+			mp.processor.logger.Warnf("Algorithm emitted two points but no candidate was buffered for series '%s' - emitting current point only", seriesID)
 			mp.processor.metrics.IncrementProcessed()
 			mp.processor.updateProcessedTime(state, currentPoint.Timestamp)
 			return mp.createOutputMessage(msg, dataMap, []algorithms.GenericPoint{currentPoint}, state)
@@ -268,7 +311,7 @@ func (mp *MessageProcessor) processWithState(msg *service.Message, dataMap map[s
 
 	default:
 		// Multiple points emitted (unusual) - emit all points to avoid data loss
-		mp.processor.logger.Warnf("Algorithm emitted %d points for series %s, emitting all points", len(emittedPoints), seriesID)
+		mp.processor.logger.Warnf("Algorithm emitted %d points for series '%s' - this is unusual, emitting first point only", len(emittedPoints), seriesID)
 		mp.processor.metrics.IncrementProcessed()
 		// Update processed time with the latest timestamp
 		latestTime := emittedPoints[0].Timestamp
@@ -278,6 +321,10 @@ func (mp *MessageProcessor) processWithState(msg *service.Message, dataMap map[s
 			}
 		}
 		mp.processor.updateProcessedTime(state, latestTime)
+		// Log all points for debugging
+		for i, pt := range emittedPoints {
+			mp.processor.logger.Debugf("Multiple emission point %d for series '%s': value=%v, timestamp=%v", i, seriesID, pt.Value, pt.Timestamp)
+		}
 		return mp.createOutputMessage(msg, dataMap, emittedPoints, state)
 	}
 }
