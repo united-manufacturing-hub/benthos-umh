@@ -98,12 +98,13 @@ type SwingingDoorAlgorithm struct {
 	maxTime   time.Duration // 0 → disabled
 
 	// -------- state ------------------------------------------------------------
-	started      bool   // becomes true after first ingest
-	base         Point  // last archived point (B)
-	cand         *Point // pending candidate (C)
-	slopeMin     float64
-	slopeMax     float64
-	lastEmitTime time.Time
+	started           bool   // becomes true after first ingest
+	base              Point  // last archived point (B)
+	cand              *Point // pending candidate (C)
+	slopeMin          float64
+	slopeMax          float64
+	lastEmitTime      time.Time
+	minTimeSuppressed bool // true when min_time has suppressed an emission
 }
 
 // -----------------------------------------------------------------------------
@@ -112,16 +113,18 @@ type SwingingDoorAlgorithm struct {
 
 // Ingest processes one point and returns 0–1 points to emit immediately.
 func (sd *SwingingDoorAlgorithm) Ingest(v float64, ts time.Time) ([]Point, error) {
-	out := make([]Point, 0, 1) // never more than one per call
-
 	debugLog("=== INGEST: (%.1f, %s) ===", v, ts.Format("15:04:05"))
 
-	// ---- first point ----------------------------------------------------------
+	out := make([]Point, 0, 1)
+	emittedThisCall := false
+
+	// ---- first point is always archived -----------------------------------
 	if !sd.started {
 		sd.started = true
 		sd.base = Point{Value: v, Timestamp: ts}
 		sd.lastEmitTime = ts
 		out = append(out, sd.base) // first point is always archived
+		emittedThisCall = true
 		debugLog("FIRST POINT: base=(%.1f, %s), EMIT", sd.base.Value, sd.base.Timestamp.Format("15:04:05"))
 		return out, nil
 	}
@@ -143,29 +146,62 @@ func (sd *SwingingDoorAlgorithm) Ingest(v float64, ts time.Time) ([]Point, error
 	emitNeeded := sd.mustEmit(v, ts)
 	debugLog("EMIT CHECK: emitNeeded=%t", emitNeeded)
 
-	// ---- min_time gate --------------------------------------------------------
-	if emitNeeded && sd.minTime > 0 && ts.Sub(sd.lastEmitTime) < sd.minTime {
-		debugLog("MIN_TIME SUPPRESS: elapsed=%v < minTime=%v, suppress emission",
-			ts.Sub(sd.lastEmitTime), sd.minTime)
-		// Too early – suppress archive, restart door with current point
-		sd.cand = &Point{Value: v, Timestamp: ts}
+	// ---- max_time heartbeat special handling ----------------------------------
+	if sd.maxTime > 0 && ts.Sub(sd.lastEmitTime) >= sd.maxTime {
+		debugLog("MAX_TIME TRIGGER: elapsed=%v >= maxTime=%v, emit current point",
+			ts.Sub(sd.lastEmitTime), sd.maxTime)
+		// When max_time triggers, emit the current point being processed
+		currentPoint := Point{Value: v, Timestamp: ts}
+		out = append(out, currentPoint)
+		emittedThisCall = true
+		sd.base = currentPoint
+		sd.lastEmitTime = ts
+		debugLog("MAX_TIME EMIT: emit current point=(%.1f, %s), new base=(%.1f, %s)",
+			currentPoint.Value, currentPoint.Timestamp.Format("15:04:05"),
+			sd.base.Value, sd.base.Timestamp.Format("15:04:05"))
+
+		// Reset candidate since we've moved past it
+		sd.cand = nil
 		sd.openDoor()
-		sd.closeDoor(*sd.cand)
-		debugLog("RESTART: new candidate=(%.1f, %s), new slopes=[%.3f, %.3f]",
-			sd.cand.Value, sd.cand.Timestamp.Format("15:04:05"), sd.slopeMin, sd.slopeMax)
+		debugLog("MAX_TIME RESET: cleared candidate, opened door")
 		return out, nil
+	}
+
+	// ---- min_time gate --------------------------------------------------------
+	if emitNeeded && sd.minTime > 0 {
+		// Compare the time-stamp we're *about* to archive with the
+		// last one that actually made it to disk.
+		elapsed := sd.cand.Timestamp.Sub(sd.lastEmitTime)
+
+		// "No points recorded **within** min_time" means strictly less-than.
+		debugLog("MIN_TIME CHECK: candidateTime=%s, lastEmitTime=%s, elapsed=%v, minTime=%v, suppress=%t",
+			sd.cand.Timestamp.Format("15:04:05"), sd.lastEmitTime.Format("15:04:05"), elapsed, sd.minTime, elapsed < sd.minTime)
+		if elapsed < sd.minTime {
+			debugLog("MIN_TIME SUPPRESS: elapsed=%v < minTime=%v, suppress emission",
+				elapsed, sd.minTime)
+			// Too early – suppress archive, restart door with current point
+			sd.cand = &Point{Value: v, Timestamp: ts}
+			sd.openDoor()
+			sd.closeDoor(*sd.cand)
+			sd.minTimeSuppressed = true // Mark that we've suppressed due to min_time
+			debugLog("SUPPRESS: new candidate=(%.1f, %s), new slopes=[%.3f, %.3f], suppressed=true",
+				sd.cand.Value, sd.cand.Timestamp.Format("15:04:05"), sd.slopeMin, sd.slopeMax)
+			return out, nil
+		}
 	}
 
 	if emitNeeded {
 		// Archive the *previous* candidate -------------
 		emittedPoint := *sd.cand
 		out = append(out, emittedPoint)
+		emittedThisCall = true
 		sd.base = *sd.cand
 		sd.lastEmitTime = sd.base.Timestamp
+		sd.minTimeSuppressed = false // Clear suppression flag on successful emission
 
-		debugLog("EMIT PREVIOUS: emit candidate=(%.1f, %s), new base=(%.1f, %s)",
+		debugLog("EMIT PREVIOUS: emit candidate=(%.1f, %s), new base=(%.1f, %s), lastEmitTime=%s",
 			emittedPoint.Value, emittedPoint.Timestamp.Format("15:04:05"),
-			sd.base.Value, sd.base.Timestamp.Format("15:04:05"))
+			sd.base.Value, sd.base.Timestamp.Format("15:04:05"), sd.lastEmitTime.Format("15:04:05"))
 
 		// Current point becomes new candidate ----------
 		sd.cand = &Point{Value: v, Timestamp: ts}
@@ -182,6 +218,23 @@ func (sd *SwingingDoorAlgorithm) Ingest(v float64, ts time.Time) ([]Point, error
 	sd.cand = &Point{Value: v, Timestamp: ts}
 	sd.closeDoor(*sd.cand)
 	debugLog("TIGHTENED: new slopes=[%.3f, %.3f]", sd.slopeMin, sd.slopeMax)
+
+	// ---- min_time heartbeat ---------------------------------------------------
+	if !emittedThisCall && sd.minTime > 0 && sd.minTimeSuppressed && ts.Sub(sd.lastEmitTime) > sd.minTime {
+		// Enough time has passed without an archive – push the *latest* sample.
+		debugLog("MIN_TIME HEARTBEAT: elapsed=%v > minTime=%v, emit current point (had suppressed candidate)",
+			ts.Sub(sd.lastEmitTime), sd.minTime)
+		p := Point{Value: v, Timestamp: ts}
+		out = append(out, p)
+		sd.base = p
+		sd.lastEmitTime = ts
+		sd.cand = nil
+		sd.minTimeSuppressed = false
+		sd.openDoor()
+		debugLog("HEARTBEAT EMIT: emit current point=(%.1f, %s), reset state",
+			p.Value, p.Timestamp.Format("15:04:05"))
+	}
+
 	return out, nil
 }
 
@@ -275,13 +328,6 @@ func (sd *SwingingDoorAlgorithm) closeDoor(p Point) {
 }
 
 func (sd *SwingingDoorAlgorithm) mustEmit(v float64, ts time.Time) bool {
-	// ---- max_time heartbeat ---------------------------------------------------
-	if sd.maxTime > 0 && ts.Sub(sd.lastEmitTime) >= sd.maxTime {
-		debugLog("MUST EMIT: max_time constraint (elapsed=%v >= maxTime=%v)",
-			ts.Sub(sd.lastEmitTime), sd.maxTime)
-		return true
-	}
-
 	// ---- traditional SDT check -----------------------------------------------
 	// Traditional SDT: If we skip the candidate and go directly from base to new point,
 	// would the interpolation error at the candidate exceed the threshold?
