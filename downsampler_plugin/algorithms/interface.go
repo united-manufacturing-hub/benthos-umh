@@ -45,7 +45,6 @@
 //
 // Configuration:
 //   - threshold: float64 - maximum interpolation error tolerance
-//   - min_time: duration - minimum time between emissions (optional)
 //   - max_time: duration - maximum time between kept points (optional)
 //
 // # Assumptions and Requirements
@@ -125,7 +124,6 @@
 //	// Create algorithm instance
 //	algo, err := algorithms.Create("swinging_door", map[string]interface{}{
 //		"threshold": 1.0,
-//		"min_time":  "100ms",
 //		"max_time":  "30s",
 //	})
 //	if err != nil {
@@ -183,10 +181,9 @@
 //		"threshold": 1.0,
 //	}
 //
-//	// SDT with noise filtering and heartbeat
+//	// SDT with heartbeat
 //	map[string]interface{}{
 //		"threshold": 0.5,
-//		"min_time":  "1s",   // Suppress high-frequency noise
 //		"max_time":  "10m",  // Force periodic emission
 //	}
 //

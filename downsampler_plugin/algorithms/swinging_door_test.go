@@ -241,35 +241,6 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				},
 				ExpectedReduction: 40, // 4 out of 10 points filtered = 40% reduction
 			}),
-
-			// Entry("MinDeltaX - Minimum time constraint", SwingingDoorTestCase{
-			// 	Name:        "min_delta_time_constraint",
-			// 	Description: "Test minimum X distance constraint - no values recorded within 1 time unit",
-			// 	Config: map[string]interface{}{
-			// 		"threshold": 1.0,
-			// 		"min_time":  "1s",
-			// 	},
-			// 	InputPoints: []TestPoint{
-			// 		{TimeSeconds: 0, Value: 2},
-			// 		{TimeSeconds: 1, Value: 2},
-			// 		{TimeSeconds: 2, Value: 2},
-			// 		{TimeSeconds: 3, Value: 2},
-			// 		{TimeSeconds: 4, Value: 2},
-			// 		{TimeSeconds: 5, Value: 10},
-			// 		{TimeSeconds: 6, Value: 3},
-			// 		{TimeSeconds: 7, Value: 3},
-			// 		{TimeSeconds: 8, Value: 3},
-			// 		{TimeSeconds: 9, Value: 3},
-			// 	},
-			// 	ExpectedEmitted: []TestPoint{
-			// 		{TimeSeconds: 0, Value: 2},
-			// 		{TimeSeconds: 4, Value: 2},
-			// 		{TimeSeconds: 5, Value: 10},
-			// 		{TimeSeconds: 7, Value: 3},
-			// 		{TimeSeconds: 9, Value: 3},
-			// 	},
-			// 	ExpectedReduction: 50, // 5 out of 10 points filtered = 50% reduction
-			// }),
 		)
 	})
 
@@ -300,7 +271,7 @@ var _ = Describe("Swinging Door Algorithm", func() {
 
 			It("should require threshold parameter", func() {
 				config := map[string]interface{}{
-					"min_time": "1s",
+					"max_time": "1s",
 				}
 				_, err := algorithms.Create("swinging_door", config)
 				Expect(err).To(HaveOccurred())
@@ -467,33 +438,6 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				Expect(points).To(HaveLen(1), "Should force emit due to max_time constraint")
 			})
 
-			// Note: min_time test is commented out since we temporarily disabled MinDeltaX
-			// It("suppresses emit until min_time elapses", func() {
-			// 	// Noise filtering: min_time prevents emission of high-frequency noise
-			// 	// that would otherwise cause envelope collapse. This is critical in industrial
-			// 	// environments with electrical interference or sensor quantization noise.
-			// 	// Canon implementations buffer "candidate" points until min_time elapses.
-			// 	// Reference: CygNet and Weatherford documentation emphasize this for noise immunity.
-			// 	config := map[string]interface{}{"threshold": 0.1, "min_time": "100ms"}
-			// 	algo, err := algorithms.Create("swinging_door", config)
-			// 	Expect(err).NotTo(HaveOccurred())
-			// 	defer algo.Reset()
-			//
-			// 	t0 := baseTime
-			// 	points, err := algo.Ingest(0.0, t0)
-			// 	Expect(err).NotTo(HaveOccurred())
-			// 	Expect(points).To(HaveLen(1), "First point should be emitted")
-			//
-			// 	// Big jump but only 20 ms later - should be suppressed by min_time
-			// 	points, err = algo.Ingest(10.0, t0.Add(20*time.Millisecond))
-			// 	Expect(err).NotTo(HaveOccurred())
-			// 	Expect(points).To(HaveLen(0), "Should be suppressed by min_time")
-			//
-			// 	// Next point still within envelope but now > 100 ms - should emit candidate
-			// 	points, err = algo.Ingest(11.0, t0.Add(120*time.Millisecond))
-			// 	Expect(err).NotTo(HaveOccurred())
-			// 	Expect(points).To(HaveLen(1), "Should now emit candidate after min_time")
-			// })
 		})
 
 		Context("State integrity validation", func() {
