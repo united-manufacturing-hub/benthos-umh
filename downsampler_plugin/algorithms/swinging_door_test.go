@@ -47,7 +47,7 @@ func runSwingingDoorTestCase(testCase SwingingDoorTestCase) {
 	defer algo.Reset()
 
 	By("Processing input points and tracking emissions")
-	baseTime := time.Now()
+	baseTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	emittedPoints := []TestPoint{}
 
 	// Process all input points
@@ -270,8 +270,8 @@ var _ = Describe("Swinging Door Algorithm", func() {
 					{TimeSeconds: 3, Value: 2},  // x=3, y=2 (held by min_time)
 					{TimeSeconds: 4, Value: 2},  // x=4, y=2 (emits due to value change)
 					{TimeSeconds: 5, Value: 10}, // x=5, y=10 (emits due to large change)
-					{TimeSeconds: 6, Value: 3},  // x=6, y=3 (emits due to value change)
-					{TimeSeconds: 7, Value: 3},  // x=7, y=3 (held by min_time)
+					{TimeSeconds: 6, Value: 3},  // x=6, y=3 (held by min_time)
+					{TimeSeconds: 7, Value: 3},  // x=7, y=3 (emits due to large change)
 					{TimeSeconds: 8, Value: 3},  // x=8, y=3 (held by min_time)
 					{TimeSeconds: 9, Value: 3},  // x=9, y=3 (emits due to value change)
 				},
@@ -283,6 +283,33 @@ var _ = Describe("Swinging Door Algorithm", func() {
 					{TimeSeconds: 9, Value: 3},  // Index 9 (emits after min_time)
 				},
 				ExpectedReduction: 50, // 5 out of 10 points filtered = 50% reduction
+			}),
+
+			Entry("MinDelta - Minimum time constraint", SwingingDoorTestCase{
+				Name:        "min_delta_time_constraint",
+				Description: "Test minimum time between emissions - prevents archiving more frequently than every 1 time unit",
+				Config: map[string]interface{}{
+					"threshold": 1.0,
+					"min_time":  "10s", // Prevents archiving more frequently than every 1.5 time unit
+				},
+				InputPoints: []TestPoint{
+					{TimeSeconds: 0, Value: 2},
+					{TimeSeconds: 10, Value: 2},
+					{TimeSeconds: 20, Value: 2},
+					{TimeSeconds: 30, Value: 2},
+					{TimeSeconds: 40, Value: 2},
+					{TimeSeconds: 45, Value: 10},
+					{TimeSeconds: 50, Value: 3},
+					{TimeSeconds: 60, Value: 3},
+					{TimeSeconds: 70, Value: 3},
+					{TimeSeconds: 80, Value: 3},
+				},
+				ExpectedEmitted: []TestPoint{
+					{TimeSeconds: 0, Value: 2},
+					{TimeSeconds: 40, Value: 2},
+					{TimeSeconds: 80, Value: 3},
+				},
+				ExpectedReduction: 70, // 3 out of 10 points filtered = 30% reduction
 			}),
 		)
 	})

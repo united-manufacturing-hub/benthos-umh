@@ -24,12 +24,14 @@ import (
 type DeadbandConfig struct {
 	Threshold float64       `json:"threshold,omitempty" yaml:"threshold,omitempty"`
 	MaxTime   time.Duration `json:"max_time,omitempty" yaml:"max_time,omitempty"`
+	MinTime   time.Duration `json:"min_time,omitempty" yaml:"min_time,omitempty"`
 }
 
 // SwingingDoorConfig holds swinging door algorithm parameters
 type SwingingDoorConfig struct {
 	Threshold float64       `json:"threshold,omitempty" yaml:"threshold,omitempty"`
 	MaxTime   time.Duration `json:"max_time,omitempty" yaml:"max_time,omitempty"`
+	MinTime   time.Duration `json:"min_time,omitempty" yaml:"min_time,omitempty"`
 }
 
 // LatePolicyConfig holds late arrival handling parameters
@@ -117,10 +119,16 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 		if c.Default.SwingingDoor.MaxTime > 0 {
 			config["max_time"] = c.Default.SwingingDoor.MaxTime.String()
 		}
+		if c.Default.SwingingDoor.MinTime > 0 {
+			config["min_time"] = c.Default.SwingingDoor.MinTime.String()
+		}
 	} else {
 		config["threshold"] = c.Default.Deadband.Threshold
 		if c.Default.Deadband.MaxTime > 0 {
 			config["max_time"] = c.Default.Deadband.MaxTime.String()
+		}
+		if c.Default.Deadband.MinTime > 0 {
+			config["min_time"] = c.Default.Deadband.MinTime.String()
 		}
 	}
 
@@ -154,7 +162,7 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 
 		if matched {
 			// Apply deadband overrides (only if actually configured with meaningful values)
-			if override.Deadband != nil && (override.Deadband.Threshold != 0 || override.Deadband.MaxTime != 0) {
+			if override.Deadband != nil && (override.Deadband.Threshold != 0 || override.Deadband.MaxTime != 0 || override.Deadband.MinTime != 0) {
 				algorithm = "deadband"
 				if override.Deadband.Threshold != 0 {
 					config["threshold"] = override.Deadband.Threshold
@@ -162,16 +170,22 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 				if override.Deadband.MaxTime != 0 {
 					config["max_time"] = override.Deadband.MaxTime.String()
 				}
+				if override.Deadband.MinTime != 0 {
+					config["min_time"] = override.Deadband.MinTime.String()
+				}
 			}
 
 			// Apply swinging door overrides (only if actually configured with meaningful values)
-			if override.SwingingDoor != nil && (override.SwingingDoor.Threshold != 0 || override.SwingingDoor.MaxTime != 0) {
+			if override.SwingingDoor != nil && (override.SwingingDoor.Threshold != 0 || override.SwingingDoor.MaxTime != 0 || override.SwingingDoor.MinTime != 0) {
 				algorithm = "swinging_door"
 				if override.SwingingDoor.Threshold != 0 {
 					config["threshold"] = override.SwingingDoor.Threshold
 				}
 				if override.SwingingDoor.MaxTime != 0 {
 					config["max_time"] = override.SwingingDoor.MaxTime.String()
+				}
+				if override.SwingingDoor.MinTime != 0 {
+					config["min_time"] = override.SwingingDoor.MinTime.String()
 				}
 			}
 
