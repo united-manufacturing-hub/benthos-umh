@@ -122,6 +122,19 @@ func (sd *SwingingDoorAlgorithm) Ingest(v float64, ts time.Time) ([]Point, error
 		sd.base.Value, sd.base.Timestamp.Format("15:04:05"),
 		sd.candString(), sd.slopeMin, sd.slopeMax)
 
+	// ---- heartbeat first --------------------------------------------------
+	if sd.maxTime > 0 && ts.Sub(sd.lastEmitTime) >= sd.maxTime {
+		p := Point{Value: v, Timestamp: ts}
+		out = append(out, p)
+		sd.base = p
+		sd.lastEmitTime = ts
+		sd.cand = nil
+		sd.openDoor()
+		debugLog("MAX_TIME EMIT (before candidate): emit current point=(%.1f, %s)",
+			p.Value, p.Timestamp.Format("15:04:05"))
+		return out, nil // done – heartbeat satisfied
+	}
+
 	// ---- establish candidate if none yet ----------------------------------
 	if sd.cand == nil {
 		sd.cand = &Point{Value: v, Timestamp: ts}

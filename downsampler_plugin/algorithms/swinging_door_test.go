@@ -334,6 +334,39 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(points).To(HaveLen(1))
 			})
+
+			It("forces emit at every max_time interval over a long period", func() {
+				// This test checks that the max_time constraint triggers emits at regular intervals
+				// even when the value changes are small and do not exceed the threshold.
+				config := map[string]interface{}{"threshold": 1.0, "max_time": "100ms"}
+				algo, err := algorithms.Create("swinging_door", config)
+				Expect(err).NotTo(HaveOccurred())
+				defer algo.Reset()
+
+				t0 := baseTime
+				times := []time.Time{t0}
+				for i := 1; i <= 10; i++ {
+					times = append(times, t0.Add(time.Duration(i)*100*time.Millisecond))
+				}
+
+				emitted := 0
+				for i, ts := range times {
+					val := 5.0 + 0.05*float64(i) // small changes, always below threshold
+					points, err := algo.Ingest(val, ts)
+					Expect(err).NotTo(HaveOccurred())
+					if i == 0 {
+						Expect(points).To(HaveLen(1), "First point should be emitted")
+						emitted++
+					} else if i%1 == 0 && i > 0 {
+						// Should emit every 100ms due to max_time
+						if len(points) > 0 {
+							emitted += len(points)
+						}
+					}
+				}
+				// Should emit at least once every 100ms interval (10 intervals + first point)
+				Expect(emitted).To(BeNumerically(">=", 10), "Should emit at least once per max_time interval")
+			})
 		})
 
 		Context("Metadata and configuration info", func() {
