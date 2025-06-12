@@ -60,7 +60,7 @@ var _ = Describe("Configuration Logic", func() {
 			It("should return min_time as a string in the config map", func() {
 				algorithm, configMap := config.GetConfigForTopic("any.topic.here")
 
-				Expect(algorithm).To(Equal("deadband"))
+				Expect(algorithm).To(Equal("swinging_door"))
 				Expect(configMap).To(HaveKeyWithValue("threshold", 1.5))
 				Expect(configMap).To(HaveKeyWithValue("min_time", "15s"))
 			})

@@ -380,7 +380,7 @@ downsampler:
 		)
 	})
 
-	FDescribe("Basic Swinging Door Algorithm Behavior", func() {
+	Describe("Basic Swinging Door Algorithm Behavior", func() {
 		Context("Minimum Time Constraint", func() {
 			DescribeTable("should enforce min_time between emissions",
 				RunStreamTestCase,
