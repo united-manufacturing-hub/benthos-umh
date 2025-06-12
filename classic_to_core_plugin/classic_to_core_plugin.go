@@ -98,7 +98,10 @@ The processor will:
 				return nil, err
 			}
 
-			targetDataContract, _ := conf.FieldString("target_data_contract")
+			targetDataContract, err := conf.FieldString("target_data_contract")
+			if err != nil {
+				return nil, err
+			}
 
 			preserveMeta, err := conf.FieldBool("preserve_meta")
 			if err != nil {
@@ -109,10 +112,16 @@ The processor will:
 			if err != nil {
 				return nil, err
 			}
+			if maxRecursionDepth <= 0 {
+				return nil, fmt.Errorf("max_recursion_depth must be positive, got %d", maxRecursionDepth)
+			}
 
 			maxTagsPerMessage, err := conf.FieldInt("max_tags_per_message")
 			if err != nil {
 				return nil, err
+			}
+			if maxTagsPerMessage <= 0 {
+				return nil, fmt.Errorf("max_tags_per_message must be positive, got %d", maxTagsPerMessage)
 			}
 
 			config := ClassicToCoreConfig{
