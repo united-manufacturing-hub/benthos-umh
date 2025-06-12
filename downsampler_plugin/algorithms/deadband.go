@@ -62,7 +62,7 @@ type DeadbandAlgorithm struct {
 //   - Missing or invalid threshold values
 //   - Negative threshold values
 //   - Invalid max_time duration strings
-func NewDeadbandAlgorithm(config map[string]interface{}) (DownsampleAlgorithm, error) {
+func NewDeadbandAlgorithm(config map[string]interface{}) (StreamCompressor, error) {
 	threshold := 0.0
 	var maxInterval time.Duration
 
@@ -109,28 +109,33 @@ func NewDeadbandAlgorithm(config map[string]interface{}) (DownsampleAlgorithm, e
 	}, nil
 }
 
-// ProcessPoint processes a new data point and returns whether it should be kept
-func (d *DeadbandAlgorithm) ProcessPoint(value float64, timestamp time.Time) (bool, error) {
+// Ingest processes a new data point and returns zero or more points to emit
+func (d *DeadbandAlgorithm) Ingest(value float64, timestamp time.Time) ([]Point, error) {
+	currentPoint := Point{
+		Value:     value,
+		Timestamp: timestamp,
+	}
+
 	// First point is always kept
 	if !d.hasKeptValue {
 		d.lastKeptValue = value
 		d.lastKeptTime = timestamp
 		d.hasKeptValue = true
-		return true, nil
+		return []Point{currentPoint}, nil
 	}
 
 	// Handle time overflow and duration limits
 	if d.lastKeptTime.IsZero() {
 		d.lastKeptValue = value
 		d.lastKeptTime = timestamp
-		return true, nil
+		return []Point{currentPoint}, nil
 	}
 
 	// Check maximum interval constraint
 	if d.maxTime > 0 && timestamp.Sub(d.lastKeptTime) >= d.maxTime {
 		d.lastKeptValue = value
 		d.lastKeptTime = timestamp
-		return true, nil
+		return []Point{currentPoint}, nil
 	}
 
 	// Check threshold constraint
@@ -141,24 +146,24 @@ func (d *DeadbandAlgorithm) ProcessPoint(value float64, timestamp time.Time) (bo
 		if delta > 0 {
 			d.lastKeptValue = value
 			d.lastKeptTime = timestamp
-			return true, nil
+			return []Point{currentPoint}, nil
 		}
-		return false, nil
+		return []Point{}, nil
 	}
 
 	if delta >= d.threshold {
 		d.lastKeptValue = value
 		d.lastKeptTime = timestamp
-		return true, nil
+		return []Point{currentPoint}, nil
 	}
 
-	return false, nil
+	return []Point{}, nil
 }
 
-// Flush returns any pending final point (deadband has no pending points)
-func (d *DeadbandAlgorithm) Flush() (*Point, error) {
+// Flush returns any pending final points (deadband has no pending points)
+func (d *DeadbandAlgorithm) Flush() ([]Point, error) {
 	// Deadband algorithm doesn't buffer points, so nothing to flush
-	return nil, nil
+	return []Point{}, nil
 }
 
 // Reset clears the algorithm's internal state
@@ -168,15 +173,15 @@ func (d *DeadbandAlgorithm) Reset() {
 	d.hasKeptValue = false
 }
 
-// GetMetadata returns metadata string for annotation
-func (d *DeadbandAlgorithm) GetMetadata() string {
+// Config returns metadata string for annotation
+func (d *DeadbandAlgorithm) Config() string {
 	if d.maxTime > 0 {
 		return fmt.Sprintf("deadband(threshold=%.3f,max_time=%v)", d.threshold, d.maxTime)
 	}
 	return fmt.Sprintf("deadband(threshold=%.3f)", d.threshold)
 }
 
-// GetName returns the algorithm name
-func (d *DeadbandAlgorithm) GetName() string {
+// Name returns the algorithm name
+func (d *DeadbandAlgorithm) Name() string {
 	return "deadband"
 }

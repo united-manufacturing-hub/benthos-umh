@@ -11,7 +11,7 @@ import (
 )
 
 var _ = Describe("Deadband Algorithm", func() {
-	var algo algorithms.DownsampleAlgorithm
+	var algo algorithms.StreamCompressor
 	var err error
 	var baseTime time.Time
 
@@ -34,54 +34,61 @@ var _ = Describe("Deadband Algorithm", func() {
 		})
 
 		It("should always keep the first point", func() {
-			keep, err := algo.ProcessPoint(10.0, baseTime)
+			points, err := algo.Ingest(10.0, baseTime)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue(), "First point should always be kept")
+			Expect(points).To(HaveLen(1), "First point should always be kept")
+			Expect(points[0].Value).To(Equal(10.0))
+			Expect(points[0].Timestamp).To(Equal(baseTime))
 		})
 
 		It("should process a sequence correctly", func() {
 			// First point - always kept
-			keep, err := algo.ProcessPoint(10.0, baseTime)
+			points, err := algo.Ingest(10.0, baseTime)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue(), "First point should always be kept")
+			Expect(points).To(HaveLen(1), "First point should always be kept")
+			Expect(points[0].Value).To(Equal(10.0))
 
 			// Small change (0.3 < 0.5) - should be filtered
-			keep, err = algo.ProcessPoint(10.3, baseTime.Add(time.Second))
+			points, err = algo.Ingest(10.3, baseTime.Add(time.Second))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeFalse(), "Small change (0.3 < 0.5) should be filtered")
+			Expect(points).To(HaveLen(0), "Small change (0.3 < 0.5) should be filtered")
 
 			// Large change (1.6 >= 0.5) - should be kept
-			keep, err = algo.ProcessPoint(11.6, baseTime.Add(2*time.Second))
+			points, err = algo.Ingest(11.6, baseTime.Add(2*time.Second))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue(), "Large change (1.6 >= 0.5) should be kept")
+			Expect(points).To(HaveLen(1), "Large change (1.6 >= 0.5) should be kept")
+			Expect(points[0].Value).To(Equal(11.6))
 
 			// Exact threshold change (0.5 = 0.5) - should be kept
-			keep, err = algo.ProcessPoint(12.1, baseTime.Add(3*time.Second))
+			points, err = algo.Ingest(12.1, baseTime.Add(3*time.Second))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue(), "Exact threshold change (0.5 = 0.5) should be kept")
+			Expect(points).To(HaveLen(1), "Exact threshold change (0.5 = 0.5) should be kept")
+			Expect(points[0].Value).To(Equal(12.1))
 		})
 
 		Context("additional basic filtering scenarios", func() {
 			It("should handle basic filtering sequence", func() {
 				// First point should always be kept
-				keep, err := algo.ProcessPoint(10.0, baseTime)
+				points, err := algo.Ingest(10.0, baseTime)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeTrue(), "First point should be kept")
+				Expect(points).To(HaveLen(1), "First point should be kept")
+				Expect(points[0].Value).To(Equal(10.0))
 
 				// Small change (< threshold) should be dropped
-				keep, err = algo.ProcessPoint(10.3, baseTime.Add(time.Second))
+				points, err = algo.Ingest(10.3, baseTime.Add(time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeFalse(), "Small change should be dropped")
+				Expect(points).To(HaveLen(0), "Small change should be dropped")
 
 				// Large change (>= threshold) should be kept
-				keep, err = algo.ProcessPoint(10.6, baseTime.Add(2*time.Second))
+				points, err = algo.Ingest(10.6, baseTime.Add(2*time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeTrue(), "Large change should be kept")
+				Expect(points).To(HaveLen(1), "Large change should be kept")
+				Expect(points[0].Value).To(Equal(10.6))
 
 				// Another small change should be dropped
-				keep, err = algo.ProcessPoint(10.5, baseTime.Add(3*time.Second))
+				points, err = algo.Ingest(10.5, baseTime.Add(3*time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeFalse(), "Small change should be dropped")
+				Expect(points).To(HaveLen(0), "Small change should be dropped")
 			})
 		})
 	})
@@ -98,19 +105,21 @@ var _ = Describe("Deadband Algorithm", func() {
 
 		It("should handle max interval correctly", func() {
 			// First point
-			keep, err := algo.ProcessPoint(10.0, baseTime)
+			points, err := algo.Ingest(10.0, baseTime)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue(), "First point should be kept")
+			Expect(points).To(HaveLen(1), "First point should be kept")
+			Expect(points[0].Value).To(Equal(10.0))
 
 			// Small change within time limit - should be filtered
-			keep, err = algo.ProcessPoint(10.3, baseTime.Add(30*time.Second))
+			points, err = algo.Ingest(10.3, baseTime.Add(30*time.Second))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeFalse(), "Small change within time limit should be filtered")
+			Expect(points).To(HaveLen(0), "Small change within time limit should be filtered")
 
 			// Small change after max interval - should be kept
-			keep, err = algo.ProcessPoint(10.3, baseTime.Add(70*time.Second))
+			points, err = algo.Ingest(10.3, baseTime.Add(70*time.Second))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue(), "Small change after max interval should be kept")
+			Expect(points).To(HaveLen(1), "Small change after max interval should be kept")
+			Expect(points[0].Value).To(Equal(10.3))
 		})
 
 		Context("max interval with 1 minute duration", func() {
@@ -125,19 +134,21 @@ var _ = Describe("Deadband Algorithm", func() {
 
 			It("should enforce max interval constraint", func() {
 				// First point
-				keep, err := algo.ProcessPoint(10.0, baseTime)
+				points, err := algo.Ingest(10.0, baseTime)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeTrue())
+				Expect(points).To(HaveLen(1))
+				Expect(points[0].Value).To(Equal(10.0))
 
 				// Within max_interval, small change should be dropped
-				keep, err = algo.ProcessPoint(10.3, baseTime.Add(30*time.Second))
+				points, err = algo.Ingest(10.3, baseTime.Add(30*time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeFalse())
+				Expect(points).To(HaveLen(0))
 
 				// After max_interval, even small change should be kept
-				keep, err = algo.ProcessPoint(10.3, baseTime.Add(70*time.Second))
+				points, err = algo.Ingest(10.3, baseTime.Add(70*time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeTrue())
+				Expect(points).To(HaveLen(1))
+				Expect(points[0].Value).To(Equal(10.3))
 			})
 		})
 	})
@@ -163,10 +174,12 @@ var _ = Describe("Deadband Algorithm", func() {
 				// create directional bias where downward changes are treated differently
 				// than upward changes. Industrial historians must maintain symmetry to avoid
 				// systematic drift in compressed data.
-				keep, _ := algo.ProcessPoint(10.0, baseTime)
-				Expect(keep).Should(BeTrue())
-				keep, _ = algo.ProcessPoint(9.5, baseTime.Add(time.Second)) // Δ = −0.5
-				Expect(keep).Should(BeTrue())                               // must keep - exact threshold magnitude
+				points, err := algo.Ingest(10.0, baseTime)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(points).To(HaveLen(1))
+				points, err = algo.Ingest(9.5, baseTime.Add(time.Second)) // Δ = −0.5
+				Expect(err).NotTo(HaveOccurred())
+				Expect(points).To(HaveLen(1)) // must keep - exact threshold magnitude
 			})
 
 			It("drops an identical repeat", func() {
@@ -174,9 +187,10 @@ var _ = Describe("Deadband Algorithm", func() {
 				// constraints (like max_interval) force emission. This test prevents
 				// accidental "≤" vs "<" boundary condition errors in threshold comparison.
 				// Even with threshold = 0, repeats should be dropped (special case behavior).
-				_, _ = algo.ProcessPoint(10.0, baseTime)
-				keep, _ := algo.ProcessPoint(10.0, baseTime.Add(time.Second))
-				Expect(keep).Should(BeFalse())
+				_, _ = algo.Ingest(10.0, baseTime)
+				points, err := algo.Ingest(10.0, baseTime.Add(time.Second))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(points).To(HaveLen(0), "Identical value should be dropped")
 			})
 		})
 
@@ -192,9 +206,10 @@ var _ = Describe("Deadband Algorithm", func() {
 				cfg := map[string]interface{}{"threshold": 0.5, "max_time": "60s"}
 				algo, _ := algorithms.NewDeadbandAlgorithm(cfg)
 				t0 := baseTime
-				_, _ = algo.ProcessPoint(10.0, t0)
-				keep, _ := algo.ProcessPoint(10.0, t0.Add(65*time.Second)) // Δ = 0, but > 60 s
-				Expect(keep).Should(BeTrue())                              // time constraint overrides threshold
+				_, _ = algo.Ingest(10.0, t0)
+				points, err := algo.Ingest(10.0, t0.Add(65*time.Second)) // Δ = 0, but > 60 s
+				Expect(err).NotTo(HaveOccurred())
+				Expect(points).To(HaveLen(1), "time constraint overrides threshold")
 			})
 		})
 
@@ -217,19 +232,19 @@ var _ = Describe("Deadband Algorithm", func() {
 				Expect(algo).NotTo(BeNil())
 
 				// First point
-				keep, err := algo.ProcessPoint(10.0, baseTime)
+				points, err := algo.Ingest(10.0, baseTime)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeTrue())
+				Expect(points).To(HaveLen(1))
 
 				// Even tiny change should be kept with zero threshold
-				keep, err = algo.ProcessPoint(10.001, baseTime.Add(time.Second))
+				points, err = algo.Ingest(10.001, baseTime.Add(time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeTrue())
+				Expect(points).To(HaveLen(1))
 
 				// Exact repeat should be dropped even with zero threshold
-				keep, err = algo.ProcessPoint(10.001, baseTime.Add(2*time.Second))
+				points, err = algo.Ingest(10.001, baseTime.Add(2*time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeFalse())
+				Expect(points).To(HaveLen(0))
 			})
 		})
 
@@ -242,14 +257,14 @@ var _ = Describe("Deadband Algorithm", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				// First point should be kept
-				keep, err := algo.ProcessPoint(10.0, baseTime)
+				points, err := algo.Ingest(10.0, baseTime)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeTrue())
+				Expect(points).To(HaveLen(1))
 
 				// Even huge change should be dropped with MaxFloat64 threshold
-				keep, err = algo.ProcessPoint(1e100, baseTime.Add(time.Second))
+				points, err = algo.Ingest(1e100, baseTime.Add(time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeFalse())
+				Expect(points).To(HaveLen(0))
 			})
 		})
 
@@ -282,11 +297,11 @@ var _ = Describe("Deadband Algorithm", func() {
 				for _, test := range testSequence {
 					timestamp := baseTime.Add(test.delay)
 
-					keepZero, errZero := algoWithZero.ProcessPoint(test.value, timestamp)
-					keepNoMax, errNoMax := algoWithoutMax.ProcessPoint(test.value, timestamp)
+					pointsZero, errZero := algoWithZero.Ingest(test.value, timestamp)
+					pointsNoMax, errNoMax := algoWithoutMax.Ingest(test.value, timestamp)
 
 					if errZero == nil && errNoMax == nil {
-						Expect(keepZero).To(Equal(keepNoMax), "Algorithms should behave identically for value %.1f", test.value)
+						Expect(len(pointsZero) > 0).To(Equal(len(pointsNoMax) > 0), "Algorithms should behave identically for value %.1f", test.value)
 					} else {
 						Expect(errZero).To(Equal(errNoMax))
 					}
@@ -306,12 +321,12 @@ var _ = Describe("Deadband Algorithm", func() {
 
 			It("should handle clock skew gracefully", func() {
 				// First point
-				keep, err := algo.ProcessPoint(10.0, baseTime.Add(5*time.Second))
+				points, err := algo.Ingest(10.0, baseTime.Add(5*time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeTrue())
+				Expect(points).To(HaveLen(1))
 
 				// Point with earlier timestamp (clock skew)
-				keep, err = algo.ProcessPoint(10.6, baseTime.Add(4*time.Second))
+				points, err = algo.Ingest(10.6, baseTime.Add(4*time.Second))
 
 				// Should either handle gracefully or return an error, but not panic
 				// The current implementation will treat negative duration as 0
@@ -321,7 +336,7 @@ var _ = Describe("Deadband Algorithm", func() {
 				} else {
 					// If no error, behavior should be predictable
 					// In this case, negative duration means no max_time constraint
-					Expect(keep).To(BeTrue()) // Should keep due to threshold (0.6 > 0.5)
+					Expect(points).To(HaveLen(1)) // Should keep due to threshold (0.6 > 0.5)
 				}
 			})
 		})
@@ -335,7 +350,7 @@ var _ = Describe("Deadband Algorithm", func() {
 			algo, err := algorithms.NewDeadbandAlgorithm(config)
 			Expect(err).NotTo(HaveOccurred())
 
-			metadata := algo.GetMetadata()
+			metadata := algo.Config()
 			Expect(metadata).To(Equal("deadband(threshold=0.500)"))
 		})
 
@@ -347,7 +362,7 @@ var _ = Describe("Deadband Algorithm", func() {
 			algo, err := algorithms.NewDeadbandAlgorithm(config)
 			Expect(err).NotTo(HaveOccurred())
 
-			metadata := algo.GetMetadata()
+			metadata := algo.Config()
 			Expect(metadata).To(Equal("deadband(threshold=0.500,max_time=1m0s)"))
 		})
 	})
@@ -394,17 +409,17 @@ var _ = Describe("Deadband Algorithm", func() {
 
 			It("should filter small oscillations around a value", func() {
 				// Human verification: Sensor reading 10.0, then small noise ±0.5, should filter the noise
-				keep, _ := algo.ProcessPoint(10.0, baseTime)
-				Expect(keep).To(BeTrue(), "First reading: 10.0 → KEEP (always keep first)")
+				points, _ := algo.Ingest(10.0, baseTime)
+				Expect(points).To(HaveLen(1), "First reading: 10.0 → KEEP (always keep first)")
 
-				keep, _ = algo.ProcessPoint(10.3, baseTime.Add(1*time.Second))
-				Expect(keep).To(BeFalse(), "Reading: 10.3 → DROP (change = 0.3 < threshold 1.0)")
+				points, _ = algo.Ingest(10.3, baseTime.Add(1*time.Second))
+				Expect(points).To(HaveLen(0), "Reading: 10.3 → DROP (change = 0.3 < threshold 1.0)")
 
-				keep, _ = algo.ProcessPoint(9.7, baseTime.Add(2*time.Second))
-				Expect(keep).To(BeFalse(), "Reading: 9.7 → DROP (change from last kept = 0.3 < threshold 1.0)")
+				points, _ = algo.Ingest(9.7, baseTime.Add(2*time.Second))
+				Expect(points).To(HaveLen(0), "Reading: 9.7 → DROP (change from last kept = 0.3 < threshold 1.0)")
 
-				keep, _ = algo.ProcessPoint(11.5, baseTime.Add(3*time.Second))
-				Expect(keep).To(BeTrue(), "Reading: 11.5 → KEEP (change from last kept = 1.5 ≥ threshold 1.0)")
+				points, _ = algo.Ingest(11.5, baseTime.Add(3*time.Second))
+				Expect(points).To(HaveLen(1), "Reading: 11.5 → KEEP (change from last kept = 1.5 ≥ threshold 1.0)")
 			})
 
 			It("should handle a temperature sensor example", func() {
@@ -412,17 +427,17 @@ var _ = Describe("Deadband Algorithm", func() {
 				config := map[string]interface{}{"threshold": 0.5}
 				algo, _ := algorithms.NewDeadbandAlgorithm(config)
 
-				keep, _ := algo.ProcessPoint(22.0, baseTime)
-				Expect(keep).To(BeTrue(), "Initial temp: 22.0°C → KEEP")
+				points, _ := algo.Ingest(22.0, baseTime)
+				Expect(points).To(HaveLen(1), "Initial temp: 22.0°C → KEEP")
 
-				keep, _ = algo.ProcessPoint(22.3, baseTime.Add(1*time.Minute))
-				Expect(keep).To(BeFalse(), "Small rise: 22.3°C → DROP (0.3°C < 0.5°C threshold)")
+				points, _ = algo.Ingest(22.3, baseTime.Add(1*time.Minute))
+				Expect(points).To(HaveLen(0), "Small rise: 22.3°C → DROP (0.3°C < 0.5°C threshold)")
 
-				keep, _ = algo.ProcessPoint(22.8, baseTime.Add(2*time.Minute))
-				Expect(keep).To(BeTrue(), "Significant rise: 22.8°C → KEEP (0.8°C ≥ 0.5°C threshold)")
+				points, _ = algo.Ingest(22.8, baseTime.Add(2*time.Minute))
+				Expect(points).To(HaveLen(1), "Significant rise: 22.8°C → KEEP (0.8°C ≥ 0.5°C threshold)")
 
-				keep, _ = algo.ProcessPoint(22.9, baseTime.Add(3*time.Minute))
-				Expect(keep).To(BeFalse(), "Small rise: 22.9°C → DROP (0.1°C < 0.5°C threshold)")
+				points, _ = algo.Ingest(22.9, baseTime.Add(3*time.Minute))
+				Expect(points).To(HaveLen(0), "Small rise: 22.9°C → DROP (0.1°C < 0.5°C threshold)")
 			})
 		})
 
@@ -438,19 +453,19 @@ var _ = Describe("Deadband Algorithm", func() {
 
 			It("should send heartbeat even with no significant change", func() {
 				// Human verification: System sends periodic updates even if value doesn't change much
-				keep, _ := algo.ProcessPoint(100.0, baseTime)
-				Expect(keep).To(BeTrue(), "Initial value: 100.0 → KEEP")
+				points, _ := algo.Ingest(100.0, baseTime)
+				Expect(points).To(HaveLen(1), "Initial value: 100.0 → KEEP")
 
 				// Small changes that would normally be filtered
-				keep, _ = algo.ProcessPoint(100.5, baseTime.Add(10*time.Second))
-				Expect(keep).To(BeFalse(), "Small change: 100.5 → DROP (0.5 < 2.0 threshold)")
+				points, _ = algo.Ingest(100.5, baseTime.Add(10*time.Second))
+				Expect(points).To(HaveLen(0), "Small change: 100.5 → DROP (0.5 < 2.0 threshold)")
 
-				keep, _ = algo.ProcessPoint(101.0, baseTime.Add(20*time.Second))
-				Expect(keep).To(BeFalse(), "Small change: 101.0 → DROP (1.0 < 2.0 threshold)")
+				points, _ = algo.Ingest(101.0, baseTime.Add(20*time.Second))
+				Expect(points).To(HaveLen(0), "Small change: 101.0 → DROP (1.0 < 2.0 threshold)")
 
 				// After 35 seconds, max_time forces emission even with small change
-				keep, _ = algo.ProcessPoint(101.2, baseTime.Add(35*time.Second))
-				Expect(keep).To(BeTrue(), "Heartbeat: 101.2 → KEEP (max_time 30s exceeded)")
+				points, _ = algo.Ingest(101.2, baseTime.Add(35*time.Second))
+				Expect(points).To(HaveLen(1), "Heartbeat: 101.2 → KEEP (max_time 30s exceeded)")
 			})
 		})
 
@@ -463,32 +478,32 @@ var _ = Describe("Deadband Algorithm", func() {
 
 			It("should handle exact threshold boundaries correctly", func() {
 				// Human verification: Test the boundary condition at exactly threshold value
-				keep, _ := algo.ProcessPoint(10.0, baseTime)
-				Expect(keep).To(BeTrue(), "Start: 10.0 → KEEP")
+				points, _ := algo.Ingest(10.0, baseTime)
+				Expect(points).To(HaveLen(1), "Start: 10.0 → KEEP")
 
-				keep, _ = algo.ProcessPoint(11.0, baseTime.Add(1*time.Second))
-				Expect(keep).To(BeTrue(), "Exact threshold: 11.0 → KEEP (change = 1.0 = threshold)")
+				points, _ = algo.Ingest(11.0, baseTime.Add(1*time.Second))
+				Expect(points).To(HaveLen(1), "Exact threshold: 11.0 → KEEP (change = 1.0 = threshold)")
 
-				keep, _ = algo.ProcessPoint(11.99, baseTime.Add(2*time.Second))
-				Expect(keep).To(BeFalse(), "Just under threshold: 11.99 → DROP (change = 0.99 < 1.0)")
+				points, _ = algo.Ingest(11.99, baseTime.Add(2*time.Second))
+				Expect(points).To(HaveLen(0), "Just under threshold: 11.99 → DROP (change = 0.99 < 1.0)")
 
-				keep, _ = algo.ProcessPoint(12.01, baseTime.Add(3*time.Second))
-				Expect(keep).To(BeTrue(), "Just over threshold: 12.01 → KEEP (change = 1.01 > 1.0)")
+				points, _ = algo.Ingest(12.01, baseTime.Add(3*time.Second))
+				Expect(points).To(HaveLen(1), "Just over threshold: 12.01 → KEEP (change = 1.01 > 1.0)")
 			})
 
 			It("should work with negative values and negative changes", func() {
 				// Human verification: Algorithm works symmetrically for positive and negative values
-				keep, _ := algo.ProcessPoint(-5.0, baseTime)
-				Expect(keep).To(BeTrue(), "Start: -5.0 → KEEP")
+				points, _ := algo.Ingest(-5.0, baseTime)
+				Expect(points).To(HaveLen(1), "Start: -5.0 → KEEP")
 
-				keep, _ = algo.ProcessPoint(-4.0, baseTime.Add(1*time.Second))
-				Expect(keep).To(BeTrue(), "Increase: -4.0 → KEEP (change = 1.0 = threshold)")
+				points, _ = algo.Ingest(-4.0, baseTime.Add(1*time.Second))
+				Expect(points).To(HaveLen(1), "Increase: -4.0 → KEEP (change = 1.0 = threshold)")
 
-				keep, _ = algo.ProcessPoint(-6.0, baseTime.Add(2*time.Second))
-				Expect(keep).To(BeTrue(), "Decrease: -6.0 → KEEP (change = 2.0 > threshold)")
+				points, _ = algo.Ingest(-6.0, baseTime.Add(2*time.Second))
+				Expect(points).To(HaveLen(1), "Decrease: -6.0 → KEEP (change = 2.0 > threshold)")
 
-				keep, _ = algo.ProcessPoint(-5.5, baseTime.Add(3*time.Second))
-				Expect(keep).To(BeFalse(), "Small change: -5.5 → DROP (change = 0.5 < threshold)")
+				points, _ = algo.Ingest(-5.5, baseTime.Add(3*time.Second))
+				Expect(points).To(HaveLen(0), "Small change: -5.5 → DROP (change = 0.5 < threshold)")
 			})
 		})
 	})
@@ -505,10 +520,10 @@ var _ = Describe("Deadband Algorithm", func() {
 				Expect(algo).NotTo(BeNil())
 
 				// Algorithm should work correctly when used sequentially
-				_, _ = algo.ProcessPoint(10.0, baseTime)
-				keep, err := algo.ProcessPoint(10.6, baseTime.Add(time.Second))
+				_, _ = algo.Ingest(10.0, baseTime)
+				points, err := algo.Ingest(10.6, baseTime.Add(time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeTrue())
+				Expect(points).To(HaveLen(1))
 			})
 		})
 	})
@@ -556,9 +571,13 @@ var _ = Describe("Deadband Algorithm", func() {
 
 				for i, point := range rawData {
 					timestamp := baseTime.Add(time.Duration(point.x) * time.Second)
-					keep, err := algo.ProcessPoint(point.y, timestamp)
+					points, err := algo.Ingest(point.y, timestamp)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(keep).To(Equal(expectedKept[i]), "Point %d (x=%.1f, y=%.1f)", i, point.x, point.y)
+					if expectedKept[i] {
+						Expect(points).To(HaveLen(1), "Point %d (x=%.1f, y=%.1f) should be kept", i, point.x, point.y)
+					} else {
+						Expect(points).To(HaveLen(0), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
+					}
 				}
 
 				// Verify compression: 7 raw -> 3 kept = ~57% reduction
@@ -601,9 +620,13 @@ var _ = Describe("Deadband Algorithm", func() {
 
 				for i, point := range rawData {
 					timestamp := baseTime.Add(time.Duration(point.x) * time.Second)
-					keep, err := algo.ProcessPoint(point.y, timestamp)
+					points, err := algo.Ingest(point.y, timestamp)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(keep).To(Equal(expectedKept[i]), "Point %d (x=%.1f, y=%.1f)", i, point.x, point.y)
+					if expectedKept[i] {
+						Expect(points).To(HaveLen(1), "Point %d (x=%.1f, y=%.1f) should be kept", i, point.x, point.y)
+					} else {
+						Expect(points).To(HaveLen(0), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
+					}
 				}
 			})
 		})
@@ -636,9 +659,13 @@ var _ = Describe("Deadband Algorithm", func() {
 
 				for i, point := range rawData {
 					timestamp := baseTime.Add(time.Duration(point.x) * time.Second)
-					keep, err := algo.ProcessPoint(point.y, timestamp)
+					points, err := algo.Ingest(point.y, timestamp)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(keep).To(Equal(expectedKept[i]), "Point %d (x=%.1f, y=%.1f)", i, point.x, point.y)
+					if expectedKept[i] {
+						Expect(points).To(HaveLen(1), "Point %d (x=%.1f, y=%.1f) should be kept", i, point.x, point.y)
+					} else {
+						Expect(points).To(HaveLen(0), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
+					}
 				}
 			})
 		})
@@ -671,9 +698,13 @@ var _ = Describe("Deadband Algorithm", func() {
 
 				for i, point := range rawData {
 					timestamp := baseTime.Add(time.Duration(point.x) * time.Second)
-					keep, err := algo.ProcessPoint(point.y, timestamp)
+					points, err := algo.Ingest(point.y, timestamp)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(keep).To(Equal(expectedKept[i]), "Point %d (x=%.1f, y=%.1f)", i, point.x, point.y)
+					if expectedKept[i] {
+						Expect(points).To(HaveLen(1), "Point %d (x=%.1f, y=%.1f) should be kept", i, point.x, point.y)
+					} else {
+						Expect(points).To(HaveLen(0), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
+					}
 				}
 			})
 		})
@@ -705,9 +736,13 @@ var _ = Describe("Deadband Algorithm", func() {
 
 				for i, point := range rawData {
 					timestamp := baseTime.Add(time.Duration(point.x) * time.Second)
-					keep, err := algo.ProcessPoint(point.y, timestamp)
+					points, err := algo.Ingest(point.y, timestamp)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(keep).To(Equal(expectedKept[i]), "Point %d (x=%.1f, y=%.1f)", i, point.x, point.y)
+					if expectedKept[i] {
+						Expect(points).To(HaveLen(1), "Point %d (x=%.1f, y=%.1f) should be kept", i, point.x, point.y)
+					} else {
+						Expect(points).To(HaveLen(0), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
+					}
 				}
 			})
 		})
@@ -739,10 +774,24 @@ var _ = Describe("Deadband Algorithm", func() {
 
 				for i, point := range rawData {
 					timestamp := baseTime.Add(time.Duration(point.x) * time.Second)
-					keep, err := algo.ProcessPoint(point.y, timestamp)
+					points, err := algo.Ingest(point.y, timestamp)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(keep).To(Equal(expectedKept[i]), "Point %d (x=%.1f, y=%.1f)", i, point.x, point.y)
+					if expectedKept[i] {
+						Expect(points).To(HaveLen(1), "Point %d (x=%.1f, y=%.1f) should be kept", i, point.x, point.y)
+					} else {
+						Expect(points).To(HaveLen(0), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
+					}
 				}
+
+				// Verify compression ratio
+				keptCount := 0
+				for _, kept := range expectedKept {
+					if kept {
+						keptCount++
+					}
+				}
+				reductionPercent := int(float64(len(rawData)-keptCount) / float64(len(rawData)) * 100)
+				Expect(reductionPercent).To(Equal(42), "Expected ~42% reduction")
 			})
 		})
 
@@ -772,9 +821,13 @@ var _ = Describe("Deadband Algorithm", func() {
 
 				for i, point := range rawData {
 					timestamp := baseTime.Add(time.Duration(point.x) * time.Second)
-					keep, err := algo.ProcessPoint(point.y, timestamp)
+					points, err := algo.Ingest(point.y, timestamp)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(keep).To(Equal(expectedKept[i]), "Point %d (x=%.1f, y=%.1f)", i, point.x, point.y)
+					if expectedKept[i] {
+						Expect(points).To(HaveLen(1), "Point %d (x=%.1f, y=%.1f) should be kept", i, point.x, point.y)
+					} else {
+						Expect(points).To(HaveLen(0), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
+					}
 				}
 			})
 		})

@@ -25,14 +25,6 @@ func init() {
 	Register("swinging_door", NewSwingingDoorAlgorithm)
 }
 
-// Point represents a data point with value and timestamp.
-//
-// This is used internally by the SDT algorithm to track envelope calculations.
-type Point struct {
-	Value     float64
-	Timestamp time.Time
-}
-
 // SwingingDoorAlgorithm implements the industry-standard "emit-previous"
 // Swinging Door Trending (SDT) algorithm used by PI Server, WinCC, and other
 // historians for numeric time-series data compression.
@@ -100,7 +92,7 @@ type SwingingDoorAlgorithm struct {
 //   - Missing or invalid threshold values
 //   - Negative threshold values
 //   - Invalid time duration strings
-func NewSwingingDoorAlgorithm(config map[string]interface{}) (DownsampleAlgorithm, error) {
+func NewSwingingDoorAlgorithm(config map[string]interface{}) (StreamCompressor, error) {
 	threshold := 1.0
 	var minTime, maxTime time.Duration
 
@@ -163,8 +155,8 @@ func NewSwingingDoorAlgorithm(config map[string]interface{}) (DownsampleAlgorith
 	}, nil
 }
 
-// ProcessPoint processes a new data point using SDT logic with emit-previous behavior
-func (s *SwingingDoorAlgorithm) ProcessPoint(value float64, timestamp time.Time) (bool, error) {
+// Ingest processes a new data point using SDT logic with emit-previous behavior
+func (s *SwingingDoorAlgorithm) Ingest(value float64, timestamp time.Time) ([]Point, error) {
 	currentPoint := &Point{
 		Value:     value,
 		Timestamp: timestamp,
@@ -338,7 +330,7 @@ func (s *SwingingDoorAlgorithm) processPointWithEnvelope(currentPoint *Point) (b
 }
 
 // Flush returns any pending final point that should be emitted at end-of-stream
-func (s *SwingingDoorAlgorithm) Flush() (*Point, error) {
+func (s *SwingingDoorAlgorithm) Flush() ([]Point, error) {
 	if s.pendingPoint != nil {
 		// Return the pending point and clear it
 		result := s.pendingPoint
@@ -359,7 +351,7 @@ func (s *SwingingDoorAlgorithm) Reset() {
 }
 
 // GetMetadata returns metadata string for annotation
-func (s *SwingingDoorAlgorithm) GetMetadata() string {
+func (s *SwingingDoorAlgorithm) Config() string {
 	metadata := fmt.Sprintf("swinging_door(threshold=%.3f", s.threshold)
 	if s.minTime > 0 {
 		metadata += fmt.Sprintf(",min_time=%v", s.minTime)
@@ -372,6 +364,6 @@ func (s *SwingingDoorAlgorithm) GetMetadata() string {
 }
 
 // GetName returns the algorithm name
-func (s *SwingingDoorAlgorithm) GetName() string {
+func (s *SwingingDoorAlgorithm) Name() string {
 	return "swinging_door"
 }

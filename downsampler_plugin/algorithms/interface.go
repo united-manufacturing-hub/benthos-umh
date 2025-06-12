@@ -93,21 +93,23 @@
 //
 //	// Process any data type in any order
 //	for _, point := range mixedOrderData {
-//		keep, err := processor.ProcessPoint(point.Value, point.Timestamp)
+//		emitted, err := processor.Ingest(point.Value, point.Timestamp)
 //		if err != nil {
 //			return fmt.Errorf("processing failed: %w", err)
 //		}
-//		if keep {
-//			// Emit/store this compressed point
-//			fmt.Printf("Keep: %v at %v\n", point.Value, point.Timestamp)
+//		for _, pt := range emitted {
+//			// Emit/store these compressed points
+//			fmt.Printf("Emit: %v at %v\n", pt.Value, pt.Timestamp)
 //		}
 //	}
 //
-//	// Flush any final pending point (important for SDT)
-//	if finalPoint, err := processor.Flush(); err != nil {
+//	// Flush any final pending points (important for SDT)
+//	if finalPoints, err := processor.Flush(); err != nil {
 //		return fmt.Errorf("flush failed: %w", err)
-//	} else if finalPoint != nil {
-//		fmt.Printf("Final: %v at %v\n", finalPoint.Value, finalPoint.Timestamp)
+//	} else {
+//		for _, pt := range finalPoints {
+//			fmt.Printf("Final: %v at %v\n", pt.Value, pt.Timestamp)
+//		}
 //	}
 //
 // ## Advanced: Direct Algorithm Usage (Low-level API)
@@ -132,23 +134,25 @@
 //
 //	// Process pre-sorted float64 data points
 //	for _, point := range chronologicalData {
-//		keep, err := algo.ProcessPoint(point.Value, point.Timestamp) // Must be float64
+//		emitted, err := algo.Ingest(point.Value, point.Timestamp) // Must be float64
 //		if err != nil {
 //			return fmt.Errorf("processing failed: %w", err)
 //		}
-//		if keep {
-//			// Emit this point - add algorithm metadata
-//			fmt.Printf("Keep: %v at %v (via %s)\n",
-//				point.Value, point.Timestamp, algo.GetMetadata())
+//		for _, pt := range emitted {
+//			// Emit these points - add algorithm metadata
+//			fmt.Printf("Emit: %v at %v (via %s)\n",
+//				pt.Value, pt.Timestamp, algo.Config())
 //		}
 //	}
 //
-//	// Flush any final pending point (essential for SDT)
-//	if finalPoint, err := algo.Flush(); err != nil {
+//	// Flush any final pending points (essential for SDT)
+//	if finalPoints, err := algo.Flush(); err != nil {
 //		return fmt.Errorf("flush failed: %w", err)
-//	} else if finalPoint != nil {
-//		fmt.Printf("Final: %v at %v (via %s)\n",
-//			finalPoint.Value, finalPoint.Timestamp, algo.GetMetadata())
+//	} else {
+//		for _, pt := range finalPoints {
+//			fmt.Printf("Final: %v at %v (via %s)\n",
+//				pt.Value, pt.Timestamp, algo.Config())
+//		}
 //	}
 //
 // # Configuration Examples
@@ -208,41 +212,52 @@ import (
 	"time"
 )
 
-// DownsampleAlgorithm defines the interface for downsampling algorithms.
+// Point represents a single data point with a numeric value and timestamp.
+type Point struct {
+	Value     float64
+	Timestamp time.Time
+}
+
+// StreamCompressor defines the interface for downsampling algorithms.
 //
 // All algorithms process numeric time-series data and maintain internal state
 // for stateful compression (like SDT envelope tracking). Implementations must:
 //   - Process data points in chronological order
 //   - Accept only float64 values
-//   - Return true when a point should be kept/emitted
+//   - Return zero or more points that should be emitted
 //   - Provide descriptive metadata for debugging/auditing
-type DownsampleAlgorithm interface {
-	// ProcessPoint processes a new numeric data point and returns whether it should be kept.
+//
+// StreamCompressor is 100% deterministic, has no Benthos types,
+// and never allocates messages.
+type StreamCompressor interface {
+	// Ingest adds one point and returns zero or more points
+	// the algorithm wants to emit immediately.
 	//
 	// Parameters:
 	//   - value: the numeric measurement (must be float64)
-	//   - timestamp: when the measurement was taken
+	//   - ts: when the measurement was taken
 	//
 	// Returns:
-	//   - bool: true if this point should be kept/emitted, false to drop it
+	//   - []Point: slice of points to emit (may be empty, typically 0-2 points)
 	//   - error: processing error (algorithm should recover on next call)
 	//
 	// This method is called for every point in sequence, allowing stateful algorithms
-	// like SDT to maintain internal envelope state across all points.
-	ProcessPoint(value float64, timestamp time.Time) (bool, error)
+	// like SDT to maintain internal envelope state across all points and emit
+	// both current and previous points as needed.
+	Ingest(value float64, ts time.Time) ([]Point, error)
 
-	// Flush returns any pending final point that should be emitted at end-of-stream.
+	// Flush returns any remaining points still buffered inside the algorithm.
 	//
 	// This method should be called exactly once at the logical end of a data series
-	// to ensure that algorithms like SDT can emit their final pending point.
+	// to ensure that algorithms like SDT can emit their final pending points.
 	//
 	// Returns:
-	//   - Point: the final pending point to emit, or nil if none
+	//   - []Point: slice of final points to emit (at most a handful, never unbounded)
 	//   - error: flush error (rare)
 	//
 	// After calling Flush, the algorithm state should be consistent for continued
 	// use or Reset.
-	Flush() (*Point, error)
+	Flush() ([]Point, error)
 
 	// Reset clears the algorithm's internal state.
 	//
@@ -253,17 +268,17 @@ type DownsampleAlgorithm interface {
 	//   - Processing multiple independent time series
 	Reset()
 
-	// GetMetadata returns a string describing the algorithm and its configuration
+	// Config returns a string describing the algorithm and its configuration
 	// for use in message metadata annotations.
 	//
 	// Format: "algorithm_name(param1=value1,param2=value2)"
 	// Example: "deadband(threshold=0.500,max_time=5m0s)"
-	GetMetadata() string
+	Config() string
 
-	// GetName returns the algorithm name as registered in the factory.
+	// Name returns the algorithm name as registered in the factory.
 	//
 	// This should match the name used in Create() calls.
-	GetName() string
+	Name() string
 }
 
 // AlgorithmFactory creates new algorithm instances from configuration.
@@ -273,7 +288,7 @@ type DownsampleAlgorithm interface {
 //   - Return descriptive errors for invalid config
 //   - Set sensible defaults for optional parameters
 //   - Initialize the algorithm in a clean state
-type AlgorithmFactory func(config map[string]interface{}) (DownsampleAlgorithm, error)
+type AlgorithmFactory func(config map[string]interface{}) (StreamCompressor, error)
 
 // Registry holds all available algorithms by name.
 // Algorithms register themselves during package initialization using Register().
@@ -294,7 +309,7 @@ func Register(name string, factory AlgorithmFactory) {
 //   - config: configuration parameters specific to the algorithm
 //
 // Returns:
-//   - DownsampleAlgorithm: ready-to-use algorithm instance
+//   - StreamCompressor: ready-to-use algorithm instance
 //   - error: if algorithm not found or configuration invalid
 //
 // Example:
@@ -303,7 +318,7 @@ func Register(name string, factory AlgorithmFactory) {
 //		"threshold": 0.5,
 //		"max_time":  "5m",
 //	})
-func Create(name string, config map[string]interface{}) (DownsampleAlgorithm, error) {
+func Create(name string, config map[string]interface{}) (StreamCompressor, error) {
 	factory, exists := Registry[name]
 	if !exists {
 		return nil, &AlgorithmNotFoundError{Name: name}

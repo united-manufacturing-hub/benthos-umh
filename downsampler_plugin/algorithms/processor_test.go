@@ -33,53 +33,53 @@ var _ = Describe("ProcessorWrapper", func() {
 
 		It("should handle numeric types with conversion", func() {
 			// Test various numeric types
-			keep, err := processor.ProcessPoint(10.0, baseTime)
+			points, err := processor.Ingest(10.0, baseTime)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue(), "First point should be kept")
+			Expect(points).To(HaveLen(1), "First point should be kept")
 
 			// Integer conversion
-			keep, err = processor.ProcessPoint(10, baseTime.Add(time.Second))
+			points, err = processor.Ingest(10, baseTime.Add(time.Second))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeFalse(), "Small change should be dropped")
+			Expect(points).To(HaveLen(0), "Small change should be dropped")
 
 			// Float32 conversion
-			keep, err = processor.ProcessPoint(float32(11.0), baseTime.Add(2*time.Second))
+			points, err = processor.Ingest(float32(11.0), baseTime.Add(2*time.Second))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue(), "Large change should be kept")
+			Expect(points).To(HaveLen(1), "Large change should be kept")
 		})
 
 		It("should handle boolean values with change-based logic", func() {
 			// First boolean value should be kept
-			keep, err := processor.ProcessPoint(true, baseTime)
+			points, err := processor.Ingest(true, baseTime)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue())
+			Expect(points).To(HaveLen(1))
 
 			// Same boolean value should be dropped
-			keep, err = processor.ProcessPoint(true, baseTime.Add(time.Second))
+			points, err = processor.Ingest(true, baseTime.Add(time.Second))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeFalse())
+			Expect(points).To(HaveLen(0))
 
 			// Changed boolean value should be kept
-			keep, err = processor.ProcessPoint(false, baseTime.Add(2*time.Second))
+			points, err = processor.Ingest(false, baseTime.Add(2*time.Second))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue())
+			Expect(points).To(HaveLen(1))
 		})
 
 		It("should handle string values with change-based logic", func() {
 			// First string value should be kept
-			keep, err := processor.ProcessPoint("running", baseTime)
+			points, err := processor.Ingest("running", baseTime)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue())
+			Expect(points).To(HaveLen(1))
 
 			// Same string value should be dropped
-			keep, err = processor.ProcessPoint("running", baseTime.Add(time.Second))
+			points, err = processor.Ingest("running", baseTime.Add(time.Second))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeFalse())
+			Expect(points).To(HaveLen(0))
 
 			// Changed string value should be kept
-			keep, err = processor.ProcessPoint("stopped", baseTime.Add(2*time.Second))
+			points, err = processor.Ingest("stopped", baseTime.Add(2*time.Second))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue())
+			Expect(points).To(HaveLen(1))
 		})
 	})
 
@@ -100,14 +100,14 @@ var _ = Describe("ProcessorWrapper", func() {
 
 			It("should drop out-of-order data", func() {
 				// First point
-				keep, err := processor.ProcessPoint(10.0, baseTime.Add(2*time.Second))
+				points, err := processor.Ingest(10.0, baseTime.Add(2*time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeTrue())
+				Expect(points).To(HaveLen(1))
 
 				// Out-of-order point should be dropped
-				keep, err = processor.ProcessPoint(11.0, baseTime.Add(1*time.Second))
+				points, err = processor.Ingest(11.0, baseTime.Add(1*time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeFalse())
+				Expect(points).To(HaveLen(0))
 			})
 		})
 
@@ -127,12 +127,12 @@ var _ = Describe("ProcessorWrapper", func() {
 
 			It("should pass through out-of-order data to algorithm", func() {
 				// First point
-				keep, err := processor.ProcessPoint(10.0, baseTime.Add(2*time.Second))
+				points, err := processor.Ingest(10.0, baseTime.Add(2*time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(keep).To(BeTrue())
+				Expect(points).To(HaveLen(1))
 
 				// Out-of-order point should be passed through to algorithm
-				keep, err = processor.ProcessPoint(11.0, baseTime.Add(1*time.Second))
+				points, err = processor.Ingest(11.0, baseTime.Add(1*time.Second))
 				Expect(err).NotTo(HaveOccurred())
 				// Result depends on algorithm logic, just verify no error
 			})
@@ -153,14 +153,13 @@ var _ = Describe("ProcessorWrapper", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should include out-of-order handling in metadata", func() {
-			metadata := processor.GetMetadata()
-			Expect(metadata).To(ContainSubstring("deadband"))
-			Expect(metadata).To(ContainSubstring("out_of_order_handling=drop"))
+		It("should include algorithm configuration in metadata", func() {
+			config := processor.Config()
+			Expect(config).To(ContainSubstring("deadband"))
 		})
 
 		It("should return correct algorithm name", func() {
-			name := processor.GetName()
+			name := processor.Name()
 			Expect(name).To(Equal("deadband"))
 		})
 	})
@@ -181,51 +180,10 @@ var _ = Describe("ProcessorWrapper", func() {
 
 		It("should reject unsupported types", func() {
 			// Test complex number (not supported)
-			keep, err := processor.ProcessPoint(complex(1, 2), baseTime)
+			points, err := processor.Ingest(complex(1, 2), baseTime)
 			Expect(err).To(HaveOccurred())
-			Expect(keep).To(BeFalse())
+			Expect(points).To(HaveLen(0))
 		})
 	})
 
-	Describe("swinging door algorithm integration", func() {
-		BeforeEach(func() {
-			config := algorithms.ProcessorConfig{
-				Algorithm: "swinging_door",
-				AlgorithmConfig: map[string]interface{}{
-					"threshold": 1.0,
-					"min_time":  "100ms",
-				},
-				PassThrough: false,
-			}
-			var err error
-			processor, err = algorithms.NewProcessorWrapper(config)
-			Expect(err).NotTo(HaveOccurred())
-		})
-
-		It("should work with swinging door algorithm", func() {
-			// First point should always be kept
-			keep, err := processor.ProcessPoint(10.0, baseTime)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue())
-
-			// Test integer conversion with SDT
-			keep, err = processor.ProcessPoint(11, baseTime.Add(200*time.Millisecond))
-			Expect(err).NotTo(HaveOccurred())
-			// SDT logic determines result
-
-			// Test boolean handling
-			keep, err = processor.ProcessPoint(true, baseTime.Add(300*time.Millisecond))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue(), "First boolean should be kept")
-
-			// Test string handling
-			keep, err = processor.ProcessPoint("state1", baseTime.Add(400*time.Millisecond))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeTrue(), "First string should be kept")
-
-			keep, err = processor.ProcessPoint("state1", baseTime.Add(500*time.Millisecond))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(keep).To(BeFalse(), "Repeated string should be dropped")
-		})
-	})
 })

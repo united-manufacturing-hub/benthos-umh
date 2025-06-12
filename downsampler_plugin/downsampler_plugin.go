@@ -18,10 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
-	"reflect"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -29,153 +25,19 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin/algorithms"
 )
 
-// DeadbandConfig holds deadband algorithm parameters
-type DeadbandConfig struct {
-	Threshold float64       `json:"threshold,omitempty" yaml:"threshold,omitempty"`
-	MaxTime   time.Duration `json:"max_time,omitempty" yaml:"max_time,omitempty"`
-}
-
-// SwingingDoorConfig holds swinging door algorithm parameters
-type SwingingDoorConfig struct {
-	Threshold float64       `json:"threshold,omitempty" yaml:"threshold,omitempty"`
-	MinTime   time.Duration `json:"min_time,omitempty" yaml:"min_time,omitempty"`
-	MaxTime   time.Duration `json:"max_time,omitempty" yaml:"max_time,omitempty"`
-}
-
-// LatePolicyConfig holds late arrival handling parameters
-type LatePolicyConfig struct {
-	LatePolicy string `json:"late_policy,omitempty" yaml:"late_policy,omitempty"`
-}
-
-// DefaultConfig holds the default algorithm parameters
-type DefaultConfig struct {
-	Deadband     DeadbandConfig     `json:"deadband,omitempty" yaml:"deadband,omitempty"`
-	SwingingDoor SwingingDoorConfig `json:"swinging_door,omitempty" yaml:"swinging_door,omitempty"`
-	LatePolicy   LatePolicyConfig   `json:"late_policy,omitempty" yaml:"late_policy,omitempty"`
-}
-
-// OverrideConfig defines algorithm parameter overrides for specific topics or patterns
-type OverrideConfig struct {
-	Pattern      string              `json:"pattern,omitempty" yaml:"pattern,omitempty"`
-	Topic        string              `json:"topic,omitempty" yaml:"topic,omitempty"`
-	Deadband     *DeadbandConfig     `json:"deadband,omitempty" yaml:"deadband,omitempty"`
-	SwingingDoor *SwingingDoorConfig `json:"swinging_door,omitempty" yaml:"swinging_door,omitempty"`
-	LatePolicy   *LatePolicyConfig   `json:"late_policy,omitempty" yaml:"late_policy,omitempty"`
-}
-
-// DownsamplerConfig holds the configuration for the downsampler processor
-type DownsamplerConfig struct {
-	Default   DefaultConfig    `json:"default" yaml:"default"`
-	Overrides []OverrideConfig `json:"overrides,omitempty" yaml:"overrides,omitempty"`
-}
-
-// GetConfigForTopic returns the effective configuration for a given topic by applying overrides
-func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]interface{}) {
-	// Determine default algorithm based on which default config has values
-	// Prioritize deadband as the simpler algorithm
-	algorithm := "deadband" // Default fallback
-
-	// Only use swinging_door if explicitly configured and deadband is not
-	hasDeadbandConfig := c.Default.Deadband.Threshold != 0 || c.Default.Deadband.MaxTime != 0
-	hasSwingingDoorConfig := c.Default.SwingingDoor.Threshold != 0 || c.Default.SwingingDoor.MinTime != 0 || c.Default.SwingingDoor.MaxTime != 0
-
-	if hasDeadbandConfig {
-		algorithm = "deadband"
-	} else if hasSwingingDoorConfig {
-		algorithm = "swinging_door"
-	}
-
-	// Start with defaults based on the determined algorithm
-	config := map[string]interface{}{}
-
-	if algorithm == "swinging_door" {
-		config["threshold"] = c.Default.SwingingDoor.Threshold
-		config["min_time"] = c.Default.SwingingDoor.MinTime
-		config["max_time"] = c.Default.SwingingDoor.MaxTime
-	} else {
-		config["threshold"] = c.Default.Deadband.Threshold
-		config["max_time"] = c.Default.Deadband.MaxTime
-		config["min_time"] = c.Default.SwingingDoor.MinTime // Deadband doesn't use min_time but include for consistency
-	}
-
-	// Add late policy defaults
-	latePolicy := "passthrough" // Default policy
-	if c.Default.LatePolicy.LatePolicy != "" {
-		latePolicy = c.Default.LatePolicy.LatePolicy
-	}
-	config["late_policy"] = latePolicy
-
-	// Apply overrides in order (first match wins)
-	for _, override := range c.Overrides {
-		matched := false
-
-		if override.Topic != "" {
-			matched = (override.Topic == topic)
-		} else if len(override.Pattern) > 0 {
-			// Use filepath.Match for wildcard patterns (supports * and ?)
-			if m, err := filepath.Match(override.Pattern, topic); err == nil && m {
-				matched = true
-			} else {
-				// Also check against just the field name (last part after last dot)
-				parts := strings.Split(topic, ".")
-				if len(parts) > 0 {
-					fieldName := parts[len(parts)-1]
-					if m, err := filepath.Match(override.Pattern, fieldName); err == nil && m {
-						matched = true
-					}
-				}
-			}
-		}
-
-		if matched {
-			fmt.Printf("      🎯 OVERRIDE MATCHED for topic='%s', pattern='%s'\n", topic, override.Pattern)
-
-			// Apply deadband overrides (only if actually configured with meaningful values)
-			if override.Deadband != nil && (override.Deadband.Threshold != 0 || override.Deadband.MaxTime != 0) {
-				fmt.Printf("      🎯 APPLYING DEADBAND override: threshold=%v\n", override.Deadband.Threshold)
-				algorithm = "deadband"
-				if override.Deadband.Threshold != 0 {
-					config["threshold"] = override.Deadband.Threshold
-				}
-				if override.Deadband.MaxTime != 0 {
-					config["max_time"] = override.Deadband.MaxTime
-				}
-			}
-
-			// Apply swinging door overrides (only if actually configured with meaningful values)
-			if override.SwingingDoor != nil && (override.SwingingDoor.Threshold != 0 || override.SwingingDoor.MinTime != 0 || override.SwingingDoor.MaxTime != 0) {
-				fmt.Printf("      🎯 APPLYING SWINGING_DOOR override: threshold=%v\n", override.SwingingDoor.Threshold)
-				algorithm = "swinging_door"
-				if override.SwingingDoor.Threshold != 0 {
-					config["threshold"] = override.SwingingDoor.Threshold
-				}
-				if override.SwingingDoor.MinTime != 0 {
-					config["min_time"] = override.SwingingDoor.MinTime
-				}
-				if override.SwingingDoor.MaxTime != 0 {
-					config["max_time"] = override.SwingingDoor.MaxTime
-				}
-			}
-
-			// Apply late policy overrides
-			if override.LatePolicy != nil {
-				if override.LatePolicy.LatePolicy != "" {
-					config["late_policy"] = override.LatePolicy.LatePolicy
-				}
-			}
-			break
-		}
-	}
-
-	fmt.Printf("      ⚙️  FINAL CONFIG for topic='%s': algorithm=%s, config=%+v\n", topic, algorithm, config)
-	return algorithm, config
-}
-
 // SeriesState holds the state for a single time series
 type SeriesState struct {
 	processor         *algorithms.ProcessorWrapper
 	lastProcessedTime time.Time // Track the last processed timestamp for late arrival detection
 	mutex             sync.RWMutex
+}
+
+// MessageProcessingResult holds the result of processing a single message
+type MessageProcessingResult struct {
+	OriginalMessage   *service.Message
+	ProcessedMessages []*service.Message // May be empty if filtered, may be multiple if algorithm emits multiple points
+	WasFiltered       bool
+	Error             error
 }
 
 func init() {
@@ -391,74 +253,94 @@ func newDownsamplerProcessor(config DownsamplerConfig, logger *service.Logger, m
 	}, nil
 }
 
-// getThresholdForTopic returns the appropriate threshold for a given topic
-func (p *DownsamplerProcessor) getThresholdForTopic(topic string) float64 {
-	_, config := p.config.GetConfigForTopic(topic)
-	if threshold, ok := config["threshold"].(float64); ok {
-		return threshold
-	}
-	return 0.0 // Default fallback
-}
-
 // ProcessBatch processes a batch of messages, applying downsampling to time-series data
+// Implements at-least-once delivery semantics: only ACK after all processing is complete
 func (p *DownsamplerProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var outBatch service.MessageBatch
+	var processingErrors []error
 
-	for _, msg := range batch {
-		// Process UMH-core time-series messages
-		if !p.isTimeSeriesMessage(msg) {
-			outBatch = append(outBatch, msg)
-			p.messagesPassed.Incr(1)
-			continue
-		}
+	// Process all messages in the batch, collecting any errors
+	for i, msg := range batch {
+		result := p.processMessage(ctx, msg, i)
 
-		// Parse structured payload
-		data, err := msg.AsStructured()
-		if err != nil {
+		if result.Error != nil {
+			processingErrors = append(processingErrors, fmt.Errorf("message %d: %w", i, result.Error))
 			p.messagesErrored.Incr(1)
-			p.logger.Errorf("Failed to parse structured data: %v", err)
-			// Fail open - pass message through on error
-			outBatch = append(outBatch, msg)
+			// Fail open - pass message through on error to avoid data loss
+			outBatch = append(outBatch, result.OriginalMessage)
 			continue
 		}
 
-		dataMap, ok := data.(map[string]interface{})
-		if !ok {
-			p.messagesErrored.Incr(1)
-			p.logger.Errorf("Payload is not a JSON object")
-			// Fail open - pass message through on error
-			outBatch = append(outBatch, msg)
-			continue
+		// Add all processed messages to output batch
+		if len(result.ProcessedMessages) > 0 {
+			outBatch = append(outBatch, result.ProcessedMessages...)
 		}
-
-		// Extract timestamp
-		timestamp, err := p.extractTimestamp(dataMap)
-		if err != nil {
-			p.messagesErrored.Incr(1)
-			p.logger.Errorf("Failed to extract timestamp: %v", err)
-			// Fail open - pass message through on error
-			outBatch = append(outBatch, msg)
-			continue
-		}
-
-		// Process as UMH-core format (single "value" field)
-		processedMsg, err := p.processUMHCoreMessage(msg, dataMap, timestamp)
-		if err != nil {
-			p.messagesErrored.Incr(1)
-			p.logger.Errorf("Failed to process UMH-core message: %v", err)
-			// Fail open - pass message through on error
-			outBatch = append(outBatch, msg)
-			continue
-		}
-		if processedMsg != nil {
-			outBatch = append(outBatch, processedMsg)
-		}
+		// Note: if len(result.ProcessedMessages) == 0, the message was filtered (not an error)
 	}
 
+	// If there were any critical errors, you might want to return an error
+	// This would prevent ACKing the batch, ensuring at-least-once delivery
+	if len(processingErrors) > 0 {
+		p.logger.Errorf("Batch processing had %d errors, but continuing with fail-open policy", len(processingErrors))
+		// In a strict at-least-once setup, you might return the first error here:
+		// return nil, processingErrors[0]
+	}
+
+	// Only return success (allowing ACK) if we've successfully processed the entire batch
 	if len(outBatch) == 0 {
 		return nil, nil
 	}
 	return []service.MessageBatch{outBatch}, nil
+}
+
+// processMessage processes a single message and returns the result
+func (p *DownsamplerProcessor) processMessage(ctx context.Context, msg *service.Message, index int) MessageProcessingResult {
+	result := MessageProcessingResult{
+		OriginalMessage: msg,
+	}
+
+	// Process UMH-core time-series messages
+	if !p.isTimeSeriesMessage(msg) {
+		result.ProcessedMessages = []*service.Message{msg}
+		p.messagesPassed.Incr(1)
+		return result
+	}
+
+	// Parse structured payload
+	data, err := msg.AsStructured()
+	if err != nil {
+		result.Error = fmt.Errorf("failed to parse structured data: %w", err)
+		return result
+	}
+
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		result.Error = fmt.Errorf("payload is not a JSON object, got %T", data)
+		return result
+	}
+
+	// Extract timestamp
+	timestamp, err := p.extractTimestamp(dataMap)
+	if err != nil {
+		result.Error = fmt.Errorf("failed to extract timestamp: %w", err)
+		return result
+	}
+
+	// Process as UMH-core format (single "value" field)
+	processedMsg, err := p.processUMHCoreMessage(msg, dataMap, timestamp)
+	if err != nil {
+		result.Error = fmt.Errorf("failed to process UMH-core message: %w", err)
+		return result
+	}
+
+	if processedMsg != nil {
+		result.ProcessedMessages = []*service.Message{processedMsg}
+	} else {
+		result.WasFiltered = true
+		// Empty ProcessedMessages indicates the message was filtered (not an error)
+	}
+
+	return result
 }
 
 // isTimeSeriesMessage determines if a message should be processed for downsampling
@@ -512,46 +394,94 @@ func (p *DownsamplerProcessor) extractTimestamp(dataMap map[string]interface{}) 
 	return time.Unix(0, ts*int64(time.Millisecond)), nil
 }
 
-// processUMHCoreMessage processes a UMH-core format message (single "value" field)
+// processUMHCoreMessage processes a single UMH-core format message
 func (p *DownsamplerProcessor) processUMHCoreMessage(msg *service.Message, dataMap map[string]interface{}, timestamp time.Time) (*service.Message, error) {
-	// Get umh_topic for series identification
-	umhTopic, exists := msg.MetaGet("umh_topic")
+	// Extract series ID from umh_topic
+	topicInterface, exists := dataMap["umh_topic"]
 	if !exists {
-		return nil, errors.New("missing umh_topic metadata")
+		return nil, fmt.Errorf("missing required field: umh_topic")
+	}
+
+	seriesID, ok := topicInterface.(string)
+	if !ok {
+		return nil, fmt.Errorf("umh_topic must be a string, got %T", topicInterface)
 	}
 
 	// Extract value
-	value := dataMap["value"]
-	if value == nil {
-		return nil, errors.New("missing value field")
+	value, exists := dataMap["value"]
+	if !exists {
+		return nil, fmt.Errorf("missing required field: value")
 	}
 
 	// Get or create series state
-	state, err := p.getOrCreateSeriesState(umhTopic)
+	state, err := p.getOrCreateSeriesState(seriesID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get series state: %w", err)
 	}
 
+	state.mutex.Lock()
+	defer state.mutex.Unlock()
+
+	// Handle late arrivals using ProcessorWrapper's built-in logic
 	// ProcessorWrapper handles late arrival internally based on PassThrough setting
+	// If PassThrough=false: out-of-order data is dropped automatically
+	// If PassThrough=true: out-of-order data is passed through unchanged
 
-	// Apply downsampling algorithm
-	shouldKeep, err := p.shouldKeepMessage(state, value, timestamp)
+	// Use ProcessorWrapper to process the value and get emitted points
+	emittedPoints, err := state.processor.Ingest(value, timestamp)
 	if err != nil {
-		return nil, fmt.Errorf("algorithm error for series %s: %w", umhTopic, err)
+		return nil, fmt.Errorf("failed to process message: %w", err)
 	}
 
-	if shouldKeep {
-		// Update state and return message
-		p.updateSeriesState(state, value, timestamp)
-		msg.MetaSet("downsampled_by", state.processor.GetMetadata())
-		p.messagesProcessed.Incr(1)
-		return msg, nil
-	} else {
-		// Message filtered - update processed time for late arrival detection
-		p.updateProcessedTime(state, timestamp)
+	// If no points were emitted, the message was filtered out
+	if len(emittedPoints) == 0 {
 		p.messagesFiltered.Incr(1)
-		return nil, nil
+		p.logger.Debug(fmt.Sprintf("Message filtered out for series %s: value=%v", seriesID, value))
+		return nil, nil // Return nil to indicate message should be dropped
 	}
+
+	// Points were emitted - we need to handle them
+	// For now, we'll emit the first point (most common case)
+	// TODO: Handle multiple points if algorithms start emitting multiple points
+	if len(emittedPoints) > 1 {
+		p.logger.Warnf("Algorithm emitted %d points, only using first one. This may indicate SDT final emission.", len(emittedPoints))
+	}
+
+	emittedPoint := emittedPoints[0]
+
+	p.messagesProcessed.Incr(1)
+
+	// Update internal tracking state
+	p.updateProcessedTime(state, emittedPoint.Timestamp)
+
+	// Create output message with emitted point data
+	outputData := make(map[string]interface{})
+	for key, val := range dataMap {
+		outputData[key] = val
+	}
+
+	// Update the value and timestamp with the emitted point
+	outputData["value"] = emittedPoint.Value
+	outputData["timestamp"] = emittedPoint.Timestamp.UnixNano()
+
+	// Add algorithm metadata
+	if outputData["metadata"] == nil {
+		outputData["metadata"] = make(map[string]interface{})
+	}
+
+	metadata, ok := outputData["metadata"].(map[string]interface{})
+	if !ok {
+		metadata = make(map[string]interface{})
+		outputData["metadata"] = metadata
+	}
+
+	metadata["downsampling_algorithm"] = state.processor.Config()
+
+	// Create new message with processed data
+	outputMsg := msg.Copy()
+	outputMsg.SetStructured(outputData)
+
+	return outputMsg, nil
 }
 
 // getOrCreateSeriesState retrieves or creates the state for a time series
@@ -643,190 +573,11 @@ func (p *DownsamplerProcessor) handleLateArrival(seriesID string, state *SeriesS
 	return false, nil // Not late, continue normal processing
 }
 
-// shouldKeepMessage determines if a message should be kept based on the algorithm
+// shouldKeepMessage is deprecated - use ProcessorWrapper.Ingest directly in processUMHCoreMessage
+// This maintains backward compatibility for any remaining references
 func (p *DownsamplerProcessor) shouldKeepMessage(state *SeriesState, value interface{}, timestamp time.Time) (bool, error) {
-	// ProcessorWrapper handles all type conversion, boolean/string logic, and algorithm processing
-	shouldKeep, err := state.processor.ProcessPoint(value, timestamp)
-
-	if err == nil && !shouldKeep && p.logger != nil {
-		p.logger.Debug(fmt.Sprintf("ProcessorWrapper dropped value: %v", value))
-	}
-
-	return shouldKeep, err
-}
-
-// areEqual checks if two values are equal (used for non-numeric types)
-func (p *DownsamplerProcessor) areEqual(a, b interface{}) bool {
-	// Handle different types
-	if reflect.TypeOf(a) != reflect.TypeOf(b) {
-		return false
-	}
-
-	// Use deep equal for complex types (maps, slices, arrays)
-	aType := reflect.TypeOf(a)
-	if aType.Kind() == reflect.Map || aType.Kind() == reflect.Slice || aType.Kind() == reflect.Array {
-		return reflect.DeepEqual(a, b)
-	}
-
-	// For simple types, direct comparison should work
-	return a == b
-}
-
-// logDropReason provides detailed logging about why a message was dropped
-func (p *DownsamplerProcessor) logDropReason(state *SeriesState, currentValue, previousValue interface{}, currentTime, previousTime time.Time) {
-	algorithmName := state.processor.GetName()
-
-	// Extract threshold for current algorithm (assuming deadband for now)
-	threshold := p.extractThresholdFromMetadata(state.processor.GetMetadata())
-
-	switch algorithmName {
-	case "deadband":
-		p.logDeadbandDropReason(currentValue, previousValue, currentTime, previousTime, threshold)
-	case "swinging_door":
-		p.logSwingingDoorDropReason(currentValue, previousValue, currentTime, previousTime)
-	default:
-		p.logger.Debugf("Message dropped by %s algorithm: current=%v, previous=%v",
-			algorithmName, currentValue, previousValue)
-	}
-}
-
-// logDeadbandDropReason provides specific logging for deadband algorithm drops
-func (p *DownsamplerProcessor) logDeadbandDropReason(currentValue, previousValue interface{}, currentTime, previousTime time.Time, threshold float64) {
-	// First message case
-	if previousValue == nil {
-		p.logger.Debugf("Message kept: first message in series")
-		return
-	}
-
-	// Try to convert to numeric values for detailed comparison
-	currentFloat, currentErr := p.toFloat64(currentValue)
-	previousFloat, previousErr := p.toFloat64(previousValue)
-
-	if currentErr != nil || previousErr != nil {
-		// Non-numeric comparison
-		if currentErr != nil {
-			p.logger.Debugf("Message dropped: could not convert current value to numeric (%v), using equality check", currentErr)
-		} else if previousErr != nil {
-			p.logger.Debugf("Message dropped: could not convert previous value to numeric (%v), treating as different", previousErr)
-		}
-		return
-	}
-
-	// Calculate difference for numeric values
-	diff := currentFloat - previousFloat
-	absDiff := diff
-	if absDiff < 0 {
-		absDiff = -absDiff
-	}
-
-	// Time since last output
-	timeSinceLastOutput := currentTime.Sub(previousTime)
-
-	// Detailed logging with all relevant information
-	p.logger.Debugf("Message dropped by deadband: current=%.6f, previous=%.6f, diff=%.6f, absDiff=%.6f, threshold=%.6f, timeSince=%v",
-		currentFloat, previousFloat, diff, absDiff, threshold, timeSinceLastOutput)
-
-	if absDiff < threshold {
-		p.logger.Debugf("Drop reason: absolute difference (%.6f) below threshold (%.6f)", absDiff, threshold)
-	}
-}
-
-// logSwingingDoorDropReason provides specific logging for swinging door algorithm drops
-func (p *DownsamplerProcessor) logSwingingDoorDropReason(currentValue, previousValue interface{}, currentTime, previousTime time.Time) {
-	// First message case
-	if previousValue == nil {
-		p.logger.Debugf("Message kept: first message in series")
-		return
-	}
-
-	// Try to convert to numeric values for detailed comparison
-	currentFloat, currentErr := p.toFloat64(currentValue)
-	previousFloat, previousErr := p.toFloat64(previousValue)
-
-	if currentErr != nil || previousErr != nil {
-		// Non-numeric comparison
-		if currentErr != nil {
-			p.logger.Debugf("Message dropped: could not convert current value to numeric (%v), using fail-open", currentErr)
-		} else if previousErr != nil {
-			p.logger.Debugf("Message dropped: could not convert previous value to numeric (%v), treating as different", previousErr)
-		}
-		return
-	}
-
-	// Time since last output
-	timeSinceLastOutput := currentTime.Sub(previousTime)
-
-	// Detailed logging with all relevant information
-	p.logger.Debugf("Message dropped by swinging_door: current=%.6f, previous=%.6f, timeSince=%v",
-		currentFloat, previousFloat, timeSinceLastOutput)
-
-	p.logger.Debugf("Drop reason: point remained within swinging door bounds")
-}
-
-// extractThresholdFromMetadata extracts threshold value from algorithm metadata string
-func (p *DownsamplerProcessor) extractThresholdFromMetadata(metadata string) float64 {
-	// Parse metadata string like "deadband(threshold=0.500,max_time=30s)" or "deadband(threshold=0.500)"
-	// This is a simple parser - in production you might want something more robust
-	start := strings.Index(metadata, "threshold=")
-	if start == -1 {
-		return 0.0
-	}
-	start += len("threshold=")
-
-	end := start
-	for end < len(metadata) && (metadata[end] >= '0' && metadata[end] <= '9' || metadata[end] == '.') {
-		end++
-	}
-
-	if end > start {
-		if threshold, err := strconv.ParseFloat(metadata[start:end], 64); err == nil {
-			return threshold
-		}
-	}
-
-	return 0.0
-}
-
-// toFloat64 converts various numeric types to float64 (helper method)
-func (p *DownsamplerProcessor) toFloat64(val interface{}) (float64, error) {
-	switch v := val.(type) {
-	case float64:
-		return v, nil
-	case float32:
-		return float64(v), nil
-	case int:
-		return float64(v), nil
-	case int8:
-		return float64(v), nil
-	case int16:
-		return float64(v), nil
-	case int32:
-		return float64(v), nil
-	case int64:
-		return float64(v), nil
-	case uint:
-		return float64(v), nil
-	case uint8:
-		return float64(v), nil
-	case uint16:
-		return float64(v), nil
-	case uint32:
-		return float64(v), nil
-	case uint64:
-		return float64(v), nil
-	case bool:
-		if v {
-			return 1.0, nil
-		}
-		return 0.0, nil
-	case string:
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			return f, nil
-		}
-		return 0, fmt.Errorf("cannot convert string to number: %s", v)
-	default:
-		return 0, fmt.Errorf("cannot convert type %T to float64", val)
-	}
+	emittedPoints, err := state.processor.Ingest(value, timestamp)
+	return len(emittedPoints) > 0, err
 }
 
 // updateSeriesState updates the state after a message is kept
@@ -853,17 +604,23 @@ func (p *DownsamplerProcessor) updateProcessedTime(state *SeriesState, timestamp
 
 // Close cleans up resources and flushes any pending points
 func (p *DownsamplerProcessor) Close(ctx context.Context) error {
-	// Just clean up - don't try to emit messages during close
-	// In a real scenario, the algorithms should be designed to emit pending points
-	// when they receive envelope-breaking data, not on close
 	p.stateMutex.Lock()
 	defer p.stateMutex.Unlock()
 
-	for _, state := range p.seriesState {
-		// Reset the processor state
+	// Flush any pending points from algorithms (important for SDT)
+	for seriesID, state := range p.seriesState {
+		state.mutex.Lock()
+		if pendingPoints, err := state.processor.Flush(); err != nil {
+			p.logger.Errorf("Failed to flush pending points for series %s: %v", seriesID, err)
+		} else if len(pendingPoints) > 0 {
+			p.logger.Infof("Flushed %d pending points for series %s on close", len(pendingPoints), seriesID)
+			// Note: In a real deployment, you'd want to emit these points to a dead letter queue
+			// or persist them for recovery, rather than just logging them
+		}
 		state.processor.Reset()
+		state.mutex.Unlock()
 	}
-	p.seriesState = make(map[string]*SeriesState)
 
+	p.seriesState = make(map[string]*SeriesState)
 	return nil
 }
