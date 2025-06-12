@@ -64,12 +64,23 @@ func newSwingingDoor(cfg map[string]interface{}) (StreamCompressor, error) {
 		maxT = d
 	}
 
+	// ---- optional: min_time ---------------------------------------
+	var minT time.Duration
+	if s, ok := cfg["min_time"].(string); ok && s != "" {
+		d, err := time.ParseDuration(s)
+		if err != nil || d < 0 {
+			return nil, fmt.Errorf("%s: invalid min_time: %v", name, s)
+		}
+		minT = d
+	}
+
 	c := &SwingingDoorAlgorithm{
 		threshold: thr,
 		maxTime:   maxT,
+		minTime:   minT,
 	}
 	c.openDoor() // initialise slopes
-	debugLog("Created SDT algorithm: threshold=%.3f, maxTime=%v", thr, maxT)
+	debugLog("Created SDT algorithm: threshold=%.3f, maxTime=%v, minTime=%v", thr, maxT, minT)
 	return c, nil
 }
 
@@ -87,6 +98,7 @@ type SwingingDoorAlgorithm struct {
 	// -------- configuration ----------------------------------------------------
 	threshold float64
 	maxTime   time.Duration // 0 → disabled
+	minTime   time.Duration // 0 → disabled
 
 	// -------- state ------------------------------------------------------------
 	started      bool   // becomes true after first ingest
@@ -152,6 +164,18 @@ func (sd *SwingingDoorAlgorithm) Ingest(v float64, ts time.Time) ([]Point, error
 	emitNeeded := sd.mustEmit(v, ts)
 	debugLog("EMIT CHECK: emitNeeded=%t", emitNeeded)
 
+	// ---------- NEW: Delta-Min gate -------------------------------------------
+	if emitNeeded && sd.minTime > 0 &&
+		ts.Sub(sd.lastEmitTime) < sd.minTime {
+		// Not enough time has elapsed → keep sliding candidate
+		debugLog("DELTA-MIN gate: hold candidate (Δt=%v < %v)",
+			ts.Sub(sd.lastEmitTime), sd.minTime)
+
+		sd.cand = &Point{Value: v, Timestamp: ts}
+		sd.closeDoor(*sd.cand)
+		return out, nil // nothing emitted this call
+	}
+
 	// ---- emit the candidate if required -----------------------------------
 	if emitNeeded {
 		emittedPoint := *sd.cand
@@ -206,6 +230,7 @@ func (sd *SwingingDoorAlgorithm) Reset() {
 	*sd = SwingingDoorAlgorithm{
 		threshold: sd.threshold,
 		maxTime:   sd.maxTime,
+		minTime:   sd.minTime,
 	}
 	sd.openDoor()
 }
@@ -214,6 +239,9 @@ func (sd *SwingingDoorAlgorithm) Config() string {
 	cfg := fmt.Sprintf("swinging_door(threshold=%.3f", sd.threshold)
 	if sd.maxTime > 0 {
 		cfg += ",max_time=" + sd.maxTime.String()
+	}
+	if sd.minTime > 0 {
+		cfg += ",min_time=" + sd.minTime.String()
 	}
 	cfg += ")"
 	return cfg

@@ -255,6 +255,35 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				},
 				ExpectedReduction: 40, // 4 out of 10 points filtered = 40% reduction
 			}),
+
+			Entry("MinDelta - Minimum time constraint", SwingingDoorTestCase{
+				Name:        "min_delta_time_constraint",
+				Description: "Test minimum time between emissions - prevents archiving more frequently than every 1 time unit",
+				Config: map[string]interface{}{
+					"threshold": 1.0,
+					"min_time":  "1s", // Prevents archiving more frequently than every 1 time unit
+				},
+				InputPoints: []TestPoint{
+					{TimeSeconds: 0, Value: 2},  // x=0, y=2
+					{TimeSeconds: 1, Value: 2},  // x=1, y=2 (held by min_time)
+					{TimeSeconds: 2, Value: 2},  // x=2, y=2 (held by min_time)
+					{TimeSeconds: 3, Value: 2},  // x=3, y=2 (held by min_time)
+					{TimeSeconds: 4, Value: 2},  // x=4, y=2 (emits due to value change)
+					{TimeSeconds: 5, Value: 10}, // x=5, y=10 (emits due to large change)
+					{TimeSeconds: 6, Value: 3},  // x=6, y=3 (emits due to value change)
+					{TimeSeconds: 7, Value: 3},  // x=7, y=3 (held by min_time)
+					{TimeSeconds: 8, Value: 3},  // x=8, y=3 (held by min_time)
+					{TimeSeconds: 9, Value: 3},  // x=9, y=3 (emits due to value change)
+				},
+				ExpectedEmitted: []TestPoint{
+					{TimeSeconds: 0, Value: 2},  // Index 0 (first point always emits)
+					{TimeSeconds: 4, Value: 2},  // Index 4 (emits after min_time)
+					{TimeSeconds: 5, Value: 10}, // Index 5 (emits due to large change)
+					{TimeSeconds: 6, Value: 3},  // Index 7 (emits due to large change)
+					{TimeSeconds: 9, Value: 3},  // Index 9 (emits after min_time)
+				},
+				ExpectedReduction: 50, // 5 out of 10 points filtered = 50% reduction
+			}),
 		)
 	})
 
