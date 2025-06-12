@@ -15,8 +15,6 @@
 package downsampler_plugin_test
 
 import (
-	"os"
-
 	. "github.com/onsi/ginkgo/v2"
 )
 
@@ -25,12 +23,6 @@ import (
 // Set TEST_DOWNSAMPLER=1 to enable comprehensive end-to-end tests.
 
 var _ = Describe("Downsampler Behavior", Ordered, func() {
-	BeforeAll(func() {
-		// Skip comprehensive E2E tests unless explicitly enabled
-		if os.Getenv("TEST_DOWNSAMPLER") != "1" {
-			Skip("Comprehensive E2E tests require TEST_DOWNSAMPLER=1 environment variable")
-		}
-	})
 
 	Describe("Basic Deadband Algorithm Behavior", func() {
 		Context("Numeric Threshold Filtering", func() {
@@ -100,8 +92,8 @@ downsampler:
 						{Value: 110, TimestampMs: 4000, Topic: "umh.v1.plant.counter"}, // Filtered (diff=3 < 5)
 					},
 					ExpectedOutput: []ExpectedMessage{
-						{Value: 100, TimestampMs: 1000, Topic: "umh.v1.plant.counter", HasMetadata: map[string]string{"downsampled_by": "deadband"}},
-						{Value: 107, TimestampMs: 3000, Topic: "umh.v1.plant.counter", HasMetadata: map[string]string{"downsampled_by": "deadband"}},
+						{Value: 100.0, TimestampMs: 1000, Topic: "umh.v1.plant.counter", HasMetadata: map[string]string{"downsampled_by": "deadband"}},
+						{Value: 107.0, TimestampMs: 3000, Topic: "umh.v1.plant.counter", HasMetadata: map[string]string{"downsampled_by": "deadband"}},
 					},
 				}),
 			)
