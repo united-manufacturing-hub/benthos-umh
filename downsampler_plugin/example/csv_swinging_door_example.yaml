@@ -13,18 +13,19 @@
 # limitations under the License.
 
 logger:
-  level: DEBUG
+  level: INFO
   add_timestamp: true
   static_fields:
     "@service": benthos
 
 input:
   csv:
-    paths: [ "./export_small.csv" ]
+    paths: [ "./export.csv" ]
     parse_header_row: true
     delimiter: ","
 
 pipeline:
+  threads: 1
   processors:
 
     # Convert timestamp to Unix milliseconds for downsampler
@@ -53,7 +54,7 @@ pipeline:
     - downsampler:
         default:
           deadband:
-            threshold: 1        # Swinging door threshold
+            threshold: 5        # Swinging door threshold
             max_time: 30s        # Maximum time interval
             
     # Convert back to readable timestamp and format as CSV
@@ -66,8 +67,6 @@ pipeline:
                this.value.string()
 
 output:
-  stdout:
-    codec: lines
-  #file:
-  #  path: "./export_compressed.csv"
-  #  codec: lines 
+  file:
+    path: "./export_compressed_deadband_1.csv"
+    codec: lines 

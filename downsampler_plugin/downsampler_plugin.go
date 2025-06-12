@@ -281,6 +281,8 @@ type DownsamplerProcessor struct {
 	flushTicker   *time.Ticker              // Periodic timer for checking idle candidates
 	closeChan     chan struct{}             // Signals background goroutine shutdown
 	shutdownBatch chan service.MessageBatch // Channel for emitting idle-flushed messages
+
+	closeOnce sync.Once // Ensures Close is only executed once
 }
 
 // newDownsamplerProcessor creates and initializes a new downsampler processor instance with comprehensive safety mechanisms.
@@ -637,17 +639,18 @@ func (p *DownsamplerProcessor) updateProcessedTime(state *SeriesState, timestamp
 // WHY still fail‑open here?
 //   - Better to risk duplicate data than to drop final points.
 func (p *DownsamplerProcessor) Close(ctx context.Context) error {
-	// Stop the idle flush goroutine if not already stopped
-	if p.closeChan != nil {
-		close(p.closeChan)
-		p.closeChan = nil
-	}
+	// Use sync.Once to ensure closeChan is only closed once
+	p.closeOnce.Do(func() {
+		if p.closeChan != nil {
+			close(p.closeChan)
+			p.closeChan = nil
+		}
 
-	// Stop the ticker if not already stopped
-	if p.flushTicker != nil {
-		p.flushTicker.Stop()
-		p.flushTicker = nil
-	}
+		if p.flushTicker != nil {
+			p.flushTicker.Stop()
+			p.flushTicker = nil
+		}
+	})
 
 	p.stateMutex.Lock()
 	defer p.stateMutex.Unlock()
