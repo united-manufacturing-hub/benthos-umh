@@ -109,6 +109,8 @@ func (mp *MessageProcessor) isTimeSeriesMessage(msg *service.Message) bool {
 	_, hasTimestamp := data["timestamp_ms"]
 	_, hasValue := data["value"]
 
+	// TODO: check that there are no other fields
+
 	// Require both timestamp_ms and value fields for UMH-core format
 	return hasTimestamp && hasValue
 }
@@ -138,7 +140,7 @@ func (mp *MessageProcessor) extractTimestamp(dataMap map[string]interface{}) (ti
 // processUMHCoreMessage processes a single UMH-core format message
 func (mp *MessageProcessor) processUMHCoreMessage(msg *service.Message, dataMap map[string]interface{}, timestamp time.Time) (*service.Message, error) {
 	// Extract series ID
-	seriesID, err := mp.extractSeriesID(dataMap)
+	seriesID, err := mp.extractSeriesID(msg)
 	if err != nil {
 		return nil, err
 	}
@@ -159,16 +161,16 @@ func (mp *MessageProcessor) processUMHCoreMessage(msg *service.Message, dataMap 
 	return mp.processWithState(msg, dataMap, value, timestamp, seriesID, state)
 }
 
-// extractSeriesID extracts the series ID from the message data
-func (mp *MessageProcessor) extractSeriesID(dataMap map[string]interface{}) (string, error) {
-	topicInterface, exists := dataMap["umh_topic"]
+// extractSeriesID extracts the series ID from the message metadata
+// The umh_topic metadata field is required for UMH-core time-series processing
+func (mp *MessageProcessor) extractSeriesID(msg *service.Message) (string, error) {
+	seriesID, exists := msg.MetaGet("umh_topic")
 	if !exists {
-		return "", fmt.Errorf("missing required field: umh_topic")
+		return "", fmt.Errorf("missing required metadata field: umh_topic")
 	}
 
-	seriesID, ok := topicInterface.(string)
-	if !ok {
-		return "", fmt.Errorf("umh_topic must be a string, got %T", topicInterface)
+	if seriesID == "" {
+		return "", fmt.Errorf("umh_topic metadata cannot be empty")
 	}
 
 	return seriesID, nil
@@ -183,7 +185,7 @@ func (mp *MessageProcessor) extractValue(dataMap map[string]interface{}) (interf
 	return value, nil
 }
 
-// processWithState processes the message using the series state
+// processWithState processes the message using the series state with ACK buffering
 func (mp *MessageProcessor) processWithState(msg *service.Message, dataMap map[string]interface{}, value interface{}, timestamp time.Time, seriesID string, state *SeriesState) (*service.Message, error) {
 	state.mutex.Lock()
 	defer state.mutex.Unlock()
@@ -194,30 +196,102 @@ func (mp *MessageProcessor) processWithState(msg *service.Message, dataMap map[s
 		return nil, fmt.Errorf("failed to process message: %w", err)
 	}
 
-	// If no points were emitted, the message was filtered out
-	if len(emittedPoints) == 0 {
-		mp.processor.metrics.IncrementFiltered()
-		mp.processor.logger.Debug(fmt.Sprintf("Message filtered out for series %s: value=%v", seriesID, value))
-		return nil, nil // Return nil to indicate message should be dropped
-	}
+	// Convert timestamp to Unix milliseconds for comparison
+	timestampMs := timestamp.UnixNano() / int64(time.Millisecond)
 
-	// Handle emitted points
-	return mp.createOutputMessage(msg, dataMap, emittedPoints, state)
+	// Handle different emission scenarios
+	switch len(emittedPoints) {
+	case 0:
+		// Algorithm filtered - stash message as candidate
+		state.stash(msg)
+		mp.processor.metrics.IncrementFiltered()
+		mp.processor.logger.Debug(fmt.Sprintf("Message filtered and stashed for series %s: value=%v", seriesID, value))
+		return nil, nil // No immediate output
+
+	case 1:
+		// Single point emitted - this could be current or previous point
+		emittedPoint := emittedPoints[0]
+		emittedPointMs := emittedPoint.Timestamp.UnixNano() / int64(time.Millisecond)
+
+		if emittedPointMs == timestampMs {
+			// Current point emitted - release any buffered candidate and emit current
+			state.releaseCandidate() // ACK the buffered message if any
+			mp.processor.metrics.IncrementProcessed()
+			mp.processor.updateProcessedTime(state, emittedPoint.Timestamp)
+			return mp.createOutputMessage(msg, dataMap, emittedPoints, state)
+		} else {
+			// Previous point emitted - emit buffered candidate, then stash current
+			bufferedMsg := state.releaseCandidate()
+			if bufferedMsg != nil {
+				// Clone template from buffered message and emit it with algorithm point
+				outputMsg, err := mp.cloneTemplate(bufferedMsg, emittedPoint, state)
+				if err != nil {
+					return nil, fmt.Errorf("failed to create output from buffered message: %w", err)
+				}
+				// Stash current message as new candidate
+				state.stash(msg)
+				mp.processor.metrics.IncrementProcessed()
+				mp.processor.updateProcessedTime(state, emittedPoint.Timestamp)
+				return outputMsg, nil
+			} else {
+				// No buffered message - this shouldn't happen in normal operation
+				mp.processor.logger.Warnf("Algorithm emitted previous point but no candidate was buffered for series %s", seriesID)
+				state.stash(msg)
+				return nil, nil
+			}
+		}
+
+	case 2:
+		// Two points emitted (emit-previous scenario) - emit first (previous), stash current
+		previousPoint := emittedPoints[0]
+		currentPoint := emittedPoints[1]
+
+		// Release buffered candidate and emit it with previous point
+		bufferedMsg := state.releaseCandidate()
+		if bufferedMsg != nil {
+			outputMsg, err := mp.cloneTemplate(bufferedMsg, previousPoint, state)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create output from buffered message: %w", err)
+			}
+			// Stash current message with current point timestamp
+			state.stash(msg)
+			mp.processor.metrics.IncrementProcessed()
+			mp.processor.updateProcessedTime(state, previousPoint.Timestamp)
+			return outputMsg, nil
+		} else {
+			// No buffered message - emit current point directly
+			mp.processor.logger.Warnf("Algorithm emitted two points but no candidate was buffered for series %s", seriesID)
+			mp.processor.metrics.IncrementProcessed()
+			mp.processor.updateProcessedTime(state, currentPoint.Timestamp)
+			return mp.createOutputMessage(msg, dataMap, []algorithms.GenericPoint{currentPoint}, state)
+		}
+
+	default:
+		// Multiple points emitted (unusual) - emit all points to avoid data loss
+		mp.processor.logger.Warnf("Algorithm emitted %d points for series %s, emitting all points", len(emittedPoints), seriesID)
+		mp.processor.metrics.IncrementProcessed()
+		// Update processed time with the latest timestamp
+		latestTime := emittedPoints[0].Timestamp
+		for _, pt := range emittedPoints {
+			if pt.Timestamp.After(latestTime) {
+				latestTime = pt.Timestamp
+			}
+		}
+		mp.processor.updateProcessedTime(state, latestTime)
+		return mp.createOutputMessage(msg, dataMap, emittedPoints, state)
+	}
 }
 
 // createOutputMessage creates the output message from emitted points
-func (mp *MessageProcessor) createOutputMessage(msg *service.Message, dataMap map[string]interface{}, emittedPoints []algorithms.Point, state *SeriesState) (*service.Message, error) {
-	// Points were emitted - we need to handle them
-	// For now, we'll emit the first point (most common case)
-	if len(emittedPoints) > 1 {
-		mp.processor.logger.Warnf("Algorithm emitted %d points, only using first one. This may indicate SDT final emission.", len(emittedPoints))
+// If multiple points are emitted, only the first one is used (most common case)
+// The caller should handle multiple points if needed
+func (mp *MessageProcessor) createOutputMessage(msg *service.Message, dataMap map[string]interface{}, emittedPoints []algorithms.GenericPoint, state *SeriesState) (*service.Message, error) {
+	if len(emittedPoints) == 0 {
+		return nil, fmt.Errorf("no points to emit")
 	}
 
+	// Use the first point for the output message
 	emittedPoint := emittedPoints[0]
-	mp.processor.metrics.IncrementProcessed()
-
-	// Update internal tracking state
-	mp.processor.updateProcessedTime(state, emittedPoint.Timestamp)
 
 	// Create output message with emitted point data
 	outputData := make(map[string]interface{})
@@ -226,30 +300,63 @@ func (mp *MessageProcessor) createOutputMessage(msg *service.Message, dataMap ma
 	}
 
 	// Update the value and timestamp with the emitted point
+	// Preserve the original value type (string, bool, or numeric)
 	outputData["value"] = emittedPoint.Value
-	outputData["timestamp"] = emittedPoint.Timestamp.UnixNano()
-
-	// Add algorithm metadata
-	mp.addAlgorithmMetadata(outputData, state)
+	outputData["timestamp_ms"] = emittedPoint.Timestamp.UnixNano() / int64(time.Millisecond)
 
 	// Create new message with processed data
 	outputMsg := msg.Copy()
 	outputMsg.SetStructured(outputData)
 
+	// Add algorithm metadata to message metadata
+	mp.addAlgorithmMetadata(outputMsg, state)
+
 	return outputMsg, nil
 }
 
-// addAlgorithmMetadata adds downsampling algorithm metadata to the output data
-func (mp *MessageProcessor) addAlgorithmMetadata(outputData map[string]interface{}, state *SeriesState) {
-	if outputData["metadata"] == nil {
-		outputData["metadata"] = make(map[string]interface{})
+// cloneTemplate creates a new message from a buffered message template and algorithm point
+func (mp *MessageProcessor) cloneTemplate(templateMsg *service.Message, point algorithms.GenericPoint, state *SeriesState) (*service.Message, error) {
+	// Get the structured data from the template message
+	templateData, err := templateMsg.AsStructured()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get structured data from template: %w", err)
 	}
 
-	metadata, ok := outputData["metadata"].(map[string]interface{})
+	templateMap, ok := templateData.(map[string]interface{})
 	if !ok {
-		metadata = make(map[string]interface{})
-		outputData["metadata"] = metadata
+		return nil, fmt.Errorf("template data is not a map, got %T", templateData)
 	}
 
-	metadata["downsampling_algorithm"] = state.processor.Config()
+	// Create output data by copying template
+	outputData := make(map[string]interface{})
+	for key, val := range templateMap {
+		outputData[key] = val
+	}
+
+	// Update with algorithm point data
+	// Preserve the original value type (string, bool, or numeric)
+	outputData["value"] = point.Value
+	outputData["timestamp_ms"] = point.Timestamp.UnixNano() / int64(time.Millisecond)
+
+	// Create new message with processed data
+	outputMsg := templateMsg.Copy()
+	outputMsg.SetStructured(outputData)
+
+	// Add algorithm metadata to message metadata
+	mp.addAlgorithmMetadata(outputMsg, state)
+
+	return outputMsg, nil
+}
+
+// addAlgorithmMetadata adds downsampling algorithm metadata to the message metadata
+func (mp *MessageProcessor) addAlgorithmMetadata(outputMsg *service.Message, state *SeriesState) {
+	// Get algorithm name for metadata
+	algorithmName := state.processor.Name()
+
+	// Add downsampled_by metadata that tests expect
+	outputMsg.MetaSet("downsampled_by", algorithmName)
+
+	// Add full algorithm configuration as string for debugging
+	algorithmConfig := state.processor.Config()
+	outputMsg.MetaSet("downsampling_config", algorithmConfig)
 }

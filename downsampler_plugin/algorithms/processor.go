@@ -94,7 +94,7 @@ func NewProcessorWrapper(config ProcessorConfig) (*ProcessorWrapper, error) {
 }
 
 // Ingest processes a data point with automatic type conversion and ordering
-func (p *ProcessorWrapper) Ingest(value interface{}, timestamp time.Time) ([]Point, error) {
+func (p *ProcessorWrapper) Ingest(value interface{}, timestamp time.Time) ([]GenericPoint, error) {
 	// Handle boolean values with special logic
 	if boolVal, isBool := value.(bool); isBool {
 		return p.processBooleanValue(boolVal, timestamp)
@@ -108,7 +108,7 @@ func (p *ProcessorWrapper) Ingest(value interface{}, timestamp time.Time) ([]Poi
 	// Convert to float64
 	floatVal, err := p.toFloat64(value)
 	if err != nil {
-		return []Point{}, fmt.Errorf("type conversion failed: %w", err)
+		return []GenericPoint{}, fmt.Errorf("type conversion failed: %w", err)
 	}
 
 	// Handle ordering - algorithms expect monotonic timestamps
@@ -116,10 +116,10 @@ func (p *ProcessorWrapper) Ingest(value interface{}, timestamp time.Time) ([]Poi
 		if p.passThrough {
 			// PassThrough=true means bypass algorithm and always keep out-of-order data
 			// This ensures out-of-order messages are passed through unchanged
-			return []Point{{Value: floatVal, Timestamp: timestamp}}, nil
+			return []GenericPoint{{Value: floatVal, Timestamp: timestamp}}, nil
 		} else {
 			// Drop out-of-order data
-			return []Point{}, nil
+			return []GenericPoint{}, nil
 		}
 	}
 
@@ -128,57 +128,63 @@ func (p *ProcessorWrapper) Ingest(value interface{}, timestamp time.Time) ([]Poi
 	if p.lastTimestamp.IsZero() || !timestamp.Before(p.lastTimestamp) {
 		p.lastTimestamp = timestamp
 	}
-	return p.algorithm.Ingest(floatVal, timestamp)
+
+	// Call the underlying algorithm and convert Points to GenericPoints
+	points, err := p.algorithm.Ingest(floatVal, timestamp)
+	if err != nil {
+		return []GenericPoint{}, err
+	}
+
+	// Convert []Point to []GenericPoint
+	genericPoints := make([]GenericPoint, len(points))
+	for i, point := range points {
+		genericPoints[i] = GenericPoint{
+			Value:     point.Value,
+			Timestamp: point.Timestamp,
+		}
+	}
+
+	return genericPoints, nil
 }
 
 // processBooleanValue handles boolean values with change-based logic
-func (p *ProcessorWrapper) processBooleanValue(value bool, timestamp time.Time) ([]Point, error) {
-	// Convert bool to float64 for Point (0.0 = false, 1.0 = true)
-	floatVal := 0.0
-	if value {
-		floatVal = 1.0
-	}
-
+func (p *ProcessorWrapper) processBooleanValue(value bool, timestamp time.Time) ([]GenericPoint, error) {
 	// First boolean value is always kept
 	if p.lastBoolValue == nil {
 		p.lastBoolValue = &value
 		p.lastBoolTime = timestamp
-		return []Point{{Value: floatVal, Timestamp: timestamp}}, nil
+		return []GenericPoint{{Value: value, Timestamp: timestamp}}, nil
 	}
 
 	// Keep if value changed
 	if *p.lastBoolValue != value {
 		p.lastBoolValue = &value
 		p.lastBoolTime = timestamp
-		return []Point{{Value: floatVal, Timestamp: timestamp}}, nil
+		return []GenericPoint{{Value: value, Timestamp: timestamp}}, nil
 	}
 
 	// Drop if no change
-	return []Point{}, nil
+	return []GenericPoint{}, nil
 }
 
 // processStringValue handles string values with change-based logic
-func (p *ProcessorWrapper) processStringValue(value string, timestamp time.Time) ([]Point, error) {
-	// Convert string to float64 for Point (hash of string for consistency)
-	// This is a simple approach - could be enhanced with better string-to-numeric mapping
-	floatVal := float64(len(value)) // Simple length-based conversion
-
+func (p *ProcessorWrapper) processStringValue(value string, timestamp time.Time) ([]GenericPoint, error) {
 	// First string value is always kept
 	if p.lastStringValue == nil {
 		p.lastStringValue = &value
 		p.lastStringTime = timestamp
-		return []Point{{Value: floatVal, Timestamp: timestamp}}, nil
+		return []GenericPoint{{Value: value, Timestamp: timestamp}}, nil
 	}
 
 	// Keep if value changed
 	if *p.lastStringValue != value {
 		p.lastStringValue = &value
 		p.lastStringTime = timestamp
-		return []Point{{Value: floatVal, Timestamp: timestamp}}, nil
+		return []GenericPoint{{Value: value, Timestamp: timestamp}}, nil
 	}
 
 	// Drop if no change
-	return []Point{}, nil
+	return []GenericPoint{}, nil
 }
 
 // toFloat64 converts various numeric types to float64
@@ -234,6 +240,20 @@ func (p *ProcessorWrapper) Name() string {
 }
 
 // Flush returns any pending final points from the underlying algorithm
-func (p *ProcessorWrapper) Flush() ([]Point, error) {
-	return p.algorithm.Flush()
+func (p *ProcessorWrapper) Flush() ([]GenericPoint, error) {
+	points, err := p.algorithm.Flush()
+	if err != nil {
+		return []GenericPoint{}, err
+	}
+
+	// Convert []Point to []GenericPoint
+	genericPoints := make([]GenericPoint, len(points))
+	for i, point := range points {
+		genericPoints[i] = GenericPoint{
+			Value:     point.Value,
+			Timestamp: point.Timestamp,
+		}
+	}
+
+	return genericPoints, nil
 }

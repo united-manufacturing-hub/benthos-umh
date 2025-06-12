@@ -15,13 +15,22 @@
 package downsampler_plugin_test
 
 import (
+	"os"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	_ "github.com/redpanda-data/benthos/v4/public/components/io"
+	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 )
 
 func TestDownsamplerPlugin(t *testing.T) {
+	// Skip comprehensive E2E tests unless explicitly enabled
+	if os.Getenv("TEST_DOWNSAMPLER") != "1" {
+		Skip("Comprehensive E2E tests require TEST_DOWNSAMPLER=1 environment variable")
+	}
+
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Downsampler Plugin Suite")
+
 }

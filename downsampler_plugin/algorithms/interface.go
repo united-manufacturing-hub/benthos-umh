@@ -218,6 +218,13 @@ type Point struct {
 	Timestamp time.Time
 }
 
+// GenericPoint represents a single data point with a generic value and timestamp.
+// This is used to preserve the original value when processing non-numeric data.
+type GenericPoint struct {
+	Value     interface{}
+	Timestamp time.Time
+}
+
 // StreamCompressor defines the interface for downsampling algorithms.
 //
 // All algorithms process numeric time-series data and maintain internal state
