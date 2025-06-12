@@ -105,43 +105,44 @@ type SwingingDoorAlgorithm struct {
 func (sd *SwingingDoorAlgorithm) Ingest(v float64, ts time.Time) ([]Point, error) {
 	debugLog("=== INGEST: (%.1f, %s) ===", v, ts.Format("15:04:05"))
 
-	// ---------------------------------------------------------------
-	// 1. first point?
-	// ---------------------------------------------------------------
+	out := make([]Point, 0, 1)
+
+	// ---- first point is always archived -----------------------------------
 	if !sd.started {
 		sd.started = true
 		sd.base = Point{Value: v, Timestamp: ts}
 		sd.lastEmitTime = ts
-		return []Point{sd.base}, nil
-	}
-
-	// ---------------------------------------------------------------
-	// 2. heartbeat (comp-max-time)  – runs on *every* call after first
-	// ---------------------------------------------------------------
-	if sd.maxTime > 0 && ts.Sub(sd.lastEmitTime) >= sd.maxTime {
-		p := Point{Value: v, Timestamp: ts}
-		sd.base = p
-		sd.lastEmitTime = ts
-		sd.cand = nil // discard any pending candidate
-		sd.openDoor() // reset envelope
-		debugLog("MAX_TIME EMIT (top of ingest): emit current point=(%.1f, %s)", p.Value, p.Timestamp.Format("15:04:05"))
-		return []Point{p}, nil
-	}
-
-	// ---------------------------------------------------------------
-	// 3. establish candidate if none
-	// ---------------------------------------------------------------
-	if sd.cand == nil {
-		sd.cand = &Point{Value: v, Timestamp: ts}
-		sd.closeDoor(*sd.cand)
-		debugLog("NO CANDIDATE: set candidate=(%.1f, %s), new slopes=[%.3f, %.3f]",
-			sd.cand.Value, sd.cand.Timestamp.Format("15:04:05"), sd.slopeMin, sd.slopeMax)
-		return nil, nil
+		out = append(out, sd.base)
+		debugLog("FIRST POINT: base=(%.1f, %s), EMIT",
+			sd.base.Value, sd.base.Timestamp.Format("15:04:05"))
+		return out, nil
 	}
 
 	debugLog("CURRENT STATE: base=(%.1f, %s), cand=%s, slopes=[%.3f, %.3f]",
 		sd.base.Value, sd.base.Timestamp.Format("15:04:05"),
 		sd.candString(), sd.slopeMin, sd.slopeMax)
+
+	// ---- heartbeat first --------------------------------------------------
+	if sd.maxTime > 0 && ts.Sub(sd.lastEmitTime) >= sd.maxTime {
+		p := Point{Value: v, Timestamp: ts}
+		out = append(out, p)
+		sd.base = p
+		sd.lastEmitTime = ts
+		sd.cand = nil
+		sd.openDoor()
+		debugLog("MAX_TIME EMIT (before candidate): emit current point=(%.1f, %s)",
+			p.Value, p.Timestamp.Format("15:04:05"))
+		return out, nil // done – heartbeat satisfied
+	}
+
+	// ---- establish candidate if none yet ----------------------------------
+	if sd.cand == nil {
+		sd.cand = &Point{Value: v, Timestamp: ts}
+		sd.closeDoor(*sd.cand)
+		debugLog("NO CANDIDATE: set candidate=(%.1f, %s), new slopes=[%.3f, %.3f]",
+			sd.cand.Value, sd.cand.Timestamp.Format("15:04:05"), sd.slopeMin, sd.slopeMax)
+		return out, nil
+	}
 
 	// ---- decide if we must emit the candidate -----------------------------
 	emitNeeded := sd.mustEmit(v, ts)
@@ -153,7 +154,7 @@ func (sd *SwingingDoorAlgorithm) Ingest(v float64, ts time.Time) ([]Point, error
 			ts.Sub(sd.lastEmitTime), sd.maxTime)
 
 		currentPoint := Point{Value: v, Timestamp: ts}
-		out := []Point{currentPoint}
+		out = append(out, currentPoint)
 		sd.base = currentPoint
 		sd.lastEmitTime = ts
 		debugLog("MAX_TIME EMIT: emit current point=(%.1f, %s)",
@@ -168,7 +169,7 @@ func (sd *SwingingDoorAlgorithm) Ingest(v float64, ts time.Time) ([]Point, error
 	// ---- emit the candidate if required -----------------------------------
 	if emitNeeded {
 		emittedPoint := *sd.cand
-		out := []Point{emittedPoint}
+		out = append(out, emittedPoint)
 		sd.base = emittedPoint
 		sd.lastEmitTime = emittedPoint.Timestamp
 
@@ -190,7 +191,7 @@ func (sd *SwingingDoorAlgorithm) Ingest(v float64, ts time.Time) ([]Point, error
 	sd.closeDoor(*sd.cand)
 	debugLog("TIGHTENED: new slopes=[%.3f, %.3f]", sd.slopeMin, sd.slopeMax)
 
-	return nil, nil
+	return out, nil
 }
 
 // Helper to format candidate for debug output
