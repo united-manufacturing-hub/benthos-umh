@@ -29,7 +29,6 @@ type DeadbandConfig struct {
 // SwingingDoorConfig holds swinging door algorithm parameters
 type SwingingDoorConfig struct {
 	Threshold float64       `json:"threshold,omitempty" yaml:"threshold,omitempty"`
-	MinTime   time.Duration `json:"min_time,omitempty" yaml:"min_time,omitempty"`
 	MaxTime   time.Duration `json:"max_time,omitempty" yaml:"max_time,omitempty"`
 }
 
@@ -102,7 +101,7 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 
 	// Only use swinging_door if explicitly configured and deadband is not
 	hasDeadbandConfig := c.Default.Deadband.Threshold != 0 || c.Default.Deadband.MaxTime != 0
-	hasSwingingDoorConfig := c.Default.SwingingDoor.Threshold != 0 || c.Default.SwingingDoor.MinTime != 0 || c.Default.SwingingDoor.MaxTime != 0
+	hasSwingingDoorConfig := c.Default.SwingingDoor.Threshold != 0 || c.Default.SwingingDoor.MaxTime != 0
 
 	if hasDeadbandConfig {
 		algorithm = "deadband"
@@ -115,12 +114,10 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 
 	if algorithm == "swinging_door" {
 		config["threshold"] = c.Default.SwingingDoor.Threshold
-		config["min_time"] = c.Default.SwingingDoor.MinTime
 		config["max_time"] = c.Default.SwingingDoor.MaxTime
 	} else {
 		config["threshold"] = c.Default.Deadband.Threshold
 		config["max_time"] = c.Default.Deadband.MaxTime
-		config["min_time"] = c.Default.SwingingDoor.MinTime // Deadband doesn't use min_time but include for consistency
 	}
 
 	// Add late policy defaults
@@ -164,13 +161,10 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 			}
 
 			// Apply swinging door overrides (only if actually configured with meaningful values)
-			if override.SwingingDoor != nil && (override.SwingingDoor.Threshold != 0 || override.SwingingDoor.MinTime != 0 || override.SwingingDoor.MaxTime != 0) {
+			if override.SwingingDoor != nil && (override.SwingingDoor.Threshold != 0 || override.SwingingDoor.MaxTime != 0) {
 				algorithm = "swinging_door"
 				if override.SwingingDoor.Threshold != 0 {
 					config["threshold"] = override.SwingingDoor.Threshold
-				}
-				if override.SwingingDoor.MinTime != 0 {
-					config["min_time"] = override.SwingingDoor.MinTime
 				}
 				if override.SwingingDoor.MaxTime != 0 {
 					config["max_time"] = override.SwingingDoor.MaxTime

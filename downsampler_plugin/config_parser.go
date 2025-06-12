@@ -82,9 +82,6 @@ func (cp *ConfigurationParser) parseSwingingDoorDefaults(conf *service.ParsedCon
 		if threshold, err := defaultParsed.FieldFloat("threshold"); err == nil {
 			defaultConfig.SwingingDoor.Threshold = threshold
 		}
-		if minTime, err := defaultParsed.FieldDuration("min_time"); err == nil {
-			defaultConfig.SwingingDoor.MinTime = minTime
-		}
 		if maxTime, err := defaultParsed.FieldDuration("max_time"); err == nil {
 			defaultConfig.SwingingDoor.MaxTime = maxTime
 		}
@@ -159,9 +156,6 @@ func (cp *ConfigurationParser) parseOverrideSwingingDoor(overrideConf *service.P
 		override.SwingingDoor = &SwingingDoorConfig{}
 		if threshold, err := swingingDoorParsed.FieldFloat("threshold"); err == nil {
 			override.SwingingDoor.Threshold = threshold
-		}
-		if minTime, err := swingingDoorParsed.FieldDuration("min_time"); err == nil {
-			override.SwingingDoor.MinTime = minTime
 		}
 		if maxTime, err := swingingDoorParsed.FieldDuration("max_time"); err == nil {
 			override.SwingingDoor.MaxTime = maxTime

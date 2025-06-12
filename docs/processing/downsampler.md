@@ -40,7 +40,6 @@ pipeline:
             max_time: 1h             # Auditor heartbeat interval
           swinging_door:             # Swinging door algorithm parameters
             threshold: 0.2           # Same threshold concept as deadband
-            min_time: 5s             # Noise reduction for fast processes
             max_time: 1h             # Auditor heartbeat interval
         overrides:                   # Signal-specific overrides
           - pattern: "*.temperature"
@@ -68,7 +67,6 @@ The algorithm is automatically determined by which configuration section contain
 - `default.deadband.threshold`: Default threshold for significant changes (2× sensor noise)
 - `default.deadband.max_time`: Default maximum time before forced output (auditor heartbeat)
 - `default.swinging_door.threshold`: Default threshold for envelope deviation (same concept as deadband)
-- `default.swinging_door.min_time`: Default minimum time between points (noise reduction)
 - `default.swinging_door.max_time`: Default maximum time before forced output (auditor heartbeat)
 
 **Override Patterns:**
@@ -96,7 +94,6 @@ downsampler:
   default:
     swinging_door:
       threshold: 0.2           # Same threshold concept
-      min_time: 5s             # Process-aware noise reduction
       max_time: 1h             # Auditor heartbeat
   overrides:
     - pattern: "*.temperature"
@@ -116,7 +113,6 @@ downsampler:
     - pattern: "*.vibration"
       swinging_door:           # Override with swinging door
         threshold: 0.01        # Sensitive vibration monitoring
-        min_time: 1s           # High-frequency vibration data
 ```
 
 ### Pattern Matching Examples
@@ -184,7 +180,6 @@ The SDT algorithm maintains an "envelope" or "corridor" around the trend line fr
 
 **Parameters:**
 - `threshold`: Maximum vertical deviation from the trend line *(same concept as deadband threshold)*
-- `min_time`: Minimum time between stored points *(noise reduction for high-frequency processes)*
 - `max_time`: Maximum time before forcing output *(auditor heartbeat, same as deadband)*
 
 **How it works:**
@@ -192,17 +187,14 @@ The SDT algorithm maintains an "envelope" or "corridor" around the trend line fr
 2. **Envelope Calculation**: For each new point, calculate upper and lower trend lines from base point
 3. **Boundary Check**: If the point falls outside the envelope (±threshold), end current segment
 4. **Segment End**: Store the previous point as segment end, start new segment from there
-5. **Min Time Filter**: Points arriving faster than `min_time` are buffered/evaluated but not immediately stored
 
 **Benefits over Deadband:**
 - **Better Trend Preservation**: Maintains slope information, not just magnitude
 - **Higher Compression**: Can achieve 95-99% reduction vs 90-95% for deadband
 - **Temporal Awareness**: Considers time progression in compression decisions
-- **Process-Aware**: `min_time` prevents false triggers from processes that can't change rapidly
 
 **Tuning Recommendations:**
 - **Threshold**: Set to **2× sensor noise level** (same principle as deadband)
-- **Min Time**: Set to **fastest meaningful process change time** (0 = disabled, 5s typical)
 - **Max Time**: Default **1 hour** for auditor compliance (periodic heartbeat)
 - **Use Cases**: Continuous analog processes, temperature control, flow rates, pressure monitoring
 

@@ -186,9 +186,6 @@ overrides:
 				service.NewFloatField("threshold").
 					Description("Default compression deviation for swinging door algorithm.").
 					Optional(),
-				service.NewDurationField("min_time").
-					Description("Default minimum time interval for swinging door algorithm.").
-					Optional(),
 				service.NewDurationField("max_time").
 					Description("Default maximum time interval for swinging door algorithm.").
 					Optional()).
@@ -219,9 +216,6 @@ overrides:
 			service.NewObjectField("swinging_door",
 				service.NewFloatField("threshold").
 					Description("Override compression deviation for swinging door algorithm.").
-					Optional(),
-				service.NewDurationField("min_time").
-					Description("Override minimum time interval for swinging door algorithm.").
 					Optional(),
 				service.NewDurationField("max_time").
 					Description("Override maximum time interval for swinging door algorithm.").
