@@ -380,4 +380,40 @@ downsampler:
 		)
 	})
 
+	FDescribe("Basic Swinging Door Algorithm Behavior", func() {
+		Context("Minimum Time Constraint", func() {
+			DescribeTable("should enforce min_time between emissions",
+				RunStreamTestCase,
+
+				Entry("Swinging door with min_time constraint", StreamTestCase{
+					Name:        "swinging_door_min_time_constraint",
+					Description: "Test minimum time between emissions - prevents archiving more frequently than every 10 seconds",
+					Config: `
+downsampler:
+  default:
+    swinging_door:
+      threshold: 1.0
+      min_time: 10s`,
+					Input: []TestMessage{
+						{Value: 2, TimestampMs: 0 * 1000, Topic: "sensor.sdt"},
+						{Value: 2, TimestampMs: 10 * 1000, Topic: "sensor.sdt"},
+						{Value: 2, TimestampMs: 20 * 1000, Topic: "sensor.sdt"},
+						{Value: 2, TimestampMs: 30 * 1000, Topic: "sensor.sdt"},
+						{Value: 2, TimestampMs: 40 * 1000, Topic: "sensor.sdt"},
+						{Value: 10, TimestampMs: 45 * 1000, Topic: "sensor.sdt"},
+						{Value: 3, TimestampMs: 50 * 1000, Topic: "sensor.sdt"},
+						{Value: 3, TimestampMs: 60 * 1000, Topic: "sensor.sdt"},
+						{Value: 3, TimestampMs: 70 * 1000, Topic: "sensor.sdt"},
+						{Value: 3, TimestampMs: 80 * 1000, Topic: "sensor.sdt"},
+					},
+					ExpectedOutput: []ExpectedMessage{
+						{Value: 2, TimestampMs: 0 * 1000, Topic: "sensor.sdt", HasMetadata: map[string]string{"downsampled_by": "swinging_door"}},
+						{Value: 2, TimestampMs: 40 * 1000, Topic: "sensor.sdt", HasMetadata: map[string]string{"downsampled_by": "swinging_door"}},
+						{Value: 3, TimestampMs: 80 * 1000, Topic: "sensor.sdt", HasMetadata: map[string]string{"downsampled_by": "swinging_door"}},
+					},
+				}),
+			)
+		})
+	})
+
 })
