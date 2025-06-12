@@ -23,14 +23,14 @@ input:
     count: 100
     interval: "500ms"
     mapping: |
-      let message_count = count("messages")
+      let message_count = count("messages") % 5
       let goodValue = 10.50 + random_int(max: 5)
       let deviationValue = 50.45
 
       root = {
         "timestamp_ms": timestamp_unix_milli(),
         "value": match $message_count {
-          4 => $deviationValue,
+          0 => $deviationValue,
           _ => $goodValue
         }
       }
@@ -43,7 +43,7 @@ pipeline:
     - downsampler:
         default:
           deadband:
-            threshold: 2.0       # Default threshold for numeric values
+            threshold: 20.0       # Default threshold for numeric values
             max_time: 30s        # Default max interval
         overrides:
           - pattern: ".*temperature"

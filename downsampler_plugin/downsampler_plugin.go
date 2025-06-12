@@ -480,16 +480,17 @@ func (p *DownsamplerProcessor) updateProcessedTime(state *SeriesState, timestamp
 
 // Close cleans up resources and flushes any pending points
 func (p *DownsamplerProcessor) Close(ctx context.Context) error {
-	// Stop the idle flush goroutine (only close once)
-	defer func() {
-		if r := recover(); r != nil {
-			// Ignore panic from closing already closed channel
-			p.logger.Debug("Recovered from channel close panic (expected during cleanup)")
-		}
-	}()
+	// Stop the idle flush goroutine if not already stopped
+	if p.closeChan != nil {
+		close(p.closeChan)
+		p.closeChan = nil
+	}
 
-	close(p.closeChan)
-	p.flushTicker.Stop()
+	// Stop the ticker if not already stopped
+	if p.flushTicker != nil {
+		p.flushTicker.Stop()
+		p.flushTicker = nil
+	}
 
 	p.stateMutex.Lock()
 	defer p.stateMutex.Unlock()
@@ -498,6 +499,10 @@ func (p *DownsamplerProcessor) Close(ctx context.Context) error {
 
 	// Release any buffered messages and flush algorithm points
 	for seriesID, state := range p.seriesState {
+		if state == nil {
+			continue
+		}
+
 		state.mutex.Lock()
 
 		// Release any buffered candidate message and add to final batch
@@ -529,8 +534,8 @@ func (p *DownsamplerProcessor) Close(ctx context.Context) error {
 		state.mutex.Unlock()
 	}
 
-	// Send final batch to shutdown channel if we have messages
-	if len(finalBatch) > 0 {
+	// Send final batch to shutdown channel if we have messages and channel exists
+	if len(finalBatch) > 0 && p.shutdownBatch != nil {
 		select {
 		case p.shutdownBatch <- finalBatch:
 			p.logger.Infof("Queued %d final messages for emission on close", len(finalBatch))
@@ -539,6 +544,10 @@ func (p *DownsamplerProcessor) Close(ctx context.Context) error {
 		}
 	}
 
-	p.seriesState = make(map[string]*SeriesState)
+	// Clear the series state
+	if p.seriesState != nil {
+		p.seriesState = make(map[string]*SeriesState)
+	}
+
 	return nil
 }
