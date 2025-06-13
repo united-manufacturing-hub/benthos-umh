@@ -17,13 +17,13 @@ Wildcard overrides let you apply a conservative baseline (`deadband {threshold: 
 
 2. **Noise suppression anywhere in the stream**
    *Configuration:* `deadband {threshold: 2 × σ_noise, max_time: 1h}`
-   *Effect:* Removes fluctuations beneath the sensor’s specified noise floor yet retains all legitimate steps.
+   *Effect:* Removes fluctuations beneath the sensor's specified noise floor yet retains all legitimate steps.
 
 3. **Final stage before the historian**
    *Configuration:* `swinging_door {threshold: 2 × σ_noise, min_time: physics_limit, max_time: 1h}`
    *Effect:* Achieves 95–99 % volume reduction while preserving slope integrity and audit heartbeat. Introduces latency of up to `max_time` as the algorithm needs to buffer the last point before it can be emitted.
 
-Discrete counters and alarms should remain on `deadband {threshold: 0}`; SDT’s emit-previous logic could delay a critical state change.
+Discrete counters and alarms should remain on `deadband {threshold: 0}`; SDT's emit-previous logic could delay a critical state change.
 
 > **Compliance note** – Both algorithms enforce an absolute error bound and maintain a heartbeat, but they still remove data. If your GxP / 21 CFR Part 11 process mandates a full raw stream, archive the unfiltered UMH-core topic in parallel.
 
@@ -51,7 +51,7 @@ processors:
 ```
 
 *Nothing else is required.*
-Messages that aren’t strict UMH-core time-series (`value` + `timestamp_ms`) pass straight through.
+Messages that aren't strict UMH-core time-series (`value` + `timestamp_ms`) pass straight through.
 
 ---
 
@@ -62,9 +62,9 @@ The Downsampler exposes just four parameters; once you understand their purpose 
 
 | Parameter     | Purpose                                                                                          | Typical setting                                                                            | Issue it prevents                                                               |
 | ------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| `threshold`   | Maximum absolute deviation allowed before a new point must be stored (same units as the signal). | **2 × sensor-noise σ** · If σ is unknown, inspect a steady period and take ± peak spread   | Removes pure measurement noise without masking genuine step changes.            |
+| `threshold`   | Maximum absolute deviation allowed before a new point must be stored (same units as the signal). | **2 × sensor-noise σ** · If σ is unknown, inspect a steady period and take ± peak spread   | Removes pure measurement noise without masking genuine step changes.            |
 | `min_time`    | Smallest physically realistic interval between meaningful changes. Available only on `swinging_door`                               | Fastest credible process period (e.g. 1 s for furnaces, 50 ms for servo torque). `0` = off | Suppresses transients caused by bursty drivers or unstable links.               |
-| `max_time`    | Heart-beat that forces an output even during flat periods; also flushes any SDT buffer.          | 15 min – 1 h (aligns with 21 CFR §11 “system liveness”).                                   | Ensures line-flat sensors remain visible and internal buffers stay bounded.     |
+| `max_time`    | Heart-beat that forces an output even during flat periods; also flushes any SDT buffer.          | 15 min – 1 h (aligns with 21 CFR §11 "system liveness").                                   | Ensures line-flat sensors remain visible and internal buffers stay bounded.     |
 | `late_policy` | Action for out-of-order samples.                                                                 | `passthrough` (default) or `drop`.                                                         | Lets you balance historical accuracy against traffic volume on skewed networks. |     |
 
 ### Dead-band
@@ -79,7 +79,7 @@ The Downsampler exposes just four parameters; once you understand their purpose 
 
 ### Swinging-Door Trending (SDT)
 
-* **Rule** Maintain rotating upper and lower “doors” that bound the current slope; emit the **previous** point when a new sample would violate the envelope.
+* **Rule** Maintain rotating upper and lower "doors" that bound the current slope; emit the **previous** point when a new sample would violate the envelope.
 * **Additional parameters**
 
   * `threshold` – vertical tolerance (same intuition as for dead-band).
@@ -140,17 +140,50 @@ The same mechanism ensures a graceful shutdown: during a Benthos drain, every bu
 
 With these guards the Downsampler behaves deterministically across PLC glitches, network jitter and even deliberate fuzz-test assaults—yet still errs on the side of passing the data through rather than dropping it.
 
-## Further Reading & Learning Materials for Swinging-Door Trending
 
-| Topic                                                             | Resource                                                                                                                       | Why it’s worth your time                                                                         |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| Step-by-step animations of the envelope closing and segment flush | **emrumo/swingingdoor** – GIF-heavy GitHub repo that visualises each decision the algorithm makes. ([pisquare.osisoft.com][1]) | Watch the “doors” rotate in real time and see exactly why a point is (not) kept.                 |                                                   |
-| Original historian context & glossary                             | AVEVA (OSIsoft) PI documentation page on *swinging-door compression*. ([docs.aveva.com][4])                                    | Shows how SDT is wired into a production-grade historian and why `max_time` exists.              |
-| Academic analysis & tuning guidance                               | “Swinging Door Trending Compression Algorithm for IoT Environments,” IEEE/ResearchGate. ([researchgate.net][5])                | Explains error bounds, calibration of `threshold`, and benchmark results on real sensor streams. |
-| Historical patent background                                      | US Patent 5,437,030 – the original 1990s PI Swinging-Door patent (expired). ([github.com][7])                                  | Good trivia and helps you understand why older systems look the way they do.                     |
+### How Swinging-Door Trending keeps the essentials—step by step
 
-[1]: https://pisquare.osisoft.com/0D51I00004UHdq2SAD?utm_source=chatgpt.com "swinging door compression algorithm - PI Square"
-[4]: https://docs.aveva.com/bundle/glossary/page/1457222.html?utm_source=chatgpt.com "swinging-door compression - AVEVA™ Documentation"
-[5]: https://www.researchgate.net/publication/337361831_Swinging_Door_Trending_Compression_Algorithm_for_IoT_Environments?utm_source=chatgpt.com "Swinging Door Trending Compression Algorithm for IoT Environments"
-[6]: https://github.com/apache/streampipes/discussions/1285?utm_source=chatgpt.com "The Swinging Door Trending (SDT) Filter Processor #1285 - GitHub"
-[7]: https://github.com/gfoidl/DataCompression/blob/master/api-doc/articles/SwingingDoor.md?utm_source=chatgpt.com "DataCompression/api-doc/articles/SwingingDoor.md at master"
+1. **Segment start (point A, green).**
+   From the very first sample in a segment the algorithm opens two straight "doors": an **upper** line and a **lower** line.
+   *Their slopes mark the fastest rise and the slowest rise allowed while the signal stays inside the ± *compDev* error band.*
+   <img src="./downsampler/img1.png" alt="Cone opens" width="600"/>
+
+2. **Each new sample narrows the door.**
+   Every arriving point recalculates the steepest and flattest slopes that would still stay within ± *compDev*.
+   Geometrically the cone can only shrink, so the blue lines in the pictures pivot closer together frame by frame.
+
+   <img src="./downsampler/img2.png" alt="Door narrows further" width="600"/>
+
+   <img src="./downsampler/img3.png" alt="Almost closed" width="600"/>
+
+3. **Two working points—P and S.**
+
+   * **P** (black) is simply the *latest* raw sample.
+   * **S** (red, "snapshot") is the *candidate* we might archive.
+     Unlike a dead-band filter we do **not** decide about P immediately; first we test whether S can still represent the trend after P tightens the cone.
+
+4. **Door-slam event = keep S, start over.**
+   When the upper-slope line crosses the lower-slope line the cone has closed (see img 4 / final GIF frame).
+
+   * S is now guaranteed to be the last point that still satisfies the error bound → we **emit** S.
+   * P becomes the new anchor A of the next segment, and the door re-opens to its full width.
+
+   <img src="./downsampler/img4.png" alt="Door closed, snapshot flushed" width="600"/>
+
+5. **Heartbeat and physics limits.**
+   *`max_time`* forces an emit even if the cone never closes (flat signals, watchdog audit).
+   *`min_time`* ignores arrivals that come *so* fast the physical process could not have changed—useful for ovens versus millisecond-level servo data.
+
+6. **The GIF puts it all together.**
+   Blue cone lines swing, the red snapshot jumps forward, only a handful of black-× points survive, yet the reconstructed line never drifts more than ± *compDev* from the raw signal.
+
+   <img src="./downsampler/animation1.gif" alt="GIF" width="600"/>
+
+Image Source: [emrumo/swingingdoor](https://github.com/emrumo/swingingdoor)
+
+---
+
+**Practical take-away**
+
+* OT engineers still see smooth ramps without the "stair-step" artefacts a naïve dead-band would create.
+* IT teams hold up to **99 % fewer rows** and move far less data, with mathematically bounded error and an audit heartbeat that satisfies 21 CFR §11 / GxP record-liveness rules.
