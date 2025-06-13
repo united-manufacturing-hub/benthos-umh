@@ -23,6 +23,11 @@ import (
 	downsampler "github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin"
 )
 
+// Helper function to create float64 pointers
+func float64Ptr(f float64) *float64 {
+	return &f
+}
+
 // Unit Tests - Configuration and Component Logic
 // These tests focus on individual components and configuration logic
 // without requiring Benthos streams or environment variables.
@@ -38,7 +43,7 @@ var _ = Describe("Configuration Logic", func() {
 
 		Context("with default deadband configuration", func() {
 			BeforeEach(func() {
-				config.Default.Deadband.Threshold = 1.5
+				config.Default.Deadband.Threshold = float64Ptr(1.5)
 				config.Default.Deadband.MaxTime = 30 * time.Second
 			})
 
@@ -54,7 +59,7 @@ var _ = Describe("Configuration Logic", func() {
 
 		Context("with default swinging_door min_time configuration", func() {
 			BeforeEach(func() {
-				config.Default.SwingingDoor.Threshold = 1.5
+				config.Default.SwingingDoor.Threshold = float64Ptr(1.5)
 				config.Default.SwingingDoor.MinTime = 15 * time.Second
 			})
 
@@ -70,15 +75,15 @@ var _ = Describe("Configuration Logic", func() {
 
 		Context("with pattern matching overrides", func() {
 			BeforeEach(func() {
-				config.Default.Deadband.Threshold = 2.0
+				config.Default.Deadband.Threshold = float64Ptr(2.0)
 				config.Overrides = []downsampler.OverrideConfig{
 					{
 						Pattern:  "*temperature",
-						Deadband: &downsampler.DeadbandConfig{Threshold: 0.1},
+						Deadband: &downsampler.DeadbandConfig{Threshold: float64Ptr(0.1)},
 					},
 					{
 						Pattern:  "*pressure",
-						Deadband: &downsampler.DeadbandConfig{Threshold: 0.5},
+						Deadband: &downsampler.DeadbandConfig{Threshold: float64Ptr(0.5)},
 					},
 				}
 			})
@@ -129,7 +134,7 @@ var _ = Describe("Configuration Logic", func() {
 				// For this test to work, we need to add a swinging_door override
 				config.Overrides = append(config.Overrides, downsampler.OverrideConfig{
 					Pattern:      "*critical",
-					SwingingDoor: &downsampler.SwingingDoorConfig{Threshold: 0.1},
+					SwingingDoor: &downsampler.SwingingDoorConfig{Threshold: float64Ptr(0.1)},
 				})
 
 				algorithm, configMap, err = config.GetConfigForTopic("umh.v1.plant.critical")
@@ -144,8 +149,8 @@ var _ = Describe("Configuration Logic", func() {
 				// Test that swinging_door takes precedence over deadband when both are configured
 				conflictingOverride := downsampler.OverrideConfig{
 					Pattern:      "*temperature",
-					Deadband:     &downsampler.DeadbandConfig{Threshold: 0.1, MaxTime: time.Minute},
-					SwingingDoor: &downsampler.SwingingDoorConfig{Threshold: 0.2, MaxTime: time.Hour, MinTime: time.Second * 5},
+					Deadband:     &downsampler.DeadbandConfig{Threshold: float64Ptr(0.1), MaxTime: time.Minute},
+					SwingingDoor: &downsampler.SwingingDoorConfig{Threshold: float64Ptr(0.2), MaxTime: time.Hour, MinTime: time.Second * 5},
 				}
 
 				config.Overrides = []downsampler.OverrideConfig{conflictingOverride}

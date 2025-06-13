@@ -74,7 +74,7 @@ func (cp *ConfigurationParser) parseDefaultConfig(conf *service.ParsedConfig, co
 func (cp *ConfigurationParser) parseDeadbandDefaults(conf *service.ParsedConfig, defaultConfig *DefaultConfig) error {
 	if defaultParsed := conf.Namespace("default", "deadband"); defaultParsed.Contains() {
 		if threshold, err := defaultParsed.FieldFloat("threshold"); err == nil {
-			defaultConfig.Deadband.Threshold = threshold
+			defaultConfig.Deadband.Threshold = &threshold
 		}
 		if maxTime, err := defaultParsed.FieldDuration("max_time"); err == nil {
 			defaultConfig.Deadband.MaxTime = maxTime
@@ -87,7 +87,7 @@ func (cp *ConfigurationParser) parseDeadbandDefaults(conf *service.ParsedConfig,
 func (cp *ConfigurationParser) parseSwingingDoorDefaults(conf *service.ParsedConfig, defaultConfig *DefaultConfig) error {
 	if defaultParsed := conf.Namespace("default", "swinging_door"); defaultParsed.Contains() {
 		if threshold, err := defaultParsed.FieldFloat("threshold"); err == nil {
-			defaultConfig.SwingingDoor.Threshold = threshold
+			defaultConfig.SwingingDoor.Threshold = &threshold
 		}
 		if maxTime, err := defaultParsed.FieldDuration("max_time"); err == nil {
 			defaultConfig.SwingingDoor.MaxTime = maxTime
@@ -154,7 +154,7 @@ func (cp *ConfigurationParser) parseOverrideDeadband(overrideConf *service.Parse
 	if deadbandParsed := overrideConf.Namespace("deadband"); deadbandParsed.Contains() {
 		override.Deadband = &DeadbandConfig{}
 		if threshold, err := deadbandParsed.FieldFloat("threshold"); err == nil {
-			override.Deadband.Threshold = threshold
+			override.Deadband.Threshold = &threshold
 		}
 		if maxTime, err := deadbandParsed.FieldDuration("max_time"); err == nil {
 			override.Deadband.MaxTime = maxTime
@@ -168,7 +168,7 @@ func (cp *ConfigurationParser) parseOverrideSwingingDoor(overrideConf *service.P
 	if swingingDoorParsed := overrideConf.Namespace("swinging_door"); swingingDoorParsed.Contains() {
 		override.SwingingDoor = &SwingingDoorConfig{}
 		if threshold, err := swingingDoorParsed.FieldFloat("threshold"); err == nil {
-			override.SwingingDoor.Threshold = threshold
+			override.SwingingDoor.Threshold = &threshold
 		}
 		if maxTime, err := swingingDoorParsed.FieldDuration("max_time"); err == nil {
 			override.SwingingDoor.MaxTime = maxTime
