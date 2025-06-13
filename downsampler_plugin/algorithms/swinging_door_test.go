@@ -590,6 +590,65 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				_, err := algorithms.Create("swinging_door", config)
 				Expect(err).NotTo(HaveOccurred(), "Should accept threshold = 0")
 			})
+
+			It("rejects min_time > max_time configuration", func() {
+				// Logical validation: min_time > max_time creates an impossible constraint
+				// where the delta-min gate would never allow emission, effectively deadlocking
+				// the algorithm. This prevents misconfiguration that would break the algorithm.
+				config := map[string]interface{}{
+					"threshold": 1.0,
+					"max_time":  5 * time.Second,
+					"min_time":  10 * time.Second, // Invalid: min > max
+				}
+				_, err := algorithms.Create("swinging_door", config)
+				Expect(err).To(HaveOccurred(), "Should reject min_time > max_time")
+				Expect(err.Error()).To(ContainSubstring("min_time"))
+				Expect(err.Error()).To(ContainSubstring("max_time"))
+				Expect(err.Error()).To(ContainSubstring("deadlock"))
+			})
+
+			It("accepts min_time = max_time configuration", func() {
+				// Edge case: min_time = max_time is mathematically valid
+				// It means emissions happen at exactly the specified interval
+				config := map[string]interface{}{
+					"threshold": 1.0,
+					"max_time":  5 * time.Second,
+					"min_time":  5 * time.Second, // Valid: min = max
+				}
+				_, err := algorithms.Create("swinging_door", config)
+				Expect(err).NotTo(HaveOccurred(), "Should accept min_time = max_time")
+			})
+
+			It("accepts min_time < max_time configuration", func() {
+				// Normal case: min_time < max_time is the expected configuration
+				config := map[string]interface{}{
+					"threshold": 1.0,
+					"max_time":  10 * time.Second,
+					"min_time":  5 * time.Second, // Valid: min < max
+				}
+				_, err := algorithms.Create("swinging_door", config)
+				Expect(err).NotTo(HaveOccurred(), "Should accept min_time < max_time")
+			})
+
+			It("accepts min_time without max_time", func() {
+				// Valid configuration: min_time can be specified without max_time
+				config := map[string]interface{}{
+					"threshold": 1.0,
+					"min_time":  5 * time.Second,
+				}
+				_, err := algorithms.Create("swinging_door", config)
+				Expect(err).NotTo(HaveOccurred(), "Should accept min_time without max_time")
+			})
+
+			It("accepts max_time without min_time", func() {
+				// Valid configuration: max_time can be specified without min_time
+				config := map[string]interface{}{
+					"threshold": 1.0,
+					"max_time":  10 * time.Second,
+				}
+				_, err := algorithms.Create("swinging_door", config)
+				Expect(err).NotTo(HaveOccurred(), "Should accept max_time without min_time")
+			})
 		})
 
 		Context("NaN and Inf value guards", func() {
