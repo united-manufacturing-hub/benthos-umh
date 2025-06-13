@@ -427,7 +427,7 @@ var _ = Describe("Swinging Door Algorithm", func() {
 					if i == 0 {
 						Expect(points).To(HaveLen(1), "First point should be emitted")
 						emitted++
-					} else if i%1 == 0 && i > 0 {
+					} else if i > 0 {
 						// Should emit every 100ms due to max_time
 						if len(points) > 0 {
 							emitted += len(points)
