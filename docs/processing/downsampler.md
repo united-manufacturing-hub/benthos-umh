@@ -125,6 +125,62 @@ Both modes preserve at-least-once delivery for in-order traffic; only you decide
 
 The same mechanism ensures a graceful shutdown: during a Benthos drain, every buffered point is emitted before the plug-in confirms closure.
 
+### Dynamic, per-message compression hints
+
+Instead of hard-coding a rule map inside the *downsampler* you can let each message declare its own compression wishes in **metadata**. The downsampler simply reads the hints, validates them, and uses them in place of the global/default settings.
+This is useful if you want to configure everything for a single tag in a single place - the tag_processor.
+
+---
+
+#### Metadata keys
+
+| Meta key         | Type / allowed values                    | Maps to parameter |
+| ---------------- | ---------------------------------------- | ----------------- |
+| `ds_algorithm`        | `"deadband"` \| `"swinging_door"`        | algorithm switch  |
+| `ds_threshold`   | float                                    | `threshold`       |
+| `ds_min_time`    | Go/ISO-style duration string (`"750ms"`) | `min_time` (SDT)  |
+| `ds_max_time`    | duration string (`"15m"`, `"1h"`, …)     | `max_time`        |
+| `ds_late_policy` | `"passthrough"` \| `"drop"`              | late-arrival rule |
+
+#### Precedence
+
+```
+per-message metadata  →  pattern override  →  global default
+```
+
+If any field is missing the cascade falls back to the next level, so you can override only what
+matters.
+
+---
+
+#### Tag-processor snippet – picking the right algorithm on the fly
+
+```yaml
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |
+          # generic baseline for every tag
+          msg.meta.location_path = "enterprise.plant1"
+          msg.meta.data_contract = "_historian"
+
+          # safe, zero-risk compression unless told otherwise
+          msg.meta.ds_algorithm       = "deadband"
+          msg.meta.ds_threshold  = 0
+          msg.meta.ds_max_time   = "30m"
+          return msg;
+
+        conditions:
+          - if: msg.meta.virtual_path.startsWith("furnace.")
+            then: |
+              msg.meta.ds_algorithm      = "swinging_door"
+              msg.meta.ds_threshold = 0.5
+              msg.meta.ds_min_time  = "5s"
+              msg.meta.ds_max_time  = "1h"
+              return msg;
+    - downsampler: {}
+```
+
 ---
 
 ### Numerical edge cases covered in tests

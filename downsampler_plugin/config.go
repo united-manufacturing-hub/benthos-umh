@@ -64,6 +64,7 @@ type OverrideConfig struct {
 type DownsamplerConfig struct {
 	Default   DefaultConfig    `json:"default" yaml:"default"`
 	Overrides []OverrideConfig `json:"overrides,omitempty" yaml:"overrides,omitempty"`
+	AllowMeta bool             `json:"allow_meta_overrides" yaml:"allow_meta_overrides"`
 }
 
 // GetConfigForTopic returns the effective configuration for a given topic by applying pattern-based overrides.

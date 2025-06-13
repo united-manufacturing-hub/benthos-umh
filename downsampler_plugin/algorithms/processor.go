@@ -300,3 +300,9 @@ func (p *ProcessorWrapper) Flush() ([]GenericPoint, error) {
 
 	return genericPoints, nil
 }
+
+// NeedsPreviousPoint returns whether the underlying algorithm needs to emit previous points.
+// This is used to optimize ACK buffering behavior.
+func (p *ProcessorWrapper) NeedsPreviousPoint() bool {
+	return p.algorithm.NeedsPreviousPoint()
+}

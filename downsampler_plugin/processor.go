@@ -203,7 +203,7 @@ func (mp *MessageProcessor) processUMHCoreMessage(msg *service.Message, dataMap 
 	}
 
 	// Get or create series state
-	state, err := mp.processor.getOrCreateSeriesState(seriesID)
+	state, err := mp.processor.getOrCreateSeriesState(seriesID, msg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get series state: %w", err)
 	}
