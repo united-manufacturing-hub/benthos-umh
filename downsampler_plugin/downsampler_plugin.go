@@ -197,13 +197,9 @@ overrides:
 					Optional()).
 				Description("Default swinging door algorithm parameters.").
 				Optional(),
-			service.NewObjectField("late_policy",
-				service.NewStringEnumField("late_policy", "passthrough", "drop").
-					Description("Default policy for handling late-arriving messages (passthrough=forward unchanged, drop=discard with warning).").
-					Default("passthrough").
-					Optional(),
-			).
-				Description("Default late arrival handling parameters.").
+			service.NewStringEnumField("late_policy", "passthrough", "drop").
+				Description("Default policy for handling late-arriving messages (passthrough=forward unchanged, drop=discard with warning).").
+				Default("passthrough").
 				Optional()).
 			Description("Default algorithm parameters applied to all topics unless overridden.")).
 		Field(service.NewObjectListField("overrides",
@@ -234,12 +230,8 @@ overrides:
 					Optional()).
 				Description("Swinging door algorithm parameter overrides.").
 				Optional(),
-			service.NewObjectField("late_policy",
-				service.NewStringEnumField("late_policy", "passthrough", "drop").
-					Description("Override policy for handling late-arriving messages (passthrough=forward unchanged, drop=discard with warning).").
-					Optional(),
-			).
-				Description("Late arrival handling parameter overrides.").
+			service.NewStringEnumField("late_policy", "passthrough", "drop").
+				Description("Override policy for handling late-arriving messages (passthrough=forward unchanged, drop=discard with warning).").
 				Optional()).
 			Description("Topic-specific parameter overrides using pattern matching. Supports exact topic names and shell-style wildcards (* matches any sequence, ? matches any character).").
 			Optional()).
