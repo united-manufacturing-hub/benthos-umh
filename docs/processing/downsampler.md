@@ -53,6 +53,8 @@ processors:
 *Nothing else is required.*
 Messages that aren't strict UMH-core time-series (`value` + `timestamp_ms`) pass straight through.
 
+**Important:** When an override pattern specifies both `deadband` and `swinging_door` algorithms, the more advanced **swinging door** algorithm takes precedence and deadband parameters are ignored.
+
 ---
 
 ## Algorithm & Parameter Deep Dive

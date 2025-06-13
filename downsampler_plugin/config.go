@@ -15,7 +15,6 @@
 package downsampler_plugin
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -160,27 +159,11 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 		}
 
 		if matched {
-			// Validate that only one algorithm is specified per override
-			// This should have been caught during parsing, but we include a runtime check as well
+			// Check which algorithms are configured
 			hasDeadband := override.Deadband != nil && (override.Deadband.Threshold != 0 || override.Deadband.MaxTime != 0)
 			hasSwingingDoor := override.SwingingDoor != nil && (override.SwingingDoor.Threshold != 0 || override.SwingingDoor.MaxTime != 0 || override.SwingingDoor.MinTime != 0)
 
-			if hasDeadband && hasSwingingDoor {
-				return "", nil, fmt.Errorf("override pattern '%s' specifies both deadband and swinging_door algorithms - only one algorithm may be specified per override", override.Pattern)
-			}
-
-			// Apply deadband overrides (only if actually configured with meaningful values)
-			if hasDeadband {
-				algorithm = "deadband"
-				if override.Deadband.Threshold != 0 {
-					config["threshold"] = override.Deadband.Threshold
-				}
-				if override.Deadband.MaxTime != 0 {
-					config["max_time"] = override.Deadband.MaxTime.String()
-				}
-			}
-
-			// Apply swinging door overrides (only if actually configured with meaningful values)
+			// If both are specified, swinging door takes precedence (more advanced algorithm)
 			if hasSwingingDoor {
 				algorithm = "swinging_door"
 				if override.SwingingDoor.Threshold != 0 {
@@ -191,6 +174,14 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 				}
 				if override.SwingingDoor.MinTime != 0 {
 					config["min_time"] = override.SwingingDoor.MinTime.String()
+				}
+			} else if hasDeadband {
+				algorithm = "deadband"
+				if override.Deadband.Threshold != 0 {
+					config["threshold"] = override.Deadband.Threshold
+				}
+				if override.Deadband.MaxTime != 0 {
+					config["max_time"] = override.Deadband.MaxTime.String()
 				}
 			}
 

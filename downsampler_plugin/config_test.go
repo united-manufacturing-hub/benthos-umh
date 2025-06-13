@@ -139,22 +139,23 @@ var _ = Describe("Configuration Logic", func() {
 			})
 		})
 
-		Context("validation of conflicting algorithms", func() {
-			It("should reject override configurations with both deadband and swinging_door", func() {
-				// Test that our validation catches conflicting algorithm configurations
+		Context("algorithm precedence behavior", func() {
+			It("should prioritize swinging_door when both algorithms are specified", func() {
+				// Test that swinging_door takes precedence over deadband when both are configured
 				conflictingOverride := downsampler.OverrideConfig{
 					Pattern:      "*temperature",
-					Deadband:     &downsampler.DeadbandConfig{Threshold: 0.1},
-					SwingingDoor: &downsampler.SwingingDoorConfig{Threshold: 0.2},
+					Deadband:     &downsampler.DeadbandConfig{Threshold: 0.1, MaxTime: time.Minute},
+					SwingingDoor: &downsampler.SwingingDoorConfig{Threshold: 0.2, MaxTime: time.Hour, MinTime: time.Second * 5},
 				}
 
 				config.Overrides = []downsampler.OverrideConfig{conflictingOverride}
 
 				algorithm, configMap, err := config.GetConfigForTopic("test.temperature")
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("specifies both deadband and swinging_door algorithms"))
-				Expect(algorithm).To(Equal(""))
-				Expect(configMap).To(BeNil())
+				Expect(err).NotTo(HaveOccurred())
+				Expect(algorithm).To(Equal("swinging_door"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 0.2))
+				Expect(configMap).To(HaveKeyWithValue("max_time", "1h0m0s"))
+				Expect(configMap).To(HaveKeyWithValue("min_time", "5s"))
 			})
 		})
 	})
