@@ -522,6 +522,78 @@ func (p *DownsamplerProcessor) ProcessBatch(ctx context.Context, batch service.M
 	return outBatches, nil
 }
 
+// flushAndRecreateProcessor handles parameter-only changes by flushing current data and recreating the processor.
+// This is the "ghetto" solution for meta-override parameter changes that ensures new parameters take effect immediately.
+func (p *DownsamplerProcessor) flushAndRecreateProcessor(state *SeriesState, seriesID string, algorithmType string, newConfig map[string]interface{}) error {
+	// Log parameter change details for debugging
+	if oldThreshold, exists := state.lastConfig["threshold"]; exists {
+		if newThreshold, exists := newConfig["threshold"]; exists && oldThreshold != newThreshold {
+			p.logger.Infof("Series %s: threshold parameter change detected %.3f → %.3f, flushing and recreating processor",
+				seriesID, oldThreshold, newThreshold)
+		}
+	}
+	p.logger.Debugf("Series %s: parameter change detected, flushing and recreating processor", seriesID)
+
+	// 1. Flush current processor to get any buffered points
+	bufferedPoints, err := state.processor.Flush()
+	if err != nil {
+		p.logger.Warnf("Error flushing processor for series %s: %v", seriesID, err)
+		// Continue with recreation even if flush fails
+	} else if len(bufferedPoints) > 0 {
+		p.logger.Debugf("Flushed %d buffered points from old processor for series %s", len(bufferedPoints), seriesID)
+
+		// Convert flushed points to messages and add to candidate buffer
+		// Note: We're using the same logic as createSyntheticMessage but for flushed points
+		for _, point := range bufferedPoints {
+			syntheticMsg := p.createSyntheticMessage(seriesID, point, state)
+			if syntheticMsg != nil {
+				// Stash the synthetic message as a candidate for emission
+				state.stash(syntheticMsg)
+				p.logger.Debugf("Stashed flushed point as candidate for series %s: value=%v, timestamp=%v",
+					seriesID, point.Value, point.Timestamp)
+			}
+		}
+	}
+
+	// 2. Create new processor with updated config
+	processorConfig := algorithms.ProcessorConfig{
+		Algorithm:       algorithmType,
+		AlgorithmConfig: newConfig,
+		PassThrough:     newConfig["late_policy"] == "passthrough",
+		Logger:          p.logger,
+		SeriesID:        seriesID,
+	}
+
+	newProcessor, err := algorithms.NewProcessorWrapper(processorConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create processor %s: %w", algorithmType, err)
+	}
+
+	// 3. Replace processor and reset state
+	state.processor = newProcessor
+	state.processor.Reset()
+	state.lastConfig = newConfig // Update stored config for next comparison
+
+	// 4. Update metrics and log success
+	p.metrics.IncrementMetaOverrideRecreated()
+	p.logger.Debugf("Successfully recreated processor for series %s with new parameters", seriesID)
+
+	return nil
+}
+
+// copyConfig creates a deep copy of a configuration map to avoid mutation issues
+func copyConfig(original map[string]interface{}) map[string]interface{} {
+	if original == nil {
+		return nil
+	}
+
+	copy := make(map[string]interface{})
+	for k, v := range original {
+		copy[k] = v
+	}
+	return copy
+}
+
 // getOrCreateSeriesState returns the state for a series, creating it if needed
 func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string, msg *service.Message) (*SeriesState, error) {
 	p.stateMutex.RLock()
@@ -543,8 +615,9 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string, msg *serv
 				}
 
 				// Apply metadata overrides
+				newConfig := copyConfig(algorithmConfig) // Make a copy to avoid mutation
 				for k, v := range hints {
-					algorithmConfig[k] = v
+					newConfig[k] = v
 				}
 				if algo, ok := hints["algorithm"]; ok {
 					algorithmType = algo.(string)
@@ -552,13 +625,14 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string, msg *serv
 
 				// Check if we need to recreate the processor
 				if algorithmType != state.processor.Name() {
+					// Algorithm change - full recreation (existing logic)
 					p.logger.Infof("Series %s switching algorithm to %s via metadata", seriesID, algorithmType)
 
 					// Create new processor with merged config
 					processorConfig := algorithms.ProcessorConfig{
 						Algorithm:       algorithmType,
-						AlgorithmConfig: algorithmConfig,
-						PassThrough:     algorithmConfig["late_policy"] == "passthrough",
+						AlgorithmConfig: newConfig,
+						PassThrough:     newConfig["late_policy"] == "passthrough",
 						Logger:          p.logger,
 						SeriesID:        seriesID,
 					}
@@ -571,6 +645,38 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string, msg *serv
 					// Update state with new processor
 					state.processor = processor
 					state.processor.Reset()
+					state.lastConfig = newConfig // Store new config
+				} else if !configsEqual(state.lastConfig, newConfig) {
+					// Same algorithm, different parameters - flush and recreate
+					p.logger.Debugf("Series %s: parameters changed but algorithm stays %s, using flush-and-recreate",
+						seriesID, algorithmType)
+
+					// Lock state mutex to prevent concurrent access during recreation
+					state.mutex.Lock()
+					err := p.flushAndRecreateProcessor(state, seriesID, algorithmType, newConfig)
+					state.mutex.Unlock()
+
+					if err != nil {
+						p.logger.Errorf("Failed to flush and recreate processor for series %s: %v", seriesID, err)
+						// Fall back to algorithm switching logic (full recreation)
+						processorConfig := algorithms.ProcessorConfig{
+							Algorithm:       algorithmType,
+							AlgorithmConfig: newConfig,
+							PassThrough:     newConfig["late_policy"] == "passthrough",
+							Logger:          p.logger,
+							SeriesID:        seriesID,
+						}
+
+						processor, err := algorithms.NewProcessorWrapper(processorConfig)
+						if err != nil {
+							return nil, fmt.Errorf("failed to create processor %s: %w", algorithmType, err)
+						}
+
+						state.processor = processor
+						state.processor.Reset()
+						state.lastConfig = newConfig
+						p.logger.Warnf("Used fallback recreation for series %s due to flush error", seriesID)
+					}
 				}
 				p.metrics.IncrementMetaOverrideApplied()
 			}
@@ -627,8 +733,9 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string, msg *serv
 
 	// Create and store new state
 	state = &SeriesState{
-		processor: processor,
-		holdsPrev: processor.NeedsPreviousPoint(),
+		processor:  processor,
+		holdsPrev:  processor.NeedsPreviousPoint(),
+		lastConfig: copyConfig(algorithmConfig), // Store config for future comparisons
 	}
 	p.seriesState[seriesID] = state
 
@@ -858,4 +965,127 @@ func extractMetaHints(msg *service.Message) (map[string]interface{}, error) {
 		return nil, nil // nothing set
 	}
 	return hints, nil
+}
+
+// configsEqual compares two algorithm configurations to detect parameter changes.
+// Returns true if configurations are equivalent, false if they differ.
+// Handles type conversions between different numeric types and duration representations.
+func configsEqual(config1, config2 map[string]interface{}) bool {
+	if config1 == nil && config2 == nil {
+		return true
+	}
+	if config1 == nil || config2 == nil {
+		return false
+	}
+
+	// Compare relevant parameters that affect algorithm behavior
+	keys := []string{"threshold", "max_time", "min_time", "late_policy"}
+
+	for _, key := range keys {
+		if !valuesEqual(config1[key], config2[key]) {
+			return false
+		}
+	}
+	return true
+}
+
+// valuesEqual compares two configuration values with type conversion support.
+// Handles float64 vs int comparisons and duration vs string comparisons.
+func valuesEqual(v1, v2 interface{}) bool {
+	if v1 == nil && v2 == nil {
+		return true
+	}
+	if v1 == nil || v2 == nil {
+		return false
+	}
+
+	// Handle numeric values (threshold)
+	if isNumeric(v1) && isNumeric(v2) {
+		f1, err1 := toFloat64(v1)
+		f2, err2 := toFloat64(v2)
+		if err1 != nil || err2 != nil {
+			return false
+		}
+		return f1 == f2
+	}
+
+	// Handle duration values (max_time, min_time)
+	if isDuration(v1) && isDuration(v2) {
+		d1, err1 := toDuration(v1)
+		d2, err2 := toDuration(v2)
+		if err1 != nil || err2 != nil {
+			return false
+		}
+		return d1 == d2
+	}
+
+	// Handle string values (late_policy)
+	return fmt.Sprintf("%v", v1) == fmt.Sprintf("%v", v2)
+}
+
+// isNumeric checks if a value is a numeric type
+func isNumeric(v interface{}) bool {
+	switch v.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return true
+	default:
+		return false
+	}
+}
+
+// isDuration checks if a value is a duration type or string
+func isDuration(v interface{}) bool {
+	switch v.(type) {
+	case time.Duration:
+		return true
+	case string:
+		_, err := time.ParseDuration(v.(string))
+		return err == nil
+	default:
+		return false
+	}
+}
+
+// toFloat64 converts various numeric types to float64
+func toFloat64(v interface{}) (float64, error) {
+	switch val := v.(type) {
+	case float64:
+		return val, nil
+	case float32:
+		return float64(val), nil
+	case int:
+		return float64(val), nil
+	case int8:
+		return float64(val), nil
+	case int16:
+		return float64(val), nil
+	case int32:
+		return float64(val), nil
+	case int64:
+		return float64(val), nil
+	case uint:
+		return float64(val), nil
+	case uint8:
+		return float64(val), nil
+	case uint16:
+		return float64(val), nil
+	case uint32:
+		return float64(val), nil
+	case uint64:
+		return float64(val), nil
+	default:
+		return 0, fmt.Errorf("unsupported numeric type: %T", v)
+	}
+}
+
+// toDuration converts various duration representations to time.Duration
+func toDuration(v interface{}) (time.Duration, error) {
+	switch val := v.(type) {
+	case time.Duration:
+		return val, nil
+	case string:
+		return time.ParseDuration(val)
+	default:
+		return 0, fmt.Errorf("unsupported duration type: %T", v)
+	}
 }
