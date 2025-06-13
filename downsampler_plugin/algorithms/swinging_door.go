@@ -62,18 +62,8 @@ func newSwingingDoor(cfg map[string]interface{}) (StreamCompressor, error) {
 				return nil, fmt.Errorf("%s: invalid max_time: %v", name, v)
 			}
 			maxT = v
-		} else if s, ok := mt.(string); ok {
-			// Support duration strings like "30m", "1h", etc.
-			d, err := time.ParseDuration(s)
-			if err != nil {
-				return nil, fmt.Errorf("%s: invalid max_time string '%s': %v", name, s, err)
-			}
-			if d < 0 {
-				return nil, fmt.Errorf("%s: invalid max_time: %v", name, d)
-			}
-			maxT = d
 		} else {
-			return nil, fmt.Errorf("%s: invalid max_time type: %T (expected time.Duration or string)", name, mt)
+			return nil, fmt.Errorf("%s: invalid max_time type: %T", name, mt)
 		}
 	}
 
@@ -85,18 +75,8 @@ func newSwingingDoor(cfg map[string]interface{}) (StreamCompressor, error) {
 				return nil, fmt.Errorf("%s: invalid min_time: %v", name, v)
 			}
 			minT = v
-		} else if s, ok := mt.(string); ok {
-			// Support duration strings like "5s", "1m", etc.
-			d, err := time.ParseDuration(s)
-			if err != nil {
-				return nil, fmt.Errorf("%s: invalid min_time string '%s': %v", name, s, err)
-			}
-			if d < 0 {
-				return nil, fmt.Errorf("%s: invalid min_time: %v", name, d)
-			}
-			minT = d
 		} else {
-			return nil, fmt.Errorf("%s: invalid min_time type: %T (expected time.Duration or string)", name, mt)
+			return nil, fmt.Errorf("%s: invalid min_time type: %T", name, mt)
 		}
 	}
 
