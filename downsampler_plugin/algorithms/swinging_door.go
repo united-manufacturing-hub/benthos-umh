@@ -147,12 +147,15 @@ func (sd *SwingingDoorAlgorithm) Ingest(v float64, ts time.Time) ([]Point, error
 	if sd.maxTime > 0 && ts.Sub(sd.lastEmitTime) >= sd.maxTime {
 		p := Point{Value: v, Timestamp: ts}
 
+		// Capture the actual elapsed time before updating lastEmitTime
+		actualElapsed := ts.Sub(sd.lastEmitTime)
+
 		sd.base = p
 		sd.lastEmitTime = ts
 		sd.cand = nil // discard any pending candidate
 		sd.openDoor() // reset envelope
 
-		debugLog("HEARTBEAT fired: Δt=%v   maxTime=%v", ts.Sub(sd.lastEmitTime), sd.maxTime)
+		debugLog("HEARTBEAT fired: Δt=%v   maxTime=%v", actualElapsed, sd.maxTime)
 
 		return append(out, p), nil
 	}
@@ -171,12 +174,12 @@ func (sd *SwingingDoorAlgorithm) Ingest(v float64, ts time.Time) ([]Point, error
 	debugLog("EMIT CHECK: emitNeeded=%t", emitNeeded)
 
 	// ---------- NEW: Delta-Min gate -------------------------------------------
-	debugLog("DELTA-MIN gate: Δt=%v   minTime=%v", ts.Sub(sd.lastEmitTime), sd.minTime)
+	debugLog("DELTA-MIN gate: Δt=%v   minTime=%v", sd.cand.Timestamp.Sub(sd.lastEmitTime), sd.minTime)
 	if emitNeeded && sd.minTime > 0 &&
 		sd.cand.Timestamp.Sub(sd.lastEmitTime) < sd.minTime {
 		// Not enough time has elapsed → keep sliding candidate
 		debugLog("DELTA-MIN gate: hold candidate (Δt=%v < %v)",
-			ts.Sub(sd.lastEmitTime), sd.minTime)
+			sd.cand.Timestamp.Sub(sd.lastEmitTime), sd.minTime)
 
 		sd.cand = &Point{Value: v, Timestamp: ts}
 		sd.openDoor()
