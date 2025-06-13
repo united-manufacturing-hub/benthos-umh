@@ -205,17 +205,22 @@ The processor includes several safeguards for production use:
 
 ## Error Handling
 
-The processor handles various error conditions gracefully:
+The processor includes comprehensive error handling and logging for non-standard messages. Each error condition is logged with detailed information to help diagnose issues:
 
-| Error Condition              | Behavior                      | Metrics               |
-| ---------------------------- | ----------------------------- | --------------------- |
-| Missing timestamp field      | Message skipped, error logged | `messages_errored`    |
-| Invalid JSON                 | Message skipped, error logged | `messages_errored`    |
-| Missing topic metadata       | Message skipped, error logged | `messages_errored`    |
-| Invalid topic format         | Message skipped, error logged | `messages_errored`    |
-| Unsupported timestamp format | Message skipped, error logged | `messages_errored`    |
-| Recursion depth exceeded     | Flattening stopped at limit   | `recursion_limit_hit` |
-| Too many tags                | Processing stopped at limit   | `tag_limit_exceeded`  |
+| Error Condition          | Log Message Example                                          | Behavior                      | Metrics               |
+| ------------------------ | ------------------------------------------------------------ | ----------------------------- | --------------------- |
+| Invalid JSON             | "failed to parse as structured data: ..."                    | Message skipped, error logged | `messages_errored`    |
+| Missing timestamp_ms     | "timestamp field 'timestamp_ms' not found in payload"        | Message skipped, error logged | `messages_errored`    |
+| Invalid timestamp format | "failed to parse timestamp: ..."                             | Message skipped, error logged | `messages_errored`    |
+| Missing topic metadata   | "no topic found in message metadata"                         | Message skipped, error logged | `messages_errored`    |
+| Invalid topic format     | "invalid topic structure, expected at least 4 parts: ..."    | Message skipped, error logged | `messages_errored`    |
+| Invalid UMH prefix       | "invalid UMH topic prefix, expected 'umh.v1': ..."           | Message skipped, error logged | `messages_errored`    |
+| Missing data contract    | "no data contract found in topic: ..."                       | Message skipped, error logged | `messages_errored`    |
+| Missing location path    | "missing location path in topic: ..."                        | Message skipped, error logged | `messages_errored`    |
+| Recursion depth exceeded | "Maximum recursion depth of 10 reached, stopping flattening" | Flattening stopped at limit   | `recursion_limit_hit` |
+| Too many tags            | "Message exceeds maximum tag limit of 1000, truncating"      | Processing stopped at limit   | `tag_limit_exceeded`  |
+
+All error messages include the original message content and specific details about what went wrong, making it easy to identify and fix issues with non-standard messages.
 
 ## Metrics
 
@@ -229,6 +234,8 @@ The processor exposes comprehensive metrics for monitoring:
 | `messages_dropped`    | Counter | Messages dropped due to configuration   |
 | `recursion_limit_hit` | Counter | Times recursion depth limit was reached |
 | `tag_limit_exceeded`  | Counter | Times tag limit was exceeded            |
+
+These metrics can be used to monitor the health of the processor and identify patterns of non-standard messages that need attention.
 
 ## Complete Integration Example
 

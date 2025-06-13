@@ -187,7 +187,10 @@ func (p *ClassicToCoreProcessor) processMessage(msg *service.Message) ([]*servic
 	}
 
 	// Flatten payload with recursion limit
-	flattenedTags := p.flattenPayload(payload, "", 0)
+	flattenedTags, err := p.flattenPayload(payload, "", 0)
+	if err != nil {
+		return nil, fmt.Errorf("payload flattening failed: %w", err)
+	}
 
 	// Check tag limit
 	if len(flattenedTags) > maxTagsPerMessage {
@@ -420,12 +423,11 @@ func (p *ClassicToCoreProcessor) constructCoreTopic(components *TopicComponents,
 // It converts complex tag group structures into flat key-value pairs with dot-notation names.
 // For example: {"axis": {"x": 1.0, "y": 2.0}} becomes {"axis.x": 1.0, "axis.y": 2.0}.
 // The function respects recursion depth limits to prevent stack overflow and infinite loops.
-func (p *ClassicToCoreProcessor) flattenPayload(payload map[string]interface{}, prefix string, depth int) map[string]interface{} {
+func (p *ClassicToCoreProcessor) flattenPayload(payload map[string]interface{}, prefix string, depth int) (map[string]interface{}, error) {
 	// Check recursion depth limit
 	if depth > maxRecursionDepth {
-		p.logger.Warnf("Maximum recursion depth of %d reached, stopping flattening", maxRecursionDepth)
 		p.recursionLimitHit.Incr(1)
-		return payload
+		return nil, fmt.Errorf("maximum recursion depth of %d reached, stopping flattening", maxRecursionDepth)
 	}
 
 	result := make(map[string]interface{})
@@ -446,7 +448,10 @@ func (p *ClassicToCoreProcessor) flattenPayload(payload map[string]interface{}, 
 		// Check if value is a nested object (tag group)
 		if nestedMap, ok := value.(map[string]interface{}); ok {
 			// Recursively flatten nested objects with incremented depth
-			nestedResults := p.flattenPayload(nestedMap, fullKey, depth+1)
+			nestedResults, err := p.flattenPayload(nestedMap, fullKey, depth+1)
+			if err != nil {
+				return nil, err
+			}
 			for nestedKey, nestedValue := range nestedResults {
 				result[nestedKey] = nestedValue
 			}
@@ -456,7 +461,7 @@ func (p *ClassicToCoreProcessor) flattenPayload(payload map[string]interface{}, 
 		}
 	}
 
-	return result
+	return result, nil
 }
 
 // extractTimestamp converts various timestamp formats to a standardized int64 value.
