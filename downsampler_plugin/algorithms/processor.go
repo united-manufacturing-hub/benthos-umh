@@ -54,12 +54,14 @@ type ProcessorWrapper struct {
 	logger        *service.Logger
 	seriesID      string // For debug logging context
 
-	// Boolean handling state
-	lastBoolValue *bool
+	// Boolean handling state - using value fields to avoid heap allocations
+	lastBoolValue bool
+	haveBoolValue bool
 	lastBoolTime  time.Time
 
-	// String handling state
-	lastStringValue *string
+	// String handling state - using value fields to avoid heap allocations
+	lastStringValue string
+	haveStringValue bool
 	lastStringTime  time.Time
 }
 
@@ -174,8 +176,9 @@ func (p *ProcessorWrapper) Ingest(value interface{}, timestamp time.Time) ([]Gen
 // processBooleanValue handles boolean values with change-based logic
 func (p *ProcessorWrapper) processBooleanValue(value bool, timestamp time.Time) ([]GenericPoint, error) {
 	// First boolean value is always kept
-	if p.lastBoolValue == nil {
-		p.lastBoolValue = &value
+	if !p.haveBoolValue {
+		p.lastBoolValue = value
+		p.haveBoolValue = true
 		p.lastBoolTime = timestamp
 		if p.logger != nil {
 			p.logger.Debugf("Boolean value kept for series '%s': first value %v at %v", p.seriesID, value, timestamp)
@@ -184,10 +187,10 @@ func (p *ProcessorWrapper) processBooleanValue(value bool, timestamp time.Time) 
 	}
 
 	// Keep if value changed
-	if *p.lastBoolValue != value {
+	if p.lastBoolValue != value {
 		// Capture the previous value before updating
-		old := *p.lastBoolValue
-		p.lastBoolValue = &value
+		old := p.lastBoolValue
+		p.lastBoolValue = value
 		p.lastBoolTime = timestamp
 		if p.logger != nil {
 			p.logger.Debugf("Boolean value kept for series '%s': changed from %v to %v at %v", p.seriesID, old, value, timestamp)
@@ -205,8 +208,9 @@ func (p *ProcessorWrapper) processBooleanValue(value bool, timestamp time.Time) 
 // processStringValue handles string values with change-based logic
 func (p *ProcessorWrapper) processStringValue(value string, timestamp time.Time) ([]GenericPoint, error) {
 	// First string value is always kept
-	if p.lastStringValue == nil {
-		p.lastStringValue = &value
+	if !p.haveStringValue {
+		p.lastStringValue = value
+		p.haveStringValue = true
 		p.lastStringTime = timestamp
 		if p.logger != nil {
 			p.logger.Debugf("String value kept for series '%s': first value '%s' at %v", p.seriesID, value, timestamp)
@@ -215,9 +219,9 @@ func (p *ProcessorWrapper) processStringValue(value string, timestamp time.Time)
 	}
 
 	// Keep if value changed
-	if *p.lastStringValue != value {
-		oldValue := *p.lastStringValue
-		p.lastStringValue = &value
+	if p.lastStringValue != value {
+		oldValue := p.lastStringValue
+		p.lastStringValue = value
 		p.lastStringTime = timestamp
 		if p.logger != nil {
 			p.logger.Debugf("String value kept for series '%s': changed from '%s' to '%s' at %v", p.seriesID, oldValue, value, timestamp)
@@ -268,9 +272,9 @@ func (p *ProcessorWrapper) toFloat64(val interface{}) (float64, error) {
 func (p *ProcessorWrapper) Reset() {
 	p.algorithm.Reset()
 	p.lastTimestamp = time.Time{}
-	p.lastBoolValue = nil
+	p.haveBoolValue = false
 	p.lastBoolTime = time.Time{}
-	p.lastStringValue = nil
+	p.haveStringValue = false
 	p.lastStringTime = time.Time{}
 }
 
