@@ -75,7 +75,7 @@ The Downsampler exposes just four parameters; once you understand their purpose 
 | `threshold`   | Maximum absolute deviation allowed before a new point must be stored (same units as the signal). Optional, defaults to 0. | **2 × sensor-noise σ** · If σ is unknown, inspect a steady period and take ± peak spread. **Default 0** = keep any change, drop exact repeats.   | Removes pure measurement noise without masking genuine step changes.            |
 | `min_time`    | Smallest physically realistic interval between meaningful changes. Available only on `swinging_door`                               | Fastest credible process period (e.g. 1 s for furnaces, 50 ms for servo torque). `0` = off | Suppresses transients caused by bursty drivers or unstable links.               |
 | `max_time`    | Heart-beat that forces an output even during flat periods; also flushes any SDT buffer.          | 15 min – 1 h (aligns with 21 CFR §11 "system liveness").                                   | Ensures line-flat sensors remain visible and internal buffers stay bounded.     |
-| `late_policy` | Action for out-of-order samples.                                                                 | `passthrough` (default) or `drop`.                                                         | Lets you balance historical accuracy against traffic volume on skewed networks. |     |
+| `late_policy` | Action for out-of-order samples.                                                                 | `passthrough` (default) or `drop`.                                                         | Lets you balance historical accuracy against traffic volume on skewed networks. |
 
 ### Dead-band
 
