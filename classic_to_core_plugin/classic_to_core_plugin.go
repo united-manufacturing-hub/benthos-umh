@@ -287,17 +287,17 @@ func (p *ClassicToCoreProcessor) validateAndParseTopic(msg *service.Message) (*T
 // TopicComponents represents the parsed parts of a UMH topic.
 // This structure breaks down the hierarchical UMH topic format into its constituent parts,
 // enabling reconstruction of Core format topics by appending field names to the appropriate components.
-// The parsing follows UMH topic conventions: umh.v1.<location>.<data_contract>.<context>
+// The parsing follows UMH topic conventions: umh.v1.<location>.<schema>.<tag_group>
 type TopicComponents struct {
-	Prefix       string // "umh.v1"
-	LocationPath string // "enterprise.site.area"
-	DataContract string // "_historian"
-	Context      string // Additional context after data contract
+	Prefix   string // "umh.v1"
+	Location string // "enterprise.site.area"
+	Schema   string // "_historian"
+	TagGroup string // Additional context after schema
 }
 
 // parseClassicTopic parses a UMH Historian Data Contract topic into its components.
 // It validates the topic structure, ensures it follows UMH v1 conventions, and extracts
-// the location path, data contract, and context. This parsing is essential for reconstructing
+// the location path, schema, and context. This parsing is essential for reconstructing
 // proper Core format topics that maintain the original hierarchical structure while adding field names.
 func (p *ClassicToCoreProcessor) parseClassicTopic(topic string) (*TopicComponents, error) {
 	parts := strings.Split(topic, ".")
@@ -310,38 +310,38 @@ func (p *ClassicToCoreProcessor) parseClassicTopic(topic string) (*TopicComponen
 		return nil, fmt.Errorf("invalid UMH topic prefix, expected 'umh.v1': %s", topic)
 	}
 
-	// Find the data contract (starts with underscore)
-	var dataContractIndex = -1
+	// Find the schema (starts with underscore)
+	var schemaIndex = -1
 	for i := 2; i < len(parts); i++ { // Start from index 2 (after umh.v1)
 		if strings.HasPrefix(parts[i], "_") {
-			dataContractIndex = i
+			schemaIndex = i
 			break
 		}
 	}
 
-	if dataContractIndex == -1 {
-		return nil, fmt.Errorf("no data contract found in topic: %s", topic)
+	if schemaIndex == -1 {
+		return nil, fmt.Errorf("no schema found in topic: %s", topic)
 	}
 
-	if dataContractIndex == 2 {
+	if schemaIndex == 2 {
 		return nil, fmt.Errorf("missing location path in topic: %s", topic)
 	}
 
 	// Reconstruct components
 	prefix := strings.Join(parts[:2], ".") // umh.v1
-	locationPath := strings.Join(parts[2:dataContractIndex], ".")
-	dataContract := parts[dataContractIndex]
+	locationPath := strings.Join(parts[2:schemaIndex], ".")
+	schema := parts[schemaIndex]
 
 	var context string
-	if len(parts) > dataContractIndex+1 {
-		context = strings.Join(parts[dataContractIndex+1:], ".")
+	if len(parts) > schemaIndex+1 {
+		context = strings.Join(parts[schemaIndex+1:], ".")
 	}
 
 	return &TopicComponents{
-		Prefix:       prefix,
-		LocationPath: locationPath,
-		DataContract: dataContract,
-		Context:      context,
+		Prefix:   prefix,
+		Location: locationPath,
+		Schema:   schema,
+		TagGroup: context,
 	}, nil
 }
 
@@ -375,25 +375,25 @@ func (p *ClassicToCoreProcessor) createCoreMessage(originalMsg *service.Message,
 	}
 
 	// Determine target data contract
-	targetDataContract := p.config.TargetDataContract
-	if targetDataContract == "" {
+	targetSchema := p.config.TargetDataContract
+	if targetSchema == "" {
 		// Use the original data contract if not specified
-		targetDataContract = topicComponents.DataContract
+		targetSchema = topicComponents.Schema
 	}
 
 	// Construct new topic
-	newTopic := p.constructCoreTopic(topicComponents, fieldName, targetDataContract)
+	newTopic := p.constructCoreTopic(topicComponents, fieldName, targetSchema)
 	newMsg.MetaSet("topic", newTopic)
 	newMsg.MetaSet("umh_topic", newTopic)
 
 	// Set Core-specific metadata
-	newMsg.MetaSet("location_path", topicComponents.LocationPath)
-	newMsg.MetaSet("data_contract", targetDataContract)
+	newMsg.MetaSet("location_path", topicComponents.Location)
+	newMsg.MetaSet("schema", targetSchema)
 	newMsg.MetaSet("tag_name", fieldName)
 
 	// Set virtual path if there was context in the original topic
-	if topicComponents.Context != "" {
-		newMsg.MetaSet("virtual_path", topicComponents.Context)
+	if topicComponents.TagGroup != "" {
+		newMsg.MetaSet("virtual_path", topicComponents.TagGroup)
 	}
 
 	return newMsg, nil
@@ -403,15 +403,15 @@ func (p *ClassicToCoreProcessor) createCoreMessage(originalMsg *service.Message,
 // It maintains the UMH hierarchical structure while adapting it for Core format by using the
 // target data contract and appending the field name. The resulting topic follows the pattern:
 // umh.v1.<location>.<target_contract>.<context>.<field_name>
-func (p *ClassicToCoreProcessor) constructCoreTopic(components *TopicComponents, fieldName string, targetDataContract string) string {
+func (p *ClassicToCoreProcessor) constructCoreTopic(components *TopicComponents, fieldName string, targetSchema string) string {
 	parts := []string{
 		components.Prefix,
-		components.LocationPath,
-		targetDataContract,
+		components.Location,
+		targetSchema,
 	}
 
-	if components.Context != "" {
-		parts = append(parts, components.Context)
+	if components.TagGroup != "" {
+		parts = append(parts, components.TagGroup)
 	}
 
 	parts = append(parts, fieldName)

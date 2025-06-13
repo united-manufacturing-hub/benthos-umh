@@ -15,7 +15,7 @@ Use the `classic_to_core` processor when you need to:
 
 The processor maintains compatibility with the `_historian` schema, ensuring that the output can be consumed by systems expecting Classic format messages.
 
-## Configuration
+## Quick Start
 
 ```yaml
 pipeline:
