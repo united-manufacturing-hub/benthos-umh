@@ -121,8 +121,8 @@ func (p *ProcessorWrapper) Ingest(value interface{}, timestamp time.Time) ([]Gen
 	floatVal, err := p.toFloat64(value)
 	if err != nil {
 		if p.logger != nil {
-			p.logger.Debugf("Type conversion failed for series '%s': value %v (type %T) cannot be converted to float64: %v",
-				p.seriesID, value, value, err)
+			p.logger.Debugf("Type conversion failed for series '%s' (algorithm: %s): value %v (type %T) cannot be converted to float64: %v",
+				p.seriesID, p.algorithm.Name(), value, value, err)
 		}
 		return []GenericPoint{}, fmt.Errorf("type conversion failed: %w", err)
 	}
@@ -134,16 +134,16 @@ func (p *ProcessorWrapper) Ingest(value interface{}, timestamp time.Time) ([]Gen
 			// This ensures out-of-order messages are passed through unchanged
 			if p.logger != nil {
 				timeDiff := p.lastTimestamp.Sub(timestamp)
-				p.logger.Debugf("Late arrival passthrough for series '%s': message timestamp %v is %v behind last processed %v - passing through unchanged",
-					p.seriesID, timestamp, timeDiff, p.lastTimestamp)
+				p.logger.Debugf("Late arrival passthrough for series '%s' (algorithm: %s): message timestamp %v is %v behind last processed %v - passing through unchanged",
+					p.seriesID, p.algorithm.Name(), timestamp, timeDiff, p.lastTimestamp)
 			}
 			return []GenericPoint{{Value: value, Timestamp: timestamp}}, nil
 		} else {
 			// Drop out-of-order data
 			if p.logger != nil {
 				timeDiff := p.lastTimestamp.Sub(timestamp)
-				p.logger.Debugf("Late arrival drop for series '%s': message timestamp %v is %v behind last processed %v - dropping message",
-					p.seriesID, timestamp, timeDiff, p.lastTimestamp)
+				p.logger.Debugf("Late arrival drop for series '%s' (algorithm: %s): message timestamp %v is %v behind last processed %v - dropping message",
+					p.seriesID, p.algorithm.Name(), timestamp, timeDiff, p.lastTimestamp)
 			}
 			return []GenericPoint{}, nil
 		}
@@ -181,7 +181,7 @@ func (p *ProcessorWrapper) processBooleanValue(value bool, timestamp time.Time) 
 		p.haveBoolValue = true
 		p.lastBoolTime = timestamp
 		if p.logger != nil {
-			p.logger.Debugf("Boolean value kept for series '%s': first value %v at %v", p.seriesID, value, timestamp)
+			p.logger.Debugf("Boolean value kept for series '%s' (algorithm: %s): first value %v at %v", p.seriesID, p.algorithm.Name(), value, timestamp)
 		}
 		return []GenericPoint{{Value: value, Timestamp: timestamp}}, nil
 	}
@@ -193,14 +193,14 @@ func (p *ProcessorWrapper) processBooleanValue(value bool, timestamp time.Time) 
 		p.lastBoolValue = value
 		p.lastBoolTime = timestamp
 		if p.logger != nil {
-			p.logger.Debugf("Boolean value kept for series '%s': changed from %v to %v at %v", p.seriesID, old, value, timestamp)
+			p.logger.Debugf("Boolean value kept for series '%s' (algorithm: %s): changed from %v to %v at %v", p.seriesID, p.algorithm.Name(), old, value, timestamp)
 		}
 		return []GenericPoint{{Value: value, Timestamp: timestamp}}, nil
 	}
 
 	// Drop if no change
 	if p.logger != nil {
-		p.logger.Debugf("Boolean value dropped for series '%s': unchanged value %v at %v", p.seriesID, value, timestamp)
+		p.logger.Debugf("Boolean value dropped for series '%s' (algorithm: %s): unchanged value %v at %v", p.seriesID, p.algorithm.Name(), value, timestamp)
 	}
 	return []GenericPoint{}, nil
 }
@@ -213,7 +213,7 @@ func (p *ProcessorWrapper) processStringValue(value string, timestamp time.Time)
 		p.haveStringValue = true
 		p.lastStringTime = timestamp
 		if p.logger != nil {
-			p.logger.Debugf("String value kept for series '%s': first value '%s' at %v", p.seriesID, value, timestamp)
+			p.logger.Debugf("String value kept for series '%s' (algorithm: %s): first value '%s' at %v", p.seriesID, p.algorithm.Name(), value, timestamp)
 		}
 		return []GenericPoint{{Value: value, Timestamp: timestamp}}, nil
 	}
@@ -224,14 +224,14 @@ func (p *ProcessorWrapper) processStringValue(value string, timestamp time.Time)
 		p.lastStringValue = value
 		p.lastStringTime = timestamp
 		if p.logger != nil {
-			p.logger.Debugf("String value kept for series '%s': changed from '%s' to '%s' at %v", p.seriesID, oldValue, value, timestamp)
+			p.logger.Debugf("String value kept for series '%s' (algorithm: %s): changed from '%s' to '%s' at %v", p.seriesID, p.algorithm.Name(), oldValue, value, timestamp)
 		}
 		return []GenericPoint{{Value: value, Timestamp: timestamp}}, nil
 	}
 
 	// Drop if no change
 	if p.logger != nil {
-		p.logger.Debugf("String value dropped for series '%s': unchanged value '%s' at %v", p.seriesID, value, timestamp)
+		p.logger.Debugf("String value dropped for series '%s' (algorithm: %s): unchanged value '%s' at %v", p.seriesID, p.algorithm.Name(), value, timestamp)
 	}
 	return []GenericPoint{}, nil
 }

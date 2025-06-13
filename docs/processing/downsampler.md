@@ -39,7 +39,7 @@ processors:
         late_policy: passthrough   # global policy for late arrivals
         deadband:
           threshold: 0             # keep every change
-          max_time: 30m            # 30-minute heartbeat
+          max_time: "30m"          # 30-minute heartbeat
       overrides:                   # finer control
         - pattern: "*.temperature"
           deadband:
@@ -48,8 +48,8 @@ processors:
           late_policy: drop        # can override per pattern
           swinging_door:
             threshold: 0.1
-            min_time: 5s
-            max_time: 1h
+            min_time: "5s"
+            max_time: "1h"
 ```
 
 *Nothing else is required.*
