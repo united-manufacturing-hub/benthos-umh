@@ -542,18 +542,6 @@ var _ = Describe("Deadband Algorithm", func() {
 		})
 	})
 
-	// Property-based testing placeholder
-	Describe("Property-based tests (future enhancement)", func() {
-		Context("fuzz testing properties", func() {
-			It("should maintain the fundamental property that consecutive kept points differ by >= threshold OR time delta >= max_time", func() {
-				Skip("TODO: Implement Go 1.22 fuzzing test")
-				// TODO: Property test that verifies:
-				// For any two consecutive kept points P1, P2:
-				// abs(P2.value - P1.value) >= threshold OR P2.time - P1.time >= max_time
-			})
-		})
-	})
-
 	Describe("comprehensive deadband test plan verification", func() {
 		// Test cases implementing deadband filtering patterns
 		// These tests verify deadband behavior against various data patterns
