@@ -17,7 +17,7 @@ Wildcard overrides let you apply a conservative baseline (`deadband {threshold: 
 
 2. **Noise suppression anywhere in the stream**
    *Configuration:* `deadband {threshold: 2 × σ_noise, max_time: 1h}`
-   *Effect:* Removes fluctuations beneath the sensor's specified noise floor yet retains all legitimate steps.
+   *Effect:* Removes fluctuations beneath the sensor's specified noise floor yet retains all legitimate steps. No latency is introduced.
 
 3. **Final stage before the historian**
    *Configuration:* `swinging_door {threshold: 2 × σ_noise, min_time: physics_limit, max_time: 1h}`
@@ -54,6 +54,12 @@ processors:
 
 *Nothing else is required.*
 Messages that aren't strict UMH-core time-series (`value` + `timestamp_ms`) pass straight through.
+
+**Pattern Matching:** The `pattern` field uses **shell-style glob patterns** (not regex). Supported wildcards:
+- `*` matches any sequence of characters (e.g., `"*.temperature"` matches topics ending in "temperature")
+- `?` matches any single character 
+- `[abc]` matches any character in brackets
+- Examples: `"*.temperature"`, `"*sensor*"`, `"temp_?"`, `"sensor[12]"`
 
 **Important:** When an override pattern specifies both `deadband` and `swinging_door` algorithms, the more advanced **swinging door** algorithm takes precedence and deadband parameters are ignored.
 
@@ -115,8 +121,8 @@ The Downsampler runs each series in its own finite-state machine and guards two 
 
 *The timestamp of each processed sample is compared with the most recent one already seen for that series.*
 
-* `passthrough` (default) Forward the late sample raw, flagging it with `meta:late_oos=true`.
-* `drop` Discard and increment a metric counter—useful when stale data has no value but bandwidth is critical.
+* `passthrough` (default) Forward the late sample raw, flagging it with `meta:late_oos=true` (oos = "out of sequence").
+* `drop` Discard and increment a metric counter—useful when stale data has no value but bandwidth is critical.
 
 Both modes preserve at-least-once delivery for in-order traffic; only you decide what to do with stragglers.
 
