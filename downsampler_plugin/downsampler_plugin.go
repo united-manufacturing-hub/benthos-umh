@@ -770,7 +770,7 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string, msg *serv
 //   - timestamp: The timestamp of the message that was processed
 func (p *DownsamplerProcessor) updateProcessedTime(state *SeriesState, timestamp time.Time) {
 	// Only update lastProcessedTime for late arrival detection
-	// Don't update lastOutput/lastOutputTime since message wasn't kept
+	// This tracks the latest timestamp processed regardless of whether message was emitted
 	if timestamp.After(state.lastProcessedTime) {
 		state.lastProcessedTime = timestamp
 	}
