@@ -38,7 +38,7 @@ func init() {
 //   - Special case: threshold=0 keeps any change but drops exact repeats
 //
 // Configuration parameters:
-//   - threshold (required): minimum change magnitude to keep a point
+//   - threshold (optional, default=0): minimum change magnitude to keep a point
 //   - max_time (optional): maximum time between kept points for heartbeat emission
 //
 // Thread safety: NOT goroutine-safe. Use separate instances for concurrent processing.
@@ -55,11 +55,11 @@ type DeadbandAlgorithm struct {
 // NewDeadbandAlgorithm creates a new deadband algorithm instance.
 //
 // Configuration map keys:
-//   - "threshold": float64, int, or string - minimum change required (>= 0)
+//   - "threshold": float64, int, or string - minimum change required (>= 0, default=0)
 //   - "max_time": time.Duration or string - maximum time between emissions (optional)
 //
 // Returns error for:
-//   - Missing or invalid threshold values
+//   - Invalid threshold values (non-numeric types)
 //   - Negative threshold values
 //   - Invalid max_time duration strings
 func NewDeadbandAlgorithm(config map[string]interface{}) (StreamCompressor, error) {
