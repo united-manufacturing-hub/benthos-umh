@@ -572,6 +572,7 @@ func (p *DownsamplerProcessor) flushAndRecreateProcessor(state *SeriesState, ser
 	// 3. Replace processor and reset state
 	state.processor = newProcessor
 	state.processor.Reset()
+	state.holdsPrev = newProcessor.NeedsPreviousPoint()
 	state.lastConfig = newConfig // Update stored config for next comparison
 
 	// 4. Update metrics and log success
@@ -645,6 +646,7 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string, msg *serv
 					// Update state with new processor
 					state.processor = processor
 					state.processor.Reset()
+					state.holdsPrev = processor.NeedsPreviousPoint()
 					state.lastConfig = newConfig // Store new config
 				} else if !configsEqual(state.lastConfig, newConfig) {
 					// Same algorithm, different parameters - flush and recreate
@@ -674,6 +676,7 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string, msg *serv
 
 						state.processor = processor
 						state.processor.Reset()
+						state.holdsPrev = processor.NeedsPreviousPoint()
 						state.lastConfig = newConfig
 						p.logger.Warnf("Used fallback recreation for series %s due to flush error", seriesID)
 					}
