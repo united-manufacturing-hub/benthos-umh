@@ -150,7 +150,6 @@ var _ = Describe("ClassicToCoreProcessor", func() {
 			},
 			Entry("basic conversion with explicit target data contract",
 				`classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw`,
 				"umh.v1.acme._historian.weather",
 				map[string]interface{}{
@@ -180,8 +179,7 @@ var _ = Describe("ClassicToCoreProcessor", func() {
 				},
 			),
 			Entry("conversion using input data contract when target not specified",
-				`classic_to_core:
-  timestamp_field: timestamp_ms`,
+				`classic_to_core: {}`,
 				"umh.v1.acme._historian.weather",
 				map[string]interface{}{
 					"timestamp_ms": 1717083000000,
@@ -201,7 +199,6 @@ var _ = Describe("ClassicToCoreProcessor", func() {
 			),
 			Entry("complex location path with virtual path",
 				`classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw`,
 				"umh.v1.enterprise.plant1.machining.cnc-line.cnc5._historian.axis.position",
 				map[string]interface{}{
@@ -222,7 +219,6 @@ var _ = Describe("ClassicToCoreProcessor", func() {
 			),
 			Entry("tag groups flattening with dot separator",
 				`classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw`,
 				"umh.v1.acme._historian.cnc-mill",
 				map[string]interface{}{
@@ -369,7 +365,6 @@ var _ = Describe("ClassicToCoreProcessor", func() {
 			},
 			Entry("boolean values preserved as-is (not converted to 0/1)",
 				`classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw`,
 				"umh.v1.acme._historian.machine",
 				map[string]interface{}{
@@ -390,7 +385,6 @@ var _ = Describe("ClassicToCoreProcessor", func() {
 			),
 			Entry("location with underscores",
 				`classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw`,
 				"umh.v1.site_1.area_2.line_3._historian.sensor",
 				map[string]interface{}{
@@ -406,7 +400,6 @@ var _ = Describe("ClassicToCoreProcessor", func() {
 			),
 			Entry("deeply nested tag groups",
 				`classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw`,
 				"umh.v1.factory._historian.machine",
 				map[string]interface{}{
@@ -450,7 +443,6 @@ var _ = Describe("ClassicToCoreProcessor", func() {
 			),
 			Entry("minimal valid payload (exactly 2 properties)",
 				`classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw`,
 				"umh.v1.minimal._historian.test",
 				map[string]interface{}{
@@ -466,7 +458,7 @@ var _ = Describe("ClassicToCoreProcessor", func() {
 			),
 		)
 
-		It("should handle exclude fields configuration", func() {
+		It("should process all fields except timestamp", func() {
 			builder := service.NewStreamBuilder()
 
 			var msgHandler service.MessageHandlerFunc
@@ -475,11 +467,7 @@ var _ = Describe("ClassicToCoreProcessor", func() {
 
 			err = builder.AddProcessorYAML(`
 classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw
-  exclude_fields:
-    - quality_status
-    - internal_id
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -500,7 +488,7 @@ classic_to_core:
 				_ = stream.Run(ctx)
 			}()
 
-			// Create message with excluded fields
+			// Create message with multiple fields
 			classicPayload := map[string]interface{}{
 				"timestamp_ms":   1717083000000,
 				"temperature":    23.4,
@@ -516,16 +504,14 @@ classic_to_core:
 
 			Eventually(func() int {
 				return len(messages)
-			}).Should(Equal(1)) // Only temperature should be processed
+			}).Should(Equal(3)) // All fields except timestamp should be processed
 
-			msg := messages[0]
-			topic, _ := msg.MetaGet("topic")
-			Expect(topic).To(Equal("umh.v1.acme._raw.weather.temperature"))
-
-			// Check that umh_topic is also set correctly
-			umhTopic, exists := msg.MetaGet("umh_topic")
-			Expect(exists).To(BeTrue())
-			Expect(umhTopic).To(Equal("umh.v1.acme._raw.weather.temperature"))
+			// Check that umh_topic is set correctly for all messages
+			for _, msg := range messages {
+				umhTopic, exists := msg.MetaGet("umh_topic")
+				Expect(exists).To(BeTrue())
+				Expect(umhTopic).To(ContainSubstring("umh.v1.acme._raw.weather"))
+			}
 		})
 
 		It("should handle different timestamp formats", func() {
@@ -537,7 +523,6 @@ classic_to_core:
 
 			err = builder.AddProcessorYAML(`
 classic_to_core:
-  timestamp_field: custom_timestamp
   target_data_contract: _raw
 `)
 			Expect(err).NotTo(HaveOccurred())
@@ -561,8 +546,8 @@ classic_to_core:
 
 			// Test with string timestamp
 			classicPayload := map[string]interface{}{
-				"custom_timestamp": "1717083000000",
-				"temperature":      23.4,
+				"timestamp_ms": "1717083000000",
+				"temperature":  23.4,
 			}
 			payloadBytes, _ := json.Marshal(classicPayload)
 			testMsg := service.NewMessage(payloadBytes)
@@ -599,7 +584,6 @@ classic_to_core:
 
 			err = builder.AddProcessorYAML(`
 classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw
 `)
 			Expect(err).NotTo(HaveOccurred())
@@ -648,7 +632,6 @@ classic_to_core:
 
 			err = builder.AddProcessorYAML(`
 classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw
 `)
 			Expect(err).NotTo(HaveOccurred())
@@ -683,7 +666,7 @@ classic_to_core:
 			}, "100ms").Should(Equal(0))
 		})
 
-		It("should preserve original metadata when configured", func() {
+		It("should preserve original metadata (always enabled)", func() {
 			builder := service.NewStreamBuilder()
 
 			var msgHandler service.MessageHandlerFunc
@@ -692,9 +675,7 @@ classic_to_core:
 
 			err = builder.AddProcessorYAML(`
 classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw
-  preserve_meta: true
 `)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -745,9 +726,9 @@ classic_to_core:
 			Expect(quality).To(Equal("GOOD"))
 
 			// Check that new Core metadata is also set
-			dataContract, exists := msg.MetaGet("data_contract")
+			schema, exists := msg.MetaGet("schema")
 			Expect(exists).To(BeTrue())
-			Expect(dataContract).To(Equal("_raw"))
+			Expect(schema).To(Equal("_raw"))
 		})
 
 		It("should handle numeric field names correctly", func() {
@@ -759,7 +740,6 @@ classic_to_core:
 
 			err = builder.AddProcessorYAML(`
 classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw
 `)
 			Expect(err).NotTo(HaveOccurred())
@@ -823,20 +803,16 @@ classic_to_core:
 
 		// Tests for new limit and validation features
 		Context("with limits and validation", func() {
-			It("should enforce max tags per message limit", func() {
+			It("should process messages within hardcoded limits", func() {
 				builder := service.NewStreamBuilder()
 
 				var msgHandler service.MessageHandlerFunc
 				msgHandler, err := builder.AddProducerFunc()
 				Expect(err).NotTo(HaveOccurred())
 
-				// Set a low limit for testing
 				err = builder.AddProcessorYAML(`
 classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw
-  max_tags_per_message: 2
-  max_recursion_depth: 10
 `)
 				Expect(err).NotTo(HaveOccurred())
 
@@ -857,12 +833,12 @@ classic_to_core:
 					_ = stream.Run(ctx)
 				}()
 
-				// Create payload with more tags than limit allows
+				// Create payload within limits (hardcoded max is 1000 tags)
 				classicPayload := map[string]interface{}{
 					"timestamp_ms": 1717083000000,
 					"tag1":         1.0,
 					"tag2":         2.0,
-					"tag3":         3.0, // This should cause limit exceeded
+					"tag3":         3.0,
 				}
 				payloadBytes, _ := json.Marshal(classicPayload)
 				testMsg := service.NewMessage(payloadBytes)
@@ -871,26 +847,22 @@ classic_to_core:
 				err = msgHandler(ctx, testMsg)
 				Expect(err).NotTo(HaveOccurred())
 
-				// Should not process any messages due to limit exceeded
-				Consistently(func() int {
+				// Should process all messages since we're within the hardcoded limit
+				Eventually(func() int {
 					return len(messages)
-				}, "100ms").Should(Equal(0))
+				}).Should(Equal(3))
 			})
 
-			It("should enforce recursion depth limit", func() {
+			It("should respect hardcoded recursion depth limit", func() {
 				builder := service.NewStreamBuilder()
 
 				var msgHandler service.MessageHandlerFunc
 				msgHandler, err := builder.AddProducerFunc()
 				Expect(err).NotTo(HaveOccurred())
 
-				// Set a low recursion limit for testing
 				err = builder.AddProcessorYAML(`
 classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw
-  max_tags_per_message: 1000
-  max_recursion_depth: 2
 `)
 				Expect(err).NotTo(HaveOccurred())
 
@@ -911,16 +883,16 @@ classic_to_core:
 					_ = stream.Run(ctx)
 				}()
 
-				// Create deeply nested payload beyond the limit
+				// Create nested payload within the hardcoded limit (10 levels deep)
 				classicPayload := map[string]interface{}{
 					"timestamp_ms": 1717083000000,
 					"level1": map[string]interface{}{
 						"level2": map[string]interface{}{
 							"level3": map[string]interface{}{
-								"deep_value": 42.0, // This should be cut off at depth limit
+								"deep_value": 42.0,
 							},
 						},
-						"shallow_value": 1.0, // This should still be processed
+						"shallow_value": 1.0,
 					},
 				}
 				payloadBytes, _ := json.Marshal(classicPayload)
@@ -932,11 +904,18 @@ classic_to_core:
 
 				Eventually(func() int {
 					return len(messages)
-				}).Should(Equal(1)) // Only the shallow_value should be processed
+				}).Should(Equal(2)) // Both values should be processed within the limit
 
-				msg := messages[0]
-				topic, _ := msg.MetaGet("topic")
-				Expect(topic).To(Equal("umh.v1.test._raw.data.level1.shallow_value"))
+				// Verify the nested value was processed correctly
+				foundDeepValue := false
+				for _, msg := range messages {
+					topic, _ := msg.MetaGet("topic")
+					if topic == "umh.v1.test._raw.data.level1.level2.level3.deep_value" {
+						foundDeepValue = true
+						break
+					}
+				}
+				Expect(foundDeepValue).To(BeTrue())
 			})
 
 			It("should validate UMH topic prefix", func() {
@@ -948,7 +927,6 @@ classic_to_core:
 
 				err = builder.AddProcessorYAML(`
 classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw
 `)
 				Expect(err).NotTo(HaveOccurred())
@@ -996,7 +974,6 @@ classic_to_core:
 
 				err = builder.AddProcessorYAML(`
 classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw
 `)
 				Expect(err).NotTo(HaveOccurred())
@@ -1047,10 +1024,7 @@ classic_to_core:
 
 				err = builder.AddProcessorYAML(`
 classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw
-  max_tags_per_message: 1000
-  max_recursion_depth: 10
 `)
 				Expect(err).NotTo(HaveOccurred())
 
@@ -1128,7 +1102,6 @@ classic_to_core:
 
 				err = builder.AddProcessorYAML(`
 classic_to_core:
-  timestamp_field: missing_field
   target_data_contract: _raw
 `)
 				Expect(err).NotTo(HaveOccurred())
@@ -1150,10 +1123,10 @@ classic_to_core:
 					_ = stream.Run(ctx)
 				}()
 
-				// Create message without the expected timestamp field
+				// Create message without the required timestamp_ms field
 				classicPayload := map[string]interface{}{
-					"timestamp_ms": 1717083000000, // Wrong field name
-					"temperature":  25.5,
+					"wrong_timestamp": 1717083000000, // Wrong field name
+					"temperature":     25.5,
 				}
 				payloadBytes, _ := json.Marshal(classicPayload)
 				testMsg := service.NewMessage(payloadBytes)
@@ -1177,7 +1150,6 @@ classic_to_core:
 
 				err = builder.AddProcessorYAML(`
 classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw
 `)
 				Expect(err).NotTo(HaveOccurred())
@@ -1212,7 +1184,7 @@ classic_to_core:
 				}, "100ms").Should(Equal(0))
 			})
 
-			It("should test metadata preservation disabled", func() {
+			It("should test metadata preservation is always enabled", func() {
 				builder := service.NewStreamBuilder()
 
 				var msgHandler service.MessageHandlerFunc
@@ -1221,9 +1193,7 @@ classic_to_core:
 
 				err = builder.AddProcessorYAML(`
 classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw
-  preserve_meta: false
 `)
 				Expect(err).NotTo(HaveOccurred())
 
@@ -1252,7 +1222,7 @@ classic_to_core:
 				payloadBytes, _ := json.Marshal(classicPayload)
 				testMsg := service.NewMessage(payloadBytes)
 				testMsg.MetaSet("topic", "umh.v1.acme._historian.weather")
-				testMsg.MetaSet("original_meta", "should_not_be_preserved")
+				testMsg.MetaSet("original_meta", "should_be_preserved")
 
 				err = msgHandler(ctx, testMsg)
 				Expect(err).NotTo(HaveOccurred())
@@ -1263,14 +1233,15 @@ classic_to_core:
 
 				msg := messages[0]
 
-				// Check that original metadata is NOT preserved
-				_, exists := msg.MetaGet("original_meta")
-				Expect(exists).To(BeFalse())
-
-				// But Core metadata should be set
-				dataContract, exists := msg.MetaGet("data_contract")
+				// Check that original metadata IS preserved (always enabled)
+				originalMeta, exists := msg.MetaGet("original_meta")
 				Expect(exists).To(BeTrue())
-				Expect(dataContract).To(Equal("_raw"))
+				Expect(originalMeta).To(Equal("should_be_preserved"))
+
+				// And Core metadata should be set
+				schema, exists := msg.MetaGet("schema")
+				Expect(exists).To(BeTrue())
+				Expect(schema).To(Equal("_raw"))
 			})
 
 			It("should test topic parsing with umh_topic fallback", func() {
@@ -1282,7 +1253,6 @@ classic_to_core:
 
 				err = builder.AddProcessorYAML(`
 classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw
 `)
 				Expect(err).NotTo(HaveOccurred())
@@ -1335,7 +1305,6 @@ classic_to_core:
 
 				err = builder.AddProcessorYAML(`
 classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw
 `)
 				Expect(err).NotTo(HaveOccurred())
@@ -1396,7 +1365,6 @@ classic_to_core:
 
 				err = builder.AddProcessorYAML(`
 classic_to_core:
-  timestamp_field: timestamp_ms
   target_data_contract: _raw
 `)
 				Expect(err).NotTo(HaveOccurred())
