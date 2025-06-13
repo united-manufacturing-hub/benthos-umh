@@ -80,6 +80,11 @@ func newSwingingDoor(cfg map[string]interface{}) (StreamCompressor, error) {
 		}
 	}
 
+	// ---- validate time constraints relationship ----------------------
+	if maxT > 0 && minT > 0 && minT > maxT {
+		return nil, fmt.Errorf("%s: min_time (%v) cannot be greater than max_time (%v) - this would deadlock the delta-min gate", name, minT, maxT)
+	}
+
 	c := &SwingingDoorAlgorithm{
 		threshold: thr,
 		maxTime:   maxT,
