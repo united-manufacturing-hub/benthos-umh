@@ -60,6 +60,7 @@ type SeriesState struct {
 
 // stash stores a message as a candidate for potential later emission
 // This is called when the algorithm doesn't emit a point but we want to buffer the message
+// REQUIRES: caller must hold s.mutex.Lock()
 func (s *SeriesState) stash(msg *service.Message) {
 	s.candidateMsg = msg.Copy() // Make a copy to avoid mutation
 	s.candidateTs = time.Now().UnixNano() / int64(time.Millisecond)
@@ -67,6 +68,7 @@ func (s *SeriesState) stash(msg *service.Message) {
 
 // releaseCandidate returns the buffered message if one exists and clears the buffer
 // Returns nil if no message is buffered
+// REQUIRES: caller must hold s.mutex.Lock()
 func (s *SeriesState) releaseCandidate() *service.Message {
 	if s.candidateMsg == nil {
 		return nil
@@ -79,12 +81,14 @@ func (s *SeriesState) releaseCandidate() *service.Message {
 }
 
 // hasCandidate returns true if there's a message currently buffered
+// REQUIRES: caller must hold s.mutex.Lock()
 func (s *SeriesState) hasCandidate() bool {
 	return s.candidateMsg != nil
 }
 
 // getCandidateTimestamp returns the timestamp when the current candidate was buffered
 // Returns 0 if no candidate is buffered
+// REQUIRES: caller must hold s.mutex.Lock()
 func (s *SeriesState) getCandidateTimestamp() int64 {
 	return s.candidateTs
 }
