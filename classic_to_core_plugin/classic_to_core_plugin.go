@@ -35,7 +35,6 @@ type ClassicToCoreConfig struct {
 const (
 	maxRecursionDepth = 10
 	maxTagsPerMessage = 1000
-	preserveMeta      = true
 	timestampField    = "timestamp_ms"
 )
 
@@ -366,13 +365,11 @@ func (p *ClassicToCoreProcessor) createCoreMessage(originalMsg *service.Message,
 	newMsg := service.NewMessage(payloadBytes)
 
 	// Always preserve metadata
-	if preserveMeta {
-		// Copy all metadata from original message
-		originalMsg.MetaWalk(func(k, v string) error {
-			newMsg.MetaSet(k, v)
-			return nil
-		})
-	}
+	// Copy all metadata from original message
+	originalMsg.MetaWalk(func(k, v string) error {
+		newMsg.MetaSet(k, v)
+		return nil
+	})
 
 	// Determine target data contract
 	targetSchema := p.config.TargetDataContract
