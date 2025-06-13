@@ -124,13 +124,6 @@ func (d *DeadbandAlgorithm) Ingest(value float64, timestamp time.Time) ([]Point,
 		return []Point{currentPoint}, nil
 	}
 
-	// Handle time overflow and duration limits
-	if d.lastKeptTime.IsZero() {
-		d.lastKeptValue = value
-		d.lastKeptTime = timestamp
-		return []Point{currentPoint}, nil
-	}
-
 	// Check maximum interval constraint
 	if d.maxTime > 0 && timestamp.Sub(d.lastKeptTime) >= d.maxTime {
 		d.lastKeptValue = value
