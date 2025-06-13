@@ -793,8 +793,18 @@ func (p *DownsamplerProcessor) createSyntheticMessage(seriesID string, point alg
 	algorithmName := state.processor.Name()
 	msg.MetaSet("downsampled_by", algorithmName)
 
+	// Add full algorithm configuration with type safety
+	// Note: Config() currently returns a string, but we ensure type safety here
 	algorithmConfig := state.processor.Config()
-	msg.MetaSet("downsampling_config", algorithmConfig)
+
+	// Ensure we always set a string value for MetaSet (defensive programming)
+	// This provides future-proofing if Config() ever returns structured data
+	if algorithmConfig != "" {
+		msg.MetaSet("downsampling_config", algorithmConfig)
+	} else {
+		// Fallback to algorithm name if config is empty
+		msg.MetaSet("downsampling_config", algorithmName)
+	}
 
 	// Mark as synthetic for debugging/monitoring
 	msg.MetaSet("synthetic_flush_point", "true")

@@ -448,7 +448,16 @@ func (mp *MessageProcessor) addAlgorithmMetadata(outputMsg *service.Message, sta
 	// Add downsampled_by metadata that tests expect
 	outputMsg.MetaSet("downsampled_by", algorithmName)
 
-	// Add full algorithm configuration as string for debugging
+	// Add full algorithm configuration as JSON string for debugging
+	// Note: Config() currently returns a string, but we ensure type safety here
 	algorithmConfig := state.processor.Config()
-	outputMsg.MetaSet("downsampling_config", algorithmConfig)
+
+	// Ensure we always set a string value for MetaSet (defensive programming)
+	// This provides future-proofing if Config() ever returns structured data
+	if algorithmConfig != "" {
+		outputMsg.MetaSet("downsampling_config", algorithmConfig)
+	} else {
+		// Fallback to algorithm name if config is empty
+		outputMsg.MetaSet("downsampling_config", algorithmName)
+	}
 }
