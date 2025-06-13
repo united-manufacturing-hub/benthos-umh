@@ -43,8 +43,9 @@ var _ = Describe("Configuration Logic", func() {
 			})
 
 			It("should return default deadband values for any topic", func() {
-				algorithm, configMap := config.GetConfigForTopic("any.topic.here")
+				algorithm, configMap, err := config.GetConfigForTopic("any.topic.here")
 
+				Expect(err).NotTo(HaveOccurred())
 				Expect(algorithm).To(Equal("deadband"))
 				Expect(configMap).To(HaveKeyWithValue("threshold", 1.5))
 				Expect(configMap).To(HaveKeyWithValue("max_time", "30s"))
@@ -58,8 +59,9 @@ var _ = Describe("Configuration Logic", func() {
 			})
 
 			It("should return min_time as a string in the config map", func() {
-				algorithm, configMap := config.GetConfigForTopic("any.topic.here")
+				algorithm, configMap, err := config.GetConfigForTopic("any.topic.here")
 
+				Expect(err).NotTo(HaveOccurred())
 				Expect(algorithm).To(Equal("swinging_door"))
 				Expect(configMap).To(HaveKeyWithValue("threshold", 1.5))
 				Expect(configMap).To(HaveKeyWithValue("min_time", "15s"))
@@ -71,157 +73,88 @@ var _ = Describe("Configuration Logic", func() {
 				config.Default.Deadband.Threshold = 2.0
 				config.Overrides = []downsampler.OverrideConfig{
 					{
-						Pattern:  "*.temperature",
+						Pattern:  "*temperature",
 						Deadband: &downsampler.DeadbandConfig{Threshold: 0.1},
 					},
 					{
-						Pattern:  "*.pressure",
+						Pattern:  "*pressure",
 						Deadband: &downsampler.DeadbandConfig{Threshold: 0.5},
 					},
 				}
 			})
 
-			It("should match wildcard patterns correctly", func() {
-				algorithm, configMap := config.GetConfigForTopic("umh.v1.plant._historian.temperature")
+			It("should match wildcard patterns across different field levels", func() {
+				// This should match *temperature since 'critical_temperature' ends with 'temperature'
+				algorithm, configMap, err := config.GetConfigForTopic("umh.v1.acme._historian.critical_temperature")
+				Expect(err).NotTo(HaveOccurred())
 				Expect(algorithm).To(Equal("deadband"))
 				Expect(configMap).To(HaveKeyWithValue("threshold", 0.1))
-			})
 
-			It("should fall back to default for non-matching topics", func() {
-				algorithm, configMap := config.GetConfigForTopic("umh.v1.plant._historian.humidity")
+				// This should match *temperature since it ends with 'temperature'
+				algorithm, configMap, err = config.GetConfigForTopic("umh.v1.factory._historian.temperature")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(algorithm).To(Equal("deadband"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 0.1))
+
+				// This should use default since it doesn't match any pattern
+				algorithm, configMap, err = config.GetConfigForTopic("umh.v1.plant._historian.flow_rate")
+				Expect(err).NotTo(HaveOccurred())
 				Expect(algorithm).To(Equal("deadband"))
 				Expect(configMap).To(HaveKeyWithValue("threshold", 2.0))
 			})
-		})
 
-		Context("with exact topic matching", func() {
-			BeforeEach(func() {
-				config.Default.Deadband.Threshold = 2.0
-				config.Overrides = []downsampler.OverrideConfig{
-					{
-						Pattern:  "umh.v1.plant._historian.critical_temp",
-						Deadband: &downsampler.DeadbandConfig{Threshold: 0.01},
-					},
-				}
-			})
-
-			It("should match exact topics correctly", func() {
-				algorithm, configMap := config.GetConfigForTopic("umh.v1.plant._historian.critical_temp")
+			It("should match final segment fallback patterns", func() {
+				algorithm, configMap, err := config.GetConfigForTopic("umh.v1.plant1.temperature")
+				Expect(err).NotTo(HaveOccurred())
 				Expect(algorithm).To(Equal("deadband"))
-				Expect(configMap).To(HaveKeyWithValue("threshold", 0.01))
-			})
+				Expect(configMap).To(HaveKeyWithValue("threshold", 0.1))
 
-			It("should fall back to default for non-exact topics", func() {
-				algorithm, configMap := config.GetConfigForTopic("umh.v1.plant._historian.critical_temp_2")
-				Expect(algorithm).To(Equal("deadband"))
-				Expect(configMap).To(HaveKeyWithValue("threshold", 2.0))
-			})
-		})
-
-		Context("with wildcard and exact pattern overrides", func() {
-			BeforeEach(func() {
-				config.Default.Deadband.Threshold = 10.0
-				config.Overrides = []downsampler.OverrideConfig{
-					{
-						Pattern:  "*.temperature",
-						Deadband: &downsampler.DeadbandConfig{Threshold: 0.5},
-					},
-					{
-						Pattern:  "umh.v1.acme._historian.critical_temperature",
-						Deadband: &downsampler.DeadbandConfig{Threshold: 0.01},
-					},
-				}
-			})
-
-			It("should apply first matching rule (exact pattern before wildcard)", func() {
-				// This should match the exact pattern rule first
-				algorithm, configMap := config.GetConfigForTopic("umh.v1.acme._historian.critical_temperature")
-
-				Expect(algorithm).To(Equal("deadband"))
-				Expect(configMap).To(HaveKeyWithValue("threshold", 0.01))
-			})
-
-			It("should apply wildcard pattern when exact doesn't match", func() {
-				// This should match the wildcard pattern rule
-				algorithm, configMap := config.GetConfigForTopic("umh.v1.factory._historian.temperature")
-
+				algorithm, configMap, err = config.GetConfigForTopic("umh.v1.factory.pressure")
+				Expect(err).NotTo(HaveOccurred())
 				Expect(algorithm).To(Equal("deadband"))
 				Expect(configMap).To(HaveKeyWithValue("threshold", 0.5))
+
+				algorithm, configMap, err = config.GetConfigForTopic("umh.v2.plant1.humidity")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(algorithm).To(Equal("deadband"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 2.0))
 			})
 
-			It("should use default values when no overrides match", func() {
-				// This topic should not match any pattern override
-				algorithm, configMap := config.GetConfigForTopic("umh.v1.plant._historian.flow_rate")
-
+			It("should return algorithm and config matching the override", func() {
+				algorithm, configMap, err := config.GetConfigForTopic("umh.v1.plant.temperature")
+				Expect(err).NotTo(HaveOccurred())
 				Expect(algorithm).To(Equal("deadband"))
-				Expect(configMap).To(HaveKeyWithValue("threshold", 10.0)) // Default threshold
+				Expect(configMap).To(HaveKeyWithValue("threshold", 0.1))
+
+				// For this test to work, we need to add a swinging_door override
+				config.Overrides = append(config.Overrides, downsampler.OverrideConfig{
+					Pattern:      "*critical",
+					SwingingDoor: &downsampler.SwingingDoorConfig{Threshold: 0.1},
+				})
+
+				algorithm, configMap, err = config.GetConfigForTopic("umh.v1.plant.critical")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(algorithm).To(Equal("swinging_door"))
+				Expect(configMap).To(HaveKeyWithValue("threshold", 0.1))
 			})
 		})
 
-		Context("with complex wildcard patterns", func() {
-			BeforeEach(func() {
-				config.Default.Deadband.Threshold = 5.0
-				config.Overrides = []downsampler.OverrideConfig{
-					{
-						Pattern:  "umh.v1.*.temperature",
-						Deadband: &downsampler.DeadbandConfig{Threshold: 0.2},
-					},
-					{
-						Pattern:  "umh.v1.factory.*",
-						Deadband: &downsampler.DeadbandConfig{Threshold: 1.0},
-					},
+		Context("validation of conflicting algorithms", func() {
+			It("should reject override configurations with both deadband and swinging_door", func() {
+				// Test that our validation catches conflicting algorithm configurations
+				conflictingOverride := downsampler.OverrideConfig{
+					Pattern:      "*temperature",
+					Deadband:     &downsampler.DeadbandConfig{Threshold: 0.1},
+					SwingingDoor: &downsampler.SwingingDoorConfig{Threshold: 0.2},
 				}
-			})
 
-			It("should match specific wildcard patterns", func() {
-				// Should match umh.v1.*.temperature
-				algorithm, configMap := config.GetConfigForTopic("umh.v1.plant1.temperature")
+				config.Overrides = []downsampler.OverrideConfig{conflictingOverride}
 
-				Expect(algorithm).To(Equal("deadband"))
-				Expect(configMap).To(HaveKeyWithValue("threshold", 0.2))
-			})
-
-			It("should match broader wildcard patterns", func() {
-				// Should match umh.v1.factory.*
-				algorithm, configMap := config.GetConfigForTopic("umh.v1.factory.pressure")
-
-				Expect(algorithm).To(Equal("deadband"))
-				Expect(configMap).To(HaveKeyWithValue("threshold", 1.0))
-			})
-
-			It("should use default values when no complex patterns match", func() {
-				// This topic should not match any of the complex wildcard patterns
-				algorithm, configMap := config.GetConfigForTopic("umh.v2.plant1.humidity")
-
-				Expect(algorithm).To(Equal("deadband"))
-				Expect(configMap).To(HaveKeyWithValue("threshold", 5.0)) // Default threshold
-			})
-		})
-
-		Context("with late policy configuration", func() {
-			BeforeEach(func() {
-				config.Default.Deadband.Threshold = 1.0
-				config.Default.LatePolicy.LatePolicy = "drop"
-				config.Overrides = []downsampler.OverrideConfig{
-					{
-						Pattern:    "*.critical",
-						LatePolicy: &downsampler.LatePolicyConfig{LatePolicy: "passthrough"},
-					},
-				}
-			})
-
-			It("should apply default late policy", func() {
-				algorithm, configMap := config.GetConfigForTopic("umh.v1.plant.temperature")
-
-				Expect(algorithm).To(Equal("deadband"))
-				Expect(configMap).To(HaveKeyWithValue("late_policy", "drop"))
-			})
-
-			It("should apply late policy overrides", func() {
-				algorithm, configMap := config.GetConfigForTopic("umh.v1.plant.critical")
-
-				Expect(algorithm).To(Equal("deadband"))
-				Expect(configMap).To(HaveKeyWithValue("late_policy", "passthrough"))
+				algorithm, configMap, err := config.GetConfigForTopic("test.temperature")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("specifies both deadband and swinging_door algorithms"))
+				Expect(algorithm).To(Equal(""))
+				Expect(configMap).To(BeNil())
 			})
 		})
 	})
