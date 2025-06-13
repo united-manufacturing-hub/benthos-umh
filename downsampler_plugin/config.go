@@ -22,13 +22,13 @@ import (
 
 // DeadbandConfig holds deadband algorithm parameters
 type DeadbandConfig struct {
-	Threshold float64       `json:"threshold,omitempty" yaml:"threshold,omitempty"`
+	Threshold *float64      `json:"threshold,omitempty" yaml:"threshold,omitempty"`
 	MaxTime   time.Duration `json:"max_time,omitempty" yaml:"max_time,omitempty"`
 }
 
 // SwingingDoorConfig holds swinging door algorithm parameters
 type SwingingDoorConfig struct {
-	Threshold float64       `json:"threshold,omitempty" yaml:"threshold,omitempty"`
+	Threshold *float64      `json:"threshold,omitempty" yaml:"threshold,omitempty"`
 	MaxTime   time.Duration `json:"max_time,omitempty" yaml:"max_time,omitempty"`
 	MinTime   time.Duration `json:"min_time,omitempty" yaml:"min_time,omitempty"`
 }
@@ -103,8 +103,8 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 	algorithm := "deadband" // Default fallback
 
 	// Only use swinging_door if explicitly configured and deadband is not
-	hasDeadbandConfig := c.Default.Deadband.Threshold != 0 || c.Default.Deadband.MaxTime != 0
-	hasSwingingDoorConfig := c.Default.SwingingDoor.Threshold != 0 || c.Default.SwingingDoor.MaxTime != 0 || c.Default.SwingingDoor.MinTime != 0
+	hasDeadbandConfig := c.Default.Deadband.Threshold != nil || c.Default.Deadband.MaxTime != 0
+	hasSwingingDoorConfig := c.Default.SwingingDoor.Threshold != nil || c.Default.SwingingDoor.MaxTime != 0 || c.Default.SwingingDoor.MinTime != 0
 
 	if hasDeadbandConfig {
 		algorithm = "deadband"
@@ -116,7 +116,9 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 	config := map[string]interface{}{}
 
 	if algorithm == "swinging_door" {
-		config["threshold"] = c.Default.SwingingDoor.Threshold
+		if c.Default.SwingingDoor.Threshold != nil {
+			config["threshold"] = *c.Default.SwingingDoor.Threshold
+		}
 		if c.Default.SwingingDoor.MaxTime > 0 {
 			config["max_time"] = c.Default.SwingingDoor.MaxTime.String()
 		}
@@ -124,7 +126,9 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 			config["min_time"] = c.Default.SwingingDoor.MinTime.String()
 		}
 	} else {
-		config["threshold"] = c.Default.Deadband.Threshold
+		if c.Default.Deadband.Threshold != nil {
+			config["threshold"] = *c.Default.Deadband.Threshold
+		}
 		if c.Default.Deadband.MaxTime > 0 {
 			config["max_time"] = c.Default.Deadband.MaxTime.String()
 		}
@@ -160,14 +164,14 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 
 		if matched {
 			// Check which algorithms are configured
-			hasDeadband := override.Deadband != nil && (override.Deadband.Threshold != 0 || override.Deadband.MaxTime != 0)
-			hasSwingingDoor := override.SwingingDoor != nil && (override.SwingingDoor.Threshold != 0 || override.SwingingDoor.MaxTime != 0 || override.SwingingDoor.MinTime != 0)
+			hasDeadband := override.Deadband != nil && (override.Deadband.Threshold != nil || override.Deadband.MaxTime != 0)
+			hasSwingingDoor := override.SwingingDoor != nil && (override.SwingingDoor.Threshold != nil || override.SwingingDoor.MaxTime != 0 || override.SwingingDoor.MinTime != 0)
 
 			// If both are specified, swinging door takes precedence (more advanced algorithm)
 			if hasSwingingDoor {
 				algorithm = "swinging_door"
-				if override.SwingingDoor.Threshold != 0 {
-					config["threshold"] = override.SwingingDoor.Threshold
+				if override.SwingingDoor.Threshold != nil {
+					config["threshold"] = *override.SwingingDoor.Threshold
 				}
 				if override.SwingingDoor.MaxTime != 0 {
 					config["max_time"] = override.SwingingDoor.MaxTime.String()
@@ -177,8 +181,8 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 				}
 			} else if hasDeadband {
 				algorithm = "deadband"
-				if override.Deadband.Threshold != 0 {
-					config["threshold"] = override.Deadband.Threshold
+				if override.Deadband.Threshold != nil {
+					config["threshold"] = *override.Deadband.Threshold
 				}
 				if override.Deadband.MaxTime != 0 {
 					config["max_time"] = override.Deadband.MaxTime.String()
