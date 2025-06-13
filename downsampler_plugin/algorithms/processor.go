@@ -185,10 +185,12 @@ func (p *ProcessorWrapper) processBooleanValue(value bool, timestamp time.Time) 
 
 	// Keep if value changed
 	if *p.lastBoolValue != value {
+		// Capture the previous value before updating
+		old := *p.lastBoolValue
 		p.lastBoolValue = &value
 		p.lastBoolTime = timestamp
 		if p.logger != nil {
-			p.logger.Debugf("Boolean value kept for series '%s': changed from %v to %v at %v", p.seriesID, *p.lastBoolValue, value, timestamp)
+			p.logger.Debugf("Boolean value kept for series '%s': changed from %v to %v at %v", p.seriesID, old, value, timestamp)
 		}
 		return []GenericPoint{{Value: value, Timestamp: timestamp}}, nil
 	}
