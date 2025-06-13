@@ -121,6 +121,11 @@ type SwingingDoorAlgorithm struct {
 
 // Ingest processes one point and returns 0–1 points to emit immediately.
 func (sd *SwingingDoorAlgorithm) Ingest(v float64, ts time.Time) ([]Point, error) {
+	// Guard against NaN and Inf values that could poison downstream math
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return nil, fmt.Errorf("invalid value: NaN and Inf values are not allowed (got %v)", v)
+	}
+
 	debugLog("=== INGEST: (%.1f, %s) ===", v, ts.Format("15:04:05"))
 
 	out := make([]Point, 0, 1)

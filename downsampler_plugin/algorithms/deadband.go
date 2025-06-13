@@ -111,6 +111,11 @@ func NewDeadbandAlgorithm(config map[string]interface{}) (StreamCompressor, erro
 
 // Ingest processes a new data point and returns zero or more points to emit
 func (d *DeadbandAlgorithm) Ingest(value float64, timestamp time.Time) ([]Point, error) {
+	// Guard against NaN and Inf values that could poison downstream math
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return nil, fmt.Errorf("invalid value: NaN and Inf values are not allowed (got %v)", value)
+	}
+
 	currentPoint := Point{
 		Value:     value,
 		Timestamp: timestamp,

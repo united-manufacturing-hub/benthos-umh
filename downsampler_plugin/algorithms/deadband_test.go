@@ -602,6 +602,56 @@ var _ = Describe("Deadband Algorithm", func() {
 				Expect(points).To(HaveLen(1))
 			})
 		})
+
+		Context("NaN and Inf value guards", func() {
+			It("should reject NaN values", func() {
+				config := map[string]interface{}{"threshold": 1.0}
+				algo, err := algorithms.NewDeadbandAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+
+				points, err := algo.Ingest(math.NaN(), baseTime)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("NaN and Inf values are not allowed"))
+				Expect(points).To(BeNil())
+			})
+
+			It("should reject positive infinity", func() {
+				config := map[string]interface{}{"threshold": 1.0}
+				algo, err := algorithms.NewDeadbandAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+
+				points, err := algo.Ingest(math.Inf(1), baseTime)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("NaN and Inf values are not allowed"))
+				Expect(points).To(BeNil())
+			})
+
+			It("should reject negative infinity", func() {
+				config := map[string]interface{}{"threshold": 1.0}
+				algo, err := algorithms.NewDeadbandAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+
+				points, err := algo.Ingest(math.Inf(-1), baseTime)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("NaN and Inf values are not allowed"))
+				Expect(points).To(BeNil())
+			})
+
+			It("should continue working normally after rejecting invalid values", func() {
+				config := map[string]interface{}{"threshold": 1.0}
+				algo, err := algorithms.NewDeadbandAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Try to ingest NaN - should fail
+				_, err = algo.Ingest(math.NaN(), baseTime)
+				Expect(err).To(HaveOccurred())
+
+				// Normal values should still work
+				points, err := algo.Ingest(10.0, baseTime.Add(time.Second))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(points).To(HaveLen(1)) // First valid point kept
+			})
+		})
 	})
 
 	Describe("comprehensive deadband test plan verification", func() {
