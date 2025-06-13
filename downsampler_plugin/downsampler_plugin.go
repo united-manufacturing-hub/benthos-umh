@@ -176,7 +176,6 @@ overrides:
 			service.NewObjectField("deadband",
 				service.NewFloatField("threshold").
 					Description("Default threshold for deadband algorithm.").
-					Default(0.0).
 					Optional(),
 				service.NewDurationField("max_time").
 					Description("Default maximum time interval for deadband algorithm.").
