@@ -303,57 +303,53 @@ func (sd *SwingingDoorAlgorithm) closeDoor(p Point) {
 }
 
 func (sd *SwingingDoorAlgorithm) mustEmit(v float64, ts time.Time) bool {
-	// ---- traditional SDT check -----------------------------------------------
-	// Traditional SDT: If we skip the candidate and go directly from base to new point,
-	// would the interpolation error at the candidate exceed the threshold?
-	if sd.cand != nil {
-		// Calculate what the interpolated value would be at candidate's timestamp
-		// if we draw a line from base directly to the new point
+	// Use geometric envelope approach as the canonical decision mechanism
+	// This is the industry standard for SDT and is consistent with closeDoor()
+
+	dx := ts.Sub(sd.base.Timestamp).Seconds()
+	if dx == 0 {
+		debugLog("MUST EMIT: duplicate timestamp")
+		return true // duplicate timestamp
+	}
+
+	slope := (v - sd.base.Value) / dx
+
+	// Check envelope intersection - the new point's slope must fit within the envelope
+	violation := slope < sd.slopeMin || slope > sd.slopeMax
+	debugLog("ENVELOPE CHECK: slope=%.3f, bounds=[%.3f, %.3f], violation=%t",
+		slope, sd.slopeMin, sd.slopeMax, violation)
+
+	// Also check if the envelope has collapsed (slopeMin > slopeMax)
+	// This happens when the accumulated constraints become impossible to satisfy
+	envelopeCollapsed := sd.slopeMin > sd.slopeMax
+	debugLog("ENVELOPE COLLAPSED: %t (min=%.3f > max=%.3f)",
+		envelopeCollapsed, sd.slopeMin, sd.slopeMax)
+
+	// Additional safety check: verify interpolation error for the candidate
+	// This catches edge cases where envelope math might miss significant errors
+	if sd.cand != nil && !violation && !envelopeCollapsed {
 		baseDx := ts.Sub(sd.base.Timestamp).Seconds()
 		candDx := sd.cand.Timestamp.Sub(sd.base.Timestamp).Seconds()
 
 		if baseDx > 0 && candDx > 0 {
-			// Slope from base to new point
+			// Calculate interpolation error if we skip the candidate
 			slopeBaseToNew := (v - sd.base.Value) / baseDx
-			// What would the interpolated value be at candidate's time?
 			interpolatedAtCand := sd.base.Value + slopeBaseToNew*candDx
-			// What's the actual error?
 			interpolationError := math.Abs(sd.cand.Value - interpolatedAtCand)
 
-			debugLog("TRADITIONAL SDT CHECK:")
-			debugLog("  Base: (%.1f, %s)", sd.base.Value, sd.base.Timestamp.Format("15:04:05"))
-			debugLog("  Candidate: (%.1f, %s)", sd.cand.Value, sd.cand.Timestamp.Format("15:04:05"))
-			debugLog("  New Point: (%.1f, %s)", v, ts.Format("15:04:05"))
-			debugLog("  Slope base→new: %.3f", slopeBaseToNew)
-			debugLog("  Interpolated at candidate: %.3f", interpolatedAtCand)
-			debugLog("  Actual candidate value: %.3f", sd.cand.Value)
-			debugLog("  Interpolation error: %.3f vs threshold %.3f", interpolationError, sd.threshold)
-
 			if interpolationError >= sd.threshold {
-				debugLog("MUST EMIT: traditional SDT - interpolation error %.3f >= threshold %.3f",
+				debugLog("MUST EMIT: interpolation safety check - error %.3f >= threshold %.3f",
 					interpolationError, sd.threshold)
 				return true
 			}
 		}
 	}
 
-	// ---- geometric envelope check (alternative approach) ---------------------
-	dx := ts.Sub(sd.base.Timestamp).Seconds()
-	if dx == 0 {
-		debugLog("MUST EMIT: duplicate timestamp")
-		return true // duplicate timestamp
+	if violation || envelopeCollapsed {
+		debugLog("MUST EMIT: geometric envelope - violation=%t, collapsed=%t", violation, envelopeCollapsed)
+		return true
 	}
-	slope := (v - sd.base.Value) / dx
 
-	// Check envelope intersection
-	violation := slope < sd.slopeMin || slope > sd.slopeMax
-	debugLog("ENVELOPE CHECK: slope=%.3f, bounds=[%.3f, %.3f], violation=%t",
-		slope, sd.slopeMin, sd.slopeMax, violation)
-
-	// Also check if the envelope has collapsed (slopeMin > slopeMax)
-	envelopeCollapsed := sd.slopeMin > sd.slopeMax
-	debugLog("ENVELOPE COLLAPSED: %t (min=%.3f > max=%.3f)",
-		envelopeCollapsed, sd.slopeMin, sd.slopeMax)
-
-	return violation || envelopeCollapsed
+	debugLog("ENVELOPE OK: point fits within bounds")
+	return false
 }
