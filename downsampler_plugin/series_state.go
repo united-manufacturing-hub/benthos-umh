@@ -56,6 +56,10 @@ type SeriesState struct {
 	// This eliminates unnecessary memory usage and idle-flush complexity for algorithms
 	// like deadband that never emit historical points.
 	holdsPrev bool // true if algorithm needs emit-previous buffering (e.g., SDT), false otherwise (e.g., deadband)
+
+	// Configuration tracking for parameter change detection
+	// Used to detect when metadata overrides change parameters but keep the same algorithm
+	lastConfig map[string]interface{} // Last effective configuration used for this series
 }
 
 // stash stores a message as a candidate for potential later emission

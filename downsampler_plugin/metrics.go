@@ -20,23 +20,25 @@ import (
 
 // DownsamplerMetrics provides metrics collection for the downsampler plugin
 type DownsamplerMetrics struct {
-	MessagesProcessed     *service.MetricCounter
-	MessagesFiltered      *service.MetricCounter
-	MessagesErrored       *service.MetricCounter
-	MessagesPassed        *service.MetricCounter
-	MetaOverridesApplied  *service.MetricCounter
-	MetaOverridesRejected *service.MetricCounter
+	MessagesProcessed       *service.MetricCounter
+	MessagesFiltered        *service.MetricCounter
+	MessagesErrored         *service.MetricCounter
+	MessagesPassed          *service.MetricCounter
+	MetaOverridesApplied    *service.MetricCounter
+	MetaOverridesRejected   *service.MetricCounter
+	MetaOverrideRecreations *service.MetricCounter
 }
 
 // NewDownsamplerMetrics creates a new metrics collection for the downsampler plugin
 func NewDownsamplerMetrics(metrics *service.Metrics) *DownsamplerMetrics {
 	return &DownsamplerMetrics{
-		MessagesProcessed:     metrics.NewCounter("messages_processed"),
-		MessagesFiltered:      metrics.NewCounter("messages_filtered"),
-		MessagesErrored:       metrics.NewCounter("messages_errored"),
-		MessagesPassed:        metrics.NewCounter("messages_passed_through"),
-		MetaOverridesApplied:  metrics.NewCounter("meta_overrides_applied"),
-		MetaOverridesRejected: metrics.NewCounter("meta_overrides_rejected"),
+		MessagesProcessed:       metrics.NewCounter("messages_processed"),
+		MessagesFiltered:        metrics.NewCounter("messages_filtered"),
+		MessagesErrored:         metrics.NewCounter("messages_errored"),
+		MessagesPassed:          metrics.NewCounter("messages_passed_through"),
+		MetaOverridesApplied:    metrics.NewCounter("meta_overrides_applied"),
+		MetaOverridesRejected:   metrics.NewCounter("meta_overrides_rejected"),
+		MetaOverrideRecreations: metrics.NewCounter("meta_override_recreations"),
 	}
 }
 
@@ -68,4 +70,9 @@ func (m *DownsamplerMetrics) IncrementMetaOverrideApplied() {
 // IncrementMetaOverrideRejected increments the rejected metadata overrides counter
 func (m *DownsamplerMetrics) IncrementMetaOverrideRejected() {
 	m.MetaOverridesRejected.Incr(1)
+}
+
+// IncrementMetaOverrideRecreated increments the parameter-only recreations counter
+func (m *DownsamplerMetrics) IncrementMetaOverrideRecreated() {
+	m.MetaOverrideRecreations.Incr(1)
 }
