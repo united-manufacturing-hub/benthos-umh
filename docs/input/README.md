@@ -12,6 +12,10 @@ This section covers Benthos input plugins for collecting data from various indus
 
 - **[Beckhoff ADS (Community)](beckhoff-ads-community.md)** - Community-supported plugin for Beckhoff's ADS protocol. Supports batch reading, notifications, and symbol-based communication with Beckhoff PLCs.
 
+- **[Siemens S7](siemens-s7.md)** - Connects to Siemens S7 PLCs via the native S7 protocol, enabling cyclic or on-demand reads of data blocks, inputs/outputs, and markers with configurable polling interval.
+
+- **[Ethernet/IP](ethernet-ip.md)** - Interfaces with Rockwell and other Ethernet/IP compatible controllers, mainly supporting the CIP protocol.
+
 - **[More Input Plugins](https://docs.redpanda.com/redpanda-connect/components/inputs/about/)** - Additional built-in input plugins available in Benthos/Redpanda Connect for various data sources.
 
 ## Choosing the Right Input Plugin
@@ -20,5 +24,7 @@ This section covers Benthos input plugins for collecting data from various indus
 - Use **Modbus** for legacy industrial devices and PLCs that communicate via Modbus protocol
 - Use **ifm IO-Link Master** when working with ifm electronic's IO-Link infrastructure and sensors
 - Use **Beckhoff ADS** specifically for Beckhoff PLC systems and TwinCAT environments
+- Use **Siemens S7** for industrial Siemens devices that communicate via Siemens protocol
+- Use **Ethernet/IP** for CompactLogix, ControlLogix, Micro800er series, that communicate via CIP protocol
 - Explore **additional input plugins** for other protocols like HTTP, MQTT, databases, file systems, and more
 
