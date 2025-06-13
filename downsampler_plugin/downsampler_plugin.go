@@ -427,10 +427,8 @@ func (p *DownsamplerProcessor) flushIdleCandidates() {
 			// Get max_time configuration with safe type assertion and default
 			maxTimeMs := int64(4 * 60 * 60 * 1000) // Default 4 hours in milliseconds
 			if maxTime, exists := algorithmConfig["max_time"]; exists {
-				if maxTimeStr, ok := maxTime.(string); ok {
-					if duration, err := time.ParseDuration(maxTimeStr); err == nil && duration > 0 {
-						maxTimeMs = duration.Nanoseconds() / int64(time.Millisecond)
-					}
+				if duration, ok := maxTime.(time.Duration); ok && duration > 0 {
+					maxTimeMs = duration.Nanoseconds() / int64(time.Millisecond)
 				}
 			}
 

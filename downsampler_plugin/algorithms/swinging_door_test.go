@@ -231,7 +231,7 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				Description: "Test maximum X distance enforcement - forces archiving every 6 time units",
 				Config: map[string]interface{}{
 					"threshold": 1.0,
-					"max_time":  "6s", // Forces archiving every 6 time units
+					"max_time":  6 * time.Second, // Forces archiving every 6 time units
 				},
 				InputPoints: []TestPoint{
 					{TimeSeconds: 2, Value: 2},    // x=2, y=2
@@ -261,7 +261,7 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				Description: "Test minimum time between emissions - prevents archiving more frequently than every 1 time unit",
 				Config: map[string]interface{}{
 					"threshold": 1.0,
-					"min_time":  "1s", // Prevents archiving more frequently than every 1 time unit
+					"min_time":  1 * time.Second, // Prevents archiving more frequently than every 1 time unit
 				},
 				InputPoints: []TestPoint{
 					{TimeSeconds: 0, Value: 2},  // x=0, y=2
@@ -290,7 +290,7 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				Description: "Test minimum time between emissions - prevents archiving more frequently than every 10 time units",
 				Config: map[string]interface{}{
 					"threshold": 1.0,
-					"min_time":  "10s", // Prevents archiving more frequently than every 10 time units
+					"min_time":  10 * time.Second, // Prevents archiving more frequently than every 10 time units
 				},
 				InputPoints: []TestPoint{
 					{TimeSeconds: 0, Value: 2},
@@ -341,7 +341,7 @@ var _ = Describe("Swinging Door Algorithm", func() {
 
 			It("should require threshold parameter", func() {
 				config := map[string]interface{}{
-					"max_time": "1s",
+					"max_time": 1 * time.Second,
 				}
 				_, err := algorithms.Create("swinging_door", config)
 				Expect(err).To(HaveOccurred())
@@ -408,7 +408,7 @@ var _ = Describe("Swinging Door Algorithm", func() {
 			It("forces emit at every max_time interval over a long period", func() {
 				// This test checks that the max_time constraint triggers emits at regular intervals
 				// even when the value changes are small and do not exceed the threshold.
-				config := map[string]interface{}{"threshold": 1.0, "max_time": "100ms"}
+				config := map[string]interface{}{"threshold": 1.0, "max_time": 100 * time.Millisecond}
 				algo, err := algorithms.Create("swinging_door", config)
 				Expect(err).NotTo(HaveOccurred())
 				defer algo.Reset()
@@ -443,7 +443,7 @@ var _ = Describe("Swinging Door Algorithm", func() {
 			It("should return correct configuration string", func() {
 				config := map[string]interface{}{
 					"threshold": 1.5,
-					"max_time":  "1s",
+					"max_time":  1 * time.Second,
 				}
 				algo, err := algorithms.Create("swinging_door", config)
 				Expect(err).NotTo(HaveOccurred())
@@ -520,7 +520,7 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				// periodic "heartbeat" signals even for constant processes.
 				// Reference: PI Server compression documentation describes this as essential
 				// for data integrity in process control applications.
-				config := map[string]interface{}{"threshold": 1.0, "max_time": "100ms"}
+				config := map[string]interface{}{"threshold": 1.0, "max_time": 100 * time.Millisecond}
 				algo, err := algorithms.Create("swinging_door", config)
 				Expect(err).NotTo(HaveOccurred())
 				defer algo.Reset()

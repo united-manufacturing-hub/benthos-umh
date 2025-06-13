@@ -204,3 +204,6 @@ dist
 # Cover.profile
 *.profile
 benthos-umh
+
+# Temporary files
+code_review.md

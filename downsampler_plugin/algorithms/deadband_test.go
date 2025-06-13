@@ -111,7 +111,7 @@ var _ = Describe("Deadband Algorithm", func() {
 		BeforeEach(func() {
 			config := map[string]interface{}{
 				"threshold": 0.5,
-				"max_time":  "60s",
+				"max_time":  60 * time.Second,
 			}
 			algo, err = algorithms.NewDeadbandAlgorithm(config)
 			Expect(err).NotTo(HaveOccurred())
@@ -140,7 +140,7 @@ var _ = Describe("Deadband Algorithm", func() {
 			BeforeEach(func() {
 				config := map[string]interface{}{
 					"threshold": 0.5,
-					"max_time":  "1m",
+					"max_time":  1 * time.Minute,
 				}
 				algo, err = algorithms.NewDeadbandAlgorithm(config)
 				Expect(err).NotTo(HaveOccurred())
@@ -217,7 +217,7 @@ var _ = Describe("Deadband Algorithm", func() {
 				// interpolation errors over extended periods.
 				// Reference: PI Server docs - compression testing page describes this
 				// dual-constraint approach as fundamental to data integrity.
-				cfg := map[string]interface{}{"threshold": 0.5, "max_time": "60s"}
+				cfg := map[string]interface{}{"threshold": 0.5, "max_time": 60 * time.Second}
 				algo, _ := algorithms.NewDeadbandAlgorithm(cfg)
 				t0 := baseTime
 				_, _ = algo.Ingest(10.0, t0)
@@ -286,7 +286,7 @@ var _ = Describe("Deadband Algorithm", func() {
 			It("should behave identically to no max_time when explicitly set to 0s", func() {
 				configWithZero := map[string]interface{}{
 					"threshold": 0.5,
-					"max_time":  "0s",
+					"max_time":  0 * time.Second,
 				}
 				algoWithZero, err := algorithms.NewDeadbandAlgorithm(configWithZero)
 				Expect(err).NotTo(HaveOccurred())
@@ -327,7 +327,7 @@ var _ = Describe("Deadband Algorithm", func() {
 			BeforeEach(func() {
 				config := map[string]interface{}{
 					"threshold": 0.5,
-					"max_time":  "60s",
+					"max_time":  60 * time.Second,
 				}
 				algo, err = algorithms.NewDeadbandAlgorithm(config)
 				Expect(err).NotTo(HaveOccurred())
@@ -371,7 +371,7 @@ var _ = Describe("Deadband Algorithm", func() {
 		It("should generate correct metadata with max time", func() {
 			config := map[string]interface{}{
 				"threshold": 0.5,
-				"max_time":  "60s",
+				"max_time":  60 * time.Second,
 			}
 			algo, err := algorithms.NewDeadbandAlgorithm(config)
 			Expect(err).NotTo(HaveOccurred())
@@ -390,7 +390,7 @@ var _ = Describe("Deadband Algorithm", func() {
 			Entry("basic threshold", map[string]interface{}{"threshold": 1.5}),
 			Entry("with max_time", map[string]interface{}{
 				"threshold": 0.5,
-				"max_time":  "60s",
+				"max_time":  60 * time.Second,
 			}),
 		)
 
@@ -459,7 +459,7 @@ var _ = Describe("Deadband Algorithm", func() {
 			BeforeEach(func() {
 				config := map[string]interface{}{
 					"threshold": 2.0,
-					"max_time":  "30s",
+					"max_time":  30 * time.Second,
 				}
 				algo, err = algorithms.NewDeadbandAlgorithm(config)
 				Expect(err).NotTo(HaveOccurred())
@@ -687,8 +687,8 @@ var _ = Describe("Deadband Algorithm", func() {
 		Context("Max Time Constraint - Heartbeat emission", func() {
 			BeforeEach(func() {
 				config := map[string]interface{}{
-					"threshold": 5.0,  // Large threshold
-					"max_time":  "3s", // Force emission every 3 seconds
+					"threshold": 5.0,             // Large threshold
+					"max_time":  3 * time.Second, // Force emission every 3 seconds
 				}
 				algo, err = algorithms.NewDeadbandAlgorithm(config)
 				Expect(err).NotTo(HaveOccurred())
