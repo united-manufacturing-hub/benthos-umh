@@ -1,28 +1,19 @@
 # Classic to Core Processor
 
-The `classic_to_core` processor converts UMH Historian Data Contract format messages into Core format, following the "one tag, one message, one topic" principle. This processor is essential for migrating from legacy historian data formats to modern Core data architecture.
+The `classic_to_core` processor converts UMH Historian schema format messages into Core format, following the "one tag, one message, one topic" principle. This processor is essential for migrating from Classic historian schemas to Core data architecture.
 
 ## Overview
 
 The Classic to Core Processor transforms single messages containing multiple values and timestamps into separate Core format messages, each containing a single value. It handles nested tag groups by flattening them into intuitive dot-notation paths and reconstructs topics according to Core conventions.
 
-**Key Features:**
-
-- Converts UMH Historian Data Contract to Core format
-- Flattens nested tag groups using dot (`.`) separator
-- Preserves metadata while updating topic-related fields
-- Supports configurable field exclusion and data contracts
-- Includes performance safeguards and comprehensive error handling
-- Provides detailed metrics for monitoring
-
 ## When to Use
 
 Use the `classic_to_core` processor when you need to:
 
-- **Migrate from Historian to Core**: Converting legacy UMH Historian Data Contract messages to modern Core format
-- **Normalize message structure**: Transform multi-value messages into single-value messages
-- **Flatten nested data**: Convert complex tag groups into simple dot-notation paths
-- **Maintain topic conventions**: Preserve UMH topic structure while converting data contracts
+- **Process Classic Data in Core**: Convert Classic UMH Historian schema messages to Core format for processing in Core-based systems
+- **Use Core Processors**: Enable the use of processors that rely on the Core data model (like downsampler)
+
+The processor maintains compatibility with the `_historian` schema, ensuring that the output can be consumed by systems expecting Classic format messages.
 
 ## Configuration
 
@@ -30,24 +21,14 @@ Use the `classic_to_core` processor when you need to:
 pipeline:
   processors:
     - classic_to_core:
-        timestamp_field: timestamp_ms # Field containing timestamp (default: timestamp_ms)
-        target_data_contract: _raw # Target data contract. If empty, uses input's contract
-        exclude_fields: [] # List of fields to exclude from conversion
-        preserve_meta: true # Whether to preserve original metadata
-        max_recursion_depth: 10 # Maximum recursion depth for flattening nested tag groups
-        max_tags_per_message: 1000 # Maximum number of tags to extract from a single message
+        target_data_contract: _raw # Target data contract. If empty, uses input's schema
 ```
 
 ### Configuration Options
 
-| Parameter              | Type     | Default        | Description                                                   |
-| ---------------------- | -------- | -------------- | ------------------------------------------------------------- |
-| `timestamp_field`      | string   | `timestamp_ms` | Field containing the timestamp value                          |
-| `target_data_contract` | string   | `""`           | Target data contract. If empty, uses input's data contract    |
-| `exclude_fields`       | []string | `[]`           | List of fields to exclude from conversion                     |
-| `preserve_meta`        | boolean  | `true`         | Whether to preserve original metadata from source message     |
-| `max_recursion_depth`  | int      | `10`           | Maximum recursion depth for flattening nested tag groups      |
-| `max_tags_per_message` | int      | `1000`         | Maximum number of tags to extract from a single input message |
+| Parameter              | Type   | Default | Description                                         |
+| ---------------------- | ------ | ------- | --------------------------------------------------- |
+| `target_data_contract` | string | `""`    | Target data contract. If empty, uses input's schema |
 
 ## Message Transformation
 
@@ -55,7 +36,7 @@ pipeline:
 
 The processor transforms single messages with multiple values into separate Core format messages:
 
-**Input (Historian Data Contract):**
+**Input (Historian Schema):**
 
 - Topic: `umh.v1.acme._historian.weather`
 - Payload:
@@ -86,7 +67,7 @@ Message 2:
 
 The processor flattens nested tag groups using dot notation:
 
-**Input (Historian Data Contract with Tag Groups):**
+**Input (Historian Schema with Tag Groups):**
 
 - Topic: `umh.v1.acme._historian.cnc-mill`
 - Payload:
@@ -154,41 +135,13 @@ The processor handles complex hierarchical location paths:
 
 ## Advanced Configuration
 
-### Field Exclusion
+### Using Input Schema
 
-Exclude specific fields from processing:
-
-```yaml
-classic_to_core:
-  timestamp_field: timestamp_ms
-  target_data_contract: _raw
-  exclude_fields:
-    - quality_status
-    - internal_id
-    - _debug_info
-```
-
-**Input:**
-
-```json
-{
-  "timestamp_ms": 1717083000000,
-  "temperature": 23.4,
-  "quality_status": "OK",
-  "internal_id": "sensor_123"
-}
-```
-
-**Output:** Only `temperature` will be processed; excluded fields are ignored.
-
-### Using Input Data Contract
-
-When `target_data_contract` is not specified, the processor uses the input's data contract:
+When `target_data_contract` is not specified, the processor uses the input's schema:
 
 ```yaml
 classic_to_core:
-  timestamp_field: timestamp_ms
-  # target_data_contract not specified - uses input's contract
+  # target_data_contract not specified - uses input's schema
 ```
 
 **Input:**
@@ -198,31 +151,7 @@ classic_to_core:
 **Output:**
 
 - Topic: `umh.v1.acme._historian.weather.pressure`
-- Maintains the original `_historian` data contract
-
-### Custom Timestamp Field
-
-Configure a different timestamp field:
-
-```yaml
-classic_to_core:
-  timestamp_field: custom_timestamp
-  target_data_contract: _processed
-```
-
-**Input:**
-
-```json
-{
-  "custom_timestamp": "1717083000000",
-  "pressure": 1013.25
-}
-```
-
-**Output:**
-
-- Topic: `umh.v1.acme._processed.weather.pressure`
-- Payload: `{"value": 1013.25, "timestamp_ms": 1717083000000}`
+- Maintains the original `_historian` schema
 
 ## Topic Transformation
 
@@ -232,7 +161,7 @@ The processor parses Classic topics and reconstructs them for Core format:
 | ------------- | ------------------------ | ------------------------ | ------------------------------ |
 | Prefix        | `umh.v1`                 | `umh.v1`                 | Unchanged                      |
 | Location Path | `enterprise.plant1.area` | `enterprise.plant1.area` | Unchanged                      |
-| Data Contract | `_historian`             | `_raw` (configurable)    | Updated based on configuration |
+| Schema        | `_historian`             | `_raw` (configurable)    | Updated based on configuration |
 | Context       | `weather`                | `weather`                | Becomes virtual_path           |
 | Field Name    | N/A                      | `temperature`            | Added for each field           |
 
@@ -250,12 +179,12 @@ The processor sets the following metadata fields:
 - `topic`: The new Core topic
 - `umh_topic`: Same as topic (enables direct use with `uns_output`)
 - `location_path`: Extracted from original topic
-- `data_contract`: The target data contract (or input's contract if not specified)
+- `data_contract`: The target data contract (or input's schema if not specified)
 - `tag_name`: The field name
 - `virtual_path`: Original context (if present)
 
 **Metadata Preservation:**
-When `preserve_meta: true` (default), original metadata is preserved alongside new fields.
+Original metadata is always preserved alongside new fields.
 
 ## Performance & Reliability
 
@@ -263,22 +192,15 @@ When `preserve_meta: true` (default), original metadata is preserved alongside n
 
 The processor includes several safeguards for production use:
 
-- **Recursion Limit**: `max_recursion_depth` prevents stack overflow from deeply nested tag groups
-- **Message Size Limit**: `max_tags_per_message` prevents memory exhaustion from overly large messages
+- **Recursion Limit**: Maximum recursion depth of 10 levels for flattening nested tag groups
+- **Message Size Limit**: Maximum of 1000 tags per message to prevent memory exhaustion
 - **Topic Validation**: Strict UMH v1 topic format validation with proper error handling
 - **Comprehensive Metrics**: Tracks processing counts, errors, and limit violations for monitoring
-
-### Default Limits
-
-All limits are configurable with sensible defaults suitable for most industrial use cases:
-
-- **Max Recursion Depth**: 10 levels (handles complex nested structures)
-- **Max Tags Per Message**: 1000 tags (suitable for large industrial datasets)
 
 ### Performance Considerations
 
 - **Message Expansion**: Each input message creates N output messages (N = number of data fields)
-- **Memory Usage**: Metadata is copied for each output message when `preserve_meta: true`
+- **Memory Usage**: Metadata is copied for each output message
 - **Processing Overhead**: Minimal - efficient string parsing with optimized allocations
 
 ## Error Handling
@@ -310,7 +232,7 @@ The processor exposes comprehensive metrics for monitoring:
 
 ## Complete Integration Example
 
-Here's a complete Benthos configuration for migrating from Historian to Core format:
+Here's a complete Benthos configuration for migrating from Classic to Core format:
 
 ```yaml
 input:
@@ -322,14 +244,7 @@ input:
 pipeline:
   processors:
     - classic_to_core:
-        timestamp_field: timestamp_ms
-        # Uses input data contract (_historian) if not specified
-        preserve_meta: true
-        exclude_fields:
-          - _quality
-          - _debug_info
-        max_recursion_depth: 10
-        max_tags_per_message: 1000
+        target_data_contract: _raw
 
 output:
   # Use UNS output for seamless integration
@@ -344,33 +259,10 @@ output:
 **This configuration:**
 
 1. Consumes all Classic `_historian` topics
-2. Converts them to Core format using the original `_historian` data contract
-3. Excludes quality and debug fields
-4. Publishes to individual Core topics via `uns_output`
-5. Uses `umh_topic` metadata for automatic topic routing
-6. Preserves all metadata for downstream processing
-
-## Migration Strategy
-
-### Recommended Migration Approach
-
-1. **Side-by-side deployment**: Run Classic and Core systems in parallel
-2. **Gradual migration**: Convert topics one at a time
-3. **Validation**: Compare output between systems
-4. **Switch consumers**: Update consumers to use Core topics
-5. **Decommission Classic**: Remove Classic systems once validated
-
-### Testing Your Migration
-
-Before deploying to production:
-
-```bash
-# Run unit tests
-TEST_CLASSIC_TO_CORE=1 go test ./classic_to_core_plugin/...
-
-# Test with sample data
-benthos -c migration-config.yaml --log.level=debug
-```
+2. Converts them to Core format using the `_raw` data contract
+3. Publishes to individual Core topics via `uns_output`
+4. Uses `umh_topic` metadata for automatic topic routing
+5. Preserves all metadata for downstream processing
 
 ## Troubleshooting
 
@@ -378,15 +270,14 @@ benthos -c migration-config.yaml --log.level=debug
 
 **No output messages**
 
-- Check that input has valid JSON with timestamp field
+- Check that input has valid JSON with timestamp_ms field
 - Verify topic metadata is present
 - Ensure input topics follow Classic format: `umh.v1.<location>._historian.<context>`
 
 **Missing fields**
 
-- Verify `exclude_fields` configuration
 - Check logs for parsing errors
-- Ensure fields are not nested beyond `max_recursion_depth`
+- Ensure fields are not nested beyond maximum recursion depth (10 levels)
 
 **Wrong topics**
 
@@ -396,36 +287,5 @@ benthos -c migration-config.yaml --log.level=debug
 
 **Timestamp errors**
 
-- Check that timestamp field contains numeric values (int, float, or string numbers)
-- Verify timestamp field name matches configuration
+- Check that timestamp_ms field contains numeric values (int, float, or string numbers)
 - Ensure timestamp values are valid Unix timestamps
-
-### Debug Configuration
-
-For troubleshooting, enable debug logging:
-
-```yaml
-logger:
-  level: DEBUG
-  format: json
-
-input:
-  # ... your input config
-
-pipeline:
-  processors:
-    - classic_to_core:
-        # ... your processor config
-
-output:
-  # For debugging, you can output to stdout first
-  stdout:
-    codec: lines
-```
-
-This will show detailed processing information including:
-
-- Topic parsing results
-- Field extraction details
-- Metadata transformations
-- Error conditions and reasons

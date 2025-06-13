@@ -6,7 +6,7 @@ This section covers Benthos processors for data transformation and message handl
 
 - **[Tag Processor](tag-processor.md)** - Optimized for processing tags and time series data, converting them to the UMH data model within the `_historian` data contract. Provides automatic message formatting, metadata generation, and structured processing stages.
 
-- **[Classic to Core Processor](classic-to-core-processor.md)** - Converts UMH Historian Data Contract format messages into Core format, following the "one tag, one message, one topic" principle. Ideal for migrating from legacy historian formats to modern Core data architecture.
+- **[Classic to Core Processor](classic-to-core-processor.md)** - Converts UMH Historian Data Contract format messages into Core format, following the "one tag, one message, one topic" principle.
 
 - **[Node-RED JavaScript Processor](node-red-javascript-processor.md)** - Provides full control over payload and metadata through custom JavaScript code. Use this processor when you need complex transformations, conditional logic, or custom processing beyond standard tag handling.
 
