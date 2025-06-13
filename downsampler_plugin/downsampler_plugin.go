@@ -422,19 +422,27 @@ func (p *DownsamplerProcessor) flushIdleCandidates() {
 	for i, state := range seriesStates {
 		seriesID := seriesIDs[i]
 
-		// Get the max_time configuration for this specific series
-		_, algorithmConfig := p.config.GetConfigForTopic(seriesID)
-		maxTimeMs := int64(4 * 60 * 60 * 1000) // Default 4 hours in milliseconds
-
-		if maxTime, exists := algorithmConfig["max_time"]; exists {
-			if duration, ok := maxTime.(time.Duration); ok && duration > 0 {
-				maxTimeMs = duration.Nanoseconds() / int64(time.Millisecond)
-			}
+		// Calculate flush interval with algorithm configuration resolution
+		_, algorithmConfig, err := p.config.GetConfigForTopic(seriesID)
+		if err != nil {
+			p.logger.Error(fmt.Sprintf("Configuration error for topic %s: %v", seriesID, err))
+			continue // Skip this series if configuration is invalid
 		}
 
 		state.mutex.Lock()
 		if state.hasCandidate() {
 			candidateAge := currentTime - state.getCandidateTimestamp()
+
+			// Get max_time configuration with safe type assertion and default
+			maxTimeMs := int64(4 * 60 * 60 * 1000) // Default 4 hours in milliseconds
+			if maxTime, exists := algorithmConfig["max_time"]; exists {
+				if maxTimeStr, ok := maxTime.(string); ok {
+					if duration, err := time.ParseDuration(maxTimeStr); err == nil && duration > 0 {
+						maxTimeMs = duration.Nanoseconds() / int64(time.Millisecond)
+					}
+				}
+			}
+
 			if candidateAge >= maxTimeMs {
 				p.logger.Debug(fmt.Sprintf("Flushing idle candidate for series %s (age: %dms, max_time: %dms)",
 					seriesID, candidateAge, maxTimeMs))
@@ -543,7 +551,11 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string, msg *serv
 				p.metrics.IncrementMetaOverrideRejected()
 			} else if hints != nil {
 				// Get base algorithm configuration
-				algorithmType, algorithmConfig := p.config.GetConfigForTopic(seriesID)
+				algorithmType, algorithmConfig, err := p.config.GetConfigForTopic(seriesID)
+				if err != nil {
+					p.logger.Error(fmt.Sprintf("Configuration error for topic %s: %v", seriesID, err))
+					return nil, err
+				}
 
 				// Apply metadata overrides
 				for k, v := range hints {
@@ -590,8 +602,12 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string, msg *serv
 		return state, nil
 	}
 
-	// Get algorithm configuration for this topic
-	algorithmType, algorithmConfig := p.config.GetConfigForTopic(seriesID)
+	// Get algorithm configuration for this specific topic
+	algorithmType, algorithmConfig, err := p.config.GetConfigForTopic(seriesID)
+	if err != nil {
+		p.logger.Error(fmt.Sprintf("Configuration error for topic %s: %v", seriesID, err))
+		return nil, err
+	}
 
 	// Apply metadata overrides if enabled
 	if p.config.AllowMeta {

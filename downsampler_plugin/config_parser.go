@@ -15,6 +15,8 @@
 package downsampler_plugin
 
 import (
+	"fmt"
+
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
@@ -141,6 +143,14 @@ func (cp *ConfigurationParser) parseOverrideConfig(overrideConf *service.ParsedC
 	}
 	if err := cp.parseOverrideLatePolicy(overrideConf, &override); err != nil {
 		return override, err
+	}
+
+	// Validate that only one algorithm is specified per override
+	hasDeadband := override.Deadband != nil && (override.Deadband.Threshold != 0 || override.Deadband.MaxTime != 0)
+	hasSwingingDoor := override.SwingingDoor != nil && (override.SwingingDoor.Threshold != 0 || override.SwingingDoor.MaxTime != 0 || override.SwingingDoor.MinTime != 0)
+
+	if hasDeadband && hasSwingingDoor {
+		return override, fmt.Errorf("override pattern '%s' specifies both deadband and swinging_door algorithms - only one algorithm may be specified per override", override.Pattern)
 	}
 
 	return override, nil

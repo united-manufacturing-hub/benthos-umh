@@ -15,6 +15,7 @@
 package downsampler_plugin
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -96,7 +97,8 @@ type DownsamplerConfig struct {
 // Returns:
 //   - string: The selected algorithm name ("deadband" or "swinging_door")
 //   - map[string]interface{}: The effective configuration parameters for the algorithm
-func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]interface{}) {
+//   - error: An error if the configuration is invalid
+func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]interface{}, error) {
 	// Determine default algorithm based on which default config has values
 	// Prioritize deadband as the simpler algorithm
 	algorithm := "deadband" // Default fallback
@@ -158,8 +160,17 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 		}
 
 		if matched {
+			// Validate that only one algorithm is specified per override
+			// This should have been caught during parsing, but we include a runtime check as well
+			hasDeadband := override.Deadband != nil && (override.Deadband.Threshold != 0 || override.Deadband.MaxTime != 0)
+			hasSwingingDoor := override.SwingingDoor != nil && (override.SwingingDoor.Threshold != 0 || override.SwingingDoor.MaxTime != 0 || override.SwingingDoor.MinTime != 0)
+
+			if hasDeadband && hasSwingingDoor {
+				return "", nil, fmt.Errorf("override pattern '%s' specifies both deadband and swinging_door algorithms - only one algorithm may be specified per override", override.Pattern)
+			}
+
 			// Apply deadband overrides (only if actually configured with meaningful values)
-			if override.Deadband != nil && (override.Deadband.Threshold != 0 || override.Deadband.MaxTime != 0) {
+			if hasDeadband {
 				algorithm = "deadband"
 				if override.Deadband.Threshold != 0 {
 					config["threshold"] = override.Deadband.Threshold
@@ -170,7 +181,7 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 			}
 
 			// Apply swinging door overrides (only if actually configured with meaningful values)
-			if override.SwingingDoor != nil && (override.SwingingDoor.Threshold != 0 || override.SwingingDoor.MaxTime != 0 || override.SwingingDoor.MinTime != 0) {
+			if hasSwingingDoor {
 				algorithm = "swinging_door"
 				if override.SwingingDoor.Threshold != 0 {
 					config["threshold"] = override.SwingingDoor.Threshold
@@ -193,5 +204,5 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 		}
 	}
 
-	return algorithm, config
+	return algorithm, config, nil
 }
