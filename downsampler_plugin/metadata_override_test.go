@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -61,9 +62,14 @@ downsampler:
 `)
 			Expect(err).NotTo(HaveOccurred())
 
-			var messages []*service.Message
+			var (
+				messages []*service.Message
+				mtx      sync.Mutex
+			)
 			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				mtx.Lock()
 				messages = append(messages, msg)
+				mtx.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -123,16 +129,25 @@ downsampler:
 
 			// Wait for processing
 			Eventually(func() int {
-				return len(messages)
+				mtx.Lock()
+				n := len(messages)
+				mtx.Unlock()
+				return n
 			}, "3s").Should(BeNumerically(">=", 5))
 
 			// Verify we got the expected messages
 			// Should get: msg1, msg2, msg3, msg4, msg5, msg6 (all should pass)
-			Expect(len(messages)).To(BeNumerically(">=", 5))
+			mtx.Lock()
+			messageCount := len(messages)
+			messagesCopy := make([]*service.Message, len(messages))
+			copy(messagesCopy, messages)
+			mtx.Unlock()
+
+			Expect(messageCount).To(BeNumerically(">=", 5))
 
 			// Check that series1 messages passed
 			series1Count := 0
-			for _, msg := range messages {
+			for _, msg := range messagesCopy {
 				if topic, exists := msg.MetaGet("umh_topic"); exists && topic == "test.series1" {
 					series1Count++
 				}
@@ -141,7 +156,7 @@ downsampler:
 
 			// Check that series2 messages passed (swinging_door with low threshold)
 			series2Count := 0
-			for _, msg := range messages {
+			for _, msg := range messagesCopy {
 				if topic, exists := msg.MetaGet("umh_topic"); exists && topic == "test.series2" {
 					series2Count++
 				}
@@ -150,7 +165,7 @@ downsampler:
 
 			// Check that series3 messages passed (deadband with low threshold)
 			series3Count := 0
-			for _, msg := range messages {
+			for _, msg := range messagesCopy {
 				if topic, exists := msg.MetaGet("umh_topic"); exists && topic == "test.series3" {
 					series3Count++
 				}
@@ -175,9 +190,14 @@ downsampler:
 `)
 			Expect(err).NotTo(HaveOccurred())
 
-			var messages []*service.Message
+			var (
+				messages []*service.Message
+				mtx      sync.Mutex
+			)
 			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				mtx.Lock()
 				messages = append(messages, msg)
+				mtx.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -212,12 +232,18 @@ downsampler:
 
 			// Wait for processing
 			Eventually(func() int {
-				return len(messages)
+				mtx.Lock()
+				n := len(messages)
+				mtx.Unlock()
+				return n
 			}, "2s").Should(Equal(3))
 
 			// All messages should pass through using default configuration
 			// since invalid metadata should be rejected
-			Expect(len(messages)).To(Equal(3))
+			mtx.Lock()
+			messageCount := len(messages)
+			mtx.Unlock()
+			Expect(messageCount).To(Equal(3))
 		})
 
 		It("should respect allow_meta_overrides=false", func() {
@@ -241,9 +267,14 @@ downsampler:
 `)
 			Expect(err).NotTo(HaveOccurred())
 
-			var messages []*service.Message
+			var (
+				messages []*service.Message
+				mtx      sync.Mutex
+			)
 			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				mtx.Lock()
 				messages = append(messages, msg)
+				mtx.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -268,14 +299,22 @@ downsampler:
 
 			// Wait for processing
 			Eventually(func() int {
-				return len(messages)
+				mtx.Lock()
+				n := len(messages)
+				mtx.Unlock()
+				return n
 			}, "2s").Should(BeNumerically(">=", 1))
 
 			// Verify we got at least one message (proving the downsampler works)
-			Expect(len(messages)).To(BeNumerically(">=", 1))
+			mtx.Lock()
+			messageCount := len(messages)
+			firstMessage := messages[0]
+			mtx.Unlock()
+
+			Expect(messageCount).To(BeNumerically(">=", 1))
 
 			// Verify the message content
-			structured, err := messages[0].AsStructured()
+			structured, err := firstMessage.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
 			data := structured.(map[string]interface{})
@@ -295,7 +334,7 @@ downsampler:
 			Expect(val).To(Equal(10.0))
 
 			// Verify downsampler metadata is present (proving it was processed)
-			downsampledBy, exists := messages[0].MetaGet("downsampled_by")
+			downsampledBy, exists := firstMessage.MetaGet("downsampled_by")
 			Expect(exists).To(BeTrue(), "Message should have downsampled_by metadata")
 			Expect(downsampledBy).To(ContainSubstring("deadband"))
 		})
@@ -318,9 +357,14 @@ downsampler:
 `)
 			Expect(err).NotTo(HaveOccurred())
 
-			var messages []*service.Message
+			var (
+				messages []*service.Message
+				mtx      sync.Mutex
+			)
 			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				mtx.Lock()
 				messages = append(messages, msg)
+				mtx.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -349,11 +393,17 @@ downsampler:
 
 			// Wait for processing
 			Eventually(func() int {
-				return len(messages)
+				mtx.Lock()
+				n := len(messages)
+				mtx.Unlock()
+				return n
 			}, "2s").Should(BeNumerically(">=", 2))
 
 			// Should get both messages
-			Expect(len(messages)).To(BeNumerically(">=", 2))
+			mtx.Lock()
+			messageCount := len(messages)
+			mtx.Unlock()
+			Expect(messageCount).To(BeNumerically(">=", 2))
 		})
 
 		It("should work with pattern overrides and metadata", func() {
@@ -378,9 +428,14 @@ downsampler:
 `)
 			Expect(err).NotTo(HaveOccurred())
 
-			var messages []*service.Message
+			var (
+				messages []*service.Message
+				mtx      sync.Mutex
+			)
 			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				mtx.Lock()
 				messages = append(messages, msg)
+				mtx.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -404,7 +459,10 @@ downsampler:
 
 			// Wait for first message
 			Eventually(func() int {
-				return len(messages)
+				mtx.Lock()
+				n := len(messages)
+				mtx.Unlock()
+				return n
 			}, "1s").Should(Equal(1))
 
 			// Message 2: Large change that passes both pattern and metadata overrides
@@ -415,11 +473,17 @@ downsampler:
 
 			// Wait for second message
 			Eventually(func() int {
-				return len(messages)
+				mtx.Lock()
+				n := len(messages)
+				mtx.Unlock()
+				return n
 			}, "1s").Should(Equal(2))
 
 			// Should get both messages
-			Expect(len(messages)).To(Equal(2))
+			mtx.Lock()
+			messageCount := len(messages)
+			mtx.Unlock()
+			Expect(messageCount).To(Equal(2))
 		})
 	})
 
@@ -440,9 +504,14 @@ downsampler:
 `)
 			Expect(err).NotTo(HaveOccurred())
 
-			var messages []*service.Message
+			var (
+				messages []*service.Message
+				mtx      sync.Mutex
+			)
 			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				mtx.Lock()
 				messages = append(messages, msg)
+				mtx.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -464,13 +533,21 @@ downsampler:
 
 			// Wait for processing
 			Eventually(func() int {
-				return len(messages)
+				mtx.Lock()
+				n := len(messages)
+				mtx.Unlock()
+				return n
 			}, "1s").Should(Equal(1))
 
 			// Message should pass through unchanged
-			Expect(len(messages)).To(Equal(1))
+			mtx.Lock()
+			messageCount := len(messages)
+			firstMessage := messages[0]
+			mtx.Unlock()
 
-			structured, err := messages[0].AsStructured()
+			Expect(messageCount).To(Equal(1))
+
+			structured, err := firstMessage.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			data := structured.(map[string]interface{})
 			Expect(data["some"]).To(Equal("data"))

@@ -351,10 +351,10 @@ func calculateFlushInterval(config DownsamplerConfig) time.Duration {
 
 	// Check override configurations
 	for _, override := range config.Overrides {
-		if override.Deadband.MaxTime > 0 && override.Deadband.MaxTime < minMaxTime {
+		if override.Deadband != nil && override.Deadband.MaxTime > 0 && override.Deadband.MaxTime < minMaxTime {
 			minMaxTime = override.Deadband.MaxTime
 		}
-		if override.SwingingDoor.MaxTime > 0 && override.SwingingDoor.MaxTime < minMaxTime {
+		if override.SwingingDoor != nil && override.SwingingDoor.MaxTime > 0 && override.SwingingDoor.MaxTime < minMaxTime {
 			minMaxTime = override.SwingingDoor.MaxTime
 		}
 	}
