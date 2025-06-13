@@ -135,7 +135,7 @@ func (p *ProcessorWrapper) Ingest(value interface{}, timestamp time.Time) ([]Gen
 				p.logger.Debugf("Late arrival passthrough for series '%s': message timestamp %v is %v behind last processed %v - passing through unchanged",
 					p.seriesID, timestamp, timeDiff, p.lastTimestamp)
 			}
-			return []GenericPoint{{Value: floatVal, Timestamp: timestamp}}, nil
+			return []GenericPoint{{Value: value, Timestamp: timestamp}}, nil
 		} else {
 			// Drop out-of-order data
 			if p.logger != nil {
