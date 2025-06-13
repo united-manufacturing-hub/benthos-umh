@@ -101,9 +101,9 @@ func (cp *ConfigurationParser) parseSwingingDoorDefaults(conf *service.ParsedCon
 
 // parseLatePolicyDefaults parses the late policy default configuration
 func (cp *ConfigurationParser) parseLatePolicyDefaults(conf *service.ParsedConfig, defaultConfig *DefaultConfig) error {
-	if defaultParsed := conf.Namespace("default", "late_policy"); defaultParsed.Contains() {
+	if defaultParsed := conf.Namespace("default"); defaultParsed.Contains() {
 		if latePolicy, err := defaultParsed.FieldString("late_policy"); err == nil {
-			defaultConfig.LatePolicy.LatePolicy = latePolicy
+			defaultConfig.LatePolicy = latePolicy
 		}
 	}
 	return nil
@@ -182,11 +182,8 @@ func (cp *ConfigurationParser) parseOverrideSwingingDoor(overrideConf *service.P
 
 // parseOverrideLatePolicy parses late policy override configuration
 func (cp *ConfigurationParser) parseOverrideLatePolicy(overrideConf *service.ParsedConfig, override *OverrideConfig) error {
-	if latePolicyParsed := overrideConf.Namespace("late_policy"); latePolicyParsed.Contains() {
-		override.LatePolicy = &LatePolicyConfig{}
-		if latePolicy, err := latePolicyParsed.FieldString("late_policy"); err == nil {
-			override.LatePolicy.LatePolicy = latePolicy
-		}
+	if latePolicy, err := overrideConf.FieldString("late_policy"); err == nil {
+		override.LatePolicy = latePolicy
 	}
 	return nil
 }

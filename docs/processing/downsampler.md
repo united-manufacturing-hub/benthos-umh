@@ -36,6 +36,7 @@ Discrete counters and alarms should remain on `deadband {threshold: 0}`; SDT's e
 processors:
   - downsampler:
       default:                     # safe baseline for every topic
+        late_policy: passthrough   # global policy for late arrivals
         deadband:
           threshold: 0             # keep every change
           max_time: 30m            # 30-minute heartbeat
@@ -44,6 +45,7 @@ processors:
           deadband:
             threshold: 0.1         # 2 × 0.05 °C noise
         - pattern: "*.furnace*"
+          late_policy: drop        # can override per pattern
           swinging_door:
             threshold: 0.1
             min_time: 5s

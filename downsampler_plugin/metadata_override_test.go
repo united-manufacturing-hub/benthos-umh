@@ -314,8 +314,7 @@ downsampler:
     deadband:
       threshold: 0.1
       max_time: 30s
-    late_policy:
-      late_policy: passthrough
+    late_policy: passthrough
 `)
 			Expect(err).NotTo(HaveOccurred())
 

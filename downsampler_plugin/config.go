@@ -33,16 +33,11 @@ type SwingingDoorConfig struct {
 	MinTime   time.Duration `json:"min_time,omitempty" yaml:"min_time,omitempty"`
 }
 
-// LatePolicyConfig holds late arrival handling parameters
-type LatePolicyConfig struct {
-	LatePolicy string `json:"late_policy,omitempty" yaml:"late_policy,omitempty"`
-}
-
 // DefaultConfig holds the default algorithm parameters
 type DefaultConfig struct {
 	Deadband     DeadbandConfig     `json:"deadband,omitempty" yaml:"deadband,omitempty"`
 	SwingingDoor SwingingDoorConfig `json:"swinging_door,omitempty" yaml:"swinging_door,omitempty"`
-	LatePolicy   LatePolicyConfig   `json:"late_policy,omitempty" yaml:"late_policy,omitempty"`
+	LatePolicy   string             `json:"late_policy,omitempty" yaml:"late_policy,omitempty"`
 }
 
 // OverrideConfig defines algorithm parameter overrides for topic patterns.
@@ -57,7 +52,7 @@ type OverrideConfig struct {
 	Pattern      string              `json:"pattern" yaml:"pattern"`                                 // Topic pattern (exact match or wildcards with * and ?)
 	Deadband     *DeadbandConfig     `json:"deadband,omitempty" yaml:"deadband,omitempty"`           // Deadband algorithm overrides
 	SwingingDoor *SwingingDoorConfig `json:"swinging_door,omitempty" yaml:"swinging_door,omitempty"` // Swinging door algorithm overrides
-	LatePolicy   *LatePolicyConfig   `json:"late_policy,omitempty" yaml:"late_policy,omitempty"`     // Late arrival policy overrides
+	LatePolicy   string              `json:"late_policy,omitempty" yaml:"late_policy,omitempty"`     // Late arrival policy overrides
 }
 
 // DownsamplerConfig holds the configuration for the downsampler processor
@@ -136,8 +131,8 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 
 	// Add late policy defaults
 	latePolicy := "passthrough" // Default policy
-	if c.Default.LatePolicy.LatePolicy != "" {
-		latePolicy = c.Default.LatePolicy.LatePolicy
+	if c.Default.LatePolicy != "" {
+		latePolicy = c.Default.LatePolicy
 	}
 	config["late_policy"] = latePolicy
 
@@ -190,10 +185,8 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 			}
 
 			// Apply late policy overrides
-			if override.LatePolicy != nil {
-				if override.LatePolicy.LatePolicy != "" {
-					config["late_policy"] = override.LatePolicy.LatePolicy
-				}
+			if override.LatePolicy != "" {
+				config["late_policy"] = override.LatePolicy
 			}
 			break
 		}

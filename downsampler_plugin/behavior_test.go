@@ -222,10 +222,9 @@ downsampler:
 				Config: `
 downsampler:
   default:
+    late_policy: passthrough
     deadband:
-      threshold: 0.5
-    late_policy:
-      late_policy: passthrough`,
+      threshold: 0.5`,
 				Input: []TestMessage{
 					{Value: 10.0, TimestampMs: 3000, Topic: "sensor.temp"}, // In order
 					{Value: 15.0, TimestampMs: 4000, Topic: "sensor.temp"}, // In order
@@ -250,10 +249,9 @@ downsampler:
 				Config: `
 downsampler:
   default:
+    late_policy: drop
     deadband:
-      threshold: 0.5
-    late_policy:
-      late_policy: drop`,
+      threshold: 0.5`,
 				Input: []TestMessage{
 					{Value: 10.0, TimestampMs: 3000, Topic: "sensor.temp"}, // In order
 					{Value: 15.0, TimestampMs: 4000, Topic: "sensor.temp"}, // In order
