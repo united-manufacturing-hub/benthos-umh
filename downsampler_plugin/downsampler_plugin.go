@@ -321,8 +321,30 @@ func newDownsamplerProcessor(config DownsamplerConfig, logger *service.Logger, m
 
 	processor.messageProcessor = NewMessageProcessor(processor)
 
-	// Start idle flush goroutine
-	go processor.idleFlushLoop()
+	// Start background goroutine for idle flush mechanism
+	// Pass channels as parameters to avoid race conditions with Close()
+	go func(flushTicker *time.Ticker, closeChan chan struct{}) {
+		if flushTicker == nil || closeChan == nil {
+			return
+		}
+
+		// Use only the passed channels - never access struct fields
+		for {
+			select {
+			case <-flushTicker.C:
+				// Check if we're still supposed to be running before doing work
+				select {
+				case <-closeChan:
+					return
+				default:
+					// Only call flushIdleCandidates if we haven't been closed
+					processor.flushIdleCandidates()
+				}
+			case <-closeChan:
+				return
+			}
+		}
+	}(processor.flushTicker, processor.closeChan)
 
 	logger.Infof("Downsampler initialized with idle flush interval: %v", flushInterval)
 	return processor, nil
@@ -362,35 +384,7 @@ func calculateFlushInterval(config DownsamplerConfig) time.Duration {
 	return minMaxTime
 }
 
-// -----------------------------------------------------------------------------
-// idleFlushLoop & flushIdleCandidates
-// -----------------------------------------------------------------------------
-//
-// Responsibility matrix:
-//
-//	idleFlushLoop
-//	  • Run flushIdleCandidates every   flushTicker.C
-//	  • Stop on closeChan.
-//
-// WHY separated goroutine?
-//
-//	– Keeps main path latency constant.
-//	– Allows deterministic flush cadence independent of traffic.
-func (p *DownsamplerProcessor) idleFlushLoop() {
-	for {
-		select {
-		case <-p.flushTicker.C:
-			p.flushIdleCandidates()
-		case <-p.closeChan:
-			return
-		}
-	}
-}
-
-// flushIdleCandidates
-//   - Gather candidates               (read lock)
-//   - Per‑series age check            (fine‑grained lock)
-//   - Emit & reset algorithm if age ≥ max_time
+// flushIdleCandidates checks all series for idle candidates and flushes them if needed
 func (p *DownsamplerProcessor) flushIdleCandidates() {
 	p.stateMutex.RLock()
 	seriesStates := make([]*SeriesState, 0, len(p.seriesState))
