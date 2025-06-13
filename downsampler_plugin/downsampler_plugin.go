@@ -393,7 +393,9 @@ func (p *DownsamplerProcessor) flushIdleCandidates() {
 	for id, state := range p.seriesState {
 		// Only check series that can have candidates (emit-previous algorithms)
 		// This optimization skips deadband and other non-buffering algorithms
-		if state.holdsPrev && state.hasCandidate() {
+		if state.holdsPrev {
+			// We need to check hasCandidate() under the state's mutex lock
+			// So we'll add all eligible states and check later when we have proper locks
 			seriesStates = append(seriesStates, state)
 			seriesIDs = append(seriesIDs, id)
 		}
