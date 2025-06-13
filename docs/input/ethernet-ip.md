@@ -1,15 +1,13 @@
 # Ethernet/IP
 
-The plugin is designed to read data from configured tags within Rockwell Automation PLCs that support the CIP protocol over Ethernet/IP, such as **ControlLogix**, **CompactLogix**, and **Micro820**. It uses the [`gologix`](https://github.com/danomagnum/gologix) driver—a native Go implementation modeled after pylogix—to establish and maintain communication with the controller.Add commentMore actions
+
+The plugin is designed to read data from configured tags within Rockwell Automation PLCs that support the CIP protocol over Ethernet/IP, such as **ControlLogix**, **CompactLogix**, and **Micro820**. It uses the [`gologix`](https://github.com/danomagnum/gologix) driver — a native Go implementation modeled after pylogix — to establish and maintain communication with the controller.
 
 Currently, the plugin behaves similarly to the `s7comm` plugin: you must explicitly configure the **tag names** and **data types** you want to read. Automatic browsing or discovery of tags is **not yet implemented**. As such, you should already know the tag names and structures from the PLC program (e.g., via Studio 5000 or Connected Components Workbench).
 
-{% hint style="warning" %}
-Support is limited to modern controllers that use **CIP over Ethernet/IP**. Legacy PLCs such as **PLC-5**, **SLC-500**, or **MicroLogix** models using **PCCC** are _not supported_.
-{% endhint %}
+> ⚠️ Support is limited to modern controllers that use **CIP over Ethernet/IP**. Legacy PLCs such as **PLC-5**, **SLC-500**, or **MicroLogix** models using **PCCC** are *not supported*.
 
 In future versions, support for **browsing** and **listing available tags** directly from the controller may be added to improve usability and reduce manual configuration.
-
 **Datatypes**
 
 The plugin is being tested with multiple datatypes, therefore the following datatypes are verified for compatibility:

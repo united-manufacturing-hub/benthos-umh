@@ -2,12 +2,10 @@
 
 This input is tailored for the S7 communication protocol, facilitating a direct connection with S7-300, S7-400, S7-1200, and S7-1500 series PLCs.
 
-{% hint style="info" %}
 For more modern PLCs like the S7-1200 and S7-1500 the following two changes need to be done to use them:
 
 1. "Optimized block access" must be disabled for the DBs we want to access
 2. In the "Protection" section of the CPU Properties, enable the "Permit access with PUT/GET" checkbox
-{% endhint %}
 
 **Configuration**
 
@@ -31,7 +29,7 @@ input:
 * **rack**: Identifies the physical location of the CPU within the PLC rack.
 * **slot**: Identifies the specific CPU slot within the rack.
 * **batchMaxSize**: Maximum count of addresses bundled in a single batch request. This affects the PDU size.
-* **timeout**: Timeout duration in milliseconds for connection attempts and read requests.
+* **timeout**: Timeout duration in seconds for connection attempts and read requests.
 * **disableCPUInfo**: Set this to true to not fetch CPU information from the PLC. Should be used when you get the error 'Failed to get CPU information'
 * **addresses**: Specifies the list of addresses to read. The format for addresses is `<area>.<type><address>[.extra]`, where:
   * `area`: Specifies the direct area access, e.g., "DB1" for data block one. Supported areas include inputs (`PE`), outputs (`PA`), Merkers (`MK`), DB (`DB`), counters (`C`), and timers (`T`).

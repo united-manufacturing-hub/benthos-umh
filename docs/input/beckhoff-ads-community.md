@@ -3,9 +3,7 @@
 Input for Beckhoff's ADS protocol. Supports batch reading and notifications. Beckhoff recommends limiting notifications to approximately 500 to avoid overloading the controller.\
 This input only supports symbols and not direct addresses.
 
-{% hint style="info" %}
 This plugin is community supported only. If you encounter any issues, check out the [original repository](https://github.com/RuneRoven/benthosADS) for more information, or ask around in our Discord.
-{% endhint %}
 
 ```yaml
 ---
