@@ -20,8 +20,7 @@ The processor maintains compatibility with the `_historian` schema, ensuring tha
 ```yaml
 pipeline:
   processors:
-    - classic_to_core:
-        target_data_contract: _raw # Target data contract. If empty, uses input's schema
+    - classic_to_core: {}
 ```
 
 ### Configuration Options
@@ -107,31 +106,6 @@ The processor creates 5 separate messages:
 
 5. Topic: `umh.v1.acme._raw.cnc-mill.collision`
    - Payload: `{"value": false, "timestamp_ms": 1670001234567}`
-
-### Complex Location Paths
-
-The processor handles complex hierarchical location paths:
-
-**Input:**
-
-- Topic: `umh.v1.enterprise.plant1.machining.cnc-line.cnc5._historian.axis.position`
-- Payload:
-
-```json
-{
-  "timestamp_ms": 1717083000000,
-  "x_position": 125.7,
-  "y_position": 89.3
-}
-```
-
-**Output:**
-
-- Topic: `umh.v1.enterprise.plant1.machining.cnc-line.cnc5._raw.axis.position.x_position`
-- Payload: `{"value": 125.7, "timestamp_ms": 1717083000000}`
-
-- Topic: `umh.v1.enterprise.plant1.machining.cnc-line.cnc5._raw.axis.position.y_position`
-- Payload: `{"value": 89.3, "timestamp_ms": 1717083000000}`
 
 ## Advanced Configuration
 
@@ -250,17 +224,11 @@ input:
 
 pipeline:
   processors:
-    - classic_to_core:
-        target_data_contract: _raw
+    - classic_to_core: {}
 
 output:
   # Use UNS output for seamless integration
-  uns_output:
-    kafka:
-      addresses: ['kafka:9092']
-      key: ${! meta("location_path") }-${! meta("tag_name") }
-      compression: snappy
-      max_message_bytes: 1MB
+  uns_output: {}
 ```
 
 **This configuration:**
