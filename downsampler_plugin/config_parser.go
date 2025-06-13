@@ -40,6 +40,13 @@ func (cp *ConfigurationParser) ParseConfiguration(conf *service.ParsedConfig) (D
 		return config, err
 	}
 
+	// Parse allow_meta_overrides (defaults to true if not specified)
+	if allowMeta, err := conf.FieldBool("allow_meta_overrides"); err == nil {
+		config.AllowMeta = allowMeta
+	} else {
+		config.AllowMeta = true
+	}
+
 	return config, nil
 }
 

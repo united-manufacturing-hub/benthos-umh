@@ -22,6 +22,9 @@ import (
 	. "github.com/onsi/gomega"
 	_ "github.com/redpanda-data/benthos/v4/public/components/io"
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
+
+	// Import the downsampler plugin to register it
+	_ "github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin"
 )
 
 func TestDownsamplerPlugin(t *testing.T) {
@@ -32,5 +35,4 @@ func TestDownsamplerPlugin(t *testing.T) {
 
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Downsampler Plugin Suite")
-
 }

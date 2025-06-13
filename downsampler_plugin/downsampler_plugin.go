@@ -51,6 +51,7 @@ package downsampler_plugin
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -242,7 +243,10 @@ overrides:
 				Description("Late arrival handling parameter overrides.").
 				Optional()).
 			Description("Topic-specific parameter overrides using pattern matching. Supports exact topic names and shell-style wildcards (* matches any sequence, ? matches any character).").
-			Optional())
+			Optional()).
+		Field(service.NewBoolField("allow_meta_overrides").
+			Description("Honour per-message ds_* metadata.").
+			Default(true))
 
 	err := service.RegisterBatchProcessor(
 		"downsampler",
@@ -525,23 +529,55 @@ func (p *DownsamplerProcessor) ProcessBatch(ctx context.Context, batch service.M
 	return outBatches, nil
 }
 
-// getOrCreateSeriesState manages per-time-series algorithm state with thread-safe lazy initialization.
-//
-// This function implements the core state management strategy for the downsampler, creating and
-// configuring algorithm instances on-demand as new time series are encountered.
-//
-// Parameters:
-//   - seriesID: The UMH topic identifier (e.g., "umh.v1.acme._historian.temperature.sensor1")
-//
-// Returns:
-//   - *SeriesState: Configured algorithm state ready for message processing
-//   - error: Non-nil if algorithm creation fails (indicates configuration issues)
-func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string) (*SeriesState, error) {
+// getOrCreateSeriesState returns the state for a series, creating it if needed
+func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string, msg *service.Message) (*SeriesState, error) {
 	p.stateMutex.RLock()
 	state, exists := p.seriesState[seriesID]
 	p.stateMutex.RUnlock()
 
 	if exists {
+		// If metadata overrides are enabled, check for changes
+		if p.config.AllowMeta {
+			if hints, err := extractMetaHints(msg); err != nil {
+				p.logger.Warnf("Meta overrides ignored for series %s: %v", seriesID, err)
+				p.metrics.IncrementMetaOverrideRejected()
+			} else if hints != nil {
+				// Get base algorithm configuration
+				algorithmType, algorithmConfig := p.config.GetConfigForTopic(seriesID)
+
+				// Apply metadata overrides
+				for k, v := range hints {
+					algorithmConfig[k] = v
+				}
+				if algo, ok := hints["algorithm"]; ok {
+					algorithmType = algo.(string)
+				}
+
+				// Check if we need to recreate the processor
+				if algorithmType != state.processor.Name() {
+					p.logger.Infof("Series %s switching algorithm to %s via metadata", seriesID, algorithmType)
+
+					// Create new processor with merged config
+					processorConfig := algorithms.ProcessorConfig{
+						Algorithm:       algorithmType,
+						AlgorithmConfig: algorithmConfig,
+						PassThrough:     algorithmConfig["late_policy"] == "passthrough",
+						Logger:          p.logger,
+						SeriesID:        seriesID,
+					}
+
+					processor, err := algorithms.NewProcessorWrapper(processorConfig)
+					if err != nil {
+						return nil, fmt.Errorf("failed to create processor %s: %w", algorithmType, err)
+					}
+
+					// Update state with new processor
+					state.processor = processor
+					state.processor.Reset()
+				}
+				p.metrics.IncrementMetaOverrideApplied()
+			}
+		}
 		return state, nil
 	}
 
@@ -557,25 +593,28 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string) (*SeriesS
 	// Get algorithm configuration for this topic
 	algorithmType, algorithmConfig := p.config.GetConfigForTopic(seriesID)
 
-	// Map late policy to PassThrough parameter
-	latePolicy, _ := algorithmConfig["late_policy"].(string)
-	passThrough := true // Default to passthrough
-	if latePolicy == "drop" {
-		passThrough = false
-	}
-
-	// Remove late_policy from algorithm config as it's handled by ProcessorWrapper
-	algConfig := make(map[string]interface{})
-	for k, v := range algorithmConfig {
-		if k != "late_policy" {
-			algConfig[k] = v
+	// Apply metadata overrides if enabled
+	if p.config.AllowMeta {
+		if hints, err := extractMetaHints(msg); err != nil {
+			p.logger.Warnf("Meta overrides ignored for series %s: %v", seriesID, err)
+			p.metrics.IncrementMetaOverrideRejected()
+		} else if hints != nil {
+			// Apply metadata overrides
+			for k, v := range hints {
+				algorithmConfig[k] = v
+			}
+			if algo, ok := hints["algorithm"]; ok {
+				algorithmType = algo.(string)
+			}
+			p.metrics.IncrementMetaOverrideApplied()
 		}
 	}
 
+	// Create processor with merged config
 	processorConfig := algorithms.ProcessorConfig{
 		Algorithm:       algorithmType,
-		AlgorithmConfig: algConfig,
-		PassThrough:     passThrough,
+		AlgorithmConfig: algorithmConfig,
+		PassThrough:     algorithmConfig["late_policy"] == "passthrough",
 		Logger:          p.logger,
 		SeriesID:        seriesID,
 	}
@@ -585,24 +624,13 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string) (*SeriesS
 		return nil, fmt.Errorf("failed to create processor %s: %w", algorithmType, err)
 	}
 
-	// Determine if this algorithm needs emit-previous buffering
-	// This optimization eliminates unnecessary memory usage for algorithms like deadband
-	// that never emit historical points, while preserving ACK safety for algorithms like SDT
-	needsBuffering := false
-	if algorithm, createErr := algorithms.Create(algorithmType, algConfig); createErr == nil {
-		needsBuffering = algorithm.NeedsPreviousPoint()
-		p.logger.Debugf("Series %s using algorithm %s: holdsPrev=%v", seriesID, algorithmType, needsBuffering)
-	} else {
-		p.logger.Warnf("Could not determine buffering needs for algorithm %s, defaulting to safe mode (buffering enabled): %v", algorithmType, createErr)
-		needsBuffering = true // Fail safe - enable buffering if we can't determine algorithm behavior
-	}
-
+	// Create and store new state
 	state = &SeriesState{
 		processor: processor,
-		holdsPrev: needsBuffering,
+		holdsPrev: processor.NeedsPreviousPoint(),
 	}
-
 	p.seriesState[seriesID] = state
+
 	return state, nil
 }
 
@@ -771,4 +799,52 @@ func (p *DownsamplerProcessor) createSyntheticMessage(seriesID string, point alg
 	msg.MetaSet("synthetic_flush_point", "true")
 
 	return msg
+}
+
+// extractMetaHints parses metadata hints from a message
+func extractMetaHints(msg *service.Message) (map[string]interface{}, error) {
+	hints := make(map[string]interface{})
+
+	// 1. algorithm
+	if algo, ok := msg.MetaGet("ds_algorithm"); ok {
+		if algo == "deadband" || algo == "swinging_door" {
+			hints["algorithm"] = algo
+		} else {
+			return nil, fmt.Errorf("invalid ds_algorithm %q", algo)
+		}
+	}
+
+	// 2. numeric threshold
+	if v, ok := msg.MetaGet("ds_threshold"); ok {
+		t, err := strconv.ParseFloat(v, 64)
+		if err != nil || t < 0 {
+			return nil, fmt.Errorf("bad ds_threshold: %v", v)
+		}
+		hints["threshold"] = t
+	}
+
+	// 3-4. durations (min/max)
+	for _, key := range []string{"ds_min_time", "ds_max_time"} {
+		if s, ok := msg.MetaGet(key); ok {
+			d, err := time.ParseDuration(s)
+			if err != nil || d < 0 {
+				return nil, fmt.Errorf("bad %s: %v", key, s)
+			}
+			hints[key[3:]] = d // strip "ds_"
+		}
+	}
+
+	// 5. late policy
+	if pol, ok := msg.MetaGet("ds_late_policy"); ok {
+		if pol == "passthrough" || pol == "drop" {
+			hints["late_policy"] = pol
+		} else {
+			return nil, fmt.Errorf("invalid ds_late_policy: %v", pol)
+		}
+	}
+
+	if len(hints) == 0 {
+		return nil, nil // nothing set
+	}
+	return hints, nil
 }
