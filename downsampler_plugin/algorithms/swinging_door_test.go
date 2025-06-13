@@ -15,6 +15,7 @@
 package algorithms_test
 
 import (
+	"math"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -588,6 +589,73 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				config := map[string]interface{}{"threshold": 0.0}
 				_, err := algorithms.Create("swinging_door", config)
 				Expect(err).NotTo(HaveOccurred(), "Should accept threshold = 0")
+			})
+		})
+
+		Context("NaN and Inf value guards", func() {
+			var algo algorithms.StreamCompressor
+
+			BeforeEach(func() {
+				config := map[string]interface{}{"threshold": 1.0}
+				var err error
+				algo, err = algorithms.Create("swinging_door", config)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			AfterEach(func() {
+				if algo != nil {
+					algo.Reset()
+				}
+			})
+
+			It("should reject NaN values", func() {
+				points, err := algo.Ingest(math.NaN(), baseTime)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("NaN and Inf values are not allowed"))
+				Expect(points).To(BeNil())
+			})
+
+			It("should reject positive infinity", func() {
+				points, err := algo.Ingest(math.Inf(1), baseTime)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("NaN and Inf values are not allowed"))
+				Expect(points).To(BeNil())
+			})
+
+			It("should reject negative infinity", func() {
+				points, err := algo.Ingest(math.Inf(-1), baseTime)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("NaN and Inf values are not allowed"))
+				Expect(points).To(BeNil())
+			})
+
+			It("should continue working normally after rejecting invalid values", func() {
+				// Try to ingest NaN - should fail
+				_, err := algo.Ingest(math.NaN(), baseTime)
+				Expect(err).To(HaveOccurred())
+
+				// Normal values should still work
+				points, err := algo.Ingest(10.0, baseTime.Add(time.Second))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(points).To(HaveLen(1)) // First valid point kept
+			})
+
+			It("should reject invalid values even after algorithm has started", func() {
+				// Start with a valid point
+				points, err := algo.Ingest(10.0, baseTime)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(points).To(HaveLen(1))
+
+				// Try to add NaN - should fail
+				points, err = algo.Ingest(math.NaN(), baseTime.Add(time.Second))
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("NaN and Inf values are not allowed"))
+				Expect(points).To(BeNil())
+
+				// Algorithm should still work with valid values
+				points, err = algo.Ingest(11.0, baseTime.Add(2*time.Second))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(points).To(HaveLen(0)) // Within envelope, no emission expected
 			})
 		})
 	})
