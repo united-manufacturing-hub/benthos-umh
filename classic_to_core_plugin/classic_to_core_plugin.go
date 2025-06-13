@@ -28,13 +28,16 @@ import (
 // It defines how messages should be converted from UMH Historian Data Contract
 // format to Core format, including field handling, limits, and metadata preservation.
 type ClassicToCoreConfig struct {
-	TimestampField     string   `json:"timestamp_field" yaml:"timestamp_field"`
-	ExcludeFields      []string `json:"exclude_fields" yaml:"exclude_fields"`
-	TargetDataContract string   `json:"target_data_contract" yaml:"target_data_contract"`
-	PreserveMeta       bool     `json:"preserve_meta" yaml:"preserve_meta"`
-	MaxRecursionDepth  int      `json:"max_recursion_depth" yaml:"max_recursion_depth"`
-	MaxTagsPerMessage  int      `json:"max_tags_per_message" yaml:"max_tags_per_message"`
+	TargetDataContract string `json:"target_data_contract" yaml:"target_data_contract"`
 }
+
+// Constants for hardcoded configuration values
+const (
+	maxRecursionDepth = 10
+	maxTagsPerMessage = 1000
+	preserveMeta      = true
+	timestampField    = "timestamp_ms"
+)
 
 func init() {
 	spec := service.NewConfigSpec().
@@ -61,76 +64,22 @@ The processor will:
 3. Create one output message per tag
 4. Construct new topics by appending tag names
 5. Preserve original metadata while updating topic-related fields`).
-		Field(service.NewStringField("timestamp_field").
-			Description("Field name containing the timestamp (default: timestamp_ms)").
-			Default("timestamp_ms")).
-		Field(service.NewStringListField("exclude_fields").
-			Description("List of fields to exclude from conversion (timestamp_field is automatically excluded)").
-			Default([]string{}).
-			Optional()).
 		Field(service.NewStringField("target_data_contract").
 			Description("Target data contract for output topics. If empty, uses the input's data contract (e.g., _historian)").
 			Default("").
-			Optional()).
-		Field(service.NewBoolField("preserve_meta").
-			Description("Whether to preserve original metadata from source message").
-			Default(true)).
-		Field(service.NewIntField("max_recursion_depth").
-			Description("Maximum recursion depth for flattening nested tag groups (default: 10)").
-			Default(10).
-			Optional()).
-		Field(service.NewIntField("max_tags_per_message").
-			Description("Maximum number of tags to extract from a single input message (default: 1000)").
-			Default(1000).
 			Optional())
 
 	err := service.RegisterBatchProcessor(
 		"classic_to_core",
 		spec,
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
-			timestampField, err := conf.FieldString("timestamp_field")
-			if err != nil {
-				return nil, err
-			}
-
-			excludeFields, err := conf.FieldStringList("exclude_fields")
-			if err != nil {
-				return nil, err
-			}
-
 			targetDataContract, err := conf.FieldString("target_data_contract")
 			if err != nil {
 				return nil, err
 			}
 
-			preserveMeta, err := conf.FieldBool("preserve_meta")
-			if err != nil {
-				return nil, err
-			}
-
-			maxRecursionDepth, err := conf.FieldInt("max_recursion_depth")
-			if err != nil {
-				return nil, err
-			}
-			if maxRecursionDepth <= 0 {
-				return nil, fmt.Errorf("max_recursion_depth must be positive, got %d", maxRecursionDepth)
-			}
-
-			maxTagsPerMessage, err := conf.FieldInt("max_tags_per_message")
-			if err != nil {
-				return nil, err
-			}
-			if maxTagsPerMessage <= 0 {
-				return nil, fmt.Errorf("max_tags_per_message must be positive, got %d", maxTagsPerMessage)
-			}
-
 			config := ClassicToCoreConfig{
-				TimestampField:     timestampField,
-				ExcludeFields:      excludeFields,
 				TargetDataContract: targetDataContract,
-				PreserveMeta:       preserveMeta,
-				MaxRecursionDepth:  maxRecursionDepth,
-				MaxTagsPerMessage:  maxTagsPerMessage,
 			}
 
 			return newClassicToCoreProcessor(config, mgr.Logger(), mgr.Metrics())
@@ -162,10 +111,7 @@ type ClassicToCoreProcessor struct {
 func newClassicToCoreProcessor(config ClassicToCoreConfig, logger *service.Logger, metrics *service.Metrics) (*ClassicToCoreProcessor, error) {
 	// Create exclude fields map for fast lookup
 	excludeFieldsMap := make(map[string]bool)
-	excludeFieldsMap[config.TimestampField] = true // Always exclude timestamp field
-	for _, field := range config.ExcludeFields {
-		excludeFieldsMap[field] = true
-	}
+	excludeFieldsMap["timestamp_ms"] = true // Always exclude timestamp field
 
 	return &ClassicToCoreProcessor{
 		config:            config,
@@ -199,8 +145,8 @@ func (p *ClassicToCoreProcessor) ProcessBatch(ctx context.Context, batch service
 		}
 
 		// Check tag limit per message
-		if len(expandedMessages) > p.config.MaxTagsPerMessage {
-			p.logger.Errorf("Message produced %d tags, exceeding limit of %d", len(expandedMessages), p.config.MaxTagsPerMessage)
+		if len(expandedMessages) > maxTagsPerMessage {
+			p.logger.Errorf("Message produced %d tags, exceeding limit of %d", len(expandedMessages), maxTagsPerMessage)
 			p.tagLimitExceeded.Incr(1)
 			p.messagesDropped.Incr(1)
 			continue
@@ -243,6 +189,23 @@ func (p *ClassicToCoreProcessor) processMessage(msg *service.Message) ([]*servic
 	// Flatten payload with recursion limit
 	flattenedTags := p.flattenPayload(payload, "", 0)
 
+	// Check tag limit
+	if len(flattenedTags) > maxTagsPerMessage {
+		p.logger.Warnf("Message exceeds maximum tag limit of %d, truncating", maxTagsPerMessage)
+		p.tagLimitExceeded.Incr(1)
+		// Truncate the payload to the limit
+		truncatedTags := make(map[string]interface{})
+		count := 0
+		for k, v := range flattenedTags {
+			if count >= maxTagsPerMessage {
+				break
+			}
+			truncatedTags[k] = v
+			count++
+		}
+		flattenedTags = truncatedTags
+	}
+
 	// Convert to Core messages
 	var expandedMessages []*service.Message
 	for tagName, tagValue := range flattenedTags {
@@ -282,9 +245,9 @@ func (p *ClassicToCoreProcessor) parsePayload(msg *service.Message) (map[string]
 // It ensures the configured timestamp field is present in the payload and converts it to a numeric timestamp.
 // The timestamp is critical for Core format messages as it provides the temporal context for each data point.
 func (p *ClassicToCoreProcessor) validateAndExtractTimestamp(payload map[string]interface{}) (int64, error) {
-	timestampValue, exists := payload[p.config.TimestampField]
+	timestampValue, exists := payload[timestampField]
 	if !exists {
-		return 0, fmt.Errorf("timestamp field '%s' not found in payload", p.config.TimestampField)
+		return 0, fmt.Errorf("timestamp field '%s' not found in payload", timestampField)
 	}
 
 	timestamp, err := p.extractTimestamp(timestampValue)
@@ -399,12 +362,11 @@ func (p *ClassicToCoreProcessor) createCoreMessage(originalMsg *service.Message,
 	// Create new message
 	newMsg := service.NewMessage(payloadBytes)
 
-	// Preserve original metadata if requested
-	if p.config.PreserveMeta {
-		_ = originalMsg.MetaWalkMut(func(key string, value any) error {
-			if str, ok := value.(string); ok {
-				newMsg.MetaSet(key, str)
-			}
+	// Always preserve metadata
+	if preserveMeta {
+		// Copy all metadata from original message
+		originalMsg.MetaWalk(func(k, v string) error {
+			newMsg.MetaSet(k, v)
 			return nil
 		})
 	}
@@ -459,18 +421,18 @@ func (p *ClassicToCoreProcessor) constructCoreTopic(components *TopicComponents,
 // For example: {"axis": {"x": 1.0, "y": 2.0}} becomes {"axis.x": 1.0, "axis.y": 2.0}.
 // The function respects recursion depth limits to prevent stack overflow and infinite loops.
 func (p *ClassicToCoreProcessor) flattenPayload(payload map[string]interface{}, prefix string, depth int) map[string]interface{} {
-	result := make(map[string]interface{})
-
 	// Check recursion depth limit
-	if depth >= p.config.MaxRecursionDepth {
+	if depth > maxRecursionDepth {
+		p.logger.Warnf("Maximum recursion depth of %d reached, stopping flattening", maxRecursionDepth)
 		p.recursionLimitHit.Incr(1)
-		p.logger.Warnf("Recursion depth limit (%d) reached at prefix '%s', stopping further flattening", p.config.MaxRecursionDepth, prefix)
-		return result
+		return payload
 	}
+
+	result := make(map[string]interface{})
 
 	for key, value := range payload {
 		// Skip the timestamp field as it's handled separately
-		if key == p.config.TimestampField {
+		if key == timestampField {
 			continue
 		}
 
