@@ -256,8 +256,8 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				ExpectedReduction: 40, // 4 out of 10 points filtered = 40% reduction
 			}),
 
-			Entry("MinDelta - Minimum time constraint", SwingingDoorTestCase{
-				Name:        "min_delta_time_constraint",
+			Entry("MinDelta - Minimum time constraint (1s)", SwingingDoorTestCase{
+				Name:        "min_delta_time_constraint_1s",
 				Description: "Test minimum time between emissions - prevents archiving more frequently than every 1 time unit",
 				Config: map[string]interface{}{
 					"threshold": 1.0,
@@ -285,9 +285,9 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				ExpectedReduction: 50, // 5 out of 10 points filtered = 50% reduction
 			}),
 
-			Entry("MinDelta - Minimum time constraint", SwingingDoorTestCase{
-				Name:        "min_delta_time_constraint",
-				Description: "Test minimum time between emissions - prevents archiving more frequently than every 1 time unit",
+			Entry("MinDelta - Minimum time constraint (10s)", SwingingDoorTestCase{
+				Name:        "min_delta_time_constraint_10s",
+				Description: "Test minimum time between emissions - prevents archiving more frequently than every 10 time units",
 				Config: map[string]interface{}{
 					"threshold": 1.0,
 					"min_time":  "10s", // Prevents archiving more frequently than every 10 time units
