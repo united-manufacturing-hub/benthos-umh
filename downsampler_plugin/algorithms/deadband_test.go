@@ -387,6 +387,7 @@ var _ = Describe("Deadband Algorithm", func() {
 				_, err := algorithms.NewDeadbandAlgorithm(config)
 				Expect(err).NotTo(HaveOccurred())
 			},
+			Entry("empty config (uses defaults)", map[string]interface{}{}),
 			Entry("basic threshold", map[string]interface{}{"threshold": 1.5}),
 			Entry("with max_time", map[string]interface{}{
 				"threshold": 0.5,
@@ -524,6 +525,67 @@ var _ = Describe("Deadband Algorithm", func() {
 
 	// New context for additional edge cases from code review
 	Describe("Code Review Edge Cases", func() {
+		Context("default configuration behavior", func() {
+			It("should use threshold=0 when no config provided", func() {
+				// Test that empty config {} behaves as threshold=0 (keep any change, drop exact repeats)
+				config := map[string]interface{}{}
+				algo, err := algorithms.NewDeadbandAlgorithm(config)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(algo).NotTo(BeNil())
+
+				// Verify the algorithm behaves as if threshold=0
+				points, _ := algo.Ingest(10.0, baseTime)
+				Expect(points).To(HaveLen(1), "First value: 10.0 → KEEP (always keep first)")
+
+				points, _ = algo.Ingest(10.0, baseTime.Add(1*time.Second))
+				Expect(points).To(HaveLen(0), "Exact repeat: 10.0 → DROP (no change with threshold=0)")
+
+				points, _ = algo.Ingest(10.0001, baseTime.Add(2*time.Second))
+				Expect(points).To(HaveLen(1), "Tiny change: 10.0001 → KEEP (any change with threshold=0)")
+
+				points, _ = algo.Ingest(10.0001, baseTime.Add(3*time.Second))
+				Expect(points).To(HaveLen(0), "Exact repeat: 10.0001 → DROP (no change with threshold=0)")
+
+				// Verify config string shows threshold=0.000
+				configStr := algo.Config()
+				Expect(configStr).To(Equal("deadband(threshold=0.000)"))
+			})
+
+			It("should behave identically to explicit threshold=0", func() {
+				// Compare empty config vs explicit threshold=0
+				emptyConfig := map[string]interface{}{}
+				explicitConfig := map[string]interface{}{"threshold": 0.0}
+
+				algoEmpty, err := algorithms.NewDeadbandAlgorithm(emptyConfig)
+				Expect(err).NotTo(HaveOccurred())
+
+				algoExplicit, err := algorithms.NewDeadbandAlgorithm(explicitConfig)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Both should produce identical results
+				testValues := []float64{5.0, 5.0, 5.1, 5.1, 5.2}
+				expectedLengths := []int{1, 0, 1, 0, 1} // first, repeat, change, repeat, change
+
+				for i, value := range testValues {
+					timestamp := baseTime.Add(time.Duration(i) * time.Second)
+
+					pointsEmpty, err := algoEmpty.Ingest(value, timestamp)
+					Expect(err).NotTo(HaveOccurred())
+
+					pointsExplicit, err := algoExplicit.Ingest(value, timestamp)
+					Expect(err).NotTo(HaveOccurred())
+
+					Expect(len(pointsEmpty)).To(Equal(len(pointsExplicit)),
+						"Empty config and explicit threshold=0 should behave identically for value %v", value)
+					Expect(len(pointsEmpty)).To(Equal(expectedLengths[i]),
+						"Value %v should produce %d points", value, expectedLengths[i])
+				}
+
+				// Both should have identical config strings
+				Expect(algoEmpty.Config()).To(Equal(algoExplicit.Config()))
+			})
+		})
+
 		Context("thread safety documentation", func() {
 			It("should document thread safety expectations", func() {
 				// This is a documentation test - the algorithm should clearly state
