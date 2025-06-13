@@ -115,17 +115,17 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 			config["threshold"] = *c.Default.SwingingDoor.Threshold
 		}
 		if c.Default.SwingingDoor.MaxTime > 0 {
-			config["max_time"] = c.Default.SwingingDoor.MaxTime.String()
+			config["max_time"] = c.Default.SwingingDoor.MaxTime
 		}
 		if c.Default.SwingingDoor.MinTime > 0 {
-			config["min_time"] = c.Default.SwingingDoor.MinTime.String()
+			config["min_time"] = c.Default.SwingingDoor.MinTime
 		}
 	} else {
 		if c.Default.Deadband.Threshold != nil {
 			config["threshold"] = *c.Default.Deadband.Threshold
 		}
 		if c.Default.Deadband.MaxTime > 0 {
-			config["max_time"] = c.Default.Deadband.MaxTime.String()
+			config["max_time"] = c.Default.Deadband.MaxTime
 		}
 	}
 
@@ -169,10 +169,10 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 					config["threshold"] = *override.SwingingDoor.Threshold
 				}
 				if override.SwingingDoor.MaxTime != 0 {
-					config["max_time"] = override.SwingingDoor.MaxTime.String()
+					config["max_time"] = override.SwingingDoor.MaxTime
 				}
 				if override.SwingingDoor.MinTime != 0 {
-					config["min_time"] = override.SwingingDoor.MinTime.String()
+					config["min_time"] = override.SwingingDoor.MinTime
 				}
 			} else if hasDeadband {
 				algorithm = "deadband"
@@ -180,7 +180,7 @@ func (c *DownsamplerConfig) GetConfigForTopic(topic string) (string, map[string]
 					config["threshold"] = *override.Deadband.Threshold
 				}
 				if override.Deadband.MaxTime != 0 {
-					config["max_time"] = override.Deadband.MaxTime.String()
+					config["max_time"] = override.Deadband.MaxTime
 				}
 			}
 

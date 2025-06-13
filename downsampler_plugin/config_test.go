@@ -53,7 +53,7 @@ var _ = Describe("Configuration Logic", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(algorithm).To(Equal("deadband"))
 				Expect(configMap).To(HaveKeyWithValue("threshold", 1.5))
-				Expect(configMap).To(HaveKeyWithValue("max_time", "30s"))
+				Expect(configMap).To(HaveKeyWithValue("max_time", 30*time.Second))
 			})
 		})
 
@@ -63,13 +63,13 @@ var _ = Describe("Configuration Logic", func() {
 				config.Default.SwingingDoor.MinTime = 15 * time.Second
 			})
 
-			It("should return min_time as a string in the config map", func() {
+			It("should return min_time as a duration in the config map", func() {
 				algorithm, configMap, err := config.GetConfigForTopic("any.topic.here")
 
 				Expect(err).NotTo(HaveOccurred())
 				Expect(algorithm).To(Equal("swinging_door"))
 				Expect(configMap).To(HaveKeyWithValue("threshold", 1.5))
-				Expect(configMap).To(HaveKeyWithValue("min_time", "15s"))
+				Expect(configMap).To(HaveKeyWithValue("min_time", 15*time.Second))
 			})
 		})
 
@@ -159,8 +159,8 @@ var _ = Describe("Configuration Logic", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(algorithm).To(Equal("swinging_door"))
 				Expect(configMap).To(HaveKeyWithValue("threshold", 0.2))
-				Expect(configMap).To(HaveKeyWithValue("max_time", "1h0m0s"))
-				Expect(configMap).To(HaveKeyWithValue("min_time", "5s"))
+				Expect(configMap).To(HaveKeyWithValue("max_time", time.Hour))
+				Expect(configMap).To(HaveKeyWithValue("min_time", 5*time.Second))
 			})
 		})
 	})
