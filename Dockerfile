@@ -24,6 +24,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY ./cmd ./cmd
+COPY ./downsampler_plugin ./downsampler_plugin
 COPY ./opcua_plugin ./opcua_plugin
 COPY ./s7comm_plugin ./s7comm_plugin
 COPY ./modbus_plugin ./modbus_plugin

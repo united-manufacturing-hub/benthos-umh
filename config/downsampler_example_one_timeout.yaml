@@ -1,0 +1,46 @@
+# Copyright 2025 UMH Systems GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+logger:
+  level: DEBUG
+  add_timestamp: true
+  static_fields:
+    "@service": benthos
+
+input:
+  generate:
+    count: 100
+    interval: "500ms"
+    mapping: |
+      let goodValue = 10.50 + random_int(max: 5)
+
+      root = {
+        "timestamp_ms": timestamp_unix_milli(),
+        "value": $goodValue
+      }
+
+      meta data_contract = "_raw"
+      meta umh_topic = "umh.v1.plant1.line1._raw.temperature"
+
+pipeline:
+  processors:
+    - downsampler:
+        default:
+          deadband:
+            threshold: 20.0       # Default threshold for numeric values
+            max_time: 5s        # Default max interval   
+
+output:
+  stdout:
+    codec: lines

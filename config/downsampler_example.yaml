@@ -1,0 +1,113 @@
+# Copyright 2025 UMH Systems GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Benthos Downsampler Plugin Example
+# This configuration demonstrates the downsampler processor plugin with deadband algorithm
+# Testing multiple metrics with different thresholds and data types
+
+logger:
+  level: DEBUG
+  add_timestamp: true
+  static_fields:
+    "@service": benthos
+
+input:
+  generate:
+    mapping: |
+      let metric_index = counter() % 5
+      let topics = [
+        "umh.v1.plant1.line1._historian.temperature",
+        "umh.v1.plant1.line1._historian.humidity", 
+        "umh.v1.plant1.line1._historian.pressure",
+        "umh.v1.plant1.line1._historian.status",
+        "umh.v1.plant1.line1._historian.machine_state"
+      ]
+      
+      root = match $metric_index {
+        0 => {
+          "value": (20 + random_int(max: 1000) / 100.0),
+          "timestamp_ms": timestamp_unix_milli()
+        },
+        1 => {
+          "value": (30 + random_int(max: 4000) / 100.0),
+          "timestamp_ms": timestamp_unix_milli()
+        },
+        2 => {
+          "value": (1000 + random_int(max: 10000) / 100.0),
+          "timestamp_ms": timestamp_unix_milli()
+        },
+        3 => {
+          "value": "RUNNING",  # Constant string value
+          "timestamp_ms": timestamp_unix_milli()
+        },
+        4 => {
+          "value": (random_int(max: 100) < 90),  # 90% chance of true
+          "timestamp_ms": timestamp_unix_milli()
+        }
+      }
+      
+      meta data_contract = "_historian"
+      meta umh_topic = $topics.index($metric_index)
+    interval: 120ms
+    count: 100
+
+pipeline:
+  processors:
+    - downsampler:
+        default:
+          deadband:
+            threshold: 2.0       # Default threshold for numeric values
+            max_time: 30s        # Default max interval
+          late_policy:
+            late_policy: passthrough  # Default: forward late messages unchanged (vs drop)
+        overrides:
+          - pattern: "*.temperature"
+            deadband:
+              threshold: 0.5     # Fine-grained for temperature (numeric)
+          - pattern: "*.humidity" 
+            deadband:
+              threshold: 1.0     # Medium sensitivity for humidity (numeric)
+          - pattern: "*.status"
+            deadband:
+              threshold: 0.1     # Ignored for strings - uses equality check only
+          - pattern: "*.machine_state" 
+            deadband:
+              threshold: 0.1     # Ignored for booleans - uses equality check only
+          - pattern: "*.critical_sensor"
+            late_policy:
+              late_policy: drop   # Drop late data for critical sensors
+          # Pressure will use default threshold of 2.0 (numeric)
+
+output:
+  stdout:
+    codec: lines
+
+# This configuration will:
+# 1. Generate five types of simulated sensor data:
+#    - Temperature: 20-30°C (custom threshold: 0.5°C for numeric comparison)
+#    - Humidity: 30-70% (custom threshold: 1.0% for numeric comparison)  
+#    - Pressure: 1000-1100 Pa (default threshold: 2.0 Pa for numeric comparison)
+#    - Status: Constant "RUNNING" string (threshold ignored, uses equality comparison)
+#    - Machine State: Boolean with 90% true (threshold ignored, uses equality comparison)
+# 2. Apply different deadband thresholds based on metric type (numeric values only)
+# 3. For strings and booleans: ignore thresholds, use equality comparison only
+# 4. Demonstrate constant value filtering behavior
+# 5. Output detailed debug logs showing threshold decisions
+#
+# Expected results: 
+# - Numeric values filtered based on configured thresholds
+# - String values kept only when they change (equality check)
+# - Boolean values kept only when they change (equality check)
+# - Constant string filtered after first message regardless of threshold
+# - Boolean changes kept when false/true transitions occur 
