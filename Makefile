@@ -94,6 +94,11 @@ test-tag-processor:
 	@TEST_TAG_PROCESSOR=true \
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./tag_processor_plugin/...
 
+.PHONY: test-classic-to-core
+test-classic-to-core:
+	@TEST_CLASSIC_TO_CORE=1 \
+		$(GINKGO_CMD) $(GINKGO_FLAGS) ./classic_to_core_plugin/...
+
 
 ###### TESTS WITH RUNNING BENTHOS-UMH #####
 # Test the tag processor with a local OPC UA server
