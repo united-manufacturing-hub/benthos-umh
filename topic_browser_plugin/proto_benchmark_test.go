@@ -20,7 +20,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 func createTestBundle() *UnsBundle {
@@ -41,9 +41,8 @@ func createTestBundle() *UnsBundle {
 						Ts: &TimeSeriesPayload{
 							ScalarType:  ScalarType_NUMERIC,
 							TimestampMs: 1647753600000,
-							Value: &anypb.Any{
-								TypeUrl: "golang/float64",
-								Value:   []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x40}, // 13.0 in float64
+							Value: &TimeSeriesPayload_NumericValue{
+								NumericValue: &wrapperspb.DoubleValue{Value: 13.0},
 							},
 						},
 					},
@@ -53,33 +52,36 @@ func createTestBundle() *UnsBundle {
 	}
 }
 
-func createLargeTestBundle() *UnsBundle {
+func createLargeBundle(numTopics int, numEvents int) *UnsBundle {
 	bundle := &UnsBundle{
 		UnsMap: &TopicMap{
 			Entries: make(map[string]*TopicInfo),
 		},
 		Events: &EventTable{
-			Entries: make([]*EventTableEntry, 0, 1000),
+			Entries: make([]*EventTableEntry, 0, numEvents),
 		},
 	}
 
-	// Add 1000 entries to the bundle
-	for i := 0; i < 1000; i++ {
-		topic := fmt.Sprintf("topic-%d", i)
-		bundle.UnsMap.Entries[topic] = &TopicInfo{
+	// Create topics
+	for i := 0; i < numTopics; i++ {
+		topicID := fmt.Sprintf("topic-%d", i)
+		bundle.UnsMap.Entries[topicID] = &TopicInfo{
 			Level0:       "enterprise",
 			DataContract: "_historian",
 		}
+	}
 
+	// Create events
+	for i := 0; i < numEvents; i++ {
+		topicID := fmt.Sprintf("topic-%d", i%numTopics)
 		bundle.Events.Entries = append(bundle.Events.Entries, &EventTableEntry{
-			UnsTreeId: topic,
+			UnsTreeId: topicID,
 			Payload: &EventTableEntry_Ts{
 				Ts: &TimeSeriesPayload{
 					ScalarType:  ScalarType_NUMERIC,
-					TimestampMs: 1647753600000 + int64(i),
-					Value: &anypb.Any{
-						TypeUrl: "golang/float64",
-						Value:   []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x40}, // 13.0 in float64
+					TimestampMs: int64(1647753600000 + i),
+					Value: &TimeSeriesPayload_NumericValue{
+						NumericValue: &wrapperspb.DoubleValue{Value: rand.Float64() * 100},
 					},
 				},
 			},
@@ -89,52 +91,10 @@ func createLargeTestBundle() *UnsBundle {
 	return bundle
 }
 
-func createVeryLargeTestBundle() *UnsBundle {
-	bundle := &UnsBundle{
-		UnsMap: &TopicMap{
-			Entries: make(map[string]*TopicInfo),
-		},
-		Events: &EventTable{
-			Entries: make([]*EventTableEntry, 0, 100000),
-		},
-	}
-
-	// Create 10 different UNSInfo entries
-	for i := 0; i < 10; i++ {
-		topic := fmt.Sprintf("topic-%d", i)
-		bundle.UnsMap.Entries[topic] = &TopicInfo{
-			Level0:       "enterprise",
-			DataContract: "_historian",
-		}
-	}
-
-	// Add 100,000 entries to the bundle, randomly distributed among the 10 UNSInfo entries
-	for i := 0; i < 100000; i++ {
-		// Generate a random float64 value
-		value := rand.Float64()
-		valueBytes := make([]byte, 8)
-		binary.LittleEndian.PutUint64(valueBytes, uint64(value))
-
-		// Randomly select one of the 10 UNSInfo entries
-		topicIndex := rand.Intn(10)
-		topic := fmt.Sprintf("topic-%d", topicIndex)
-
-		bundle.Events.Entries = append(bundle.Events.Entries, &EventTableEntry{
-			UnsTreeId: topic, // Use the topic as the UnsTreeId
-			Payload: &EventTableEntry_Ts{
-				Ts: &TimeSeriesPayload{
-					ScalarType:  ScalarType_NUMERIC,
-					TimestampMs: 1647753600000 + int64(i),
-					Value: &anypb.Any{
-						TypeUrl: "golang/float64",
-						Value:   valueBytes,
-					},
-				},
-			},
-		})
-	}
-
-	return bundle
+func createFloatBytes(value float64) []byte {
+	bits := make([]byte, 8)
+	binary.LittleEndian.PutUint64(bits, binary.LittleEndian.Uint64(bits))
+	return bits
 }
 
 func BenchmarkBundleToProtobufBytes(b *testing.B) {
@@ -150,7 +110,7 @@ func BenchmarkBundleToProtobufBytes(b *testing.B) {
 	})
 
 	b.Run("large bundle", func(b *testing.B) {
-		bundle := createLargeTestBundle()
+		bundle := createLargeBundle(100, 1000)
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_, err := bundleToProtobuf(bundle)
@@ -161,7 +121,7 @@ func BenchmarkBundleToProtobufBytes(b *testing.B) {
 	})
 
 	b.Run("very large bundle", func(b *testing.B) {
-		bundle := createVeryLargeTestBundle()
+		bundle := createLargeBundle(1000, 10000)
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_, err := bundleToProtobuf(bundle)
@@ -189,7 +149,7 @@ func BenchmarkProtobufBytesToBundle(b *testing.B) {
 	})
 
 	b.Run("large bundle", func(b *testing.B) {
-		bundle := createLargeTestBundle()
+		bundle := createLargeBundle(100, 1000)
 		protoBytes, err := bundleToProtobuf(bundle)
 		if err != nil {
 			b.Fatal(err)
@@ -204,7 +164,7 @@ func BenchmarkProtobufBytesToBundle(b *testing.B) {
 	})
 
 	b.Run("very large bundle", func(b *testing.B) {
-		bundle := createVeryLargeTestBundle()
+		bundle := createLargeBundle(1000, 10000)
 		protoBytes, err := bundleToProtobuf(bundle)
 		if err != nil {
 			b.Fatal(err)
@@ -236,7 +196,7 @@ func BenchmarkRoundTrip(b *testing.B) {
 	})
 
 	b.Run("large bundle", func(b *testing.B) {
-		bundle := createLargeTestBundle()
+		bundle := createLargeBundle(100, 1000)
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			protoBytes, err := bundleToProtobuf(bundle)
@@ -251,7 +211,7 @@ func BenchmarkRoundTrip(b *testing.B) {
 	})
 
 	b.Run("very large bundle", func(b *testing.B) {
-		bundle := createVeryLargeTestBundle()
+		bundle := createLargeBundle(1000, 10000)
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			protoBytes, err := bundleToProtobuf(bundle)
@@ -279,7 +239,7 @@ func BenchmarkBundleToProtobufBytesWithCompression(b *testing.B) {
 	})
 
 	b.Run("large bundle", func(b *testing.B) {
-		bundle := createLargeTestBundle()
+		bundle := createLargeBundle(100, 1000)
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_, err := BundleToProtobufBytesWithCompression(bundle)
@@ -290,7 +250,7 @@ func BenchmarkBundleToProtobufBytesWithCompression(b *testing.B) {
 	})
 
 	b.Run("very large bundle", func(b *testing.B) {
-		bundle := createVeryLargeTestBundle()
+		bundle := createLargeBundle(1000, 10000)
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_, err := BundleToProtobufBytesWithCompression(bundle)
@@ -318,7 +278,7 @@ func BenchmarkProtobufBytesToBundleWithCompression(b *testing.B) {
 	})
 
 	b.Run("large bundle", func(b *testing.B) {
-		bundle := createLargeTestBundle()
+		bundle := createLargeBundle(100, 1000)
 		compressedBytes, err := BundleToProtobufBytesWithCompression(bundle)
 		if err != nil {
 			b.Fatal(err)
@@ -333,7 +293,7 @@ func BenchmarkProtobufBytesToBundleWithCompression(b *testing.B) {
 	})
 
 	b.Run("very large bundle", func(b *testing.B) {
-		bundle := createVeryLargeTestBundle()
+		bundle := createLargeBundle(1000, 10000)
 		compressedBytes, err := BundleToProtobufBytesWithCompression(bundle)
 		if err != nil {
 			b.Fatal(err)
@@ -365,7 +325,7 @@ func BenchmarkCompressionRoundTrip(b *testing.B) {
 	})
 
 	b.Run("large bundle", func(b *testing.B) {
-		bundle := createLargeTestBundle()
+		bundle := createLargeBundle(100, 1000)
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			compressedBytes, err := BundleToProtobufBytesWithCompression(bundle)
@@ -380,7 +340,7 @@ func BenchmarkCompressionRoundTrip(b *testing.B) {
 	})
 
 	b.Run("very large bundle", func(b *testing.B) {
-		bundle := createVeryLargeTestBundle()
+		bundle := createLargeBundle(1000, 10000)
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			compressedBytes, err := BundleToProtobufBytesWithCompression(bundle)
@@ -413,7 +373,7 @@ func BenchmarkCompressionRatio(b *testing.B) {
 	})
 
 	b.Run("large bundle", func(b *testing.B) {
-		bundle := createLargeTestBundle()
+		bundle := createLargeBundle(100, 1000)
 		protoBytes, err := bundleToProtobuf(bundle)
 		if err != nil {
 			b.Fatal(err)
@@ -429,7 +389,7 @@ func BenchmarkCompressionRatio(b *testing.B) {
 	})
 
 	b.Run("very large bundle", func(b *testing.B) {
-		bundle := createVeryLargeTestBundle()
+		bundle := createLargeBundle(1000, 10000)
 		protoBytes, err := bundleToProtobuf(bundle)
 		if err != nil {
 			b.Fatal(err)
