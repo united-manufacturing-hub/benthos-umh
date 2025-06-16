@@ -18,8 +18,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	topicbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin/topic_browser_plugin.protobuf"
-	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 var _ = Describe("Uns", func() {
@@ -49,23 +47,22 @@ var _ = Describe("Uns", func() {
 			unsInfo, err := topicToUNSInfo(topic)
 			Expect(err).To(BeNil())
 			Expect(unsInfo.Level0).To(Equal("enterprise"))
-			Expect(unsInfo.Level1.GetValue()).To(Equal("site"))
-			Expect(unsInfo.Level2.GetValue()).To(Equal("area"))
-			Expect(unsInfo.Level3.GetValue()).To(Equal("line"))
-			Expect(unsInfo.Level4.GetValue()).To(Equal("workcell"))
-			Expect(unsInfo.Level5.GetValue()).To(Equal("originid"))
+			Expect(unsInfo.LocationSublevels).To(Equal([]string{"site", "area", "line", "workcell", "originid"}))
 			Expect(unsInfo.DataContract).To(Equal("_schema"))
-			Expect(unsInfo.VirtualPath.GetValue()).To(Equal("event"))
+			Expect(*unsInfo.VirtualPath).To(Equal("event"))
+			Expect(unsInfo.Name).To(Equal("group"))
 		})
 
 		It("should parse valid UNS topic with minimal fields", func() {
-			topic := "umh.v1.enterprise._schema"
+			topic := "umh.v1.enterprise._schema.temperature"
 
 			unsInfo, err := topicToUNSInfo(topic)
 			Expect(err).To(BeNil())
 			Expect(unsInfo.Level0).To(Equal("enterprise"))
+			Expect(unsInfo.LocationSublevels).To(BeEmpty())
 			Expect(unsInfo.DataContract).To(Equal("_schema"))
-			Expect(unsInfo.VirtualPath.GetValue()).To(BeEmpty())
+			Expect(unsInfo.VirtualPath).To(BeNil())
+			Expect(unsInfo.Name).To(Equal("temperature"))
 		})
 
 		It("should return error for empty topic", func() {
@@ -86,14 +83,33 @@ var _ = Describe("Uns", func() {
 			Expect(unsInfo).To(BeNil())
 		})
 
-		Describe("Table-driven tests for optional fields", func() {
+		It("should parse topic with location sublevels and virtual path", func() {
+			topic := "umh.v1.enterprise.site.area._historian.motor.diagnostics.temperature"
+
+			unsInfo, err := topicToUNSInfo(topic)
+			Expect(err).To(BeNil())
+			Expect(unsInfo.Level0).To(Equal("enterprise"))
+			Expect(unsInfo.LocationSublevels).To(Equal([]string{"site", "area"}))
+			Expect(unsInfo.DataContract).To(Equal("_historian"))
+			Expect(*unsInfo.VirtualPath).To(Equal("motor.diagnostics"))
+			Expect(unsInfo.Name).To(Equal("temperature"))
+		})
+
+		Describe("Table-driven tests for different topic structures", func() {
 			type testCase struct {
-				topic           string
-				expectedInfo    *topicbrowserpluginprotobuf.TopicInfo
-				shouldHaveError bool
+				topic                string
+				expectedLevel0       string
+				expectedSublevels    []string
+				expectedDataContract string
+				expectedVirtualPath  *string
+				expectedName         string
+				shouldHaveError      bool
 			}
 
-			DescribeTable("should correctly parse topics with optional fields",
+			// Helper function for string pointers
+			stringPtr := func(s string) *string { return &s }
+
+			DescribeTable("should correctly parse topics with various structures",
 				func(tc testCase) {
 					unsInfo, err := topicToUNSInfo(tc.topic)
 					if tc.shouldHaveError {
@@ -104,138 +120,109 @@ var _ = Describe("Uns", func() {
 
 					Expect(err).To(BeNil())
 					Expect(unsInfo).ToNot(BeNil())
-					Expect(unsInfo.Level0).To(Equal(tc.expectedInfo.Level0))
-					Expect(unsInfo.DataContract).To(Equal(tc.expectedInfo.DataContract))
+					Expect(unsInfo.Level0).To(Equal(tc.expectedLevel0))
+					Expect(unsInfo.LocationSublevels).To(Equal(tc.expectedSublevels))
+					Expect(unsInfo.DataContract).To(Equal(tc.expectedDataContract))
+					Expect(unsInfo.Name).To(Equal(tc.expectedName))
 
-					// Check optional fields
-					if tc.expectedInfo.Level1 != nil {
-						Expect(unsInfo.Level1.GetValue()).To(Equal(tc.expectedInfo.Level1.GetValue()))
-					} else {
-						Expect(unsInfo.Level1).To(BeNil())
-					}
-
-					if tc.expectedInfo.Level2 != nil {
-						Expect(unsInfo.Level2.GetValue()).To(Equal(tc.expectedInfo.Level2.GetValue()))
-					} else {
-						Expect(unsInfo.Level2).To(BeNil())
-					}
-
-					if tc.expectedInfo.Level3 != nil {
-						Expect(unsInfo.Level3.GetValue()).To(Equal(tc.expectedInfo.Level3.GetValue()))
-					} else {
-						Expect(unsInfo.Level3).To(BeNil())
-					}
-
-					if tc.expectedInfo.Level4 != nil {
-						Expect(unsInfo.Level4.GetValue()).To(Equal(tc.expectedInfo.Level4.GetValue()))
-					} else {
-						Expect(unsInfo.Level4).To(BeNil())
-					}
-
-					if tc.expectedInfo.Level5 != nil {
-						Expect(unsInfo.Level5.GetValue()).To(Equal(tc.expectedInfo.Level5.GetValue()))
-					} else {
-						Expect(unsInfo.Level5).To(BeNil())
-					}
-
-					if tc.expectedInfo.VirtualPath != nil {
-						Expect(unsInfo.VirtualPath.GetValue()).To(Equal(tc.expectedInfo.VirtualPath.GetValue()))
+					if tc.expectedVirtualPath != nil {
+						Expect(unsInfo.VirtualPath).ToNot(BeNil())
+						Expect(*unsInfo.VirtualPath).To(Equal(*tc.expectedVirtualPath))
 					} else {
 						Expect(unsInfo.VirtualPath).To(BeNil())
 					}
 				},
-				Entry("only enterprise and schema", testCase{
-					topic: "umh.v1.enterprise._schema",
-					expectedInfo: &topicbrowserpluginprotobuf.TopicInfo{
-						Level0:       "enterprise",
-						DataContract: "_schema",
-					},
-					shouldHaveError: false,
+				Entry("minimal: enterprise + schema + name", testCase{
+					topic:                "umh.v1.enterprise._schema.temperature",
+					expectedLevel0:       "enterprise",
+					expectedSublevels:    nil,
+					expectedDataContract: "_schema",
+					expectedVirtualPath:  nil,
+					expectedName:         "temperature",
+					shouldHaveError:      false,
 				}),
-				Entry("enterprise, site, and schema", testCase{
-					topic: "umh.v1.enterprise.site._schema",
-					expectedInfo: &topicbrowserpluginprotobuf.TopicInfo{
-						Level0:       "enterprise",
-						Level1:       wrapperspb.String("site"),
-						DataContract: "_schema",
-					},
-					shouldHaveError: false,
+				Entry("enterprise + site + schema + name", testCase{
+					topic:                "umh.v1.enterprise.site._schema.pressure",
+					expectedLevel0:       "enterprise",
+					expectedSublevels:    []string{"site"},
+					expectedDataContract: "_schema",
+					expectedVirtualPath:  nil,
+					expectedName:         "pressure",
+					shouldHaveError:      false,
 				}),
-				Entry("enterprise, site, area, and schema", testCase{
-					topic: "umh.v1.enterprise.site.area._schema",
-					expectedInfo: &topicbrowserpluginprotobuf.TopicInfo{
-						Level0:       "enterprise",
-						Level1:       wrapperspb.String("site"),
-						Level2:       wrapperspb.String("area"),
-						DataContract: "_schema",
-					},
-					shouldHaveError: false,
+				Entry("enterprise + site + area + schema + name", testCase{
+					topic:                "umh.v1.enterprise.site.area._schema.humidity",
+					expectedLevel0:       "enterprise",
+					expectedSublevels:    []string{"site", "area"},
+					expectedDataContract: "_schema",
+					expectedVirtualPath:  nil,
+					expectedName:         "humidity",
+					shouldHaveError:      false,
 				}),
-				Entry("enterprise, site, area, line, and schema", testCase{
-					topic: "umh.v1.enterprise.site.area.line._schema",
-					expectedInfo: &topicbrowserpluginprotobuf.TopicInfo{
-						Level0:       "enterprise",
-						Level1:       wrapperspb.String("site"),
-						Level2:       wrapperspb.String("area"),
-						Level3:       wrapperspb.String("line"),
-						DataContract: "_schema",
-					},
-					shouldHaveError: false,
+				Entry("enterprise + site + area + line + schema + name", testCase{
+					topic:                "umh.v1.enterprise.site.area.line._schema.vibration",
+					expectedLevel0:       "enterprise",
+					expectedSublevels:    []string{"site", "area", "line"},
+					expectedDataContract: "_schema",
+					expectedVirtualPath:  nil,
+					expectedName:         "vibration",
+					shouldHaveError:      false,
 				}),
-				Entry("enterprise, site, area, line, workcell, and schema", testCase{
-					topic: "umh.v1.enterprise.site.area.line.workcell._schema",
-					expectedInfo: &topicbrowserpluginprotobuf.TopicInfo{
-						Level0:       "enterprise",
-						Level1:       wrapperspb.String("site"),
-						Level2:       wrapperspb.String("area"),
-						Level3:       wrapperspb.String("line"),
-						Level4:       wrapperspb.String("workcell"),
-						DataContract: "_schema",
-					},
-					shouldHaveError: false,
+				Entry("enterprise + site + area + line + workcell + schema + name", testCase{
+					topic:                "umh.v1.enterprise.site.area.line.workcell._schema.speed",
+					expectedLevel0:       "enterprise",
+					expectedSublevels:    []string{"site", "area", "line", "workcell"},
+					expectedDataContract: "_schema",
+					expectedVirtualPath:  nil,
+					expectedName:         "speed",
+					shouldHaveError:      false,
 				}),
-				Entry("enterprise, site, area, line, workcell, originid, and schema", testCase{
-					topic: "umh.v1.enterprise.site.area.line.workcell.originid._schema",
-					expectedInfo: &topicbrowserpluginprotobuf.TopicInfo{
-						Level0:       "enterprise",
-						Level1:       wrapperspb.String("site"),
-						Level2:       wrapperspb.String("area"),
-						Level3:       wrapperspb.String("line"),
-						Level4:       wrapperspb.String("workcell"),
-						Level5:       wrapperspb.String("originid"),
-						DataContract: "_schema",
-					},
-					shouldHaveError: false,
+				Entry("enterprise + site + area + line + workcell + originid + schema + name", testCase{
+					topic:                "umh.v1.enterprise.site.area.line.workcell.originid._schema.power",
+					expectedLevel0:       "enterprise",
+					expectedSublevels:    []string{"site", "area", "line", "workcell", "originid"},
+					expectedDataContract: "_schema",
+					expectedVirtualPath:  nil,
+					expectedName:         "power",
+					shouldHaveError:      false,
 				}),
-				Entry("enterprise, site, area, line, workcell, originid, schema, and event group", testCase{
-					topic: "umh.v1.enterprise.site.area.line.workcell.originid._schema.event.group",
-					expectedInfo: &topicbrowserpluginprotobuf.TopicInfo{
-						Level0:       "enterprise",
-						Level1:       wrapperspb.String("site"),
-						Level2:       wrapperspb.String("area"),
-						Level3:       wrapperspb.String("line"),
-						Level4:       wrapperspb.String("workcell"),
-						Level5:       wrapperspb.String("originid"),
-						DataContract: "_schema",
-						VirtualPath:  wrapperspb.String("event"),
-					},
-					shouldHaveError: false,
+				Entry("with virtual path: single segment", testCase{
+					topic:                "umh.v1.enterprise.site.area.line.workcell.originid._schema.event.temperature",
+					expectedLevel0:       "enterprise",
+					expectedSublevels:    []string{"site", "area", "line", "workcell", "originid"},
+					expectedDataContract: "_schema",
+					expectedVirtualPath:  stringPtr("event"),
+					expectedName:         "temperature",
+					shouldHaveError:      false,
 				}),
-				Entry("enterprise, site, area, line, workcell, originid, schema, and complex event group", testCase{
-					topic: "umh.v1.enterprise.site.area.line.workcell.originid._schema.event.group.subgroup",
-					expectedInfo: &topicbrowserpluginprotobuf.TopicInfo{
-						Level0:       "enterprise",
-						Level1:       wrapperspb.String("site"),
-						Level2:       wrapperspb.String("area"),
-						Level3:       wrapperspb.String("line"),
-						Level4:       wrapperspb.String("workcell"),
-						Level5:       wrapperspb.String("originid"),
-						DataContract: "_schema",
-						VirtualPath:  wrapperspb.String("event.group"),
-					},
-					shouldHaveError: false,
+				Entry("with virtual path: multiple segments", testCase{
+					topic:                "umh.v1.enterprise.site.area.line.workcell.originid._schema.event.group.subgroup.measurement",
+					expectedLevel0:       "enterprise",
+					expectedSublevels:    []string{"site", "area", "line", "workcell", "originid"},
+					expectedDataContract: "_schema",
+					expectedVirtualPath:  stringPtr("event.group.subgroup"),
+					expectedName:         "measurement",
+					shouldHaveError:      false,
+				}),
+				Entry("unlimited depth: 10 location levels", testCase{
+					topic:                "umh.v1.enterprise.region.site.building.floor.area.line.workcell.station.machine._historian.temperature",
+					expectedLevel0:       "enterprise",
+					expectedSublevels:    []string{"region", "site", "building", "floor", "area", "line", "workcell", "station", "machine"},
+					expectedDataContract: "_historian",
+					expectedVirtualPath:  nil,
+					expectedName:         "temperature",
+					shouldHaveError:      false,
+				}),
+				Entry("error: missing name segment", testCase{
+					topic:           "umh.v1.enterprise.site._schema",
+					shouldHaveError: true,
+				}),
+				Entry("error: data contract as final segment", testCase{
+					topic:           "umh.v1.enterprise.site._schema",
+					shouldHaveError: true,
 				}),
 			)
 		})
+
 	})
 })

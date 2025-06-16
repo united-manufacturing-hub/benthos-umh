@@ -11,21 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-
-// Copyright 2025 UMH Systems GmbH
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
 // ---------------------------------------------------------------------------
 //
 // Tag-Processor → FSM wire contracts
@@ -51,13 +36,12 @@
 // 	protoc        v3.21.12
 // source: topic_browser_data.proto
 
-package topic_browser_plugin_protobuf
+package topic_browser_plugin
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	anypb "google.golang.org/protobuf/types/known/anypb"
-	wrapperspb "google.golang.org/protobuf/types/known/wrapperspb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -201,16 +185,15 @@ func (ScalarType) EnumDescriptor() ([]byte, []int) {
 type TopicInfo struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Physical ISA-95 (or custom) hierarchy; level0 must never be empty
-	Level0 string                  `protobuf:"bytes,1,opt,name=level0,proto3" json:"level0,omitempty"` // e.g. "corpA"
-	Level1 *wrapperspb.StringValue `protobuf:"bytes,2,opt,name=level1,proto3" json:"level1,omitempty"` // e.g. "plant-1"
-	Level2 *wrapperspb.StringValue `protobuf:"bytes,3,opt,name=level2,proto3" json:"level2,omitempty"` // e.g. "line-4"
-	Level3 *wrapperspb.StringValue `protobuf:"bytes,4,opt,name=level3,proto3" json:"level3,omitempty"` // e.g. "pump-41"
-	Level4 *wrapperspb.StringValue `protobuf:"bytes,5,opt,name=level4,proto3" json:"level4,omitempty"`
-	Level5 *wrapperspb.StringValue `protobuf:"bytes,6,opt,name=level5,proto3" json:"level5,omitempty"`
-	// Data contract that governs payload shape, e.g. "_historian", and the virtual_path
-	DataContract string `protobuf:"bytes,7,opt,name=data_contract,json=dataContract,proto3" json:"data_contract,omitempty"`
+	Level0 string `protobuf:"bytes,1,opt,name=level0,proto3" json:"level0,omitempty"` // e.g. "corpA"
+	// Dynamic location hierarchy (level1, level2, ... levelN)
+	LocationSublevels []string `protobuf:"bytes,2,rep,name=location_sublevels,json=locationSublevels,proto3" json:"location_sublevels,omitempty"` // e.g. ["plant-1", "line-4", "pump-41"]
+	// Data contract that governs payload shape, e.g. "_historian"
+	DataContract string `protobuf:"bytes,3,opt,name=data_contract,json=dataContract,proto3" json:"data_contract,omitempty"`
 	// Optional non-physical grouping path (axis.x.position, diagnostics.*, …)
-	VirtualPath *wrapperspb.StringValue `protobuf:"bytes,8,opt,name=virtual_path,json=virtualPath,proto3" json:"virtual_path,omitempty"`
+	VirtualPath *string `protobuf:"bytes,4,opt,name=virtual_path,json=virtualPath,proto3,oneof" json:"virtual_path,omitempty"` // joined with '.' if present
+	// The final segment name (e.g., "temperature", "order_created")
+	Name string `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`
 	// Aggregated Kafka-header *metadata* for this topic.
 	// ───────────────────────────────────────────────────
 	//   - Every time the tag_processor sees a Kafka header on this topic it stores
@@ -223,7 +206,7 @@ type TopicInfo struct {
 	//   - This is *not* duplicated data: EventKafka.headers (inside EventTableEntry)
 	//     keeps the raw per-event headers for debugging, whereas this field is
 	//     a compact, topic-level index optimised for look-ups and UI filters.
-	Metadata      map[string]string `protobuf:"bytes,9,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Metadata      map[string]string `protobuf:"bytes,6,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -265,37 +248,9 @@ func (x *TopicInfo) GetLevel0() string {
 	return ""
 }
 
-func (x *TopicInfo) GetLevel1() *wrapperspb.StringValue {
+func (x *TopicInfo) GetLocationSublevels() []string {
 	if x != nil {
-		return x.Level1
-	}
-	return nil
-}
-
-func (x *TopicInfo) GetLevel2() *wrapperspb.StringValue {
-	if x != nil {
-		return x.Level2
-	}
-	return nil
-}
-
-func (x *TopicInfo) GetLevel3() *wrapperspb.StringValue {
-	if x != nil {
-		return x.Level3
-	}
-	return nil
-}
-
-func (x *TopicInfo) GetLevel4() *wrapperspb.StringValue {
-	if x != nil {
-		return x.Level4
-	}
-	return nil
-}
-
-func (x *TopicInfo) GetLevel5() *wrapperspb.StringValue {
-	if x != nil {
-		return x.Level5
+		return x.LocationSublevels
 	}
 	return nil
 }
@@ -307,11 +262,18 @@ func (x *TopicInfo) GetDataContract() string {
 	return ""
 }
 
-func (x *TopicInfo) GetVirtualPath() *wrapperspb.StringValue {
-	if x != nil {
-		return x.VirtualPath
+func (x *TopicInfo) GetVirtualPath() string {
+	if x != nil && x.VirtualPath != nil {
+		return *x.VirtualPath
 	}
-	return nil
+	return ""
+}
+
+func (x *TopicInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
 }
 
 func (x *TopicInfo) GetMetadata() map[string]string {
@@ -810,20 +772,18 @@ var File_topic_browser_data_proto protoreflect.FileDescriptor
 const file_topic_browser_data_proto_rawDesc = "" +
 	"\n" +
 	"\x18topic_browser_data.proto\x12\n" +
-	"umh.events\x1a\x1egoogle/protobuf/wrappers.proto\x1a\x19google/protobuf/any.proto\"\x95\x04\n" +
+	"umh.events\x1a\x19google/protobuf/any.proto\"\xc2\x02\n" +
 	"\tTopicInfo\x12\x16\n" +
-	"\x06level0\x18\x01 \x01(\tR\x06level0\x124\n" +
-	"\x06level1\x18\x02 \x01(\v2\x1c.google.protobuf.StringValueR\x06level1\x124\n" +
-	"\x06level2\x18\x03 \x01(\v2\x1c.google.protobuf.StringValueR\x06level2\x124\n" +
-	"\x06level3\x18\x04 \x01(\v2\x1c.google.protobuf.StringValueR\x06level3\x124\n" +
-	"\x06level4\x18\x05 \x01(\v2\x1c.google.protobuf.StringValueR\x06level4\x124\n" +
-	"\x06level5\x18\x06 \x01(\v2\x1c.google.protobuf.StringValueR\x06level5\x12#\n" +
-	"\rdata_contract\x18\a \x01(\tR\fdataContract\x12?\n" +
-	"\fvirtual_path\x18\b \x01(\v2\x1c.google.protobuf.StringValueR\vvirtualPath\x12?\n" +
-	"\bmetadata\x18\t \x03(\v2#.umh.events.TopicInfo.MetadataEntryR\bmetadata\x1a;\n" +
+	"\x06level0\x18\x01 \x01(\tR\x06level0\x12-\n" +
+	"\x12location_sublevels\x18\x02 \x03(\tR\x11locationSublevels\x12#\n" +
+	"\rdata_contract\x18\x03 \x01(\tR\fdataContract\x12&\n" +
+	"\fvirtual_path\x18\x04 \x01(\tH\x00R\vvirtualPath\x88\x01\x01\x12\x12\n" +
+	"\x04name\x18\x05 \x01(\tR\x04name\x12?\n" +
+	"\bmetadata\x18\x06 \x03(\v2#.umh.events.TopicInfo.MetadataEntryR\bmetadata\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9a\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x0f\n" +
+	"\r_virtual_path\"\x9a\x01\n" +
 	"\bTopicMap\x12;\n" +
 	"\aentries\x18\x01 \x03(\v2!.umh.events.TopicMap.EntriesEntryR\aentries\x1aQ\n" +
 	"\fEntriesEntry\x12\x10\n" +
@@ -871,7 +831,7 @@ const file_topic_browser_data_proto_rawDesc = "" +
 	"\aNUMERIC\x10\x01\x12\n" +
 	"\n" +
 	"\x06STRING\x10\x02\x12\v\n" +
-	"\aBOOLEAN\x10\x03B\x1fZ\x1dtopic_browser_plugin.protobufb\x06proto3"
+	"\aBOOLEAN\x10\x03B\x19Z\x17./;topic_browser_pluginb\x06proto3"
 
 var (
 	file_topic_browser_data_proto_rawDescOnce sync.Once
@@ -888,46 +848,39 @@ func file_topic_browser_data_proto_rawDescGZIP() []byte {
 var file_topic_browser_data_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_topic_browser_data_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_topic_browser_data_proto_goTypes = []any{
-	(PayloadFormat)(0),             // 0: umh.events.PayloadFormat
-	(ScalarType)(0),                // 1: umh.events.ScalarType
-	(*TopicInfo)(nil),              // 2: umh.events.TopicInfo
-	(*TopicMap)(nil),               // 3: umh.events.TopicMap
-	(*EventKafka)(nil),             // 4: umh.events.EventKafka
-	(*TimeSeriesPayload)(nil),      // 5: umh.events.TimeSeriesPayload
-	(*RelationalPayload)(nil),      // 6: umh.events.RelationalPayload
-	(*EventTableEntry)(nil),        // 7: umh.events.EventTableEntry
-	(*EventTable)(nil),             // 8: umh.events.EventTable
-	(*UnsBundle)(nil),              // 9: umh.events.UnsBundle
-	nil,                            // 10: umh.events.TopicInfo.MetadataEntry
-	nil,                            // 11: umh.events.TopicMap.EntriesEntry
-	nil,                            // 12: umh.events.EventKafka.HeadersEntry
-	(*wrapperspb.StringValue)(nil), // 13: google.protobuf.StringValue
-	(*anypb.Any)(nil),              // 14: google.protobuf.Any
+	(PayloadFormat)(0),        // 0: umh.events.PayloadFormat
+	(ScalarType)(0),           // 1: umh.events.ScalarType
+	(*TopicInfo)(nil),         // 2: umh.events.TopicInfo
+	(*TopicMap)(nil),          // 3: umh.events.TopicMap
+	(*EventKafka)(nil),        // 4: umh.events.EventKafka
+	(*TimeSeriesPayload)(nil), // 5: umh.events.TimeSeriesPayload
+	(*RelationalPayload)(nil), // 6: umh.events.RelationalPayload
+	(*EventTableEntry)(nil),   // 7: umh.events.EventTableEntry
+	(*EventTable)(nil),        // 8: umh.events.EventTable
+	(*UnsBundle)(nil),         // 9: umh.events.UnsBundle
+	nil,                       // 10: umh.events.TopicInfo.MetadataEntry
+	nil,                       // 11: umh.events.TopicMap.EntriesEntry
+	nil,                       // 12: umh.events.EventKafka.HeadersEntry
+	(*anypb.Any)(nil),         // 13: google.protobuf.Any
 }
 var file_topic_browser_data_proto_depIdxs = []int32{
-	13, // 0: umh.events.TopicInfo.level1:type_name -> google.protobuf.StringValue
-	13, // 1: umh.events.TopicInfo.level2:type_name -> google.protobuf.StringValue
-	13, // 2: umh.events.TopicInfo.level3:type_name -> google.protobuf.StringValue
-	13, // 3: umh.events.TopicInfo.level4:type_name -> google.protobuf.StringValue
-	13, // 4: umh.events.TopicInfo.level5:type_name -> google.protobuf.StringValue
-	13, // 5: umh.events.TopicInfo.virtual_path:type_name -> google.protobuf.StringValue
-	10, // 6: umh.events.TopicInfo.metadata:type_name -> umh.events.TopicInfo.MetadataEntry
-	11, // 7: umh.events.TopicMap.entries:type_name -> umh.events.TopicMap.EntriesEntry
-	12, // 8: umh.events.EventKafka.headers:type_name -> umh.events.EventKafka.HeadersEntry
-	1,  // 9: umh.events.TimeSeriesPayload.scalar_type:type_name -> umh.events.ScalarType
-	14, // 10: umh.events.TimeSeriesPayload.value:type_name -> google.protobuf.Any
-	5,  // 11: umh.events.EventTableEntry.ts:type_name -> umh.events.TimeSeriesPayload
-	6,  // 12: umh.events.EventTableEntry.rel:type_name -> umh.events.RelationalPayload
-	4,  // 13: umh.events.EventTableEntry.raw_kafka_msg:type_name -> umh.events.EventKafka
-	7,  // 14: umh.events.EventTable.entries:type_name -> umh.events.EventTableEntry
-	3,  // 15: umh.events.UnsBundle.uns_map:type_name -> umh.events.TopicMap
-	8,  // 16: umh.events.UnsBundle.events:type_name -> umh.events.EventTable
-	2,  // 17: umh.events.TopicMap.EntriesEntry.value:type_name -> umh.events.TopicInfo
-	18, // [18:18] is the sub-list for method output_type
-	18, // [18:18] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	10, // 0: umh.events.TopicInfo.metadata:type_name -> umh.events.TopicInfo.MetadataEntry
+	11, // 1: umh.events.TopicMap.entries:type_name -> umh.events.TopicMap.EntriesEntry
+	12, // 2: umh.events.EventKafka.headers:type_name -> umh.events.EventKafka.HeadersEntry
+	1,  // 3: umh.events.TimeSeriesPayload.scalar_type:type_name -> umh.events.ScalarType
+	13, // 4: umh.events.TimeSeriesPayload.value:type_name -> google.protobuf.Any
+	5,  // 5: umh.events.EventTableEntry.ts:type_name -> umh.events.TimeSeriesPayload
+	6,  // 6: umh.events.EventTableEntry.rel:type_name -> umh.events.RelationalPayload
+	4,  // 7: umh.events.EventTableEntry.raw_kafka_msg:type_name -> umh.events.EventKafka
+	7,  // 8: umh.events.EventTable.entries:type_name -> umh.events.EventTableEntry
+	3,  // 9: umh.events.UnsBundle.uns_map:type_name -> umh.events.TopicMap
+	8,  // 10: umh.events.UnsBundle.events:type_name -> umh.events.EventTable
+	2,  // 11: umh.events.TopicMap.EntriesEntry.value:type_name -> umh.events.TopicInfo
+	12, // [12:12] is the sub-list for method output_type
+	12, // [12:12] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_topic_browser_data_proto_init() }
@@ -935,6 +888,7 @@ func file_topic_browser_data_proto_init() {
 	if File_topic_browser_data_proto != nil {
 		return
 	}
+	file_topic_browser_data_proto_msgTypes[0].OneofWrappers = []any{}
 	file_topic_browser_data_proto_msgTypes[5].OneofWrappers = []any{
 		(*EventTableEntry_Ts)(nil),
 		(*EventTableEntry_Rel)(nil),

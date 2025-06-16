@@ -23,8 +23,6 @@ import (
 	"strings"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
-	topicbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin/topic_browser_plugin.protobuf"
-	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 // extractTopicFromMessage looks up the "umh_topic" meta-field from the benthos message.
@@ -41,44 +39,75 @@ func extractTopicFromMessage(message *service.Message) (string, error) {
 // It parses the topic to extract level information and virtual path details.
 //
 // Args:
-//   - topic: The topic string to parse (e.g., "umh.v1.acme.cologne.assembly.machine01._analytics.scada.counter")
+//   - topic: The topic string to parse (e.g., "umh.v1.acme.cologne.assembly.machine01._analytics.scada.counter.temperature")
 //
 // Returns:
-//   - *topicbrowserpluginprotobuf.TopicInfo: The parsed topic information
+//   - *TopicInfo: The parsed topic information
 //   - error: Any error that occurred during parsing
 //
 // The function expects topics to follow the UMH topic structure:
-// umh.v1.level0.level1.level2.level3.level4.level5
-// where each level can be a topic hierarchy component.
-//
-// Virtual paths (indicated by underscores) are also parsed and stored separately.
-func topicToUNSInfo(topic string) (*topicbrowserpluginprotobuf.TopicInfo, error) {
+// umh.v1.<location_path>.<data_contract>[.<virtual_path>].<name>
+// where:
+// - location_path: level0.level1.level2...levelN (level0 is mandatory, others optional)
+// - data_contract: starts with underscore (e.g., "_historian")
+// - virtual_path: optional logical grouping (e.g., "motor.diagnostics")
+// - name: mandatory final segment (e.g., "temperature", "order_created")
+func topicToUNSInfo(topic string) (*TopicInfo, error) {
 	if err := validateTopicFormat(topic); err != nil {
 		return nil, err
 	}
 
 	parts := strings.Split(topic, ".")
-	unsInfo := &topicbrowserpluginprotobuf.TopicInfo{
-		Level0: parts[2], // Skip "umh" and "v1"
+
+	// Minimum valid topic: umh.v1.level0._contract.name (5 parts)
+	if len(parts) < 5 {
+		return nil, errors.New("topic must have at least: umh.v1.level0._contract.name")
 	}
 
-	// Find datacontract position and process levels
-	datacontractIndex, err := findDatacontractIndex(parts)
-	if err != nil {
-		return nil, err
+	// Find datacontract position (must start with underscore and not be the last segment)
+	datacontractIndex := -1
+	for i := 3; i < len(parts)-1; i++ { // Start from index 3, end before last segment
+		if len(parts[i]) == 0 {
+			return nil, errors.New("topic contains empty segments")
+		}
+		if strings.HasPrefix(parts[i], "_") {
+			datacontractIndex = i
+			break
+		}
 	}
 
-	// Process levels before datacontract
-	if err := processLevels(parts[3:datacontractIndex], unsInfo); err != nil {
-		return nil, err
+	if datacontractIndex == -1 {
+		return nil, errors.New("topic must contain a data contract (segment starting with '_') and it cannot be the final segment")
 	}
 
-	// Set datacontract
-	unsInfo.DataContract = parts[datacontractIndex] // Datacontract renamed to DataContract
+	// The last segment is always the name (mandatory)
+	nameIndex := len(parts) - 1
+	name := parts[nameIndex]
+	if name == "" {
+		return nil, errors.New("topic name (final segment) cannot be empty")
+	}
 
-	// Process virtual path (everything after datacontract)
-	if err := processVirtualPath(parts[datacontractIndex+1:], unsInfo); err != nil {
-		return nil, err
+	// Create TopicInfo struct
+	unsInfo := &TopicInfo{
+		Level0:       parts[2], // Skip "umh" and "v1"
+		DataContract: parts[datacontractIndex],
+		Name:         name,
+	}
+
+	// Process location sublevels (everything between level0 and datacontract)
+	locationStart := 3 // After umh.v1.level0
+	locationEnd := datacontractIndex
+	if locationEnd > locationStart {
+		unsInfo.LocationSublevels = parts[locationStart:locationEnd]
+	}
+
+	// Process virtual path (everything between datacontract and name)
+	virtualStart := datacontractIndex + 1
+	virtualEnd := nameIndex
+	if virtualEnd > virtualStart {
+		virtualParts := parts[virtualStart:virtualEnd]
+		virtualPath := strings.Join(virtualParts, ".")
+		unsInfo.VirtualPath = &virtualPath
 	}
 
 	return unsInfo, nil
@@ -92,61 +121,5 @@ func validateTopicFormat(topic string) error {
 	if !strings.HasPrefix(topic, "umh.v1.") {
 		return errors.New("topic must start with umh.v1")
 	}
-	return nil
-}
-
-// findDatacontractIndex locates the datacontract field in the topic parts
-func findDatacontractIndex(parts []string) (int, error) {
-	for i := 3; i < len(parts); i++ {
-		if len(parts[i]) == 0 {
-			return 0, errors.New("topic contains empty parts")
-		}
-		if strings.HasPrefix(parts[i], "_") {
-			return i, nil
-		}
-	}
-	return 0, errors.New("topic must contain datacontract")
-}
-
-// processLevels assigns level values to the TopicInfo struct
-func processLevels(levelParts []string, info *topicbrowserpluginprotobuf.TopicInfo) error {
-	for i, part := range levelParts {
-		if len(part) == 0 {
-			return errors.New("topic contains empty parts")
-		}
-
-		switch i {
-		case 0:
-			info.Level1 = wrapperspb.String(part)
-		case 1:
-			info.Level2 = wrapperspb.String(part)
-		case 2:
-			info.Level3 = wrapperspb.String(part)
-		case 3:
-			info.Level4 = wrapperspb.String(part)
-		case 4:
-			info.Level5 = wrapperspb.String(part)
-		default:
-			return errors.New("too many level parts in topic")
-		}
-	}
-	return nil
-}
-
-// processVirtualPath processes the virtual path parts of the topic
-func processVirtualPath(virtualParts []string, info *topicbrowserpluginprotobuf.TopicInfo) error {
-	if len(virtualParts) == 0 {
-		return nil
-	}
-
-	// If there's only one part, it was the EventTag (now discarded)
-	if len(virtualParts) == 1 {
-		return nil
-	}
-
-	// If there are multiple parts, the last one was the EventTag (discarded)
-	// The remaining parts form the virtual path
-	virtualPathParts := virtualParts[:len(virtualParts)-1]
-	info.VirtualPath = wrapperspb.String(strings.Join(virtualPathParts, "."))
 	return nil
 }

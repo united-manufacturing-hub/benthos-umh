@@ -43,7 +43,6 @@ import (
 	lru "github.com/hashicorp/golang-lru"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
-	topicbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin/topic_browser_plugin.protobuf"
 )
 
 // TopicBrowserProcessor implements the Benthos processor interface for the Topic Browser plugin.
@@ -121,13 +120,13 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 // initializeUnsBundle creates a new empty UNS bundle structure.
 // The bundle is pre-allocated with initial capacity to avoid reallocations during processing.
 // This structure will hold both the topic metadata map and the event entries.
-func (t *TopicBrowserProcessor) initializeUnsBundle() *topicbrowserpluginprotobuf.UnsBundle {
-	return &topicbrowserpluginprotobuf.UnsBundle{
-		UnsMap: &topicbrowserpluginprotobuf.TopicMap{
-			Entries: make(map[string]*topicbrowserpluginprotobuf.TopicInfo),
+func (t *TopicBrowserProcessor) initializeUnsBundle() *UnsBundle {
+	return &UnsBundle{
+		UnsMap: &TopicMap{
+			Entries: make(map[string]*TopicInfo),
 		},
-		Events: &topicbrowserpluginprotobuf.EventTable{
-			Entries: make([]*topicbrowserpluginprotobuf.EventTableEntry, 0, 1),
+		Events: &EventTable{
+			Entries: make([]*EventTableEntry, 0, 1),
 		},
 	}
 }
@@ -139,9 +138,9 @@ func (t *TopicBrowserProcessor) initializeUnsBundle() *topicbrowserpluginprotobu
 // - Updates metrics for monitoring and debugging
 func (t *TopicBrowserProcessor) processMessageBatch(
 	batch service.MessageBatch,
-	unsBundle *topicbrowserpluginprotobuf.UnsBundle,
-) (map[string][]*topicbrowserpluginprotobuf.TopicInfo, error) {
-	topicInfos := make(map[string][]*topicbrowserpluginprotobuf.TopicInfo)
+	unsBundle *UnsBundle,
+) (map[string][]*TopicInfo, error) {
+	topicInfos := make(map[string][]*TopicInfo)
 
 	for _, message := range batch {
 		topicInfo, eventTableEntry, unsTreeId, err := MessageToUNSInfoAndEvent(message)
@@ -157,7 +156,7 @@ func (t *TopicBrowserProcessor) processMessageBatch(
 
 		// Group topic infos by UNS tree ID
 		if _, ok := topicInfos[*unsTreeId]; !ok {
-			topicInfos[*unsTreeId] = make([]*topicbrowserpluginprotobuf.TopicInfo, 0, 1)
+			topicInfos[*unsTreeId] = make([]*TopicInfo, 0, 1)
 		}
 		topicInfos[*unsTreeId] = append(topicInfos[*unsTreeId], topicInfo)
 		t.messagesProcessed.Incr(1)
@@ -173,8 +172,8 @@ func (t *TopicBrowserProcessor) processMessageBatch(
 // - Only updates the bundle when topic metadata has changed
 // - Prevents unnecessary traffic by caching unchanged topics
 func (t *TopicBrowserProcessor) updateTopicMetadata(
-	topicInfos map[string][]*topicbrowserpluginprotobuf.TopicInfo,
-	unsBundle *topicbrowserpluginprotobuf.UnsBundle,
+	topicInfos map[string][]*TopicInfo,
+	unsBundle *UnsBundle,
 ) {
 	t.topicMetadataCacheMutex.Lock()
 	defer t.topicMetadataCacheMutex.Unlock()
@@ -191,7 +190,7 @@ func (t *TopicBrowserProcessor) updateTopicMetadata(
 // mergeTopicHeaders combines headers from multiple topic infos into a single map.
 // This is necessary because a single topic might appear in multiple messages
 // with different header values that need to be consolidated.
-func (t *TopicBrowserProcessor) mergeTopicHeaders(topics []*topicbrowserpluginprotobuf.TopicInfo) map[string]string {
+func (t *TopicBrowserProcessor) mergeTopicHeaders(topics []*TopicInfo) map[string]string {
 	mergedHeaders := make(map[string]string)
 	for _, topicInfo := range topics {
 		for key, value := range topicInfo.Metadata {
@@ -224,8 +223,8 @@ func (t *TopicBrowserProcessor) shouldReportTopic(unsTreeId string, mergedHeader
 func (t *TopicBrowserProcessor) updateTopicCacheAndBundle(
 	unsTreeId string,
 	mergedHeaders map[string]string,
-	topic *topicbrowserpluginprotobuf.TopicInfo,
-	unsBundle *topicbrowserpluginprotobuf.UnsBundle,
+	topic *TopicInfo,
+	unsBundle *UnsBundle,
 ) {
 	t.topicMetadataCache.Add(unsTreeId, mergedHeaders)
 	clone := maps.Clone(mergedHeaders)
@@ -237,7 +236,7 @@ func (t *TopicBrowserProcessor) updateTopicCacheAndBundle(
 // This prevents creating empty messages when:
 // - No events were successfully processed
 // - No topic metadata has changed
-func (t *TopicBrowserProcessor) hasDataToReturn(unsBundle *topicbrowserpluginprotobuf.UnsBundle) bool {
+func (t *TopicBrowserProcessor) hasDataToReturn(unsBundle *UnsBundle) bool {
 	return len(unsBundle.Events.Entries) > 0 || len(unsBundle.UnsMap.Entries) > 0
 }
 
@@ -246,7 +245,7 @@ func (t *TopicBrowserProcessor) hasDataToReturn(unsBundle *topicbrowserpluginpro
 // - Compresses the bundle to minimize traffic
 // - Creates a new message with the encoded data
 // - Returns the message in the format expected by the Benthos framework
-func (t *TopicBrowserProcessor) createFinalMessage(unsBundle *topicbrowserpluginprotobuf.UnsBundle) ([]service.MessageBatch, error) {
+func (t *TopicBrowserProcessor) createFinalMessage(unsBundle *UnsBundle) ([]service.MessageBatch, error) {
 	protoBytes, err := BundleToProtobufBytesWithCompression(unsBundle)
 	if err != nil {
 		return nil, err

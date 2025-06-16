@@ -34,9 +34,8 @@ syntax = "proto3";
 
 package umh.events;
 
-option go_package = "topic_browser_plugin.protobuf";
+option go_package = "./;topic_browser_plugin";
 
-import "google/protobuf/wrappers.proto";
 import "google/protobuf/any.proto";
 
 // ---------- Topic info -------------------------------------------------------
@@ -48,18 +47,19 @@ import "google/protobuf/any.proto";
  */
 message TopicInfo {
   // Physical ISA-95 (or custom) hierarchy; level0 must never be empty
-  string                      level0        = 1;  // e.g. "corpA"
-  google.protobuf.StringValue level1        = 2;  // e.g. "plant-1"
-  google.protobuf.StringValue level2        = 3;  // e.g. "line-4"
-  google.protobuf.StringValue level3        = 4;  // e.g. "pump-41"
-  google.protobuf.StringValue level4        = 5;
-  google.protobuf.StringValue level5        = 6;
+  string            level0             = 1;  // e.g. "corpA"
+  
+  // Dynamic location hierarchy (level1, level2, ... levelN)
+  repeated string   location_sublevels = 2;  // e.g. ["plant-1", "line-4", "pump-41"]
 
-  // Data contract that governs payload shape, e.g. "_historian", and the virtual_path
-  string                      data_contract = 7;
+  // Data contract that governs payload shape, e.g. "_historian"
+  string            data_contract      = 3;
 
   // Optional non-physical grouping path (axis.x.position, diagnostics.*, …)
-  google.protobuf.StringValue virtual_path  = 8;
+  optional string   virtual_path       = 4;  // joined with '.' if present
+
+  // The final segment name (e.g., "temperature", "order_created")
+  string            name               = 5;
 
   // Aggregated Kafka-header *metadata* for this topic.
   // ───────────────────────────────────────────────────
@@ -73,7 +73,7 @@ message TopicInfo {
   // • This is *not* duplicated data: EventKafka.headers (inside EventTableEntry)
   //   keeps the raw per-event headers for debugging, whereas this field is
   //   a compact, topic-level index optimised for look-ups and UI filters.
-  map<string,string>          metadata      = 9;
+  map<string,string> metadata          = 6;
 }
 
 // TopicMap provides a fast lookup structure for topics using their UNS Tree ID as the key.

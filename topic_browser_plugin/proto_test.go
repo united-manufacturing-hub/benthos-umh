@@ -17,7 +17,6 @@ package topic_browser_plugin
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	topicbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin/topic_browser_plugin.protobuf"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
@@ -25,22 +24,22 @@ var _ = Describe("Protobuf Functions", func() {
 	Describe("bundleToProtobuf and protobufBytesToBundle", func() {
 		It("successfully encodes and decodes a bundle with time series data", func() {
 			// Create a test bundle
-			originalBundle := &topicbrowserpluginprotobuf.UnsBundle{
-				UnsMap: &topicbrowserpluginprotobuf.TopicMap{
-					Entries: map[string]*topicbrowserpluginprotobuf.TopicInfo{
+			originalBundle := &UnsBundle{
+				UnsMap: &TopicMap{
+					Entries: map[string]*TopicInfo{
 						"test-topic": {
 							Level0:       "enterprise",
 							DataContract: "_historian",
 						},
 					},
 				},
-				Events: &topicbrowserpluginprotobuf.EventTable{
-					Entries: []*topicbrowserpluginprotobuf.EventTableEntry{
+				Events: &EventTable{
+					Entries: []*EventTableEntry{
 						{
 							UnsTreeId: "test-topic",
-							Payload: &topicbrowserpluginprotobuf.EventTableEntry_Ts{
-								Ts: &topicbrowserpluginprotobuf.TimeSeriesPayload{
-									ScalarType:  topicbrowserpluginprotobuf.ScalarType_NUMERIC,
+							Payload: &EventTableEntry_Ts{
+								Ts: &TimeSeriesPayload{
+									ScalarType:  ScalarType_NUMERIC,
 									TimestampMs: 1647753600000,
 									Value: &anypb.Any{
 										TypeUrl: "golang/float64",
@@ -71,12 +70,12 @@ var _ = Describe("Protobuf Functions", func() {
 
 		It("handles empty bundle", func() {
 			// Create an empty bundle
-			originalBundle := &topicbrowserpluginprotobuf.UnsBundle{
-				UnsMap: &topicbrowserpluginprotobuf.TopicMap{
-					Entries: make(map[string]*topicbrowserpluginprotobuf.TopicInfo),
+			originalBundle := &UnsBundle{
+				UnsMap: &TopicMap{
+					Entries: make(map[string]*TopicInfo),
 				},
-				Events: &topicbrowserpluginprotobuf.EventTable{
-					Entries: make([]*topicbrowserpluginprotobuf.EventTableEntry, 0),
+				Events: &EventTable{
+					Entries: make([]*EventTableEntry, 0),
 				},
 			}
 
@@ -97,9 +96,9 @@ var _ = Describe("Protobuf Functions", func() {
 
 		It("handles bundle with multiple entries", func() {
 			// Create a bundle with multiple entries
-			originalBundle := &topicbrowserpluginprotobuf.UnsBundle{
-				UnsMap: &topicbrowserpluginprotobuf.TopicMap{
-					Entries: map[string]*topicbrowserpluginprotobuf.TopicInfo{
+			originalBundle := &UnsBundle{
+				UnsMap: &TopicMap{
+					Entries: map[string]*TopicInfo{
 						"topic1": {
 							Level0:       "enterprise",
 							DataContract: "_historian",
@@ -110,13 +109,13 @@ var _ = Describe("Protobuf Functions", func() {
 						},
 					},
 				},
-				Events: &topicbrowserpluginprotobuf.EventTable{
-					Entries: []*topicbrowserpluginprotobuf.EventTableEntry{
+				Events: &EventTable{
+					Entries: []*EventTableEntry{
 						{
 							UnsTreeId: "topic1",
-							Payload: &topicbrowserpluginprotobuf.EventTableEntry_Ts{
-								Ts: &topicbrowserpluginprotobuf.TimeSeriesPayload{
-									ScalarType:  topicbrowserpluginprotobuf.ScalarType_NUMERIC,
+							Payload: &EventTableEntry_Ts{
+								Ts: &TimeSeriesPayload{
+									ScalarType:  ScalarType_NUMERIC,
 									TimestampMs: 1647753600000,
 									Value: &anypb.Any{
 										TypeUrl: "golang/float64",
@@ -127,9 +126,9 @@ var _ = Describe("Protobuf Functions", func() {
 						},
 						{
 							UnsTreeId: "topic2",
-							Payload: &topicbrowserpluginprotobuf.EventTableEntry_Ts{
-								Ts: &topicbrowserpluginprotobuf.TimeSeriesPayload{
-									ScalarType:  topicbrowserpluginprotobuf.ScalarType_NUMERIC,
+							Payload: &EventTableEntry_Ts{
+								Ts: &TimeSeriesPayload{
+									ScalarType:  ScalarType_NUMERIC,
 									TimestampMs: 1647753600001,
 									Value: &anypb.Any{
 										TypeUrl: "golang/float64",

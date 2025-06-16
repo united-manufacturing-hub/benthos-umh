@@ -133,10 +133,10 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				ENDENDENDEND
 			*/
 
-			// Let's only focus on the 2nd lin (0a64 - updated due to EventTag removal)
+			// Let's only focus on the 2nd lin (0a70 - updated due to Name field addition)
 			dataLine := strings.Split(string(outBytes), "\n")[1]
-			// Expect it to begin with 0a64 (updated due to EventTag field removal)
-			Expect(dataLine[:4]).To(Equal("0a64"))
+			// Expect it to begin with 0a70 (updated due to Name field addition)
+			Expect(dataLine[:4]).To(Equal("0a70"))
 
 			// Hex decode it
 			hexDecoded, err := hex.DecodeString(dataLine)
@@ -151,8 +151,8 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(decoded.Events.Entries).To(HaveLen(2))
 			Expect(decoded.UnsMap.Entries).To(HaveLen(1))
 
-			Expect(decoded.UnsMap.Entries).To(HaveKey("4b307e4839c8ff19")) // uns tree id - updated after EventTag removal
-			topicData := decoded.UnsMap.Entries["4b307e4839c8ff19"]
+			Expect(decoded.UnsMap.Entries).To(HaveKey("1637bdbe36d5a9bb")) // uns tree id - updated after Name field addition
+			topicData := decoded.UnsMap.Entries["1637bdbe36d5a9bb"]
 			Expect(topicData).NotTo(BeNil())
 			Expect(topicData.Level0).To(Equal("test-topic"))
 			Expect(topicData.DataContract).To(Equal("_historian"))
@@ -225,10 +225,10 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).To(BeNil())
 			Expect(outBytes2).NotTo(BeNil())
 
-			// Let's only focus on the 2nd lin (0a64 - updated due to EventTag removal)
+			// Let's only focus on the 2nd lin (0a70 - updated due to Name field addition)
 			dataLine := strings.Split(string(outBytes2), "\n")[1]
-			// Expect it to begin with 0a64 (updated due to EventTag field removal)
-			Expect(dataLine[:4]).To(Equal("0a64"))
+			// Expect it to begin with 0a70 (updated due to Name field addition)
+			Expect(dataLine[:4]).To(Equal("0a70"))
 
 			// Hex decode it
 			hexDecoded, err := hex.DecodeString(dataLine)
@@ -245,7 +245,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(decoded2.UnsMap.Entries).To(HaveLen(1))
 
 			// Verify the topic info
-			topicInfo2 := decoded2.UnsMap.Entries["4b307e4839c8ff19"]
+			topicInfo2 := decoded2.UnsMap.Entries["1637bdbe36d5a9bb"]
 			Expect(topicInfo2).NotTo(BeNil())
 			Expect(topicInfo2.Level0).To(Equal("test-topic"))
 			Expect(topicInfo2.DataContract).To(Equal("_historian"))

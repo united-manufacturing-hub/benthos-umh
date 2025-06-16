@@ -71,7 +71,6 @@ import (
 	"math"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
-	topicbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin/topic_browser_plugin.protobuf"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
@@ -117,7 +116,7 @@ var (
 // Example invalid: ["array", "data"] or "string" or 123 or non-JSON
 //
 // Any format that is not a valid JSON object will return an error
-func messageToEvent(message *service.Message) (*topicbrowserpluginprotobuf.EventTableEntry, error) {
+func messageToEvent(message *service.Message) (*EventTableEntry, error) {
 	// 1. Try to get structured data (valid JSON required for both time-series and relational)
 	structured, err := message.AsStructured()
 	if err != nil {
@@ -148,17 +147,17 @@ func messageToEvent(message *service.Message) (*topicbrowserpluginprotobuf.Event
 }
 
 // determineScalarType determines the ScalarType enum based on the Go type and type string
-func determineScalarType(value interface{}, valueType string) topicbrowserpluginprotobuf.ScalarType {
+func determineScalarType(value interface{}, valueType string) ScalarType {
 	switch value.(type) {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-		return topicbrowserpluginprotobuf.ScalarType_NUMERIC
+		return ScalarType_NUMERIC
 	case bool:
-		return topicbrowserpluginprotobuf.ScalarType_BOOLEAN
+		return ScalarType_BOOLEAN
 	case string:
-		return topicbrowserpluginprotobuf.ScalarType_STRING
+		return ScalarType_STRING
 	default:
 		// For other types (JSON objects, arrays, etc.), treat as string
-		return topicbrowserpluginprotobuf.ScalarType_STRING
+		return ScalarType_STRING
 	}
 }
 
@@ -167,10 +166,10 @@ func determineScalarType(value interface{}, valueType string) topicbrowserplugin
 // 1. "timestamp_ms" - timestamp in milliseconds (numeric)
 // 2. "value" - the scalar value (any type)
 // Any other format is considered relational data
-func processTimeSeriesData(structured map[string]interface{}) (*topicbrowserpluginprotobuf.EventTableEntry, error) {
+func processTimeSeriesData(structured map[string]interface{}) (*EventTableEntry, error) {
 	var valueContent anypb.Any
 	var timestampMs int64
-	var scalarType topicbrowserpluginprotobuf.ScalarType
+	var scalarType ScalarType
 	var err error
 
 	// Validate that we have exactly the required keys for UMH-Core time-series format
@@ -220,22 +219,22 @@ func processTimeSeriesData(structured map[string]interface{}) (*topicbrowserplug
 	scalarType = determineScalarType(value, valueType)
 
 	// Create the TimeSeriesPayload
-	timeSeriesPayload := &topicbrowserpluginprotobuf.TimeSeriesPayload{
+	timeSeriesPayload := &TimeSeriesPayload{
 		ScalarType:  scalarType,
 		Value:       &valueContent,
 		TimestampMs: timestampMs,
 	}
 
 	// Return EventTableEntry with the TimeSeriesPayload using the oneof pattern
-	return &topicbrowserpluginprotobuf.EventTableEntry{
-		Payload: &topicbrowserpluginprotobuf.EventTableEntry_Ts{
+	return &EventTableEntry{
+		Payload: &EventTableEntry_Ts{
 			Ts: timeSeriesPayload,
 		},
 	}, nil
 }
 
 // processRelationalStructured processes structured data directly as relational without re-serialization
-func processRelationalStructured(structured map[string]interface{}) (*topicbrowserpluginprotobuf.EventTableEntry, error) {
+func processRelationalStructured(structured map[string]interface{}) (*EventTableEntry, error) {
 	// Convert the structured data to JSON bytes for storage
 	valueBytes, err := json.Marshal(structured)
 	if err != nil {
@@ -243,13 +242,13 @@ func processRelationalStructured(structured map[string]interface{}) (*topicbrows
 	}
 
 	// Create the RelationalPayload
-	relationalPayload := &topicbrowserpluginprotobuf.RelationalPayload{
+	relationalPayload := &RelationalPayload{
 		Json: valueBytes,
 	}
 
 	// Return EventTableEntry with the RelationalPayload using the oneof pattern
-	return &topicbrowserpluginprotobuf.EventTableEntry{
-		Payload: &topicbrowserpluginprotobuf.EventTableEntry_Rel{
+	return &EventTableEntry{
+		Payload: &EventTableEntry_Rel{
 			Rel: relationalPayload,
 		},
 	}, nil
