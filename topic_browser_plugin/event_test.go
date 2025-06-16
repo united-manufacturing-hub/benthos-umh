@@ -15,41 +15,12 @@
 package topic_browser_plugin
 
 import (
-	"errors"
 	"math"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
-
-// mockMessage implements service.Message for testing
-type mockMessage struct {
-	structured interface{}
-	bytes      []byte
-}
-
-func (m *mockMessage) AsStructured() (interface{}, error) {
-	if m.structured != nil {
-		return m.structured, nil
-	}
-	return nil, errors.New("not structured")
-}
-
-func (m *mockMessage) AsBytes() ([]byte, error) {
-	if m.bytes != nil {
-		return m.bytes, nil
-	}
-	return nil, errors.New("not bytes")
-}
-
-// Implement remaining service.Message interface methods
-func (m *mockMessage) GetMeta(key string) (string, bool)        { return "", false }
-func (m *mockMessage) SetMeta(key, value string)                {}
-func (m *mockMessage) DeleteMeta(key string)                    {}
-func (m *mockMessage) MetaIter(f func(k, v string) error) error { return nil }
-func (m *mockMessage) Copy() service.Message                    { panic("not implemented") }
-func (m *mockMessage) DeepCopy() service.Message                { panic("not implemented") }
 
 var _ = Describe("Event Processing", func() {
 	Describe("messageToEvent", func() {
