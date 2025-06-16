@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tag_browser_plugin
+package topic_browser_plugin
 
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
+	topicbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin/topic_browser_plugin.protobuf"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -89,7 +89,7 @@ var _ = Describe("Uns", func() {
 		Describe("Table-driven tests for optional fields", func() {
 			type testCase struct {
 				topic           string
-				expectedInfo    *tagbrowserpluginprotobuf.TopicInfo
+				expectedInfo    *topicbrowserpluginprotobuf.TopicInfo
 				shouldHaveError bool
 			}
 
@@ -146,7 +146,7 @@ var _ = Describe("Uns", func() {
 				},
 				Entry("only enterprise and schema", testCase{
 					topic: "umh.v1.enterprise._schema",
-					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
+					expectedInfo: &topicbrowserpluginprotobuf.TopicInfo{
 						Level0:       "enterprise",
 						DataContract: "_schema",
 					},
@@ -154,7 +154,7 @@ var _ = Describe("Uns", func() {
 				}),
 				Entry("enterprise, site, and schema", testCase{
 					topic: "umh.v1.enterprise.site._schema",
-					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
+					expectedInfo: &topicbrowserpluginprotobuf.TopicInfo{
 						Level0:       "enterprise",
 						Level1:       wrapperspb.String("site"),
 						DataContract: "_schema",
@@ -163,7 +163,7 @@ var _ = Describe("Uns", func() {
 				}),
 				Entry("enterprise, site, area, and schema", testCase{
 					topic: "umh.v1.enterprise.site.area._schema",
-					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
+					expectedInfo: &topicbrowserpluginprotobuf.TopicInfo{
 						Level0:       "enterprise",
 						Level1:       wrapperspb.String("site"),
 						Level2:       wrapperspb.String("area"),
@@ -173,7 +173,7 @@ var _ = Describe("Uns", func() {
 				}),
 				Entry("enterprise, site, area, line, and schema", testCase{
 					topic: "umh.v1.enterprise.site.area.line._schema",
-					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
+					expectedInfo: &topicbrowserpluginprotobuf.TopicInfo{
 						Level0:       "enterprise",
 						Level1:       wrapperspb.String("site"),
 						Level2:       wrapperspb.String("area"),
@@ -184,7 +184,7 @@ var _ = Describe("Uns", func() {
 				}),
 				Entry("enterprise, site, area, line, workcell, and schema", testCase{
 					topic: "umh.v1.enterprise.site.area.line.workcell._schema",
-					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
+					expectedInfo: &topicbrowserpluginprotobuf.TopicInfo{
 						Level0:       "enterprise",
 						Level1:       wrapperspb.String("site"),
 						Level2:       wrapperspb.String("area"),
@@ -196,7 +196,7 @@ var _ = Describe("Uns", func() {
 				}),
 				Entry("enterprise, site, area, line, workcell, originid, and schema", testCase{
 					topic: "umh.v1.enterprise.site.area.line.workcell.originid._schema",
-					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
+					expectedInfo: &topicbrowserpluginprotobuf.TopicInfo{
 						Level0:       "enterprise",
 						Level1:       wrapperspb.String("site"),
 						Level2:       wrapperspb.String("area"),
@@ -209,7 +209,7 @@ var _ = Describe("Uns", func() {
 				}),
 				Entry("enterprise, site, area, line, workcell, originid, schema, and event group", testCase{
 					topic: "umh.v1.enterprise.site.area.line.workcell.originid._schema.event.group",
-					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
+					expectedInfo: &topicbrowserpluginprotobuf.TopicInfo{
 						Level0:       "enterprise",
 						Level1:       wrapperspb.String("site"),
 						Level2:       wrapperspb.String("area"),
@@ -223,7 +223,7 @@ var _ = Describe("Uns", func() {
 				}),
 				Entry("enterprise, site, area, line, workcell, originid, schema, and complex event group", testCase{
 					topic: "umh.v1.enterprise.site.area.line.workcell.originid._schema.event.group.subgroup",
-					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
+					expectedInfo: &topicbrowserpluginprotobuf.TopicInfo{
 						Level0:       "enterprise",
 						Level1:       wrapperspb.String("site"),
 						Level2:       wrapperspb.String("area"),

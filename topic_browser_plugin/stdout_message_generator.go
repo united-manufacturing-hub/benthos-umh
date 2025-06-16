@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tag_browser_plugin
+package topic_browser_plugin
 
 /*
 	The functions in this file are used to create an stdout-ready message from our protobuf bytes.

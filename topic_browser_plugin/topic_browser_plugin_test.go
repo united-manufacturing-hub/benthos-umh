@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tag_browser_plugin
+package topic_browser_plugin
 
 import (
 	"context"
@@ -25,11 +25,11 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-var _ = Describe("TagBrowserProcessor", func() {
-	var processor *TagBrowserProcessor
+var _ = Describe("TopicBrowserProcessor", func() {
+	var processor *TopicBrowserProcessor
 
 	BeforeEach(func() {
-		processor = NewTagBrowserProcessor(nil, nil, 0)
+		processor = NewTopicBrowserProcessor(nil, nil, 0)
 	})
 
 	Describe("ProcessBatch", func() {

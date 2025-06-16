@@ -61,7 +61,7 @@ func (p *MessageProcessor) ProcessRecord(record *kgo.Record) *service.Message {
 	// Add kafka meta fields
 	msg.MetaSetMut("kafka_msg_key", record.Key)
 	msg.MetaSetMut("kafka_topic", record.Topic)
-	msg.MetaSetMut("umh_topic", record.Topic) // For internal reasons, record.Topic is duplicated from the kafka_topic field. The tag_browser plugin uses this field.
+	msg.MetaSetMut("umh_topic", record.Topic) // For internal reasons, record.Topic is duplicated from the kafka_topic field. The topic_browser plugin uses this field.
 
 	return msg
 }

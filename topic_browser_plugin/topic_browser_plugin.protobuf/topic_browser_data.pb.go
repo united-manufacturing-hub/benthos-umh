@@ -49,9 +49,9 @@
 // versions:
 // 	protoc-gen-go v1.36.6
 // 	protoc        v3.21.12
-// source: tag_browser_data.proto
+// source: topic_browser_data.proto
 
-package tag_browser_plugin_protobuf
+package topic_browser_plugin_protobuf
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -74,13 +74,13 @@ const (
 // Each event emitted by the tag-processor falls into **exactly one** payload
 // family.
 //
-// ▸ TIMESERIES … the classic “one tag, one value, one timestamp” sensor point
+// ▸ TIMESERIES … the classic "one tag, one value, one timestamp" sensor point
 // ▸ RELATIONAL  … a complete, self-contained JSON document (batch header,
 //
 //	alarm object, recipe, …) that already belongs together
 //
 // Anything else is rejected at ingest-time; mixing formats on a single topic
-// would break the “one-topic-one-shape” contract.
+// would break the "one-topic-one-shape" contract.
 //
 // See full rationale at: https://docs.umh.app/usage/unified-namespace/payload-formats
 type PayloadFormat int32
@@ -116,11 +116,11 @@ func (x PayloadFormat) String() string {
 }
 
 func (PayloadFormat) Descriptor() protoreflect.EnumDescriptor {
-	return file_tag_browser_data_proto_enumTypes[0].Descriptor()
+	return file_topic_browser_data_proto_enumTypes[0].Descriptor()
 }
 
 func (PayloadFormat) Type() protoreflect.EnumType {
-	return &file_tag_browser_data_proto_enumTypes[0]
+	return &file_topic_browser_data_proto_enumTypes[0]
 }
 
 func (x PayloadFormat) Number() protoreflect.EnumNumber {
@@ -129,11 +129,11 @@ func (x PayloadFormat) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use PayloadFormat.Descriptor instead.
 func (PayloadFormat) EnumDescriptor() ([]byte, []int) {
-	return file_tag_browser_data_proto_rawDescGZIP(), []int{0}
+	return file_topic_browser_data_proto_rawDescGZIP(), []int{0}
 }
 
 // *
-// For **TIMESERIES** payloads we also capture the scalar’s *primitive* type.
+// For **TIMESERIES** payloads we also capture the scalar's *primitive* type.
 // The Management Console uses this hint to pick a sensible default renderer:
 //
 //	NUMERIC  → plot on a line/area chart
@@ -178,11 +178,11 @@ func (x ScalarType) String() string {
 }
 
 func (ScalarType) Descriptor() protoreflect.EnumDescriptor {
-	return file_tag_browser_data_proto_enumTypes[1].Descriptor()
+	return file_topic_browser_data_proto_enumTypes[1].Descriptor()
 }
 
 func (ScalarType) Type() protoreflect.EnumType {
-	return &file_tag_browser_data_proto_enumTypes[1]
+	return &file_topic_browser_data_proto_enumTypes[1]
 }
 
 func (x ScalarType) Number() protoreflect.EnumNumber {
@@ -191,7 +191,7 @@ func (x ScalarType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ScalarType.Descriptor instead.
 func (ScalarType) EnumDescriptor() ([]byte, []int) {
-	return file_tag_browser_data_proto_rawDescGZIP(), []int{1}
+	return file_topic_browser_data_proto_rawDescGZIP(), []int{1}
 }
 
 // *
@@ -215,7 +215,7 @@ type TopicInfo struct {
 	// ───────────────────────────────────────────────────
 	//   - Every time the tag_processor sees a Kafka header on this topic it stores
 	//     the *latest* value here, keyed by header name.
-	//   - The map therefore holds “last known” values for headers such as
+	//   - The map therefore holds "last known" values for headers such as
 	//     `unit`, `serial_number`, `plc_address`, …—anything a bridge, PLC or
 	//     stream-processor chose to add.
 	//   - The front-end can search or facet by these keys without scanning live
@@ -230,7 +230,7 @@ type TopicInfo struct {
 
 func (x *TopicInfo) Reset() {
 	*x = TopicInfo{}
-	mi := &file_tag_browser_data_proto_msgTypes[0]
+	mi := &file_topic_browser_data_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -242,7 +242,7 @@ func (x *TopicInfo) String() string {
 func (*TopicInfo) ProtoMessage() {}
 
 func (x *TopicInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_tag_browser_data_proto_msgTypes[0]
+	mi := &file_topic_browser_data_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -255,7 +255,7 @@ func (x *TopicInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TopicInfo.ProtoReflect.Descriptor instead.
 func (*TopicInfo) Descriptor() ([]byte, []int) {
-	return file_tag_browser_data_proto_rawDescGZIP(), []int{0}
+	return file_topic_browser_data_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *TopicInfo) GetLevel0() string {
@@ -334,7 +334,7 @@ type TopicMap struct {
 
 func (x *TopicMap) Reset() {
 	*x = TopicMap{}
-	mi := &file_tag_browser_data_proto_msgTypes[1]
+	mi := &file_topic_browser_data_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -346,7 +346,7 @@ func (x *TopicMap) String() string {
 func (*TopicMap) ProtoMessage() {}
 
 func (x *TopicMap) ProtoReflect() protoreflect.Message {
-	mi := &file_tag_browser_data_proto_msgTypes[1]
+	mi := &file_topic_browser_data_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -359,7 +359,7 @@ func (x *TopicMap) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TopicMap.ProtoReflect.Descriptor instead.
 func (*TopicMap) Descriptor() ([]byte, []int) {
-	return file_tag_browser_data_proto_rawDescGZIP(), []int{1}
+	return file_topic_browser_data_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *TopicMap) GetEntries() map[string]*TopicInfo {
@@ -380,7 +380,7 @@ type EventKafka struct {
 
 func (x *EventKafka) Reset() {
 	*x = EventKafka{}
-	mi := &file_tag_browser_data_proto_msgTypes[2]
+	mi := &file_topic_browser_data_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -392,7 +392,7 @@ func (x *EventKafka) String() string {
 func (*EventKafka) ProtoMessage() {}
 
 func (x *EventKafka) ProtoReflect() protoreflect.Message {
-	mi := &file_tag_browser_data_proto_msgTypes[2]
+	mi := &file_topic_browser_data_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -405,7 +405,7 @@ func (x *EventKafka) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EventKafka.ProtoReflect.Descriptor instead.
 func (*EventKafka) Descriptor() ([]byte, []int) {
-	return file_tag_browser_data_proto_rawDescGZIP(), []int{2}
+	return file_topic_browser_data_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *EventKafka) GetHeaders() map[string]string {
@@ -423,7 +423,7 @@ func (x *EventKafka) GetPayload() []byte {
 }
 
 // *
-// TimeSeriesPayload  ─ the canonical UMH “one-tag / one-value” shape
+// TimeSeriesPayload  ─ the canonical UMH "one-tag / one-value" shape
 // ---------------------------------------------------------------
 //   - Holds exactly one scalar *and* the moment it was observed at the source.
 //   - `scalar_type` mirrors the ScalarType enum so the UI can decide quickly
@@ -448,7 +448,7 @@ type TimeSeriesPayload struct {
 
 func (x *TimeSeriesPayload) Reset() {
 	*x = TimeSeriesPayload{}
-	mi := &file_tag_browser_data_proto_msgTypes[3]
+	mi := &file_topic_browser_data_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -460,7 +460,7 @@ func (x *TimeSeriesPayload) String() string {
 func (*TimeSeriesPayload) ProtoMessage() {}
 
 func (x *TimeSeriesPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_tag_browser_data_proto_msgTypes[3]
+	mi := &file_topic_browser_data_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -473,7 +473,7 @@ func (x *TimeSeriesPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TimeSeriesPayload.ProtoReflect.Descriptor instead.
 func (*TimeSeriesPayload) Descriptor() ([]byte, []int) {
-	return file_tag_browser_data_proto_rawDescGZIP(), []int{3}
+	return file_topic_browser_data_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *TimeSeriesPayload) GetScalarType() ScalarType {
@@ -514,7 +514,7 @@ type RelationalPayload struct {
 
 func (x *RelationalPayload) Reset() {
 	*x = RelationalPayload{}
-	mi := &file_tag_browser_data_proto_msgTypes[4]
+	mi := &file_topic_browser_data_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -526,7 +526,7 @@ func (x *RelationalPayload) String() string {
 func (*RelationalPayload) ProtoMessage() {}
 
 func (x *RelationalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_tag_browser_data_proto_msgTypes[4]
+	mi := &file_topic_browser_data_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -539,7 +539,7 @@ func (x *RelationalPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RelationalPayload.ProtoReflect.Descriptor instead.
 func (*RelationalPayload) Descriptor() ([]byte, []int) {
-	return file_tag_browser_data_proto_rawDescGZIP(), []int{4}
+	return file_topic_browser_data_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *RelationalPayload) GetJson() []byte {
@@ -584,7 +584,7 @@ func (x *RelationalPayload) GetJson() []byte {
 //
 //	Helpful when chains of bridges reshape or forward the same topic multiple times to get the trace of the record.
 //
-// produced_at_ms   – Kafka’s own timestamp (epoch-ms) when the record was
+// produced_at_ms   – Kafka's own timestamp (epoch-ms) when the record was
 //
 //	written to the UNS.  Use this to spot buffering or
 //	network latency.  Do *not* confuse with
@@ -607,7 +607,7 @@ type EventTableEntry struct {
 
 func (x *EventTableEntry) Reset() {
 	*x = EventTableEntry{}
-	mi := &file_tag_browser_data_proto_msgTypes[5]
+	mi := &file_topic_browser_data_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -619,7 +619,7 @@ func (x *EventTableEntry) String() string {
 func (*EventTableEntry) ProtoMessage() {}
 
 func (x *EventTableEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_tag_browser_data_proto_msgTypes[5]
+	mi := &file_topic_browser_data_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -632,7 +632,7 @@ func (x *EventTableEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EventTableEntry.ProtoReflect.Descriptor instead.
 func (*EventTableEntry) Descriptor() ([]byte, []int) {
-	return file_tag_browser_data_proto_rawDescGZIP(), []int{5}
+	return file_topic_browser_data_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *EventTableEntry) GetUnsTreeId() string {
@@ -714,7 +714,7 @@ type EventTable struct {
 
 func (x *EventTable) Reset() {
 	*x = EventTable{}
-	mi := &file_tag_browser_data_proto_msgTypes[6]
+	mi := &file_topic_browser_data_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -726,7 +726,7 @@ func (x *EventTable) String() string {
 func (*EventTable) ProtoMessage() {}
 
 func (x *EventTable) ProtoReflect() protoreflect.Message {
-	mi := &file_tag_browser_data_proto_msgTypes[6]
+	mi := &file_topic_browser_data_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -739,7 +739,7 @@ func (x *EventTable) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EventTable.ProtoReflect.Descriptor instead.
 func (*EventTable) Descriptor() ([]byte, []int) {
-	return file_tag_browser_data_proto_rawDescGZIP(), []int{6}
+	return file_topic_browser_data_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *EventTable) GetEntries() []*EventTableEntry {
@@ -763,7 +763,7 @@ type UnsBundle struct {
 
 func (x *UnsBundle) Reset() {
 	*x = UnsBundle{}
-	mi := &file_tag_browser_data_proto_msgTypes[7]
+	mi := &file_topic_browser_data_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -775,7 +775,7 @@ func (x *UnsBundle) String() string {
 func (*UnsBundle) ProtoMessage() {}
 
 func (x *UnsBundle) ProtoReflect() protoreflect.Message {
-	mi := &file_tag_browser_data_proto_msgTypes[7]
+	mi := &file_topic_browser_data_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -788,7 +788,7 @@ func (x *UnsBundle) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnsBundle.ProtoReflect.Descriptor instead.
 func (*UnsBundle) Descriptor() ([]byte, []int) {
-	return file_tag_browser_data_proto_rawDescGZIP(), []int{7}
+	return file_topic_browser_data_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *UnsBundle) GetUnsMap() *TopicMap {
@@ -805,11 +805,11 @@ func (x *UnsBundle) GetEvents() *EventTable {
 	return nil
 }
 
-var File_tag_browser_data_proto protoreflect.FileDescriptor
+var File_topic_browser_data_proto protoreflect.FileDescriptor
 
-const file_tag_browser_data_proto_rawDesc = "" +
+const file_topic_browser_data_proto_rawDesc = "" +
 	"\n" +
-	"\x16tag_browser_data.proto\x12\n" +
+	"\x18topic_browser_data.proto\x12\n" +
 	"umh.events\x1a\x1egoogle/protobuf/wrappers.proto\x1a\x19google/protobuf/any.proto\"\x95\x04\n" +
 	"\tTopicInfo\x12\x16\n" +
 	"\x06level0\x18\x01 \x01(\tR\x06level0\x124\n" +
@@ -871,23 +871,23 @@ const file_tag_browser_data_proto_rawDesc = "" +
 	"\aNUMERIC\x10\x01\x12\n" +
 	"\n" +
 	"\x06STRING\x10\x02\x12\v\n" +
-	"\aBOOLEAN\x10\x03B\x1dZ\x1btag_browser_plugin.protobufb\x06proto3"
+	"\aBOOLEAN\x10\x03B\x1fZ\x1dtopic_browser_plugin.protobufb\x06proto3"
 
 var (
-	file_tag_browser_data_proto_rawDescOnce sync.Once
-	file_tag_browser_data_proto_rawDescData []byte
+	file_topic_browser_data_proto_rawDescOnce sync.Once
+	file_topic_browser_data_proto_rawDescData []byte
 )
 
-func file_tag_browser_data_proto_rawDescGZIP() []byte {
-	file_tag_browser_data_proto_rawDescOnce.Do(func() {
-		file_tag_browser_data_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_tag_browser_data_proto_rawDesc), len(file_tag_browser_data_proto_rawDesc)))
+func file_topic_browser_data_proto_rawDescGZIP() []byte {
+	file_topic_browser_data_proto_rawDescOnce.Do(func() {
+		file_topic_browser_data_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_topic_browser_data_proto_rawDesc), len(file_topic_browser_data_proto_rawDesc)))
 	})
-	return file_tag_browser_data_proto_rawDescData
+	return file_topic_browser_data_proto_rawDescData
 }
 
-var file_tag_browser_data_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_tag_browser_data_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
-var file_tag_browser_data_proto_goTypes = []any{
+var file_topic_browser_data_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_topic_browser_data_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_topic_browser_data_proto_goTypes = []any{
 	(PayloadFormat)(0),             // 0: umh.events.PayloadFormat
 	(ScalarType)(0),                // 1: umh.events.ScalarType
 	(*TopicInfo)(nil),              // 2: umh.events.TopicInfo
@@ -904,7 +904,7 @@ var file_tag_browser_data_proto_goTypes = []any{
 	(*wrapperspb.StringValue)(nil), // 13: google.protobuf.StringValue
 	(*anypb.Any)(nil),              // 14: google.protobuf.Any
 }
-var file_tag_browser_data_proto_depIdxs = []int32{
+var file_topic_browser_data_proto_depIdxs = []int32{
 	13, // 0: umh.events.TopicInfo.level1:type_name -> google.protobuf.StringValue
 	13, // 1: umh.events.TopicInfo.level2:type_name -> google.protobuf.StringValue
 	13, // 2: umh.events.TopicInfo.level3:type_name -> google.protobuf.StringValue
@@ -930,12 +930,12 @@ var file_tag_browser_data_proto_depIdxs = []int32{
 	0,  // [0:18] is the sub-list for field type_name
 }
 
-func init() { file_tag_browser_data_proto_init() }
-func file_tag_browser_data_proto_init() {
-	if File_tag_browser_data_proto != nil {
+func init() { file_topic_browser_data_proto_init() }
+func file_topic_browser_data_proto_init() {
+	if File_topic_browser_data_proto != nil {
 		return
 	}
-	file_tag_browser_data_proto_msgTypes[5].OneofWrappers = []any{
+	file_topic_browser_data_proto_msgTypes[5].OneofWrappers = []any{
 		(*EventTableEntry_Ts)(nil),
 		(*EventTableEntry_Rel)(nil),
 	}
@@ -943,18 +943,18 @@ func file_tag_browser_data_proto_init() {
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_tag_browser_data_proto_rawDesc), len(file_tag_browser_data_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_topic_browser_data_proto_rawDesc), len(file_topic_browser_data_proto_rawDesc)),
 			NumEnums:      2,
 			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_tag_browser_data_proto_goTypes,
-		DependencyIndexes: file_tag_browser_data_proto_depIdxs,
-		EnumInfos:         file_tag_browser_data_proto_enumTypes,
-		MessageInfos:      file_tag_browser_data_proto_msgTypes,
+		GoTypes:           file_topic_browser_data_proto_goTypes,
+		DependencyIndexes: file_topic_browser_data_proto_depIdxs,
+		EnumInfos:         file_topic_browser_data_proto_enumTypes,
+		MessageInfos:      file_topic_browser_data_proto_msgTypes,
 	}.Build()
-	File_tag_browser_data_proto = out.File
-	file_tag_browser_data_proto_goTypes = nil
-	file_tag_browser_data_proto_depIdxs = nil
+	File_topic_browser_data_proto = out.File
+	file_topic_browser_data_proto_goTypes = nil
+	file_topic_browser_data_proto_depIdxs = nil
 }
