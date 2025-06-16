@@ -548,35 +548,6 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 		return nil, fmt.Errorf("failed to copy metadata: %v", err)
 	}
 
-	// Build the filtered metadata object for the payload
-	filteredMeta := make(map[string]string)
-	err = msg.MetaWalkMut(func(key string, value any) error {
-		// Skip internal keys for the payload meta
-		if internalKeys[key] {
-			return nil
-		}
-
-		// Convert value to string if possible
-		var strVal string
-		switch v := value.(type) {
-		case string:
-			strVal = v
-		case fmt.Stringer:
-			strVal = v.String()
-		default:
-			strVal = fmt.Sprintf("%v", v)
-		}
-
-		// Only include changed or new metadata in the payload
-		if origVal, exists := originalMeta[key]; !exists || strVal != origVal {
-			filteredMeta[key] = strVal
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to build filtered metadata: %v", err)
-	}
-
 	// Get the structured payload from the original message
 	structured, err := msg.AsStructured()
 	if err != nil {
@@ -588,34 +559,6 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	finalPayload := map[string]interface{}{
 		"value":        value,
 		"timestamp_ms": time.Now().UnixMilli(),
-	}
-
-	// If exposeAllMeta is set to true in message meta, expose ALL metadata in the payload.
-	exposeAll := false
-	if exposeVal, exists := msg.MetaGet("exposeAllMeta"); exists {
-		if strings.ToLower(exposeVal) == "true" {
-			exposeAll = true
-		}
-	}
-	realMeta := make(map[string]string)
-	if exposeAll {
-		allMeta := make(map[string]string)
-		if err := msg.MetaWalkMut(func(key string, value any) error {
-			if str, ok := value.(string); ok {
-				allMeta[key] = str
-			} else {
-				allMeta[key] = fmt.Sprintf("%v", value)
-			}
-			return nil
-		}); err != nil {
-			return nil, fmt.Errorf("failed to collect all metadata: %v", err)
-		}
-		realMeta = allMeta
-	} else if len(filteredMeta) > 0 {
-		realMeta = filteredMeta
-	}
-	for k, v := range realMeta {
-		newMsg.MetaSet(k, v)
 	}
 
 	newMsg.SetStructured(finalPayload)
