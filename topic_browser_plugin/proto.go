@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tag_browser_plugin
+package topic_browser_plugin
 
 import (
 	"bytes"
 	"io"
 
 	"github.com/pierrec/lz4"
-	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
+	topicbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin/topic_browser_plugin.protobuf"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -30,7 +30,7 @@ import (
 /*
 goos: darwin
 goarch: arm64
-pkg: github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin
+pkg: github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin
 cpu: Apple M3 Pro
 BenchmarkBundleToProtobufBytes/small_bundle-11           2294737               529.1 ns/op           144 B/op          3 allocs/op
 BenchmarkBundleToProtobufBytes/large_bundle-11              4328            278539 ns/op          130306 B/op       2001 allocs/op
@@ -54,7 +54,7 @@ BenchmarkCompressionRatio/small_bundle-11                               10000000
 BenchmarkCompressionRatio/large_bundle-11                               1000000000               0.0009600 ns/op             14269 compressed_size_bytes                 0.1521 compression_ratio            93788 original_size_bytes         79519 size_difference_bytes               0 B/op          0 allocs/op
 BenchmarkCompressionRatio/very_large_bundle-11                          1000000000               0.04109 ns/op      771176 compressed_size_bytes                 0.1542 compression_ratio          5000498 original_size_bytes       4229322 size_difference_bytes               0 B/op          0 allocs/op
 PASS
-ok      github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin      26.803s
+ok      github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin      26.803s
 
 
 Small Bundle (1 entry):
@@ -81,7 +81,7 @@ However, for inputs under 1024 bytes, we skip compression, as the overhead from 
 */
 
 // bundleToProtobuf converts an UNSBundle (containing both Topics and Events) to a protobuf representation
-func bundleToProtobuf(bundle *tagbrowserpluginprotobuf.UnsBundle) ([]byte, error) {
+func bundleToProtobuf(bundle *topicbrowserpluginprotobuf.UnsBundle) ([]byte, error) {
 	protoBytes, err := proto.Marshal(bundle)
 	if err != nil {
 		return []byte{}, err
@@ -90,8 +90,8 @@ func bundleToProtobuf(bundle *tagbrowserpluginprotobuf.UnsBundle) ([]byte, error
 }
 
 // protobufBytesToBundle converts protobuf-encoded data back to an UnsBundle
-func protobufBytesToBundle(protoBytes []byte) (*tagbrowserpluginprotobuf.UnsBundle, error) {
-	bundle := &tagbrowserpluginprotobuf.UnsBundle{}
+func protobufBytesToBundle(protoBytes []byte) (*topicbrowserpluginprotobuf.UnsBundle, error) {
+	bundle := &topicbrowserpluginprotobuf.UnsBundle{}
 	err := proto.Unmarshal(protoBytes, bundle)
 	if err != nil {
 		return nil, err
@@ -101,7 +101,7 @@ func protobufBytesToBundle(protoBytes []byte) (*tagbrowserpluginprotobuf.UnsBund
 
 // BundleToProtobufBytesWithCompression converts an UnsBundle to compressed protobuf bytes using LZ4 if the size exceeds 1024 bytes.
 // Returns the compressed byte array or the original protobuf bytes if compression is unnecessary, along with an error if any occurs.
-func BundleToProtobufBytesWithCompression(bundle *tagbrowserpluginprotobuf.UnsBundle) ([]byte, error) {
+func BundleToProtobufBytesWithCompression(bundle *topicbrowserpluginprotobuf.UnsBundle) ([]byte, error) {
 	protoBytes, err := bundleToProtobuf(bundle)
 	if err != nil {
 		return []byte{}, err
@@ -137,7 +137,7 @@ func BundleToProtobufBytesWithCompression(bundle *tagbrowserpluginprotobuf.UnsBu
 // ProtobufBytesToBundleWithCompression converts compressed protobuf data back to an UnsBundle, handling optional LZ4 compression.
 // If the data is not LZ4-compressed, it will fall back to normal protobuf decoding.
 // Returns the decoded UnsBundle or an error if decoding fails.
-func ProtobufBytesToBundleWithCompression(compressedBytes []byte) (*tagbrowserpluginprotobuf.UnsBundle, error) {
+func ProtobufBytesToBundleWithCompression(compressedBytes []byte) (*topicbrowserpluginprotobuf.UnsBundle, error) {
 	// If the compressedBytes don't start with the LZ4 magic number, return the original bytes
 	// https://github.com/lz4/lz4/blob/dev/doc/lz4_Frame_format.md#general-structure-of-lz4-frame-format
 	if !bytes.Equal(compressedBytes[:4], []byte{0x04, 0x22, 0x4d, 0x18}) {

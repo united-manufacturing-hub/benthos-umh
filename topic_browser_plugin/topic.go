@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tag_browser_plugin
+package topic_browser_plugin
 
 /*
 	This file contains functions to extract the topic from a message and to extract the different levels
@@ -23,7 +23,7 @@ import (
 	"strings"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
-	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
+	topicbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin/topic_browser_plugin.protobuf"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -37,20 +37,28 @@ func extractTopicFromMessage(message *service.Message) (string, error) {
 	return "", errors.New("unable to extract topic from message. No umh_topic meta-field found")
 }
 
-// topicToUNSInfo extracts the levels and datacontract from a UNS topic.
-// A UNS topic follows the format: umh.v1.{level0}.{level1}.{level2}.{level3}.{level4}.{level5}.{datacontract}.{virtualPath}
-// where:
-// - level0 is required
-// - level1-5 are optional
-// - datacontract is required and starts with '_'
-// - virtualPath is optional
-func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.TopicInfo, error) {
+// topicToUNSInfo converts a topic string to a UNS info struct.
+// It parses the topic to extract level information and virtual path details.
+//
+// Args:
+//   - topic: The topic string to parse (e.g., "umh.v1.acme.cologne.assembly.machine01._analytics.scada.counter")
+//
+// Returns:
+//   - *topicbrowserpluginprotobuf.TopicInfo: The parsed topic information
+//   - error: Any error that occurred during parsing
+//
+// The function expects topics to follow the UMH topic structure:
+// umh.v1.level0.level1.level2.level3.level4.level5
+// where each level can be a topic hierarchy component.
+//
+// Virtual paths (indicated by underscores) are also parsed and stored separately.
+func topicToUNSInfo(topic string) (*topicbrowserpluginprotobuf.TopicInfo, error) {
 	if err := validateTopicFormat(topic); err != nil {
 		return nil, err
 	}
 
 	parts := strings.Split(topic, ".")
-	unsInfo := &tagbrowserpluginprotobuf.TopicInfo{
+	unsInfo := &topicbrowserpluginprotobuf.TopicInfo{
 		Level0: parts[2], // Skip "umh" and "v1"
 	}
 
@@ -101,7 +109,7 @@ func findDatacontractIndex(parts []string) (int, error) {
 }
 
 // processLevels assigns level values to the TopicInfo struct
-func processLevels(levelParts []string, info *tagbrowserpluginprotobuf.TopicInfo) error {
+func processLevels(levelParts []string, info *topicbrowserpluginprotobuf.TopicInfo) error {
 	for i, part := range levelParts {
 		if len(part) == 0 {
 			return errors.New("topic contains empty parts")
@@ -125,10 +133,8 @@ func processLevels(levelParts []string, info *tagbrowserpluginprotobuf.TopicInfo
 	return nil
 }
 
-// processVirtualPath handles the virtual path part of the topic (everything after datacontract)
-// The last part after datacontract was previously the EventTag, which is now discarded
-// The remaining parts (if any) form the virtual path
-func processVirtualPath(virtualParts []string, info *tagbrowserpluginprotobuf.TopicInfo) error {
+// processVirtualPath processes the virtual path parts of the topic
+func processVirtualPath(virtualParts []string, info *topicbrowserpluginprotobuf.TopicInfo) error {
 	if len(virtualParts) == 0 {
 		return nil
 	}

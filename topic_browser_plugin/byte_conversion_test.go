@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tag_browser_plugin
+package topic_browser_plugin
 
 import (
 	"fmt"
@@ -79,7 +79,7 @@ var _ = Describe("Byte Conversion", func() {
 			input := TestStruct{Name: "test", Value: 42}
 			bytes, typ, err := ToBytes(input)
 			Expect(err).To(BeNil())
-			Expect(typ).To(Equal("tag_browser_plugin.TestStruct"))
+			Expect(typ).To(Equal("topic_browser_plugin.TestStruct"))
 			Expect(bytes).To(ContainSubstring("test"))
 			Expect(bytes).To(ContainSubstring("42"))
 		})
@@ -137,7 +137,7 @@ var _ = Describe("Byte Conversion", func() {
 
 		It("handles complex types via JSON", func() {
 			jsonBytes := []byte(`{"Name":"test","Value":42}`)
-			result, err := FromBytes(jsonBytes, "tag_browser_plugin.TestStruct")
+			result, err := FromBytes(jsonBytes, "topic_browser_plugin.TestStruct")
 			Expect(err).To(BeNil())
 			Expect(result).To(HaveKeyWithValue("Name", "test"))
 			Expect(result).To(HaveKeyWithValue("Value", float64(42)))
@@ -193,9 +193,9 @@ var _ = Describe("Byte Conversion", func() {
 
 		It("handles unicode strings", func() {
 			testCases := []string{
-				"Hello, 世界",         // Basic Unicode
-				"👋🌍",                  // Emoji
-				"Hello, 世界 👋🌍",      // Mixed ASCII, Unicode, and Emoji
+				"Hello, 世界",       // Basic Unicode
+				"👋🌍",              // Emoji
+				"Hello, 世界 👋🌍",    // Mixed ASCII, Unicode, and Emoji
 				"Hello, 世界 👋🌍 你好", // Complex mixed string
 			}
 
@@ -302,7 +302,7 @@ var _ = Describe("Byte Conversion", func() {
 
 			_, typ, err := ToBytes(circular)
 			Expect(err).To(Not(BeNil()))
-			Expect(err.Error()).To(Equal("json: unsupported value: encountered a cycle via tag_browser_plugin.Circular"))
+			Expect(err.Error()).To(Equal("json: unsupported value: encountered a cycle via topic_browser_plugin.Circular"))
 
 			// Test with a very large JSON structure
 			largeMap := make(map[string]int)

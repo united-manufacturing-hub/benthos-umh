@@ -12,19 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tag_browser_plugin
+package topic_browser_plugin
 
 import (
 	"github.com/redpanda-data/benthos/v4/public/service"
-	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
+	topicbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin/topic_browser_plugin.protobuf"
 )
 
-// messageToRawKafkaMsg extracts all headers and the raw payload
-func messageToRawKafkaMsg(message *service.Message) (*tagbrowserpluginprotobuf.EventKafka, error) {
-	// We need to extract:
-	// 1. All headers
-	// 2. The raw payload
-
+// messageToRawKafkaMsg converts a Benthos message to a raw Kafka message structure.
+// This function extracts headers and payload from the message for debugging and auditing purposes.
+//
+// Args:
+//   - message: The Benthos message to convert
+//
+// Returns:
+//   - *topicbrowserpluginprotobuf.EventKafka: The raw Kafka message structure
+//   - error: Any error that occurred during conversion
+//
+// The function preserves all message metadata as headers and captures the raw payload bytes.
+// This is useful for debugging, auditing, and maintaining traceability of the original message.
+func messageToRawKafkaMsg(message *service.Message) (*topicbrowserpluginprotobuf.EventKafka, error) {
+	// Extract all metadata as headers
 	headers := make(map[string]string)
 
 	// Iterate over all headers
@@ -36,12 +44,13 @@ func messageToRawKafkaMsg(message *service.Message) (*tagbrowserpluginprotobuf.E
 		return nil, err
 	}
 
+	// Get raw payload bytes
 	payload, err := message.AsBytes()
 	if err != nil {
 		return nil, err
 	}
 
-	return &tagbrowserpluginprotobuf.EventKafka{
+	return &topicbrowserpluginprotobuf.EventKafka{
 		Headers: headers,
 		Payload: payload,
 	}, nil

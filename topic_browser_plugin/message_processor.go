@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tag_browser_plugin
+package topic_browser_plugin
 
 /*
 	This file contains a function that will create the TopicInfo and EventTableEntry from a message.
@@ -21,17 +21,34 @@ package tag_browser_plugin
 
 import (
 	"encoding/hex"
+	"fmt"
 	"strings"
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
+	topicbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin/topic_browser_plugin.protobuf"
 )
 
-// MessageToUNSInfoAndEvent first extracts the topic from the message, then the event data and finally the UNS info.
-// It generates the UnsTreeId, which is required by the frontend.
-// Finally, it appends the "raw" Kafka message part, including the raw message and its headers
-func MessageToUNSInfoAndEvent(message *service.Message) (*tagbrowserpluginprotobuf.TopicInfo, *tagbrowserpluginprotobuf.EventTableEntry, *string, error) {
+// MessageToUNSInfoAndEvent converts a Benthos message to UNS info and event entry.
+// This function serves as the main entry point for processing incoming messages
+// and extracting both topic hierarchy information and event data.
+//
+// Args:
+//   - message: The Benthos message to process
+//
+// Returns:
+//   - *topicbrowserpluginprotobuf.TopicInfo: Topic hierarchy information
+//   - *topicbrowserpluginprotobuf.EventTableEntry: Event data
+//   - *string: UNS tree ID (hash of topic info)
+//   - error: Any error that occurred during processing
+//
+// The function performs the following operations:
+// 1. Extracts the topic from message metadata
+// 2. Converts the topic to UNS hierarchy information
+// 3. Converts the message payload to an event entry
+// 4. Generates a unique UNS tree ID for the topic
+// 5. Links the event to the topic via the tree ID
+func MessageToUNSInfoAndEvent(message *service.Message) (*topicbrowserpluginprotobuf.TopicInfo, *topicbrowserpluginprotobuf.EventTableEntry, *string, error) {
 	topic, err := extractTopicFromMessage(message)
 	if err != nil {
 		return nil, nil, nil, err
@@ -40,13 +57,13 @@ func MessageToUNSInfoAndEvent(message *service.Message) (*tagbrowserpluginprotob
 	// Extract UNS Data
 	unsInfo, err := topicToUNSInfo(topic)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, fmt.Errorf("failed to parse topic '%s': %w", topic, err)
 	}
 
 	// Extract Event Data - EventTag parameter removed since it's no longer needed
 	event, err := messageToEvent(message)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, fmt.Errorf("failed to convert message to event: %w", err)
 	}
 
 	// We now have everything to calculate the uns_tree_id
@@ -71,7 +88,7 @@ func MessageToUNSInfoAndEvent(message *service.Message) (*tagbrowserpluginprotob
 // HashUNSTableEntry generates an xxHash from the Levels and datacontract.
 // This is used by the frontend to identify which topic an entry belongs to.
 // We use it over full topic names to reduce the amount of data we need to send to the frontend.
-func HashUNSTableEntry(info *tagbrowserpluginprotobuf.TopicInfo) string {
+func HashUNSTableEntry(info *topicbrowserpluginprotobuf.TopicInfo) string {
 	hasher := xxhash.New()
 	_, _ = hasher.Write([]byte(info.Level0))
 	// GetValue returns either the contained data, or "" if no value is set

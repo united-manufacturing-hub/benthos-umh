@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package tag_browser_plugin implements a Benthos processor plugin for the UMH Tag Browser.
+// Package topic_browser_plugin implements a Benthos processor plugin for the UMH Topic Browser.
 // This plugin processes incoming messages to extract and organize topic hierarchy information,
 // metadata, and event data for efficient browsing and querying in the UMH system.
 //
@@ -31,8 +31,8 @@
 // Example configuration:
 //
 //	processors:
-//	  - tag_browser: {}
-package tag_browser_plugin
+//	  - topic_browser: {}
+package topic_browser_plugin
 
 import (
 	"context"
@@ -43,17 +43,17 @@ import (
 	lru "github.com/hashicorp/golang-lru"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
-	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
+	topicbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin/topic_browser_plugin.protobuf"
 )
 
-// TagBrowserProcessor implements the Benthos processor interface for the Tag Browser plugin.
+// TopicBrowserProcessor implements the Benthos processor interface for the Topic Browser plugin.
 // It processes messages to extract topic hierarchy, metadata, and event data while
 // maintaining an efficient cache of topic metadata to minimize network traffic.
 //
 // The processor uses an LRU cache to store topic metadata and only transmits changes
 // when the metadata has been modified. This significantly reduces the amount of data
 // sent to the UMH core system.
-type TagBrowserProcessor struct {
+type TopicBrowserProcessor struct {
 	// topicMetadataCache stores the most recently used topic metadata to prevent
 	// re-sending unchanged topic information. The cache is thread-safe and protected
 	// by topicMetadataCacheMutex.
@@ -68,7 +68,7 @@ type TagBrowserProcessor struct {
 	messagesFailed    *service.MetricCounter
 }
 
-func (t *TagBrowserProcessor) Process(ctx context.Context, message *service.Message) (service.MessageBatch, error) {
+func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Message) (service.MessageBatch, error) {
 	messageBatch, err := t.ProcessBatch(ctx, service.MessageBatch{message})
 	if err != nil {
 		return nil, err
@@ -79,7 +79,7 @@ func (t *TagBrowserProcessor) Process(ctx context.Context, message *service.Mess
 	return messageBatch[0], nil
 }
 
-// ProcessBatch processes a batch of messages into UNS bundles for the tag browser.
+// ProcessBatch processes a batch of messages into UNS bundles for the topic browser.
 // The function follows a multi-step process to efficiently handle message batching and topic deduplication:
 // 1. Initializes an empty UNS bundle to collect all processed data
 // 2. Processes each message in the batch to extract topic and event information
@@ -90,7 +90,7 @@ func (t *TagBrowserProcessor) Process(ctx context.Context, message *service.Mess
 // - Batching multiple messages into a single protobuf message
 // - Using an LRU cache to avoid re-sending unchanged topic metadata
 // - Only including topics in the output when their metadata has changed
-func (t *TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	if len(batch) == 0 {
 		return nil, nil
 	}
@@ -121,13 +121,13 @@ func (t *TagBrowserProcessor) ProcessBatch(_ context.Context, batch service.Mess
 // initializeUnsBundle creates a new empty UNS bundle structure.
 // The bundle is pre-allocated with initial capacity to avoid reallocations during processing.
 // This structure will hold both the topic metadata map and the event entries.
-func (t *TagBrowserProcessor) initializeUnsBundle() *tagbrowserpluginprotobuf.UnsBundle {
-	return &tagbrowserpluginprotobuf.UnsBundle{
-		UnsMap: &tagbrowserpluginprotobuf.TopicMap{
-			Entries: make(map[string]*tagbrowserpluginprotobuf.TopicInfo),
+func (t *TopicBrowserProcessor) initializeUnsBundle() *topicbrowserpluginprotobuf.UnsBundle {
+	return &topicbrowserpluginprotobuf.UnsBundle{
+		UnsMap: &topicbrowserpluginprotobuf.TopicMap{
+			Entries: make(map[string]*topicbrowserpluginprotobuf.TopicInfo),
 		},
-		Events: &tagbrowserpluginprotobuf.EventTable{
-			Entries: make([]*tagbrowserpluginprotobuf.EventTableEntry, 0, 1),
+		Events: &topicbrowserpluginprotobuf.EventTable{
+			Entries: make([]*topicbrowserpluginprotobuf.EventTableEntry, 0, 1),
 		},
 	}
 }
@@ -137,11 +137,11 @@ func (t *TagBrowserProcessor) initializeUnsBundle() *tagbrowserpluginprotobuf.Un
 // - Extracts topic information and event data
 // - Groups topic infos by UNS tree ID for efficient metadata merging
 // - Updates metrics for monitoring and debugging
-func (t *TagBrowserProcessor) processMessageBatch(
+func (t *TopicBrowserProcessor) processMessageBatch(
 	batch service.MessageBatch,
-	unsBundle *tagbrowserpluginprotobuf.UnsBundle,
-) (map[string][]*tagbrowserpluginprotobuf.TopicInfo, error) {
-	topicInfos := make(map[string][]*tagbrowserpluginprotobuf.TopicInfo)
+	unsBundle *topicbrowserpluginprotobuf.UnsBundle,
+) (map[string][]*topicbrowserpluginprotobuf.TopicInfo, error) {
+	topicInfos := make(map[string][]*topicbrowserpluginprotobuf.TopicInfo)
 
 	for _, message := range batch {
 		topicInfo, eventTableEntry, unsTreeId, err := MessageToUNSInfoAndEvent(message)
@@ -157,7 +157,7 @@ func (t *TagBrowserProcessor) processMessageBatch(
 
 		// Group topic infos by UNS tree ID
 		if _, ok := topicInfos[*unsTreeId]; !ok {
-			topicInfos[*unsTreeId] = make([]*tagbrowserpluginprotobuf.TopicInfo, 0, 1)
+			topicInfos[*unsTreeId] = make([]*topicbrowserpluginprotobuf.TopicInfo, 0, 1)
 		}
 		topicInfos[*unsTreeId] = append(topicInfos[*unsTreeId], topicInfo)
 		t.messagesProcessed.Incr(1)
@@ -172,9 +172,9 @@ func (t *TagBrowserProcessor) processMessageBatch(
 // - Merges headers from multiple messages for the same topic
 // - Only updates the bundle when topic metadata has changed
 // - Prevents unnecessary traffic by caching unchanged topics
-func (t *TagBrowserProcessor) updateTopicMetadata(
-	topicInfos map[string][]*tagbrowserpluginprotobuf.TopicInfo,
-	unsBundle *tagbrowserpluginprotobuf.UnsBundle,
+func (t *TopicBrowserProcessor) updateTopicMetadata(
+	topicInfos map[string][]*topicbrowserpluginprotobuf.TopicInfo,
+	unsBundle *topicbrowserpluginprotobuf.UnsBundle,
 ) {
 	t.topicMetadataCacheMutex.Lock()
 	defer t.topicMetadataCacheMutex.Unlock()
@@ -191,7 +191,7 @@ func (t *TagBrowserProcessor) updateTopicMetadata(
 // mergeTopicHeaders combines headers from multiple topic infos into a single map.
 // This is necessary because a single topic might appear in multiple messages
 // with different header values that need to be consolidated.
-func (t *TagBrowserProcessor) mergeTopicHeaders(topics []*tagbrowserpluginprotobuf.TopicInfo) map[string]string {
+func (t *TopicBrowserProcessor) mergeTopicHeaders(topics []*topicbrowserpluginprotobuf.TopicInfo) map[string]string {
 	mergedHeaders := make(map[string]string)
 	for _, topicInfo := range topics {
 		for key, value := range topicInfo.Metadata {
@@ -206,7 +206,7 @@ func (t *TagBrowserProcessor) mergeTopicHeaders(topics []*tagbrowserpluginprotob
 // - Checking if the topic exists in the cache
 // - Comparing current headers with cached headers
 // - Only returning true when the topic is new or has changed
-func (t *TagBrowserProcessor) shouldReportTopic(unsTreeId string, mergedHeaders map[string]string) bool {
+func (t *TopicBrowserProcessor) shouldReportTopic(unsTreeId string, mergedHeaders map[string]string) bool {
 	stored, ok := t.topicMetadataCache.Get(unsTreeId)
 	if !ok {
 		return true
@@ -221,11 +221,11 @@ func (t *TagBrowserProcessor) shouldReportTopic(unsTreeId string, mergedHeaders 
 // - The cache is updated with the latest metadata
 // - The bundle includes the updated topic information
 // - The topic's metadata is properly set in the output
-func (t *TagBrowserProcessor) updateTopicCacheAndBundle(
+func (t *TopicBrowserProcessor) updateTopicCacheAndBundle(
 	unsTreeId string,
 	mergedHeaders map[string]string,
-	topic *tagbrowserpluginprotobuf.TopicInfo,
-	unsBundle *tagbrowserpluginprotobuf.UnsBundle,
+	topic *topicbrowserpluginprotobuf.TopicInfo,
+	unsBundle *topicbrowserpluginprotobuf.UnsBundle,
 ) {
 	t.topicMetadataCache.Add(unsTreeId, mergedHeaders)
 	clone := maps.Clone(mergedHeaders)
@@ -237,7 +237,7 @@ func (t *TagBrowserProcessor) updateTopicCacheAndBundle(
 // This prevents creating empty messages when:
 // - No events were successfully processed
 // - No topic metadata has changed
-func (t *TagBrowserProcessor) hasDataToReturn(unsBundle *tagbrowserpluginprotobuf.UnsBundle) bool {
+func (t *TopicBrowserProcessor) hasDataToReturn(unsBundle *topicbrowserpluginprotobuf.UnsBundle) bool {
 	return len(unsBundle.Events.Entries) > 0 || len(unsBundle.UnsMap.Entries) > 0
 }
 
@@ -246,7 +246,7 @@ func (t *TagBrowserProcessor) hasDataToReturn(unsBundle *tagbrowserpluginprotobu
 // - Compresses the bundle to minimize traffic
 // - Creates a new message with the encoded data
 // - Returns the message in the format expected by the Benthos framework
-func (t *TagBrowserProcessor) createFinalMessage(unsBundle *tagbrowserpluginprotobuf.UnsBundle) ([]service.MessageBatch, error) {
+func (t *TopicBrowserProcessor) createFinalMessage(unsBundle *topicbrowserpluginprotobuf.UnsBundle) ([]service.MessageBatch, error) {
 	protoBytes, err := BundleToProtobufBytesWithCompression(unsBundle)
 	if err != nil {
 		return nil, err
@@ -258,7 +258,7 @@ func (t *TagBrowserProcessor) createFinalMessage(unsBundle *tagbrowserpluginprot
 	return []service.MessageBatch{{message}}, nil
 }
 
-func (t *TagBrowserProcessor) Close(_ context.Context) error {
+func (t *TopicBrowserProcessor) Close(_ context.Context) error {
 	// Wipe cache
 	t.topicMetadataCacheMutex.Lock()
 	t.topicMetadataCache.Purge()
@@ -266,12 +266,12 @@ func (t *TagBrowserProcessor) Close(_ context.Context) error {
 	return nil
 }
 
-func NewTagBrowserProcessor(logger *service.Logger, metrics *service.Metrics, lruSize int) *TagBrowserProcessor {
+func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, lruSize int) *TopicBrowserProcessor {
 	// The LRU cache is used to:
 	// - Deduplicate topics
 	// - Store the latest version of meta-information about that topic
 	l, _ := lru.New(lruSize) // Can only error if size is negative
-	return &TagBrowserProcessor{
+	return &TopicBrowserProcessor{
 		topicMetadataCache:      l,
 		logger:                  logger,
 		messagesProcessed:       metrics.NewCounter("messages_processed"),
@@ -283,7 +283,7 @@ func NewTagBrowserProcessor(logger *service.Logger, metrics *service.Metrics, lr
 func init() {
 	spec := service.NewConfigSpec().
 		Version("1.0.0").
-		Description(`The tag browser processor processes messages into UNS bundles for the tag browser.
+		Description(`The topic browser processor processes messages into UNS bundles for the topic browser.
 
 The processor will read the message headers and body to extract the UNS information and event table entries.
 
@@ -298,7 +298,7 @@ The processor requires that the following metadata fields are set:
 			Default(50_000).
 			Advanced())
 
-	err := service.RegisterBatchProcessor("tag_browser", spec, func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
+	err := service.RegisterBatchProcessor("topic_browser", spec, func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
 		lruSize, err := conf.FieldInt("lru_size")
 		if err != nil {
 			return nil, err
@@ -306,7 +306,7 @@ The processor requires that the following metadata fields are set:
 		if lruSize < 1 {
 			return nil, errors.New("lru_size must be greater than 0")
 		}
-		return NewTagBrowserProcessor(mgr.Logger(), mgr.Metrics(), lruSize), nil
+		return NewTopicBrowserProcessor(mgr.Logger(), mgr.Metrics(), lruSize), nil
 	})
 
 	if err != nil {

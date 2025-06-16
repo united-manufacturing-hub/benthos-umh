@@ -34,7 +34,7 @@ syntax = "proto3";
 
 package umh.events;
 
-option go_package = "tag_browser_plugin.protobuf";
+option go_package = "topic_browser_plugin.protobuf";
 
 import "google/protobuf/wrappers.proto";
 import "google/protobuf/any.proto";
@@ -65,7 +65,7 @@ message TopicInfo {
   // ───────────────────────────────────────────────────
   // • Every time the tag_processor sees a Kafka header on this topic it stores
   //   the *latest* value here, keyed by header name.
-  // • The map therefore holds “last known” values for headers such as
+  // • The map therefore holds "last known" values for headers such as
   //   `unit`, `serial_number`, `plc_address`, …—anything a bridge, PLC or
   //   stream-processor chose to add.
   // • The front-end can search or facet by these keys without scanning live
@@ -98,12 +98,12 @@ message EventKafka {
  * Each event emitted by the tag-processor falls into **exactly one** payload
  * family.
  *
- * ▸ TIMESERIES … the classic “one tag, one value, one timestamp” sensor point  
+ * ▸ TIMESERIES … the classic "one tag, one value, one timestamp" sensor point  
  * ▸ RELATIONAL  … a complete, self-contained JSON document (batch header,
  *                 alarm object, recipe, …) that already belongs together
  *
  * Anything else is rejected at ingest-time; mixing formats on a single topic
- * would break the “one-topic-one-shape” contract.
+ * would break the "one-topic-one-shape" contract.
  *
  * See full rationale at: https://docs.umh.app/usage/unified-namespace/payload-formats
  */
@@ -114,7 +114,7 @@ enum PayloadFormat {
 }
 
 /**
- * For **TIMESERIES** payloads we also capture the scalar’s *primitive* type.
+ * For **TIMESERIES** payloads we also capture the scalar's *primitive* type.
  * The Management Console uses this hint to pick a sensible default renderer:
  *
  *   NUMERIC  → plot on a line/area chart  
@@ -134,7 +134,7 @@ enum ScalarType {            // applies only to Time-series
 //──────────────────────────── PAYLOAD SHAPES ────────────────────────────────
 
 /**
- * TimeSeriesPayload  ─ the canonical UMH “one-tag / one-value” shape
+ * TimeSeriesPayload  ─ the canonical UMH "one-tag / one-value" shape
  * ---------------------------------------------------------------
  * • Holds exactly one scalar *and* the moment it was observed at the source.
  * • `scalar_type` mirrors the ScalarType enum so the UI can decide quickly
@@ -202,7 +202,7 @@ message RelationalPayload {
  * bridged_by       – Ordered list of Benthos instances the record traversed. 
  *                    Helpful when chains of bridges reshape or forward the same topic multiple times to get the trace of the record.
  *
- * produced_at_ms   – Kafka’s own timestamp (epoch-ms) when the record was
+ * produced_at_ms   – Kafka's own timestamp (epoch-ms) when the record was
  *                    written to the UNS.  Use this to spot buffering or
  *                    network latency.  Do *not* confuse with
  *                    TimeSeriesPayload.timestamp_ms, which is the **source**

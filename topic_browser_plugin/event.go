@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tag_browser_plugin
+package topic_browser_plugin
 
 /*
 	The functions in this file allow the program to extract the event data (e.g timestamp, payload key/value) from the benthos message.
@@ -54,7 +54,7 @@ import (
 	"math"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
-	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
+	topicbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin/topic_browser_plugin.protobuf"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
@@ -78,7 +78,7 @@ import (
 // Example invalid: ["array", "data"] or "string" or 123 or non-JSON
 //
 // Any format that is not a valid JSON object will return an error
-func messageToEvent(message *service.Message) (*tagbrowserpluginprotobuf.EventTableEntry, error) {
+func messageToEvent(message *service.Message) (*topicbrowserpluginprotobuf.EventTableEntry, error) {
 	// 1. Try to get structured data (valid JSON required for both time-series and relational)
 	structured, err := message.AsStructured()
 	if err != nil {
@@ -109,17 +109,17 @@ func messageToEvent(message *service.Message) (*tagbrowserpluginprotobuf.EventTa
 }
 
 // determineScalarType determines the ScalarType enum based on the Go type and type string
-func determineScalarType(value interface{}, valueType string) tagbrowserpluginprotobuf.ScalarType {
+func determineScalarType(value interface{}, valueType string) topicbrowserpluginprotobuf.ScalarType {
 	switch value.(type) {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-		return tagbrowserpluginprotobuf.ScalarType_NUMERIC
+		return topicbrowserpluginprotobuf.ScalarType_NUMERIC
 	case bool:
-		return tagbrowserpluginprotobuf.ScalarType_BOOLEAN
+		return topicbrowserpluginprotobuf.ScalarType_BOOLEAN
 	case string:
-		return tagbrowserpluginprotobuf.ScalarType_STRING
+		return topicbrowserpluginprotobuf.ScalarType_STRING
 	default:
 		// For other types (JSON objects, arrays, etc.), treat as string
-		return tagbrowserpluginprotobuf.ScalarType_STRING
+		return topicbrowserpluginprotobuf.ScalarType_STRING
 	}
 }
 
@@ -128,10 +128,10 @@ func determineScalarType(value interface{}, valueType string) tagbrowserpluginpr
 // 1. "timestamp_ms" - timestamp in milliseconds (numeric)
 // 2. "value" - the scalar value (any type)
 // Any other format is considered relational data
-func processTimeSeriesData(structured map[string]interface{}) (*tagbrowserpluginprotobuf.EventTableEntry, error) {
+func processTimeSeriesData(structured map[string]interface{}) (*topicbrowserpluginprotobuf.EventTableEntry, error) {
 	var valueContent anypb.Any
 	var timestampMs int64
-	var scalarType tagbrowserpluginprotobuf.ScalarType
+	var scalarType topicbrowserpluginprotobuf.ScalarType
 	var err error
 
 	// Validate that we have exactly the required keys for UMH-Core time-series format
@@ -163,22 +163,22 @@ func processTimeSeriesData(structured map[string]interface{}) (*tagbrowserplugin
 	scalarType = determineScalarType(value, valueType)
 
 	// Create the TimeSeriesPayload
-	timeSeriesPayload := &tagbrowserpluginprotobuf.TimeSeriesPayload{
+	timeSeriesPayload := &topicbrowserpluginprotobuf.TimeSeriesPayload{
 		ScalarType:  scalarType,
 		Value:       &valueContent,
 		TimestampMs: timestampMs,
 	}
 
 	// Return EventTableEntry with the TimeSeriesPayload using the oneof pattern
-	return &tagbrowserpluginprotobuf.EventTableEntry{
-		Payload: &tagbrowserpluginprotobuf.EventTableEntry_Ts{
+	return &topicbrowserpluginprotobuf.EventTableEntry{
+		Payload: &topicbrowserpluginprotobuf.EventTableEntry_Ts{
 			Ts: timeSeriesPayload,
 		},
 	}, nil
 }
 
 // processRelationalData extracts the message payload as bytes and returns them
-func processRelationalData(message *service.Message) (*tagbrowserpluginprotobuf.EventTableEntry, error) {
+func processRelationalData(message *service.Message) (*topicbrowserpluginprotobuf.EventTableEntry, error) {
 	// For relational data, we don't do any parsing and just extract the payload as bytes
 	valueBytes, err := message.AsBytes()
 	if err != nil {
@@ -187,13 +187,13 @@ func processRelationalData(message *service.Message) (*tagbrowserpluginprotobuf.
 	}
 
 	// Create the RelationalPayload
-	relationalPayload := &tagbrowserpluginprotobuf.RelationalPayload{
+	relationalPayload := &topicbrowserpluginprotobuf.RelationalPayload{
 		Json: valueBytes,
 	}
 
 	// Return EventTableEntry with the RelationalPayload using the oneof pattern
-	return &tagbrowserpluginprotobuf.EventTableEntry{
-		Payload: &tagbrowserpluginprotobuf.EventTableEntry_Rel{
+	return &topicbrowserpluginprotobuf.EventTableEntry{
+		Payload: &topicbrowserpluginprotobuf.EventTableEntry_Rel{
 			Rel: relationalPayload,
 		},
 	}, nil
