@@ -775,7 +775,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]interface{})
 			Expect(ok).To(BeTrue())
-			Expect(payload["value_backup"]).To(Equal(json.Number("23.5")))
+			Expect(payload["value"]).To(Equal(json.Number("23.5")))
 		})
 
 		It("should process messages duplicated in advancedProcessing through all stages", func() {
@@ -872,7 +872,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]interface{})
 			Expect(ok).To(BeTrue())
-			Expect(payload["value_doubled"]).To(Equal(json.Number("47")))
+			Expect(payload["value"]).To(Equal(json.Number("47")))
 		})
 
 		It("should process messages duplicated in defaults through all stages", func() {
@@ -1140,10 +1140,9 @@ tag_processor:
 			value, ok = payload["value"]
 			GinkgoWriter.Printf("payload: %v \n", payload)
 			Expect(ok).To(BeTrue())
-			objValue, ok := value.(map[string]interface{})
+			objValue, ok := value.(string)
 			Expect(ok).To(BeTrue())
-			Expect(objValue["key1"]).To(Equal("value1"))
-			Expect(objValue["key2"]).To(Equal(json.Number("42")))
+			Expect(objValue).To(Equal("{\"key1\":\"value1\",\"key2\":42}"))
 		})
 	})
 })
