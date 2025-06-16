@@ -115,7 +115,7 @@ tag_processor:
 			payload, ok := structured.(map[string]interface{})
 			Expect(ok).To(BeTrue())
 
-			value, ok := payload["temperature"]
+			value, ok := payload["value"]
 			Expect(ok).To(BeTrue())
 
 			// Convert json.Number to float64
@@ -214,7 +214,7 @@ tag_processor:
 			payload, ok := structured.(map[string]interface{})
 			Expect(ok).To(BeTrue())
 
-			value, ok := payload["actual"]
+			value, ok := payload["value"]
 			Expect(ok).To(BeTrue())
 
 			// Convert json.Number to float64
@@ -304,7 +304,7 @@ tag_processor:
 			payload, ok := structured.(map[string]interface{})
 			Expect(ok).To(BeTrue())
 
-			value, ok := payload["temperature"]
+			value, ok := payload["value"]
 			Expect(ok).To(BeTrue())
 
 			// Convert json.Number to float64
@@ -451,7 +451,7 @@ tag_processor:
 			payload, ok := structured.(map[string]interface{})
 			Expect(ok).To(BeTrue())
 
-			value, ok := payload["temperature"]
+			value, ok := payload["value"]
 			Expect(ok).To(BeTrue())
 
 			// Convert json.Number to float64
@@ -630,7 +630,7 @@ tag_processor:
 			payload, ok := structured.(map[string]interface{})
 			Expect(ok).To(BeTrue())
 
-			value, ok := payload["temperature"]
+			value, ok := payload["value"]
 			Expect(ok).To(BeTrue())
 
 			// Convert json.Number to float64
@@ -767,7 +767,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok := structured.(map[string]interface{})
 			Expect(ok).To(BeTrue())
-			Expect(payload["temperature"]).To(Equal(json.Number("23.5")))
+			Expect(payload["value"]).To(Equal(json.Number("23.5")))
 
 			// Check second message
 			msg = messages[1]
@@ -775,7 +775,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]interface{})
 			Expect(ok).To(BeTrue())
-			Expect(payload["temperature_backup"]).To(Equal(json.Number("23.5")))
+			Expect(payload["value_backup"]).To(Equal(json.Number("23.5")))
 		})
 
 		It("should process messages duplicated in advancedProcessing through all stages", func() {
@@ -858,7 +858,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok := structured.(map[string]interface{})
 			Expect(ok).To(BeTrue())
-			Expect(payload["temperature"]).To(Equal(json.Number("23.5")))
+			Expect(payload["value"]).To(Equal(json.Number("23.5")))
 
 			// Check analytics message
 			msg = messages[1]
@@ -872,7 +872,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]interface{})
 			Expect(ok).To(BeTrue())
-			Expect(payload["temperature_doubled"]).To(Equal(json.Number("47")))
+			Expect(payload["value_doubled"]).To(Equal(json.Number("47")))
 		})
 
 		It("should process messages duplicated in defaults through all stages", func() {
@@ -969,7 +969,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok := structured.(map[string]interface{})
 			Expect(ok).To(BeTrue())
-			Expect(payload["temperature"]).To(Equal(json.Number("23.5")))
+			Expect(payload["value"]).To(Equal(json.Number("23.5")))
 
 			// Check analytics message
 			msg = messages[1]
@@ -986,7 +986,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]interface{})
 			Expect(ok).To(BeTrue())
-			Expect(payload["temperature_raw"]).To(Equal(json.Number("47")))
+			Expect(payload["value"]).To(Equal(json.Number("47")))
 		})
 
 		It("should handle different data types correctly", func() {
