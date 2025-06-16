@@ -29,7 +29,7 @@ import (
 )
 
 // MessageToUNSInfoAndEvent first extracts the topic from the message, then the event data and finally the UNS info.
-// It also sets the eventTag if necessary and generates the UnsTreeId, which is required by the frontend.
+// It generates the UnsTreeId, which is required by the frontend.
 // Finally, it appends the "raw" Kafka message part, including the raw message and its headers
 func MessageToUNSInfoAndEvent(message *service.Message) (*tagbrowserpluginprotobuf.TopicInfo, *tagbrowserpluginprotobuf.EventTableEntry, *string, error) {
 	topic, err := extractTopicFromMessage(message)
@@ -43,8 +43,8 @@ func MessageToUNSInfoAndEvent(message *service.Message) (*tagbrowserpluginprotob
 		return nil, nil, nil, err
 	}
 
-	// Extract Event Data
-	event, err := messageToEvent(message, unsInfo.EventTag)
+	// Extract Event Data - EventTag parameter removed since it's no longer needed
+	event, err := messageToEvent(message)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -62,7 +62,7 @@ func MessageToUNSInfoAndEvent(message *service.Message) (*tagbrowserpluginprotob
 	// If we have a processed-by header, we will extract that and set it in the event
 	// The first entry in here will be the producer of the message
 	if val, ok := event.RawKafkaMsg.Headers["processed-by"]; ok {
-		event.ProcessedBy = strings.Split(val, ",")
+		event.BridgedBy = strings.Split(val, ",") // ProcessedBy renamed to BridgedBy
 	}
 
 	return unsInfo, event, &unsTreeId, nil
@@ -80,8 +80,7 @@ func HashUNSTableEntry(info *tagbrowserpluginprotobuf.TopicInfo) string {
 	_, _ = hasher.Write([]byte(info.Level3.GetValue()))
 	_, _ = hasher.Write([]byte(info.Level4.GetValue()))
 	_, _ = hasher.Write([]byte(info.Level5.GetValue()))
-	_, _ = hasher.Write([]byte(info.Datacontract))
+	_, _ = hasher.Write([]byte(info.DataContract))
 	_, _ = hasher.Write([]byte(info.VirtualPath.GetValue()))
-	_, _ = hasher.Write([]byte(info.EventTag.GetValue()))
 	return hex.EncodeToString(hasher.Sum(nil))
 }
