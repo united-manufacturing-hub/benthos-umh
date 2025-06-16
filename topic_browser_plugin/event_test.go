@@ -16,6 +16,7 @@ package topic_browser_plugin
 
 import (
 	"errors"
+	"math"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -245,6 +246,90 @@ var _ = Describe("Event Processing", func() {
 			Expect(err).To(BeNil())
 			Expect(event.GetRel()).NotTo(BeNil()) // Should be relational data
 			Expect(event.GetTs()).To(BeNil())     // Should not be timeseries
+		})
+
+		It("rejects NaN values in time series data", func() {
+			msg := service.NewMessage(nil)
+			msg.SetStructured(map[string]interface{}{
+				"timestamp_ms": int64(1234567890),
+				"value":        math.NaN(),
+			})
+
+			event, err := messageToEvent(msg)
+			Expect(err).NotTo(BeNil())
+			Expect(err.Error()).To(ContainSubstring("NaN"))
+			Expect(event).To(BeNil())
+		})
+
+		It("rejects positive infinity values in time series data", func() {
+			msg := service.NewMessage(nil)
+			msg.SetStructured(map[string]interface{}{
+				"timestamp_ms": int64(1234567890),
+				"value":        math.Inf(1),
+			})
+
+			event, err := messageToEvent(msg)
+			Expect(err).NotTo(BeNil())
+			Expect(err.Error()).To(ContainSubstring("Inf"))
+			Expect(event).To(BeNil())
+		})
+
+		It("rejects negative infinity values in time series data", func() {
+			msg := service.NewMessage(nil)
+			msg.SetStructured(map[string]interface{}{
+				"timestamp_ms": int64(1234567890),
+				"value":        math.Inf(-1),
+			})
+
+			event, err := messageToEvent(msg)
+			Expect(err).NotTo(BeNil())
+			Expect(err.Error()).To(ContainSubstring("Inf"))
+			Expect(event).To(BeNil())
+		})
+
+		It("rejects oversized payloads in time series data", func() {
+			// Create a large string value (>1KB)
+			largeValue := make([]byte, 1025) // 1025 bytes > 1KB limit
+			for i := range largeValue {
+				largeValue[i] = 'A'
+			}
+
+			msg := service.NewMessage(nil)
+			msg.SetStructured(map[string]interface{}{
+				"timestamp_ms": int64(1234567890),
+				"value":        string(largeValue),
+			})
+
+			event, err := messageToEvent(msg)
+			Expect(err).NotTo(BeNil())
+			Expect(err.Error()).To(ContainSubstring("payload size"))
+			Expect(event).To(BeNil())
+		})
+
+		It("rejects float timestamps with fractional parts", func() {
+			msg := service.NewMessage(nil)
+			msg.SetStructured(map[string]interface{}{
+				"timestamp_ms": 1234567890.5, // Has fractional part
+				"value":        25.5,
+			})
+
+			event, err := messageToEvent(msg)
+			Expect(err).NotTo(BeNil())
+			Expect(err.Error()).To(ContainSubstring("precision loss"))
+			Expect(event).To(BeNil())
+		})
+
+		It("accepts float timestamps without fractional parts", func() {
+			msg := service.NewMessage(nil)
+			msg.SetStructured(map[string]interface{}{
+				"timestamp_ms": 1234567890.0, // No fractional part
+				"value":        25.5,
+			})
+
+			event, err := messageToEvent(msg)
+			Expect(err).To(BeNil())
+			Expect(event.GetTs()).NotTo(BeNil())
+			Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1234567890)))
 		})
 	})
 
