@@ -485,6 +485,136 @@ downsampler:
 			mtx.Unlock()
 			Expect(messageCount).To(Equal(2))
 		})
+
+		It("should respect ds_ignore metadata to bypass downsampling", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+downsampler:
+  default:
+    deadband:
+      threshold: 0.1
+      max_time: 30s
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var (
+				messages []*service.Message
+				mtx      sync.Mutex
+			)
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				mtx.Lock()
+				messages = append(messages, msg)
+				mtx.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			baseTime := time.Now()
+
+			// Message 1: Normal message (should be processed)
+			msg1 := createTimeSeriesMessage(10.0, baseTime, "test.series1")
+			err = msgHandler(ctx, msg1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Message 2: Same series, small change (should be filtered)
+			msg2 := createTimeSeriesMessage(10.05, baseTime.Add(time.Second), "test.series1")
+			err = msgHandler(ctx, msg2)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Message 3: Different series with ds_ignore metadata
+			msg3 := createTimeSeriesMessage(20.0, baseTime, "test.series2")
+			msg3.MetaSet("ds_ignore", "true")
+			err = msgHandler(ctx, msg3)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Message 4: Same series, small change but still with ds_ignore
+			msg4 := createTimeSeriesMessage(20.01, baseTime.Add(time.Second), "test.series2")
+			msg4.MetaSet("ds_ignore", "bypass")
+			err = msgHandler(ctx, msg4)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Message 5: Non-time-series message with ds_ignore (should still be ignored)
+			msg5 := service.NewMessage([]byte(`{"some": "data"}`))
+			msg5.MetaSet("ds_ignore", "yes")
+			err = msgHandler(ctx, msg5)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Wait for processing
+			Eventually(func() int {
+				mtx.Lock()
+				n := len(messages)
+				mtx.Unlock()
+				return n
+			}, "2s").Should(Equal(4))
+
+			// Verify we got the expected messages
+			mtx.Lock()
+			messageCount := len(messages)
+			messagesCopy := make([]*service.Message, len(messages))
+			copy(messagesCopy, messages)
+			mtx.Unlock()
+
+			Expect(messageCount).To(Equal(4))
+
+			// Verify message 1 (normal processing)
+			msg1Out := messagesCopy[0]
+			structured, err := msg1Out.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			data := structured.(map[string]interface{})
+			Expect(data["value"]).To(Equal(10.0))
+
+			downsampledBy, exists := msg1Out.MetaGet("downsampled_by")
+			Expect(exists).To(BeTrue())
+			Expect(downsampledBy).To(Equal("deadband"))
+
+			// Verify message 3 (ignored)
+			msg3Out := messagesCopy[1]
+			structured, err = msg3Out.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			data = structured.(map[string]interface{})
+			Expect(data["value"]).To(Equal(20.0))
+
+			downsampledBy, exists = msg3Out.MetaGet("downsampled_by")
+			Expect(exists).To(BeTrue())
+			Expect(downsampledBy).To(Equal("ignored"))
+
+			// Verify message 4 (ignored)
+			msg4Out := messagesCopy[2]
+			structured, err = msg4Out.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			data = structured.(map[string]interface{})
+			Expect(data["value"]).To(Equal(20.01))
+
+			downsampledBy, exists = msg4Out.MetaGet("downsampled_by")
+			Expect(exists).To(BeTrue())
+			Expect(downsampledBy).To(Equal("ignored"))
+
+			// Verify message 5 (ignored non-time-series)
+			msg5Out := messagesCopy[3]
+			structured, err = msg5Out.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			data = structured.(map[string]interface{})
+			Expect(data["some"]).To(Equal("data"))
+
+			downsampledBy, exists = msg5Out.MetaGet("downsampled_by")
+			Expect(exists).To(BeTrue())
+			Expect(downsampledBy).To(Equal("ignored"))
+		})
 	})
 
 	When("processing non-time-series messages", func() {
