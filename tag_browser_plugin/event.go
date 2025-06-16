@@ -23,21 +23,28 @@ package tag_browser_plugin
 	UMH-Core recognizes a strict time-series payload format that differs from UMH Classic.
 
 	Valid UMH-Core Time-Series Format:
-	- Must be valid JSON
+	- Must be valid JSON object
 	- Must contain exactly 2 keys: "timestamp_ms" and "value"
 	- "timestamp_ms": numeric timestamp in milliseconds since Unix epoch
 	- "value": any scalar value (number, boolean, string)
 
-	Example VALID:
+	Example VALID Time-Series:
 	{"timestamp_ms": 1717083000000, "value": 23.4}
 	{"timestamp_ms": 1717083000000, "value": true}
 	{"timestamp_ms": 1717083000000, "value": "running"}
 
-	Example INVALID (UMH Classic format):
+	Example UMH Classic format (processed as RELATIONAL in UMH-Core):
 	{"timestamp_ms": 1717083000000, "temperature": 23.4, "humidity": 42.1}
 	{"timestamp_ms": 1717083000000, "pressure": 1013.25}
 
-	Any payload that doesn't match the exact UMH-Core time-series format is processed as relational data.
+	Important: The _historian data contract in UMH-Core will only process messages as
+	time-series when they contain exactly one tag named "value". All other formats,
+	including UMH Classic multi-tag messages, will be processed as relational data.
+
+	For migration from UMH Classic to UMH-Core time-series format, use the appropriate
+	benthos-umh plugin to convert your data.
+
+	Any payload that is not a valid JSON object will be rejected as invalid.
 
 	See: https://docs.umh.app/usage/unified-namespace/payload-formats
 */
@@ -54,42 +61,51 @@ import (
 // messageToEvent will convert a benthos message, into an EventTableEntry
 // It checks if the incoming message is a valid time-series message, otherwise it handles it as relational data
 //
+// UMH-Core Format Requirements:
+// - Time-Series: Must have exactly 2 keys: "timestamp_ms" and "value"
+// - Relational: Must be valid JSON object (including UMH Classic format)
+// - Invalid: Non-JSON or non-object data will result in an error
+//
 // UMH-Core Time-Series Format Requirements:
-// - Must be valid JSON
+// - Must be valid JSON object
 // - Must have exactly 2 keys: "timestamp_ms" and "value"
 // - "timestamp_ms": numeric timestamp in milliseconds since Unix epoch
 // - "value": any scalar value (number, boolean, string)
 //
 // Example valid time-series: {"timestamp_ms": 1717083000000, "value": 23.4}
-// Example invalid (UMH Classic): {"timestamp_ms": 1717083000000, "temperature": 23.4}
+// Example valid relational (UMH Classic): {"timestamp_ms": 1717083000000, "temperature": 23.4}
+// Example valid relational: {"order_id": 123, "customer": "ACME Corp", "items": {...}}
+// Example invalid: ["array", "data"] or "string" or 123 or non-JSON
 //
-// Any other format is processed as relational data
+// Any format that is not a valid JSON object will return an error
 func messageToEvent(message *service.Message) (*tagbrowserpluginprotobuf.EventTableEntry, error) {
-	// 1. If we don't have structured data (e.g. no JSON), we will handle it as relational data
+	// 1. Try to get structured data (valid JSON required for both time-series and relational)
 	structured, err := message.AsStructured()
 	if err != nil {
-		return processRelationalData(message)
+		// This is not valid JSON - return error for invalid format
+		return nil, fmt.Errorf("invalid JSON format: %v", err)
 	}
-	// 2. If the structured data is not a map, we will handle it as relational data (e.g lists)
+
+	// 2. Relational data must be a JSON object (map), not arrays or primitives
 	structuredAsMap, ok := structured.(map[string]interface{})
 	if !ok {
-		return processRelationalData(message)
+		// Valid JSON but not an object - this is invalid (arrays, primitives, etc.)
+		return nil, fmt.Errorf("relational data must be a JSON object, got %T", structured)
 	}
 
-	// Exactly timestamp_ms and "value" keys are required for UMH-Core time-series format
-	if len(structuredAsMap) != 2 {
-		return processRelationalData(message)
+	// 3. Check if it matches UMH-Core time-series format exactly
+	if len(structuredAsMap) == 2 {
+		_, hasTimestamp := structuredAsMap["timestamp_ms"]
+		_, hasValue := structuredAsMap["value"]
+		if hasTimestamp && hasValue {
+			// Valid UMH-Core time-series format
+			return processTimeSeriesData(structuredAsMap)
+		}
 	}
 
-	// Check for exact UMH-Core time-series format: timestamp_ms and value
-	_, hasTimestamp := structuredAsMap["timestamp_ms"]
-	_, hasValue := structuredAsMap["value"]
-	if !hasTimestamp || !hasValue {
-		return processRelationalData(message)
-	}
-
-	// We passed all checks, we can now process the data as time-series data
-	return processTimeSeriesData(structuredAsMap)
+	// 4. If it doesn't match time-series format, process as relational data
+	// (This includes UMH Classic format with arbitrary key names)
+	return processRelationalData(message)
 }
 
 // determineScalarType determines the ScalarType enum based on the Go type and type string

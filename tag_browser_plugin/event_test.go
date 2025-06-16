@@ -79,15 +79,15 @@ var _ = Describe("Event Processing", func() {
 				Expect(event.GetTs()).To(BeNil())
 			})
 
-			It("rejects time series data with arbitrary key names (UMH Classic format)", func() {
+			It("processes UMH Classic format as relational data", func() {
 				msg := service.NewMessage(nil)
 				msg.SetStructured(map[string]interface{}{
 					"timestamp_ms": int64(1234567890),
-					"temperature":  float64(25.5), // Should use "value" instead
+					"temperature":  float64(25.5), // UMH Classic format
 				})
 
 				event, err := messageToEvent(msg)
-				Expect(err).To(BeNil())               // messageToEvent should not error, it falls back to relational
+				Expect(err).To(BeNil())               // Should not error, processed as relational
 				Expect(event.GetRel()).NotTo(BeNil()) // Should be processed as relational
 				Expect(event.GetTs()).To(BeNil())     // Should not be timeseries
 			})
@@ -132,22 +132,44 @@ var _ = Describe("Event Processing", func() {
 					Expect(event.GetTs().GetValue().TypeUrl).To(HavePrefix(tc.typePrefix))
 				}
 			})
+
+			It("rejects invalid JSON format", func() {
+				msg := service.NewMessage([]byte("invalid json {"))
+
+				event, err := messageToEvent(msg)
+				Expect(err).NotTo(BeNil())
+				Expect(err.Error()).To(ContainSubstring("invalid JSON format"))
+				Expect(event).To(BeNil())
+			})
+
+			It("rejects JSON arrays as invalid", func() {
+				msg := service.NewMessage(nil)
+				msg.SetStructured([]interface{}{"not", "a", "map"})
+
+				event, err := messageToEvent(msg)
+				Expect(err).NotTo(BeNil())
+				Expect(err.Error()).To(ContainSubstring("relational data must be a JSON object"))
+				Expect(event).To(BeNil())
+			})
 		})
 
 		Context("with relational data", func() {
-			It("processes raw bytes data correctly", func() {
+			It("rejects raw bytes data as invalid", func() {
 				rawData := []byte("raw data")
 				msg := service.NewMessage(rawData)
 
 				event, err := messageToEvent(msg)
-				Expect(err).To(BeNil())
-				Expect(event.GetRel()).NotTo(BeNil())
-				Expect(event.GetTs()).To(BeNil())
+				Expect(err).NotTo(BeNil())
+				Expect(err.Error()).To(ContainSubstring("invalid JSON format"))
+				Expect(event).To(BeNil())
 			})
 
-			It("handles non-map structured data", func() {
+			It("processes valid JSON objects as relational", func() {
 				msg := service.NewMessage(nil)
-				msg.SetStructured([]interface{}{"not", "a", "map"})
+				msg.SetStructured(map[string]interface{}{
+					"order_id": 123,
+					"customer": "ACME Corp",
+				})
 
 				event, err := messageToEvent(msg)
 				Expect(err).To(BeNil())
