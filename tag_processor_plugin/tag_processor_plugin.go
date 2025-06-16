@@ -614,6 +614,9 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	} else if len(filteredMeta) > 0 {
 		realMeta = filteredMeta
 	}
+	for k, v := range realMeta {
+		newMsg.MetaSet(k, v)
+	}
 
 	newMsg.SetStructured(finalPayload)
 
@@ -621,10 +624,6 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	topic := p.constructUMHTopic(msg)
 	newMsg.MetaSet("topic", topic) // topic is deprecated, use umh_topic instead for easy to understand difference between MQTT Topic, Kafka Topic and UMH Topic
 	newMsg.MetaSet("umh_topic", topic)
-
-	for k, v := range realMeta {
-		newMsg.MetaSet(k, v)
-	}
 
 	return newMsg, nil
 }
