@@ -55,10 +55,9 @@ var _ = Describe("Event Processing", func() {
 		Context("with time series data", func() {
 			It("processes valid time series data correctly", func() {
 				msg := service.NewMessage(nil)
-				name := "temperature"
 				msg.SetStructured(map[string]interface{}{
 					"timestamp_ms": int64(1234567890),
-					name:           float64(25.5),
+					"value":        float64(25.5),
 				})
 
 				event, err := messageToEvent(msg)
@@ -71,7 +70,7 @@ var _ = Describe("Event Processing", func() {
 			It("rejects time series data with missing timestamp", func() {
 				msg := service.NewMessage(nil)
 				msg.SetStructured(map[string]interface{}{
-					"temperature": float64(25.5),
+					"value": float64(25.5),
 				})
 
 				event, err := messageToEvent(msg)
@@ -80,11 +79,24 @@ var _ = Describe("Event Processing", func() {
 				Expect(event.GetTs()).To(BeNil())
 			})
 
+			It("rejects time series data with arbitrary key names (UMH Classic format)", func() {
+				msg := service.NewMessage(nil)
+				msg.SetStructured(map[string]interface{}{
+					"timestamp_ms": int64(1234567890),
+					"temperature":  float64(25.5), // Should use "value" instead
+				})
+
+				event, err := messageToEvent(msg)
+				Expect(err).To(BeNil())               // messageToEvent should not error, it falls back to relational
+				Expect(event.GetRel()).NotTo(BeNil()) // Should be processed as relational
+				Expect(event.GetTs()).To(BeNil())     // Should not be timeseries
+			})
+
 			It("rejects time series data with too many fields", func() {
 				msg := service.NewMessage(nil)
 				msg.SetStructured(map[string]interface{}{
 					"timestamp_ms": int64(1234567890),
-					"temperature":  float64(25.5),
+					"value":        float64(25.5),
 					"humidity":     float64(60.0),
 				})
 
@@ -149,7 +161,7 @@ var _ = Describe("Event Processing", func() {
 		It("extracts timestamp and value correctly", func() {
 			data := map[string]interface{}{
 				"timestamp_ms": int64(1234567890),
-				"pressure":     float64(1013.25),
+				"value":        float64(1013.25),
 			}
 
 			event, err := processTimeSeriesData(data)
@@ -159,6 +171,30 @@ var _ = Describe("Event Processing", func() {
 			Expect(event.GetTs().GetValue().TypeUrl).To(HavePrefix("golang/float64"))
 		})
 
+		It("rejects UMH Classic format with arbitrary key names", func() {
+			data := map[string]interface{}{
+				"timestamp_ms": int64(1234567890),
+				"pressure":     float64(1013.25), // Should be "value" in UMH-Core
+			}
+
+			event, err := processTimeSeriesData(data)
+			Expect(err).NotTo(BeNil())
+			Expect(err.Error()).To(ContainSubstring("time-series data must have exactly 'timestamp_ms' and 'value' keys"))
+			Expect(event).To(BeNil())
+		})
+
+		It("rejects data missing the value key", func() {
+			data := map[string]interface{}{
+				"timestamp_ms": int64(1234567890),
+				"temperature":  float64(25.0), // Missing "value" key
+			}
+
+			event, err := processTimeSeriesData(data)
+			Expect(err).NotTo(BeNil())
+			Expect(err.Error()).To(ContainSubstring("time-series data must have exactly 'timestamp_ms' and 'value' keys"))
+			Expect(event).To(BeNil())
+		})
+
 		It("handles conversion errors gracefully", func() {
 			// Create a value that can't be converted to bytes
 			type Unconvertible struct {
@@ -166,7 +202,7 @@ var _ = Describe("Event Processing", func() {
 			}
 			data := map[string]interface{}{
 				"timestamp_ms": int64(1234567890),
-				"invalid":      Unconvertible{make(chan int)},
+				"value":        Unconvertible{make(chan int)},
 			}
 
 			event, err := processTimeSeriesData(data)
@@ -178,7 +214,7 @@ var _ = Describe("Event Processing", func() {
 			msg := service.NewMessage(nil)
 			msg.SetStructured(map[string]interface{}{
 				"timestamp_ms": int64(1234567890),
-				"pressure":     float64(1013.25),
+				"value":        float64(1013.25),
 				"temperature":  float64(25.0),
 			})
 

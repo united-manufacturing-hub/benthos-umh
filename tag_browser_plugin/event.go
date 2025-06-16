@@ -16,6 +16,30 @@ package tag_browser_plugin
 
 /*
 	The functions in this file allow the program to extract the event data (e.g timestamp, payload key/value) from the benthos message.
+
+	UMH-Core Time-Series Payload Format Specification:
+	==================================================
+
+	UMH-Core recognizes a strict time-series payload format that differs from UMH Classic.
+
+	Valid UMH-Core Time-Series Format:
+	- Must be valid JSON
+	- Must contain exactly 2 keys: "timestamp_ms" and "value"
+	- "timestamp_ms": numeric timestamp in milliseconds since Unix epoch
+	- "value": any scalar value (number, boolean, string)
+
+	Example VALID:
+	{"timestamp_ms": 1717083000000, "value": 23.4}
+	{"timestamp_ms": 1717083000000, "value": true}
+	{"timestamp_ms": 1717083000000, "value": "running"}
+
+	Example INVALID (UMH Classic format):
+	{"timestamp_ms": 1717083000000, "temperature": 23.4, "humidity": 42.1}
+	{"timestamp_ms": 1717083000000, "pressure": 1013.25}
+
+	Any payload that doesn't match the exact UMH-Core time-series format is processed as relational data.
+
+	See: https://docs.umh.app/usage/unified-namespace/payload-formats
 */
 
 import (
@@ -29,6 +53,17 @@ import (
 
 // messageToEvent will convert a benthos message, into an EventTableEntry
 // It checks if the incoming message is a valid time-series message, otherwise it handles it as relational data
+//
+// UMH-Core Time-Series Format Requirements:
+// - Must be valid JSON
+// - Must have exactly 2 keys: "timestamp_ms" and "value"
+// - "timestamp_ms": numeric timestamp in milliseconds since Unix epoch
+// - "value": any scalar value (number, boolean, string)
+//
+// Example valid time-series: {"timestamp_ms": 1717083000000, "value": 23.4}
+// Example invalid (UMH Classic): {"timestamp_ms": 1717083000000, "temperature": 23.4}
+//
+// Any other format is processed as relational data
 func messageToEvent(message *service.Message) (*tagbrowserpluginprotobuf.EventTableEntry, error) {
 	// 1. If we don't have structured data (e.g. no JSON), we will handle it as relational data
 	structured, err := message.AsStructured()
@@ -41,13 +76,15 @@ func messageToEvent(message *service.Message) (*tagbrowserpluginprotobuf.EventTa
 		return processRelationalData(message)
 	}
 
-	// Exactly timestamp_ms and one key/value pair are required, otherwise it is relational data
+	// Exactly timestamp_ms and "value" keys are required for UMH-Core time-series format
 	if len(structuredAsMap) != 2 {
 		return processRelationalData(message)
 	}
 
-	// A timestamp_ms field must be present, otherwise it is relational data
-	if _, ok := structuredAsMap["timestamp_ms"]; !ok {
+	// Check for exact UMH-Core time-series format: timestamp_ms and value
+	_, hasTimestamp := structuredAsMap["timestamp_ms"]
+	_, hasValue := structuredAsMap["value"]
+	if !hasTimestamp || !hasValue {
 		return processRelationalData(message)
 	}
 
@@ -70,42 +107,44 @@ func determineScalarType(value interface{}, valueType string) tagbrowserpluginpr
 	}
 }
 
-// processTimeSeriesData extracts the timestamp, value name, and value (including its type) from the structured data
-// EventTag validation has been removed since it's no longer part of the protobuf schema
+// processTimeSeriesData extracts the timestamp and value from the structured data
+// For UMH-Core, time-series data must have exactly these two keys:
+// 1. "timestamp_ms" - timestamp in milliseconds (numeric)
+// 2. "value" - the scalar value (any type)
+// Any other format is considered relational data
 func processTimeSeriesData(structured map[string]interface{}) (*tagbrowserpluginprotobuf.EventTableEntry, error) {
 	var valueContent anypb.Any
 	var timestampMs int64
 	var scalarType tagbrowserpluginprotobuf.ScalarType
 	var err error
 
-	// We loop over all key/value pairs of the message's payload (we previously checked that there are exactly two)
-	for key, value := range structured {
-		switch key {
-		case "timestamp_ms":
-			// Since we do not know the type of the timestamp_ms field, we need to convert it to an int64
-			// But we can expect it to be some kind of numeric type, so we check its type and convert accordingly
-			timestampMs, err = interfaceToInt64(value)
-			if err != nil {
-				return nil, err
-			}
-		default:
-			// The non-timestamp key/value pair will be handled here
-			// EventTag validation has been removed - we accept any key name
-			// We need to convert the value to a protobuf Any, which is a wrapper around a byte array
-			var byteValue []byte
-			var valueType string
-			byteValue, valueType, err = ToBytes(value)
-			if err != nil {
-				return nil, err
-			}
-			valueContent = anypb.Any{
-				TypeUrl: fmt.Sprintf("golang/%s", valueType),
-				Value:   byteValue,
-			}
-			// Determine the scalar type for the protobuf
-			scalarType = determineScalarType(value, valueType)
-		}
+	// Validate that we have exactly the required keys for UMH-Core time-series format
+	timestampValue, hasTimestamp := structured["timestamp_ms"]
+	value, hasValue := structured["value"]
+
+	if !hasTimestamp || !hasValue {
+		return nil, fmt.Errorf("time-series data must have exactly 'timestamp_ms' and 'value' keys")
 	}
+
+	// Process timestamp_ms
+	timestampMs, err = interfaceToInt64(timestampValue)
+	if err != nil {
+		return nil, err
+	}
+
+	// Process value
+	var byteValue []byte
+	var valueType string
+	byteValue, valueType, err = ToBytes(value)
+	if err != nil {
+		return nil, err
+	}
+	valueContent = anypb.Any{
+		TypeUrl: fmt.Sprintf("golang/%s", valueType),
+		Value:   byteValue,
+	}
+	// Determine the scalar type for the protobuf
+	scalarType = determineScalarType(value, valueType)
 
 	// Create the TimeSeriesPayload
 	timeSeriesPayload := &tagbrowserpluginprotobuf.TimeSeriesPayload{
