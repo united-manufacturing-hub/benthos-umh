@@ -50,19 +50,23 @@ Input format (Historian Data Contract):
 - Topic: umh.v1.<location>._historian.<context>
 - Supports flat tags: {"timestamp_ms": 123, "temperature": 23.4}
 - Supports tag groups: {"timestamp_ms": 123, "axis": {"x": 1.0, "y": 2.0}}
+- Supports meta/metadata fields: {"timestamp_ms": 123, "temperature": 23.4, "meta": {"sensor_id": "ABC123"}}
 
 Output format (Core):
 - Multiple messages, one per tag (including flattened tag groups)
 - Each with {"value": <field_value>, "timestamp_ms": <timestamp>}
 - Topics: umh.v1.<location>.<target_data_contract>.<context>.<tag_name>
 - Tag groups flattened with dot separators: "axis.x", "axis.y"
+- Meta/metadata fields applied as metadata to all output messages
 
 The processor will:
 1. Extract the timestamp field from the payload
-2. Flatten any nested tag groups using dot separator for intuitive paths
-3. Create one output message per tag
-4. Construct new topics by appending tag names
-5. Preserve original metadata while updating topic-related fields`).
+2. Extract meta and metadata fields for applying to all output messages  
+3. Flatten any nested tag groups using dot separator for intuitive paths
+4. Create one output message per tag
+5. Construct new topics by appending tag names
+6. Preserve original metadata while updating topic-related fields
+7. Apply meta/metadata field contents as metadata to all generated messages`).
 		Field(service.NewStringField("target_data_contract").
 			Description("Target data contract for output topics. If empty, uses the input's data contract (e.g., _historian)").
 			Default("").
@@ -111,6 +115,8 @@ func newClassicToCoreProcessor(config ClassicToCoreConfig, logger *service.Logge
 	// Create exclude fields map for fast lookup
 	excludeFieldsMap := make(map[string]bool)
 	excludeFieldsMap["timestamp_ms"] = true // Always exclude timestamp field
+	excludeFieldsMap["meta"] = true         // Exclude meta field - handled as metadata
+	excludeFieldsMap["metadata"] = true     // Exclude metadata field - handled as metadata
 
 	return &ClassicToCoreProcessor{
 		config:            config,
@@ -185,6 +191,37 @@ func (p *ClassicToCoreProcessor) processMessage(msg *service.Message) ([]*servic
 		return nil, fmt.Errorf("topic parsing failed: %w", err)
 	}
 
+	// Extract meta and metadata fields for applying to all output messages
+	additionalMeta := make(map[string]string)
+
+	// Handle "meta" field
+	if metaField, exists := payload["meta"]; exists {
+		if metaMap, ok := metaField.(map[string]interface{}); ok {
+			for key, value := range metaMap {
+				if strValue, ok := value.(string); ok {
+					additionalMeta[key] = strValue
+				} else {
+					// Convert non-string values to string
+					additionalMeta[key] = fmt.Sprintf("%v", value)
+				}
+			}
+		}
+	}
+
+	// Handle "metadata" field
+	if metadataField, exists := payload["metadata"]; exists {
+		if metadataMap, ok := metadataField.(map[string]interface{}); ok {
+			for key, value := range metadataMap {
+				if strValue, ok := value.(string); ok {
+					additionalMeta[key] = strValue
+				} else {
+					// Convert non-string values to string
+					additionalMeta[key] = fmt.Sprintf("%v", value)
+				}
+			}
+		}
+	}
+
 	// Flatten payload with recursion limit
 	flattenedTags, err := p.flattenPayload(payload, "", 0)
 	if err != nil {
@@ -215,7 +252,7 @@ func (p *ClassicToCoreProcessor) processMessage(msg *service.Message) ([]*servic
 			continue
 		}
 
-		newMsg, err := p.createCoreMessage(msg, tagName, tagValue, timestamp, topicComponents)
+		newMsg, err := p.createCoreMessage(msg, tagName, tagValue, timestamp, topicComponents, additionalMeta)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Core message for tag '%s': %w", tagName, err)
 		}
@@ -348,7 +385,7 @@ func (p *ClassicToCoreProcessor) parseClassicTopic(topic string) (*TopicComponen
 // It constructs the Core payload format ({"value": <field_value>, "timestamp_ms": <timestamp>}),
 // generates the appropriate Core topic, and sets up all required metadata fields.
 // This function embodies the "one tag, one message" principle of Core format.
-func (p *ClassicToCoreProcessor) createCoreMessage(originalMsg *service.Message, fieldName string, fieldValue interface{}, timestamp int64, topicComponents *TopicComponents) (*service.Message, error) {
+func (p *ClassicToCoreProcessor) createCoreMessage(originalMsg *service.Message, fieldName string, fieldValue interface{}, timestamp int64, topicComponents *TopicComponents, additionalMeta map[string]string) (*service.Message, error) {
 	// Create Core format payload
 	corePayload := map[string]interface{}{
 		"value":        fieldValue,
@@ -397,6 +434,11 @@ func (p *ClassicToCoreProcessor) createCoreMessage(originalMsg *service.Message,
 		newMsg.MetaSet("virtual_path", topicComponents.TagGroup)
 	}
 
+	// Apply additional metadata from meta/metadata fields
+	for key, value := range additionalMeta {
+		newMsg.MetaSet(key, value)
+	}
+
 	return newMsg, nil
 }
 
@@ -434,8 +476,8 @@ func (p *ClassicToCoreProcessor) flattenPayload(payload map[string]interface{}, 
 	result := make(map[string]interface{})
 
 	for key, value := range payload {
-		// Skip the timestamp field as it's handled separately
-		if key == timestampField {
+		// Skip fields that are handled separately
+		if key == timestampField || key == "meta" || key == "metadata" {
 			continue
 		}
 
