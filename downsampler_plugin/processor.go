@@ -51,6 +51,27 @@ func (mp *MessageProcessor) ProcessMessage(msg *service.Message, index int) Mess
 		OriginalMessage: msg,
 	}
 
+	// Check for ds_ignore metadata first (highest precedence)
+	if ignoreValue, hasIgnore := msg.MetaGet("ds_ignore"); hasIgnore && ignoreValue != "" {
+		// Create copy of message with ignore metadata
+		ignoredMsg := msg.Copy()
+		ignoredMsg.MetaDelete("ds_ignore") // keep internal flags internal
+		ignoredMsg.MetaSet("downsampled_by", "ignored")
+
+		// Extract topic for logging if available
+		topicName := "unknown"
+		if topic, hasTopic := msg.MetaGet("umh_topic"); hasTopic {
+			topicName = topic
+		}
+
+		mp.processor.logger.Debugf("Message ignored due to ds_ignore metadata: topic=%s, ignore_value=%s", topicName, ignoreValue)
+		mp.processor.metrics.IncrementIgnored()
+		mp.processor.metrics.IncrementPassed() // maintain metric consistency
+
+		result.ProcessedMessages = []*service.Message{ignoredMsg}
+		return result
+	}
+
 	// Process UMH-core time-series messages
 	if !mp.isTimeSeriesMessage(msg) {
 		result.ProcessedMessages = []*service.Message{msg}
