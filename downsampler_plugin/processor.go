@@ -55,6 +55,7 @@ func (mp *MessageProcessor) ProcessMessage(msg *service.Message, index int) Mess
 	if ignoreValue, hasIgnore := msg.MetaGet("ds_ignore"); hasIgnore && ignoreValue != "" {
 		// Create copy of message with ignore metadata
 		ignoredMsg := msg.Copy()
+		ignoredMsg.MetaDelete("ds_ignore") // keep internal flags internal
 		ignoredMsg.MetaSet("downsampled_by", "ignored")
 
 		// Extract topic for logging if available
@@ -65,6 +66,7 @@ func (mp *MessageProcessor) ProcessMessage(msg *service.Message, index int) Mess
 
 		mp.processor.logger.Debugf("Message ignored due to ds_ignore metadata: topic=%s, ignore_value=%s", topicName, ignoreValue)
 		mp.processor.metrics.IncrementIgnored()
+		mp.processor.metrics.IncrementPassed() // maintain metric consistency
 
 		result.ProcessedMessages = []*service.Message{ignoredMsg}
 		return result
