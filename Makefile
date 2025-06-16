@@ -99,6 +99,9 @@ test-classic-to-core:
 	@TEST_CLASSIC_TO_CORE=1 \
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./classic_to_core_plugin/...
 
+.PHONY: test-downsampler
+test-downsampler:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./downsampler_plugin/...
 
 ###### TESTS WITH RUNNING BENTHOS-UMH #####
 # Test the tag processor with a local OPC UA server
@@ -111,3 +114,15 @@ test-benthos-tag-processor: target
 .PHONY: test-benthos-sensorconnect
 test-benthos-sensorconnect: target
 	@$(BENTHOS_BIN) -c ./config/sensorconnect-test.yaml
+
+.PHONY: test-benthos-downsampler
+test-benthos-downsampler: target
+	@$(BENTHOS_BIN) -c ./config/downsampler_example.yaml
+
+.PHONY: test-benthos-downsampler-example-one
+test-benthos-downsampler-example-one: target
+	@$(BENTHOS_BIN) -c ./config/downsampler_example_one.yaml
+
+.PHONY: test-benthos-downsampler-example-one-timeout
+test-benthos-downsampler-example-one-timeout: target
+	@$(BENTHOS_BIN) -c ./config/downsampler_example_one_timeout.yaml

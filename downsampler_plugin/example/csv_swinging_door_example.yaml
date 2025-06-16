@@ -1,0 +1,73 @@
+# Copyright 2025 UMH Systems GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+logger:
+  level: INFO
+  add_timestamp: true
+  static_fields:
+    "@service": benthos
+
+input:
+  csv:
+    paths: [ "./export.csv" ]
+    parse_header_row: true
+    delimiter: ","
+
+pipeline:
+  threads: 1
+  processors:
+
+    # Convert timestamp to Unix milliseconds for downsampler
+    - mapping: |
+        let timestamp_str = this.timestamp
+        let timestamp_unix = $timestamp_str.ts_parse("2006-01-02 15:04:05.999+00").ts_unix_milli()
+        
+        root = {
+          "timestamp_ms": $timestamp_unix,
+          "value": this.value.number(),
+        }
+        
+        # Set metadata for the downsampler
+        meta data_contract = "_raw"
+        meta umh_topic = "umh.v1.plant1.line1._raw." + this.name.string()
+
+    - log:
+        level: DEBUG
+        message: "Processing CSV row"
+        fields_mapping: |
+          root.topic = meta("umh_topic")
+          root.timestamp = this.timestamp_ms
+          root.value = this.value
+
+# Apply swinging door downsampling
+    - downsampler:
+        default:
+          swinging_door:
+            threshold: 0.5        # Swinging door threshold
+            min_time: "5s"         # Minimum time interval
+            max_time: "30s"        # Maximum time interval
+            
+    # Convert back to readable timestamp and format as CSV
+    - mapping: |
+        let timestamp_ms = this.timestamp_ms
+        let timestamp_formatted = ($timestamp_ms / 1000.0).ts_format("2006-01-02 15:04:05.999+00")
+        
+        root = $timestamp_formatted + "," + 
+               meta("umh_topic") + "," + 
+               this.value.string()
+
+output:
+  file:
+    path: "./export_compressed_swinging_door_1.csv"
+    codec: lines 
