@@ -14,6 +14,7 @@
 
 # Example Benthos configuration using the classic_to_core processor
 # This config migrates UMH Historian Data Contract messages to Core format
+# Supports nested tag groups and arrays (converted to string representation)
 
 input:
   # Consume from Kafka topics matching Historian Data Contract format

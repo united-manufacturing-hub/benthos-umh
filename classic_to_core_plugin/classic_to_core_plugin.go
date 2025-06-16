@@ -50,23 +50,26 @@ Input format (Historian Data Contract):
 - Topic: umh.v1.<location>._historian.<context>
 - Supports flat tags: {"timestamp_ms": 123, "temperature": 23.4}
 - Supports tag groups: {"timestamp_ms": 123, "axis": {"x": 1.0, "y": 2.0}}
+- Supports arrays: {"timestamp_ms": 123, "values": [10, 20, 30]}
 - Supports meta/metadata fields: {"timestamp_ms": 123, "temperature": 23.4, "meta": {"sensor_id": "ABC123"}}
 
 Output format (Core):
-- Multiple messages, one per tag (including flattened tag groups)
+- Multiple messages, one per tag (including flattened tag groups and converted arrays)
 - Each with {"value": <field_value>, "timestamp_ms": <timestamp>}
 - Topics: umh.v1.<location>.<target_data_contract>.<context>.<tag_name>
 - Tag groups flattened with dot separators: "axis.x", "axis.y"
+- Arrays converted to string format: "values": "[10 20 30]"
 - Meta/metadata fields applied as metadata to all output messages
 
 The processor will:
 1. Extract the timestamp field from the payload
 2. Extract meta and metadata fields for applying to all output messages  
 3. Flatten any nested tag groups using dot separator for intuitive paths
-4. Create one output message per tag
-5. Construct new topics by appending tag names
-6. Preserve original metadata while updating topic-related fields
-7. Apply meta/metadata field contents as metadata to all generated messages`).
+4. Convert arrays to string representation to ensure UMH-Core scalar-only compliance
+5. Create one output message per tag
+6. Construct new topics by appending tag names
+7. Preserve original metadata while updating topic-related fields
+8. Apply meta/metadata field contents as metadata to all generated messages`).
 		Field(service.NewStringField("target_data_contract").
 			Description("Target data contract for output topics. If empty, uses the input's data contract (e.g., _historian)").
 			Default("").
@@ -462,9 +465,11 @@ func (p *ClassicToCoreProcessor) constructCoreTopic(components *TopicComponents,
 	return strings.Join(parts, ".")
 }
 
-// flattenPayload recursively flattens nested objects using dot separator to create intuitive paths.
+// flattenPayload recursively flattens nested objects and converts arrays to string representation.
 // It converts complex tag group structures into flat key-value pairs with dot-notation names.
 // For example: {"axis": {"x": 1.0, "y": 2.0}} becomes {"axis.x": 1.0, "axis.y": 2.0}.
+// Arrays are converted to string format: {"values": [10, 20]} becomes {"values": "[10 20]"}.
+// This ensures UMH-Core compliance by converting arrays to scalar string values.
 // The function respects recursion depth limits to prevent stack overflow and infinite loops.
 func (p *ClassicToCoreProcessor) flattenPayload(payload map[string]interface{}, prefix string, depth int) (map[string]interface{}, error) {
 	// Check recursion depth limit
@@ -498,6 +503,15 @@ func (p *ClassicToCoreProcessor) flattenPayload(payload map[string]interface{}, 
 			for nestedKey, nestedValue := range nestedResults {
 				result[nestedKey] = nestedValue
 			}
+		} else if arrayValue, ok := value.([]interface{}); ok {
+			// Handle arrays: UMH-Core spec allows scalar only, so convert arrays to string representation
+			// Convert to space-separated string format: ["a", "b", "c"] -> "[a b c]"
+			// This follows the tag-processor's array handling logic.
+			var elements []string
+			for _, item := range arrayValue {
+				elements = append(elements, fmt.Sprintf("%v", item))
+			}
+			result[fullKey] = fmt.Sprintf("[%s]", strings.Join(elements, " "))
 		} else {
 			// Regular tag - add to result
 			result[fullKey] = value

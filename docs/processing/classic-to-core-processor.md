@@ -109,6 +109,55 @@ The processor creates 5 separate messages:
 5. Topic: `umh.v1.acme._raw.cnc-mill.collision`
    - Payload: `{"value": false, "timestamp_ms": 1670001234567}`
 
+### Array Handling
+
+Arrays are converted to string representation to ensure UMH-Core compliance (scalar values only):
+
+**Input (Historian Schema with Arrays):**
+
+- Topic: `umh.v1.factory._historian.sensors`
+- Payload:
+
+```json
+{
+  "timestamp_ms": 1670001234567,
+  "measurements": [23.4, 24.1, 22.8],
+  "sensor_ids": ["temp1", "temp2", "temp3"],
+  "status_flags": [true, false, true],
+  "mixed_data": ["sensor", 42, true, null]
+}
+```
+
+- target_data_contract: "\_raw"
+
+**Output (Core Format with Array Conversion):**
+
+The processor creates 4 separate messages with arrays converted to strings:
+
+1. Topic: `umh.v1.factory._raw.sensors.measurements`
+
+   - Payload: `{"value": "[23.4 24.1 22.8]", "timestamp_ms": 1670001234567}`
+
+2. Topic: `umh.v1.factory._raw.sensors.sensor_ids`
+
+   - Payload: `{"value": "[temp1 temp2 temp3]", "timestamp_ms": 1670001234567}`
+
+3. Topic: `umh.v1.factory._raw.sensors.status_flags`
+
+   - Payload: `{"value": "[true false true]", "timestamp_ms": 1670001234567}`
+
+4. Topic: `umh.v1.factory._raw.sensors.mixed_data`
+   - Payload: `{"value": "[sensor 42 true <nil>]", "timestamp_ms": 1670001234567}`
+
+**Array Conversion Rules:**
+
+- Arrays are converted to space-separated string format: `[item1 item2 item3]`
+- Empty arrays become `[]`
+- Single-item arrays become `[item]`
+- All array elements are converted using Go's `fmt.Sprintf("%v", item)` format
+- Null values in arrays appear as `<nil>`
+- Arrays within nested objects are also converted to strings
+
 ## Advanced Configuration
 
 ### Using Input Schema
