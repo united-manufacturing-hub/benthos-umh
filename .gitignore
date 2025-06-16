@@ -203,7 +203,8 @@ dist
 
 # Cover.profile
 *.profile
-
-
 benthos-umh
 benthos
+
+# Temporary files
+code_review.md
