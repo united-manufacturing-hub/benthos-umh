@@ -19,7 +19,6 @@ import (
 	. "github.com/onsi/gomega"
 	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
 	"google.golang.org/protobuf/types/known/anypb"
-	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 var _ = Describe("Protobuf Functions", func() {
@@ -31,19 +30,23 @@ var _ = Describe("Protobuf Functions", func() {
 					Entries: map[string]*tagbrowserpluginprotobuf.TopicInfo{
 						"test-topic": {
 							Level0:       "enterprise",
-							Datacontract: "_historian",
-							EventTag:     wrapperspb.String("temperature"),
+							DataContract: "_historian",
 						},
 					},
 				},
 				Events: &tagbrowserpluginprotobuf.EventTable{
 					Entries: []*tagbrowserpluginprotobuf.EventTableEntry{
 						{
-							IsTimeseries: true,
-							TimestampMs:  wrapperspb.Int64(1647753600000),
-							Value: &anypb.Any{
-								TypeUrl: "golang/float64",
-								Value:   []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x40}, // 13.0 in float64
+							UnsTreeId: "test-topic",
+							Payload: &tagbrowserpluginprotobuf.EventTableEntry_Ts{
+								Ts: &tagbrowserpluginprotobuf.TimeSeriesPayload{
+									ScalarType:  tagbrowserpluginprotobuf.ScalarType_NUMERIC,
+									TimestampMs: 1647753600000,
+									Value: &anypb.Any{
+										TypeUrl: "golang/float64",
+										Value:   []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x40}, // 13.0 in float64
+									},
+								},
 							},
 						},
 					},
@@ -99,32 +102,40 @@ var _ = Describe("Protobuf Functions", func() {
 					Entries: map[string]*tagbrowserpluginprotobuf.TopicInfo{
 						"topic1": {
 							Level0:       "enterprise",
-							Datacontract: "_historian",
-							EventTag:     wrapperspb.String("temperature"),
+							DataContract: "_historian",
 						},
 						"topic2": {
 							Level0:       "enterprise",
-							Datacontract: "_historian",
-							EventTag:     wrapperspb.String("humidity"),
+							DataContract: "_historian",
 						},
 					},
 				},
 				Events: &tagbrowserpluginprotobuf.EventTable{
 					Entries: []*tagbrowserpluginprotobuf.EventTableEntry{
 						{
-							IsTimeseries: true,
-							TimestampMs:  wrapperspb.Int64(1647753600000),
-							Value: &anypb.Any{
-								TypeUrl: "golang/float64",
-								Value:   []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x40}, // 13.0 in float64
+							UnsTreeId: "topic1",
+							Payload: &tagbrowserpluginprotobuf.EventTableEntry_Ts{
+								Ts: &tagbrowserpluginprotobuf.TimeSeriesPayload{
+									ScalarType:  tagbrowserpluginprotobuf.ScalarType_NUMERIC,
+									TimestampMs: 1647753600000,
+									Value: &anypb.Any{
+										TypeUrl: "golang/float64",
+										Value:   []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x40}, // 13.0 in float64
+									},
+								},
 							},
 						},
 						{
-							IsTimeseries: true,
-							TimestampMs:  wrapperspb.Int64(1647753600001),
-							Value: &anypb.Any{
-								TypeUrl: "golang/float64",
-								Value:   []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x40}, // 13.0 in float64
+							UnsTreeId: "topic2",
+							Payload: &tagbrowserpluginprotobuf.EventTableEntry_Ts{
+								Ts: &tagbrowserpluginprotobuf.TimeSeriesPayload{
+									ScalarType:  tagbrowserpluginprotobuf.ScalarType_NUMERIC,
+									TimestampMs: 1647753600001,
+									Value: &anypb.Any{
+										TypeUrl: "golang/float64",
+										Value:   []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x40}, // 13.0 in float64
+									},
+								},
 							},
 						},
 					},
@@ -145,7 +156,6 @@ var _ = Describe("Protobuf Functions", func() {
 			Expect(decodedBundle.UnsMap.Entries).To(HaveLen(2))
 			Expect(decodedBundle.UnsMap.Entries["topic1"].Level0).To(Equal(originalBundle.UnsMap.Entries["topic1"].Level0))
 			Expect(decodedBundle.UnsMap.Entries["topic2"].Level0).To(Equal(originalBundle.UnsMap.Entries["topic2"].Level0))
-			Expect(decodedBundle.UnsMap.Entries["topic2"].EventTag.GetValue()).To(Equal(originalBundle.UnsMap.Entries["topic2"].EventTag.GetValue()))
 			Expect(decodedBundle.Events.Entries).To(HaveLen(2))
 		})
 

@@ -20,7 +20,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 // mockMessage implements service.Message for testing
@@ -62,11 +61,11 @@ var _ = Describe("Event Processing", func() {
 					name:           float64(25.5),
 				})
 
-				event, err := messageToEvent(msg, wrapperspb.String(name))
+				event, err := messageToEvent(msg)
 				Expect(err).To(BeNil())
-				Expect(event.IsTimeseries).To(BeTrue())
-				Expect(event.TimestampMs).To(Equal(wrapperspb.Int64(1234567890)))
-				Expect(event.Value.TypeUrl).To(HavePrefix("golang/float64"))
+				Expect(event.GetTs()).NotTo(BeNil())
+				Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1234567890)))
+				Expect(event.GetTs().GetValue().TypeUrl).To(HavePrefix("golang/float64"))
 			})
 
 			It("rejects time series data with missing timestamp", func() {
@@ -75,10 +74,10 @@ var _ = Describe("Event Processing", func() {
 					"temperature": float64(25.5),
 				})
 
-				event, err := messageToEvent(msg, nil)
+				event, err := messageToEvent(msg)
 				Expect(err).To(BeNil())
-				Expect(event.IsTimeseries).To(BeFalse())
-				Expect(event.TimestampMs).To(BeNil())
+				Expect(event.GetRel()).NotTo(BeNil())
+				Expect(event.GetTs()).To(BeNil())
 			})
 
 			It("rejects time series data with too many fields", func() {
@@ -89,10 +88,10 @@ var _ = Describe("Event Processing", func() {
 					"humidity":     float64(60.0),
 				})
 
-				event, err := messageToEvent(msg, nil)
+				event, err := messageToEvent(msg)
 				Expect(err).To(BeNil())
-				Expect(event.IsTimeseries).To(BeFalse())
-				Expect(event.TimestampMs).To(BeNil())
+				Expect(event.GetRel()).NotTo(BeNil())
+				Expect(event.GetTs()).To(BeNil())
 			})
 
 			It("should handle different value types", func() {
@@ -114,11 +113,11 @@ var _ = Describe("Event Processing", func() {
 						"value":        tc.value,
 					})
 
-					event, err := messageToEvent(msg, wrapperspb.String("value"))
+					event, err := messageToEvent(msg)
 					Expect(err).To(BeNil())
-					Expect(event.IsTimeseries).To(BeTrue())
-					Expect(event.TimestampMs).To(Equal(wrapperspb.Int64(1234567890)))
-					Expect(event.Value.TypeUrl).To(HavePrefix(tc.typePrefix))
+					Expect(event.GetTs()).NotTo(BeNil())
+					Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1234567890)))
+					Expect(event.GetTs().GetValue().TypeUrl).To(HavePrefix(tc.typePrefix))
 				}
 			})
 		})
@@ -128,22 +127,20 @@ var _ = Describe("Event Processing", func() {
 				rawData := []byte("raw data")
 				msg := service.NewMessage(rawData)
 
-				event, err := messageToEvent(msg, nil)
+				event, err := messageToEvent(msg)
 				Expect(err).To(BeNil())
-				Expect(event.IsTimeseries).To(BeFalse())
-				Expect(event.TimestampMs).To(BeNil())
-				Expect(event.Value.TypeUrl).To(Equal("golang/[]byte"))
-				Expect(event.Value.Value).To(Equal(rawData))
+				Expect(event.GetRel()).NotTo(BeNil())
+				Expect(event.GetTs()).To(BeNil())
 			})
 
 			It("handles non-map structured data", func() {
 				msg := service.NewMessage(nil)
 				msg.SetStructured([]interface{}{"not", "a", "map"})
 
-				event, err := messageToEvent(msg, nil)
+				event, err := messageToEvent(msg)
 				Expect(err).To(BeNil())
-				Expect(event.IsTimeseries).To(BeFalse())
-				Expect(event.TimestampMs).To(BeNil())
+				Expect(event.GetRel()).NotTo(BeNil())
+				Expect(event.GetTs()).To(BeNil())
 			})
 		})
 	})
@@ -155,11 +152,11 @@ var _ = Describe("Event Processing", func() {
 				"pressure":     float64(1013.25),
 			}
 
-			event, err := processTimeSeriesData(data, wrapperspb.String("pressure"))
+			event, err := processTimeSeriesData(data)
 			Expect(err).To(BeNil())
-			Expect(event.IsTimeseries).To(BeTrue())
-			Expect(event.TimestampMs).To(Equal(wrapperspb.Int64(1234567890)))
-			Expect(event.Value.TypeUrl).To(HavePrefix("golang/float64"))
+			Expect(event.GetTs()).NotTo(BeNil())
+			Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1234567890)))
+			Expect(event.GetTs().GetValue().TypeUrl).To(HavePrefix("golang/float64"))
 		})
 
 		It("handles conversion errors gracefully", func() {
@@ -172,20 +169,24 @@ var _ = Describe("Event Processing", func() {
 				"invalid":      Unconvertible{make(chan int)},
 			}
 
-			event, err := processTimeSeriesData(data, nil)
+			event, err := processTimeSeriesData(data)
 			Expect(err).NotTo(BeNil())
 			Expect(event).To(BeNil())
 		})
 
-		It("should not panic when expectedTagNameForTimeseries is nil", func() {
-			data := map[string]interface{}{
+		It("should not panic when there are multiple non-timestamp fields", func() {
+			msg := service.NewMessage(nil)
+			msg.SetStructured(map[string]interface{}{
 				"timestamp_ms": int64(1234567890),
 				"pressure":     float64(1013.25),
-			}
+				"temperature":  float64(25.0),
+			})
 
-			_, err := processTimeSeriesData(data, nil)
-			Expect(err).To(Not(BeNil()))
-			Expect(err.Error()).To(Equal("expected tag name for timeseries, but was empty"))
+			// This should be processed as relational data, not timeseries
+			event, err := messageToEvent(msg)
+			Expect(err).To(BeNil())
+			Expect(event.GetRel()).NotTo(BeNil()) // Should be relational data
+			Expect(event.GetTs()).To(BeNil())     // Should not be timeseries
 		})
 	})
 
@@ -196,10 +197,8 @@ var _ = Describe("Event Processing", func() {
 
 			event, err := processRelationalData(msg)
 			Expect(err).To(BeNil())
-			Expect(event.IsTimeseries).To(BeFalse())
-			Expect(event.TimestampMs).To(BeNil())
-			Expect(event.Value.TypeUrl).To(Equal("golang/[]byte"))
-			Expect(event.Value.Value).To(Equal(rawData))
+			Expect(event.GetRel()).NotTo(BeNil())
+			Expect(event.GetTs()).To(BeNil())
 		})
 	})
 })

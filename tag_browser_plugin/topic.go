@@ -126,13 +126,21 @@ func processLevels(levelParts []string, info *tagbrowserpluginprotobuf.TopicInfo
 }
 
 // processVirtualPath handles the virtual path part of the topic (everything after datacontract)
-// EventTag is no longer needed and has been removed from the protobuf schema
+// The last part after datacontract was previously the EventTag, which is now discarded
+// The remaining parts (if any) form the virtual path
 func processVirtualPath(virtualParts []string, info *tagbrowserpluginprotobuf.TopicInfo) error {
 	if len(virtualParts) == 0 {
 		return nil
 	}
 
-	// All parts after datacontract form the virtual path
-	info.VirtualPath = wrapperspb.String(strings.Join(virtualParts, "."))
+	// If there's only one part, it was the EventTag (now discarded)
+	if len(virtualParts) == 1 {
+		return nil
+	}
+
+	// If there are multiple parts, the last one was the EventTag (discarded)
+	// The remaining parts form the virtual path
+	virtualPathParts := virtualParts[:len(virtualParts)-1]
+	info.VirtualPath = wrapperspb.String(strings.Join(virtualPathParts, "."))
 	return nil
 }
