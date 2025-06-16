@@ -25,12 +25,11 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
 	"google.golang.org/protobuf/types/known/anypb"
-	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
-// messageToEvent will convert a benthos message, into an EventTableEntry, and eventTag and an optional error
+// messageToEvent will convert a benthos message, into an EventTableEntry
 // It checks if the incoming message is a valid time-series message, otherwise it handles it as relational data
-func messageToEvent(message *service.Message, expectedTagNameForTimeseries *wrapperspb.StringValue) (*tagbrowserpluginprotobuf.EventTableEntry, error) {
+func messageToEvent(message *service.Message) (*tagbrowserpluginprotobuf.EventTableEntry, error) {
 	// 1. If we don't have structured data (e.g. no JSON), we will handle it as relational data
 	structured, err := message.AsStructured()
 	if err != nil {
@@ -53,13 +52,30 @@ func messageToEvent(message *service.Message, expectedTagNameForTimeseries *wrap
 	}
 
 	// We passed all checks, we can now process the data as time-series data
-	return processTimeSeriesData(structuredAsMap, expectedTagNameForTimeseries)
+	return processTimeSeriesData(structuredAsMap)
+}
+
+// determineScalarType determines the ScalarType enum based on the Go type and type string
+func determineScalarType(value interface{}, valueType string) tagbrowserpluginprotobuf.ScalarType {
+	switch value.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return tagbrowserpluginprotobuf.ScalarType_NUMERIC
+	case bool:
+		return tagbrowserpluginprotobuf.ScalarType_BOOLEAN
+	case string:
+		return tagbrowserpluginprotobuf.ScalarType_STRING
+	default:
+		// For other types (JSON objects, arrays, etc.), treat as string
+		return tagbrowserpluginprotobuf.ScalarType_STRING
+	}
 }
 
 // processTimeSeriesData extracts the timestamp, value name, and value (including its type) from the structured data
-func processTimeSeriesData(structured map[string]interface{}, expectedTagNameForTimeseries *wrapperspb.StringValue) (*tagbrowserpluginprotobuf.EventTableEntry, error) {
+// EventTag validation has been removed since it's no longer part of the protobuf schema
+func processTimeSeriesData(structured map[string]interface{}) (*tagbrowserpluginprotobuf.EventTableEntry, error) {
 	var valueContent anypb.Any
 	var timestampMs int64
+	var scalarType tagbrowserpluginprotobuf.ScalarType
 	var err error
 
 	// We loop over all key/value pairs of the message's payload (we previously checked that there are exactly two)
@@ -74,13 +90,7 @@ func processTimeSeriesData(structured map[string]interface{}, expectedTagNameFor
 			}
 		default:
 			// The non-timestamp key/value pair will be handled here
-			expectedValue := expectedTagNameForTimeseries.GetValue()
-			if expectedValue == "" {
-				return nil, fmt.Errorf("expected tag name for timeseries, but was empty")
-			}
-			if expectedValue != key {
-				return nil, fmt.Errorf("expected tag name for timeseries %s, but was %s", expectedTagNameForTimeseries, key)
-			}
+			// EventTag validation has been removed - we accept any key name
 			// We need to convert the value to a protobuf Any, which is a wrapper around a byte array
 			var byteValue []byte
 			var valueType string
@@ -92,13 +102,23 @@ func processTimeSeriesData(structured map[string]interface{}, expectedTagNameFor
 				TypeUrl: fmt.Sprintf("golang/%s", valueType),
 				Value:   byteValue,
 			}
+			// Determine the scalar type for the protobuf
+			scalarType = determineScalarType(value, valueType)
 		}
 	}
 
+	// Create the TimeSeriesPayload
+	timeSeriesPayload := &tagbrowserpluginprotobuf.TimeSeriesPayload{
+		ScalarType:  scalarType,
+		Value:       &valueContent,
+		TimestampMs: timestampMs,
+	}
+
+	// Return EventTableEntry with the TimeSeriesPayload using the oneof pattern
 	return &tagbrowserpluginprotobuf.EventTableEntry{
-		IsTimeseries: true,
-		TimestampMs:  wrapperspb.Int64(timestampMs),
-		Value:        &valueContent,
+		Payload: &tagbrowserpluginprotobuf.EventTableEntry_Ts{
+			Ts: timeSeriesPayload,
+		},
 	}, nil
 }
 
@@ -110,12 +130,20 @@ func processRelationalData(message *service.Message) (*tagbrowserpluginprotobuf.
 		// Note: This shall never happen, as AsBytes internally never returns errors
 		return nil, err
 	}
+
+	// Create the RelationalPayload
+	relationalPayload := &tagbrowserpluginprotobuf.RelationalPayload{
+		Json: valueBytes,
+	}
+
+	// Return EventTableEntry with the RelationalPayload using the oneof pattern
 	return &tagbrowserpluginprotobuf.EventTableEntry{
-		IsTimeseries: false,
-		TimestampMs:  nil,
-		Value:        &anypb.Any{TypeUrl: "golang/[]byte", Value: valueBytes},
+		Payload: &tagbrowserpluginprotobuf.EventTableEntry_Rel{
+			Rel: relationalPayload,
+		},
 	}, nil
 }
+
 func interfaceToInt64(value interface{}) (int64, error) {
 	var valueAsInt64 int64
 	switch v := value.(type) {

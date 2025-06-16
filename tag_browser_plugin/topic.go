@@ -38,12 +38,12 @@ func extractTopicFromMessage(message *service.Message) (string, error) {
 }
 
 // topicToUNSInfo extracts the levels and datacontract from a UNS topic.
-// A UNS topic follows the format: umh.v1.{level0}.{level1}.{level2}.{level3}.{level4}.{level5}.{datacontract}.{virtualPath}.{eventTag}
+// A UNS topic follows the format: umh.v1.{level0}.{level1}.{level2}.{level3}.{level4}.{level5}.{datacontract}.{virtualPath}
 // where:
 // - level0 is required
 // - level1-5 are optional
 // - datacontract is required and starts with '_'
-// - virtualPath and eventTag are optional
+// - virtualPath is optional
 func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.TopicInfo, error) {
 	if err := validateTopicFormat(topic); err != nil {
 		return nil, err
@@ -66,10 +66,10 @@ func topicToUNSInfo(topic string) (*tagbrowserpluginprotobuf.TopicInfo, error) {
 	}
 
 	// Set datacontract
-	unsInfo.Datacontract = parts[datacontractIndex]
+	unsInfo.DataContract = parts[datacontractIndex] // Datacontract renamed to DataContract
 
-	// Process event group (virtual path and event tag)
-	if err := processEventGroup(parts[datacontractIndex+1:], unsInfo); err != nil {
+	// Process virtual path (everything after datacontract)
+	if err := processVirtualPath(parts[datacontractIndex+1:], unsInfo); err != nil {
 		return nil, err
 	}
 
@@ -125,18 +125,14 @@ func processLevels(levelParts []string, info *tagbrowserpluginprotobuf.TopicInfo
 	return nil
 }
 
-// processEventGroup handles the virtual path and event tag parts of the topic
-func processEventGroup(eventParts []string, info *tagbrowserpluginprotobuf.TopicInfo) error {
-	if len(eventParts) == 0 {
+// processVirtualPath handles the virtual path part of the topic (everything after datacontract)
+// EventTag is no longer needed and has been removed from the protobuf schema
+func processVirtualPath(virtualParts []string, info *tagbrowserpluginprotobuf.TopicInfo) error {
+	if len(virtualParts) == 0 {
 		return nil
 	}
 
-	if len(eventParts) > 1 {
-		// All parts except the last one form the virtual path
-		info.VirtualPath = wrapperspb.String(strings.Join(eventParts[:len(eventParts)-1], "."))
-	}
-
-	// Last part is always the event tag
-	info.EventTag = wrapperspb.String(eventParts[len(eventParts)-1])
+	// All parts after datacontract form the virtual path
+	info.VirtualPath = wrapperspb.String(strings.Join(virtualParts, "."))
 	return nil
 }
