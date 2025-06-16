@@ -50,6 +50,8 @@ package topic_browser_plugin
 */
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 
@@ -61,6 +63,22 @@ import (
 const (
 	// MaxPayloadSizeBytes defines the maximum allowed payload size to prevent resource consumption attacks
 	MaxPayloadSizeBytes = 1024 // 1KB limit
+
+	// Field names for UMH-Core time-series format
+	FieldTimestamp = "timestamp_ms"
+	FieldValue     = "value"
+)
+
+var (
+	// Error types for different failure modes
+	ErrNotObject         = errors.New("payload is not a JSON object")
+	ErrInvalidJSON       = errors.New("invalid JSON format")
+	ErrInvalidTimeSeries = errors.New("time-series payload must have exactly 'timestamp_ms' and 'value' keys")
+	ErrNaNOrInf          = errors.New("value may not be NaN or Inf")
+	ErrPayloadTooLarge   = errors.New("payload size exceeds maximum allowed size")
+	ErrPrecisionLoss     = errors.New("timestamp_ms conversion would cause precision loss")
+	ErrInvalidTimestamp  = errors.New("timestamp_ms must be numerical type")
+	ErrNilValue          = errors.New("value cannot be nil")
 )
 
 // messageToEvent will convert a benthos message, into an EventTableEntry
@@ -88,20 +106,20 @@ func messageToEvent(message *service.Message) (*topicbrowserpluginprotobuf.Event
 	structured, err := message.AsStructured()
 	if err != nil {
 		// This is not valid JSON - return error for invalid format
-		return nil, fmt.Errorf("invalid JSON format: %v", err)
+		return nil, fmt.Errorf("%w: %v", ErrInvalidJSON, err)
 	}
 
 	// 2. Relational data must be a JSON object (map), not arrays or primitives
 	structuredAsMap, ok := structured.(map[string]interface{})
 	if !ok {
 		// Valid JSON but not an object - this is invalid (arrays, primitives, etc.)
-		return nil, fmt.Errorf("relational data must be a JSON object, got %T", structured)
+		return nil, fmt.Errorf("%w, got %T", ErrNotObject, structured)
 	}
 
 	// 3. Check if it matches UMH-Core time-series format exactly
 	if len(structuredAsMap) == 2 {
-		_, hasTimestamp := structuredAsMap["timestamp_ms"]
-		_, hasValue := structuredAsMap["value"]
+		_, hasTimestamp := structuredAsMap[FieldTimestamp]
+		_, hasValue := structuredAsMap[FieldValue]
 		if hasTimestamp && hasValue {
 			// Valid UMH-Core time-series format
 			return processTimeSeriesData(structuredAsMap)
@@ -110,7 +128,7 @@ func messageToEvent(message *service.Message) (*topicbrowserpluginprotobuf.Event
 
 	// 4. If it doesn't match time-series format, process as relational data
 	// (This includes UMH Classic format with arbitrary key names)
-	return processRelationalData(message)
+	return processRelationalStructured(structuredAsMap)
 }
 
 // determineScalarType determines the ScalarType enum based on the Go type and type string
@@ -140,11 +158,19 @@ func processTimeSeriesData(structured map[string]interface{}) (*topicbrowserplug
 	var err error
 
 	// Validate that we have exactly the required keys for UMH-Core time-series format
-	timestampValue, hasTimestamp := structured["timestamp_ms"]
-	value, hasValue := structured["value"]
+	timestampValue, hasTimestamp := structured[FieldTimestamp]
+	value, hasValue := structured[FieldValue]
 
 	if !hasTimestamp || !hasValue {
-		return nil, fmt.Errorf("time-series data must have exactly 'timestamp_ms' and 'value' keys")
+		return nil, fmt.Errorf("%w: must have exactly '%s' and '%s' keys", ErrInvalidTimeSeries, FieldTimestamp, FieldValue)
+	}
+
+	// Validate that neither timestamp nor value is nil
+	if timestampValue == nil {
+		return nil, fmt.Errorf("%w: %s cannot be nil", ErrNilValue, FieldTimestamp)
+	}
+	if value == nil {
+		return nil, fmt.Errorf("%w: %s cannot be nil", ErrNilValue, FieldValue)
 	}
 
 	// Process timestamp_ms
@@ -155,7 +181,7 @@ func processTimeSeriesData(structured map[string]interface{}) (*topicbrowserplug
 
 	// Validate special float values before processing
 	if f, ok := value.(float64); ok && (math.IsNaN(f) || math.IsInf(f, 0)) {
-		return nil, fmt.Errorf("value may not be NaN or Inf")
+		return nil, ErrNaNOrInf
 	}
 
 	// Process value
@@ -168,7 +194,7 @@ func processTimeSeriesData(structured map[string]interface{}) (*topicbrowserplug
 
 	// Validate payload size to prevent resource consumption attacks
 	if len(byteValue) > MaxPayloadSizeBytes {
-		return nil, fmt.Errorf("payload size %d bytes exceeds maximum allowed size of %d bytes", len(byteValue), MaxPayloadSizeBytes)
+		return nil, fmt.Errorf("%w: %d bytes exceeds maximum allowed size of %d bytes", ErrPayloadTooLarge, len(byteValue), MaxPayloadSizeBytes)
 	}
 	valueContent = anypb.Any{
 		TypeUrl: fmt.Sprintf("golang/%s", valueType),
@@ -192,13 +218,12 @@ func processTimeSeriesData(structured map[string]interface{}) (*topicbrowserplug
 	}, nil
 }
 
-// processRelationalData extracts the message payload as bytes and returns them
-func processRelationalData(message *service.Message) (*topicbrowserpluginprotobuf.EventTableEntry, error) {
-	// For relational data, we don't do any parsing and just extract the payload as bytes
-	valueBytes, err := message.AsBytes()
+// processRelationalStructured processes structured data directly as relational without re-serialization
+func processRelationalStructured(structured map[string]interface{}) (*topicbrowserpluginprotobuf.EventTableEntry, error) {
+	// Convert the structured data to JSON bytes for storage
+	valueBytes, err := json.Marshal(structured)
 	if err != nil {
-		// Note: This shall never happen, as AsBytes internally never returns errors
-		return nil, err
+		return nil, fmt.Errorf("failed to marshal relational data: %w", err)
 	}
 
 	// Create the RelationalPayload
@@ -248,7 +273,7 @@ func interfaceToInt64(value interface{}) (int64, error) {
 			return 0, fmt.Errorf("value %f out of int64 range", v)
 		}
 		if float64(v) != math.Trunc(float64(v)) {
-			return 0, fmt.Errorf("timestamp_ms conversion would cause precision loss: %f is not an integer", v)
+			return 0, fmt.Errorf("%w: %f is not an integer", ErrPrecisionLoss, float64(v))
 		}
 		valueAsInt64 = int64(v)
 	case float64:
@@ -256,11 +281,11 @@ func interfaceToInt64(value interface{}) (int64, error) {
 			return 0, fmt.Errorf("value %f out of int64 range", v)
 		}
 		if v != math.Trunc(v) {
-			return 0, fmt.Errorf("timestamp_ms conversion would cause precision loss: %f is not an integer", v)
+			return 0, fmt.Errorf("%w: %f is not an integer", ErrPrecisionLoss, v)
 		}
 		valueAsInt64 = int64(v)
 	default:
-		return 0, fmt.Errorf("timestamp_ms must be numerical type, but was %T", v)
+		return 0, fmt.Errorf("%w, but was %T", ErrInvalidTimestamp, v)
 	}
 	return valueAsInt64, nil
 }
