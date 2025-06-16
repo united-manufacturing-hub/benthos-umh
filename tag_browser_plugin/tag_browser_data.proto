@@ -62,17 +62,47 @@ message EventKafka {
   bytes payload             = 2;  // Raw message payload
 }
 
+// PayloadFormat is used to indicate the format of the payload.
+// See also https://docs.umh.app/usage/unified-namespace/payload-formats
+enum PayloadFormat {
+  PAYLOAD_FORMAT_UNSPECIFIED = 0; // this should never happen, can only happen if it wasn't set --> message should be rejected
+  TIMESERIES = 1;   // one scalar value + timestamp (e.g. a float)
+  RELATIONAL  = 2;   // full JSON object (e.g. a JSON object)
+}
+
+enum ScalarType {            // applies only to Time-series
+  SCALAR_TYPE_UNSPECIFIED = 0; // this should never happen, can only happen if it wasn't set --> message should be rejected
+  NUMERIC                  = 1;
+  STRING                   = 2;
+  BOOLEAN                  = 3;
+}
+
+// One scalar point  (the UMH “time-series / tags” format)
+message TimeSeriesPayload {
+  ScalarType               scalar_type  = 1;   // numeric / string / boolean
+  google.protobuf.Any      value        = 2;   // encoded scalar
+  int64                    timestamp_ms = 3;   // source time
+}
+
+// Arbitrary JSON document  (the UMH “relational / JSON” format)
+message RelationalPayload {
+  bytes json = 1;                              // already UTF-8 JSON bytes
+}
+
+
 // ---------- Event table ----------------------------------------------------
 
 // EventTableEntry represents a single processed event in the system.
 // It contains both the event data and metadata about how it was processed.
 message EventTableEntry {
-  string                      uns_tree_id   = 1; // Hash of the associated TopicInfo
-  google.protobuf.Any         value         = 2; // The actual event payload, can be any type
-  google.protobuf.Int64Value  timestamp_ms  = 3; // Event timestamp (for timeseries data)
-  bool                        is_timeseries = 4; // Indicates if this is timeseries data
-  EventKafka                  raw_kafka_msg = 5; // Original Kafka message data
-  repeated string             processed_by  = 6; // List of processors that have handled this message
+  string                  uns_tree_id   = 1;   // xxHash over TopicInfo
+  oneof payload {
+    TimeSeriesPayload     ts     = 10;
+    RelationalPayload     rel    = 11;
+  }
+  EventKafka              raw_kafka_msg = 5;   // the raw kafka message, for now only for debugging purposes
+  repeated string         bridged_by  = 6;   // each message has a list of benthos instances where it went through
+  uint64                  produced_at_ms = 7;  // The event when it was ingestd into the UNS, technically the timestamp of the Kafka message
 }
 
 // EventTable contains a batch of processed events.
