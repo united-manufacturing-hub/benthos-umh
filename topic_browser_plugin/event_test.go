@@ -36,7 +36,9 @@ var _ = Describe("Event Processing", func() {
 				Expect(err).To(BeNil())
 				Expect(event.GetTs()).NotTo(BeNil())
 				Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1234567890)))
-				Expect(event.GetTs().GetValue().TypeUrl).To(HavePrefix("golang/float64"))
+				Expect(event.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
+				Expect(event.GetTs().GetNumericValue()).NotTo(BeNil())
+				Expect(event.GetTs().GetNumericValue().GetValue()).To(Equal(float64(25.5)))
 			})
 
 			It("rejects time series data with missing timestamp", func() {
@@ -81,13 +83,13 @@ var _ = Describe("Event Processing", func() {
 			It("should handle different value types", func() {
 				testCases := []struct {
 					value      interface{}
-					typePrefix string
+					scalarType ScalarType
 				}{
-					{float64(123.45), "golang/float64"},
-					{int64(123), "golang/int64"},
-					{uint64(123), "golang/uint64"},
-					{true, "golang/bool"},
-					{"test", "golang/string"},
+					{float64(123.45), ScalarType_NUMERIC},
+					{int64(123), ScalarType_NUMERIC},
+					{uint64(123), ScalarType_NUMERIC},
+					{true, ScalarType_BOOLEAN},
+					{"test", ScalarType_STRING},
 				}
 
 				for _, tc := range testCases {
@@ -101,7 +103,19 @@ var _ = Describe("Event Processing", func() {
 					Expect(err).To(BeNil())
 					Expect(event.GetTs()).NotTo(BeNil())
 					Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1234567890)))
-					Expect(event.GetTs().GetValue().TypeUrl).To(HavePrefix(tc.typePrefix))
+					Expect(event.GetTs().GetScalarType()).To(Equal(tc.scalarType))
+
+					// Check the specific value based on scalar type
+					switch tc.scalarType {
+					case ScalarType_NUMERIC:
+						Expect(event.GetTs().GetNumericValue()).NotTo(BeNil())
+					case ScalarType_STRING:
+						Expect(event.GetTs().GetStringValue()).NotTo(BeNil())
+						Expect(event.GetTs().GetStringValue().GetValue()).To(Equal("test"))
+					case ScalarType_BOOLEAN:
+						Expect(event.GetTs().GetBooleanValue()).NotTo(BeNil())
+						Expect(event.GetTs().GetBooleanValue().GetValue()).To(Equal(true))
+					}
 				}
 			})
 
@@ -222,7 +236,9 @@ var _ = Describe("Event Processing", func() {
 			Expect(err).To(BeNil())
 			Expect(event.GetTs()).NotTo(BeNil())
 			Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1234567890)))
-			Expect(event.GetTs().GetValue().TypeUrl).To(HavePrefix("golang/float64"))
+			Expect(event.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
+			Expect(event.GetTs().GetNumericValue()).NotTo(BeNil())
+			Expect(event.GetTs().GetNumericValue().GetValue()).To(Equal(float64(1013.25)))
 		})
 
 		It("rejects UMH Classic format with arbitrary key names", func() {

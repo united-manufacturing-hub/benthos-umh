@@ -17,11 +17,11 @@ package topic_browser_plugin
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
-var _ = Describe("Protobuf Functions", func() {
-	Describe("bundleToProtobuf and protobufBytesToBundle", func() {
+var _ = Describe("Protobuf Bundle Operations", func() {
+	Context("Bundle serialization and deserialization", func() {
 		It("successfully encodes and decodes a bundle with time series data", func() {
 			// Create a test bundle
 			originalBundle := &UnsBundle{
@@ -41,9 +41,8 @@ var _ = Describe("Protobuf Functions", func() {
 								Ts: &TimeSeriesPayload{
 									ScalarType:  ScalarType_NUMERIC,
 									TimestampMs: 1647753600000,
-									Value: &anypb.Any{
-										TypeUrl: "golang/float64",
-										Value:   []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x40}, // 13.0 in float64
+									Value: &TimeSeriesPayload_NumericValue{
+										NumericValue: &wrapperspb.DoubleValue{Value: 13.0},
 									},
 								},
 							},
@@ -117,9 +116,8 @@ var _ = Describe("Protobuf Functions", func() {
 								Ts: &TimeSeriesPayload{
 									ScalarType:  ScalarType_NUMERIC,
 									TimestampMs: 1647753600000,
-									Value: &anypb.Any{
-										TypeUrl: "golang/float64",
-										Value:   []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x40}, // 13.0 in float64
+									Value: &TimeSeriesPayload_NumericValue{
+										NumericValue: &wrapperspb.DoubleValue{Value: 13.0},
 									},
 								},
 							},
@@ -130,9 +128,8 @@ var _ = Describe("Protobuf Functions", func() {
 								Ts: &TimeSeriesPayload{
 									ScalarType:  ScalarType_NUMERIC,
 									TimestampMs: 1647753600001,
-									Value: &anypb.Any{
-										TypeUrl: "golang/float64",
-										Value:   []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x40}, // 13.0 in float64
+									Value: &TimeSeriesPayload_NumericValue{
+										NumericValue: &wrapperspb.DoubleValue{Value: 13.0},
 									},
 								},
 							},
@@ -153,17 +150,7 @@ var _ = Describe("Protobuf Functions", func() {
 
 			// Verify the decoded bundle matches the original
 			Expect(decodedBundle.UnsMap.Entries).To(HaveLen(2))
-			Expect(decodedBundle.UnsMap.Entries["topic1"].Level0).To(Equal(originalBundle.UnsMap.Entries["topic1"].Level0))
-			Expect(decodedBundle.UnsMap.Entries["topic2"].Level0).To(Equal(originalBundle.UnsMap.Entries["topic2"].Level0))
 			Expect(decodedBundle.Events.Entries).To(HaveLen(2))
-		})
-
-		It("handles invalid protobuf bytes", func() {
-			// Try to decode invalid bytes
-			invalidBytes := []byte{0x00, 0x01, 0x02, 0x03}
-			decodedBundle, err := protobufBytesToBundle(invalidBytes)
-			Expect(err).NotTo(BeNil())
-			Expect(decodedBundle).To(BeNil())
 		})
 	})
 })

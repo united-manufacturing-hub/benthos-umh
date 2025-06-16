@@ -166,16 +166,18 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Verify first event
 			event1 := decoded.Events.Entries[0]
 			Expect(event1.GetTs().GetTimestampMs()).To(Equal(int64(1647753600000)))
-			Expect(event1.GetTs().GetValue().TypeUrl).To(Equal("golang/int"))
-			Expect(event1.GetTs().GetValue().Value).To(Equal([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}))
+			Expect(event1.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
+			Expect(event1.GetTs().GetNumericValue()).NotTo(BeNil())
+			Expect(event1.GetTs().GetNumericValue().GetValue()).To(Equal(float64(3)))
 			Expect(event1.RawKafkaMsg).NotTo(BeNil())
 			Expect(event1.RawKafkaMsg.Headers).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
 
 			// Verify second event
 			event2 := decoded.Events.Entries[1]
 			Expect(event2.GetTs().GetTimestampMs()).To(Equal(int64(1647753600001)))
-			Expect(event2.GetTs().GetValue().TypeUrl).To(Equal("golang/int"))
-			Expect(event2.GetTs().GetValue().Value).To(Equal([]byte{0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}))
+			Expect(event2.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
+			Expect(event2.GetTs().GetNumericValue()).NotTo(BeNil())
+			Expect(event2.GetTs().GetNumericValue().GetValue()).To(Equal(float64(5)))
 			Expect(event2.RawKafkaMsg).NotTo(BeNil())
 		})
 
@@ -255,8 +257,9 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Verify the event
 			event := decoded2.Events.Entries[0]
 			Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1647753600001)))
-			Expect(event.GetTs().GetValue().TypeUrl).To(Equal("golang/int"))
-			Expect(event.GetTs().GetValue().Value).To(Equal([]byte{0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}))
+			Expect(event.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
+			Expect(event.GetTs().GetNumericValue()).NotTo(BeNil())
+			Expect(event.GetTs().GetNumericValue().GetValue()).To(Equal(float64(5)))
 			Expect(event.RawKafkaMsg).NotTo(BeNil())
 			Expect(event.RawKafkaMsg.Headers).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
 

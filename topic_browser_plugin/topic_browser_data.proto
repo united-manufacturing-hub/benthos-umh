@@ -36,7 +36,7 @@ package umh.events;
 
 option go_package = "./;topic_browser_plugin";
 
-import "google/protobuf/any.proto";
+import "google/protobuf/wrappers.proto";
 
 // ---------- Topic info -------------------------------------------------------
 
@@ -140,8 +140,7 @@ enum ScalarType {            // applies only to Time-series
  * • `scalar_type` mirrors the ScalarType enum so the UI can decide quickly
  *   whether the value should be plotted (numeric), shown as text (string) or
  *   rendered as a state indicator (boolean).
- * • `value` is wrapped in google.protobuf.Any to keep the wire payload tiny
- *   while still allowing three primitive types:
+ * • `value` is a oneof containing standard protobuf wrapper types:
  *       ▸ google.protobuf.DoubleValue   → NUMERIC  
  *       ▸ google.protobuf.StringValue   → STRING  
  *       ▸ google.protobuf.BoolValue     → BOOLEAN
@@ -150,9 +149,13 @@ enum ScalarType {            // applies only to Time-series
  *   The latter lives in `EventTableEntry.produced_at_ms` for debugging.
  */
 message TimeSeriesPayload {
-  ScalarType               scalar_type  = 1;   // numeric / string / boolean
-  google.protobuf.Any      value        = 2;   // DoubleValue, StringValue, BoolValue
-  int64                    timestamp_ms = 3;   // source time
+  ScalarType               scalar_type  = 1;   // numeric / string / boolean (for frontend convenience)
+  oneof value {
+    google.protobuf.DoubleValue numeric_value = 2;   // NUMERIC values
+    google.protobuf.StringValue string_value  = 3;   // STRING values  
+    google.protobuf.BoolValue   boolean_value = 4;   // BOOLEAN values
+  }
+  int64                    timestamp_ms = 5;   // source time
 }
 
 /**

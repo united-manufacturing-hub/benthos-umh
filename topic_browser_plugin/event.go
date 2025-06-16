@@ -71,7 +71,7 @@ import (
 	"math"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
-	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 const (
@@ -94,6 +94,7 @@ var (
 	ErrPrecisionLoss     = errors.New("timestamp_ms conversion would cause precision loss")
 	ErrInvalidTimestamp  = errors.New("timestamp_ms must be numerical type")
 	ErrNilValue          = errors.New("value cannot be nil")
+	ErrUnsupportedType   = errors.New("unsupported value type for time-series")
 )
 
 // messageToEvent will convert a benthos message, into an EventTableEntry
@@ -146,30 +147,13 @@ func messageToEvent(message *service.Message) (*EventTableEntry, error) {
 	return processRelationalStructured(structuredAsMap)
 }
 
-// determineScalarType determines the ScalarType enum based on the Go type and type string
-func determineScalarType(value interface{}, valueType string) ScalarType {
-	switch value.(type) {
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-		return ScalarType_NUMERIC
-	case bool:
-		return ScalarType_BOOLEAN
-	case string:
-		return ScalarType_STRING
-	default:
-		// For other types (JSON objects, arrays, etc.), treat as string
-		return ScalarType_STRING
-	}
-}
-
 // processTimeSeriesData extracts the timestamp and value from the structured data
 // For UMH-Core, time-series data must have exactly these two keys:
 // 1. "timestamp_ms" - timestamp in milliseconds (numeric)
 // 2. "value" - the scalar value (any type)
 // Any other format is considered relational data
 func processTimeSeriesData(structured map[string]interface{}) (*EventTableEntry, error) {
-	var valueContent anypb.Any
 	var timestampMs int64
-	var scalarType ScalarType
 	var err error
 
 	// Validate that we have exactly the required keys for UMH-Core time-series format
@@ -199,30 +183,73 @@ func processTimeSeriesData(structured map[string]interface{}) (*EventTableEntry,
 		return nil, ErrNaNOrInf
 	}
 
-	// Process value
-	var byteValue []byte
-	var valueType string
-	byteValue, valueType, err = ToBytes(value)
+	// Check payload size by serializing the value (approximation)
+	valueBytes, err := json.Marshal(value)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to marshal value for size check: %w", err)
+	}
+	if len(valueBytes) > MaxTimeSeriesPayloadBytes {
+		return nil, fmt.Errorf("%w: time-series payload %d bytes exceeds maximum allowed size of %d bytes", ErrPayloadTooLarge, len(valueBytes), MaxTimeSeriesPayloadBytes)
 	}
 
-	// Validate payload size for time-series data only (relational data has no hard limit)
-	if len(byteValue) > MaxTimeSeriesPayloadBytes {
-		return nil, fmt.Errorf("%w: time-series payload %d bytes exceeds maximum allowed size of %d bytes", ErrPayloadTooLarge, len(byteValue), MaxTimeSeriesPayloadBytes)
-	}
-	valueContent = anypb.Any{
-		TypeUrl: fmt.Sprintf("golang/%s", valueType),
-		Value:   byteValue,
-	}
-	// Determine the scalar type for the protobuf
-	scalarType = determineScalarType(value, valueType)
-
-	// Create the TimeSeriesPayload
+	// Create the TimeSeriesPayload with oneof wrapper types
 	timeSeriesPayload := &TimeSeriesPayload{
-		ScalarType:  scalarType,
-		Value:       &valueContent,
 		TimestampMs: timestampMs,
+	}
+
+	// Set the value and scalar type based on the Go type
+	switch v := value.(type) {
+	case float64:
+		timeSeriesPayload.ScalarType = ScalarType_NUMERIC
+		timeSeriesPayload.Value = &TimeSeriesPayload_NumericValue{
+			NumericValue: &wrapperspb.DoubleValue{Value: v},
+		}
+	case float32:
+		timeSeriesPayload.ScalarType = ScalarType_NUMERIC
+		timeSeriesPayload.Value = &TimeSeriesPayload_NumericValue{
+			NumericValue: &wrapperspb.DoubleValue{Value: float64(v)},
+		}
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		// Convert all integer types to float64 for consistent handling
+		var floatVal float64
+		switch v := v.(type) {
+		case int:
+			floatVal = float64(v)
+		case int8:
+			floatVal = float64(v)
+		case int16:
+			floatVal = float64(v)
+		case int32:
+			floatVal = float64(v)
+		case int64:
+			floatVal = float64(v)
+		case uint:
+			floatVal = float64(v)
+		case uint8:
+			floatVal = float64(v)
+		case uint16:
+			floatVal = float64(v)
+		case uint32:
+			floatVal = float64(v)
+		case uint64:
+			floatVal = float64(v)
+		}
+		timeSeriesPayload.ScalarType = ScalarType_NUMERIC
+		timeSeriesPayload.Value = &TimeSeriesPayload_NumericValue{
+			NumericValue: &wrapperspb.DoubleValue{Value: floatVal},
+		}
+	case string:
+		timeSeriesPayload.ScalarType = ScalarType_STRING
+		timeSeriesPayload.Value = &TimeSeriesPayload_StringValue{
+			StringValue: &wrapperspb.StringValue{Value: v},
+		}
+	case bool:
+		timeSeriesPayload.ScalarType = ScalarType_BOOLEAN
+		timeSeriesPayload.Value = &TimeSeriesPayload_BooleanValue{
+			BooleanValue: &wrapperspb.BoolValue{Value: v},
+		}
+	default:
+		return nil, fmt.Errorf("%w: cannot handle type %T", ErrUnsupportedType, value)
 	}
 
 	// Return EventTableEntry with the TimeSeriesPayload using the oneof pattern

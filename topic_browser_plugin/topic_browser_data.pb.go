@@ -41,7 +41,7 @@ package topic_browser_plugin
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	anypb "google.golang.org/protobuf/types/known/anypb"
+	wrapperspb "google.golang.org/protobuf/types/known/wrapperspb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -391,8 +391,7 @@ func (x *EventKafka) GetPayload() []byte {
 //   - `scalar_type` mirrors the ScalarType enum so the UI can decide quickly
 //     whether the value should be plotted (numeric), shown as text (string) or
 //     rendered as a state indicator (boolean).
-//   - `value` is wrapped in google.protobuf.Any to keep the wire payload tiny
-//     while still allowing three primitive types:
+//   - `value` is a oneof containing standard protobuf wrapper types:
 //     ▸ google.protobuf.DoubleValue   → NUMERIC
 //     ▸ google.protobuf.StringValue   → STRING
 //     ▸ google.protobuf.BoolValue     → BOOLEAN
@@ -400,10 +399,15 @@ func (x *EventKafka) GetPayload() []byte {
 //     the PLC / device generated the value, *not* when Kafka wrote the message.
 //     The latter lives in `EventTableEntry.produced_at_ms` for debugging.
 type TimeSeriesPayload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ScalarType    ScalarType             `protobuf:"varint,1,opt,name=scalar_type,json=scalarType,proto3,enum=umh.events.ScalarType" json:"scalar_type,omitempty"` // numeric / string / boolean
-	Value         *anypb.Any             `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`                                                         // DoubleValue, StringValue, BoolValue
-	TimestampMs   int64                  `protobuf:"varint,3,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`                         // source time
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	ScalarType ScalarType             `protobuf:"varint,1,opt,name=scalar_type,json=scalarType,proto3,enum=umh.events.ScalarType" json:"scalar_type,omitempty"` // numeric / string / boolean (for frontend convenience)
+	// Types that are valid to be assigned to Value:
+	//
+	//	*TimeSeriesPayload_NumericValue
+	//	*TimeSeriesPayload_StringValue
+	//	*TimeSeriesPayload_BooleanValue
+	Value         isTimeSeriesPayload_Value `protobuf_oneof:"value"`
+	TimestampMs   int64                     `protobuf:"varint,5,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"` // source time
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -445,9 +449,36 @@ func (x *TimeSeriesPayload) GetScalarType() ScalarType {
 	return ScalarType_SCALAR_TYPE_UNSPECIFIED
 }
 
-func (x *TimeSeriesPayload) GetValue() *anypb.Any {
+func (x *TimeSeriesPayload) GetValue() isTimeSeriesPayload_Value {
 	if x != nil {
 		return x.Value
+	}
+	return nil
+}
+
+func (x *TimeSeriesPayload) GetNumericValue() *wrapperspb.DoubleValue {
+	if x != nil {
+		if x, ok := x.Value.(*TimeSeriesPayload_NumericValue); ok {
+			return x.NumericValue
+		}
+	}
+	return nil
+}
+
+func (x *TimeSeriesPayload) GetStringValue() *wrapperspb.StringValue {
+	if x != nil {
+		if x, ok := x.Value.(*TimeSeriesPayload_StringValue); ok {
+			return x.StringValue
+		}
+	}
+	return nil
+}
+
+func (x *TimeSeriesPayload) GetBooleanValue() *wrapperspb.BoolValue {
+	if x != nil {
+		if x, ok := x.Value.(*TimeSeriesPayload_BooleanValue); ok {
+			return x.BooleanValue
+		}
 	}
 	return nil
 }
@@ -458,6 +489,28 @@ func (x *TimeSeriesPayload) GetTimestampMs() int64 {
 	}
 	return 0
 }
+
+type isTimeSeriesPayload_Value interface {
+	isTimeSeriesPayload_Value()
+}
+
+type TimeSeriesPayload_NumericValue struct {
+	NumericValue *wrapperspb.DoubleValue `protobuf:"bytes,2,opt,name=numeric_value,json=numericValue,proto3,oneof"` // NUMERIC values
+}
+
+type TimeSeriesPayload_StringValue struct {
+	StringValue *wrapperspb.StringValue `protobuf:"bytes,3,opt,name=string_value,json=stringValue,proto3,oneof"` // STRING values
+}
+
+type TimeSeriesPayload_BooleanValue struct {
+	BooleanValue *wrapperspb.BoolValue `protobuf:"bytes,4,opt,name=boolean_value,json=booleanValue,proto3,oneof"` // BOOLEAN values
+}
+
+func (*TimeSeriesPayload_NumericValue) isTimeSeriesPayload_Value() {}
+
+func (*TimeSeriesPayload_StringValue) isTimeSeriesPayload_Value() {}
+
+func (*TimeSeriesPayload_BooleanValue) isTimeSeriesPayload_Value() {}
 
 // *
 // RelationalPayload  ─ full JSON document shape
@@ -772,7 +825,7 @@ var File_topic_browser_data_proto protoreflect.FileDescriptor
 const file_topic_browser_data_proto_rawDesc = "" +
 	"\n" +
 	"\x18topic_browser_data.proto\x12\n" +
-	"umh.events\x1a\x19google/protobuf/any.proto\"\xc2\x02\n" +
+	"umh.events\x1a\x1egoogle/protobuf/wrappers.proto\"\xc2\x02\n" +
 	"\tTopicInfo\x12\x16\n" +
 	"\x06level0\x18\x01 \x01(\tR\x06level0\x12-\n" +
 	"\x12location_sublevels\x18\x02 \x03(\tR\x11locationSublevels\x12#\n" +
@@ -795,12 +848,15 @@ const file_topic_browser_data_proto_rawDesc = "" +
 	"\apayload\x18\x02 \x01(\fR\apayload\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9b\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc3\x02\n" +
 	"\x11TimeSeriesPayload\x127\n" +
 	"\vscalar_type\x18\x01 \x01(\x0e2\x16.umh.events.ScalarTypeR\n" +
-	"scalarType\x12*\n" +
-	"\x05value\x18\x02 \x01(\v2\x14.google.protobuf.AnyR\x05value\x12!\n" +
-	"\ftimestamp_ms\x18\x03 \x01(\x03R\vtimestampMs\"'\n" +
+	"scalarType\x12C\n" +
+	"\rnumeric_value\x18\x02 \x01(\v2\x1c.google.protobuf.DoubleValueH\x00R\fnumericValue\x12A\n" +
+	"\fstring_value\x18\x03 \x01(\v2\x1c.google.protobuf.StringValueH\x00R\vstringValue\x12A\n" +
+	"\rboolean_value\x18\x04 \x01(\v2\x1a.google.protobuf.BoolValueH\x00R\fbooleanValue\x12!\n" +
+	"\ftimestamp_ms\x18\x05 \x01(\x03R\vtimestampMsB\a\n" +
+	"\x05value\"'\n" +
 	"\x11RelationalPayload\x12\x12\n" +
 	"\x04json\x18\x01 \x01(\fR\x04json\"\xa1\x02\n" +
 	"\x0fEventTableEntry\x12\x1e\n" +
@@ -848,39 +904,43 @@ func file_topic_browser_data_proto_rawDescGZIP() []byte {
 var file_topic_browser_data_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_topic_browser_data_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_topic_browser_data_proto_goTypes = []any{
-	(PayloadFormat)(0),        // 0: umh.events.PayloadFormat
-	(ScalarType)(0),           // 1: umh.events.ScalarType
-	(*TopicInfo)(nil),         // 2: umh.events.TopicInfo
-	(*TopicMap)(nil),          // 3: umh.events.TopicMap
-	(*EventKafka)(nil),        // 4: umh.events.EventKafka
-	(*TimeSeriesPayload)(nil), // 5: umh.events.TimeSeriesPayload
-	(*RelationalPayload)(nil), // 6: umh.events.RelationalPayload
-	(*EventTableEntry)(nil),   // 7: umh.events.EventTableEntry
-	(*EventTable)(nil),        // 8: umh.events.EventTable
-	(*UnsBundle)(nil),         // 9: umh.events.UnsBundle
-	nil,                       // 10: umh.events.TopicInfo.MetadataEntry
-	nil,                       // 11: umh.events.TopicMap.EntriesEntry
-	nil,                       // 12: umh.events.EventKafka.HeadersEntry
-	(*anypb.Any)(nil),         // 13: google.protobuf.Any
+	(PayloadFormat)(0),             // 0: umh.events.PayloadFormat
+	(ScalarType)(0),                // 1: umh.events.ScalarType
+	(*TopicInfo)(nil),              // 2: umh.events.TopicInfo
+	(*TopicMap)(nil),               // 3: umh.events.TopicMap
+	(*EventKafka)(nil),             // 4: umh.events.EventKafka
+	(*TimeSeriesPayload)(nil),      // 5: umh.events.TimeSeriesPayload
+	(*RelationalPayload)(nil),      // 6: umh.events.RelationalPayload
+	(*EventTableEntry)(nil),        // 7: umh.events.EventTableEntry
+	(*EventTable)(nil),             // 8: umh.events.EventTable
+	(*UnsBundle)(nil),              // 9: umh.events.UnsBundle
+	nil,                            // 10: umh.events.TopicInfo.MetadataEntry
+	nil,                            // 11: umh.events.TopicMap.EntriesEntry
+	nil,                            // 12: umh.events.EventKafka.HeadersEntry
+	(*wrapperspb.DoubleValue)(nil), // 13: google.protobuf.DoubleValue
+	(*wrapperspb.StringValue)(nil), // 14: google.protobuf.StringValue
+	(*wrapperspb.BoolValue)(nil),   // 15: google.protobuf.BoolValue
 }
 var file_topic_browser_data_proto_depIdxs = []int32{
 	10, // 0: umh.events.TopicInfo.metadata:type_name -> umh.events.TopicInfo.MetadataEntry
 	11, // 1: umh.events.TopicMap.entries:type_name -> umh.events.TopicMap.EntriesEntry
 	12, // 2: umh.events.EventKafka.headers:type_name -> umh.events.EventKafka.HeadersEntry
 	1,  // 3: umh.events.TimeSeriesPayload.scalar_type:type_name -> umh.events.ScalarType
-	13, // 4: umh.events.TimeSeriesPayload.value:type_name -> google.protobuf.Any
-	5,  // 5: umh.events.EventTableEntry.ts:type_name -> umh.events.TimeSeriesPayload
-	6,  // 6: umh.events.EventTableEntry.rel:type_name -> umh.events.RelationalPayload
-	4,  // 7: umh.events.EventTableEntry.raw_kafka_msg:type_name -> umh.events.EventKafka
-	7,  // 8: umh.events.EventTable.entries:type_name -> umh.events.EventTableEntry
-	3,  // 9: umh.events.UnsBundle.uns_map:type_name -> umh.events.TopicMap
-	8,  // 10: umh.events.UnsBundle.events:type_name -> umh.events.EventTable
-	2,  // 11: umh.events.TopicMap.EntriesEntry.value:type_name -> umh.events.TopicInfo
-	12, // [12:12] is the sub-list for method output_type
-	12, // [12:12] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	13, // 4: umh.events.TimeSeriesPayload.numeric_value:type_name -> google.protobuf.DoubleValue
+	14, // 5: umh.events.TimeSeriesPayload.string_value:type_name -> google.protobuf.StringValue
+	15, // 6: umh.events.TimeSeriesPayload.boolean_value:type_name -> google.protobuf.BoolValue
+	5,  // 7: umh.events.EventTableEntry.ts:type_name -> umh.events.TimeSeriesPayload
+	6,  // 8: umh.events.EventTableEntry.rel:type_name -> umh.events.RelationalPayload
+	4,  // 9: umh.events.EventTableEntry.raw_kafka_msg:type_name -> umh.events.EventKafka
+	7,  // 10: umh.events.EventTable.entries:type_name -> umh.events.EventTableEntry
+	3,  // 11: umh.events.UnsBundle.uns_map:type_name -> umh.events.TopicMap
+	8,  // 12: umh.events.UnsBundle.events:type_name -> umh.events.EventTable
+	2,  // 13: umh.events.TopicMap.EntriesEntry.value:type_name -> umh.events.TopicInfo
+	14, // [14:14] is the sub-list for method output_type
+	14, // [14:14] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_topic_browser_data_proto_init() }
@@ -889,6 +949,11 @@ func file_topic_browser_data_proto_init() {
 		return
 	}
 	file_topic_browser_data_proto_msgTypes[0].OneofWrappers = []any{}
+	file_topic_browser_data_proto_msgTypes[3].OneofWrappers = []any{
+		(*TimeSeriesPayload_NumericValue)(nil),
+		(*TimeSeriesPayload_StringValue)(nil),
+		(*TimeSeriesPayload_BooleanValue)(nil),
+	}
 	file_topic_browser_data_proto_msgTypes[5].OneofWrappers = []any{
 		(*EventTableEntry_Ts)(nil),
 		(*EventTableEntry_Rel)(nil),

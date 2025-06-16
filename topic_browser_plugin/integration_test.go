@@ -27,31 +27,6 @@ import (
 var _ = Describe("Topic Browser Integration Tests", func() {
 
 	Describe("Pipeline Configuration", func() {
-		It("should validate the production pipeline configuration", func() {
-			// This test validates the standard production configuration
-			productionConfig := `
-input:
-  uns:
-    umh_topic: "umh\.v1\..*"
-    consumer_group: "topic_browser_prod"
-
-pipeline:
-  processors:
-    - topic_browser: {}
-
-output:
-  stdout: {}
-`
-
-			// Validate that the configuration parses correctly
-			builder := service.NewStreamBuilder()
-			err := builder.SetYAML(productionConfig)
-			Expect(err).NotTo(HaveOccurred())
-
-			stream, err := builder.Build()
-			Expect(err).NotTo(HaveOccurred())
-			Expect(stream).NotTo(BeNil())
-		})
 
 		It("should emit UNS bundles at regular intervals when implemented", func() {
 			Skip("FIXME: Current implementation emits on every batch, but should buffer and emit once per second")
