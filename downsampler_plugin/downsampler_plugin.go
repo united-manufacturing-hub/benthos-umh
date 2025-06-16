@@ -102,6 +102,10 @@ It processes UMH-core time-series data with data_contract "_historian",
 passing all other messages through unchanged. Each message that passes the downsampling filter is annotated 
 with metadata indicating the algorithm used.
 
+In typical UMH deployments, the downsampler is enabled by default with conservative settings to automatically 
+compress time-series data. The tag_processor can be used upstream to selectively bypass downsampling for 
+critical data by setting the ds_ignore metadata field.
+
 Supported format:
 - UMH-core: Single "value" field with timestamp (one tag, one message, one topic)
 - Requires "umh_topic" metadata field to identify the time series
@@ -125,6 +129,30 @@ The downsampler handles different data types as follows:
 
 - **Other types**: 
   Rejected with an error to ensure data integrity.
+
+## Selective Bypass with ds_ignore
+
+The ds_ignore metadata key allows selective bypass of downsampling on a per-message basis:
+
+- Any message with ds_ignore metadata (any non-empty value) completely bypasses all downsampling logic
+- Designed for use with tag_processor to identify critical data that must be preserved unchanged
+- Common use cases: emergency alarms, state changes, calibration data, precision measurements
+- Bypassed messages are marked with downsampled_by: "ignored" and counted in messages_ignored metric
+
+Example tag_processor configuration for UMH:
+```yaml
+- tag_processor:
+    conditions:
+      - if: msg.meta.tag_name.endsWith("_alarm") || msg.meta.data_contract === "_state"
+        then: |
+          msg.meta.ds_ignore = "critical_data"
+          return msg;
+- downsampler:
+    default:
+      deadband:
+        threshold: 1.0
+        max_time: "30m"
+```
 
 ## ACK Buffering & Data Safety
 
