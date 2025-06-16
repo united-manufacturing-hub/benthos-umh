@@ -39,7 +39,7 @@ var _ = Describe("TagBrowserProcessor", func() {
 			msg.MetaSet("umh_topic", "umh.v1.test-topic._historian.some_value")
 			msg.SetStructured(map[string]interface{}{
 				"timestamp_ms": int64(1647753600000),
-				"some_value":   13,
+				"value":        13,
 			})
 
 			// Process the message
@@ -86,14 +86,14 @@ var _ = Describe("TagBrowserProcessor", func() {
 			msg1.MetaSet("umh_topic", "umh.v1.test-topic._historian.some_value")
 			msg1.SetStructured(map[string]interface{}{
 				"timestamp_ms": int64(1647753600000),
-				"some_value":   3,
+				"value":        3,
 			})
 
 			msg2 := service.NewMessage(nil)
 			msg2.MetaSet("umh_topic", "umh.v1.test-topic._historian.some_value")
 			msg2.SetStructured(map[string]interface{}{
 				"timestamp_ms": int64(1647753600001),
-				"some_value":   5,
+				"value":        5,
 			})
 
 			// Process both messages
@@ -185,14 +185,14 @@ var _ = Describe("TagBrowserProcessor", func() {
 			msg1.MetaSet("umh_topic", "umh.v1.test-topic._historian.some_value")
 			msg1.SetStructured(map[string]interface{}{
 				"timestamp_ms": int64(1647753600000),
-				"some_value":   3,
+				"value":        3,
 			})
 
 			msg2 := service.NewMessage(nil)
 			msg2.MetaSet("umh_topic", "umh.v1.test-topic._historian.some_value")
 			msg2.SetStructured(map[string]interface{}{
 				"timestamp_ms": int64(1647753600001),
-				"some_value":   5,
+				"value":        5,
 			})
 
 			// Process first messages
