@@ -80,10 +80,7 @@ Output:
 
 ```json
 {
-  "value": {
-    "key1": "value1",
-    "key2": 42
-  }
+  "value": "{\"key1\": \"value1\",\"key2\": 42}"
 }
 ```
 
@@ -118,10 +115,10 @@ Output:
 
 This consistent formatting ensures that:
 
-* All messages have a "value" field
-* Simple types (numbers, strings, booleans) are preserved as-is
-* Complex types (arrays, objects) are converted to their string representations
-* Numbers are always preserved as numeric types (integers or floats)
+- All messages have a "value" field
+- Simple types (numbers, strings, booleans) are preserved as-is
+- Complex types (arrays, objects) are converted to their string representations
+- Numbers are always preserved as numeric types (integers or floats)
 
 **Configuration**
 
@@ -154,18 +151,18 @@ pipeline:
 **Processing Stages**
 
 1. **Defaults**
-   * Sets initial metadata values
-   * Runs first on every message
-   * Must return a message object
+   - Sets initial metadata values
+   - Runs first on every message
+   - Must return a message object
 2. **Conditions**
-   * List of conditional transformations
-   * Each condition has an `if` expression and a `then` code block
-   * Runs after defaults
-   * Must return a message object
+   - List of conditional transformations
+   - Each condition has an `if` expression and a `then` code block
+   - Runs after defaults
+   - Must return a message object
 3. **Advanced Processing**
-   * Optional final processing stage
-   * Can modify both metadata and payload
-   * Must return a message object
+   - Optional final processing stage
+   - Can modify both metadata and payload
+   - Must return a message object
 
 **Metadata Fields**
 
@@ -173,17 +170,18 @@ The processor uses the following metadata fields:
 
 **Required Fields:**
 
-* `location_path`: Hierarchical location path in dot notation (e.g., "enterprise.site.area.line.workcell.plc123")
-* `data_contract`: Data schema identifier (e.g., "\_historian", "\_analytics")
-* `tag_name`: Name of the tag/variable (e.g., "temperature", "pressure")
+- `location_path`: Hierarchical location path in dot notation (e.g., "enterprise.site.area.line.workcell.plc123")
+- `data_contract`: Data schema identifier (e.g., "\_historian", "\_analytics")
+- `tag_name`: Name of the tag/variable (e.g., "temperature", "pressure")
 
 **Optional Fields:**
 
-* `virtual_path`: Logical, non-physical grouping path in dot notation (e.g., "axis.x.position")
+- `virtual_path`: Logical, non-physical grouping path in dot notation (e.g., "axis.x.position")
 
 **Generated Fields:**
 
-* `umh_topic`: Automatically generated from the above fields in the format:
+- `umh_topic`: Automatically generated from the above fields in the format:
+
   ```
   umh.v1.<location_path>.<data_contract>.<virtual_path>.<tag_name>
   ```
@@ -334,10 +332,10 @@ umh.v1.enterprise.plant1.area1.machining_line.cnc5.plc123._historian.axis.x.Data
 
 This example shows how to:
 
-* Match an entire folder structure using `includes("DataAccess_AnalogType")`
-* Move all matching nodes into a new virtual path prefix (`axis.x`)
-* Preserve the original folder hierarchy under the new location
-* Apply consistent location path for the entire folder structure
+- Match an entire folder structure using `includes("DataAccess_AnalogType")`
+- Move all matching nodes into a new virtual path prefix (`axis.x`)
+- Preserve the original folder hierarchy under the new location
+- Apply consistent location path for the entire folder structure
 
 4. **Advanced Processing with getLastPayload**
 
@@ -556,7 +554,6 @@ Output:
       ],
       "notes": "Replace worn nozzle to prevent defects."
     }
-
   },
   "timestamp_ms": 1733903611000
 }
