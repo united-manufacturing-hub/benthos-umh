@@ -26,22 +26,11 @@ input:
 pipeline:
   processors:
     # Convert Historian Data Contract format to Core format
-    - classic_to_core:
-        timestamp_field: timestamp_ms
-        # Uses input data contract (_historian) if target not specified
-        preserve_meta: true
-        exclude_fields:
-          - _quality
-          - _debug_info
-        max_recursion_depth: 10
-        max_tags_per_message: 1000
+    - classic_to_core: {} # Uses input data contract (_historian) if target not specified
 
 output:
   # Publish to individual Core topics using UNS output
-  uns_output:
-    kafka:
-      addresses: ['localhost:9092']
-      key: ${! meta("location_path") }-${! meta("tag_name") }
+  uns_output: {}
 
 logger:
   level: INFO

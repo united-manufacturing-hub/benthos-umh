@@ -520,6 +520,9 @@ func (p *ClassicToCoreProcessor) extractTimestamp(value interface{}) (int64, err
 	case int:
 		return int64(v), nil
 	case json.Number:
+		if i, err := v.Int64(); err == nil {
+			return i, nil
+		}
 		if f, err := v.Float64(); err == nil {
 			return int64(f), nil
 		}
