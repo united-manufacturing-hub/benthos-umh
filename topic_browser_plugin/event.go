@@ -47,6 +47,21 @@ package topic_browser_plugin
 	Any payload that is not a valid JSON object will be rejected as invalid.
 
 	See: https://docs.umh.app/usage/unified-namespace/payload-formats
+
+	SIZE LIMITS SPECIFICATION:
+	==========================
+
+	Rule Statement:
+	> Only time-series payloads are size-capped at 1024 bytes (after JSON decoding); relational payloads have no hard limit.
+
+	| Type                   | Typical content                                                      | Size limit enforced                    |
+	| ---------------------- | -------------------------------------------------------------------- | --------------------------------------- |
+	| **Time-series / Tags** | Exactly two keys: timestamp_ms and value                           | ≤ 1024 B decoded                       |
+	| **Relational / JSON**  | One self-contained business record or multi-field snapshot         | **No hard cap** (broker limit only)    |
+
+	Implementation:
+	- Time-series: must stay small – fits in one DB row / cache line
+	- Relational: unbounded for now; rely on broker / infra defaults
 */
 
 import (
@@ -61,8 +76,9 @@ import (
 )
 
 const (
-	// MaxPayloadSizeBytes defines the maximum allowed payload size to prevent resource consumption attacks
-	MaxPayloadSizeBytes = 1024 // 1KB limit
+	// Time-series: must stay small – fits in one DB row / cache line
+	// Only time-series payloads are size-capped at 1024 bytes (after JSON decoding); relational payloads have no hard limit.
+	MaxTimeSeriesPayloadBytes = 1024 // 1 KiB
 
 	// Field names for UMH-Core time-series format
 	FieldTimestamp = "timestamp_ms"
@@ -192,9 +208,9 @@ func processTimeSeriesData(structured map[string]interface{}) (*topicbrowserplug
 		return nil, err
 	}
 
-	// Validate payload size to prevent resource consumption attacks
-	if len(byteValue) > MaxPayloadSizeBytes {
-		return nil, fmt.Errorf("%w: %d bytes exceeds maximum allowed size of %d bytes", ErrPayloadTooLarge, len(byteValue), MaxPayloadSizeBytes)
+	// Validate payload size for time-series data only (relational data has no hard limit)
+	if len(byteValue) > MaxTimeSeriesPayloadBytes {
+		return nil, fmt.Errorf("%w: time-series payload %d bytes exceeds maximum allowed size of %d bytes", ErrPayloadTooLarge, len(byteValue), MaxTimeSeriesPayloadBytes)
 	}
 	valueContent = anypb.Any{
 		TypeUrl: fmt.Sprintf("golang/%s", valueType),

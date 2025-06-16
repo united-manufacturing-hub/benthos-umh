@@ -216,6 +216,27 @@ var _ = Describe("Event Processing", func() {
 				Expect(event.GetRel()).NotTo(BeNil())
 				Expect(event.GetTs()).To(BeNil())
 			})
+
+			It("processes large relational data without size limits", func() {
+				// Create relational data larger than 1KB (time-series limit)
+				largeDescription := make([]byte, 2048) // 2KB > 1KB time-series limit
+				for i := range largeDescription {
+					largeDescription[i] = 'X'
+				}
+
+				msg := service.NewMessage(nil)
+				msg.SetStructured(map[string]interface{}{
+					"order_id":    123,
+					"customer":    "ACME Corp",
+					"description": string(largeDescription), // Large field that would exceed time-series limit
+					"metadata":    map[string]interface{}{"priority": "high"},
+				})
+
+				event, err := messageToEvent(msg)
+				Expect(err).To(BeNil())               // Should NOT fail due to size
+				Expect(event.GetRel()).NotTo(BeNil()) // Should be processed as relational
+				Expect(event.GetTs()).To(BeNil())     // Should not be time-series
+			})
 		})
 	})
 
@@ -341,7 +362,7 @@ var _ = Describe("Event Processing", func() {
 
 			event, err := messageToEvent(msg)
 			Expect(err).NotTo(BeNil())
-			Expect(err.Error()).To(ContainSubstring("payload size"))
+			Expect(err.Error()).To(ContainSubstring("time-series payload"))
 			Expect(event).To(BeNil())
 		})
 
