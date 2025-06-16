@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -146,6 +147,16 @@ var _ = Describe("ClassicToCoreProcessor", func() {
 						virtualPath, _ := msg.MetaGet("virtual_path")
 						Expect(virtualPath).To(Equal(expected["expected_virtual_path"]))
 					}
+
+					// Check meta/metadata fields
+					for key, expectedValue := range expected {
+						if strings.HasPrefix(key, "expected_meta_") {
+							metaKey := strings.TrimPrefix(key, "expected_meta_")
+							actualValue, exists := msg.MetaGet(metaKey)
+							Expect(exists).To(BeTrue(), "Expected meta key '%s' to exist", metaKey)
+							Expect(actualValue).To(Equal(expectedValue), "Meta key '%s' value mismatch", metaKey)
+						}
+					}
 				}
 			},
 			Entry("basic conversion with explicit target data contract",
@@ -266,6 +277,242 @@ var _ = Describe("ClassicToCoreProcessor", func() {
 						"expected_data_contract": "_raw",
 						"expected_tag_name":      "temperature",
 						"expected_virtual_path":  "cnc-mill",
+					},
+				},
+			),
+			Entry("meta field handling - basic meta field",
+				`classic_to_core:
+  target_data_contract: _raw`,
+				"umh.v1.acme._historian.sensor",
+				map[string]interface{}{
+					"timestamp_ms": 1717083000000,
+					"temperature":  23.4,
+					"meta": map[string]interface{}{
+						"sensor_id":  "TEMP001",
+						"location":   "warehouse_a",
+						"batch_id":   "B12345",
+						"calibrated": true,
+						"precision":  0.1,
+					},
+				},
+				[]map[string]interface{}{
+					{
+						"expected_topic":           "umh.v1.acme._raw.sensor.temperature",
+						"expected_value":           23.4,
+						"expected_timestamp":       int64(1717083000000),
+						"expected_location_path":   "acme",
+						"expected_data_contract":   "_raw",
+						"expected_tag_name":        "temperature",
+						"expected_virtual_path":    "sensor",
+						"expected_meta_sensor_id":  "TEMP001",
+						"expected_meta_location":   "warehouse_a",
+						"expected_meta_batch_id":   "B12345",
+						"expected_meta_calibrated": "true",
+						"expected_meta_precision":  "0.1",
+					},
+				},
+			),
+			Entry("metadata field handling - basic metadata field",
+				`classic_to_core:
+  target_data_contract: _raw`,
+				"umh.v1.acme._historian.sensor",
+				map[string]interface{}{
+					"timestamp_ms": 1717083000000,
+					"pressure":     101.3,
+					"metadata": map[string]interface{}{
+						"device_type": "pressure_sensor",
+						"model":       "PS-500",
+						"firmware":    "v2.1.3",
+						"accuracy":    0.05,
+					},
+				},
+				[]map[string]interface{}{
+					{
+						"expected_topic":            "umh.v1.acme._raw.sensor.pressure",
+						"expected_value":            101.3,
+						"expected_timestamp":        int64(1717083000000),
+						"expected_location_path":    "acme",
+						"expected_data_contract":    "_raw",
+						"expected_tag_name":         "pressure",
+						"expected_virtual_path":     "sensor",
+						"expected_meta_device_type": "pressure_sensor",
+						"expected_meta_model":       "PS-500",
+						"expected_meta_firmware":    "v2.1.3",
+						"expected_meta_accuracy":    "0.05",
+					},
+				},
+			),
+			Entry("both meta and metadata fields present",
+				`classic_to_core:
+  target_data_contract: _raw`,
+				"umh.v1.factory._historian.machine",
+				map[string]interface{}{
+					"timestamp_ms": 1717083000000,
+					"temperature":  45.2,
+					"vibration":    0.3,
+					"meta": map[string]interface{}{
+						"machine_id": "CNC001",
+						"operator":   "john_doe",
+					},
+					"metadata": map[string]interface{}{
+						"shift":       "morning",
+						"maintenance": "2024-01-15",
+						"part_number": 12345,
+					},
+				},
+				[]map[string]interface{}{
+					{
+						"expected_topic":            "umh.v1.factory._raw.machine.temperature",
+						"expected_value":            45.2,
+						"expected_timestamp":        int64(1717083000000),
+						"expected_location_path":    "factory",
+						"expected_data_contract":    "_raw",
+						"expected_tag_name":         "temperature",
+						"expected_virtual_path":     "machine",
+						"expected_meta_machine_id":  "CNC001",
+						"expected_meta_operator":    "john_doe",
+						"expected_meta_shift":       "morning",
+						"expected_meta_maintenance": "2024-01-15",
+						"expected_meta_part_number": "12345",
+					},
+					{
+						"expected_topic":            "umh.v1.factory._raw.machine.vibration",
+						"expected_value":            0.3,
+						"expected_timestamp":        int64(1717083000000),
+						"expected_location_path":    "factory",
+						"expected_data_contract":    "_raw",
+						"expected_tag_name":         "vibration",
+						"expected_virtual_path":     "machine",
+						"expected_meta_machine_id":  "CNC001",
+						"expected_meta_operator":    "john_doe",
+						"expected_meta_shift":       "morning",
+						"expected_meta_maintenance": "2024-01-15",
+						"expected_meta_part_number": "12345",
+					},
+				},
+			),
+			Entry("meta field with multiple data fields",
+				`classic_to_core:
+  target_data_contract: _raw`,
+				"umh.v1.plant._historian.sensors",
+				map[string]interface{}{
+					"timestamp_ms": 1717083000000,
+					"temp1":        22.1,
+					"temp2":        23.4,
+					"temp3":        21.8,
+					"meta": map[string]interface{}{
+						"zone":     "production_floor",
+						"shift_id": "S001",
+					},
+				},
+				[]map[string]interface{}{
+					{
+						"expected_topic":         "umh.v1.plant._raw.sensors.temp1",
+						"expected_value":         22.1,
+						"expected_timestamp":     int64(1717083000000),
+						"expected_location_path": "plant",
+						"expected_data_contract": "_raw",
+						"expected_tag_name":      "temp1",
+						"expected_virtual_path":  "sensors",
+						"expected_meta_zone":     "production_floor",
+						"expected_meta_shift_id": "S001",
+					},
+					{
+						"expected_topic":         "umh.v1.plant._raw.sensors.temp2",
+						"expected_value":         23.4,
+						"expected_timestamp":     int64(1717083000000),
+						"expected_location_path": "plant",
+						"expected_data_contract": "_raw",
+						"expected_tag_name":      "temp2",
+						"expected_virtual_path":  "sensors",
+						"expected_meta_zone":     "production_floor",
+						"expected_meta_shift_id": "S001",
+					},
+					{
+						"expected_topic":         "umh.v1.plant._raw.sensors.temp3",
+						"expected_value":         21.8,
+						"expected_timestamp":     int64(1717083000000),
+						"expected_location_path": "plant",
+						"expected_data_contract": "_raw",
+						"expected_tag_name":      "temp3",
+						"expected_virtual_path":  "sensors",
+						"expected_meta_zone":     "production_floor",
+						"expected_meta_shift_id": "S001",
+					},
+				},
+			),
+			Entry("meta field with nested tag groups",
+				`classic_to_core:
+  target_data_contract: _raw`,
+				"umh.v1.factory._historian.robot",
+				map[string]interface{}{
+					"timestamp_ms": 1717083000000,
+					"position": map[string]interface{}{
+						"x": 12.5,
+						"y": 7.3,
+					},
+					"meta": map[string]interface{}{
+						"robot_id":   "R001",
+						"program":    "welding_seq_a",
+						"cycle_time": 45.2,
+					},
+				},
+				[]map[string]interface{}{
+					{
+						"expected_topic":           "umh.v1.factory._raw.robot.position.x",
+						"expected_value":           12.5,
+						"expected_timestamp":       int64(1717083000000),
+						"expected_location_path":   "factory",
+						"expected_data_contract":   "_raw",
+						"expected_tag_name":        "position.x",
+						"expected_virtual_path":    "robot",
+						"expected_meta_robot_id":   "R001",
+						"expected_meta_program":    "welding_seq_a",
+						"expected_meta_cycle_time": "45.2",
+					},
+					{
+						"expected_topic":           "umh.v1.factory._raw.robot.position.y",
+						"expected_value":           7.3,
+						"expected_timestamp":       int64(1717083000000),
+						"expected_location_path":   "factory",
+						"expected_data_contract":   "_raw",
+						"expected_tag_name":        "position.y",
+						"expected_virtual_path":    "robot",
+						"expected_meta_robot_id":   "R001",
+						"expected_meta_program":    "welding_seq_a",
+						"expected_meta_cycle_time": "45.2",
+					},
+				},
+			),
+			Entry("meta field with mixed data types",
+				`classic_to_core:
+  target_data_contract: _raw`,
+				"umh.v1.test._historian.mixed",
+				map[string]interface{}{
+					"timestamp_ms": 1717083000000,
+					"value":        42.0, // Use float64 to match JSON unmarshalling behavior
+					"meta": map[string]interface{}{
+						"string_val": "test_string",
+						"int_val":    123,
+						"float_val":  45.67,
+						"bool_val":   true,
+						"null_val":   nil,
+					},
+				},
+				[]map[string]interface{}{
+					{
+						"expected_topic":           "umh.v1.test._raw.mixed.value",
+						"expected_value":           42.0, // Use float64 to match JSON unmarshalling behavior
+						"expected_timestamp":       int64(1717083000000),
+						"expected_location_path":   "test",
+						"expected_data_contract":   "_raw",
+						"expected_tag_name":        "value",
+						"expected_virtual_path":    "mixed",
+						"expected_meta_string_val": "test_string",
+						"expected_meta_int_val":    "123",
+						"expected_meta_float_val":  "45.67",
+						"expected_meta_bool_val":   "true",
+						"expected_meta_null_val":   "<nil>",
 					},
 				},
 			),
@@ -1392,6 +1639,238 @@ classic_to_core:
 				Expect(true).To(BeTrue()) // Test passes if we get here
 			})
 
+		})
+
+		It("should handle edge cases for meta/metadata fields", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+classic_to_core:
+  target_data_contract: _raw
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Test with empty meta and metadata objects
+			classicPayload := map[string]interface{}{
+				"timestamp_ms": 1717083000000,
+				"temperature":  23.4,
+				"meta":         map[string]interface{}{}, // Empty meta object
+				"metadata":     map[string]interface{}{}, // Empty metadata object
+			}
+			payloadBytes, _ := json.Marshal(classicPayload)
+			testMsg := service.NewMessage(payloadBytes)
+			testMsg.MetaSet("topic", "umh.v1.test._historian.sensor")
+
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			// Should still create the message even with empty meta objects
+			msg := messages[0]
+			topic, _ := msg.MetaGet("topic")
+			Expect(topic).To(Equal("umh.v1.test._raw.sensor.temperature"))
+		})
+
+		It("should handle non-object meta/metadata fields gracefully", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+classic_to_core:
+  target_data_contract: _raw
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Test with non-object meta and metadata fields (should be ignored)
+			classicPayload := map[string]interface{}{
+				"timestamp_ms": 1717083000000,
+				"temperature":  23.4,
+				"meta":         "not_an_object",    // String instead of object
+				"metadata":     []string{"a", "b"}, // Array instead of object
+			}
+			payloadBytes, _ := json.Marshal(classicPayload)
+			testMsg := service.NewMessage(payloadBytes)
+			testMsg.MetaSet("topic", "umh.v1.test._historian.sensor")
+
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			// Should still create the message, just without the invalid meta fields
+			msg := messages[0]
+			topic, _ := msg.MetaGet("topic")
+			Expect(topic).To(Equal("umh.v1.test._raw.sensor.temperature"))
+		})
+
+		It("should not create messages for meta and metadata fields themselves", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+classic_to_core:
+  target_data_contract: _raw
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Create message with only timestamp, meta, and metadata (no actual data fields)
+			classicPayload := map[string]interface{}{
+				"timestamp_ms": 1717083000000,
+				"meta": map[string]interface{}{
+					"sensor_id": "TEMP001",
+				},
+				"metadata": map[string]interface{}{
+					"location": "warehouse",
+				},
+			}
+			payloadBytes, _ := json.Marshal(classicPayload)
+			testMsg := service.NewMessage(payloadBytes)
+			testMsg.MetaSet("topic", "umh.v1.test._historian.sensor")
+
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should not create any messages since there are no data fields (only meta/metadata)
+			Consistently(func() int {
+				return len(messages)
+			}, "100ms").Should(Equal(0))
+		})
+
+		It("should handle meta/metadata with conflicting keys (metadata overwrites meta)", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+classic_to_core:
+  target_data_contract: _raw
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Test with conflicting keys in meta and metadata
+			classicPayload := map[string]interface{}{
+				"timestamp_ms": 1717083000000,
+				"temperature":  23.4,
+				"meta": map[string]interface{}{
+					"source":  "sensor_A",
+					"version": "1.0",
+				},
+				"metadata": map[string]interface{}{
+					"source":  "sensor_B", // This should overwrite the meta value
+					"quality": "good",
+				},
+			}
+			payloadBytes, _ := json.Marshal(classicPayload)
+			testMsg := service.NewMessage(payloadBytes)
+			testMsg.MetaSet("topic", "umh.v1.test._historian.sensor")
+
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			msg := messages[0]
+
+			// Check that metadata overwrote meta for conflicting key
+			source, exists := msg.MetaGet("source")
+			Expect(exists).To(BeTrue())
+			Expect(source).To(Equal("sensor_B")) // Should be the metadata value, not meta
+
+			// Check that non-conflicting keys from both are present
+			version, exists := msg.MetaGet("version")
+			Expect(exists).To(BeTrue())
+			Expect(version).To(Equal("1.0"))
+
+			quality, exists := msg.MetaGet("quality")
+			Expect(exists).To(BeTrue())
+			Expect(quality).To(Equal("good"))
 		})
 	})
 })
