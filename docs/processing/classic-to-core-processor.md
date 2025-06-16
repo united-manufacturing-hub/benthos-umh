@@ -13,8 +13,6 @@ Use the `classic_to_core` processor when you need to:
 - **Process Classic Data in Core**: Convert Classic UMH Historian schema messages to Core format for processing in Core-based systems
 - **Use Core Processors**: Enable the use of processors that rely on the Core data model (like downsampler)
 
-The processor maintains compatibility with the `_historian` schema, ensuring that the output can be consumed by systems expecting Classic format messages.
-
 ## Quick Start
 
 ```yaml
@@ -47,6 +45,8 @@ The processor transforms single messages with multiple values into separate Core
   "humidity": 42.1
 }
 ```
+
+- target_data_contract: "\_raw"
 
 **Output (Core Format):**
 
@@ -83,6 +83,8 @@ The processor flattens nested tag groups using dot notation:
   "collision": false
 }
 ```
+
+- target_data_contract: "\_raw"
 
 **Output (Core Format with Flattened Tags):**
 
