@@ -366,10 +366,13 @@ func (p *ClassicToCoreProcessor) createCoreMessage(originalMsg *service.Message,
 
 	// Always preserve metadata
 	// Copy all metadata from original message
-	originalMsg.MetaWalk(func(k, v string) error {
+	err = originalMsg.MetaWalk(func(k, v string) error {
 		newMsg.MetaSet(k, v)
 		return nil
 	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to copy metadata from original message: %w", err)
+	}
 
 	// Determine target data contract
 	targetSchema := p.config.TargetDataContract
@@ -386,6 +389,7 @@ func (p *ClassicToCoreProcessor) createCoreMessage(originalMsg *service.Message,
 	// Set Core-specific metadata
 	newMsg.MetaSet("location_path", topicComponents.Location)
 	newMsg.MetaSet("schema", targetSchema)
+	newMsg.MetaSet("data_contract", targetSchema)
 	newMsg.MetaSet("tag_name", fieldName)
 
 	// Set virtual path if there was context in the original topic
