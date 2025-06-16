@@ -95,6 +95,34 @@ var _ = Describe("Uns", func() {
 			Expect(unsInfo.Name).To(Equal("temperature"))
 		})
 
+		It("should return error for empty level0", func() {
+			unsInfo, err := topicToUNSInfo("umh.v1.._hist.temp")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("level0 (enterprise) cannot be empty"))
+			Expect(unsInfo).To(BeNil())
+		})
+
+		It("should return error for double dot in virtual path", func() {
+			unsInfo, err := topicToUNSInfo("umh.v1.ent._hist.motor..temp")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("virtual path cannot contain empty segments"))
+			Expect(unsInfo).To(BeNil())
+		})
+
+		It("should return error for lone underscore contract", func() {
+			unsInfo, err := topicToUNSInfo("umh.v1.ent._.temp")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("data contract cannot be just an underscore"))
+			Expect(unsInfo).To(BeNil())
+		})
+
+		It("should return error for name starting with underscore", func() {
+			unsInfo, err := topicToUNSInfo("umh.v1.ent._hist._temp")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("topic name cannot start with underscore"))
+			Expect(unsInfo).To(BeNil())
+		})
+
 		Describe("Table-driven tests for different topic structures", func() {
 			type testCase struct {
 				topic                string
@@ -135,7 +163,7 @@ var _ = Describe("Uns", func() {
 				Entry("minimal: enterprise + schema + name", testCase{
 					topic:                "umh.v1.enterprise._schema.temperature",
 					expectedLevel0:       "enterprise",
-					expectedSublevels:    nil,
+					expectedSublevels:    []string{},
 					expectedDataContract: "_schema",
 					expectedVirtualPath:  nil,
 					expectedName:         "temperature",

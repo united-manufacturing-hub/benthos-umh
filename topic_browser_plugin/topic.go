@@ -25,10 +25,15 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
+const (
+	topicPrefix = "umh.v1."
+	metaKey     = "umh_topic"
+)
+
 // extractTopicFromMessage looks up the "umh_topic" meta-field from the benthos message.
 func extractTopicFromMessage(message *service.Message) (string, error) {
 	// The uns input plugin will set the "umh_topic" meta-field
-	topic, found := message.MetaGet("umh_topic")
+	topic, found := message.MetaGet(metaKey)
 	if found {
 		return topic, nil
 	}
@@ -42,7 +47,7 @@ func extractTopicFromMessage(message *service.Message) (string, error) {
 //   - topic: The topic string to parse (e.g., "umh.v1.acme.cologne.assembly.machine01._analytics.scada.counter.temperature")
 //
 // Returns:
-//   - *TopicInfo: The parsed topic information
+//   - *TopicInfo: The parsed topic information (VirtualPath field is nil when absent)
 //   - error: Any error that occurred during parsing
 //
 // The function expects topics to follow the UMH topic structure:
@@ -64,6 +69,11 @@ func topicToUNSInfo(topic string) (*TopicInfo, error) {
 		return nil, errors.New("topic must have at least: umh.v1.level0._contract.name")
 	}
 
+	// Validate level0 is not empty
+	if parts[2] == "" {
+		return nil, errors.New("level0 (enterprise) cannot be empty")
+	}
+
 	// Find datacontract position (must start with underscore and not be the last segment)
 	datacontractIndex := -1
 	for i := 3; i < len(parts)-1; i++ { // Start from index 3, end before last segment
@@ -80,11 +90,21 @@ func topicToUNSInfo(topic string) (*TopicInfo, error) {
 		return nil, errors.New("topic must contain a data contract (segment starting with '_') and it cannot be the final segment")
 	}
 
+	// Validate data contract is not just an underscore
+	if len(parts[datacontractIndex]) <= 1 {
+		return nil, errors.New("data contract cannot be just an underscore")
+	}
+
 	// The last segment is always the name (mandatory)
 	nameIndex := len(parts) - 1
 	name := parts[nameIndex]
 	if name == "" {
 		return nil, errors.New("topic name (final segment) cannot be empty")
+	}
+
+	// Validate name doesn't start with underscore (to avoid confusion with data contracts)
+	if strings.HasPrefix(name, "_") {
+		return nil, errors.New("topic name cannot start with underscore")
 	}
 
 	// Create TopicInfo struct
@@ -99,6 +119,8 @@ func topicToUNSInfo(topic string) (*TopicInfo, error) {
 	locationEnd := datacontractIndex
 	if locationEnd > locationStart {
 		unsInfo.LocationSublevels = parts[locationStart:locationEnd]
+	} else {
+		unsInfo.LocationSublevels = []string{} // Ensure non-nil empty slice
 	}
 
 	// Process virtual path (everything between datacontract and name)
@@ -106,6 +128,14 @@ func topicToUNSInfo(topic string) (*TopicInfo, error) {
 	virtualEnd := nameIndex
 	if virtualEnd > virtualStart {
 		virtualParts := parts[virtualStart:virtualEnd]
+
+		// Validate that no virtual path segments are empty
+		for _, part := range virtualParts {
+			if len(part) == 0 {
+				return nil, errors.New("virtual path cannot contain empty segments")
+			}
+		}
+
 		virtualPath := strings.Join(virtualParts, ".")
 		unsInfo.VirtualPath = &virtualPath
 	}
@@ -118,7 +148,7 @@ func validateTopicFormat(topic string) error {
 	if len(topic) == 0 {
 		return errors.New("topic cannot be empty")
 	}
-	if !strings.HasPrefix(topic, "umh.v1.") {
+	if !strings.HasPrefix(topic, topicPrefix) {
 		return errors.New("topic must start with umh.v1")
 	}
 	return nil
