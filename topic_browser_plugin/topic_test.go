@@ -213,12 +213,16 @@ var _ = Describe("Uns", func() {
 					expectedName:         "temperature",
 					shouldHaveError:      false,
 				}),
-				Entry("error: missing name segment", testCase{
-					topic:           "umh.v1.enterprise.site._schema",
+				Entry("error: missing name segment - minimal case", testCase{
+					topic:           "umh.v1.enterprise._schema",
+					shouldHaveError: true,
+				}),
+				Entry("error: missing name segment - with location", testCase{
+					topic:           "umh.v1.enterprise.site.area._historian",
 					shouldHaveError: true,
 				}),
 				Entry("error: data contract as final segment", testCase{
-					topic:           "umh.v1.enterprise.site._schema",
+					topic:           "umh.v1.enterprise.site.building._analytics",
 					shouldHaveError: true,
 				}),
 			)
