@@ -22,7 +22,9 @@ package topic_browser_plugin
 import (
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -69,6 +71,9 @@ func MessageToUNSInfoAndEvent(message *service.Message) (*TopicInfo, *EventTable
 	unsTreeId := HashUNSTableEntry(unsInfo)
 	event.UnsTreeId = unsTreeId
 
+	// Set the ProducedAtMs field with Kafka timestamp (epoch-ms when record was written to UNS)
+	event.ProducedAtMs = extractKafkaTimestamp(message)
+
 	// Finally, we populate the RawKafkaMsg field in the event
 	event.RawKafkaMsg, err = messageToRawKafkaMsg(message)
 	if err != nil {
@@ -82,6 +87,22 @@ func MessageToUNSInfoAndEvent(message *service.Message) (*TopicInfo, *EventTable
 	}
 
 	return unsInfo, event, &unsTreeId, nil
+}
+
+// extractKafkaTimestamp extracts the Kafka timestamp from the message metadata.
+// This represents when the record was written to Kafka (produced_at_ms).
+// Falls back to current time if no Kafka timestamp is available.
+func extractKafkaTimestamp(message *service.Message) uint64 {
+	// Primary: Get the Kafka timestamp from UNS input plugin (standardized format)
+	if timestampStr, exists := message.MetaGet("kafka_timestamp_ms"); exists {
+		if timestampMs, err := strconv.ParseUint(timestampStr, 10, 64); err == nil {
+			return timestampMs
+		}
+	}
+
+	// Fallback: use current time if no Kafka timestamp is available
+	// This can happen with non-Kafka inputs or older message formats
+	return uint64(time.Now().UnixMilli())
 }
 
 // HashUNSTableEntry generates an xxHash from the Levels and datacontract.
