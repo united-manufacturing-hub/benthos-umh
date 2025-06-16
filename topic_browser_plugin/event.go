@@ -58,6 +58,11 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
+const (
+	// MaxPayloadSizeBytes defines the maximum allowed payload size to prevent resource consumption attacks
+	MaxPayloadSizeBytes = 1024 // 1KB limit
+)
+
 // messageToEvent will convert a benthos message, into an EventTableEntry
 // It checks if the incoming message is a valid time-series message, otherwise it handles it as relational data
 //
@@ -148,12 +153,22 @@ func processTimeSeriesData(structured map[string]interface{}) (*topicbrowserplug
 		return nil, err
 	}
 
+	// Validate special float values before processing
+	if f, ok := value.(float64); ok && (math.IsNaN(f) || math.IsInf(f, 0)) {
+		return nil, fmt.Errorf("value may not be NaN or Inf")
+	}
+
 	// Process value
 	var byteValue []byte
 	var valueType string
 	byteValue, valueType, err = ToBytes(value)
 	if err != nil {
 		return nil, err
+	}
+
+	// Validate payload size to prevent resource consumption attacks
+	if len(byteValue) > MaxPayloadSizeBytes {
+		return nil, fmt.Errorf("payload size %d bytes exceeds maximum allowed size of %d bytes", len(byteValue), MaxPayloadSizeBytes)
 	}
 	valueContent = anypb.Any{
 		TypeUrl: fmt.Sprintf("golang/%s", valueType),
@@ -232,10 +247,16 @@ func interfaceToInt64(value interface{}) (int64, error) {
 		if v > float32(math.MaxInt64) || v < float32(math.MinInt64) {
 			return 0, fmt.Errorf("value %f out of int64 range", v)
 		}
+		if float64(v) != math.Trunc(float64(v)) {
+			return 0, fmt.Errorf("timestamp_ms conversion would cause precision loss: %f is not an integer", v)
+		}
 		valueAsInt64 = int64(v)
 	case float64:
 		if v > float64(math.MaxInt64) || v < float64(math.MinInt64) {
 			return 0, fmt.Errorf("value %f out of int64 range", v)
+		}
+		if v != math.Trunc(v) {
+			return 0, fmt.Errorf("timestamp_ms conversion would cause precision loss: %f is not an integer", v)
 		}
 		valueAsInt64 = int64(v)
 	default:
