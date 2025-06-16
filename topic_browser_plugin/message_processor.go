@@ -26,7 +26,6 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	topicbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin/topic_browser_plugin.protobuf"
 )
 
 // MessageToUNSInfoAndEvent converts a Benthos message to UNS info and event entry.
@@ -37,8 +36,8 @@ import (
 //   - message: The Benthos message to process
 //
 // Returns:
-//   - *topicbrowserpluginprotobuf.TopicInfo: Topic hierarchy information
-//   - *topicbrowserpluginprotobuf.EventTableEntry: Event data
+//   - *TopicInfo: Topic hierarchy information
+//   - *EventTableEntry: Event data
 //   - *string: UNS tree ID (hash of topic info)
 //   - error: Any error that occurred during processing
 //
@@ -48,7 +47,7 @@ import (
 // 3. Converts the message payload to an event entry
 // 4. Generates a unique UNS tree ID for the topic
 // 5. Links the event to the topic via the tree ID
-func MessageToUNSInfoAndEvent(message *service.Message) (*topicbrowserpluginprotobuf.TopicInfo, *topicbrowserpluginprotobuf.EventTableEntry, *string, error) {
+func MessageToUNSInfoAndEvent(message *service.Message) (*TopicInfo, *EventTableEntry, *string, error) {
 	topic, err := extractTopicFromMessage(message)
 	if err != nil {
 		return nil, nil, nil, err
@@ -88,16 +87,24 @@ func MessageToUNSInfoAndEvent(message *service.Message) (*topicbrowserpluginprot
 // HashUNSTableEntry generates an xxHash from the Levels and datacontract.
 // This is used by the frontend to identify which topic an entry belongs to.
 // We use it over full topic names to reduce the amount of data we need to send to the frontend.
-func HashUNSTableEntry(info *topicbrowserpluginprotobuf.TopicInfo) string {
+func HashUNSTableEntry(info *TopicInfo) string {
 	hasher := xxhash.New()
 	_, _ = hasher.Write([]byte(info.Level0))
-	// GetValue returns either the contained data, or "" if no value is set
-	_, _ = hasher.Write([]byte(info.Level1.GetValue()))
-	_, _ = hasher.Write([]byte(info.Level2.GetValue()))
-	_, _ = hasher.Write([]byte(info.Level3.GetValue()))
-	_, _ = hasher.Write([]byte(info.Level4.GetValue()))
-	_, _ = hasher.Write([]byte(info.Level5.GetValue()))
+
+	// Hash all location sublevels
+	for _, level := range info.LocationSublevels {
+		_, _ = hasher.Write([]byte(level))
+	}
+
 	_, _ = hasher.Write([]byte(info.DataContract))
-	_, _ = hasher.Write([]byte(info.VirtualPath.GetValue()))
+
+	// Hash virtual path if it exists
+	if info.VirtualPath != nil {
+		_, _ = hasher.Write([]byte(*info.VirtualPath))
+	}
+
+	// Hash the name (new field)
+	_, _ = hasher.Write([]byte(info.Name))
+
 	return hex.EncodeToString(hasher.Sum(nil))
 }

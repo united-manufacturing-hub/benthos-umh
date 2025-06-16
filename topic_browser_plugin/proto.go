@@ -19,7 +19,6 @@ import (
 	"io"
 
 	"github.com/pierrec/lz4"
-	topicbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin/topic_browser_plugin.protobuf"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -81,7 +80,7 @@ However, for inputs under 1024 bytes, we skip compression, as the overhead from 
 */
 
 // bundleToProtobuf converts an UNSBundle (containing both Topics and Events) to a protobuf representation
-func bundleToProtobuf(bundle *topicbrowserpluginprotobuf.UnsBundle) ([]byte, error) {
+func bundleToProtobuf(bundle *UnsBundle) ([]byte, error) {
 	protoBytes, err := proto.Marshal(bundle)
 	if err != nil {
 		return []byte{}, err
@@ -90,8 +89,8 @@ func bundleToProtobuf(bundle *topicbrowserpluginprotobuf.UnsBundle) ([]byte, err
 }
 
 // protobufBytesToBundle converts protobuf-encoded data back to an UnsBundle
-func protobufBytesToBundle(protoBytes []byte) (*topicbrowserpluginprotobuf.UnsBundle, error) {
-	bundle := &topicbrowserpluginprotobuf.UnsBundle{}
+func protobufBytesToBundle(protoBytes []byte) (*UnsBundle, error) {
+	bundle := &UnsBundle{}
 	err := proto.Unmarshal(protoBytes, bundle)
 	if err != nil {
 		return nil, err
@@ -101,7 +100,7 @@ func protobufBytesToBundle(protoBytes []byte) (*topicbrowserpluginprotobuf.UnsBu
 
 // BundleToProtobufBytesWithCompression converts an UnsBundle to compressed protobuf bytes using LZ4 if the size exceeds 1024 bytes.
 // Returns the compressed byte array or the original protobuf bytes if compression is unnecessary, along with an error if any occurs.
-func BundleToProtobufBytesWithCompression(bundle *topicbrowserpluginprotobuf.UnsBundle) ([]byte, error) {
+func BundleToProtobufBytesWithCompression(bundle *UnsBundle) ([]byte, error) {
 	protoBytes, err := bundleToProtobuf(bundle)
 	if err != nil {
 		return []byte{}, err
@@ -137,7 +136,7 @@ func BundleToProtobufBytesWithCompression(bundle *topicbrowserpluginprotobuf.Uns
 // ProtobufBytesToBundleWithCompression converts compressed protobuf data back to an UnsBundle, handling optional LZ4 compression.
 // If the data is not LZ4-compressed, it will fall back to normal protobuf decoding.
 // Returns the decoded UnsBundle or an error if decoding fails.
-func ProtobufBytesToBundleWithCompression(compressedBytes []byte) (*topicbrowserpluginprotobuf.UnsBundle, error) {
+func ProtobufBytesToBundleWithCompression(compressedBytes []byte) (*UnsBundle, error) {
 	// If the compressedBytes don't start with the LZ4 magic number, return the original bytes
 	// https://github.com/lz4/lz4/blob/dev/doc/lz4_Frame_format.md#general-structure-of-lz4-frame-format
 	if !bytes.Equal(compressedBytes[:4], []byte{0x04, 0x22, 0x4d, 0x18}) {

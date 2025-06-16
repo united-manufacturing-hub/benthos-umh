@@ -20,27 +20,26 @@ import (
 	"math/rand"
 	"testing"
 
-	topicbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin/topic_browser_plugin.protobuf"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
-func createTestBundle() *topicbrowserpluginprotobuf.UnsBundle {
-	return &topicbrowserpluginprotobuf.UnsBundle{
-		UnsMap: &topicbrowserpluginprotobuf.TopicMap{
-			Entries: map[string]*topicbrowserpluginprotobuf.TopicInfo{
+func createTestBundle() *UnsBundle {
+	return &UnsBundle{
+		UnsMap: &TopicMap{
+			Entries: map[string]*TopicInfo{
 				"test-topic": {
 					Level0:       "enterprise",
 					DataContract: "_historian",
 				},
 			},
 		},
-		Events: &topicbrowserpluginprotobuf.EventTable{
-			Entries: []*topicbrowserpluginprotobuf.EventTableEntry{
+		Events: &EventTable{
+			Entries: []*EventTableEntry{
 				{
 					UnsTreeId: "test-topic",
-					Payload: &topicbrowserpluginprotobuf.EventTableEntry_Ts{
-						Ts: &topicbrowserpluginprotobuf.TimeSeriesPayload{
-							ScalarType:  topicbrowserpluginprotobuf.ScalarType_NUMERIC,
+					Payload: &EventTableEntry_Ts{
+						Ts: &TimeSeriesPayload{
+							ScalarType:  ScalarType_NUMERIC,
 							TimestampMs: 1647753600000,
 							Value: &anypb.Any{
 								TypeUrl: "golang/float64",
@@ -54,29 +53,29 @@ func createTestBundle() *topicbrowserpluginprotobuf.UnsBundle {
 	}
 }
 
-func createLargeTestBundle() *topicbrowserpluginprotobuf.UnsBundle {
-	bundle := &topicbrowserpluginprotobuf.UnsBundle{
-		UnsMap: &topicbrowserpluginprotobuf.TopicMap{
-			Entries: make(map[string]*topicbrowserpluginprotobuf.TopicInfo),
+func createLargeTestBundle() *UnsBundle {
+	bundle := &UnsBundle{
+		UnsMap: &TopicMap{
+			Entries: make(map[string]*TopicInfo),
 		},
-		Events: &topicbrowserpluginprotobuf.EventTable{
-			Entries: make([]*topicbrowserpluginprotobuf.EventTableEntry, 0, 1000),
+		Events: &EventTable{
+			Entries: make([]*EventTableEntry, 0, 1000),
 		},
 	}
 
 	// Add 1000 entries to the bundle
 	for i := 0; i < 1000; i++ {
 		topic := fmt.Sprintf("topic-%d", i)
-		bundle.UnsMap.Entries[topic] = &topicbrowserpluginprotobuf.TopicInfo{
+		bundle.UnsMap.Entries[topic] = &TopicInfo{
 			Level0:       "enterprise",
 			DataContract: "_historian",
 		}
 
-		bundle.Events.Entries = append(bundle.Events.Entries, &topicbrowserpluginprotobuf.EventTableEntry{
+		bundle.Events.Entries = append(bundle.Events.Entries, &EventTableEntry{
 			UnsTreeId: topic,
-			Payload: &topicbrowserpluginprotobuf.EventTableEntry_Ts{
-				Ts: &topicbrowserpluginprotobuf.TimeSeriesPayload{
-					ScalarType:  topicbrowserpluginprotobuf.ScalarType_NUMERIC,
+			Payload: &EventTableEntry_Ts{
+				Ts: &TimeSeriesPayload{
+					ScalarType:  ScalarType_NUMERIC,
 					TimestampMs: 1647753600000 + int64(i),
 					Value: &anypb.Any{
 						TypeUrl: "golang/float64",
@@ -90,20 +89,20 @@ func createLargeTestBundle() *topicbrowserpluginprotobuf.UnsBundle {
 	return bundle
 }
 
-func createVeryLargeTestBundle() *topicbrowserpluginprotobuf.UnsBundle {
-	bundle := &topicbrowserpluginprotobuf.UnsBundle{
-		UnsMap: &topicbrowserpluginprotobuf.TopicMap{
-			Entries: make(map[string]*topicbrowserpluginprotobuf.TopicInfo),
+func createVeryLargeTestBundle() *UnsBundle {
+	bundle := &UnsBundle{
+		UnsMap: &TopicMap{
+			Entries: make(map[string]*TopicInfo),
 		},
-		Events: &topicbrowserpluginprotobuf.EventTable{
-			Entries: make([]*topicbrowserpluginprotobuf.EventTableEntry, 0, 100000),
+		Events: &EventTable{
+			Entries: make([]*EventTableEntry, 0, 100000),
 		},
 	}
 
 	// Create 10 different UNSInfo entries
 	for i := 0; i < 10; i++ {
 		topic := fmt.Sprintf("topic-%d", i)
-		bundle.UnsMap.Entries[topic] = &topicbrowserpluginprotobuf.TopicInfo{
+		bundle.UnsMap.Entries[topic] = &TopicInfo{
 			Level0:       "enterprise",
 			DataContract: "_historian",
 		}
@@ -120,11 +119,11 @@ func createVeryLargeTestBundle() *topicbrowserpluginprotobuf.UnsBundle {
 		topicIndex := rand.Intn(10)
 		topic := fmt.Sprintf("topic-%d", topicIndex)
 
-		bundle.Events.Entries = append(bundle.Events.Entries, &topicbrowserpluginprotobuf.EventTableEntry{
+		bundle.Events.Entries = append(bundle.Events.Entries, &EventTableEntry{
 			UnsTreeId: topic, // Use the topic as the UnsTreeId
-			Payload: &topicbrowserpluginprotobuf.EventTableEntry_Ts{
-				Ts: &topicbrowserpluginprotobuf.TimeSeriesPayload{
-					ScalarType:  topicbrowserpluginprotobuf.ScalarType_NUMERIC,
+			Payload: &EventTableEntry_Ts{
+				Ts: &TimeSeriesPayload{
+					ScalarType:  ScalarType_NUMERIC,
 					TimestampMs: 1647753600000 + int64(i),
 					Value: &anypb.Any{
 						TypeUrl: "golang/float64",
