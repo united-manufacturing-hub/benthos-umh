@@ -577,12 +577,6 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 		return nil, fmt.Errorf("failed to build filtered metadata: %v", err)
 	}
 
-	// Retrieve tag_name from the message meta
-	tagName, exists := msg.MetaGet("tag_name")
-	if !exists {
-		return nil, fmt.Errorf("missing tag_name in metadata")
-	}
-
 	// Get the structured payload from the original message
 	structured, err := msg.AsStructured()
 	if err != nil {
@@ -592,7 +586,7 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 
 	// Build the final payload object
 	finalPayload := map[string]interface{}{
-		tagName:        value,
+		"value":        value,
 		"timestamp_ms": time.Now().UnixMilli(),
 	}
 
@@ -603,6 +597,7 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 			exposeAll = true
 		}
 	}
+	realMeta := make(map[string]string)
 	if exposeAll {
 		allMeta := make(map[string]string)
 		if err := msg.MetaWalkMut(func(key string, value any) error {
@@ -615,9 +610,9 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 		}); err != nil {
 			return nil, fmt.Errorf("failed to collect all metadata: %v", err)
 		}
-		finalPayload["meta"] = allMeta
+		realMeta = allMeta
 	} else if len(filteredMeta) > 0 {
-		finalPayload["meta"] = filteredMeta
+		realMeta = filteredMeta
 	}
 
 	newMsg.SetStructured(finalPayload)
@@ -626,6 +621,10 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	topic := p.constructUMHTopic(msg)
 	newMsg.MetaSet("topic", topic) // topic is deprecated, use umh_topic instead for easy to understand difference between MQTT Topic, Kafka Topic and UMH Topic
 	newMsg.MetaSet("umh_topic", topic)
+
+	for k, v := range realMeta {
+		newMsg.MetaSet(k, v)
+	}
 
 	return newMsg, nil
 }
@@ -645,11 +644,11 @@ func (p *TagProcessor) convertValue(v interface{}) interface{} {
 	case []interface{}:
 		return fmt.Sprintf("%v", val)
 	case map[string]interface{}:
-		converted := make(map[string]interface{})
-		for k, v := range val {
-			converted[k] = p.convertValue(v)
+		jsonBytes, err := json.Marshal(val)
+		if err != nil {
+			return fmt.Sprintf("%v", val)
 		}
-		return converted
+		return string(jsonBytes)
 	default:
 		str := fmt.Sprintf("%v", val)
 		if num, err := strconv.ParseFloat(str, 64); err == nil {
