@@ -149,7 +149,46 @@ var _ = Describe("Event Processing", func() {
 
 				event, err := messageToEvent(msg)
 				Expect(err).NotTo(BeNil())
-				Expect(err.Error()).To(ContainSubstring("relational data must be a JSON object"))
+				Expect(err.Error()).To(ContainSubstring("payload is not a JSON object"))
+				Expect(event).To(BeNil())
+			})
+
+			It("accepts float timestamps without fractional parts", func() {
+				msg := service.NewMessage(nil)
+				msg.SetStructured(map[string]interface{}{
+					"timestamp_ms": 1234567890.0, // No fractional part
+					"value":        25.5,
+				})
+
+				event, err := messageToEvent(msg)
+				Expect(err).To(BeNil())
+				Expect(event.GetTs()).NotTo(BeNil())
+				Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1234567890)))
+			})
+
+			It("rejects nil timestamp values", func() {
+				msg := service.NewMessage(nil)
+				msg.SetStructured(map[string]interface{}{
+					"timestamp_ms": nil,
+					"value":        25.5,
+				})
+
+				event, err := messageToEvent(msg)
+				Expect(err).NotTo(BeNil())
+				Expect(err.Error()).To(ContainSubstring("cannot be nil"))
+				Expect(event).To(BeNil())
+			})
+
+			It("rejects nil value fields", func() {
+				msg := service.NewMessage(nil)
+				msg.SetStructured(map[string]interface{}{
+					"timestamp_ms": int64(1234567890),
+					"value":        nil,
+				})
+
+				event, err := messageToEvent(msg)
+				Expect(err).NotTo(BeNil())
+				Expect(err.Error()).To(ContainSubstring("cannot be nil"))
 				Expect(event).To(BeNil())
 			})
 		})
@@ -202,7 +241,7 @@ var _ = Describe("Event Processing", func() {
 
 			event, err := processTimeSeriesData(data)
 			Expect(err).NotTo(BeNil())
-			Expect(err.Error()).To(ContainSubstring("time-series data must have exactly 'timestamp_ms' and 'value' keys"))
+			Expect(err.Error()).To(ContainSubstring("time-series payload must have exactly"))
 			Expect(event).To(BeNil())
 		})
 
@@ -214,7 +253,7 @@ var _ = Describe("Event Processing", func() {
 
 			event, err := processTimeSeriesData(data)
 			Expect(err).NotTo(BeNil())
-			Expect(err.Error()).To(ContainSubstring("time-series data must have exactly 'timestamp_ms' and 'value' keys"))
+			Expect(err.Error()).To(ContainSubstring("time-series payload must have exactly"))
 			Expect(event).To(BeNil())
 		})
 
@@ -318,27 +357,16 @@ var _ = Describe("Event Processing", func() {
 			Expect(err.Error()).To(ContainSubstring("precision loss"))
 			Expect(event).To(BeNil())
 		})
-
-		It("accepts float timestamps without fractional parts", func() {
-			msg := service.NewMessage(nil)
-			msg.SetStructured(map[string]interface{}{
-				"timestamp_ms": 1234567890.0, // No fractional part
-				"value":        25.5,
-			})
-
-			event, err := messageToEvent(msg)
-			Expect(err).To(BeNil())
-			Expect(event.GetTs()).NotTo(BeNil())
-			Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1234567890)))
-		})
 	})
 
-	Describe("processRelationalData", func() {
-		It("processes raw bytes correctly", func() {
-			rawData := []byte("raw data")
-			msg := service.NewMessage(rawData)
+	Describe("processRelationalStructured", func() {
+		It("processes structured data correctly", func() {
+			structuredData := map[string]interface{}{
+				"order_id": 123,
+				"customer": "ACME Corp",
+			}
 
-			event, err := processRelationalData(msg)
+			event, err := processRelationalStructured(structuredData)
 			Expect(err).To(BeNil())
 			Expect(event.GetRel()).NotTo(BeNil())
 			Expect(event.GetTs()).To(BeNil())
