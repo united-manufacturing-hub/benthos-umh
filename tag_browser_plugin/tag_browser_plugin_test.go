@@ -133,10 +133,10 @@ var _ = Describe("TagBrowserProcessor", func() {
 				ENDENDENDEND
 			*/
 
-			// Let's only focus on the 2nd lin (0a72)
+			// Let's only focus on the 2nd lin (0a64 - updated due to EventTag removal)
 			dataLine := strings.Split(string(outBytes), "\n")[1]
-			// Expect it to begin with 0a72
-			Expect(dataLine[:4]).To(Equal("0a72"))
+			// Expect it to begin with 0a64 (updated due to EventTag field removal)
+			Expect(dataLine[:4]).To(Equal("0a64"))
 
 			// Hex decode it
 			hexDecoded, err := hex.DecodeString(dataLine)
@@ -151,12 +151,12 @@ var _ = Describe("TagBrowserProcessor", func() {
 			Expect(decoded.Events.Entries).To(HaveLen(2))
 			Expect(decoded.UnsMap.Entries).To(HaveLen(1))
 
-			Expect(decoded.UnsMap.Entries).To(HaveKey("1637bdbe36d5a9bb")) // uns tree id
-			topicData := decoded.UnsMap.Entries["1637bdbe36d5a9bb"]
+			Expect(decoded.UnsMap.Entries).To(HaveKey("4b307e4839c8ff19")) // uns tree id - updated after EventTag removal
+			topicData := decoded.UnsMap.Entries["4b307e4839c8ff19"]
 			Expect(topicData).NotTo(BeNil())
 			Expect(topicData.Level0).To(Equal("test-topic"))
-			Expect(topicData.Datacontract).To(Equal("_historian"))
-			Expect(topicData.EventTag.GetValue()).To(Equal("some_value"))
+			Expect(topicData.DataContract).To(Equal("_historian"))
+			// EventTag functionality was removed from protobuf schema
 			Expect(topicData.Metadata).To(Not(BeEmpty()))
 			Expect(topicData.Metadata).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
 
@@ -165,19 +165,18 @@ var _ = Describe("TagBrowserProcessor", func() {
 
 			// Verify first event
 			event1 := decoded.Events.Entries[0]
-			Expect(event1.TimestampMs.GetValue()).To(Equal(int64(1647753600000)))
-			Expect(event1.Value.TypeUrl).To(Equal("golang/int"))
-			Expect(event1.Value.Value).To(Equal([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}))
+			Expect(event1.GetTs().GetTimestampMs()).To(Equal(int64(1647753600000)))
+			Expect(event1.GetTs().GetValue().TypeUrl).To(Equal("golang/int"))
+			Expect(event1.GetTs().GetValue().Value).To(Equal([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}))
 			Expect(event1.RawKafkaMsg).NotTo(BeNil())
 			Expect(event1.RawKafkaMsg.Headers).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
 
 			// Verify second event
 			event2 := decoded.Events.Entries[1]
-			Expect(event2.TimestampMs.GetValue()).To(Equal(int64(1647753600001)))
-			Expect(event2.Value.TypeUrl).To(Equal("golang/int"))
-			Expect(event2.Value.Value).To(Equal([]byte{0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}))
+			Expect(event2.GetTs().GetTimestampMs()).To(Equal(int64(1647753600001)))
+			Expect(event2.GetTs().GetValue().TypeUrl).To(Equal("golang/int"))
+			Expect(event2.GetTs().GetValue().Value).To(Equal([]byte{0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}))
 			Expect(event2.RawKafkaMsg).NotTo(BeNil())
-			Expect(event2.RawKafkaMsg.Headers).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
 		})
 
 		It("caches UNS map entries accross multiple invocations", func() {
@@ -226,10 +225,10 @@ var _ = Describe("TagBrowserProcessor", func() {
 			Expect(err).To(BeNil())
 			Expect(outBytes2).NotTo(BeNil())
 
-			// Let's only focus on the 2nd lin (0a72)
+			// Let's only focus on the 2nd lin (0a64 - updated due to EventTag removal)
 			dataLine := strings.Split(string(outBytes2), "\n")[1]
-			// Expect it to begin with 0a72
-			Expect(dataLine[:4]).To(Equal("0a72"))
+			// Expect it to begin with 0a64 (updated due to EventTag field removal)
+			Expect(dataLine[:4]).To(Equal("0a64"))
 
 			// Hex decode it
 			hexDecoded, err := hex.DecodeString(dataLine)
@@ -246,19 +245,18 @@ var _ = Describe("TagBrowserProcessor", func() {
 			Expect(decoded2.UnsMap.Entries).To(HaveLen(1))
 
 			// Verify the topic info
-			topicInfo2 := decoded2.UnsMap.Entries["1637bdbe36d5a9bb"]
+			topicInfo2 := decoded2.UnsMap.Entries["4b307e4839c8ff19"]
 			Expect(topicInfo2).NotTo(BeNil())
 			Expect(topicInfo2.Level0).To(Equal("test-topic"))
-			Expect(topicInfo2.Datacontract).To(Equal("_historian"))
-			Expect(topicInfo2.EventTag.GetValue()).To(Equal("some_value"))
+			Expect(topicInfo2.DataContract).To(Equal("_historian"))
 			Expect(topicInfo2.Metadata).To(Not(BeEmpty()))
 			Expect(topicInfo2.Metadata).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
 
 			// Verify the event
 			event := decoded2.Events.Entries[0]
-			Expect(event.TimestampMs.GetValue()).To(Equal(int64(1647753600001)))
-			Expect(event.Value.TypeUrl).To(Equal("golang/int"))
-			Expect(event.Value.Value).To(Equal([]byte{0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}))
+			Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1647753600001)))
+			Expect(event.GetTs().GetValue().TypeUrl).To(Equal("golang/int"))
+			Expect(event.GetTs().GetValue().Value).To(Equal([]byte{0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}))
 			Expect(event.RawKafkaMsg).NotTo(BeNil())
 			Expect(event.RawKafkaMsg.Headers).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
 

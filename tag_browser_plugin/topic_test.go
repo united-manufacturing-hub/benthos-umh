@@ -54,9 +54,8 @@ var _ = Describe("Uns", func() {
 			Expect(unsInfo.Level3.GetValue()).To(Equal("line"))
 			Expect(unsInfo.Level4.GetValue()).To(Equal("workcell"))
 			Expect(unsInfo.Level5.GetValue()).To(Equal("originid"))
-			Expect(unsInfo.Datacontract).To(Equal("_schema"))
+			Expect(unsInfo.DataContract).To(Equal("_schema"))
 			Expect(unsInfo.VirtualPath.GetValue()).To(Equal("event"))
-			Expect(unsInfo.EventTag.GetValue()).To(Equal("group"))
 		})
 
 		It("should parse valid UNS topic with minimal fields", func() {
@@ -65,7 +64,7 @@ var _ = Describe("Uns", func() {
 			unsInfo, err := topicToUNSInfo(topic)
 			Expect(err).To(BeNil())
 			Expect(unsInfo.Level0).To(Equal("enterprise"))
-			Expect(unsInfo.Datacontract).To(Equal("_schema"))
+			Expect(unsInfo.DataContract).To(Equal("_schema"))
 			Expect(unsInfo.VirtualPath.GetValue()).To(BeEmpty())
 		})
 
@@ -106,7 +105,7 @@ var _ = Describe("Uns", func() {
 					Expect(err).To(BeNil())
 					Expect(unsInfo).ToNot(BeNil())
 					Expect(unsInfo.Level0).To(Equal(tc.expectedInfo.Level0))
-					Expect(unsInfo.Datacontract).To(Equal(tc.expectedInfo.Datacontract))
+					Expect(unsInfo.DataContract).To(Equal(tc.expectedInfo.DataContract))
 
 					// Check optional fields
 					if tc.expectedInfo.Level1 != nil {
@@ -141,17 +140,15 @@ var _ = Describe("Uns", func() {
 
 					if tc.expectedInfo.VirtualPath != nil {
 						Expect(unsInfo.VirtualPath.GetValue()).To(Equal(tc.expectedInfo.VirtualPath.GetValue()))
-						Expect(unsInfo.EventTag.GetValue()).To(Equal(tc.expectedInfo.EventTag.GetValue()))
 					} else {
 						Expect(unsInfo.VirtualPath).To(BeNil())
-						Expect(unsInfo.EventTag).To(BeNil())
 					}
 				},
 				Entry("only enterprise and schema", testCase{
 					topic: "umh.v1.enterprise._schema",
 					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
 						Level0:       "enterprise",
-						Datacontract: "_schema",
+						DataContract: "_schema",
 					},
 					shouldHaveError: false,
 				}),
@@ -160,7 +157,7 @@ var _ = Describe("Uns", func() {
 					expectedInfo: &tagbrowserpluginprotobuf.TopicInfo{
 						Level0:       "enterprise",
 						Level1:       wrapperspb.String("site"),
-						Datacontract: "_schema",
+						DataContract: "_schema",
 					},
 					shouldHaveError: false,
 				}),
@@ -170,7 +167,7 @@ var _ = Describe("Uns", func() {
 						Level0:       "enterprise",
 						Level1:       wrapperspb.String("site"),
 						Level2:       wrapperspb.String("area"),
-						Datacontract: "_schema",
+						DataContract: "_schema",
 					},
 					shouldHaveError: false,
 				}),
@@ -181,7 +178,7 @@ var _ = Describe("Uns", func() {
 						Level1:       wrapperspb.String("site"),
 						Level2:       wrapperspb.String("area"),
 						Level3:       wrapperspb.String("line"),
-						Datacontract: "_schema",
+						DataContract: "_schema",
 					},
 					shouldHaveError: false,
 				}),
@@ -193,7 +190,7 @@ var _ = Describe("Uns", func() {
 						Level2:       wrapperspb.String("area"),
 						Level3:       wrapperspb.String("line"),
 						Level4:       wrapperspb.String("workcell"),
-						Datacontract: "_schema",
+						DataContract: "_schema",
 					},
 					shouldHaveError: false,
 				}),
@@ -206,7 +203,7 @@ var _ = Describe("Uns", func() {
 						Level3:       wrapperspb.String("line"),
 						Level4:       wrapperspb.String("workcell"),
 						Level5:       wrapperspb.String("originid"),
-						Datacontract: "_schema",
+						DataContract: "_schema",
 					},
 					shouldHaveError: false,
 				}),
@@ -219,9 +216,8 @@ var _ = Describe("Uns", func() {
 						Level3:       wrapperspb.String("line"),
 						Level4:       wrapperspb.String("workcell"),
 						Level5:       wrapperspb.String("originid"),
-						Datacontract: "_schema",
+						DataContract: "_schema",
 						VirtualPath:  wrapperspb.String("event"),
-						EventTag:     wrapperspb.String("group"),
 					},
 					shouldHaveError: false,
 				}),
@@ -234,9 +230,8 @@ var _ = Describe("Uns", func() {
 						Level3:       wrapperspb.String("line"),
 						Level4:       wrapperspb.String("workcell"),
 						Level5:       wrapperspb.String("originid"),
-						Datacontract: "_schema",
+						DataContract: "_schema",
 						VirtualPath:  wrapperspb.String("event.group"),
-						EventTag:     wrapperspb.String("subgroup"),
 					},
 					shouldHaveError: false,
 				}),

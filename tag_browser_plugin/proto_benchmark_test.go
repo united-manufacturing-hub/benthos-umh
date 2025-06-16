@@ -22,7 +22,6 @@ import (
 
 	tagbrowserpluginprotobuf "github.com/united-manufacturing-hub/benthos-umh/tag_browser_plugin/tag_browser_plugin.protobuf"
 	"google.golang.org/protobuf/types/known/anypb"
-	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 func createTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
@@ -31,19 +30,23 @@ func createTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 			Entries: map[string]*tagbrowserpluginprotobuf.TopicInfo{
 				"test-topic": {
 					Level0:       "enterprise",
-					Datacontract: "_historian",
-					EventTag:     wrapperspb.String("temperature"),
+					DataContract: "_historian",
 				},
 			},
 		},
 		Events: &tagbrowserpluginprotobuf.EventTable{
 			Entries: []*tagbrowserpluginprotobuf.EventTableEntry{
 				{
-					IsTimeseries: true,
-					TimestampMs:  wrapperspb.Int64(1647753600000),
-					Value: &anypb.Any{
-						TypeUrl: "golang/float64",
-						Value:   []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x40}, // 13.0 in float64
+					UnsTreeId: "test-topic",
+					Payload: &tagbrowserpluginprotobuf.EventTableEntry_Ts{
+						Ts: &tagbrowserpluginprotobuf.TimeSeriesPayload{
+							ScalarType:  tagbrowserpluginprotobuf.ScalarType_NUMERIC,
+							TimestampMs: 1647753600000,
+							Value: &anypb.Any{
+								TypeUrl: "golang/float64",
+								Value:   []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x40}, // 13.0 in float64
+							},
+						},
 					},
 				},
 			},
@@ -66,16 +69,20 @@ func createLargeTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 		topic := fmt.Sprintf("topic-%d", i)
 		bundle.UnsMap.Entries[topic] = &tagbrowserpluginprotobuf.TopicInfo{
 			Level0:       "enterprise",
-			Datacontract: "_historian",
-			EventTag:     wrapperspb.String(fmt.Sprintf("sensor-%d", i)),
+			DataContract: "_historian",
 		}
 
 		bundle.Events.Entries = append(bundle.Events.Entries, &tagbrowserpluginprotobuf.EventTableEntry{
-			IsTimeseries: true,
-			TimestampMs:  wrapperspb.Int64(1647753600000 + int64(i)),
-			Value: &anypb.Any{
-				TypeUrl: "golang/float64",
-				Value:   []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x40}, // 13.0 in float64
+			UnsTreeId: topic,
+			Payload: &tagbrowserpluginprotobuf.EventTableEntry_Ts{
+				Ts: &tagbrowserpluginprotobuf.TimeSeriesPayload{
+					ScalarType:  tagbrowserpluginprotobuf.ScalarType_NUMERIC,
+					TimestampMs: 1647753600000 + int64(i),
+					Value: &anypb.Any{
+						TypeUrl: "golang/float64",
+						Value:   []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x40}, // 13.0 in float64
+					},
+				},
 			},
 		})
 	}
@@ -98,8 +105,7 @@ func createVeryLargeTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 		topic := fmt.Sprintf("topic-%d", i)
 		bundle.UnsMap.Entries[topic] = &tagbrowserpluginprotobuf.TopicInfo{
 			Level0:       "enterprise",
-			Datacontract: "_historian",
-			EventTag:     wrapperspb.String(fmt.Sprintf("sensor-%d", i)),
+			DataContract: "_historian",
 		}
 	}
 
@@ -115,13 +121,17 @@ func createVeryLargeTestBundle() *tagbrowserpluginprotobuf.UnsBundle {
 		topic := fmt.Sprintf("topic-%d", topicIndex)
 
 		bundle.Events.Entries = append(bundle.Events.Entries, &tagbrowserpluginprotobuf.EventTableEntry{
-			IsTimeseries: true,
-			TimestampMs:  wrapperspb.Int64(1647753600000 + int64(i)),
-			Value: &anypb.Any{
-				TypeUrl: "golang/float64",
-				Value:   valueBytes,
-			},
 			UnsTreeId: topic, // Use the topic as the UnsTreeId
+			Payload: &tagbrowserpluginprotobuf.EventTableEntry_Ts{
+				Ts: &tagbrowserpluginprotobuf.TimeSeriesPayload{
+					ScalarType:  tagbrowserpluginprotobuf.ScalarType_NUMERIC,
+					TimestampMs: 1647753600000 + int64(i),
+					Value: &anypb.Any{
+						TypeUrl: "golang/float64",
+						Value:   valueBytes,
+					},
+				},
+			},
 		})
 	}
 
