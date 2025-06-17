@@ -83,7 +83,7 @@ func MessageToUNSInfoAndEvent(message *service.Message) (*TopicInfo, *EventTable
 	// If we have a processed-by header, we will extract that and set it in the event
 	// The first entry in here will be the producer of the message
 	if val, ok := event.RawKafkaMsg.Headers["processed-by"]; ok {
-		event.BridgedBy = strings.Split(val, ",") // ProcessedBy renamed to BridgedBy
+		event.BridgedBy = strings.Split(val, ",")
 	}
 
 	return unsInfo, event, &unsTreeId, nil

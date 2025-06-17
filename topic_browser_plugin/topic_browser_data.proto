@@ -26,7 +26,7 @@
 //    │ tag_proc. │ ───────────────────────────►│   FSM       │
 //    └───────────┘                             └─────────────┘
 //      UnsBundle.events[*] : EventTableEntry         (~ring-100)
-//      UnsBundle.uns_map   : TopicInfo (deltas only)
+//      UnsBundle.uns_map   : TopicInfo (complete state)
 //
 // ---------------------------------------------------------------------------
 
@@ -95,14 +95,16 @@ message EventKafka {
 //──────────────────────────── PAYLOAD ENUMS ─────────────────────────────────
 
 /**
- * Each event emitted by the tag-processor falls into **exactly one** payload
- * family.
+ * PayloadFormat discriminates between the two payload families for frontend convenience.
+ * This allows the UI to quickly determine payload type without inspecting the oneof structure.
+ * Similar to how ScalarType provides quick type information for time-series values.
  *
  * ▸ TIMESERIES … the classic "one tag, one value, one timestamp" sensor point  
  * ▸ RELATIONAL  … a complete, self-contained JSON document (batch header,
  *                 alarm object, recipe, …) that already belongs together
  *
- * Anything else is rejected at ingest-time; mixing formats on a single topic
+ * Each event emitted by the tag-processor falls into **exactly one** payload
+ * family. Anything else is rejected at ingest-time; mixing formats on a single topic
  * would break the "one-topic-one-shape" contract.
  *
  * See full rationale at: https://docs.umh.app/usage/unified-namespace/payload-formats
@@ -193,6 +195,10 @@ message RelationalPayload {
  *                    payload back to its TopicInfo without repeating long
  *                    strings in every row.
  *
+ * payload_format   – PayloadFormat enum for frontend convenience. Allows UI to
+ *                    quickly determine if this is TIMESERIES or RELATIONAL data
+ *                    without inspecting the oneof payload structure.
+ *
  * payload          – `oneof` branch holding either:
  *                       ▸ TimeSeriesPayload  (scalar + timestamp_ms)  
  *                       ▸ RelationalPayload  (full JSON document)
@@ -213,13 +219,16 @@ message RelationalPayload {
  */
 message EventTableEntry {
   string                  uns_tree_id   = 1;   // xxHash over TopicInfo
+  PayloadFormat           payload_format = 2;   // TIMESERIES/RELATIONAL (frontend convenience)
+  // Fields 3,4 reserved for future metadata expansion
+  EventKafka              raw_kafka_msg = 5;   // headers + value, for debugging
+  repeated string         bridged_by  = 6;   // Benthos hops (oldest → newest)
+  uint64                  produced_at_ms = 7;  // Kafka write time, epoch-ms 
+  // Fields 8,9 reserved for future expansion
   oneof payload {
     TimeSeriesPayload     ts     = 10;
     RelationalPayload     rel    = 11;
   }
-  EventKafka              raw_kafka_msg = 5;   // headers + value, for debugging
-  repeated string         bridged_by  = 6;   // Benthos hops (oldest → newest)
-  uint64                  produced_at_ms = 7;  // Kafka write time, epoch-ms 
 }
 
 //──────────────────────────── EVENT BATCH ───────────────────────────────────

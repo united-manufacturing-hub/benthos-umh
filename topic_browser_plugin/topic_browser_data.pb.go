@@ -26,7 +26,7 @@
 //    │ tag_proc. │ ───────────────────────────►│   FSM       │
 //    └───────────┘                             └─────────────┘
 //      UnsBundle.events[*] : EventTableEntry         (~ring-100)
-//      UnsBundle.uns_map   : TopicInfo (deltas only)
+//      UnsBundle.uns_map   : TopicInfo (complete state)
 //
 // ---------------------------------------------------------------------------
 
@@ -584,6 +584,11 @@ func (x *RelationalPayload) GetJson() []byte {
 //	payload back to its TopicInfo without repeating long
 //	strings in every row.
 //
+// payload_format   – PayloadFormat enum for frontend convenience. Allows UI to
+//
+//	quickly determine if this is TIMESERIES or RELATIONAL data
+//	without inspecting the oneof payload structure.
+//
 // payload          – `oneof` branch holding either:
 //
 //	▸ TimeSeriesPayload  (scalar + timestamp_ms)
@@ -606,16 +611,20 @@ func (x *RelationalPayload) GetJson() []byte {
 //	TimeSeriesPayload.timestamp_ms, which is the **source**
 //	time inside the PLC/device.
 type EventTableEntry struct {
-	state     protoimpl.MessageState `protogen:"open.v1"`
-	UnsTreeId string                 `protobuf:"bytes,1,opt,name=uns_tree_id,json=unsTreeId,proto3" json:"uns_tree_id,omitempty"` // xxHash over TopicInfo
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UnsTreeId     string                 `protobuf:"bytes,1,opt,name=uns_tree_id,json=unsTreeId,proto3" json:"uns_tree_id,omitempty"`                                          // xxHash over TopicInfo
+	PayloadFormat PayloadFormat          `protobuf:"varint,2,opt,name=payload_format,json=payloadFormat,proto3,enum=umh.events.PayloadFormat" json:"payload_format,omitempty"` // TIMESERIES/RELATIONAL (frontend convenience)
+	// Fields 3,4 reserved for future metadata expansion
+	RawKafkaMsg  *EventKafka `protobuf:"bytes,5,opt,name=raw_kafka_msg,json=rawKafkaMsg,proto3" json:"raw_kafka_msg,omitempty"`     // headers + value, for debugging
+	BridgedBy    []string    `protobuf:"bytes,6,rep,name=bridged_by,json=bridgedBy,proto3" json:"bridged_by,omitempty"`             // Benthos hops (oldest → newest)
+	ProducedAtMs uint64      `protobuf:"varint,7,opt,name=produced_at_ms,json=producedAtMs,proto3" json:"produced_at_ms,omitempty"` // Kafka write time, epoch-ms
+	// Fields 8,9 reserved for future expansion
+	//
 	// Types that are valid to be assigned to Payload:
 	//
 	//	*EventTableEntry_Ts
 	//	*EventTableEntry_Rel
 	Payload       isEventTableEntry_Payload `protobuf_oneof:"payload"`
-	RawKafkaMsg   *EventKafka               `protobuf:"bytes,5,opt,name=raw_kafka_msg,json=rawKafkaMsg,proto3" json:"raw_kafka_msg,omitempty"`     // headers + value, for debugging
-	BridgedBy     []string                  `protobuf:"bytes,6,rep,name=bridged_by,json=bridgedBy,proto3" json:"bridged_by,omitempty"`             // Benthos hops (oldest → newest)
-	ProducedAtMs  uint64                    `protobuf:"varint,7,opt,name=produced_at_ms,json=producedAtMs,proto3" json:"produced_at_ms,omitempty"` // Kafka write time, epoch-ms
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -657,6 +666,34 @@ func (x *EventTableEntry) GetUnsTreeId() string {
 	return ""
 }
 
+func (x *EventTableEntry) GetPayloadFormat() PayloadFormat {
+	if x != nil {
+		return x.PayloadFormat
+	}
+	return PayloadFormat_PAYLOAD_FORMAT_UNSPECIFIED
+}
+
+func (x *EventTableEntry) GetRawKafkaMsg() *EventKafka {
+	if x != nil {
+		return x.RawKafkaMsg
+	}
+	return nil
+}
+
+func (x *EventTableEntry) GetBridgedBy() []string {
+	if x != nil {
+		return x.BridgedBy
+	}
+	return nil
+}
+
+func (x *EventTableEntry) GetProducedAtMs() uint64 {
+	if x != nil {
+		return x.ProducedAtMs
+	}
+	return 0
+}
+
 func (x *EventTableEntry) GetPayload() isEventTableEntry_Payload {
 	if x != nil {
 		return x.Payload
@@ -680,27 +717,6 @@ func (x *EventTableEntry) GetRel() *RelationalPayload {
 		}
 	}
 	return nil
-}
-
-func (x *EventTableEntry) GetRawKafkaMsg() *EventKafka {
-	if x != nil {
-		return x.RawKafkaMsg
-	}
-	return nil
-}
-
-func (x *EventTableEntry) GetBridgedBy() []string {
-	if x != nil {
-		return x.BridgedBy
-	}
-	return nil
-}
-
-func (x *EventTableEntry) GetProducedAtMs() uint64 {
-	if x != nil {
-		return x.ProducedAtMs
-	}
-	return 0
 }
 
 type isEventTableEntry_Payload interface {
@@ -766,11 +782,11 @@ func (x *EventTable) GetEntries() []*EventTableEntry {
 
 // *
 // A single frame delivered to the FSM:
-//   - `uns_map`  – any new / changed TopicInfo
+//   - `uns_map`  – the full TopicInfo map
 //   - `events`   – matching EventTable entries
 type UnsBundle struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	UnsMap        *TopicMap              `protobuf:"bytes,1,opt,name=uns_map,json=unsMap,proto3" json:"uns_map,omitempty"` // Map of new or changed topics
+	UnsMap        *TopicMap              `protobuf:"bytes,1,opt,name=uns_map,json=unsMap,proto3" json:"uns_map,omitempty"` // Map of all topics if new or changed topics or a metadata was changed
 	Events        *EventTable            `protobuf:"bytes,2,opt,name=events,proto3" json:"events,omitempty"`               // Events associated with these topics
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -858,16 +874,17 @@ const file_topic_browser_data_proto_rawDesc = "" +
 	"\ftimestamp_ms\x18\x05 \x01(\x03R\vtimestampMsB\a\n" +
 	"\x05value\"'\n" +
 	"\x11RelationalPayload\x12\x12\n" +
-	"\x04json\x18\x01 \x01(\fR\x04json\"\xa1\x02\n" +
+	"\x04json\x18\x01 \x01(\fR\x04json\"\xe3\x02\n" +
 	"\x0fEventTableEntry\x12\x1e\n" +
-	"\vuns_tree_id\x18\x01 \x01(\tR\tunsTreeId\x12/\n" +
-	"\x02ts\x18\n" +
-	" \x01(\v2\x1d.umh.events.TimeSeriesPayloadH\x00R\x02ts\x121\n" +
-	"\x03rel\x18\v \x01(\v2\x1d.umh.events.RelationalPayloadH\x00R\x03rel\x12:\n" +
+	"\vuns_tree_id\x18\x01 \x01(\tR\tunsTreeId\x12@\n" +
+	"\x0epayload_format\x18\x02 \x01(\x0e2\x19.umh.events.PayloadFormatR\rpayloadFormat\x12:\n" +
 	"\rraw_kafka_msg\x18\x05 \x01(\v2\x16.umh.events.EventKafkaR\vrawKafkaMsg\x12\x1d\n" +
 	"\n" +
 	"bridged_by\x18\x06 \x03(\tR\tbridgedBy\x12$\n" +
-	"\x0eproduced_at_ms\x18\a \x01(\x04R\fproducedAtMsB\t\n" +
+	"\x0eproduced_at_ms\x18\a \x01(\x04R\fproducedAtMs\x12/\n" +
+	"\x02ts\x18\n" +
+	" \x01(\v2\x1d.umh.events.TimeSeriesPayloadH\x00R\x02ts\x121\n" +
+	"\x03rel\x18\v \x01(\v2\x1d.umh.events.RelationalPayloadH\x00R\x03relB\t\n" +
 	"\apayload\"C\n" +
 	"\n" +
 	"EventTable\x125\n" +
@@ -929,18 +946,19 @@ var file_topic_browser_data_proto_depIdxs = []int32{
 	13, // 4: umh.events.TimeSeriesPayload.numeric_value:type_name -> google.protobuf.DoubleValue
 	14, // 5: umh.events.TimeSeriesPayload.string_value:type_name -> google.protobuf.StringValue
 	15, // 6: umh.events.TimeSeriesPayload.boolean_value:type_name -> google.protobuf.BoolValue
-	5,  // 7: umh.events.EventTableEntry.ts:type_name -> umh.events.TimeSeriesPayload
-	6,  // 8: umh.events.EventTableEntry.rel:type_name -> umh.events.RelationalPayload
-	4,  // 9: umh.events.EventTableEntry.raw_kafka_msg:type_name -> umh.events.EventKafka
-	7,  // 10: umh.events.EventTable.entries:type_name -> umh.events.EventTableEntry
-	3,  // 11: umh.events.UnsBundle.uns_map:type_name -> umh.events.TopicMap
-	8,  // 12: umh.events.UnsBundle.events:type_name -> umh.events.EventTable
-	2,  // 13: umh.events.TopicMap.EntriesEntry.value:type_name -> umh.events.TopicInfo
-	14, // [14:14] is the sub-list for method output_type
-	14, // [14:14] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	0,  // 7: umh.events.EventTableEntry.payload_format:type_name -> umh.events.PayloadFormat
+	4,  // 8: umh.events.EventTableEntry.raw_kafka_msg:type_name -> umh.events.EventKafka
+	5,  // 9: umh.events.EventTableEntry.ts:type_name -> umh.events.TimeSeriesPayload
+	6,  // 10: umh.events.EventTableEntry.rel:type_name -> umh.events.RelationalPayload
+	7,  // 11: umh.events.EventTable.entries:type_name -> umh.events.EventTableEntry
+	3,  // 12: umh.events.UnsBundle.uns_map:type_name -> umh.events.TopicMap
+	8,  // 13: umh.events.UnsBundle.events:type_name -> umh.events.EventTable
+	2,  // 14: umh.events.TopicMap.EntriesEntry.value:type_name -> umh.events.TopicInfo
+	15, // [15:15] is the sub-list for method output_type
+	15, // [15:15] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_topic_browser_data_proto_init() }
