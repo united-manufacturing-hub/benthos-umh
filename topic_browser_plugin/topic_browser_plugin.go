@@ -178,6 +178,15 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
+// topicRingBuffer implements a fixed-size circular buffer for storing the latest events per topic.
+// This prevents data loss while controlling memory usage by automatically overwriting oldest events.
+type topicRingBuffer struct {
+	events   []*EventTableEntry // Fixed-size circular buffer
+	head     int                // Write position (next slot to write)
+	size     int                // Current number of events stored
+	capacity int                // Maximum events per topic (from config)
+}
+
 // TopicBrowserProcessor implements the Benthos processor interface for the Topic Browser plugin.
 // It processes messages to extract topic hierarchy, metadata, and event data while
 // maintaining an efficient cache of topic metadata to minimize network traffic.
@@ -198,6 +207,26 @@ type TopicBrowserProcessor struct {
 	// metrics track the number of processed and failed messages
 	messagesProcessed *service.MetricCounter
 	messagesFailed    *service.MetricCounter
+
+	// New buffering fields for ring buffer implementation
+	messageBuffer       []*service.Message          // Unacked original messages
+	topicBuffers        map[string]*topicRingBuffer // Per-topic ring buffers
+	pendingTopicChanges map[string]*TopicInfo       // Topics with metadata changes
+	fullTopicMap        map[string]*TopicInfo       // Complete authoritative topic state
+	lastEmitTime        time.Time                   // Last emission timestamp
+	bufferMutex         sync.Mutex                  // Protects all buffer state
+
+	// Configuration parameters
+	emitInterval      time.Duration
+	maxEventsPerTopic int
+	maxBufferSize     int
+
+	// Enhanced metrics for ring buffer monitoring
+	eventsOverwritten     *service.MetricCounter
+	ringBufferUtilization *service.MetricCounter
+	flushDuration         *service.MetricCounter
+	emissionSize          *service.MetricCounter
+	totalEventsEmitted    *service.MetricCounter
 }
 
 func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Message) (service.MessageBatch, error) {
@@ -624,6 +653,19 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 		messagesProcessed:       metrics.NewCounter("messages_processed"),
 		messagesFailed:          metrics.NewCounter("messages_failed"),
 		topicMetadataCacheMutex: &sync.Mutex{},
+		emitInterval:            emitInterval,
+		maxEventsPerTopic:       maxEventsPerTopic,
+		maxBufferSize:           maxBufferSize,
+		topicBuffers:            make(map[string]*topicRingBuffer),
+		pendingTopicChanges:     make(map[string]*TopicInfo),
+		fullTopicMap:            make(map[string]*TopicInfo),
+		lastEmitTime:            time.Now(),
+		bufferMutex:             sync.Mutex{},
+		eventsOverwritten:       metrics.NewCounter("events_overwritten"),
+		ringBufferUtilization:   metrics.NewCounter("ring_buffer_utilization"),
+		flushDuration:           metrics.NewCounter("flush_duration"),
+		emissionSize:            metrics.NewCounter("emission_size"),
+		totalEventsEmitted:      metrics.NewCounter("total_events_emitted"),
 	}
 }
 
