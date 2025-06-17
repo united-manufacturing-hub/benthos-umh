@@ -102,6 +102,10 @@ It processes UMH-core time-series data with data_contract "_historian",
 passing all other messages through unchanged. Each message that passes the downsampling filter is annotated 
 with metadata indicating the algorithm used.
 
+In typical UMH deployments, the downsampler is enabled by default with conservative settings to automatically 
+compress time-series data. The tag_processor can be used upstream to selectively bypass downsampling for 
+critical data by setting the ds_ignore metadata field.
+
 Supported format:
 - UMH-core: Single "value" field with timestamp (one tag, one message, one topic)
 - Requires "umh_topic" metadata field to identify the time series
@@ -126,52 +130,16 @@ The downsampler handles different data types as follows:
 - **Other types**: 
   Rejected with an error to ensure data integrity.
 
-## ACK Buffering & Data Safety
+## Selective Bypass with ds_ignore
 
-The downsampler implements internal message buffering to support "emit-previous" algorithms like Swinging Door Trending.
-This ensures at-least-once delivery semantics with no data loss:
+The ds_ignore metadata key allows selective bypass of downsampling on a per-message basis:
 
-- **Internal Buffer**: One message buffered per time series (memory bounded)
-- **ACK Safety**: Messages only ACKed after successful processing and emission
-- **Idle Handling**: Uses algorithm 'max_time' setting to flush stale buffered messages
-- **Shutdown Safety**: All buffered messages properly emitted during graceful shutdown
+- Any message with ds_ignore metadata (any non-empty value) completely bypasses all downsampling logic
+- Designed for use with tag_processor to identify critical data that must be preserved unchanged
+- Common use cases: emergency alarms, state changes, calibration data, precision measurements
+- Bypassed messages are marked with downsampled_by: "ignored" and counted in messages_ignored metric
 
-## Algorithm Integration
-
-The 'max_time' parameter serves dual purposes:
-1. **Algorithm heartbeat**: Forces periodic emission regardless of threshold (existing behavior)
-2. **Buffer management**: Flushes idle buffered messages and resets algorithm state
-
-When max_time is reached for a series:
-- Any buffered message is immediately flushed and emitted
-- Algorithm state is reset (next message treated as fresh start)
-- Prevents indefinite buffering when series stop sending data
-
-Currently supported algorithms:
-- deadband: Filters out changes smaller than a configured threshold
-- swinging_door: Dynamic compression maintaining trend fidelity using Swinging Door Trending (SDT)
-
-## Pattern Matching Examples
-
-Override configuration supports flexible pattern matching:
-
-**Exact topic matching:**
-overrides:
-  - pattern: "umh.v1.factory._historian.line1.temperature.sensor1"
-    deadband:
-      threshold: 2.0
-
-**Wildcard patterns:**
-overrides:
-  - pattern: "*.temperature.*"     # All temperature sensors
-    deadband:
-      threshold: 1.5
-  - pattern: "*line1*"             # All sensors on line1
-    deadband:
-      max_time: "10m"
-  - pattern: "*pressure*"          # Any topic containing "pressure"
-    swinging_door:
-      threshold: 0.8`).
+Use with tag_processor for UMH deployments to selectively bypass downsampling based on message characteristics.`).
 		Field(service.NewObjectField("default",
 			service.NewObjectField("deadband",
 				service.NewFloatField("threshold").

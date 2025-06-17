@@ -24,6 +24,7 @@ type DownsamplerMetrics struct {
 	MessagesFiltered        *service.MetricCounter
 	MessagesErrored         *service.MetricCounter
 	MessagesPassed          *service.MetricCounter
+	MessagesIgnored         *service.MetricCounter
 	MetaOverridesApplied    *service.MetricCounter
 	MetaOverridesRejected   *service.MetricCounter
 	MetaOverrideRecreations *service.MetricCounter
@@ -36,6 +37,7 @@ func NewDownsamplerMetrics(metrics *service.Metrics) *DownsamplerMetrics {
 		MessagesFiltered:        metrics.NewCounter("messages_filtered"),
 		MessagesErrored:         metrics.NewCounter("messages_errored"),
 		MessagesPassed:          metrics.NewCounter("messages_passed_through"),
+		MessagesIgnored:         metrics.NewCounter("messages_ignored"),
 		MetaOverridesApplied:    metrics.NewCounter("meta_overrides_applied"),
 		MetaOverridesRejected:   metrics.NewCounter("meta_overrides_rejected"),
 		MetaOverrideRecreations: metrics.NewCounter("meta_override_recreations"),
@@ -60,6 +62,11 @@ func (m *DownsamplerMetrics) IncrementErrored() {
 // IncrementPassed increments the passed-through messages counter
 func (m *DownsamplerMetrics) IncrementPassed() {
 	m.MessagesPassed.Incr(1)
+}
+
+// IncrementIgnored increments the ignored messages counter
+func (m *DownsamplerMetrics) IncrementIgnored() {
+	m.MessagesIgnored.Incr(1)
 }
 
 // IncrementMetaOverrideApplied increments the applied metadata overrides counter
