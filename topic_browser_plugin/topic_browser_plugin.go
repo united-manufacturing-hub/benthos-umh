@@ -454,7 +454,7 @@ func (t *TopicBrowserProcessor) updateTopicMetadata(
 	defer t.topicMetadataCacheMutex.Unlock()
 
 	for unsTreeId, topics := range topicInfos {
-		mergedHeaders := t.mergeTopicHeaders(topics)
+		mergedHeaders := t.mergeTopicHeaders(unsTreeId, topics)
 
 		if t.shouldReportTopic(unsTreeId, mergedHeaders) {
 			t.updateTopicCacheAndBundle(unsTreeId, mergedHeaders, topics[0], unsBundle)
@@ -463,15 +463,52 @@ func (t *TopicBrowserProcessor) updateTopicMetadata(
 }
 
 // mergeTopicHeaders combines headers from multiple topic infos into a single map.
-// This is necessary because a single topic might appear in multiple messages
-// with different header values that need to be consolidated.
-func (t *TopicBrowserProcessor) mergeTopicHeaders(topics []*TopicInfo) map[string]string {
+// This implements cumulative metadata persistence where each metadata key retains
+// its last known value even if it disappears from subsequent messages.
+//
+// # CUMULATIVE METADATA ALGORITHM
+//
+// This function implements metadata persistence per key:
+//
+// ## Persistence Strategy:
+//   - Start with previously cached metadata (if exists)
+//   - Layer on new metadata from current batch
+//   - Each key keeps its most recent value
+//   - Keys never disappear once seen (Topic Browser requirement)
+//
+// ## Use Case Examples:
+//   - Message 1: {unit: "celsius"} → Store: {unit: "celsius"}
+//   - Message 2: {serial: "ABC123"} → Store: {unit: "celsius", serial: "ABC123"}
+//   - Message 3: {unit: "fahrenheit"} → Store: {unit: "fahrenheit", serial: "ABC123"}
+//   - Message 4: {location: "factory"} → Store: {unit: "fahrenheit", serial: "ABC123", location: "factory"}
+//
+// This ensures the Topic Browser UI shows all known metadata about a topic,
+// not just what was in the most recent message.
+//
+// Args:
+//   - unsTreeId: UNS Tree ID for cache lookup of existing metadata
+//   - topics: Topic infos from current batch to merge
+//
+// Returns:
+//   - map[string]string: Cumulative metadata with all keys ever seen
+func (t *TopicBrowserProcessor) mergeTopicHeaders(unsTreeId string, topics []*TopicInfo) map[string]string {
+	// Start with previously cached metadata (if exists)
 	mergedHeaders := make(map[string]string)
-	for _, topicInfo := range topics {
-		for key, value := range topicInfo.Metadata {
+	if stored, ok := t.topicMetadataCache.Get(unsTreeId); ok {
+		cachedHeaders := stored.(map[string]string)
+		// Copy all previously known metadata
+		for key, value := range cachedHeaders {
 			mergedHeaders[key] = value
 		}
 	}
+
+	// Layer on new metadata from current batch
+	for _, topicInfo := range topics {
+		for key, value := range topicInfo.Metadata {
+			mergedHeaders[key] = value // Update with latest value
+		}
+	}
+
 	return mergedHeaders
 }
 
@@ -695,6 +732,56 @@ func (t *TopicBrowserProcessor) extractTopicFromMessage(msg *service.Message) (s
 		return "", errors.New("missing umh_topic metadata")
 	}
 	return topic, nil
+}
+
+// bufferMessage handles the buffering of a processed message and its topic information.
+// This function manages both the ring buffer storage and the message buffer for ACK control.
+func (t *TopicBrowserProcessor) bufferMessage(msg *service.Message, event *EventTableEntry, topicInfo *TopicInfo, unsTreeId string) error {
+	t.bufferMutex.Lock()
+	defer t.bufferMutex.Unlock()
+
+	// Safety check: prevent unbounded growth
+	if len(t.messageBuffer) >= t.maxBufferSize {
+		return errors.New("buffer full - dropping message")
+	}
+
+	// Extract topic string for ring buffer
+	topic, err := t.extractTopicFromMessage(msg)
+	if err != nil {
+		return err
+	}
+
+	// Buffer original message (for ACK)
+	t.messageBuffer = append(t.messageBuffer, msg)
+
+	// Add to per-topic ring buffer
+	t.addEventToTopicBuffer(topic, event)
+
+	// Track topic changes using cumulative metadata
+	cumulativeMetadata := t.mergeTopicHeaders(unsTreeId, []*TopicInfo{topicInfo})
+	if t.shouldReportTopic(unsTreeId, cumulativeMetadata) {
+		// Update topic info with cumulative metadata before storing
+		topicInfoWithCumulative := *topicInfo // shallow copy
+		topicInfoWithCumulative.Metadata = cumulativeMetadata
+		t.pendingTopicChanges[unsTreeId] = &topicInfoWithCumulative
+		t.updateTopicCache(unsTreeId, cumulativeMetadata)
+	}
+
+	// Update full topic map (authoritative state) with cumulative metadata
+	topicInfoWithCumulative := *topicInfo // shallow copy
+	topicInfoWithCumulative.Metadata = cumulativeMetadata
+	t.fullTopicMap[unsTreeId] = &topicInfoWithCumulative
+
+	return nil
+}
+
+// updateTopicCache updates the LRU cache with new topic metadata.
+// This is separated from updateTopicCacheAndBundle to support the ring buffer workflow.
+func (t *TopicBrowserProcessor) updateTopicCache(unsTreeId string, headers map[string]string) {
+	t.topicMetadataCacheMutex.Lock()
+	defer t.topicMetadataCacheMutex.Unlock()
+
+	t.topicMetadataCache.Add(unsTreeId, maps.Clone(headers))
 }
 
 func (t *TopicBrowserProcessor) Close(_ context.Context) error {
