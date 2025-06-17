@@ -37,7 +37,7 @@
 //
 // Typical flow
 // ────────────
-//    ┌───────────┐   UnsBundle  (LZ4 + hex)   ┌─────────────┐
+//    ┌───────────┐   UnsBundle  (Block LZ4 + hex)   ┌─────────────┐
 //    │ tag_proc. │ ───────────────────────────►│   FSM       │
 //    └───────────┘                             └─────────────┘
 //      UnsBundle.events[*] : EventTableEntry         (~ring-100)
