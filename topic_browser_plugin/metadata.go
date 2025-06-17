@@ -57,55 +57,6 @@ func (t *TopicBrowserProcessor) mergeTopicHeaders(unsTreeId string, topics []*To
 	return mergedHeaders
 }
 
-// shouldReportTopic determines if a topic's metadata has changed and needs to be reported.
-//
-// # CHANGE DETECTION ALGORITHM
-//
-// This function implements the core logic for the emission contract's topic filtering:
-//
-// ## Cache Lookup Behavior:
-//   - Cache miss (topic not found): Always returns true (new topic)
-//   - Cache hit (topic found): Performs deep comparison of headers
-//
-// ## Comparison Strategy:
-//   - Uses maps.Equal for deep equality checking of header maps
-//   - Compares current merged headers vs previously cached headers
-//   - Returns true if ANY header key/value has changed
-//   - Returns false if headers are identical (prevents re-emission)
-//
-// ## Performance Characteristics:
-//   - O(n) comparison where n = number of headers per topic
-//   - Typical topics have 5-20 headers, making this very fast
-//   - maps.Equal is optimized for common cases (length mismatch, key differences)
-//
-// ## Edge Cases:
-//   - Empty headers (both current and cached): Returns false (no change)
-//   - New headers added: Returns true (metadata expansion)
-//   - Headers removed: Returns true (metadata contraction)
-//   - Header values changed: Returns true (metadata update)
-//   - Cache eviction: Returns true on next access (topic treated as new)
-//
-// This is a key optimization that prevents unnecessary traffic by:
-// - Checking if the topic exists in the cache
-// - Comparing current headers with cached headers
-// - Only returning true when the topic is new or has changed
-//
-// Args:
-//   - unsTreeId: UNS Tree ID (xxHash) for cache lookup
-//   - mergedHeaders: Current merged headers to compare against cache
-//
-// Returns:
-//   - bool: true if topic should be included in uns_map, false if can be skipped
-func (t *TopicBrowserProcessor) shouldReportTopic(unsTreeId string, mergedHeaders map[string]string) bool {
-	stored, ok := t.topicMetadataCache.Get(unsTreeId)
-	if !ok {
-		return true
-	}
-
-	cachedHeaders := stored.(map[string]string)
-	return !maps.Equal(cachedHeaders, mergedHeaders)
-}
-
 // updateTopicCache updates the LRU cache with new topic metadata.
 // This is separated from updateTopicCacheAndBundle to support the ring buffer workflow.
 func (t *TopicBrowserProcessor) updateTopicCache(unsTreeId string, headers map[string]string) {
@@ -132,17 +83,17 @@ func (t *TopicBrowserProcessor) updateTopicCacheAndBundle(
 	unsBundle.UnsMap.Entries[unsTreeId] = topic
 }
 
-// updateTopicMetadata manages the topic metadata cache and bundle updates.
+// updateTopicMetadata manages the topic metadata processing and bundle updates.
 //
-// # CACHE MANAGEMENT IMPLEMENTATION
+// # SIMPLIFIED METADATA PROCESSING
 //
-// This function implements the core caching logic that enables the emission contract:
+// This function implements simplified metadata processing with no conditional logic:
 //
-// ## Cache Strategy:
-//   - LRU cache stores merged headers for each UNS Tree ID
-//   - Cache key: UNS Tree ID (xxHash of topic hierarchy)
-//   - Cache value: map[string]string of merged headers
-//   - Cache comparison uses maps.Equal for deep equality checking
+// ## Processing Strategy:
+//   - All topics are always included in the uns_map bundle
+//   - No comparison or change detection logic
+//   - Simplified flow: merge headers → update cache → add to bundle
+//   - Cumulative metadata merging still preserved
 //
 // ## Metadata Merging Logic:
 //   - Multiple messages for same topic have headers merged
@@ -150,31 +101,31 @@ func (t *TopicBrowserProcessor) updateTopicCacheAndBundle(
 //   - Merged headers become the canonical metadata for the topic
 //   - Original per-message headers preserved in EventTableEntry.RawKafkaMsg
 //
-// ## Change Detection:
-//   - Cache miss: Topic is new, automatically included in uns_map
-//   - Cache hit: Deep comparison of merged headers vs cached headers
-//   - Header changes: Topic included in uns_map, cache updated
-//   - No changes: Topic excluded from uns_map (traffic optimization)
-//
 // ## Thread Safety:
-//   - Mutex protects ALL cache operations (Get, Add, comparison logic)
+//   - Mutex protects ALL cache operations (Get, Add)
 //   - Lock held for entire function to ensure consistency
 //   - Prevents race conditions in multi-threaded Benthos environment
 //
 // ## Memory Management:
-//   - LRU cache automatically evicts oldest entries when full
-//   - Evicted topics will be re-emitted on next access (acceptable trade-off)
+//   - LRU cache still maintained for cumulative metadata persistence
 //   - maps.Clone ensures cached data doesn't share memory with active processing
+//   - Cache used only for metadata accumulation, not change detection
 //
-// This function is critical for performance optimization as it:
+// ## Simplification Benefits:
+//   - No conditional topic emission logic
+//   - Always provides complete topic state to downstream consumers
+//   - Eliminates complexity around cache hit/miss scenarios
+//   - Predictable output behavior
+//
+// This function:
 // - Uses a mutex to ensure thread-safe cache operations
 // - Merges headers from multiple messages for the same topic
-// - Only updates the bundle when topic metadata has changed
-// - Prevents unnecessary traffic by caching unchanged topics
+// - Always updates the bundle with all topics (no filtering)
+// - Maintains cumulative metadata in cache for next processing cycle
 //
 // Args:
 //   - topicInfos: Topics grouped by UNS Tree ID from message batch
-//   - unsBundle: Bundle to update with changed topics
+//   - unsBundle: Bundle to update with all topics
 func (t *TopicBrowserProcessor) updateTopicMetadata(
 	topicInfos map[string][]*TopicInfo,
 	unsBundle *UnsBundle,
@@ -185,9 +136,8 @@ func (t *TopicBrowserProcessor) updateTopicMetadata(
 	for unsTreeId, topics := range topicInfos {
 		mergedHeaders := t.mergeTopicHeaders(unsTreeId, topics)
 
-		if t.shouldReportTopic(unsTreeId, mergedHeaders) {
-			t.updateTopicCacheAndBundle(unsTreeId, mergedHeaders, topics[0], unsBundle)
-		}
+		// Always include all topics in uns_map (no conditional emission)
+		t.updateTopicCacheAndBundle(unsTreeId, mergedHeaders, topics[0], unsBundle)
 	}
 }
 
