@@ -1,0 +1,84 @@
+agent:
+    metricsPort: 8080
+    communicator:
+        apiUrl: https://management.umh.app/api
+        authToken: b19b7192f7166f7f00358f7c9c6ca5f33bd73629bd9bd16da0fe9a78472fc0e7
+    releaseChannel: stable
+    location:
+        0: enterprise-of-kings
+        1: ""
+        2: ""
+        3: ""
+        4: ""
+        5: ""
+        6: ""
+dataFlow:
+    - name: generate
+      desiredState: active
+      dataFlowComponentConfig:
+        benthos:
+            input:
+                generate:
+                    interval: 1s
+                    mapping: root = "hello world"
+            pipeline:
+                processors:
+                    - tag_processor:
+                        defaults: |-
+                            msg.meta.location_path = "enterprise.plant1.machiningArea.cnc-line.cnc5.plc123";
+                            msg.meta.data_contract = "_historian";
+                            msg.meta.tag_name = "value";
+                            msg.payload = msg.payload;
+                            msg.meta.virtual_path = "axis.y";
+                            return msg;
+            output:
+                uns: {}
+            buffer:
+                none: {}
+    - name: generate-2
+      desiredState: active
+      dataFlowComponentConfig:
+        benthos:
+            input:
+                generate:
+                    interval: 1s
+                    mapping: root = "hello world"
+            pipeline:
+                processors:
+                    - tag_processor:
+                        defaults: |-
+                            msg.meta.location_path = "enterprise.plant1.machiningArea.cnc-line.cnc5.plc123";
+                            msg.meta.data_contract = "_historian";
+                            msg.meta.tag_name = "on_purpose_wrong";
+                            msg.payload = msg.payload;
+                            msg.meta.virtual_path = "axis.wrong"
+                            return msg;
+            output:
+                uns: {}
+            buffer:
+                none: {}
+    - name: generate-3
+      desiredState: active
+      dataFlowComponentConfig:
+        benthos:
+            input:
+                generate:
+                    interval: 10ms
+                    mapping: root = "hello world"
+            pipeline:
+                processors:
+                    - tag_processor:
+                        defaults: |-
+                            msg.meta.location_path = "enterprise.plant1.machiningArea.cnc-line.cnc5";
+                            msg.meta.data_contract = "_historian";
+                            msg.meta.tag_name = "value";
+                            msg.payload = msg.payload;
+                            msg.meta.virtual_path = "axis.quick";
+                            return msg;
+            output:
+                uns: {}
+            buffer:
+                none: {}
+internal:
+    redpanda:
+        desiredState: active
