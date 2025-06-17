@@ -103,14 +103,11 @@ func (t *TopicBrowserProcessor) flushBufferAndACK() ([]service.MessageBatch, err
 	t.bufferMutex.Lock()
 	defer t.bufferMutex.Unlock()
 
-	// Collect all events from ring buffers with rate limiting
+	// Collect all events from ring buffers (already rate-limited by buffer size)
 	allEvents := make([]*EventTableEntry, 0)
 	for topic := range t.topicBuffers {
 		events := t.getLatestEventsForTopic(topic)
-		// Apply rate limiting: max events per topic per interval
-		if len(events) > t.maxEventsPerTopic {
-			events = events[len(events)-t.maxEventsPerTopic:] // Keep latest N events
-		}
+		// Ring buffer already enforces max events per topic - no additional limiting needed
 		allEvents = append(allEvents, events...)
 	}
 
