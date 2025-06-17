@@ -226,7 +226,7 @@ func BenchmarkRoundTrip(b *testing.B) {
 	})
 }
 
-func BenchmarkBundleToProtobufBytes(b *testing.B) {
+func BenchmarkCompression(b *testing.B) {
 	b.Run("small bundle", func(b *testing.B) {
 		bundle := createTestBundle()
 		b.ResetTimer()
