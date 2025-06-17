@@ -71,7 +71,7 @@ func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*EventTa
 // ## Emission Strategy:
 //   - Collect all events from ring buffers across all topics
 //   - Apply rate limiting (max events per topic per interval)
-//   - Emit full topic tree when any topic metadata has changed
+//   - Always emit complete topic tree (full state in every bundle)
 //   - Create single protobuf bundle with events + complete topic map
 //
 // ## Rate Limiting Logic:
@@ -81,9 +81,10 @@ func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*EventTa
 //   - Oldest events naturally dropped when buffer is full
 //
 // ## Full Tree Emission:
-//   - When any topic metadata changes, emit entire fullTopicMap
+//   - Always emit entire fullTopicMap in every bundle
 //   - Ensures downstream has complete topic state (no merge complexity)
-//   - Consistent with existing shouldReportTopic change detection
+//   - Stateless for downstream consumers - no need to track partial updates
+//   - Consistent behavior regardless of what changed
 //
 // ## ACK Behavior:
 //   - Only ACK messages after successful emission
@@ -114,7 +115,7 @@ func (t *TopicBrowserProcessor) flushBufferAndACK() ([]service.MessageBatch, err
 	}
 
 	// Early return if no data to emit
-	if len(allEvents) == 0 && len(t.pendingTopicChanges) == 0 {
+	if len(allEvents) == 0 && len(t.fullTopicMap) == 0 {
 		t.lastEmitTime = time.Now()
 		// Still need to ACK any buffered messages even if no emission
 		if len(t.messageBuffer) > 0 {
@@ -132,11 +133,9 @@ func (t *TopicBrowserProcessor) flushBufferAndACK() ([]service.MessageBatch, err
 		Events: &EventTable{Entries: allEvents},
 	}
 
-	// Full tree emission: emit entire topic map when any topic changes
-	if len(t.pendingTopicChanges) > 0 {
-		for treeId, topic := range t.fullTopicMap {
-			unsBundle.UnsMap.Entries[treeId] = topic
-		}
+	// Always emit complete fullTopicMap (no conditional emission)
+	for treeId, topic := range t.fullTopicMap {
+		unsBundle.UnsMap.Entries[treeId] = topic
 	}
 
 	// Serialize and compress bundle
