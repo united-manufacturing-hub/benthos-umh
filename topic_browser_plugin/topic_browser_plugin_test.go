@@ -30,7 +30,8 @@ var _ = Describe("TopicBrowserProcessor", func() {
 	var processor *TopicBrowserProcessor
 
 	BeforeEach(func() {
-		processor = NewTopicBrowserProcessor(nil, nil, 0, time.Second, 10, 10000)
+		// Use very short emit interval for tests (1ms)
+		processor = NewTopicBrowserProcessor(nil, nil, 0, time.Millisecond, 10, 10000)
 	})
 
 	Describe("ProcessBatch", func() {
@@ -47,7 +48,17 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			var err error
 			processor.topicMetadataCache, err = lru.New(1)
 			Expect(err).To(BeNil())
+
+			// First call - should buffer the message (no immediate emission)
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg})
+			Expect(err).To(BeNil())
+			Expect(result).To(BeNil()) // No immediate emission
+
+			// Wait for emission interval to pass
+			time.Sleep(2 * time.Millisecond)
+
+			// Second call - should trigger emission
+			result, err = processor.ProcessBatch(context.Background(), service.MessageBatch{})
 			Expect(err).To(BeNil())
 			Expect(result).To(HaveLen(1))
 			Expect(result[0]).To(HaveLen(1))
@@ -101,7 +112,17 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			var err error
 			processor.topicMetadataCache, err = lru.New(1)
 			Expect(err).To(BeNil())
+
+			// First call - should buffer the messages (no immediate emission)
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg1, msg2})
+			Expect(err).To(BeNil())
+			Expect(result).To(BeNil()) // No immediate emission
+
+			// Wait for emission interval to pass
+			time.Sleep(2 * time.Millisecond)
+
+			// Second call - should trigger emission
+			result, err = processor.ProcessBatch(context.Background(), service.MessageBatch{})
 			Expect(err).To(BeNil())
 			Expect(result).To(HaveLen(1))
 			Expect(result[0]).To(HaveLen(1))
@@ -202,7 +223,17 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			var err error
 			processor.topicMetadataCache, err = lru.New(1)
 			Expect(err).To(BeNil())
+
+			// First call - should buffer the message (no immediate emission)
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg1})
+			Expect(err).To(BeNil())
+			Expect(result).To(BeNil()) // No immediate emission
+
+			// Wait for emission interval to pass
+			time.Sleep(2 * time.Millisecond)
+
+			// Second call - should trigger emission
+			result, err = processor.ProcessBatch(context.Background(), service.MessageBatch{})
 			Expect(err).To(BeNil())
 			Expect(result).To(HaveLen(1))
 			Expect(result[0]).To(HaveLen(1))
@@ -214,7 +245,17 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Process 2nd messages
 			processor.topicMetadataCache, err = lru.New(1)
 			Expect(err).To(BeNil())
+
+			// First call - should buffer the message (no immediate emission)
 			result2, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg2})
+			Expect(err).To(BeNil())
+			Expect(result2).To(BeNil()) // No immediate emission
+
+			// Wait for emission interval to pass
+			time.Sleep(2 * time.Millisecond)
+
+			// Second call - should trigger emission
+			result2, err = processor.ProcessBatch(context.Background(), service.MessageBatch{})
 			Expect(err).To(BeNil())
 			Expect(result2).To(HaveLen(1))
 			Expect(result2[0]).To(HaveLen(1))

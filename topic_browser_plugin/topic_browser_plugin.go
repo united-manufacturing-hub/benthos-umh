@@ -169,7 +169,6 @@ package topic_browser_plugin
 import (
 	"context"
 	"errors"
-	"maps"
 	"sync"
 	"time"
 
@@ -294,92 +293,7 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 		return nil, nil
 	}
 
-	// Step 1: Initialize the UNS bundle
-	unsBundle := t.initializeUnsBundle()
-
-	// Step 2: Process all messages in the batch
-	topicInfos, err := t.processMessageBatch(batch, unsBundle)
-	if err != nil {
-		return nil, err
-	}
-
-	// Step 3: Update topic metadata and cache
-	t.updateTopicMetadata(topicInfos, unsBundle)
-
-	// Step 4: Check if we have any data to return
-	if !t.hasDataToReturn(unsBundle) {
-		return nil, nil
-	}
-
-	// Step 5: Create and return the final message
-	return t.createFinalMessage(unsBundle)
-}
-
-// Helper methods to break down the complexity
-
-// initializeUnsBundle creates a new empty UNS bundle structure.
-// The bundle is pre-allocated with initial capacity to avoid reallocations during processing.
-// This structure will hold both the topic metadata map and the event entries.
-func (t *TopicBrowserProcessor) initializeUnsBundle() *UnsBundle {
-	return &UnsBundle{
-		UnsMap: &TopicMap{
-			Entries: make(map[string]*TopicInfo),
-		},
-		Events: &EventTable{
-			Entries: make([]*EventTableEntry, 0, 1),
-		},
-	}
-}
-
-// processMessageBatch handles the conversion of raw messages into structured UNS data.
-//
-// # MESSAGE PROCESSING CONTRACT
-//
-// This function implements the individual message processing logic with the following guarantees:
-//
-// ## Processing Behavior:
-//   - Processes each message independently (failure of one doesn't affect others)
-//   - Extracts umh_topic metadata as the primary topic identifier
-//   - Converts topic string to hierarchical TopicInfo structure
-//   - Processes message payload into TimeSeriesPayload or RelationalPayload
-//   - Generates UNS Tree ID via xxHash for efficient topic identification
-//
-// ## Error Handling Strategy:
-//   - Individual message errors are logged with context but processing continues
-//   - messages_failed metric is incremented for each failed message
-//   - Failed messages do not appear in the final events array
-//   - Non-fatal errors (e.g., malformed JSON) are handled gracefully
-//
-// ## Data Grouping Logic:
-//   - Messages are grouped by UNS Tree ID for efficient metadata merging
-//   - Multiple messages for the same topic have their headers merged
-//   - Last-write-wins strategy for conflicting header values
-//   - Each successful message produces exactly one EventTableEntry
-//
-// ## Header Management:
-//   - Raw Kafka headers are preserved in EventTableEntry.RawKafkaMsg
-//   - Headers are copied to TopicInfo.Metadata for search/filter functionality
-//   - Bridge routing information extracted from "processed-by" header
-//   - Kafka timestamp extracted for ProducedAtMs field
-//
-// For each message in the batch:
-// - Extracts topic information and event data
-// - Groups topic infos by UNS tree ID for efficient metadata merging
-// - Updates metrics for monitoring and debugging
-//
-// Args:
-//   - batch: Input message batch to process
-//   - unsBundle: Output bundle to populate with events
-//
-// Returns:
-//   - map[string][]*TopicInfo: Topics grouped by UNS Tree ID for cache comparison
-//   - error: Fatal error that prevents further processing (nil for individual message failures)
-func (t *TopicBrowserProcessor) processMessageBatch(
-	batch service.MessageBatch,
-	unsBundle *UnsBundle,
-) (map[string][]*TopicInfo, error) {
-	topicInfos := make(map[string][]*TopicInfo)
-
+	// Process each message and add to ring buffers
 	for _, message := range batch {
 		topicInfo, eventTableEntry, unsTreeId, err := MessageToUNSInfoAndEvent(message)
 		if err != nil {
@@ -388,401 +302,37 @@ func (t *TopicBrowserProcessor) processMessageBatch(
 			continue
 		}
 
-		// Add event to bundle
-		unsBundle.Events.Entries = append(unsBundle.Events.Entries, eventTableEntry)
-		topicInfo.Metadata = eventTableEntry.RawKafkaMsg.Headers
-
-		// Group topic infos by UNS tree ID
-		if _, ok := topicInfos[*unsTreeId]; !ok {
-			topicInfos[*unsTreeId] = make([]*TopicInfo, 0, 1)
+		// Buffer the message (includes ring buffer storage and topic tracking)
+		err = t.bufferMessage(message, eventTableEntry, topicInfo, *unsTreeId)
+		if err != nil {
+			t.logger.Errorf("Error buffering message: %v", err)
+			t.messagesFailed.Incr(1)
+			continue
 		}
-		topicInfos[*unsTreeId] = append(topicInfos[*unsTreeId], topicInfo)
+
 		t.messagesProcessed.Incr(1)
 	}
 
-	return topicInfos, nil
-}
-
-// updateTopicMetadata manages the topic metadata cache and bundle updates.
-//
-// # CACHE MANAGEMENT IMPLEMENTATION
-//
-// This function implements the core caching logic that enables the emission contract:
-//
-// ## Cache Strategy:
-//   - LRU cache stores merged headers for each UNS Tree ID
-//   - Cache key: UNS Tree ID (xxHash of topic hierarchy)
-//   - Cache value: map[string]string of merged headers
-//   - Cache comparison uses maps.Equal for deep equality checking
-//
-// ## Metadata Merging Logic:
-//   - Multiple messages for same topic have headers merged
-//   - Last header value wins for duplicate keys (last-write-wins)
-//   - Merged headers become the canonical metadata for the topic
-//   - Original per-message headers preserved in EventTableEntry.RawKafkaMsg
-//
-// ## Change Detection:
-//   - Cache miss: Topic is new, automatically included in uns_map
-//   - Cache hit: Deep comparison of merged headers vs cached headers
-//   - Header changes: Topic included in uns_map, cache updated
-//   - No changes: Topic excluded from uns_map (traffic optimization)
-//
-// ## Thread Safety:
-//   - Mutex protects ALL cache operations (Get, Add, comparison logic)
-//   - Lock held for entire function to ensure consistency
-//   - Prevents race conditions in multi-threaded Benthos environment
-//
-// ## Memory Management:
-//   - LRU cache automatically evicts oldest entries when full
-//   - Evicted topics will be re-emitted on next access (acceptable trade-off)
-//   - maps.Clone ensures cached data doesn't share memory with active processing
-//
-// This function is critical for performance optimization as it:
-// - Uses a mutex to ensure thread-safe cache operations
-// - Merges headers from multiple messages for the same topic
-// - Only updates the bundle when topic metadata has changed
-// - Prevents unnecessary traffic by caching unchanged topics
-//
-// Args:
-//   - topicInfos: Topics grouped by UNS Tree ID from message batch
-//   - unsBundle: Bundle to update with changed topics
-func (t *TopicBrowserProcessor) updateTopicMetadata(
-	topicInfos map[string][]*TopicInfo,
-	unsBundle *UnsBundle,
-) {
-	t.topicMetadataCacheMutex.Lock()
-	defer t.topicMetadataCacheMutex.Unlock()
-
-	for unsTreeId, topics := range topicInfos {
-		mergedHeaders := t.mergeTopicHeaders(unsTreeId, topics)
-
-		if t.shouldReportTopic(unsTreeId, mergedHeaders) {
-			t.updateTopicCacheAndBundle(unsTreeId, mergedHeaders, topics[0], unsBundle)
-		}
-	}
-}
-
-// mergeTopicHeaders combines headers from multiple topic infos into a single map.
-// This implements cumulative metadata persistence where each metadata key retains
-// its last known value even if it disappears from subsequent messages.
-//
-// # CUMULATIVE METADATA ALGORITHM
-//
-// This function implements metadata persistence per key:
-//
-// ## Persistence Strategy:
-//   - Start with previously cached metadata (if exists)
-//   - Layer on new metadata from current batch
-//   - Each key keeps its most recent value
-//   - Keys never disappear once seen (Topic Browser requirement)
-//
-// ## Use Case Examples:
-//   - Message 1: {unit: "celsius"} → Store: {unit: "celsius"}
-//   - Message 2: {serial: "ABC123"} → Store: {unit: "celsius", serial: "ABC123"}
-//   - Message 3: {unit: "fahrenheit"} → Store: {unit: "fahrenheit", serial: "ABC123"}
-//   - Message 4: {location: "factory"} → Store: {unit: "fahrenheit", serial: "ABC123", location: "factory"}
-//
-// This ensures the Topic Browser UI shows all known metadata about a topic,
-// not just what was in the most recent message.
-//
-// Args:
-//   - unsTreeId: UNS Tree ID for cache lookup of existing metadata
-//   - topics: Topic infos from current batch to merge
-//
-// Returns:
-//   - map[string]string: Cumulative metadata with all keys ever seen
-func (t *TopicBrowserProcessor) mergeTopicHeaders(unsTreeId string, topics []*TopicInfo) map[string]string {
-	// Start with previously cached metadata (if exists)
-	mergedHeaders := make(map[string]string)
-	if stored, ok := t.topicMetadataCache.Get(unsTreeId); ok {
-		cachedHeaders := stored.(map[string]string)
-		// Copy all previously known metadata
-		for key, value := range cachedHeaders {
-			mergedHeaders[key] = value
-		}
-	}
-
-	// Layer on new metadata from current batch
-	for _, topicInfo := range topics {
-		for key, value := range topicInfo.Metadata {
-			mergedHeaders[key] = value // Update with latest value
-		}
-	}
-
-	return mergedHeaders
-}
-
-// shouldReportTopic determines if a topic's metadata has changed and needs to be reported.
-//
-// # CHANGE DETECTION ALGORITHM
-//
-// This function implements the core logic for the emission contract's topic filtering:
-//
-// ## Cache Lookup Behavior:
-//   - Cache miss (topic not found): Always returns true (new topic)
-//   - Cache hit (topic found): Performs deep comparison of headers
-//
-// ## Comparison Strategy:
-//   - Uses maps.Equal for deep equality checking of header maps
-//   - Compares current merged headers vs previously cached headers
-//   - Returns true if ANY header key/value has changed
-//   - Returns false if headers are identical (prevents re-emission)
-//
-// ## Performance Characteristics:
-//   - O(n) comparison where n = number of headers per topic
-//   - Typical topics have 5-20 headers, making this very fast
-//   - maps.Equal is optimized for common cases (length mismatch, key differences)
-//
-// ## Edge Cases:
-//   - Empty headers (both current and cached): Returns false (no change)
-//   - New headers added: Returns true (metadata expansion)
-//   - Headers removed: Returns true (metadata contraction)
-//   - Header values changed: Returns true (metadata update)
-//   - Cache eviction: Returns true on next access (topic treated as new)
-//
-// This is a key optimization that prevents unnecessary traffic by:
-// - Checking if the topic exists in the cache
-// - Comparing current headers with cached headers
-// - Only returning true when the topic is new or has changed
-//
-// Args:
-//   - unsTreeId: UNS Tree ID (xxHash) for cache lookup
-//   - mergedHeaders: Current merged headers to compare against cache
-//
-// Returns:
-//   - bool: true if topic should be included in uns_map, false if can be skipped
-func (t *TopicBrowserProcessor) shouldReportTopic(unsTreeId string, mergedHeaders map[string]string) bool {
-	stored, ok := t.topicMetadataCache.Get(unsTreeId)
-	if !ok {
-		return true
-	}
-
-	cachedHeaders := stored.(map[string]string)
-	return !maps.Equal(cachedHeaders, mergedHeaders)
-}
-
-// updateTopicCacheAndBundle updates both the cache and the output bundle with new topic metadata.
-// This function ensures that:
-// - The cache is updated with the latest metadata
-// - The bundle includes the updated topic information
-// - The topic's metadata is properly set in the output
-func (t *TopicBrowserProcessor) updateTopicCacheAndBundle(
-	unsTreeId string,
-	mergedHeaders map[string]string,
-	topic *TopicInfo,
-	unsBundle *UnsBundle,
-) {
-	t.topicMetadataCache.Add(unsTreeId, mergedHeaders)
-	clone := maps.Clone(mergedHeaders)
-	topic.Metadata = clone
-	unsBundle.UnsMap.Entries[unsTreeId] = topic
-}
-
-// hasDataToReturn checks if there is any data to include in the output message.
-//
-// # OUTPUT DECISION ALGORITHM
-//
-// This function implements the final decision logic for whether to emit a message:
-//
-// ## Emission Criteria:
-//   - Events present: At least one message was successfully processed
-//   - Topics present: At least one topic metadata change was detected
-//   - Both present: Most common case (new events + topic changes)
-//   - Neither present: No output (returns nil to prevent empty protobuf)
-//
-// ## Performance Optimization:
-//   - Prevents creation of empty protobuf messages
-//   - Avoids unnecessary serialization and compression overhead
-//   - Reduces network traffic by eliminating no-op messages
-//   - Saves downstream processing cycles in umh-core
-//
-// ## Edge Case Handling:
-//   - All messages failed processing: len(Events) == 0, returns false
-//   - No topic changes but events exist: Returns true (events-only emission)
-//   - Topic changes but no events: Returns true (topics-only emission, rare)
-//   - Empty input batch: Returns false early (prevents unnecessary work)
-//
-// This prevents creating empty messages when:
-// - No events were successfully processed
-// - No topic metadata has changed
-//
-// Args:
-//   - unsBundle: The bundle to check for data content
-//
-// Returns:
-//   - bool: true if bundle contains data worthy of emission, false if empty
-func (t *TopicBrowserProcessor) hasDataToReturn(unsBundle *UnsBundle) bool {
-	return len(unsBundle.Events.Entries) > 0 || len(unsBundle.UnsMap.Entries) > 0
-}
-
-// createFinalMessage converts the UNS bundle into a protobuf-encoded message.
-//
-// # SERIALIZATION AND COMPRESSION PIPELINE
-//
-// This function implements the final serialization pipeline with conditional compression:
-//
-// ## Protobuf Serialization:
-//   - Marshals UnsBundle to binary protobuf format
-//   - Protobuf chosen for efficiency and forward/backward compatibility
-//   - Schema evolution supported via protobuf field numbering
-//
-// ## LZ4 Compression Decision:
-//   - Applied if protobuf size ≥ 1024 bytes (see BundleToProtobufBytesWithCompression)
-//   - Compression level 0 for fastest processing (latency-optimized)
-//   - Typical compression ratio: 84% for UMH data (5MB → 750KB)
-//   - Skipped for small payloads to avoid LZ4 frame overhead
-//
-// ## Wire Format Generation:
-//   - Hex-encodes the final bytes (protobuf or LZ4-compressed protobuf)
-//   - Wraps in delimiter format for umh-core parsing:
-//     STARTSTARTSTART\n<hex-data>\nENDDATAENDDATENDDATA\n<timestamp>\nENDENDENDEND
-//   - Includes current timestamp for latency analysis
-//
-// ## Error Handling:
-//   - Protobuf marshaling errors: Returns error (prevents data corruption)
-//   - LZ4 compression errors: Returns error (prevents data corruption)
-//   - No partial emission on failure (atomic success/failure)
-//
-// ## Performance Characteristics:
-//   - Small bundles (<1KB): ~450ns processing, no compression
-//   - Large bundles (~94KB): ~506µs processing, 84.8% compression
-//   - Very large bundles (~5MB): ~14.8ms processing, 84.6% compression
-//
-// This function:
-// - Compresses the bundle to minimize traffic (when beneficial)
-// - Creates a new message with the encoded data
-// - Returns the message in the format expected by the Benthos framework
-//
-// Args:
-//   - unsBundle: The bundle to serialize and potentially compress
-//
-// Returns:
-//   - []service.MessageBatch: Single batch with one message containing encoded data
-//   - error: Any serialization or compression error
-func (t *TopicBrowserProcessor) createFinalMessage(unsBundle *UnsBundle) ([]service.MessageBatch, error) {
-	protoBytes, err := BundleToProtobufBytesWithCompression(unsBundle)
-	if err != nil {
-		return nil, err
-	}
-
-	message := service.NewMessage(nil)
-	message.SetBytes(bytesToMessageWithStartEndBlocksAndTimestamp(protoBytes))
-
-	return []service.MessageBatch{{message}}, nil
-}
-
-// Ring Buffer Management Functions
-
-// addEventToTopicBuffer adds an event to the per-topic ring buffer.
-// If the buffer is full, it overwrites the oldest event and increments the overwritten metric.
-func (t *TopicBrowserProcessor) addEventToTopicBuffer(topic string, event *EventTableEntry) {
-	buffer := t.getOrCreateTopicBuffer(topic)
-
-	// Add to ring buffer (overwrites oldest if full)
-	buffer.events[buffer.head] = event
-	buffer.head = (buffer.head + 1) % buffer.capacity
-
-	if buffer.size < buffer.capacity {
-		buffer.size++
-	} else {
-		// Buffer is full - we're overwriting the oldest event
-		t.eventsOverwritten.Incr(1)
-	}
-}
-
-// getOrCreateTopicBuffer returns the ring buffer for a topic, creating it if it doesn't exist.
-func (t *TopicBrowserProcessor) getOrCreateTopicBuffer(topic string) *topicRingBuffer {
-	if buffer, exists := t.topicBuffers[topic]; exists {
-		return buffer
-	}
-
-	// Create new ring buffer for this topic
-	buffer := &topicRingBuffer{
-		events:   make([]*EventTableEntry, t.maxEventsPerTopic),
-		head:     0,
-		size:     0,
-		capacity: t.maxEventsPerTopic,
-	}
-	t.topicBuffers[topic] = buffer
-	return buffer
-}
-
-// getLatestEventsForTopic extracts all events from a topic's ring buffer in chronological order.
-// Returns events from oldest to newest, preserving the correct time sequence.
-func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*EventTableEntry {
-	buffer := t.topicBuffers[topic]
-	if buffer == nil || buffer.size == 0 {
-		return nil
-	}
-
-	// Extract events in chronological order (oldest to newest)
-	events := make([]*EventTableEntry, buffer.size)
-	for i := 0; i < buffer.size; i++ {
-		idx := (buffer.head - buffer.size + i + buffer.capacity) % buffer.capacity
-		events[i] = buffer.events[idx]
-	}
-	return events
-}
-
-// extractTopicFromMessage extracts the topic string from message metadata.
-// Returns the topic string or error if umh_topic metadata is missing.
-func (t *TopicBrowserProcessor) extractTopicFromMessage(msg *service.Message) (string, error) {
-	topic, exists := msg.MetaGet("umh_topic")
-	if !exists {
-		return "", errors.New("missing umh_topic metadata")
-	}
-	return topic, nil
-}
-
-// bufferMessage handles the buffering of a processed message and its topic information.
-// This function manages both the ring buffer storage and the message buffer for ACK control.
-func (t *TopicBrowserProcessor) bufferMessage(msg *service.Message, event *EventTableEntry, topicInfo *TopicInfo, unsTreeId string) error {
+	// Check if emission interval has elapsed
 	t.bufferMutex.Lock()
-	defer t.bufferMutex.Unlock()
+	shouldEmit := time.Since(t.lastEmitTime) >= t.emitInterval
+	t.bufferMutex.Unlock()
 
-	// Safety check: prevent unbounded growth
-	if len(t.messageBuffer) >= t.maxBufferSize {
-		return errors.New("buffer full - dropping message")
+	if shouldEmit {
+		return t.flushBufferAndACK()
 	}
 
-	// Extract topic string for ring buffer
-	topic, err := t.extractTopicFromMessage(msg)
-	if err != nil {
-		return err
-	}
-
-	// Buffer original message (for ACK)
-	t.messageBuffer = append(t.messageBuffer, msg)
-
-	// Add to per-topic ring buffer
-	t.addEventToTopicBuffer(topic, event)
-
-	// Track topic changes using cumulative metadata
-	cumulativeMetadata := t.mergeTopicHeaders(unsTreeId, []*TopicInfo{topicInfo})
-	if t.shouldReportTopic(unsTreeId, cumulativeMetadata) {
-		// Update topic info with cumulative metadata before storing
-		topicInfoWithCumulative := *topicInfo // shallow copy
-		topicInfoWithCumulative.Metadata = cumulativeMetadata
-		t.pendingTopicChanges[unsTreeId] = &topicInfoWithCumulative
-		t.updateTopicCache(unsTreeId, cumulativeMetadata)
-	}
-
-	// Update full topic map (authoritative state) with cumulative metadata
-	topicInfoWithCumulative := *topicInfo // shallow copy
-	topicInfoWithCumulative.Metadata = cumulativeMetadata
-	t.fullTopicMap[unsTreeId] = &topicInfoWithCumulative
-
-	return nil
+	// Don't ACK yet - messages stay pending
+	return nil, nil
 }
 
-// updateTopicCache updates the LRU cache with new topic metadata.
-// This is separated from updateTopicCacheAndBundle to support the ring buffer workflow.
-func (t *TopicBrowserProcessor) updateTopicCache(unsTreeId string, headers map[string]string) {
-	t.topicMetadataCacheMutex.Lock()
-	defer t.topicMetadataCacheMutex.Unlock()
+// Core processing functions are now in separate files:
+// - Buffer management: buffer.go
+// - Metadata handling: metadata.go
+// - Message processing: processing.go
+// - Serialization: serialization.go
 
-	t.topicMetadataCache.Add(unsTreeId, maps.Clone(headers))
-}
+// Helper methods are now in separate files
 
 func (t *TopicBrowserProcessor) Close(_ context.Context) error {
 	// Wipe cache
