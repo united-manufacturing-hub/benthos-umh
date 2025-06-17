@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"strings"
+	"time"
 
 	lru "github.com/hashicorp/golang-lru"
 	. "github.com/onsi/ginkgo/v2"
@@ -29,7 +30,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 	var processor *TopicBrowserProcessor
 
 	BeforeEach(func() {
-		processor = NewTopicBrowserProcessor(nil, nil, 0)
+		processor = NewTopicBrowserProcessor(nil, nil, 0, time.Second, 10, 10000)
 	})
 
 	Describe("ProcessBatch", func() {
