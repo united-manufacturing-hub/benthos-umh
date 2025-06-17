@@ -11,6 +11,21 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+
+// Copyright 2025 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 // ---------------------------------------------------------------------------
 //
 // Tag-Processor → FSM wire contracts
@@ -55,15 +70,17 @@ const (
 )
 
 // *
-// Each event emitted by the tag-processor falls into **exactly one** payload
-// family.
+// PayloadFormat discriminates between the two payload families for frontend convenience.
+// This allows the UI to quickly determine payload type without inspecting the oneof structure.
+// Similar to how ScalarType provides quick type information for time-series values.
 //
 // ▸ TIMESERIES … the classic "one tag, one value, one timestamp" sensor point
 // ▸ RELATIONAL  … a complete, self-contained JSON document (batch header,
 //
 //	alarm object, recipe, …) that already belongs together
 //
-// Anything else is rejected at ingest-time; mixing formats on a single topic
+// Each event emitted by the tag-processor falls into **exactly one** payload
+// family. Anything else is rejected at ingest-time; mixing formats on a single topic
 // would break the "one-topic-one-shape" contract.
 //
 // See full rationale at: https://docs.umh.app/usage/unified-namespace/payload-formats

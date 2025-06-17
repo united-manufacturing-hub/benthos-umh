@@ -69,6 +69,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -199,6 +200,24 @@ func processTimeSeriesData(structured map[string]interface{}) (*EventTableEntry,
 
 	// Set the value and scalar type based on the Go type
 	switch v := value.(type) {
+	case json.Number:
+		// Handle json.Number type - try parsing as different types
+		if floatVal, err := strconv.ParseFloat(string(v), 64); err == nil {
+			// Successfully parsed as float - check for special values
+			if math.IsNaN(floatVal) || math.IsInf(floatVal, 0) {
+				return nil, ErrNaNOrInf
+			}
+			timeSeriesPayload.ScalarType = ScalarType_NUMERIC
+			timeSeriesPayload.Value = &TimeSeriesPayload_NumericValue{
+				NumericValue: &wrapperspb.DoubleValue{Value: floatVal},
+			}
+		} else {
+			// If it can't be parsed as float, treat as string
+			timeSeriesPayload.ScalarType = ScalarType_STRING
+			timeSeriesPayload.Value = &TimeSeriesPayload_StringValue{
+				StringValue: &wrapperspb.StringValue{Value: string(v)},
+			}
+		}
 	case float64:
 		timeSeriesPayload.ScalarType = ScalarType_NUMERIC
 		timeSeriesPayload.Value = &TimeSeriesPayload_NumericValue{
@@ -286,6 +305,25 @@ func processRelationalStructured(structured map[string]interface{}) (*EventTable
 func interfaceToInt64(value interface{}) (int64, error) {
 	var valueAsInt64 int64
 	switch v := value.(type) {
+	case json.Number:
+		// Handle json.Number type which can occur when JSON is parsed with UseNumber()
+		intVal, err := strconv.ParseInt(string(v), 10, 64)
+		if err != nil {
+			// Try parsing as float if it's not an integer
+			floatVal, err := strconv.ParseFloat(string(v), 64)
+			if err != nil {
+				return 0, fmt.Errorf("failed to parse json.Number '%s': %w", string(v), err)
+			}
+			if floatVal > float64(math.MaxInt64) || floatVal < float64(math.MinInt64) {
+				return 0, fmt.Errorf("value %f out of int64 range", floatVal)
+			}
+			if floatVal != math.Trunc(floatVal) {
+				return 0, fmt.Errorf("%w: %f is not an integer", ErrPrecisionLoss, floatVal)
+			}
+			valueAsInt64 = int64(floatVal)
+		} else {
+			valueAsInt64 = intVal
+		}
 	case int:
 		valueAsInt64 = int64(v)
 	case int8:
