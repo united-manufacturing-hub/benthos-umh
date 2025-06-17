@@ -164,6 +164,94 @@ pipeline:
    - Can modify both metadata and payload
    - Must return a message object
 
+**How Metadata Works**
+
+The tag processor uses a two-step process for handling metadata:
+
+1. **JavaScript Stage - Working with `msg.meta`**
+
+   In your JavaScript code (defaults, conditions, advancedProcessing), you work with the `msg.meta` object:
+
+   ```javascript
+   // In JavaScript processing stages
+   msg.meta.location_path = 'enterprise.site.area'
+   msg.meta.data_contract = '_historian'
+   msg.meta.tag_name = 'temperature'
+   msg.meta.virtual_path = 'axis.x.position'
+   ```
+
+   At this stage, these are just JavaScript object properties - they're not yet actual Benthos metadata.
+
+2. **Conversion to Benthos Metadata**
+
+   After the JavaScript processing is complete, the tag processor extracts all properties from the `msg.meta` JavaScript object and converts them to actual Benthos message metadata.
+
+3. **Final Message Structure**
+
+   **Important**: Properties set on `msg.meta` become message metadata, **not** part of the payload.
+
+   **Metadata** (accessible via message metadata):
+
+   - `location_path`: "enterprise.site.area"
+   - `data_contract`: "\_historian"
+   - `tag_name`: "temperature"
+   - `virtual_path`: "axis.x.position"
+   - `umh_topic`: "umh.v1.enterprise.site.area.\_historian.axis.x.position.temperature" (auto-generated)
+   - `topic`: "umh.v1.enterprise.site.area.\_historian.axis.x.position.temperature" (auto-generated, deprecated)
+
+   **Payload** (the actual message content):
+
+   ```json
+   {
+     "value": 23.5,
+     "timestamp_ms": 1647890123456
+   }
+   ```
+
+**Integration with UNS Output**
+
+The tag processor is typically used together with the `uns` output plugin, which is the standard way to publish data into the United Manufacturing Hub. Here's how metadata flows from tag processor to UNS:
+
+1. **Metadata to UNS Headers**: All metadata fields set by the tag processor become UNS headers, preserving the complete context and routing information.
+
+2. **UMH Topic as Routing Key**: The auto-generated `umh_topic` metadata becomes the UNS routing key, enabling efficient message routing and topic-based subscriptions.
+
+3. **Payload Preservation**: The structured payload (with `value` and `timestamp_ms`) is published as-is to the UNS.
+
+**Complete Flow Example:**
+
+```yaml
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |
+          msg.meta.location_path = "enterprise.site.area";
+          msg.meta.data_contract = "_historian";
+          msg.meta.tag_name = "temperature";
+          msg.meta.custom_field = "sensor_data";
+          return msg;
+  output:
+    uns: {}
+```
+
+**Input Message**: `23.5`
+
+**UNS Record Result**:
+
+- **UNS Topic**: `umh.messages` (fixed UNS topic)
+- **UNS Routing Key**: `umh.v1.enterprise.site.area._historian.temperature` (from `umh_topic` metadata)
+- **UNS Value**: `{"value": 23.5, "timestamp_ms": 1647890123456}` (structured payload)
+- **UNS Headers**:
+  ```
+  location_path: "enterprise.site.area"
+  data_contract: "_historian"
+  tag_name: "temperature"
+  umh_topic: "umh.v1.enterprise.site.area._historian.temperature"
+  topic: "umh.v1.enterprise.site.area._historian.temperature"
+  custom_field: "sensor_data"
+  bridged_by: "umh-core"
+  ```
+
 **Metadata Fields**
 
 The processor uses the following metadata fields:
