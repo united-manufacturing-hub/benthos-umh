@@ -29,19 +29,15 @@ func (t *TopicBrowserProcessor) bufferMessage(msg *service.Message, event *Event
 	// Add to per-topic ring buffer
 	t.addEventToTopicBuffer(topic, event)
 
-	// Track topic changes using cumulative metadata
+	// Track topic changes using cumulative metadata (always report all topics)
 	cumulativeMetadata := t.mergeTopicHeaders(unsTreeId, []*TopicInfo{topicInfo})
-	if t.shouldReportTopic(unsTreeId, cumulativeMetadata) {
-		// Update topic info with cumulative metadata before storing
-		topicInfoWithCumulative := *topicInfo // shallow copy
-		topicInfoWithCumulative.Metadata = cumulativeMetadata
-		t.pendingTopicChanges[unsTreeId] = &topicInfoWithCumulative
-		t.updateTopicCache(unsTreeId, cumulativeMetadata)
-	}
-
-	// Update full topic map (authoritative state) with cumulative metadata
+	// Update topic info with cumulative metadata before storing
 	topicInfoWithCumulative := *topicInfo // shallow copy
 	topicInfoWithCumulative.Metadata = cumulativeMetadata
+	t.pendingTopicChanges[unsTreeId] = &topicInfoWithCumulative
+	t.updateTopicCache(unsTreeId, cumulativeMetadata)
+
+	// Update full topic map (authoritative state) with cumulative metadata
 	t.fullTopicMap[unsTreeId] = &topicInfoWithCumulative
 
 	return nil
