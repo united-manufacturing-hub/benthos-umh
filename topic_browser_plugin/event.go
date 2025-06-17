@@ -254,6 +254,7 @@ func processTimeSeriesData(structured map[string]interface{}) (*EventTableEntry,
 
 	// Return EventTableEntry with the TimeSeriesPayload using the oneof pattern
 	return &EventTableEntry{
+		PayloadFormat: PayloadFormat_TIMESERIES,
 		Payload: &EventTableEntry_Ts{
 			Ts: timeSeriesPayload,
 		},
@@ -275,6 +276,7 @@ func processRelationalStructured(structured map[string]interface{}) (*EventTable
 
 	// Return EventTableEntry with the RelationalPayload using the oneof pattern
 	return &EventTableEntry{
+		PayloadFormat: PayloadFormat_RELATIONAL,
 		Payload: &EventTableEntry_Rel{
 			Rel: relationalPayload,
 		},
