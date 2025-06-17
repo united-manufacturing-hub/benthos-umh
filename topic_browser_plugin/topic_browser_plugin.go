@@ -238,11 +238,11 @@ func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Me
 	return messageBatch[0], nil
 }
 
-// ProcessBatch processes a batch of messages into UNS bundles for the topic browser.
+// ProcessBatch processes a batch of messages with ring buffer storage and delayed ACK emission.
 //
-// # EMISSION CONTRACT IMPLEMENTATION
+// # RING BUFFER + DELAYED ACK IMPLEMENTATION
 //
-// This function implements the core emission contract specified in the package documentation:
+// This function implements the hybrid buffering approach with the following behavior:
 //
 // ## Input Processing:
 //   - Processes ALL messages in the batch sequentially
@@ -250,43 +250,50 @@ func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Me
 //   - Each message is converted to TopicInfo + EventTableEntry pair
 //   - Messages without umh_topic metadata are skipped with error logging
 //
+// ## Ring Buffer Storage:
+//   - Each topic maintains a ring buffer of latest N events (configurable)
+//   - Ring buffers automatically overwrite oldest events when full (no data loss of recent events)
+//   - Original messages buffered for delayed ACK pattern
+//   - Thread-safe operations with mutex protection
+//
 // ## Topic Metadata Management:
-//   - Groups TopicInfo entries by UNS Tree ID (xxHash of topic hierarchy)
-//   - Merges headers from multiple messages for the same topic (last-write-wins)
-//   - Compares merged headers against LRU cache to detect changes
-//   - Only includes topics in uns_map when metadata has changed or topic is new
+//   - Cumulative metadata persistence across messages and time
+//   - Metadata keys once seen are preserved until cache eviction
+//   - Last-write-wins strategy for conflicting header values
+//   - Complete topic state maintained in fullTopicMap
+//
+// ## Delayed ACK Emission Pattern:
+//   - Messages are NOT ACKed immediately after processing
+//   - Messages remain pending until emission interval elapses
+//   - Timer-based emission (default: 1 second intervals)
+//   - All buffered messages ACKed atomically after successful emission
+//
+// ## Emission Behavior:
+//   - Rate limiting: Max N events per topic per interval (default: 10)
+//   - Full tree emission: Complete fullTopicMap sent when any data changes
+//   - LZ4 compression for large payloads (≥1024 bytes, 84% compression ratio)
+//   - No partial emissions - all or nothing approach
 //
 // ## Output Generation Rules:
-//  1. **No Data Case**: Returns nil if no events processed AND no topic changes
-//  2. **Events Only**: uns_map empty, events contains new message data
-//  3. **Topics Only**: events empty, uns_map contains changed topic metadata
-//  4. **Both**: uns_map AND events populated (most common case)
+//  1. **No Emission**: Timer hasn't elapsed, messages stay buffered
+//  2. **Full Emission**: Timer elapsed, emit events + complete topic tree + ACK all messages
+//  3. **Error Handling**: Emission failure prevents ACK (messages will be retried)
 //
-// ## Cache Behavior:
-//   - Cache hits: Topic metadata compared, no emission if unchanged
-//   - Cache misses: Topic treated as new, automatically included in uns_map
-//   - Cache eviction: Evicted topics will be re-emitted on next access
-//   - Thread safety: Mutex protects all cache operations
+// ## Performance Characteristics:
+//   - Traffic reduction via batching and rate limiting
+//   - Memory bounded via ring buffer and safety limits
+//   - Latency: Up to emit_interval delay (trade-off for reduced traffic)
+//   - Backpressure: Natural via delayed ACK and buffer limits
 //
-// ## Error Handling:
-//   - Individual message failures do not abort batch processing
-//   - Protobuf serialization failures return error (no partial emission)
-//   - LZ4 compression failures return error (prevents data corruption)
-//
-// ## Performance Optimizations:
-//   - Pre-allocated data structures to minimize allocations
-//   - Batch processing reduces per-message overhead
-//   - LZ4 compression for payloads ≥1024 bytes (84% compression ratio)
-//   - Early return for empty batches avoids unnecessary work
-//
-// The function is designed to minimize traffic by:
-// - Batching multiple messages into a single protobuf message
-// - Using an LRU cache to avoid re-sending unchanged topic metadata
-// - Only including topics in the output when their metadata has changed
+// The function is designed to balance traffic efficiency with latency by:
+// - Buffering multiple messages into fewer, larger emissions
+// - Rate limiting per-topic event volume
+// - Preserving recent data while managing memory usage
+// - Providing complete topic state to downstream consumers
 //
 // Returns:
-//   - []service.MessageBatch: Single batch containing one protobuf message, or nil if no data
-//   - error: Any fatal error that prevented processing (individual message errors are logged)
+//   - []service.MessageBatch: [emission_message], [ack_batch] if timer elapsed, or nil if buffering
+//   - error: Fatal error preventing processing (individual message errors are logged)
 func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	if len(batch) == 0 {
 		return nil, nil
@@ -336,11 +343,25 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 
 // Helper methods are now in separate files
 
-func (t *TopicBrowserProcessor) Close(_ context.Context) error {
+func (t *TopicBrowserProcessor) Close(ctx context.Context) error {
+	t.bufferMutex.Lock()
+	defer t.bufferMutex.Unlock()
+
+	// Flush any remaining buffered messages during shutdown
+	if len(t.messageBuffer) > 0 || len(t.fullTopicMap) > 0 {
+		t.logger.Info("Flushing buffered messages during graceful shutdown")
+		_, err := t.flushBufferAndACK()
+		if err != nil {
+			t.logger.Errorf("Error flushing buffer during shutdown: %v", err)
+			// Continue with shutdown even if flush fails
+		}
+	}
+
 	// Wipe cache
 	t.topicMetadataCacheMutex.Lock()
 	t.topicMetadataCache.Purge()
 	t.topicMetadataCacheMutex.Unlock()
+
 	return nil
 }
 
