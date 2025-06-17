@@ -29,7 +29,8 @@ func (t *TopicBrowserProcessor) bufferMessage(msg *service.Message, event *Event
 	// Add to per-topic ring buffer
 	t.addEventToTopicBuffer(topic, event)
 
-	// Update fullTopicMap with cumulative metadata (for always-emit behavior)
+	// Update fullTopicMap with cumulative metadata and emit complete state once per interval
+	// This maintains the authoritative topic state with merged metadata across all messages
 	cumulativeMetadata := t.mergeTopicHeaders(unsTreeId, []*TopicInfo{topicInfo})
 	// Update topic info with cumulative metadata before storing
 	topicInfoWithCumulative := *topicInfo // shallow copy
