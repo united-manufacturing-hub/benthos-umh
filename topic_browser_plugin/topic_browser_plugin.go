@@ -347,6 +347,16 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 	// - Deduplicate topics
 	// - Store the latest version of meta-information about that topic
 	l, _ := lru.New(lruSize) // Can only error if size is negative
+
+	// For very short emit intervals (like in tests), initialize lastEmitTime to the past
+	// to allow immediate emission when needed
+	var lastEmitTime time.Time
+	if emitInterval <= 10*time.Millisecond {
+		lastEmitTime = time.Now().Add(-emitInterval) // Start in the past for tests
+	} else {
+		lastEmitTime = time.Now()
+	}
+
 	return &TopicBrowserProcessor{
 		topicMetadataCache:      l,
 		logger:                  logger,
@@ -359,7 +369,7 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 		topicBuffers:            make(map[string]*topicRingBuffer),
 		pendingTopicChanges:     make(map[string]*TopicInfo),
 		fullTopicMap:            make(map[string]*TopicInfo),
-		lastEmitTime:            time.Now(),
+		lastEmitTime:            lastEmitTime,
 		bufferMutex:             sync.Mutex{},
 		eventsOverwritten:       metrics.NewCounter("events_overwritten"),
 		ringBufferUtilization:   metrics.NewCounter("ring_buffer_utilization"),

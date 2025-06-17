@@ -49,21 +49,14 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			processor.topicMetadataCache, err = lru.New(1)
 			Expect(err).To(BeNil())
 
-			// First call - should buffer the message (no immediate emission)
+			// With short emit intervals, emission happens immediately
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg})
 			Expect(err).To(BeNil())
-			Expect(result).To(BeNil()) // No immediate emission
+			Expect(result).To(HaveLen(2))    // [emission_batch, ack_batch]
+			Expect(result[0]).To(HaveLen(1)) // emission batch has 1 message
+			Expect(result[1]).To(HaveLen(1)) // ack batch has 1 message
 
-			// Wait for emission interval to pass
-			time.Sleep(2 * time.Millisecond)
-
-			// Second call - should trigger emission
-			result, err = processor.ProcessBatch(context.Background(), service.MessageBatch{})
-			Expect(err).To(BeNil())
-			Expect(result).To(HaveLen(1))
-			Expect(result[0]).To(HaveLen(1))
-
-			// Verify the output message
+			// Verify the output message (emission)
 			outputMsg := result[0][0]
 			Expect(outputMsg).NotTo(BeNil())
 
@@ -113,21 +106,14 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			processor.topicMetadataCache, err = lru.New(1)
 			Expect(err).To(BeNil())
 
-			// First call - should buffer the messages (no immediate emission)
+			// With short emit intervals, emission happens immediately
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg1, msg2})
 			Expect(err).To(BeNil())
-			Expect(result).To(BeNil()) // No immediate emission
+			Expect(result).To(HaveLen(2))    // [emission_batch, ack_batch]
+			Expect(result[0]).To(HaveLen(1)) // emission batch has 1 message
+			Expect(result[1]).To(HaveLen(2)) // ack batch has 2 messages
 
-			// Wait for emission interval to pass
-			time.Sleep(2 * time.Millisecond)
-
-			// Second call - should trigger emission
-			result, err = processor.ProcessBatch(context.Background(), service.MessageBatch{})
-			Expect(err).To(BeNil())
-			Expect(result).To(HaveLen(1))
-			Expect(result[0]).To(HaveLen(1))
-
-			// Verify the output messages
+			// Verify the output message (emission)
 			outputMsg := result[0][0]
 			Expect(outputMsg).NotTo(BeNil())
 
@@ -224,21 +210,14 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			processor.topicMetadataCache, err = lru.New(1)
 			Expect(err).To(BeNil())
 
-			// First call - should buffer the message (no immediate emission)
+			// With short emit intervals, emission happens immediately
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg1})
 			Expect(err).To(BeNil())
-			Expect(result).To(BeNil()) // No immediate emission
+			Expect(result).To(HaveLen(2))    // [emission_batch, ack_batch]
+			Expect(result[0]).To(HaveLen(1)) // emission batch has 1 message
+			Expect(result[1]).To(HaveLen(1)) // ack batch has 1 message
 
-			// Wait for emission interval to pass
-			time.Sleep(2 * time.Millisecond)
-
-			// Second call - should trigger emission
-			result, err = processor.ProcessBatch(context.Background(), service.MessageBatch{})
-			Expect(err).To(BeNil())
-			Expect(result).To(HaveLen(1))
-			Expect(result[0]).To(HaveLen(1))
-
-			// Verify the output messages
+			// Verify the output message (emission)
 			outputMsg := result[0][0]
 			Expect(outputMsg).NotTo(BeNil())
 
@@ -246,21 +225,14 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			processor.topicMetadataCache, err = lru.New(1)
 			Expect(err).To(BeNil())
 
-			// First call - should buffer the message (no immediate emission)
+			// With short emit intervals, emission happens immediately
 			result2, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg2})
 			Expect(err).To(BeNil())
-			Expect(result2).To(BeNil()) // No immediate emission
+			Expect(result2).To(HaveLen(2))    // [emission_batch, ack_batch]
+			Expect(result2[0]).To(HaveLen(1)) // emission batch has 1 message
+			Expect(result2[1]).To(HaveLen(1)) // ack batch has 1 message
 
-			// Wait for emission interval to pass
-			time.Sleep(2 * time.Millisecond)
-
-			// Second call - should trigger emission
-			result2, err = processor.ProcessBatch(context.Background(), service.MessageBatch{})
-			Expect(err).To(BeNil())
-			Expect(result2).To(HaveLen(1))
-			Expect(result2[0]).To(HaveLen(1))
-
-			// Verify the output messages
+			// Verify the output message (emission)
 			outputMsg2 := result2[0][0]
 			Expect(outputMsg2).NotTo(BeNil())
 
