@@ -15,11 +15,11 @@ Key quotes from the call (paraphrased):
 *Duration: 1-2 days*
 
 #### **1.1 Remove shouldReportTopic Logic** ⚠️
-- [ ] **File**: `metadata.go`
-- [ ] **Action**: Delete `shouldReportTopic` function entirely
-- [ ] **Impact**: All topics will always be included in uns_map (no more cache comparison)
-- [ ] **Commit**: "Remove shouldReportTopic logic - no more conditional topic emission"
-- [ ] **Test**: Run basic tests to ensure topics are always emitted
+- [x] **File**: `metadata.go`
+- [x] **Action**: Delete `shouldReportTopic` function entirely
+- [x] **Impact**: All topics will always be included in uns_map (no more cache comparison)
+- [x] **Commit**: "Remove shouldReportTopic logic - no more conditional topic emission"
+- [x] **Test**: Run basic tests to ensure topics are always emitted
 
 #### **1.2 Remove LRU Cache Infrastructure** ⚠️
 - [ ] **File**: `metadata.go` 
@@ -28,22 +28,23 @@ Key quotes from the call (paraphrased):
 - [ ] **Action**: Remove `topicMetadataCache` and `topicMetadataCacheMutex` fields from struct
 - [ ] **Commit**: "Remove LRU cache infrastructure"
 - [ ] **Test**: Verify compilation and basic functionality
+- [ ] **Note**: Cache still used for cumulative metadata - may keep for now
 
 #### **1.3 Simplify updateTopicMetadata** ⚠️ 
-- [ ] **File**: `metadata.go`
-- [ ] **Action**: Remove cache lookup/comparison logic
-- [ ] **New Logic**: Always add all topics to uns_map bundle
-- [ ] **Result**: Function becomes simple loop over topics → bundle
-- [ ] **Commit**: "Simplify updateTopicMetadata - always emit all topics"
-- [ ] **Test**: Verify topic data is correctly included in bundles
+- [x] **File**: `metadata.go`
+- [x] **Action**: Remove cache lookup/comparison logic
+- [x] **New Logic**: Always add all topics to uns_map bundle
+- [x] **Result**: Function becomes simple loop over topics → bundle
+- [x] **Commit**: "Simplify updateTopicMetadata - always emit all topics"
+- [x] **Test**: Verify topic data is correctly included in bundles
 
 #### **1.4 Update flushBufferAndACK** ⚠️
-- [ ] **File**: `buffer.go` 
-- [ ] **Action**: Remove conditional full tree emission
-- [ ] **New Logic**: **ALWAYS** emit complete `fullTopicMap` in every bundle
-- [ ] **Rationale**: No more "changed topics" concept - every emission is full state
-- [ ] **Commit**: "Always emit full topic map in every bundle"
-- [ ] **Test**: Verify complete topic state is always present
+- [x] **File**: `buffer.go` 
+- [x] **Action**: Remove conditional full tree emission
+- [x] **New Logic**: **ALWAYS** emit complete `fullTopicMap` in every bundle
+- [x] **Rationale**: No more "changed topics" concept - every emission is full state
+- [x] **Commit**: "Always emit full topic map in every bundle"
+- [x] **Test**: Verify complete topic state is always present
 
 ### **Phase 2: Remove Size Check - Always Compress** 
 *Duration: 1 day*
@@ -163,7 +164,7 @@ Key quotes from the call (paraphrased):
 
 ## Progress Tracking
 
-- [ ] Phase 1 Complete
+- [x] Phase 1 Complete
 - [x] Phase 2 Complete  
 - [ ] Phase 3 Complete
 - [ ] Phase 4 Complete
