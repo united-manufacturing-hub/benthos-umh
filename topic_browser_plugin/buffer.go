@@ -81,10 +81,10 @@ func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*EventTa
 //   - Oldest events naturally dropped when buffer is full
 //
 // ## Full Tree Emission:
-//   - Always emit entire fullTopicMap in every bundle
+//   - Always emit entire fullTopicMap in every bundle (regardless of changes)
 //   - Ensures downstream has complete topic state (no merge complexity)
 //   - Stateless for downstream consumers - no need to track partial updates
-//   - Consistent behavior regardless of what changed
+//   - Consistent behavior - every emission contains complete state
 //
 // ## ACK Behavior:
 //   - Only ACK messages after successful emission
