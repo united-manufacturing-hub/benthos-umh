@@ -141,10 +141,10 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				ENDENDENDEND
 			*/
 
-			// Let's only focus on the 2nd lin (0a70 - updated due to Name field addition)
+			// Let's only focus on the 2nd line (0422 - updated due to simplifications)
 			dataLine := strings.Split(string(outBytes), "\n")[1]
-			// Expect it to begin with 0a70 (updated due to Name field addition)
-			Expect(dataLine[:4]).To(Equal("0a70"))
+			// Expect it to begin with 0422 (updated due to simplifications)
+			Expect(dataLine[:4]).To(Equal("0422"))
 
 			// Hex decode it
 			hexDecoded, err := hex.DecodeString(dataLine)
@@ -165,6 +165,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(topicData.Level0).To(Equal("test-topic"))
 			Expect(topicData.DataContract).To(Equal("_historian"))
 			// EventTag functionality was removed from protobuf schema
+
 			Expect(topicData.Metadata).To(Not(BeEmpty()))
 			Expect(topicData.Metadata).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
 
@@ -221,9 +222,11 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			outputMsg := result[0][0]
 			Expect(outputMsg).NotTo(BeNil())
 
-			// Process 2nd messages
-			processor.topicMetadataCache, err = lru.New(1)
-			Expect(err).To(BeNil())
+			// Process 2nd message (reuse same processor - don't reinitialize cache)
+			// This simulates continuous operation where metadata accumulates
+
+			// Small delay to ensure emission interval has elapsed
+			time.Sleep(2 * time.Millisecond)
 
 			// With short emit intervals, emission happens immediately
 			result2, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg2})
@@ -241,10 +244,10 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).To(BeNil())
 			Expect(outBytes2).NotTo(BeNil())
 
-			// Let's only focus on the 2nd lin (0a70 - updated due to Name field addition)
+			// Let's only focus on the 2nd line (0422 - updated due to simplifications)
 			dataLine := strings.Split(string(outBytes2), "\n")[1]
-			// Expect it to begin with 0a70 (updated due to Name field addition)
-			Expect(dataLine[:4]).To(Equal("0a70"))
+			// Expect it to begin with 0422 (updated due to simplifications)
+			Expect(dataLine[:4]).To(Equal("0422"))
 
 			// Hex decode it
 			hexDecoded, err := hex.DecodeString(dataLine)
@@ -257,7 +260,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(decoded2).NotTo(BeNil())
 
 			// Verify the decoded bundle
-			Expect(decoded2.Events.Entries).To(HaveLen(1))
+			Expect(decoded2.Events.Entries).To(HaveLen(2)) // Ring buffer contains both events
 			Expect(decoded2.UnsMap.Entries).To(HaveLen(1))
 
 			// Verify the topic info
@@ -268,14 +271,24 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(topicInfo2.Metadata).To(Not(BeEmpty()))
 			Expect(topicInfo2.Metadata).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
 
-			// Verify the event
-			event := decoded2.Events.Entries[0]
-			Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1647753600001)))
-			Expect(event.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
-			Expect(event.GetTs().GetNumericValue()).NotTo(BeNil())
-			Expect(event.GetTs().GetNumericValue().GetValue()).To(Equal(float64(5)))
-			Expect(event.RawKafkaMsg).NotTo(BeNil())
-			Expect(event.RawKafkaMsg.Headers).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
+			// Verify the events (ring buffer contains both events)
+			// First event (from first call)
+			event1 := decoded2.Events.Entries[0]
+			Expect(event1.GetTs().GetTimestampMs()).To(Equal(int64(1647753600000)))
+			Expect(event1.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
+			Expect(event1.GetTs().GetNumericValue()).NotTo(BeNil())
+			Expect(event1.GetTs().GetNumericValue().GetValue()).To(Equal(float64(3)))
+			Expect(event1.RawKafkaMsg).NotTo(BeNil())
+			Expect(event1.RawKafkaMsg.Headers).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
+
+			// Second event (from second call)
+			event2 := decoded2.Events.Entries[1]
+			Expect(event2.GetTs().GetTimestampMs()).To(Equal(int64(1647753600001)))
+			Expect(event2.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
+			Expect(event2.GetTs().GetNumericValue()).NotTo(BeNil())
+			Expect(event2.GetTs().GetNumericValue().GetValue()).To(Equal(float64(5)))
+			Expect(event2.RawKafkaMsg).NotTo(BeNil())
+			Expect(event2.RawKafkaMsg.Headers).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
 
 			// Dump to disk for testing
 			/*

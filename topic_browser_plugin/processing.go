@@ -118,6 +118,7 @@ func (t *TopicBrowserProcessor) processMessageBatch(
 
 		// Add event to bundle
 		unsBundle.Events.Entries = append(unsBundle.Events.Entries, eventTableEntry)
+
 		topicInfo.Metadata = eventTableEntry.RawKafkaMsg.Headers
 
 		// Group topic infos by UNS tree ID
