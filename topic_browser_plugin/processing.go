@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"google.golang.org/protobuf/proto"
 )
 
 // bufferMessage handles the buffering of a processed message and its topic information.
@@ -32,13 +33,14 @@ func (t *TopicBrowserProcessor) bufferMessage(msg *service.Message, event *Event
 	// Update fullTopicMap with cumulative metadata and emit complete state once per interval
 	// This maintains the authoritative topic state with merged metadata across all messages
 	cumulativeMetadata := t.mergeTopicHeaders(unsTreeId, []*TopicInfo{topicInfo})
-	// Update topic info with cumulative metadata before storing
-	topicInfoWithCumulative := *topicInfo // shallow copy
+
+	// ✅ FIX: Use proto.Clone() to safely copy protobuf struct without copying internal mutex
+	topicInfoWithCumulative := proto.Clone(topicInfo).(*TopicInfo)
 	topicInfoWithCumulative.Metadata = cumulativeMetadata
 	t.updateTopicCache(unsTreeId, cumulativeMetadata)
 
 	// Update full topic map (authoritative state) with cumulative metadata
-	t.fullTopicMap[unsTreeId] = &topicInfoWithCumulative
+	t.fullTopicMap[unsTreeId] = topicInfoWithCumulative
 
 	return nil
 }
