@@ -18,6 +18,13 @@ logger:
   static_fields:
     "@service": benthos-kafka-test
 
+# Enable HTTP server with pprof debug endpoints
+http:
+  enabled: true
+  address: "0.0.0.0:4195"
+  root_path: "/benthos"
+  debug_endpoints: true
+
 input:
   uns:
     umh_topic: "umh.v1.*"  # Match all UMH topics
@@ -27,7 +34,7 @@ input:
 
 pipeline:
   processors:
-    - topic_browser: {}
+    - topic_browser: {}  
 
 output:
   stdout:

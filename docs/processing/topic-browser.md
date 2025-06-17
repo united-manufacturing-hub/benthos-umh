@@ -213,7 +213,7 @@ processors:
       lru_size: 50000                        # Cache size (default: 50,000 entries)
       emit_interval: "1s"                    # Emission interval (default: 1s)
       max_events_per_topic_per_interval: 10  # Ring buffer size per topic (default: 10)
-      max_buffer_size: 10000                 # Safety limit for total buffered messages (default: 10,000)
+      max_buffer_size: 100000                # Safety limit for total buffered messages (default: 100,000)
 ```
 
 ### Configuration Parameters
@@ -223,7 +223,7 @@ processors:
 | `lru_size` | 50,000 | LRU cache size for cumulative metadata storage | Adjust based on topic cardinality |
 | `emit_interval` | 1s | Maximum buffering time before emission | Lower for real-time, higher for throughput |
 | `max_events_per_topic_per_interval` | 10 | Ring buffer size per topic | Increase for high-frequency topics |
-| `max_buffer_size` | 10,000 | Safety limit for total buffered messages | Set based on available memory |
+| `max_buffer_size` | 100,000 | Safety limit for total buffered messages | Set based on available memory |
 
 ### Sizing Guidelines
 | Environment | Topics | LRU Size | Ring Buffer | Memory Usage |

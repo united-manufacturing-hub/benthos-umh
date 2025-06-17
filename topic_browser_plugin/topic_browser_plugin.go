@@ -421,7 +421,7 @@ The processor requires that the following metadata fields are set:
 			Advanced()).
 		Field(service.NewIntField("max_buffer_size").
 			Description("Maximum number of messages to buffer (safety limit)").
-			Default(10000).
+			Default(100000).
 			Advanced())
 
 	err := service.RegisterBatchProcessor("topic_browser", spec, func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {

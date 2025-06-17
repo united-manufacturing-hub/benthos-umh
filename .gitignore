@@ -207,4 +207,4 @@ benthos-umh
 
 # Temporary files
 code_review.md
-umh-core-data
+umh-core-data*.pprof
