@@ -98,7 +98,7 @@ func protobufBytesToBundle(protoBytes []byte) (*UnsBundle, error) {
 	return bundle, nil
 }
 
-// BundleToProtobufBytesWithCompression converts an UnsBundle to LZ4-compressed protobuf bytes.
+// BundleToProtobufBytes converts an UnsBundle to LZ4-compressed protobuf bytes.
 //
 // # ALWAYS-ON LZ4 COMPRESSION
 //
@@ -139,7 +139,7 @@ func protobufBytesToBundle(protoBytes []byte) (*UnsBundle, error) {
 // Returns:
 //   - []byte: LZ4-compressed protobuf bytes (always compressed)
 //   - error: Any marshaling or compression error
-func BundleToProtobufBytesWithCompression(bundle *UnsBundle) ([]byte, error) {
+func BundleToProtobufBytes(bundle *UnsBundle) ([]byte, error) {
 	protoBytes, err := bundleToProtobuf(bundle)
 	if err != nil {
 		return []byte{}, err

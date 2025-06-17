@@ -140,7 +140,7 @@ func (t *TopicBrowserProcessor) flushBufferAndACK() ([]service.MessageBatch, err
 	}
 
 	// Serialize and compress bundle
-	protoBytes, err := BundleToProtobufBytesWithCompression(unsBundle)
+	protoBytes, err := BundleToProtobufBytes(unsBundle)
 	if err != nil {
 		return nil, err
 	}
