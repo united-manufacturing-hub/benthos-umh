@@ -97,7 +97,7 @@ func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*EventTa
 //   - Update lastEmitTime to reset interval timer
 //
 // Returns:
-//   - []service.MessageBatch: [emission_message], [ack_batch] or nil on no data
+//   - []service.MessageBatch: [emission_message] ONLY - never original messages
 //   - error: Emission failure (prevents ACK)
 func (t *TopicBrowserProcessor) flushBufferAndACK() ([]service.MessageBatch, error) {
 	t.bufferMutex.Lock()
@@ -114,13 +114,8 @@ func (t *TopicBrowserProcessor) flushBufferAndACK() ([]service.MessageBatch, err
 	// Early return if no data to emit
 	if len(allEvents) == 0 && len(t.fullTopicMap) == 0 {
 		t.lastEmitTime = time.Now()
-		// Still need to ACK any buffered messages even if no emission
-		if len(t.messageBuffer) > 0 {
-			ackBatch := make(service.MessageBatch, len(t.messageBuffer))
-			copy(ackBatch, t.messageBuffer)
-			t.clearBuffers()
-			return []service.MessageBatch{ackBatch}, nil
-		}
+		// ✅ FIX: Clear buffers and return nil - don't emit original messages
+		t.clearBuffers()
 		return nil, nil
 	}
 
@@ -145,13 +140,6 @@ func (t *TopicBrowserProcessor) flushBufferAndACK() ([]service.MessageBatch, err
 	emissionMsg := service.NewMessage(nil)
 	emissionMsg.SetBytes(bytesToMessageWithStartEndBlocksAndTimestamp(protoBytes))
 
-	// Create ACK batch from all buffered messages
-	var ackBatch service.MessageBatch
-	if len(t.messageBuffer) > 0 {
-		ackBatch = make(service.MessageBatch, len(t.messageBuffer))
-		copy(ackBatch, t.messageBuffer)
-	}
-
 	// Update metrics
 	t.totalEventsEmitted.Incr(int64(len(allEvents)))
 	t.emissionSize.Incr(int64(len(protoBytes)))
@@ -160,10 +148,7 @@ func (t *TopicBrowserProcessor) flushBufferAndACK() ([]service.MessageBatch, err
 	t.clearBuffers()
 	t.lastEmitTime = time.Now()
 
-	// Return emission + ACK batch
-	if len(ackBatch) > 0 {
-		return []service.MessageBatch{{emissionMsg}, ackBatch}, nil
-	}
+	// ✅ FIX: Return ONLY the processed emission message, never original messages
 	return []service.MessageBatch{{emissionMsg}}, nil
 }
 
