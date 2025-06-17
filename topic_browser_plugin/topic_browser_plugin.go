@@ -34,41 +34,36 @@
 //
 // The plugin follows a strict emission contract that determines what data is sent when:
 //
-// ## UNS Map Emission Rules:
-//   - uns_map is ONLY emitted when there is ≥1 new/changed topic since the previous frame
-//   - Topic metadata changes are detected via xxHash comparison in the LRU cache
-//   - When uns_map is emitted, it contains the ENTIRE current topic tree (not just deltas)
-//   - This prevents complex merge logic downstream by always providing complete state
+// ## Ring Buffer + Always-Emit Strategy:
+//   - Messages are buffered in per-topic ring buffers during emit_interval
+//   - Each topic maintains max_events_per_topic_per_interval entries (default: 10)
+//   - Ring buffers automatically overwrite oldest events when full
+//   - Complete topic map is ALWAYS emitted (no change detection)
+//   - Provides complete state to downstream consumers (stateless consumption)
 //
-// ## Events Emission Rules:
-//   - events contains ALL successfully processed messages from the current batch
-//   - Each event represents one real incoming message that passed validation
-//   - No synthetic events are created - processor never fabricates additional data
-//   - Failed messages are logged and counted but do not appear in events array
+// ## Rate Limiting During High Traffic:
+//   - Startup scenarios: Reading full Kafka topic can produce burst traffic
+//   - Ring buffer prevents overwhelming downstream: max 10 events/topic/interval
+//   - Oldest events automatically dropped when buffer capacity exceeded
+//   - Only most recent events per topic are emitted
+//   - Prevents memory exhaustion during topic replay scenarios
 //
 // ## Possible Output Scenarios:
-//  1. Both uns_map + events: New/changed topics with their corresponding events
-//  2. Only events: No topic changes, but new event data for existing topics
-//  3. Only uns_map: Topic metadata changed but no new events (rare edge case)
-//  4. No output: No processable messages and no topic changes (empty batch returned)
+//  1. Full emission: Complete topic map + latest events from all active topics
+//  2. No emission: No messages processed and emit_interval not elapsed
 //
 // # LZ4 COMPRESSION STRATEGY
 //
-// The plugin uses conditional LZ4 compression with a 1024-byte threshold:
+// The plugin uses always-on LZ4 compression for all payloads:
 //
-// ## When LZ4 Compression is Applied:
-//   - Protobuf payload size ≥ 1024 bytes after marshaling
-//   - Compression level 0 (fastest) for minimal latency impact
-//   - Achieves ~84% compression ratio on typical UMH data (see benchmarks in proto.go)
-//
-// ## When LZ4 Compression is Skipped:
-//   - Protobuf payload size < 1024 bytes
-//   - LZ4 frame overhead would actually increase total size
-//   - Small payloads are sent uncompressed to avoid unnecessary CPU overhead
+// ## Compression Strategy:
+//   - All protobuf payloads are LZ4 compressed with level 0 (fastest)
+//   - No size threshold - compression applied universally
+//   - Single code path eliminates conditional logic complexity
+//   - Downstream consumers always expect LZ4 format
 //
 // ## Compression Detection:
 //   - Downstream consumers detect LZ4 via magic number: [0x04, 0x22, 0x4d, 0x18]
-//   - Falls back to uncompressed protobuf decoding if magic number not present
 //   - See ProtobufBytesToBundleWithCompression() for implementation details
 //
 // # EDGE CASE HANDLING
@@ -105,56 +100,41 @@
 //
 // # CONFIGURATION PARAMETERS
 //
-//   - lru_size: LRU cache size (default: 50,000 entries)
-//   - Larger values reduce re-emissions but consume more memory
-//   - Smaller values save memory but may cause unnecessary traffic
-//   - Recommended: 1000-100,000 depending on topic cardinality
+//   - lru_size: LRU cache size (default: 50,000 entries) - for cumulative metadata storage
+//   - emit_interval: Maximum buffering time before emission (default: 1s)
+//   - max_events_per_topic_per_interval: Ring buffer size per topic (default: 10)
+//   - max_buffer_size: Safety limit for total buffered messages (default: 10,000)
 //
 // # METRICS COLLECTED
 //
 //   - messages_processed: Successfully processed messages (counter)
 //   - messages_failed: Failed message processing attempts (counter)
-//
-// # PERFORMANCE CHARACTERISTICS
-//
-// Based on benchmark results in proto.go:
-//   - Small bundles (<1KB): ~450ns processing time, no compression overhead
-//   - Large bundles (~94KB): ~506µs processing time, 84.8% compression ratio
-//   - Very large bundles (~5MB): ~14.8ms processing time, 84.6% compression ratio
-//
-// The plugin is optimized for high-throughput scenarios while maintaining low latency
-// for small message batches typical in industrial IoT deployments.
+//   - events_overwritten: Ring buffer overflow events (counter)
+//   - total_events_emitted: Total events sent downstream (counter)
 //
 // # IMPORTANT IMPLEMENTATION NOTES
 //
-// ## Current Implementation vs Specification Discrepancy
+// ## Ring Buffer Rate Limiting Implementation
 //
-// The user specification mentions a "10 msg/s per-topic token-bucket" for throttling,
-// but the CURRENT IMPLEMENTATION does not include this feature. The current behavior is:
+// The current implementation uses ring buffers for effective rate limiting:
 //
-// ### What the Current Implementation Actually Does:
-//   - Processes ALL successfully parsed messages without throttling
-//   - No rate limiting or token bucket implementation
-//   - All events that pass validation appear in the events array
-//   - No events are dropped due to rate limiting
+// ### Ring Buffer Strategy:
+//   - Each topic maintains a fixed-size ring buffer (max_events_per_topic_per_interval)
+//   - Default limit: 10 events per topic per emission interval
+//   - Automatic overflow handling: oldest events discarded when buffer full
+//   - Prevents memory exhaustion during startup topic replay scenarios
 //
-// ### What the Specification Describes (Not Yet Implemented):
-//   - Token bucket throttling at 10 messages/second per topic
-//   - Excess messages dropped with ring_overflow markers
-//   - FSM tracks dropped events via events_dropped_total{topic} metric
+// ### High-Traffic Scenarios:
+//   - Startup: Reading full Kafka topic creates burst traffic
+//   - Ring buffer naturally limits emission to latest N events per topic
+//   - No explicit rate calculation needed - buffer size enforces limit
+//   - Memory bounded and predictable regardless of input traffic
 //
-// ### Migration Path:
-//
-//	If token bucket throttling is implemented in the future, it would be added in the
-//	processMessageBatch function, where messages could be filtered based on their
-//	topic rate before being added to the events array. The current architecture
-//	supports this addition without breaking changes.
-//
-// ## Actual Current Behavior:
-//   - Every valid message produces an event in the output
-//   - No artificial rate limiting or message dropping
-//   - Performance is limited by downstream processing capability
-//   - Cache-based topic deduplication is the primary traffic optimization
+// ### Overflow Behavior:
+//   - Events beyond buffer capacity are automatically discarded (oldest first)
+//   - eventsOverwritten metric tracks overflow occurrences
+//   - Ensures system stability during traffic spikes
+//   - Downstream receives consistent volume per topic per interval
 //
 // # USAGE EXAMPLE
 //
@@ -194,9 +174,9 @@ type topicRingBuffer struct {
 // when the metadata has been modified. This significantly reduces the amount of data
 // sent to the UMH core system.
 type TopicBrowserProcessor struct {
-	// topicMetadataCache stores the most recently used topic metadata to prevent
-	// re-sending unchanged topic information. The cache is thread-safe and protected
-	// by topicMetadataCacheMutex.
+	// topicMetadataCache stores topic metadata for cumulative persistence across messages.
+	// Used to merge new metadata with previously seen metadata for the same topic.
+	// The cache is thread-safe and protected by topicMetadataCacheMutex.
 	topicMetadataCache      *lru.Cache
 	topicMetadataCacheMutex *sync.Mutex
 
