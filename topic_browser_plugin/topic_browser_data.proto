@@ -233,10 +233,10 @@ message EventTable {
 
 /**
  * A single frame delivered to the FSM:
- *    • `uns_map`  – any new / changed TopicInfo
+ *    • `uns_map`  – the full TopicInfo map
  *    • `events`   – matching EventTable entries
  */
 message UnsBundle {
-  TopicMap uns_map  = 1; // Map of new or changed topics
+  TopicMap uns_map  = 1; // Map of all topics if new or changed topics or a metadata was changed
   EventTable events = 2; // Events associated with these topics
 }

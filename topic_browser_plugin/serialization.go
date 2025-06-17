@@ -53,7 +53,7 @@ func (t *TopicBrowserProcessor) hasDataToReturn(unsBundle *UnsBundle) bool {
 //   - Schema evolution supported via protobuf field numbering
 //
 // ## LZ4 Compression Decision:
-//   - Applied if protobuf size ≥ 1024 bytes (see BundleToProtobufBytesWithCompression)
+//   - Always applied via LZ4 compression (see BundleToProtobufBytes)
 //   - Compression level 0 for fastest processing (latency-optimized)
 //   - Typical compression ratio: 84% for UMH data (5MB → 750KB)
 //   - Skipped for small payloads to avoid LZ4 frame overhead
@@ -86,7 +86,7 @@ func (t *TopicBrowserProcessor) hasDataToReturn(unsBundle *UnsBundle) bool {
 //   - []service.MessageBatch: Single batch with one message containing encoded data
 //   - error: Any serialization or compression error
 func (t *TopicBrowserProcessor) createFinalMessage(unsBundle *UnsBundle) ([]service.MessageBatch, error) {
-	protoBytes, err := BundleToProtobufBytesWithCompression(unsBundle)
+	protoBytes, err := BundleToProtobufBytes(unsBundle)
 	if err != nil {
 		return nil, err
 	}
