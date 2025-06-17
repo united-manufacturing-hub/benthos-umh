@@ -270,7 +270,7 @@ func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Me
 //
 // ## Emission Behavior:
 //   - Rate limiting: Max N events per topic per interval (default: 10)
-//   - Full tree emission: Complete fullTopicMap sent when any data changes
+//   - Full tree emission: Complete fullTopicMap sent in every emission (no change detection)
 //   - LZ4 compression for large payloads (≥1024 bytes, 84% compression ratio)
 //   - No partial emissions - all or nothing approach
 //
