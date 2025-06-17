@@ -1144,5 +1144,164 @@ tag_processor:
 			Expect(ok).To(BeTrue())
 			Expect(objValue).To(Equal("{\"key1\":\"value1\",\"key2\":42}"))
 		})
+
+		It("should construct umh_topic correctly with all metadata fields", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.site.area.line.workcell";
+    msg.meta.data_contract = "_historian";
+    msg.meta.virtual_path = "axis.x.position";
+    msg.meta.tag_name = "actual_value";
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Create and send test message
+			testMsg := service.NewMessage([]byte("42.7"))
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			msg := messages[0]
+
+			// Verify all metadata fields are set correctly
+			location_path, exists := msg.MetaGet("location_path")
+			Expect(exists).To(BeTrue())
+			Expect(location_path).To(Equal("enterprise.site.area.line.workcell"))
+
+			data_contract, exists := msg.MetaGet("data_contract")
+			Expect(exists).To(BeTrue())
+			Expect(data_contract).To(Equal("_historian"))
+
+			virtual_path, exists := msg.MetaGet("virtual_path")
+			Expect(exists).To(BeTrue())
+			Expect(virtual_path).To(Equal("axis.x.position"))
+
+			tag_name, exists := msg.MetaGet("tag_name")
+			Expect(exists).To(BeTrue())
+			Expect(tag_name).To(Equal("actual_value"))
+
+			// Verify both topic (deprecated) and umh_topic are set correctly
+			topic, exists := msg.MetaGet("topic")
+			Expect(exists).To(BeTrue())
+			expectedTopic := "umh.v1.enterprise.site.area.line.workcell._historian.axis.x.position.actual_value"
+			Expect(topic).To(Equal(expectedTopic))
+
+			umh_topic, exists := msg.MetaGet("umh_topic")
+			Expect(exists).To(BeTrue())
+			Expect(umh_topic).To(Equal(expectedTopic))
+
+			// Verify topic and umh_topic have the same value
+			Expect(topic).To(Equal(umh_topic))
+
+			// Verify payload structure
+			structured, err := msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+
+			value, ok := payload["value"]
+			Expect(ok).To(BeTrue())
+
+			numValue, ok := value.(json.Number)
+			Expect(ok).To(BeTrue())
+			floatValue, err := numValue.Float64()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(floatValue).To(BeNumerically("==", 42.7))
+
+			timestamp_ms, ok := payload["timestamp_ms"]
+			Expect(ok).To(BeTrue())
+			Expect(timestamp_ms).To(BeNumerically(">", 0))
+		})
+
+		It("should construct umh_topic correctly without virtual_path", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.site";
+    msg.meta.data_contract = "_analytics";
+    msg.meta.tag_name = "temperature";
+    // Note: virtual_path is intentionally not set
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Create and send test message
+			testMsg := service.NewMessage([]byte("25.3"))
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			msg := messages[0]
+
+			// Verify virtual_path is not set
+			_, exists := msg.MetaGet("virtual_path")
+			Expect(exists).To(BeFalse())
+
+			// Verify umh_topic is constructed without virtual_path
+			umh_topic, exists := msg.MetaGet("umh_topic")
+			Expect(exists).To(BeTrue())
+			expectedTopic := "umh.v1.enterprise.site._analytics.temperature"
+			Expect(umh_topic).To(Equal(expectedTopic))
+
+			// Verify topic (deprecated) has the same value
+			topic, exists := msg.MetaGet("topic")
+			Expect(exists).To(BeTrue())
+			Expect(topic).To(Equal(expectedTopic))
+		})
 	})
 })
