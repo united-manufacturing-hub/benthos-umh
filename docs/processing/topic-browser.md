@@ -43,10 +43,10 @@ The processor expects UMH messages with:
 The processor follows a strict emission contract that optimizes network traffic:
 
 #### UNS Map Emission
-- **When emitted**: Only when ≥1 topic has new/changed metadata since the last frame
-- **What's included**: The ENTIRE current topic tree (not just deltas)
-- **Why entire tree**: Prevents complex merge logic in downstream consumers
-- **Change detection**: xxHash comparison of merged headers in LRU cache
+- **When emitted**: Always emitted with complete topic tree in every emission interval
+- **What's included**: The ENTIRE current topic tree (all topics and their cumulative metadata)
+- **Why entire tree**: Stateless consumption - downstream gets complete state each time
+- **No change detection**: Always emits full tree for complete state consistency
 
 #### Events Emission  
 - **What's included**: ALL successfully processed messages from the current batch
@@ -54,10 +54,10 @@ The processor follows a strict emission contract that optimizes network traffic:
 - **Failed messages**: Logged and counted but don't appear in output
 
 #### Possible Output Scenarios
-1. **Both uns_map + events**: New/changed topics with corresponding events (most common)
-2. **Events only**: New event data for existing topics without metadata changes
-3. **Topics only**: Topic metadata changed but no new events (rare)
-4. **No output**: No processable messages and no topic changes
+1. **Both uns_map + events**: Complete topic tree plus ring-buffered events (most common)
+2. **Events only**: Ring-buffered events with previously known topic tree
+3. **Topics only**: Complete topic tree without events (edge case)
+4. **No output**: No messages processed since last emission interval
 
 ### Data Structures
 
@@ -148,16 +148,17 @@ Topic metadata caching prevents unnecessary re-transmission:
 - **Size**: Configurable (default 50,000 entries)
 - **Eviction**: Least Recently Used
 
-#### Traffic Reduction Logic
+#### Metadata Accumulation Logic
 ```
 New message → Extract headers → Hash topic hierarchy → Cache lookup
                                                            ↓
-Cache miss: Include topic in uns_map + update cache
-Cache hit: Compare headers → Same: Skip emission
-                          → Different: Include in uns_map + update cache
+Cache miss: Store headers in cache + update full topic map
+Cache hit: Merge headers (last-write-wins) → Update cache + full topic map
+                                                           ↓
+                            Full topic map always emitted with complete state
 ```
 
-**Result**: Only topics with actual metadata changes consume bandwidth
+**Result**: Cumulative metadata ensures complete topic state is always available downstream
 
 ### Protobuf Schema Design
 

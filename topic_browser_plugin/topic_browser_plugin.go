@@ -96,7 +96,12 @@
 //	<unix-timestamp-ms>
 //	ENDENDENDEND
 //
-// This format allows easy parsing and includes timing information for latency analysis.
+// ## Wire Format Characteristics:
+//   - Every emission contains complete state (topic map + events)
+//   - Stateless consumption: downstream does not need to merge partial updates
+//   - Self-contained bundles: each emission is independently processable
+//   - Timing information included for latency analysis and debugging
+//   - Consistent format regardless of emission trigger (timer vs buffer full)
 //
 // # CONFIGURATION PARAMETERS
 //
@@ -258,6 +263,14 @@ func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Me
 //  1. **No Emission**: Timer hasn't elapsed, messages stay buffered
 //  2. **Full Emission**: Timer elapsed, emit events + complete topic tree + ACK all messages
 //  3. **Error Handling**: Emission failure prevents ACK (messages will be retried)
+//
+// ## Message-Driven Behavior (Important Edge Case):
+//   - Emissions ONLY occur when messages are actively being processed
+//   - No timer-based heartbeats: if no messages arrive, no emissions are generated
+//   - Low-traffic UNS scenarios may experience extended delays between emissions
+//   - Downstream consumers should expect gaps in emission timing during quiet periods
+//   - This is intentional: the processor is message-driven, not time-driven
+//   - For guaranteed periodic emissions, ensure continuous message flow to the UNS
 //
 // ## Performance Characteristics:
 //   - Traffic reduction via batching and rate limiting
