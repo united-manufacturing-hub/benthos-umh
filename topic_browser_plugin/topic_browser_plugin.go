@@ -634,6 +634,69 @@ func (t *TopicBrowserProcessor) createFinalMessage(unsBundle *UnsBundle) ([]serv
 	return []service.MessageBatch{{message}}, nil
 }
 
+// Ring Buffer Management Functions
+
+// addEventToTopicBuffer adds an event to the per-topic ring buffer.
+// If the buffer is full, it overwrites the oldest event and increments the overwritten metric.
+func (t *TopicBrowserProcessor) addEventToTopicBuffer(topic string, event *EventTableEntry) {
+	buffer := t.getOrCreateTopicBuffer(topic)
+
+	// Add to ring buffer (overwrites oldest if full)
+	buffer.events[buffer.head] = event
+	buffer.head = (buffer.head + 1) % buffer.capacity
+
+	if buffer.size < buffer.capacity {
+		buffer.size++
+	} else {
+		// Buffer is full - we're overwriting the oldest event
+		t.eventsOverwritten.Incr(1)
+	}
+}
+
+// getOrCreateTopicBuffer returns the ring buffer for a topic, creating it if it doesn't exist.
+func (t *TopicBrowserProcessor) getOrCreateTopicBuffer(topic string) *topicRingBuffer {
+	if buffer, exists := t.topicBuffers[topic]; exists {
+		return buffer
+	}
+
+	// Create new ring buffer for this topic
+	buffer := &topicRingBuffer{
+		events:   make([]*EventTableEntry, t.maxEventsPerTopic),
+		head:     0,
+		size:     0,
+		capacity: t.maxEventsPerTopic,
+	}
+	t.topicBuffers[topic] = buffer
+	return buffer
+}
+
+// getLatestEventsForTopic extracts all events from a topic's ring buffer in chronological order.
+// Returns events from oldest to newest, preserving the correct time sequence.
+func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*EventTableEntry {
+	buffer := t.topicBuffers[topic]
+	if buffer == nil || buffer.size == 0 {
+		return nil
+	}
+
+	// Extract events in chronological order (oldest to newest)
+	events := make([]*EventTableEntry, buffer.size)
+	for i := 0; i < buffer.size; i++ {
+		idx := (buffer.head - buffer.size + i + buffer.capacity) % buffer.capacity
+		events[i] = buffer.events[idx]
+	}
+	return events
+}
+
+// extractTopicFromMessage extracts the topic string from message metadata.
+// Returns the topic string or error if umh_topic metadata is missing.
+func (t *TopicBrowserProcessor) extractTopicFromMessage(msg *service.Message) (string, error) {
+	topic, exists := msg.MetaGet("umh_topic")
+	if !exists {
+		return "", errors.New("missing umh_topic metadata")
+	}
+	return topic, nil
+}
+
 func (t *TopicBrowserProcessor) Close(_ context.Context) error {
 	// Wipe cache
 	t.topicMetadataCacheMutex.Lock()
