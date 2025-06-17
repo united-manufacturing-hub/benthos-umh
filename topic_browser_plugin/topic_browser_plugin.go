@@ -302,6 +302,9 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 			continue
 		}
 
+		// Set metadata from event headers (this was missing!)
+		topicInfo.Metadata = eventTableEntry.RawKafkaMsg.Headers
+
 		// Buffer the message (includes ring buffer storage and topic tracking)
 		err = t.bufferMessage(message, eventTableEntry, topicInfo, *unsTreeId)
 		if err != nil {
