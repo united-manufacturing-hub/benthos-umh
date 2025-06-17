@@ -31,6 +31,23 @@ The Topic Browser transforms the raw stream of UMH messages into an organized, s
 
 ## Message Processing Contract
 
+### Processing Architecture
+
+The processor implements a **ring buffer + delayed ACK** architecture:
+
+#### Ring Buffer Strategy
+- **Per-topic buffers**: Each topic maintains a ring buffer of latest events
+- **Buffer size**: Configurable (default: 10 events per topic per interval)
+- **Overflow handling**: Automatic overwrite of oldest events when buffer full
+- **Rate limiting**: Prevents memory exhaustion during startup topic replay scenarios
+- **Emission interval**: Configurable timer-based emission (default: 1 second)
+
+#### Delayed ACK Pattern
+- **Buffering**: Messages are buffered until emission interval elapses
+- **Atomic ACK**: All buffered messages ACKed only after successful emission
+- **Failure handling**: Emission failure prevents ACK (messages will be retried)
+- **Memory safety**: Buffer size limits protect against unbounded growth
+
 ### Input Requirements
 
 The processor expects UMH messages with:
@@ -59,6 +76,13 @@ The processor follows a strict emission contract that optimizes network traffic:
 3. **Topics only**: Complete topic tree without events (edge case)
 4. **No output**: No messages processed since last emission interval
 
+#### Message-Driven Behavior (Important)
+- **Emission trigger**: Emissions ONLY occur when messages are actively being processed
+- **No heartbeats**: No timer-based heartbeats if no messages arrive
+- **Low-traffic impact**: Low-traffic UNS scenarios may experience extended delays between emissions
+- **Downstream considerations**: Consumers should expect gaps in emission timing during quiet periods
+- **Design rationale**: Processor is message-driven, not time-driven for resource efficiency
+
 ### Data Structures
 
 #### TopicInfo (Topic Metadata)
@@ -75,8 +99,9 @@ message TopicInfo {
 
 **Business Logic**: 
 - Represents the "where" and "what" of each signal in the system
-- Metadata aggregated from all messages for search/filter functionality
-- Changes infrequently (only when new headers appear or values change)
+- Metadata accumulated from all messages for complete topic state
+- Always includes cumulative metadata (all keys ever seen for the topic)
+- Updated with latest values using last-write-wins strategy
 
 #### EventTableEntry (Message Data)
 ```protobuf
@@ -122,21 +147,19 @@ Name: "position"
 
 ### LZ4 Compression Strategy
 
-The processor uses conditional LZ4 compression to minimize network traffic:
+The processor uses universal LZ4 compression for all protobuf output:
 
-#### Compression Decision Algorithm
-- **Threshold**: 1024 bytes of protobuf data
-- **Below threshold**: Send uncompressed (LZ4 frame overhead > benefit)
-- **Above threshold**: Apply LZ4 level 0 (fastest compression)
+#### Compression Algorithm
+- **Strategy**: Always compress with LZ4 level 0 (fastest compression)
+- **No threshold**: All protobuf payloads are compressed regardless of size
+- **Consistency**: Single code path eliminates conditional logic complexity
+- **Detection**: Downstream consumers detect LZ4 via magic number: [0x04, 0x22, 0x4d, 0x18]
 
-#### Performance Characteristics
-| Bundle Size | Compression Ratio | Processing Time | Bytes Saved |
-|-------------|-------------------|-----------------|-------------|
-| 100 bytes | No compression | ~450ns | 0 |
-| 94KB | 84.8% reduction | ~506μs | 79KB |
-| 5MB | 84.6% reduction | ~14.8ms | 4MB |
-
-**Why LZ4 Level 0**: Optimized for latency over compression ratio in real-time industrial systems
+#### Why Universal Compression
+- **Simplicity**: No threshold logic or conditional paths
+- **Predictability**: Downstream always expects LZ4 format
+- **Efficiency**: LZ4 level 0 provides fast compression with minimal overhead
+- **Reliability**: Eliminates edge cases around compression decision boundaries
 
 ### LRU Cache Optimization
 
@@ -187,16 +210,28 @@ ENDENDENDEND
 ```yaml
 processors:
   - topic_browser:
-      lru_size: 50000  # Cache size (adjust based on topic cardinality)
+      lru_size: 50000                        # Cache size (default: 50,000 entries)
+      emit_interval: "1s"                    # Emission interval (default: 1s)
+      max_events_per_topic_per_interval: 10  # Ring buffer size per topic (default: 10)
+      max_buffer_size: 10000                 # Safety limit for total buffered messages (default: 10,000)
 ```
 
+### Configuration Parameters
+
+| Parameter | Default | Purpose | Tuning Guidance |
+|-----------|---------|---------|-----------------|
+| `lru_size` | 50,000 | LRU cache size for cumulative metadata storage | Adjust based on topic cardinality |
+| `emit_interval` | 1s | Maximum buffering time before emission | Lower for real-time, higher for throughput |
+| `max_events_per_topic_per_interval` | 10 | Ring buffer size per topic | Increase for high-frequency topics |
+| `max_buffer_size` | 10,000 | Safety limit for total buffered messages | Set based on available memory |
+
 ### Sizing Guidelines
-| Environment | Topics | Recommended LRU Size | Memory Usage |
-|-------------|--------|---------------------|--------------|
-| Small plant | <1,000 | 5,000 | ~5MB |
-| Medium plant | 1,000-10,000 | 25,000 | ~25MB |
-| Large enterprise | 10,000-100,000 | 100,000 | ~100MB |
-| Very large | >100,000 | 250,000 | ~250MB |
+| Environment | Topics | LRU Size | Ring Buffer | Memory Usage |
+|-------------|--------|----------|-------------|--------------|
+| Small plant | <1,000 | 5,000 | 10 | ~5MB |
+| Medium plant | 1,000-10,000 | 25,000 | 10 | ~25MB |
+| Large enterprise | 10,000-100,000 | 100,000 | 15 | ~100MB |
+| Very large | >100,000 | 250,000 | 20 | ~250MB |
 
 ## Integration Points
 
@@ -233,7 +268,13 @@ processors:
 ### Network & Serialization
 - **Protobuf failures**: Return error immediately (no partial emission)
 - **Compression failures**: Return error (prevents data corruption)
-- **Large payloads**: Automatic LZ4 compression handles up to multi-megabyte bundles
+- **Large payloads**: Universal LZ4 compression handles up to multi-megabyte bundles
+
+### Ring Buffer Edge Cases
+- **Buffer overflow**: Oldest events automatically discarded when ring buffer full
+- **Burst traffic**: Startup topic replay scenarios handled gracefully via ring buffer limits
+- **Memory safety**: Ring buffer size limits prevent unbounded memory growth
+- **Event ordering**: Ring buffer maintains chronological order within each topic
 
 ## Troubleshooting
 
@@ -247,15 +288,25 @@ processors:
 **Performance degradation**:
 - Monitor LRU cache hit rate (should be >90%)
 - Check for extremely high topic cardinality  
-- Verify LZ4 compression is activating for large bundles
+- Verify ring buffer isn't overflowing excessively (check events_overwritten metric)
+- Ensure emission intervals aren't too frequent for your traffic volume
 
 **Memory usage growth**:
 - Reduce lru_size if memory constrained
+- Lower max_events_per_topic_per_interval to reduce ring buffer memory
+- Reduce max_buffer_size to limit total buffered messages
 - Check for topic metadata churn causing cache misses
 - Monitor for header proliferation per topic
+
+**Emission delays**:
+- Verify messages are actively flowing (processor is message-driven)
+- Check emit_interval setting vs required latency
+- Monitor for processing bottlenecks causing buffer delays
 
 ### Metrics to Monitor
 - `messages_processed`: Successfully processed messages (should increase steadily)
 - `messages_failed`: Failed processing attempts (should remain low)
-- Cache hit rate: Not directly exposed but can be inferred from traffic patterns
+- `events_overwritten`: Ring buffer overflow events (monitor for excessive values)
+- `total_events_emitted`: Total events sent downstream (for throughput monitoring)
+- Ring buffer utilization: Monitor per-topic buffer usage patterns
 - Downstream latency: Monitor time from message receipt to UI display 
