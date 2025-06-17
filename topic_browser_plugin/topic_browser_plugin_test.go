@@ -260,7 +260,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(decoded2).NotTo(BeNil())
 
 			// Verify the decoded bundle
-			Expect(decoded2.Events.Entries).To(HaveLen(2)) // Ring buffer contains both events
+			Expect(decoded2.Events.Entries).To(HaveLen(1)) // Ring buffer cleared after first emission
 			Expect(decoded2.UnsMap.Entries).To(HaveLen(1))
 
 			// Verify the topic info
@@ -271,18 +271,10 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(topicInfo2.Metadata).To(Not(BeEmpty()))
 			Expect(topicInfo2.Metadata).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
 
-			// Verify the events (ring buffer contains both events)
-			// First event (from first call)
-			event1 := decoded2.Events.Entries[0]
-			Expect(event1.GetTs().GetTimestampMs()).To(Equal(int64(1647753600000)))
-			Expect(event1.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
-			Expect(event1.GetTs().GetNumericValue()).NotTo(BeNil())
-			Expect(event1.GetTs().GetNumericValue().GetValue()).To(Equal(float64(3)))
-			Expect(event1.RawKafkaMsg).NotTo(BeNil())
-			Expect(event1.RawKafkaMsg.Headers).To(HaveKeyWithValue("umh_topic", "umh.v1.test-topic._historian.some_value"))
-
-			// Second event (from second call)
-			event2 := decoded2.Events.Entries[1]
+			// Verify the events (ring buffer is cleared after each emission)
+			// Only the second event should be present (from the second call)
+			Expect(decoded2.Events.Entries).To(HaveLen(1))
+			event2 := decoded2.Events.Entries[0]
 			Expect(event2.GetTs().GetTimestampMs()).To(Equal(int64(1647753600001)))
 			Expect(event2.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
 			Expect(event2.GetTs().GetNumericValue()).NotTo(BeNil())

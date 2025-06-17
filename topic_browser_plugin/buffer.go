@@ -92,8 +92,8 @@ func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*EventTa
 //   - Failed emission = no ACK (messages will be retried)
 //
 // ## Buffer Management:
-//   - Clear messageBuffer after emission
-//   - Keep ring buffers intact for next interval (continuous buffering)
+//   - Clear messageBuffer and ring buffers after emission
+//   - Reset ring buffer state to prevent duplicate emissions
 //   - Update lastEmitTime to reset interval timer
 //
 // Returns:
@@ -167,11 +167,20 @@ func (t *TopicBrowserProcessor) flushBufferAndACK() ([]service.MessageBatch, err
 	return []service.MessageBatch{{emissionMsg}}, nil
 }
 
-// clearBuffers clears the message buffer while preserving ring buffers.
-// Ring buffers are kept intact to allow continuous buffering across emission intervals.
+// clearBuffers clears both message buffer and ring buffers after successful emission.
+// This prevents duplicate event emission across intervals.
 func (t *TopicBrowserProcessor) clearBuffers() {
 	t.messageBuffer = nil
-	// Note: topicBuffers (ring buffers) are kept intact for next interval
+	// Clear all ring buffers to prevent duplicate emissions
+	for topic := range t.topicBuffers {
+		buffer := t.topicBuffers[topic]
+		buffer.size = 0
+		buffer.head = 0
+		// Keep the allocated slice but reset pointers to prevent memory leaks
+		for i := range buffer.events {
+			buffer.events[i] = nil
+		}
+	}
 }
 
 // extractTopicFromMessage extracts the topic string from message metadata.
