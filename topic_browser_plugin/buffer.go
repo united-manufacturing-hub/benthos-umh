@@ -92,7 +92,7 @@ func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*EventTa
 //   - Failed emission = no ACK (messages will be retried)
 //
 // ## Buffer Management:
-//   - Clear messageBuffer and pendingTopicChanges after emission
+//   - Clear messageBuffer after emission
 //   - Keep ring buffers intact for next interval (continuous buffering)
 //   - Update lastEmitTime to reset interval timer
 //
@@ -170,11 +170,10 @@ func (t *TopicBrowserProcessor) flushBufferAndACK() ([]service.MessageBatch, err
 	return []service.MessageBatch{{emissionMsg}}, nil
 }
 
-// clearBuffers clears the message buffer and pending topic changes while preserving ring buffers.
+// clearBuffers clears the message buffer while preserving ring buffers.
 // Ring buffers are kept intact to allow continuous buffering across emission intervals.
 func (t *TopicBrowserProcessor) clearBuffers() {
 	t.messageBuffer = nil
-	t.pendingTopicChanges = make(map[string]*TopicInfo)
 	// Note: topicBuffers (ring buffers) are kept intact for next interval
 }
 

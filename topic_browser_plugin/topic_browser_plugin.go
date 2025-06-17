@@ -208,12 +208,11 @@ type TopicBrowserProcessor struct {
 	messagesFailed    *service.MetricCounter
 
 	// New buffering fields for ring buffer implementation
-	messageBuffer       []*service.Message          // Unacked original messages
-	topicBuffers        map[string]*topicRingBuffer // Per-topic ring buffers
-	pendingTopicChanges map[string]*TopicInfo       // Topics with metadata changes
-	fullTopicMap        map[string]*TopicInfo       // Complete authoritative topic state
-	lastEmitTime        time.Time                   // Last emission timestamp
-	bufferMutex         sync.Mutex                  // Protects all buffer state
+	messageBuffer []*service.Message          // Unacked original messages
+	topicBuffers  map[string]*topicRingBuffer // Per-topic ring buffers
+	fullTopicMap  map[string]*TopicInfo       // Complete authoritative topic state
+	lastEmitTime  time.Time                   // Last emission timestamp
+	bufferMutex   sync.Mutex                  // Protects all buffer state
 
 	// Configuration parameters
 	emitInterval      time.Duration
@@ -370,7 +369,6 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 		maxEventsPerTopic:       maxEventsPerTopic,
 		maxBufferSize:           maxBufferSize,
 		topicBuffers:            make(map[string]*topicRingBuffer),
-		pendingTopicChanges:     make(map[string]*TopicInfo),
 		fullTopicMap:            make(map[string]*TopicInfo),
 		lastEmitTime:            lastEmitTime,
 		bufferMutex:             sync.Mutex{},
