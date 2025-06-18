@@ -56,6 +56,12 @@ update-benthos:
   go get github.com/redpanda-data/benthos/v4@latest && \
   go mod tidy
 
+.PHONY: update-go-dependencies
+update-go-dependencies:
+	go get -u ./...
+	go mod tidy
+	go mod vendor
+
 .PHONY: test
 test: setup-test-deps
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./...
