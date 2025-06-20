@@ -13,14 +13,14 @@
 # limitations under the License.
 
 ---
-name: license-eye-header
+name: code-checks
 on:
   pull_request:
     branches:
       - master
 jobs:
-  license-eye-header:
-    name: License Eye Header
+  code-checks:
+    name: Code Checks
     runs-on:
       group: arc-runners-tests
     steps:
@@ -31,6 +31,14 @@ jobs:
         run: |
           make install-tools
 
+      - name: Misspell
+        run: |
+          make misspell
+
       - name: License Eye Header
         run: |
           make license-check
+
+      - name: Lint
+        run: |
+          make lint

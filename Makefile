@@ -1,4 +1,4 @@
-# Copyright 2023 UMH Systems GmbH
+# Copyright 2025 UMH Systems GmbH
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -35,14 +35,6 @@ target:
        -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt=$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
        -o $(BENTHOS_BIN) \
        cmd/benthos/main.go
-
-.PHONY: license-fix
-license-fix:
-	@$(LICENSE_EYE) header fix
-
-.PHONY: license-check
-license-check:
-	@$(LICENSE_EYE) header check
 
 .PHONY: setup-test-deps
 setup-test-deps:
@@ -105,8 +97,6 @@ test-downsampler:
 test-benthos-tag-processor: target
 	@$(BENTHOS_BIN) -c ./config/tag-processor-test.yaml
 
-# USAGE:
-# make test-benthos-sensorconnect TEST_DEBUG_IFM_ENDPOINT=(IP of sensor interface)
 .PHONY: test-benthos-sensorconnect
 test-benthos-sensorconnect: target
 	@$(BENTHOS_BIN) -c ./config/sensorconnect-test.yaml
