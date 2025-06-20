@@ -13,27 +13,56 @@
 # limitations under the License.
 
 SRC_ROOT := $(shell git rev-parse --show-toplevel)
-
-# ---------------------------------------------------
-# Pinned URLs for go install
-# ---------------------------------------------------
-#  we might add some additional tools later e.g. golangci-lint/gofmt
-LICENSE_EYE_URL := github.com/apache/skywalking-eyes/cmd/license-eye@v0.7.0
-
-
 TOOLS_BIN_DIR    := $(SRC_ROOT)/.tools
 
 
-# ---------------------------------------------------
-# Tools references
-# ---------------------------------------------------
-LICENSE_EYE := $(TOOLS_BIN_DIR)/license-eye
+LICENSE_EYE  := $(TOOLS_BIN_DIR)/license-eye
+LINT         := $(TOOLS_BIN_DIR)/golangci-lint
+PROTOBUF     := $(TOOLS_BIN_DIR)/protoc-gen-go
+GOFUMPT      := $(TOOLS_BIN_DIR)/gofumpt
+MISSPELL     := $(TOOLS_BIN_DIR)/misspell -error
+MISSPELL_FIX := $(TOOLS_BIN_DIR)/misspell -w
+GOVULNCHECK  := $(TOOLS_BIN_DIR)/govulncheck
+STATICCHECK  := $(TOOLS_BIN_DIR)/staticcheck
 
 $(TOOLS_BIN_DIR):
 	@mkdir -p $@
 
-$(LICENSE_EYE): $(TOOLS_BIN_DIR)
-	@GOBIN=$(TOOLS_BIN_DIR) go install $(LICENSE_EYE_URL)
+.PHONY: commit
+commit: install-tools misspell fmt license-check lint
 
 .PHONY: install-tools
-install-tools: $(LICENSE_EYE)
+install-tools: $(TOOLS_BIN_DIR)
+	@GOBIN=$(TOOLS_BIN_DIR) go install tool
+
+.PHONY: fmt
+fmt: $(GOFUMPT)
+	$(GOFUMPT) -w -l $$(go list -f '{{.Dir}}' ./...)
+
+.PHONY: lint
+lint: $(LINT)
+	$(LINT) run
+
+.PHONY: license-fix
+license-fix: $(LICENSE_EYE)
+	@$(LICENSE_EYE) header fix
+
+.PHONY: license-check
+license-check: $(LICENSE_EYE)
+	@$(LICENSE_EYE) header check
+
+.PHONY: misspell
+misspell: $(TOOLS_BIN_DIR)/misspell
+	@$(MISSPELL) ./...
+
+.PHONY: misspell-fix
+misspell-fix: $(TOOLS_BIN_DIR)/misspell
+	@$(MISSPELL) .
+
+.PHONY: staticcheck
+staticcheck: $(STATICCHECK)
+	@$(STATICCHECK) ./...
+
+.PHONY: vuln
+vuln: $(GOVULNCHECK)
+	@$(GOVULNCHECK) ./...
