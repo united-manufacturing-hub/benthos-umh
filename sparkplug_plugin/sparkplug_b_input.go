@@ -432,6 +432,13 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 
 	s.logger.Debugf("📊 processSparkplugMessage: parsed topic - msgType=%s, deviceKey=%s", msgType, deviceKey)
 
+	// **FIX: Filter STATE messages from protobuf parsing**
+	// STATE messages contain plain text "ONLINE"/"OFFLINE", not protobuf payloads
+	if msgType == "STATE" {
+		s.logger.Debugf("🏛️ processSparkplugMessage: processing STATE message (payload: %s)", string(mqttMsg.payload))
+		return s.processStateMessage(deviceKey, msgType, topicInfo, mqttMsg.topic, string(mqttMsg.payload))
+	}
+
 	// DEBUG: Log before protobuf unmarshal as recommended in the plan
 	s.logger.Debugf("🔍 processSparkplugMessage: attempting to unmarshal %d bytes as Sparkplug payload", len(mqttMsg.payload))
 
@@ -568,6 +575,61 @@ func (s *sparkplugInput) processDeathMessage(deviceKey, msgType string, payload 
 	}
 
 	s.logger.Debugf("Processed %s for device %s", msgType, deviceKey)
+}
+
+func (s *sparkplugInput) processStateMessage(deviceKey, msgType string, topicInfo *TopicInfo, originalTopic string, statePayload string) (service.MessageBatch, error) {
+	s.logger.Debugf("🏛️ processStateMessage: processing STATE message for device %s, state: %s", deviceKey, statePayload)
+
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+
+	// Update node state based on STATE message content
+	isOnline := statePayload == "ONLINE"
+	if state, exists := s.nodeStates[deviceKey]; exists {
+		state.isOnline = isOnline
+		state.lastSeen = time.Now()
+	} else {
+		s.nodeStates[deviceKey] = &nodeState{
+			isOnline: isOnline,
+			lastSeen: time.Now(),
+		}
+	}
+
+	// Create a status event message for STATE changes
+	event := map[string]interface{}{
+		"event":        "StateChange",
+		"device_key":   deviceKey,
+		"group_id":     topicInfo.Group,
+		"edge_node_id": topicInfo.EdgeNode,
+		"state":        statePayload,
+		"timestamp_ms": time.Now().UnixMilli(),
+	}
+
+	if topicInfo.Device != "" {
+		event["device_id"] = topicInfo.Device
+	}
+
+	jsonBytes, err := json.Marshal(event)
+	if err != nil {
+		s.logger.Errorf("Failed to marshal STATE event: %v", err)
+		return nil, nil
+	}
+
+	msg := service.NewMessage(jsonBytes)
+	msg.MetaSet("sparkplug_msg_type", msgType)
+	msg.MetaSet("sparkplug_device_key", deviceKey)
+	msg.MetaSet("mqtt_topic", originalTopic)
+	msg.MetaSet("group_id", topicInfo.Group)
+	msg.MetaSet("edge_node_id", topicInfo.EdgeNode)
+	if topicInfo.Device != "" {
+		msg.MetaSet("device_id", topicInfo.Device)
+	}
+	msg.MetaSet("event_type", "state_change")
+	msg.MetaSet("node_state", statePayload)
+
+	s.logger.Debugf("✅ processStateMessage: created STATE event message for device %s: %s", deviceKey, statePayload)
+
+	return service.MessageBatch{msg}, nil
 }
 
 func (s *sparkplugInput) Close(ctx context.Context) error {
