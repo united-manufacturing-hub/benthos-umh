@@ -13,9 +13,39 @@
 - ✅ **Root cause found**: STATE messages contain plain text "ONLINE", not protobuf
 - ✅ **Debug logs working**: All debug logs successfully revealing message flow and issues
 
-### **Next Priority - Fix STATE Message Filtering**
-- ⏳ **TODO**: Add topic filtering to exclude STATE messages from protobuf parsing
-- ⏳ **TODO**: Test the fix with the integration test
+### **Next Priority - Fix STATE Message Filtering** ⏳ **IN PROGRESS**
+- ✅ **DONE**: Enhanced integration test infrastructure with `TEST_SPARKPLUG_B=1` env var
+- ✅ **DONE**: Added Makefile targets for unit tests and integration tests
+- ✅ **DONE**: Automated Mosquitto broker startup in Makefile
+- ⏳ **TODO**: Fix STATE message filtering to exclude from protobuf parsing
+- ⏳ **TODO**: Test all fixes with the automated integration test suite
+
+## 🚀 **Quick Setup & Bug Reproduction**
+
+To reproduce the bug and test fixes:
+
+```bash
+# 1. Start MQTT broker
+echo "listener 1883
+allow_anonymous true" > /tmp/mosquitto.conf
+docker run -d --name test-mosquitto -p 1883:1883 \
+  -v /tmp/mosquitto.conf:/mosquitto/config/mosquitto.conf \
+  eclipse-mosquitto:2.0
+
+# 2. Run integration test (reproduces bug)
+cd sparkplug_plugin
+go test -v -run "PoC.*Integration"
+
+# 3. Manual debugging (optional)
+cd ..
+go build -o benthos-umh ./cmd/benthos
+./benthos-umh -c test-config.yaml  # See sparkplug_b_integration_test.go for config
+
+# 4. Clean up
+docker stop test-mosquitto && docker rm test-mosquitto
+```
+
+**Expected Bug**: Error parsing STATE messages as protobuf (contains "ONLINE" text, not protobuf)
 
 ---
 
@@ -286,65 +316,76 @@ It("ignores NDATA messages arriving before NBIRTH (pre-birth data)", func() {
 })
 ```
 
-#### **Day 4 – Local MQTT Test Harness with Testcontainers**
+#### **Day 3 – Enhanced Test Infrastructure** ✅ **COMPLETED**
 
-**Proposed Approach:** Use `testcontainers-go` library to programmatically start Eclipse Mosquitto container:
+**Implementation:** Enhanced integration test infrastructure with automated broker management for fast iteration:
 
-```go
-import tc "github.com/testcontainers/testcontainers-go"
-import "github.com/testcontainers/testcontainers-go/modules/mqtt"
+**A. Environment Variable Gating (Following Established Pattern):** ✅
+- Integration tests now use `TEST_SPARKPLUG_B=1` environment variable
+- Tests are skipped if environment variable is not set
+- Follows the same pattern as other plugins in the codebase
 
-var mqttContainer *mqtt.MosquittoContainer
-var brokerURI string
+**B. Makefile Integration:** ✅ Enhanced Makefile with separate targets:
 
-BeforeSuite(func() {
-    // Start a Mosquitto MQTT broker container
-    mqttContainer, _ = mqtt.RunContainer(ctx, mqtt.WithDefaultConfig())
-    brokerURI = fmt.Sprintf("tcp://%s:%d", mqttContainer.Host, mqttContainer.Port)
-    // Configure plugin to use this brokerURI
-    os.Setenv("TEST_MQTT_BROKER", brokerURI)
-})
+```makefile
+# Unit tests only (no external dependencies)
+test-sparkplug-unit:
+	@echo "Running Sparkplug unit tests..."
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./sparkplug_plugin/...
 
-AfterSuite(func() {
-    mqttContainer.Terminate(ctx)
-})
+# Integration tests (requires MQTT broker)
+test-sparkplug-b-integration:
+	@echo "Running Sparkplug B integration tests (requires running Mosquitto broker)..."
+	@echo "If Mosquitto is not running, start it with: make start-mosquitto"
+	@TEST_SPARKPLUG_B=1 \
+		$(GINKGO_CMD) $(GINKGO_FLAGS) ./sparkplug_plugin/...
+
+# Start Mosquitto broker automatically
+start-mosquitto:
+	@echo "Starting Mosquitto MQTT broker..."
+	@docker ps -q --filter "name=test-mosquitto" | grep -q . && echo "Mosquitto already running" || \
+		(echo "listener 1883\nallow_anonymous true" > /tmp/mosquitto.conf && \
+		docker run -d --name test-mosquitto -p 1883:1883 \
+			-v /tmp/mosquitto.conf:/mosquitto/config/mosquitto.conf \
+			eclipse-mosquitto:2.0 && \
+		echo "Mosquitto started on port 1883")
+
+# Stop and clean up broker
+stop-mosquitto:
+	@echo "Stopping Mosquitto MQTT broker..."
+	@docker stop test-mosquitto 2>/dev/null && docker rm test-mosquitto 2>/dev/null || true
+	@rm -f /tmp/mosquitto.conf
 ```
 
-**Smoke Test Scenario:** Full round-trip Sparkplug message flow:
-1. **Startup and NBIRTH:** Edge Node simulator publishes NBIRTH → Primary Host receives and decodes
-2. **Data Message Flow:** Edge Node publishes NDATA → Host receives and processes
-3. **Sequence Gap Injection:** Simulate gap → verify host requests rebirth (NCMD)
-4. **Shutdown and NDEATH:** Stop Edge Node → broker emits LWT NDEATH → Host transitions to OFFLINE
+**C. Automated Broker Management:** ✅ Implemented broker lifecycle management:
+- **Automatic Detection**: Makefile checks if broker is already running
+- **Configuration Management**: Generates proper mosquitto.conf for testing
+- **Port Management**: Uses fixed port 1883 for consistency
+- **Cleanup**: Provides stop target to clean up containers and config files
 
-**Clear Failure Modes:** Each step has specific assertions:
-- Missing NBIRTH → timeout with "expected birth message but none received"
-- Failed sequence enforcement → "expected NCMD rebirth, none sent"
-- Failed alias mapping → missing field or alias number instead of name
+**Benefits of This Approach:**
+- **Fast Iteration**: `make test-sparkplug-unit` for quick unit testing
+- **Automated Setup**: `make start-mosquitto` handles broker startup
+- **Clear Separation**: Unit tests vs integration tests are distinct
+- **Follows Codebase Patterns**: Uses established `TEST_*` environment variable pattern
+- **Dev Container Compatible**: Works reliably in dev container environment
 
-**Benefits:**
-- **Fast**: Mosquitto container starts in <1 second
-- **Isolated**: Fresh broker per test run, no lingering state
-- **Realistic**: Exercises actual network serialization, subscription topics, QoS
-- **One-command**: `go test` brings up all needed infrastructure
+#### **Day 4 – Fix STATE Message Filtering** ⏳ **NEXT PRIORITY**
 
-#### **Day 4 – CI wiring (GitHub Actions)**
+**Implementation Steps:**
+1. **Identify STATE message filtering**: Add topic filtering to exclude STATE messages from protobuf parsing
+2. **Update message handler**: Modify `messageHandler` to skip protobuf parsing for STATE topics
+3. **Test the fix**: Use integration tests to verify STATE messages are handled correctly
+4. **Validate all scenarios**: Ensure NBIRTH, NDATA, NDEATH messages still work properly
 
-```yaml
-name: sparkplug-poc
-on: [push, pull_request]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    services:
-      mosquitto:
-        image: eclipse-mosquitto:2.0
-        ports: ["1883:1883"]
-    steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-go@v5
-      with: {go-version: '1.22'}
-    - run: go test ./... -race -cover
-```
+**Success Criteria:**
+- ✅ Enhanced test infrastructure with `TEST_SPARKPLUG_B=1` environment variable
+- ✅ Makefile targets for unit tests (`make test-sparkplug-unit`) and integration tests (`make test-sparkplug-b-integration`)
+- ✅ Automated Mosquitto broker startup (`make start-mosquitto`)
+- ⏳ STATE messages no longer cause protobuf parsing errors
+- ⏳ All integration tests pass without errors
+- ✅ Tests complete in <60 seconds
+- ✅ No manual broker setup required
 
 #### **Day 5 – Polish & retrospective**
 
