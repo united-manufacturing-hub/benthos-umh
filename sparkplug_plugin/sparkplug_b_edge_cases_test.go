@@ -15,6 +15,7 @@
 package sparkplug_plugin_test
 
 import (
+	"fmt"
 	"os"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -75,6 +76,43 @@ var _ = Describe("Sparkplug B Edge Cases", func() {
 				Expect(dataMetric.Alias).NotTo(BeNil())
 				// Name should be nil or empty (will be resolved from alias cache)
 				Expect(dataMetric.Name == nil || *dataMetric.Name == "").To(BeTrue())
+			})
+
+			It("should validate all Eclipse Tahu vectors", func() {
+				eclipseTahuVectors := sparkplug_plugin.GetEclipseTahuVectors()
+				Expect(len(eclipseTahuVectors)).To(BeNumerically(">=", 7),
+					"Should have at least 7 Eclipse Tahu vectors")
+
+				for _, vector := range eclipseTahuVectors {
+					By(fmt.Sprintf("Validating Eclipse Tahu vector: %s", vector.Name))
+
+					// Decode the vector
+					payload, err := sparkplug_plugin.DecodeTestVector(vector)
+					Expect(err).NotTo(HaveOccurred(),
+						"Eclipse Tahu vector %s should decode successfully", vector.Name)
+
+					// Verify expected metric count
+					Expect(len(payload.Metrics)).To(Equal(vector.ExpectedMetrics),
+						"Vector %s should have %d metrics", vector.Name, vector.ExpectedMetrics)
+				}
+			})
+
+			It("should categorize test vectors by message type", func() {
+				birthVectors := sparkplug_plugin.GetTestVectorsByMessageType("NBIRTH")
+				Expect(len(birthVectors)).To(BeNumerically(">=", 2),
+					"Should have at least 2 NBIRTH vectors")
+
+				dataVectors := sparkplug_plugin.GetTestVectorsByMessageType("NDATA")
+				Expect(len(dataVectors)).To(BeNumerically(">=", 3),
+					"Should have at least 3 NDATA vectors")
+
+				deathVectors := sparkplug_plugin.GetTestVectorsByMessageType("NDEATH")
+				Expect(len(deathVectors)).To(Equal(1),
+					"Should have 1 NDEATH vector")
+
+				cmdVectors := sparkplug_plugin.GetTestVectorsByMessageType("NCMD")
+				Expect(len(cmdVectors)).To(Equal(1),
+					"Should have 1 NCMD vector")
 			})
 		})
 	})
