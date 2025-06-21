@@ -151,6 +151,17 @@ test-sparkplug-bidirectional-full: start-mosquitto test-sparkplug-bidirectional
 	@echo "Sparkplug B bidirectional communication tests completed"
 	@echo "🚀 P2.5 Bidirectional Communication Validation - PASSED"
 
+# New test infrastructure targets (Phase 1 implementation)
+.PHONY: test-sparkplug-new test-sparkplug-all-new test-sparkplug-coverage
+test-sparkplug-new:
+	@$(MAKE) -C sparkplug_plugin test
+
+test-sparkplug-all-new:
+	@$(MAKE) -C sparkplug_plugin test-all
+
+test-sparkplug-coverage:
+	@$(MAKE) -C sparkplug_plugin coverage
+
 
 ###### TESTS WITH RUNNING BENTHOS-UMH #####
 # Test the tag processor with a local OPC UA server
