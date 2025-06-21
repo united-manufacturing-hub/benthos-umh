@@ -98,6 +98,47 @@ test-tag-processor:
 test-sparkplug:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./sparkplug_plugin/...
 
+.PHONY: test-sparkplug-unit
+test-sparkplug-unit:
+	@echo "Running Sparkplug unit tests..."
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./sparkplug_plugin/...
+
+.PHONY: test-sparkplug-b-integration
+test-sparkplug-b-integration:
+	@echo "Running Sparkplug B integration tests (requires running Mosquitto broker)..."
+	@echo "If Mosquitto is not running, start it with: make start-mosquitto"
+	@TEST_SPARKPLUG_B=1 \
+		$(GINKGO_CMD) $(GINKGO_FLAGS) ./sparkplug_plugin/...
+
+.PHONY: start-mosquitto
+start-mosquitto:
+	@echo "Starting Mosquitto MQTT broker for integration tests..."
+	@if ! docker ps | grep -q test-mosquitto; then \
+		echo "Creating mosquitto.conf..."; \
+		echo "listener 1883" > /tmp/mosquitto.conf; \
+		echo "allow_anonymous true" >> /tmp/mosquitto.conf; \
+		echo "Starting Mosquitto container..."; \
+		docker run -d --name test-mosquitto -p 1883:1883 \
+			-v /tmp/mosquitto.conf:/mosquitto/config/mosquitto.conf \
+			eclipse-mosquitto:2.0; \
+		echo "Waiting for Mosquitto to start..."; \
+		sleep 2; \
+		echo "Mosquitto is ready at localhost:1883"; \
+	else \
+		echo "Mosquitto is already running"; \
+	fi
+
+.PHONY: stop-mosquitto
+stop-mosquitto:
+	@echo "Stopping Mosquitto MQTT broker..."
+	@docker stop test-mosquitto 2>/dev/null || true
+	@docker rm test-mosquitto 2>/dev/null || true
+	@echo "Mosquitto stopped"
+
+.PHONY: test-sparkplug-b-full
+test-sparkplug-b-full: start-mosquitto test-sparkplug-b-integration
+	@echo "Sparkplug B integration tests completed"
+
 
 ###### TESTS WITH RUNNING BENTHOS-UMH #####
 # Test the tag processor with a local OPC UA server

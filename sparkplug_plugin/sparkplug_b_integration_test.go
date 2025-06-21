@@ -1,3 +1,97 @@
+/*
+Sparkplug B Integration Test
+
+This integration test validates the Sparkplug B input plugin against a real MQTT broker.
+It publishes Sparkplug NBIRTH and NDATA messages and verifies that the plugin correctly
+processes them into JSON output.
+
+## Test Types:
+
+1. **Unit Tests**: Run with `make test-sparkplug-unit` (no external dependencies)
+2. **Integration Tests**: Run with `make test-sparkplug-b-integration` (requires Mosquitto)
+
+## Quick Setup for Integration Tests:
+
+**Option A - Automatic (Recommended):**
+```bash
+make test-sparkplug-b-full    # Starts Mosquitto + runs tests + keeps broker running
+make stop-mosquitto           # Clean up when done
+```
+
+**Option B - Step by Step:**
+```bash
+make start-mosquitto          # Start broker
+make test-sparkplug-b-integration  # Run tests
+make stop-mosquitto           # Clean up
+```
+
+**Option C - Manual Docker Setup:**
+```bash
+# Create mosquitto config (allow external connections)
+echo "listener 1883
+allow_anonymous true" > /tmp/mosquitto.conf
+
+# Start broker
+docker run -d --name test-mosquitto -p 1883:1883 \
+  -v /tmp/mosquitto.conf:/mosquitto/config/mosquitto.conf \
+  eclipse-mosquitto:2.0
+
+# Run integration test
+cd sparkplug_plugin
+TEST_SPARKPLUG_B=1 go test -v -timeout=60s
+
+# Clean up
+docker stop test-mosquitto && docker rm test-mosquitto
+```
+
+## Manual Debugging with Benthos:
+
+For detailed debugging, build and run Benthos manually:
+```bash
+cd ..
+go build -o benthos-umh ./cmd/benthos
+
+# Create test config
+cat > test-config.yaml << 'EOF'
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://127.0.0.1:1883"]
+      client_id: "test-primary-host"
+      qos: 1
+    identity:
+      group_id: "FactoryA"
+      edge_node_id: "CentralHost"
+    role: "primary_host"
+    behaviour:
+      auto_split_metrics: true
+output:
+  stdout: {}
+logger:
+  level: DEBUG
+EOF
+
+# Run with debug logs
+./benthos-umh -c test-config.yaml
+```
+
+## Expected Behavior:
+- The plugin should successfully process NBIRTH and NDATA messages
+- It should resolve aliases (e.g., alias 100 -> "Temperature")
+- It should output proper JSON with decoded metrics
+
+## Known Issues (Current Bug to Fix):
+The debug logs will show this error:
+```
+ERRO Failed to unmarshal Sparkplug payload from topic spBv1.0/FactoryA/STATE/CentralHost:
+     proto: cannot parse invalid wire-format data
+```
+
+This happens because STATE messages contain plain text "ONLINE" but the plugin
+tries to unmarshal them as Sparkplug protobuf. This is the main bug we need to fix
+by filtering STATE messages from protobuf parsing.
+*/
+
 package sparkplug_plugin_test
 
 import (
@@ -16,6 +110,26 @@ import (
 	_ "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin" // Import to register
 )
 
+// setupMQTTBroker ensures a test MQTT broker is running
+func setupMQTTBroker() error {
+	// Check if broker is already running
+	opts := mqtt.NewClientOptions()
+	opts.AddBroker("tcp://127.0.0.1:1883")
+	opts.SetClientID("test-broker-check")
+	opts.SetConnectTimeout(2 * time.Second)
+
+	client := mqtt.NewClient(opts)
+	token := client.Connect()
+	if token.WaitTimeout(2*time.Second) && token.Error() == nil {
+		client.Disconnect(100)
+		return nil // Broker already running
+	}
+
+	return fmt.Errorf("MQTT broker not running. Please start with:\n" +
+		"docker run -d --name test-mosquitto -p 1883:1883 -v /tmp/mosquitto.conf:/mosquitto/config/mosquitto.conf eclipse-mosquitto:2.0\n" +
+		"(See documentation in this file for details)")
+}
+
 // TestSparkplugBPoC tests the Sparkplug B input plugin end-to-end
 var _ = ginkgo.Describe("Sparkplug B PoC Integration Tests", func() {
 	ginkgo.Describe("End-to-End Message Processing", func() {
@@ -33,6 +147,11 @@ var _ = ginkgo.Describe("Sparkplug B PoC Integration Tests", func() {
 				}
 
 				ginkgo.By(fmt.Sprintf("Using MQTT broker: %s", brokerURL))
+
+				// Ensure MQTT broker is running
+				if err := setupMQTTBroker(); err != nil {
+					ginkgo.Skip(fmt.Sprintf("MQTT broker setup failed: %v", err))
+				}
 
 				// Create MQTT client for publishing test messages
 				opts := mqtt.NewClientOptions()
