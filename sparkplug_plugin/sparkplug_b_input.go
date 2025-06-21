@@ -316,7 +316,7 @@ func (s *sparkplugInput) Connect(ctx context.Context) error {
 		WillTopic:        stateTopic,
 		WillPayload:      statePayload,
 		WillQoS:          s.config.MQTT.QoS,
-		WillRetain:       false,
+		WillRetain:       true,
 		OnConnect:        s.onConnect,
 		OnConnectionLost: s.onConnectionLost,
 		MessageHandler: func(client mqtt.Client, msg mqtt.Message) {
@@ -384,11 +384,16 @@ func (s *sparkplugInput) messageHandler(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
+	// DEBUG: Log entry point as recommended in the plan
+	s.logger.Debugf("📥 messageHandler: received message on topic %s, payload length %d",
+		msg.Topic(), len(msg.Payload()))
+
 	s.messagesReceived.Incr(1)
 
 	// Non-blocking send to message channel
 	select {
 	case s.messages <- mqttMessage{topic: msg.Topic(), payload: msg.Payload()}:
+		s.logger.Debugf("✅ messageHandler: queued message for processing")
 	default:
 		s.logger.Warn("Message buffer full, dropping message")
 	}
@@ -399,18 +404,36 @@ func (s *sparkplugInput) ReadBatch(ctx context.Context) (service.MessageBatch, s
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
 	case mqttMsg := <-s.messages:
+		s.logger.Debugf("🔍 ReadBatch: processing message from topic %s", mqttMsg.topic)
 		batch, err := s.processSparkplugMessage(mqttMsg)
+		if err != nil {
+			s.logger.Errorf("❌ ReadBatch: failed to process message: %v", err)
+			return nil, nil, err
+		}
+		if batch == nil || len(batch) == 0 {
+			s.logger.Debugf("⚠️ ReadBatch: no batch produced for message")
+			return nil, func(ctx context.Context, err error) error { return nil }, nil
+		}
+		s.logger.Debugf("✅ ReadBatch: produced batch with %d messages", len(batch))
 		return batch, func(ctx context.Context, err error) error { return nil }, err
 	}
 }
 
 func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.MessageBatch, error) {
+	// DEBUG: Log processing entry as recommended in the plan
+	s.logger.Debugf("🔄 processSparkplugMessage: starting to process topic %s", mqttMsg.topic)
+
 	// Parse topic to extract Sparkplug components
 	msgType, deviceKey, topicInfo := s.parseSparkplugTopicDetailed(mqttMsg.topic)
 	if msgType == "" {
 		s.logger.Debugf("Ignoring non-Sparkplug topic: %s", mqttMsg.topic)
 		return nil, nil
 	}
+
+	s.logger.Debugf("📊 processSparkplugMessage: parsed topic - msgType=%s, deviceKey=%s", msgType, deviceKey)
+
+	// DEBUG: Log before protobuf unmarshal as recommended in the plan
+	s.logger.Debugf("🔍 processSparkplugMessage: attempting to unmarshal %d bytes as Sparkplug payload", len(mqttMsg.payload))
 
 	// Decode Sparkplug payload
 	var payload sproto.Payload
@@ -419,13 +442,20 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 		return nil, nil
 	}
 
+	// DEBUG: Log after successful protobuf unmarshal
+	s.logger.Debugf("✅ processSparkplugMessage: successfully unmarshaled payload with %d metrics", len(payload.Metrics))
+
 	isBirthMessage := strings.Contains(msgType, "BIRTH")
 	isDataMessage := strings.Contains(msgType, "DATA")
 	isDeathMessage := strings.Contains(msgType, "DEATH")
 
+	s.logger.Debugf("🏷️ processSparkplugMessage: message type classification - birth=%v, data=%v, death=%v",
+		isBirthMessage, isDataMessage, isDeathMessage)
+
 	var batch service.MessageBatch
 
 	if isBirthMessage {
+		s.logger.Debugf("🎂 processSparkplugMessage: processing BIRTH message")
 		s.processBirthMessage(deviceKey, msgType, &payload)
 		s.birthsProcessed.Incr(1)
 
@@ -435,6 +465,7 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 			batch = s.createSingleMessage(&payload, msgType, deviceKey, topicInfo, mqttMsg.topic)
 		}
 	} else if isDataMessage {
+		s.logger.Debugf("📈 processSparkplugMessage: processing DATA message")
 		s.processDataMessage(deviceKey, msgType, &payload)
 
 		if s.config.Behaviour.AutoSplitMetrics {
@@ -443,11 +474,19 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 			batch = s.createSingleMessage(&payload, msgType, deviceKey, topicInfo, mqttMsg.topic)
 		}
 	} else if isDeathMessage {
+		s.logger.Debugf("💀 processSparkplugMessage: processing DEATH message")
 		s.processDeathMessage(deviceKey, msgType, &payload)
 		s.deathsProcessed.Incr(1)
 
 		// Create status event message for death
 		batch = s.createDeathEventMessage(msgType, deviceKey, topicInfo, mqttMsg.topic)
+	}
+
+	// DEBUG: Log when pushing to Benthos pipeline as recommended in the plan
+	if batch != nil && len(batch) > 0 {
+		s.logger.Debugf("🚀 processSparkplugMessage: created batch with %d messages for Benthos pipeline", len(batch))
+	} else {
+		s.logger.Debugf("⚠️ processSparkplugMessage: no batch created - this might be the issue!")
 	}
 
 	return batch, nil
@@ -555,19 +594,45 @@ func (s *sparkplugInput) Close(ctx context.Context) error {
 
 // Helper methods that delegate to the existing processor logic where possible
 func (s *sparkplugInput) cacheAliases(deviceKey string, metrics []*sproto.Payload_Metric) {
+	// DEBUG: Log before alias caching as recommended in the plan
+	s.logger.Debugf("🗃️ cacheAliases: starting to cache aliases for deviceKey=%s, %d metrics", deviceKey, len(metrics))
+
 	// Use core component instead of processor
 	count := s.aliasCache.CacheAliases(deviceKey, metrics)
 	if count > 0 {
-		s.logger.Debugf("Cached %d aliases for device %s", count, deviceKey)
+		s.logger.Debugf("✅ cacheAliases: cached %d aliases for device %s", count, deviceKey)
+
+		// DEBUG: Log the actual aliases cached (helpful for debugging)
+		for _, metric := range metrics {
+			if metric.Name != nil && metric.Alias != nil {
+				s.logger.Debugf("   🔗 cached alias %d -> '%s'", *metric.Alias, *metric.Name)
+			}
+		}
+	} else {
+		s.logger.Debugf("⚠️ cacheAliases: no aliases cached for device %s", deviceKey)
 	}
 }
 
 func (s *sparkplugInput) resolveAliases(deviceKey string, metrics []*sproto.Payload_Metric) {
+	// DEBUG: Log before alias resolution as recommended in the plan
+	s.logger.Debugf("🔍 resolveAliases: starting to resolve aliases for deviceKey=%s, %d metrics", deviceKey, len(metrics))
+
 	// Use core component instead of processor
 	count := s.aliasCache.ResolveAliases(deviceKey, metrics)
 	if count > 0 {
 		s.aliasResolutions.Incr(int64(count))
-		s.logger.Debugf("Resolved %d aliases for device %s", count, deviceKey)
+		s.logger.Debugf("✅ resolveAliases: resolved %d aliases for device %s", count, deviceKey)
+
+		// DEBUG: Log the actual resolutions (critical for debugging)
+		for _, metric := range metrics {
+			if metric.Name != nil && metric.Alias != nil {
+				s.logger.Debugf("   🎯 resolved alias %d -> '%s'", *metric.Alias, *metric.Name)
+			} else if metric.Alias != nil && metric.Name == nil {
+				s.logger.Debugf("   ❌ FAILED to resolve alias %d (no name found)", *metric.Alias)
+			}
+		}
+	} else {
+		s.logger.Debugf("⚠️ resolveAliases: no aliases resolved for device %s - this could be the issue!", deviceKey)
 	}
 }
 

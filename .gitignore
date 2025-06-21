@@ -203,3 +203,7 @@ dist
 
 # Cover.profile
 *.profile
+
+# Benthos binary
+benthos-umh
+benthos-umh.exe
