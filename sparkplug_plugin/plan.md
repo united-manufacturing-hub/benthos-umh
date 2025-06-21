@@ -2207,3 +2207,539 @@ services:
 4. **Begin Multi-Broker Failover Logic** (Week 2)
 
 This security implementation will transform the Sparkplug B plugin from a development/testing tool into a **production-ready, enterprise-grade solution** suitable for industrial IoT deployments! 🔐
+
+---
+
+## 🔄 **PHASE 7: UMH-SPARKPLUG B DATA MODEL CONVERSION (PRODUCT CHALLENGE)**
+*Strategic PoC Requirement - Automatic Bidirectional Data Model Translation*
+
+### **Product Challenge Overview**
+
+With 94% test coverage and comprehensive security planning complete, the **critical missing piece** for a production-ready Proof of Concept (PoC) is **automatic conversion between UMH and Sparkplug B data models**. This is fundamentally a **product challenge** rather than a pure engineering problem - requiring seamless user experience, intuitive data mapping, and transparent protocol translation.
+
+### **Strategic Context & Market Requirements**
+
+**Industry Problem:**
+- **Protocol Silos**: Manufacturing environments have mixed Sparkplug B (industrial standard) and UMH (unified namespace) systems
+- **Manual Integration Overhead**: Current solutions require extensive manual configuration for data model mapping
+- **Vendor Lock-in**: Proprietary solutions create dependency on specific platforms
+- **Complexity Barrier**: OT engineers need simple, transparent data bridging without protocol expertise
+
+**Market Opportunity:**
+- **Seamless Protocol Bridge**: First-class automatic conversion between industrial standards
+- **Zero-Configuration Experience**: Plug-and-play integration for mixed environments  
+- **Open-Source Advantage**: Transparent, customizable alternative to proprietary solutions
+- **Industrial IoT Enablement**: Lower barrier to entry for UNS adoption in Sparkplug B environments
+
+### **Technical Foundation Analysis**
+
+#### **UMH Data Model Structure**
+```yaml
+# UMH Topic Convention (ISA-95 Compliant)
+Topic: "umh.v1.{enterprise}.{site}.{area}.{productionLine}.{workCell}.{originID}.{_schema}.{schema_context}"
+
+# UMH Payload Format (_historian schema)
+Payload: {
+  "timestamp_ms": 1733903611000,
+  "tag_name": "temperature", 
+  "value": 23.5,
+  "quality": "GOOD"
+}
+
+# UMH Metadata (Tag Processor)
+Meta: {
+  "location_path": "enterprise.site.area.line.workcell.plc123",
+  "data_contract": "_historian", 
+  "tag_name": "temperature",
+  "virtual_path": "sensors.thermal",
+  "umh_topic": "umh.v1.enterprise.site.area.line.workcell.plc123._historian.sensors.thermal.temperature"
+}
+```
+
+#### **Sparkplug B Data Model Structure**  
+```yaml
+# Sparkplug B Topic Convention
+Topic: "spBv1.0/{group_id}/{message_type}/{edge_node_id}[/{device_id}]"
+
+# Sparkplug B Payload Format (Protobuf)
+Payload: {
+  "timestamp": 1733903611000,
+  "metrics": [
+    {
+      "name": "Temperature",
+      "alias": 1,
+      "timestamp": 1733903611000,
+      "datatype": "Float",
+      "value": 23.5
+    }
+  ],
+  "seq": 5
+}
+
+# Sparkplug B Session Management
+- NBIRTH: Establishes metric definitions and aliases
+- NDATA: Sends current values using aliases  
+- NDEATH: Signals disconnection
+- STATE: Host state management
+```
+
+#### **Parris Method Implementation Strategy**
+
+**From HiveMQ Blog Reference:**
+> "In the Parris method, you put your entire enterprise structure in your GroupID using delimiters to separate the categories."
+
+**Applied to UMH-Sparkplug Conversion:**
+```yaml
+# UMH to Sparkplug B (Parris Method)
+UMH Topic: "umh.v1.enterprise.site.area.line.workcell.plc123._historian.sensors.thermal.temperature"
+
+Sparkplug B Topic: "spBv1.0/enterprise:site:area:line:workcell:plc123/NDATA/sensors:thermal"
+
+Sparkplug B Payload: {
+  "timestamp": 1733903611000,
+  "metrics": [
+    {
+      "name": "temperature", 
+      "alias": 1,
+      "timestamp": 1733903611000,
+      "datatype": "Float",
+      "value": 23.5
+    }
+  ],
+  "seq": 6
+}
+```
+
+### **Product Requirements & User Experience**
+
+#### **Core User Stories**
+
+**As an OT Engineer, I want to:**
+1. **Seamless Integration**: Connect Sparkplug B devices to UMH without manual configuration
+2. **Transparent Conversion**: See my Sparkplug data in UMH format automatically
+3. **Bidirectional Flow**: Send UMH data to Sparkplug B systems without data loss
+4. **Visual Mapping**: Understand how my data structures are being converted
+5. **Error Transparency**: Know immediately when conversion fails and why
+
+**As a System Integrator, I want to:**
+1. **Flexible Mapping**: Customize how organizational structures map between protocols
+2. **Performance Visibility**: Monitor conversion performance and throughput
+3. **Schema Evolution**: Handle changes in data structures gracefully
+4. **Debugging Tools**: Trace data flow through the conversion process
+
+#### **User Experience Design Principles**
+
+**1. Zero-Configuration Default Behavior**
+```yaml
+# Default automatic conversion - no user configuration required
+input:
+  sparkplug_b: {}  # Automatically outputs UMH-compatible time-series data
+
+pipeline:
+  processors:
+    - tag_processor: {}  # Automatically handles Sparkplug metadata
+
+output:
+  uns: {}  # Seamlessly accepts converted data
+```
+
+**2. Transparent Data Mapping**
+
+| Sparkplug B Element | UMH Element | Conversion Logic |
+|---------------------|-------------|------------------|
+| `group_id` | `location_path` (enterprise) | Direct mapping with Parris delimiter parsing |
+| `edge_node_id` | `location_path` (lower levels) | Hierarchical structure reconstruction |  
+| `device_id` | `virtual_path` | Logical grouping path |
+| `metric.name` | `tag_name` | Direct field mapping |
+| `metric.alias` | Internal cache | Transparent alias resolution |
+| `metric.value` | `payload.value` | Type-safe conversion |
+| `metric.timestamp` | `timestamp_ms` | Timestamp normalization |
+
+**3. Intelligent Schema Detection**
+```yaml
+# Automatic detection and conversion
+Sparkplug B Input → UMH Output:
+  - NBIRTH → UMH metadata establishment
+  - NDATA → UMH time-series datapoints  
+  - NDEATH → UMH device offline events
+  - STATE → UMH connection status
+
+UMH Input → Sparkplug B Output:
+  - _historian → NDATA messages with aliases
+  - Device metadata → NBIRTH certificates
+  - Connection events → STATE messages
+```
+
+### **Technical Implementation Strategy**
+
+#### **Phase 7A: Sparkplug B Input Enhancement (Week 1-2)**
+
+**Current State Analysis:**
+- ✅ Sparkplug B input plugin exists with comprehensive functionality
+- ✅ Alias resolution and session management working
+- ✅ STATE message filtering implemented
+- ⚠️ **Gap**: Outputs raw Sparkplug data, not UMH time-series format
+
+**Enhancement Requirements:**
+```go
+// Enhanced Sparkplug B Input Configuration
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+    identity:
+      group_id: "Factory"
+      edge_node_id: "SCADA-Host"
+    role: "primary_host"
+    
+    # NEW: UMH Data Model Conversion
+    umh_conversion:
+      enabled: true                    # Enable automatic UMH conversion
+      location_mapping:                # Parris method configuration
+        delimiter: ":"                 # Group ID delimiter
+        default_enterprise: "factory"  # Default if group doesn't contain enterprise
+        hierarchy_levels:              # Map Sparkplug hierarchy to UMH
+          - "enterprise"
+          - "site" 
+          - "area"
+          - "line"
+          - "workcell"
+      
+      data_contract: "_historian"      # Default UMH schema
+      timestamp_field: "timestamp_ms"  # UMH timestamp format
+      
+      # Advanced mapping options
+      device_to_virtual_path: true     # Map device_id to virtual_path
+      preserve_aliases: false          # Don't expose internal aliases
+      quality_mapping:                 # Map Sparkplug quality to UMH
+        GOOD: "GOOD"
+        BAD: "BAD"
+        UNCERTAIN: "UNCERTAIN"
+```
+
+**Output Format:**
+```json
+// Before (Raw Sparkplug)
+{
+  "device_key": "Factory/Line1/Sensor01",
+  "metrics": [
+    {"name": "Temperature", "alias": 1, "value": 23.5}
+  ],
+  "timestamp": 1733903611000
+}
+
+// After (UMH Time-Series)
+{
+  "temperature": 23.5,
+  "timestamp_ms": 1733903611000
+}
+
+// With UMH Metadata
+{
+  "meta": {
+    "location_path": "factory.site1.area1.line1.workcell1",
+    "data_contract": "_historian", 
+    "tag_name": "temperature",
+    "virtual_path": "sensors.thermal",
+    "sparkplug_source": {
+      "group_id": "Factory",
+      "edge_node_id": "Line1", 
+      "device_id": "Sensor01",
+      "alias": 1
+    }
+  }
+}
+```
+
+#### **Phase 7B: UMH to Sparkplug B Output Enhancement (Week 2-3)**
+
+**Current State Analysis:**
+- ✅ Sparkplug B output plugin exists with metric definition support
+- ✅ Alias management and session lifecycle working
+- ⚠️ **Gap**: Requires manual metric configuration, doesn't auto-convert UMH
+
+**Enhancement Requirements:**
+```go
+// Enhanced Sparkplug B Output Configuration  
+output:
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+    identity:
+      group_id: "Factory"  # Can be overridden by UMH metadata
+      edge_node_id: "Gateway"
+    role: "edge_node"
+    
+    # NEW: UMH Data Model Conversion
+    umh_conversion:
+      enabled: true                    # Enable automatic UMH conversion
+      location_to_group_mapping:       # Reverse Parris method
+        delimiter: ":"                 # Group ID delimiter
+        max_hierarchy_levels: 6        # Limit hierarchy depth
+        
+      auto_metric_discovery: true      # Automatically create metrics from UMH tags
+      alias_generation:                # Dynamic alias assignment
+        strategy: "hash"               # hash, sequential, manual
+        start_alias: 1
+        
+      # Message type mapping
+      message_type_mapping:
+        "_historian": "NDATA"          # Time-series data
+        "_analytics": "NDATA"          # Processed data
+        "_events": "NDATA"             # Event data
+        "_commands": "NCMD"            # Command messages
+```
+
+**Input Processing:**
+```json
+// UMH Input
+{
+  "temperature": 23.5,
+  "timestamp_ms": 1733903611000,
+  "meta": {
+    "location_path": "factory.site1.area1.line1.workcell1.sensor01",
+    "data_contract": "_historian",
+    "tag_name": "temperature",
+    "virtual_path": "sensors.thermal"
+  }
+}
+
+// Sparkplug B Output (Auto-Generated)
+Topic: "spBv1.0/factory:site1:area1:line1:workcell1/NDATA/sensor01"
+Payload: {
+  "timestamp": 1733903611000,
+  "metrics": [
+    {
+      "name": "sensors.thermal.temperature",  // virtual_path + tag_name
+      "alias": 1,                             // Auto-generated
+      "timestamp": 1733903611000,
+      "datatype": "Float",
+      "value": 23.5
+    }
+  ],
+  "seq": 7
+}
+```
+
+#### **Phase 7C: Tag Processor Integration (Week 3-4)**
+
+**Current State Analysis:**
+- ✅ Tag processor exists with comprehensive JavaScript processing
+- ✅ UMH topic generation and metadata handling
+- ⚠️ **Gap**: No Sparkplug B awareness or conversion helpers
+
+**Enhancement Requirements:**
+```javascript
+// Enhanced Tag Processor with Sparkplug B Helpers
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |
+          // NEW: Sparkplug B conversion helpers available
+          if (msg.meta.sparkplug_source) {
+            // Auto-convert from Sparkplug B metadata
+            msg.meta.location_path = umh.sparkplug.parseGroupId(
+              msg.meta.sparkplug_source.group_id, 
+              ":"  // delimiter
+            );
+            msg.meta.virtual_path = msg.meta.sparkplug_source.device_id;
+            msg.meta.tag_name = msg.meta.sparkplug_source.metric_name;
+          }
+          
+          msg.meta.data_contract = "_historian";
+          return msg;
+          
+        conditions:
+          - if: msg.meta.sparkplug_source && msg.meta.sparkplug_source.group_id.includes("critical")
+            then: |
+              // Route critical systems to different data contract
+              msg.meta.data_contract = "_analytics";
+              msg.meta.location_path += ".critical_systems";
+              return msg;
+```
+
+**New Helper Functions:**
+```javascript
+// Available in tag processor JavaScript environment
+umh.sparkplug = {
+  // Parse Parris method group ID
+  parseGroupId: (groupId, delimiter) => "enterprise.site.area.line.workcell",
+  
+  // Generate Sparkplug B group ID from UMH location
+  generateGroupId: (locationPath, delimiter) => "enterprise:site:area:line:workcell",
+  
+  // Convert Sparkplug data types to UMH
+  convertDataType: (sparkplugType) => "number|string|boolean",
+  
+  // Generate metric aliases
+  generateAlias: (metricName) => 123,
+  
+  // Validate conversion
+  validateConversion: (umhMsg, sparkplugMsg) => true
+};
+```
+
+### **Advanced Features & User Experience**
+
+#### **Conversion Monitoring & Debugging**
+
+**Real-Time Conversion Dashboard:**
+```yaml
+# Metrics exposed for monitoring
+Conversion Metrics:
+  - sparkplug_to_umh_messages_converted
+  - umh_to_sparkplug_messages_converted  
+  - conversion_errors_total
+  - alias_cache_size
+  - topic_mapping_cache_size
+  - conversion_latency_histogram
+
+# Debug endpoints
+Debug Tools:
+  - /debug/sparkplug/aliases     # View alias mappings
+  - /debug/umh/topics           # View topic mappings  
+  - /debug/conversion/trace     # Trace conversion flow
+  - /debug/schemas/validation   # Schema validation results
+```
+
+**Visual Data Flow Tracing:**
+```json
+// Conversion trace output
+{
+  "trace_id": "conv_12345",
+  "input_format": "sparkplug_b",
+  "output_format": "umh",
+  "conversion_steps": [
+    {
+      "step": "parse_topic",
+      "input": "spBv1.0/Factory:Area1/NDATA/Line1",
+      "output": {"group": "Factory:Area1", "edge_node": "Line1"}
+    },
+    {
+      "step": "apply_parris_method", 
+      "input": "Factory:Area1",
+      "output": "factory.area1"
+    },
+    {
+      "step": "resolve_aliases",
+      "input": {"alias": 1},
+      "output": {"name": "temperature"}
+    },
+    {
+      "step": "generate_umh_topic",
+      "output": "umh.v1.factory.area1._historian.line1.temperature"
+    }
+  ],
+  "performance": {
+    "total_duration_ms": 2.3,
+    "cache_hits": 2,
+    "cache_misses": 1
+  }
+}
+```
+
+#### **Schema Evolution & Compatibility**
+
+**Automatic Schema Detection:**
+```yaml
+# Schema compatibility matrix
+Conversion Compatibility:
+  Sparkplug B → UMH:
+    - NBIRTH → UMH device registration
+    - NDATA → UMH time-series data
+    - NDEATH → UMH device offline event
+    - STATE → UMH connection status
+    - NCMD → UMH command message
+    
+  UMH → Sparkplug B:
+    - _historian → NDATA with aliases
+    - _analytics → NDATA with computed metrics
+    - _events → Custom Sparkplug metrics
+    - _commands → NCMD messages
+```
+
+**Graceful Degradation:**
+```yaml
+# Fallback strategies when conversion fails
+Fallback Behavior:
+  Unknown Sparkplug Metric Types:
+    - Convert to string representation
+    - Log warning with metric details
+    - Continue processing other metrics
+    
+  Invalid UMH Topic Structure:
+    - Use default location hierarchy
+    - Generate warning event
+    - Preserve original data in metadata
+    
+  Alias Conflicts:
+    - Auto-generate new alias
+    - Log conflict resolution
+    - Update alias cache
+```
+
+### **Implementation Timeline & Milestones**
+
+#### **Week 1-2: Sparkplug B Input Enhancement**
+- ✅ Add UMH conversion configuration options
+- ✅ Implement Parris method group ID parsing
+- ✅ Create time-series data output format
+- ✅ Add UMH metadata generation
+- ✅ Test with existing Sparkplug B test vectors
+
+#### **Week 2-3: Sparkplug B Output Enhancement**  
+- ✅ Add UMH input processing
+- ✅ Implement reverse Parris method mapping
+- ✅ Create automatic metric discovery
+- ✅ Add dynamic alias generation
+- ✅ Test bidirectional conversion
+
+#### **Week 3-4: Tag Processor Integration**
+- ✅ Add Sparkplug B helper functions
+- ✅ Implement conversion validation
+- ✅ Create debugging and tracing tools
+- ✅ Add comprehensive error handling
+
+#### **Week 4-5: PoC Validation & Documentation**
+- ✅ End-to-end integration testing
+- ✅ Performance benchmarking
+- ✅ User experience validation
+- ✅ Complete documentation and examples
+
+### **Success Criteria & Validation**
+
+#### **Functional Requirements**
+- ✅ **Zero-Config Conversion**: Sparkplug B data automatically appears as UMH time-series
+- ✅ **Bidirectional Flow**: UMH data seamlessly converts to Sparkplug B format
+- ✅ **Parris Method Implementation**: Hierarchical mapping using delimiter-based group IDs
+- ✅ **Alias Transparency**: Internal Sparkplug aliases hidden from UMH users
+- ✅ **Type Safety**: All data type conversions preserve semantic meaning
+
+#### **Performance Requirements**
+- ✅ **Low Latency**: <5ms conversion overhead per message
+- ✅ **High Throughput**: >10,000 messages/second conversion rate
+- ✅ **Memory Efficiency**: <100MB memory overhead for alias/topic caches
+- ✅ **Cache Performance**: >95% cache hit rate for alias/topic resolution
+
+#### **User Experience Requirements**
+- ✅ **Intuitive Configuration**: Default behavior works for 80% of use cases
+- ✅ **Clear Error Messages**: Conversion failures include actionable guidance
+- ✅ **Visual Debugging**: Conversion flow can be traced and understood
+- ✅ **Seamless Integration**: Works with existing UMH and Sparkplug B systems
+
+### **Competitive Advantage & Market Position**
+
+**Unique Value Proposition:**
+1. **First Open-Source Implementation**: Transparent, customizable UMH-Sparkplug B bridge
+2. **Zero-Configuration Experience**: Works out-of-the-box for standard deployments
+3. **Industrial-Grade Performance**: Handles enterprise-scale message volumes
+4. **Comprehensive Protocol Support**: Full Sparkplug B specification compliance
+5. **Extensible Architecture**: Plugin-based system for custom conversions
+
+**Market Differentiation:**
+- **vs. Proprietary Solutions**: Open source, no vendor lock-in, transparent conversion logic
+- **vs. Manual Integration**: Automatic conversion, no configuration overhead
+- **vs. Limited Bridges**: Full bidirectional support, comprehensive data model mapping
+- **vs. Academic Solutions**: Production-ready, enterprise-grade performance and reliability
+
+This Phase 7 implementation will complete the PoC requirements by providing seamless, automatic conversion between UMH and Sparkplug B data models, enabling true interoperability between industrial IoT ecosystems while maintaining the performance and reliability standards established in previous phases.
