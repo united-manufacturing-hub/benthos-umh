@@ -1685,3 +1685,525 @@ sparkplug_plugin/
 - ✅ End-to-end message processing with real MQTT broker
 - ✅ Plugin-to-plugin bidirectional communication
 - ✅ Multiple edge nodes publishing to same broker
+
+---
+
+## 🔐 **PHASE 6: SECURITY IMPLEMENTATION (OPTION A)**
+*Next Major Phase - Production Security Hardening*
+
+### **Strategic Rationale**
+
+With 94% test coverage and production-ready test infrastructure, **security implementation** is the logical next step for several critical reasons:
+
+1. **Production Readiness Gap**: Current plugin lacks TLS/SSL support - major blocker for enterprise deployment
+2. **Industrial IoT Security Requirements**: Sparkplug B deployments often handle sensitive manufacturing data
+3. **Compliance Necessity**: Many industrial environments require encrypted communication by policy
+4. **Foundation for Advanced Features**: Security infrastructure enables multi-tenant, cloud, and hybrid deployments
+5. **Market Differentiation**: Comprehensive security support sets our plugin apart from basic implementations
+
+### **Phase 6 Objectives**
+
+**Primary Goals:**
+- ✅ **TLS/SSL Support**: Secure MQTT connections with certificate validation
+- ✅ **Authentication Mechanisms**: Username/password, client certificates, token-based auth
+- ✅ **Multi-Broker Failover**: High availability with secure broker clusters
+- ✅ **Security Configuration Validation**: Comprehensive config validation and error handling
+- ✅ **Security Testing**: Dedicated test suite for security scenarios
+
+**Secondary Goals:**
+- 🔧 **Certificate Management**: Auto-renewal, CA validation, certificate chains
+- 🔧 **Security Monitoring**: Connection security metrics and alerting
+- 🔧 **Audit Logging**: Security events and access logging
+- 🔧 **Performance Impact Assessment**: Security overhead measurement
+
+### **Implementation Plan - Phase 6A: Core Security Features**
+
+#### **6A.1: TLS/SSL Configuration (Week 1-2)**
+
+**Enhanced MQTT Configuration Structure:**
+```yaml
+# Current basic configuration
+mqtt:
+  urls: ["tcp://localhost:1883"]
+  client_id: "sparkplug-client"
+
+# New security-enhanced configuration
+mqtt:
+  urls: ["ssl://broker.company.com:8883", "ssl://backup-broker.company.com:8883"]
+  client_id: "sparkplug-edge-001"
+  
+  # TLS Configuration
+  tls:
+    enabled: true
+    insecure_skip_verify: false  # Default: false for production
+    ca_file: "/etc/ssl/certs/ca-certificates.crt"
+    cert_file: "/etc/ssl/private/client.crt"
+    key_file: "/etc/ssl/private/client.key"
+    server_name: "broker.company.com"  # SNI support
+    min_version: "1.2"  # TLS 1.2 minimum
+    max_version: "1.3"  # TLS 1.3 preferred
+    cipher_suites: ["TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"]  # Optional restriction
+    
+  # Authentication
+  auth:
+    username: "${MQTT_USERNAME}"  # Environment variable support
+    password: "${MQTT_PASSWORD}"
+    # Alternative: client certificate authentication (mutual TLS)
+    client_cert_auth: true
+    
+  # Connection Security
+  connection:
+    keep_alive: 30s
+    connect_timeout: 10s
+    reconnect_delay: 5s
+    max_reconnect_delay: 60s
+    clean_session: true
+    will:
+      topic: "spBv1.0/Factory/STATE/EdgeNode001"
+      payload: "OFFLINE"
+      qos: 1
+      retained: true
+```
+
+**Implementation Tasks:**
+```go
+// sparkplug_plugin/security.go - New file for security components
+
+type TLSConfig struct {
+    Enabled           bool     `yaml:"enabled"`
+    InsecureSkipVerify bool    `yaml:"insecure_skip_verify"`
+    CAFile            string   `yaml:"ca_file"`
+    CertFile          string   `yaml:"cert_file"`
+    KeyFile           string   `yaml:"key_file"`
+    ServerName        string   `yaml:"server_name"`
+    MinVersion        string   `yaml:"min_version"`
+    MaxVersion        string   `yaml:"max_version"`
+    CipherSuites      []string `yaml:"cipher_suites"`
+}
+
+type AuthConfig struct {
+    Username        string `yaml:"username"`
+    Password        string `yaml:"password"`
+    ClientCertAuth  bool   `yaml:"client_cert_auth"`
+}
+
+type SecurityConfig struct {
+    TLS  TLSConfig  `yaml:"tls"`
+    Auth AuthConfig `yaml:"auth"`
+}
+
+// Security configuration builder
+func (sc *SecurityConfig) BuildTLSConfig() (*tls.Config, error) {
+    if !sc.TLS.Enabled {
+        return nil, nil
+    }
+    
+    tlsConfig := &tls.Config{
+        InsecureSkipVerify: sc.TLS.InsecureSkipVerify,
+        ServerName:         sc.TLS.ServerName,
+    }
+    
+    // Load CA certificates
+    if sc.TLS.CAFile != "" {
+        caCert, err := ioutil.ReadFile(sc.TLS.CAFile)
+        if err != nil {
+            return nil, fmt.Errorf("failed to read CA file: %w", err)
+        }
+        caCertPool := x509.NewCertPool()
+        if !caCertPool.AppendCertsFromPEM(caCert) {
+            return nil, fmt.Errorf("failed to parse CA certificate")
+        }
+        tlsConfig.RootCAs = caCertPool
+    }
+    
+    // Load client certificates for mutual TLS
+    if sc.TLS.CertFile != "" && sc.TLS.KeyFile != "" {
+        cert, err := tls.LoadX509KeyPair(sc.TLS.CertFile, sc.TLS.KeyFile)
+        if err != nil {
+            return nil, fmt.Errorf("failed to load client certificate: %w", err)
+        }
+        tlsConfig.Certificates = []tls.Certificate{cert}
+    }
+    
+    // Set TLS version constraints
+    if sc.TLS.MinVersion != "" {
+        tlsConfig.MinVersion = parseTLSVersion(sc.TLS.MinVersion)
+    }
+    if sc.TLS.MaxVersion != "" {
+        tlsConfig.MaxVersion = parseTLSVersion(sc.TLS.MaxVersion)
+    }
+    
+    return tlsConfig, nil
+}
+```
+
+#### **6A.2: Multi-Broker Failover (Week 2-3)**
+
+**High Availability Configuration:**
+```yaml
+mqtt:
+  # Multiple brokers for failover
+  brokers:
+    - url: "ssl://primary-broker.company.com:8883"
+      priority: 1
+      health_check: "tcp"  # tcp, mqtt_ping, custom
+      timeout: 5s
+      
+    - url: "ssl://secondary-broker.company.com:8883" 
+      priority: 2
+      health_check: "tcp"
+      timeout: 5s
+      
+    - url: "ssl://backup-broker.company.com:8883"
+      priority: 3
+      health_check: "tcp"
+      timeout: 10s
+      
+  # Failover behavior
+  failover:
+    strategy: "priority"  # priority, round_robin, random
+    max_retries: 3
+    retry_delay: 2s
+    health_check_interval: 30s
+    reconnect_on_failure: true
+```
+
+**Implementation Architecture:**
+```go
+// sparkplug_plugin/broker_manager.go - New file
+
+type BrokerConfig struct {
+    URL         string        `yaml:"url"`
+    Priority    int          `yaml:"priority"`
+    HealthCheck string       `yaml:"health_check"`
+    Timeout     time.Duration `yaml:"timeout"`
+}
+
+type FailoverConfig struct {
+    Strategy            string        `yaml:"strategy"`
+    MaxRetries         int           `yaml:"max_retries"`
+    RetryDelay         time.Duration `yaml:"retry_delay"`
+    HealthCheckInterval time.Duration `yaml:"health_check_interval"`
+    ReconnectOnFailure  bool         `yaml:"reconnect_on_failure"`
+}
+
+type BrokerManager struct {
+    brokers       []BrokerConfig
+    failoverConfig FailoverConfig
+    currentBroker  *BrokerConfig
+    healthChecker  *HealthChecker
+    metrics       *SecurityMetrics
+}
+
+func (bm *BrokerManager) GetNextBroker() (*BrokerConfig, error) {
+    switch bm.failoverConfig.Strategy {
+    case "priority":
+        return bm.getHighestPriorityHealthyBroker()
+    case "round_robin":
+        return bm.getRoundRobinBroker()
+    case "random":
+        return bm.getRandomHealthyBroker()
+    default:
+        return nil, fmt.Errorf("unknown failover strategy: %s", bm.failoverConfig.Strategy)
+    }
+}
+
+func (bm *BrokerManager) StartHealthChecking(ctx context.Context) {
+    ticker := time.NewTicker(bm.failoverConfig.HealthCheckInterval)
+    defer ticker.Stop()
+    
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case <-ticker.C:
+            bm.performHealthChecks()
+        }
+    }
+}
+```
+
+#### **6A.3: Security Testing Infrastructure (Week 3-4)**
+
+**New Test Categories:**
+```go
+// sparkplug_plugin/security_test.go - New comprehensive security test suite
+
+//go:build security
+
+package sparkplug_plugin_test
+
+import (
+    "crypto/tls"
+    "crypto/x509"
+    "testing"
+    . "github.com/onsi/ginkgo/v2"
+    . "github.com/onsi/gomega"
+)
+
+var _ = Describe("Security Implementation Tests", func() {
+    Context("TLS Configuration", func() {
+        It("should validate TLS configuration parsing", func() {
+            config := SecurityConfig{
+                TLS: TLSConfig{
+                    Enabled:    true,
+                    CAFile:     "/path/to/ca.crt",
+                    CertFile:   "/path/to/client.crt", 
+                    KeyFile:    "/path/to/client.key",
+                    MinVersion: "1.2",
+                },
+            }
+            
+            tlsConfig, err := config.BuildTLSConfig()
+            Expect(err).NotTo(HaveOccurred())
+            Expect(tlsConfig.MinVersion).To(Equal(uint16(tls.VersionTLS12)))
+        })
+        
+        It("should reject invalid certificate paths", func() {
+            config := SecurityConfig{
+                TLS: TLSConfig{
+                    Enabled:  true,
+                    CertFile: "/nonexistent/cert.crt",
+                    KeyFile:  "/nonexistent/key.key",
+                },
+            }
+            
+            _, err := config.BuildTLSConfig()
+            Expect(err).To(HaveOccurred())
+            Expect(err.Error()).To(ContainSubstring("failed to load client certificate"))
+        })
+    })
+    
+    Context("Multi-Broker Failover", func() {
+        It("should select highest priority healthy broker", func() {
+            brokers := []BrokerConfig{
+                {URL: "ssl://broker1:8883", Priority: 2, HealthCheck: "tcp"},
+                {URL: "ssl://broker2:8883", Priority: 1, HealthCheck: "tcp"},
+                {URL: "ssl://broker3:8883", Priority: 3, HealthCheck: "tcp"},
+            }
+            
+            manager := NewBrokerManager(brokers, FailoverConfig{Strategy: "priority"})
+            // Mock all brokers as healthy
+            manager.SetBrokerHealth("ssl://broker1:8883", true)
+            manager.SetBrokerHealth("ssl://broker2:8883", true) 
+            manager.SetBrokerHealth("ssl://broker3:8883", true)
+            
+            broker, err := manager.GetNextBroker()
+            Expect(err).NotTo(HaveOccurred())
+            Expect(broker.URL).To(Equal("ssl://broker2:8883")) // Priority 1 (highest)
+        })
+        
+        It("should skip unhealthy brokers", func() {
+            // Test failover logic when primary broker is down
+        })
+    })
+    
+    Context("Authentication", func() {
+        It("should support username/password authentication", func() {
+            // Test basic auth configuration
+        })
+        
+        It("should support client certificate authentication", func() {
+            // Test mutual TLS authentication
+        })
+        
+        It("should handle authentication failures gracefully", func() {
+            // Test auth failure scenarios
+        })
+    })
+})
+```
+
+**Security Integration Tests:**
+```go
+// sparkplug_plugin/security_integration_test.go
+
+//go:build security && integration
+
+// Real broker tests with TLS, certificates, authentication
+// Requires Docker containers with properly configured secure brokers
+```
+
+#### **6A.4: Security Metrics & Monitoring (Week 4)**
+
+**Security Observability:**
+```go
+// sparkplug_plugin/security_metrics.go
+
+type SecurityMetrics struct {
+    TLSConnectionsTotal      prometheus.Counter
+    TLSConnectionsActive     prometheus.Gauge
+    TLSHandshakeErrors       prometheus.Counter
+    AuthenticationAttempts   prometheus.Counter
+    AuthenticationFailures   prometheus.Counter
+    BrokerFailovers         prometheus.Counter
+    CertificateExpiryDays   prometheus.Gauge
+}
+
+func (sm *SecurityMetrics) RecordTLSConnection(success bool) {
+    sm.TLSConnectionsTotal.Inc()
+    if success {
+        sm.TLSConnectionsActive.Inc()
+    } else {
+        sm.TLSHandshakeErrors.Inc()
+    }
+}
+
+func (sm *SecurityMetrics) RecordAuthentication(success bool) {
+    sm.AuthenticationAttempts.Inc()
+    if !success {
+        sm.AuthenticationFailures.Inc()
+    }
+}
+
+func (sm *SecurityMetrics) CheckCertificateExpiry(certPath string) {
+    cert, err := loadCertificate(certPath)
+    if err != nil {
+        return
+    }
+    
+    daysUntilExpiry := time.Until(cert.NotAfter).Hours() / 24
+    sm.CertificateExpiryDays.Set(daysUntilExpiry)
+}
+```
+
+### **Phase 6B: Advanced Security Features (Optional)**
+
+#### **6B.1: Certificate Management**
+- Auto-renewal integration with Let's Encrypt/internal CA
+- Certificate rotation without downtime
+- Certificate chain validation and trust management
+
+#### **6B.2: Security Audit Logging**
+- Structured security event logging
+- Authentication/authorization audit trail
+- Connection security event tracking
+
+#### **6B.3: Advanced Authentication**
+- JWT token-based authentication
+- OAuth2/OIDC integration for cloud deployments
+- Role-based access control (RBAC) for topic permissions
+
+### **Testing Strategy - Security-First Approach**
+
+**Test Pyramid for Security:**
+```makefile
+# Security test targets in sparkplug_plugin/Makefile
+
+# Level 1: Security unit tests (offline, fast)
+test-security-unit:
+	go test -v -tags="security" -run "Security.*Unit" ./sparkplug_plugin
+
+# Level 2: Security configuration tests (offline)
+test-security-config:
+	go test -v -tags="security" -run "Security.*Config" ./sparkplug_plugin
+
+# Level 3: Security integration tests (requires secure brokers)
+test-security-integration:
+	docker-compose -f tests/security/docker-compose.yml up -d
+	go test -v -tags="security,integration" -run "Security.*Integration" ./sparkplug_plugin
+	docker-compose -f tests/security/docker-compose.yml down
+
+# Level 4: Security penetration tests (manual/optional)
+test-security-pentest:
+	@echo "Running security penetration tests..."
+	@echo "⚠️  This requires manual security testing tools"
+```
+
+**Docker Test Infrastructure for Security:**
+```yaml
+# tests/security/docker-compose.yml
+version: '3.8'
+services:
+  mosquitto-tls:
+    image: eclipse-mosquitto:2.0
+    ports:
+      - "8883:8883"  # TLS port
+      - "8884:8884"  # TLS + client cert port
+    volumes:
+      - ./mosquitto-tls.conf:/mosquitto/config/mosquitto.conf
+      - ./certs:/mosquitto/certs
+    
+  mosquitto-auth:
+    image: eclipse-mosquitto:2.0  
+    ports:
+      - "8885:1883"  # Auth-required port
+    volumes:
+      - ./mosquitto-auth.conf:/mosquitto/config/mosquitto.conf
+      - ./passwd:/mosquitto/config/passwd
+```
+
+### **Success Criteria - Phase 6**
+
+**Technical Milestones:**
+- ✅ **TLS/SSL Support**: All connection types (tcp, ssl, wss) working
+- ✅ **Authentication**: Username/password + client certificates working
+- ✅ **Multi-Broker Failover**: Automatic failover with health checking
+- ✅ **Security Configuration**: Comprehensive config validation
+- ✅ **Security Testing**: Dedicated test suite with >90% security code coverage
+- ✅ **Performance Impact**: <10% performance degradation with TLS enabled
+- ✅ **Documentation**: Complete security configuration guide
+
+**Business Value Metrics:**
+- 🎯 **Enterprise Readiness**: Plugin meets enterprise security requirements
+- 🎯 **Compliance Support**: Supports common industrial security standards
+- 🎯 **Production Deployment**: Ready for secure production environments
+- 🎯 **Market Differentiation**: Comprehensive security vs. basic implementations
+
+**Deliverables:**
+1. **Enhanced Plugin**: Security-hardened Sparkplug B plugin with TLS/auth support
+2. **Security Documentation**: Complete security configuration and deployment guide
+3. **Security Test Suite**: Comprehensive security testing infrastructure
+4. **Reference Configurations**: Production-ready secure configuration examples
+5. **Security Metrics**: Observability for security operations
+
+### **Risk Assessment & Mitigation**
+
+**Technical Risks:**
+- 🚨 **Performance Impact**: TLS overhead affecting throughput
+  - *Mitigation*: Benchmarking, optimization, connection pooling
+- 🚨 **Certificate Management Complexity**: Complex cert workflows
+  - *Mitigation*: Clear documentation, automation, testing
+- 🚨 **Configuration Complexity**: Too many security options
+  - *Mitigation*: Sensible defaults, validation, examples
+
+**Business Risks:**
+- 🚨 **Development Timeline**: Security features taking longer than expected
+  - *Mitigation*: Phased approach, MVP first, advanced features optional
+- 🚨 **Compatibility Issues**: Breaking existing deployments
+  - *Mitigation*: Backward compatibility, migration guide, feature flags
+
+### **Phase 6 Timeline Estimate**
+
+**Week 1-2: Core TLS Implementation**
+- TLS configuration structure
+- Certificate loading and validation
+- Basic secure connections
+
+**Week 3: Multi-Broker Failover**
+- Broker health checking
+- Failover logic implementation
+- High availability testing
+
+**Week 4: Security Testing & Documentation**
+- Security test suite
+- Integration testing with secure brokers
+- Documentation and examples
+
+**Week 5: Polish & Validation**
+- Performance testing
+- Security review
+- Production readiness validation
+
+**Total Estimate: 5 weeks for complete Phase 6A implementation**
+
+---
+
+**Next Action Items for Phase 6:**
+
+1. **Create Security Architecture Document** (Day 1)
+2. **Set up Security Test Infrastructure** (Day 2-3)
+3. **Implement Core TLS Configuration** (Week 1)
+4. **Begin Multi-Broker Failover Logic** (Week 2)
+
+This security implementation will transform the Sparkplug B plugin from a development/testing tool into a **production-ready, enterprise-grade solution** suitable for industrial IoT deployments! 🔐
