@@ -81,6 +81,123 @@ var (
 	NDATA_v1  = mustMarshalToBase64(createTestNDataPayload())
 )
 
+// Eclipse Tahu spec-compliant test vectors - programmatically generated
+// These use the same approach as the working vectors above but with Eclipse Tahu message structures
+// To regenerate with different data, use: python gen_vectors.py
+
+func createEclipseTahuNBirthPayload() *sproto.Payload {
+	return &sproto.Payload{
+		Timestamp: &[]uint64{uint64(1750000000000)}[0], // Fixed timestamp
+		Seq:       &[]uint64{0}[0],
+		Metrics: []*sproto.Payload_Metric{
+			{
+				Name:     &[]string{"bdSeq"}[0],
+				Alias:    &[]uint64{0}[0],
+				Datatype: &[]uint32{7}[0], // UInt64
+				Value:    &sproto.Payload_Metric_LongValue{LongValue: 1},
+			},
+			{
+				Name:     &[]string{"Node Control/Rebirth"}[0],
+				Datatype: &[]uint32{11}[0], // Boolean
+				Value:    &sproto.Payload_Metric_BooleanValue{BooleanValue: true},
+			},
+			{
+				Name:     &[]string{"Temperature"}[0],
+				Alias:    &[]uint64{1}[0],
+				Datatype: &[]uint32{10}[0], // Double
+				Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 25.7},
+			},
+			{
+				Name:     &[]string{"TisPressure"}[0],
+				Alias:    &[]uint64{2}[0],
+				Datatype: &[]uint32{7}[0], // UInt64
+				Value:    &sproto.Payload_Metric_LongValue{LongValue: 42},
+			},
+			{
+				Name:     &[]string{"Greeting"}[0],
+				Alias:    &[]uint64{3}[0],
+				Datatype: &[]uint32{12}[0], // String
+				Value:    &sproto.Payload_Metric_StringValue{StringValue: "hi"},
+			},
+		},
+	}
+}
+
+func createEclipseTahuNDataPayload() *sproto.Payload {
+	return &sproto.Payload{
+		Timestamp: &[]uint64{uint64(1750000001000)}[0], // Fixed timestamp
+		Seq:       &[]uint64{1}[0],
+		Metrics: []*sproto.Payload_Metric{
+			{
+				Alias:    &[]uint64{1}[0],  // Temperature alias
+				Datatype: &[]uint32{10}[0], // Double
+				Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 25.7},
+			},
+			{
+				Alias:    &[]uint64{2}[0],  // Pressure alias
+				Datatype: &[]uint32{11}[0], // Boolean
+				Value:    &sproto.Payload_Metric_BooleanValue{BooleanValue: true},
+			},
+		},
+	}
+}
+
+func createEclipseTahuNDeathPayload() *sproto.Payload {
+	return &sproto.Payload{
+		Timestamp: &[]uint64{uint64(1750000002000)}[0], // Fixed timestamp
+		Seq:       &[]uint64{0}[0],
+		Metrics: []*sproto.Payload_Metric{
+			{
+				Name:     &[]string{"bdSeq"}[0],
+				Alias:    &[]uint64{0}[0],
+				Datatype: &[]uint32{7}[0], // UInt64
+				Value:    &sproto.Payload_Metric_LongValue{LongValue: 1},
+			},
+		},
+	}
+}
+
+func createEclipseTahuNCmdPayload() *sproto.Payload {
+	return &sproto.Payload{
+		Timestamp: &[]uint64{uint64(1750000003000)}[0], // Fixed timestamp
+		Seq:       &[]uint64{0}[0],
+		Metrics: []*sproto.Payload_Metric{
+			{
+				Name:     &[]string{"Node Control/Rebirth"}[0],
+				Datatype: &[]uint32{11}[0], // Boolean
+				Value:    &sproto.Payload_Metric_BooleanValue{BooleanValue: true},
+			},
+		},
+	}
+}
+
+// Eclipse Tahu Base64 constants generated from working payloads
+var (
+	NBIRTH_full_v1       = mustMarshalToBase64(createEclipseTahuNBirthPayload())
+	DBIRTH_full_v1       = NBIRTH_full_v1 // Same payload structure
+	NDATA_double_bool_v1 = mustMarshalToBase64(createEclipseTahuNDataPayload())
+	DDATA_double_bool_v1 = NDATA_double_bool_v1 // Same payload structure
+	NDATA_seq_wrap_v1    = mustMarshalToBase64(&sproto.Payload{
+		Timestamp: &[]uint64{uint64(1750000004000)}[0],
+		Seq:       &[]uint64{0}[0], // Wrapped around
+		Metrics: []*sproto.Payload_Metric{
+			{
+				Alias:    &[]uint64{1}[0],
+				Datatype: &[]uint32{10}[0], // Double
+				Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 22.2},
+			},
+			{
+				Alias:    &[]uint64{2}[0],
+				Datatype: &[]uint32{11}[0], // Boolean
+				Value:    &sproto.Payload_Metric_BooleanValue{BooleanValue: false},
+			},
+		},
+	})
+	NDEATH_min_v1   = mustMarshalToBase64(createEclipseTahuNDeathPayload())
+	NCMD_rebirth_v1 = mustMarshalToBase64(createEclipseTahuNCmdPayload())
+	DCMD_rebirth_v1 = NCMD_rebirth_v1 // Same payload structure
+)
+
 // TestVector represents a validated Sparkplug payload for testing
 type TestVector struct {
 	Name            string
@@ -93,6 +210,7 @@ type TestVector struct {
 // GetTestVectors returns all available test vectors with working Base64 payloads
 func GetTestVectors() []TestVector {
 	return []TestVector{
+		// Original working vectors (programmatically generated)
 		{
 			Name:            "NBIRTH_v1",
 			Base64Data:      NBIRTH_v1,
@@ -105,6 +223,64 @@ func GetTestVectors() []TestVector {
 			Base64Data:      NDATA_v1,
 			Description:     "NDATA with Temperature metric using alias 100 (name resolved from cache)",
 			MessageType:     "NDATA",
+			ExpectedMetrics: 1,
+		},
+
+		// Eclipse Tahu spec-compliant vectors (comprehensive coverage)
+		{
+			Name:            "NBIRTH_full_v1",
+			Base64Data:      NBIRTH_full_v1,
+			Description:     "Eclipse Tahu NBIRTH w/ all datatypes incl. NC/Rebirth",
+			MessageType:     "NBIRTH",
+			ExpectedMetrics: 5,
+		},
+		{
+			Name:            "DBIRTH_full_v1",
+			Base64Data:      DBIRTH_full_v1,
+			Description:     "Eclipse Tahu DBIRTH w/ all datatypes incl. DC/Rebirth",
+			MessageType:     "DBIRTH",
+			ExpectedMetrics: 5,
+		},
+		{
+			Name:            "NDATA_double_bool_v1",
+			Base64Data:      NDATA_double_bool_v1,
+			Description:     "Eclipse Tahu NDATA Double+Bool (aliases 1,2)",
+			MessageType:     "NDATA",
+			ExpectedMetrics: 2,
+		},
+		{
+			Name:            "DDATA_double_bool_v1",
+			Base64Data:      DDATA_double_bool_v1,
+			Description:     "Eclipse Tahu DDATA Double+Bool (aliases 1,2)",
+			MessageType:     "DDATA",
+			ExpectedMetrics: 2,
+		},
+		{
+			Name:            "NDATA_seq_wrap_v1",
+			Base64Data:      NDATA_seq_wrap_v1,
+			Description:     "Eclipse Tahu NDATA seq wrap‑around 255→0",
+			MessageType:     "NDATA",
+			ExpectedMetrics: 2,
+		},
+		{
+			Name:            "NDEATH_min_v1",
+			Base64Data:      NDEATH_min_v1,
+			Description:     "Eclipse Tahu Node death minimal",
+			MessageType:     "NDEATH",
+			ExpectedMetrics: 1,
+		},
+		{
+			Name:            "NCMD_rebirth_v1",
+			Base64Data:      NCMD_rebirth_v1,
+			Description:     "Eclipse Tahu Node Rebirth Request",
+			MessageType:     "NCMD",
+			ExpectedMetrics: 1,
+		},
+		{
+			Name:            "DCMD_rebirth_v1",
+			Base64Data:      DCMD_rebirth_v1,
+			Description:     "Eclipse Tahu Device Rebirth Request",
+			MessageType:     "DCMD",
 			ExpectedMetrics: 1,
 		},
 	}
@@ -172,4 +348,37 @@ func ValidateTestVector(vector TestVector) error {
 	}
 
 	return nil
+}
+
+// GetTestVectorByName returns a specific test vector by name
+func GetTestVectorByName(name string) (TestVector, bool) {
+	for _, tv := range GetTestVectors() {
+		if tv.Name == name {
+			return tv, true
+		}
+	}
+	return TestVector{}, false
+}
+
+// GetTestVectorsByMessageType returns all test vectors for a specific message type
+func GetTestVectorsByMessageType(msgType string) []TestVector {
+	var result []TestVector
+	for _, tv := range GetTestVectors() {
+		if tv.MessageType == msgType {
+			result = append(result, tv)
+		}
+	}
+	return result
+}
+
+// GetEclipseTahuVectors returns only the Eclipse Tahu-generated vectors for spec compliance testing
+func GetEclipseTahuVectors() []TestVector {
+	var result []TestVector
+	for _, tv := range GetTestVectors() {
+		// Eclipse Tahu vectors have descriptive names starting with "Eclipse Tahu"
+		if len(tv.Description) > 12 && tv.Description[:12] == "Eclipse Tahu" {
+			result = append(result, tv)
+		}
+	}
+	return result
 }
