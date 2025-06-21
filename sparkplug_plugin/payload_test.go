@@ -21,6 +21,19 @@ func TestSparkplugPayloadVectors(t *testing.T) {
 	RunSpecs(t, "Sparkplug B Payload Test Suite")
 }
 
+// Helper functions for payload testing
+func stringPtr(s string) *string {
+	return &s
+}
+
+func uint64Ptr(u uint64) *uint64 {
+	return &u
+}
+
+func uint32Ptr(u uint32) *uint32 {
+	return &u
+}
+
 var _ = Describe("Static Payload Validation", func() {
 	Context("Test Vector Decoding", func() {
 		It("should decode all generated test vectors successfully", func() {
@@ -197,9 +210,104 @@ var _ = Describe("Static Payload Validation", func() {
 		})
 
 		It("should handle metric value types correctly", func() {
-			// This would test specific metric value preservation
-			// across encode/decode cycles for different data types
-			Skip("TODO: Implement comprehensive value type testing")
+			// Test all Sparkplug data types with proper validation
+			testMetrics := []*sproto.Payload_Metric{
+				{
+					Name:     stringPtr("Int8_Value"),
+					Alias:    uint64Ptr(1),
+					Datatype: uint32Ptr(1), // Int8
+					Value:    &sproto.Payload_Metric_IntValue{IntValue: 127},
+				},
+				{
+					Name:     stringPtr("Int16_Value"),
+					Alias:    uint64Ptr(2),
+					Datatype: uint32Ptr(2), // Int16
+					Value:    &sproto.Payload_Metric_IntValue{IntValue: 32767},
+				},
+				{
+					Name:     stringPtr("Int32_Value"),
+					Alias:    uint64Ptr(3),
+					Datatype: uint32Ptr(3), // Int32
+					Value:    &sproto.Payload_Metric_IntValue{IntValue: 2147483647},
+				},
+				{
+					Name:     stringPtr("Int64_Value"),
+					Alias:    uint64Ptr(4),
+					Datatype: uint32Ptr(7), // Int64
+					Value:    &sproto.Payload_Metric_LongValue{LongValue: 9223372036854775807},
+				},
+				{
+					Name:     stringPtr("Float_Value"),
+					Alias:    uint64Ptr(5),
+					Datatype: uint32Ptr(9), // Float
+					Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 3.14159},
+				},
+				{
+					Name:     stringPtr("Double_Value"),
+					Alias:    uint64Ptr(6),
+					Datatype: uint32Ptr(10), // Double
+					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 2.718281828459045},
+				},
+				{
+					Name:     stringPtr("Boolean_Value"),
+					Alias:    uint64Ptr(7),
+					Datatype: uint32Ptr(11), // Boolean
+					Value:    &sproto.Payload_Metric_BooleanValue{BooleanValue: true},
+				},
+				{
+					Name:     stringPtr("String_Value"),
+					Alias:    uint64Ptr(8),
+					Datatype: uint32Ptr(12), // String
+					Value:    &sproto.Payload_Metric_StringValue{StringValue: "Test String"},
+				},
+			}
+
+			// Create payload with all data types
+			testPayload := &sproto.Payload{
+				Timestamp: uint64Ptr(1672531320000),
+				Seq:       uint64Ptr(0),
+				Metrics:   testMetrics,
+			}
+
+			// Test round-trip encoding/decoding
+			encodedData, err := proto.Marshal(testPayload)
+			Expect(err).NotTo(HaveOccurred())
+
+			var decodedPayload sproto.Payload
+			err = proto.Unmarshal(encodedData, &decodedPayload)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify decoded payload matches original
+			Expect(decodedPayload.Metrics).To(HaveLen(8))
+			Expect(*decodedPayload.Timestamp).To(Equal(*testPayload.Timestamp))
+			Expect(*decodedPayload.Seq).To(Equal(*testPayload.Seq))
+
+			// Validate each metric type after round-trip
+			for i, metric := range decodedPayload.Metrics {
+				originalMetric := testMetrics[i]
+				By("validating metric type "+*originalMetric.Name, func() {
+					Expect(metric.Name).NotTo(BeNil())
+					Expect(*metric.Name).To(Equal(*originalMetric.Name))
+					Expect(*metric.Alias).To(Equal(*originalMetric.Alias))
+					Expect(*metric.Datatype).To(Equal(*originalMetric.Datatype))
+
+					// Type-specific validation
+					switch *metric.Datatype {
+					case 1, 2, 3: // Int8, Int16, Int32
+						Expect(metric.GetIntValue()).To(Equal(originalMetric.GetIntValue()))
+					case 7: // Int64
+						Expect(metric.GetLongValue()).To(Equal(originalMetric.GetLongValue()))
+					case 9: // Float
+						Expect(metric.GetFloatValue()).To(BeNumerically("~", originalMetric.GetFloatValue(), 0.0001))
+					case 10: // Double
+						Expect(metric.GetDoubleValue()).To(BeNumerically("~", originalMetric.GetDoubleValue(), 0.0000001))
+					case 11: // Boolean
+						Expect(metric.GetBooleanValue()).To(Equal(originalMetric.GetBooleanValue()))
+					case 12: // String
+						Expect(metric.GetStringValue()).To(Equal(originalMetric.GetStringValue()))
+					}
+				})
+			}
 		})
 	})
 

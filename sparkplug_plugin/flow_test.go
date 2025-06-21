@@ -336,7 +336,43 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 	Context("Error Recovery Logic", func() {
 		It("should handle malformed message recovery", func() {
 			// Test error recovery scenarios
-			Skip("TODO: Implement malformed message handling")
+			cache := sparkplug_plugin.NewAliasCache()
+			deviceKey := "Factory/Line1"
+
+			// Test malformed protobuf handling
+			malformedData := []byte{0xFF, 0xFE, 0xFD, 0xFC} // Invalid protobuf
+
+			var payload sproto.Payload
+			err := proto.Unmarshal(malformedData, &payload)
+			Expect(err).To(HaveOccurred()) // Should fail to unmarshal
+
+			// Test recovery after malformed message
+			// Cache should remain functional
+			validMetrics := []*sproto.Payload_Metric{
+				{
+					Name:  stringPtr("Temperature"),
+					Alias: uint64Ptr(100),
+				},
+			}
+			count := cache.CacheAliases(deviceKey, validMetrics)
+			Expect(count).To(Equal(1))
+
+			// Test partial payload corruption
+			partiallyCorrupted := &sproto.Payload{
+				Timestamp: uint64Ptr(1672531320000),
+				Seq:       uint64Ptr(1),
+				Metrics: []*sproto.Payload_Metric{
+					{
+						// Missing required fields - should be handled gracefully
+						Alias: uint64Ptr(100),
+						// No Value field
+					},
+				},
+			}
+
+			// Should handle gracefully without crashing
+			resolvedCount := cache.ResolveAliases(deviceKey, partiallyCorrupted.Metrics)
+			Expect(resolvedCount).To(Equal(1)) // Should still resolve alias
 		})
 
 		It("should handle cache reset scenarios", func() {
