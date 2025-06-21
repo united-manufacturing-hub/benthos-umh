@@ -139,6 +139,18 @@ stop-mosquitto:
 test-sparkplug-b-full: start-mosquitto test-sparkplug-b-integration
 	@echo "Sparkplug B integration tests completed"
 
+.PHONY: test-sparkplug-bidirectional
+test-sparkplug-bidirectional:
+	@echo "Running Sparkplug B bidirectional communication tests (requires running Mosquitto broker)..."
+	@echo "If Mosquitto is not running, start it with: make start-mosquitto"
+	@TEST_SPARKPLUG_B=1 \
+		$(GINKGO_CMD) $(GINKGO_FLAGS) --focus="Bidirectional" ./sparkplug_plugin/...
+
+.PHONY: test-sparkplug-bidirectional-full
+test-sparkplug-bidirectional-full: start-mosquitto test-sparkplug-bidirectional
+	@echo "Sparkplug B bidirectional communication tests completed"
+	@echo "🚀 P2.5 Bidirectional Communication Validation - PASSED"
+
 
 ###### TESTS WITH RUNNING BENTHOS-UMH #####
 # Test the tag processor with a local OPC UA server
