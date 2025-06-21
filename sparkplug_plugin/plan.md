@@ -113,7 +113,7 @@ docker stop test-mosquitto && docker rm test-mosquitto
 - ✅ All edge cases from Sparkplug 3.0 spec covered
 - ✅ Clear failure modes with descriptive error messages
 
-### **Next Phase - P2 Documentation** ⏳ **READY TO START**
+### **P2 Documentation Phase** ✅ **COMPLETED**
 
 **Objectives:**
 - Update documentation to reflect current plugin capabilities
@@ -122,11 +122,332 @@ docker stop test-mosquitto && docker rm test-mosquitto
 - Ensure docs match actual plugin behavior
 
 **High Priority Tasks:**
-- ⏳ **TODO**: Update `sparkplug-b-input.md` with current plugin features
-- ⏳ **TODO**: Add configuration examples for different use cases
-- ⏳ **TODO**: Document STATE message handling and edge cases
-- ⏳ **TODO**: Create troubleshooting guide with common issues
-- ⏳ **TODO**: Update integration test documentation
+- ✅ **DONE**: Update `sparkplug-b-input.md` with current plugin features
+- ✅ **DONE**: Add configuration examples for different use cases
+- ✅ **DONE**: Document STATE message handling and edge cases
+- ✅ **DONE**: Create troubleshooting guide with common issues
+- ✅ **DONE**: Update integration test documentation
+
+**Implementation Results:**
+- **Production-ready status** documented with 73/74 test coverage
+- **STATE message filtering fix** fully documented (v2.0)
+- **Edge Cases & Advanced Troubleshooting** section with debug commands
+- **Testing & Validation** section with 74 comprehensive unit tests
+- **Complete configuration examples** for all use cases
+- **Debug query examples** for monitoring operations
+
+### **P2.5 Bidirectional Communication Validation** ⏳ **CRITICAL BEFORE SECURITY**
+
+**Rationale**: Before adding security complexity, we must validate that input/output plugins communicate flawlessly together in a realistic edge node ↔ primary host scenario.
+
+**Objectives:**
+- Validate end-to-end Sparkplug B protocol implementation
+- Test complete edge node lifecycle with primary host monitoring
+- Verify alias resolution, sequence tracking, and rebirth requests work bidirectionally
+- Establish performance baselines before security overhead
+- Identify any integration issues in a controlled environment
+
+**Test Architecture - Two Parallel Streams:**
+
+**Stream 1: Edge Node (Output Plugin)**
+```yaml
+# benthos-edge-node.yaml
+input:
+  generate:
+    interval: "5s"
+    mapping: |
+      root.temperature = random_float() * 100
+      root.pressure = random_float() * 50
+      root.vibration = random_float() * 10
+      root.timestamp = now()
+
+output:
+  sparkplug_b:
+    role: "edge_node"
+    identity:
+      group_id: "Factory"
+      edge_node_id: "Line1"
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+    # Publishes: STATE→NBIRTH→NDATA stream→NDEATH
+```
+
+**Stream 2: Primary Host (Input Plugin)**
+```yaml
+# benthos-primary-host.yaml
+input:
+  sparkplug_b:
+    role: "primary_host"
+    identity:
+      group_id: "SCADA" 
+      edge_node_id: "PrimaryHost"
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+    # Subscribes: spBv1.0/+/# (all groups)
+
+output:
+  stdout: {}
+```
+
+**Implementation Options Evaluation:**
+
+**Option A: Makefile Integration Test**
+```makefile
+test-bidirectional:
+	docker run -d --name test-mosquitto -p 1883:1883 eclipse-mosquitto:2.0
+	./benthos-umh -c test/benthos-edge-node.yaml &
+	./benthos-umh -c test/benthos-primary-host.yaml &
+	sleep 30  # Let them communicate
+	kill %1 %2  # Clean shutdown → NDEATH test
+	docker stop test-mosquitto
+```
+
+**Option B: Ginkgo Integration Test**
+```go
+var _ = Describe("Bidirectional Communication", func() {
+    It("should handle complete edge node lifecycle", func() {
+        broker := StartTestBroker()
+        edgeNode := StartEdgeNodeStream(broker.URL)
+        primaryHost := StartPrimaryHostStream(broker.URL)
+        
+        // Validate message flow...
+    })
+})
+```
+
+**Option C: Docker Compose Stack**
+```yaml
+version: '3.8'
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+  edge-node:
+    build: .
+    command: ["benthos", "-c", "test/edge-node.yaml"]
+  primary-host:
+    build: .
+    command: ["benthos", "-c", "primary-host.yaml"]
+```
+
+**Critical Validation Points:**
+- ✅ **Complete Protocol Flow**: STATE→NBIRTH→NDATA→NDEATH lifecycle
+- ✅ **Alias Resolution**: NBIRTH establishes, NDATA resolves correctly
+- ✅ **Sequence Tracking**: Primary host detects gaps, requests rebirth
+- ✅ **Bidirectional Commands**: NCMD rebirth requests work
+- ✅ **Error Recovery**: Network disconnection/reconnection handling
+- ✅ **Performance Baseline**: Message throughput without security overhead
+- ✅ **Memory Stability**: Long-running test (1+ hours) without leaks
+- ✅ **Clean Shutdowns**: Proper NDEATH on termination
+
+**Technical Implementation Analysis:**
+
+**1. Plugin Coordination Challenges:**
+- **Timing Dependencies**: Edge node must establish session before primary host can validate
+- **MQTT Client ID Conflicts**: Both plugins connecting to same broker need unique IDs
+- **Topic Overlap**: Primary host subscribes to `spBv1.0/+/#` while edge node publishes to `spBv1.0/Factory/#`
+- **Sequence Synchronization**: How do we ensure deterministic testing of sequence gaps?
+
+**2. Test Data Generation Strategy:**
+```go
+// Should we use deterministic or random data?
+type TestDataStrategy int
+const (
+    Deterministic TestDataStrategy = iota  // Same values every run
+    RandomSeeded                          // Random but reproducible
+    TrueRandom                           // Different every run
+)
+```
+
+**3. Message Flow Verification:**
+```go
+// How granular should our validation be?
+type ValidationLevel int
+const (
+    BasicFlow       ValidationLevel = iota  // Just count messages
+    StructuralMatch                        // Verify payload structure
+    SemanticEqual                          // Deep value comparison
+    TimingAnalysis                         // Measure latencies
+)
+```
+
+**4. Error Injection Mechanisms:**
+- **Network Level**: Drop TCP packets, simulate latency
+- **MQTT Level**: Disconnect clients, corrupt QoS delivery
+- **Protocol Level**: Malformed protobuf, invalid sequence numbers
+- **Application Level**: Logic errors, memory pressure
+
+**Expert LLM Questions:**
+
+**A. Architecture & Design:**
+1. **Plugin Coordination**: Should we run both plugins in same process (shared broker connection) or separate processes (realistic deployment)?
+
+2. **Test Data Realism**: Should we generate synthetic industrial data (temperature, pressure, vibration) or abstract test values? What data patterns stress-test alias resolution most effectively?
+
+3. **State Management**: How do we validate internal state consistency between plugins? Should we expose debug endpoints or rely on log analysis?
+
+**B. Performance & Reliability:**
+4. **Throughput Expectations**: What are realistic Sparkplug B message rates?
+   - **Low**: 1 msg/sec (typical sensor polling)
+   - **Medium**: 10-100 msg/sec (high-frequency monitoring)  
+   - **High**: 1000+ msg/sec (process control systems)
+   - **Burst**: Short bursts of 10k+ msg/sec (batch data uploads)
+
+5. **Memory Leak Detection**: How should we monitor memory usage during long tests?
+   ```go
+   // Option A: Built-in runtime stats
+   var m runtime.MemStats
+   runtime.ReadMemStats(&m)
+   
+   // Option B: External profiling
+   go tool pprof http://localhost:6060/debug/pprof/heap
+   
+   // Option C: Custom metrics
+   prometheus.NewGaugeVec("benthos_memory_usage")
+   ```
+
+6. **Failure Recovery Testing**: Which failure scenarios are most critical to test?
+   - **Network Partitions**: Broker unreachable for 30s, 5min, 1hr
+   - **Process Crashes**: Edge node dies during NBIRTH, NDATA stream
+   - **Resource Exhaustion**: High CPU, low memory conditions
+   - **Clock Skew**: System time changes during operation
+
+**C. Sequence & Protocol Validation:**
+7. **Sequence Gap Injection**: What's the most realistic way to test rebirth requests?
+   ```go
+   // Option A: Message dropping
+   if msg.Sequence == targetSeq { return nil } // Drop specific message
+   
+   // Option B: Sequence manipulation  
+   msg.Sequence = jumpedSequence // Create artificial gap
+   
+   // Option C: Timing simulation
+   time.Sleep(rebirthTimeout + 1*time.Second) // Force timeout
+   ```
+
+8. **Alias Resolution Edge Cases**: Which scenarios stress the alias cache most?
+   - **Collision Testing**: Multiple metrics with same alias ID
+   - **Large Alias Maps**: 1000+ metrics in single NBIRTH
+   - **Rapid Cache Invalidation**: Frequent NDEATH→NBIRTH cycles
+   - **Partial Updates**: NBIRTH with subset of previous metrics
+
+**D. Integration Testing Strategy:**
+9. **Test Environment Isolation**: How do we ensure tests don't interfere?
+   ```bash
+   # Option A: Dynamic ports
+   MQTT_PORT=$(shuf -i 10000-65000 -n 1)
+   
+   # Option B: Docker networking
+   docker network create sparkplug-test-${RANDOM}
+   
+   # Option C: Process namespaces
+   unshare --net --mount
+   ```
+
+10. **Success Criteria Validation**: How do we programmatically verify "communication works"?
+    - **Message Count Matching**: EdgeNodeSent == PrimaryHostReceived
+    - **Alias Resolution Rate**: 100% of NDATA aliases resolved
+    - **Timing Constraints**: End-to-end latency < 100ms
+    - **Error Rate**: Zero protocol errors during test run
+
+**E. Operational Concerns:**
+11. **CI/CD Integration**: Should this run in GitHub Actions or require local execution?
+    - **Pros**: Automated validation on every PR
+    - **Cons**: Docker networking complexity, timing sensitivity
+
+12. **Debug Instrumentation**: What level of logging/tracing do we need?
+    ```go
+    // Should we add distributed tracing?
+    span, ctx := tracer.Start(ctx, "sparkplug.message.flow")
+    span.SetAttributes(
+        attribute.String("message.type", msgType),
+        attribute.String("device.key", deviceKey),
+    )
+    ```
+
+**Recommended Implementation Approach:**
+
+**Phase 1: Basic Flow Validation (Day 1)**
+```bash
+# Makefile approach for quick validation
+make test-bidirectional-basic:
+    # 30-second smoke test with deterministic data
+    # Validates: STATE→NBIRTH→NDATA→NDEATH cycle
+    # Success: Message count matching, no errors
+```
+
+**Phase 2: Integration Testing (Day 2-3)**
+```go
+// Ginkgo test suite for comprehensive validation
+var _ = Describe("Bidirectional Integration", func() {
+    Context("Protocol Flow", func() {
+        It("handles complete edge node lifecycle", SpecTimeout(5*time.Minute))
+        It("validates alias resolution end-to-end")
+        It("tests sequence gap detection and rebirth")
+    })
+    Context("Error Recovery", func() {
+        It("handles network disconnection gracefully")
+        It("recovers from malformed messages")
+    })
+})
+```
+
+**Phase 3: Performance & Stability (Day 4)**
+```yaml
+# Docker Compose for long-running stability test
+version: '3.8'
+services:
+  monitor:
+    image: prom/prometheus
+    # Collect metrics during 1-hour stability test
+```
+
+**Implementation Priority:**
+1. ✅ **IMMEDIATE**: Choose **Makefile approach** for quick validation (lowest complexity)
+2. ⏳ **TODO**: Create basic edge node and primary host configs (`test/benthos-edge-node.yaml`, `test/benthos-primary-host.yaml`)
+3. ⏳ **TODO**: Implement 30-second smoke test with message count validation
+4. ⏳ **TODO**: Add Ginkgo integration test for complete protocol flow
+5. ⏳ **TODO**: Implement sequence gap injection and rebirth testing
+6. ⏳ **TODO**: Add network failure simulation (disconnect/reconnect)
+7. ⏳ **TODO**: Create 1-hour stability test with memory monitoring
+8. ⏳ **TODO**: Document all test procedures and troubleshooting
+
+**Risk Assessment:**
+- 🟡 **Medium Risk**: Timing dependencies between plugins could cause flaky tests
+- 🟡 **Medium Risk**: MQTT broker state might persist between test runs
+- 🟢 **Low Risk**: Both plugins already tested individually
+- 🟢 **Low Risk**: Integration follows standard Sparkplug B patterns
+
+**Success Criteria (Detailed):**
+- ✅ **Basic Flow**: Edge node publishes 5 NDATA messages, primary host receives all 5
+- ✅ **Alias Resolution**: 100% of received NDATA messages have resolved metric names
+- ✅ **Sequence Validation**: Injected sequence gap triggers NCMD rebirth request within 5 seconds
+- ✅ **Error Recovery**: Network disconnection/reconnection completes without data loss
+- ✅ **Performance**: Sustained 10 msg/sec throughput with <100ms end-to-end latency
+- ✅ **Stability**: 1-hour test shows <1MB memory growth, zero protocol errors
+- ✅ **Clean Shutdown**: NDEATH message sent on graceful termination
+
+**Blocking Issues for P3 Security:**
+- Any protocol errors in basic flow
+- Memory leaks during stability testing
+- Sequence gap handling failures
+- Alias resolution inconsistencies
+
+This phase is **CRITICAL** - security features are pointless if basic communication is flawed.
+
+### **Next Phase - P3 Security** ⏳ **PENDING P2.5 COMPLETION**
+
+**Objectives:**
+- Implement TLS/SSL encryption for MQTT connections
+- Add multi-broker failover for high availability
+- Implement proper authentication and authorization
+- Add security validation and monitoring
+
+**High Priority Tasks:**
+- ⏳ **TODO**: Implement TLS/SSL configuration for MQTT connections
+- ⏳ **TODO**: Add multi-broker failover support
+- ⏳ **TODO**: Implement client certificate authentication
+- ⏳ **TODO**: Add connection security validation
+- ⏳ **TODO**: Implement security monitoring and alerts
 
 ## 🗺️ **Development Roadmap**
 
@@ -134,12 +455,13 @@ docker stop test-mosquitto && docker rm test-mosquitto
 |-------|----------|-------|---------------|
 | **PoC** ✅ | **Week 1** | ✅ **Make plugin work** | ✅ End-to-end data flow working |
 | **P1 – Testing** ✅ | Week 2 | ✅ **Local broker tests, CI** | ✅ `go test ./...` no external deps |
-| **P2 – Documentation** | Week 3 | Update docs, examples | Comprehensive user guides |
+| **P2 – Documentation** ✅ | Week 3 | ✅ **Update docs, examples** | ✅ Comprehensive user guides |
+| **P2.5 – Bidirectional** | Week 3.5 | **Input/Output integration** | Edge node ↔ Primary host validated |
 | **P3 – Security** | Week 4 | TLS, multi-broker | Production security features |
 | **P4 – Performance** | Future | Benchmarks, soak tests | 50k msg/s, 72h stability |
 | **P5 – Advanced** | Future | Templates, compression | Nice-to-have features |
 
-**Current Priority**: **P2 - Documentation Phase** - Update documentation to reflect current plugin capabilities and provide comprehensive configuration examples.
+**Current Priority**: **P2.5 - Bidirectional Communication Validation** - Critical validation that input/output plugins communicate flawlessly before adding security complexity.
 
 ---
 
