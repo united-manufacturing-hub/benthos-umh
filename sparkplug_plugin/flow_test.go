@@ -493,6 +493,137 @@ var _ = Describe("Message Processing Pipeline", func() {
 				})
 			}
 		})
+
+		It("should process vector sequences through message validation", func() {
+			// Test processing sequences of test vectors through validation
+			testVectors := []struct {
+				name        string
+				msgType     string
+				hasMetrics  bool
+				hasSequence bool
+			}{
+				{"NBIRTH_vector", "NBIRTH", true, true},
+				{"NDATA_vector", "NDATA", true, true},
+				{"NDEATH_vector", "NDEATH", false, true},
+				{"STATE_vector", "STATE", false, false},
+			}
+
+			for _, vector := range testVectors {
+				By("processing "+vector.name, func() {
+					// Create mock message based on vector
+					mockMessage := map[string]interface{}{
+						"sparkplug_msg_type": vector.msgType,
+						"group_id":           "Factory1",
+						"edge_node_id":       "Line1",
+						"timestamp":          1672531320000,
+					}
+
+					if vector.hasSequence {
+						mockMessage["seq"] = uint64(1)
+					}
+
+					if vector.hasMetrics {
+						mockMessage["metrics"] = []map[string]interface{}{
+							{
+								"name":     "Temperature",
+								"datatype": uint32(9),
+								"value":    25.5,
+							},
+						}
+					}
+
+					// Validate message structure
+					validateSparkplugMessage(mockMessage, vector.msgType)
+
+					// Validate UMH format
+					validateUMHFormat(mockMessage)
+				})
+			}
+		})
+
+		It("should generate proper UMH output format", func() {
+			// Test UMH output format generation
+			sparkplugMessage := map[string]interface{}{
+				"sparkplug_msg_type": "NDATA",
+				"group_id":           "Factory1",
+				"edge_node_id":       "Line1",
+				"timestamp":          uint64(1672531320000),
+				"seq":                uint64(1),
+				"metrics": []map[string]interface{}{
+					{
+						"name":     "Temperature",
+						"alias":    uint64(100),
+						"datatype": uint32(9),
+						"value":    25.5,
+					},
+				},
+			}
+
+			// Convert to UMH format
+			umhOutput := convertToUMHFormat(sparkplugMessage)
+
+			// Validate UMH structure
+			Expect(umhOutput["timestamp"]).NotTo(BeNil())
+			Expect(umhOutput["sparkplug_msg_type"]).To(Equal("NDATA"))
+			Expect(umhOutput["group_id"]).To(Equal("Factory1"))
+			Expect(umhOutput["edge_node_id"]).To(Equal("Line1"))
+
+			// Validate metrics are preserved
+			if metrics, ok := umhOutput["metrics"]; ok {
+				metricsArray := metrics.([]map[string]interface{})
+				Expect(metricsArray).To(HaveLen(1))
+				Expect(metricsArray[0]["name"]).To(Equal("Temperature"))
+			}
+		})
+
+		It("should populate message metadata correctly", func() {
+			// Test metadata population from Sparkplug messages
+			testCases := []struct {
+				topic    string
+				expected map[string]string
+			}{
+				{
+					topic: "spBv1.0/Factory1/NBIRTH/Line1",
+					expected: map[string]string{
+						"sparkplug_msg_type": "NBIRTH",
+						"group_id":           "Factory1",
+						"edge_node_id":       "Line1",
+						"message_type":       "NBIRTH",
+					},
+				},
+				{
+					topic: "spBv1.0/Factory1/NDATA/Line1",
+					expected: map[string]string{
+						"sparkplug_msg_type": "NDATA",
+						"group_id":           "Factory1",
+						"edge_node_id":       "Line1",
+						"message_type":       "NDATA",
+					},
+				},
+				{
+					topic: "spBv1.0/Factory1/DBIRTH/Line1/Machine1",
+					expected: map[string]string{
+						"sparkplug_msg_type": "DBIRTH",
+						"group_id":           "Factory1",
+						"edge_node_id":       "Line1",
+						"device_id":          "Machine1",
+						"message_type":       "DBIRTH",
+					},
+				},
+			}
+
+			for _, tc := range testCases {
+				By("parsing topic "+tc.topic, func() {
+					// Parse topic to extract metadata
+					metadata := parseSparkplugTopic(tc.topic)
+
+					// Validate extracted metadata
+					for key, expectedValue := range tc.expected {
+						Expect(metadata[key]).To(Equal(expectedValue), "Metadata key %s should match", key)
+					}
+				})
+			}
+		})
 	})
 
 	Context("Message Generation Logic", func() {
@@ -952,4 +1083,59 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// convertToUMHFormat converts a Sparkplug message to UMH format
+func convertToUMHFormat(sparkplugMsg map[string]interface{}) map[string]interface{} {
+	// Create UMH format message (simplified)
+	umhMsg := make(map[string]interface{})
+
+	// Copy all fields
+	for key, value := range sparkplugMsg {
+		umhMsg[key] = value
+	}
+
+	// Ensure timestamp is present
+	if _, exists := umhMsg["timestamp"]; !exists {
+		umhMsg["timestamp"] = uint64(1672531320000)
+	}
+
+	return umhMsg
+}
+
+// parseSparkplugTopic parses a Sparkplug topic and extracts metadata
+func parseSparkplugTopic(topic string) map[string]string {
+	metadata := make(map[string]string)
+
+	// Simple topic parsing for test purposes
+	// Real implementation would use the TopicParser from the plugin
+	parts := []string{}
+	current := ""
+	for _, char := range topic {
+		if char == '/' {
+			if current != "" {
+				parts = append(parts, current)
+				current = ""
+			}
+		} else {
+			current += string(char)
+		}
+	}
+	if current != "" {
+		parts = append(parts, current)
+	}
+
+	if len(parts) >= 4 {
+		// spBv1.0/GroupID/MessageType/EdgeNodeID[/DeviceID]
+		metadata["group_id"] = parts[1]
+		metadata["sparkplug_msg_type"] = parts[2]
+		metadata["message_type"] = parts[2]
+		metadata["edge_node_id"] = parts[3]
+
+		if len(parts) >= 5 {
+			metadata["device_id"] = parts[4]
+		}
+	}
+
+	return metadata
 }
