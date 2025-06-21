@@ -358,7 +358,7 @@ func (s *sparkplugOutput) Connect(ctx context.Context) error {
 		WillTopic:        deathTopic,
 		WillPayload:      deathPayload,
 		WillQoS:          s.config.MQTT.QoS,
-		WillRetain:       false,
+		WillRetain:       true,
 		OnConnect:        s.onConnect,
 		OnConnectionLost: s.onConnectionLost,
 	}
