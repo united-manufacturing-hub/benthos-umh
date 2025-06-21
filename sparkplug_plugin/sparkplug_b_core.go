@@ -128,6 +128,15 @@ func (ac *AliasCache) Clear() {
 	ac.cache = make(map[string]map[uint64]string)
 }
 
+// SpbDeviceKey creates a unified device key for Sparkplug B
+// Format: <group>/<edge>/<device> – device == "" for node-level
+func SpbDeviceKey(gid, nid, did string) string {
+	if did == "" {
+		return gid + "/" + nid
+	}
+	return gid + "/" + nid + "/" + did
+}
+
 // TopicParser provides functions for parsing and constructing Sparkplug B topics.
 type TopicParser struct{}
 
