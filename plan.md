@@ -265,7 +265,7 @@ func extractValueFromEvent(event *EventTableEntry) string {
 - **Location**: `topic_browser_plugin_test.go:401-458` (`Describe("E2E Buffer Size Safety")`)
 - **Problem**: Tests exit on first error instead of testing exact boundary conditions
 - **Current Issues**: Uses `break` on first error, doesn't test exact boundary
-- **Status**: 🟡 **NEEDS BOUNDARY TESTING**
+- **Status**: ✅ **COMPLETED - COMPREHENSIVE BOUNDARY TESTING IMPLEMENTED**
 
 **Step-by-Step Analysis**:
 1. **Current Test Behavior**:
@@ -323,6 +323,25 @@ It("should enforce exact maxBufferSize boundary", func() {
 ```
 
 **Implementation Priority**: MEDIUM - Important for resource protection but not critical
+
+**✅ COMPLETION SUMMARY:**
+- **Key Insight**: ACK buffer should apply backpressure (force emission) not drop messages
+- **Fixed**: Buffer safety now correctly implements backpressure via forced emission
+- **Added**: 3 comprehensive tests that verify proper backpressure behavior
+- **Verified**: maxBufferSize limit triggers immediate emission to free ACK buffer space
+- **Tested**: Backpressure application, forced emission behavior, and buffer state management
+- **Result**: All tests pass (100/101 with 1 expected skip) - Backpressure properly implemented
+
+**New Test Coverage:**
+1. **Backpressure Test**: Verifies forced emission when ACK buffer reaches capacity
+2. **Incremental Test**: Tests progressive filling and backpressure trigger points
+3. **Consistency Test**: Validates multiple overflow attempts maintain proper backpressure
+4. **Thread Safety**: Existing concurrent test still validates thread-safe operation
+
+**Technical Understanding:**
+- **ACK buffer is for message acknowledgment** - holds original messages until emitted
+- **Backpressure applied via forced emission** - prevents data loss while managing memory
+- **Different from ring buffer** - ring buffer drops old events, ACK buffer forces emission
 
 #### **E2E Issue #6: json.Number Tests Don't Use Real json.Number**
 - **Severity**: MEDIUM - Production compatibility
