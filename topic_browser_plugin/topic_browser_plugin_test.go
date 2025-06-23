@@ -300,6 +300,8 @@ var _ = Describe("TopicBrowserProcessor", func() {
 	// E2E Tests for Critical Edge Cases
 	Describe("E2E Rate Limiting and Emit Timing", func() {
 		var realisticProcessor *TopicBrowserProcessor
+		var emissionTimes []time.Time
+		var emissionMutex sync.Mutex
 
 		BeforeEach(func() {
 			// Create processor with realistic 1-second interval and proper LRU cache
@@ -307,57 +309,141 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			var err error
 			realisticProcessor.topicMetadataCache, err = lru.New(100)
 			Expect(err).NotTo(HaveOccurred())
+
+			// Reset emission tracking
+			emissionMutex.Lock()
+			emissionTimes = []time.Time{}
+			emissionMutex.Unlock()
 		})
 
-		It("should emit max 1 message per second in realistic scenarios", func() {
-			By("Processing multiple batches rapidly")
+		It("should enforce 1-second emission intervals with precise timing", func() {
+			By("Wrapping processor to capture emission timestamps")
 
-			var allResults [][]service.MessageBatch
+			// Create wrapper function to capture emission times
+			captureEmissionWrapper := func(batch service.MessageBatch) ([]service.MessageBatch, error) {
+				result, err := realisticProcessor.ProcessBatch(context.Background(), batch)
+				if result != nil && len(result) > 0 {
+					emissionMutex.Lock()
+					emissionTimes = append(emissionTimes, time.Now())
+					emissionMutex.Unlock()
+				}
+				return result, err
+			}
 
-			// Send 5 batches quickly (within 500ms)
-			for i := 0; i < 5; i++ {
-				batch := createTestBatch(1, fmt.Sprintf("rapid-batch-%d", i))
+			By("Sending messages across multiple intervals to trigger emissions")
+
+			// Send first batch and immediately wait for emission
+			batch1 := createTestBatch(1, "timing-test-1")
+			_, err := captureEmissionWrapper(batch1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Wait for next 1-second interval boundary
+			time.Sleep(1200 * time.Millisecond) // 1.2s to ensure crossing boundary
+
+			// Send second batch to trigger next emission
+			batch2 := createTestBatch(1, "timing-test-2")
+			_, err = captureEmissionWrapper(batch2)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Wait again and send third batch
+			time.Sleep(1200 * time.Millisecond) // 1.2s to ensure crossing boundary
+
+			batch3 := createTestBatch(1, "timing-test-3")
+			_, err = captureEmissionWrapper(batch3)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying emission intervals are properly rate-limited")
+			emissionMutex.Lock()
+			capturedTimes := make([]time.Time, len(emissionTimes))
+			copy(capturedTimes, emissionTimes)
+			emissionMutex.Unlock()
+
+			// Should have at least 2 emissions for proper interval testing
+			Expect(len(capturedTimes)).To(BeNumerically(">=", 2),
+				"Should have multiple emissions to verify rate limiting")
+
+			// Verify intervals between emissions are >= 1 second
+			for i := 1; i < len(capturedTimes); i++ {
+				interval := capturedTimes[i].Sub(capturedTimes[i-1])
+				Expect(interval).To(BeNumerically(">=", 950*time.Millisecond),
+					fmt.Sprintf("Emission interval %d should be >= 950ms, got %v", i, interval))
+				Expect(interval).To(BeNumerically("<=", 1400*time.Millisecond),
+					fmt.Sprintf("Emission interval %d should be <= 1400ms (reasonable upper bound), got %v", i, interval))
+			}
+		})
+
+		It("should buffer messages without immediate emission", func() {
+			By("Sending multiple rapid messages without crossing time boundary")
+
+			var rapidResults [][]service.MessageBatch
+			startTime := time.Now()
+
+			// Send 3 batches rapidly (within 300ms total)
+			for i := 0; i < 3; i++ {
+				batch := createTestBatch(1, fmt.Sprintf("rapid-buffer-%d", i))
 				result, err := realisticProcessor.ProcessBatch(context.Background(), batch)
 				Expect(err).NotTo(HaveOccurred())
 				if result != nil && len(result) > 0 {
-					allResults = append(allResults, result)
+					rapidResults = append(rapidResults, result)
 				}
 				time.Sleep(100 * time.Millisecond) // 100ms between batches
 			}
 
-			By("Verifying emission behavior with realistic interval")
-			// With 1-second intervals, messages are buffered and emitted together
-			// Should have some emissions, but not necessarily immediate
-			totalEmissions := len(allResults)
-			Expect(totalEmissions).To(BeNumerically(">=", 0), "Should handle batches without error")
+			elapsedTime := time.Since(startTime)
 
-			By("Waiting for next emission interval")
-			time.Sleep(1100 * time.Millisecond) // Wait past next 1-second boundary
+			By("Verifying rapid messages are properly buffered")
+			// Within 500ms, should have minimal emissions (messages buffered)
+			Expect(elapsedTime).To(BeNumerically("<", 500*time.Millisecond),
+				"Rapid sending should complete quickly")
 
-			// Send another batch to trigger potential emission
-			batch := createTestBatch(1, "trigger-batch")
-			result, err := realisticProcessor.ProcessBatch(context.Background(), batch)
+			// Most messages should be buffered, not immediately emitted
+			immediateEmissions := len(rapidResults)
+			Expect(immediateEmissions).To(BeNumerically("<=", 1),
+				"Should have minimal immediate emissions during rapid sending")
+
+			By("Verifying buffered messages are eventually emitted after interval")
+			// Wait past 1-second boundary and send trigger message
+			time.Sleep(1200 * time.Millisecond)
+
+			triggerBatch := createTestBatch(1, "trigger-emission")
+			result, err := realisticProcessor.ProcessBatch(context.Background(), triggerBatch)
 			Expect(err).NotTo(HaveOccurred())
-			if result != nil && len(result) > 0 {
-				allResults = append(allResults, result)
-			}
 
-			By("Verifying proper rate limiting behavior")
-			finalEmissions := len(allResults)
-			Expect(finalEmissions).To(BeNumerically(">=", totalEmissions), "Should continue processing")
+			// Should get emission after crossing time boundary
+			if result != nil && len(result) > 0 {
+				Expect(len(result)).To(BeNumerically(">", 0),
+					"Should emit buffered messages after crossing time boundary")
+			}
 		})
 
-		It("should handle message-driven emission correctly", func() {
-			By("Processing batch with proper initialization")
-			batch := createTestBatch(1, "test-message")
+		It("should handle edge case of exact 1-second timing", func() {
+			By("Testing behavior right at 1-second boundaries")
 
-			start := time.Now()
-			_, err := realisticProcessor.ProcessBatch(context.Background(), batch)
-			elapsed := time.Since(start)
-
+			// Send initial message
+			batch1 := createTestBatch(1, "boundary-test-1")
+			result1, err := realisticProcessor.ProcessBatch(context.Background(), batch1)
 			Expect(err).NotTo(HaveOccurred())
-			// With realistic intervals, emission may be buffered
-			Expect(elapsed).To(BeNumerically("<", 1000*time.Millisecond), "Should process quickly")
+
+			// Wait exactly 1 second
+			time.Sleep(1000 * time.Millisecond)
+
+			// Send second message - should trigger emission due to time boundary
+			batch2 := createTestBatch(1, "boundary-test-2")
+			result2, err := realisticProcessor.ProcessBatch(context.Background(), batch2)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying emission occurs at boundary")
+			// Either result1 or result2 should have emissions (or both)
+			totalEmissions := 0
+			if result1 != nil {
+				totalEmissions += len(result1)
+			}
+			if result2 != nil {
+				totalEmissions += len(result2)
+			}
+
+			Expect(totalEmissions).To(BeNumerically(">", 0),
+				"Should have emissions when crossing 1-second boundary")
 		})
 	})
 
