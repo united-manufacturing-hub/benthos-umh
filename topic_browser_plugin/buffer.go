@@ -23,7 +23,9 @@ func (t *TopicBrowserProcessor) addEventToTopicBuffer(topic string, event *Event
 		buffer.size++
 	} else {
 		// Buffer is full - we're overwriting the oldest event
-		t.eventsOverwritten.Incr(1)
+		if t.eventsOverwritten != nil {
+			t.eventsOverwritten.Incr(1)
+		}
 	}
 }
 
@@ -97,7 +99,7 @@ func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*EventTa
 //   - Update lastEmitTime to reset interval timer
 //
 // Returns:
-//   - []service.MessageBatch: [emission_message] ONLY - never original messages
+//   - []service.MessageBatch: [emission_message, ack_batch] - delayed ACK pattern
 //   - error: Emission failure (prevents ACK)
 func (t *TopicBrowserProcessor) flushBufferAndACK() ([]service.MessageBatch, error) {
 	t.bufferMutex.Lock()
@@ -141,15 +143,24 @@ func (t *TopicBrowserProcessor) flushBufferAndACK() ([]service.MessageBatch, err
 	emissionMsg.SetBytes(bytesToMessageWithStartEndBlocksAndTimestamp(protoBytes))
 
 	// Update metrics
-	t.totalEventsEmitted.Incr(int64(len(allEvents)))
-	t.emissionSize.Incr(int64(len(protoBytes)))
+	if t.totalEventsEmitted != nil {
+		t.totalEventsEmitted.Incr(int64(len(allEvents)))
+	}
+	if t.emissionSize != nil {
+		t.emissionSize.Incr(int64(len(protoBytes)))
+	}
 
-	// Clear buffers and update timestamp
+	// ✅ FIX: Create ACK batch BEFORE clearing buffers
+	// For proper delayed ACK: [emission_batch, ack_batch_of_original_messages]
+	ackBatch := make(service.MessageBatch, len(t.messageBuffer))
+	copy(ackBatch, t.messageBuffer)
+
+	// Clear buffers and update timestamp AFTER creating ACK batch
 	t.clearBuffers()
 	t.lastEmitTime = time.Now()
 
-	// ✅ FIX: Return ONLY the processed emission message, never original messages
-	return []service.MessageBatch{{emissionMsg}}, nil
+	// Return both emission and ACK batches
+	return []service.MessageBatch{{emissionMsg}, ackBatch}, nil
 }
 
 // clearBuffers clears both message buffer and ring buffers after successful emission.
