@@ -99,7 +99,7 @@
 //
 //	STARTSTARTSTART
 //	<hex-encoded-protobuf-or-lz4-data>
-//	ENDDATAENDDATENDDATA
+//	ENDDATAENDDATAENDDATA
 //	<unix-timestamp-ms>
 //	ENDENDENDEND
 //

@@ -24,10 +24,17 @@ import (
 	"time"
 )
 
+// Wire format delimiters for umh-core consumption
+const (
+	startBlock = "STARTSTARTSTART\n"
+	midBlock   = "ENDDATAENDDATAENDDATA\n"
+	finalBlock = "ENDENDENDEND"
+)
+
 // bytesToMessageWithStartEndBlocksAndTimestamp wraps the byte string in start & end blocks and includes a timestamp
 // This allows easy parsing on the umh-core side.
 func bytesToMessageWithStartEndBlocksAndTimestamp(protobytes []byte) []byte {
 	hexBytes := hex.EncodeToString(protobytes)
 	unixTimestampMs := time.Now().UnixMilli()
-	return []byte("STARTSTARTSTART\n" + hexBytes + "\nENDDATAENDDATENDDATA\n" + fmt.Sprintf("%d", unixTimestampMs) + "\nENDENDENDEND")
+	return []byte(startBlock + hexBytes + "\n" + midBlock + fmt.Sprintf("%d", unixTimestampMs) + "\n" + finalBlock)
 }
