@@ -100,6 +100,7 @@ topic_browser:
 
 			outputMutex.Lock()
 			outputCount := len(outputMessages)
+			tsCopy := append([]time.Time(nil), outputTimestamps...)
 			outputMutex.Unlock()
 
 			// Should have emitted fewer bundles than input messages due to time-based aggregation
@@ -107,9 +108,9 @@ topic_browser:
 			Expect(outputCount).To(BeNumerically(">=", 1))
 
 			// Verify timing between emissions (should be ~1 second apart)
-			if len(outputTimestamps) > 1 {
-				for i := 1; i < len(outputTimestamps); i++ {
-					interval := outputTimestamps[i].Sub(outputTimestamps[i-1])
+			if len(tsCopy) > 1 {
+				for i := 1; i < len(tsCopy); i++ {
+					interval := tsCopy[i].Sub(tsCopy[i-1])
 					Expect(interval.Seconds()).To(BeNumerically("~", 1.0, 0.1))
 				}
 			}
