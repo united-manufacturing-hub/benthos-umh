@@ -396,12 +396,14 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 	// DUAL EMISSION LOGIC: Check for time-based emission after processing all messages
 	// This implements the second emission trigger (interval-based) in addition to
 	// the overflow protection that may have occurred during message processing above.
+	//
+	// ✅ FIX: Hold mutex during entire check-and-flush to prevent TOCTOU race condition
 	t.bufferMutex.Lock()
-	shouldEmit := time.Since(t.lastEmitTime) >= t.emitInterval
-	if shouldEmit {
+	defer t.bufferMutex.Unlock()
+
+	if time.Since(t.lastEmitTime) >= t.emitInterval {
 		// Time-based emission: emitInterval has elapsed, flush remaining buffer
 		intervalResult, err := t.flushBufferAndACKLocked()
-		t.bufferMutex.Unlock()
 
 		if err != nil {
 			return nil, err
@@ -417,7 +419,6 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 
 		return allResults, nil
 	}
-	t.bufferMutex.Unlock()
 
 	// No interval-based emission, but return any overflow emissions that occurred
 	// This happens when buffer overflow protection triggered but interval hasn't elapsed

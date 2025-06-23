@@ -53,6 +53,16 @@ This document outlines the comprehensive quality assurance plan for the Topic Br
    - **Solution**: Cleaned up formatting in topic-browser-test.yaml
    - **Impact**: Improved code consistency and linting compliance
 
+10. **Issue #11: TOCTOU Race Condition in shouldEmit** ✅ COMPLETED - COMMITTED  
+   - **Problem**: Time-of-check-time-of-use race between shouldEmit check and flushBufferAndACK call
+   - **Solution**: Hold bufferMutex during entire check-and-flush operation using defer pattern
+   - **Impact**: Prevents concurrent flushes and eliminates double-flush/empty emission race conditions
+
+11. **Issue #12: Missing Error Variable Documentation** ✅ COMPLETED - COMMITTED
+   - **Problem**: Exported error variables in event.go lacked proper Go documentation comments
+   - **Solution**: Added individual doc comments for each exported error variable starting with variable name
+   - **Impact**: Improved code documentation compliance with Go conventions
+
 ### ✅ **DISMISSED ISSUES (3 total)**
 
 1. **Issue #8: Build Failure** ✅ DISMISSED - False positive (import exists in code)
@@ -60,12 +70,12 @@ This document outlines the comprehensive quality assurance plan for the Topic Br
 3. **Issue #11: Protobuf Copy** ✅ DISMISSED - Already fixed (uses proto.Clone() correctly)
 
 ### 📊 **Phase 1 Results**
-- **Total Issues Addressed**: 12
-- **Critical Issues Fixed**: 6 (race conditions, thread safety, nil checks)
+- **Total Issues Addressed**: 14
+- **Critical Issues Fixed**: 7 (race conditions, thread safety, nil checks, TOCTOU races)
 - **Important Issues Fixed**: 1 (precision validation)
-- **Minor Issues Fixed**: 2 (compatibility, formatting)
-- **Test Results**: 88/88 tests pass with race detector
-- **Commits Made**: 8 separate commits for each issue resolution
+- **Minor Issues Fixed**: 3 (compatibility, formatting, documentation)
+- **Test Results**: 110/111 tests pass with race detector (1 expected skip)
+- **Commits Made**: 10 separate commits for each issue resolution
 
 ---
 

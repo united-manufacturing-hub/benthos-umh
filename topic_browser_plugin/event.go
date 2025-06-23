@@ -86,16 +86,24 @@ const (
 )
 
 var (
-	// Error types for different failure modes
-	ErrNotObject         = errors.New("payload is not a JSON object")
-	ErrInvalidJSON       = errors.New("invalid JSON format")
+	// ErrNotObject indicates that the payload is not a JSON object.
+	ErrNotObject = errors.New("payload is not a JSON object")
+	// ErrInvalidJSON indicates invalid JSON format.
+	ErrInvalidJSON = errors.New("invalid JSON format")
+	// ErrInvalidTimeSeries indicates time-series payload must have exactly 'timestamp_ms' and 'value' keys.
 	ErrInvalidTimeSeries = errors.New("time-series payload must have exactly 'timestamp_ms' and 'value' keys")
-	ErrNaNOrInf          = errors.New("value may not be NaN or Inf")
-	ErrPayloadTooLarge   = errors.New("payload size exceeds maximum allowed size")
-	ErrPrecisionLoss     = errors.New("timestamp_ms conversion would cause precision loss")
-	ErrInvalidTimestamp  = errors.New("timestamp_ms must be numerical type")
-	ErrNilValue          = errors.New("value cannot be nil")
-	ErrUnsupportedType   = errors.New("unsupported value type for time-series")
+	// ErrNaNOrInf indicates that the value may not be NaN or Inf.
+	ErrNaNOrInf = errors.New("value may not be NaN or Inf")
+	// ErrPayloadTooLarge indicates that payload size exceeds maximum allowed size.
+	ErrPayloadTooLarge = errors.New("payload size exceeds maximum allowed size")
+	// ErrPrecisionLoss indicates that timestamp_ms conversion would cause precision loss.
+	ErrPrecisionLoss = errors.New("timestamp_ms conversion would cause precision loss")
+	// ErrInvalidTimestamp indicates that timestamp_ms must be numerical type.
+	ErrInvalidTimestamp = errors.New("timestamp_ms must be numerical type")
+	// ErrNilValue indicates that a required value cannot be nil.
+	ErrNilValue = errors.New("value cannot be nil")
+	// ErrUnsupportedType indicates an unsupported value type for time-series.
+	ErrUnsupportedType = errors.New("unsupported value type for time-series")
 )
 
 // messageToEvent will convert a benthos message, into an EventTableEntry
