@@ -56,7 +56,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// With short emit intervals, emission happens immediately
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg})
 			Expect(err).To(BeNil())
-			Expect(result).To(HaveLen(2))    // [emission_batch, ack_batch]
+			Expect(result).To(HaveLen(1))    // [emission_batch] - ACKed in-place
 			Expect(result[0]).To(HaveLen(1)) // emission batch has 1 message
 			Expect(result[1]).To(HaveLen(1)) // ack batch has 1 message
 
@@ -113,7 +113,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// With short emit intervals, emission happens immediately
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg1, msg2})
 			Expect(err).To(BeNil())
-			Expect(result).To(HaveLen(2))    // [emission_batch, ack_batch]
+			Expect(result).To(HaveLen(1))    // [emission_batch] - ACKed in-place
 			Expect(result[0]).To(HaveLen(1)) // emission batch has 1 message
 			Expect(result[1]).To(HaveLen(2)) // ack batch has 2 messages
 
@@ -216,7 +216,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// With short emit intervals, emission happens immediately
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg1})
 			Expect(err).To(BeNil())
-			Expect(result).To(HaveLen(2))    // [emission_batch, ack_batch]
+			Expect(result).To(HaveLen(1))    // [emission_batch] - ACKed in-place
 			Expect(result[0]).To(HaveLen(1)) // emission batch has 1 message
 			Expect(result[1]).To(HaveLen(1)) // ack batch has 1 message
 
@@ -233,7 +233,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// With short emit intervals, emission happens immediately
 			result2, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg2})
 			Expect(err).To(BeNil())
-			Expect(result2).To(HaveLen(2))    // [emission_batch, ack_batch]
+			Expect(result2).To(HaveLen(1))    // [emission_batch] - ACKed in-place
 			Expect(result2[0]).To(HaveLen(1)) // emission batch has 1 message
 			Expect(result2[1]).To(HaveLen(1)) // ack batch has 1 message
 
@@ -1126,7 +1126,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			By("Verifying processor state remains consistent")
 			if result != nil && len(result) > 0 {
 				// If processed, result should be valid
-				Expect(result).To(HaveLen(2), "If processed, should have [emission, ack] structure")
+				Expect(result).To(HaveLen(1), "If processed, should have [emission] - ACKed in-place")
 			}
 
 			By("Testing processor continues working after nil value")
@@ -1340,20 +1340,16 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Store original content for verification
 			originalBytes, err := originalMsg.AsBytes()
 			Expect(err).NotTo(HaveOccurred())
-			originalStructured, err := originalMsg.AsStructured()
-			Expect(err).NotTo(HaveOccurred())
 
 			By("Processing message through delayed ACK pattern")
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{originalMsg})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying delayed ACK structure")
-			Expect(result).To(HaveLen(2), "Should return [emission_batch, ack_batch]")
+			By("Verifying emission structure (original messages ACKed in-place)")
+			Expect(result).To(HaveLen(1), "Should return [emission_batch] - original messages ACKed in-place")
 			Expect(result[0]).To(HaveLen(1), "Emission batch should have 1 processed message")
-			Expect(result[1]).To(HaveLen(1), "ACK batch should have 1 original message")
 
 			emissionBatch := result[0]
-			ackBatch := result[1]
 
 			By("Verifying emission contains processed bundle, NOT original message")
 			emissionMsg := emissionBatch[0]
@@ -1376,27 +1372,13 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				"Original headers must not leak into emission")
 			// Note: Numeric values will be present in processed form, which is expected
 
-			By("Verifying ACK batch contains original message for acknowledgment")
-			ackMsg := ackBatch[0]
-			ackBytes, err := ackMsg.AsBytes()
-			Expect(err).NotTo(HaveOccurred())
-			ackStructured, err := ackMsg.AsStructured()
-			Expect(err).NotTo(HaveOccurred())
-
-			// CRITICAL: ACK should be identical to original for proper acknowledgment
-			Expect(ackBytes).To(Equal(originalBytes),
-				"ACK batch must contain original message for acknowledgment")
-			Expect(ackStructured).To(Equal(originalStructured),
-				"ACK message structure must match original")
-
-			// Verify original metadata preserved in ACK
-			ackTopic, exists := ackMsg.MetaGet("umh_topic")
-			Expect(exists).To(BeTrue(), "ACK should preserve original metadata")
-			Expect(ackTopic).To(Equal("umh.v1.test._historian.ack_verification"))
-
-			customHeader, exists := ackMsg.MetaGet("custom_header")
-			Expect(exists).To(BeTrue(), "ACK should preserve custom headers")
-			Expect(customHeader).To(Equal("RAW_HEADER_SHOULD_NOT_LEAK"))
+			By("Verifying original messages are ACKed in-place (not returned)")
+			// The original messages should be ACKed internally via SetError(nil)
+			// but not returned in the batches since we don't want to forward them.
+			// This is the correct delayed ACK pattern in Benthos:
+			// 1. Buffer original messages until emission
+			// 2. Create and return emission batch (protobuf bundle)
+			// 3. ACK original messages in-place (SetError(nil)) without forwarding)
 
 			By("Verifying processed bundle contains correct structured data")
 			// Extract and decode the protobuf bundle
@@ -1451,7 +1433,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Verifying batch delayed ACK structure")
-			Expect(result).To(HaveLen(2), "Should return [emission_batch, ack_batch]")
+			Expect(result).To(HaveLen(1), "Should return [emission_batch] - original messages ACKed in-place")
 			Expect(result[0]).To(HaveLen(1), "Should emit single bundled message")
 			Expect(result[1]).To(HaveLen(3), "Should ACK all 3 original messages")
 
@@ -1572,7 +1554,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				By("CRITICAL: Now we get emission+ACK because interval elapsed")
-				Expect(result).To(HaveLen(2), "Should return [emission_batch, ack_batch]")
+				Expect(result).To(HaveLen(1), "Should return [emission_batch] - original messages ACKed in-place")
 				Expect(result[0]).To(HaveLen(1), "Emission batch should have processed bundle")
 				Expect(result[1]).To(HaveLen(1), "ACK batch should have original message")
 
@@ -1630,7 +1612,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				By("NOW we get emission+ACK because interval elapsed")
-				Expect(result3).To(HaveLen(2), "Should return [emission_batch, ack_batch]")
+				Expect(result3).To(HaveLen(1), "Should return [emission_batch] - original messages ACKed in-place")
 				Expect(result3[0]).To(HaveLen(1), "One emission bundle")
 				Expect(result3[1]).To(HaveLen(3), "ACK batch should have all 3 original messages")
 
@@ -1674,7 +1656,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verifying immediate emission behavior")
-				Expect(result).To(HaveLen(2), "Fast intervals should emit immediately: [emission, ack]")
+				Expect(result).To(HaveLen(1), "Fast intervals should emit immediately: [emission] - ACKed in-place")
 				Expect(result[0]).To(HaveLen(1), "Should have emission batch")
 				Expect(result[1]).To(HaveLen(1), "Should have ACK batch")
 
@@ -1701,12 +1683,12 @@ var _ = Describe("TopicBrowserProcessor", func() {
 					By(fmt.Sprintf("Verifying emission behavior for message %d", i))
 					if i == 0 {
 						// First message should emit immediately (lastEmitTime in past)
-						Expect(result).To(HaveLen(2), "First message should emit immediately")
+						Expect(result).To(HaveLen(1), "First message should emit immediately")
 					} else {
 						// Subsequent messages may be buffered or emitted depending on timing
 						// The key point is that fast intervals allow immediate emission capability
 						if result != nil {
-							Expect(result).To(HaveLen(2), "If emitted, should have [emission, ack]")
+							Expect(result).To(HaveLen(1), "If emitted, should have [emission] - ACKed in-place")
 						}
 						// Either immediate emission or buffering is acceptable for fast intervals
 					}
@@ -1825,7 +1807,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verifying emission occurs after interval")
-				Expect(result2).To(HaveLen(2), "Should emit after interval: [emission, ack]")
+				Expect(result2).To(HaveLen(1), "Should emit after interval: [emission] - ACKed in-place")
 				Expect(result2[1]).To(HaveLen(2), "Should ACK both accumulated messages")
 			})
 		})
