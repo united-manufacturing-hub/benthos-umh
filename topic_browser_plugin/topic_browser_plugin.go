@@ -334,14 +334,17 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 		}
 	}
 
-	// Check if emission interval has elapsed
+	// ✅ FIX: Atomic check-and-flush to prevent TOCTOU race condition
+	// Keep mutex held during entire check-and-flush operation
 	t.bufferMutex.Lock()
 	shouldEmit := time.Since(t.lastEmitTime) >= t.emitInterval
-	t.bufferMutex.Unlock()
-
 	if shouldEmit {
-		return t.flushBufferAndACK()
+		// Use locked version to avoid double-mutex acquisition
+		result, err := t.flushBufferAndACKLocked()
+		t.bufferMutex.Unlock()
+		return result, err
 	}
+	t.bufferMutex.Unlock()
 
 	// Don't ACK yet - messages stay pending
 	return nil, nil
@@ -361,10 +364,15 @@ func (t *TopicBrowserProcessor) Close(ctx context.Context) error {
 
 	// Flush any remaining buffered messages during shutdown
 	if len(t.messageBuffer) > 0 || len(t.fullTopicMap) > 0 {
-		t.logger.Info("Flushing buffered messages during graceful shutdown")
-		_, err := t.flushBufferAndACK()
+		if t.logger != nil {
+			t.logger.Info("Flushing buffered messages during graceful shutdown")
+		}
+		// Use locked version since we already hold the mutex
+		_, err := t.flushBufferAndACKLocked()
 		if err != nil {
-			t.logger.Errorf("Error flushing buffer during shutdown: %v", err)
+			if t.logger != nil {
+				t.logger.Errorf("Error flushing buffer during shutdown: %v", err)
+			}
 			// Continue with shutdown even if flush fails
 		}
 	}

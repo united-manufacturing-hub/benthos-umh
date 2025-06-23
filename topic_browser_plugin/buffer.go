@@ -89,6 +89,16 @@ func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*EventTa
 // flushBufferAndACK handles the emission of accumulated data and ACK of buffered messages.
 // This implements the delayed ACK pattern where messages are only ACKed after successful emission.
 //
+// This is the public interface that acquires the mutex and delegates to flushBufferAndACKLocked.
+func (t *TopicBrowserProcessor) flushBufferAndACK() ([]service.MessageBatch, error) {
+	t.bufferMutex.Lock()
+	defer t.bufferMutex.Unlock()
+	return t.flushBufferAndACKLocked()
+}
+
+// flushBufferAndACKLocked handles the emission of accumulated data and ACK of buffered messages.
+// This implements the delayed ACK pattern where messages are only ACKed after successful emission.
+//
 // # DELAYED ACK EMISSION ALGORITHM
 //
 // This function implements the core delayed ACK pattern:
@@ -121,12 +131,13 @@ func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*EventTa
 //   - Reset ring buffer state to prevent duplicate emissions
 //   - Update lastEmitTime to reset interval timer
 //
+// THREAD SAFETY: This function assumes t.bufferMutex is already held by the caller.
+// It MUST be called from within a mutex-protected section.
+//
 // Returns:
 //   - []service.MessageBatch: [emission_message, ack_batch] - delayed ACK pattern
 //   - error: Emission failure (prevents ACK)
-func (t *TopicBrowserProcessor) flushBufferAndACK() ([]service.MessageBatch, error) {
-	t.bufferMutex.Lock()
-	defer t.bufferMutex.Unlock()
+func (t *TopicBrowserProcessor) flushBufferAndACKLocked() ([]service.MessageBatch, error) {
 
 	// Collect all events from ring buffers (already rate-limited by buffer size)
 	allEvents := make([]*EventTableEntry, 0)
