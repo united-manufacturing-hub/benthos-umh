@@ -60,6 +60,72 @@ var _ = Describe("TopicInfo Helper Methods", func() {
 			result := topicInfo.LocationPath()
 			Expect(result).To(Equal("enterprise.site"))
 		})
+
+		// ✅ NEW: Nil receiver protection tests
+		It("should return empty string for nil receiver", func() {
+			var topicInfo *TopicInfo = nil
+
+			result := topicInfo.LocationPath()
+			Expect(result).To(Equal(""))
+		})
+
+		// ✅ NEW: Whitespace handling tests
+		It("should trim whitespace from level0", func() {
+			topicInfo := &TopicInfo{
+				Level0:            "  enterprise  ",
+				LocationSublevels: []string{},
+			}
+
+			result := topicInfo.LocationPath()
+			Expect(result).To(Equal("enterprise"))
+		})
+
+		It("should trim whitespace from all sublevels", func() {
+			topicInfo := &TopicInfo{
+				Level0:            " enterprise ",
+				LocationSublevels: []string{" site ", "  area  ", "\tline\t"},
+			}
+
+			result := topicInfo.LocationPath()
+			Expect(result).To(Equal("enterprise.site.area.line"))
+		})
+
+		It("should handle mixed whitespace scenarios", func() {
+			topicInfo := &TopicInfo{
+				Level0:            "\n enterprise \n",
+				LocationSublevels: []string{"\r site \r", "  area  ", " line"},
+			}
+
+			result := topicInfo.LocationPath()
+			Expect(result).To(Equal("enterprise.site.area.line"))
+		})
+
+		It("should handle empty strings after trimming", func() {
+			topicInfo := &TopicInfo{
+				Level0:            "   ",
+				LocationSublevels: []string{"  ", "\t\t", "valid"},
+			}
+
+			result := topicInfo.LocationPath()
+			Expect(result).To(Equal("...valid"))
+		})
+
+		It("should ensure hash equality for equivalent paths with different whitespace", func() {
+			topicInfo1 := &TopicInfo{
+				Level0:            "enterprise",
+				LocationSublevels: []string{"site", "area"},
+			}
+
+			topicInfo2 := &TopicInfo{
+				Level0:            " enterprise ",
+				LocationSublevels: []string{" site ", " area "},
+			}
+
+			result1 := topicInfo1.LocationPath()
+			result2 := topicInfo2.LocationPath()
+			Expect(result1).To(Equal(result2))
+			Expect(result1).To(Equal("enterprise.site.area"))
+		})
 	})
 
 	Describe("Validate", func() {
