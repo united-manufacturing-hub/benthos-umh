@@ -26,6 +26,9 @@ import (
 
 // addEventToTopicBuffer adds an event to the per-topic ring buffer.
 // If the buffer is full, it overwrites the oldest event and increments the overwritten metric.
+//
+// THREAD SAFETY: This function assumes t.bufferMutex is already held by the caller.
+// It MUST be called from within a mutex-protected section.
 func (t *TopicBrowserProcessor) addEventToTopicBuffer(topic string, event *EventTableEntry) {
 	buffer := t.getOrCreateTopicBuffer(topic)
 
@@ -44,6 +47,9 @@ func (t *TopicBrowserProcessor) addEventToTopicBuffer(topic string, event *Event
 }
 
 // getOrCreateTopicBuffer returns the ring buffer for a topic, creating it if it doesn't exist.
+//
+// THREAD SAFETY: This function assumes t.bufferMutex is already held by the caller.
+// It MUST be called from within a mutex-protected section.
 func (t *TopicBrowserProcessor) getOrCreateTopicBuffer(topic string) *topicRingBuffer {
 	if buffer, exists := t.topicBuffers[topic]; exists {
 		return buffer
@@ -62,6 +68,9 @@ func (t *TopicBrowserProcessor) getOrCreateTopicBuffer(topic string) *topicRingB
 
 // getLatestEventsForTopic extracts all events from a topic's ring buffer in chronological order.
 // Returns events from oldest to newest, preserving the correct time sequence.
+//
+// THREAD SAFETY: This function assumes t.bufferMutex is already held by the caller.
+// It MUST be called from within a mutex-protected section.
 func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*EventTableEntry {
 	buffer := t.topicBuffers[topic]
 	if buffer == nil || buffer.size == 0 {
@@ -179,6 +188,9 @@ func (t *TopicBrowserProcessor) flushBufferAndACK() ([]service.MessageBatch, err
 
 // clearBuffers clears both message buffer and ring buffers after successful emission.
 // This prevents duplicate event emission across intervals.
+//
+// THREAD SAFETY: This function assumes t.bufferMutex is already held by the caller.
+// It MUST be called from within a mutex-protected section.
 func (t *TopicBrowserProcessor) clearBuffers() {
 	t.messageBuffer = nil
 	// Clear all ring buffers to prevent duplicate emissions

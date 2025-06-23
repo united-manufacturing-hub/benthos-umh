@@ -42,7 +42,7 @@ grep -n "topic_browser_plugin" cmd/benthos/bundle/package.go
 
 ---
 
-### Issue #2: Missing License Headers ⚠️ IN PROGRESS
+### Issue #2: Missing License Headers ✅ COMPLETED - COMMITTED
 
 **Review Comment**: Multiple files missing Apache 2.0 license headers
 
@@ -51,9 +51,9 @@ grep -n "topic_browser_plugin" cmd/benthos/bundle/package.go
 - `topic_browser_plugin/processing.go` - Missing header ✅ FIXING
 - `topic_browser_plugin/buffer.go` - Missing header ✅ FIXING
 
-**Action**: **FIX** - Add license headers to all files
-**Template**: Using Apache 2.0 header from `topic_browser_plugin.go`
-**Implementation Priority**: **HIGH** - Blocks CI/CD
+**Action**: **COMPLETED** - Added license headers to all files
+**Template**: Used Apache 2.0 header from `topic_browser_plugin.go`
+**Result**: CI license-eye-header failures resolved
 
 ---
 
@@ -130,27 +130,21 @@ case uint64:
 
 ---
 
-### Issue #6: Thread Safety in ProcessBatch ⚠️ IMPORTANT
+### Issue #6: Thread Safety in ProcessBatch ⚠️ IN PROGRESS
 
 **Review Comment**: `bufferMessage modifies shared state including topicBuffers and fullTopicMap`
 
-**Assessment**: **PARTIALLY VALID** - Inconsistent mutex usage
-- `ProcessBatch()` doesn't hold mutex during message processing loop
-- `bufferMessage()` takes mutex internally but inconsistent with `addEventToTopicBuffer()`
-- Potential for race conditions in concurrent scenarios
+**Assessment**: **CONFIRMED** - Race conditions in buffer operations
+- `addEventToTopicBuffer()` accesses `topicBuffers` map without mutex protection
+- `getOrCreateTopicBuffer()` accesses `topicBuffers` map without mutex protection  
+- `flushBufferAndACK()` properly uses mutex - inconsistent pattern
+- Race condition confirmed between buffer access and map modification
 
-**Action**: **FIX** - Consolidate mutex usage strategy
+**Action**: **FIX** - Add mutex protection to buffer operations
+**Approach**: Since `bufferMessage()` already holds mutex, ensure all operations within that scope are protected
+**Fix**: `addEventToTopicBuffer()` should assume mutex is already held by caller
 
-**Technical Approach**: Two options:
-1. **Option A**: Hold mutex for entire ProcessBatch operation
-2. **Option B**: Ensure all buffer operations are internally synchronized
-
-**Recommendation**: **Option B** - Better concurrency
-- Keep `bufferMessage()` mutex internal
-- Fix `addEventToTopicBuffer()` to use mutex
-- More granular locking for better performance
-
-**Implementation Priority**: **MEDIUM** - Concurrency safety
+**Implementation Priority**: **HIGH** - Race condition causes data corruption
 
 ---
 
