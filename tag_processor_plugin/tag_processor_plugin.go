@@ -548,41 +548,6 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 		return nil, fmt.Errorf("failed to copy metadata: %v", err)
 	}
 
-	// Build the filtered metadata object for the payload
-	filteredMeta := make(map[string]string)
-	err = msg.MetaWalkMut(func(key string, value any) error {
-		// Skip internal keys for the payload meta
-		if internalKeys[key] {
-			return nil
-		}
-
-		// Convert value to string if possible
-		var strVal string
-		switch v := value.(type) {
-		case string:
-			strVal = v
-		case fmt.Stringer:
-			strVal = v.String()
-		default:
-			strVal = fmt.Sprintf("%v", v)
-		}
-
-		// Only include changed or new metadata in the payload
-		if origVal, exists := originalMeta[key]; !exists || strVal != origVal {
-			filteredMeta[key] = strVal
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to build filtered metadata: %v", err)
-	}
-
-	// Retrieve tag_name from the message meta
-	tagName, exists := msg.MetaGet("tag_name")
-	if !exists {
-		return nil, fmt.Errorf("missing tag_name in metadata")
-	}
-
 	// Get the structured payload from the original message
 	structured, err := msg.AsStructured()
 	if err != nil {
@@ -592,32 +557,8 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 
 	// Build the final payload object
 	finalPayload := map[string]interface{}{
-		tagName:        value,
+		"value":        value,
 		"timestamp_ms": time.Now().UnixMilli(),
-	}
-
-	// If exposeAllMeta is set to true in message meta, expose ALL metadata in the payload.
-	exposeAll := false
-	if exposeVal, exists := msg.MetaGet("exposeAllMeta"); exists {
-		if strings.ToLower(exposeVal) == "true" {
-			exposeAll = true
-		}
-	}
-	if exposeAll {
-		allMeta := make(map[string]string)
-		if err := msg.MetaWalkMut(func(key string, value any) error {
-			if str, ok := value.(string); ok {
-				allMeta[key] = str
-			} else {
-				allMeta[key] = fmt.Sprintf("%v", value)
-			}
-			return nil
-		}); err != nil {
-			return nil, fmt.Errorf("failed to collect all metadata: %v", err)
-		}
-		finalPayload["meta"] = allMeta
-	} else if len(filteredMeta) > 0 {
-		finalPayload["meta"] = filteredMeta
 	}
 
 	newMsg.SetStructured(finalPayload)
@@ -645,11 +586,11 @@ func (p *TagProcessor) convertValue(v interface{}) interface{} {
 	case []interface{}:
 		return fmt.Sprintf("%v", val)
 	case map[string]interface{}:
-		converted := make(map[string]interface{})
-		for k, v := range val {
-			converted[k] = p.convertValue(v)
+		jsonBytes, err := json.Marshal(val)
+		if err != nil {
+			return fmt.Sprintf("%v", val)
 		}
-		return converted
+		return string(jsonBytes)
 	default:
 		str := fmt.Sprintf("%v", val)
 		if num, err := strconv.ParseFloat(str, 64); err == nil {
