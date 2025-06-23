@@ -73,6 +73,11 @@ This document outlines the comprehensive quality assurance plan for the Topic Br
    - **Solution**: Added null byte (\x00) delimiters between segments using helper write() function
    - **Impact**: Eliminates hash collisions while maintaining 8-byte output size, ensures unique UNS tree IDs
 
+14. **Issue #15: Protobuf Package/Directory Mismatch** ✅ COMPLETED - COMMITTED
+   - **Problem**: Proto file declared `package umh.events` but lived in `topic_browser_plugin/` with relative `go_package = "./;topic_browser_plugin"`
+   - **Solution**: Aligned package declaration to match directory structure: `package topic_browser_plugin` with full import path `go_package = "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin;topic_browser_plugin"`
+   - **Impact**: Fixes protoc/Buf compatibility, eliminates PACKAGE_DIRECTORY_MATCH errors, ensures proper Go module imports
+
 ### ✅ **DISMISSED ISSUES (3 total)**
 
 1. **Issue #8: Build Failure** ✅ DISMISSED - False positive (import exists in code)
@@ -80,12 +85,12 @@ This document outlines the comprehensive quality assurance plan for the Topic Br
 3. **Issue #11: Protobuf Copy** ✅ DISMISSED - Already fixed (uses proto.Clone() correctly)
 
 ### 📊 **Phase 1 Results**
-- **Total Issues Addressed**: 16
-- **Critical Issues Fixed**: 9 (race conditions, thread safety, nil checks, TOCTOU races, goroutine leaks, hash collisions)
+- **Total Issues Addressed**: 17
+- **Critical Issues Fixed**: 10 (race conditions, thread safety, nil checks, TOCTOU races, goroutine leaks, hash collisions, protobuf compatibility)
 - **Important Issues Fixed**: 1 (precision validation)
 - **Minor Issues Fixed**: 3 (compatibility, formatting, documentation)
 - **Test Results**: 110/111 tests pass with race detector (1 expected skip)
-- **Commits Made**: 12 separate commits for each issue resolution
+- **Commits Made**: 13 separate commits for each issue resolution
 
 ---
 
