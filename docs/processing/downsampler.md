@@ -152,6 +152,7 @@ This is useful if you want to configure everything for a single tag in a single 
 | `ds_min_time`    | Go/ISO-style duration string (`"750ms"`) | `min_time` (SDT)  |
 | `ds_max_time`    | duration string (`"15m"`, `"1h"`, …)     | `max_time`        |
 | `ds_late_policy` | `"passthrough"` \| `"drop"`              | late-arrival rule |
+| `ds_ignore`      | any non-empty value                      | bypass downsampler completely |
 
 #### Precedence
 
@@ -161,6 +162,71 @@ per-message metadata  →  pattern override  →  global default
 
 If any field is missing the cascade falls back to the next level, so you can override only what
 matters.
+
+#### Complete bypass with `ds_ignore`
+
+In UMH deployments, the downsampler is typically enabled by default with conservative settings to provide data compression benefits across all time-series data. However, certain message types require complete bypass of any downsampling logic to ensure data integrity.
+
+The `ds_ignore` metadata key provides this capability and is designed to be used primarily in the **tag_processor** to selectively bypass downsampling based on message characteristics:
+
+- **Any non-empty value** for `ds_ignore` will cause the message to skip all downsampling logic
+- The message passes through unchanged, preserving all original data and metadata
+- A `downsampled_by: "ignored"` metadata field is added for traceability
+- No series state is created or modified for ignored messages
+- Ignored messages are counted in the `messages_ignored` metric
+
+#### Common UMH use cases
+
+**Critical alarms and alerts:**
+```yaml
+pipeline:
+  processors:
+    - tag_processor:
+        conditions:
+          - if: msg.meta.tag_name === "emergency_stop" || msg.meta.tag_name.endsWith("_alarm")
+            then: |
+              msg.meta.ds_ignore = "true"
+              return msg;
+    - downsampler: 
+        default:
+          deadband:
+            threshold: 1.0
+            max_time: "30m"
+```
+
+**High-precision measurements:**
+```yaml
+pipeline:
+  processors:
+    - tag_processor:
+        conditions:
+          - if: msg.meta.virtual_path && msg.meta.virtual_path.includes("calibration")
+            then: |
+              msg.meta.ds_ignore = "bypass_precision_data"
+              return msg;
+    - downsampler: 
+        default:
+          deadband:
+            threshold: 0.1
+```
+
+**State change events:**
+```yaml
+pipeline:
+  processors:
+    - tag_processor:
+        conditions:
+          - if: msg.meta.data_contract === "_state" || msg.meta.tag_name.startsWith("mode_")
+            then: |
+              msg.meta.ds_ignore = "preserve_state_changes"
+              return msg;
+    - downsampler: 
+        default:
+          deadband:
+            threshold: 2.0
+```
+
+This approach allows UMH to benefit from automatic downsampling for most data while preserving critical information that requires every data point to be stored without any filtering or compression.
 
 ---
 
