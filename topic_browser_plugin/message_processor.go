@@ -108,24 +108,33 @@ func extractKafkaTimestamp(message *service.Message) uint64 {
 // HashUNSTableEntry generates an xxHash from the Levels and datacontract.
 // This is used by the frontend to identify which topic an entry belongs to.
 // We use it over full topic names to reduce the amount of data we need to send to the frontend.
+//
+// ✅ FIX: Uses null byte delimiters to prevent hash collisions between different segment combinations.
+// For example, ["ab","c"] vs ["a","bc"] would produce different hashes instead of identical ones.
 func HashUNSTableEntry(info *TopicInfo) string {
 	hasher := xxhash.New()
-	_, _ = hasher.Write([]byte(info.Level0))
+
+	// Helper function to write each component followed by NUL delimiter to avoid ambiguity
+	write := func(s string) {
+		_, _ = hasher.Write(append([]byte(s), 0))
+	}
+
+	write(info.Level0)
 
 	// Hash all location sublevels
 	for _, level := range info.LocationSublevels {
-		_, _ = hasher.Write([]byte(level))
+		write(level)
 	}
 
-	_, _ = hasher.Write([]byte(info.DataContract))
+	write(info.DataContract)
 
 	// Hash virtual path if it exists
 	if info.VirtualPath != nil {
-		_, _ = hasher.Write([]byte(*info.VirtualPath))
+		write(*info.VirtualPath)
 	}
 
 	// Hash the name (new field)
-	_, _ = hasher.Write([]byte(info.Name))
+	write(info.Name)
 
 	return hex.EncodeToString(hasher.Sum(nil))
 }

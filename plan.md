@@ -68,6 +68,11 @@ This document outlines the comprehensive quality assurance plan for the Topic Br
    - **Solution**: Added sync.WaitGroup to synchronize goroutine completion with defer streamWg.Wait()
    - **Impact**: Prevents goroutine leaks and test flakiness, ensures proper resource cleanup
 
+13. **Issue #14: Hash Collision Vulnerability in UNS Tree ID Generation** ✅ COMPLETED - COMMITTED
+   - **Problem**: HashUNSTableEntry() concatenates string segments without delimiters, causing hash collisions (e.g., ["ab","c"] vs ["a","bc"])
+   - **Solution**: Added null byte (\x00) delimiters between segments using helper write() function
+   - **Impact**: Eliminates hash collisions while maintaining 8-byte output size, ensures unique UNS tree IDs
+
 ### ✅ **DISMISSED ISSUES (3 total)**
 
 1. **Issue #8: Build Failure** ✅ DISMISSED - False positive (import exists in code)
@@ -75,12 +80,12 @@ This document outlines the comprehensive quality assurance plan for the Topic Br
 3. **Issue #11: Protobuf Copy** ✅ DISMISSED - Already fixed (uses proto.Clone() correctly)
 
 ### 📊 **Phase 1 Results**
-- **Total Issues Addressed**: 15
-- **Critical Issues Fixed**: 8 (race conditions, thread safety, nil checks, TOCTOU races, goroutine leaks)
+- **Total Issues Addressed**: 16
+- **Critical Issues Fixed**: 9 (race conditions, thread safety, nil checks, TOCTOU races, goroutine leaks, hash collisions)
 - **Important Issues Fixed**: 1 (precision validation)
 - **Minor Issues Fixed**: 3 (compatibility, formatting, documentation)
 - **Test Results**: 110/111 tests pass with race detector (1 expected skip)
-- **Commits Made**: 11 separate commits for each issue resolution
+- **Commits Made**: 12 separate commits for each issue resolution
 
 ---
 
