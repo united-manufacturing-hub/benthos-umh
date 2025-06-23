@@ -34,8 +34,8 @@ var _ = Describe("TopicBrowserProcessor", func() {
 	var processor *TopicBrowserProcessor
 
 	BeforeEach(func() {
-		// Use very short emit interval for tests (1ms)
-		processor = NewTopicBrowserProcessor(nil, nil, 0, time.Millisecond, 10, 10000)
+		// Use very short emit interval for tests (1ms) and proper LRU size
+		processor = NewTopicBrowserProcessor(nil, nil, 100, time.Millisecond, 10, 10000)
 	})
 
 	Describe("ProcessBatch", func() {
@@ -211,9 +211,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			})
 
 			// Process first messages
-			var err error
-			processor.topicMetadataCache, err = lru.New(1)
-			Expect(err).To(BeNil())
+			// Use existing cache from BeforeEach to test persistence across invocations
 
 			// With short emit intervals, emission happens immediately
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg1})

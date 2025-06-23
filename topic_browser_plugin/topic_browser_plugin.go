@@ -469,6 +469,11 @@ func (t *TopicBrowserProcessor) Close(ctx context.Context) error {
 }
 
 func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, lruSize int, emitInterval time.Duration, maxEventsPerTopic int, maxBufferSize int) *TopicBrowserProcessor {
+	// Validate LRU size - must be at least 1 for the processor to function properly
+	if lruSize < 1 {
+		panic("lru_size must be greater than 0 - the processor requires a cache to accumulate topic metadata")
+	}
+
 	// The LRU cache is used to:
 	// - Deduplicate topics
 	// - Store the latest version of meta-information about that topic
