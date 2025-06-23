@@ -6,7 +6,7 @@ This document outlines the comprehensive quality assurance plan for the Topic Br
 
 ## 🎉 Phase 1: Code Review Issues - COMPLETED
 
-### ✅ **RESOLVED ISSUES (10 total)**
+### ✅ **RESOLVED ISSUES (11 total)**
 
 1. **Issue #1: Cache Race Condition** ✅ COMPLETED - COMMITTED
    - **Problem**: `mergeTopicHeaders()` accessed LRU cache without mutex protection
@@ -87,6 +87,11 @@ This document outlines the comprehensive quality assurance plan for the Topic Br
    - **Problem**: Middle delimiter "ENDDATAENDDATENDDATA" missing an "A", making start/end tokens asymmetric and hard-coded strings brittle
    - **Solution**: Fixed typo to "ENDDATAENDDATAENDDATA", extracted constants (startBlock, midBlock, finalBlock) to prevent transcription errors
    - **Impact**: Corrected wire format specification, improved maintainability, enabled unit testing of delimiters
+
+17. **Issue #18: Data Race in Integration Test Slice Access** ✅ COMPLETED - COMMITTED
+   - **Problem**: outputTimestamps slice appended under mutex lock but read without protection, causing potential race condition
+   - **Solution**: Added tsCopy := append([]time.Time(nil), outputTimestamps...) inside mutex lock to create safe copy for reading
+   - **Impact**: Eliminated data race, prevented potential test flakiness and crashes, verified with go test -race
 
 ### ✅ **DISMISSED ISSUES (3 total)**
 
