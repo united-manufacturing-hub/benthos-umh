@@ -162,7 +162,7 @@ case uint64:
 
 ---
 
-### Issue #8: TOCTOU Race in shouldEmit Check ⚠️ IN PROGRESS
+### Issue #8: TOCTOU Race in shouldEmit Check ✅ COMPLETED - COMMITTED
 
 **Review Comment**: `Lock is released before calling flushBufferAndACK`
 
@@ -172,41 +172,28 @@ case uint64:
 - Race condition: Thread A checks shouldEmit=true, Thread B flushes first, Thread A flushes empty buffer
 - Can cause double-flushes, empty emissions, or inconsistent state
 
-**Action**: **FIX** - Atomic check-and-flush operation
+**Action**: **COMPLETED** - Implemented atomic check-and-flush operation
 
-**Technical Approach**:
-```go
-// Current problematic pattern
-t.bufferMutex.Lock()
-shouldEmit := time.Since(t.lastEmitTime) >= t.emitInterval
-t.bufferMutex.Unlock()
-if shouldEmit {
-    return t.flushBufferAndACK() // ❌ Race condition
-}
+**Solution**: Created `flushBufferAndACKLocked()` helper and modified ProcessBatch to:
+- Keep mutex held during entire check-and-flush operation
+- Use locked version to avoid double-mutex acquisition
+- Updated Close() method to prevent deadlock
 
-// Fix: Keep mutex and pass to flush
-t.bufferMutex.Lock()
-shouldEmit := time.Since(t.lastEmitTime) >= t.emitInterval
-if shouldEmit {
-    return t.flushBufferAndACKLocked() // ✅ Mutex held
-}
-t.bufferMutex.Unlock()
-```
-
-**Implementation Priority**: **MEDIUM** - Race condition
+**Impact**: Eliminates TOCTOU race condition that could cause double-flushes or empty emissions
 
 ---
 
-### Issue #9: Nil Pointer Risk with RawKafkaMsg ⚠️ IMPORTANT
+### Issue #9: Nil Pointer Risk with RawKafkaMsg ⚠️ IN PROGRESS
 
 **Review Comment**: `eventTableEntry.RawKafkaMsg can be nil`
 
-**Assessment**: **VALID** - Defensive programming needed
-- Located in `topic_browser_plugin.go:304-306`
-- Potential nil pointer dereference on malformed input
-- Should add nil check
+**Assessment**: **CONFIRMED** - Defensive programming needed
+- Located in `topic_browser_plugin.go:315`
+- Code: `topicInfo.Metadata = eventTableEntry.RawKafkaMsg.Headers`
+- Potential nil pointer dereference on malformed input or edge cases
+- Could cause panic and crash the processor
 
-**Action**: **FIX** - Add nil check
+**Action**: **FIX** - Add nil check with defensive programming
 
 **Technical Details**:
 ```go
