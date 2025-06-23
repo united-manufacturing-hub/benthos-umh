@@ -332,9 +332,8 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 	for _, message := range batch {
 		topicInfo, eventTableEntry, unsTreeId, err := MessageToUNSInfoAndEvent(message)
 		if err != nil {
-			// DEBUG: Log the actual error for test debugging
 			if t.logger != nil {
-				t.logger.Errorf("Error while processing message: %v", err)
+				t.logger.Errorf("Failed to convert message to UNS info and event: %v. Check message format and umh_topic metadata", err)
 			}
 			if t.messagesFailed != nil {
 				t.messagesFailed.Incr(1)
@@ -380,9 +379,8 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 		// Now buffer the current message (buffer should have space)
 		err = t.bufferMessage(message, eventTableEntry, topicInfo, *unsTreeId)
 		if err != nil {
-			// DEBUG: Log buffer error for test debugging
 			if t.logger != nil {
-				t.logger.Errorf("Error buffering message: %v", err)
+				t.logger.Errorf("Failed to buffer message in ring buffer: %v. Check buffer capacity and memory limits", err)
 			}
 			if t.messagesFailed != nil {
 				t.messagesFailed.Incr(1)
@@ -454,7 +452,7 @@ func (t *TopicBrowserProcessor) Close(ctx context.Context) error {
 		_, err := t.flushBufferAndACKLocked()
 		if err != nil {
 			if t.logger != nil {
-				t.logger.Errorf("Error flushing buffer during shutdown: %v", err)
+				t.logger.Errorf("Failed to flush buffer during graceful shutdown: %v. Some messages may be lost", err)
 			}
 			// Continue with shutdown even if flush fails
 		}
