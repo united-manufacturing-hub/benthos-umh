@@ -325,113 +325,55 @@ It("should enforce exact maxBufferSize boundary", func() {
 **Implementation Priority**: MEDIUM - Important for resource protection but not critical
 
 **✅ COMPLETION SUMMARY:**
-- **Key Insight**: ACK buffer should apply backpressure (force emission) not drop messages
-- **Fixed**: Buffer safety now correctly implements backpressure via forced emission
-- **Added**: 3 comprehensive tests that verify proper backpressure behavior
+- **Key Insight**: ACK buffer should apply overflow protection (force emission) not drop messages
+- **Fixed**: Buffer safety now correctly implements overflow protection via forced emission
+- **Added**: 3 comprehensive tests that verify proper overflow protection behavior  
 - **Verified**: maxBufferSize limit triggers immediate emission to free ACK buffer space
-- **Tested**: Backpressure application, forced emission behavior, and buffer state management
-- **Result**: All tests pass (100/101 with 1 expected skip) - Backpressure properly implemented
+- **Tested**: Overflow protection application, forced emission behavior, and buffer state management
+- **Result**: All tests pass (100/101 with 1 expected skip) - Buffer overflow protection properly implemented
 
 **New Test Coverage:**
-1. **Backpressure Test**: Verifies forced emission when ACK buffer reaches capacity
-2. **Incremental Test**: Tests progressive filling and backpressure trigger points
-3. **Consistency Test**: Validates multiple overflow attempts maintain proper backpressure
+1. **Overflow Protection Test**: Verifies forced emission when ACK buffer reaches capacity
+2. **Incremental Test**: Tests progressive filling and overflow protection trigger points
+3. **Consistency Test**: Validates multiple overflow attempts maintain proper overflow protection
 4. **Thread Safety**: Existing concurrent test still validates thread-safe operation
 
 **Technical Understanding:**
 - **ACK buffer is for message acknowledgment** - holds original messages until emitted
-- **Backpressure applied via forced emission** - prevents data loss while managing memory
+- **Overflow protection via forced emission** - prevents data loss while managing memory
+- **Not traditional backpressure** - doesn't signal upstream to slow down, just makes room
 - **Different from ring buffer** - ring buffer drops old events, ACK buffer forces emission
+
+**Buffer Overflow Protection Behavior:**
+- **Triggered when**: len(messageBuffer) >= maxBufferSize and new message arrives
+- **Action**: Immediately flush current buffer to make room for incoming message
+- **Result**: Incoming message gets buffered normally, no data loss
+- **Edge Case**: Buffer at 10/10 + new message → flush 10, buffer the new one (never exceeds limit)
 
 #### **E2E Issue #6: json.Number Tests Don't Use Real json.Number**
 - **Severity**: MEDIUM - Production compatibility
-- **Location**: `topic_browser_plugin_test.go:477-507` (`It("should handle json.Number types correctly")`)
+- **Location**: `topic_browser_plugin_test.go:850-925` (`It("should handle json.Number types correctly through full pipeline")`)
 - **Problem**: Tests create json.Number but don't verify it survives Benthos pipeline processing
-- **Current Issues**: Creates json.Number but doesn't verify timestamp parsing works
-- **Status**: 🟡 **NEEDS PIPELINE VERIFICATION**
+- **Current Issues**: ✅ **COMPLETED** - Comprehensive pipeline verification implemented
+- **Status**: ✅ **COMPLETED**
 
-**Step-by-Step Analysis**:
-1. **Current Test Behavior**:
-   - Creates json.Number with `decoder.UseNumber()`
-   - Calls `ProcessBatch()` but doesn't verify json.Number handling
-   - Only checks that no error occurs, not that json.Number is processed correctly
+**✅ COMPLETED IMPLEMENTATION:**
+1. **Enhanced Test Coverage**: 
+   - Creates explicit `json.Number("1750171500000")` instead of generic interface{}
+   - Verifies json.Number type before processing
+   - Processes through full pipeline with result validation
 
-2. **Missing Validations**:
-   - No verification that json.Number timestamp is parsed correctly
-   - No verification that json.Number survives event processing
-   - No verification that the final protobuf contains correct timestamp
+2. **End-to-End Verification**:
+   - Extracts UNS bundle from pipeline output
+   - Verifies json.Number timestamp parsed correctly to `int64(1750171500000)`
+   - Validates string value processing alongside json.Number
 
-3. **Code Analysis - json.Number Handling**:
-Looking at `event.go:230-250`, the precision validation code handles json.Number:
-```go
-case json.Number:
-    if floatVal, err := v.Float64(); err == nil {
-        // json.Number conversion logic
-    }
-```
+3. **Added Helper Function**:
+   - `extractUnsBundle()` function for protobuf verification
+   - Handles hex decoding and LZ4 decompression
+   - Reusable for other pipeline verification tests
 
-**Fix Strategy**:
-```go
-It("should handle json.Number types correctly in full pipeline", func() {
-    By("Creating message with json.Number timestamp")
-    
-    // Create explicit json.Number (not just interface{})
-    timestampNum := json.Number("1750171500000")
-    data := map[string]interface{}{
-        "timestamp_ms": timestampNum,
-        "value":        "json-number-test",
-    }
-    
-    msg := service.NewMessage(nil)
-    msg.SetStructured(data)
-    msg.MetaSet("umh_topic", "umh.v1.test._historian.jsonnum")
-    
-    By("Processing and verifying json.Number handling")
-    batch := service.MessageBatch{msg}
-    result, err := edgeProcessor.ProcessBatch(context.Background(), batch)
-    
-    Expect(err).NotTo(HaveOccurred())
-    
-    if result != nil && len(result) > 0 && len(result[0]) > 0 {
-        By("Verifying json.Number was processed correctly")
-        
-        // Extract and verify the protobuf bundle
-        bundle := extractUnsBundle(result[0][0])
-        Expect(bundle).NotTo(BeNil())
-        
-        if len(bundle.Events.Entries) > 0 {
-            event := bundle.Events.Entries[0]
-            if event.Payload != nil && event.Payload.GetTs() != nil {
-                // Verify timestamp was parsed correctly from json.Number
-                actualTimestamp := event.Payload.GetTs().TimestampMs
-                Expect(actualTimestamp).To(Equal(int64(1750171500000)))
-            }
-        }
-    }
-})
-```
-
-**Required Helper Function**:
-```go
-func extractUnsBundle(msg *service.Message) *UnsBundle {
-    bytes, err := msg.AsBytes()
-    if err != nil {
-        return nil
-    }
-    
-    // Remove start/end blocks if present
-    cleanBytes := bytesFromMessageWithStartEndBlocksAndTimestamp(bytes)
-    
-    bundle, err := ProtobufBytesToBundleWithCompression(cleanBytes)
-    if err != nil {
-        return nil
-    }
-    
-    return bundle
-}
-```
-
-**Implementation Priority**: MEDIUM - Important for production compatibility but not blocking
+**Test Results**: All tests pass (103/104 with 1 expected skip) ✅
 
 ### 🟢 **LOW PRIORITY (Fix When Time Permits)**
 
