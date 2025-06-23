@@ -233,6 +233,11 @@ func processTimeSeriesData(structured map[string]interface{}) (*EventTableEntry,
 		var floatVal float64
 		switch v := v.(type) {
 		case int:
+			// ✅ FIX: Check precision safety for potentially 64-bit int
+			const maxSafeInt = 1 << 53 // 2^53 = 9,007,199,254,740,992
+			if v > maxSafeInt || v < -maxSafeInt {
+				return nil, fmt.Errorf("int value %d exceeds safe float64 precision range (±2^53)", v)
+			}
 			floatVal = float64(v)
 		case int8:
 			floatVal = float64(v)
@@ -241,8 +246,18 @@ func processTimeSeriesData(structured map[string]interface{}) (*EventTableEntry,
 		case int32:
 			floatVal = float64(v)
 		case int64:
+			// ✅ FIX: Check precision safety before converting to float64
+			const maxSafeInt64 = 1 << 53 // 2^53 = 9,007,199,254,740,992
+			if v > maxSafeInt64 || v < -maxSafeInt64 {
+				return nil, fmt.Errorf("int64 value %d exceeds safe float64 precision range (±2^53)", v)
+			}
 			floatVal = float64(v)
 		case uint:
+			// ✅ FIX: Check precision safety for potentially 64-bit uint
+			const maxSafeUint = 1 << 53 // 2^53 = 9,007,199,254,740,992
+			if v > maxSafeUint {
+				return nil, fmt.Errorf("uint value %d exceeds safe float64 precision range (2^53)", v)
+			}
 			floatVal = float64(v)
 		case uint8:
 			floatVal = float64(v)
@@ -251,6 +266,11 @@ func processTimeSeriesData(structured map[string]interface{}) (*EventTableEntry,
 		case uint32:
 			floatVal = float64(v)
 		case uint64:
+			// ✅ FIX: Check precision safety before converting to float64
+			const maxSafeUint64 = 1 << 53 // 2^53 = 9,007,199,254,740,992
+			if v > maxSafeUint64 {
+				return nil, fmt.Errorf("uint64 value %d exceeds safe float64 precision range (2^53)", v)
+			}
 			floatVal = float64(v)
 		}
 		timeSeriesPayload.ScalarType = ScalarType_NUMERIC
