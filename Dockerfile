@@ -33,6 +33,7 @@ COPY ./tag_processor_plugin ./tag_processor_plugin
 COPY ./sensorconnect_plugin ./sensorconnect_plugin
 COPY ./eip_plugin ./eip_plugin
 COPY ./uns_plugin ./uns_plugin
+COPY ./topic_browser_plugin ./topic_browser_plugin
 
 ENV CGO_ENABLED=0
 RUN go build \
