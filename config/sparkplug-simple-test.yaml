@@ -1,0 +1,49 @@
+# Minimal Sparkplug B Primary Host Test Configuration
+# This is a simple test configuration to verify Sparkplug B connectivity
+# and basic message processing. Use this for initial testing and debugging.
+
+input:
+  sparkplug_b:
+    # Basic MQTT connection to public broker
+    mqtt:
+      urls: ["tcp://broker.hivemq.com:1883"]
+      client_id: "benthos-sparkplug-test"
+      qos: 1
+    
+    # Primary Host identity
+    identity:
+      group_id: "TestGroup" 
+      edge_node_id: "TestPrimaryHost"
+    
+    # Configure as Primary Host (receives data from Edge Nodes)
+    role: "primary_host"
+    
+    # Listen to all Sparkplug groups (empty array = all groups)
+    subscription:
+      groups: []
+    
+    # Basic behavior for testing
+    behaviour:
+      auto_split_metrics: true     # Each metric becomes a separate message
+      data_messages_only: false    # Process BIRTH, DATA, and DEATH messages
+      auto_extract_values: true    # Extract metric values from protobuf
+
+# Simple processing pipeline
+pipeline:
+  processors:
+    - mapping: |
+        # Add timestamp for debugging
+        root = this
+        root.received_at = now()
+        
+        # Add basic Sparkplug info for visibility
+        if meta("spb_message_type") != null {
+          root.sparkplug_message_type = meta("spb_message_type")
+        }
+        if meta("spb_group_id") != null {
+          root.sparkplug_group = meta("spb_group_id") 
+        }
+
+# Output to console for easy monitoring
+output:
+  stdout: {} 

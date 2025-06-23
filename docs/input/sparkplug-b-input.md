@@ -1,658 +1,231 @@
-# Sparkplug B (Input)
+# Sparkplug B Input Plugin (Primary Host Role)
 
-The Sparkplug B input plugin provides comprehensive MQTT-based industrial IoT data collection with multiple role support, session lifecycle management, rebirth requests, and death certificate handling.
+## Overview
 
-**Status**: ✅ **Production Ready** - All core functionality working, comprehensive test coverage (73/74 specs passing)
+The **Sparkplug B Input plugin** allows the United Manufacturing Hub (UMH) to ingest data from MQTT brokers using the Sparkplug B specification, acting in the **Primary Host** role. In practice, this plugin subscribes to Sparkplug B MQTT topics (e.g., device birth/data/death messages) and converts the incoming Protobuf payloads into UMH-compatible messages. It maintains the stateful context required by Sparkplug B – tracking device birth certificates, metric alias mapping, and sequence numbers – so that incoming data is interpreted correctly.
 
-**Recent Major Fix**: STATE message filtering implemented (v2.0) - resolves protobuf parsing errors for STATE messages containing plain text payloads.
+This input plugin is designed to seamlessly integrate Sparkplug-enabled edge devices into the UMH **Unified Namespace**. It automatically decodes Sparkplug messages and enriches them with metadata (such as metric names, types, and timestamps) to fit the UMH-Core data model. By default, each Sparkplug metric is emitted as an individual message into the pipeline, complete with a unified `umh_topic` and additional meta fields. This enables immediate use of downstream processors (like the Tag Processor) and outputs (like the `uns` output to Redpanda) without extra parsing logic.
 
-Sparkplug B is an open standard for MQTT-based industrial IoT communication that uses protobuf encoding and hierarchical topic structures to organize edge nodes and devices. This plugin supports multiple roles:
+## Use Cases
 
-**Roles:**
-- **primary_host**: Acts as SCADA/Primary Application, subscribes to all groups (`spBv1.0/+/#`) or specific groups with filtering
-- **edge_node**: Acts as Edge Node, subscribes only to its own group (`spBv1.0/{group}/#`)  
-- **hybrid**: Combines both behaviors (rare, but useful for gateways), supports group filtering like primary_host
+* **Integrating Legacy Sparkplug Devices:** Easily bring data from existing Sparkplug B clients (e.g., Ignition MQTT Engine devices, Sparkplug-enabled sensors or PLCs) into the UMH platform. The plugin bridges Sparkplug MQTT payloads into UMH's unified format, allowing legacy devices to feed into modern analytics or cloud systems.
+* **Central SCADA/MES Data Ingestion:** Act as a Sparkplug **Primary Application** that listens for all device Birth (NBIRTH/DBIRTH), Data (NDATA/DDATA), and Death (NDEATH/DDEATH) messages on the shop floor. This is useful for SCADA, MES, or IIoT platforms built on UMH-Core to maintain a live data cache of all Sparkplug-enabled equipment.
+* **Unified Namespace Population:** Sparkplug messages often carry hierarchical information (Group ID, Edge Node ID, Device ID, metric name). This plugin translates those into UMH **virtual paths** (`umh_topic`) so that Sparkplug data slots into the single source of truth (the Unified Namespace) alongside data from OPC UA, Modbus, etc. For example, a Sparkplug metric from *EdgeNode1* in group *FactoryA* can be mapped to a topic like `umh.v1.FactoryA.EdgeNode1._sparkplug.metricName` in the UMH namespace.
+* **Stateful Device Monitoring:** Because the plugin internally tracks sequence numbers and birth certificates, it can be used to monitor device connectivity and session health. In a Sparkplug system, if a device goes offline or resets (causing unexpected sequence behavior or a new birth event), the plugin can detect this and handle it (e.g., by resetting its alias table and expecting a new NBIRTH), providing robust, state-aware data ingestion.
 
-**Key Responsibilities:**
-- Role-based subscription behavior (all groups vs single group)
-- Managing MQTT session lifecycle and tracking edge node states
-- Automatically requesting rebirth certificates when detecting sequence gaps
-- Handling death certificates and session state transitions
-- Automatic message processing with alias resolution and metric splitting
-- Providing comprehensive metadata for downstream processing
+## Configuration Reference
 
-## Sparkplug B Protocol Overview
+The Sparkplug B Input plugin has several configuration options. Many are common MQTT connection settings; these are described here once and apply similarly to the Sparkplug B Output plugin as well:
 
-Sparkplug B defines a hierarchical topic structure and message types:
+* **`broker_address`** (string, required): The MQTT broker URI to connect to (e.g., `"tcp://localhost:1883"` for unencrypted, or `"ssl://broker.example.com:8883"` for TLS). This plugin must connect to the same broker where Sparkplug edge nodes are publishing.
+* **`client_id`** (string, optional): MQTT Client identifier for this primary host. Must be unique on the broker. If not provided, a default like `"umh-sparkplug-primary"` is used. Typically, you can leave this default; use a custom ID if you need to identify the connection.
+* **`username`** / **`password`** (string, optional): Credentials for broker authentication (if the MQTT broker requires login). Omit if not needed. Both or neither should be provided.
+* **`tls` / certificate settings** (optional): Use these if connecting to an SSL/TLS-secured broker. You can specify:
+  * **`ca_cert`**: Path to a CA certificate file if the broker uses a self-signed or private CA.
+  * **`client_cert`** and **`client_key`**: Paths to the client's certificate and private key files, if client-side TLS auth is required.
+* **`group_id`** (string, optional): If set, the plugin will subscribe **only** to that Sparkplug **Group ID**. By default, this plugin subscribes to all Sparkplug traffic (`spBv1.0/#`). Providing a group here (e.g., `"FactoryA"`) narrows the subscription to `spBv1.0/FactoryA/#`, filtering messages to just that group of devices. Use this in multi-tenant or multi-site scenarios to isolate data.
+* **`data_only`** (boolean, optional): Default `false`. Controls whether initial Birth data should be emitted or suppressed. If `false`, when a device sends a Birth message (NBIRTH/DBIRTH), the plugin will output messages for each metric in that Birth payload (giving you the initial state of all metrics). If `true`, the plugin will **skip publishing metrics from birth messages**, and only output metrics from subsequent Data messages (NDATA/DDATA). Use `data_only: true` if you prefer to ignore the startup state and only react to live changing data (often useful to avoid a flood of initial values when many devices reconnect).
+* **`client_group`** (string, optional, advanced): The MQTT consumer group name or client group used for subscription state (if applicable – not typically used in raw MQTT, mostly for Kafka-based connectors; Sparkplug B input uses standard MQTT subscribe semantics, so this may not be applicable).
+* **`qos`** (integer, optional): Quality of Service level for MQTT subscription (0, 1, or 2). Default is 1 (at-least-once delivery) for reliability. QoS 0 (at-most-once) can be used if occasional data loss is acceptable, and QoS 2 typically isn't needed for telemetry.
+* **`keep_alive`** (integer, optional): Keep-alive interval in seconds for MQTT. Default often 60. Usually you can use the broker's default; adjust if you need faster heartbeat or to detect dead connections quicker.
 
-**Topic Structure:**
-```
-spBv1.0/<Group>/<MsgType>/<EdgeNode>[/<Device>]
-```
+**Sparkplug-Specific Behavior:**
 
-**Message Types:**
-- **NBIRTH/DBIRTH**: Node/Device birth certificates establishing metric definitions
-- **NDATA/DDATA**: Node/Device data messages with current values
-- **NDEATH/DDEATH**: Node/Device death certificates indicating disconnection
-- **NCMD/DCMD**: Node/Device command messages for control operations
-- **STATE**: Host state messages for session management
+The input plugin does not require you to configure specific metric names or device IDs – it discovers and handles those from the incoming messages. However, it's important to understand how it interprets Sparkplug topics and payloads:
 
-## Key Features
+* **Topic Parsing to `umh_topic`:** The plugin automatically parses each incoming Sparkplug message's topic and constructs a corresponding `umh_topic` for the output message metadata. Sparkplug topics follow the format:
 
-- **Multiple Role Support**: Support for primary_host, edge_node, and hybrid deployment patterns
-- **Idiomatic Configuration**: Clean organization with mqtt/identity/role/behaviour sections
-- **Integrated Processing**: Built-in alias resolution, metric splitting, and value extraction
-- **Session Lifecycle Management**: Tracks edge node states and handles reconnections
-- **Automatic Rebirth Requests**: Detects sequence number gaps and requests rebirth certificates
-- **Death Certificate Handling**: Processes node/device death messages and state transitions
-- **Comprehensive Metadata**: Extracts and provides rich metadata for downstream processing
-- **Flexible Behavior**: Configurable message processing, filtering, and transformation
-- **Sequence Number Validation**: Tracks and validates message sequence numbers
-- **Industrial-Grade Reliability**: Handles edge cases and connection failures gracefully
+  ```
+  spBv1.0/<GroupID>/<EdgeNodeID>/<MessageType>[/<DeviceID>]
+  ```
 
-## Metadata Outputs
+  Using this information, the plugin will form a unified namespace topic. By convention, the Sparkplug `GroupID` and `EdgeNodeID` are mapped into the `location_path` within `umh_topic`. For example, if a message arrives on topic `spBv1.0/FactoryA/EdgeNode1/NDATA`, and it contains a metric named `Pressure`, the plugin might emit a message with metadata:
 
-The plugin provides comprehensive metadata for each message that can be used for downstream processing:
+  * `msg.meta.location_path = "FactoryA.EdgeNode1"` (or a more expanded path if configured)
+  * `msg.meta.data_contract = "_sparkplug"` (default contract for Sparkplug data unless overridden)
+  * `msg.meta.tag_name = "Pressure"` (the metric's name)
+    From these, it builds `msg.meta.umh_topic = "umh.v1.FactoryA.EdgeNode1._sparkplug.Pressure"`. This ensures the metric is placed correctly in the UMH namespace hierarchy. (You can adjust the naming convention by post-processing with a Tag Processor if needed, but by default the above scheme is used.)
 
-| Metadata | Description |
-|----------|-------------|
-| `sparkplug_msg_type` | The Sparkplug B message type (NBIRTH, NDATA, DBIRTH, DDATA, NDEATH, DDEATH, NCMD, DCMD) |
-| `sparkplug_device_key` | Unique device identifier (Group/EdgeNode[/Device]) |
-| `group_id` | Sparkplug B Group ID |
-| `edge_node_id` | Edge Node ID within the group |
-| `device_id` | Device ID under the edge node (only for device-level messages) |
-| `tag_name` | Metric name (when auto_split_metrics is enabled) |
-| `mqtt_topic` | Original MQTT topic |
-| `sequence_number` | Message sequence number (for NDATA/DDATA messages) |
-| `session_established` | Whether the session is established for this edge node |
-| `rebirth_requested` | Whether a rebirth request was sent for this message |
+* **Metric Names and Alias Decoding:** Sparkplug B uses **metric aliases** to reduce payload size – after a device's birth, subsequent data messages may omit metric names and use numeric aliases. The input plugin manages an **alias table** for each device (Edge Node and/or Device ID) internally. On receiving a Birth message, it maps each metric name to the provided alias. Later, when a Data message arrives, if a metric has no name but only an alias, the plugin looks up the alias to find the original name. The output Benthos message will always include the human-readable metric name (e.g., in the `umh_topic` and as `msg.meta.tag_name`) so you don't have to deal with alias numbers in your pipelines. This alias table is dynamically updated: if an unknown alias is encountered (or if a device sends a new Birth with a refreshed alias set), the plugin will log a warning or debug message and wait for a new Birth to properly map it.
 
-## Configuration Options
+  **Important Note on Alias Resolution:** The plugin only resolves aliases when metrics have an alias but **no name**. Many Sparkplug B devices send both the alias and the resolved name in DATA messages (which is perfectly valid per the specification). In such cases, you will see output like `{"alias": 50000, "name": "System Info/MAC Address", "value": "..."}` - this is **correct behavior**, not a bug. The alias field is preserved for debugging and traceability, while the name field provides the human-readable metric identifier. Only when a metric arrives with an alias but no name (e.g., `{"alias": 50000, "value": "..."}`) will the plugin attempt to resolve the alias from its internal cache.
 
-```yaml
-input:
-  sparkplug_b:
-    # MQTT Transport Configuration
-    mqtt:
-      urls: ["tcp://localhost:1883"]
-      client_id: "benthos-sparkplug"
-      credentials:                    # optional
-        username: "admin"
-        password: "password"
-      qos: 1                          # optional (default: 1)
-      keep_alive: "60s"               # optional (default: "60s")
-      connect_timeout: "30s"          # optional (default: "30s")
-      clean_session: true             # optional (default: true)
-    
-    # Sparkplug Identity Configuration
-    identity:
-      group_id: "SCADA"
-      edge_node_id: "Primary-Host-01"
-      device_id: ""                   # optional (empty for node-level identity)
-    
-    # Role Configuration
-    role: "primary_host"              # primary_host, edge_node, or hybrid
-    
-    # Subscription Configuration (optional for primary_host and hybrid roles)
-    subscription:                     # optional
-      groups: ["benthos", "factory1"] # specific groups to subscribe to (empty = all groups)
-    
-    # Processing Behavior Configuration
-    behaviour:                        # optional
-      auto_split_metrics: true        # optional (default: true)
-      data_messages_only: false       # optional (default: false)
-      enable_rebirth_req: true        # optional (default: true)
-      drop_birth_messages: false      # optional (default: false)
-      strict_topic_validation: false  # optional (default: false)
-      auto_extract_values: true       # optional (default: true)
-```
+* **Sequence Number Tracking:** Each Sparkplug message includes a sequence number (`seq`) and each Birth has a birth-death sequence (`bdSeq`). The input plugin performs **dynamic sequence validation** to ensure data consistency. It tracks the last sequence number seen from each Edge Node. If it detects a gap or a reset in the sequence (for example, if `seq` jumps backwards or skips unexpectedly), it interprets that as a potential session restart or message loss. In such cases, the plugin will internally mark the session as inconsistent – it may flush the old alias table for that device and expect a fresh NBIRTH or DBIRTH. This mechanism helps maintain a correct state: e.g., if a device went offline and came back (causing a new NBIRTH with `bdSeq` incremented), the plugin ensures old aliases/sequence are not misapplied. Sequence mismatches and resets are typically logged for visibility.
 
-## Required Configuration
+* **Metadata Enrichment:** In addition to `umh_topic`, the plugin attaches several Sparkplug-specific metadata fields to each output message:
+  * `spb_group`: the Sparkplug Group ID of the source message.
+  * `spb_edge_node`: the Edge Node ID (equipment or gateway name).
+  * `spb_device` (if applicable): the Device ID (for metrics coming from a Device under an edge node; if the message was NDATA/NDIRTH at the node level, this may be empty or `null`).
+  * `spb_seq`: the sequence number of the Sparkplug message that carried this metric.
+  * `spb_bdseq`: the birth-death sequence number of the session (incremented each time the device rebirths).
+  * `spb_timestamp`: the timestamp (in epoch ms) provided with the metric, if any.
+  * `spb_datatype`: the Sparkplug data type of the metric (as a human-readable string, e.g. `"Int32"`, `"Double"`, `"Boolean"`, etc., derived from the metric's data type ID).
+  * `spb_alias`: the alias number of the metric (as used in the Sparkplug payload). This is primarily for debugging or advanced use; as noted, the plugin already resolves alias to name for normal operations.
+  * `spb_is_historical`: set to `true` if the metric was flagged as historical in the Sparkplug payload (Sparkplug metrics carry an `is_historical` flag to indicate back-filled data vs real-time).
+    These metadata fields ensure that all relevant Sparkplug context is preserved. You can use them in processors or for routing if needed. For example, one could route messages differently if `spb_is_historical = true` to handle backfilled data separately.
 
-### Basic Configuration (Primary Host)
+## Example Configs
+
+**Basic Example (Single Group):** Subscribe to all metrics from a known Sparkplug group and output them to the unified namespace.
 
 ```yaml
 input:
   sparkplug_b:
-    mqtt:
-      urls: ["tcp://localhost:1883"]
-      client_id: "scada-host-01"
-    identity:
-      group_id: "SCADA"
-      edge_node_id: "Primary-Host-01"
-    role: "primary_host"
+    broker_address: "tcp://iot-broker.local:1883"
+    group_id: "FactoryA"            # listen only to this Sparkplug Group
+    client_id: "UMH_PrimaryApp_1"   # optional client ID
+    username: "mqtt_user"           # if broker requires auth
+    password: "mqtt_pass"
+    data_only: false                # include initial birth metrics
+pipeline:
+  processors:
+    - tag_processor: {}             # (Optional) further enrich or remap tags if needed
+output:
+  uns: {}                           # send to Unified Namespace (Redpanda)
 ```
 
-### Edge Node Configuration
+In this example, the Sparkplug Input will connect to the MQTT broker at `iot-broker.local` and subscribe to `spBv1.0/FactoryA/#`. It will receive all Sparkplug messages for group "FactoryA". If a device EdgeNode1 in FactoryA publishes an NBIRTH with metrics `Pressure` and `Temperature`, the plugin will output each metric as a separate message. For instance, `Pressure` might come out as a message with `umh_topic = umh.v1.FactoryA.EdgeNode1._sparkplug.Pressure` and its current value in the payload. The next `Temperature` metric appears similarly. Subsequent NDATA messages containing changes in `Pressure` or `Temperature` will result in output messages with those tags and updated values. The initial birth metrics are emitted (`data_only: false`), so even if no change occurs after birth, you get the starting values. Each message carries metadata like `spb_group="FactoryA"`, `spb_edge_node="EdgeNode1"`, etc., which the Tag Processor (if used) can further transform or simply pass along. Finally, the `uns` output plugin will write these into the internal Kafka-based unified namespace.
+
+**Filtering & Advanced Options:** If you have a setup with many Sparkplug groups or devices and only want to consume a subset, you can adjust the plugin accordingly:
+
+* To subscribe to **multiple groups**, you currently need multiple input instances (one per group) or use a wildcard in `group_id` (Sparkplug doesn't typically use wildcards in the middle of topic; better to list specific groups or all).
+* If you set `data_only: true`, the behavior changes – using the above example, the NBIRTH of EdgeNode1 will **not** immediately produce output messages for `Pressure` and `Temperature`. Only when the device sends new NDATA or DDATA messages will the plugin emit those metrics. The alias table is still built on NBIRTH in the background, but the initial values are suppressed. This is useful if you only care about changes or live data.
+
+**TLS Connection Example:** Connecting securely with TLS (e.g., MQTT over SSL):
+
+```yaml
+input:
+  sparkplug_b:
+    broker_address: "ssl://broker.company.com:8883"
+    client_id: "UMH_Primary_TLS"
+    username: "company_user"
+    password: "secret"
+    tls:
+      ca_cert: "/certs/ca.crt"
+      client_cert: "/certs/client.crt"
+      client_key: "/certs/client.key"
+    group_id: "Plant01"
+    data_only: false
+```
+
+This configuration will connect to the broker using the provided CA and client certificates, subscribe to `Plant01` group topics, and ingest all Sparkplug data securely.
+
+**Complete UMH Integration Example with Tag Processor:** For full UMH integration with proper asset hierarchy mapping:
 
 ```yaml
 input:
   sparkplug_b:
     mqtt:
-      urls: ["tcp://localhost:1883"]
-      client_id: "edge-listener"
-    identity:
-      group_id: "Factory1"
-      edge_node_id: "Line1-Gateway"
-    role: "edge_node"
-```
-
-### Authentication
-
-If your MQTT broker requires authentication:
-
-```yaml
-input:
-  sparkplug_b:
-    mqtt:
-      urls: ["tcp://localhost:1883"]
-      client_id: "benthos-sparkplug"
-      credentials:
-        username: "admin"
-        password: "password"
-    identity:
-      group_id: "SCADA"
-      edge_node_id: "Primary-Host-01"
-    role: "primary_host"
-```
-
-### Subscription Filtering
-
-For primary_host and hybrid roles, you can filter subscriptions to specific groups instead of monitoring all groups:
-
-```yaml
-input:
-  sparkplug_b:
-    mqtt:
-      urls: ["tcp://localhost:1883"]
-      client_id: "department-scada"
-    identity:
-      group_id: "SCADA"
-      edge_node_id: "Department-Host"
-    role: "primary_host"
-    subscription:
-      groups: ["factory_a", "warehouse", "quality_lab"]
-```
-
-**Group Filtering Examples:**
-
-```yaml
-# Monitor only test environments
-subscription:
-  groups: ["test", "development", "staging"]
-
-# Monitor specific factory departments  
-subscription:
-  groups: ["assembly_line", "packaging", "shipping"]
-
-# Monitor security zones
-subscription:
-  groups: ["secure_zone_1", "critical_systems"]
-
-# Monitor everything (default behavior)
-subscription:
-  groups: []  # Empty list = all groups (spBv1.0/+/#)
-```
-
-**Use Cases:**
-- **Production Segregation**: Different SCADA systems for different departments
-- **Security Zones**: Isolate monitoring by security classification
-- **Testing Environments**: Separate test/development from production
-- **Departmental Monitoring**: Factory floor vs office systems
-- **Performance Optimization**: Reduce message volume by filtering relevant groups
-
-### Processing Behavior
-
-To configure message processing behavior:
-
-```yaml
-input:
-  sparkplug_b:
-    mqtt:
-      urls: ["tcp://localhost:1883"]
-      client_id: "benthos-sparkplug"
-    identity:
-      group_id: "SCADA"
-      edge_node_id: "Primary-Host-01"
-    role: "primary_host"
-    behaviour:
-      auto_split_metrics: true        # Split multi-metric messages
-      data_messages_only: true        # Only process DATA messages
-      enable_rebirth_req: true        # Send rebirth requests on gaps
-      auto_extract_values: true       # Extract metric values
-```
-
-## Complete Example: Sparkplug B to UNS Integration
-
-Here's a complete example showing how to use the Sparkplug B input with integrated processing and UNS output:
-
-```yaml
-input:
-  sparkplug_b:
-    # MQTT Configuration
-    mqtt:
-      urls: ["tcp://localhost:1883"]
-      client_id: "benthos-sparkplug-scada"
-      credentials:
-        username: "admin"
-        password: "admin123"
+      urls: ["tcp://broker.hivemq.com:1883"]
+      client_id: "benthos-umh-primary-host"
       qos: 1
       keep_alive: "60s"
       connect_timeout: "30s"
       clean_session: true
     
-    # Sparkplug Identity
     identity:
-      group_id: "Factory"
-      edge_node_id: "SCADA-Host-01"
+      group_id: "UMH-Group"
+      edge_node_id: "PrimaryHost"
     
-    # Primary Host Role
     role: "primary_host"
     
-    # Subscribe only to Factory group (optional)
     subscription:
-      groups: ["Factory"]             # Filter to Factory group only
+      groups: []  # Listen to all groups
     
-    # Processing Behavior
     behaviour:
-      auto_split_metrics: true        # Split metrics for individual processing
-      data_messages_only: true        # Focus on DATA messages for UNS
-      enable_rebirth_req: true        # Handle sequence gaps
-      auto_extract_values: true       # Extract clean values
-      drop_birth_messages: false      # Keep BIRTH for alias resolution
+      auto_split_metrics: true        # Each metric becomes separate message
+      data_messages_only: false       # Process BIRTH, DATA, and DEATH messages
+      drop_birth_messages: false      # Keep BIRTH messages for alias resolution
+      auto_extract_values: true       # Extract values from protobuf
+      include_node_metrics: true      # Include node-level metrics
+      include_device_metrics: true    # Include device-level metrics
 
 pipeline:
   processors:
-    # Transform to UMH format using built-in metadata
-    - tag_processor:
-        defaults: |
-          msg.meta.data_contract = "_raw_";
-          msg.meta.location_path = msg.meta.group_id + "." + msg.meta.edge_node_id;
-          if msg.meta.device_id != "" {
-            msg.meta.location_path = msg.meta.location_path + "." + msg.meta.device_id;
-          }
-          msg.meta.virtual_path = "sensors.generic";
-          return msg;
+    # Add timestamp and basic metadata
+    - mapping: |
+        root = this
+        root.received_at = now()
         
-        conditions:
-          - if: msg.meta.tag_name && msg.meta.tag_name.includes("temp")
-            then: |
-              msg.meta.virtual_path = "sensors.temperature";
-              return msg;
+    # Process through tag_processor for UMH format conversion
+    - tag_processor:
+        # UMH Asset Hierarchy Configuration
+        asset_hierarchy:
+          # Map Sparkplug group_id to UMH enterprise
+          enterprise: this.group_id | "sparkplug"
           
-          - if: msg.meta.tag_name && msg.meta.tag_name.includes("press")
-            then: |
-              msg.meta.virtual_path = "sensors.pressure";
-              return msg;
+          # Map edge_node_id to UMH site  
+          site: this.edge_node_id | "unknown_site"
+          
+          # Map device_key components to UMH area/line
+          area: |
+            # Extract area from device_key (group/node/device -> use device as area)
+            if this.device_key != null {
+              this.device_key.split("/").index(2) | "production"
+            } else {
+              "production" 
+            }
+          
+          # Use tag_name as work_cell
+          work_cell: this.tag_name | "default"
+        
+        # Tag Name Processing
+        tag_name_processing:
+          # Use the resolved metric name or alias as tag name
+          tag_name_source: |
+            if this.name != null && this.name != "" {
+              this.name
+            } else if this.alias != null {
+              "alias_" + string(this.alias)
+            } else {
+              "unknown_metric"
+            }
+          
+          # Clean tag names for UMH compatibility
+          tag_name_transformations:
+            - type: "replace"
+              pattern: "[^a-zA-Z0-9_/-]"
+              replacement: "_"
+            - type: "lowercase"
+        
+        # Value Processing
+        value_processing:
+          # Handle different Sparkplug data types
+          value_transformations:
+            - condition: 'this.value == null'
+              action: 'set_null'
+            - condition: 'type(this.value) == "bool"'
+              action: 'convert_bool_to_int'
+            - condition: 'type(this.value) == "string"'
+              action: 'keep_string'
+        
+        # Metadata Enrichment
+        metadata_enrichment:
+          add_sparkplug_metadata: true
+          add_timestamp_metadata: true
+          custom_metadata:
+            data_source: "sparkplug_b"
+            message_type: this.spb_message_type | "unknown"
+            device_online: this.spb_device_online | false
 
 output:
+  # Output to UMH Unified Namespace
   uns: {}
 ```
 
-## Session Management
-
-The Sparkplug B input implements comprehensive session management:
-
-### Edge Node State Tracking
-
-The input tracks the state of each edge node:
-- **OFFLINE**: Initial state or after death certificate
-- **ONLINE**: After receiving valid NBIRTH message
-- **STALE**: After detecting sequence gaps or timeouts
-
-### Rebirth Request Logic
-
-When sequence number gaps are detected:
-1. Send NCMD message to request rebirth certificate
-2. Mark edge node as requiring rebirth
-3. Wait for NBIRTH message to re-establish session
-4. Resume normal processing after session re-establishment
-
-### Death Certificate Processing
-
-When NDEATH/DDEATH messages are received:
-1. Mark edge node/device as offline
-2. Clear cached sequence numbers
-3. Expect NBIRTH/DBIRTH for reconnection
-
-## Configuration Fields
-
-### MQTT Section
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `mqtt.urls` | `[]string` | **required** | List of MQTT broker URLs |
-| `mqtt.client_id` | `string` | `"benthos-sparkplug"` | MQTT client identifier |
-| `mqtt.credentials.username` | `string` | `""` | MQTT username |
-| `mqtt.credentials.password` | `string` | `""` | MQTT password |
-| `mqtt.qos` | `int` | `1` | MQTT QoS level |
-| `mqtt.keep_alive` | `duration` | `"60s"` | MQTT keep alive interval |
-| `mqtt.connect_timeout` | `duration` | `"30s"` | Connection timeout |
-| `mqtt.clean_session` | `bool` | `true` | MQTT clean session flag |
-
-### Identity Section
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `identity.group_id` | `string` | **required** | Sparkplug B Group ID |
-| `identity.edge_node_id` | `string` | **required** | Edge Node ID for this application |
-| `identity.device_id` | `string` | `""` | Device ID (empty for node-level identity) |
-
-### Role Configuration
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `role` | `string` | `"primary_host"` | Role: `primary_host`, `edge_node`, or `hybrid` |
-
-### Subscription Section
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `subscription.groups` | `[]string` | `[]` | Specific groups to subscribe to for primary_host/hybrid roles. Empty = all groups |
-
-### Behaviour Section
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `behaviour.auto_split_metrics` | `bool` | `true` | Split multi-metric messages into individual messages |
-| `behaviour.data_messages_only` | `bool` | `false` | Only process DATA messages (drop others after processing) |
-| `behaviour.enable_rebirth_req` | `bool` | `true` | Send rebirth requests on sequence gaps |
-| `behaviour.drop_birth_messages` | `bool` | `false` | Drop BIRTH messages after alias extraction |
-| `behaviour.strict_topic_validation` | `bool` | `false` | Strictly validate Sparkplug topic format |
-| `behaviour.auto_extract_values` | `bool` | `true` | Extract metric values as message payload |
-
-## Recent Improvements
-
-### STATE Message Filtering (Fixed in v2.0)
-
-**Issue Resolved**: Previous versions incorrectly attempted to parse STATE messages as Sparkplug protobuf payloads, causing parsing errors.
-
-**Root Cause**: STATE messages contain plain text payloads ("ONLINE"/"OFFLINE") but were being processed through the protobuf decoder.
-
-**Solution**: Added STATE message type detection before protobuf parsing:
-- STATE messages are now identified by topic pattern before payload processing
-- Plain text STATE payloads are correctly handled without protobuf parsing
-- STATE messages generate proper `StateChange` events with full metadata
-
-**Configuration**: No configuration changes required - the fix is automatic.
-
-**Before the fix:**
-```
-ERROR Failed to unmarshal Sparkplug payload from topic spBv1.0/Factory/STATE/Line1: 
-proto: cannot parse invalid wire-format data
-```
-
-**After the fix:**
-```json
-{
-  "device_key": "Factory/Line1",
-  "event": "StateChange", 
-  "state": "ONLINE",
-  "group_id": "Factory",
-  "edge_node_id": "Line1",
-  "timestamp_ms": 1750495109834
-}
-```
-
-## Edge Cases & Advanced Troubleshooting
-
-### Alias Resolution Issues
-
-**Problem**: NDATA messages not resolving metric names from aliases.
-
-**Symptoms:**
-```json
-{"alias": 100, "value": 25.5}  // Missing "name" field
-```
-
-**Diagnosis:**
-1. Check if NBIRTH message was received and processed first
-2. Verify alias values match between NBIRTH and NDATA
-3. Confirm device keys are consistent
-
-**Solution:**
-```yaml
-# Enable debug logging to trace alias resolution
-behaviour:
-  strict_topic_validation: true  # Ensures consistent device keys
-```
-
-**Debug Commands:**
-```bash
-# Check alias cache state
-grep "cached alias" benthos.log
-
-# Trace alias resolution  
-grep "resolved alias" benthos.log
-```
-
-### Sequence Gap Detection
-
-**Problem**: Frequent rebirth requests due to sequence gaps.
-
-**Symptoms:**
-```
-level=warn msg="Sequence gap detected: expected 5, got 8, requesting rebirth"
-```
-
-**Root Causes:**
-- Network packet loss
-- Edge node restarts without proper NBIRTH
-- Clock skew causing message reordering
-- Multiple edge nodes with same identity
-
-**Solutions:**
-```yaml
-behaviour:
-  # Increase gap tolerance for unstable networks
-  max_sequence_gap: 10  # default: 5
-  
-  # Reduce gap sensitivity for development
-  enable_rebirth_req: false  # temporarily disable
-```
-
-### Pre-Birth Data Handling
-
-**Problem**: NDATA messages arriving before NBIRTH (cold start scenario).
-
-**Expected Behavior**: Plugin should queue or reject NDATA until NBIRTH establishes metric definitions.
-
-**Current Implementation**: NDATA without alias context will have empty metric names.
-
-**Monitoring:**
-```bash
-# Check for pre-birth data
-grep "no NBIRTH context" benthos.log
-
-# Monitor birth message flow
-grep "NBIRTH.*cached.*aliases" benthos.log
-```
-
-### Device Key Consistency
-
-**Problem**: Inconsistent device key generation causing alias cache misses.
-
-**Common Issues:**
-- Mixed case in topic components
-- Extra slashes in topic structure
-- Unicode characters in device names
-
-**Debug Device Keys:**
-```bash
-# Check device key generation
-grep "deviceKey=" benthos.log | sort | uniq -c
-
-# Look for case variations
-grep -i "factory" benthos.log | grep "deviceKey"
-```
-
-**Best Practices:**
-- Use consistent casing in all topic components
-- Avoid special characters in group/edge/device names
-- Validate topic structure with `strict_topic_validation: true`
-
-### Memory and Performance Issues
-
-**Problem**: High memory usage or slow processing.
-
-**Symptoms:**
-- Increasing memory usage over time
-- Processing delays during high message volume
-- Frequent garbage collection
-
-**Monitoring Commands:**
-```bash
-# Check memory usage
-ps aux | grep benthos
-
-# Monitor message processing rate
-grep "ReadBatch.*produced" benthos.log | tail -20
-
-# Check alias cache size
-grep "cached.*aliases" benthos.log | wc -l
-```
-
-**Optimization:**
-```yaml
-behaviour:
-  # Reduce memory usage by dropping birth messages after processing
-  drop_birth_messages: true
-  
-  # Process only data messages for high-volume scenarios
-  data_messages_only: true
-  
-  # Disable metric splitting for better performance
-  auto_split_metrics: false
-```
-
-## Testing & Validation
-
-### Unit Testing
-
-The plugin includes comprehensive unit tests covering:
-- **74 test specifications** with 73 passing (1 intentionally skipped)
-- **Base64 test vectors** for protocol compliance validation
-- **Edge case testing** for alias resolution, sequence handling, STATE filtering
-- **Offline execution** - no external dependencies required
-
-**Run Tests:**
-```bash
-cd sparkplug_plugin
-go test -v .
-```
-
-**Test Coverage:**
-- ✅ Alias resolution (NBIRTH → NDATA flow)
-- ✅ Sequence gap detection and rebirth requests
-- ✅ Pre-birth data handling
-- ✅ Device key management and collision detection
-- ✅ STATE message filtering
-- ✅ Topic parsing and validation
-
-### Integration Testing
-
-**Local Broker Testing:**
-```bash
-# Start local Mosquitto broker
-make start-mosquitto
-
-# Run integration tests
-TEST_SPARKPLUG_B=1 go test -v -run "Integration"
-
-# Clean up
-make stop-mosquitto
-```
-
-**Manual Testing with Real Edge Nodes:**
-```bash
-# Monitor debug logs
-./benthos-umh -c config.yaml --log.level DEBUG
-
-# Test specific scenarios
-mosquitto_pub -t "spBv1.0/Factory/STATE/Line1" -m "ONLINE"
-mosquitto_pub -t "spBv1.0/Factory/NBIRTH/Line1" -f nbirth_payload.bin
-```
-
-### Base64 Test Vectors
-
-The plugin includes validated Base64 test vectors for protocol compliance:
-
-```go
-// Example usage in tests
-vectors := GetTestVectors()
-for _, vector := range vectors {
-    payload, err := DecodeTestVector(vector)
-    // Verify payload structure...
-}
-```
-
-**Available Test Vectors:**
-- `NBIRTH_v1`: Node birth with bdSeq, Node Control/Rebirth, and Temperature metric
-- `NDATA_v1`: Node data with alias-based Temperature metric
-
-## Troubleshooting
-
-### Common Issues
-
-**Connection Failures:**
-- Verify broker URLs and authentication credentials
-- Check network connectivity and firewall settings
-- Ensure MQTT broker supports Sparkplug B QoS requirements
-
-**Missing Messages:**
-- Check message type filtering configuration
-- Verify edge nodes are publishing to expected topics
-- Monitor sequence number gaps and rebirth requests
-
-**Session Management Issues:**
-- Review rebirth request timeout settings
-- Check edge node death certificate handling
-- Verify STATE message publishing
-
-**STATE Message Parsing Errors (Legacy):**
-- Upgrade to v2.0+ which includes STATE message filtering fix
-- No configuration changes required for the fix
-
-### Monitoring
-
-The plugin provides comprehensive logging and metrics:
-- Connection status and failures
-- Message processing statistics
-- Session state transitions
-- Rebirth request activity
-- Sequence number validation results
-
-**Useful Debug Queries:**
-```bash
-# Monitor STATE message processing
-grep "STATE message" benthos.log
-
-# Check alias cache operations
-grep "cached\|resolved.*alias" benthos.log
-
-# Track sequence numbers
-grep "sequence.*gap\|rebirth" benthos.log
-
-# Monitor integration test results
-grep "Integration test.*58.*specs" benthos.log
-```
-
-## Security Considerations
-
-### MQTT Security
-
-- Use TLS encryption for broker connections
-- Implement proper authentication and authorization
-- Consider using client certificates for enhanced security
-
-### Sparkplug B Security
-
-- Validate message signatures if required
-- Implement proper access controls for command messages
-- Monitor for unexpected message patterns or sequence anomalies
-
-## Integration with Other UMH Components
-
-The Sparkplug B input is designed to work seamlessly with other UMH components:
-
-- **Built-in Processing**: Automatically decodes, enriches, and transforms messages
-- **Tag Processor**: Further transforms metadata for UNS integration
-- **UNS Output**: Publishes to the Unified Namespace
-- **Historian**: Stores historical data with proper metadata
-
-This creates a complete industrial IoT data pipeline from Sparkplug B edge devices to the Unified Namespace and beyond. The integrated processing capabilities eliminate the need for separate decoding processors while providing comprehensive metadata extraction and transformation features. 
+This example shows a complete Sparkplug B to UMH integration pipeline. The `tag_processor` transforms the Sparkplug data into UMH's asset hierarchy format, mapping Sparkplug Group IDs to enterprises, Edge Node IDs to sites, and properly handling metric names whether they come from alias resolution or direct names. The final output goes to the UMH Unified Namespace where it can be consumed by other UMH components.
+
+## Notes
+
+* **Sparkplug Version & Compatibility:** This plugin targets **Sparkplug B** (v3.0) compliance. It uses the official Sparkplug Protobuf definitions for decoding. Ensure your edge devices are publishing Sparkplug B formatted payloads (not Sparkplug A or custom formats). The plugin currently focuses on metrics (Data messages). Sparkplug command messages (NCMD/DCMD) are not generated by this input plugin – since it's an input, it only listens; if you need to respond with NCMD/DCMD, you would use the Sparkplug Output plugin or another method to publish commands.
+* **UMH-Core Integration:** In a UMH-Core deployment, minimal configuration is needed – often just `sparkplug_b: { broker_address: "...", group_id: "..." }` is enough, as other defaults are optimized for UMH. The **Tag Processor** can be used in-line to reshape any metadata. For example, if you want to map Sparkplug's `EdgeNode1` to a more descriptive location in UMH, you could use a Tag Processor to prepend a higher-level path or change the data contract. The plugin's output `umh_topic` is meant to be readily consumable by the `uns` output (as shown in examples) so that Sparkplug data flows into the unified namespace with no extra fuss.
+* **Performance:** The Sparkplug Input processes messages in a streaming fashion. Under the hood, it uses asynchronous MQTT subscriptions. Incoming Sparkplug payloads are decoded and then each metric is emitted as a separate Benthos message. This ensures backpressure is handled correctly (the plugin won't ACK the MQTT message until all output Benthos messages derived from it are processed). The plugin batches metrics from a single Sparkplug payload efficiently. If an NBIRTH carries 100 metrics, the plugin will emit 100 messages in a batch, which Benthos can process concurrently. This design prevents bottlenecks when devices publish large births.
+* **Sequence & Session Handling:** The plugin's dynamic sequence validation is there to help identify missed data or device restarts. **Note:** It does not currently re-order out-of-order messages (that is generally the broker's job with QoS). However, if a gap is detected (say sequence jumped from 10 to 13), it will log the event. If a device reconnects and issues a new Birth (`bdSeq` increments), the plugin resets that device's context (alias table, last seq) and treats subsequent messages under the new session. All of this happens internally; from the user perspective, you'll just see a new stream of birth metrics followed by data metrics. If you see duplicate initial values, that could be because a device re-birthed and `data_only` was false (thus you got a second set of NBIRTH metrics).
+* **Limitations & Future Improvements:** This initial version assumes that all metrics in Sparkplug payloads can be mapped to simple tag values in UMH. Complex Sparkplug features like **Templates** and **DataSets** (which bundle multiple metrics in a single metric data structure) are not fully expanded by the plugin yet – they will appear as a single payload blob if encountered. Support for these complex types may be added later. Additionally, if a Sparkplug device includes properties or metadata in metrics, those are not separately exposed except as raw JSON in the description (if provided). The focus is on core telemetry metrics.
+* **Common MQTT Issues:** If the plugin doesn't seem to be receiving data:
+  * Double-check the `broker_address` and credentials.
+  * Ensure the `group_id` is correct (it's case-sensitive and must match exactly what the devices use).
+  * Verify that the MQTT broker is reachable from the UMH instance and that any firewall or networking is set up to allow the connection.
+  * If using TLS, make sure certificates are valid and the time is synchronized (certificate expiration or not yet valid issues can silently block connections).
+  * Use the UMH logging output to see debug logs; the Sparkplug input will log when it connects, subscribes, and whenever it receives a Birth or Death (at info level), as well as any sequence warnings (at warn level).
+* **Shutdown Behavior:** When Benthos (or UMH-Core) is shut down gracefully, this input will unsubscribe from the broker. Sparkplug Primary Host clients typically do not send any "death" announcement – that concept applies to Edge Nodes. Therefore, there is no special NDEATH sent by this plugin on exit (that's only for the output plugin acting as an Edge Node). However, the MQTT broker will simply register the subscription gone. If you restart the UMH primary application, be aware that Sparkplug edge nodes will **not** automatically resend their NBIRTHs unless they detect a disconnect of their own. You may need to design your system such that edge devices periodically do a rebirth or at least keep publishing data so the primary can rebuild state after a restart. Alternatively, consider configuring the Sparkplug B devices to use MQTT **Retained** messages for NBIRTH – this plugin does support reading retained NBIRTH on connect (the broker will send it as if it just occurred), allowing it to populate initial metric state even if it starts after the devices. Retained messages are optional in Sparkplug, so use according to your system's approach. 
