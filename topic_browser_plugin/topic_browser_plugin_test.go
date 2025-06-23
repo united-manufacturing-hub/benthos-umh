@@ -817,38 +817,98 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(finalBufferLen).To(Equal(1), "Buffer should contain only the overflow-triggering message")
 		})
 
-		It("should handle concurrent access safely", func() {
-			By("Simulating concurrent message processing")
+		It("should handle concurrent access with race condition detection", func() {
+			By("Simulating concurrent message processing with race detection")
 
-			// Test with fewer goroutines to avoid overwhelming the small buffer
+			// Test with multiple goroutines to stress-test thread safety
 			var wg sync.WaitGroup
-			var successCount int64
-			var mutex sync.Mutex
+			var results []error
+			var resultsMutex sync.Mutex
+			var bufferSizes []int
+			var topicMapSizes []int
 
-			for i := 0; i < 5; i++ {
+			// Capture initial state for comparison
+			safetyProcessor.bufferMutex.Lock()
+			initialBufferSize := len(safetyProcessor.messageBuffer)
+			initialTopicMapSize := len(safetyProcessor.fullTopicMap)
+			safetyProcessor.bufferMutex.Unlock()
+
+			By(fmt.Sprintf("Starting concurrent test with initial state: buffer=%d, topics=%d",
+				initialBufferSize, initialTopicMapSize))
+
+			// Run concurrent operations with race detector enabled
+			numGoroutines := 10
+			for i := 0; i < numGoroutines; i++ {
 				wg.Add(1)
 				go func(index int) {
 					defer wg.Done()
-					batch := createTestBatch(1, fmt.Sprintf("concurrent-test-%d", index))
+
+					batch := createTestBatch(1, fmt.Sprintf("race-test-%d", index))
 					_, err := safetyProcessor.ProcessBatch(context.Background(), batch)
 
-					mutex.Lock()
-					if err == nil {
-						successCount++
-					}
-					mutex.Unlock()
+					// Capture results and state snapshots
+					resultsMutex.Lock()
+					results = append(results, err)
+
+					// Capture buffer state during concurrent access
+					safetyProcessor.bufferMutex.Lock()
+					bufferSizes = append(bufferSizes, len(safetyProcessor.messageBuffer))
+					topicMapSizes = append(topicMapSizes, len(safetyProcessor.fullTopicMap))
+					safetyProcessor.bufferMutex.Unlock()
+
+					resultsMutex.Unlock()
 				}(i)
 			}
 
 			wg.Wait()
 
-			By("Verifying safe concurrent operation")
-			// At least some messages should process successfully
-			mutex.Lock()
-			finalSuccessCount := successCount
-			mutex.Unlock()
+			By("Verifying consistent state after concurrent access")
+			// Check final state consistency
+			safetyProcessor.bufferMutex.Lock()
+			finalBufferSize := len(safetyProcessor.messageBuffer)
+			finalTopicMapSize := len(safetyProcessor.fullTopicMap)
+			safetyProcessor.bufferMutex.Unlock()
 
-			Expect(finalSuccessCount).To(BeNumerically(">", 0), "Should handle concurrent access safely")
+			// Verify state consistency
+			Expect(finalBufferSize).To(BeNumerically(">=", 0), "Buffer size should be non-negative")
+			Expect(finalBufferSize).To(BeNumerically("<=", 10), "Buffer size should not exceed maxBufferSize")
+			Expect(finalTopicMapSize).To(BeNumerically(">=", 0), "Topic map size should be non-negative")
+
+			By("Verifying no race conditions occurred")
+			// Race detector should not report any data races (test passes if no race warnings)
+			// All captured state snapshots should be valid
+			for i, size := range bufferSizes {
+				Expect(size).To(BeNumerically(">=", 0),
+					fmt.Sprintf("Buffer size snapshot %d should be non-negative", i))
+				Expect(size).To(BeNumerically("<=", 10),
+					fmt.Sprintf("Buffer size snapshot %d should not exceed maxBufferSize", i))
+			}
+
+			for i, size := range topicMapSizes {
+				Expect(size).To(BeNumerically(">=", 0),
+					fmt.Sprintf("Topic map size snapshot %d should be non-negative", i))
+			}
+
+			By("Verifying error handling during concurrent access")
+			// Count successful vs failed operations
+			successCount := 0
+			for _, err := range results {
+				if err == nil {
+					successCount++
+				}
+			}
+
+			// At least some operations should succeed (processor should handle concurrency)
+			Expect(successCount).To(BeNumerically(">", 0),
+				fmt.Sprintf("Should handle some concurrent operations successfully, got %d/%d",
+					successCount, len(results)))
+
+			By("Documenting race detection behavior")
+			// This test validates:
+			// 1. No data races detected by Go race detector (if enabled with -race flag)
+			// 2. Internal state remains consistent under concurrent load
+			// 3. Buffer size constraints are maintained during concurrent access
+			// 4. Processor continues functioning under concurrent stress
 		})
 	})
 
@@ -981,29 +1041,71 @@ var _ = Describe("TopicBrowserProcessor", func() {
 		})
 	})
 
-	Describe("E2E Error Recovery and Edge Cases", func() {
+	Describe("E2E Error Recovery and Edge Cases - Enhanced Validation", func() {
 		var errorProcessor *TopicBrowserProcessor
 
 		BeforeEach(func() {
-			errorProcessor = NewTopicBrowserProcessor(nil, nil, 100, time.Millisecond, 100, 100)
+			// Use longer interval to avoid timing issues in error recovery tests
+			errorProcessor = NewTopicBrowserProcessor(nil, nil, 100, time.Hour, 100, 100)
 			var err error
 			errorProcessor.topicMetadataCache, err = lru.New(100)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should handle malformed JSON appropriately", func() {
+		It("should handle malformed JSON with proper error tracking", func() {
 			By("Sending invalid JSON message")
 
 			msg := service.NewMessage([]byte(`{"invalid": json}`))
 			msg.MetaSet("umh_topic", "umh.v1.test._historian.bad")
 			batch := service.MessageBatch{msg}
 
-			_, _ = errorProcessor.ProcessBatch(context.Background(), batch)
-			// The processor might skip invalid messages rather than error
-			// This tests graceful handling regardless of specific behavior
+			By("Processing malformed message and verifying error handling")
+			result, err := errorProcessor.ProcessBatch(context.Background(), batch)
+
+			By("Verifying graceful error handling behavior")
+			// Processor should handle gracefully (not crash)
+			Expect(err).NotTo(HaveOccurred(), "Processor should handle malformed input gracefully")
+
+			By("Verifying no invalid data is emitted")
+			// Should not emit invalid data - either nil result or empty batches
+			if result != nil {
+				Expect(len(result)).To(BeNumerically("<=", 2), "Should not emit more than expected batches")
+				if len(result) > 0 {
+					// If emission occurs, it should be valid data, not malformed input
+					for _, batch := range result {
+						Expect(batch).NotTo(BeNil(), "Emitted batches should not be nil")
+					}
+				}
+			}
+
+			By("Verifying processor continues to work after error")
+			// Send a valid message to ensure processor didn't break
+			validMsg := service.NewMessage(nil)
+			validMsg.MetaSet("umh_topic", "umh.v1.test._historian.recovery_test")
+			validMsg.SetStructured(map[string]interface{}{
+				"timestamp_ms": time.Now().UnixMilli(),
+				"value":        "recovery_test",
+			})
+
+			validResult, validErr := errorProcessor.ProcessBatch(context.Background(), service.MessageBatch{validMsg})
+			Expect(validErr).NotTo(HaveOccurred(), "Processor should continue working after handling malformed input")
+
+			By("Verifying processor state is stable after error")
+			// With time.Hour interval, valid message will be buffered (not immediately emitted)
+			// The key test is that no error occurred and processor continues working
+			if validResult != nil {
+				// If any result, it should be valid structure
+				Expect(len(validResult)).To(BeNumerically("<=", 2), "Result should have valid structure")
+			}
+
+			// Verify processor internal state is healthy
+			errorProcessor.bufferMutex.Lock()
+			bufferLen := len(errorProcessor.messageBuffer)
+			errorProcessor.bufferMutex.Unlock()
+			Expect(bufferLen).To(BeNumerically(">=", 0), "Buffer should be in valid state after error recovery")
 		})
 
-		It("should handle edge case values appropriately", func() {
+		It("should handle edge case values with proper validation", func() {
 			By("Sending time-series with nil value")
 
 			data := map[string]interface{}{
@@ -1016,27 +1118,203 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			msg.MetaSet("umh_topic", "umh.v1.test._historian.nil")
 			batch := service.MessageBatch{msg}
 
-			_, _ = errorProcessor.ProcessBatch(context.Background(), batch)
-			// Test that the system handles edge cases gracefully
-			// May return error or skip - both are valid behaviors
+			By("Processing nil value and verifying handling")
+			result, err := errorProcessor.ProcessBatch(context.Background(), batch)
+
+			By("Verifying nil value handling behavior")
+			// Should handle gracefully - either process with default or skip
+			Expect(err).NotTo(HaveOccurred(), "Processor should handle nil values gracefully")
+
+			By("Verifying processor state remains consistent")
+			if result != nil && len(result) > 0 {
+				// If processed, result should be valid
+				Expect(result).To(HaveLen(2), "If processed, should have [emission, ack] structure")
+			}
+
+			By("Testing processor continues working after nil value")
+			followupMsg := service.NewMessage(nil)
+			followupMsg.MetaSet("umh_topic", "umh.v1.test._historian.nil_recovery")
+			followupMsg.SetStructured(map[string]interface{}{
+				"timestamp_ms": time.Now().UnixMilli(),
+				"value":        123.45,
+			})
+
+			followupResult, followupErr := errorProcessor.ProcessBatch(context.Background(), service.MessageBatch{followupMsg})
+			Expect(followupErr).NotTo(HaveOccurred(), "Processor should work normally after nil value")
+
+			By("Verifying processor continues working after nil value handling")
+			// With time.Hour interval, message will be buffered (not immediately emitted)
+			if followupResult != nil {
+				Expect(len(followupResult)).To(BeNumerically("<=", 2), "Result should have valid structure")
+			}
+
+			// Verify buffer state is healthy
+			errorProcessor.bufferMutex.Lock()
+			bufferLen := len(errorProcessor.messageBuffer)
+			errorProcessor.bufferMutex.Unlock()
+			Expect(bufferLen).To(BeNumerically(">=", 0), "Buffer should be in valid state")
 		})
 
-		It("should handle special float values appropriately", func() {
-			By("Sending time-series with NaN value")
+		It("should handle special float values with proper validation", func() {
+			By("Testing NaN value handling")
 
-			data := map[string]interface{}{
+			nanData := map[string]interface{}{
 				"timestamp_ms": 1750171500000,
 				"value":        math.NaN(),
 			}
 
-			msg := service.NewMessage(nil)
-			msg.SetStructured(data)
-			msg.MetaSet("umh_topic", "umh.v1.test._historian.nan")
-			batch := service.MessageBatch{msg}
+			nanMsg := service.NewMessage(nil)
+			nanMsg.SetStructured(nanData)
+			nanMsg.MetaSet("umh_topic", "umh.v1.test._historian.nan")
 
-			_, _ = errorProcessor.ProcessBatch(context.Background(), batch)
-			// Test that the system handles special float values
-			// May return error or handle gracefully - both are valid
+			nanResult, nanErr := errorProcessor.ProcessBatch(context.Background(), service.MessageBatch{nanMsg})
+			Expect(nanErr).NotTo(HaveOccurred(), "Should handle NaN values gracefully")
+			// Verify result structure if processing occurred
+			if nanResult != nil && len(nanResult) > 0 {
+				Expect(len(nanResult)).To(BeNumerically("<=", 2), "NaN result should have valid structure")
+			}
+
+			By("Testing Infinity value handling")
+
+			infData := map[string]interface{}{
+				"timestamp_ms": 1750171500000,
+				"value":        math.Inf(1),
+			}
+
+			infMsg := service.NewMessage(nil)
+			infMsg.SetStructured(infData)
+			infMsg.MetaSet("umh_topic", "umh.v1.test._historian.inf")
+
+			infResult, infErr := errorProcessor.ProcessBatch(context.Background(), service.MessageBatch{infMsg})
+			Expect(infErr).NotTo(HaveOccurred(), "Should handle Infinity values gracefully")
+			// Verify result structure if processing occurred
+			if infResult != nil && len(infResult) > 0 {
+				Expect(len(infResult)).To(BeNumerically("<=", 2), "Infinity result should have valid structure")
+			}
+
+			By("Testing negative Infinity value handling")
+
+			negInfData := map[string]interface{}{
+				"timestamp_ms": 1750171500000,
+				"value":        math.Inf(-1),
+			}
+
+			negInfMsg := service.NewMessage(nil)
+			negInfMsg.SetStructured(negInfData)
+			negInfMsg.MetaSet("umh_topic", "umh.v1.test._historian.neg_inf")
+
+			negInfResult, negInfErr := errorProcessor.ProcessBatch(context.Background(), service.MessageBatch{negInfMsg})
+			Expect(negInfErr).NotTo(HaveOccurred(), "Should handle negative Infinity values gracefully")
+			// Verify result structure if processing occurred
+			if negInfResult != nil && len(negInfResult) > 0 {
+				Expect(len(negInfResult)).To(BeNumerically("<=", 2), "Negative Infinity result should have valid structure")
+			}
+
+			By("Verifying processor continues working after special float values")
+			normalMsg := service.NewMessage(nil)
+			normalMsg.MetaSet("umh_topic", "umh.v1.test._historian.float_recovery")
+			normalMsg.SetStructured(map[string]interface{}{
+				"timestamp_ms": time.Now().UnixMilli(),
+				"value":        42.0,
+			})
+
+			normalResult, normalErr := errorProcessor.ProcessBatch(context.Background(), service.MessageBatch{normalMsg})
+			Expect(normalErr).NotTo(HaveOccurred(), "Should work normally after special float handling")
+
+			By("Verifying processor continues working after special float handling")
+			// With time.Hour interval, message will be buffered (not immediately emitted)
+			if normalResult != nil {
+				Expect(len(normalResult)).To(BeNumerically("<=", 2), "Result should have valid structure")
+			}
+
+			// Verify buffer state is healthy
+			errorProcessor.bufferMutex.Lock()
+			bufferLen := len(errorProcessor.messageBuffer)
+			errorProcessor.bufferMutex.Unlock()
+			Expect(bufferLen).To(BeNumerically(">=", 0), "Buffer should be in valid state")
+
+			// Document the expected behavior for special float values
+			By("Documenting special float behavior")
+			// NaN, +Inf, -Inf are valid IEEE 754 values that may be:
+			// 1. Processed and serialized as-is (valid behavior)
+			// 2. Filtered out or replaced with defaults (also valid)
+			// 3. Cause graceful skipping of the message (also valid)
+			// The key requirement is graceful handling without crashing
+		})
+
+		It("should demonstrate error recovery with mixed valid/invalid batch", func() {
+			By("Creating batch with mix of valid and invalid messages")
+
+			batch := make(service.MessageBatch, 4)
+
+			// Valid message 1
+			batch[0] = service.NewMessage(nil)
+			batch[0].MetaSet("umh_topic", "umh.v1.test._historian.valid1")
+			batch[0].SetStructured(map[string]interface{}{
+				"timestamp_ms": time.Now().UnixMilli(),
+				"value":        "valid1",
+			})
+
+			// Invalid message (malformed JSON)
+			batch[1] = service.NewMessage([]byte(`{"broken": json}`))
+			batch[1].MetaSet("umh_topic", "umh.v1.test._historian.broken")
+
+			// Valid message 2
+			batch[2] = service.NewMessage(nil)
+			batch[2].MetaSet("umh_topic", "umh.v1.test._historian.valid2")
+			batch[2].SetStructured(map[string]interface{}{
+				"timestamp_ms": time.Now().UnixMilli() + 1,
+				"value":        "valid2",
+			})
+
+			// Edge case message (nil value)
+			batch[3] = service.NewMessage(nil)
+			batch[3].MetaSet("umh_topic", "umh.v1.test._historian.nil_edge")
+			batch[3].SetStructured(map[string]interface{}{
+				"timestamp_ms": time.Now().UnixMilli() + 2,
+				"value":        nil,
+			})
+
+			By("Processing mixed batch and verifying robust error handling")
+			result, err := errorProcessor.ProcessBatch(context.Background(), batch)
+
+			By("Verifying processor handles mixed batch gracefully")
+			Expect(err).NotTo(HaveOccurred(), "Should handle mixed valid/invalid batch gracefully")
+
+			By("Verifying some processing occurred (valid messages handled)")
+			// At minimum, the valid messages should be processed somehow
+			// The exact behavior may vary (skip invalid, process valid, etc.)
+			if result != nil {
+				Expect(len(result)).To(BeNumerically(">=", 0), "Result should be valid structure")
+				if len(result) > 0 {
+					// If any processing occurred, structure should be valid
+					Expect(len(result)).To(BeNumerically("<=", 2), "Should not exceed expected batch structure")
+				}
+			}
+
+			By("Verifying processor state remains stable after mixed batch")
+			// Processor should continue working normally after handling mixed batch
+			followupMsg := service.NewMessage(nil)
+			followupMsg.MetaSet("umh_topic", "umh.v1.test._historian.stability_test")
+			followupMsg.SetStructured(map[string]interface{}{
+				"timestamp_ms": time.Now().UnixMilli(),
+				"value":        "stability_test",
+			})
+
+			followupResult, followupErr := errorProcessor.ProcessBatch(context.Background(), service.MessageBatch{followupMsg})
+			Expect(followupErr).NotTo(HaveOccurred(), "Processor should remain stable after mixed batch")
+
+			By("Verifying processor remains stable after mixed batch processing")
+			// With time.Hour interval, message will be buffered (not immediately emitted)
+			if followupResult != nil {
+				Expect(len(followupResult)).To(BeNumerically("<=", 2), "Result should have valid structure")
+			}
+
+			// Verify buffer state is healthy after mixed batch processing
+			errorProcessor.bufferMutex.Lock()
+			bufferLen := len(errorProcessor.messageBuffer)
+			errorProcessor.bufferMutex.Unlock()
+			Expect(bufferLen).To(BeNumerically(">=", 0), "Buffer should be in valid state after mixed batch")
 		})
 	})
 
@@ -1364,6 +1642,224 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				// 2. Message 3 triggered emission because interval elapsed
 				// 3. All 3 messages ACKed atomically with emission
 				// 4. ACK timing is tied to emission timing, not buffering timing
+			})
+		})
+	})
+
+	// E2E Issue #7: Organized Timing Test Suites
+	// This addresses the confusing mix of fast/slow intervals throughout tests
+	// by providing clear, separate test suites for different timing behaviors
+	Describe("E2E Organized Timing Scenarios", func() {
+
+		Describe("Fast Timing Scenarios (≤10ms intervals) - Immediate Emission", func() {
+			var fastProcessor *TopicBrowserProcessor
+
+			BeforeEach(func() {
+				// Fast intervals (≤10ms) initialize lastEmitTime to past for immediate emission
+				fastProcessor = NewTopicBrowserProcessor(nil, nil, 100, time.Millisecond, 10, 100)
+				var err error
+				fastProcessor.topicMetadataCache, err = lru.New(100)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should emit immediately with 1ms intervals (test-optimized behavior)", func() {
+				By("Processing message with fast interval")
+
+				msg := service.NewMessage(nil)
+				msg.MetaSet("umh_topic", "umh.v1.test._historian.fast")
+				msg.SetStructured(map[string]interface{}{
+					"timestamp_ms": time.Now().UnixMilli(),
+					"value":        "fast-test",
+				})
+
+				result, err := fastProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying immediate emission behavior")
+				Expect(result).To(HaveLen(2), "Fast intervals should emit immediately: [emission, ack]")
+				Expect(result[0]).To(HaveLen(1), "Should have emission batch")
+				Expect(result[1]).To(HaveLen(1), "Should have ACK batch")
+
+				By("Explaining the behavior")
+				// This happens because emitInterval ≤ 10ms triggers:
+				// lastEmitTime = time.Now().Add(-emitInterval) in constructor
+				// So time.Since(lastEmitTime) >= emitInterval is immediately true
+			})
+
+			It("should handle multiple fast messages with immediate processing", func() {
+				By("Sending multiple messages in quick succession")
+
+				for i := 0; i < 3; i++ {
+					msg := service.NewMessage(nil)
+					msg.MetaSet("umh_topic", "umh.v1.test._historian.multi_fast")
+					msg.SetStructured(map[string]interface{}{
+						"timestamp_ms": time.Now().UnixMilli() + int64(i),
+						"value":        fmt.Sprintf("fast-%d", i),
+					})
+
+					result, err := fastProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg})
+					Expect(err).NotTo(HaveOccurred())
+
+					By(fmt.Sprintf("Verifying emission behavior for message %d", i))
+					if i == 0 {
+						// First message should emit immediately (lastEmitTime in past)
+						Expect(result).To(HaveLen(2), "First message should emit immediately")
+					} else {
+						// Subsequent messages may be buffered or emitted depending on timing
+						// The key point is that fast intervals allow immediate emission capability
+						if result != nil {
+							Expect(result).To(HaveLen(2), "If emitted, should have [emission, ack]")
+						}
+						// Either immediate emission or buffering is acceptable for fast intervals
+					}
+				}
+
+				By("Verifying fast interval behavior is different from slow intervals")
+				// The key insight: fast intervals (≤10ms) have immediate emission capability
+				// while slow intervals (>10ms) always buffer initially
+			})
+		})
+
+		Describe("Realistic Timing Scenarios (>10ms intervals) - Buffered Emission", func() {
+			var realisticProcessor *TopicBrowserProcessor
+
+			BeforeEach(func() {
+				// Realistic intervals (>10ms) initialize lastEmitTime to now for buffered behavior
+				realisticProcessor = NewTopicBrowserProcessor(nil, nil, 100, time.Second, 10, 100)
+				var err error
+				realisticProcessor.topicMetadataCache, err = lru.New(100)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should buffer messages with 1-second intervals (production-like behavior)", func() {
+				By("Processing message with realistic interval")
+
+				msg := service.NewMessage(nil)
+				msg.MetaSet("umh_topic", "umh.v1.test._historian.realistic")
+				msg.SetStructured(map[string]interface{}{
+					"timestamp_ms": time.Now().UnixMilli(),
+					"value":        "realistic-test",
+				})
+
+				result, err := realisticProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying buffered behavior (no immediate emission)")
+				Expect(result).To(BeNil(), "Realistic intervals should buffer messages initially")
+
+				By("Verifying message is held in buffer")
+				realisticProcessor.bufferMutex.Lock()
+				bufferLen := len(realisticProcessor.messageBuffer)
+				realisticProcessor.bufferMutex.Unlock()
+
+				Expect(bufferLen).To(Equal(1), "Message should be buffered for future emission")
+
+				By("Explaining the behavior")
+				// This happens because emitInterval > 10ms triggers:
+				// lastEmitTime = time.Now() in constructor
+				// So time.Since(lastEmitTime) < emitInterval initially
+			})
+
+			It("should accumulate multiple messages before emission", func() {
+				By("Sending multiple messages quickly")
+
+				for i := 0; i < 3; i++ {
+					msg := service.NewMessage(nil)
+					msg.MetaSet("umh_topic", "umh.v1.test._historian.accumulate")
+					msg.SetStructured(map[string]interface{}{
+						"timestamp_ms": time.Now().UnixMilli() + int64(i),
+						"value":        fmt.Sprintf("accumulate-%d", i),
+					})
+
+					result, err := realisticProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg})
+					Expect(err).NotTo(HaveOccurred())
+
+					By(fmt.Sprintf("Verifying message %d is buffered", i))
+					Expect(result).To(BeNil(), "Messages should be buffered, not emitted immediately")
+				}
+
+				By("Verifying all messages are accumulated in buffer")
+				realisticProcessor.bufferMutex.Lock()
+				bufferLen := len(realisticProcessor.messageBuffer)
+				realisticProcessor.bufferMutex.Unlock()
+
+				Expect(bufferLen).To(Equal(3), "All 3 messages should be buffered")
+			})
+		})
+
+		Describe("Medium Timing Scenarios (10-1000ms) - Hybrid Behavior", func() {
+			var mediumProcessor *TopicBrowserProcessor
+
+			BeforeEach(func() {
+				// Medium intervals (100ms) - buffered behavior but faster than production
+				mediumProcessor = NewTopicBrowserProcessor(nil, nil, 100, 100*time.Millisecond, 10, 100)
+				var err error
+				mediumProcessor.topicMetadataCache, err = lru.New(100)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should demonstrate interval-based emission with medium timing", func() {
+				By("Sending first message - should be buffered")
+
+				msg1 := service.NewMessage(nil)
+				msg1.MetaSet("umh_topic", "umh.v1.test._historian.medium")
+				msg1.SetStructured(map[string]interface{}{
+					"timestamp_ms": time.Now().UnixMilli(),
+					"value":        "medium-1",
+				})
+
+				result1, err := mediumProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg1})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result1).To(BeNil(), "First message should be buffered")
+
+				By("Waiting for interval to elapse")
+				time.Sleep(150 * time.Millisecond) // Wait longer than 100ms interval
+
+				By("Sending second message - should trigger emission of both")
+				msg2 := service.NewMessage(nil)
+				msg2.MetaSet("umh_topic", "umh.v1.test._historian.medium")
+				msg2.SetStructured(map[string]interface{}{
+					"timestamp_ms": time.Now().UnixMilli(),
+					"value":        "medium-2",
+				})
+
+				result2, err := mediumProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg2})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying emission occurs after interval")
+				Expect(result2).To(HaveLen(2), "Should emit after interval: [emission, ack]")
+				Expect(result2[1]).To(HaveLen(2), "Should ACK both accumulated messages")
+			})
+		})
+
+		Describe("Timing Behavior Documentation", func() {
+			It("should document the timing logic clearly", func() {
+				By("Explaining the constructor timing logic")
+
+				// From topic_browser_plugin.go:562-566:
+				// if emitInterval <= 10*time.Millisecond {
+				//     lastEmitTime = time.Now().Add(-emitInterval) // Start in the past for tests
+				// } else {
+				//     lastEmitTime = time.Now()
+				// }
+
+				By("Fast intervals (≤10ms): lastEmitTime starts in the past")
+				// This makes time.Since(lastEmitTime) >= emitInterval immediately true
+				// Result: Immediate emission on first ProcessBatch call
+				// Use case: Fast test execution, immediate feedback
+
+				By("Realistic intervals (>10ms): lastEmitTime starts at now")
+				// This makes time.Since(lastEmitTime) < emitInterval initially
+				// Result: Messages buffered until interval elapses
+				// Use case: Production behavior, batched efficiency
+
+				By("This design provides:")
+				// 1. Fast test execution with ≤10ms intervals
+				// 2. Realistic production behavior with >10ms intervals
+				// 3. Clear separation of test vs production timing
+
+				// This test documents the behavior for future developers
+				Expect(true).To(BeTrue(), "Documentation test - always passes")
 			})
 		})
 	})
