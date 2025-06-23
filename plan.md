@@ -42,18 +42,17 @@ grep -n "topic_browser_plugin" cmd/benthos/bundle/package.go
 
 ---
 
-### Issue #2: Missing License Headers ⚠️ CRITICAL
+### Issue #2: Missing License Headers ⚠️ IN PROGRESS
 
 **Review Comment**: Multiple files missing Apache 2.0 license headers
 
 **Assessment**: **VALID** - Legal compliance requirement
-- `topic_browser_plugin/metadata.go` - Missing header
-- `topic_browser_plugin/processing.go` - Missing header  
-- `topic_browser_plugin/buffer.go` - Missing header
-- `umh-core-data/redpanda/config_cache.yaml` - Missing header
+- `topic_browser_plugin/metadata.go` - Missing header ✅ FIXING
+- `topic_browser_plugin/processing.go` - Missing header ✅ FIXING
+- `topic_browser_plugin/buffer.go` - Missing header ✅ FIXING
 
 **Action**: **FIX** - Add license headers to all files
-
+**Template**: Using Apache 2.0 header from `topic_browser_plugin.go`
 **Implementation Priority**: **HIGH** - Blocks CI/CD
 
 ---
@@ -291,7 +290,7 @@ if len(compressedBytes) < 4 || !isLZ4Data(compressedBytes) {
 
 ### Phase 1: Critical Fixes (Immediate)
 
-#### Issue #1: Cache Race Condition ✅ COMPLETED
+#### Issue #1: Cache Race Condition ✅ COMPLETED - COMMITTED
 **Problem**: `mergeTopicHeaders()` accesses LRU cache without mutex protection
 **Location**: `topic_browser_plugin/metadata.go:77-82`
 **Fix**: Add mutex lock around cache access in `mergeTopicHeaders()`
