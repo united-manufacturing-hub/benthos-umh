@@ -6,6 +6,8 @@ This section covers Benthos processors for data transformation and message handl
 
 - **[Tag Processor](tag-processor.md)** - Optimized for processing tags and time series data, converting them to the UMH data model within the `_historian` data contract. Provides automatic message formatting, metadata generation, and structured processing stages.
 
+- **[Classic to Core Processor](classic-to-core-processor.md)** - Converts UMH Historian Data Contract format messages into Core format, following the "one tag, one message, one topic" principle.
+
 - **[Downsampler](downsampler.md)** - Reduces time-series data volume by filtering out insignificant changes using configurable algorithms. Integrates with UMH data pipelines to compress historian data while preserving significant trends.
 
 - **[Topic Browser](topic-browser.md)** - **[Internal]** Transforms UMH messages into structured data for the Topic Browser interface. Extracts hierarchical topic information and event data to enable real-time topic exploration, metadata search, and debugging in the Management Console.
@@ -17,8 +19,8 @@ This section covers Benthos processors for data transformation and message handl
 ## Which Processor to Choose?
 
 - Use **Tag Processor** when working with structured time series data that needs to conform to the UMH data model
+- Use **Classic to Core Processor** when migrating from legacy UMH Historian Data Contract format to modern Core format
 - Use **Downsampler** after tag_processor to reduce data volume while preserving important changes in time-series data
 - Use **Topic Browser** (internal) when implementing systems that need to consume and display UMH topic hierarchies and event streams
 - Use **Node-RED JavaScript Processor** when you need maximum flexibility and custom processing logic
 - Explore the **additional processors** for specific use cases like JSON manipulation, HTTP requests, caching, and more
-
