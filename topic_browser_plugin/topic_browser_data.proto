@@ -32,9 +32,9 @@
 
 syntax = "proto3";
 
-package umh.events;
+package topic_browser_plugin;
 
-option go_package = "./;topic_browser_plugin";
+option go_package = ".;topic_browser_plugin";
 
 import "google/protobuf/wrappers.proto";
 
