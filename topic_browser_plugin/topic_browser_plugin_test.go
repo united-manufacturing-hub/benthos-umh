@@ -145,10 +145,10 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				ENDENDENDEND
 			*/
 
-			// Let's only focus on the 2nd line (0422 - updated due to simplifications)
+			// Let's only focus on the 2nd line (f643 - LZ4 block compressed format)
 			dataLine := strings.Split(string(outBytes), "\n")[1]
-			// Expect it to begin with 0422 (updated due to simplifications)
-			Expect(dataLine[:4]).To(Equal("0422"))
+			// Expect it to begin with f643 (LZ4 block compressed protobuf format)
+			Expect(dataLine[:4]).To(Equal("f643"))
 
 			// Hex decode it
 			hexDecoded, err := hex.DecodeString(dataLine)
@@ -248,10 +248,10 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).To(BeNil())
 			Expect(outBytes2).NotTo(BeNil())
 
-			// Let's only focus on the 2nd line (0422 - updated due to simplifications)
+			// Let's only focus on the 2nd line (f643 - LZ4 block compressed format)
 			dataLine := strings.Split(string(outBytes2), "\n")[1]
-			// Expect it to begin with 0422 (updated due to simplifications)
-			Expect(dataLine[:4]).To(Equal("0422"))
+			// Expect it to begin with f643 (LZ4 block compressed protobuf format)
+			Expect(dataLine[:4]).To(Equal("f643"))
 
 			// Hex decode it
 			hexDecoded, err := hex.DecodeString(dataLine)
