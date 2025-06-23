@@ -614,8 +614,8 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should apply backpressure by forcing emission when ACK buffer is full", func() {
-			By("Testing backpressure behavior - force emission to free ACK buffer")
+		It("should apply buffer overflow protection by forcing emission when ACK buffer is full", func() {
+			By("Testing buffer overflow protection - force emission to free ACK buffer")
 
 			// Test exactly maxBufferSize + 1 messages (10 + 1 = 11)
 			// When buffer fills up, it should force emission to make room
@@ -623,12 +623,12 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				batch := createTestBatchWithValue(1, fmt.Sprintf("boundary-test-%d", i))
 				_, err := safetyProcessor.ProcessBatch(context.Background(), batch)
 
-				// ProcessBatch should succeed - backpressure applied via forced emission
+				// ProcessBatch should succeed - overflow protection applied via forced emission
 				Expect(err).NotTo(HaveOccurred(),
-					fmt.Sprintf("ProcessBatch should handle message %d with backpressure", i))
+					fmt.Sprintf("ProcessBatch should handle message %d with overflow protection", i))
 			}
 
-			By("Verifying buffer state after backpressure application")
+			By("Verifying buffer state after overflow protection application")
 			safetyProcessor.bufferMutex.Lock()
 			bufferLen := len(safetyProcessor.messageBuffer)
 			safetyProcessor.bufferMutex.Unlock()
@@ -636,7 +636,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Buffer should be much smaller due to forced emissions during overflow
 			// (Not necessarily == 1 due to timing, but should be much less than maxBufferSize)
 			Expect(bufferLen).To(BeNumerically("<=", 10),
-				"Buffer should be smaller due to forced emissions applying backpressure")
+				"Buffer should be smaller due to forced emissions from overflow protection")
 		})
 
 		It("should handle incremental buffer filling correctly", func() {
@@ -659,19 +659,19 @@ var _ = Describe("TopicBrowserProcessor", func() {
 					fmt.Sprintf("Buffer should contain %d messages after %d additions", currentSize, currentSize))
 			}
 
-			By("Verifying backpressure triggers emission when buffer reaches capacity")
-			// Now buffer is full (10/10), next message should trigger emission for backpressure
+			By("Verifying overflow protection triggers emission when buffer reaches capacity")
+			// Now buffer is full (10/10), next message should trigger emission for overflow protection
 			batch := createTestBatch(1, "overflow-test")
 			_, err := safetyProcessor.ProcessBatch(context.Background(), batch)
 
-			Expect(err).NotTo(HaveOccurred(), "Message should be handled with backpressure when buffer is at capacity")
+			Expect(err).NotTo(HaveOccurred(), "Message should be handled with overflow protection when buffer is at capacity")
 
 			// Buffer size should be reduced due to forced emission
 			safetyProcessor.bufferMutex.Lock()
 			finalBufferLen := len(safetyProcessor.messageBuffer)
 			safetyProcessor.bufferMutex.Unlock()
 
-			Expect(finalBufferLen).To(BeNumerically("<=", 10), "Buffer should be reduced by forced emission for backpressure")
+			Expect(finalBufferLen).To(BeNumerically("<=", 10), "Buffer should be reduced by forced emission for overflow protection")
 		})
 
 		It("should maintain buffer state consistency during edge cases", func() {
@@ -691,14 +691,14 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			Expect(bufferLen).To(Equal(10), "Buffer should be at exactly maxBufferSize")
 
-			By("Testing multiple consecutive overflow attempts trigger backpressure")
-			// Try multiple messages that should trigger forced emissions for backpressure
+			By("Testing multiple consecutive overflow attempts trigger overflow protection")
+			// Try multiple messages that should trigger forced emissions for overflow protection
 			for i := 0; i < 3; i++ {
 				batch := createTestBatch(1, fmt.Sprintf("overflow-attempt-%d", i))
 				_, err := safetyProcessor.ProcessBatch(context.Background(), batch)
 
 				Expect(err).NotTo(HaveOccurred(),
-					fmt.Sprintf("Overflow attempt %d should be handled with backpressure", i))
+					fmt.Sprintf("Overflow attempt %d should be handled with overflow protection", i))
 
 				// Buffer size should be controlled via forced emissions
 				safetyProcessor.bufferMutex.Lock()
@@ -706,8 +706,115 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				safetyProcessor.bufferMutex.Unlock()
 
 				Expect(currentBufferLen).To(BeNumerically("<=", 10),
-					fmt.Sprintf("Buffer size should be controlled by backpressure after attempt %d", i))
+					fmt.Sprintf("Buffer size should be controlled by overflow protection after attempt %d", i))
 			}
+		})
+
+		It("should return overflow emissions for proper ACK handling", func() {
+			By("Testing that overflow emissions are actually returned")
+
+			// Fill buffer to capacity (10/10)
+			for i := 0; i < 10; i++ {
+				batch := createTestBatch(1, fmt.Sprintf("fill-test-%d", i))
+				result, err := safetyProcessor.ProcessBatch(context.Background(), batch)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(BeNil(), "No emissions should occur during filling")
+			}
+
+			By("Sending overflow-triggering message and verifying emission results")
+			// This should trigger overflow protection and return emission results
+			overflowBatch := createTestBatch(1, "overflow-trigger")
+			results, err := safetyProcessor.ProcessBatch(context.Background(), overflowBatch)
+
+			Expect(err).NotTo(HaveOccurred(), "Overflow protection should succeed")
+			Expect(results).NotTo(BeNil(), "Should return emission results for ACK")
+			Expect(len(results)).To(BeNumerically(">=", 1), "Should have at least one emission batch")
+
+			By("Verifying buffer state after overflow protection")
+			safetyProcessor.bufferMutex.Lock()
+			bufferLen := len(safetyProcessor.messageBuffer)
+			safetyProcessor.bufferMutex.Unlock()
+
+			// Buffer should contain the overflow-triggering message
+			Expect(bufferLen).To(Equal(1), "Buffer should contain exactly the overflow-triggering message")
+		})
+
+		It("should never exceed maxBufferSize even temporarily", func() {
+			By("Testing that buffer size never exceeds limit during overflow protection")
+
+			var maxObservedSize int
+			var sizeHistory []int
+
+			// Custom processor with monitoring
+			monitorProcessor := NewTopicBrowserProcessor(nil, nil, 100, time.Hour, 100, 5) // smaller buffer for easier testing
+			var err error
+			monitorProcessor.topicMetadataCache, err = lru.New(100)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Fill to capacity and beyond, monitoring size at each step
+			for i := 0; i < 8; i++ { // 5 + 3 overflow attempts
+				batch := createTestBatch(1, fmt.Sprintf("monitor-test-%d", i))
+				_, err := monitorProcessor.ProcessBatch(context.Background(), batch)
+
+				Expect(err).NotTo(HaveOccurred())
+
+				// Check buffer size immediately after each operation
+				monitorProcessor.bufferMutex.Lock()
+				currentSize := len(monitorProcessor.messageBuffer)
+				sizeHistory = append(sizeHistory, currentSize)
+				if currentSize > maxObservedSize {
+					maxObservedSize = currentSize
+				}
+				monitorProcessor.bufferMutex.Unlock()
+			}
+
+			By("Verifying buffer never exceeded maxBufferSize")
+			Expect(maxObservedSize).To(BeNumerically("<=", 5),
+				fmt.Sprintf("Buffer should never exceed maxBufferSize=5, but reached %d. History: %v", maxObservedSize, sizeHistory))
+		})
+
+		It("should handle precise edge case: 9/10 vs 10/10 behavior", func() {
+			By("Testing behavior when buffer is at 9/10 (under capacity)")
+
+			// Fill to 9/10
+			for i := 0; i < 9; i++ {
+				batch := createTestBatch(1, fmt.Sprintf("edge-test-%d", i))
+				result, err := safetyProcessor.ProcessBatch(context.Background(), batch)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(BeNil(), "No overflow should occur at 9/10")
+			}
+
+			// Add 10th message - should still not trigger overflow
+			batch10 := createTestBatch(1, "edge-test-10th")
+			result10, err := safetyProcessor.ProcessBatch(context.Background(), batch10)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result10).To(BeNil(), "No overflow should occur at exactly 10/10")
+
+			// Verify buffer is at exactly capacity
+			safetyProcessor.bufferMutex.Lock()
+			bufferLen := len(safetyProcessor.messageBuffer)
+			safetyProcessor.bufferMutex.Unlock()
+
+			Expect(bufferLen).To(Equal(10), "Buffer should be exactly at capacity")
+
+			By("Testing behavior when buffer is at 10/10 and new message arrives")
+
+			// Add 11th message - should trigger overflow protection
+			batch11 := createTestBatch(1, "edge-test-11th")
+			result11, err := safetyProcessor.ProcessBatch(context.Background(), batch11)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result11).NotTo(BeNil(), "Overflow protection should trigger and return emissions")
+
+			// Verify buffer now contains only the 11th message
+			safetyProcessor.bufferMutex.Lock()
+			finalBufferLen := len(safetyProcessor.messageBuffer)
+			safetyProcessor.bufferMutex.Unlock()
+
+			Expect(finalBufferLen).To(Equal(1), "Buffer should contain only the overflow-triggering message")
 		})
 
 		It("should handle concurrent access safely", func() {
@@ -755,30 +862,59 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should handle json.Number types correctly", func() {
-			By("Creating message with json.Number timestamp")
+		It("should handle json.Number types correctly through full pipeline", func() {
+			By("Creating message with explicit json.Number timestamp")
 
-			// Simulate how Kafka messages arrive with json.Number
-			rawJSON := `{"timestamp_ms": 1750171500000, "value": "test-value"}`
-			var data map[string]interface{}
+			// Create explicit json.Number (not just interface{})
+			timestampNum := json.Number("1750171500000")
+			data := map[string]interface{}{
+				"timestamp_ms": timestampNum, // This is a real json.Number
+				"value":        "json-number-test",
+			}
 
-			// Parse with UseNumber to create json.Number types
-			decoder := json.NewDecoder(strings.NewReader(rawJSON))
-			decoder.UseNumber()
-			err := decoder.Decode(&data)
-			Expect(err).NotTo(HaveOccurred())
+			// Verify we actually have a json.Number
+			_, isJsonNumber := data["timestamp_ms"].(json.Number)
+			Expect(isJsonNumber).To(BeTrue(), "timestamp_ms should be a json.Number type")
 
-			// Create message with json.Number timestamp
 			msg := service.NewMessage(nil)
 			msg.SetStructured(data)
-			msg.MetaSet("umh_topic", "umh.v1.test._historian.value")
+			msg.MetaSet("umh_topic", "umh.v1.test._historian.jsonnum")
 
-			By("Processing message with json.Number")
+			By("Processing and verifying json.Number handling through full pipeline")
 			batch := service.MessageBatch{msg}
-			_, err = edgeProcessor.ProcessBatch(context.Background(), batch)
+			result, err := edgeProcessor.ProcessBatch(context.Background(), batch)
 
-			Expect(err).NotTo(HaveOccurred())
-			// Should process successfully without json.Number errors
+			Expect(err).NotTo(HaveOccurred(), "json.Number should process without error")
+
+			if result != nil && len(result) > 0 && len(result[0]) > 0 {
+				By("Extracting and verifying the UNS bundle from pipeline output")
+
+				// Extract the UNS bundle from the processed message
+				bundle := extractUnsBundle(result[0][0])
+				Expect(bundle).NotTo(BeNil(), "Should successfully extract UNS bundle")
+
+				if len(bundle.Events.Entries) > 0 {
+					event := bundle.Events.Entries[0]
+					Expect(event).NotTo(BeNil(), "Should have event entry")
+
+					By("Verifying json.Number timestamp was parsed correctly into protobuf")
+					// Use the same pattern as existing tests (lines 176-185)
+					actualTimestamp := event.GetTs().GetTimestampMs()
+					Expect(actualTimestamp).To(Equal(int64(1750171500000)),
+						fmt.Sprintf("json.Number timestamp should be parsed correctly, got %d", actualTimestamp))
+
+					By("Verifying string value was also processed correctly")
+					if event.GetTs().GetStringValue() != nil {
+						actualValue := event.GetTs().GetStringValue().GetValue()
+						Expect(actualValue).To(Equal("json-number-test"),
+							"String value should be processed correctly alongside json.Number timestamp")
+					}
+				} else {
+					Fail("UNS bundle should contain at least one event entry")
+				}
+			} else {
+				Fail("ProcessBatch should return results when processing json.Number message")
+			}
 		})
 
 		It("should handle large relational payloads", func() {
@@ -1294,4 +1430,32 @@ func extractValueFromTimeSeries(event *EventTableEntry) string {
 		return fmt.Sprintf("%.0f", ts.GetNumericValue().GetValue())
 	}
 	return ""
+}
+
+// Helper function to extract UNS bundle from processed message for verification
+func extractUnsBundle(msg *service.Message) *UnsBundle {
+	bytes, err := msg.AsBytes()
+	if err != nil {
+		return nil
+	}
+
+	// Split the message - second line contains the LZ4 compressed protobuf data
+	lines := strings.Split(string(bytes), "\n")
+	if len(lines) < 2 {
+		return nil
+	}
+
+	// Hex decode the protobuf data
+	hexDecoded, err := hex.DecodeString(lines[1])
+	if err != nil {
+		return nil
+	}
+
+	// Parse the protobuf bundle with compression handling
+	bundle, err := ProtobufBytesToBundleWithCompression(hexDecoded)
+	if err != nil {
+		return nil
+	}
+
+	return bundle
 }

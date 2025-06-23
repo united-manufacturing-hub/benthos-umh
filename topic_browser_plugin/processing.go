@@ -25,16 +25,6 @@ func (t *TopicBrowserProcessor) bufferMessage(msg *service.Message, event *Event
 	t.bufferMutex.Lock()
 	defer t.bufferMutex.Unlock()
 
-	// ACK buffer safety: when full, force immediate emission to apply backpressure
-	if len(t.messageBuffer) >= t.maxBufferSize {
-		// Force immediate flush to free ACK buffer space (apply backpressure)
-		_, err := t.flushBufferAndACKLocked()
-		if err != nil {
-			// If flush fails, we can't safely buffer more messages
-			return err
-		}
-	}
-
 	// Extract topic string for ring buffer
 	topic, err := t.extractTopicFromMessage(msg)
 	if err != nil {

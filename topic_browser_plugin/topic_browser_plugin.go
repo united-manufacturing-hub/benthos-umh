@@ -295,10 +295,36 @@ func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Me
 // Returns:
 //   - []service.MessageBatch: [emission_message], [ack_batch] if timer elapsed, or nil if buffering
 //   - error: Fatal error preventing processing (individual message errors are logged)
+//
+// ProcessBatch processes a batch of messages with dual emission triggers:
+// 1. Time-based emission: Every emitInterval, buffered messages are flushed
+// 2. Buffer overflow protection: When buffer approaches capacity, immediate flush occurs
+//
+// BUFFER OVERFLOW PROTECTION BEHAVIOR:
+// - Triggered when: len(messageBuffer) >= maxBufferSize and new message arrives
+// - Action: Immediately flush the current buffer to make room for the incoming message
+// - Result: The incoming message that would have caused overflow gets buffered normally
+// - No data loss: All flushed messages are returned for proper ACK handling
+//
+// EDGE CASE EXAMPLE:
+// - Buffer has 9/10 messages, new message arrives → no flush (10/10 is within limit)
+// - Buffer has 10/10 messages, new message arrives → flush the 10 messages, then buffer the new one
+// - This ensures buffer never exceeds maxBufferSize while accepting all messages
+//
+// This prevents unbounded memory growth while ensuring no message loss.
+// The processor returns results from both emission triggers when they occur.
+//
+// NOTE: This is not traditional "backpressure" (signaling upstream to slow down).
+// Instead, it's "buffer overflow protection" via immediate emission to make room.
 func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	if len(batch) == 0 {
 		return nil, nil
 	}
+
+	// overflowEmissionResults holds messages emitted due to buffer overflow protection
+	// These occur when the buffer is about to exceed maxBufferSize and we need to
+	// immediately flush to make room for the incoming message
+	var overflowEmissionResults []service.MessageBatch
 
 	// Process each message and add to ring buffers
 	for _, message := range batch {
@@ -320,7 +346,36 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 			topicInfo.Metadata = eventTableEntry.RawKafkaMsg.Headers
 		}
 
-		// Buffer the message (includes ring buffer storage and topic tracking)
+		// ✅ BUFFER OVERFLOW PROTECTION: Check before buffering the current message
+		// If adding this message would exceed buffer capacity, immediately flush the buffer
+		// to make room. This prevents unbounded memory growth without losing messages.
+		t.bufferMutex.Lock()
+		wouldExceedCapacity := len(t.messageBuffer) >= t.maxBufferSize
+		if wouldExceedCapacity {
+			// Immediate flush to free buffer space for the incoming message
+			overflowResult, flushErr := t.flushBufferAndACKLocked()
+			t.bufferMutex.Unlock()
+
+			if flushErr != nil {
+				// If flush fails, we can't safely buffer more messages
+				if t.logger != nil {
+					t.logger.Errorf("Buffer overflow flush failed: %v", flushErr)
+				}
+				if t.messagesFailed != nil {
+					t.messagesFailed.Incr(1)
+				}
+				continue
+			}
+
+			// Collect overflow emission results to return to caller
+			if overflowResult != nil {
+				overflowEmissionResults = append(overflowEmissionResults, overflowResult...)
+			}
+		} else {
+			t.bufferMutex.Unlock()
+		}
+
+		// Now buffer the current message (buffer should have space)
 		err = t.bufferMessage(message, eventTableEntry, topicInfo, *unsTreeId)
 		if err != nil {
 			// DEBUG: Log buffer error for test debugging
@@ -338,19 +393,40 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 		}
 	}
 
-	// ✅ FIX: Atomic check-and-flush to prevent TOCTOU race condition
-	// Keep mutex held during entire check-and-flush operation
+	// DUAL EMISSION LOGIC: Check for time-based emission after processing all messages
+	// This implements the second emission trigger (interval-based) in addition to
+	// the overflow protection that may have occurred during message processing above.
 	t.bufferMutex.Lock()
 	shouldEmit := time.Since(t.lastEmitTime) >= t.emitInterval
 	if shouldEmit {
-		// Use locked version to avoid double-mutex acquisition
-		result, err := t.flushBufferAndACKLocked()
+		// Time-based emission: emitInterval has elapsed, flush remaining buffer
+		intervalResult, err := t.flushBufferAndACKLocked()
 		t.bufferMutex.Unlock()
-		return result, err
+
+		if err != nil {
+			return nil, err
+		}
+
+		// Combine both emission types:
+		// 1. overflowEmissionResults: Messages emitted due to buffer overflow protection
+		// 2. intervalResult: Messages emitted due to time interval trigger
+		allResults := overflowEmissionResults
+		if intervalResult != nil {
+			allResults = append(allResults, intervalResult...)
+		}
+
+		return allResults, nil
 	}
 	t.bufferMutex.Unlock()
 
-	// Don't ACK yet - messages stay pending
+	// No interval-based emission, but return any overflow emissions that occurred
+	// This happens when buffer overflow protection triggered but interval hasn't elapsed
+	if len(overflowEmissionResults) > 0 {
+		return overflowEmissionResults, nil
+	}
+
+	// No emissions occurred - messages remain buffered, waiting for next interval
+	// ACK is deferred until emission happens
 	return nil, nil
 }
 
