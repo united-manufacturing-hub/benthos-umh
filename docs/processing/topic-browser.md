@@ -44,7 +44,8 @@ The processor implements a **ring buffer + delayed ACK** architecture:
 
 #### Delayed ACK Pattern
 - **Buffering**: Messages are buffered until emission interval elapses
-- **Atomic ACK**: All buffered messages ACKed only after successful emission
+- **In-place ACK**: Buffered messages are ACKed in-place when emission succeeds (not forwarded downstream)
+- **Single emission**: Only the protobuf bundle is forwarded downstream, original messages are consumed
 - **Failure handling**: Emission failure prevents ACK (messages will be retried)
 - **Memory safety**: Buffer size limits protect against unbounded growth
 
@@ -58,6 +59,12 @@ The processor expects UMH messages with:
 ### Output Emission Rules
 
 The processor follows a strict emission contract that optimizes network traffic:
+
+#### Critical: Only Protobuf Bundle is Forwarded
+- **Single output**: Only the compressed protobuf bundle (STARTSTARTSTART format) is sent downstream
+- **Original messages**: Input UMH messages are ACKed but **NOT forwarded** downstream
+- **No duplication**: You will never see both the protobuf bundle AND the original messages in output
+- **Clean pipeline**: Downstream consumers only receive the structured protobuf data
 
 #### UNS Map Emission
 - **When emitted**: Always emitted with complete topic tree in every emission interval
@@ -290,6 +297,12 @@ processors:
 - Check umh_topic metadata is present in messages
 - Verify topic format follows UMH conventions (umh.v1....)
 - Ensure messages reach the processor (check input metrics)
+
+**Seeing duplicate messages in output**:
+- This should NOT happen - if you see both protobuf bundles AND original messages, there's a configuration issue
+- The processor should only emit protobuf bundles (STARTSTARTSTART format)
+- Original UMH messages are consumed and ACKed, not forwarded
+- Check for multiple processors or incorrect pipeline configuration
 
 **Performance degradation**:
 - Monitor LRU cache hit rate (should be >90%)

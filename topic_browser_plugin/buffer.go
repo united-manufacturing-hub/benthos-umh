@@ -184,22 +184,19 @@ func (t *TopicBrowserProcessor) flushBufferAndACKLocked() ([]service.MessageBatc
 		t.emissionSize.Incr(int64(len(protoBytes)))
 	}
 
-	// ✅ DELAYED ACK PATTERN: Create ACK batch from original messages
-	// The original messages need to be ACKed but not forwarded downstream
-	ackBatch := make(service.MessageBatch, len(t.messageBuffer))
-	for i, msg := range t.messageBuffer {
-		msg.SetError(nil) // Clear any errors to ACK the message
-		ackBatch[i] = msg
+	// ✅ DELAYED ACK: ACK original messages in-place without forwarding them
+	// We only want to forward the protobuf bundle, not the original messages
+	for _, msg := range t.messageBuffer {
+		msg.SetError(nil) // Clear any errors and ACK the message
 	}
 
 	// Clear buffers and update timestamp
 	t.clearBuffers()
 	t.lastEmitTime = time.Now()
 
-	// Return both emission and ACK batches: [emission_batch, ack_batch]
-	// - emission_batch: protobuf bundle (forwarded downstream)
-	// - ack_batch: original messages (ACKed but not forwarded)
-	return []service.MessageBatch{{emissionMsg}, ackBatch}, nil
+	// Return only the emission message (protobuf bundle)
+	// Original messages are ACKed above but not forwarded
+	return []service.MessageBatch{{emissionMsg}}, nil
 }
 
 // clearBuffers clears both message buffer and ring buffers after successful emission.
