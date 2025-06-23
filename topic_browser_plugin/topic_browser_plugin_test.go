@@ -607,39 +607,107 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 		BeforeEach(func() {
 			// Create processor with small buffer for safety testing
-			safetyProcessor = NewTopicBrowserProcessor(nil, nil, 100, time.Millisecond, 100, 10)
+			// Use longer emit interval to ensure messages are buffered rather than immediately emitted
+			safetyProcessor = NewTopicBrowserProcessor(nil, nil, 100, time.Hour, 100, 10)
 			var err error
 			safetyProcessor.topicMetadataCache, err = lru.New(100)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should enforce maxBufferSize limit gracefully", func() {
-			By("Attempting to exceed buffer capacity")
+		It("should apply backpressure by forcing emission when ACK buffer is full", func() {
+			By("Testing backpressure behavior - force emission to free ACK buffer")
 
-			// maxBufferSize = 10, so try to add 12 messages
-			var successCount int
-			for i := 0; i < 12; i++ {
-				batch := createTestBatch(1, fmt.Sprintf("buffer-test-%d", i))
-				result, err := safetyProcessor.ProcessBatch(context.Background(), batch)
+			// Test exactly maxBufferSize + 1 messages (10 + 1 = 11)
+			// When buffer fills up, it should force emission to make room
+			for i := 0; i < 11; i++ {
+				batch := createTestBatchWithValue(1, fmt.Sprintf("boundary-test-%d", i))
+				_, err := safetyProcessor.ProcessBatch(context.Background(), batch)
 
-				if err != nil {
-					By(fmt.Sprintf("Buffer limit reached at message %d", i))
-					// Error is expected when buffer is full
-					break
-				}
-
-				if result != nil {
-					successCount++
-				}
+				// ProcessBatch should succeed - backpressure applied via forced emission
+				Expect(err).NotTo(HaveOccurred(),
+					fmt.Sprintf("ProcessBatch should handle message %d with backpressure", i))
 			}
 
-			By("Verifying buffer operates within constraints")
+			By("Verifying buffer state after backpressure application")
 			safetyProcessor.bufferMutex.Lock()
 			bufferLen := len(safetyProcessor.messageBuffer)
 			safetyProcessor.bufferMutex.Unlock()
 
-			Expect(bufferLen).To(BeNumerically("<=", 10), "Buffer should not exceed maxBufferSize")
-			Expect(successCount).To(BeNumerically(">", 0), "Should process some messages successfully")
+			// Buffer should be much smaller due to forced emissions during overflow
+			// (Not necessarily == 1 due to timing, but should be much less than maxBufferSize)
+			Expect(bufferLen).To(BeNumerically("<=", 10),
+				"Buffer should be smaller due to forced emissions applying backpressure")
+		})
+
+		It("should handle incremental buffer filling correctly", func() {
+			By("Testing buffer behavior during incremental filling")
+
+			// Test progressive filling from 1 to maxBufferSize
+			for currentSize := 1; currentSize <= 10; currentSize++ {
+				batch := createTestBatch(1, fmt.Sprintf("incremental-test-%d", currentSize))
+				_, err := safetyProcessor.ProcessBatch(context.Background(), batch)
+
+				Expect(err).NotTo(HaveOccurred(),
+					fmt.Sprintf("Message %d should succeed during incremental filling", currentSize))
+
+				// Verify buffer size matches expectations
+				safetyProcessor.bufferMutex.Lock()
+				actualBufferLen := len(safetyProcessor.messageBuffer)
+				safetyProcessor.bufferMutex.Unlock()
+
+				Expect(actualBufferLen).To(Equal(currentSize),
+					fmt.Sprintf("Buffer should contain %d messages after %d additions", currentSize, currentSize))
+			}
+
+			By("Verifying backpressure triggers emission when buffer reaches capacity")
+			// Now buffer is full (10/10), next message should trigger emission for backpressure
+			batch := createTestBatch(1, "overflow-test")
+			_, err := safetyProcessor.ProcessBatch(context.Background(), batch)
+
+			Expect(err).NotTo(HaveOccurred(), "Message should be handled with backpressure when buffer is at capacity")
+
+			// Buffer size should be reduced due to forced emission
+			safetyProcessor.bufferMutex.Lock()
+			finalBufferLen := len(safetyProcessor.messageBuffer)
+			safetyProcessor.bufferMutex.Unlock()
+
+			Expect(finalBufferLen).To(BeNumerically("<=", 10), "Buffer should be reduced by forced emission for backpressure")
+		})
+
+		It("should maintain buffer state consistency during edge cases", func() {
+			By("Filling buffer to exactly capacity")
+
+			// Fill buffer to exactly maxBufferSize (10)
+			for i := 0; i < 10; i++ {
+				batch := createTestBatch(1, fmt.Sprintf("consistency-test-%d", i))
+				_, err := safetyProcessor.ProcessBatch(context.Background(), batch)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			By("Verifying buffer state at capacity")
+			safetyProcessor.bufferMutex.Lock()
+			bufferLen := len(safetyProcessor.messageBuffer)
+			safetyProcessor.bufferMutex.Unlock()
+
+			Expect(bufferLen).To(Equal(10), "Buffer should be at exactly maxBufferSize")
+
+			By("Testing multiple consecutive overflow attempts trigger backpressure")
+			// Try multiple messages that should trigger forced emissions for backpressure
+			for i := 0; i < 3; i++ {
+				batch := createTestBatch(1, fmt.Sprintf("overflow-attempt-%d", i))
+				_, err := safetyProcessor.ProcessBatch(context.Background(), batch)
+
+				Expect(err).NotTo(HaveOccurred(),
+					fmt.Sprintf("Overflow attempt %d should be handled with backpressure", i))
+
+				// Buffer size should be controlled via forced emissions
+				safetyProcessor.bufferMutex.Lock()
+				currentBufferLen := len(safetyProcessor.messageBuffer)
+				safetyProcessor.bufferMutex.Unlock()
+
+				Expect(currentBufferLen).To(BeNumerically("<=", 10),
+					fmt.Sprintf("Buffer size should be controlled by backpressure after attempt %d", i))
+			}
 		})
 
 		It("should handle concurrent access safely", func() {

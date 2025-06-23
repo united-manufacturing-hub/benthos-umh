@@ -15,8 +15,6 @@
 package topic_browser_plugin
 
 import (
-	"errors"
-
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"google.golang.org/protobuf/proto"
 )
@@ -27,9 +25,14 @@ func (t *TopicBrowserProcessor) bufferMessage(msg *service.Message, event *Event
 	t.bufferMutex.Lock()
 	defer t.bufferMutex.Unlock()
 
-	// Safety check: prevent unbounded growth
+	// ACK buffer safety: when full, force immediate emission to apply backpressure
 	if len(t.messageBuffer) >= t.maxBufferSize {
-		return errors.New("buffer full - dropping message")
+		// Force immediate flush to free ACK buffer space (apply backpressure)
+		_, err := t.flushBufferAndACKLocked()
+		if err != nil {
+			// If flush fails, we can't safely buffer more messages
+			return err
+		}
 	}
 
 	// Extract topic string for ring buffer
@@ -38,7 +41,7 @@ func (t *TopicBrowserProcessor) bufferMessage(msg *service.Message, event *Event
 		return err
 	}
 
-	// Buffer original message (for ACK)
+	// Buffer original message (for ACK control)
 	t.messageBuffer = append(t.messageBuffer, msg)
 
 	// Add to per-topic ring buffer
