@@ -45,6 +45,7 @@ type Behaviour struct {
 	// INPUT-side flags
 	AutoSplitMetrics      bool `yaml:"auto_split_metrics"`
 	DataMessagesOnly      bool `yaml:"data_messages_only"`
+	DataOnly              bool `yaml:"data_only"`
 	EnableRebirthReq      bool `yaml:"enable_rebirth_req"`
 	DropBirthMessages     bool `yaml:"drop_birth_messages"`
 	StrictTopicValidation bool `yaml:"strict_topic_validation"`

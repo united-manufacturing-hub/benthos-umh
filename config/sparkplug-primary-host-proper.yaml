@@ -1,7 +1,7 @@
 # Complete Sparkplug B Primary Host Configuration for UMH
 # This configuration connects to a Sparkplug B MQTT broker as a Primary Host,
 # processes the data through tag_processor for UMH format conversion,
-# and outputs to both console and UMH-formatted MQTT.
+# and outputs to UMH-formatted MQTT.
 
 input:
   sparkplug_b:
@@ -16,99 +16,15 @@ input:
     
     # Identity Configuration
     identity:
-      group_id: "UMH-Group"
+      group_id: "TestGroup"
       edge_node_id: "PrimaryHost"
     
     # Role Configuration - Primary Host
     role: "primary_host"
     
-    # Subscription Configuration - listen to all groups
+    # Subscription Configuration - listen to only TestGroup
     subscription:
-      groups: []  # Empty means listen to all groups
-    
-    # Behavior Configuration for optimal alias resolution
-    behaviour:
-      auto_split_metrics: true        # Split each metric into separate messages
-      data_messages_only: false       # Process ALL message types (BIRTH, DATA, DEATH)
-      drop_birth_messages: false      # Keep BIRTH messages for alias resolution
-      auto_extract_values: true       # Extract values from protobuf
-      include_node_metrics: true      # Include node-level metrics
-      include_device_metrics: true    # Include device-level metrics
-
-pipeline:
-  processors:
-    # Add timestamp and basic metadata
-    - mapping: |
-        root = this
-        root.received_at = now()
-        
-    # Process through tag_processor for UMH format conversion
-    - tag_processor:
-        # UMH Asset Hierarchy Configuration
-        asset_hierarchy:
-          # Map Sparkplug group_id to UMH enterprise
-          enterprise: this.group_id | "sparkplug"
-          
-          # Map edge_node_id to UMH site  
-          site: this.edge_node_id | "unknown_site"
-          
-          # Map device_key components to UMH area/line
-          area: |
-            # Extract area from device_key (group/node/device -> use device as area)
-            if this.device_key != null {
-              this.device_key.split("/").index(2) | "production"
-            } else {
-              "production" 
-            }
-          
-          # Use tag_name as work_cell
-          work_cell: this.tag_name | "default"
-        
-        # Tag Name Processing
-        tag_name_processing:
-          # Use the resolved metric name or alias as tag name
-          tag_name_source: |
-            if this.name != null && this.name != "" {
-              this.name
-            } else if this.alias != null {
-              "alias_" + string(this.alias)
-            } else {
-              "unknown_metric"
-            }
-          
-          # Clean tag names for UMH compatibility
-          tag_name_transformations:
-            - type: "replace"
-              pattern: "[^a-zA-Z0-9_/-]"
-              replacement: "_"
-            - type: "lowercase"
-        
-        # Value Processing
-        value_processing:
-          # Handle different Sparkplug data types
-          value_transformations:
-            - condition: 'this.value == null'
-              action: 'set_null'
-            - condition: 'type(this.value) == "bool"'
-              action: 'convert_bool_to_int'
-            - condition: 'type(this.value) == "string"'
-              action: 'keep_string'
-        
-        # Metadata Enrichment
-        metadata_enrichment:
-          add_sparkplug_metadata: true
-          add_timestamp_metadata: true
-          custom_metadata:
-            data_source: "sparkplug_b"
-            message_type: this.spb_message_type | "unknown"
-            device_online: this.spb_device_online | false
+      groups: ["TestGroup"]
 
 output:
-  # Output to stdout for monitoring
-  stdout:
-    codec: "lines"
-
-# Enhanced logging for debugging
-logger:
-  level: "DEBUG"
-  format: "logfmt" 
+  stdout: {}

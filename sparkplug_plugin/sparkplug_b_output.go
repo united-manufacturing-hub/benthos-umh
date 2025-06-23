@@ -58,7 +58,7 @@ and then publishes DATA messages as Benthos messages flow through the pipeline.`
 				Default([]string{"tcp://localhost:1883"}),
 			service.NewStringField("client_id").
 				Description("MQTT client ID for this edge node").
-				Default("benthos-sparkplug-node"),
+				Default("benthos-sparkplug-output"),
 			service.NewObjectField("credentials",
 				service.NewStringField("username").
 					Description("MQTT username for authentication").
@@ -76,10 +76,10 @@ and then publishes DATA messages as Benthos messages flow through the pipeline.`
 				Default(1),
 			service.NewDurationField("keep_alive").
 				Description("MQTT keep alive interval").
-				Default("30s"),
+				Default("60s"),
 			service.NewDurationField("connect_timeout").
 				Description("MQTT connection timeout").
-				Default("10s"),
+				Default("30s"),
 			service.NewBoolField("clean_session").
 				Description("MQTT clean session flag").
 				Default(true)).
@@ -93,7 +93,7 @@ and then publishes DATA messages as Benthos messages flow through the pipeline.`
 				Description("Edge Node ID within the group (e.g., 'Line3')").
 				Example("Line3"),
 			service.NewStringField("device_id").
-				Description("Device ID under the edge node (optional, if not specified publishes as node-level)").
+				Description("Device ID under the edge node (optional, if not specified acts as node-level)").
 				Default("").
 				Optional()).
 			Description("Sparkplug identity configuration")).
@@ -166,6 +166,13 @@ type sparkplugOutput struct {
 	metricTypes   map[string]string      // metric name -> type
 	lastValues    map[string]interface{} // metric name -> last value
 	stateMu       sync.RWMutex
+
+	// Dynamic alias management for P5 implementation
+	nextAlias         uint64       // Next available alias number for dynamic assignment
+	rebirthPending    bool         // Flag to prevent NDATA during rebirth
+	lastRebirthTime   time.Time    // Last rebirth timestamp for debouncing
+	rebirthDebounceMs int64        // Debounce period in milliseconds (default: 5000ms)
+	dynamicMu         sync.RWMutex // Separate mutex for dynamic alias operations
 
 	// Core components
 	mqttClientBuilder *MQTTClientBuilder
@@ -321,6 +328,14 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 	}
 	bdSeq := bdSeqBig.Uint64()
 
+	// Calculate next available alias number (start after configured aliases)
+	nextAlias := uint64(1) // Start from 1, bdSeq uses alias 0
+	for _, alias := range metricAliases {
+		if alias >= nextAlias {
+			nextAlias = alias + 1
+		}
+	}
+
 	return &sparkplugOutput{
 		config:             config,
 		metrics:            metrics,
@@ -332,6 +347,9 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 		metricAliases:      metricAliases,
 		metricTypes:        metricTypes,
 		lastValues:         make(map[string]interface{}),
+		nextAlias:          nextAlias,
+		rebirthPending:     false,
+		rebirthDebounceMs:  5000, // 5 second debounce
 		mqttClientBuilder:  NewMQTTClientBuilder(mgr),
 		messagesPublished:  mgr.Metrics().NewCounter("messages_published"),
 		birthsPublished:    mgr.Metrics().NewCounter("births_published"),
@@ -412,7 +430,20 @@ func (s *sparkplugOutput) Write(ctx context.Context, msg *service.Message) error
 	}
 
 	if len(data) == 0 {
-		s.logger.Debug("No metrics to publish in message")
+		// Enhanced debug logging to understand why no metrics were extracted
+		structured, _ := msg.AsStructured()
+		allMeta := make(map[string]interface{})
+		msg.MetaWalk(func(key, value string) error {
+			allMeta[key] = value
+			return nil
+		})
+
+		s.logger.Debugf("No metrics to publish in message - Debug info: "+
+			"Configured metrics count: %d, "+
+			"Auto extract tag_name: %t, "+
+			"Message payload: %+v, "+
+			"Message metadata: %+v",
+			len(s.metrics), s.autoExtractTagName, structured, allMeta)
 		return nil
 	}
 
@@ -468,6 +499,7 @@ func (s *sparkplugOutput) createDeathMessage() (string, []byte) {
 
 	deathPayload := &sproto.Payload{
 		Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),
+		Seq:       func() *uint64 { s := uint64(0); return &s }(), // NDEATH must have seq=0 per Sparkplug spec
 		Metrics:   []*sproto.Payload_Metric{bdSeqMetric},
 	}
 
@@ -490,7 +522,7 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 
 	var metrics []*sproto.Payload_Metric
 
-	// Add bdSeq metric
+	// Add bdSeq metric (required by Sparkplug spec)
 	bdSeqMetric := &sproto.Payload_Metric{
 		Name:  func() *string { s := "bdSeq"; return &s }(),
 		Alias: func() *uint64 { a := uint64(0); return &a }(),
@@ -500,6 +532,17 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 		Datatype: func() *uint32 { d := uint32(4); return &d }(),
 	}
 	metrics = append(metrics, bdSeqMetric)
+
+	// Add Node Control/Rebirth metric (required by Sparkplug spec for Edge Nodes)
+	nodeControlMetric := &sproto.Payload_Metric{
+		Name:  func() *string { s := "Node Control/Rebirth"; return &s }(),
+		Alias: func() *uint64 { a := uint64(1); return &a }(),
+		Value: &sproto.Payload_Metric_BooleanValue{
+			BooleanValue: false, // Always false in NBIRTH
+		},
+		Datatype: func() *uint32 { d := uint32(11); return &d }(), // Boolean type
+	}
+	metrics = append(metrics, nodeControlMetric)
 
 	// Add configured metrics
 	s.stateMu.RLock()
@@ -552,10 +595,18 @@ func (s *sparkplugOutput) extractMessageData(msg *service.Message) (map[string]i
 		return nil, fmt.Errorf("failed to get structured message data: %w", err)
 	}
 
+	s.logger.Debugf("extractMessageData: Starting extraction - "+
+		"autoExtractTagName: %t, configured metrics: %d, structured payload: %+v",
+		s.autoExtractTagName, len(s.metrics), structured)
+
 	if s.autoExtractTagName {
 		if tagName, exists := msg.MetaGet("tag_name"); exists {
+			s.logger.Debugf("extractMessageData: Found tag_name metadata: %s", tagName)
+
+			// Try to match with configured metrics first
 			for _, metricConfig := range s.metrics {
 				if metricConfig.Name == tagName {
+					s.logger.Debugf("extractMessageData: Matched tag_name %s with configured metric, extracting from path: %s", tagName, metricConfig.ValueFrom)
 					value, err := s.extractValueFromPath(structured, metricConfig.ValueFrom)
 					if err != nil {
 						s.logger.Debugf("Failed to extract value for metric %s: %v", tagName, err)
@@ -565,14 +616,37 @@ func (s *sparkplugOutput) extractMessageData(msg *service.Message) (map[string]i
 					break
 				}
 			}
+
+			// If no configured metrics matched, try to generate metric name from virtual_path:tag_name
+			if len(data) == 0 {
+				if virtualPath, hasVirtualPath := msg.MetaGet("virtual_path"); hasVirtualPath {
+					// Generate metric name using virtual_path:tag_name format
+					metricName := virtualPath + ":" + tagName
+					s.logger.Debugf("extractMessageData: No matching configured metrics, generating metric name: %s", metricName)
+
+					// Extract value from the tag_name field in the payload
+					if value, err := s.extractValueFromPath(structured, tagName); err == nil {
+						data[metricName] = value
+						s.logger.Debugf("extractMessageData: Successfully extracted value for generated metric %s: %v", metricName, value)
+					} else {
+						s.logger.Debugf("extractMessageData: Failed to extract value for generated metric %s from path %s: %v", metricName, tagName, err)
+					}
+				} else {
+					s.logger.Debugf("extractMessageData: tag_name %s found but no virtual_path metadata for metric generation", tagName)
+				}
+			}
+		} else {
+			s.logger.Debugf("extractMessageData: No tag_name metadata found")
 		}
 	}
 
+	// Process configured metrics
 	for _, metricConfig := range s.metrics {
 		if _, exists := data[metricConfig.Name]; exists {
 			continue
 		}
 
+		s.logger.Debugf("extractMessageData: Processing configured metric %s with value_from: %s", metricConfig.Name, metricConfig.ValueFrom)
 		value, err := s.extractValueFromPath(structured, metricConfig.ValueFrom)
 		if err != nil {
 			s.logger.Debugf("Failed to extract value for metric %s: %v", metricConfig.Name, err)
@@ -581,6 +655,7 @@ func (s *sparkplugOutput) extractMessageData(msg *service.Message) (map[string]i
 		data[metricConfig.Name] = value
 	}
 
+	s.logger.Debugf("extractMessageData: Extraction complete - extracted %d metrics: %+v", len(data), data)
 	return data, nil
 }
 
@@ -594,6 +669,39 @@ func (s *sparkplugOutput) extractValueFromPath(structured interface{}, path stri
 }
 
 func (s *sparkplugOutput) publishDataMessage(data map[string]interface{}) error {
+	// P5 Dynamic Alias Implementation: Check for new metrics
+	newMetrics := s.detectNewMetrics(data)
+	if len(newMetrics) > 0 {
+		s.logger.Infof("Detected %d new metrics: %v", len(newMetrics), newMetrics)
+
+		if s.shouldTriggerRebirth() {
+			// Assign dynamic aliases to new metrics
+			s.assignDynamicAliases(newMetrics, data)
+
+			// Trigger rebirth sequence
+			if err := s.triggerRebirth(); err != nil {
+				return fmt.Errorf("failed to trigger rebirth for new metrics: %w", err)
+			}
+
+			// Skip this DATA message - rebirth will announce the new metrics
+			// Next DATA messages will include the new metrics normally
+			s.logger.Debug("Skipping DATA message during rebirth sequence")
+			return nil
+		} else {
+			s.logger.Debug("Rebirth debounced or already pending, skipping new metrics for now")
+			// Continue with existing metrics only
+		}
+	}
+
+	// Check if rebirth is pending - if so, skip DATA messages
+	s.dynamicMu.RLock()
+	if s.rebirthPending {
+		s.dynamicMu.RUnlock()
+		s.logger.Debug("Rebirth pending, skipping DATA message")
+		return nil
+	}
+	s.dynamicMu.RUnlock()
+
 	var topic string
 	if s.config.Identity.DeviceID != "" {
 		topic = fmt.Sprintf("spBv1.0/%s/DDATA/%s/%s", s.config.Identity.GroupID, s.config.Identity.EdgeNodeID, s.config.Identity.DeviceID)
@@ -616,7 +724,8 @@ func (s *sparkplugOutput) publishDataMessage(data map[string]interface{}) error 
 		metricType, hasType := s.metricTypes[metricName]
 
 		if !hasAlias || !hasType {
-			s.logger.Debugf("Metric %s not configured, skipping", metricName)
+			// P5: New metrics are now handled above, this should only happen during debounce
+			s.logger.Debugf("Metric %s not configured (may be new metric during debounce), skipping", metricName)
 			continue
 		}
 
@@ -636,7 +745,8 @@ func (s *sparkplugOutput) publishDataMessage(data map[string]interface{}) error 
 	}
 
 	if len(metrics) == 0 {
-		return fmt.Errorf("no valid metrics to publish")
+		s.logger.Debug("No configured metrics to publish in this DATA message")
+		return nil // Don't error on empty messages - may happen during dynamic alias assignment
 	}
 
 	dataPayload := &sproto.Payload{
@@ -792,4 +902,127 @@ func (s *sparkplugOutput) convertToString(value interface{}) (string, bool) {
 	default:
 		return fmt.Sprintf("%v", v), true
 	}
+}
+
+// P5 Dynamic Alias Implementation - Helper Methods
+
+// detectNewMetrics identifies metrics that don't have aliases and need dynamic assignment
+func (s *sparkplugOutput) detectNewMetrics(data map[string]interface{}) []string {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+
+	var newMetrics []string
+	for metricName := range data {
+		if _, hasAlias := s.metricAliases[metricName]; !hasAlias {
+			newMetrics = append(newMetrics, metricName)
+		}
+	}
+	return newMetrics
+}
+
+// shouldTriggerRebirth determines if a rebirth should be triggered based on debouncing
+func (s *sparkplugOutput) shouldTriggerRebirth() bool {
+	s.dynamicMu.RLock()
+	defer s.dynamicMu.RUnlock()
+
+	// Check if rebirth is already pending
+	if s.rebirthPending {
+		return false
+	}
+
+	// Check debounce period
+	timeSinceLastRebirth := time.Since(s.lastRebirthTime).Milliseconds()
+	return timeSinceLastRebirth >= s.rebirthDebounceMs
+}
+
+// assignDynamicAliases assigns aliases and types to new metrics
+func (s *sparkplugOutput) assignDynamicAliases(newMetrics []string, data map[string]interface{}) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+
+	for _, metricName := range newMetrics {
+		// Assign alias
+		s.metricAliases[metricName] = s.nextAlias
+		s.nextAlias++
+
+		// Infer type from value
+		value := data[metricName]
+		metricType := s.inferMetricType(value)
+		s.metricTypes[metricName] = metricType
+
+		// Add to metrics configuration for future births
+		metricConfig := MetricConfig{
+			Name:      metricName,
+			Alias:     s.metricAliases[metricName],
+			Type:      metricType,
+			ValueFrom: "value", // Default value path
+		}
+		s.metrics = append(s.metrics, metricConfig)
+
+		s.logger.Infof("Assigned dynamic alias %d to metric '%s' (type: %s)",
+			s.metricAliases[metricName], metricName, metricType)
+	}
+}
+
+// inferMetricType determines the Sparkplug data type based on the Go value type
+func (s *sparkplugOutput) inferMetricType(value interface{}) string {
+	switch value.(type) {
+	case bool:
+		return "boolean"
+	case int, int8, int16, int32:
+		return "int32"
+	case int64:
+		return "int64"
+	case uint, uint8, uint16, uint32:
+		return "uint32"
+	case uint64:
+		return "uint64"
+	case float32:
+		return "float"
+	case float64:
+		return "double"
+	case string:
+		return "string"
+	case json.Number:
+		// Try to determine if it's integer or float
+		if numStr := string(value.(json.Number)); strings.Contains(numStr, ".") {
+			return "double"
+		}
+		return "int64"
+	default:
+		return "string" // Default to string for unknown types
+	}
+}
+
+// triggerRebirth initiates a rebirth sequence with new metrics
+func (s *sparkplugOutput) triggerRebirth() error {
+	s.dynamicMu.Lock()
+	s.rebirthPending = true
+	s.lastRebirthTime = time.Now()
+	s.dynamicMu.Unlock()
+
+	s.logger.Info("Triggering rebirth sequence due to new metrics")
+
+	// Increment bdSeq for rebirth
+	s.stateMu.Lock()
+	s.bdSeq++
+	s.stateMu.Unlock()
+
+	// Publish new BIRTH message with all metrics (existing + new)
+	if err := s.publishBirthMessage(); err != nil {
+		s.dynamicMu.Lock()
+		s.rebirthPending = false
+		s.dynamicMu.Unlock()
+		return fmt.Errorf("failed to publish rebirth message: %w", err)
+	}
+
+	s.birthsPublished.Incr(1)
+	s.logger.Info("Successfully published rebirth message")
+
+	// Clear rebirth pending flag
+	s.dynamicMu.Lock()
+	s.rebirthPending = false
+	s.dynamicMu.Unlock()
+
+	return nil
 }

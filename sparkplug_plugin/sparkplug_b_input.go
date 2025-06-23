@@ -54,20 +54,22 @@ Key features:
 		// MQTT Transport Configuration
 		Field(service.NewObjectField("mqtt",
 			service.NewStringListField("urls").
-				Description("List of MQTT broker URLs").
+				Description("List of MQTT broker URLs to connect to").
 				Example([]string{"tcp://localhost:1883", "ssl://broker.hivemq.com:8883"}).
 				Default([]string{"tcp://localhost:1883"}),
 			service.NewStringField("client_id").
-				Description("MQTT client ID").
-				Default("benthos-sparkplug"),
+				Description("MQTT client ID for this input plugin").
+				Default("benthos-sparkplug-input"),
 			service.NewObjectField("credentials",
 				service.NewStringField("username").
-					Description("MQTT username").
-					Default(""),
+					Description("MQTT username for authentication").
+					Default("").
+					Optional(),
 				service.NewStringField("password").
-					Description("MQTT password").
+					Description("MQTT password for authentication").
+					Default("").
 					Secret().
-					Default("")).
+					Optional()).
 				Description("MQTT authentication credentials").
 				Optional(),
 			service.NewIntField("qos").
@@ -86,16 +88,16 @@ Key features:
 		// Sparkplug Identity Configuration
 		Field(service.NewObjectField("identity",
 			service.NewStringField("group_id").
-				Description("Sparkplug Group ID (e.g., 'SCADA', 'FactoryA')").
-				Example("SCADA"),
+				Description("Sparkplug Group ID (e.g., 'FactoryA')").
+				Example("FactoryA"),
 			service.NewStringField("edge_node_id").
-				Description("Edge Node ID for this application").
-				Example("Primary-Host-01"),
+				Description("Edge Node ID within the group (e.g., 'Line3')").
+				Example("Line3"),
 			service.NewStringField("device_id").
-				Description("Device ID (empty for node-level identity)").
+				Description("Device ID under the edge node (optional, if not specified acts as node-level)").
 				Default("").
 				Optional()).
-			Description("Sparkplug B identity configuration")).
+			Description("Sparkplug identity configuration")).
 		// Role Configuration
 		Field(service.NewStringField("role").
 			Description("Sparkplug role: 'primary_host' (subscribe to all groups), 'edge_node' (own group only), or 'hybrid' (both)").
@@ -116,6 +118,9 @@ Key features:
 				Default(true),
 			service.NewBoolField("data_messages_only").
 				Description("Only process DATA messages (drop BIRTH/DEATH after processing)").
+				Default(false),
+			service.NewBoolField("data_only").
+				Description("Skip publishing metrics from birth messages, only emit DATA messages").
 				Default(false),
 			service.NewBoolField("enable_rebirth_req").
 				Description("Send rebirth requests on sequence gaps").
@@ -268,6 +273,7 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 	behaviourConf := conf.Namespace("behaviour")
 	config.Behaviour.AutoSplitMetrics, _ = behaviourConf.FieldBool("auto_split_metrics")
 	config.Behaviour.DataMessagesOnly, _ = behaviourConf.FieldBool("data_messages_only")
+	config.Behaviour.DataOnly, _ = behaviourConf.FieldBool("data_only")
 	config.Behaviour.EnableRebirthReq, _ = behaviourConf.FieldBool("enable_rebirth_req")
 	config.Behaviour.DropBirthMessages, _ = behaviourConf.FieldBool("drop_birth_messages")
 	config.Behaviour.StrictTopicValidation, _ = behaviourConf.FieldBool("strict_topic_validation")
@@ -466,6 +472,13 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 		s.processBirthMessage(deviceKey, msgType, &payload)
 		s.birthsProcessed.Incr(1)
 
+		// Implement data_only filter - skip emitting birth metrics if enabled
+		if s.config.Behaviour.DataOnly {
+			s.logger.Debugf("🚫 processSparkplugMessage: data_only=true, skipping birth metric emission")
+			// Still process birth for alias table but don't emit metrics
+			return nil, nil
+		}
+
 		if s.config.Behaviour.AutoSplitMetrics {
 			batch = s.createSplitMessages(&payload, msgType, deviceKey, topicInfo, mqttMsg.topic)
 		} else {
@@ -541,15 +554,21 @@ func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
-	// Check sequence numbers for out-of-order detection
+	// Check sequence numbers for out-of-order detection (Sparkplug B spec compliance)
 	if state, exists := s.nodeStates[deviceKey]; exists && payload.Seq != nil {
 		currentSeq := uint8(*payload.Seq)
 		expectedSeq := uint8((int(state.lastSeq) + 1) % 256)
 
-		if currentSeq != expectedSeq {
+		// Validate sequence according to Sparkplug B specification
+		isValidSequence := s.validateSequenceNumber(state.lastSeq, currentSeq)
+
+		if !isValidSequence {
 			s.logger.Warnf("Sequence gap detected for device %s: expected %d, got %d",
 				deviceKey, expectedSeq, currentSeq)
 			s.sequenceErrors.Incr(1)
+
+			// Mark node as stale until rebirth (Sparkplug spec requirement)
+			state.isOnline = false
 
 			// Send rebirth request if enabled
 			if s.config.Behaviour.EnableRebirthReq {
@@ -748,6 +767,13 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sproto.Payload_Metric, 
 		msg.MetaSet("device_id", topicInfo.Device)
 	}
 
+	// Enhanced metadata enrichment as per expert specification
+	msg.MetaSet("spb_group", topicInfo.Group)
+	msg.MetaSet("spb_edge_node", topicInfo.EdgeNode)
+	if topicInfo.Device != "" {
+		msg.MetaSet("spb_device", topicInfo.Device)
+	}
+
 	// Set metric name as tag
 	tagName := "unknown_metric"
 	if metric.Name != nil && *metric.Name != "" {
@@ -757,15 +783,36 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sproto.Payload_Metric, 
 	}
 	msg.MetaSet("tag_name", tagName)
 
-	// Set timestamp if available
-	if payload.Timestamp != nil {
-		msg.MetaSet("timestamp_ms", fmt.Sprintf("%d", *payload.Timestamp))
-	}
-
-	// Set sequence number if available
+	// Enhanced sequence and timing metadata
 	if payload.Seq != nil {
 		msg.MetaSet("sparkplug_seq", fmt.Sprintf("%d", *payload.Seq))
+		msg.MetaSet("spb_seq", fmt.Sprintf("%d", *payload.Seq))
 	}
+
+	if payload.Timestamp != nil {
+		msg.MetaSet("timestamp_ms", fmt.Sprintf("%d", *payload.Timestamp))
+		msg.MetaSet("spb_timestamp", fmt.Sprintf("%d", *payload.Timestamp))
+	}
+
+	// Add metric-specific metadata
+	if metric.Alias != nil {
+		msg.MetaSet("spb_alias", fmt.Sprintf("%d", *metric.Alias))
+	}
+
+	if metric.Datatype != nil {
+		msg.MetaSet("spb_datatype", s.getDataTypeName(*metric.Datatype))
+	}
+
+	if metric.IsHistorical != nil {
+		msg.MetaSet("spb_is_historical", fmt.Sprintf("%t", *metric.IsHistorical))
+	}
+
+	// Add birth-death sequence if available from node state
+	s.stateMu.RLock()
+	if state, exists := s.nodeStates[deviceKey]; exists {
+		msg.MetaSet("spb_bdseq", fmt.Sprintf("%d", state.bdSeq))
+	}
+	s.stateMu.RUnlock()
 
 	return msg
 }
@@ -866,6 +913,42 @@ func (s *sparkplugInput) extractMetricValue(metric *sproto.Payload_Metric) []byt
 	}
 
 	return jsonBytes
+}
+
+// getDataTypeName converts Sparkplug data type ID to human-readable string
+func (s *sparkplugInput) getDataTypeName(datatype uint32) string {
+	switch datatype {
+	case 1:
+		return "Int8"
+	case 2:
+		return "Int16"
+	case 3:
+		return "Int32"
+	case 4:
+		return "Int64"
+	case 5:
+		return "UInt8"
+	case 6:
+		return "UInt16"
+	case 7:
+		return "UInt32"
+	case 8:
+		return "UInt64"
+	case 9:
+		return "Float"
+	case 10:
+		return "Double"
+	case 11:
+		return "Boolean"
+	case 12:
+		return "String"
+	case 13:
+		return "DateTime"
+	case 14:
+		return "Text"
+	default:
+		return "Unknown"
+	}
 }
 
 func (s *sparkplugInput) payloadToJSON(payload *sproto.Payload) []byte {
@@ -977,4 +1060,35 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 
 	s.rebirthsRequested.Incr(1)
 	s.logger.Infof("Sent rebirth request to %s on topic %s", deviceKey, topic)
+}
+
+// validateSequenceNumber checks if a received sequence number is valid according to Sparkplug B spec
+func (s *sparkplugInput) validateSequenceNumber(lastSeq, currentSeq uint8) bool {
+	// Calculate expected next sequence with wraparound
+	expectedNext := uint8((int(lastSeq) + 1) % 256)
+
+	// Direct match is valid
+	if currentSeq == expectedNext {
+		return true
+	}
+
+	// Handle wraparound case (255 -> 0)
+	if lastSeq == 255 && currentSeq == 0 {
+		return true
+	}
+
+	// Allow small gaps based on default tolerance (5)
+	maxGap := uint8(5) // Default gap tolerance per Sparkplug spec
+
+	// Calculate gap size
+	var gap uint8
+	if currentSeq > lastSeq {
+		gap = currentSeq - lastSeq - 1
+	} else {
+		// Handle wraparound gap calculation
+		gap = uint8((256 - int(lastSeq) - 1) + int(currentSeq))
+	}
+
+	// Allow small gaps within tolerance
+	return gap <= maxGap
 }
