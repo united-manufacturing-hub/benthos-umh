@@ -303,8 +303,13 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 	for _, message := range batch {
 		topicInfo, eventTableEntry, unsTreeId, err := MessageToUNSInfoAndEvent(message)
 		if err != nil {
-			t.logger.Errorf("Error while processing message: %v", err)
-			t.messagesFailed.Incr(1)
+			// DEBUG: Log the actual error for test debugging
+			if t.logger != nil {
+				t.logger.Errorf("Error while processing message: %v", err)
+			}
+			if t.messagesFailed != nil {
+				t.messagesFailed.Incr(1)
+			}
 			continue
 		}
 
@@ -314,12 +319,19 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 		// Buffer the message (includes ring buffer storage and topic tracking)
 		err = t.bufferMessage(message, eventTableEntry, topicInfo, *unsTreeId)
 		if err != nil {
-			t.logger.Errorf("Error buffering message: %v", err)
-			t.messagesFailed.Incr(1)
+			// DEBUG: Log buffer error for test debugging
+			if t.logger != nil {
+				t.logger.Errorf("Error buffering message: %v", err)
+			}
+			if t.messagesFailed != nil {
+				t.messagesFailed.Incr(1)
+			}
 			continue
 		}
 
-		t.messagesProcessed.Incr(1)
+		if t.messagesProcessed != nil {
+			t.messagesProcessed.Incr(1)
+		}
 	}
 
 	// Check if emission interval has elapsed
@@ -380,11 +392,23 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 		lastEmitTime = time.Now()
 	}
 
+	// Handle nil metrics for tests
+	var messagesProcessed, messagesFailed, eventsOverwritten, ringBufferUtilization, flushDuration, emissionSize, totalEventsEmitted *service.MetricCounter
+	if metrics != nil {
+		messagesProcessed = metrics.NewCounter("messages_processed")
+		messagesFailed = metrics.NewCounter("messages_failed")
+		eventsOverwritten = metrics.NewCounter("events_overwritten")
+		ringBufferUtilization = metrics.NewCounter("ring_buffer_utilization")
+		flushDuration = metrics.NewCounter("flush_duration")
+		emissionSize = metrics.NewCounter("emission_size")
+		totalEventsEmitted = metrics.NewCounter("total_events_emitted")
+	}
+
 	return &TopicBrowserProcessor{
 		topicMetadataCache:      l,
 		logger:                  logger,
-		messagesProcessed:       metrics.NewCounter("messages_processed"),
-		messagesFailed:          metrics.NewCounter("messages_failed"),
+		messagesProcessed:       messagesProcessed,
+		messagesFailed:          messagesFailed,
 		topicMetadataCacheMutex: &sync.Mutex{},
 		emitInterval:            emitInterval,
 		maxEventsPerTopic:       maxEventsPerTopic,
@@ -393,11 +417,11 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 		fullTopicMap:            make(map[string]*TopicInfo),
 		lastEmitTime:            lastEmitTime,
 		bufferMutex:             sync.Mutex{},
-		eventsOverwritten:       metrics.NewCounter("events_overwritten"),
-		ringBufferUtilization:   metrics.NewCounter("ring_buffer_utilization"),
-		flushDuration:           metrics.NewCounter("flush_duration"),
-		emissionSize:            metrics.NewCounter("emission_size"),
-		totalEventsEmitted:      metrics.NewCounter("total_events_emitted"),
+		eventsOverwritten:       eventsOverwritten,
+		ringBufferUtilization:   ringBufferUtilization,
+		flushDuration:           flushDuration,
+		emissionSize:            emissionSize,
+		totalEventsEmitted:      totalEventsEmitted,
 	}
 }
 

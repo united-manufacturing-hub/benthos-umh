@@ -81,6 +81,9 @@ import (
 func (t *TopicBrowserProcessor) mergeTopicHeaders(unsTreeId string, topics []*TopicInfo) map[string]string {
 	// Start with previously cached metadata (if exists)
 	mergedHeaders := make(map[string]string)
+
+	// ✅ FIX: Add mutex protection around cache access to prevent race conditions
+	t.topicMetadataCacheMutex.Lock()
 	if stored, ok := t.topicMetadataCache.Get(unsTreeId); ok {
 		cachedHeaders := stored.(map[string]string)
 		// Copy all previously known metadata
@@ -88,6 +91,7 @@ func (t *TopicBrowserProcessor) mergeTopicHeaders(unsTreeId string, topics []*To
 			mergedHeaders[key] = value
 		}
 	}
+	t.topicMetadataCacheMutex.Unlock()
 
 	// Layer on new metadata from current batch
 	for _, topicInfo := range topics {
