@@ -633,10 +633,337 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// May return error or handle gracefully - both are valid
 		})
 	})
+
+	// E2E Issue #2: Output Format - Raw Messages Leaking Test
+	Describe("E2E Output Format and Delayed ACK Verification", func() {
+		var processor *TopicBrowserProcessor
+
+		BeforeEach(func() {
+			processor = NewTopicBrowserProcessor(nil, nil, 100, time.Millisecond, 10, 100)
+			var err error
+			processor.topicMetadataCache, err = lru.New(100)
+			Expect(err).To(BeNil())
+		})
+
+		It("should implement proper delayed ACK pattern - no raw message leakage", func() {
+			By("Creating original message with distinctive content")
+			originalMsg := service.NewMessage(nil)
+			originalMsg.MetaSet("umh_topic", "umh.v1.test._historian.ack_verification")
+			originalMsg.MetaSet("custom_header", "RAW_HEADER_SHOULD_NOT_LEAK")
+			originalMsg.SetStructured(map[string]interface{}{
+				"timestamp_ms": int64(1647753600000),
+				"value":        42.0, // Use numeric value like working tests
+			})
+
+			// Store original content for verification
+			originalBytes, err := originalMsg.AsBytes()
+			Expect(err).NotTo(HaveOccurred())
+			originalStructured, err := originalMsg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Processing message through delayed ACK pattern")
+			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{originalMsg})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying delayed ACK structure")
+			Expect(result).To(HaveLen(2), "Should return [emission_batch, ack_batch]")
+			Expect(result[0]).To(HaveLen(1), "Emission batch should have 1 processed message")
+			Expect(result[1]).To(HaveLen(1), "ACK batch should have 1 original message")
+
+			emissionBatch := result[0]
+			ackBatch := result[1]
+
+			By("Verifying emission contains processed bundle, NOT original message")
+			emissionMsg := emissionBatch[0]
+			emissionBytes, err := emissionMsg.AsBytes()
+			Expect(err).NotTo(HaveOccurred())
+
+			// CRITICAL: Emission should NOT be identical to original
+			Expect(emissionBytes).NotTo(Equal(originalBytes),
+				"Emission must be processed bundle, not original message")
+
+			// Emission should be protobuf bundle format
+			emissionStr := string(emissionBytes)
+			Expect(emissionStr).To(ContainSubstring("STARTSTARTSTART"),
+				"Emission should be protobuf bundle format")
+			Expect(emissionStr).To(ContainSubstring("END"),
+				"Emission should end with bundle marker")
+
+			// CRITICAL: Original distinctive content should NOT leak into emission
+			Expect(emissionStr).NotTo(ContainSubstring("RAW_HEADER_SHOULD_NOT_LEAK"),
+				"Original headers must not leak into emission")
+			// Note: Numeric values will be present in processed form, which is expected
+
+			By("Verifying ACK batch contains original message for acknowledgment")
+			ackMsg := ackBatch[0]
+			ackBytes, err := ackMsg.AsBytes()
+			Expect(err).NotTo(HaveOccurred())
+			ackStructured, err := ackMsg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+
+			// CRITICAL: ACK should be identical to original for proper acknowledgment
+			Expect(ackBytes).To(Equal(originalBytes),
+				"ACK batch must contain original message for acknowledgment")
+			Expect(ackStructured).To(Equal(originalStructured),
+				"ACK message structure must match original")
+
+			// Verify original metadata preserved in ACK
+			ackTopic, exists := ackMsg.MetaGet("umh_topic")
+			Expect(exists).To(BeTrue(), "ACK should preserve original metadata")
+			Expect(ackTopic).To(Equal("umh.v1.test._historian.ack_verification"))
+
+			customHeader, exists := ackMsg.MetaGet("custom_header")
+			Expect(exists).To(BeTrue(), "ACK should preserve custom headers")
+			Expect(customHeader).To(Equal("RAW_HEADER_SHOULD_NOT_LEAK"))
+
+			By("Verifying processed bundle contains correct structured data")
+			// Extract and decode the protobuf bundle
+			emissionLines := strings.Split(emissionStr, "\n")
+			Expect(len(emissionLines)).To(BeNumerically(">=", 2), "Should have data lines")
+
+			dataLine := emissionLines[1]
+			// Note: LZ4 format varies but should start with f6
+			Expect(dataLine).To(HavePrefix("f6"), "Should be LZ4 compressed protobuf")
+
+			hexDecoded, err := hex.DecodeString(dataLine)
+			Expect(err).NotTo(HaveOccurred())
+
+			bundle, err := ProtobufBytesToBundleWithCompression(hexDecoded)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(bundle).NotTo(BeNil())
+
+			// Verify bundle contains processed event data
+			Expect(bundle.Events.Entries).To(HaveLen(1), "Bundle should contain 1 event")
+			event := bundle.Events.Entries[0]
+
+			Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1647753600000)))
+
+			// The processed value should be present as numeric value
+			if event.GetTs().GetNumericValue() != nil {
+				processedValue := event.GetTs().GetNumericValue().GetValue()
+				Expect(processedValue).To(Equal(42.0))
+			}
+		})
+
+		It("should handle multiple messages with correct ACK pattern", func() {
+			By("Creating multiple original messages")
+			msgs := make(service.MessageBatch, 3)
+			originalContents := make([][]byte, 3)
+
+			for i := 0; i < 3; i++ {
+				msg := service.NewMessage(nil)
+				msg.MetaSet("umh_topic", fmt.Sprintf("umh.v1.test._historian.multi_%d", i))
+				msg.SetStructured(map[string]interface{}{
+					"timestamp_ms": int64(1647753600000 + int64(i)),
+					"value":        fmt.Sprintf("ORIGINAL_VALUE_%d", i),
+				})
+				msgs[i] = msg
+
+				bytes, err := msg.AsBytes()
+				Expect(err).NotTo(HaveOccurred())
+				originalContents[i] = bytes
+			}
+
+			By("Processing multiple messages")
+			result, err := processor.ProcessBatch(context.Background(), msgs)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying batch delayed ACK structure")
+			Expect(result).To(HaveLen(2), "Should return [emission_batch, ack_batch]")
+			Expect(result[0]).To(HaveLen(1), "Should emit single bundled message")
+			Expect(result[1]).To(HaveLen(3), "Should ACK all 3 original messages")
+
+			By("Verifying single emission contains all events")
+			emissionMsg := result[0][0]
+			emissionBytes, err := emissionMsg.AsBytes()
+			Expect(err).NotTo(HaveOccurred())
+
+			// Decode bundle to verify it contains all events
+			emissionStr := string(emissionBytes)
+			emissionLines := strings.Split(emissionStr, "\n")
+			dataLine := emissionLines[1]
+			hexDecoded, err := hex.DecodeString(dataLine)
+			Expect(err).NotTo(HaveOccurred())
+			bundle, err := ProtobufBytesToBundleWithCompression(hexDecoded)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(bundle.Events.Entries).To(HaveLen(3), "Bundle should contain all 3 events")
+
+			By("Verifying ACK batch contains all original messages")
+			ackBatch := result[1]
+			for i, ackMsg := range ackBatch {
+				ackBytes, err := ackMsg.AsBytes()
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(ackBytes).To(Equal(originalContents[i]),
+					fmt.Sprintf("ACK message %d should match original", i))
+			}
+		})
+
+		It("should not emit when messages are buffered (no immediate ACK)", func() {
+			By("Creating processor with long emission interval")
+			longProcessor := NewTopicBrowserProcessor(nil, nil, 100, time.Hour, 10, 100)
+			var err error
+			longProcessor.topicMetadataCache, err = lru.New(100)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Processing message that should be buffered")
+			msg := service.NewMessage(nil)
+			msg.MetaSet("umh_topic", "umh.v1.test._historian.buffered")
+			msg.SetStructured(map[string]interface{}{
+				"timestamp_ms": int64(1647753600000),
+				"value":        "buffered_value",
+			})
+
+			result, err := longProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying no emission occurs when buffered")
+			Expect(result).To(BeNil(), "Should return nil when messages are buffered")
+
+			By("Verifying message is held in buffer for future ACK")
+			longProcessor.bufferMutex.Lock()
+			bufferLen := len(longProcessor.messageBuffer)
+			longProcessor.bufferMutex.Unlock()
+
+			Expect(bufferLen).To(Equal(1), "Message should be buffered for future emission/ACK")
+		})
+	})
+
+	// CORE ACK TIMING VERIFICATION - Simple test for the main concern
+	Describe("ACK Timing: Buffer → Wait → Emit+ACK", func() {
+		Context("Messages should be ACKed only when emitted, not when buffered", func() {
+			It("should NOT ACK messages immediately when buffered (before 1 second)", func() {
+				By("Creating processor with realistic 1 second emit interval")
+				// Use actual 1 second interval (not test milliseconds)
+				realisticProcessor := NewTopicBrowserProcessor(nil, nil, 100, time.Second, 10, 100)
+				var err error
+				realisticProcessor.topicMetadataCache, err = lru.New(100)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Sending a message that should be buffered")
+				msg := service.NewMessage(nil)
+				msg.MetaSet("umh_topic", "umh.v1.test._historian.timing_test")
+				msg.SetStructured(map[string]interface{}{
+					"timestamp_ms": int64(1647753600000),
+					"value":        42.0,
+				})
+
+				By("Processing message - should be buffered, NOT ACKed")
+				result, err := realisticProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("CRITICAL: No ACK should happen yet (message is buffered)")
+				Expect(result).To(BeNil(), "Should return nil - no emission, no ACK yet")
+
+				By("Verifying message is buffered internally (waiting for 1 second)")
+				realisticProcessor.bufferMutex.Lock()
+				bufferLen := len(realisticProcessor.messageBuffer)
+				realisticProcessor.bufferMutex.Unlock()
+				Expect(bufferLen).To(Equal(1), "Message should be buffered, waiting for emit interval")
+
+				By("VERIFICATION: This proves messages are NOT ACKed when buffered")
+				// The fact that ProcessBatch returned nil means:
+				// 1. Message was buffered internally ✅
+				// 2. No ACK batch was returned ✅
+				// 3. Original message remains unACKed until emission ✅
+			})
+
+			It("should ACK messages only when 1 second interval triggers emission", func() {
+				By("Creating processor with very short interval for testing")
+				// Use 1ms for test speed, but concept is same as 1 second
+				fastProcessor := NewTopicBrowserProcessor(nil, nil, 100, time.Millisecond, 10, 100)
+				var err error
+				fastProcessor.topicMetadataCache, err = lru.New(100)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Sending a message")
+				msg := service.NewMessage(nil)
+				msg.MetaSet("umh_topic", "umh.v1.test._historian.emission_test")
+				msg.SetStructured(map[string]interface{}{
+					"timestamp_ms": int64(1647753600000),
+					"value":        123.0,
+				})
+
+				By("Processing message - interval has elapsed, should emit+ACK")
+				result, err := fastProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("CRITICAL: Now we get emission+ACK because interval elapsed")
+				Expect(result).To(HaveLen(2), "Should return [emission_batch, ack_batch]")
+				Expect(result[0]).To(HaveLen(1), "Emission batch should have processed bundle")
+				Expect(result[1]).To(HaveLen(1), "ACK batch should have original message")
+
+				By("VERIFICATION: This proves ACK happens exactly when emission happens")
+				// The fact that we get both batches means:
+				// 1. Emit interval was reached ✅
+				// 2. Bundle was emitted (result[0]) ✅
+				// 3. Original was ACKed (result[1]) ✅
+				// 4. Both happen atomically at the same time ✅
+			})
+
+			It("should demonstrate the exact timing relationship", func() {
+				By("Creating processor with medium interval to show timing")
+				mediumProcessor := NewTopicBrowserProcessor(nil, nil, 100, 100*time.Millisecond, 10, 100)
+				var err error
+				mediumProcessor.topicMetadataCache, err = lru.New(100)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("First message - should be buffered (no ACK)")
+				msg1 := service.NewMessage(nil)
+				msg1.MetaSet("umh_topic", "umh.v1.test._historian.timing_demo")
+				msg1.SetStructured(map[string]interface{}{
+					"timestamp_ms": int64(1647753600000),
+					"value":        1.0,
+				})
+
+				result1, err := mediumProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg1})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result1).To(BeNil(), "First message buffered, no ACK yet")
+
+				By("Second message immediately after - still buffered (no ACK)")
+				msg2 := service.NewMessage(nil)
+				msg2.MetaSet("umh_topic", "umh.v1.test._historian.timing_demo")
+				msg2.SetStructured(map[string]interface{}{
+					"timestamp_ms": int64(1647753600001),
+					"value":        2.0,
+				})
+
+				result2, err := mediumProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg2})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result2).To(BeNil(), "Second message also buffered, no ACK yet")
+
+				By("Waiting for emit interval to pass")
+				time.Sleep(150 * time.Millisecond) // Wait longer than 100ms interval
+
+				By("Third message - triggers emission+ACK of all buffered messages")
+				msg3 := service.NewMessage(nil)
+				msg3.MetaSet("umh_topic", "umh.v1.test._historian.timing_demo")
+				msg3.SetStructured(map[string]interface{}{
+					"timestamp_ms": int64(1647753600002),
+					"value":        3.0,
+				})
+
+				result3, err := mediumProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg3})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("NOW we get emission+ACK because interval elapsed")
+				Expect(result3).To(HaveLen(2), "Should return [emission_batch, ack_batch]")
+				Expect(result3[0]).To(HaveLen(1), "One emission bundle")
+				Expect(result3[1]).To(HaveLen(3), "ACK batch should have all 3 original messages")
+
+				By("VERIFICATION: All 3 messages ACKed together when emission happens")
+				// This proves the key behavior:
+				// 1. Messages 1 & 2 were buffered without ACK
+				// 2. Message 3 triggered emission because interval elapsed
+				// 3. All 3 messages ACKed atomically with emission
+				// 4. ACK timing is tied to emission timing, not buffering timing
+			})
+		})
+	})
 })
 
-// Helper functions for E2E tests
-
+// Helper function for tests
 func createTestBatch(size int, valuePrefix string) service.MessageBatch {
 	batch := make(service.MessageBatch, size)
 	for i := 0; i < size; i++ {

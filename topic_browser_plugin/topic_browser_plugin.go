@@ -217,6 +217,7 @@ type TopicBrowserProcessor struct {
 	flushDuration         *service.MetricCounter
 	emissionSize          *service.MetricCounter
 	totalEventsEmitted    *service.MetricCounter
+	// TODO: add last length of full topic map as "total_amount_of_topics"
 }
 
 func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Message) (service.MessageBatch, error) {
