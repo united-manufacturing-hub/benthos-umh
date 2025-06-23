@@ -452,36 +452,152 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 		BeforeEach(func() {
 			// Create processor with small ring buffer for overflow testing
-			overflowProcessor = NewTopicBrowserProcessor(nil, nil, 100, time.Millisecond, 5, 100)
+			// Use longer emit interval to ensure messages are buffered rather than immediately emitted
+			overflowProcessor = NewTopicBrowserProcessor(nil, nil, 100, time.Hour, 5, 100)
 			var err error
 			overflowProcessor.topicMetadataCache, err = lru.New(100)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should handle ring buffer overflow with FIFO behavior", func() {
-			By("Filling ring buffer beyond capacity")
+		It("should preserve latest events during ring buffer overflow with content verification", func() {
+			By("Adding events with unique identifiers for content verification")
 
-			// maxTopicEvents = 5, so fill with 8 events to trigger overflow
+			// Create 8 events with unique, verifiable values (capacity = 5)
+			// Expected behavior: events 3,4,5,6,7 should be preserved (latest 5)
 			for i := 0; i < 8; i++ {
-				batch := createTestBatch(1, fmt.Sprintf("overflow-test-%d", i))
+				batch := createTestBatchWithValue(1, fmt.Sprintf("event-%d", i))
 				_, err := overflowProcessor.ProcessBatch(context.Background(), batch)
 				Expect(err).NotTo(HaveOccurred())
 			}
 
-			By("Verifying ring buffer state")
+			By("Verifying ring buffer size constraints")
 			overflowProcessor.bufferMutex.Lock()
 			topicKey := "umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.y"
 			topicBuffer := overflowProcessor.topicBuffers[topicKey]
+
+			Expect(topicBuffer).NotTo(BeNil(), "Topic buffer should exist")
+			Expect(topicBuffer.size).To(Equal(5), "Ring buffer should maintain exactly maxEventsPerTopic size")
+			Expect(topicBuffer.capacity).To(Equal(5), "Ring buffer capacity should match config")
+
+			By("Verifying latest events are preserved (content verification)")
+			// Extract events using the same method the processor uses
+			events := overflowProcessor.getLatestEventsForTopic(topicKey)
 			overflowProcessor.bufferMutex.Unlock()
 
-			if topicBuffer != nil {
-				Expect(topicBuffer.size).To(BeNumerically("<=", 5), "Ring buffer should maintain max size")
+			Expect(events).To(HaveLen(5), "Should preserve exactly 5 events (maxEventsPerTopic)")
 
-				By("Verifying FIFO behavior - recent events are preserved")
-				// Check that the buffer contains some events
-				if topicBuffer.size > 0 {
-					Expect(topicBuffer.events).NotTo(BeEmpty(), "Should contain buffered events")
-				}
+			// Verify that the LATEST 5 events are preserved: event-3, event-4, event-5, event-6, event-7
+			// Ring buffer should discard oldest events (event-0, event-1, event-2)
+			expectedValues := []string{"event-3", "event-4", "event-5", "event-6", "event-7"}
+
+			for i, event := range events {
+				actualValue := extractValueFromTimeSeries(event)
+				Expect(actualValue).To(Equal(expectedValues[i]),
+					fmt.Sprintf("Event at position %d should be %s, got %s", i, expectedValues[i], actualValue))
+			}
+
+			By("Verifying chronological order preservation")
+			// Events should be in chronological order (oldest to newest of preserved events)
+			for i := 1; i < len(events); i++ {
+				prevTimestamp := events[i-1].GetTs().GetTimestampMs()
+				currTimestamp := events[i].GetTs().GetTimestampMs()
+				Expect(currTimestamp).To(BeNumerically(">=", prevTimestamp),
+					fmt.Sprintf("Events should be in chronological order: event[%d].timestamp=%d should be >= event[%d].timestamp=%d",
+						i, currTimestamp, i-1, prevTimestamp))
+			}
+		})
+
+		It("should handle partial buffer fills correctly", func() {
+			By("Adding fewer events than buffer capacity")
+
+			// Add only 3 events to a buffer with capacity 5
+			for i := 0; i < 3; i++ {
+				batch := createTestBatchWithValue(1, fmt.Sprintf("partial-%d", i))
+				_, err := overflowProcessor.ProcessBatch(context.Background(), batch)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			By("Verifying partial buffer state")
+			overflowProcessor.bufferMutex.Lock()
+			topicKey := "umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.y"
+			events := overflowProcessor.getLatestEventsForTopic(topicKey)
+			bufferSize := len(overflowProcessor.messageBuffer)
+			overflowProcessor.bufferMutex.Unlock()
+
+			Expect(bufferSize).To(Equal(3), "Should have 3 messages in buffer")
+			Expect(events).To(HaveLen(3), "Should contain exactly 3 events")
+
+			// Verify all 3 events are preserved in correct order
+			expectedValues := []string{"partial-0", "partial-1", "partial-2"}
+			for i, event := range events {
+				actualValue := extractValueFromTimeSeries(event)
+				Expect(actualValue).To(Equal(expectedValues[i]),
+					fmt.Sprintf("Event %d should be %s, got %s", i, expectedValues[i], actualValue))
+			}
+		})
+
+		It("should handle exact capacity boundary correctly", func() {
+			By("Adding exactly buffer capacity number of events")
+
+			// Add exactly 5 events to buffer with capacity 5
+			for i := 0; i < 5; i++ {
+				batch := createTestBatchWithValue(1, fmt.Sprintf("exact-%d", i))
+				_, err := overflowProcessor.ProcessBatch(context.Background(), batch)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			By("Verifying exact capacity handling")
+			overflowProcessor.bufferMutex.Lock()
+			topicKey := "umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.y"
+			events := overflowProcessor.getLatestEventsForTopic(topicKey)
+			topicBuffer := overflowProcessor.topicBuffers[topicKey]
+			bufferSize := len(overflowProcessor.messageBuffer)
+			overflowProcessor.bufferMutex.Unlock()
+
+			Expect(bufferSize).To(Equal(5), "Should have 5 messages in buffer")
+			Expect(events).To(HaveLen(5), "Should contain exactly 5 events")
+			Expect(topicBuffer.size).To(Equal(5), "Buffer size should be exactly capacity")
+
+			// All 5 events should be preserved
+			expectedValues := []string{"exact-0", "exact-1", "exact-2", "exact-3", "exact-4"}
+			for i, event := range events {
+				actualValue := extractValueFromTimeSeries(event)
+				Expect(actualValue).To(Equal(expectedValues[i]),
+					fmt.Sprintf("Event %d should be %s, got %s", i, expectedValues[i], actualValue))
+			}
+		})
+
+		It("should handle multiple overflow cycles", func() {
+			By("Testing buffer behavior through multiple overflow cycles")
+
+			// First cycle: Add 8 events (overflow by 3)
+			for i := 0; i < 8; i++ {
+				batch := createTestBatchWithValue(1, fmt.Sprintf("cycle1-%d", i))
+				_, err := overflowProcessor.ProcessBatch(context.Background(), batch)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			// Second cycle: Add 5 more events (another complete overflow)
+			for i := 0; i < 5; i++ {
+				batch := createTestBatchWithValue(1, fmt.Sprintf("cycle2-%d", i))
+				_, err := overflowProcessor.ProcessBatch(context.Background(), batch)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			By("Verifying final state after multiple overflows")
+			overflowProcessor.bufferMutex.Lock()
+			topicKey := "umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.y"
+			events := overflowProcessor.getLatestEventsForTopic(topicKey)
+			overflowProcessor.bufferMutex.Unlock()
+
+			Expect(events).To(HaveLen(5), "Should still contain exactly 5 events")
+
+			// After all operations, should contain the 5 most recent events: cycle2-0, cycle2-1, cycle2-2, cycle2-3, cycle2-4
+			expectedValues := []string{"cycle2-0", "cycle2-1", "cycle2-2", "cycle2-3", "cycle2-4"}
+			for i, event := range events {
+				actualValue := extractValueFromTimeSeries(event)
+				Expect(actualValue).To(Equal(expectedValues[i]),
+					fmt.Sprintf("After multiple overflows, event %d should be %s, got %s", i, expectedValues[i], actualValue))
 			}
 		})
 	})
@@ -1067,4 +1183,47 @@ func createTestBatch(size int, valuePrefix string) service.MessageBatch {
 		batch[i] = msg
 	}
 	return batch
+}
+
+// Helper function for ring buffer content verification tests
+func createTestBatchWithValue(size int, valueString string) service.MessageBatch {
+	batch := make(service.MessageBatch, size)
+	for i := 0; i < size; i++ {
+		// Use incrementing timestamps to ensure chronological order
+		baseTime := time.Now().UnixMilli()
+		data := map[string]interface{}{
+			"timestamp_ms": baseTime + int64(i),
+			"value":        valueString,
+		}
+
+		msg := service.NewMessage(nil)
+		msg.SetStructured(data)
+
+		// Add required UMH metadata
+		msg.MetaSet("umh_topic", "umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.y")
+
+		batch[i] = msg
+	}
+	return batch
+}
+
+// Helper function to extract value from EventTableEntry for verification
+func extractValueFromTimeSeries(event *EventTableEntry) string {
+	if event == nil {
+		return ""
+	}
+
+	ts := event.GetTs()
+	if ts == nil {
+		return ""
+	}
+
+	if ts.GetStringValue() != nil {
+		return ts.GetStringValue().GetValue()
+	}
+	if ts.GetNumericValue() != nil {
+		// Convert numeric value to string for comparison
+		return fmt.Sprintf("%.0f", ts.GetNumericValue().GetValue())
+	}
+	return ""
 }
