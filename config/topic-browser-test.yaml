@@ -34,8 +34,8 @@ input:
 
 pipeline:
   processors:
-    - topic_browser: {}  
+    - topic_browser: {}
 
 output:
   stdout:
-    codec: lines 
+    codec: lines
