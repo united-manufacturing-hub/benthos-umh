@@ -71,9 +71,14 @@ topic_browser:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
+			// ✅ FIX: Use WaitGroup to prevent goroutine leak
+			var streamWg sync.WaitGroup
+			streamWg.Add(1)
 			go func() {
+				defer streamWg.Done()
 				_ = stream.Run(ctx)
 			}()
+			defer streamWg.Wait() // Ensure stream goroutine completes before test exits
 
 			// Send multiple messages rapidly (more than once per second)
 			startTime := time.Now()
