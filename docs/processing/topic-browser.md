@@ -203,7 +203,7 @@ Efficient binary serialization with forward/backward compatibility:
 ```
 STARTSTARTSTART
 <hex-encoded-protobuf-or-lz4-data>
-ENDDATAENDDATENDDATA  
+ENDDATAENDDATAENDDATA  
 <unix-timestamp-ms>
 ENDENDENDEND
 ```
@@ -216,10 +216,10 @@ ENDENDENDEND
 ```yaml
 processors:
   - topic_browser:
-      lru_size: 50000                        # Cache size (default: 50,000 entries)
-      emit_interval: "1s"                    # Emission interval (default: 1s)
-      max_events_per_topic_per_interval: 10  # Ring buffer size per topic (default: 10)
-      max_buffer_size: 100000                # Safety limit for total buffered messages (default: 100,000)
+      lru_size: 50000                              # Cache size (default: 50,000 entries)
+      emit_interval: "1s"                          # Emission interval (default: 1s)
+      max_events_per_topic_per_interval: 10       # Ring buffer size per topic (default: 10)
+      max_buffer_size: 100000                     # Safety limit for total buffered messages (default: 100,000)
 ```
 
 ### Configuration Parameters
@@ -314,5 +314,10 @@ processors:
 - `messages_failed`: Failed processing attempts (should remain low)
 - `events_overwritten`: Ring buffer overflow events (monitor for excessive values)
 - `total_events_emitted`: Total events sent downstream (for throughput monitoring)
+- `ring_buffer_utilization`: Ring buffer usage patterns (currently tracked but not actively used)
+- `flush_duration`: Time taken for buffer flush operations (performance monitoring)
+- `emission_size`: Size of emitted protobuf bundles (network usage monitoring)
+
+**Additional Metrics Available**:
 - Ring buffer utilization: Monitor per-topic buffer usage patterns
 - Downstream latency: Monitor time from message receipt to UI display 
