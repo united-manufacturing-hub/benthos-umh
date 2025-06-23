@@ -162,14 +162,15 @@ case uint64:
 
 ---
 
-### Issue #8: TOCTOU Race in shouldEmit Check ⚠️ IMPORTANT
+### Issue #8: TOCTOU Race in shouldEmit Check ⚠️ IN PROGRESS
 
 **Review Comment**: `Lock is released before calling flushBufferAndACK`
 
-**Assessment**: **VALID** - Time-of-check-time-of-use race
-- `shouldEmit` check releases mutex before calling `flushBufferAndACK()`
-- Another goroutine could flush first, causing double-flush
-- Located in `topic_browser_plugin.go:318-326`
+**Assessment**: **CONFIRMED** - Time-of-check-time-of-use race
+- `shouldEmit` check releases mutex before calling `flushBufferAndACK()` 
+- Located in `topic_browser_plugin.go:330-337`
+- Race condition: Thread A checks shouldEmit=true, Thread B flushes first, Thread A flushes empty buffer
+- Can cause double-flushes, empty emissions, or inconsistent state
 
 **Action**: **FIX** - Atomic check-and-flush operation
 
