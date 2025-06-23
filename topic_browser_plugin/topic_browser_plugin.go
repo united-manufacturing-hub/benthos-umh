@@ -317,7 +317,9 @@ func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Me
 // NOTE: This is not traditional "backpressure" (signaling upstream to slow down).
 // Instead, it's "buffer overflow protection" via immediate emission to make room.
 func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+	t.logger.Infof("DEBUG: ProcessBatch called with %d messages", len(batch))
 	if len(batch) == 0 {
+		t.logger.Infof("DEBUG: Empty batch, returning nil")
 		return nil, nil
 	}
 
