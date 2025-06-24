@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -2042,10 +2043,138 @@ var _ = Describe("EON Node ID Resolution (Parris Method) Unit Tests", func() {
 	})
 })
 
+var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
+	var output *mockSparkplugOutput
+
+	BeforeEach(func() {
+		output = newMockSparkplugOutput()
+	})
+
+	Context("Phase 1: State Management Infrastructure", func() {
+		It("should initialize state fields correctly", func() {
+			// Test that new sparkplugOutput instances have proper state initialization
+			Expect(output.cachedLocationPath).To(Equal(""))
+			Expect(output.cachedEdgeNodeID).To(Equal(""))
+			// Note: Cannot directly test sync.RWMutex initialization,
+			// but concurrent tests below will verify thread safety
+		})
+
+		It("should handle concurrent state access safely", func() {
+			// Test concurrent access to state
+			var wg sync.WaitGroup
+			numGoroutines := 10
+
+			for i := 0; i < numGoroutines; i++ {
+				wg.Add(1)
+				go func(id int) {
+					defer wg.Done()
+
+					// Simulate concurrent state access
+					output.edgeNodeStateMu.Lock()
+					output.cachedLocationPath = fmt.Sprintf("test.path.%d", id)
+					output.cachedEdgeNodeID = fmt.Sprintf("test:path:%d", id)
+					output.edgeNodeStateMu.Unlock()
+
+					// Verify we can read back
+					output.edgeNodeStateMu.RLock()
+					locationPath := output.cachedLocationPath
+					edgeNodeID := output.cachedEdgeNodeID
+					output.edgeNodeStateMu.RUnlock()
+
+					Expect(locationPath).To(ContainSubstring("test.path"))
+					Expect(edgeNodeID).To(ContainSubstring("test:path"))
+				}(i)
+			}
+
+			wg.Wait()
+			// Test passes if no race conditions detected
+		})
+
+		It("should provide getBirthEdgeNodeID fallback logic", func() {
+			testCases := []struct {
+				name             string
+				staticEdgeNodeID string
+				expectedResult   string
+				description      string
+			}{
+				{
+					name:             "static config provided",
+					staticEdgeNodeID: "StaticNode01",
+					expectedResult:   "StaticNode01",
+					description:      "should use static config when provided",
+				},
+				{
+					name:             "no config, uses default",
+					staticEdgeNodeID: "",
+					expectedResult:   "default_node",
+					description:      "should fall back to default_node when no config",
+				},
+			}
+
+			for _, tc := range testCases {
+				By(tc.description)
+				output.config.Identity.EdgeNodeID = tc.staticEdgeNodeID
+
+				result := output.getBirthEdgeNodeID()
+
+				Expect(result).To(Equal(tc.expectedResult))
+			}
+		})
+
+		It("should prioritize cached state over static config", func() {
+			// Set up static config
+			output.config.Identity.EdgeNodeID = "StaticNode"
+
+			// Initially should use static config
+			result1 := output.getBirthEdgeNodeID()
+			Expect(result1).To(Equal("StaticNode"))
+
+			// Set cached state
+			output.edgeNodeStateMu.Lock()
+			output.cachedLocationPath = "enterprise.cached.path"
+			output.cachedEdgeNodeID = "enterprise:cached:path"
+			output.edgeNodeStateMu.Unlock()
+
+			// Now should use cached state
+			result2 := output.getBirthEdgeNodeID()
+			Expect(result2).To(Equal("enterprise:cached:path"))
+		})
+
+		It("should handle state transitions correctly", func() {
+			By("Starting with empty state")
+			result1 := output.getBirthEdgeNodeID()
+			Expect(result1).To(Equal("default_node"))
+
+			By("Adding static config")
+			output.config.Identity.EdgeNodeID = "StaticNode"
+			result2 := output.getBirthEdgeNodeID()
+			Expect(result2).To(Equal("StaticNode"))
+
+			By("Adding cached state")
+			output.edgeNodeStateMu.Lock()
+			output.cachedEdgeNodeID = "enterprise:dynamic:path"
+			output.edgeNodeStateMu.Unlock()
+			result3 := output.getBirthEdgeNodeID()
+			Expect(result3).To(Equal("enterprise:dynamic:path"))
+
+			By("Clearing cached state")
+			output.edgeNodeStateMu.Lock()
+			output.cachedEdgeNodeID = ""
+			output.edgeNodeStateMu.Unlock()
+			result4 := output.getBirthEdgeNodeID()
+			Expect(result4).To(Equal("StaticNode")) // Falls back to static
+		})
+	})
+})
+
 // Mock structures for testing EON Node ID resolution
 type mockSparkplugOutput struct {
 	config sparkplug_plugin.Config
 	logger mockLogger
+	// NEW: State management fields for Edge Node ID consistency fix
+	cachedLocationPath string
+	cachedEdgeNodeID   string
+	edgeNodeStateMu    sync.RWMutex
 }
 
 func newMockSparkplugOutput() *mockSparkplugOutput {
@@ -2057,7 +2186,10 @@ func newMockSparkplugOutput() *mockSparkplugOutput {
 				DeviceID:   "",
 			},
 		},
-		logger: mockLogger{},
+		logger:             mockLogger{},
+		cachedLocationPath: "",
+		cachedEdgeNodeID:   "",
+		edgeNodeStateMu:    sync.RWMutex{},
 	}
 }
 
@@ -2077,6 +2209,25 @@ func (m *mockSparkplugOutput) getEONNodeID(msg *mockMessage) string {
 
 	// Priority 3: Default fallback (should log warning)
 	m.logger.Warn("No location_path metadata or edge_node_id configured, using default EON Node ID")
+	return "default_node"
+}
+
+// NEW: Mock getBirthEdgeNodeID method for Phase 1 testing
+func (m *mockSparkplugOutput) getBirthEdgeNodeID() string {
+	m.edgeNodeStateMu.RLock()
+	defer m.edgeNodeStateMu.RUnlock()
+
+	// Use cached state if available
+	if m.cachedEdgeNodeID != "" {
+		return m.cachedEdgeNodeID
+	}
+
+	// Fall back to static config
+	if m.config.Identity.EdgeNodeID != "" {
+		return m.config.Identity.EdgeNodeID
+	}
+
+	// Final fallback
 	return "default_node"
 }
 

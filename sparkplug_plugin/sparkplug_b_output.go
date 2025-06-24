@@ -175,6 +175,11 @@ type sparkplugOutput struct {
 	rebirthDebounceMs int64        // Debounce period in milliseconds (default: 5000ms)
 	dynamicMu         sync.RWMutex // Separate mutex for dynamic alias operations
 
+	// Edge Node ID consistency state management (Phase 1)
+	cachedLocationPath string       // Cached location_path from DATA messages
+	cachedEdgeNodeID   string       // Cached Edge Node ID for BIRTH consistency
+	edgeNodeStateMu    sync.RWMutex // Mutex for thread-safe state access
+
 	// Core components
 	mqttClientBuilder *MQTTClientBuilder
 
@@ -349,6 +354,9 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 		nextAlias:          nextAlias,
 		rebirthPending:     false,
 		rebirthDebounceMs:  5000, // 5 second debounce
+		// Edge Node ID consistency state (Phase 1)
+		cachedLocationPath: "",
+		cachedEdgeNodeID:   "",
 		mqttClientBuilder:  NewMQTTClientBuilder(mgr),
 		messagesPublished:  mgr.Metrics().NewCounter("messages_published"),
 		birthsPublished:    mgr.Metrics().NewCounter("births_published"),
@@ -465,13 +473,14 @@ func (s *sparkplugOutput) Close(ctx context.Context) error {
 	if s.client != nil && s.client.IsConnected() {
 		// Publish DEATH message before disconnecting gracefully
 		// Note: DEATH messages use static configuration since no message context is available
+		// DEATH messages must be retained to clear the retained BIRTH message
 		deathTopic, deathPayload := s.createDeathMessage(nil)
-		token := s.client.Publish(deathTopic, s.config.MQTT.QoS, false, deathPayload)
+		token := s.client.Publish(deathTopic, s.config.MQTT.QoS, true, deathPayload)
 		token.WaitTimeout(5 * time.Second)
 
 		if token.Error() == nil {
 			s.deathsPublished.Incr(1)
-			s.logger.Info("Published DEATH message before disconnect")
+			s.logger.Info("Published retained DEATH message before disconnect")
 		}
 
 		s.client.Disconnect(1000)
@@ -520,6 +529,43 @@ func (s *sparkplugOutput) getEONNodeID(msg *service.Message) string {
 	s.logger.Warn("No location_path metadata or edge_node_id configured, using default EON Node ID. " +
 		"For production use, either set identity.edge_node_id in configuration or ensure location_path " +
 		"metadata is provided (usually by tag_processor plugin)")
+	return "default_node"
+}
+
+// getBirthEdgeNodeID resolves the Edge Node ID for BIRTH messages using cached state.
+// This method implements the "Last Known Good State" pattern to ensure BIRTH and DATA
+// messages use consistent Edge Node IDs for proper alias resolution.
+//
+// Priority logic:
+// 1. Cached State (Preferred): Use cached Edge Node ID from previous DATA messages
+// 2. Static Override: Use configured edge_node_id if available
+// 3. Default Fallback: Use "default_node" (should be avoided in production)
+//
+// This method is thread-safe and designed to be called from BIRTH message publishing
+// contexts where message metadata is not available.
+//
+// Returns:
+//   - string: The resolved Edge Node ID for BIRTH message topic construction
+func (s *sparkplugOutput) getBirthEdgeNodeID() string {
+	s.edgeNodeStateMu.RLock()
+	defer s.edgeNodeStateMu.RUnlock()
+
+	// Priority 1: Use cached state if available
+	if s.cachedEdgeNodeID != "" {
+		s.logger.Debugf("Using cached Edge Node ID for BIRTH: %s (from cached location_path: %s)",
+			s.cachedEdgeNodeID, s.cachedLocationPath)
+		return s.cachedEdgeNodeID
+	}
+
+	// Priority 2: Fall back to static config
+	if s.config.Identity.EdgeNodeID != "" {
+		s.logger.Debugf("Using static Edge Node ID for BIRTH: %s", s.config.Identity.EdgeNodeID)
+		return s.config.Identity.EdgeNodeID
+	}
+
+	// Priority 3: Default fallback
+	s.logger.Warn("No cached state or static edge_node_id available for BIRTH, using default Edge Node ID. " +
+		"This may cause alias resolution failures if DATA messages use different Edge Node IDs")
 	return "default_node"
 }
 
@@ -645,12 +691,14 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 		return fmt.Errorf("failed to marshal BIRTH payload: %w", err)
 	}
 
-	token := s.client.Publish(topic, s.config.MQTT.QoS, false, payloadBytes)
+	// BIRTH messages MUST be retained per Sparkplug B specification
+	// This allows Primary Hosts to receive current state when they connect
+	token := s.client.Publish(topic, s.config.MQTT.QoS, true, payloadBytes)
 	if token.Wait() && token.Error() != nil {
 		return fmt.Errorf("failed to publish BIRTH message: %w", token.Error())
 	}
 
-	s.logger.Infof("Published BIRTH message on topic: %s", topic)
+	s.logger.Infof("Published retained BIRTH message on topic: %s", topic)
 	return nil
 }
 
