@@ -4,6 +4,11 @@
 # and outputs to UMH-formatted MQTT.
 # LISTENS FOR PARRIS METHOD GENERATED EON NODE IDs
 
+# Enable debug logging to see alias resolution
+logger:
+  level: DEBUG
+  format: logfmt
+
 input:
   sparkplug_b:
     # MQTT Transport Configuration
