@@ -2290,6 +2290,175 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 			wg.Wait()
 		})
 	})
+
+	Context("Phase 3: Integration Tests - BIRTH-DATA Consistency", func() {
+		It("should ensure BIRTH and DATA messages use consistent Edge Node IDs", func() {
+			testCases := []struct {
+				name         string
+				locationPath string
+				staticConfig string
+				description  string
+			}{
+				{
+					name:         "dynamic path consistency",
+					locationPath: "enterprise.factory.line1",
+					staticConfig: "",
+					description:  "BIRTH and DATA should both use enterprise:factory:line1",
+				},
+				{
+					name:         "complex hierarchy consistency",
+					locationPath: "automotive.plant_detroit.assembly.station_5",
+					staticConfig: "StaticNode",
+					description:  "location_path should override static config for both message types",
+				},
+			}
+
+			for _, tc := range testCases {
+				By(tc.description)
+
+				// Reset state
+				output.cachedLocationPath = ""
+				output.cachedEdgeNodeID = ""
+				output.config.Identity.EdgeNodeID = tc.staticConfig
+
+				// Step 1: Simulate DATA message processing (caches state)
+				dataMsg := newMockMessage()
+				if tc.locationPath != "" {
+					dataMsg.SetMeta("location_path", tc.locationPath)
+				}
+
+				dataEdgeNodeID := output.getEdgeNodeID(dataMsg)
+
+				// Step 2: Simulate BIRTH message publishing (uses cached state)
+				birthEdgeNodeID := output.getBirthEdgeNodeID()
+
+				// Step 3: Verify consistency
+				Expect(dataEdgeNodeID).To(Equal(birthEdgeNodeID))
+
+				if tc.locationPath != "" {
+					expectedID := strings.ReplaceAll(tc.locationPath, ".", ":")
+					Expect(dataEdgeNodeID).To(Equal(expectedID))
+					Expect(birthEdgeNodeID).To(Equal(expectedID))
+				}
+			}
+		})
+
+		It("should handle state transitions during message processing", func() {
+			By("Starting with no cached state")
+			initialBirthID := output.getBirthEdgeNodeID()
+			Expect(initialBirthID).To(Equal("default_node"))
+
+			By("Processing first DATA message")
+			msg1 := newMockMessage()
+			msg1.SetMeta("location_path", "enterprise.line1")
+
+			dataID1 := output.getEdgeNodeID(msg1)
+			birthID1 := output.getBirthEdgeNodeID()
+
+			Expect(dataID1).To(Equal("enterprise:line1"))
+			Expect(birthID1).To(Equal("enterprise:line1"))
+
+			By("Processing DATA message with different location_path")
+			msg2 := newMockMessage()
+			msg2.SetMeta("location_path", "enterprise.line2")
+
+			dataID2 := output.getEdgeNodeID(msg2)
+			birthID2 := output.getBirthEdgeNodeID()
+
+			Expect(dataID2).To(Equal("enterprise:line2"))
+			Expect(birthID2).To(Equal("enterprise:line2")) // Should update to latest
+
+			By("Verifying cached state reflects latest DATA message")
+			Expect(output.cachedLocationPath).To(Equal("enterprise.line2"))
+			Expect(output.cachedEdgeNodeID).To(Equal("enterprise:line2"))
+		})
+
+		It("should maintain consistency across multiple message types", func() {
+			// This test simulates the full message flow that was failing before the fix
+
+			By("Setting up dynamic location path")
+			locationPath := "enterprise.factory.line1.station1"
+			expectedEdgeNodeID := "enterprise:factory:line1:station1"
+
+			By("Processing DATA message (should cache state)")
+			dataMsg := newMockMessage()
+			dataMsg.SetMeta("location_path", locationPath)
+
+			dataEdgeNodeID := output.getEdgeNodeID(dataMsg)
+			Expect(dataEdgeNodeID).To(Equal(expectedEdgeNodeID))
+
+			By("Verifying BIRTH message uses same Edge Node ID")
+			birthEdgeNodeID := output.getBirthEdgeNodeID()
+			Expect(birthEdgeNodeID).To(Equal(expectedEdgeNodeID))
+
+			By("Verifying subsequent DATA messages maintain consistency")
+			dataMsg2 := newMockMessage()
+			dataMsg2.SetMeta("location_path", locationPath)
+
+			dataEdgeNodeID2 := output.getEdgeNodeID(dataMsg2)
+			Expect(dataEdgeNodeID2).To(Equal(expectedEdgeNodeID))
+
+			By("Verifying all Edge Node IDs are identical")
+			Expect(dataEdgeNodeID).To(Equal(birthEdgeNodeID))
+			Expect(dataEdgeNodeID).To(Equal(dataEdgeNodeID2))
+
+			// This consistency is what enables proper alias resolution
+			// Cache key: TestGroup/{edgeNodeID} = Lookup key: TestGroup/{edgeNodeID}
+		})
+
+		It("should handle edge cases gracefully", func() {
+			testCases := []struct {
+				name         string
+				locationPath string
+				staticConfig string
+				expectedID   string
+				description  string
+			}{
+				{
+					name:         "empty location_path with static config",
+					locationPath: "",
+					staticConfig: "StaticEdgeNode",
+					expectedID:   "StaticEdgeNode",
+					description:  "should fall back to static config consistently",
+				},
+				{
+					name:         "empty location_path without static config",
+					locationPath: "",
+					staticConfig: "",
+					expectedID:   "default_node",
+					description:  "should use default_node consistently",
+				},
+				{
+					name:         "single segment location_path",
+					locationPath: "enterprise",
+					staticConfig: "StaticNode",
+					expectedID:   "enterprise",
+					description:  "should handle single-segment paths correctly",
+				},
+			}
+
+			for _, tc := range testCases {
+				By(tc.description)
+
+				// Reset state
+				output.cachedLocationPath = ""
+				output.cachedEdgeNodeID = ""
+				output.config.Identity.EdgeNodeID = tc.staticConfig
+
+				// Process DATA message
+				dataMsg := newMockMessage()
+				if tc.locationPath != "" {
+					dataMsg.SetMeta("location_path", tc.locationPath)
+				}
+
+				dataID := output.getEdgeNodeID(dataMsg)
+				birthID := output.getBirthEdgeNodeID()
+
+				Expect(dataID).To(Equal(tc.expectedID))
+				Expect(birthID).To(Equal(tc.expectedID))
+			}
+		})
+	})
 })
 
 // Mock structures for testing EON Node ID resolution
