@@ -89,7 +89,7 @@ func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*EventTa
 // flushBufferAndACK handles the emission of accumulated data and ACK of buffered messages.
 // This implements the delayed ACK pattern where messages are only ACKed after successful emission.
 //
-// This is the public interface that acquires the mutex and delegates to flushBufferAndACKLocked.
+// This function acquires the mutex and delegates to flushBufferAndACKLocked.
 func (t *TopicBrowserProcessor) flushBufferAndACK() ([]service.MessageBatch, error) {
 	t.bufferMutex.Lock()
 	defer t.bufferMutex.Unlock()
