@@ -56,13 +56,20 @@ func NewDefaultUnsInputConfig() UnsInputConfig {
 func ParseFromBenthos(conf *service.ParsedConfig) (UnsInputConfig, error) {
 	config := NewDefaultUnsInputConfig()
 
-	// Parse topic (regex pattern for message key filtering)
+	// Parse umh_topic (preferred) or topic (deprecated) - regex pattern for message key filtering
 	if conf.Contains("umh_topic") {
 		topic, err := conf.FieldString("umh_topic")
+		if err != nil {
+			return config, fmt.Errorf("error while parsing the 'umh_topic' field from the plugin's config: %v", err)
+		}
+		config.umhTopic = topic
+	} else if conf.Contains("topic") {
+		topic, err := conf.FieldString("topic")
 		if err != nil {
 			return config, fmt.Errorf("error while parsing the 'topic' field from the plugin's config: %v", err)
 		}
 		config.umhTopic = topic
+		// TODO: Add deprecation warning log here when logger is available
 	}
 
 	// Parse kafka_topic (the actual Kafka topic to consume from)
@@ -103,13 +110,13 @@ func RegisterConfigSpec() *service.ConfigSpec {
 	The uns_plugin input consumes messages from the United Manufacturing Hub's kafka messaging system.
 	This input plugin is optimized for communication with UMH core components and handles the complexities of Kafka for you.
 
-	All messages are read from the uns topic 'umh.messages' by default, with messages being filtered by the regular expression specified in the plugin config field 'topic'. This becomes crucial for streaming out the data of interest from the uns topic.
+	All messages are read from the uns topic 'umh.messages' by default, with messages being filtered by the regular expression specified in the plugin config field 'umh_topic'. This becomes crucial for streaming out the data of interest from the uns topic.
 
 	By default, the plugin connects to the Kafka broker at localhost:9092 with the consumer group id specified in the plugin config. The consumer group id is usually derived from the UMH workloads like protocol converter names.
 		`).
-		Field(service.NewStringField("topic").
+		Field(service.NewStringField("umh_topic").
 			Description(`
-	Key used to filter the messages. The value set for the 'topic' field will be used to compare against the message key in kafka. The 'topic' field allows regular expressions which should be compatible with RE2 regex engine.
+	Key used to filter the messages. The value set for the 'umh_topic' field will be used to compare against the message key in kafka. The 'umh_topic' field allows regular expressions which should be compatible with RE2 regex engine.
 
 	The topic should follow the UMH naming convention: umh.v1.enterprise.site.area.tag
 	(e.g., 'umh.v1.acme.berlin.assembly.temperature')
@@ -118,6 +125,14 @@ func RegisterConfigSpec() *service.ConfigSpec {
 			Example("umh.v1.acme.berlin.assembly.temperature").
 			Example(`umh\.v1\..+`).
 			Default(defaultTopicKey)).
+		Field(service.NewStringField("topic").
+			Description(`
+	[DEPRECATED] Use 'umh_topic' instead. Key used to filter the messages for backwards compatibility.
+		`).
+			Example("umh.v1.acme.berlin.assembly.temperature").
+			Example(`umh\.v1\..+`).
+			Default(defaultTopicKey).
+			Advanced()).
 		Field(service.NewStringField("kafka_topic").
 			Description(`
 	The input kafka topic to read messages from. By default the messages will be consumed from 'umh.messages' topic.

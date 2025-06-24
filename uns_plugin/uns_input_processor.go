@@ -15,6 +15,7 @@
 package uns_plugin
 
 import (
+	"fmt"
 	"regexp"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -61,7 +62,10 @@ func (p *MessageProcessor) ProcessRecord(record *kgo.Record) *service.Message {
 	// Add kafka meta fields
 	msg.MetaSetMut("kafka_msg_key", record.Key)
 	msg.MetaSetMut("kafka_topic", record.Topic)
-	msg.MetaSetMut("umh_topic", record.Topic) // For internal reasons, record.Topic is duplicated from the kafka_topic field. The tag_browser plugin uses this field.
+	msg.MetaSetMut("umh_topic", record.Key) // UMH topic structure from Kafka message key (e.g., "umh.v1.enterprise.plant1._historian.temperature")
+
+	// Add Kafka timestamp (when the record was written to Kafka) - this is used by the topic browser for ProducedAtMs
+	msg.MetaSetMut("kafka_timestamp_ms", fmt.Sprintf("%d", record.Timestamp.UnixMilli()))
 
 	return msg
 }
