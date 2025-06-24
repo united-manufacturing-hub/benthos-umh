@@ -55,7 +55,7 @@ output:
           
           # Edge Node identity - PARRIS METHOD DEMO
           identity:
-            group_id: "TestGroup"
+            group_id: "TestGroup2"
             # edge_node_id: ""  # EMPTY = Use Parris Method conversion
             # location_path "enterprise.factory.line1.station1" 
             # will become EON Node ID "enterprise:factory:line1:station1"

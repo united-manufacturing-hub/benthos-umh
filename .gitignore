@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Parts of this file were adapted from
-# GitHub’s collection of .gitignore file templates
+# GitHub's collection of .gitignore file templates
 # which are Copyright (c) 2022 GitHub, Inc.
 # and released under the MIT License.
 # For more details, visit the project page:
@@ -207,3 +207,10 @@ dist
 # Benthos binary
 benthos-umh
 benthos-umh.exe
+benthos
+
+# Test logs and temporary files
+test-logs-*/
+results.md
+test-sparkplug-compliance.sh
+*.yaml.bak

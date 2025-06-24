@@ -22,7 +22,7 @@ input:
     
     # Identity Configuration
     identity:
-      group_id: "TestGroup"
+      group_id: "TestGroup2"
       edge_node_id: "PrimaryHost"
     
     # Role Configuration - Primary Host
@@ -31,7 +31,7 @@ input:
     # Subscription Configuration - listen to TestGroup
     # Will receive messages from EON Node ID: "enterprise:factory:line1:station1"
     subscription:
-      groups: ["TestGroup"]
+      groups: ["TestGroup2"]
 
 output:
   broker:

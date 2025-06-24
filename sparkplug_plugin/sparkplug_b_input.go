@@ -460,9 +460,10 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 	isBirthMessage := strings.Contains(msgType, "BIRTH")
 	isDataMessage := strings.Contains(msgType, "DATA")
 	isDeathMessage := strings.Contains(msgType, "DEATH")
+	isCommandMessage := strings.Contains(msgType, "CMD")
 
-	s.logger.Debugf("🏷️ processSparkplugMessage: message type classification - birth=%v, data=%v, death=%v",
-		isBirthMessage, isDataMessage, isDeathMessage)
+	s.logger.Debugf("🏷️ processSparkplugMessage: message type classification - birth=%v, data=%v, death=%v, command=%v",
+		isBirthMessage, isDataMessage, isDeathMessage, isCommandMessage)
 
 	var batch service.MessageBatch
 
@@ -499,6 +500,9 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 
 		// Create status event message for death
 		batch = s.createDeathEventMessage(msgType, deviceKey, topicInfo, mqttMsg.topic)
+	} else if isCommandMessage {
+		s.logger.Debugf("⚡ processSparkplugMessage: processing COMMAND message")
+		batch = s.processCommandMessage(deviceKey, msgType, &payload, topicInfo, mqttMsg.topic)
 	}
 
 	// DEBUG: Log when pushing to Benthos pipeline as recommended in the plan
@@ -593,6 +597,44 @@ func (s *sparkplugInput) processDeathMessage(deviceKey, msgType string, payload 
 	}
 
 	s.logger.Debugf("Processed %s for device %s", msgType, deviceKey)
+}
+
+func (s *sparkplugInput) processCommandMessage(deviceKey, msgType string, payload *sproto.Payload, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+	s.logger.Debugf("⚡ processCommandMessage: processing %s for device %s with %d metrics", msgType, deviceKey, len(payload.Metrics))
+
+	// Update node state timestamp for activity tracking
+	s.stateMu.Lock()
+	if state, exists := s.nodeStates[deviceKey]; exists {
+		state.lastSeen = time.Now()
+	} else {
+		s.nodeStates[deviceKey] = &nodeState{
+			lastSeen: time.Now(),
+			isOnline: true, // Assume online if receiving commands
+		}
+	}
+	s.stateMu.Unlock()
+
+	// Check for rebirth command
+	for _, metric := range payload.Metrics {
+		if metric.Name != nil && *metric.Name == "Node Control/Rebirth" {
+			if metric.GetBooleanValue() {
+				s.logger.Infof("🔄 Rebirth request received for device %s", deviceKey)
+				// Handle rebirth logic here if needed for edge nodes
+				// For primary hosts, this is typically just logged
+			}
+		}
+	}
+
+	// Create batch from command metrics - commands should be processed like any other Sparkplug message
+	var batch service.MessageBatch
+	if s.config.Behaviour.AutoSplitMetrics {
+		batch = s.createSplitMessages(payload, msgType, deviceKey, topicInfo, originalTopic)
+	} else {
+		batch = s.createSingleMessage(payload, msgType, deviceKey, topicInfo, originalTopic)
+	}
+
+	s.logger.Debugf("✅ processCommandMessage: created batch with %d messages for %s", len(batch), msgType)
+	return batch
 }
 
 func (s *sparkplugInput) processStateMessage(deviceKey, msgType string, topicInfo *TopicInfo, originalTopic string, statePayload string) (service.MessageBatch, error) {
