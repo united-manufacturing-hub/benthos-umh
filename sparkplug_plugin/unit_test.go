@@ -2165,6 +2165,131 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 			Expect(result4).To(Equal("StaticNode")) // Falls back to static
 		})
 	})
+
+	Context("Phase 2: Edge Node ID Resolution Logic", func() {
+		It("should enhance getEdgeNodeID with state caching", func() {
+			testCases := []struct {
+				name             string
+				locationPath     string
+				expectedEdgeNode string
+				shouldCache      bool
+			}{
+				{
+					name:             "simple path",
+					locationPath:     "enterprise.factory",
+					expectedEdgeNode: "enterprise:factory",
+					shouldCache:      true,
+				},
+				{
+					name:             "complex hierarchy",
+					locationPath:     "automotive.plant_detroit.bodyshop.line3.station5",
+					expectedEdgeNode: "automotive:plant_detroit:bodyshop:line3:station5",
+					shouldCache:      true,
+				},
+				{
+					name:             "single level",
+					locationPath:     "enterprise",
+					expectedEdgeNode: "enterprise",
+					shouldCache:      true,
+				},
+			}
+
+			for _, tc := range testCases {
+				By(fmt.Sprintf("testing %s", tc.name))
+
+				// Create mock message with location_path metadata
+				msg := newMockMessage()
+				msg.SetMeta("location_path", tc.locationPath)
+
+				// Call the enhanced method (will be getEdgeNodeID after implementation)
+				result := output.getEdgeNodeID(msg)
+
+				// Verify result
+				Expect(result).To(Equal(tc.expectedEdgeNode))
+
+				// Verify state was cached
+				if tc.shouldCache {
+					Expect(output.cachedLocationPath).To(Equal(tc.locationPath))
+					Expect(output.cachedEdgeNodeID).To(Equal(tc.expectedEdgeNode))
+				}
+			}
+		})
+
+		It("should maintain priority logic with state caching", func() {
+			testCases := []struct {
+				name           string
+				locationPath   string
+				staticConfig   string
+				expectedResult string
+				description    string
+			}{
+				{
+					name:           "location_path takes priority and caches",
+					locationPath:   "enterprise.dynamic",
+					staticConfig:   "StaticNode",
+					expectedResult: "enterprise:dynamic",
+					description:    "should use and cache location_path over static config",
+				},
+				{
+					name:           "static config when no location_path",
+					locationPath:   "",
+					staticConfig:   "StaticNode",
+					expectedResult: "StaticNode",
+					description:    "should use static config when location_path empty",
+				},
+				{
+					name:           "default when neither provided",
+					locationPath:   "",
+					staticConfig:   "",
+					expectedResult: "default_node",
+					description:    "should use default when both empty",
+				},
+			}
+
+			for _, tc := range testCases {
+				By(tc.description)
+
+				// Reset state for each test
+				output.cachedLocationPath = ""
+				output.cachedEdgeNodeID = ""
+				output.config.Identity.EdgeNodeID = tc.staticConfig
+
+				msg := newMockMessage()
+				if tc.locationPath != "" {
+					msg.SetMeta("location_path", tc.locationPath)
+				}
+
+				result := output.getEdgeNodeID(msg)
+
+				Expect(result).To(Equal(tc.expectedResult))
+			}
+		})
+
+		It("should handle concurrent state caching safely", func() {
+			// Test concurrent state updates
+			var wg sync.WaitGroup
+			numGoroutines := 5
+
+			for i := 0; i < numGoroutines; i++ {
+				wg.Add(1)
+				go func(id int) {
+					defer wg.Done()
+
+					msg := newMockMessage()
+					msg.SetMeta("location_path", fmt.Sprintf("enterprise.worker%d", id))
+
+					result := output.getEdgeNodeID(msg)
+
+					Expect(result).To(ContainSubstring("enterprise:worker"))
+					// State should be updated (one of the workers will win)
+					Expect(output.cachedLocationPath).NotTo(BeEmpty())
+					Expect(output.cachedEdgeNodeID).NotTo(BeEmpty())
+				}(i)
+			}
+
+			wg.Wait()
+		})
+	})
 })
 
 // Mock structures for testing EON Node ID resolution
@@ -2209,6 +2334,32 @@ func (m *mockSparkplugOutput) getEONNodeID(msg *mockMessage) string {
 
 	// Priority 3: Default fallback (should log warning)
 	m.logger.Warn("No location_path metadata or edge_node_id configured, using default EON Node ID")
+	return "default_node"
+}
+
+// NEW: Mock getEdgeNodeID method for Phase 2 testing (enhanced with state caching)
+func (m *mockSparkplugOutput) getEdgeNodeID(msg *mockMessage) string {
+	// Priority 1: Dynamic from location_path metadata (Parris Method)
+	if locationPath := msg.GetMeta("location_path"); locationPath != "" {
+		// Convert UMH dot notation to Sparkplug colon notation (Parris Method)
+		edgeNodeID := strings.ReplaceAll(locationPath, ".", ":")
+
+		// Cache the state for BIRTH consistency (Phase 2 enhancement)
+		m.edgeNodeStateMu.Lock()
+		m.cachedLocationPath = locationPath
+		m.cachedEdgeNodeID = edgeNodeID
+		m.edgeNodeStateMu.Unlock()
+
+		return edgeNodeID
+	}
+
+	// Priority 2: Static override from configuration
+	if m.config.Identity.EdgeNodeID != "" {
+		return m.config.Identity.EdgeNodeID
+	}
+
+	// Priority 3: Default fallback (should log warning)
+	m.logger.Warn("No location_path metadata or edge_node_id configured, using default Edge Node ID")
 	return "default_node"
 }
 

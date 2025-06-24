@@ -516,6 +516,14 @@ func (s *sparkplugOutput) getEONNodeID(msg *service.Message) string {
 		// Convert UMH dot notation to Sparkplug colon notation (Parris Method)
 		eonNodeID := strings.ReplaceAll(locationPath, ".", ":")
 		s.logger.Debugf("Using dynamic EON Node ID from location_path: %s → %s", locationPath, eonNodeID)
+
+		// Phase 2: Cache state for BIRTH consistency
+		s.edgeNodeStateMu.Lock()
+		s.cachedLocationPath = locationPath
+		s.cachedEdgeNodeID = eonNodeID
+		s.edgeNodeStateMu.Unlock()
+		s.logger.Debugf("Cached Edge Node ID state: location_path=%s, edgeNodeID=%s", locationPath, eonNodeID)
+
 		return eonNodeID
 	}
 
@@ -571,17 +579,14 @@ func (s *sparkplugOutput) getBirthEdgeNodeID() string {
 
 // Private methods for the rest of the implementation...
 func (s *sparkplugOutput) createDeathMessage(msg *service.Message) (string, []byte) {
-	// Resolve EON Node ID - use static config for DEATH messages if no message context
+	// Resolve EON Node ID - use message context if available, otherwise use cached state
 	var eonNodeID string
 	if msg != nil {
 		eonNodeID = s.getEONNodeID(msg)
 	} else {
-		// Fallback to static configuration for DEATH messages during shutdown
-		if s.config.Identity.EdgeNodeID != "" {
-			eonNodeID = s.config.Identity.EdgeNodeID
-		} else {
-			eonNodeID = "default_node"
-		}
+		// Phase 2: Use getBirthEdgeNodeID for consistent Edge Node ID resolution
+		// This ensures DEATH messages use the same Edge Node ID as BIRTH/DATA messages
+		eonNodeID = s.getBirthEdgeNodeID()
 	}
 
 	var topic string
@@ -615,16 +620,9 @@ func (s *sparkplugOutput) createDeathMessage(msg *service.Message) (string, []by
 }
 
 func (s *sparkplugOutput) publishBirthMessage() error {
-	// BIRTH messages use static configuration since they're published on connect
-	// before any message context is available
-	var eonNodeID string
-	if s.config.Identity.EdgeNodeID != "" {
-		eonNodeID = s.config.Identity.EdgeNodeID
-	} else {
-		eonNodeID = "default_node"
-		s.logger.Warn("Using default EON Node ID for BIRTH message. " +
-			"For production use, set identity.edge_node_id in configuration")
-	}
+	// Phase 2: Use getBirthEdgeNodeID for consistent Edge Node ID resolution
+	// This ensures BIRTH and DATA messages use the same Edge Node ID for proper alias resolution
+	eonNodeID := s.getBirthEdgeNodeID()
 
 	var topic string
 	if s.config.Identity.DeviceID != "" {
