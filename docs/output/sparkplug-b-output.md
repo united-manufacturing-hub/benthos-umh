@@ -120,8 +120,52 @@ The Sparkplug B output plugin supports all standard Sparkplug B data types with 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `identity.group_id` | `string` | **required** | Sparkplug B Group ID |
-| `identity.edge_node_id` | `string` | **required** | Edge Node ID within the group |
+| `identity.edge_node_id` | `string` | **optional** | Static Edge Node ID override. If empty, auto-generated from location_path metadata using Parris Method |
 | `identity.device_id` | `string` | `""` | Device ID (empty for node-level messages) |
+
+#### Dynamic EON Node ID Resolution (Parris Method)
+
+The plugin supports automatic conversion between UMH `location_path` metadata and Sparkplug-compatible EON Node IDs using the **Parris Method**. This enables seamless integration between UMH's hierarchical location system and Sparkplug B's topic namespace.
+
+**Priority Logic:**
+1. **Dynamic Generation (Recommended)**: If `location_path` metadata exists and `edge_node_id` is empty, convert using Parris Method
+2. **Static Override**: If `edge_node_id` is configured, use it (ignores metadata)  
+3. **Default Fallback**: Use `"default_node"` with warning (error scenario)
+
+**Parris Method Conversion:**
+- Converts UMH dot notation to Sparkplug colon notation
+- Example: `"enterprise.factory.line1.station1"` → `"enterprise:factory:line1:station1"`
+
+**Configuration Examples:**
+
+*Dynamic Approach (Recommended):*
+```yaml
+identity:
+  group_id: "FactoryA"     # Required: Stable business boundary
+  device_id: "TempSensor"  # Optional: Device identification
+  # edge_node_id: ""       # Empty = auto-generate from location_path metadata
+
+# Pipeline provides metadata:
+# msg.meta.location_path = "enterprise.plant1.line3.station5"
+# Results in: spBv1.0/FactoryA/DDATA/enterprise:plant1:line3:station5/TempSensor
+```
+
+*Static Override:*
+```yaml
+identity:
+  group_id: "FactoryA"
+  edge_node_id: "StaticNode01"  # Static override (ignores metadata)
+  device_id: "TempSensor"
+```
+
+**Metadata Requirements:**
+- **Required** (when `edge_node_id` is empty): `location_path` - Hierarchical location in dot notation
+- **Optional**: `virtual_path`, `tag_name` - Used for metric name generation
+
+**Metadata Sources:**
+- **tag_processor**: Primary source for UMH metadata
+- **Custom processors**: Manual metadata setting
+- **Static configuration**: Use `edge_node_id` to bypass metadata dependency
 
 ### Role Configuration
 | Field | Type | Default | Description |

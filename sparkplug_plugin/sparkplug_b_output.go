@@ -363,7 +363,8 @@ func (s *sparkplugOutput) Connect(ctx context.Context) error {
 	s.logger.Infof("Connecting Sparkplug B output (role: %s)", s.config.Role)
 
 	// Set up DEATH Last Will Testament
-	deathTopic, deathPayload := s.createDeathMessage()
+	// Note: Last Will Testament uses static configuration since no message context is available
+	deathTopic, deathPayload := s.createDeathMessage(nil)
 
 	mqttConfig := MQTTClientConfig{
 		BrokerURLs:       s.config.MQTT.URLs,
@@ -448,7 +449,7 @@ func (s *sparkplugOutput) Write(ctx context.Context, msg *service.Message) error
 	}
 
 	// Create DATA message
-	if err := s.publishDataMessage(data); err != nil {
+	if err := s.publishDataMessage(data, msg); err != nil {
 		s.logger.Errorf("Failed to publish DATA message: %v", err)
 		s.publishErrors.Incr(1)
 		return err
@@ -464,7 +465,8 @@ func (s *sparkplugOutput) Close(ctx context.Context) error {
 
 	if s.client != nil && s.client.IsConnected() {
 		// Publish DEATH message before disconnecting gracefully
-		deathTopic, deathPayload := s.createDeathMessage()
+		// Note: DEATH messages use static configuration since no message context is available
+		deathTopic, deathPayload := s.createDeathMessage(nil)
 		token := s.client.Publish(deathTopic, s.config.MQTT.QoS, false, deathPayload)
 		token.WaitTimeout(5 * time.Second)
 
@@ -480,13 +482,68 @@ func (s *sparkplugOutput) Close(ctx context.Context) error {
 	return nil
 }
 
+// getEONNodeID resolves the Edge of Network (EON) Node ID using the Parris Method.
+// This method implements dynamic EON Node ID generation from UMH location_path metadata
+// while maintaining backward compatibility with static configuration.
+//
+// Priority logic:
+// 1. Dynamic Generation (Recommended): If location_path metadata exists, convert using Parris Method
+//   - Converts UMH dot notation to Sparkplug colon notation
+//   - Example: "enterprise.plant1.line3.station5" → "enterprise:plant1:line3:station5"
+//
+// 2. Static Override: If edge_node_id is configured, use it (ignores metadata)
+// 3. Default Fallback: Use "default_node" with warning (should be avoided in production)
+//
+// The Parris Method enables ISA-95 hierarchical structures within Sparkplug topic namespace
+// by encoding the organizational hierarchy directly into the EON Node ID using colon delimiters.
+//
+// Parameters:
+//   - msg: The Benthos message containing potential location_path metadata
+//
+// Returns:
+//   - string: The resolved EON Node ID for use in Sparkplug topic construction
+func (s *sparkplugOutput) getEONNodeID(msg *service.Message) string {
+	// Priority 1: Dynamic from location_path metadata (Parris Method)
+	if locationPath, exists := msg.MetaGet("location_path"); exists && locationPath != "" {
+		// Convert UMH dot notation to Sparkplug colon notation (Parris Method)
+		eonNodeID := strings.ReplaceAll(locationPath, ".", ":")
+		s.logger.Debugf("Using dynamic EON Node ID from location_path: %s → %s", locationPath, eonNodeID)
+		return eonNodeID
+	}
+
+	// Priority 2: Static override from configuration
+	if s.config.Identity.EdgeNodeID != "" {
+		s.logger.Debugf("Using static EON Node ID from configuration: %s", s.config.Identity.EdgeNodeID)
+		return s.config.Identity.EdgeNodeID
+	}
+
+	// Priority 3: Default fallback (should log warning)
+	s.logger.Warn("No location_path metadata or edge_node_id configured, using default EON Node ID. " +
+		"For production use, either set identity.edge_node_id in configuration or ensure location_path " +
+		"metadata is provided (usually by tag_processor plugin)")
+	return "default_node"
+}
+
 // Private methods for the rest of the implementation...
-func (s *sparkplugOutput) createDeathMessage() (string, []byte) {
+func (s *sparkplugOutput) createDeathMessage(msg *service.Message) (string, []byte) {
+	// Resolve EON Node ID - use static config for DEATH messages if no message context
+	var eonNodeID string
+	if msg != nil {
+		eonNodeID = s.getEONNodeID(msg)
+	} else {
+		// Fallback to static configuration for DEATH messages during shutdown
+		if s.config.Identity.EdgeNodeID != "" {
+			eonNodeID = s.config.Identity.EdgeNodeID
+		} else {
+			eonNodeID = "default_node"
+		}
+	}
+
 	var topic string
 	if s.config.Identity.DeviceID != "" {
-		topic = fmt.Sprintf("spBv1.0/%s/DDEATH/%s/%s", s.config.Identity.GroupID, s.config.Identity.EdgeNodeID, s.config.Identity.DeviceID)
+		topic = fmt.Sprintf("spBv1.0/%s/DDEATH/%s/%s", s.config.Identity.GroupID, eonNodeID, s.config.Identity.DeviceID)
 	} else {
-		topic = fmt.Sprintf("spBv1.0/%s/NDEATH/%s", s.config.Identity.GroupID, s.config.Identity.EdgeNodeID)
+		topic = fmt.Sprintf("spBv1.0/%s/NDEATH/%s", s.config.Identity.GroupID, eonNodeID)
 	}
 
 	bdSeqMetric := &sproto.Payload_Metric{
@@ -513,11 +570,22 @@ func (s *sparkplugOutput) createDeathMessage() (string, []byte) {
 }
 
 func (s *sparkplugOutput) publishBirthMessage() error {
+	// BIRTH messages use static configuration since they're published on connect
+	// before any message context is available
+	var eonNodeID string
+	if s.config.Identity.EdgeNodeID != "" {
+		eonNodeID = s.config.Identity.EdgeNodeID
+	} else {
+		eonNodeID = "default_node"
+		s.logger.Warn("Using default EON Node ID for BIRTH message. " +
+			"For production use, set identity.edge_node_id in configuration")
+	}
+
 	var topic string
 	if s.config.Identity.DeviceID != "" {
-		topic = fmt.Sprintf("spBv1.0/%s/DBIRTH/%s/%s", s.config.Identity.GroupID, s.config.Identity.EdgeNodeID, s.config.Identity.DeviceID)
+		topic = fmt.Sprintf("spBv1.0/%s/DBIRTH/%s/%s", s.config.Identity.GroupID, eonNodeID, s.config.Identity.DeviceID)
 	} else {
-		topic = fmt.Sprintf("spBv1.0/%s/NBIRTH/%s", s.config.Identity.GroupID, s.config.Identity.EdgeNodeID)
+		topic = fmt.Sprintf("spBv1.0/%s/NBIRTH/%s", s.config.Identity.GroupID, eonNodeID)
 	}
 
 	var metrics []*sproto.Payload_Metric
@@ -668,7 +736,7 @@ func (s *sparkplugOutput) extractValueFromPath(structured interface{}, path stri
 	return nil, fmt.Errorf("field %s not found", path)
 }
 
-func (s *sparkplugOutput) publishDataMessage(data map[string]interface{}) error {
+func (s *sparkplugOutput) publishDataMessage(data map[string]interface{}, msg *service.Message) error {
 	// P5 Dynamic Alias Implementation: Check for new metrics
 	newMetrics := s.detectNewMetrics(data)
 	if len(newMetrics) > 0 {
@@ -702,11 +770,14 @@ func (s *sparkplugOutput) publishDataMessage(data map[string]interface{}) error 
 	}
 	s.dynamicMu.RUnlock()
 
+	// Resolve EON Node ID using Parris Method
+	eonNodeID := s.getEONNodeID(msg)
+
 	var topic string
 	if s.config.Identity.DeviceID != "" {
-		topic = fmt.Sprintf("spBv1.0/%s/DDATA/%s/%s", s.config.Identity.GroupID, s.config.Identity.EdgeNodeID, s.config.Identity.DeviceID)
+		topic = fmt.Sprintf("spBv1.0/%s/DDATA/%s/%s", s.config.Identity.GroupID, eonNodeID, s.config.Identity.DeviceID)
 	} else {
-		topic = fmt.Sprintf("spBv1.0/%s/NDATA/%s", s.config.Identity.GroupID, s.config.Identity.EdgeNodeID)
+		topic = fmt.Sprintf("spBv1.0/%s/NDATA/%s", s.config.Identity.GroupID, eonNodeID)
 	}
 
 	s.stateMu.Lock()

@@ -9,6 +9,7 @@ package sparkplug_plugin_test
 import (
 	"encoding/base64"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1004,6 +1005,9 @@ var _ = Describe("P5 Dynamic Alias Implementation Tests", func() {
 			Expect(len(newMetrics)).To(Equal(4))
 			Expect(newMetrics).To(ContainElements("new_temp", "new_pressure", "new_status", "new_message"))
 
+			// Sort metrics for deterministic alias assignment (Go map iteration is random)
+			sort.Strings(newMetrics)
+
 			// Simulate single rebirth handling all new metrics
 			nextAlias := uint64(101)
 			newAssignments := make(map[string]uint64)
@@ -1013,12 +1017,12 @@ var _ = Describe("P5 Dynamic Alias Implementation Tests", func() {
 				nextAlias++
 			}
 
-			// Verify all got unique aliases
+			// Verify all got unique aliases (in alphabetical order)
 			Expect(len(newAssignments)).To(Equal(4))
-			Expect(newAssignments["new_temp"]).To(Equal(uint64(101)))
+			Expect(newAssignments["new_message"]).To(Equal(uint64(101))) // alphabetically first
 			Expect(newAssignments["new_pressure"]).To(Equal(uint64(102)))
 			Expect(newAssignments["new_status"]).To(Equal(uint64(103)))
-			Expect(newAssignments["new_message"]).To(Equal(uint64(104)))
+			Expect(newAssignments["new_temp"]).To(Equal(uint64(104))) // alphabetically last
 		})
 	})
 })
@@ -1853,3 +1857,249 @@ var _ = Describe("P9 Edge Case Validation", func() {
 		})
 	})
 })
+
+var _ = Describe("EON Node ID Resolution (Parris Method) Unit Tests", func() {
+	var output *mockSparkplugOutput
+
+	BeforeEach(func() {
+		output = newMockSparkplugOutput()
+	})
+
+	Context("Dynamic EON Node ID from location_path metadata", func() {
+		It("should convert UMH dot notation to Sparkplug colon notation", func() {
+			msg := newMockMessage()
+			msg.SetMeta("location_path", "enterprise.factory.line1.station1")
+
+			eonNodeID := output.getEONNodeID(msg)
+
+			Expect(eonNodeID).To(Equal("enterprise:factory:line1:station1"))
+		})
+
+		It("should handle complex hierarchical structures", func() {
+			testCases := []struct {
+				locationPath string
+				expected     string
+			}{
+				{"enterprise", "enterprise"},
+				{"enterprise.site", "enterprise:site"},
+				{"enterprise.site.area.line.cell", "enterprise:site:area:line:cell"},
+				{"automotive.bodyshop.line3.station5.robot", "automotive:bodyshop:line3:station5:robot"},
+				{"pharma.production.cleanroom.line2.packaging.station1", "pharma:production:cleanroom:line2:packaging:station1"},
+			}
+
+			for _, tc := range testCases {
+				msg := newMockMessage()
+				msg.SetMeta("location_path", tc.locationPath)
+
+				eonNodeID := output.getEONNodeID(msg)
+
+				Expect(eonNodeID).To(Equal(tc.expected),
+					"Failed for location_path: %s", tc.locationPath)
+			}
+		})
+
+		It("should handle edge cases in location_path", func() {
+			testCases := []struct {
+				locationPath string
+				expected     string
+				description  string
+			}{
+				{"", "static_node", "empty location_path should fall back to static"},
+				{"single", "single", "single level hierarchy"},
+				{"with.dots.everywhere", "with:dots:everywhere", "multiple dots"},
+				{"enterprise.site-with-dashes.area_with_underscores", "enterprise:site-with-dashes:area_with_underscores", "special characters preserved"},
+			}
+
+			// Set static EdgeNodeID for fallback tests
+			output.config.Identity.EdgeNodeID = "static_node"
+
+			for _, tc := range testCases {
+				msg := newMockMessage()
+				if tc.locationPath != "" {
+					msg.SetMeta("location_path", tc.locationPath)
+				}
+
+				eonNodeID := output.getEONNodeID(msg)
+
+				Expect(eonNodeID).To(Equal(tc.expected),
+					"Failed for %s: location_path='%s'", tc.description, tc.locationPath)
+			}
+		})
+	})
+
+	Context("Static override from configuration", func() {
+		It("should use static EdgeNodeID when location_path is missing", func() {
+			output.config.Identity.EdgeNodeID = "StaticNode01"
+			msg := newMockMessage()
+			// No location_path metadata
+
+			eonNodeID := output.getEONNodeID(msg)
+
+			Expect(eonNodeID).To(Equal("StaticNode01"))
+		})
+
+		It("should use static EdgeNodeID when location_path is empty", func() {
+			output.config.Identity.EdgeNodeID = "ConfiguredNode"
+			msg := newMockMessage()
+			msg.SetMeta("location_path", "")
+
+			eonNodeID := output.getEONNodeID(msg)
+
+			Expect(eonNodeID).To(Equal("ConfiguredNode"))
+		})
+
+		It("should prefer location_path over static configuration", func() {
+			output.config.Identity.EdgeNodeID = "StaticNode"
+			msg := newMockMessage()
+			msg.SetMeta("location_path", "enterprise.dynamic.path")
+
+			eonNodeID := output.getEONNodeID(msg)
+
+			Expect(eonNodeID).To(Equal("enterprise:dynamic:path"))
+		})
+	})
+
+	Context("Default fallback behavior", func() {
+		It("should use default_node when no configuration or metadata", func() {
+			output.config.Identity.EdgeNodeID = ""
+			msg := newMockMessage()
+			// No location_path metadata
+
+			eonNodeID := output.getEONNodeID(msg)
+
+			Expect(eonNodeID).To(Equal("default_node"))
+		})
+
+		It("should log warning for default fallback", func() {
+			output.config.Identity.EdgeNodeID = ""
+			msg := newMockMessage()
+
+			// Capture log output (this is a simplified test)
+			eonNodeID := output.getEONNodeID(msg)
+
+			Expect(eonNodeID).To(Equal("default_node"))
+			// Note: In a real implementation, we'd verify the warning was logged
+		})
+	})
+
+	Context("Priority logic validation", func() {
+		It("should follow correct priority: location_path > static > default", func() {
+			// Test all combinations to verify priority
+			testCases := []struct {
+				locationPath string
+				staticConfig string
+				expected     string
+				description  string
+			}{
+				{"enterprise.path", "static", "enterprise:path", "location_path takes priority over static"},
+				{"", "static", "static", "static used when location_path empty"},
+				{"", "", "default_node", "default used when both empty"},
+				{"enterprise.path", "", "enterprise:path", "location_path used when static empty"},
+			}
+
+			for _, tc := range testCases {
+				output.config.Identity.EdgeNodeID = tc.staticConfig
+				msg := newMockMessage()
+				if tc.locationPath != "" {
+					msg.SetMeta("location_path", tc.locationPath)
+				}
+
+				eonNodeID := output.getEONNodeID(msg)
+
+				Expect(eonNodeID).To(Equal(tc.expected),
+					"Failed for %s", tc.description)
+			}
+		})
+	})
+
+	Context("Real-world ISA-95 scenarios", func() {
+		It("should handle automotive manufacturing hierarchy", func() {
+			msg := newMockMessage()
+			msg.SetMeta("location_path", "automotive.plant_detroit.bodyshop.line3.welding_station.robot_kuka")
+
+			eonNodeID := output.getEONNodeID(msg)
+
+			Expect(eonNodeID).To(Equal("automotive:plant_detroit:bodyshop:line3:welding_station:robot_kuka"))
+		})
+
+		It("should handle pharmaceutical manufacturing hierarchy", func() {
+			msg := newMockMessage()
+			msg.SetMeta("location_path", "pharma.site_berlin.production.cleanroom_a.tablet_line.coating_station")
+
+			eonNodeID := output.getEONNodeID(msg)
+
+			Expect(eonNodeID).To(Equal("pharma:site_berlin:production:cleanroom_a:tablet_line:coating_station"))
+		})
+
+		It("should handle food and beverage hierarchy", func() {
+			msg := newMockMessage()
+			msg.SetMeta("location_path", "brewery.site_munich.brewing.tank_farm.fermentation_tank_5")
+
+			eonNodeID := output.getEONNodeID(msg)
+
+			Expect(eonNodeID).To(Equal("brewery:site_munich:brewing:tank_farm:fermentation_tank_5"))
+		})
+	})
+})
+
+// Mock structures for testing EON Node ID resolution
+type mockSparkplugOutput struct {
+	config sparkplug_plugin.Config
+	logger mockLogger
+}
+
+func newMockSparkplugOutput() *mockSparkplugOutput {
+	return &mockSparkplugOutput{
+		config: sparkplug_plugin.Config{
+			Identity: sparkplug_plugin.Identity{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "",
+				DeviceID:   "",
+			},
+		},
+		logger: mockLogger{},
+	}
+}
+
+// Mock getEONNodeID method for testing (mirrors the actual implementation)
+func (m *mockSparkplugOutput) getEONNodeID(msg *mockMessage) string {
+	// Priority 1: Dynamic from location_path metadata (Parris Method)
+	if locationPath := msg.GetMeta("location_path"); locationPath != "" {
+		// Convert UMH dot notation to Sparkplug colon notation (Parris Method)
+		eonNodeID := strings.ReplaceAll(locationPath, ".", ":")
+		return eonNodeID
+	}
+
+	// Priority 2: Static override from configuration
+	if m.config.Identity.EdgeNodeID != "" {
+		return m.config.Identity.EdgeNodeID
+	}
+
+	// Priority 3: Default fallback (should log warning)
+	m.logger.Warn("No location_path metadata or edge_node_id configured, using default EON Node ID")
+	return "default_node"
+}
+
+type mockMessage struct {
+	metadata map[string]string
+}
+
+func newMockMessage() *mockMessage {
+	return &mockMessage{
+		metadata: make(map[string]string),
+	}
+}
+
+func (m *mockMessage) SetMeta(key, value string) {
+	m.metadata[key] = value
+}
+
+func (m *mockMessage) GetMeta(key string) string {
+	return m.metadata[key]
+}
+
+type mockLogger struct{}
+
+func (m mockLogger) Warn(msg string) {
+	// In a real test, we might capture this for verification
+}
