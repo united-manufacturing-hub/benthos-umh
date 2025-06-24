@@ -209,6 +209,12 @@ benthos-umh
 benthos-umh.exe
 benthos
 
+# Debug binaries and build artifacts
+**/debug_bin*
+**/__debug_bin*
+*.debug
+*.test
+
 # Test logs and temporary files
 test-logs-*/
 results.md
