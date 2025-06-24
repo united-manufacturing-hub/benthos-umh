@@ -19,6 +19,92 @@
 - **Alias Resolution**: ✅ WORKING - Proper metric name resolution in output
 - **MQTT Flow**: ✅ VALIDATED - Complete Sparkplug B message exchange
 
+## 🧪 **Integration Test - How to Run**
+
+### **Prerequisites:**
+```bash
+# 1. Build the latest binary
+make target
+cp tmp/bin/benthos ./benthos
+
+# 2. Ensure you have internet access (uses broker.hivemq.com:1883)
+```
+
+### **Running the Integration Test:**
+
+**Step 1: Start Primary Host (Terminal 1)**
+```bash
+cd /workspaces/benthos-umh
+./benthos -c config/sparkplug-primary-host-proper.yaml
+```
+
+**Step 2: Start Edge Node (Terminal 2)**
+```bash
+cd /workspaces/benthos-umh  
+./benthos -c config/sparkplug-edge-node-test.yaml
+```
+
+### **Expected Results:**
+
+**✅ Success Indicators:**
+1. **Alias Resolution Working:**
+   ```json
+   {"alias":1,"name":"humidity:value","value":79}
+   {"alias":2,"name":"temperature:value","value":79}
+   ```
+
+2. **Debug Logs Show:**
+   ```
+   ✅ resolveAliases: resolved 2 aliases for device TestGroup/enterprise:factory:line1:station1
+   🎯 resolved alias 1 -> 'humidity:value'
+   🎯 resolved alias 2 -> 'temperature:value'
+   ```
+
+3. **PARRIS Method Working:**
+   ```
+   Using dynamic EON Node ID from location_path: enterprise.factory.line1.station1 → enterprise:factory:line1:station1
+   ```
+
+4. **Complete Message Flow:**
+   - **NBIRTH**: Edge Node publishes birth with metric definitions
+   - **NDATA**: Edge Node publishes data every 1 second with aliases
+   - **STATE**: Primary Host publishes ONLINE state
+   - **Resolution**: Primary Host resolves aliases to metric names
+
+### **Test Configuration Details:**
+
+**Edge Node (`sparkplug-edge-node-test.yaml`):**
+- **Group ID**: `TestGroup`
+- **EON Node ID**: Dynamic from `location_path` → `enterprise:factory:line1:station1`
+- **Metrics**: `temperature:value` (alias 2), `humidity:value` (alias 1)
+- **Frequency**: 1 second intervals
+- **PARRIS Method**: Location path conversion enabled
+
+**Primary Host (`sparkplug-primary-host-proper.yaml`):**
+- **Group ID**: `TestGroup` (matches Edge Node)
+- **Subscription**: `spBv1.0/TestGroup/+/+` (all message types)
+- **Alias Cache**: Stores NBIRTH metric definitions
+- **Output**: Resolved metrics with both alias and name
+
+### **Stopping the Test:**
+```bash
+# Stop both processes
+pkill -f benthos
+```
+
+### **Troubleshooting:**
+
+**If alias resolution isn't working:**
+1. Check that both processes are using the same `group_id: "TestGroup"`
+2. Ensure Edge Node publishes NBIRTH before NDATA
+3. Verify MQTT connectivity to broker.hivemq.com:1883
+4. Check that binary was rebuilt after code changes: `make target`
+
+**If no data appears:**
+1. Verify internet connection (public MQTT broker)
+2. Check for configuration file syntax errors
+3. Ensure tag_processor is populating `location_path` metadata
+
 ## ⚠️ **Identified Remaining Issues**
 
 ### 1. **Broker Cleanup Needed**
