@@ -30,5 +30,6 @@ import (
 	_ "github.com/united-manufacturing-hub/benthos-umh/s7comm_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/tag_processor_plugin"
+	_ "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/uns_plugin"
 )

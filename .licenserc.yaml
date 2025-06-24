@@ -52,5 +52,7 @@ header:
     - 'Makefile'
     - 'README.md'
     - 'cover.profile'
+    - 'topic_browser_plugin/testing/sample_output.txt'
+    - 'topic_browser_plugin/testing/sample_output_small.txt'
 
   comment: never
