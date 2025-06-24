@@ -90,8 +90,9 @@ and then publishes DATA messages as Benthos messages flow through the pipeline.`
 				Description("Sparkplug Group ID (e.g., 'FactoryA')").
 				Example("FactoryA"),
 			service.NewStringField("edge_node_id").
-				Description("Edge Node ID within the group (e.g., 'Line3')").
-				Example("Line3"),
+				Description("Edge Node ID within the group (e.g., 'Line3'). If empty, auto-generated from location_path metadata using Parris Method").
+				Example("Line3").
+				Optional(),
 			service.NewStringField("device_id").
 				Description("Device ID under the edge node (optional, if not specified acts as node-level)").
 				Default("").
@@ -243,10 +244,8 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 		return nil, err
 	}
 
-	config.Identity.EdgeNodeID, err = identityConf.FieldString("edge_node_id")
-	if err != nil {
-		return nil, err
-	}
+	config.Identity.EdgeNodeID, _ = identityConf.FieldString("edge_node_id")
+	// edge_node_id is optional - if not provided, will be generated from location_path metadata
 
 	config.Identity.DeviceID, _ = identityConf.FieldString("device_id")
 
