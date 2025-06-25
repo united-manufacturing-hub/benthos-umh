@@ -4,15 +4,15 @@ This section covers Benthos output plugins for writing data to various industria
 
 ## Available Output Plugins
 
-- **[OPC UA Output](opc-ua-output.md)** - Writes data to OPC UA servers with optional read-back confirmation (handshake). Supports multiple data types and provides safe setpoint operations for industrial control systems.
+- **[Sparkplug B Output](sparkplug-b-output.md)** - Acts as an Edge Node in the Sparkplug B ecosystem. Publishes industrial IoT data using the standardized MQTT-based Sparkplug B protocol with protobuf encoding and alias management.
 
-- **[UNS Output](uns-output.md)** - Publishes batched messages to the Unified Namespace in `umh-core`, auto-deriving `umh-topic`, sanitising keys, and writing them to the internal Kafka broker.
+- **[OPC UA Output](opc-ua-output.md)** - Writes data to OPC UA servers with optional read-back confirmation (handshake). Supports multiple data types and provides safe setpoint operations for industrial control systems.
 
 - **[More Output Plugins](https://docs.redpanda.com/redpanda-connect/components/outputs/about/)** - Additional built-in output plugins available in Benthos/Redpanda Connect for various destinations.
 
 ## Choosing the Right Output Plugin
 
+- Use **Sparkplug B Output** when publishing data as an Edge Node in Sparkplug B MQTT-based industrial IoT systems
 - Use **OPC UA Output** when writing setpoints, commands, or data back to OPC UA-enabled industrial systems with confirmation requirements
-- Use **UNS Output** to publish data into the Unified Namespace via `umh-core`, where topics, batching, key sanitisation are handled automatically.
 - Explore **additional output plugins** for databases (PostgreSQL, MySQL, InfluxDB), message brokers (MQTT, Kafka), cloud services (AWS, Azure, GCP), file systems, HTTP APIs, and more
 

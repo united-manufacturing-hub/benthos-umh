@@ -1,0 +1,65 @@
+input:
+  # Generate test data every 2 seconds
+  generate:
+    interval: "2s"
+    mapping: |
+      root = {
+        "counter": counter()
+      }
+
+pipeline:
+  processors:
+    # Convert to UMH-core format using tag_processor
+    - tag_processor:
+        defaults: |
+          // Set UMH asset hierarchy - THIS WILL BE CONVERTED TO EON NODE ID
+          msg.meta.location_path = "enterprise.factory.line1.station1";
+          msg.meta.data_contract = "_historian";
+          
+          // Store the counter value before modifying payload
+          let counterValue = msg.payload.counter;
+          
+          // Determine tag name based on counter value
+          if (counterValue % 2 == 0) {
+            msg.meta.tag_name = "value";
+            msg.meta.virtual_path = "temperature";
+            // Simulate temperature data
+            msg.payload = 25.0 + (counterValue % 10);
+          } else {
+            msg.meta.tag_name = "value";
+            msg.meta.virtual_path = "humidity";
+            // Simulate humidity data
+            msg.payload = 60.0 + (counterValue % 20);
+          }
+          
+          return msg;
+
+output:
+  broker:
+    outputs:
+      - stdout: {}
+      - sparkplug_b:
+          # MQTT connection to same broker as Primary Host
+          mqtt:
+            urls: ["tcp://broker.hivemq.com:1883"]
+            client_id: "benthos-device-level-test-edge"
+            qos: 1
+            keep_alive: "60s"
+            connect_timeout: "30s"
+            clean_session: true
+          
+          # Edge Node identity - DEVICE-LEVEL PARRIS DEMO
+          identity:
+            group_id: "DeviceLevelTest"
+            edge_node_id: "StaticEdgeNode01"  # STATIC for Sparkplug B compliance
+            # device_id will be generated from location_path via PARRIS Method
+            # "enterprise.factory.line1.station1" → "enterprise:factory:line1:station1"
+          
+          # Configure as Edge Node (publishes data)
+          role: "edge_node"
+
+# Optional: Log to see what's being published
+logger:
+  level: "DEBUG"
+  format: "logfmt"
+  add_timestamp: true 
