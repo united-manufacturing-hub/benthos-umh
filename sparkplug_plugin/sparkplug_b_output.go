@@ -1170,15 +1170,30 @@ func (s *sparkplugOutput) setMetricValue(metric *sproto.Payload_Metric, value in
 func (s *sparkplugOutput) convertToUint32(value interface{}) (uint32, bool) {
 	switch v := value.(type) {
 	case int:
+		if v < 0 {
+			return 0, false
+		}
 		return uint32(v), true
 	case int32:
+		if v < 0 {
+			return 0, false
+		}
 		return uint32(v), true
 	case int64:
+		if v < 0 {
+			return 0, false
+		}
 		return uint32(v), true
 	case float64:
+		if v < 0 {
+			return 0, false
+		}
 		return uint32(v), true
 	case json.Number:
 		if i, err := v.Int64(); err == nil {
+			if i < 0 {
+				return 0, false
+			}
 			return uint32(i), true
 		}
 	}
@@ -1188,13 +1203,25 @@ func (s *sparkplugOutput) convertToUint32(value interface{}) (uint32, bool) {
 func (s *sparkplugOutput) convertToInt64(value interface{}) (uint64, bool) {
 	switch v := value.(type) {
 	case int:
+		if v < 0 {
+			return 0, false // Consistent with ConvertToInt32 behavior
+		}
 		return uint64(v), true
 	case int64:
+		if v < 0 {
+			return 0, false
+		}
 		return uint64(v), true
 	case float64:
+		if v < 0 {
+			return 0, false
+		}
 		return uint64(v), true
 	case json.Number:
 		if i, err := v.Int64(); err == nil {
+			if i < 0 {
+				return 0, false
+			}
 			return uint64(i), true
 		}
 	}
