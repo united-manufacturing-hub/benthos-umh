@@ -1,8 +1,6 @@
 # ifm IO-Link Master / "sensorconnect"
 
 The SensorConnect plugin facilitates communication with ifm electronic’s IO-Link Masters devices, such as the AL1350 or AL1352 IO-Link Masters.\
-
-
 It also supports EIO404 Bluetooth mesh base stations with EIO344 Bluetooth mesh IO-Link adapters.\
 It enables the integration of sensor data into Benthos pipelines by connecting to the device over HTTP and processing data from connected sensors, including digital inputs and IO-Link devices.\
 The plugin handles parsing and interpreting IO-Link data using IODD files, converting raw sensor outputs into human-readable data.

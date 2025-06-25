@@ -1,0 +1,24 @@
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://broker.hivemq.com:1883"] 
+      client_id: "benthos-device-level-primary-host"
+      qos: 1
+      keep_alive: "30s"
+      connect_timeout: "10s"
+      clean_session: true
+    identity:
+      group_id: "DeviceLevelTest"  # Match the Edge Node group
+      edge_node_id: "PrimaryHost"
+    role: "primary_host"
+
+output:
+  broker:
+    outputs:
+      - stdout:
+          codec: lines
+
+logger:
+  level: INFO
+  format: logfmt
+  add_timestamp: true 

@@ -1,3 +1,4 @@
+
 # UNS (Input)
 
 > **Works exclusively with UMH Core**
@@ -54,11 +55,7 @@ input:
 3. **Convert** each record into a Benthos message:
   - Payload → Value (raw bytes).
   - Metadata →
-    - `kafka_timestamp_ms` - Kafka record timestamp in milliseconds (when the record was written to Kafka)
-    - `kafka_msg_key` - Original Kafka message key (same as umh_topic)
-    - `kafka_topic` - Physical Kafka topic name (e.g., "umh.messages")
-    - `umh_topic` - **UMH topic structure** from Kafka message key (e.g., "umh.v1.enterprise.plant1._historian.temperature")
-    - Every Kafka header becomes `meta(...)` for processors downstream
+    - every header becomes `meta(...)` for processors downstream.
 
 4. **Batch-safe ACK** – commits offsets only when the whole Benthos batch succeeds.
 
