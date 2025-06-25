@@ -415,11 +415,8 @@ func (sm *SequenceManager) SetSequence(seq uint8) {
 
 // IsSequenceValid checks if a received sequence number is the expected next one.
 func (sm *SequenceManager) IsSequenceValid(expected, received uint8) bool {
-	// Handle wrap-around case
+	// Handle wrap-around case - uint8 automatically wraps at 255
 	expectedNext := expected + 1
-	if expectedNext > 255 {
-		expectedNext = 0
-	}
 	return received == expectedNext
 }
 
