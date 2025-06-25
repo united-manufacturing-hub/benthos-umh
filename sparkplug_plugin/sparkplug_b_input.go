@@ -28,6 +28,24 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// Sparkplug B Data Type Constants
+const (
+	SparkplugDataTypeInt8     = uint32(1)
+	SparkplugDataTypeInt16    = uint32(2)
+	SparkplugDataTypeInt32    = uint32(3)
+	SparkplugDataTypeInt64    = uint32(4)
+	SparkplugDataTypeUInt8    = uint32(5)
+	SparkplugDataTypeUInt16   = uint32(6)
+	SparkplugDataTypeUInt32   = uint32(7)
+	SparkplugDataTypeUInt64   = uint32(8)
+	SparkplugDataTypeFloat    = uint32(9)
+	SparkplugDataTypeDouble   = uint32(10)
+	SparkplugDataTypeBoolean  = uint32(11)
+	SparkplugDataTypeString   = uint32(12)
+	SparkplugDataTypeDateTime = uint32(13)
+	SparkplugDataTypeText     = uint32(14)
+)
+
 func init() {
 	inputSpec := service.NewConfigSpec().
 		Version("2.0.0").
@@ -980,33 +998,33 @@ func (s *sparkplugInput) extractMetricValue(metric *sproto.Payload_Metric) []byt
 // getDataTypeName converts Sparkplug data type ID to human-readable string
 func (s *sparkplugInput) getDataTypeName(datatype uint32) string {
 	switch datatype {
-	case 1:
+	case SparkplugDataTypeInt8:
 		return "Int8"
-	case 2:
+	case SparkplugDataTypeInt16:
 		return "Int16"
-	case 3:
+	case SparkplugDataTypeInt32:
 		return "Int32"
-	case 4:
+	case SparkplugDataTypeInt64:
 		return "Int64"
-	case 5:
+	case SparkplugDataTypeUInt8:
 		return "UInt8"
-	case 6:
+	case SparkplugDataTypeUInt16:
 		return "UInt16"
-	case 7:
+	case SparkplugDataTypeUInt32:
 		return "UInt32"
-	case 8:
+	case SparkplugDataTypeUInt64:
 		return "UInt64"
-	case 9:
+	case SparkplugDataTypeFloat:
 		return "Float"
-	case 10:
+	case SparkplugDataTypeDouble:
 		return "Double"
-	case 11:
+	case SparkplugDataTypeBoolean:
 		return "Boolean"
-	case 12:
+	case SparkplugDataTypeString:
 		return "String"
-	case 13:
+	case SparkplugDataTypeDateTime:
 		return "DateTime"
-	case 14:
+	case SparkplugDataTypeText:
 		return "Text"
 	default:
 		return "Unknown"
@@ -1100,7 +1118,7 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 		Value: &sproto.Payload_Metric_BooleanValue{
 			BooleanValue: true,
 		},
-		Datatype: func() *uint32 { d := uint32(11); return &d }(), // Boolean type
+		Datatype: func() *uint32 { d := uint32(SparkplugDataTypeBoolean); return &d }(),
 	}
 
 	cmdPayload := &sproto.Payload{
