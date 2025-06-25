@@ -8,7 +8,7 @@ input:
       connect_timeout: "10s"
       clean_session: true
     identity:
-      group_id: "DeviceLevelTest"  # Match the Edge Node group
+      group_id: "DeviceLevelTest_20250625_1226"  # Match the Edge Node group
       edge_node_id: "PrimaryHost"
     role: "primary_host"
 
