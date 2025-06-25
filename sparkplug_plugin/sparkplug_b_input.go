@@ -522,6 +522,13 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 	return batch, nil
 }
 
+// processBirthMessage handles both NBIRTH and DBIRTH messages.
+// In Device-Level PARRIS architecture, DBIRTH messages are the primary mechanism
+// for establishing alias mappings. NBIRTH messages handle node-level metrics but
+// are not used in pure device-level deployments.
+//
+// Key behavior: Caches alias → metric name mappings from BIRTH certificates
+// for use in subsequent DATA message resolution.
 func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload *sproto.Payload) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
@@ -742,6 +749,12 @@ func (s *sparkplugInput) cacheAliases(deviceKey string, metrics []*sproto.Payloa
 	}
 }
 
+// resolveAliases converts numeric aliases back to metric names using cached BIRTH certificates.
+// This is the complement to DBIRTH processing: while DBIRTH establishes the alias → name mappings,
+// resolveAliases applies those mappings to DDATA messages for efficient processing.
+//
+// Critical for Device-Level PARRIS: DDATA messages contain only aliases (for efficiency),
+// but downstream processing needs the original metric names from the DBIRTH certificate.
 func (s *sparkplugInput) resolveAliases(deviceKey string, metrics []*sproto.Payload_Metric) {
 	// DEBUG: Log before alias resolution as recommended in the plan
 	s.logger.Debugf("🔍 resolveAliases: starting to resolve aliases for deviceKey=%s, %d metrics", deviceKey, len(metrics))

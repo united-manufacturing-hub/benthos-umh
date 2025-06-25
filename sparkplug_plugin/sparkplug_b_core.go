@@ -61,6 +61,11 @@ func NewAliasCache() *AliasCache {
 }
 
 // CacheAliases extracts and stores alias → name mappings from BIRTH message metrics.
+// This is fundamental to Sparkplug B operation: BIRTH messages establish the "vocabulary"
+// of aliases that can be used in subsequent DATA messages.
+//
+// Device-Level PARRIS architecture: DBIRTH messages define all metric aliases for a device,
+// enabling efficient DDATA transmission using numeric aliases instead of full metric names.
 func (ac *AliasCache) CacheAliases(deviceKey string, metrics []*sproto.Payload_Metric) int {
 	if deviceKey == "" || len(metrics) == 0 {
 		return 0
@@ -91,6 +96,12 @@ func (ac *AliasCache) CacheAliases(deviceKey string, metrics []*sproto.Payload_M
 }
 
 // ResolveAliases enriches DATA message metrics by replacing aliases with cached names.
+// This completes the Sparkplug B efficiency cycle: while BIRTH messages define aliases
+// for metric names, DATA messages use those aliases for compact transmission.
+//
+// Device-Level PARRIS: DDATA messages contain numeric aliases (e.g., alias=1) which
+// this function resolves back to meaningful names (e.g., "temperature:value") using
+// the cached DBIRTH certificate vocabulary.
 func (ac *AliasCache) ResolveAliases(deviceKey string, metrics []*sproto.Payload_Metric) int {
 	if deviceKey == "" || len(metrics) == 0 {
 		return 0

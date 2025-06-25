@@ -2,7 +2,7 @@
 # Build targets for clean separation of test concerns via build tags
 # Following the test strategy documented in README.md
 
-.PHONY: help test test-unit test-payload test-flow test-all test-manual test-integration generate-vectors clean coverage
+.PHONY: help test test-unit test-payload test-flow test-all test-manual test-integration test-integration-local generate-vectors clean coverage
 
 # Default: fast unit tests only (<3s)
 test: test-unit
@@ -17,6 +17,7 @@ help:
 	@echo "  test-all      - All offline tests (<8s)"
 	@echo "  test-manual   - Instructions for integration tests"
 	@echo "  test-integration - Real MQTT broker tests (requires manual setup)"
+	@echo "  test-integration-local - End-to-end test with local Mosquitto"
 	@echo "  generate-vectors - Regenerate test vectors"
 	@echo "  clean         - Clean temporary files"
 	@echo "  coverage      - Generate coverage report"
@@ -55,6 +56,11 @@ test-manual:
 test-integration:
 	@echo "🔌 Running integration tests (requires MQTT broker)..."
 	cd .. && go test -race -v -tags=integration ./sparkplug_plugin
+
+# Local integration test with Mosquitto
+test-integration-local:
+	@echo "🔌 Running local integration test with Mosquitto..."
+	./scripts/test-integration-local.sh
 
 # Regenerate test vectors (when spec changes)
 generate-vectors:
