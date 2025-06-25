@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Copyright 2025 UMH Systems GmbH
 #
@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -e
+set -euo pipefail
 
 echo "🚀 Starting Sparkplug B Integration Test with Local Mosquitto"
 
@@ -32,10 +32,10 @@ cleanup() {
     docker rm mosquitto >/dev/null 2>&1 || true
     
     # Kill background processes
-    if [ ! -z "$EDGE_PID" ]; then
+    if [ ! -z "${EDGE_PID:-}" ]; then
         kill $EDGE_PID >/dev/null 2>&1 || true
     fi
-    if [ ! -z "$HOST_PID" ]; then
+    if [ ! -z "${HOST_PID:-}" ]; then
         kill $HOST_PID >/dev/null 2>&1 || true
     fi
     
@@ -44,6 +44,10 @@ cleanup() {
 
 # Trap to ensure cleanup on exit
 trap cleanup EXIT INT TERM
+
+# Initialize variables
+EDGE_PID=""
+HOST_PID=""
 
 echo -e "${BLUE}📦 Step 1: Starting Mosquitto MQTT Broker...${NC}"
 docker run -d --name mosquitto -p 1883:1883 eclipse-mosquitto:1.6

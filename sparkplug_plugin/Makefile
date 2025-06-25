@@ -2,7 +2,10 @@
 # Build targets for clean separation of test concerns via build tags
 # Following the test strategy documented in README.md
 
-.PHONY: help test test-unit test-payload test-flow test-all test-manual test-integration test-integration-local generate-vectors clean coverage
+.PHONY: all help test test-unit test-payload test-flow test-all test-manual test-integration test-integration-local generate-vectors clean coverage
+
+# Alias required by CI linters
+all: test
 
 # Default: fast unit tests only (<3s)
 test: test-unit

@@ -22,7 +22,7 @@ input:
       urls: ["tcp://localhost:1883"]
     identity:
       group_id: "DeviceLevelTest"
-      edge_node_id: "PrimaryHost" 
+      edge_node_id: "PrimaryHost"
     role: "primary_host"
 
 output:
@@ -31,4 +31,4 @@ output:
 logger:
   level: DEBUG
   format: logfmt
-  add_timestamp: true 
+  add_timestamp: true
