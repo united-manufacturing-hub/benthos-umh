@@ -552,21 +552,39 @@ func (tc *TypeConverter) ConvertToInt32(value interface{}) (uint32, bool) {
 func (tc *TypeConverter) convertToInt64(value interface{}) (uint64, bool) {
 	switch v := value.(type) {
 	case int:
+		if v < 0 {
+			return 0, false // Consistent with ConvertToInt32 behavior
+		}
 		return uint64(v), true
 	case int32:
+		if v < 0 {
+			return 0, false
+		}
 		return uint64(v), true
 	case int64:
+		if v < 0 {
+			return 0, false
+		}
 		return uint64(v), true
 	case uint32:
 		return uint64(v), true
 	case uint64:
 		return v, true
 	case float32:
+		if v < 0 {
+			return 0, false
+		}
 		return uint64(v), true
 	case float64:
+		if v < 0 {
+			return 0, false
+		}
 		return uint64(v), true
 	case string:
 		if parsed, err := strconv.ParseInt(v, 10, 64); err == nil {
+			if parsed < 0 {
+				return 0, false
+			}
 			return uint64(parsed), true
 		}
 	}
@@ -770,6 +788,17 @@ func NewMQTTClientBuilder(mgr *service.Resources) *MQTTClientBuilder {
 
 // CreateClient creates an MQTT client with Benthos-style configuration and monitoring.
 func (mcb *MQTTClientBuilder) CreateClient(config MQTTClientConfig) (mqtt.Client, error) {
+	// Add validation at the start
+	if config.ClientID == "" {
+		return nil, fmt.Errorf("client ID is required")
+	}
+	if config.KeepAlive <= 0 {
+		return nil, fmt.Errorf("keep alive must be positive, got %v", config.KeepAlive)
+	}
+	if config.ConnectTimeout <= 0 {
+		return nil, fmt.Errorf("connect timeout must be positive, got %v", config.ConnectTimeout)
+	}
+
 	opts := mqtt.NewClientOptions()
 
 	// Set broker URLs

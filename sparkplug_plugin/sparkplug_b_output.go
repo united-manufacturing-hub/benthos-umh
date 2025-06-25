@@ -275,7 +275,7 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 
 	config.Identity.EdgeNodeID, _ = identityConf.FieldString("edge_node_id")
 	if config.Identity.EdgeNodeID == "" {
-		return nil, fmt.Errorf("edge_node_id is required for Sparkplug B compliance")
+		return nil, fmt.Errorf("configuration error: edge_node_id is required for Sparkplug B compliance - please set identity.edge_node_id in your configuration")
 	}
 
 	config.Identity.LocationPath, _ = identityConf.FieldString("location_path")
@@ -473,10 +473,13 @@ func (s *sparkplugOutput) Write(ctx context.Context, msg *service.Message) error
 		// Enhanced debug logging to understand why no metrics were extracted
 		structured, _ := msg.AsStructured()
 		allMeta := make(map[string]interface{})
-		msg.MetaWalk(func(key, value string) error {
+		err := msg.MetaWalk(func(key, value string) error {
 			allMeta[key] = value
 			return nil
 		})
+		if err != nil {
+			s.logger.Debugf("Failed to walk message metadata: %v", err)
+		}
 
 		s.logger.Debugf("No metrics to publish in message - Debug info: "+
 			"Configured metrics count: %d, "+
@@ -684,9 +687,9 @@ func (s *sparkplugOutput) getStaticEdgeNodeID() string {
 		return s.config.Identity.EdgeNodeID
 	}
 
-	// This should not happen in production - Edge Node ID is required
-	s.logger.Error("Edge Node ID is required for Sparkplug B compliance. Please configure identity.edge_node_id")
-	return "MISSING_EDGE_NODE_ID"
+	// This is a critical configuration error - Edge Node ID is required for Sparkplug B compliance
+	// Failing fast prevents publishing non-compliant messages
+	panic("Critical configuration error: edge_node_id is required for Sparkplug B compliance - please set identity.edge_node_id in your configuration")
 }
 
 // getEONNodeID resolves the Edge of Network (EON) Node ID using the Parris Method.
@@ -1138,7 +1141,7 @@ func (s *sparkplugOutput) getSparkplugDataType(typeStr string) *uint32 {
 func (s *sparkplugOutput) setMetricValue(metric *sproto.Payload_Metric, value interface{}, metricType string) {
 	switch strings.ToLower(metricType) {
 	case "int8", "int16", "int32":
-		if intVal, ok := s.convertToInt32(value); ok {
+		if intVal, ok := s.convertToUint32(value); ok {
 			metric.Value = &sproto.Payload_Metric_IntValue{IntValue: intVal}
 		}
 	case "int64":
@@ -1164,7 +1167,7 @@ func (s *sparkplugOutput) setMetricValue(metric *sproto.Payload_Metric, value in
 	}
 }
 
-func (s *sparkplugOutput) convertToInt32(value interface{}) (uint32, bool) {
+func (s *sparkplugOutput) convertToUint32(value interface{}) (uint32, bool) {
 	switch v := value.(type) {
 	case int:
 		return uint32(v), true
@@ -1291,6 +1294,9 @@ func (s *sparkplugOutput) assignDynamicAliases(newMetrics []string, data map[str
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
+	// Pre-allocate slice to avoid multiple reallocations during concurrent access
+	newConfigs := make([]MetricConfig, 0, len(newMetrics))
+
 	for _, metricName := range newMetrics {
 		// Assign alias
 		s.metricAliases[metricName] = s.nextAlias
@@ -1301,18 +1307,21 @@ func (s *sparkplugOutput) assignDynamicAliases(newMetrics []string, data map[str
 		metricType := s.typeConverter.InferMetricType(value)
 		s.metricTypes[metricName] = metricType
 
-		// Add to metrics configuration for future births
+		// Prepare metric configuration
 		metricConfig := MetricConfig{
 			Name:      metricName,
 			Alias:     s.metricAliases[metricName],
 			Type:      metricType,
 			ValueFrom: "value", // Default value path
 		}
-		s.metrics = append(s.metrics, metricConfig)
+		newConfigs = append(newConfigs, metricConfig)
 
 		s.logger.Infof("Assigned dynamic alias %d to metric '%s' (type: %s)",
 			s.metricAliases[metricName], metricName, metricType)
 	}
+
+	// Single append operation to minimize slice reallocation risk
+	s.metrics = append(s.metrics, newConfigs...)
 }
 
 // triggerRebirth initiates a rebirth sequence with new metrics
