@@ -33,18 +33,23 @@ The Sparkplug B Input plugin has several configuration options. Many are common 
 
 The input plugin does not require you to configure specific metric names or device IDs – it discovers and handles those from the incoming messages. However, it's important to understand how it interprets Sparkplug topics and payloads:
 
-* **Topic Parsing to `umh_topic`:** The plugin automatically parses each incoming Sparkplug message's topic and constructs a corresponding `umh_topic` for the output message metadata. Sparkplug topics follow the format:
+  * **Topic Parsing to `umh_topic`:** The plugin automatically parses each incoming Sparkplug message's topic and constructs a corresponding `umh_topic` for the output message metadata. Sparkplug topics follow the format:
 
   ```
-  spBv1.0/<GroupID>/<EdgeNodeID>/<MessageType>[/<DeviceID>]
+  spBv1.0/<GroupID>/<MessageType>/<EdgeNodeID>[/<DeviceID>]
   ```
 
-  Using this information, the plugin will form a unified namespace topic. By convention, the Sparkplug `GroupID` and `EdgeNodeID` are mapped into the `location_path` within `umh_topic`. For example, if a message arrives on topic `spBv1.0/FactoryA/EdgeNode1/NDATA`, and it contains a metric named `Pressure`, the plugin might emit a message with metadata:
+  The plugin supports both **Node-Level** and **Device-Level** messages from the Device-Level PARRIS architecture:
+  
+  - **Node-Level**: `spBv1.0/FactoryA/NBIRTH/StaticEdgeNode01` (Edge Node birth)
+  - **Device-Level**: `spBv1.0/FactoryA/DDATA/StaticEdgeNode01/enterprise:factory:line1:station1` (Device data)
 
-  * `msg.meta.location_path = "FactoryA.EdgeNode1"` (or a more expanded path if configured)
+  Using this information, the plugin will form a unified namespace topic. By convention, the Sparkplug `GroupID`, `EdgeNodeID`, and `DeviceID` are mapped into the `location_path` within `umh_topic`. For example, if a message arrives on topic `spBv1.0/FactoryA/DDATA/StaticEdgeNode01/enterprise:factory:line1:station1`, and it contains a metric named `Pressure`, the plugin might emit a message with metadata:
+
+  * `msg.meta.location_path = "FactoryA.StaticEdgeNode01.enterprise:factory:line1:station1"` (hierarchical path including device)
   * `msg.meta.data_contract = "_sparkplug"` (default contract for Sparkplug data unless overridden)
   * `msg.meta.tag_name = "Pressure"` (the metric's name)
-    From these, it builds `msg.meta.umh_topic = "umh.v1.FactoryA.EdgeNode1._sparkplug.Pressure"`. This ensures the metric is placed correctly in the UMH namespace hierarchy. (You can adjust the naming convention by post-processing with a Tag Processor if needed, but by default the above scheme is used.)
+    From these, it builds `msg.meta.umh_topic = "umh.v1.FactoryA.StaticEdgeNode01.enterprise:factory:line1:station1._sparkplug.Pressure"`. This ensures the metric is placed correctly in the UMH namespace hierarchy with full device-level context. (You can adjust the naming convention by post-processing with a Tag Processor if needed, but by default the above scheme is used.)
 
 * **Metric Names and Alias Decoding:** Sparkplug B uses **metric aliases** to reduce payload size – after a device's birth, subsequent data messages may omit metric names and use numeric aliases. The input plugin manages an **alias table** for each device (Edge Node and/or Device ID) internally. On receiving a Birth message, it maps each metric name to the provided alias. Later, when a Data message arrives, if a metric has no name but only an alias, the plugin looks up the alias to find the original name. The output Benthos message will always include the human-readable metric name (e.g., in the `umh_topic` and as `msg.meta.tag_name`) so you don't have to deal with alias numbers in your pipelines. This alias table is dynamically updated: if an unknown alias is encountered (or if a device sends a new Birth with a refreshed alias set), the plugin will log a warning or debug message and wait for a new Birth to properly map it.
 
@@ -84,7 +89,12 @@ output:
   uns: {}                           # send to Unified Namespace (Redpanda)
 ```
 
-In this example, the Sparkplug Input will connect to the MQTT broker at `iot-broker.local` and subscribe to `spBv1.0/FactoryA/#`. It will receive all Sparkplug messages for group "FactoryA". If a device EdgeNode1 in FactoryA publishes an NBIRTH with metrics `Pressure` and `Temperature`, the plugin will output each metric as a separate message. For instance, `Pressure` might come out as a message with `umh_topic = umh.v1.FactoryA.EdgeNode1._sparkplug.Pressure` and its current value in the payload. The next `Temperature` metric appears similarly. Subsequent NDATA messages containing changes in `Pressure` or `Temperature` will result in output messages with those tags and updated values. The initial birth metrics are emitted (`data_only: false`), so even if no change occurs after birth, you get the starting values. Each message carries metadata like `spb_group="FactoryA"`, `spb_edge_node="EdgeNode1"`, etc., which the Tag Processor (if used) can further transform or simply pass along. Finally, the `uns` output plugin will write these into the internal Kafka-based unified namespace.
+In this example, the Sparkplug Input will connect to the MQTT broker at `iot-broker.local` and subscribe to `spBv1.0/FactoryA/#`. It will receive all Sparkplug messages for group "FactoryA". The plugin supports both node-level and device-level messages:
+
+- **Node-Level**: If EdgeNode1 publishes an NBIRTH, metrics appear with `umh_topic = umh.v1.FactoryA.EdgeNode1._sparkplug.Pressure`
+- **Device-Level**: If EdgeNode1 publishes a DBIRTH/DDATA for device `enterprise:factory:line1:station1`, metrics appear with `umh_topic = umh.v1.FactoryA.EdgeNode1.enterprise:factory:line1:station1._sparkplug.Pressure`
+
+The device-level approach provides full hierarchical context, enabling better organization and filtering in the unified namespace. Each message carries metadata like `spb_group="FactoryA"`, `spb_edge_node="EdgeNode1"`, `spb_device="enterprise:factory:line1:station1"`, etc., which the Tag Processor (if used) can further transform or simply pass along. Finally, the `uns` output plugin will write these into the internal Kafka-based unified namespace.
 
 **Filtering & Advanced Options:** If you have a setup with many Sparkplug groups or devices and only want to consume a subset, you can adjust the plugin accordingly:
 
@@ -110,7 +120,7 @@ input:
 
 This configuration will connect to the broker using the provided CA and client certificates, subscribe to `Plant01` group topics, and ingest all Sparkplug data securely.
 
-**Complete UMH Integration Example with Tag Processor:** For full UMH integration with proper asset hierarchy mapping:
+**Complete UMH Integration Example with Tag Processor:** For full UMH integration with device-level PARRIS support:
 
 ```yaml
 input:
@@ -124,21 +134,21 @@ input:
       clean_session: true
     
     identity:
-      group_id: "UMH-Group"
-      edge_node_id: "PrimaryHost"
+      group_id: "DeviceLevelTest"     # Group ID to subscribe to
+      edge_node_id: "PrimaryHost"     # This primary host's Edge Node ID
     
     role: "primary_host"
     
     subscription:
-      groups: []  # Listen to all groups
+      groups: []  # Listen to all groups (or specify specific groups)
     
     behaviour:
       auto_split_metrics: true        # Each metric becomes separate message
-      data_messages_only: false       # Process BIRTH, DATA, and DEATH messages
+      data_messages_only: false       # Process NBIRTH, DBIRTH, NDATA, DDATA messages
       drop_birth_messages: false      # Keep BIRTH messages for alias resolution
       auto_extract_values: true       # Extract values from protobuf
-      include_node_metrics: true      # Include node-level metrics
-      include_device_metrics: true    # Include device-level metrics
+      include_node_metrics: true      # Include node-level metrics (NBIRTH/NDATA)
+      include_device_metrics: true    # Include device-level metrics (DBIRTH/DDATA)
 
 pipeline:
   processors:
@@ -149,25 +159,30 @@ pipeline:
         
     # Process through tag_processor for UMH format conversion
     - tag_processor:
-        # UMH Asset Hierarchy Configuration
+        # UMH Asset Hierarchy Configuration for Device-Level PARRIS
         asset_hierarchy:
           # Map Sparkplug group_id to UMH enterprise
-          enterprise: this.group_id | "sparkplug"
+          enterprise: this.spb_group | "sparkplug"
           
           # Map edge_node_id to UMH site  
-          site: this.edge_node_id | "unknown_site"
+          site: this.spb_edge_node | "unknown_site"
           
-          # Map device_key components to UMH area/line
+          # Map device_id to UMH area/line (device-level PARRIS)
           area: |
-            # Extract area from device_key (group/node/device -> use device as area)
-            if this.device_key != null {
-              this.device_key.split("/").index(2) | "production"
+            # Extract area from device_id (enterprise:factory:line1:station1 -> line1)
+            if this.spb_device != null && this.spb_device != "" {
+              this.spb_device.split(":").index(2) | "production"
             } else {
               "production" 
             }
           
-          # Use tag_name as work_cell
-          work_cell: this.tag_name | "default"
+          # Extract work_cell from device_id (station1) or use tag_name
+          work_cell: |
+            if this.spb_device != null && this.spb_device != "" {
+              this.spb_device.split(":").index(3) | this.tag_name | "default"
+            } else {
+              this.tag_name | "default"
+            }
         
         # Tag Name Processing
         tag_name_processing:
@@ -213,9 +228,18 @@ output:
   uns: {}
 ```
 
-This example shows a complete Sparkplug B to UMH integration pipeline. The `tag_processor` transforms the Sparkplug data into UMH's asset hierarchy format, mapping Sparkplug Group IDs to enterprises, Edge Node IDs to sites, and properly handling metric names whether they come from alias resolution or direct names. The final output goes to the UMH Unified Namespace where it can be consumed by other UMH components.
+This example shows a complete Sparkplug B to UMH integration pipeline with device-level PARRIS support. The `tag_processor` transforms the Sparkplug data into UMH's asset hierarchy format:
+
+- **Enterprise**: Mapped from Sparkplug Group ID (`spb_group`)
+- **Site**: Mapped from Sparkplug Edge Node ID (`spb_edge_node`) 
+- **Area**: Extracted from Device ID (`spb_device`) using colon-separated hierarchy (e.g., `enterprise:factory:line1:station1` → `line1`)
+- **Work Cell**: Extracted from Device ID (e.g., `station1`) or falls back to tag name
+
+This provides full hierarchical context from the device-level PARRIS architecture, enabling proper organization in the unified namespace. The final output goes to the UMH Unified Namespace where it can be consumed by other UMH components with complete asset hierarchy information.
 
 ## Notes
+
+* **Device-Level PARRIS Architecture:** This plugin is designed to work optimally with the **Device-Level PARRIS** architecture implemented in the Sparkplug B Output plugin. This architecture uses static Edge Node IDs for Sparkplug B compliance while enabling dynamic Device IDs from UMH location hierarchy. The input plugin automatically handles both node-level (NBIRTH/NDATA) and device-level (DBIRTH/DDATA) messages, providing full hierarchical context in the unified namespace.
 
 * **Sparkplug Version & Compatibility:** This plugin targets **Sparkplug B** (v3.0) compliance. It uses the official Sparkplug Protobuf definitions for decoding. Ensure your edge devices are publishing Sparkplug B formatted payloads (not Sparkplug A or custom formats). The plugin currently focuses on metrics (Data messages). Sparkplug command messages (NCMD/DCMD) are not generated by this input plugin – since it's an input, it only listens; if you need to respond with NCMD/DCMD, you would use the Sparkplug Output plugin or another method to publish commands.
 * **UMH-Core Integration:** In a UMH-Core deployment, minimal configuration is needed – often just `sparkplug_b: { broker_address: "...", group_id: "..." }` is enough, as other defaults are optimized for UMH. The **Tag Processor** can be used in-line to reshape any metadata. For example, if you want to map Sparkplug's `EdgeNode1` to a more descriptive location in UMH, you could use a Tag Processor to prepend a higher-level path or change the data contract. The plugin's output `umh_topic` is meant to be readily consumable by the `uns` output (as shown in examples) so that Sparkplug data flows into the unified namespace with no extra fuss.

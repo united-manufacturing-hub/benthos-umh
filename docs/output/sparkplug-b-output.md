@@ -20,6 +20,14 @@ Sparkplug B is an open standard for MQTT-based industrial IoT communication that
 
 ## Sparkplug B Protocol Overview
 
+This plugin implements **Device-Level PARRIS** architecture for industry-aligned Sparkplug B compliance:
+
+**Architecture Benefits:**
+- **Static Edge Node ID**: Ensures Sparkplug B session consistency
+- **Dynamic Device ID**: Enables flexible device identification via UMH location hierarchy
+- **Industry Aligned**: Matches patterns used by Ignition MQTT Transmission
+- **Specification Compliant**: Proper NBIRTH → DBIRTH → DDATA message flow
+
 Sparkplug B defines a hierarchical topic structure and message lifecycle:
 
 **Topic Structure:**
@@ -53,8 +61,9 @@ output:
     # Sparkplug Identity Configuration
     identity:
       group_id: "Factory"
-      edge_node_id: "Line1-PLC"
-      device_id: "Sensor-Array-01"    # optional for device-level messages
+      edge_node_id: "Line1-PLC"       # required: static Edge Node ID
+      location_path: ""               # populated from message metadata  
+      device_id: ""                   # optional: if empty, auto-generated from location_path
     
     # Role Configuration
     role: "edge_node"
@@ -120,52 +129,48 @@ The Sparkplug B output plugin supports all standard Sparkplug B data types with 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `identity.group_id` | `string` | **required** | Sparkplug B Group ID |
-| `identity.edge_node_id` | `string` | **optional** | Static Edge Node ID override. If empty, auto-generated from location_path metadata using Parris Method |
+| `identity.edge_node_id` | `string` | **required** | Static Edge Node ID for Sparkplug B compliance (must be consistent throughout session) |
 | `identity.device_id` | `string` | `""` | Device ID (empty for node-level messages) |
 
-#### Dynamic EON Node ID Resolution (Parris Method)
+#### Device-Level PARRIS Method
 
-The plugin supports automatic conversion between UMH `location_path` metadata and Sparkplug-compatible EON Node IDs using the **Parris Method**. This enables seamless integration between UMH's hierarchical location system and Sparkplug B's topic namespace.
+The plugin implements **Device-Level PARRIS** for industry-aligned Sparkplug B architecture that maintains specification compliance while enabling dynamic device identification.
 
-**Priority Logic:**
-1. **Dynamic Generation (Recommended)**: If `location_path` metadata exists and `edge_node_id` is empty, convert using Parris Method
-2. **Static Override**: If `edge_node_id` is configured, use it (ignores metadata)  
-3. **Default Fallback**: Use `"default_node"` with warning (error scenario)
+**Architecture:**
+- **Static Edge Node ID**: Required field that remains consistent throughout the session (Sparkplug B compliance)
+- **Dynamic Device ID**: Generated from UMH `location_path` metadata using PARRIS Method conversion
+- **Topic Structure**: `spBv1.0/<Group>/DDATA/<StaticEdgeNode>/<DynamicDevice>`
 
-**Parris Method Conversion:**
-- Converts UMH dot notation to Sparkplug colon notation
+**PARRIS Method Conversion:**
+- Converts UMH dot notation to Sparkplug colon notation for Device ID
 - Example: `"enterprise.factory.line1.station1"` → `"enterprise:factory:line1:station1"`
 
-**Configuration Examples:**
-
-*Dynamic Approach (Recommended):*
+**Configuration Example:**
 ```yaml
 identity:
-  group_id: "FactoryA"     # Required: Stable business boundary
-  device_id: "TempSensor"  # Optional: Device identification
-  # edge_node_id: ""       # Empty = auto-generate from location_path metadata
+  group_id: "FactoryA"           # Required: Stable business grouping  
+  edge_node_id: "StaticNode01"   # Required: Static Edge Node ID
+  location_path: ""              # Optional: Will be populated from message metadata
+  device_id: ""                  # Optional: If empty, auto-generated from location_path
 
 # Pipeline provides metadata:
 # msg.meta.location_path = "enterprise.plant1.line3.station5"
-# Results in: spBv1.0/FactoryA/DDATA/enterprise:plant1:line3:station5/TempSensor
+# Results in: spBv1.0/FactoryA/DDATA/StaticNode01/enterprise:plant1:line3:station5
 ```
 
-*Static Override:*
-```yaml
-identity:
-  group_id: "FactoryA"
-  edge_node_id: "StaticNode01"  # Static override (ignores metadata)
-  device_id: "TempSensor"
-```
+**Message Flow:**
+1. **NBIRTH**: Node-level birth with Edge Node ID: `spBv1.0/FactoryA/NBIRTH/StaticNode01`
+2. **DBIRTH**: Device-level birth for new devices: `spBv1.0/FactoryA/DBIRTH/StaticNode01/enterprise:plant1:line3:station5`
+3. **DDATA**: Device-level data messages: `spBv1.0/FactoryA/DDATA/StaticNode01/enterprise:plant1:line3:station5`
 
 **Metadata Requirements:**
-- **Required** (when `edge_node_id` is empty): `location_path` - Hierarchical location in dot notation
-- **Optional**: `virtual_path`, `tag_name` - Used for metric name generation
+- **Required**: `location_path` - Hierarchical location in dot notation (for dynamic device ID)
+- **Optional**: `tag_name` - Used for metric name generation
 
-**Metadata Sources:**
-- **tag_processor**: Primary source for UMH metadata
-- **Custom processors**: Manual metadata setting
-- **Static configuration**: Use `edge_node_id` to bypass metadata dependency
+**Benefits:**
+- **Sparkplug B Compliant**: Static Edge Node ID ensures session consistency
+- **Industry Aligned**: Matches Ignition MQTT Transmission patterns
+- **UMH Integration**: Seamless conversion from UMH location hierarchy
 
 ### Role Configuration
 | Field | Type | Default | Description |
@@ -220,8 +225,9 @@ output:
       client_id: "temp-sensor-001"
     identity:
       group_id: "Factory"
-      edge_node_id: "Building-A"
-      device_id: "TMP001"
+      edge_node_id: "Building-A"      # required: static Edge Node ID
+      location_path: ""               # auto-populated from message metadata
+      device_id: ""                   # auto-generated from location_path
     role: "edge_node"
     
     behaviour:
@@ -264,8 +270,9 @@ output:
       client_id: "motor-controller-01"
     identity:
       group_id: "Production"
-      edge_node_id: "Line-1"
-      device_id: "Motor-01"
+      edge_node_id: "Line-1"          # required: static Edge Node ID
+      location_path: ""               # auto-populated from message metadata
+      device_id: ""                   # auto-generated from location_path
     role: "edge_node"
     
     behaviour:
@@ -315,8 +322,9 @@ output:
       client_id: "plc-gateway"
     identity:
       group_id: "Factory"
-      edge_node_id: "PLC-Gateway-01"
-      device_id: "Conveyor-Belt"
+      edge_node_id: "PLC-Gateway-01"  # required: static Edge Node ID
+      location_path: ""               # auto-populated from message metadata
+      device_id: ""                   # auto-generated from location_path
     role: "edge_node"
     
     behaviour:
@@ -335,8 +343,8 @@ output:
         value_from: "load_percent"
         units: "%"
 
-# Second device would use same edge_node_id but different device_id
-# This creates the proper Sparkplug B hierarchy
+# Multiple devices automatically get different device IDs from their location_path metadata
+# This creates the proper Sparkplug B hierarchy with device-level PARRIS
 ```
 
 ## Message Flow and Lifecycle
@@ -399,7 +407,9 @@ output:
       client_id: "uns-to-sparkplug-bridge"
     identity:
       group_id: "UNS-Bridge"
-      edge_node_id: "Factory-Gateway"
+      edge_node_id: "Factory-Gateway"  # required: static Edge Node ID
+      location_path: ""                # auto-populated from message metadata
+      device_id: ""                    # auto-generated from location_path
     role: "edge_node"
     
     behaviour:
