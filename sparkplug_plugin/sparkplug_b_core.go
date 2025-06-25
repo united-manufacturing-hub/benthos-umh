@@ -502,21 +502,39 @@ func (tc *TypeConverter) SetMetricValue(metric *sproto.Payload_Metric, value int
 func (tc *TypeConverter) ConvertToInt32(value interface{}) (uint32, bool) {
 	switch v := value.(type) {
 	case int:
+		if v < 0 {
+			return 0, false
+		}
 		return uint32(v), true
 	case int32:
+		if v < 0 {
+			return 0, false
+		}
 		return uint32(v), true
 	case int64:
+		if v < 0 {
+			return 0, false
+		}
 		return uint32(v), true
 	case uint32:
 		return v, true
 	case uint64:
 		return uint32(v), true
 	case float32:
+		if v < 0 {
+			return 0, false
+		}
 		return uint32(v), true
 	case float64:
+		if v < 0 {
+			return 0, false
+		}
 		return uint32(v), true
 	case string:
 		if parsed, err := strconv.ParseInt(v, 10, 32); err == nil {
+			if parsed < 0 {
+				return 0, false
+			}
 			return uint32(parsed), true
 		}
 	}
@@ -652,6 +670,36 @@ func (tc *TypeConverter) convertToString(value interface{}) (string, bool) {
 		return strconv.FormatBool(v), true
 	}
 	return "", false
+}
+
+// InferMetricType determines the Sparkplug data type based on the Go value type.
+func (tc *TypeConverter) InferMetricType(value interface{}) string {
+	switch v := value.(type) {
+	case bool:
+		return "boolean"
+	case int, int8, int16, int32:
+		return "int32"
+	case int64:
+		return "int64"
+	case uint, uint8, uint16, uint32:
+		return "uint32"
+	case uint64:
+		return "uint64"
+	case float32:
+		return "float"
+	case float64:
+		return "double"
+	case string:
+		return "string"
+	case json.Number:
+		// Try to determine if it's integer or float
+		if numStr := string(v); strings.Contains(numStr, ".") {
+			return "double"
+		}
+		return "int64"
+	default:
+		return "string" // Default to string for unknown types
+	}
 }
 
 // MQTTClientBuilder provides a Benthos-style abstraction for creating MQTT clients.

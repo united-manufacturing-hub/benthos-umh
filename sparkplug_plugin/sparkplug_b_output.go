@@ -189,6 +189,9 @@ type sparkplugOutput struct {
 	deathsPublished   *service.MetricCounter
 	sequenceWraps     *service.MetricCounter
 	publishErrors     *service.MetricCounter
+
+	// Added for type inference
+	typeConverter *TypeConverter
 }
 
 func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sparkplugOutput, error) {
@@ -370,6 +373,7 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 		deathsPublished:   mgr.Metrics().NewCounter("deaths_published"),
 		sequenceWraps:     mgr.Metrics().NewCounter("sequence_wraps"),
 		publishErrors:     mgr.Metrics().NewCounter("publish_errors"),
+		typeConverter:     NewTypeConverter(),
 	}, nil
 }
 
@@ -953,8 +957,10 @@ func (s *sparkplugOutput) publishDataMessage(data map[string]interface{}, msg *s
 	var metrics []*sproto.Payload_Metric
 
 	for metricName, value := range data {
+		s.stateMu.RLock()
 		alias, hasAlias := s.metricAliases[metricName]
 		metricType, hasType := s.metricTypes[metricName]
+		s.stateMu.RUnlock()
 
 		if !hasAlias || !hasType {
 			// P5: New metrics are now handled above, this should only happen during debounce
@@ -1180,7 +1186,7 @@ func (s *sparkplugOutput) assignDynamicAliases(newMetrics []string, data map[str
 
 		// Infer type from value
 		value := data[metricName]
-		metricType := s.inferMetricType(value)
+		metricType := s.typeConverter.InferMetricType(value)
 		s.metricTypes[metricName] = metricType
 
 		// Add to metrics configuration for future births
@@ -1194,36 +1200,6 @@ func (s *sparkplugOutput) assignDynamicAliases(newMetrics []string, data map[str
 
 		s.logger.Infof("Assigned dynamic alias %d to metric '%s' (type: %s)",
 			s.metricAliases[metricName], metricName, metricType)
-	}
-}
-
-// inferMetricType determines the Sparkplug data type based on the Go value type
-func (s *sparkplugOutput) inferMetricType(value interface{}) string {
-	switch value.(type) {
-	case bool:
-		return "boolean"
-	case int, int8, int16, int32:
-		return "int32"
-	case int64:
-		return "int64"
-	case uint, uint8, uint16, uint32:
-		return "uint32"
-	case uint64:
-		return "uint64"
-	case float32:
-		return "float"
-	case float64:
-		return "double"
-	case string:
-		return "string"
-	case json.Number:
-		// Try to determine if it's integer or float
-		if numStr := string(value.(json.Number)); strings.Contains(numStr, ".") {
-			return "double"
-		}
-		return "int64"
-	default:
-		return "string" // Default to string for unknown types
 	}
 }
 

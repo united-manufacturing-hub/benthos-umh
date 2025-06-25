@@ -14,7 +14,10 @@
 
 package sparkplug_plugin
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // MQTT transport configuration
 type MQTT struct {
@@ -80,37 +83,45 @@ type Config struct {
 	Behaviour    Behaviour    `yaml:"behaviour"`
 }
 
+// Validate validates the configuration and returns an error if invalid
+func (c *Config) Validate() error {
+	if c.MQTT.QoS > 2 {
+		return fmt.Errorf("invalid QoS value %d: must be 0, 1, or 2", c.MQTT.QoS)
+	}
+	if c.Identity.GroupID == "" {
+		return fmt.Errorf("group_id is required")
+	}
+	if c.Identity.EdgeNodeID == "" && c.Role != RolePrimaryHost {
+		return fmt.Errorf("edge_node_id is required for role %s", c.Role)
+	}
+	return nil
+}
+
 // GetSubscriptionTopics returns the MQTT topics to subscribe to based on role
+func (c *Config) getHostSubscriptionTopics() []string {
+	if len(c.Subscription.Groups) > 0 {
+		topics := make([]string, 0, len(c.Subscription.Groups))
+		for _, group := range c.Subscription.Groups {
+			topics = append(topics, "spBv1.0/"+group+"/#")
+		}
+		return topics
+	}
+	// Default: listen to all groups
+	return []string{"spBv1.0/+/#"}
+}
+
 func (c *Config) GetSubscriptionTopics() []string {
 	switch c.Role {
 	case RoleEdgeNode:
 		// Edge nodes only listen to their own group
 		return []string{"spBv1.0/" + c.Identity.GroupID + "/#"}
 	case RolePrimaryHost:
-		// Primary hosts can filter by specific groups or listen to all
-		if len(c.Subscription.Groups) > 0 {
-			var topics []string
-			for _, group := range c.Subscription.Groups {
-				topics = append(topics, "spBv1.0/"+group+"/#")
-			}
-			return topics
-		}
-		// Default: listen to all groups for complete visibility
-		return []string{"spBv1.0/+/#"}
+		return c.getHostSubscriptionTopics()
 	case RoleHybrid:
-		// Hybrid mode uses same logic as primary_host
-		if len(c.Subscription.Groups) > 0 {
-			var topics []string
-			for _, group := range c.Subscription.Groups {
-				topics = append(topics, "spBv1.0/"+group+"/#")
-			}
-			return topics
-		}
-		// Default: listen to all groups
-		return []string{"spBv1.0/+/#"}
+		return c.getHostSubscriptionTopics()
 	default:
 		// Default to primary host behavior
-		return []string{"spBv1.0/+/#"}
+		return c.getHostSubscriptionTopics()
 	}
 }
 

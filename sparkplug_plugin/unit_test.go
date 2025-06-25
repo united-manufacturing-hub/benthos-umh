@@ -503,6 +503,34 @@ var _ = Describe("TypeConverter Unit Tests", func() {
 				})
 			}
 		})
+
+		It("should infer correct data types from Go values", func() {
+			converter := sparkplug_plugin.NewTypeConverter()
+
+			// Test various value types
+			values := map[interface{}]string{
+				true:          "boolean",
+				false:         "boolean",
+				int(42):       "int32",
+				int32(42):     "int32",
+				int64(42):     "int64",
+				uint32(42):    "uint32",
+				uint64(42):    "uint64",
+				float32(3.14): "float",
+				float64(3.14): "double",
+				"hello":       "string",
+			}
+
+			for value, expectedType := range values {
+				inferredType := converter.InferMetricType(value)
+				Expect(inferredType).To(Equal(expectedType), "Value %v should infer type %s", value, expectedType)
+			}
+
+			// Test unknown type (should default to string)
+			unknownValue := struct{ field string }{field: "test"}
+			inferredType := converter.InferMetricType(unknownValue)
+			Expect(inferredType).To(Equal("string"), "Unknown types should default to string")
+		})
 	})
 })
 
