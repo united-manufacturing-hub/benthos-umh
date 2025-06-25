@@ -771,6 +771,7 @@ func (s *sparkplugInput) resolveAliases(deviceKey string, metrics []*sproto.Payl
 				s.logger.Debugf("   🎯 resolved alias %d -> '%s'", *metric.Alias, *metric.Name)
 			} else if metric.Alias != nil && metric.Name == nil {
 				s.logger.Debugf("   ❌ FAILED to resolve alias %d (no name found)", *metric.Alias)
+				s.messagesErrored.Incr(1) // Track alias resolution failures for monitoring
 			}
 		}
 	} else {

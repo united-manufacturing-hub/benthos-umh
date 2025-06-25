@@ -1507,7 +1507,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 			}
 
 			currentTime := time.Now()
-			for i, _ := range metricBatches {
+			for i := range metricBatches {
 				batchTime := currentTime.Add(time.Duration(i) * time.Second)
 
 				// Check if we should trigger rebirth (debouncing logic)
