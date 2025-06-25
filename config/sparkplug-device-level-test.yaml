@@ -32,10 +32,10 @@ pipeline:
           // Set UMH asset hierarchy - THIS WILL BE CONVERTED TO EON NODE ID
           msg.meta.location_path = "enterprise.factory.line1.station1";
           msg.meta.data_contract = "_historian";
-          
+
           // Store the counter value before modifying payload
           let counterValue = msg.payload.counter;
-          
+
           // Determine tag name based on counter value
           if (counterValue % 2 == 0) {
             msg.meta.tag_name = "value";
@@ -48,7 +48,7 @@ pipeline:
             // Simulate humidity data
             msg.payload = 60.0 + (counterValue % 20);
           }
-          
+
           return msg;
 
 output:
@@ -58,17 +58,17 @@ output:
       - sparkplug_b:
           mqtt:
             urls: ["tcp://localhost:1883"]
-          
+
           # Edge Node identity - DEVICE-LEVEL PARRIS DEMO
           identity:
             group_id: "DeviceLevelTest"
             edge_node_id: "StaticEdgeNode01"
             # device_id will be generated from location_path via PARRIS Method
-          
+
           # Configure as Edge Node (publishes data)
           role: "edge_node"
 
 logger:
   level: "DEBUG"
   format: "logfmt"
-  add_timestamp: true 
+  add_timestamp: true

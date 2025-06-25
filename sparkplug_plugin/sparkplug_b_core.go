@@ -394,11 +394,7 @@ func (sm *SequenceManager) NextSequence() uint8 {
 	defer sm.mu.Unlock()
 
 	current := sm.counter
-	sm.counter++
-	// Sparkplug sequence wraps at 256 back to 0
-	if sm.counter > 255 {
-		sm.counter = 0
-	}
+	sm.counter++ // Automatically wraps at 256 due to uint8 overflow
 
 	return current
 }
