@@ -1,22 +1,56 @@
+# Copyright 2025 UMH Systems GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Sparkplug B Primary Host Configuration for Device-Level Testing
+# This configuration subscribes to all Sparkplug B messages for the DeviceLevelTest group
+# and resolves aliases using cached BIRTH certificates.
+
 input:
-  sparkplug_b:
-    mqtt:
-      urls: ["tcp://broker.hivemq.com:1883"] 
-      client_id: "benthos-device-level-primary-host"
-      qos: 1
-      keep_alive: "30s"
-      connect_timeout: "10s"
-      clean_session: true
-    identity:
-      group_id: "DeviceLevelTest_20250625_1226"  # Match the Edge Node group
-      edge_node_id: "PrimaryHost"
-    role: "primary_host"
+  mqtt:
+    urls: ["tcp://broker.hivemq.com:1883"]
+    topics: ["spBv1.0/DeviceLevelTest/+/+"]
+    client_id: "PrimaryHost_${! random_int() }"
+    qos: 1
+
+pipeline:
+  processors:
+    # Process incoming Sparkplug B messages 
+    - sparkplug_b_input:
+        group_id: "DeviceLevelTest"
+        edge_node_id: "PrimaryHost"
+
+    # Publish PRIMARY HOST STATE message
+    - mapping: |
+        # Publish PRIMARY HOST state every 30 seconds
+        root = if batch_index() == 0 && count("state_published") % 30 == 0 {
+          {
+            "state": "ONLINE",
+            "timestamp": now()
+          }
+        } else { deleted() }
+        
+        # Track state publishing
+        let _ = count("state_published")
 
 output:
-  broker:
-    outputs:
-      - stdout:
-          codec: lines
+  mqtt:
+    urls: ["tcp://broker.hivemq.com:1883"]
+    topic: 'spBv1.0/DeviceLevelTest/STATE/PrimaryHost'
+    client_id: "PrimaryHost_State_${! random_int() }"
+    qos: 1
+    retain: true
+    max_in_flight: 1
 
 logger:
   level: INFO
