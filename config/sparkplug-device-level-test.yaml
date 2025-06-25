@@ -1,12 +1,7 @@
-# Sparkplug B Edge Node Test Configuration
-# This configuration creates a simple Edge Node that publishes test data
-# to demonstrate the complete Sparkplug B flow with the Primary Host
-# DEMONSTRATES PARRIS METHOD: location_path -> EON Node ID conversion
-
 input:
-  # Generate test data every 5 seconds
+  # Generate test data every 2 seconds
   generate:
-    interval: "1s"
+    interval: "2s"
     mapping: |
       root = {
         "counter": counter()
@@ -47,18 +42,18 @@ output:
           # MQTT connection to same broker as Primary Host
           mqtt:
             urls: ["tcp://broker.hivemq.com:1883"]
-            client_id: "benthos-test-edge-node-parris"
+            client_id: "benthos-device-level-test-edge"
             qos: 1
             keep_alive: "60s"
             connect_timeout: "30s"
             clean_session: true
           
-          # Edge Node identity - PARRIS METHOD DEMO
+          # Edge Node identity - DEVICE-LEVEL PARRIS DEMO
           identity:
-            group_id: "TestGroup2"
-            # edge_node_id: ""  # EMPTY = Use Parris Method conversion
-            # location_path "enterprise.factory.line1.station1" 
-            # will become EON Node ID "enterprise:factory:line1:station1"
+            group_id: "DeviceLevelTest"
+            edge_node_id: "StaticEdgeNode01"  # STATIC for Sparkplug B compliance
+            # device_id will be generated from location_path via PARRIS Method
+            # "enterprise.factory.line1.station1" → "enterprise:factory:line1:station1"
           
           # Configure as Edge Node (publishes data)
           role: "edge_node"
@@ -66,4 +61,5 @@ output:
 # Optional: Log to see what's being published
 logger:
   level: "DEBUG"
-  format: "json" 
+  format: "logfmt"
+  add_timestamp: true 

@@ -175,10 +175,10 @@ type sparkplugOutput struct {
 	rebirthDebounceMs int64        // Debounce period in milliseconds (default: 5000ms)
 	dynamicMu         sync.RWMutex // Separate mutex for dynamic alias operations
 
-	// Edge Node ID consistency state management (Phase 1)
-	cachedLocationPath string       // Cached location_path from DATA messages
-	cachedEdgeNodeID   string       // Cached Edge Node ID for BIRTH consistency
-	edgeNodeStateMu    sync.RWMutex // Mutex for thread-safe state access
+	// Device-level PARRIS state management
+	seenDevices   map[string]bool              // Track devices published in this session
+	deviceMetrics map[string]map[string]uint64 // Cache metrics per device (device_id -> metric_name -> alias)
+	deviceStateMu sync.RWMutex                 // Thread safety for device state
 
 	// Core components
 	mqttClientBuilder *MQTTClientBuilder
@@ -250,9 +250,15 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 	}
 
 	config.Identity.EdgeNodeID, _ = identityConf.FieldString("edge_node_id")
-	// edge_node_id is optional - if not provided, will be generated from location_path metadata
+	if config.Identity.EdgeNodeID == "" {
+		return nil, fmt.Errorf("edge_node_id is required for Sparkplug B compliance")
+	}
+
+	config.Identity.LocationPath, _ = identityConf.FieldString("location_path")
+	// location_path is optional - used for PARRIS Method conversion to device_id
 
 	config.Identity.DeviceID, _ = identityConf.FieldString("device_id")
+	// device_id is optional - if not provided, generated from location_path via PARRIS
 
 	// Parse role
 	roleStr, err := conf.FieldString("role")
@@ -354,15 +360,16 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 		nextAlias:          nextAlias,
 		rebirthPending:     false,
 		rebirthDebounceMs:  5000, // 5 second debounce
-		// Edge Node ID consistency state (Phase 1)
-		cachedLocationPath: "",
-		cachedEdgeNodeID:   "",
-		mqttClientBuilder:  NewMQTTClientBuilder(mgr),
-		messagesPublished:  mgr.Metrics().NewCounter("messages_published"),
-		birthsPublished:    mgr.Metrics().NewCounter("births_published"),
-		deathsPublished:    mgr.Metrics().NewCounter("deaths_published"),
-		sequenceWraps:      mgr.Metrics().NewCounter("sequence_wraps"),
-		publishErrors:      mgr.Metrics().NewCounter("publish_errors"),
+		// Device-level PARRIS state initialization
+		seenDevices:   make(map[string]bool),
+		deviceMetrics: make(map[string]map[string]uint64),
+
+		mqttClientBuilder: NewMQTTClientBuilder(mgr),
+		messagesPublished: mgr.Metrics().NewCounter("messages_published"),
+		birthsPublished:   mgr.Metrics().NewCounter("births_published"),
+		deathsPublished:   mgr.Metrics().NewCounter("deaths_published"),
+		sequenceWraps:     mgr.Metrics().NewCounter("sequence_wraps"),
+		publishErrors:     mgr.Metrics().NewCounter("publish_errors"),
 	}, nil
 }
 
@@ -455,7 +462,22 @@ func (s *sparkplugOutput) Write(ctx context.Context, msg *service.Message) error
 		return nil
 	}
 
-	// Create DATA message
+	// Phase 3: Device-level PARRIS implementation
+	deviceID := s.getParrisDeviceID(msg)
+
+	// Check if this is the first time we're seeing this device
+	if s.isFirstTimeDevice(deviceID) {
+		s.logger.Infof("First message for device '%s', publishing DBIRTH", deviceID)
+		if err := s.publishDBIRTH(deviceID, data); err != nil {
+			s.logger.Errorf("Failed to publish DBIRTH for device '%s': %v", deviceID, err)
+			s.publishErrors.Incr(1)
+			return err
+		}
+		s.markDeviceSeen(deviceID)
+		s.birthsPublished.Incr(1)
+	}
+
+	// Publish DATA message (DDATA if device, NDATA if node-level)
 	if err := s.publishDataMessage(data, msg); err != nil {
 		s.logger.Errorf("Failed to publish DATA message: %v", err)
 		s.publishErrors.Incr(1)
@@ -490,6 +512,76 @@ func (s *sparkplugOutput) Close(ctx context.Context) error {
 	return nil
 }
 
+// getParrisDeviceID resolves the Device ID using the PARRIS Method at device level.
+// This implements the NEW device-level PARRIS approach for Sparkplug B compliance.
+//
+// Priority logic:
+// 1. Static Override: If device_id is configured, use it (ignores metadata)
+// 2. Dynamic Generation: If location_path metadata exists, convert using PARRIS Method
+//   - Converts UMH dot notation to Sparkplug colon notation
+//   - Example: "enterprise.plant1.line3.station5" → "enterprise:plant1:line3:station5"
+//
+// 3. Config LocationPath: If location_path is configured statically, use it
+// 4. Empty Device ID: Return empty string for node-level messages (no device)
+func (s *sparkplugOutput) getParrisDeviceID(msg *service.Message) string {
+	// Priority 1: Static device_id override
+	if s.config.Identity.DeviceID != "" {
+		return s.config.Identity.DeviceID
+	}
+
+	// Priority 2: Dynamic from message metadata
+	if msg != nil {
+		if locationPath, exists := msg.MetaGet("location_path"); exists && locationPath != "" {
+			return strings.ReplaceAll(locationPath, ".", ":")
+		}
+	}
+
+	// Priority 3: Static location_path from config
+	if s.config.Identity.LocationPath != "" {
+		return strings.ReplaceAll(s.config.Identity.LocationPath, ".", ":")
+	}
+
+	// Priority 4: Empty device ID (node-level messages)
+	return ""
+}
+
+// isFirstTimeDevice checks if this is the first time we're seeing this device ID
+func (s *sparkplugOutput) isFirstTimeDevice(deviceID string) bool {
+	if deviceID == "" {
+		return false // Node-level messages don't need DBIRTH
+	}
+
+	s.deviceStateMu.RLock()
+	defer s.deviceStateMu.RUnlock()
+
+	return !s.seenDevices[deviceID]
+}
+
+// markDeviceSeen marks a device as seen to prevent duplicate DBIRTH messages
+func (s *sparkplugOutput) markDeviceSeen(deviceID string) {
+	if deviceID == "" {
+		return
+	}
+
+	s.deviceStateMu.Lock()
+	defer s.deviceStateMu.Unlock()
+
+	s.seenDevices[deviceID] = true
+}
+
+// getStaticEdgeNodeID returns the static Edge Node ID for Sparkplug B compliance.
+// Edge Node ID must be static throughout the session per Sparkplug B v3.0 specification.
+func (s *sparkplugOutput) getStaticEdgeNodeID() string {
+	// Edge Node ID must be configured and static for Sparkplug B compliance
+	if s.config.Identity.EdgeNodeID != "" {
+		return s.config.Identity.EdgeNodeID
+	}
+
+	// This should not happen in production - Edge Node ID is required
+	s.logger.Error("Edge Node ID is required for Sparkplug B compliance. Please configure identity.edge_node_id")
+	return "MISSING_EDGE_NODE_ID"
+}
+
 // getEONNodeID resolves the Edge of Network (EON) Node ID using the Parris Method.
 // This method implements dynamic EON Node ID generation from UMH location_path metadata
 // while maintaining backward compatibility with static configuration.
@@ -509,85 +601,12 @@ func (s *sparkplugOutput) Close(ctx context.Context) error {
 //   - msg: The Benthos message containing potential location_path metadata
 //
 // Returns:
-//   - string: The resolved EON Node ID for use in Sparkplug topic construction
-func (s *sparkplugOutput) getEONNodeID(msg *service.Message) string {
-	// Priority 1: Dynamic from location_path metadata (Parris Method)
-	if locationPath, exists := msg.MetaGet("location_path"); exists && locationPath != "" {
-		// Convert UMH dot notation to Sparkplug colon notation (Parris Method)
-		eonNodeID := strings.ReplaceAll(locationPath, ".", ":")
-		s.logger.Debugf("Using dynamic EON Node ID from location_path: %s → %s", locationPath, eonNodeID)
-
-		// Phase 2: Cache state for BIRTH consistency
-		s.edgeNodeStateMu.Lock()
-		s.cachedLocationPath = locationPath
-		s.cachedEdgeNodeID = eonNodeID
-		s.edgeNodeStateMu.Unlock()
-		s.logger.Debugf("Cached Edge Node ID state: location_path=%s, edgeNodeID=%s", locationPath, eonNodeID)
-
-		return eonNodeID
-	}
-
-	// Priority 2: Static override from configuration
-	if s.config.Identity.EdgeNodeID != "" {
-		s.logger.Debugf("Using static EON Node ID from configuration: %s", s.config.Identity.EdgeNodeID)
-		return s.config.Identity.EdgeNodeID
-	}
-
-	// Priority 3: Default fallback (should log warning)
-	s.logger.Warn("No location_path metadata or edge_node_id configured, using default EON Node ID. " +
-		"For production use, either set identity.edge_node_id in configuration or ensure location_path " +
-		"metadata is provided (usually by tag_processor plugin)")
-	return "default_node"
-}
-
-// getBirthEdgeNodeID resolves the Edge Node ID for BIRTH messages using cached state.
-// This method implements the "Last Known Good State" pattern to ensure BIRTH and DATA
-// messages use consistent Edge Node IDs for proper alias resolution.
-//
-// Priority logic:
-// 1. Cached State (Preferred): Use cached Edge Node ID from previous DATA messages
-// 2. Static Override: Use configured edge_node_id if available
-// 3. Default Fallback: Use "default_node" (should be avoided in production)
-//
-// This method is thread-safe and designed to be called from BIRTH message publishing
-// contexts where message metadata is not available.
-//
-// Returns:
-//   - string: The resolved Edge Node ID for BIRTH message topic construction
-func (s *sparkplugOutput) getBirthEdgeNodeID() string {
-	s.edgeNodeStateMu.RLock()
-	defer s.edgeNodeStateMu.RUnlock()
-
-	// Priority 1: Use cached state if available
-	if s.cachedEdgeNodeID != "" {
-		s.logger.Debugf("Using cached Edge Node ID for BIRTH: %s (from cached location_path: %s)",
-			s.cachedEdgeNodeID, s.cachedLocationPath)
-		return s.cachedEdgeNodeID
-	}
-
-	// Priority 2: Fall back to static config
-	if s.config.Identity.EdgeNodeID != "" {
-		s.logger.Debugf("Using static Edge Node ID for BIRTH: %s", s.config.Identity.EdgeNodeID)
-		return s.config.Identity.EdgeNodeID
-	}
-
-	// Priority 3: Default fallback
-	s.logger.Warn("No cached state or static edge_node_id available for BIRTH, using default Edge Node ID. " +
-		"This may cause alias resolution failures if DATA messages use different Edge Node IDs")
-	return "default_node"
-}
 
 // Private methods for the rest of the implementation...
 func (s *sparkplugOutput) createDeathMessage(msg *service.Message) (string, []byte) {
-	// Resolve EON Node ID - use message context if available, otherwise use cached state
-	var eonNodeID string
-	if msg != nil {
-		eonNodeID = s.getEONNodeID(msg)
-	} else {
-		// Phase 2: Use getBirthEdgeNodeID for consistent Edge Node ID resolution
-		// This ensures DEATH messages use the same Edge Node ID as BIRTH/DATA messages
-		eonNodeID = s.getBirthEdgeNodeID()
-	}
+	// Phase 3: Always use static Edge Node ID for Sparkplug B compliance
+	// This ensures DEATH messages use the same Edge Node ID as BIRTH/DATA messages
+	eonNodeID := s.getStaticEdgeNodeID()
 
 	var topic string
 	if s.config.Identity.DeviceID != "" {
@@ -619,10 +638,107 @@ func (s *sparkplugOutput) createDeathMessage(msg *service.Message) (string, []by
 	return topic, payloadBytes
 }
 
+// publishDBIRTH publishes a Device BIRTH message for the specified device ID
+func (s *sparkplugOutput) publishDBIRTH(deviceID string, data map[string]interface{}) error {
+	if deviceID == "" {
+		return fmt.Errorf("device ID cannot be empty for DBIRTH")
+	}
+
+	eonNodeID := s.getStaticEdgeNodeID()
+	topic := fmt.Sprintf("spBv1.0/%s/DBIRTH/%s/%s", s.config.Identity.GroupID, eonNodeID, deviceID)
+
+	var metrics []*sproto.Payload_Metric
+
+	// Add configured metrics for this device
+	s.stateMu.RLock()
+	for _, metricConfig := range s.metrics {
+		metric := &sproto.Payload_Metric{
+			Name:     func() *string { s := metricConfig.Name; return &s }(),
+			Alias:    &metricConfig.Alias,
+			Datatype: s.getSparkplugDataType(metricConfig.Type),
+		}
+
+		if s.retainLastValues {
+			if lastValue, exists := s.lastValues[metricConfig.Name]; exists {
+				s.setMetricValue(metric, lastValue, metricConfig.Type)
+			} else {
+				metric.IsNull = func() *bool { b := true; return &b }()
+			}
+		} else {
+			metric.IsNull = func() *bool { b := true; return &b }()
+		}
+
+		metrics = append(metrics, metric)
+	}
+
+	s.stateMu.RUnlock()
+
+	// Add dynamic metrics from current data (after releasing the read lock to avoid deadlock)
+	for metricName, value := range data {
+		// Skip if already added as configured metric
+		found := false
+		s.stateMu.RLock()
+		for _, metricConfig := range s.metrics {
+			if metricConfig.Name == metricName {
+				found = true
+				break
+			}
+		}
+		s.stateMu.RUnlock()
+
+		if found {
+			continue
+		}
+
+		// Assign dynamic alias if not already assigned (this may acquire write locks)
+		s.stateMu.RLock()
+		_, exists := s.metricAliases[metricName]
+		s.stateMu.RUnlock()
+
+		if !exists {
+			s.assignDynamicAliases([]string{metricName}, data)
+		}
+
+		s.stateMu.RLock()
+		alias := s.metricAliases[metricName]
+		metricType := s.metricTypes[metricName]
+		s.stateMu.RUnlock()
+
+		metric := &sproto.Payload_Metric{
+			Name:     func() *string { s := metricName; return &s }(),
+			Alias:    &alias,
+			Datatype: s.getSparkplugDataType(metricType),
+		}
+
+		s.setMetricValue(metric, value, metricType)
+		metrics = append(metrics, metric)
+	}
+
+	birthPayload := &sproto.Payload{
+		Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),
+		Seq:       func() *uint64 { s := uint64(0); return &s }(),
+		Metrics:   metrics,
+	}
+
+	payloadBytes, err := proto.Marshal(birthPayload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal DBIRTH payload: %w", err)
+	}
+
+	// DBIRTH messages MUST be retained per Sparkplug B specification
+	token := s.client.Publish(topic, s.config.MQTT.QoS, true, payloadBytes)
+	if token.Wait() && token.Error() != nil {
+		return fmt.Errorf("failed to publish DBIRTH message: %w", token.Error())
+	}
+
+	s.logger.Infof("Published retained DBIRTH message on topic: %s", topic)
+	return nil
+}
+
 func (s *sparkplugOutput) publishBirthMessage() error {
-	// Phase 2: Use getBirthEdgeNodeID for consistent Edge Node ID resolution
+	// Phase 3: Use static Edge Node ID for Sparkplug B compliance
 	// This ensures BIRTH and DATA messages use the same Edge Node ID for proper alias resolution
-	eonNodeID := s.getBirthEdgeNodeID()
+	eonNodeID := s.getStaticEdgeNodeID()
 
 	var topic string
 	if s.config.Identity.DeviceID != "" {
@@ -815,12 +931,13 @@ func (s *sparkplugOutput) publishDataMessage(data map[string]interface{}, msg *s
 	}
 	s.dynamicMu.RUnlock()
 
-	// Resolve EON Node ID using Parris Method
-	eonNodeID := s.getEONNodeID(msg)
+	// Phase 3: Use static Edge Node ID and device-level PARRIS
+	eonNodeID := s.getStaticEdgeNodeID()
+	deviceID := s.getParrisDeviceID(msg)
 
 	var topic string
-	if s.config.Identity.DeviceID != "" {
-		topic = fmt.Sprintf("spBv1.0/%s/DDATA/%s/%s", s.config.Identity.GroupID, eonNodeID, s.config.Identity.DeviceID)
+	if deviceID != "" {
+		topic = fmt.Sprintf("spBv1.0/%s/DDATA/%s/%s", s.config.Identity.GroupID, eonNodeID, deviceID)
 	} else {
 		topic = fmt.Sprintf("spBv1.0/%s/NDATA/%s", s.config.Identity.GroupID, eonNodeID)
 	}

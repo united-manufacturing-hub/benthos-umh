@@ -3,21 +3,24 @@
 HUMAN TODO:
 // Handle rebirth logic here if needed for edge nodes
 
-## 🎉 **Current Status: MAJOR SUCCESS + COMPLIANCE VALIDATED**
+## 🎉 **Current Status: DEVICE-LEVEL PARRIS IMPLEMENTATION COMPLETE**
 
 ### ✅ **Completed & Working:**
 - **P4-P8 Implementation**: All major features implemented and tested
 - **P9.1 NCMD Processing**: Fixed and working correctly
 - **P9.2 Compliance Validation**: ✅ **FULLY SPARKPLUG B COMPLIANT**
+- **Device-Level PARRIS**: ✅ **SIMPLIFIED SINGLE-APPROACH IMPLEMENTATION**
 - **Alias Resolution**: **WORKING PERFECTLY** - `{"alias":2,"name":"temperature:value","value":33}`
 - **P8 Spec Compliance**: Birth/death messages, sequence numbers, MQTT configuration
 - **P7 Dynamic Aliases**: Automatic alias assignment and resolution
 - **P6 Metadata Enrichment**: All 9 spb_* metadata fields populated
 - **P5 Data-Only Filter**: Efficient message processing
-- **PARRIS Method**: Location path to EON Node ID conversion working and validated
+- **Static Edge Node ID**: Required field for Sparkplug B v3.0 compliance
+- **Device-Level PARRIS**: Location path to Device ID conversion (industry-aligned)
+- **Legacy Code Removal**: Cleaned up all dynamic Edge Node ID functions
 - **Integration Test**: Live MQTT communication validated on broker.hivemq.com
-- **Binary Build**: Latest code successfully compiled and deployed
-- **Compliance Test**: 60-second three-instance test confirms full Sparkplug B compliance
+- **Binary Build**: Latest simplified code successfully compiled and deployed
+- **End-to-End Validation**: Complete NBIRTH → DBIRTH → DDATA flow working
 
 ### 📊 **Test Results:**
 - **Unit Tests**: 50/50 passing (including 14 P8 compliance tests)
@@ -38,19 +41,25 @@ cp tmp/bin/benthos ./benthos
 
 ### **Running the Integration Test:**
 
-**Step 1: Start Primary Host (Terminal 1)**
 ```bash
+# Terminal 1: Primary Host
 cd /workspaces/benthos-umh
-./benthos -c config/sparkplug-primary-host-proper.yaml
-```
+./benthos -c config/sparkplug-device-level-primary-host.yaml
 
-**Step 2: Start Edge Node (Terminal 2)**
-```bash
-cd /workspaces/benthos-umh  
-./benthos -c config/sparkplug-edge-node-test.yaml
+# Terminal 2: Edge Node (Static Edge Node ID + Device-Level PARRIS)
+./benthos -c config/sparkplug-device-level-test.yaml
 ```
 
 ### **Expected Results:**
+
+**✅ Device-Level PARRIS (Sparkplug B Compliant):**
+1. **Static Edge Node ID**: `StaticEdgeNode01`
+2. **Dynamic Device ID**: `enterprise:factory:line1:station1`
+3. **Topic Structure**: 
+   - NBIRTH: `spBv1.0/DeviceLevelTest/NBIRTH/StaticEdgeNode01`
+   - DBIRTH: `spBv1.0/DeviceLevelTest/DBIRTH/StaticEdgeNode01/enterprise:factory:line1:station1`
+   - DDATA: `spBv1.0/DeviceLevelTest/DDATA/StaticEdgeNode01/enterprise:factory:line1:station1`
+4. **Message Flow**: NBIRTH → DBIRTH → DDATA (Sparkplug B compliant)
 
 **✅ Success Indicators:**
 1. **Alias Resolution Working:**
@@ -61,35 +70,39 @@ cd /workspaces/benthos-umh
 
 2. **Debug Logs Show:**
    ```
-   ✅ resolveAliases: resolved 2 aliases for device TestGroup/enterprise:factory:line1:station1
+   ✅ resolveAliases: resolved 2 aliases for device
    🎯 resolved alias 1 -> 'humidity:value'
    🎯 resolved alias 2 -> 'temperature:value'
    ```
 
 3. **PARRIS Method Working:**
    ```
-   Using dynamic EON Node ID from location_path: enterprise.factory.line1.station1 → enterprise:factory:line1:station1
+   First message for device 'enterprise:factory:line1:station1', publishing DBIRTH
+   Published retained DBIRTH message on topic: spBv1.0/DeviceLevelTest/DBIRTH/StaticEdgeNode01/enterprise:factory:line1:station1
    ```
 
 4. **Complete Message Flow:**
-   - **NBIRTH**: Edge Node publishes birth with metric definitions
-   - **NDATA**: Edge Node publishes data every 1 second with aliases
+   - **NBIRTH**: Edge Node publishes node-level birth with metric definitions
+   - **DBIRTH**: Edge Node publishes device-level birth (device-level PARRIS only)
+   - **DDATA/NDATA**: Edge Node publishes data every 2 seconds with aliases
    - **STATE**: Primary Host publishes ONLINE state
    - **Resolution**: Primary Host resolves aliases to metric names
 
 ### **Test Configuration Details:**
 
-**Edge Node (`sparkplug-edge-node-test.yaml`):**
-- **Group ID**: `TestGroup`
-- **EON Node ID**: Dynamic from `location_path` → `enterprise:factory:line1:station1`
-- **Metrics**: `temperature:value` (alias 2), `humidity:value` (alias 1)
-- **Frequency**: 1 second intervals
-- **PARRIS Method**: Location path conversion enabled
+**Edge Node (`sparkplug-device-level-test.yaml`):**
+- **Group ID**: `DeviceLevelTest`
+- **Edge Node ID**: `StaticEdgeNode01` (static for Sparkplug B compliance)
+- **Device ID**: Dynamic from `location_path` → `enterprise:factory:line1:station1`
+- **Metrics**: `temperature:value`, `humidity:value` (dynamic aliases)
+- **Frequency**: 2 second intervals
+- **PARRIS Method**: Location path conversion to Device ID
 
-**Primary Host (`sparkplug-primary-host-proper.yaml`):**
-- **Group ID**: `TestGroup` (matches Edge Node)
-- **Subscription**: `spBv1.0/TestGroup/+/+` (all message types)
-- **Alias Cache**: Stores NBIRTH metric definitions
+**Primary Host (`sparkplug-device-level-primary-host.yaml`):**
+- **Group ID**: `DeviceLevelTest` (matches Edge Node)
+- **Edge Node ID**: `PrimaryHost`
+- **Subscription**: `spBv1.0/DeviceLevelTest/+/+` (all message types)
+- **Alias Cache**: Stores NBIRTH and DBIRTH metric definitions
 - **Output**: Resolved metrics with both alias and name
 
 ### **Stopping the Test:**
@@ -101,8 +114,8 @@ pkill -f benthos
 ### **Troubleshooting:**
 
 **If alias resolution isn't working:**
-1. Check that both processes are using the same `group_id: "TestGroup"`
-2. Ensure Edge Node publishes NBIRTH before NDATA
+1. Check that both processes are using the same `group_id: "DeviceLevelTest"`
+2. Ensure Edge Node publishes NBIRTH/DBIRTH before DDATA
 3. Verify MQTT connectivity to broker.hivemq.com:1883
 4. Check that binary was rebuilt after code changes: `make target`
 
@@ -110,6 +123,24 @@ pkill -f benthos
 1. Verify internet connection (public MQTT broker)
 2. Check for configuration file syntax errors
 3. Ensure tag_processor is populating `location_path` metadata
+4. Verify `edge_node_id` is configured (now required field)
+
+## 🧹 **Simplification Changes Made**
+
+### **Removed Legacy Code:**
+- ✅ **Removed `getEONNodeID()` function** - Dynamic Edge Node ID generation
+- ✅ **Removed `getBirthEdgeNodeID()` function** - Cached Edge Node ID for BIRTH
+- ✅ **Removed Edge Node caching state** - `cachedLocationPath`, `cachedEdgeNodeID`, `edgeNodeStateMu`
+- ✅ **Made `edge_node_id` required** - No fallback to dynamic generation
+- ✅ **Removed legacy config files** - `sparkplug-edge-node-test.yaml`, `sparkplug-primary-host-proper.yaml`
+- ✅ **Simplified documentation** - Single device-level PARRIS approach only
+
+### **Benefits:**
+- **Cleaner Code**: Removed ~100 lines of complex legacy logic
+- **Better Performance**: No more caching and state management overhead
+- **Sparkplug B Compliance**: Enforced static Edge Node ID requirement
+- **Easier Maintenance**: Single approach instead of dual compatibility
+- **Industry Alignment**: Matches Ignition MQTT Transmission patterns
 
 ## ⚠️ **Identified Remaining Issues**
 

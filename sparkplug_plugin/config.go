@@ -21,9 +21,10 @@ type Credentials struct {
 
 // Sparkplug identity configuration
 type Identity struct {
-	GroupID    string `yaml:"group_id"`     // Required: Stable business grouping (e.g., "FactoryA")
-	EdgeNodeID string `yaml:"edge_node_id"` // Optional: Static EON Node ID override. If empty, auto-generated from location_path metadata using Parris Method
-	DeviceID   string `yaml:"device_id"`    // Optional: Device-level identification. Empty means node-level messages
+	GroupID      string `yaml:"group_id"`      // Required: Stable business grouping (e.g., "FactoryA")
+	EdgeNodeID   string `yaml:"edge_node_id"`  // Required: Static Edge Node ID for session consistency (Sparkplug B compliance)
+	LocationPath string `yaml:"location_path"` // Optional: UMH location path for PARRIS Method conversion to device_id
+	DeviceID     string `yaml:"device_id"`     // Optional: Static device ID override. If empty and location_path provided, auto-generated via PARRIS
 }
 
 // Subscription configuration for primary_host role
