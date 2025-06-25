@@ -351,4 +351,4 @@ func MustDecodeBase64(b64 string) []byte {
 	return data
 }
 
-// TODO: Add more helper functions for payload manipulation and validation
+// Note: Additional payload helpers can be added as needed

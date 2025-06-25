@@ -681,22 +681,6 @@ var _ = Describe("Message Processing Pipeline", func() {
 	})
 })
 
-var _ = Describe("State Machine Validation", func() {
-	Context("Node State Transitions", func() {
-		It("should transition OFFLINE → ONLINE → STALE → OFFLINE", func() {
-			Skip("TODO: Test complete state machine transitions")
-		})
-
-		It("should handle concurrent state changes", func() {
-			Skip("TODO: Test state machine under concurrent message processing")
-		})
-
-		It("should persist state across message batches", func() {
-			Skip("TODO: Test state persistence across processing cycles")
-		})
-	})
-})
-
 var _ = Describe("Device-Level Message Handling", func() {
 	Context("DBIRTH and DDATA Processing", func() {
 		It("should handle DBIRTH → DDATA device lifecycle", func() {
