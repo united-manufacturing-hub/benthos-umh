@@ -74,7 +74,8 @@ Key features:
 				Optional(),
 			service.NewIntField("qos").
 				Description("QoS level for MQTT operations (0, 1, or 2)").
-				Default(1),
+				Default(1).
+				Examples(0, 1, 2),
 			service.NewDurationField("keep_alive").
 				Description("MQTT keep alive interval").
 				Default("60s"),
@@ -217,6 +218,9 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 	qosInt, err := mqttConf.FieldInt("qos")
 	if err != nil {
 		return nil, err
+	}
+	if qosInt < 0 || qosInt > 2 {
+		return nil, fmt.Errorf("QoS must be 0, 1, or 2, got %d", qosInt)
 	}
 	config.MQTT.QoS = byte(qosInt)
 
@@ -401,6 +405,7 @@ func (s *sparkplugInput) messageHandler(client mqtt.Client, msg mqtt.Message) {
 		s.logger.Debugf("✅ messageHandler: queued message for processing")
 	default:
 		s.logger.Warn("Message buffer full, dropping message")
+		s.messagesDropped.Incr(1)
 	}
 }
 
@@ -413,6 +418,7 @@ func (s *sparkplugInput) ReadBatch(ctx context.Context) (service.MessageBatch, s
 		batch, err := s.processSparkplugMessage(mqttMsg)
 		if err != nil {
 			s.logger.Errorf("❌ ReadBatch: failed to process message: %v", err)
+			s.messagesErrored.Incr(1)
 			return nil, nil, err
 		}
 		if batch == nil || len(batch) == 0 {
@@ -451,6 +457,7 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 	var payload sproto.Payload
 	if err := proto.Unmarshal(mqttMsg.payload, &payload); err != nil {
 		s.logger.Errorf("Failed to unmarshal Sparkplug payload from topic %s: %v", mqttMsg.topic, err)
+		s.messagesErrored.Incr(1)
 		return nil, nil
 	}
 
