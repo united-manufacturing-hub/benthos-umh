@@ -12,47 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Sparkplug B Primary Host Configuration for Device-Level Testing
-# This configuration subscribes to all Sparkplug B messages for the DeviceLevelTest group
-# and resolves aliases using cached BIRTH certificates.
+# Sparkplug B Primary Host Configuration - Minimal Setup
+# Subscribes to all Sparkplug B messages and displays them
+# Requires: docker run -d --name mosquitto -p 1883:1883 eclipse-mosquitto:1.6
 
 input:
-  mqtt:
-    urls: ["tcp://broker.hivemq.com:1883"]
-    topics: ["spBv1.0/DeviceLevelTest/+/+"]
-    client_id: "PrimaryHost_${! random_int() }"
-    qos: 1
-
-pipeline:
-  processors:
-    # Process incoming Sparkplug B messages 
-    - sparkplug_b_input:
-        group_id: "DeviceLevelTest"
-        edge_node_id: "PrimaryHost"
-
-    # Publish PRIMARY HOST STATE message
-    - mapping: |
-        # Publish PRIMARY HOST state every 30 seconds
-        root = if batch_index() == 0 && count("state_published") % 30 == 0 {
-          {
-            "state": "ONLINE",
-            "timestamp": now()
-          }
-        } else { deleted() }
-        
-        # Track state publishing
-        let _ = count("state_published")
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+    identity:
+      group_id: "DeviceLevelTest"
+      edge_node_id: "PrimaryHost" 
+    role: "primary_host"
 
 output:
-  mqtt:
-    urls: ["tcp://broker.hivemq.com:1883"]
-    topic: 'spBv1.0/DeviceLevelTest/STATE/PrimaryHost'
-    client_id: "PrimaryHost_State_${! random_int() }"
-    qos: 1
-    retain: true
-    max_in_flight: 1
+  stdout: {}
 
 logger:
-  level: INFO
+  level: DEBUG
   format: logfmt
   add_timestamp: true 

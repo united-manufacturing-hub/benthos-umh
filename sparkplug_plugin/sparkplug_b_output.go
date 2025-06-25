@@ -12,6 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package sparkplug_plugin implements Device-Level PARRIS architecture for Sparkplug B.
+//
+// Architecture Overview:
+// This implementation focuses exclusively on device-level messaging (DBIRTH/DDATA)
+// rather than the full node-level + device-level complexity. This design choice
+// aligns with UMH's asset-centric approach and simplifies the codebase significantly.
+//
+// Key Concepts:
+// - DBIRTH: Device birth certificates that define ALL metric aliases for a device
+// - DDATA: Device data messages using aliases for efficient transmission
+// - PARRIS Method: Dynamic Device ID generation from UMH location_path metadata
+// - Alias Resolution: Numeric aliases resolved to metric names via cached DBIRTH certificates
+//
+// Message Flow:
+// 1. UMH message arrives with location_path metadata
+// 2. location_path converted to Sparkplug Device ID (PARRIS method)
+// 3. Device metrics tracked and accumulated across messages
+// 4. DBIRTH published with complete metric definitions (first time OR new metrics)
+// 5. DDATA published with aliases for efficient transmission
+//
+// This approach eliminates NBIRTH/NDATA complexity while maintaining full Sparkplug B compliance.
 package sparkplug_plugin
 
 import (
@@ -469,10 +490,20 @@ func (s *sparkplugOutput) Write(ctx context.Context, msg *service.Message) error
 	// Phase 3: Device-level PARRIS implementation
 	deviceID := s.getParrisDeviceID(msg)
 
-	// Check if this is the first time we're seeing this device
-	if s.isFirstTimeDevice(deviceID) {
-		s.logger.Infof("First message for device '%s', publishing DBIRTH", deviceID)
-		if err := s.publishDBIRTH(deviceID, data); err != nil {
+	// Check if we need to publish DBIRTH (first time OR new metrics discovered)
+	newMetricsFound := s.updateDeviceMetrics(deviceID, data)
+
+	if s.isFirstTimeDevice(deviceID) || newMetricsFound {
+		if s.isFirstTimeDevice(deviceID) {
+			s.logger.Infof("First message for device '%s', publishing DBIRTH", deviceID)
+		} else {
+			s.logger.Infof("New metrics discovered for device '%s', publishing updated DBIRTH", deviceID)
+		}
+
+		// Get all known metrics for this device for DBIRTH
+		allDeviceMetrics := s.getAllDeviceMetrics(deviceID, data)
+
+		if err := s.publishDBIRTH(deviceID, allDeviceMetrics); err != nil {
 			s.logger.Errorf("Failed to publish DBIRTH for device '%s': %v", deviceID, err)
 			s.publishErrors.Incr(1)
 			return err
@@ -573,6 +604,78 @@ func (s *sparkplugOutput) markDeviceSeen(deviceID string) {
 	s.seenDevices[deviceID] = true
 }
 
+// updateDeviceMetrics updates the metric cache for a device and returns true if new metrics were found.
+// This implements the Device-Level PARRIS requirement that DBIRTH must contain ALL metrics
+// before they can be used in DDATA messages. This function ensures we track all unique
+// metrics per device across multiple incoming messages.
+//
+// Returns true when new metrics are discovered, triggering a fresh DBIRTH publication
+// to maintain Sparkplug B compliance (all aliases must be defined before use).
+func (s *sparkplugOutput) updateDeviceMetrics(deviceID string, data map[string]interface{}) bool {
+	if deviceID == "" || len(data) == 0 {
+		return false
+	}
+
+	s.deviceStateMu.Lock()
+	defer s.deviceStateMu.Unlock()
+
+	// Initialize device metrics map if not exists
+	if s.deviceMetrics[deviceID] == nil {
+		s.deviceMetrics[deviceID] = make(map[string]uint64)
+	}
+
+	deviceCache := s.deviceMetrics[deviceID]
+	newMetricsFound := false
+
+	// Check for new metrics
+	for metricName := range data {
+		if _, exists := deviceCache[metricName]; !exists {
+			newMetricsFound = true
+			// We'll assign the actual alias later in assignDynamicAliases
+			deviceCache[metricName] = 0 // Placeholder
+		}
+	}
+
+	return newMetricsFound
+}
+
+// getAllDeviceMetrics returns all known metrics for a device (cached + current).
+// Essential for Device-Level PARRIS: DBIRTH must declare ALL metrics that will appear
+// in DDATA messages. This function combines current message metrics with previously
+// cached metrics to ensure complete DBIRTH declarations.
+//
+// Behavior:
+// - Current message metrics use actual values
+// - Previously seen metrics (not in current message) use null values
+// - Ensures Sparkplug B compliance: no metric can appear in DDATA without prior DBIRTH definition
+func (s *sparkplugOutput) getAllDeviceMetrics(deviceID string, currentData map[string]interface{}) map[string]interface{} {
+	if deviceID == "" {
+		return currentData
+	}
+
+	s.deviceStateMu.RLock()
+	deviceCache := s.deviceMetrics[deviceID]
+	s.deviceStateMu.RUnlock()
+
+	// Start with current data
+	allMetrics := make(map[string]interface{})
+	for k, v := range currentData {
+		allMetrics[k] = v
+	}
+
+	// Add cached metrics with null values (DBIRTH requirement)
+	if deviceCache != nil {
+		for metricName := range deviceCache {
+			if _, exists := allMetrics[metricName]; !exists {
+				// Set to null for metrics not in current message (DBIRTH spec compliance)
+				allMetrics[metricName] = nil
+			}
+		}
+	}
+
+	return allMetrics
+}
+
 // getStaticEdgeNodeID returns the static Edge Node ID for Sparkplug B compliance.
 // Edge Node ID must be static throughout the session per Sparkplug B v3.0 specification.
 func (s *sparkplugOutput) getStaticEdgeNodeID() string {
@@ -642,7 +745,16 @@ func (s *sparkplugOutput) createDeathMessage(msg *service.Message) (string, []by
 	return topic, payloadBytes
 }
 
-// publishDBIRTH publishes a Device BIRTH message for the specified device ID
+// publishDBIRTH publishes a Device BIRTH message for the specified device ID.
+// This is the cornerstone of the Device-Level PARRIS method: DBIRTH defines ALL metrics
+// that will be used in subsequent DDATA messages. Unlike NBIRTH (node-level), DBIRTH
+// focuses exclusively on device-specific metrics with proper alias definitions.
+//
+// Key behaviors:
+// - Accumulates all known metrics for the device (current + previously seen)
+// - Assigns unique aliases for efficient DDATA transmission
+// - Sets retained flag per Sparkplug B specification
+// - Called on first device message OR when new metrics are discovered
 func (s *sparkplugOutput) publishDBIRTH(deviceID string, data map[string]interface{}) error {
 	if deviceID == "" {
 		return fmt.Errorf("device ID cannot be empty for DBIRTH")
