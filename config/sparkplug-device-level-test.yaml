@@ -50,10 +50,9 @@ output:
           
           # Edge Node identity - DEVICE-LEVEL PARRIS DEMO
           identity:
-            group_id: "DeviceLevelTest"
-            edge_node_id: "StaticEdgeNode01"  # STATIC for Sparkplug B compliance
+            group_id: "DeviceLevelTest_20250625_1226"  # Unique group to avoid broker conflicts
+            edge_node_id: "StaticEdgeNode01"
             # device_id will be generated from location_path via PARRIS Method
-            # "enterprise.factory.line1.station1" → "enterprise:factory:line1:station1"
           
           # Configure as Edge Node (publishes data)
           role: "edge_node"
