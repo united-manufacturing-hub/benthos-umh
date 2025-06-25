@@ -233,7 +233,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 var _ = Describe("TopicParser Unit Tests", func() {
 	Context("Topic Parsing", func() {
 		It("should parse valid Sparkplug topics", func() {
-			// TODO: Test actual topic parser when exposed
+			// Note: Topic parser is internal - tested via integration tests
 			// For now, test the topic format validation logic
 			validTopics := []struct {
 				topic    string
@@ -288,7 +288,7 @@ var _ = Describe("TopicParser Unit Tests", func() {
 		})
 
 		It("should reject invalid topic formats", func() {
-			// TODO: Test edge cases when parser is exposed
+			// Note: Edge cases are tested via integration tests
 			invalidTopics := []string{
 				"invalid/topic/format",
 				"spBv2.0/Factory1/NDATA/Line1",   // Wrong version
@@ -2282,8 +2282,13 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 
 					Expect(result).To(ContainSubstring("enterprise:worker"))
 					// State should be updated (one of the workers will win)
-					Expect(output.cachedLocationPath).NotTo(BeEmpty())
-					Expect(output.cachedEdgeNodeID).NotTo(BeEmpty())
+					output.edgeNodeStateMu.RLock()
+					cachedPath := output.cachedLocationPath
+					cachedID := output.cachedEdgeNodeID
+					output.edgeNodeStateMu.RUnlock()
+
+					Expect(cachedPath).NotTo(BeEmpty())
+					Expect(cachedID).NotTo(BeEmpty())
 				}(i)
 			}
 
@@ -2317,8 +2322,10 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 				By(tc.description)
 
 				// Reset state
+				output.edgeNodeStateMu.Lock()
 				output.cachedLocationPath = ""
 				output.cachedEdgeNodeID = ""
+				output.edgeNodeStateMu.Unlock()
 				output.config.Identity.EdgeNodeID = tc.staticConfig
 
 				// Step 1: Simulate DATA message processing (caches state)
@@ -2369,8 +2376,13 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 			Expect(birthID2).To(Equal("enterprise:line2")) // Should update to latest
 
 			By("Verifying cached state reflects latest DATA message")
-			Expect(output.cachedLocationPath).To(Equal("enterprise.line2"))
-			Expect(output.cachedEdgeNodeID).To(Equal("enterprise:line2"))
+			output.edgeNodeStateMu.RLock()
+			cachedPath := output.cachedLocationPath
+			cachedID := output.cachedEdgeNodeID
+			output.edgeNodeStateMu.RUnlock()
+
+			Expect(cachedPath).To(Equal("enterprise.line2"))
+			Expect(cachedID).To(Equal("enterprise:line2"))
 		})
 
 		It("should maintain consistency across multiple message types", func() {
@@ -2441,8 +2453,10 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 				By(tc.description)
 
 				// Reset state
+				output.edgeNodeStateMu.Lock()
 				output.cachedLocationPath = ""
 				output.cachedEdgeNodeID = ""
+				output.edgeNodeStateMu.Unlock()
 				output.config.Identity.EdgeNodeID = tc.staticConfig
 
 				// Process DATA message
@@ -2523,8 +2537,12 @@ func (m *mockSparkplugOutput) getEdgeNodeID(msg *mockMessage) string {
 	}
 
 	// Priority 2: Static override from configuration
-	if m.config.Identity.EdgeNodeID != "" {
-		return m.config.Identity.EdgeNodeID
+	m.edgeNodeStateMu.RLock()
+	staticEdgeNodeID := m.config.Identity.EdgeNodeID
+	m.edgeNodeStateMu.RUnlock()
+
+	if staticEdgeNodeID != "" {
+		return staticEdgeNodeID
 	}
 
 	// Priority 3: Default fallback (should log warning)
