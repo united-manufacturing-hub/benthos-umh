@@ -305,10 +305,62 @@ var _ = Describe("Initializing uns output plugin", func() {
 		})
 
 		When("with umh_topic containing consecutive dots", func() {
-			It("should sanitize consecutive dots in the message key", func() {
+			It("should reject consecutive dots in the message key", func() {
 				msg := service.NewMessage([]byte(`{"value": false, "timestamp_ms": 1750930223716}`))
 				// Set umh_topic with consecutive dots (similar to the original problem)
 				msg.MetaSet("umh_topic", "umh.v1.UMH-Systems-GmbH---Dev-Team......._historian.Root.Objects.SiemensPLC_fallback._System._EnableDiagnostics")
+				msgs := service.MessageBatch{msg}
+
+				err := outputPlugin.WriteBatch(ctx, msgs)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("message key contained multiple consecutive dots and was rejected"))
+			})
+
+			It("should reject multiple consecutive dots in different parts of the topic", func() {
+				msg := service.NewMessage([]byte(`{"value": 42.5, "timestamp_ms": 1750930223716}`))
+				// Test with multiple consecutive dots in different locations
+				msg.MetaSet("umh_topic", "umh.v1.enterprise...site.area.._historian..virtual.path.tag_name")
+				msgs := service.MessageBatch{msg}
+
+				err := outputPlugin.WriteBatch(ctx, msgs)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("message key contained multiple consecutive dots and was rejected"))
+			})
+
+			It("should reject message keys with invalid characters", func() {
+				msg := service.NewMessage([]byte(`{"value": 42.5, "timestamp_ms": 1750930223716}`))
+				// Test with invalid characters
+				msg.MetaSet("umh_topic", "umh.v1.enterprise@#$.site.area._historian.tag")
+				msgs := service.MessageBatch{msg}
+
+				err := outputPlugin.WriteBatch(ctx, msgs)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("message key contained invalid characters and was rejected"))
+			})
+
+			It("should reject message keys with leading dots", func() {
+				msg := service.NewMessage([]byte(`{"value": 42.5, "timestamp_ms": 1750930223716}`))
+				msg.MetaSet("umh_topic", ".umh.v1.enterprise.site.area._historian.tag")
+				msgs := service.MessageBatch{msg}
+
+				err := outputPlugin.WriteBatch(ctx, msgs)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("message key contained leading or trailing dots and was rejected"))
+			})
+
+			It("should reject message keys with trailing dots", func() {
+				msg := service.NewMessage([]byte(`{"value": 42.5, "timestamp_ms": 1750930223716}`))
+				msg.MetaSet("umh_topic", "umh.v1.enterprise.site.area._historian.tag.")
+				msgs := service.MessageBatch{msg}
+
+				err := outputPlugin.WriteBatch(ctx, msgs)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("message key contained leading or trailing dots and was rejected"))
+			})
+
+			It("should accept valid message keys", func() {
+				msg := service.NewMessage([]byte(`{"value": 42.5, "timestamp_ms": 1750930223716}`))
+				msg.MetaSet("umh_topic", "umh.v1.enterprise.site.area._historian.tag")
 				msgs := service.MessageBatch{msg}
 
 				err := outputPlugin.WriteBatch(ctx, msgs)
@@ -320,45 +372,13 @@ var _ = Describe("Initializing uns output plugin", func() {
 
 				messages := client.GetRequestedProduceMessages()
 				Expect(len(messages)).To(Equal(1))
-
-				// Verify that the message key does not contain consecutive dots
-				sanitizedKey := string(messages[0].Key)
-				Expect(sanitizedKey).NotTo(ContainSubstring(".."))
-
-				// Verify the expected sanitized key
-				expectedKey := "umh.v1.UMH-Systems-GmbH---Dev-Team._historian.Root.Objects.SiemensPLC_fallback._System._EnableDiagnostics"
-				Expect(sanitizedKey).To(Equal(expectedKey))
-
-				// Verify other message properties are preserved
-				Expect(messages[0].Topic).To(Equal(defaultOutputTopic))
-				Expect(messages[0].Value).To(Equal([]byte(`{"value": false, "timestamp_ms": 1750930223716}`)))
-			})
-
-			It("should handle multiple consecutive dots in different parts of the topic", func() {
-				msg := service.NewMessage([]byte(`{"value": 42.5, "timestamp_ms": 1750930223716}`))
-				// Test with multiple consecutive dots in different locations
-				msg.MetaSet("umh_topic", "umh.v1.enterprise...site.area.._historian..virtual.path.tag_name")
-				msgs := service.MessageBatch{msg}
-
-				err := outputPlugin.WriteBatch(ctx, msgs)
-				Expect(err).To(BeNil())
-
-				client, ok := unsClient.client.(TestMessagePublisher)
-				Expect(ok).To(BeTrue())
-				messages := client.GetRequestedProduceMessages()
-				Expect(len(messages)).To(Equal(1))
-
-				// Verify that all consecutive dots are cleaned up
-				sanitizedKey := string(messages[0].Key)
-				Expect(sanitizedKey).NotTo(ContainSubstring(".."))
-				expectedKey := "umh.v1.enterprise.site.area._historian.virtual.path.tag_name"
-				Expect(sanitizedKey).To(Equal(expectedKey))
+				Expect(string(messages[0].Key)).To(Equal("umh.v1.enterprise.site.area._historian.tag"))
 			})
 		})
 	})
 })
 
-var _ = Describe("sanitizeMessageKey function", func() {
+var _ = Describe("validateMessageKey function", func() {
 	var (
 		unsOutputInstance *unsOutput
 	)
@@ -373,64 +393,77 @@ var _ = Describe("sanitizeMessageKey function", func() {
 		// Create unsOutput instance with nil logger for testing
 		unsOutputInstance = &unsOutput{
 			config: config,
-			log:    nil, // nil logger is fine for unit testing the sanitize function
+			log:    nil, // nil logger is fine for unit testing the validate function
 		}
 	})
 
-	Context("when handling consecutive dots", func() {
-		It("should handle six consecutive dots correctly", func() {
+	Context("when validating message keys", func() {
+		It("should reject six consecutive dots", func() {
 			input := "umh.v1.UMH-Systems-GmbH---Dev-Team......._historian.Root.Objects.tag"
-			expected := "umh.v1.UMH-Systems-GmbH---Dev-Team._historian.Root.Objects.tag"
-			result := unsOutputInstance.sanitizeMessageKey(input)
-			Expect(result).To(Equal(expected))
-			Expect(result).NotTo(ContainSubstring(".."))
+			err := unsOutputInstance.validateMessageKey(input)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("message key contained multiple consecutive dots and was rejected"))
 		})
 
-		It("should handle multiple groups of consecutive dots", func() {
+		It("should reject multiple groups of consecutive dots", func() {
 			input := "umh.v1.enterprise...site..area.._historian..tag"
-			expected := "umh.v1.enterprise.site.area._historian.tag"
-			result := unsOutputInstance.sanitizeMessageKey(input)
-			Expect(result).To(Equal(expected))
-			Expect(result).NotTo(ContainSubstring(".."))
+			err := unsOutputInstance.validateMessageKey(input)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("message key contained multiple consecutive dots and was rejected"))
 		})
 
-		It("should handle a very long sequence of dots", func() {
+		It("should reject a very long sequence of dots", func() {
 			input := "umh.v1.enterprise............site.tag"
-			expected := "umh.v1.enterprise.site.tag"
-			result := unsOutputInstance.sanitizeMessageKey(input)
-			Expect(result).To(Equal(expected))
-			Expect(result).NotTo(ContainSubstring(".."))
+			err := unsOutputInstance.validateMessageKey(input)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("message key contained multiple consecutive dots and was rejected"))
 		})
 
-		It("should leave single dots unchanged", func() {
+		It("should accept valid message keys with single dots", func() {
 			input := "umh.v1.enterprise.site.area._historian.tag"
-			expected := "umh.v1.enterprise.site.area._historian.tag"
-			result := unsOutputInstance.sanitizeMessageKey(input)
-			Expect(result).To(Equal(expected))
+			err := unsOutputInstance.validateMessageKey(input)
+			Expect(err).To(BeNil())
 		})
 
-		It("should handle invalid characters and consecutive dots together", func() {
-			input := "umh.v1.enterprise@#$...site%%..area._historian.tag"
-			expected := "umh.v1.enterprise___.site__.area._historian.tag"
-			result := unsOutputInstance.sanitizeMessageKey(input)
-			Expect(result).To(Equal(expected))
-			Expect(result).NotTo(ContainSubstring(".."))
+		It("should reject invalid characters", func() {
+			input := "umh.v1.enterprise@#$.site%%..area._historian.tag"
+			err := unsOutputInstance.validateMessageKey(input)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("message key contained invalid characters and was rejected"))
 		})
 
-		It("should handle edge case with dots at the beginning", func() {
-			input := "..umh.v1.enterprise.site.tag"
-			expected := "umh.v1.enterprise.site.tag"
-			result := unsOutputInstance.sanitizeMessageKey(input)
-			Expect(result).To(Equal(expected))
-			Expect(result).NotTo(ContainSubstring(".."))
+		It("should reject leading dots", func() {
+			input := ".umh.v1.enterprise.site.tag"
+			err := unsOutputInstance.validateMessageKey(input)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("message key contained leading or trailing dots and was rejected"))
 		})
 
-		It("should handle edge case with dots at the end", func() {
-			input := "umh.v1.enterprise.site.tag.."
-			expected := "umh.v1.enterprise.site.tag"
-			result := unsOutputInstance.sanitizeMessageKey(input)
-			Expect(result).To(Equal(expected))
-			Expect(result).NotTo(ContainSubstring(".."))
+		It("should reject trailing dots", func() {
+			input := "umh.v1.enterprise.site.tag."
+			err := unsOutputInstance.validateMessageKey(input)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("message key contained leading or trailing dots and was rejected"))
+		})
+
+		It("should reject both leading and trailing dots", func() {
+			input := ".umh.v1.enterprise.site.tag."
+			err := unsOutputInstance.validateMessageKey(input)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("message key contained leading or trailing dots and was rejected"))
+		})
+
+		It("should accept valid UMH topics", func() {
+			validTopics := []string{
+				"umh.v1.enterprise.site.area._historian.tag",
+				"umh.v1.acme.berlin.assembly._analytics.temperature",
+				"umh.v1.factory.line1.station2._raw.pressure_sensor",
+			}
+
+			for _, topic := range validTopics {
+				err := unsOutputInstance.validateMessageKey(topic)
+				Expect(err).To(BeNil(), "Expected topic '%s' to be valid", topic)
+			}
 		})
 	})
 })
