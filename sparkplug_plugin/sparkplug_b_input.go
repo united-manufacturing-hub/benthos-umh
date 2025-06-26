@@ -50,21 +50,16 @@ func init() {
 	inputSpec := service.NewConfigSpec().
 		Version("2.0.0").
 		Summary("Sparkplug B MQTT input with idiomatic configuration").
-		Description(`A Sparkplug B input that supports multiple roles and configuration styles:
+		Description(`A Sparkplug B input plugin with Host-only roles (Sparkplug B specification compliant):
 
-ROLES:
-- primary_host: Acts as SCADA/Primary Application, subscribes to all groups (spBv1.0/+/#)
-- edge_node: Acts as Edge Node, subscribes only to its own group (spBv1.0/{group}/#)  
-- hybrid: Combines both behaviors (rare, but useful for gateways)
-
-CONFIGURATION STYLES:
-- Idiomatic: Uses mqtt/identity/role/behaviour sections for clean organization
-- Legacy: Supports existing flat configuration for backward compatibility
+SPARKPLUG B HOST ROLES:
+- Secondary Host (default): Read-only, safe for brownfield deployments, no STATE publishing
+- Primary Host (opt-in): Publishes STATE messages, tracks sequences, issues rebirth commands
 
 Key features:
-- Clean configuration structure with mqtt/identity/role/behaviour sections
-- Automatic STATE topic management with LWT
-- Role-based subscription behavior (all groups vs single group)
+- Clean configuration structure with mqtt/identity/subscription/behaviour sections
+- Specification-compliant Host-only roles (input plugins cannot be Edge Nodes)
+- Automatic STATE topic management with LWT (Primary Host only)
 - Sequence number validation and rebirth coordination
 - Alias resolution using BIRTH message metadata
 - Configurable message processing (splitting, extraction, filtering)
@@ -110,8 +105,8 @@ Key features:
 				Description("Sparkplug Group ID (e.g., 'FactoryA')").
 				Example("FactoryA"),
 			service.NewStringField("edge_node_id").
-				Description("Edge Node ID within the group (e.g., 'Line3')").
-				Example("Line3").
+				Description("For Primary Host: used as host_id for STATE topic (spBv1.0/STATE/<host_id>). For Secondary Host: optional.").
+				Example("PrimaryHost").
 				Optional(),
 			service.NewStringField("device_id").
 				Description("Device ID under the edge node (optional, if not specified acts as node-level)").
@@ -120,12 +115,12 @@ Key features:
 			Description("Sparkplug identity configuration")).
 		// Role Configuration
 		Field(service.NewStringField("role").
-			Description("Sparkplug role: 'primary_host' (subscribe to all groups), 'edge_node' (own group only), or 'hybrid' (both)").
-			Default("primary_host")).
+			Description("Sparkplug Host role: 'host' (Secondary Host, default) or 'primary' (Primary Host)").
+			Default("host")).
 		// Subscription Configuration
 		Field(service.NewObjectField("subscription",
 			service.NewStringListField("groups").
-				Description("Specific groups to subscribe to for primary_host and hybrid roles. Empty means all groups (+)").
+				Description("Specific groups to subscribe to for primary_host role. Empty means all groups (+)").
 				Example([]string{"benthos", "factory1", "test"}).
 				Default([]string{}).
 				Optional()).
@@ -274,12 +269,21 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 
 	config.Identity.DeviceID, _ = identityConf.FieldString("device_id")
 
-	// Parse role
+	// Parse role (Host-only for input plugin)
 	roleStr, err := conf.FieldString("role")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse role: %w", err)
 	}
-	config.Role = Role(roleStr)
+
+	// Only support new role names (no backward compatibility)
+	switch roleStr {
+	case "host":
+		config.Role = RoleSecondaryHost
+	case "primary":
+		config.Role = RolePrimaryHost
+	default:
+		return nil, fmt.Errorf("invalid role '%s': must be 'host' (Secondary Host) or 'primary' (Primary Host)", roleStr)
+	}
 
 	// Parse subscription section using namespace (optional)
 	if conf.Contains("subscription") {
@@ -299,6 +303,11 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 	config.Behaviour.DropBirthMessages, _ = behaviourConf.FieldBool("drop_birth_messages")
 	config.Behaviour.StrictTopicValidation, _ = behaviourConf.FieldBool("strict_topic_validation")
 	config.Behaviour.AutoExtractValues, _ = behaviourConf.FieldBool("auto_extract_values")
+
+	// Validate configuration (this will auto-detect the role)
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
 
 	si := &sparkplugInput{
 		config:            config,
@@ -386,8 +395,8 @@ func (s *sparkplugInput) onConnect(client mqtt.Client) {
 		s.logger.Infof("Subscribed to Sparkplug topic: %s", topic)
 	}
 
-	// Publish STATE ONLINE for primary host and hybrid roles
-	if s.config.Role == RolePrimaryHost || s.config.Role == RoleHybrid {
+	// Publish STATE ONLINE for primary host role
+	if s.config.Role == RolePrimaryHost {
 		stateTopic := s.config.GetStateTopic()
 		err := s.mqttClientBuilder.PublishWithMetrics(client, stateTopic, s.config.MQTT.QoS, false, "ONLINE")
 		if err != nil {
@@ -730,8 +739,8 @@ func (s *sparkplugInput) Close(ctx context.Context) error {
 	s.mu.Unlock()
 
 	if s.client != nil && s.client.IsConnected() {
-		// Publish STATE OFFLINE before disconnecting (for primary host and hybrid roles)
-		if s.config.Role == RolePrimaryHost || s.config.Role == RoleHybrid {
+		// Publish STATE OFFLINE before disconnecting (for primary host role)
+		if s.config.Role == RolePrimaryHost {
 			stateTopic := s.config.GetStateTopic()
 			token := s.client.Publish(stateTopic, s.config.MQTT.QoS, false, "OFFLINE")
 			token.WaitTimeout(5 * time.Second)
