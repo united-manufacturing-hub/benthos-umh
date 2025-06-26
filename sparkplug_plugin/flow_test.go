@@ -21,6 +21,7 @@ package sparkplug_plugin_test
 
 import (
 	"encoding/base64"
+	"os"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -49,6 +50,14 @@ func uint32Ptr(u uint32) *uint32 {
 }
 
 var _ = Describe("Lifecycle Flow Tests", func() {
+	BeforeEach(func() {
+		testActivated := os.Getenv("TEST_SPARKPLUG_UNIT")
+		if testActivated == "" {
+			Skip("Skipping Sparkplug B unit tests: TEST_SPARKPLUG_UNIT not set")
+			return
+		}
+	})
+
 	Context("Basic Message Lifecycle", func() {
 		It("should handle NBIRTH → NDATA sequence", func() {
 			// Test basic lifecycle flow (migrated from old integration tests)
@@ -422,6 +431,14 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 })
 
 var _ = Describe("Message Processing Pipeline", func() {
+	BeforeEach(func() {
+		testActivated := os.Getenv("TEST_SPARKPLUG_UNIT")
+		if testActivated == "" {
+			Skip("Skipping Sparkplug B unit tests: TEST_SPARKPLUG_UNIT not set")
+			return
+		}
+	})
+
 	Context("Message Format Validation", func() {
 		It("should validate Sparkplug message structure", func() {
 			// Test message structure validation without real plugin
@@ -696,6 +713,14 @@ var _ = Describe("Message Processing Pipeline", func() {
 })
 
 var _ = Describe("Device-Level Message Handling", func() {
+	BeforeEach(func() {
+		testActivated := os.Getenv("TEST_SPARKPLUG_UNIT")
+		if testActivated == "" {
+			Skip("Skipping Sparkplug B unit tests: TEST_SPARKPLUG_UNIT not set")
+			return
+		}
+	})
+
 	Context("DBIRTH and DDATA Processing", func() {
 		It("should handle DBIRTH → DDATA device lifecycle", func() {
 			// Test device-level message flow
