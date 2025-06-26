@@ -149,14 +149,14 @@ func CompressLZ4(data []byte) ([]byte, error) {
 // - Block-based decompression to avoid streaming overhead
 // - Buffer pooling via sync.Pool for efficient reuse
 // - Automatic buffer growth when needed
-// - Explicit error handling for invalid compressed data
+// - Explicit error handling - no fallbacks for invalid data
 //
 // Args:
 //   - compressedData: The LZ4-compressed data
 //
 // Returns:
 //   - []byte: Decompressed data
-//   - error: Any decompression error
+//   - error: Decompression error if data is invalid or corrupted
 func DecompressLZ4(compressedData []byte) ([]byte, error) {
 	if len(compressedData) == 0 {
 		return []byte{}, nil
@@ -183,11 +183,11 @@ func DecompressLZ4(compressedData []byte) ([]byte, error) {
 			decompBuf = make([]byte, len(compressedData)*8)
 			decompressedSize, err = lz4.UncompressBlock(compressedData, decompBuf)
 			if err != nil {
-				// Return error - fallback should be handled by caller
+				// Return error - no fallback, caller must handle
 				return nil, err
 			}
 		} else {
-			// Return error - fallback should be handled by caller
+			// Return error - no fallback, caller must handle
 			return nil, err
 		}
 	}
