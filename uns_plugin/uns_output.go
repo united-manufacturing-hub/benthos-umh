@@ -261,14 +261,26 @@ func (o *unsOutput) verifyOutputTopic(ctx context.Context) error {
 	return nil
 }
 
-// sanitizeMessageKey ensures the key contains only valid characters
-// It replaces invalid characters with underscores and logs a warning if sanitization occurred
-func (o *unsOutput) sanitizeMessageKey(key string) string {
+// validateMessageKey ensures the key contains only valid characters
+// It rejects any multiple consecutive dots, leading or trailing dots, and invalid characters
+func (o *unsOutput) validateMessageKey(key string) error {
 	sanitizedKey := topicSanitizer.ReplaceAllString(key, "_")
+
 	if key != sanitizedKey {
-		o.log.Debugf("Message key contained invalid characters and was sanitized: '%s' -> '%s'", key, sanitizedKey)
+		return fmt.Errorf("message key contained invalid characters and was rejected: '%s' -> '%s'", key, sanitizedKey)
 	}
-	return sanitizedKey
+
+	// Reject any multiple consecutive dots
+	if strings.Contains(sanitizedKey, "..") {
+		return fmt.Errorf("message key contained multiple consecutive dots and was rejected: '%s'", sanitizedKey)
+	}
+
+	// Reject any leading or trailing dots
+	if strings.HasPrefix(sanitizedKey, ".") || strings.HasSuffix(sanitizedKey, ".") {
+		return fmt.Errorf("message key contained leading or trailing dots and was rejected: '%s'", sanitizedKey)
+	}
+
+	return nil
 }
 
 // extractHeaders extracts all metadata from a message except Kafka-specific ones
@@ -313,7 +325,10 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 			return fmt.Errorf("umh_topic is not set or is empty in message %d, umh_topic is mandatory", i)
 		}
 
-		sanitizedKey := o.sanitizeMessageKey(key)
+		err = o.validateMessageKey(key)
+		if err != nil {
+			return fmt.Errorf("error validating message key in message %d: %v", i, err)
+		}
 
 		headers, err := o.extractHeaders(msg)
 		if err != nil {
@@ -327,13 +342,13 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 
 		record := Record{
 			Topic:   defaultOutputTopic,
-			Key:     []byte(sanitizedKey),
+			Key:     []byte(key),
 			Value:   msgAsBytes,
 			Headers: headers,
 		}
 
 		records = append(records, record)
-		o.log.Tracef("Message %d prepared with key: %s", i, sanitizedKey)
+		o.log.Tracef("Message %d prepared with key: %s", i, key)
 	}
 
 	if err := o.client.ProduceSync(ctx, records); err != nil {
