@@ -23,7 +23,7 @@ input:
     identity:
       group_id: "DeviceLevelTest"
       edge_node_id: "PrimaryHost"
-    role: "primary_host"
+    role: "primary"  # Primary Host: publishes STATE, tracks sequences
 
 output:
   stdout: {}

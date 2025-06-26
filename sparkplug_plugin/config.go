@@ -49,13 +49,16 @@ type Subscription struct {
 	Groups []string `yaml:"groups"` // Groups to subscribe to. Empty means all groups (+)
 }
 
-// Role defines the Sparkplug behavior mode
+// Role defines the Sparkplug behavior mode for INPUT plugin (Host-only)
 type Role string
 
 const (
-	RoleEdgeNode    Role = "edge_node"    // Publish only its own topics
-	RolePrimaryHost Role = "primary_host" // Subscribe to all groups
-	RoleHybrid      Role = "hybrid"       // Do both (rare, but useful)
+	// INPUT plugin roles (Host-only - compliant with Sparkplug B specification)
+	RoleSecondaryHost Role = "host"    // Secondary Host (default): Read-only, no STATE publishing, safe for brownfield
+	RolePrimaryHost   Role = "primary" // Primary Host (opt-in): Publishes STATE, tracks sequences, issues rebirth commands
+
+	// OUTPUT plugin role (internal use only)
+	RoleEdgeNode Role = "edge_node" // Edge Node: Publishes NBIRTH/NDATA
 )
 
 // Behaviour contains plugin-specific configuration toggles
@@ -78,9 +81,20 @@ type Behaviour struct {
 type Config struct {
 	MQTT         MQTT         `yaml:"mqtt"`
 	Identity     Identity     `yaml:"identity"`
-	Role         Role         `yaml:"role"`
 	Subscription Subscription `yaml:"subscription"`
 	Behaviour    Behaviour    `yaml:"behaviour"`
+
+	// Internal field - auto-detected based on configuration
+	Role Role `yaml:"-"`
+}
+
+// AutoDetectRole determines the role based on configuration (Host-only for INPUT plugin)
+func (c *Config) AutoDetectRole() {
+	// Only auto-detect if role is not explicitly set
+	if c.Role == "" {
+		// Default to Secondary Host (safe for brownfield deployments)
+		c.Role = RoleSecondaryHost
+	}
 }
 
 // Validate validates the configuration and returns an error if invalid
@@ -91,8 +105,22 @@ func (c *Config) Validate() error {
 	if c.Identity.GroupID == "" {
 		return fmt.Errorf("group_id is required")
 	}
-	if c.Identity.EdgeNodeID == "" && c.Role != RolePrimaryHost {
-		return fmt.Errorf("edge_node_id is required for role %s", c.Role)
+
+	// Auto-detect role before validation
+	c.AutoDetectRole()
+
+	// Validate role values
+	switch c.Role {
+	case RoleSecondaryHost, RolePrimaryHost, RoleEdgeNode:
+		// Valid roles
+	default:
+		return fmt.Errorf("invalid role '%s': must be 'host', 'primary', or 'edge_node'", c.Role)
+	}
+
+	// host_id (using edge_node_id field) is required for Primary Host (to publish STATE messages)
+	// Note: Primary Host uses edge_node_id as host_id for STATE topic: spBv1.0/STATE/<host_id>
+	if c.Identity.EdgeNodeID == "" && c.Role == RolePrimaryHost {
+		return fmt.Errorf("edge_node_id is required for Primary Host role as host_id to publish STATE messages on spBv1.0/STATE/<host_id>")
 	}
 	return nil
 }
@@ -112,22 +140,21 @@ func (c *Config) getHostSubscriptionTopics() []string {
 
 func (c *Config) GetSubscriptionTopics() []string {
 	switch c.Role {
+	case RoleSecondaryHost, RolePrimaryHost:
+		return c.getHostSubscriptionTopics()
 	case RoleEdgeNode:
-		// Edge nodes only listen to their own group
+		// Edge nodes only listen to their own group (for OUTPUT plugin only)
 		return []string{"spBv1.0/" + c.Identity.GroupID + "/#"}
-	case RolePrimaryHost:
-		return c.getHostSubscriptionTopics()
-	case RoleHybrid:
-		return c.getHostSubscriptionTopics()
 	default:
-		// Default to primary host behavior
+		// Default to secondary host behavior (safe)
 		return c.getHostSubscriptionTopics()
 	}
 }
 
-// GetStateTopic returns the STATE topic for this identity
+// GetStateTopic returns the STATE topic for Primary Host (Sparkplug v3.0 format)
+// Primary Host publishes on: spBv1.0/STATE/<host_id> (no group_id)
 func (c *Config) GetStateTopic() string {
-	return "spBv1.0/" + c.Identity.GroupID + "/STATE/" + c.Identity.EdgeNodeID
+	return "spBv1.0/STATE/" + c.Identity.EdgeNodeID // EdgeNodeID is used as host_id for Primary Host
 }
 
 // IsNodeLevel returns true if this is a node-level identity (empty device_id)

@@ -60,6 +60,7 @@ with complete session lifecycle management. It handles BIRTH/DEATH certificates,
 numbers, manages alias mappings, and ensures full Sparkplug B compliance.
 
 Key features:
+- Always operates as Edge Node (no role configuration needed)
 - Automatic NBIRTH/DBIRTH on connect with metric definitions
 - NDEATH/DDEATH Last Will Testament on disconnect
 - Sequence number management with proper wrapping
@@ -119,10 +120,7 @@ and then publishes DATA messages as Benthos messages flow through the pipeline.`
 				Default("").
 				Optional()).
 			Description("Sparkplug identity configuration")).
-		// Role Configuration - Fixed for output plugin
-		Field(service.NewStringField("role").
-			Description("Sparkplug role: 'edge_node' (default for output plugin), 'hybrid' (publish + receive capabilities)").
-			Default("edge_node")).
+
 		// Output-specific Configuration
 		Field(service.NewObjectListField("metrics",
 			service.NewStringField("name").
@@ -284,12 +282,8 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 	config.Identity.DeviceID, _ = identityConf.FieldString("device_id")
 	// device_id is optional - if not provided, generated from location_path via PARRIS
 
-	// Parse role
-	roleStr, err := conf.FieldString("role")
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse role: %w", err)
-	}
-	config.Role = Role(roleStr)
+	// Output plugin always acts as edge_node (no role configuration needed)
+	config.Role = RoleEdgeNode
 
 	// Parse behaviour section using namespace (optional)
 	var autoExtractTagName, retainLastValues bool
@@ -399,7 +393,7 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 }
 
 func (s *sparkplugOutput) Connect(ctx context.Context) error {
-	s.logger.Infof("Connecting Sparkplug B output (role: %s)", s.config.Role)
+	s.logger.Info("Connecting Sparkplug B output as Edge Node")
 
 	// Set up DEATH Last Will Testament
 	// Note: Last Will Testament uses static configuration since no message context is available
