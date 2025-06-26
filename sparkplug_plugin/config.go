@@ -61,28 +61,11 @@ const (
 	RoleEdgeNode Role = "edge_node" // Edge Node: Publishes NBIRTH/NDATA
 )
 
-// Behaviour contains plugin-specific configuration toggles
-type Behaviour struct {
-	// INPUT-side flags
-	AutoSplitMetrics      bool `yaml:"auto_split_metrics"`
-	DataMessagesOnly      bool `yaml:"data_messages_only"`
-	DataOnly              bool `yaml:"data_only"`
-	EnableRebirthReq      bool `yaml:"enable_rebirth_req"`
-	DropBirthMessages     bool `yaml:"drop_birth_messages"`
-	StrictTopicValidation bool `yaml:"strict_topic_validation"`
-	AutoExtractValues     bool `yaml:"auto_extract_values"`
-
-	// OUTPUT-side flags (for future output plugin)
-	RetainLastValues bool `yaml:"retain_last_values"`
-	BirthOnConnect   bool `yaml:"birth_on_connect"`
-}
-
 // Config is the complete Sparkplug B configuration structure
 type Config struct {
 	MQTT         MQTT         `yaml:"mqtt"`
 	Identity     Identity     `yaml:"identity"`
 	Subscription Subscription `yaml:"subscription"`
-	Behaviour    Behaviour    `yaml:"behaviour"`
 
 	// Internal field - auto-detected based on configuration
 	Role Role `yaml:"-"`

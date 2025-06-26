@@ -400,10 +400,15 @@ umh.v1.<location_path>.<data_contract>[.<virtual_path>].<name>
 - [ ] Verify UMH-Core format integration
 - [ ] Validate tag_processor pipeline works correctly
 
+### ✅ NEWLY COMPLETED MEDIUM Priority Items
+1. ✅ **Remove behavior configurability** - Simplified configuration by hardcoding optimal behaviors ✅ DONE
+   - **Removed**: 7 behavior configuration options (`auto_split_metrics`, `data_only`, `enable_rebirth_req`, etc.)
+   - **Hardcoded**: Essential behaviors for UMH-Core format and Sparkplug B compliance
+   - **Result**: Simpler configuration, fewer edge cases, better user experience
+
 ### MEDIUM Priority (Next Sprint)
-1. **Consider removing behavior configurability** - Simplification
-2. **Document tag_processor relationship** - Pipeline clarity  
-3. **Add E2E testing examples** - Documentation credibility
+1. **Document tag_processor relationship** - Pipeline clarity  
+2. **Add E2E testing examples** - Documentation credibility
 
 ### LOW Priority (Future Consideration)
 1. **Evaluate data_only default** - Keep current behavior
