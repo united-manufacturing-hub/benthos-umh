@@ -125,31 +125,6 @@ Key features:
 				Default([]string{}).
 				Optional()).
 			Description("Subscription filtering configuration for primary_host role").
-			Optional()).
-		// Behaviour Configuration
-		Field(service.NewObjectField("behaviour",
-			service.NewBoolField("auto_split_metrics").
-				Description("Split multi-metric messages into individual metric messages").
-				Default(true),
-			service.NewBoolField("data_messages_only").
-				Description("Only process DATA messages (drop BIRTH/DEATH after processing)").
-				Default(false),
-			service.NewBoolField("data_only").
-				Description("Skip publishing metrics from birth messages, only emit DATA messages").
-				Default(false),
-			service.NewBoolField("enable_rebirth_req").
-				Description("Send rebirth requests on sequence gaps").
-				Default(true),
-			service.NewBoolField("drop_birth_messages").
-				Description("Drop BIRTH messages after alias extraction").
-				Default(false),
-			service.NewBoolField("strict_topic_validation").
-				Description("Strictly validate Sparkplug topic format").
-				Default(false),
-			service.NewBoolField("auto_extract_values").
-				Description("Extract metric values as message payload").
-				Default(true)).
-			Description("Processing behavior configuration").
 			Optional())
 
 	err := service.RegisterBatchInput(
@@ -294,15 +269,11 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 		}
 	}
 
-	// Parse behaviour section using namespace
-	behaviourConf := conf.Namespace("behaviour")
-	config.Behaviour.AutoSplitMetrics, _ = behaviourConf.FieldBool("auto_split_metrics")
-	config.Behaviour.DataMessagesOnly, _ = behaviourConf.FieldBool("data_messages_only")
-	config.Behaviour.DataOnly, _ = behaviourConf.FieldBool("data_only")
-	config.Behaviour.EnableRebirthReq, _ = behaviourConf.FieldBool("enable_rebirth_req")
-	config.Behaviour.DropBirthMessages, _ = behaviourConf.FieldBool("drop_birth_messages")
-	config.Behaviour.StrictTopicValidation, _ = behaviourConf.FieldBool("strict_topic_validation")
-	config.Behaviour.AutoExtractValues, _ = behaviourConf.FieldBool("auto_extract_values")
+	// Behavior is now hardcoded for simplicity:
+	// - AutoSplitMetrics: true (required for UMH-Core format)
+	// - DataOnly: false (birth messages contain valuable state)
+	// - EnableRebirthReq: true (required for Sparkplug B compliance)
+	// - AutoExtractValues: true (required for UMH-Core format)
 
 	// Validate configuration (this will auto-detect the role)
 	if err := config.Validate(); err != nil {
@@ -506,27 +477,15 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 		s.processBirthMessage(deviceKey, msgType, &payload)
 		s.birthsProcessed.Incr(1)
 
-		// Implement data_only filter - skip emitting birth metrics if enabled
-		if s.config.Behaviour.DataOnly {
-			s.logger.Debugf("🚫 processSparkplugMessage: data_only=true, skipping birth metric emission")
-			// Still process birth for alias table but don't emit metrics
-			return nil, nil
-		}
-
-		if s.config.Behaviour.AutoSplitMetrics {
-			batch = s.createSplitMessages(&payload, msgType, deviceKey, topicInfo, mqttMsg.topic)
-		} else {
-			batch = s.createSingleMessage(&payload, msgType, deviceKey, topicInfo, mqttMsg.topic)
-		}
+		// Always process birth messages (they contain valuable current state)
+		// Always split metrics for UMH-Core format (one metric per message)
+		batch = s.createSplitMessages(&payload, msgType, deviceKey, topicInfo, mqttMsg.topic)
 	} else if isDataMessage {
 		s.logger.Debugf("📈 processSparkplugMessage: processing DATA message")
 		s.processDataMessage(deviceKey, msgType, &payload)
 
-		if s.config.Behaviour.AutoSplitMetrics {
-			batch = s.createSplitMessages(&payload, msgType, deviceKey, topicInfo, mqttMsg.topic)
-		} else {
-			batch = s.createSingleMessage(&payload, msgType, deviceKey, topicInfo, mqttMsg.topic)
-		}
+		// Always split metrics for UMH-Core format (one metric per message)
+		batch = s.createSplitMessages(&payload, msgType, deviceKey, topicInfo, mqttMsg.topic)
 	} else if isDeathMessage {
 		s.logger.Debugf("💀 processSparkplugMessage: processing DEATH message")
 		s.processDeathMessage(deviceKey, msgType, &payload)
@@ -614,10 +573,8 @@ func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *
 			// Mark node as stale until rebirth (Sparkplug spec requirement)
 			state.isOnline = false
 
-			// Send rebirth request if enabled
-			if s.config.Behaviour.EnableRebirthReq {
-				s.sendRebirthRequest(deviceKey)
-			}
+			// Always send rebirth requests (required for Sparkplug B compliance)
+			s.sendRebirthRequest(deviceKey)
 		}
 
 		state.lastSeq = currentSeq
@@ -666,13 +623,8 @@ func (s *sparkplugInput) processCommandMessage(deviceKey, msgType string, payloa
 		}
 	}
 
-	// Create batch from command metrics - commands should be processed like any other Sparkplug message
-	var batch service.MessageBatch
-	if s.config.Behaviour.AutoSplitMetrics {
-		batch = s.createSplitMessages(payload, msgType, deviceKey, topicInfo, originalTopic)
-	} else {
-		batch = s.createSingleMessage(payload, msgType, deviceKey, topicInfo, originalTopic)
-	}
+	// Create batch from command metrics - always split for UMH-Core format
+	batch := s.createSplitMessages(payload, msgType, deviceKey, topicInfo, originalTopic)
 
 	s.logger.Debugf("✅ processCommandMessage: created batch with %d messages for %s", len(batch), msgType)
 	return batch

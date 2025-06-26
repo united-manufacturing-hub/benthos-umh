@@ -97,10 +97,7 @@ Here's how a Sparkplug B message maps to UMH-Core:
 |-------|------|---------|-------------|
 | `subscription.groups` | `[]string` | `[]` | Groups to subscribe to (empty = all groups) |
 
-### Behavior Section
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `behaviour.data_only` | `bool` | `false` | Skip Birth messages, only process Data messages |
+
 
 ---
 

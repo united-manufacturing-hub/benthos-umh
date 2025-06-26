@@ -1,6 +1,8 @@
 # Sparkplug B (Output)
 
-The Sparkplug B output plugin acts as an **Edge Node** in the Sparkplug B ecosystem, publishing industrial IoT data using the standardized MQTT-based Sparkplug B protocol with protobuf encoding and alias management.
+## Overview
+
+The **Sparkplug B Output plugin** allows the United Manufacturing Hub (UMH) to publish industrial IoT data to MQTT brokers using the Sparkplug B specification. It acts as an **Edge Node** in the Sparkplug B ecosystem, converting UMH-Core messages into standardized MQTT-based Sparkplug B protocol with protobuf encoding and alias management.
 
 Sparkplug B is an open standard for MQTT-based industrial IoT communication that minimizes bandwidth usage through metric aliases and efficient protobuf encoding. This output plugin always operates as an Edge Node - the role is implicit based on the plugin type (output plugins publish data, input plugins consume data).
 
@@ -17,8 +19,8 @@ output:
     mqtt:
       urls: ["tcp://localhost:1883"]
     identity:
-      group_id: "Factory"
-      edge_node_id: "Line1-PLC"
+      group_id: "FactoryA"
+      edge_node_id: "EdgeNode1"
       # device_id is auto-generated from message metadata "location_path"
 ```
 
@@ -31,8 +33,8 @@ Here's how a UMH-Core message maps to Sparkplug B:
 **Configuration:**
 ```yaml
 identity:
-  group_id: "Factory"
-  edge_node_id: "Line1-PLC"
+  group_id: "FactoryA"
+  edge_node_id: "EdgeNode1"
 ```
 
 **Input UMH-Core Message:**
@@ -56,7 +58,7 @@ identity:
 ```
 
 **↓ Results in Sparkplug B Message:**
-- **Topic**: `spBv1.0/Factory/DDATA/Line1-PLC/enterprise:factory:line1:station1`
+- **Topic**: `spBv1.0/FactoryA/DDATA/EdgeNode1/enterprise:factory:line1:station1`
 - **Metric Name**: `sensors:ambient:temperature` (virtual_path + tag_name with colons)
 - **Payload**: Protobuf with metric alias, value 23.5, timestamp
 
@@ -67,9 +69,7 @@ identity:
 4. **Topic Structure**: Uses configured `group_id` and `edge_node_id` from output plugin configuration
 
 
-## Configuration
-
-## Configuration Fields
+## Configuration Reference
 
 ### MQTT Section
 | Field | Type | Default | Description |
