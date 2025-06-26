@@ -357,3 +357,80 @@ var _ = Describe("Initializing uns output plugin", func() {
 		})
 	})
 })
+
+var _ = Describe("sanitizeMessageKey function", func() {
+	var (
+		unsOutputInstance *unsOutput
+	)
+
+	BeforeEach(func() {
+		config := unsOutputConfig{
+			bridgedBy: "test-bridge",
+		}
+		umh_topic, _ := service.NewInterpolatedString("${! meta(\"umh_topic\") }")
+		config.umh_topic = umh_topic
+
+		// Create unsOutput instance with nil logger for testing
+		unsOutputInstance = &unsOutput{
+			config: config,
+			log:    nil, // nil logger is fine for unit testing the sanitize function
+		}
+	})
+
+	Context("when handling consecutive dots", func() {
+		It("should handle six consecutive dots correctly", func() {
+			input := "umh.v1.UMH-Systems-GmbH---Dev-Team......._historian.Root.Objects.tag"
+			expected := "umh.v1.UMH-Systems-GmbH---Dev-Team._historian.Root.Objects.tag"
+			result := unsOutputInstance.sanitizeMessageKey(input)
+			Expect(result).To(Equal(expected))
+			Expect(result).NotTo(ContainSubstring(".."))
+		})
+
+		It("should handle multiple groups of consecutive dots", func() {
+			input := "umh.v1.enterprise...site..area.._historian..tag"
+			expected := "umh.v1.enterprise.site.area._historian.tag"
+			result := unsOutputInstance.sanitizeMessageKey(input)
+			Expect(result).To(Equal(expected))
+			Expect(result).NotTo(ContainSubstring(".."))
+		})
+
+		It("should handle a very long sequence of dots", func() {
+			input := "umh.v1.enterprise............site.tag"
+			expected := "umh.v1.enterprise.site.tag"
+			result := unsOutputInstance.sanitizeMessageKey(input)
+			Expect(result).To(Equal(expected))
+			Expect(result).NotTo(ContainSubstring(".."))
+		})
+
+		It("should leave single dots unchanged", func() {
+			input := "umh.v1.enterprise.site.area._historian.tag"
+			expected := "umh.v1.enterprise.site.area._historian.tag"
+			result := unsOutputInstance.sanitizeMessageKey(input)
+			Expect(result).To(Equal(expected))
+		})
+
+		It("should handle invalid characters and consecutive dots together", func() {
+			input := "umh.v1.enterprise@#$...site%%..area._historian.tag"
+			expected := "umh.v1.enterprise___.site__.area._historian.tag"
+			result := unsOutputInstance.sanitizeMessageKey(input)
+			Expect(result).To(Equal(expected))
+			Expect(result).NotTo(ContainSubstring(".."))
+		})
+
+		It("should handle edge case with dots at the beginning", func() {
+			input := "..umh.v1.enterprise.site.tag"
+			expected := "umh.v1.enterprise.site.tag"
+			result := unsOutputInstance.sanitizeMessageKey(input)
+			Expect(result).To(Equal(expected))
+			Expect(result).NotTo(ContainSubstring(".."))
+		})
+
+		It("should handle edge case with dots at the end", func() {
+			input := "umh.v1.enterprise.site.tag.."
+			expected := "umh.v1.enterprise.site.tag"
+			result := unsOutputInstance.sanitizeMessageKey(input)
+			Expect(result).To(Equal(expected))
+			Expect(result).NotTo(ContainSubstring(".."))
+		})
+	})
+})

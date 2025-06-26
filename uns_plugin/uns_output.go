@@ -272,6 +272,9 @@ func (o *unsOutput) sanitizeMessageKey(key string) string {
 		sanitizedKey = strings.ReplaceAll(sanitizedKey, "..", ".")
 	}
 
+	// Trim any leading or trailing dots
+	sanitizedKey = strings.Trim(sanitizedKey, ".")
+
 	if key != sanitizedKey {
 		o.log.Debugf("Message key contained invalid characters and was sanitized: '%s' -> '%s'", key, sanitizedKey)
 	}
