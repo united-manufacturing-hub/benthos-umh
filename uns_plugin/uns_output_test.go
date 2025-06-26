@@ -303,5 +303,57 @@ var _ = Describe("Initializing uns output plugin", func() {
 				Expect(err.Error()).To(BeEquivalentTo("error writing batch output to kafka: leader partition not found"))
 			})
 		})
+
+		When("with umh_topic containing consecutive dots", func() {
+			It("should sanitize consecutive dots in the message key", func() {
+				msg := service.NewMessage([]byte(`{"value": false, "timestamp_ms": 1750930223716}`))
+				// Set umh_topic with consecutive dots (similar to the original problem)
+				msg.MetaSet("umh_topic", "umh.v1.UMH-Systems-GmbH---Dev-Team......._historian.Root.Objects.SiemensPLC_fallback._System._EnableDiagnostics")
+				msgs := service.MessageBatch{msg}
+
+				err := outputPlugin.WriteBatch(ctx, msgs)
+				Expect(err).To(BeNil())
+
+				client, ok := unsClient.client.(TestMessagePublisher)
+				Expect(ok).To(BeTrue())
+				Expect(client.IsProduceSyncCalled()).To(BeTrue())
+
+				messages := client.GetRequestedProduceMessages()
+				Expect(len(messages)).To(Equal(1))
+
+				// Verify that the message key does not contain consecutive dots
+				sanitizedKey := string(messages[0].Key)
+				Expect(sanitizedKey).NotTo(ContainSubstring(".."))
+
+				// Verify the expected sanitized key
+				expectedKey := "umh.v1.UMH-Systems-GmbH---Dev-Team._historian.Root.Objects.SiemensPLC_fallback._System._EnableDiagnostics"
+				Expect(sanitizedKey).To(Equal(expectedKey))
+
+				// Verify other message properties are preserved
+				Expect(messages[0].Topic).To(Equal(defaultOutputTopic))
+				Expect(messages[0].Value).To(Equal([]byte(`{"value": false, "timestamp_ms": 1750930223716}`)))
+			})
+
+			It("should handle multiple consecutive dots in different parts of the topic", func() {
+				msg := service.NewMessage([]byte(`{"value": 42.5, "timestamp_ms": 1750930223716}`))
+				// Test with multiple consecutive dots in different locations
+				msg.MetaSet("umh_topic", "umh.v1.enterprise...site.area.._historian..virtual.path.tag_name")
+				msgs := service.MessageBatch{msg}
+
+				err := outputPlugin.WriteBatch(ctx, msgs)
+				Expect(err).To(BeNil())
+
+				client, ok := unsClient.client.(TestMessagePublisher)
+				Expect(ok).To(BeTrue())
+				messages := client.GetRequestedProduceMessages()
+				Expect(len(messages)).To(Equal(1))
+
+				// Verify that all consecutive dots are cleaned up
+				sanitizedKey := string(messages[0].Key)
+				Expect(sanitizedKey).NotTo(ContainSubstring(".."))
+				expectedKey := "umh.v1.enterprise.site.area._historian.virtual.path.tag_name"
+				Expect(sanitizedKey).To(Equal(expectedKey))
+			})
+		})
 	})
 })
