@@ -632,7 +632,14 @@ func (p *TagProcessor) constructUMHTopic(msg *service.Message) string {
 		parts = append(parts, value)
 	}
 
-	return strings.Join(parts, ".")
+	keys := strings.Join(parts, ".")
+
+	// As a last safety net, we replace consecutive dots with a single dot
+	for strings.Contains(keys, "..") {
+		keys = strings.ReplaceAll(keys, "..", ".")
+	}
+
+	return keys
 }
 
 func (p *TagProcessor) Close(ctx context.Context) error {
