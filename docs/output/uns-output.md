@@ -20,7 +20,7 @@ output:
   uns: {}                       # nothing else needed on UMH Core. Will automatically use msg.meta.umh_topic from the tag_processor and write to the internal redpanda.
 ```
 
-*Open the **Tag Browser** (Management Console → Unified Namespace) to watch the live values.*
+*Open the **Topic Browser** (Management Console → Unified Namespace) to watch the live values.*
 
 ## 2 - Optional overrides
 
