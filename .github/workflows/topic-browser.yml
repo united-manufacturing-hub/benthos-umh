@@ -45,4 +45,4 @@ jobs:
       - name: Test
         env:
           TEST_TOPIC_BROWSER: 1
-        run: make test-topic-browser 
+        run: make test-topic-browser
