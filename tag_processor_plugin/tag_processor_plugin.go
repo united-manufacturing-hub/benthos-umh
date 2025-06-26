@@ -605,7 +605,13 @@ func (p *TagProcessor) constructUMHTopic(msg *service.Message) string {
 	parts := []string{"umh", "v1"}
 
 	if value, exists := msg.MetaGet("location_path"); exists && value != "" {
-		parts = append(parts, strings.Split(value, ".")...)
+		// Split by dots and filter out empty segments to handle consecutive dots
+		locationParts := strings.Split(value, ".")
+		for _, part := range locationParts {
+			if part != "" {
+				parts = append(parts, part)
+			}
+		}
 	}
 
 	if value, exists := msg.MetaGet("data_contract"); exists && value != "" {
@@ -613,14 +619,27 @@ func (p *TagProcessor) constructUMHTopic(msg *service.Message) string {
 	}
 
 	if value, exists := msg.MetaGet("virtual_path"); exists && value != "" {
-		parts = append(parts, strings.Split(value, ".")...)
+		// Split by dots and filter out empty segments to handle consecutive dots
+		virtualParts := strings.Split(value, ".")
+		for _, part := range virtualParts {
+			if part != "" {
+				parts = append(parts, part)
+			}
+		}
 	}
 
 	if value, exists := msg.MetaGet("tag_name"); exists && value != "" {
 		parts = append(parts, value)
 	}
 
-	return strings.Join(parts, ".")
+	keys := strings.Join(parts, ".")
+
+	// As a last safety net, we replace consecutive dots with a single dot
+	for strings.Contains(keys, "..") {
+		keys = strings.ReplaceAll(keys, "..", ".")
+	}
+
+	return keys
 }
 
 func (p *TagProcessor) Close(ctx context.Context) error {
