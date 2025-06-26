@@ -475,41 +475,43 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 		})
 
 		It("fails properly when given invalid compressed data", func() {
-			// Create invalid compressed data (uncompressed protobuf passed as compressed)
-			bundle := &UnsBundle{
+			By("Testing with guaranteed invalid LZ4 data")
+			// Use data that is guaranteed to fail LZ4 decompression
+			// LZ4 format has specific headers - random bytes will reliably fail
+			invalidLZ4Data := []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+
+			_, err := ProtobufBytesToBundleWithCompression(invalidLZ4Data)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to decompress LZ4 data"))
+
+			By("Testing with corrupted LZ4 header")
+			// Create valid compressed data, then corrupt it
+			validBundle := &UnsBundle{
 				UnsMap: &TopicMap{
 					Entries: map[string]*TopicInfo{
-						"error.test": {
-							Level0:       "enterprise",
-							DataContract: "_historian",
-						},
-					},
-				},
-				Events: &EventTable{
-					Entries: []*EventTableEntry{
-						{
-							UnsTreeId: "error.test",
-							Payload: &EventTableEntry_Ts{
-								Ts: &TimeSeriesPayload{
-									ScalarType:  ScalarType_NUMERIC,
-									TimestampMs: 1647753600000,
-									Value: &TimeSeriesPayload_NumericValue{
-										NumericValue: &wrapperspb.DoubleValue{Value: 99.9},
-									},
-								},
-							},
-						},
+						"test": {Level0: "enterprise"},
 					},
 				},
 			}
 
-			uncompressedProto, err := bundleToProtobuf(bundle)
+			validCompressed, err := BundleToProtobufBytes(validBundle)
 			Expect(err).To(BeNil())
 
-			// Try to decompress uncompressed data - should fail with clear error
-			_, err = ProtobufBytesToBundleWithCompression(uncompressedProto)
+			// Corrupt the compressed data by flipping bits
+			corruptedData := make([]byte, len(validCompressed))
+			copy(corruptedData, validCompressed)
+			for i := 0; i < len(corruptedData) && i < 8; i++ {
+				corruptedData[i] ^= 0xFF // Flip all bits in first 8 bytes
+			}
+
+			_, err = ProtobufBytesToBundleWithCompression(corruptedData)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("failed to decompress LZ4 data"))
+			// Error could be from LZ4 decompression OR protobuf parsing
+			// Both are valid failure modes for corrupted data
+			Expect(err.Error()).To(Or(
+				ContainSubstring("failed to decompress LZ4 data"),
+				ContainSubstring("failed to parse protobuf data"),
+			))
 		})
 	})
 })
