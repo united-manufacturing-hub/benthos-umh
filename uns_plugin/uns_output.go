@@ -265,6 +265,13 @@ func (o *unsOutput) verifyOutputTopic(ctx context.Context) error {
 // It replaces invalid characters with underscores and logs a warning if sanitization occurred
 func (o *unsOutput) sanitizeMessageKey(key string) string {
 	sanitizedKey := topicSanitizer.ReplaceAllString(key, "_")
+
+	// Clean up any consecutive dots as a safety measure
+	// This handles cases where multiple consecutive dots exist (e.g., "......" -> ".")
+	for strings.Contains(sanitizedKey, "..") {
+		sanitizedKey = strings.ReplaceAll(sanitizedKey, "..", ".")
+	}
+
 	if key != sanitizedKey {
 		o.log.Debugf("Message key contained invalid characters and was sanitized: '%s' -> '%s'", key, sanitizedKey)
 	}

@@ -1303,5 +1303,68 @@ tag_processor:
 			Expect(exists).To(BeTrue())
 			Expect(topic).To(Equal(expectedTopic))
 		})
+
+		It("should handle consecutive dots in location_path correctly", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "UMH-Systems-GmbH---Dev-Team......";
+    msg.meta.data_contract = "_historian";
+    msg.meta.virtual_path = "Root.Objects.SiemensPLC_fallback._System";
+    msg.meta.tag_name = "_EnableDiagnostics";
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Create and send test message
+			testMsg := service.NewMessage([]byte("false"))
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			msg := messages[0]
+
+			// Verify umh_topic does not contain consecutive dots
+			umh_topic, exists := msg.MetaGet("umh_topic")
+			Expect(exists).To(BeTrue())
+
+			// The topic should not contain consecutive dots
+			Expect(umh_topic).NotTo(ContainSubstring(".."))
+
+			// Expected topic should have single dots only
+			expectedTopic := "umh.v1.UMH-Systems-GmbH---Dev-Team._historian.Root.Objects.SiemensPLC_fallback._System._EnableDiagnostics"
+			Expect(umh_topic).To(Equal(expectedTopic))
+
+			// Verify topic (deprecated) has the same value
+			topic, exists := msg.MetaGet("topic")
+			Expect(exists).To(BeTrue())
+			Expect(topic).To(Equal(expectedTopic))
+		})
 	})
 })
