@@ -15,11 +15,22 @@
 package topic_browser_plugin
 
 import (
+	"os"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
+
+var _ = BeforeSuite(func() {
+	testActivated := os.Getenv("TEST_TOPIC_BROWSER")
+
+	// Check if environment variable is set
+	if testActivated == "" {
+		Skip("Skipping Topic Browser tests: TEST_TOPIC_BROWSER not set")
+		return
+	}
+})
 
 func TestUns(t *testing.T) {
 	RegisterFailHandler(Fail)
