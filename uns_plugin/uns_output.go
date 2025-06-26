@@ -262,7 +262,7 @@ func (o *unsOutput) verifyOutputTopic(ctx context.Context) error {
 }
 
 // validateMessageKey ensures the key contains only valid characters
-// It replaces invalid characters with underscores and logs a warning if sanitization occurred
+// It rejects any multiple consecutive dots, leading or trailing dots, and invalid characters
 func (o *unsOutput) validateMessageKey(key string) error {
 	sanitizedKey := topicSanitizer.ReplaceAllString(key, "_")
 
