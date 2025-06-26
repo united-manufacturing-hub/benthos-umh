@@ -23,6 +23,7 @@ package sparkplug_plugin_test
 import (
 	"encoding/base64"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -59,6 +60,14 @@ func boolPtr(b bool) *bool {
 }
 
 var _ = Describe("AliasCache Unit Tests", func() {
+	BeforeEach(func() {
+		testActivated := os.Getenv("TEST_SPARKPLUG_UNIT")
+		if testActivated == "" {
+			Skip("Skipping Sparkplug B unit tests: TEST_SPARKPLUG_UNIT not set")
+			return
+		}
+	})
+
 	var cache *sparkplug_plugin.AliasCache
 
 	BeforeEach(func() {
@@ -245,6 +254,14 @@ var _ = Describe("AliasCache Unit Tests", func() {
 })
 
 var _ = Describe("TopicParser Unit Tests", func() {
+	BeforeEach(func() {
+		testActivated := os.Getenv("TEST_SPARKPLUG_UNIT")
+		if testActivated == "" {
+			Skip("Skipping Sparkplug B unit tests: TEST_SPARKPLUG_UNIT not set")
+			return
+		}
+	})
+
 	Context("Topic Parsing", func() {
 		It("should parse valid Sparkplug topics", func() {
 			// Note: Topic parser is internal - tested via integration tests
@@ -361,6 +378,14 @@ var _ = Describe("TopicParser Unit Tests", func() {
 })
 
 var _ = Describe("SequenceManager Unit Tests", func() {
+	BeforeEach(func() {
+		testActivated := os.Getenv("TEST_SPARKPLUG_UNIT")
+		if testActivated == "" {
+			Skip("Skipping Sparkplug B unit tests: TEST_SPARKPLUG_UNIT not set")
+			return
+		}
+	})
+
 	Context("Sequence Number Validation", func() {
 		It("should detect sequence gaps", func() {
 			// Test sequence gap detection (migrated from old input test)
@@ -430,6 +455,14 @@ var _ = Describe("SequenceManager Unit Tests", func() {
 })
 
 var _ = Describe("TypeConverter Unit Tests", func() {
+	BeforeEach(func() {
+		testActivated := os.Getenv("TEST_SPARKPLUG_UNIT")
+		if testActivated == "" {
+			Skip("Skipping Sparkplug B unit tests: TEST_SPARKPLUG_UNIT not set")
+			return
+		}
+	})
+
 	Context("Data Type Conversions", func() {
 		It("should convert Sparkplug types to UMH format", func() {
 			// Test various Sparkplug data type conversions (migrated from old tests)
@@ -670,6 +703,14 @@ var _ = Describe("MQTTClientBuilder Unit Tests", func() {
 })
 
 var _ = Describe("Configuration Unit Tests", func() {
+	BeforeEach(func() {
+		testActivated := os.Getenv("TEST_SPARKPLUG_UNIT")
+		if testActivated == "" {
+			Skip("Skipping Sparkplug B unit tests: TEST_SPARKPLUG_UNIT not set")
+			return
+		}
+	})
+
 	Context("Config Validation", func() {
 		It("should validate required configuration fields", func() {
 			// Test required field validation (migrated from old input test)

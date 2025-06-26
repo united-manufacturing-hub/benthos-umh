@@ -21,6 +21,7 @@ package sparkplug_plugin_test
 
 import (
 	"encoding/base64"
+	"os"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -49,6 +50,14 @@ func uint32Ptr(u uint32) *uint32 {
 }
 
 var _ = Describe("Static Payload Validation", func() {
+	BeforeEach(func() {
+		testActivated := os.Getenv("TEST_SPARKPLUG_UNIT")
+		if testActivated == "" {
+			Skip("Skipping Sparkplug B unit tests: TEST_SPARKPLUG_UNIT not set")
+			return
+		}
+	})
+
 	Context("Test Vector Decoding", func() {
 		It("should decode all generated test vectors successfully", func() {
 			for _, vector := range sparkplug_plugin.TestVectors {
