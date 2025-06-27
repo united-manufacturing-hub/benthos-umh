@@ -107,6 +107,10 @@ test-downsampler:
 test-pkg-umh-topic:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./pkg/umh/topic/...
 
+.PHONY: bench-pkg-umh-topic
+bench-pkg-umh-topic:
+	go test -bench=. -benchmem ./pkg/umh/topic/...
+
 ###### TESTS WITH RUNNING BENTHOS-UMH #####
 # Test the tag processor with a local OPC UA server
 .PHONY: test-benthos-tag-processor
