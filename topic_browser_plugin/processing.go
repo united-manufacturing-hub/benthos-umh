@@ -16,12 +16,13 @@ package topic_browser_plugin
 
 import (
 	"github.com/redpanda-data/benthos/v4/public/service"
-	"google.golang.org/protobuf/proto"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
+	protobuf "google.golang.org/protobuf/proto"
 )
 
 // bufferMessage handles the buffering of a processed message and its topic information.
 // This function manages both the ring buffer storage and the message buffer for ACK control.
-func (t *TopicBrowserProcessor) bufferMessage(msg *service.Message, event *EventTableEntry, topicInfo *TopicInfo, unsTreeId string) error {
+func (t *TopicBrowserProcessor) bufferMessage(msg *service.Message, event *proto.EventTableEntry, topicInfo *proto.TopicInfo, unsTreeId string) error {
 	t.bufferMutex.Lock()
 	defer t.bufferMutex.Unlock()
 
@@ -39,10 +40,10 @@ func (t *TopicBrowserProcessor) bufferMessage(msg *service.Message, event *Event
 
 	// Update fullTopicMap with cumulative metadata and emit complete state once per interval
 	// This maintains the authoritative topic state with merged metadata across all messages
-	cumulativeMetadata := t.mergeTopicHeaders(unsTreeId, []*TopicInfo{topicInfo})
+	cumulativeMetadata := t.mergeTopicHeaders(unsTreeId, []*proto.TopicInfo{topicInfo})
 
-	// ✅ FIX: Use proto.Clone() to safely copy protobuf struct without copying internal mutex
-	topicInfoWithCumulative := proto.Clone(topicInfo).(*TopicInfo)
+	// ✅ FIX: Use protobuf.Clone() to safely copy protobuf struct without copying internal mutex
+	topicInfoWithCumulative := protobuf.Clone(topicInfo).(*proto.TopicInfo)
 	topicInfoWithCumulative.Metadata = cumulativeMetadata
 	t.updateTopicCache(unsTreeId, cumulativeMetadata)
 

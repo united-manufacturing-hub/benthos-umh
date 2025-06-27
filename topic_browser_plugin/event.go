@@ -52,11 +52,11 @@ package topic_browser_plugin
 	==========================
 
 	Rule Statement:
-	> Only time-series payloads are size-capped at 1024 bytes (after JSON decoding); relational payloads have no hard limit.
+	> Only time-series payloads are size-capped at 1 MiB (after JSON decoding); relational payloads have no hard limit.
 
 	| Type                   | Typical content                                                      | Size limit enforced                    |
 	| ---------------------- | -------------------------------------------------------------------- | --------------------------------------- |
-	| **Time-series / Tags** | Exactly two keys: timestamp_ms and value                           | ≤ 1024 B decoded                       |
+	| **Time-series / Tags** | Exactly two keys: timestamp_ms and value                           | ≤ 1 MiB decoded                        |
 	| **Relational / JSON**  | One self-contained business record or multi-field snapshot         | **No hard cap** (broker limit only)    |
 
 	Implementation:
@@ -72,13 +72,14 @@ import (
 	"strconv"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 const (
-	// Time-series: must stay small – fits in one DB row / cache line
-	// Only time-series payloads are size-capped at 1024 bytes (after JSON decoding); relational payloads have no hard limit.
-	MaxTimeSeriesPayloadBytes = 1024 // 1 KiB
+	// Time-series: 1 MiB since this is the default Kafka message size limit
+	// Usually our payloads will be much smaller
+	MaxTimeSeriesPayloadBytes = 1_048_576 // 1 MiB - Kafka message size limit
 
 	// Field names for UMH-Core time-series format
 	FieldTimestamp = "timestamp_ms"
@@ -126,7 +127,7 @@ var (
 // Example invalid: ["array", "data"] or "string" or 123 or non-JSON
 //
 // Any format that is not a valid JSON object will return an error
-func messageToEvent(message *service.Message) (*EventTableEntry, error) {
+func messageToEvent(message *service.Message) (*proto.EventTableEntry, error) {
 	// 1. Try to get structured data (valid JSON required for both time-series and relational)
 	structured, err := message.AsStructured()
 	if err != nil {
@@ -161,7 +162,7 @@ func messageToEvent(message *service.Message) (*EventTableEntry, error) {
 // 1. "timestamp_ms" - timestamp in milliseconds (numeric)
 // 2. "value" - the scalar value (any type)
 // Any other format is considered relational data
-func processTimeSeriesData(structured map[string]interface{}) (*EventTableEntry, error) {
+func processTimeSeriesData(structured map[string]interface{}) (*proto.EventTableEntry, error) {
 	var timestampMs int64
 	var err error
 
@@ -202,7 +203,7 @@ func processTimeSeriesData(structured map[string]interface{}) (*EventTableEntry,
 	}
 
 	// Create the TimeSeriesPayload with oneof wrapper types
-	timeSeriesPayload := &TimeSeriesPayload{
+	timeSeriesPayload := &proto.TimeSeriesPayload{
 		TimestampMs: timestampMs,
 	}
 
@@ -215,25 +216,25 @@ func processTimeSeriesData(structured map[string]interface{}) (*EventTableEntry,
 			if math.IsNaN(floatVal) || math.IsInf(floatVal, 0) {
 				return nil, ErrNaNOrInf
 			}
-			timeSeriesPayload.ScalarType = ScalarType_NUMERIC
-			timeSeriesPayload.Value = &TimeSeriesPayload_NumericValue{
+			timeSeriesPayload.ScalarType = proto.ScalarType_NUMERIC
+			timeSeriesPayload.Value = &proto.TimeSeriesPayload_NumericValue{
 				NumericValue: &wrapperspb.DoubleValue{Value: floatVal},
 			}
 		} else {
 			// If it can't be parsed as float, treat as string
-			timeSeriesPayload.ScalarType = ScalarType_STRING
-			timeSeriesPayload.Value = &TimeSeriesPayload_StringValue{
+			timeSeriesPayload.ScalarType = proto.ScalarType_STRING
+			timeSeriesPayload.Value = &proto.TimeSeriesPayload_StringValue{
 				StringValue: &wrapperspb.StringValue{Value: string(v)},
 			}
 		}
 	case float64:
-		timeSeriesPayload.ScalarType = ScalarType_NUMERIC
-		timeSeriesPayload.Value = &TimeSeriesPayload_NumericValue{
+		timeSeriesPayload.ScalarType = proto.ScalarType_NUMERIC
+		timeSeriesPayload.Value = &proto.TimeSeriesPayload_NumericValue{
 			NumericValue: &wrapperspb.DoubleValue{Value: v},
 		}
 	case float32:
-		timeSeriesPayload.ScalarType = ScalarType_NUMERIC
-		timeSeriesPayload.Value = &TimeSeriesPayload_NumericValue{
+		timeSeriesPayload.ScalarType = proto.ScalarType_NUMERIC
+		timeSeriesPayload.Value = &proto.TimeSeriesPayload_NumericValue{
 			NumericValue: &wrapperspb.DoubleValue{Value: float64(v)},
 		}
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
@@ -281,18 +282,18 @@ func processTimeSeriesData(structured map[string]interface{}) (*EventTableEntry,
 			}
 			floatVal = float64(v)
 		}
-		timeSeriesPayload.ScalarType = ScalarType_NUMERIC
-		timeSeriesPayload.Value = &TimeSeriesPayload_NumericValue{
+		timeSeriesPayload.ScalarType = proto.ScalarType_NUMERIC
+		timeSeriesPayload.Value = &proto.TimeSeriesPayload_NumericValue{
 			NumericValue: &wrapperspb.DoubleValue{Value: floatVal},
 		}
 	case string:
-		timeSeriesPayload.ScalarType = ScalarType_STRING
-		timeSeriesPayload.Value = &TimeSeriesPayload_StringValue{
+		timeSeriesPayload.ScalarType = proto.ScalarType_STRING
+		timeSeriesPayload.Value = &proto.TimeSeriesPayload_StringValue{
 			StringValue: &wrapperspb.StringValue{Value: v},
 		}
 	case bool:
-		timeSeriesPayload.ScalarType = ScalarType_BOOLEAN
-		timeSeriesPayload.Value = &TimeSeriesPayload_BooleanValue{
+		timeSeriesPayload.ScalarType = proto.ScalarType_BOOLEAN
+		timeSeriesPayload.Value = &proto.TimeSeriesPayload_BooleanValue{
 			BooleanValue: &wrapperspb.BoolValue{Value: v},
 		}
 	default:
@@ -300,16 +301,16 @@ func processTimeSeriesData(structured map[string]interface{}) (*EventTableEntry,
 	}
 
 	// Return EventTableEntry with the TimeSeriesPayload using the oneof pattern
-	return &EventTableEntry{
-		PayloadFormat: PayloadFormat_TIMESERIES,
-		Payload: &EventTableEntry_Ts{
+	return &proto.EventTableEntry{
+		PayloadFormat: proto.PayloadFormat_TIMESERIES,
+		Payload: &proto.EventTableEntry_Ts{
 			Ts: timeSeriesPayload,
 		},
 	}, nil
 }
 
 // processRelationalStructured processes structured data directly as relational without re-serialization
-func processRelationalStructured(structured map[string]interface{}) (*EventTableEntry, error) {
+func processRelationalStructured(structured map[string]interface{}) (*proto.EventTableEntry, error) {
 	// Convert the structured data to JSON bytes for storage
 	valueBytes, err := json.Marshal(structured)
 	if err != nil {
@@ -317,14 +318,14 @@ func processRelationalStructured(structured map[string]interface{}) (*EventTable
 	}
 
 	// Create the RelationalPayload
-	relationalPayload := &RelationalPayload{
+	relationalPayload := &proto.RelationalPayload{
 		Json: valueBytes,
 	}
 
 	// Return EventTableEntry with the RelationalPayload using the oneof pattern
-	return &EventTableEntry{
-		PayloadFormat: PayloadFormat_RELATIONAL,
-		Payload: &EventTableEntry_Rel{
+	return &proto.EventTableEntry{
+		PayloadFormat: proto.PayloadFormat_RELATIONAL,
+		Payload: &proto.EventTableEntry_Rel{
 			Rel: relationalPayload,
 		},
 	}, nil

@@ -1346,25 +1346,7 @@ tag_processor:
 
 			Eventually(func() int {
 				return len(messages)
-			}).Should(Equal(1))
-
-			msg := messages[0]
-
-			// Verify umh_topic does not contain consecutive dots
-			umh_topic, exists := msg.MetaGet("umh_topic")
-			Expect(exists).To(BeTrue())
-
-			// The topic should not contain consecutive dots
-			Expect(umh_topic).NotTo(ContainSubstring(".."))
-
-			// Expected topic should have single dots only
-			expectedTopic := "umh.v1.UMH-Systems-GmbH---Dev-Team._historian.Root.Objects.SiemensPLC_fallback._System._EnableDiagnostics"
-			Expect(umh_topic).To(Equal(expectedTopic))
-
-			// Verify topic (deprecated) has the same value
-			topic, exists := msg.MetaGet("topic")
-			Expect(exists).To(BeTrue())
-			Expect(topic).To(Equal(expectedTopic))
+			}).Should(Equal(0))
 		})
 	})
 })

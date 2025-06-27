@@ -16,6 +16,8 @@ package topic_browser_plugin
 
 import (
 	"maps"
+
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
 // METADATA FLOW DOCUMENTATION
@@ -92,7 +94,7 @@ import (
 //
 // Returns:
 //   - map[string]string: Cumulative metadata with all keys ever seen
-func (t *TopicBrowserProcessor) mergeTopicHeaders(unsTreeId string, topics []*TopicInfo) map[string]string {
+func (t *TopicBrowserProcessor) mergeTopicHeaders(unsTreeId string, topics []*proto.TopicInfo) map[string]string {
 	// Start with previously cached metadata (if exists)
 	mergedHeaders := make(map[string]string)
 

@@ -144,7 +144,7 @@ Name: "position"
 ```
 
 **Business Rules**:
-- Level0 (enterprise) is mandatory
+- level0 is mandatory
 - Location sublevels are dynamic (can be 0 to N levels)
 - Data contract must start with underscore and cannot be the final segment  
 - Virtual path is optional logical grouping

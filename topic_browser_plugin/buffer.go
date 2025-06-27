@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
 // Buffer management functions for TopicBrowserProcessor
@@ -29,7 +30,7 @@ import (
 //
 // THREAD SAFETY: This function assumes t.bufferMutex is already held by the caller.
 // It MUST be called from within a mutex-protected section.
-func (t *TopicBrowserProcessor) addEventToTopicBuffer(topic string, event *EventTableEntry) {
+func (t *TopicBrowserProcessor) addEventToTopicBuffer(topic string, event *proto.EventTableEntry) {
 	buffer := t.getOrCreateTopicBuffer(topic)
 
 	// Add to ring buffer (overwrites oldest if full)
@@ -57,7 +58,7 @@ func (t *TopicBrowserProcessor) getOrCreateTopicBuffer(topic string) *topicRingB
 
 	// Create new ring buffer for this topic
 	buffer := &topicRingBuffer{
-		events:   make([]*EventTableEntry, t.maxEventsPerTopic),
+		events:   make([]*proto.EventTableEntry, t.maxEventsPerTopic),
 		head:     0,
 		size:     0,
 		capacity: t.maxEventsPerTopic,
@@ -71,14 +72,14 @@ func (t *TopicBrowserProcessor) getOrCreateTopicBuffer(topic string) *topicRingB
 //
 // THREAD SAFETY: This function assumes t.bufferMutex is already held by the caller.
 // It MUST be called from within a mutex-protected section.
-func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*EventTableEntry {
+func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*proto.EventTableEntry {
 	buffer := t.topicBuffers[topic]
 	if buffer == nil || buffer.size == 0 {
 		return nil
 	}
 
 	// Extract events in chronological order (oldest to newest)
-	events := make([]*EventTableEntry, buffer.size)
+	events := make([]*proto.EventTableEntry, buffer.size)
 	for i := 0; i < buffer.size; i++ {
 		idx := (buffer.head - buffer.size + i + buffer.capacity) % buffer.capacity
 		events[i] = buffer.events[idx]
@@ -140,7 +141,7 @@ func (t *TopicBrowserProcessor) flushBufferAndACK() ([]service.MessageBatch, err
 func (t *TopicBrowserProcessor) flushBufferAndACKLocked() ([]service.MessageBatch, error) {
 
 	// Collect all events from ring buffers (already rate-limited by buffer size)
-	allEvents := make([]*EventTableEntry, 0)
+	allEvents := make([]*proto.EventTableEntry, 0)
 	for topic := range t.topicBuffers {
 		events := t.getLatestEventsForTopic(topic)
 		// Ring buffer already enforces max events per topic - no additional limiting needed
@@ -156,9 +157,9 @@ func (t *TopicBrowserProcessor) flushBufferAndACKLocked() ([]service.MessageBatc
 	}
 
 	// Create UNS bundle
-	unsBundle := &UnsBundle{
-		UnsMap: &TopicMap{Entries: make(map[string]*TopicInfo)},
-		Events: &EventTable{Entries: allEvents},
+	unsBundle := &proto.UnsBundle{
+		UnsMap: &proto.TopicMap{Entries: make(map[string]*proto.TopicInfo)},
+		Events: &proto.EventTable{Entries: allEvents},
 	}
 
 	// Always emit complete fullTopicMap (no conditional emission)
