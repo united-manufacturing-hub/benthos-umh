@@ -48,6 +48,8 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
 // Compiled regular expressions for efficient validation.
@@ -93,7 +95,7 @@ type UnsTopic struct {
 	raw string
 
 	// info contains the parsed topic components
-	info *TopicInfo
+	info *proto.TopicInfo
 }
 
 // NewUnsTopic creates and validates a UMH topic from a string.
@@ -179,7 +181,7 @@ func (u *UnsTopic) String() string {
 //	fmt.Println(info.DataContract)    // Output: _historian
 //	fmt.Println(*info.VirtualPath)    // Output: motor
 //	fmt.Println(info.Name)            // Output: temperature
-func (u *UnsTopic) Info() *TopicInfo {
+func (u *UnsTopic) Info() *proto.TopicInfo {
 	return u.info
 }
 
@@ -204,7 +206,7 @@ func (u *UnsTopic) AsKafkaKey() string {
 //
 // This method performs the core parsing logic while validating the topic structure.
 // It's designed for high performance with minimal memory allocations.
-func (u *UnsTopic) parse() (*TopicInfo, error) {
+func (u *UnsTopic) parse() (*proto.TopicInfo, error) {
 	// Basic format validation
 	if err := u.validateBasicFormat(); err != nil {
 		return nil, err
@@ -242,7 +244,7 @@ func (u *UnsTopic) parse() (*TopicInfo, error) {
 	}
 
 	// Build TopicInfo efficiently
-	info := &TopicInfo{
+	info := &proto.TopicInfo{
 		Level0:       parts[2], // Skip "umh" and "v1"
 		DataContract: parts[datacontractIndex],
 		Name:         name,
@@ -313,7 +315,7 @@ func (u *UnsTopic) validateBasicFormat() error {
 }
 
 // validateParsedInfo validates the parsed TopicInfo using fixed UMH rules.
-func (u *UnsTopic) validateParsedInfo(info *TopicInfo) error {
+func (u *UnsTopic) validateParsedInfo(info *proto.TopicInfo) error {
 	// Validate level0 (enterprise level)
 	if strings.HasPrefix(info.Level0, "_") {
 		return errors.New("level0 (enterprise) cannot start with underscore")
