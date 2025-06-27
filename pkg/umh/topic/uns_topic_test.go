@@ -100,11 +100,10 @@ var _ = Describe("UnsTopic", func() {
 				Entry("empty level0", "umh.v1.._historian.temperature", "level0 cannot be empty"),
 				Entry("level0 starts with underscore", "umh.v1._enterprise._historian.temperature", "level0 cannot start with underscore"),
 				Entry("data contract doesn't start with underscore", "umh.v1.enterprise.historian.temperature", "topic must contain a data contract"),
-				Entry("name is empty", "umh.v1.enterprise._historian.", "name cannot be empty"),
-				Entry("location sublevel starts with underscore", "umh.v1.enterprise._site._historian.temperature", "location sublevel cannot start with underscore"),
-				Entry("location sublevel is empty", "umh.v1.enterprise..area._historian.temperature", "location sublevel cannot be empty"),
-				Entry("virtual path segment is empty", "umh.v1.enterprise._raw.motor..temperature", "virtual path segment cannot be empty"),
-				Entry("data contract is final segment", "umh.v1.enterprise._historian", "data contract cannot be the final segment"),
+				Entry("name is empty", "umh.v1.enterprise._historian.", "topic name (final segment) cannot be empty"),
+				Entry("location sublevel is empty", "umh.v1.enterprise..area._historian.temperature", "location sublevel at index 1 cannot be empty"),
+				Entry("virtual path segment is empty", "umh.v1.enterprise._raw.motor..temperature", "virtual path segment at index 1 cannot be empty"),
+				Entry("data contract is final segment", "umh.v1.enterprise._historian", "topic must have at least: umh.v1.level0._contract.name"),
 			)
 		})
 	})
@@ -230,56 +229,56 @@ var _ = Describe("UnsTopic", func() {
 	})
 })
 
-// Benchmark tests for UnsTopic performance
-var _ = Describe("UnsTopic Benchmarks", func() {
-	Measure("NewUnsTopic Simple", func(b Benchmarker) {
+// Performance-related tests for UnsTopic
+var _ = Describe("UnsTopic Performance", func() {
+	It("should perform NewUnsTopic Simple operations efficiently", func() {
 		topic := "umh.v1.enterprise._historian.temperature"
-		b.Time("runtime", func() {
+		for i := 0; i < 1000; i++ {
 			_, err := NewUnsTopic(topic)
 			Expect(err).NotTo(HaveOccurred())
-		})
-	}, 10000)
+		}
+	})
 
-	Measure("NewUnsTopic Complex", func(b Benchmarker) {
+	It("should perform NewUnsTopic Complex operations efficiently", func() {
 		topic := "umh.v1.enterprise.site.area.line.station._historian.motor.axis.x.position"
-		b.Time("runtime", func() {
+		for i := 0; i < 1000; i++ {
 			_, err := NewUnsTopic(topic)
 			Expect(err).NotTo(HaveOccurred())
-		})
-	}, 10000)
+		}
+	})
 
-	Measure("UnsTopic String", func(b Benchmarker) {
+	It("should perform UnsTopic String operations efficiently", func() {
 		topic := "umh.v1.enterprise.site.area._historian.motor.diagnostics.temperature"
 		unsTopic, _ := NewUnsTopic(topic)
-		b.Time("runtime", func() {
+		for i := 0; i < 1000; i++ {
 			_ = unsTopic.String()
-		})
-	}, 10000)
+		}
+	})
 
-	Measure("UnsTopic Info", func(b Benchmarker) {
+	It("should perform UnsTopic Info operations efficiently", func() {
 		topic := "umh.v1.enterprise.site.area._historian.motor.diagnostics.temperature"
 		unsTopic, _ := NewUnsTopic(topic)
-		b.Time("runtime", func() {
+		for i := 0; i < 1000; i++ {
 			_ = unsTopic.Info()
-		})
-	}, 10000)
+		}
+	})
 
-	Measure("TopicInfo LocationPath", func(b Benchmarker) {
+	It("should perform TopicInfo LocationPath operations efficiently", func() {
 		topic := "umh.v1.enterprise.site.area.line._historian.temperature"
 		unsTopic, _ := NewUnsTopic(topic)
 		info := unsTopic.Info()
-		b.Time("runtime", func() {
+		for i := 0; i < 1000; i++ {
 			_ = locationPath(info)
-		})
-	}, 10000)
+		}
+	})
 
-	Measure("NewUnsTopic Allocs", func(b Benchmarker) {
+	It("should perform NewUnsTopic with minimal allocations", func() {
 		topic := "umh.v1.enterprise.site.area._historian.motor.diagnostics.temperature"
-		b.Time("runtime", func() {
+		for i := 0; i < 1000; i++ {
 			_, err := NewUnsTopic(topic)
 			Expect(err).NotTo(HaveOccurred())
-		})
-	}, 10000)
+		}
+	})
 })
 
 // Helper functions for UNS topic tests

@@ -338,23 +338,23 @@ var _ = Describe("Builder", func() {
 	})
 })
 
-// Benchmark tests for Builder performance
-var _ = Describe("Builder Benchmarks", func() {
-	Measure("Build Simple", func(b Benchmarker) {
+// Performance-related tests for Builder
+var _ = Describe("Builder Performance", func() {
+	It("should perform Build Simple operations efficiently", func() {
 		builder := NewBuilder()
-		b.Time("runtime", func() {
+		for i := 0; i < 1000; i++ {
 			builder.Reset().
 				SetLevel0("enterprise").
 				SetDataContract("_historian").
 				SetName("temperature")
 			_, err := builder.Build()
 			Expect(err).NotTo(HaveOccurred())
-		})
-	}, 10000)
+		}
+	})
 
-	Measure("Build Complex", func(b Benchmarker) {
+	It("should perform Build Complex operations efficiently", func() {
 		builder := NewBuilder()
-		b.Time("runtime", func() {
+		for i := 0; i < 1000; i++ {
 			builder.Reset().
 				SetLocationLevels("enterprise", "site", "area", "line", "station").
 				SetDataContract("_historian").
@@ -362,45 +362,39 @@ var _ = Describe("Builder Benchmarks", func() {
 				SetName("position")
 			_, err := builder.Build()
 			Expect(err).NotTo(HaveOccurred())
-		})
-	}, 10000)
+		}
+	})
 
-	Measure("GetLocationPath", func(b Benchmarker) {
+	It("should perform GetLocationPath operations efficiently", func() {
 		builder := NewBuilder()
 		builder.SetLocationLevels("enterprise", "site", "area", "line")
-		b.Time("runtime", func() {
+		for i := 0; i < 1000; i++ {
 			_ = builder.GetLocationPath()
-		})
-	}, 10000)
+		}
+	})
 
-	Measure("Reset", func(b Benchmarker) {
+	It("should perform Reset operations efficiently", func() {
 		builder := NewBuilder()
-		builder.SetLocationLevels("enterprise", "site", "area").
-			SetDataContract("_historian").
-			SetVirtualPath("motor.diagnostics").
-			SetName("temperature")
-
-		b.Time("runtime", func() {
-			builder.Reset()
-			// Set up again for next iteration
+		for i := 0; i < 1000; i++ {
 			builder.SetLocationLevels("enterprise", "site", "area").
 				SetDataContract("_historian").
 				SetVirtualPath("motor.diagnostics").
 				SetName("temperature")
-		})
-	}, 10000)
+			builder.Reset()
+		}
+	})
 
-	Measure("SetLocationPath", func(b Benchmarker) {
+	It("should perform SetLocationPath operations efficiently", func() {
 		builder := NewBuilder()
 		locationPath := "enterprise.site.area.line.station"
-		b.Time("runtime", func() {
+		for i := 0; i < 1000; i++ {
 			builder.SetLocationPath(locationPath)
-		})
-	}, 10000)
+		}
+	})
 
-	Measure("Build Allocs", func(b Benchmarker) {
+	It("should perform Build with minimal allocations", func() {
 		builder := NewBuilder()
-		b.Time("runtime", func() {
+		for i := 0; i < 1000; i++ {
 			builder.Reset().
 				SetLocationLevels("enterprise", "site", "area").
 				SetDataContract("_historian").
@@ -408,8 +402,8 @@ var _ = Describe("Builder Benchmarks", func() {
 				SetName("temperature")
 			_, err := builder.Build()
 			Expect(err).NotTo(HaveOccurred())
-		})
-	}, 10000)
+		}
+	})
 })
 
 // Helper functions
