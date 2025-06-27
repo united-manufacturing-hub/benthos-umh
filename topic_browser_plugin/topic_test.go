@@ -70,23 +70,20 @@ var _ = Describe("Uns", func() {
 
 		It("should return error for empty topic", func() {
 			unsTopic, err := topic.NewUnsTopic("")
-			unsInfo := unsTopic.Info()
 			Expect(err).To(HaveOccurred())
-			Expect(unsInfo).To(BeNil())
+			Expect(unsTopic).To(BeNil())
 		})
 
 		It("should return error for invalid prefix", func() {
 			unsTopic, err := topic.NewUnsTopic("invalid.topic")
-			unsInfo := unsTopic.Info()
 			Expect(err).To(HaveOccurred())
-			Expect(unsInfo).To(BeNil())
+			Expect(unsTopic).To(BeNil())
 		})
 
 		It("should return error for topic with insufficient parts", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1")
-			unsInfo := unsTopic.Info()
 			Expect(err).To(HaveOccurred())
-			Expect(unsInfo).To(BeNil())
+			Expect(unsTopic).To(BeNil())
 		})
 
 		It("should parse topic with location sublevels and virtual path", func() {
@@ -104,34 +101,31 @@ var _ = Describe("Uns", func() {
 
 		It("should return error for empty level0", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.._hist.temp")
-			unsInfo := unsTopic.Info()
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("level0 (enterprise) cannot be empty"))
-			Expect(unsInfo).To(BeNil())
+			Expect(unsTopic).To(BeNil())
 		})
 
 		It("should return error for double dot in virtual path", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.ent._hist.motor..temp")
-			unsInfo := unsTopic.Info()
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("virtual path segment at index"))
 			Expect(err.Error()).To(ContainSubstring("cannot be empty"))
-			Expect(unsInfo).To(BeNil())
+			Expect(unsTopic).To(BeNil())
 		})
 
 		It("should return error for lone underscore contract", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.ent._.temp")
-			unsInfo := unsTopic.Info()
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("data contract cannot be just an underscore"))
-			Expect(unsInfo).To(BeNil())
+			Expect(unsTopic).To(BeNil())
 		})
 
 		It("should allow names starting with underscore (per UMH specification)", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.ent._hist._temp")
-			unsInfo := unsTopic.Info()
 			Expect(err).To(BeNil())
-			Expect(unsInfo).NotTo(BeNil())
+			Expect(unsTopic).NotTo(BeNil())
+			unsInfo := unsTopic.Info()
 			Expect(unsInfo.Name).To(Equal("_temp"))
 		})
 
@@ -152,12 +146,12 @@ var _ = Describe("Uns", func() {
 			DescribeTable("should correctly parse topics with various structures",
 				func(tc testCase) {
 					unsTopic, err := topic.NewUnsTopic(tc.topic)
-					unsInfo := unsTopic.Info()
 					if tc.shouldHaveError {
 						Expect(err).To(HaveOccurred())
-						Expect(unsInfo).To(BeNil())
+						Expect(unsTopic).To(BeNil())
 						return
 					}
+					unsInfo := unsTopic.Info()
 
 					Expect(err).To(BeNil())
 					Expect(unsInfo).ToNot(BeNil())
