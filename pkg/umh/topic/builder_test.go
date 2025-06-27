@@ -437,7 +437,7 @@ func TestBuilder_Build_InvalidTopics(t *testing.T) {
 			setup: func(b *Builder) {
 				b.SetDataContract("_historian").SetName("temperature")
 			},
-			expectedError: "level0 (enterprise) is required",
+			expectedError: "level0 is required",
 		},
 		{
 			name: "missing data contract",
@@ -458,7 +458,7 @@ func TestBuilder_Build_InvalidTopics(t *testing.T) {
 			setup: func(b *Builder) {
 				b.SetLevel0("_enterprise").SetDataContract("_historian").SetName("temperature")
 			},
-			expectedError: "level0 (enterprise) cannot start with underscore",
+			expectedError: "level0 cannot start with underscore",
 		},
 		{
 			name: "invalid data contract",

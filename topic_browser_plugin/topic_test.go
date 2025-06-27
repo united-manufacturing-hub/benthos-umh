@@ -102,7 +102,7 @@ var _ = Describe("Uns", func() {
 		It("should return error for empty level0", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.._hist.temp")
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("level0 (enterprise) cannot be empty"))
+			Expect(err.Error()).To(ContainSubstring("level0 cannot be empty"))
 			Expect(unsTopic).To(BeNil())
 		})
 
