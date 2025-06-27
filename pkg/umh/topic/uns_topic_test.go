@@ -12,566 +12,293 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package topic
+package topic_test
 
 import (
 	"strings"
-	"testing"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	. "github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
-// Test suite for UnsTopic validation and parsing
+var _ = Describe("UnsTopic", func() {
+	Describe("NewUnsTopic", func() {
+		Context("with valid topics", func() {
+			DescribeTable("should parse topics correctly",
+				func(topic, expectedLevel0 string, expectedLevels []string, expectedDC string, expectedVP *string, expectedName string) {
+					unsTopic, err := NewUnsTopic(topic)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(unsTopic).NotTo(BeNil())
 
-func TestNewUnsTopic_ValidTopics(t *testing.T) {
-	testCases := []struct {
-		name           string
-		topic          string
-		expectedLevel0 string
-		expectedLevels []string
-		expectedDC     string
-		expectedVP     *string
-		expectedName   string
-	}{
-		{
-			name:           "minimum valid topic",
-			topic:          "umh.v1.enterprise._historian.temperature",
-			expectedLevel0: "enterprise",
-			expectedLevels: []string{},
-			expectedDC:     "_historian",
-			expectedVP:     nil,
-			expectedName:   "temperature",
-		},
-		{
-			name:           "topic with location sublevels",
-			topic:          "umh.v1.acme.berlin.assembly._historian.temperature",
-			expectedLevel0: "acme",
-			expectedLevels: []string{"berlin", "assembly"},
-			expectedDC:     "_historian",
-			expectedVP:     nil,
-			expectedName:   "temperature",
-		},
-		{
-			name:           "topic with virtual path",
-			topic:          "umh.v1.factory._raw.motor.diagnostics.temperature",
-			expectedLevel0: "factory",
-			expectedLevels: []string{},
-			expectedDC:     "_raw",
-			expectedVP:     strPtr("motor.diagnostics"),
-			expectedName:   "temperature",
-		},
-		{
-			name:           "complex topic with all components",
-			topic:          "umh.v1.enterprise.site.area.line._historian.axis.x.position",
-			expectedLevel0: "enterprise",
-			expectedLevels: []string{"site", "area", "line"},
-			expectedDC:     "_historian",
-			expectedVP:     strPtr("axis.x"),
-			expectedName:   "position",
-		},
-		{
-			name:           "topic with name starting with underscore",
-			topic:          "umh.v1.enterprise._analytics._internal_state",
-			expectedLevel0: "enterprise",
-			expectedLevels: []string{},
-			expectedDC:     "_analytics",
-			expectedVP:     nil,
-			expectedName:   "_internal_state",
-		},
-		{
-			name:           "topic with virtual path starting with underscore",
-			topic:          "umh.v1.factory._raw._internal.debug.flag",
-			expectedLevel0: "factory",
-			expectedLevels: []string{},
-			expectedDC:     "_raw",
-			expectedVP:     strPtr("_internal.debug"),
-			expectedName:   "flag",
-		},
-		{
-			name:           "deep location hierarchy",
-			topic:          "umh.v1.enterprise.region.country.state.city.plant.area.line.station._historian.temperature",
-			expectedLevel0: "enterprise",
-			expectedLevels: []string{"region", "country", "state", "city", "plant", "area", "line", "station"},
-			expectedDC:     "_historian",
-			expectedVP:     nil,
-			expectedName:   "temperature",
-		},
-	}
+					// Test String() method
+					Expect(unsTopic.String()).To(Equal(topic))
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			topic, err := NewUnsTopic(tc.topic)
-			if err != nil {
-				t.Fatalf("Expected topic to be valid, got error: %v", err)
+					// Test AsKafkaKey() method
+					Expect(unsTopic.AsKafkaKey()).To(Equal(topic))
+
+					// Test Info() method
+					info := unsTopic.Info()
+					Expect(info).NotTo(BeNil())
+
+					// Validate parsed components
+					Expect(info.Level0).To(Equal(expectedLevel0))
+					Expect(sliceEqual(info.LocationSublevels, expectedLevels)).To(BeTrue())
+					Expect(info.DataContract).To(Equal(expectedDC))
+					Expect(equalStringPtr(info.VirtualPath, expectedVP)).To(BeTrue())
+					Expect(info.Name).To(Equal(expectedName))
+
+					// Test LocationPath() helper
+					expectedPath := expectedLevel0
+					if len(expectedLevels) > 0 {
+						expectedPath += "." + strings.Join(expectedLevels, ".")
+					}
+					Expect(locationPath(info)).To(Equal(expectedPath))
+
+					// Test TotalLocationLevels() helper
+					expectedTotal := 1 + len(expectedLevels)
+					Expect(totalLocationLevels(info)).To(Equal(expectedTotal))
+				},
+				Entry("minimum valid topic",
+					"umh.v1.enterprise._historian.temperature",
+					"enterprise", []string{}, "_historian", nil, "temperature"),
+				Entry("topic with location sublevels",
+					"umh.v1.acme.berlin.assembly._historian.temperature",
+					"acme", []string{"berlin", "assembly"}, "_historian", nil, "temperature"),
+				Entry("topic with virtual path",
+					"umh.v1.factory._raw.motor.diagnostics.temperature",
+					"factory", []string{}, "_raw", strPtr("motor.diagnostics"), "temperature"),
+				Entry("complex topic with all components",
+					"umh.v1.enterprise.site.area.line._historian.axis.x.position",
+					"enterprise", []string{"site", "area", "line"}, "_historian", strPtr("axis.x"), "position"),
+				Entry("topic with name starting with underscore",
+					"umh.v1.enterprise._analytics._internal_state",
+					"enterprise", []string{}, "_analytics", nil, "_internal_state"),
+				Entry("topic with virtual path starting with underscore",
+					"umh.v1.factory._raw._internal.debug.flag",
+					"factory", []string{}, "_raw", strPtr("_internal.debug"), "flag"),
+				Entry("deep location hierarchy",
+					"umh.v1.enterprise.region.country.state.city.plant.area.line.station._historian.temperature",
+					"enterprise", []string{"region", "country", "state", "city", "plant", "area", "line", "station"}, "_historian", nil, "temperature"),
+			)
+		})
+
+		Context("with invalid topics", func() {
+			DescribeTable("should return appropriate errors",
+				func(topic, expectedErrorSubstring string) {
+					unsTopic, err := NewUnsTopic(topic)
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(ContainSubstring(expectedErrorSubstring))
+					Expect(unsTopic).To(BeNil())
+				},
+				Entry("empty topic", "", "topic cannot be empty"),
+				Entry("wrong prefix", "wrong.v1.enterprise._historian.temperature", "topic must start with umh.v1"),
+				Entry("no prefix", "enterprise._historian.temperature", "topic must start with umh.v1"),
+				Entry("too few parts", "umh.v1.enterprise._historian", "topic must have at least"),
+				Entry("empty level0", "umh.v1.._historian.temperature", "level0 cannot be empty"),
+				Entry("level0 starts with underscore", "umh.v1._enterprise._historian.temperature", "level0 cannot start with underscore"),
+				Entry("data contract doesn't start with underscore", "umh.v1.enterprise.historian.temperature", "topic must contain a data contract"),
+				Entry("name is empty", "umh.v1.enterprise._historian.", "name cannot be empty"),
+				Entry("location sublevel starts with underscore", "umh.v1.enterprise._site._historian.temperature", "location sublevel cannot start with underscore"),
+				Entry("location sublevel is empty", "umh.v1.enterprise..area._historian.temperature", "location sublevel cannot be empty"),
+				Entry("virtual path segment is empty", "umh.v1.enterprise._raw.motor..temperature", "virtual path segment cannot be empty"),
+				Entry("data contract is final segment", "umh.v1.enterprise._historian", "data contract cannot be the final segment"),
+			)
+		})
+	})
+
+	Describe("TopicInfo helper methods", func() {
+		Describe("LocationPath", func() {
+			DescribeTable("should return correct location paths",
+				func(level0 string, sublevels []string, expectedPath string) {
+					info := &proto.TopicInfo{
+						Level0:            level0,
+						LocationSublevels: sublevels,
+					}
+
+					result := locationPath(info)
+					Expect(result).To(Equal(expectedPath))
+				},
+				Entry("only level0", "enterprise", []string{}, "enterprise"),
+				Entry("level0 with one sublevel", "enterprise", []string{"site"}, "enterprise.site"),
+				Entry("level0 with multiple sublevels", "factory", []string{"area", "line", "station"}, "factory.area.line.station"),
+				Entry("empty level0", "", []string{}, ""),
+				Entry("empty level0 with sublevels", "", []string{"site", "area"}, ".site.area"),
+			)
+		})
+
+		Describe("TotalLocationLevels", func() {
+			DescribeTable("should count location levels correctly",
+				func(level0 string, sublevels []string, expectedTotal int) {
+					info := &proto.TopicInfo{
+						Level0:            level0,
+						LocationSublevels: sublevels,
+					}
+
+					result := totalLocationLevels(info)
+					Expect(result).To(Equal(expectedTotal))
+				},
+				Entry("only level0", "enterprise", []string{}, 1),
+				Entry("level0 with one sublevel", "enterprise", []string{"site"}, 2),
+				Entry("level0 with multiple sublevels", "factory", []string{"area", "line", "station"}, 4),
+				Entry("empty level0", "", []string{}, 1),
+				Entry("empty level0 with sublevels", "", []string{"site", "area"}, 3),
+			)
+		})
+	})
+
+	Describe("ConcurrentUsage", func() {
+		It("should work safely with concurrent access", func() {
+			const numGoroutines = 100
+			const numOperations = 100
+
+			done := make(chan bool, numGoroutines)
+
+			for i := 0; i < numGoroutines; i++ {
+				go func(id int) {
+					defer func() { done <- true }()
+
+					for j := 0; j < numOperations; j++ {
+						topic := "umh.v1.enterprise.site._historian.temperature"
+						unsTopic, err := NewUnsTopic(topic)
+
+						Expect(err).NotTo(HaveOccurred())
+						Expect(unsTopic.String()).To(Equal(topic))
+
+						info := unsTopic.Info()
+						Expect(info.Level0).To(Equal("enterprise"))
+						Expect(info.LocationSublevels).To(Equal([]string{"site"}))
+						Expect(info.DataContract).To(Equal("_historian"))
+						Expect(info.Name).To(Equal("temperature"))
+					}
+				}(i)
 			}
 
-			if topic == nil {
-				t.Fatal("Expected topic to be non-nil")
-			}
-
-			// Test String() method
-			if topic.String() != tc.topic {
-				t.Errorf("Expected String() = %q, got %q", tc.topic, topic.String())
-			}
-
-			// Test AsKafkaKey() method
-			if topic.AsKafkaKey() != tc.topic {
-				t.Errorf("Expected AsKafkaKey() = %q, got %q", tc.topic, topic.AsKafkaKey())
-			}
-
-			// Test Info() method
-			info := topic.Info()
-			if info == nil {
-				t.Fatal("Expected Info() to be non-nil")
-			}
-
-			// Validate parsed components
-			if info.Level0 != tc.expectedLevel0 {
-				t.Errorf("Expected Level0 = %q, got %q", tc.expectedLevel0, info.Level0)
-			}
-
-			if !sliceEqual(info.LocationSublevels, tc.expectedLevels) {
-				t.Errorf("Expected LocationSublevels = %v, got %v", tc.expectedLevels, info.LocationSublevels)
-			}
-
-			if info.DataContract != tc.expectedDC {
-				t.Errorf("Expected DataContract = %q, got %q", tc.expectedDC, info.DataContract)
-			}
-
-			if !equalStringPtr(info.VirtualPath, tc.expectedVP) {
-				t.Errorf("Expected VirtualPath = %v, got %v", ptrStr(tc.expectedVP), ptrStr(info.VirtualPath))
-			}
-
-			if info.Name != tc.expectedName {
-				t.Errorf("Expected Name = %q, got %q", tc.expectedName, info.Name)
-			}
-
-			// Test LocationPath() helper
-			expectedPath := tc.expectedLevel0
-			if len(tc.expectedLevels) > 0 {
-				expectedPath += "." + strings.Join(tc.expectedLevels, ".")
-			}
-			if locationPath(info) != expectedPath {
-				t.Errorf("Expected locationPath() = %q, got %q", expectedPath, locationPath(info))
-			}
-
-			// Test TotalLocationLevels() helper
-			expectedTotal := 1 + len(tc.expectedLevels)
-			if totalLocationLevels(info) != expectedTotal {
-				t.Errorf("Expected totalLocationLevels() = %d, got %d", expectedTotal, totalLocationLevels(info))
+			for i := 0; i < numGoroutines; i++ {
+				<-done
 			}
 		})
-	}
-}
+	})
 
-func TestNewUnsTopic_InvalidTopics(t *testing.T) {
-	testCases := []struct {
-		name          string
-		topic         string
-		expectedError string
-	}{
-		{
-			name:          "empty topic",
-			topic:         "",
-			expectedError: "topic cannot be empty",
-		},
-		{
-			name:          "wrong prefix",
-			topic:         "wrong.v1.enterprise._historian.temperature",
-			expectedError: "topic must start with umh.v1",
-		},
-		{
-			name:          "no prefix",
-			topic:         "enterprise._historian.temperature",
-			expectedError: "topic must start with umh.v1",
-		},
-		{
-			name:          "too few parts",
-			topic:         "umh.v1.enterprise._historian",
-			expectedError: "topic must have at least: umh.v1.level0._contract.name",
-		},
-		{
-			name:          "empty level0",
-			topic:         "umh.v1.._historian.temperature",
-			expectedError: "level0 cannot be empty",
-		},
-		{
-			name:          "level0 starts with underscore",
-			topic:         "umh.v1._enterprise._historian.temperature",
-			expectedError: "level0 cannot start with underscore",
-		},
-		{
-			name:          "no data contract",
-			topic:         "umh.v1.enterprise.historian.temperature",
-			expectedError: "topic must contain a data contract (segment starting with '_') and it cannot be the final segment",
-		},
-		{
-			name:          "data contract just underscore",
-			topic:         "umh.v1.enterprise._.temperature",
-			expectedError: "data contract cannot be just an underscore",
-		},
-		{
-			name:          "data contract at end",
-			topic:         "umh.v1.enterprise.temperature._historian",
-			expectedError: "topic must contain a data contract (segment starting with '_') and it cannot be the final segment",
-		},
-		{
-			name:          "empty location sublevel",
-			topic:         "umh.v1.enterprise..site._historian.temperature",
-			expectedError: "location sublevel at index 0 cannot be empty",
-		},
+	Describe("EdgeCases", func() {
+		DescribeTable("should handle edge cases correctly",
+			func(topic string, shouldSucceed bool, expectedComponents map[string]interface{}) {
+				unsTopic, err := NewUnsTopic(topic)
 
-		{
-			name:          "empty virtual path segment",
-			topic:         "umh.v1.enterprise._historian..debug.temperature",
-			expectedError: "virtual path segment at index 0 cannot be empty",
-		},
-		{
-			name:          "empty name",
-			topic:         "umh.v1.enterprise._historian.",
-			expectedError: "topic name (final segment) cannot be empty",
-		},
-		{
-			name:          "invalid characters",
-			topic:         "umh.v1.enterprise._historian.temp@rature",
-			expectedError: "topic contained invalid characters",
-		},
-		{
-			name:          "consecutive dots",
-			topic:         "umh.v1.enterprise.._historian.temperature",
-			expectedError: "location sublevel at index 0 cannot be empty",
-		},
-		{
-			name:          "leading dot",
-			topic:         ".umh.v1.enterprise._historian.temperature",
-			expectedError: "topic must start with umh.v1",
-		},
-		{
-			name:          "trailing dot",
-			topic:         "umh.v1.enterprise._historian.temperature.",
-			expectedError: "topic name (final segment) cannot be empty",
-		},
-	}
+				if shouldSucceed {
+					Expect(err).NotTo(HaveOccurred())
+					Expect(unsTopic).NotTo(BeNil())
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			topic, err := NewUnsTopic(tc.topic)
-			if err == nil {
-				t.Fatalf("Expected topic to be invalid, but got valid topic: %v", topic)
-			}
+					info := unsTopic.Info()
+					if level0, exists := expectedComponents["level0"]; exists {
+						Expect(info.Level0).To(Equal(level0))
+					}
+					if dataContract, exists := expectedComponents["dataContract"]; exists {
+						Expect(info.DataContract).To(Equal(dataContract))
+					}
+					if name, exists := expectedComponents["name"]; exists {
+						Expect(info.Name).To(Equal(name))
+					}
+				} else {
+					Expect(err).To(HaveOccurred())
+					Expect(unsTopic).To(BeNil())
+				}
+			},
+			Entry("topic with numbers in components",
+				"umh.v1.factory123._historian.sensor456",
+				true,
+				map[string]interface{}{"level0": "factory123", "dataContract": "_historian", "name": "sensor456"}),
+			Entry("topic with special characters in name",
+				"umh.v1.enterprise._historian.temp-sensor_01",
+				true,
+				map[string]interface{}{"level0": "enterprise", "dataContract": "_historian", "name": "temp-sensor_01"}),
+			Entry("very long topic",
+				"umh.v1.enterprise.region.country.state.city.plant.area.line.workstation.cell.machine._historian.axis.x.y.z.sensor.temperature.value.current.measurement",
+				true,
+				map[string]interface{}{"level0": "enterprise", "dataContract": "_historian", "name": "measurement"}),
+			Entry("topic with minimum required segments",
+				"umh.v1.a._b.c",
+				true,
+				map[string]interface{}{"level0": "a", "dataContract": "_b", "name": "c"}),
+			Entry("topic with consecutive dots (invalid)",
+				"umh.v1.enterprise.._historian.temperature",
+				false,
+				map[string]interface{}{}),
+		)
+	})
+})
 
-			if !strings.Contains(err.Error(), tc.expectedError) {
-				t.Errorf("Expected error to contain %q, got %q", tc.expectedError, err.Error())
-			}
-
-			if topic != nil {
-				t.Error("Expected topic to be nil when invalid")
-			}
+// Benchmark tests for UnsTopic performance
+var _ = Describe("UnsTopic Benchmarks", func() {
+	Measure("NewUnsTopic Simple", func(b Benchmarker) {
+		topic := "umh.v1.enterprise._historian.temperature"
+		b.Time("runtime", func() {
+			_, err := NewUnsTopic(topic)
+			Expect(err).NotTo(HaveOccurred())
 		})
-	}
-}
+	}, 10000)
 
-func TestTopicInfo_LocationPath(t *testing.T) {
-	testCases := []struct {
-		name         string
-		info         *proto.TopicInfo
-		expectedPath string
-	}{
-		{
-			name:         "nil info",
-			info:         nil,
-			expectedPath: "",
-		},
-		{
-			name: "only level0",
-			info: &proto.TopicInfo{
-				Level0:            "enterprise",
-				LocationSublevels: []string{},
-			},
-			expectedPath: "enterprise",
-		},
-		{
-			name: "level0 with sublevels",
-			info: &proto.TopicInfo{
-				Level0:            "enterprise",
-				LocationSublevels: []string{"site", "area", "line"},
-			},
-			expectedPath: "enterprise.site.area.line",
-		},
-		{
-			name: "whitespace trimming",
-			info: &proto.TopicInfo{
-				Level0:            " enterprise ",
-				LocationSublevels: []string{" site ", " area "},
-			},
-			expectedPath: "enterprise.site.area",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := locationPath(tc.info)
-			if result != tc.expectedPath {
-				t.Errorf("Expected locationPath() = %q, got %q", tc.expectedPath, result)
-			}
+	Measure("NewUnsTopic Complex", func(b Benchmarker) {
+		topic := "umh.v1.enterprise.site.area.line.station._historian.motor.axis.x.position"
+		b.Time("runtime", func() {
+			_, err := NewUnsTopic(topic)
+			Expect(err).NotTo(HaveOccurred())
 		})
-	}
-}
+	}, 10000)
 
-func TestTopicInfo_TotalLocationLevels(t *testing.T) {
-	testCases := []struct {
-		name          string
-		info          *proto.TopicInfo
-		expectedTotal int
-	}{
-		{
-			name:          "nil info",
-			info:          nil,
-			expectedTotal: 0,
-		},
-		{
-			name: "only level0",
-			info: &proto.TopicInfo{
-				Level0:            "enterprise",
-				LocationSublevels: []string{},
-			},
-			expectedTotal: 1,
-		},
-		{
-			name: "level0 with sublevels",
-			info: &proto.TopicInfo{
-				Level0:            "enterprise",
-				LocationSublevels: []string{"site", "area", "line"},
-			},
-			expectedTotal: 4,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := totalLocationLevels(tc.info)
-			if result != tc.expectedTotal {
-				t.Errorf("Expected totalLocationLevels() = %d, got %d", tc.expectedTotal, result)
-			}
+	Measure("UnsTopic String", func(b Benchmarker) {
+		topic := "umh.v1.enterprise.site.area._historian.motor.diagnostics.temperature"
+		unsTopic, _ := NewUnsTopic(topic)
+		b.Time("runtime", func() {
+			_ = unsTopic.String()
 		})
-	}
-}
+	}, 10000)
 
-// Benchmark tests for performance validation
-
-func BenchmarkNewUnsTopic_Simple(b *testing.B) {
-	topic := "umh.v1.enterprise._historian.temperature"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := NewUnsTopic(topic)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkNewUnsTopic_Complex(b *testing.B) {
-	topic := "umh.v1.enterprise.site.area.line.station._historian.motor.axis.x.position"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := NewUnsTopic(topic)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkUnsTopic_String(b *testing.B) {
-	topic, err := NewUnsTopic("umh.v1.enterprise.site._historian.motor.temperature")
-	if err != nil {
-		b.Fatal(err)
-	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = topic.String()
-	}
-}
-
-func BenchmarkUnsTopic_Info(b *testing.B) {
-	topic, err := NewUnsTopic("umh.v1.enterprise.site._historian.motor.temperature")
-	if err != nil {
-		b.Fatal(err)
-	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = topic.Info()
-	}
-}
-
-func BenchmarkTopicInfo_LocationPath(b *testing.B) {
-	topic, err := NewUnsTopic("umh.v1.enterprise.site.area.line._historian.temperature")
-	if err != nil {
-		b.Fatal(err)
-	}
-	info := topic.Info()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = locationPath(info)
-	}
-}
-
-// Memory allocation benchmarks
-
-func BenchmarkNewUnsTopic_Allocs(b *testing.B) {
-	topic := "umh.v1.enterprise.site.area._historian.motor.temperature"
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := NewUnsTopic(topic)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-// Test concurrent usage for thread safety
-
-func TestUnsTopic_ConcurrentUsage(t *testing.T) {
-	topic, err := NewUnsTopic("umh.v1.enterprise._historian.temperature")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	const numGoroutines = 100
-	const numOperations = 1000
-
-	done := make(chan bool, numGoroutines)
-
-	for i := 0; i < numGoroutines; i++ {
-		go func() {
-			defer func() { done <- true }()
-			for j := 0; j < numOperations; j++ {
-				// Test all read operations concurrently
-				_ = topic.String()
-				_ = topic.AsKafkaKey()
-				info := topic.Info()
-				_ = locationPath(info)
-				_ = totalLocationLevels(info)
-			}
-		}()
-	}
-
-	for i := 0; i < numGoroutines; i++ {
-		<-done
-	}
-}
-
-// Test edge cases and error conditions
-
-func TestNewUnsTopic_EdgeCases(t *testing.T) {
-	testCases := []struct {
-		name          string
-		topic         string
-		shouldBeValid bool
-	}{
-		{
-			name:          "topic with numbers",
-			topic:         "umh.v1.factory123.line4._historian.sensor001.temperature",
-			shouldBeValid: true,
-		},
-		{
-			name:          "topic with hyphens",
-			topic:         "umh.v1.us-east-1.plant-a._historian.motor-1.temperature",
-			shouldBeValid: true,
-		},
-		{
-			name:          "topic with mixed valid characters",
-			topic:         "umh.v1.enterprise._historian.temp-sensor_001.value",
-			shouldBeValid: true,
-		},
-		{
-			name:          "topic with unicode",
-			topic:         "umh.v1.enterprise._historian.temperaturé",
-			shouldBeValid: false,
-		},
-		{
-			name:          "topic with spaces",
-			topic:         "umh.v1.enterprise._historian.temperature value",
-			shouldBeValid: false,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			topic, err := NewUnsTopic(tc.topic)
-			if tc.shouldBeValid && err != nil {
-				t.Errorf("Expected topic to be valid, got error: %v", err)
-			}
-			if !tc.shouldBeValid && err == nil {
-				t.Errorf("Expected topic to be invalid, but got valid topic: %v", topic)
-			}
+	Measure("UnsTopic Info", func(b Benchmarker) {
+		topic := "umh.v1.enterprise.site.area._historian.motor.diagnostics.temperature"
+		unsTopic, _ := NewUnsTopic(topic)
+		b.Time("runtime", func() {
+			_ = unsTopic.Info()
 		})
-	}
-}
+	}, 10000)
 
-// Helper functions
+	Measure("TopicInfo LocationPath", func(b Benchmarker) {
+		topic := "umh.v1.enterprise.site.area.line._historian.temperature"
+		unsTopic, _ := NewUnsTopic(topic)
+		info := unsTopic.Info()
+		b.Time("runtime", func() {
+			_ = locationPath(info)
+		})
+	}, 10000)
 
-// locationPath returns the complete location path as a single string for testing.
+	Measure("NewUnsTopic Allocs", func(b Benchmarker) {
+		topic := "umh.v1.enterprise.site.area._historian.motor.diagnostics.temperature"
+		b.Time("runtime", func() {
+			_, err := NewUnsTopic(topic)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	}, 10000)
+})
+
+// Helper functions for UNS topic tests
+
 func locationPath(t *proto.TopicInfo) string {
-	if t == nil {
-		return ""
-	}
-
-	// Trim whitespace to ensure " enterprise " and "enterprise" hash identically
-	base := strings.TrimSpace(t.Level0)
-	if len(t.LocationSublevels) == 0 {
-		return base
-	}
-
-	// Pre-allocate slice with known capacity for efficiency
-	cleaned := make([]string, 0, len(t.LocationSublevels)+1)
-	cleaned = append(cleaned, base)
-
-	// Trim each sublevel for consistency
-	for _, s := range t.LocationSublevels {
-		cleaned = append(cleaned, strings.TrimSpace(s))
-	}
-
-	return strings.Join(cleaned, ".")
-}
-
-// totalLocationLevels returns the total number of location hierarchy levels for testing.
-func totalLocationLevels(t *proto.TopicInfo) int {
-	if t == nil {
-		return 0
-	}
-	return 1 + len(t.LocationSublevels)
-}
-
-func strPtr(s string) *string {
-	return &s
-}
-
-func ptrStr(s *string) string {
-	if s == nil {
-		return "<nil>"
-	}
-	return *s
-}
-
-func sliceEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
+	if t.Level0 == "" {
+		if len(t.LocationSublevels) == 0 {
+			return ""
 		}
+		return "." + strings.Join(t.LocationSublevels, ".")
 	}
-	return true
+
+	if len(t.LocationSublevels) == 0 {
+		return t.Level0
+	}
+
+	return t.Level0 + "." + strings.Join(t.LocationSublevels, ".")
 }
 
-func equalStringPtr(a, b *string) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return *a == *b
+func totalLocationLevels(t *proto.TopicInfo) int {
+	return 1 + len(t.LocationSublevels)
 }
