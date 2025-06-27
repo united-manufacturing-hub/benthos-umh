@@ -90,14 +90,17 @@ func (t *TopicInfo) Validate() error {
 		return errors.New("topic name cannot be empty")
 	}
 
-	if strings.HasPrefix(t.Name, "_") {
-		return errors.New("topic name cannot start with underscore")
-	}
-
 	// Validate location sublevels are not empty
 	for i, level := range t.LocationSublevels {
 		if level == "" {
 			return fmt.Errorf("location sublevel at index %d cannot be empty", i)
+		}
+	}
+
+	// Validate location sublevels don't start with underscore
+	for i, level := range t.LocationSublevels {
+		if strings.HasPrefix(level, "_") {
+			return fmt.Errorf("location sublevel at index %d cannot start with underscore", i)
 		}
 	}
 
