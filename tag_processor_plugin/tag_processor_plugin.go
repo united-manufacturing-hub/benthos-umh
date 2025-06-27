@@ -597,29 +597,37 @@ func (p *TagProcessor) constructUMHTopic(msg *service.Message) (string, error) {
 	builder := topic.NewBuilder()
 
 	// Set location path
+	var locationPath string
 	if value, exists := msg.MetaGet("location_path"); exists && value != "" {
-		builder.SetLocationPath(value)
+		locationPath = value
+		builder.SetLocationPath(locationPath)
 	}
 
 	// Set data contract
+	var dataContract string
 	if value, exists := msg.MetaGet("data_contract"); exists && value != "" {
-		builder.SetDataContract(value)
+		dataContract = value
+		builder.SetDataContract(dataContract)
 	}
 
 	// Set virtual path
+	var virtualPath string
 	if value, exists := msg.MetaGet("virtual_path"); exists && value != "" {
-		builder.SetVirtualPath(value)
+		virtualPath = value
+		builder.SetVirtualPath(virtualPath)
 	}
 
 	// Set tag name
+	var tagName string
 	if value, exists := msg.MetaGet("tag_name"); exists && value != "" {
-		builder.SetName(value)
+		tagName = value
+		builder.SetName(tagName)
 	}
 
 	// Build the topic string
 	topicStr, err := builder.BuildString()
 	if err != nil {
-		p.logger.Errorf("Failed to build UMH topic: %v", err)
+		p.logger.Errorf("Failed to build UMH topic: %v (locationPath: %s, dataContract: %s, virtualPath: %s, tagName: %s)", err, locationPath, dataContract, virtualPath, tagName)
 		return "", fmt.Errorf("failed to build UMH topic: %v", err)
 	}
 
