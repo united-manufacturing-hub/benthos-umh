@@ -335,8 +335,8 @@ var _ = Describe("Event Processing", func() {
 		})
 
 		It("rejects oversized payloads in time series data", func() {
-			// Create a large string value (>1 GiB - 1 byte)
-			largeValue := make([]byte, 1024*1024*1024) // 1 GiB
+			// Create a large string value (>1 MiB)
+			largeValue := make([]byte, 1048577) // 1 MiB + 1 byte
 			for i := range largeValue {
 				largeValue[i] = 'A'
 			}
