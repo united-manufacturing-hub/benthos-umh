@@ -103,6 +103,10 @@ test-classic-to-core:
 test-downsampler:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./downsampler_plugin/...
 
+.PHONY: test-pkg-umh-topic
+test-pkg-umh-topic:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./pkg/umh/topic/...
+
 ###### TESTS WITH RUNNING BENTHOS-UMH #####
 # Test the tag processor with a local OPC UA server
 .PHONY: test-benthos-tag-processor

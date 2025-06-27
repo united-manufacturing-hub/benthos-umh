@@ -52,11 +52,11 @@ package topic_browser_plugin
 	==========================
 
 	Rule Statement:
-	> Only time-series payloads are size-capped at 1 GiB (after JSON decoding); relational payloads have no hard limit.
+	> Only time-series payloads are size-capped at 1 MiB (after JSON decoding); relational payloads have no hard limit.
 
 	| Type                   | Typical content                                                      | Size limit enforced                    |
 	| ---------------------- | -------------------------------------------------------------------- | --------------------------------------- |
-	| **Time-series / Tags** | Exactly two keys: timestamp_ms and value                           | ≤ 1 GiB decoded                        |
+	| **Time-series / Tags** | Exactly two keys: timestamp_ms and value                           | ≤ 1 MiB decoded                        |
 	| **Relational / JSON**  | One self-contained business record or multi-field snapshot         | **No hard cap** (broker limit only)    |
 
 	Implementation:
@@ -76,9 +76,9 @@ import (
 )
 
 const (
-	// Time-series: 1 GiB - 1 byte since this is the max size of a text/varchar/bytea in postgres
+	// Time-series: 1 MiB since this is the default Kafka message size limit
 	// Usually our payloads will be much smaller
-	MaxTimeSeriesPayloadBytes = 1_073_741_823 // 1 GiB - postgres header size
+	MaxTimeSeriesPayloadBytes = 1_048_576 // 1 MiB - Kafka message size limit
 
 	// Field names for UMH-Core time-series format
 	FieldTimestamp = "timestamp_ms"
