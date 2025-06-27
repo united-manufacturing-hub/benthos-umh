@@ -289,7 +289,7 @@ func BundleToProtobufBytes(bundle *proto.UnsBundle) ([]byte, error) {
 // Returns:
 //   - *UnsBundle: The decoded bundle
 //   - error: Any decompression or decoding error
-func ProtobufBytesToBundleWithCompression(compressedBytes []byte) (*UnsBundle, error) {
+func ProtobufBytesToBundleWithCompression(compressedBytes []byte) (*proto.UnsBundle, error) {
 	// Decompress the LZ4-compressed data
 	decompressedBytes, err := DecompressLZ4(compressedBytes)
 	if err != nil {
