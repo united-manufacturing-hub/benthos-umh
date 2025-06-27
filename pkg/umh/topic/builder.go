@@ -405,24 +405,13 @@ func (b *Builder) GetLocationPath() string {
 func (b *Builder) buildTopicString() (string, error) {
 	// Validate required fields
 	if b.level0 == "" {
-		return "", errors.New("level0 (enterprise) is required")
+		return "", errors.New("level0 is required")
 	}
 	if b.dataContract == "" {
 		return "", errors.New("data contract is required")
 	}
 	if b.name == "" {
 		return "", errors.New("name is required")
-	}
-
-	// Calculate total capacity for efficient allocation
-	capacity := len(TopicPrefix) + len(b.level0) + len(b.dataContract) + len(b.name) + 3 // base + 3 dots
-
-	for _, level := range b.locationSublevels {
-		capacity += len(level) + 1 // +1 for dot
-	}
-
-	if b.virtualPath != nil {
-		capacity += len(*b.virtualPath) + 1 // +1 for dot
 	}
 
 	// Build topic string efficiently

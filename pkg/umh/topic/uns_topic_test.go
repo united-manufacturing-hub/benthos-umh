@@ -193,12 +193,12 @@ func TestNewUnsTopic_InvalidTopics(t *testing.T) {
 		{
 			name:          "empty level0",
 			topic:         "umh.v1.._historian.temperature",
-			expectedError: "level0 (enterprise) cannot be empty",
+			expectedError: "level0 cannot be empty",
 		},
 		{
 			name:          "level0 starts with underscore",
 			topic:         "umh.v1._enterprise._historian.temperature",
-			expectedError: "level0 (enterprise) cannot start with underscore",
+			expectedError: "level0 cannot start with underscore",
 		},
 		{
 			name:          "no data contract",

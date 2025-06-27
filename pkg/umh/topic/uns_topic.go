@@ -38,7 +38,7 @@ Build topics programmatically:
 
 Performance: ~656ns simple parsing, ~1322ns complex parsing, ~751ns simple construction, ~1436ns complex construction. Thread-safe read operations.
 
-For detailed documentation and examples, see: docs/libraries/umh-topic-parser.md
+For detailed documentation and examples, see: docs/libraries/umh-topic-parser.md && https://docs.umh.app/usage/unified-namespace/topic-convention
 */
 package topic
 
@@ -222,7 +222,7 @@ func (u *UnsTopic) parse() (*proto.TopicInfo, error) {
 
 	// Validate level0 is not empty
 	if parts[2] == "" {
-		return nil, errors.New("level0 (enterprise) cannot be empty")
+		return nil, errors.New("level0 cannot be empty")
 	}
 
 	// Find data contract position efficiently
@@ -318,7 +318,7 @@ func (u *UnsTopic) validateBasicFormat() error {
 func (u *UnsTopic) validateParsedInfo(info *proto.TopicInfo) error {
 	// Validate level0 (enterprise level)
 	if strings.HasPrefix(info.Level0, "_") {
-		return errors.New("level0 (enterprise) cannot start with underscore")
+		return errors.New("level0 cannot start with underscore")
 	}
 
 	// Validate location sublevels

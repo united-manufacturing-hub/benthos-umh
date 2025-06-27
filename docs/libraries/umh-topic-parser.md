@@ -69,9 +69,10 @@ kafkaKey := uns.AsKafkaKey()
 
 // Access parsed components
 info := uns.Info()
-fmt.Println("Location:", info.LocationPath())        // "enterprise.site"
-fmt.Println("Data Contract:", info.DataContract)     // "_historian"
-fmt.Println("Name:", info.Name)                      // "temperature"
+fmt.Println("Level0:", info.Level0)                          // "enterprise"
+fmt.Println("Location Sublevels:", info.LocationSublevels)   // ["site"]
+fmt.Println("Data Contract:", info.DataContract)             // "_historian"
+fmt.Println("Name:", info.Name)                              // "temperature"
 ```
 
 ### Programmatic Construction
@@ -132,14 +133,19 @@ builder.SetLocationLevels("enterprise", "site", "area")
 builder.SetLevel0("enterprise").
     AddLocationLevel("site").
     AddLocationLevel("area")
+
+// Method 4: Get current path from builder
+currentPath := builder.GetLocationPath() // Returns: "enterprise.site.area"
 ```
 
 ## Performance Characteristics
 
 The package is optimized for high-throughput scenarios:
 
-- **Topic parsing**: ~625ns per operation
-- **Topic construction**: ~900ns per operation  
+- **Simple topic parsing**: ~656ns per operation
+- **Complex topic parsing**: ~1322ns per operation  
+- **Simple topic construction**: ~751ns per operation
+- **Complex topic construction**: ~1436ns per operation
 - **Memory allocations**: 3-5 allocations per topic creation
 - **Read operations**: <1ns (String(), Info(), AsKafkaKey() are essentially free)
 
@@ -170,7 +176,8 @@ func processMessage(topicStr string, payload []byte) error {
 ```go
 func routeByLocation(topic *topic.UnsTopic) string {
     info := topic.Info()
-    switch info.TotalLocationLevels() {
+    totalLevels := 1 + len(info.LocationSublevels) // level0 + sublevels
+    switch totalLevels {
     case 1:
         return "enterprise-router"
     case 2:
@@ -211,7 +218,7 @@ The package provides detailed error messages for debugging:
 ```go
 topic, err := topic.NewUnsTopic("umh.v1._enterprise._historian.temp")
 if err != nil {
-    fmt.Println(err) // "level0 (enterprise) cannot start with underscore"
+    fmt.Println(err) // "level0 cannot start with underscore"
 }
 ```
 
@@ -263,13 +270,15 @@ The topic parser replaces manual validation logic throughout the codebase:
 // UnsTopic represents a validated UMH topic
 type UnsTopic struct { /* ... */ }
 
-// TopicInfo contains parsed topic components
+// TopicInfo contains parsed topic components (protobuf-generated)
+// Located in pkg/umh/topic/proto package
 type TopicInfo struct {
     Level0            string   // Enterprise level
     LocationSublevels []string // Additional location levels
     DataContract      string   // Data contract (_historian, etc.)
-    VirtualPath       *string  // Optional virtual path
+    VirtualPath       *string  // Optional virtual path (pointer, can be nil)
     Name              string   // Final name segment
+    Metadata          map[string]string // Kafka header metadata
 }
 
 // Builder provides fluent topic construction
@@ -285,11 +294,15 @@ func NewUnsTopic(topic string) (*UnsTopic, error)
 // Topic access
 func (u *UnsTopic) String() string
 func (u *UnsTopic) AsKafkaKey() string  
-func (u *UnsTopic) Info() *TopicInfo
+func (u *UnsTopic) Info() *proto.TopicInfo
 
-// Location methods
-func (t *TopicInfo) LocationPath() string
-func (t *TopicInfo) TotalLocationLevels() int
+// Field access (direct field access, not methods)
+info.Level0                // string
+info.LocationSublevels     // []string
+info.DataContract          // string
+info.VirtualPath           // *string (can be nil)
+info.Name                  // string
+info.Metadata              // map[string]string
 
 // Builder methods
 func NewBuilder() *Builder
@@ -302,6 +315,7 @@ func (b *Builder) SetVirtualPath(path string) *Builder
 func (b *Builder) SetName(name string) *Builder
 func (b *Builder) Build() (*UnsTopic, error)
 func (b *Builder) BuildString() (string, error)
+func (b *Builder) GetLocationPath() string
 func (b *Builder) Reset() *Builder
 ```
 
