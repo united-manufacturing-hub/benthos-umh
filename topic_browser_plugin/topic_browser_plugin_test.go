@@ -1016,8 +1016,8 @@ var _ = Describe("TopicBrowserProcessor", func() {
 		It("should enforce time-series payload size limits", func() {
 			By("Creating oversized time-series payload")
 
-			// Create a time-series value that exceeds 1024 bytes
-			largeValue := strings.Repeat("x", 1100) // 1100 bytes
+			// Create a time-series value that exceeds 1 GiB - 1 byte
+			largeValue := strings.Repeat("x", 1024*1024*1024)
 			data := map[string]interface{}{
 				"timestamp_ms": 1750171500000,
 				"value":        largeValue,
