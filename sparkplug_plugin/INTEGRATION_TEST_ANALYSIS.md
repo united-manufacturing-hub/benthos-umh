@@ -42,7 +42,7 @@ After analyzing the codebase, I've identified **4 distinct integration testing a
 
 ### Test Coverage Comparison
 ```
-Shell Script (test-integration-local.sh):
+Shell Script (test-integration-local.sh) - **DEPRECATED**:
 ├─ ✅ NBIRTH/DBIRTH message flow
 ├─ ✅ NDATA/DDATA message flow  
 ├─ ✅ Alias resolution
@@ -51,8 +51,11 @@ Shell Script (test-integration-local.sh):
 ├─ ❌ Concurrent connections
 └─ ❌ STATE message handling
 
-Go Tests (integration_test.go):
+Go Tests (integration_test.go) - **UNIFIED COVERAGE**:
 ├─ ✅ NBIRTH/NDATA message flow
+├─ ✅ **NEW**: Full pipeline testing (generate → tag_processor → sparkplug_b)
+├─ ✅ **NEW**: Config-based DBIRTH/DDATA flow (replicates shell script)
+├─ ✅ **NEW**: PARRIS method testing (location_path → device_id conversion)
 ├─ ✅ STATE message handling
 ├─ ✅ Plugin-to-plugin communication
 ├─ ✅ Error scenarios
@@ -160,8 +163,12 @@ make test-manual-debug    # Manual debugging with separate terminals
 ### ✅ Step 2: Enhance Go Integration Tests ⚡ *COMPLETED*
 - ✅ Added Docker Mosquitto lifecycle management
 - ✅ Integration tests now fully self-contained
+- ✅ **MAJOR**: Added real full pipeline test replicating shell script functionality
+- ✅ Edge Node stream: `generate` → `tag_processor` → `sparkplug_b` output
+- ✅ Primary Host stream: `sparkplug_b` input → `stdout`
+- ✅ Tests complete config-based PARRIS method, alias resolution, STATE messages
 - ✅ Automatic container cleanup after tests
-- ✅ All tests pass (6/7 specs, 1 skipped)
+- ✅ All tests pass (7/8 specs, 1 skipped)
 
 ### ✅ Step 3: Simplify Interface ⚡ *COMPLETED*
 - ✅ Consolidated Makefile targets:
