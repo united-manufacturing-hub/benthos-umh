@@ -15,7 +15,7 @@
 //go:build integration
 
 // Integration tests for Sparkplug B plugin - Real MQTT broker tests
-// These tests require MQTT broker setup: make start-mosquitto
+// These tests automatically start/stop Docker Mosquitto broker
 
 package sparkplug_plugin_test
 
@@ -23,6 +23,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,12 +44,57 @@ func TestSparkplugIntegrationBroker(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	// Check for required environment setup
-	if os.Getenv("TEST_MQTT_BROKER") == "" {
-		// Default to localhost if not specified
-		os.Setenv("TEST_MQTT_BROKER", "tcp://127.0.0.1:1883")
-	}
+	By("Starting Docker Mosquitto MQTT broker for integration tests")
+
+	// Stop any existing mosquitto container
+	stopMosquittoContainer()
+
+	// Start new mosquitto container
+	startMosquittoContainer()
+
+	// Set environment variable for tests
+	os.Setenv("TEST_MQTT_BROKER", "tcp://127.0.0.1:1883")
 })
+
+var _ = AfterSuite(func() {
+	By("Stopping Docker Mosquitto MQTT broker")
+	stopMosquittoContainer()
+})
+
+func startMosquittoContainer() {
+	By("Starting Docker Mosquitto container")
+
+	// Start mosquitto container
+	cmd := exec.Command("docker", "run", "-d", "--name", "mosquitto-integration-test", "-p", "1883:1883", "eclipse-mosquitto:1.6")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Printf("Failed to start Mosquitto container: %v\nOutput: %s\n", err, string(output))
+		Fail("Cannot start Docker Mosquitto container - ensure Docker is running")
+	}
+
+	// Wait for container to be ready
+	fmt.Printf("Waiting for Mosquitto to be ready...\n")
+	time.Sleep(3 * time.Second)
+
+	// Verify container is running
+	cmd = exec.Command("docker", "ps", "--filter", "name=mosquitto-integration-test", "--format", "{{.Names}}")
+	output, err = cmd.Output()
+	if err != nil || !strings.Contains(string(output), "mosquitto-integration-test") {
+		Fail("Mosquitto container failed to start properly")
+	}
+
+	fmt.Printf("✅ Mosquitto container started successfully\n")
+}
+
+func stopMosquittoContainer() {
+	// Stop container (ignore errors if it doesn't exist)
+	cmd := exec.Command("docker", "stop", "mosquitto-integration-test")
+	cmd.Run()
+
+	// Remove container (ignore errors if it doesn't exist)
+	cmd = exec.Command("docker", "rm", "mosquitto-integration-test")
+	cmd.Run()
+}
 
 var _ = Describe("Real MQTT Broker Integration", func() {
 	Context("End-to-End Message Processing", func() {
@@ -72,12 +119,8 @@ var _ = Describe("Real MQTT Broker Integration", func() {
 
 			mqttClient = mqtt.NewClient(opts)
 			token := mqttClient.Connect()
-			if !token.WaitTimeout(10 * time.Second) {
-				Skip("No MQTT broker available for integration test - run 'make start-mosquitto'")
-			}
-			if token.Error() != nil {
-				Skip(fmt.Sprintf("Cannot connect to MQTT broker: %v - run 'make start-mosquitto'", token.Error()))
-			}
+			Expect(token.WaitTimeout(10*time.Second)).To(BeTrue(), "Should connect to MQTT broker")
+			Expect(token.Error()).NotTo(HaveOccurred(), "Should connect without error")
 		})
 
 		AfterEach(func() {
@@ -101,7 +144,7 @@ input:
     identity:
       group_id: "FactoryA"
       edge_node_id: "CentralHost"
-    role: "primary_host"
+    role: "primary"
     behaviour:
       auto_split_metrics: true
 

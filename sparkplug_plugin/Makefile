@@ -18,9 +18,8 @@ help:
 	@echo "  test-payload  - Unit + payload tests (<5s)"
 	@echo "  test-flow     - Unit + payload + flow tests (<8s)"  
 	@echo "  test-all      - All offline tests (<8s)"
-	@echo "  test-manual   - Instructions for integration tests"
-	@echo "  test-integration - Real MQTT broker tests (requires manual setup)"
-	@echo "  test-integration-local - End-to-end test with local Mosquitto"
+	@echo "  test-integration - Full integration tests with automatic Docker Mosquitto"
+	@echo "  test-manual-debug - Manual debugging with separate terminals"
 	@echo "  generate-vectors - Regenerate test vectors"
 	@echo "  clean         - Clean temporary files"
 	@echo "  coverage      - Generate coverage report"
@@ -48,22 +47,21 @@ test-all:
 	@$(MAKE) test-flow
 	@echo "✅ All offline tests completed successfully"
 
-# Manual integration (requires developer to start mosquitto)
-test-manual:
-	@echo "🚀 Manual Integration Test Setup:"
-	@echo "  1. Start mosquitto: docker run -d --name mosquitto -p 1883:1883 eclipse-mosquitto:2"
-	@echo "  2. Run integration: make test-integration"
-	@echo "  3. Cleanup: docker stop mosquitto && docker rm mosquitto"
-
-# Integration tests (requires running MQTT broker)
+# Integration tests (fully automated with Docker Mosquitto)
 test-integration:
-	@echo "🔌 Running integration tests (requires MQTT broker)..."
+	@echo "🔌 Running integration tests with automatic Docker Mosquitto..."
 	cd .. && go test -race -v -tags=integration ./sparkplug_plugin
 
-# Local integration test with Mosquitto
-test-integration-local:
-	@echo "🔌 Running local integration test with Mosquitto..."
-	./scripts/test-integration-local.sh
+# Manual debugging with separate terminals
+test-manual-debug:
+	@echo "🚀 Manual Debugging Setup (for development):"
+	@echo "  1. Terminal 1 - Start Edge Node:"
+	@echo "     cd /workspaces/benthos-umh && ./benthos -c config/sparkplug-device-level-test.yaml"
+	@echo "  2. Terminal 2 - Start Primary Host:"
+	@echo "     cd /workspaces/benthos-umh && ./benthos -c config/sparkplug-device-level-primary-host.yaml"
+	@echo "  3. Both will use Docker mosquitto if running or localhost:1883"
+	@echo "  Note: You can start mosquitto manually: docker run -d --name debug-mosquitto -p 1883:1883 eclipse-mosquitto:2"
+	@echo "  Cleanup: docker stop debug-mosquitto && docker rm debug-mosquitto"
 
 # Regenerate test vectors (when spec changes)
 generate-vectors:
