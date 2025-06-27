@@ -105,7 +105,8 @@ var _ = Describe("Uns", func() {
 		It("should return error for double dot in virtual path", func() {
 			unsInfo, err := topicToUNSInfo("umh.v1.ent._hist.motor..temp")
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("virtual path cannot contain empty segments"))
+			Expect(err.Error()).To(ContainSubstring("virtual path segment at index"))
+			Expect(err.Error()).To(ContainSubstring("cannot be empty"))
 			Expect(unsInfo).To(BeNil())
 		})
 
@@ -116,11 +117,11 @@ var _ = Describe("Uns", func() {
 			Expect(unsInfo).To(BeNil())
 		})
 
-		It("should return error for name starting with underscore", func() {
+		It("should allow names starting with underscore (per UMH specification)", func() {
 			unsInfo, err := topicToUNSInfo("umh.v1.ent._hist._temp")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("topic name cannot start with underscore"))
-			Expect(unsInfo).To(BeNil())
+			Expect(err).To(BeNil())
+			Expect(unsInfo).NotTo(BeNil())
+			Expect(unsInfo.Name).To(Equal("_temp"))
 		})
 
 		Describe("Table-driven tests for different topic structures", func() {
