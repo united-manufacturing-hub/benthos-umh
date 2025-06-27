@@ -23,6 +23,7 @@ ENV GOPROXY=https://golangproxy.umh.app,https://proxy.golang.org,direct
 COPY go.mod go.sum ./
 RUN go mod download
 
+COPY ./pkg ./pkg
 COPY ./cmd ./cmd
 COPY ./downsampler_plugin ./downsampler_plugin
 COPY ./opcua_plugin ./opcua_plugin
@@ -35,7 +36,6 @@ COPY ./eip_plugin ./eip_plugin
 COPY ./uns_plugin ./uns_plugin
 COPY ./topic_browser_plugin ./topic_browser_plugin
 COPY ./classic_to_core_plugin ./classic_to_core_plugin
-COPY ./pkg ./pkg
 
 ENV CGO_ENABLED=0
 RUN go build \
