@@ -40,18 +40,6 @@ type ConditionConfig struct {
 	Then string `json:"then" yaml:"then"`
 }
 
-// internalKeys defines metadata keys that should not be included in the payload's meta field
-var internalKeys = map[string]bool{
-	"tag_name":         true,
-	"topic":            true,
-	"umh_topic":        true,
-	"_initialMetadata": true,
-	"_incomingKeys":    true,
-	"location_path":    true,
-	"data_contract":    true,
-	"virtual_path":     true,
-}
-
 func init() {
 	spec := service.NewConfigSpec().
 		Version("1.0.0").
