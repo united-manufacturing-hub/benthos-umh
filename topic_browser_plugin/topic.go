@@ -23,6 +23,7 @@ import (
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
 const (
@@ -46,9 +47,9 @@ func extractTopicFromMessage(message *service.Message) (string, error) {
 //   - topicStr: The topic string to parse (e.g., "umh.v1.acme.cologne.assembly.machine01._analytics.scada.counter.temperature")
 //
 // Returns:
-//   - *TopicInfo: The parsed topic information compatible with protobuf structure
+//   - *proto.TopicInfo: The parsed topic information compatible with protobuf structure
 //   - error: Any error that occurred during parsing
-func topicToUNSInfo(topicStr string) (*TopicInfo, error) {
+func topicToUNSInfo(topicStr string) (*proto.TopicInfo, error) {
 	// Use the new topic parser library
 	unsTopic, err := topic.NewUnsTopic(topicStr)
 	if err != nil {
@@ -59,7 +60,7 @@ func topicToUNSInfo(topicStr string) (*TopicInfo, error) {
 	info := unsTopic.Info()
 
 	// Create protobuf-compatible TopicInfo
-	protoTopicInfo := &TopicInfo{
+	protoTopicInfo := &proto.TopicInfo{
 		Level0:            info.Level0,
 		LocationSublevels: info.LocationSublevels,
 		DataContract:      info.DataContract,

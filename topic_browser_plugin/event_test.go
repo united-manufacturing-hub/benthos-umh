@@ -20,6 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
 var _ = Describe("Event Processing", func() {
@@ -36,7 +37,7 @@ var _ = Describe("Event Processing", func() {
 				Expect(err).To(BeNil())
 				Expect(event.GetTs()).NotTo(BeNil())
 				Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1234567890)))
-				Expect(event.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
+				Expect(event.GetTs().GetScalarType()).To(Equal(proto.ScalarType_NUMERIC))
 				Expect(event.GetTs().GetNumericValue()).NotTo(BeNil())
 				Expect(event.GetTs().GetNumericValue().GetValue()).To(Equal(float64(25.5)))
 			})
@@ -83,13 +84,13 @@ var _ = Describe("Event Processing", func() {
 			It("should handle different value types", func() {
 				testCases := []struct {
 					value      interface{}
-					scalarType ScalarType
+					scalarType proto.ScalarType
 				}{
-					{float64(123.45), ScalarType_NUMERIC},
-					{int64(123), ScalarType_NUMERIC},
-					{uint64(123), ScalarType_NUMERIC},
-					{true, ScalarType_BOOLEAN},
-					{"test", ScalarType_STRING},
+					{float64(123.45), proto.ScalarType_NUMERIC},
+					{int64(123), proto.ScalarType_NUMERIC},
+					{uint64(123), proto.ScalarType_NUMERIC},
+					{true, proto.ScalarType_BOOLEAN},
+					{"test", proto.ScalarType_STRING},
 				}
 
 				for _, tc := range testCases {
@@ -107,12 +108,12 @@ var _ = Describe("Event Processing", func() {
 
 					// Check the specific value based on scalar type
 					switch tc.scalarType {
-					case ScalarType_NUMERIC:
+					case proto.ScalarType_NUMERIC:
 						Expect(event.GetTs().GetNumericValue()).NotTo(BeNil())
-					case ScalarType_STRING:
+					case proto.ScalarType_STRING:
 						Expect(event.GetTs().GetStringValue()).NotTo(BeNil())
 						Expect(event.GetTs().GetStringValue().GetValue()).To(Equal("test"))
-					case ScalarType_BOOLEAN:
+					case proto.ScalarType_BOOLEAN:
 						Expect(event.GetTs().GetBooleanValue()).NotTo(BeNil())
 						Expect(event.GetTs().GetBooleanValue().GetValue()).To(Equal(true))
 					}
@@ -236,7 +237,7 @@ var _ = Describe("Event Processing", func() {
 			Expect(err).To(BeNil())
 			Expect(event.GetTs()).NotTo(BeNil())
 			Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1234567890)))
-			Expect(event.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
+			Expect(event.GetTs().GetScalarType()).To(Equal(proto.ScalarType_NUMERIC))
 			Expect(event.GetTs().GetNumericValue()).NotTo(BeNil())
 			Expect(event.GetTs().GetNumericValue().GetValue()).To(Equal(float64(1013.25)))
 		})
