@@ -272,7 +272,7 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 		finalMsg, err := p.constructFinalMessage(msg)
 		if err != nil {
 			p.messagesErrored.Incr(1)
-			p.logger.Errorf("Failed to construct final message: %v", err)
+			p.logger.Errorf("Failed to construct final message: %v [msg: %+v]", err, msg)
 			continue
 		}
 

@@ -1,0 +1,49 @@
+# Copyright 2023 UMH Systems GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+input:
+  opcua:
+      endpoint: opc.tcp://10.13.37.102:49320
+      nodeIDs:
+          - i=1
+      password: ""
+      subscribeEnabled: true
+      useHeartbeat: true
+      username: ""
+pipeline:
+    processors:
+        - tag_processor:
+            advancedProcessing: return msg;
+            conditions:
+                - if: msg.meta.opcua_attr_nodeid === "ns=4;i=6211"
+                  then: |
+                    msg.payload = parseFloat(msg.payload) + 273.15;
+                    msg.meta.tag_name = "CurrentTemperatureKelvin";
+                    msg.meta.unit = "Kelvin";
+                    return msg;
+            defaults: |
+                msg.meta.location_path = "abc";
+                msg.meta.data_contract = "_historian";
+                msg.meta.tag_name = msg.meta.opcua_tag_name;
+                msg.payload = msg.payload;
+                msg.meta.virtual_path = msg.meta.opcua_tag_path;
+                return msg;
+output:
+  stdout: {}
+
+logger:
+  level: DEBUG
+  format: logfmt
+  add_timestamp: true
