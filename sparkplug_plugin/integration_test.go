@@ -31,11 +31,14 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	_ "github.com/redpanda-data/benthos/v4/public/components/io"
+	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/weekaung/sparkplugb-client/sproto"
 	"google.golang.org/protobuf/proto"
 
-	_ "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin" // Import to register
+	_ "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"     // Import to register
+	_ "github.com/united-manufacturing-hub/benthos-umh/tag_processor_plugin" // Import tag processor for full pipeline tests
 )
 
 func TestSparkplugIntegrationBroker(t *testing.T) {
@@ -129,51 +132,127 @@ var _ = Describe("Real MQTT Broker Integration", func() {
 			}
 		})
 
-		It("should replicate shell script device-level functionality", func() {
-			By("Testing device-level DBIRTH → DDATA message flow (like shell script)")
+		It("should run full Edge Node to Primary Host pipeline (like shell script)", func() {
+			By("Testing complete pipeline: generate → tag_processor → sparkplug_b → sparkplug_b → stdout")
 
-			// This test replicates the key functionality that the shell script was testing:
-			// Device-level messages with PARRIS method (location_path → device_id)
+			// This test replicates what the shell script was actually doing:
+			// 1. Edge Node: generate → tag_processor → sparkplug_b output
+			// 2. Primary Host: sparkplug_b input → stdout
+			// 3. Real end-to-end communication via MQTT
 
-			// Publish Device-Level DBIRTH message (like Edge Node would)
-			testData := createDeviceLevelTestData()
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cancel()
 
-			// Publish DBIRTH with device ID derived from location path
-			dbirthBytes, err := proto.Marshal(testData.DBirthPayload)
+			// Edge Node Stream (similar to sparkplug-device-level-test.yaml)
+			edgeNodeConfig := fmt.Sprintf(`
+input:
+  generate:
+    interval: "2s"
+    count: 3
+    mapping: |
+      root = {"counter": counter()}
+
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |
+          msg.meta.location_path = "enterprise.factory.line1.station1";
+          msg.meta.data_contract = "_historian";
+          
+          let counterValue = msg.payload.counter;
+          if (counterValue %% 2 == 0) {
+            msg.meta.tag_name = "value";
+            msg.meta.virtual_path = "temperature";
+            msg.payload = 25.0 + (counterValue %% 10);
+          } else {
+            msg.meta.tag_name = "value";
+            msg.meta.virtual_path = "humidity";
+            msg.payload = 60.0 + (counterValue %% 20);
+          }
+          
+          return msg;
+
+output:
+  sparkplug_b:
+    mqtt:
+      urls: ["%s"]
+      client_id: "test-edge-node"
+    identity:
+      group_id: "DeviceLevelTest"
+      edge_node_id: "StaticEdgeNode01"
+
+logger:
+  level: INFO
+`, brokerURL)
+
+			// Primary Host Stream (similar to sparkplug-device-level-primary-host.yaml)
+			primaryHostConfig := fmt.Sprintf(`
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["%s"]
+      client_id: "test-primary-host"
+    identity:
+      group_id: "DeviceLevelTest"
+      edge_node_id: "PrimaryHost"
+    role: "primary"
+
+output:
+  stdout: {}
+
+logger:
+  level: INFO
+`, brokerURL)
+
+			By("Starting Edge Node stream (generate → tag_processor → sparkplug_b)")
+			edgeStreamBuilder := service.NewStreamBuilder()
+			err := edgeStreamBuilder.SetYAML(edgeNodeConfig)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Topic format: spBv1.0/DeviceLevelTest/DBIRTH/StaticEdgeNode01/enterprise:factory:line1:station1
-			// This matches the PARRIS method conversion (location_path dots → colons)
-			dbirthTopic := "spBv1.0/DeviceLevelTest/DBIRTH/StaticEdgeNode01/enterprise:factory:line1:station1"
-			token := mqttClient.Publish(dbirthTopic, 1, false, dbirthBytes)
-			Expect(token.Wait()).To(BeTrue())
-			Expect(token.Error()).NotTo(HaveOccurred())
-
-			fmt.Printf("📤 Published DBIRTH to topic: %s\n", dbirthTopic)
-			time.Sleep(2 * time.Second)
-
-			// Publish DDATA using aliases (simulating continuous data)
-			ddataBytes, err := proto.Marshal(testData.DDataPayload)
+			edgeStream, err := edgeStreamBuilder.Build()
 			Expect(err).NotTo(HaveOccurred())
 
-			ddataTopic := "spBv1.0/DeviceLevelTest/DDATA/StaticEdgeNode01/enterprise:factory:line1:station1"
-			token = mqttClient.Publish(ddataTopic, 1, false, ddataBytes)
-			Expect(token.Wait()).To(BeTrue())
-			Expect(token.Error()).NotTo(HaveOccurred())
+			edgeNodeDone := make(chan error, 1)
+			go func() {
+				edgeNodeDone <- edgeStream.Run(ctx)
+			}()
 
-			fmt.Printf("📤 Published DDATA to topic: %s\n", ddataTopic)
-			time.Sleep(2 * time.Second)
+			By("Starting Primary Host stream (sparkplug_b → stdout)")
+			hostStreamBuilder := service.NewStreamBuilder()
+			err = hostStreamBuilder.SetYAML(primaryHostConfig)
+			Expect(err).NotTo(HaveOccurred())
 
-			// Verify STATE message handling (Primary Host functionality)
-			stateTopic := "spBv1.0/STATE/PrimaryHost"
-			token = mqttClient.Publish(stateTopic, 1, true, "ONLINE") // Retained message
-			Expect(token.Wait()).To(BeTrue())
-			Expect(token.Error()).NotTo(HaveOccurred())
+			hostStream, err := hostStreamBuilder.Build()
+			Expect(err).NotTo(HaveOccurred())
 
-			fmt.Printf("📤 Published STATE to topic: %s\n", stateTopic)
-			time.Sleep(2 * time.Second)
+			primaryHostDone := make(chan error, 1)
+			go func() {
+				primaryHostDone <- hostStream.Run(ctx)
+			}()
 
-			fmt.Printf("✅ Device-level integration test completed - replicates shell script functionality\n")
+			By("Waiting for full message pipeline processing")
+			// Wait for:
+			// 1. Edge Node to start and publish NBIRTH + DBIRTH
+			// 2. Edge Node to generate and publish 3 DDATA messages
+			// 3. Primary Host to receive and process all messages
+			// 4. Full tag_processor → sparkplug_b → MQTT → sparkplug_b → stdout flow
+			time.Sleep(15 * time.Second)
+
+			// Cancel streams
+			cancel()
+
+			// Wait for streams to finish
+			select {
+			case <-edgeNodeDone:
+			case <-time.After(5 * time.Second):
+			}
+
+			select {
+			case <-primaryHostDone:
+			case <-time.After(5 * time.Second):
+			}
+
+			fmt.Printf("✅ Full pipeline integration test completed - Edge Node ↔ Primary Host via MQTT\n")
 		})
 
 		It("should process NBIRTH and NDATA messages end-to-end", func() {
