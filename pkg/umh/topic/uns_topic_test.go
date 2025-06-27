@@ -17,6 +17,8 @@ package topic
 import (
 	"strings"
 	"testing"
+
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
 // Test suite for UnsTopic validation and parsing
@@ -144,19 +146,19 @@ func TestNewUnsTopic_ValidTopics(t *testing.T) {
 				t.Errorf("Expected Name = %q, got %q", tc.expectedName, info.Name)
 			}
 
-			// Test LocationPath() method
+			// Test LocationPath() helper
 			expectedPath := tc.expectedLevel0
 			if len(tc.expectedLevels) > 0 {
 				expectedPath += "." + strings.Join(tc.expectedLevels, ".")
 			}
-			if info.LocationPath() != expectedPath {
-				t.Errorf("Expected LocationPath() = %q, got %q", expectedPath, info.LocationPath())
+			if locationPath(info) != expectedPath {
+				t.Errorf("Expected locationPath() = %q, got %q", expectedPath, locationPath(info))
 			}
 
-			// Test TotalLocationLevels() method
+			// Test TotalLocationLevels() helper
 			expectedTotal := 1 + len(tc.expectedLevels)
-			if info.TotalLocationLevels() != expectedTotal {
-				t.Errorf("Expected TotalLocationLevels() = %d, got %d", expectedTotal, info.TotalLocationLevels())
+			if totalLocationLevels(info) != expectedTotal {
+				t.Errorf("Expected totalLocationLevels() = %d, got %d", expectedTotal, totalLocationLevels(info))
 			}
 		})
 	}
@@ -272,7 +274,7 @@ func TestNewUnsTopic_InvalidTopics(t *testing.T) {
 func TestTopicInfo_LocationPath(t *testing.T) {
 	testCases := []struct {
 		name         string
-		info         *TopicInfo
+		info         *proto.TopicInfo
 		expectedPath string
 	}{
 		{
@@ -282,7 +284,7 @@ func TestTopicInfo_LocationPath(t *testing.T) {
 		},
 		{
 			name: "only level0",
-			info: &TopicInfo{
+			info: &proto.TopicInfo{
 				Level0:            "enterprise",
 				LocationSublevels: []string{},
 			},
@@ -290,7 +292,7 @@ func TestTopicInfo_LocationPath(t *testing.T) {
 		},
 		{
 			name: "level0 with sublevels",
-			info: &TopicInfo{
+			info: &proto.TopicInfo{
 				Level0:            "enterprise",
 				LocationSublevels: []string{"site", "area", "line"},
 			},
@@ -298,7 +300,7 @@ func TestTopicInfo_LocationPath(t *testing.T) {
 		},
 		{
 			name: "whitespace trimming",
-			info: &TopicInfo{
+			info: &proto.TopicInfo{
 				Level0:            " enterprise ",
 				LocationSublevels: []string{" site ", " area "},
 			},
@@ -308,9 +310,9 @@ func TestTopicInfo_LocationPath(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := tc.info.LocationPath()
+			result := locationPath(tc.info)
 			if result != tc.expectedPath {
-				t.Errorf("Expected LocationPath() = %q, got %q", tc.expectedPath, result)
+				t.Errorf("Expected locationPath() = %q, got %q", tc.expectedPath, result)
 			}
 		})
 	}
@@ -319,7 +321,7 @@ func TestTopicInfo_LocationPath(t *testing.T) {
 func TestTopicInfo_TotalLocationLevels(t *testing.T) {
 	testCases := []struct {
 		name          string
-		info          *TopicInfo
+		info          *proto.TopicInfo
 		expectedTotal int
 	}{
 		{
@@ -329,7 +331,7 @@ func TestTopicInfo_TotalLocationLevels(t *testing.T) {
 		},
 		{
 			name: "only level0",
-			info: &TopicInfo{
+			info: &proto.TopicInfo{
 				Level0:            "enterprise",
 				LocationSublevels: []string{},
 			},
@@ -337,7 +339,7 @@ func TestTopicInfo_TotalLocationLevels(t *testing.T) {
 		},
 		{
 			name: "level0 with sublevels",
-			info: &TopicInfo{
+			info: &proto.TopicInfo{
 				Level0:            "enterprise",
 				LocationSublevels: []string{"site", "area", "line"},
 			},
@@ -347,9 +349,9 @@ func TestTopicInfo_TotalLocationLevels(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := tc.info.TotalLocationLevels()
+			result := totalLocationLevels(tc.info)
 			if result != tc.expectedTotal {
-				t.Errorf("Expected TotalLocationLevels() = %d, got %d", tc.expectedTotal, result)
+				t.Errorf("Expected totalLocationLevels() = %d, got %d", tc.expectedTotal, result)
 			}
 		})
 	}
@@ -409,7 +411,7 @@ func BenchmarkTopicInfo_LocationPath(b *testing.B) {
 	info := topic.Info()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = info.LocationPath()
+		_ = locationPath(info)
 	}
 }
 
@@ -448,8 +450,8 @@ func TestUnsTopic_ConcurrentUsage(t *testing.T) {
 				_ = topic.String()
 				_ = topic.AsKafkaKey()
 				info := topic.Info()
-				_ = info.LocationPath()
-				_ = info.TotalLocationLevels()
+				_ = locationPath(info)
+				_ = totalLocationLevels(info)
 			}
 		}()
 	}
@@ -508,6 +510,38 @@ func TestNewUnsTopic_EdgeCases(t *testing.T) {
 }
 
 // Helper functions
+
+// locationPath returns the complete location path as a single string for testing.
+func locationPath(t *proto.TopicInfo) string {
+	if t == nil {
+		return ""
+	}
+
+	// Trim whitespace to ensure " enterprise " and "enterprise" hash identically
+	base := strings.TrimSpace(t.Level0)
+	if len(t.LocationSublevels) == 0 {
+		return base
+	}
+
+	// Pre-allocate slice with known capacity for efficiency
+	cleaned := make([]string, 0, len(t.LocationSublevels)+1)
+	cleaned = append(cleaned, base)
+
+	// Trim each sublevel for consistency
+	for _, s := range t.LocationSublevels {
+		cleaned = append(cleaned, strings.TrimSpace(s))
+	}
+
+	return strings.Join(cleaned, ".")
+}
+
+// totalLocationLevels returns the total number of location hierarchy levels for testing.
+func totalLocationLevels(t *proto.TopicInfo) int {
+	if t == nil {
+		return 0
+	}
+	return 1 + len(t.LocationSublevels)
+}
 
 func strPtr(s string) *string {
 	return &s
