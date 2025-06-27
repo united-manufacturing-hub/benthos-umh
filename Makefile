@@ -110,6 +110,11 @@ test-pkg-umh-topic:
 .PHONY: bench-pkg-umh-topic
 bench-pkg-umh-topic:
 	go test -bench=. -benchmem ./pkg/umh/topic/...
+  
+.PHONY: test-topic-browser
+test-topic-browser:
+	@TEST_TOPIC_BROWSER=1 \
+		$(GINKGO_CMD) $(GINKGO_FLAGS) ./topic_browser_plugin/...
 
 ###### TESTS WITH RUNNING BENTHOS-UMH #####
 # Test the tag processor with a local OPC UA server
