@@ -47,7 +47,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"sync"
 
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
@@ -60,17 +59,7 @@ var (
 
 	// invalidCharacterRegex matches any invalid characters for replacement.
 	invalidCharacterRegex = regexp.MustCompile(`[^a-zA-Z0-9._\-]`)
-
-	// Ensure regex compilation happens only once
-	regexOnce sync.Once
 )
-
-// initRegex ensures regex patterns are compiled exactly once for thread safety.
-func initRegex() {
-	regexOnce.Do(func() {
-		// Regex patterns are already compiled above, this ensures it happens once
-	})
-}
 
 // UnsTopic represents a validated UMH topic that can be used as both a topic string and Kafka key.
 //
@@ -128,9 +117,6 @@ type UnsTopic struct {
 //	_, err := NewUnsTopic("umh.v1.factory.historian.temp")         // missing _ in data contract
 //	_, err := NewUnsTopic("umh.v1.factory..line._historian.temp")  // consecutive dots
 func NewUnsTopic(topic string) (*UnsTopic, error) {
-	// Ensure regex patterns are initialized
-	initRegex()
-
 	uns := &UnsTopic{raw: topic}
 
 	// Parse and validate topic structure first (provides more specific errors)
@@ -280,7 +266,7 @@ func (u *UnsTopic) parse() (*proto.TopicInfo, error) {
 
 	// Validate the parsed components
 	if err := u.validateParsedInfo(info); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("topic validation failed: %v (topic: %s)", err, u.raw)
 	}
 
 	return info, nil
@@ -324,7 +310,7 @@ func (u *UnsTopic) validateParsedInfo(info *proto.TopicInfo) error {
 	// Validate location sublevels
 	for i, level := range info.LocationSublevels {
 		if level == "" {
-			return fmt.Errorf("location sublevel at index %d cannot be empty: %+v", i+1, info)
+			return fmt.Errorf("location sublevel at index %d cannot be empty", i+1)
 		}
 		if strings.HasPrefix(level, "_") {
 			return fmt.Errorf("location sublevel at index %d cannot start with underscore", i+1)

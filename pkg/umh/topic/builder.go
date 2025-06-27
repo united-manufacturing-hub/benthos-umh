@@ -405,13 +405,13 @@ func (b *Builder) GetLocationPath() string {
 func (b *Builder) buildTopicString() (string, error) {
 	// Validate required fields
 	if b.level0 == "" {
-		return "", errors.New("level0 is required")
+		return "", errors.New("topic construction failed: level0 is required - set using SetLevel0() or SetLocationLevels()")
 	}
 	if b.dataContract == "" {
-		return "", errors.New("data contract is required")
+		return "", errors.New("topic construction failed: data contract is required - set using SetDataContract() with a value starting with underscore")
 	}
 	if b.name == "" {
-		return "", errors.New("name is required")
+		return "", errors.New("topic construction failed: name is required - set using SetName() with the final topic identifier")
 	}
 
 	// Build topic string efficiently
