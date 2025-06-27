@@ -17,6 +17,7 @@ package topic_browser_plugin
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -24,24 +25,24 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 	Context("Bundle serialization and deserialization", func() {
 		It("successfully encodes and decodes a bundle with time series data", func() {
 			// Create a test bundle
-			originalBundle := &UnsBundle{
-				UnsMap: &TopicMap{
-					Entries: map[string]*TopicInfo{
+			originalBundle := &proto.UnsBundle{
+				UnsMap: &proto.TopicMap{
+					Entries: map[string]*proto.TopicInfo{
 						"test-topic": {
 							Level0:       "enterprise",
 							DataContract: "_historian",
 						},
 					},
 				},
-				Events: &EventTable{
-					Entries: []*EventTableEntry{
+				Events: &proto.EventTable{
+					Entries: []*proto.EventTableEntry{
 						{
 							UnsTreeId: "test-topic",
-							Payload: &EventTableEntry_Ts{
-								Ts: &TimeSeriesPayload{
-									ScalarType:  ScalarType_NUMERIC,
+							Payload: &proto.EventTableEntry_Ts{
+								Ts: &proto.TimeSeriesPayload{
+									ScalarType:  proto.ScalarType_NUMERIC,
 									TimestampMs: 1647753600000,
-									Value: &TimeSeriesPayload_NumericValue{
+									Value: &proto.TimeSeriesPayload_NumericValue{
 										NumericValue: &wrapperspb.DoubleValue{Value: 13.0},
 									},
 								},
@@ -69,12 +70,12 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 
 		It("handles empty bundle", func() {
 			// Create an empty bundle
-			originalBundle := &UnsBundle{
-				UnsMap: &TopicMap{
-					Entries: make(map[string]*TopicInfo),
+			originalBundle := &proto.UnsBundle{
+				UnsMap: &proto.TopicMap{
+					Entries: make(map[string]*proto.TopicInfo),
 				},
-				Events: &EventTable{
-					Entries: make([]*EventTableEntry, 0),
+				Events: &proto.EventTable{
+					Entries: make([]*proto.EventTableEntry, 0),
 				},
 			}
 
@@ -95,9 +96,9 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 
 		It("handles bundle with multiple entries", func() {
 			// Create a bundle with multiple entries
-			originalBundle := &UnsBundle{
-				UnsMap: &TopicMap{
-					Entries: map[string]*TopicInfo{
+			originalBundle := &proto.UnsBundle{
+				UnsMap: &proto.TopicMap{
+					Entries: map[string]*proto.TopicInfo{
 						"topic1": {
 							Level0:       "enterprise",
 							DataContract: "_historian",
@@ -108,15 +109,15 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 						},
 					},
 				},
-				Events: &EventTable{
-					Entries: []*EventTableEntry{
+				Events: &proto.EventTable{
+					Entries: []*proto.EventTableEntry{
 						{
 							UnsTreeId: "topic1",
-							Payload: &EventTableEntry_Ts{
-								Ts: &TimeSeriesPayload{
-									ScalarType:  ScalarType_NUMERIC,
+							Payload: &proto.EventTableEntry_Ts{
+								Ts: &proto.TimeSeriesPayload{
+									ScalarType:  proto.ScalarType_NUMERIC,
 									TimestampMs: 1647753600000,
-									Value: &TimeSeriesPayload_NumericValue{
+									Value: &proto.TimeSeriesPayload_NumericValue{
 										NumericValue: &wrapperspb.DoubleValue{Value: 13.0},
 									},
 								},
@@ -124,11 +125,11 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 						},
 						{
 							UnsTreeId: "topic2",
-							Payload: &EventTableEntry_Ts{
-								Ts: &TimeSeriesPayload{
-									ScalarType:  ScalarType_NUMERIC,
+							Payload: &proto.EventTableEntry_Ts{
+								Ts: &proto.TimeSeriesPayload{
+									ScalarType:  proto.ScalarType_NUMERIC,
 									TimestampMs: 1647753600001,
-									Value: &TimeSeriesPayload_NumericValue{
+									Value: &proto.TimeSeriesPayload_NumericValue{
 										NumericValue: &wrapperspb.DoubleValue{Value: 13.0},
 									},
 								},

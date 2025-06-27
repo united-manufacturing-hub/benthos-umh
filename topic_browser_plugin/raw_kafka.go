@@ -16,6 +16,7 @@ package topic_browser_plugin
 
 import (
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
 // messageToRawKafkaMsg converts a Benthos message to a raw Kafka message structure.
@@ -25,12 +26,12 @@ import (
 //   - message: The Benthos message to convert
 //
 // Returns:
-//   - *EventKafka: The raw Kafka message structure
+//   - *proto.EventKafka: The raw Kafka message structure
 //   - error: Any error that occurred during conversion
 //
 // The function preserves all message metadata as headers and captures the raw payload bytes.
 // This is useful for debugging, auditing, and maintaining traceability of the original message.
-func messageToRawKafkaMsg(message *service.Message) (*EventKafka, error) {
+func messageToRawKafkaMsg(message *service.Message) (*proto.EventKafka, error) {
 	// Extract all metadata as headers
 	headers := make(map[string]string)
 
@@ -49,7 +50,7 @@ func messageToRawKafkaMsg(message *service.Message) (*EventKafka, error) {
 		return nil, err
 	}
 
-	return &EventKafka{
+	return &proto.EventKafka{
 		Headers: headers,
 		Payload: payload,
 	}, nil

@@ -28,6 +28,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
 var _ = Describe("TopicBrowserProcessor", func() {
@@ -179,7 +180,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Verify first event
 			event1 := decoded.Events.Entries[0]
 			Expect(event1.GetTs().GetTimestampMs()).To(Equal(int64(1647753600000)))
-			Expect(event1.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
+			Expect(event1.GetTs().GetScalarType()).To(Equal(proto.ScalarType_NUMERIC))
 			Expect(event1.GetTs().GetNumericValue()).NotTo(BeNil())
 			Expect(event1.GetTs().GetNumericValue().GetValue()).To(Equal(float64(3)))
 			Expect(event1.RawKafkaMsg).NotTo(BeNil())
@@ -188,7 +189,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Verify second event
 			event2 := decoded.Events.Entries[1]
 			Expect(event2.GetTs().GetTimestampMs()).To(Equal(int64(1647753600001)))
-			Expect(event2.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
+			Expect(event2.GetTs().GetScalarType()).To(Equal(proto.ScalarType_NUMERIC))
 			Expect(event2.GetTs().GetNumericValue()).NotTo(BeNil())
 			Expect(event2.GetTs().GetNumericValue().GetValue()).To(Equal(float64(5)))
 			Expect(event2.RawKafkaMsg).NotTo(BeNil())
@@ -278,7 +279,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(decoded2.Events.Entries).To(HaveLen(1))
 			event2 := decoded2.Events.Entries[0]
 			Expect(event2.GetTs().GetTimestampMs()).To(Equal(int64(1647753600001)))
-			Expect(event2.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
+			Expect(event2.GetTs().GetScalarType()).To(Equal(proto.ScalarType_NUMERIC))
 			Expect(event2.GetTs().GetNumericValue()).NotTo(BeNil())
 			Expect(event2.GetTs().GetNumericValue().GetValue()).To(Equal(float64(5)))
 			Expect(event2.RawKafkaMsg).NotTo(BeNil())
@@ -1888,7 +1889,7 @@ func createTestBatchWithValue(size int, valueString string) service.MessageBatch
 }
 
 // Helper function to extract value from EventTableEntry for verification
-func extractValueFromTimeSeries(event *EventTableEntry) string {
+func extractValueFromTimeSeries(event *proto.EventTableEntry) string {
 	if event == nil {
 		return ""
 	}
@@ -1909,7 +1910,7 @@ func extractValueFromTimeSeries(event *EventTableEntry) string {
 }
 
 // Helper function to extract UNS bundle from processed message for verification
-func extractUnsBundle(msg *service.Message) *UnsBundle {
+func extractUnsBundle(msg *service.Message) *proto.UnsBundle {
 	bytes, err := msg.AsBytes()
 	if err != nil {
 		return nil

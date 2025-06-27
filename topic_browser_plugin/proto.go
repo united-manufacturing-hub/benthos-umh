@@ -18,7 +18,8 @@ import (
 	"sync"
 
 	"github.com/pierrec/lz4/v4"
-	"google.golang.org/protobuf/proto"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
+	protobuf "google.golang.org/protobuf/proto"
 )
 
 /*
@@ -96,8 +97,8 @@ var decompressionBufferPool = sync.Pool{
 }
 
 // bundleToProtobuf converts an UNSBundle (containing both Topics and Events) to a protobuf representation
-func bundleToProtobuf(bundle *UnsBundle) ([]byte, error) {
-	protoBytes, err := proto.Marshal(bundle)
+func bundleToProtobuf(bundle *proto.UnsBundle) ([]byte, error) {
+	protoBytes, err := protobuf.Marshal(bundle)
 	if err != nil {
 		return []byte{}, err
 	}
@@ -105,9 +106,9 @@ func bundleToProtobuf(bundle *UnsBundle) ([]byte, error) {
 }
 
 // protobufBytesToBundle converts protobuf-encoded data back to an UnsBundle
-func protobufBytesToBundle(protoBytes []byte) (*UnsBundle, error) {
-	bundle := &UnsBundle{}
-	err := proto.Unmarshal(protoBytes, bundle)
+func protobufBytesToBundle(protoBytes []byte) (*proto.UnsBundle, error) {
+	bundle := &proto.UnsBundle{}
+	err := protobuf.Unmarshal(protoBytes, bundle)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +146,7 @@ func protobufBytesToBundle(protoBytes []byte) (*UnsBundle, error) {
 // Returns:
 //   - []byte: LZ4-compressed protobuf bytes (always compressed)
 //   - error: Any marshaling or compression error
-func BundleToProtobufBytes(bundle *UnsBundle) ([]byte, error) {
+func BundleToProtobufBytes(bundle *proto.UnsBundle) ([]byte, error) {
 	protoBytes, err := bundleToProtobuf(bundle)
 	if err != nil {
 		return []byte{}, err
@@ -211,7 +212,7 @@ func BundleToProtobufBytes(bundle *UnsBundle) ([]byte, error) {
 // Returns:
 //   - *UnsBundle: The decoded bundle
 //   - error: Any decoding error
-func ProtobufBytesToBundleWithCompression(compressedBytes []byte) (*UnsBundle, error) {
+func ProtobufBytesToBundleWithCompression(compressedBytes []byte) (*proto.UnsBundle, error) {
 	// Get decompression buffer from pool
 	decompBuf := decompressionBufferPool.Get().([]byte)
 	defer decompressionBufferPool.Put(decompBuf[:0]) // Return with zero length
