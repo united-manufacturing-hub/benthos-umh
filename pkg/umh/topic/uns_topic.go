@@ -324,10 +324,10 @@ func (u *UnsTopic) validateParsedInfo(info *proto.TopicInfo) error {
 	// Validate location sublevels
 	for i, level := range info.LocationSublevels {
 		if level == "" {
-			return fmt.Errorf("location sublevel at index %d cannot be empty: %+v", i, info)
+			return fmt.Errorf("location sublevel at index %d cannot be empty: %+v", i+1, info)
 		}
 		if strings.HasPrefix(level, "_") {
-			return fmt.Errorf("location sublevel at index %d cannot start with underscore", i)
+			return fmt.Errorf("location sublevel at index %d cannot start with underscore", i+1)
 		}
 	}
 
