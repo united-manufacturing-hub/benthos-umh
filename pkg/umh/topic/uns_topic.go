@@ -36,7 +36,7 @@ Build topics programmatically:
 		SetName("temperature").
 		Build()
 
-Performance: ~625ns parsing, ~900ns construction. Thread-safe read operations.
+Performance: ~656ns simple parsing, ~1322ns complex parsing, ~751ns simple construction, ~1436ns complex construction. Thread-safe read operations.
 
 For detailed documentation and examples, see: docs/libraries/umh-topic-parser.md
 */

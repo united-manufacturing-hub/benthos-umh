@@ -28,6 +28,7 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
@@ -51,16 +52,17 @@ import (
 // 4. Generates a unique UNS tree ID for the topic
 // 5. Links the event to the topic via the tree ID
 func MessageToUNSInfoAndEvent(message *service.Message) (*proto.TopicInfo, *proto.EventTableEntry, *string, error) {
-	topic, err := extractTopicFromMessage(message)
+	t, err := extractTopicFromMessage(message)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	// Extract UNS Data
-	unsInfo, err := topicToUNSInfo(topic)
+	unsTopic, err := topic.NewUnsTopic(t)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to parse topic '%s': %w", topic, err)
+		return nil, nil, nil, fmt.Errorf("failed to parse topic '%s': %w", t, err)
 	}
+	unsInfo := unsTopic.Info()
 
 	// Extract Event Data - EventTag parameter removed since it's no longer needed
 	event, err := messageToEvent(message)

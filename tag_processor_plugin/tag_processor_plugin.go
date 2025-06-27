@@ -26,6 +26,7 @@ import (
 	"github.com/dop251/goja"
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
 type TagProcessorConfig struct {
@@ -564,7 +565,10 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	newMsg.SetStructured(finalPayload)
 
 	// Set the topic in the new message metadata
-	topic := p.constructUMHTopic(msg)
+	topic, err := p.constructUMHTopic(msg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to construct UMH topic: %v", err)
+	}
 	newMsg.MetaSet("topic", topic) // topic is deprecated, use umh_topic instead for easy to understand difference between MQTT Topic, Kafka Topic and UMH Topic
 	newMsg.MetaSet("umh_topic", topic)
 
@@ -600,46 +604,38 @@ func (p *TagProcessor) convertValue(v interface{}) interface{} {
 	}
 }
 
-// constructUMHTopic creates the topic string from message metadata
-func (p *TagProcessor) constructUMHTopic(msg *service.Message) string {
-	parts := []string{"umh", "v1"}
+// constructUMHTopic creates the topic string from message metadata using the Builder pattern
+func (p *TagProcessor) constructUMHTopic(msg *service.Message) (string, error) {
+	builder := topic.NewBuilder()
 
+	// Set location path
 	if value, exists := msg.MetaGet("location_path"); exists && value != "" {
-		// Split by dots and filter out empty segments to handle consecutive dots
-		locationParts := strings.Split(value, ".")
-		for _, part := range locationParts {
-			if part != "" {
-				parts = append(parts, part)
-			}
-		}
+		builder.SetLocationPath(value)
 	}
 
+	// Set data contract
 	if value, exists := msg.MetaGet("data_contract"); exists && value != "" {
-		parts = append(parts, value)
+		builder.SetDataContract(value)
 	}
 
+	// Set virtual path
 	if value, exists := msg.MetaGet("virtual_path"); exists && value != "" {
-		// Split by dots and filter out empty segments to handle consecutive dots
-		virtualParts := strings.Split(value, ".")
-		for _, part := range virtualParts {
-			if part != "" {
-				parts = append(parts, part)
-			}
-		}
+		builder.SetVirtualPath(value)
 	}
 
+	// Set tag name
 	if value, exists := msg.MetaGet("tag_name"); exists && value != "" {
-		parts = append(parts, value)
+		builder.SetName(value)
 	}
 
-	keys := strings.Join(parts, ".")
-
-	// As a last safety net, we replace consecutive dots with a single dot
-	for strings.Contains(keys, "..") {
-		keys = strings.ReplaceAll(keys, "..", ".")
+	// Build the topic string
+	topicStr, err := builder.BuildString()
+	if err != nil {
+		p.logger.Errorf("Failed to build UMH topic: %v", err)
+		return "", fmt.Errorf("failed to build UMH topic: %v", err)
 	}
 
-	return keys
+	return topicStr, nil
 }
 
 func (p *TagProcessor) Close(ctx context.Context) error {
