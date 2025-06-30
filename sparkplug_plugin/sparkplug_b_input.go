@@ -669,16 +669,18 @@ func (s *sparkplugInput) processStateMessage(deviceKey, msgType string, topicInf
 	}
 
 	msg := service.NewMessage(jsonBytes)
-	msg.MetaSet("sparkplug_msg_type", msgType)
-	msg.MetaSet("sparkplug_device_key", deviceKey)
-	msg.MetaSet("mqtt_topic", originalTopic)
-	msg.MetaSet("group_id", topicInfo.Group)
-	msg.MetaSet("edge_node_id", topicInfo.EdgeNode)
+
+	// Set Sparkplug B standard metadata for state messages
+	msg.MetaSet("spb_message_type", msgType)
+	msg.MetaSet("spb_device_key", deviceKey)
+	msg.MetaSet("spb_topic", originalTopic)
+	msg.MetaSet("spb_group_id", topicInfo.Group)
+	msg.MetaSet("spb_edge_node_id", topicInfo.EdgeNode)
 	if topicInfo.Device != "" {
-		msg.MetaSet("device_id", topicInfo.Device)
+		msg.MetaSet("spb_device_id", topicInfo.Device)
 	}
 	msg.MetaSet("event_type", "state_change")
-	msg.MetaSet("node_state", statePayload)
+	msg.MetaSet("spb_state", statePayload)
 
 	s.logger.Debugf("✅ processStateMessage: created STATE event message for device %s: %s", deviceKey, statePayload)
 
@@ -781,16 +783,8 @@ func (s *sparkplugInput) createSplitMessages(payload *sproto.Payload, msgType, d
 	return batch
 }
 
-func (s *sparkplugInput) createSingleMessage(payload *sproto.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
-	msg := s.createMessageFromPayload(payload, msgType, deviceKey, topicInfo, originalTopic)
-	if msg == nil {
-		return nil
-	}
-	return service.MessageBatch{msg}
-}
-
 func (s *sparkplugInput) createMessageFromMetric(metric *sproto.Payload_Metric, payload *sproto.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) *service.Message {
-	// Extract metric value as JSON
+	// Extract metric value as JSON (always preserve Sparkplug B format)
 	value := s.extractMetricValue(metric)
 	if value == nil {
 		return nil
@@ -798,40 +792,31 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sproto.Payload_Metric, 
 
 	msg := service.NewMessage(value)
 
-	// Set Sparkplug metadata
-	msg.MetaSet("sparkplug_msg_type", msgType)
-	msg.MetaSet("sparkplug_device_key", deviceKey)
-	msg.MetaSet("mqtt_topic", originalTopic)
-	msg.MetaSet("group_id", topicInfo.Group)
-	msg.MetaSet("edge_node_id", topicInfo.EdgeNode)
+	// Set Sparkplug B standard metadata (always available)
+	msg.MetaSet("spb_group_id", topicInfo.Group)
+	msg.MetaSet("spb_edge_node_id", topicInfo.EdgeNode)
 	if topicInfo.Device != "" {
-		msg.MetaSet("device_id", topicInfo.Device)
+		msg.MetaSet("spb_device_id", topicInfo.Device)
 	}
+	msg.MetaSet("spb_message_type", msgType)
+	msg.MetaSet("spb_device_key", deviceKey)
+	msg.MetaSet("spb_topic", originalTopic)
 
-	// Enhanced metadata enrichment as per expert specification
-	msg.MetaSet("spb_group", topicInfo.Group)
-	msg.MetaSet("spb_edge_node", topicInfo.EdgeNode)
-	if topicInfo.Device != "" {
-		msg.MetaSet("spb_device", topicInfo.Device)
-	}
-
-	// Set metric name as tag
-	tagName := "unknown_metric"
+	// Set Sparkplug B metric name
+	metricName := "unknown_metric"
 	if metric.Name != nil && *metric.Name != "" {
-		tagName = *metric.Name
+		metricName = *metric.Name
 	} else if metric.Alias != nil {
-		tagName = fmt.Sprintf("alias_%d", *metric.Alias)
+		metricName = fmt.Sprintf("alias_%d", *metric.Alias)
 	}
-	msg.MetaSet("tag_name", tagName)
+	msg.MetaSet("spb_metric_name", metricName)
 
-	// Enhanced sequence and timing metadata
+	// Set sequence and timing metadata
 	if payload.Seq != nil {
-		msg.MetaSet("sparkplug_seq", fmt.Sprintf("%d", *payload.Seq))
-		msg.MetaSet("spb_seq", fmt.Sprintf("%d", *payload.Seq))
+		msg.MetaSet("spb_sequence", fmt.Sprintf("%d", *payload.Seq))
 	}
 
 	if payload.Timestamp != nil {
-		msg.MetaSet("timestamp_ms", fmt.Sprintf("%d", *payload.Timestamp))
 		msg.MetaSet("spb_timestamp", fmt.Sprintf("%d", *payload.Timestamp))
 	}
 
@@ -855,27 +840,8 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sproto.Payload_Metric, 
 	}
 	s.stateMu.RUnlock()
 
-	return msg
-}
-
-func (s *sparkplugInput) createMessageFromPayload(payload *sproto.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) *service.Message {
-	// Convert entire payload to JSON
-	jsonData := s.payloadToJSON(payload)
-	if jsonData == nil {
-		return nil
-	}
-
-	msg := service.NewMessage(jsonData)
-
-	// Set metadata
-	msg.MetaSet("sparkplug_msg_type", msgType)
-	msg.MetaSet("sparkplug_device_key", deviceKey)
-	msg.MetaSet("mqtt_topic", originalTopic)
-	msg.MetaSet("group_id", topicInfo.Group)
-	msg.MetaSet("edge_node_id", topicInfo.EdgeNode)
-	if topicInfo.Device != "" {
-		msg.MetaSet("device_id", topicInfo.Device)
-	}
+	// Try to add UMH conversion metadata (optional, non-failing)
+	s.tryAddUMHMetadata(msg, metric, payload, topicInfo)
 
 	return msg
 }
@@ -900,9 +866,16 @@ func (s *sparkplugInput) createDeathEventMessage(msgType, deviceKey string, topi
 	}
 
 	msg := service.NewMessage(jsonBytes)
-	msg.MetaSet("sparkplug_msg_type", msgType)
-	msg.MetaSet("sparkplug_device_key", deviceKey)
-	msg.MetaSet("mqtt_topic", originalTopic)
+
+	// Set Sparkplug B standard metadata for death events
+	msg.MetaSet("spb_message_type", msgType)
+	msg.MetaSet("spb_device_key", deviceKey)
+	msg.MetaSet("spb_topic", originalTopic)
+	msg.MetaSet("spb_group_id", topicInfo.Group)
+	msg.MetaSet("spb_edge_node_id", topicInfo.EdgeNode)
+	if topicInfo.Device != "" {
+		msg.MetaSet("spb_device_id", topicInfo.Device)
+	}
 	msg.MetaSet("event_type", "device_offline")
 
 	return service.MessageBatch{msg}
@@ -992,67 +965,6 @@ func (s *sparkplugInput) getDataTypeName(datatype uint32) string {
 	}
 }
 
-func (s *sparkplugInput) payloadToJSON(payload *sproto.Payload) []byte {
-	// Create JSON representation of entire payload
-	result := make(map[string]interface{})
-
-	if payload.Timestamp != nil {
-		result["timestamp_ms"] = *payload.Timestamp
-	}
-
-	if payload.Seq != nil {
-		result["seq"] = *payload.Seq
-	}
-
-	if len(payload.Metrics) > 0 {
-		metrics := make([]map[string]interface{}, 0, len(payload.Metrics))
-		for _, metric := range payload.Metrics {
-			if metric == nil {
-				continue
-			}
-
-			metricJSON := make(map[string]interface{})
-			if metric.Name != nil {
-				metricJSON["name"] = *metric.Name
-			}
-			if metric.Alias != nil {
-				metricJSON["alias"] = *metric.Alias
-			}
-
-			// Add value
-			if metric.IsNull != nil && *metric.IsNull {
-				metricJSON["value"] = nil
-			} else if value := metric.GetValue(); value != nil {
-				switch v := value.(type) {
-				case *sproto.Payload_Metric_IntValue:
-					metricJSON["value"] = v.IntValue
-				case *sproto.Payload_Metric_LongValue:
-					metricJSON["value"] = v.LongValue
-				case *sproto.Payload_Metric_FloatValue:
-					metricJSON["value"] = v.FloatValue
-				case *sproto.Payload_Metric_DoubleValue:
-					metricJSON["value"] = v.DoubleValue
-				case *sproto.Payload_Metric_BooleanValue:
-					metricJSON["value"] = v.BooleanValue
-				case *sproto.Payload_Metric_StringValue:
-					metricJSON["value"] = v.StringValue
-				}
-			}
-
-			metrics = append(metrics, metricJSON)
-		}
-		result["metrics"] = metrics
-	}
-
-	jsonBytes, err := json.Marshal(result)
-	if err != nil {
-		s.logger.Errorf("Failed to marshal payload to JSON: %v", err)
-		return nil
-	}
-
-	return jsonBytes
-}
-
 func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 	if s.client == nil || !s.client.IsConnected() {
 		return
@@ -1132,4 +1044,137 @@ func (s *sparkplugInput) validateSequenceNumber(lastSeq, currentSeq uint8) bool 
 
 	// Allow small gaps within tolerance
 	return gap <= maxGap
+}
+
+// tryAddUMHMetadata attempts to convert Sparkplug B data to UMH format and add UMH metadata.
+// This is a non-failing operation - if conversion fails, it adds status flags and continues.
+func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sproto.Payload_Metric, payload *sproto.Payload, topicInfo *TopicInfo) {
+	// Only attempt conversion if we have necessary data
+	if topicInfo.Device == "" || metric == nil {
+		msg.MetaSet("umh_conversion_status", "skipped_insufficient_data")
+		s.logger.Debugf("Skipping UMH conversion: insufficient data (device=%s, metric=%v)", topicInfo.Device, metric != nil)
+		return
+	}
+
+	// Try to use the format converter
+	converter := NewFormatConverter()
+
+	// Extract raw value for conversion
+	rawValue := s.extractMetricValueRaw(metric)
+	if rawValue == nil {
+		msg.MetaSet("umh_conversion_status", "failed_no_value")
+		s.logger.Debugf("UMH conversion failed: no extractable value from metric")
+		return
+	}
+
+	// Create SparkplugMessage struct for conversion
+	sparkplugMsg := &SparkplugMessage{
+		GroupID:    topicInfo.Group,
+		EdgeNodeID: topicInfo.EdgeNode,
+		DeviceID:   topicInfo.Device,
+		Value:      rawValue,
+		DataType:   s.convertSparkplugDataTypeToString(*metric.Datatype),
+		Timestamp:  time.Now(), // Will be overridden below if payload has timestamp
+	}
+
+	// Set metric name from name or alias
+	if metric.Name != nil && *metric.Name != "" {
+		sparkplugMsg.MetricName = *metric.Name
+	} else if metric.Alias != nil {
+		sparkplugMsg.MetricName = fmt.Sprintf("alias_%d", *metric.Alias)
+	} else {
+		sparkplugMsg.MetricName = "unknown_metric"
+	}
+
+	// Set timestamp from payload if available
+	if payload.Timestamp != nil {
+		sparkplugMsg.Timestamp = time.UnixMilli(int64(*payload.Timestamp))
+	}
+
+	// Try UMH conversion
+	umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+	if err != nil {
+		msg.MetaSet("umh_conversion_status", "failed")
+		msg.MetaSet("umh_conversion_error", err.Error())
+		s.logger.Debugf("UMH conversion failed for metric %s: %v", sparkplugMsg.MetricName, err)
+		return
+	}
+
+	// Conversion successful - add UMH metadata
+	msg.MetaSet("umh_conversion_status", "success")
+	msg.MetaSet("umh_location_path", umhMsg.TopicInfo.Level0+"."+strings.Join(umhMsg.TopicInfo.LocationSublevels, "."))
+	msg.MetaSet("umh_tag_name", umhMsg.TopicInfo.Name) // UMH terminology (only when conversion succeeds)
+	msg.MetaSet("umh_data_contract", umhMsg.TopicInfo.DataContract)
+	if umhMsg.TopicInfo.VirtualPath != nil {
+		msg.MetaSet("umh_virtual_path", *umhMsg.TopicInfo.VirtualPath)
+	}
+	msg.MetaSet("umh_topic", umhMsg.Topic.String())
+
+	s.logger.Debugf("Successfully added UMH metadata for metric %s -> %s", sparkplugMsg.MetricName, umhMsg.Topic.String())
+}
+
+// extractMetricValueRaw extracts the raw value from a Sparkplug metric without JSON wrapping
+func (s *sparkplugInput) extractMetricValueRaw(metric *sproto.Payload_Metric) interface{} {
+	// Check for null value
+	if metric.IsNull != nil && *metric.IsNull {
+		return nil
+	}
+
+	// Extract value based on type
+	if value := metric.GetValue(); value != nil {
+		switch v := value.(type) {
+		case *sproto.Payload_Metric_IntValue:
+			return v.IntValue
+		case *sproto.Payload_Metric_LongValue:
+			return v.LongValue
+		case *sproto.Payload_Metric_FloatValue:
+			return v.FloatValue
+		case *sproto.Payload_Metric_DoubleValue:
+			return v.DoubleValue
+		case *sproto.Payload_Metric_BooleanValue:
+			return v.BooleanValue
+		case *sproto.Payload_Metric_StringValue:
+			return v.StringValue
+		default:
+			return nil
+		}
+	}
+
+	return nil
+}
+
+// convertSparkplugDataTypeToString converts Sparkplug data type ID to format converter expected string
+func (s *sparkplugInput) convertSparkplugDataTypeToString(datatype uint32) string {
+	switch datatype {
+	case SparkplugDataTypeInt8:
+		return "int8"
+	case SparkplugDataTypeInt16:
+		return "int16"
+	case SparkplugDataTypeInt32:
+		return "int32"
+	case SparkplugDataTypeInt64:
+		return "int64"
+	case SparkplugDataTypeUInt8:
+		return "uint8"
+	case SparkplugDataTypeUInt16:
+		return "uint16"
+	case SparkplugDataTypeUInt32:
+		return "uint32"
+	case SparkplugDataTypeUInt64:
+		return "uint64"
+	case SparkplugDataTypeFloat:
+		return "float"
+	case SparkplugDataTypeDouble:
+		return "double"
+	case SparkplugDataTypeBoolean:
+		return "boolean"
+	case SparkplugDataTypeString:
+		return "string"
+	case SparkplugDataTypeDateTime:
+		return "string" // Treat DateTime as string for now
+	case SparkplugDataTypeText:
+		return "string" // Treat Text as string
+	default:
+		return "string" // Default to string for unknown types
+	}
 }
