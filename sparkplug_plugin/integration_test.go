@@ -57,6 +57,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -74,22 +75,27 @@ import (
 	_ "github.com/united-manufacturing-hub/benthos-umh/tag_processor_plugin" // Import tag processor for full pipeline tests
 )
 
-// Global message capture for tests
-var captureChannel chan *service.Message
+// Package-level variables for test infrastructure
+// Simple test-specific MessageCapture - set by each test
+var currentTestCapture *MessageCapture
+var currentTestCaptureMu sync.RWMutex
 
-// MessageCapture implements service.Output to capture messages for testing
 type MessageCapture struct {
 	messages chan *service.Message
 }
 
 func (m *MessageCapture) Connect(ctx context.Context) error {
-	return nil // Always ready
+	// Register this instance as the current test capture
+	currentTestCaptureMu.Lock()
+	currentTestCapture = m
+	currentTestCaptureMu.Unlock()
+	return nil
 }
 
 func (m *MessageCapture) Write(ctx context.Context, msg *service.Message) error {
-	if captureChannel != nil {
+	if m.messages != nil {
 		select {
-		case captureChannel <- msg.Copy():
+		case m.messages <- msg.Copy():
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
@@ -100,15 +106,32 @@ func (m *MessageCapture) Write(ctx context.Context, msg *service.Message) error 
 }
 
 func (m *MessageCapture) Close(ctx context.Context) error {
+	// Clear the current test capture when closing
+	currentTestCaptureMu.Lock()
+	if currentTestCapture == m {
+		currentTestCapture = nil
+	}
+	currentTestCaptureMu.Unlock()
 	return nil
+}
+
+// Helper function to get the current test's MessageCapture
+func getCurrentTestCapture() *MessageCapture {
+	currentTestCaptureMu.RLock()
+	defer currentTestCaptureMu.RUnlock()
+	return currentTestCapture
 }
 
 func init() {
 	// Register custom output for tests
 	err := service.RegisterOutput("message_capture",
-		service.NewConfigSpec().Field(service.NewStringField("dummy").Default("")),
+		service.NewConfigSpec(),
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.Output, int, error) {
-			return &MessageCapture{}, 1, nil
+			// Create a capture with a buffered channel
+			capture := &MessageCapture{
+				messages: make(chan *service.Message, 100),
+			}
+			return capture, 1, nil
 		})
 	if err != nil {
 		panic(err)
@@ -209,16 +232,6 @@ var _ = Describe("Real MQTT Broker Integration", func() {
 		It("should run full Edge Node to Primary Host pipeline (like shell script)", func() {
 			By("Creating message capture system for Primary Host")
 
-			// Create isolated message capture channel for this test only
-			capturedMessages := make(chan *service.Message, 20)
-
-			// Save previous capture channel and restore it after test
-			previousCaptureChannel := captureChannel
-			captureChannel = capturedMessages
-			defer func() {
-				captureChannel = previousCaptureChannel
-			}()
-
 			By("Testing complete pipeline: generate → tag_processor → sparkplug_b → sparkplug_b → message_capture")
 
 			// This test replicates what the shell script was actually doing:
@@ -289,8 +302,7 @@ input:
       groups: ["%s"]  # Only subscribe to our specific test group
 
 output:
-  message_capture:
-    dummy: ""
+  message_capture: {}
 
 logger:
   level: INFO
@@ -346,14 +358,30 @@ logger:
 
 			By("Verifying captured messages from full pipeline")
 
-			// Clean up capture channel
-			captureChannel = nil
-			close(capturedMessages)
+			// Get the MessageCapture instance
+			messageCapture := getCurrentTestCapture()
+			Expect(messageCapture).NotTo(BeNil(), "MessageCapture should be available")
 
 			// Collect all captured messages
 			var messages []*service.Message
-			for msg := range capturedMessages {
-				messages = append(messages, msg)
+			timeout := time.After(2 * time.Second)
+		collectLoop:
+			for {
+				select {
+				case msg := <-messageCapture.messages:
+					if msg != nil {
+						messages = append(messages, msg)
+					}
+				case <-timeout:
+					break collectLoop
+				default:
+					if len(messages) > 0 {
+						time.Sleep(100 * time.Millisecond) // Brief pause to collect any remaining messages
+						break collectLoop
+					} else {
+						time.Sleep(100 * time.Millisecond) // Keep waiting if no messages yet
+					}
+				}
 			}
 
 			fmt.Printf("📥 Captured %d messages from full pipeline\n", len(messages))
@@ -433,16 +461,6 @@ logger:
 		It("should process NBIRTH and NDATA messages end-to-end", func() {
 			By("Creating a message capture system")
 
-			// Create isolated message capture channel for this test only
-			capturedMessages := make(chan *service.Message, 10)
-
-			// Save previous capture channel and restore it after test
-			previousCaptureChannel := captureChannel
-			captureChannel = capturedMessages
-			defer func() {
-				captureChannel = previousCaptureChannel
-			}()
-
 			By("Creating a stream with the Sparkplug input plugin and message capture")
 
 			// Create a stream with the input to test it
@@ -462,8 +480,7 @@ input:
       auto_split_metrics: true
 
 output:
-  message_capture:
-    dummy: ""
+  message_capture: {}
 
 logger:
   level: INFO
@@ -556,14 +573,30 @@ logger:
 				fmt.Printf("Stream didn't stop gracefully\n")
 			}
 
-			// Clean up capture channel
-			captureChannel = nil
-			close(capturedMessages)
+			// Get the MessageCapture instance
+			messageCapture := getCurrentTestCapture()
+			Expect(messageCapture).NotTo(BeNil(), "MessageCapture should be available")
 
 			// Collect all captured messages
 			var messages []*service.Message
-			for msg := range capturedMessages {
-				messages = append(messages, msg)
+			timeout := time.After(2 * time.Second)
+		collectLoop:
+			for {
+				select {
+				case msg := <-messageCapture.messages:
+					if msg != nil {
+						messages = append(messages, msg)
+					}
+				case <-timeout:
+					break collectLoop
+				default:
+					if len(messages) > 0 {
+						time.Sleep(100 * time.Millisecond) // Brief pause to collect any remaining messages
+						break collectLoop
+					} else {
+						time.Sleep(100 * time.Millisecond) // Keep waiting if no messages yet
+					}
+				}
 			}
 
 			fmt.Printf("📥 Captured %d messages\n", len(messages))
@@ -1302,8 +1335,7 @@ logger:
 
 	Context("UMH Integration and Mapping", func() {
 		var (
-			brokerURL        string
-			capturedMessages chan *service.Message
+			brokerURL string
 		)
 
 		BeforeEach(func() {
@@ -1311,19 +1343,10 @@ logger:
 			if brokerURL == "" {
 				brokerURL = "tcp://127.0.0.1:1883"
 			}
-
-			// Use MessageCapture for UMH metadata validation
-			capturedMessages = make(chan *service.Message, 50)
-			captureChannel = capturedMessages
 		})
 
 		AfterEach(func() {
-			if captureChannel != nil {
-				captureChannel = nil
-			}
-			if capturedMessages != nil {
-				close(capturedMessages)
-			}
+			// No cleanup needed - MessageCapture instances clean themselves up
 		})
 
 		It("should map UMH location paths to Sparkplug B structure correctly", func() {
@@ -1336,7 +1359,7 @@ logger:
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 
-			// Generate unique group ID to avoid cross-contamination
+			// Generate unique identifiers for this test
 			uniqueGroupID := fmt.Sprintf("LocationTest-%d-%s", GinkgoParallelProcess(), uuid.New().String()[:8])
 
 			By("Setting up full pipeline for location mapping test")
@@ -1436,6 +1459,10 @@ input:
     mqtt:
       urls: ["%s"]
       client_id: "test-location-primary-host-%d-%s"
+    identity:
+      group_id: "%s"
+      edge_node_id: "PrimaryHost"
+    role: "primary"
     subscription:
       groups: ["%s"]
 
@@ -1444,7 +1471,7 @@ output:
 
 logger:
   level: INFO
-`, brokerURL, GinkgoParallelProcess(), uuid.New().String()[:8], uniqueGroupID)
+`, brokerURL, GinkgoParallelProcess(), uuid.New().String()[:8], uniqueGroupID, uniqueGroupID)
 
 			// Start Edge Node stream
 			edgeStreamBuilder := service.NewStreamBuilder()
@@ -1475,7 +1502,15 @@ logger:
 				primaryStreamDone <- primaryStream.Run(ctx)
 			}()
 
+			// Wait for Primary Host to start and MessageCapture to be registered
+			time.Sleep(2 * time.Second)
+
 			By("Collecting UMH messages from Primary Host")
+
+			// Get the MessageCapture instance for this test
+			messageCapture := getCurrentTestCapture()
+			Expect(messageCapture).NotTo(BeNil(), "MessageCapture should be available")
+
 			var capturedUMHMessages []*service.Message
 			messageTimeout := time.After(10 * time.Second)
 
@@ -1483,7 +1518,7 @@ logger:
 			expectedMessageCount := len(locationTestData) // 3 DDATA messages converted to UMH
 			for len(capturedUMHMessages) < expectedMessageCount {
 				select {
-				case msg := <-capturedMessages:
+				case msg := <-messageCapture.messages:
 					if msg != nil {
 						capturedUMHMessages = append(capturedUMHMessages, msg)
 						fmt.Printf("📨 Captured UMH message: %d/%d\n", len(capturedUMHMessages), expectedMessageCount)
