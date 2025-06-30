@@ -167,9 +167,8 @@ func DecompressLZ4(compressedData []byte) ([]byte, error) {
 	decompBuf := decompressionBufferPool.Get().([]byte)
 	defer decompressionBufferPool.Put(decompBuf[:0]) // Return with zero length
 
-	// We don't know the exact uncompressed size, so we use a heuristic
-	// and grow the buffer if needed. Start with 4x compressed size as estimate.
-	estimatedSize := len(compressedData) * 4
+	// LZ4 guarantees that the decompressed size will be less than 255x the compressed size. (https://stackoverflow.com/questions/25740471/lz4-library-decompressed-data-upper-bound-size-estimation)
+	estimatedSize := len(compressedData) * 255
 	if cap(decompBuf) < estimatedSize {
 		decompBuf = make([]byte, estimatedSize)
 	}
@@ -178,19 +177,8 @@ func DecompressLZ4(compressedData []byte) ([]byte, error) {
 	// Decompress using LZ4 block decompression
 	decompressedSize, err := lz4.UncompressBlock(compressedData, decompBuf)
 	if err != nil {
-		// If buffer was too small, try with a larger buffer
-		if err == lz4.ErrInvalidSourceShortBuffer {
-			// Double the buffer size and try again
-			decompBuf = make([]byte, len(compressedData)*8)
-			decompressedSize, err = lz4.UncompressBlock(compressedData, decompBuf)
-			if err != nil {
-				// Return error - no fallback, caller must handle
-				return nil, err
-			}
-		} else {
-			// Return error - no fallback, caller must handle
-			return nil, err
-		}
+		// Return error - no fallback, caller must handle
+		return nil, err
 	}
 
 	// Return only the actual decompressed data
