@@ -146,16 +146,41 @@ The Primary Host uses the `edge_node_id` configuration field as the `host_id` fo
 
 ### Metadata Enrichment
 
-In addition to `umh_topic`, the plugin attaches several Sparkplug-specific metadata fields to each output message:
+The plugin attaches comprehensive Sparkplug-specific metadata fields to each output message. These are organized into **primary fields** (commonly used) and **secondary fields** (for advanced use cases):
 
-* `spb_group`: the Sparkplug Group ID of the source message
-* `spb_edge_node`: the Edge Node ID (equipment or gateway name)
-* `spb_device` (if applicable): the Device ID (for metrics coming from a Device under an edge node)
-* `spb_seq`: the sequence number of the Sparkplug message that carried this metric
-* `spb_bdseq`: the birth-death sequence number of the session
-* `spb_timestamp`: the timestamp (in epoch ms) provided with the metric, if any
-* `spb_datatype`: the Sparkplug data type of the metric (e.g. `"Int32"`, `"Double"`, `"Boolean"`)
-* `spb_alias`: the alias number of the metric (primarily for debugging)
-* `spb_is_historical`: set to `true` if the metric was flagged as historical in the Sparkplug payload
+#### Primary Metadata Fields
 
-These metadata fields ensure that all relevant Sparkplug context is preserved. You can use them in processors or for routing if needed.
+These are the main metadata fields that most users will need for processing Sparkplug messages:
+
+* `sparkplug_msg_type`: The Sparkplug message type (e.g., "NBIRTH", "NDATA", "NDEATH", "DBIRTH", "DDATA", "DDEATH")
+* `group_id`: The Sparkplug Group ID of the source message
+* `edge_node_id`: The Edge Node ID (equipment or gateway name)
+* `device_id`: The Device ID (for metrics from devices under an edge node, empty for node-level messages)
+* `sparkplug_device_key`: Combined device identifier in format "group_id/edge_node_id" or "group_id/edge_node_id/device_id"
+* `mqtt_topic`: The original MQTT topic the message was received from
+* `tag_name`: The extracted metric name (for individual metrics when auto_split_metrics is enabled)
+
+#### Secondary Metadata Fields (Advanced)
+
+These fields provide additional Sparkplug context and are primarily for debugging or advanced processing:
+
+* `spb_group`: Same as `group_id` (for backward compatibility)
+* `spb_edge_node`: Same as `edge_node_id` (for backward compatibility)
+* `spb_device`: Same as `device_id` (for backward compatibility)
+* `spb_seq`: The sequence number of the Sparkplug message
+* `spb_bdseq`: The birth-death sequence number of the session
+* `spb_timestamp`: The timestamp (in epoch ms) provided with the metric
+* `spb_datatype`: The Sparkplug data type of the metric (e.g. "Int32", "Double", "Boolean")
+* `spb_alias`: The alias number of the metric (for debugging alias resolution)
+* `spb_is_historical`: Set to "true" if the metric was flagged as historical
+
+#### Special Message Types
+
+For STATE messages, the plugin sets:
+* `event_type`: "state_change" 
+* `node_state`: The state value ("ONLINE" or "OFFLINE")
+
+For NDEATH/DDEATH messages, the plugin sets:
+* `event_type`: "device_offline"
+
+**Usage Recommendation**: Use the **primary metadata fields** for most processing logic. The `spb_` prefixed fields are provided for backward compatibility and advanced debugging scenarios.
