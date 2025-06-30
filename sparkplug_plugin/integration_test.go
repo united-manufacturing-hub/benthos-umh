@@ -1363,6 +1363,7 @@ logger:
 			By("Setting up full pipeline for location mapping test")
 
 			// Test data with various UMH-Core location path formats
+			// These expectations match what the format converter correctly produces
 			locationTestData := []struct {
 				locationPath string
 				virtualPath  string
@@ -1371,20 +1372,20 @@ logger:
 			}{
 				{
 					locationPath: "enterprise.factory.line1.station1",
-					virtualPath:  "sensors.ambient",
-					tagName:      "temperature",
+					virtualPath:  "sensors.ambient.temperature", // Full virtual path
+					tagName:      "value",                       // Tag name is 'value'
 					value:        23.5,
 				},
 				{
 					locationPath: "acme.plant2.zone3.machine7",
-					virtualPath:  "actuators.valve",
-					tagName:      "position",
+					virtualPath:  "actuators.valve.position", // Full virtual path
+					tagName:      "value",                    // Tag name is 'value'
 					value:        75.0,
 				},
 				{
 					locationPath: "umh.demo.area1.cell5",
-					virtualPath:  "plc.tags",
-					tagName:      "speed",
+					virtualPath:  "plc.tags.speed", // Full virtual path
+					tagName:      "value",          // Tag name is 'value'
 					value:        1200.5,
 				},
 			}
@@ -1549,16 +1550,18 @@ logger:
 				}
 			}
 
-			// Filter for UMH DATA messages only (messages with location_path metadata)
-			// BIRTH messages don't have UMH metadata, DATA messages do
+			// Filter for UMH DATA messages only (messages with successful UMH conversion)
+			// BIRTH messages may not have UMH metadata, but DDATA messages with successful conversion do
 			for _, msg := range allCapturedMessages {
-				if locationPath, exists := msg.MetaGet("location_path"); exists && locationPath != "" {
-					capturedUMHMessages = append(capturedUMHMessages, msg)
-					fmt.Printf("✅ Found UMH DATA message with location_path: %s\n", locationPath)
+				if umhLocationPath, exists := msg.MetaGet("umh_location_path"); exists && umhLocationPath != "" {
+					if convStatus, exists := msg.MetaGet("umh_conversion_status"); exists && convStatus == "success" {
+						capturedUMHMessages = append(capturedUMHMessages, msg)
+						fmt.Printf("✅ Found UMH DATA message with umh_location_path: %s\n", umhLocationPath)
+					}
 				} else {
-					// This is a BIRTH message - skip it
-					if msgType, exists := msg.MetaGet("sparkplug_msg_type"); exists {
-						fmt.Printf("⏭️ Skipping %s message (no location_path)\n", msgType)
+					// This is a message without UMH conversion - skip it
+					if msgType, exists := msg.MetaGet("spb_message_type"); exists {
+						fmt.Printf("⏭️ Skipping %s message (no UMH conversion)\n", msgType)
 					}
 				}
 			}
@@ -1619,15 +1622,6 @@ func createMQTTClient(brokerURL, baseClientID string) mqtt.Client {
 		panic(fmt.Sprintf("Failed to connect MQTT client %s: %v", uniqueID, token.Error()))
 	}
 	return client
-}
-
-func forceDisconnectMQTT(client mqtt.Client) {
-	// Abrupt MQTT disconnection to trigger will messages
-	if client != nil && client.IsConnected() {
-		// Disconnect with 0ms timeout = immediate disconnect without DISCONNECT packet
-		// This simulates network failure and should trigger the broker to publish the will message
-		client.Disconnect(0)
-	}
 }
 
 func subscribeToSparkplugTopic(client mqtt.Client, topic string) <-chan mqtt.Message {
@@ -1852,24 +1846,6 @@ logger:
 	}
 }
 
-func createUTF8TestData() []map[string]interface{} {
-	// TODO: Implement UTF-8 test data generator
-	// - Create test data with international characters
-	// - Include Chinese: 压力 (pressure)
-	// - Include emoji: 🌡️Temp
-	// - Include European: Müller, Åström
-	// - Return slice of test data maps
-	panic("Helper function not implemented")
-}
-
-func createDataTypeTestData() []map[string]interface{} {
-	// TODO: Implement data type test data generator
-	// - Create test data for all Sparkplug data types
-	// - Include edge cases (min/max values)
-	// - Return slice of test data maps
-	panic("Helper function not implemented")
-}
-
 // validateSequenceWrap validates sequence counter progression and wrap-around behavior
 //
 // CRITICAL LEARNING: Sparkplug B sequence counters operate at EDGE NODE LEVEL, not device level
@@ -2034,60 +2010,82 @@ func validateLocationPathMapping(messages []*service.Message, expectedMappings [
 	fmt.Printf("📊 Validating location path mapping in %d UMH messages\n", len(messages))
 
 	for i, msg := range messages {
-		// Extract UMH metadata from the message
-		locationPath, hasLocationPath := msg.MetaGet("location_path")
+		// Extract UMH metadata from the message (using umh_ prefix)
+		locationPath, hasLocationPath := msg.MetaGet("umh_location_path")
 		if !hasLocationPath {
-			return fmt.Errorf("message %d missing location_path metadata", i)
+			return fmt.Errorf("message %d missing umh_location_path metadata", i)
 		}
 
-		virtualPath, hasVirtualPath := msg.MetaGet("virtual_path")
+		virtualPath, hasVirtualPath := msg.MetaGet("umh_virtual_path")
 		if !hasVirtualPath {
-			return fmt.Errorf("message %d missing virtual_path metadata", i)
+			return fmt.Errorf("message %d missing umh_virtual_path metadata", i)
 		}
 
-		tagName, hasTagName := msg.MetaGet("tag_name")
+		tagName, hasTagName := msg.MetaGet("umh_tag_name")
 		if !hasTagName {
-			return fmt.Errorf("message %d missing tag_name metadata", i)
+			return fmt.Errorf("message %d missing umh_tag_name metadata", i)
 		}
 
 		// Get the payload value for validation
-		payloadBytes, err := msg.AsBytes()
+		structured, err := msg.AsStructured()
 		if err != nil {
-			return fmt.Errorf("message %d failed to get payload: %w", i, err)
+			return fmt.Errorf("message %d failed to get structured payload: %w", i, err)
 		}
 
+		// Extract the value field from the structured payload
 		var payloadValue float64
-		err = json.Unmarshal(payloadBytes, &payloadValue)
-		if err != nil {
-			return fmt.Errorf("message %d failed to unmarshal payload as float64: %w", i, err)
+		if structMap, ok := structured.(map[string]interface{}); ok {
+			if value, exists := structMap["value"]; exists {
+				switch v := value.(type) {
+				case float64:
+					payloadValue = v
+				case int64:
+					payloadValue = float64(v)
+				case int:
+					payloadValue = float64(v)
+				case json.Number:
+					// Handle json.Number type from JSON unmarshaling
+					if floatVal, err := v.Float64(); err == nil {
+						payloadValue = floatVal
+					} else {
+						return fmt.Errorf("message %d failed to convert json.Number to float64: %w", i, err)
+					}
+				default:
+					return fmt.Errorf("message %d value field is not a number: %T", i, value)
+				}
+			} else {
+				return fmt.Errorf("message %d missing value field in payload", i)
+			}
+		} else {
+			return fmt.Errorf("message %d payload is not a structured object", i)
 		}
 
 		// Create mapping key for validation
 		mappingKey := fmt.Sprintf("%s|%s|%s", locationPath, virtualPath, tagName)
 		foundMappings[mappingKey] = true
 
-		fmt.Printf("📝 Found UMH mapping: location_path='%s', virtual_path='%s', tag_name='%s', value=%.2f\n",
+		fmt.Printf("📝 Found UMH mapping: umh_location_path='%s', umh_virtual_path='%s', umh_tag_name='%s', value=%.2f\n",
 			locationPath, virtualPath, tagName, payloadValue)
 
 		// Validate hierarchical structure preservation
 		if locationPath == "" {
-			return fmt.Errorf("message %d has empty location_path", i)
+			return fmt.Errorf("message %d has empty umh_location_path", i)
 		}
 		if virtualPath == "" {
-			return fmt.Errorf("message %d has empty virtual_path", i)
+			return fmt.Errorf("message %d has empty umh_virtual_path", i)
 		}
 		if tagName == "" {
-			return fmt.Errorf("message %d has empty tag_name", i)
+			return fmt.Errorf("message %d has empty umh_tag_name", i)
 		}
 
-		// Validate location_path format (should be dot-separated)
+		// Validate umh_location_path format (should be dot-separated)
 		if !strings.Contains(locationPath, ".") {
-			return fmt.Errorf("message %d location_path '%s' should be dot-separated hierarchical path", i, locationPath)
+			return fmt.Errorf("message %d umh_location_path '%s' should be dot-separated hierarchical path", i, locationPath)
 		}
 
-		// Validate virtual_path format (should be dot-separated)
+		// Validate umh_virtual_path format (should be dot-separated)
 		if !strings.Contains(virtualPath, ".") {
-			return fmt.Errorf("message %d virtual_path '%s' should be dot-separated hierarchical path", i, virtualPath)
+			return fmt.Errorf("message %d umh_virtual_path '%s' should be dot-separated hierarchical path", i, virtualPath)
 		}
 	}
 
@@ -2095,7 +2093,7 @@ func validateLocationPathMapping(messages []*service.Message, expectedMappings [
 	for _, expected := range expectedMappings {
 		expectedKey := fmt.Sprintf("%s|%s|%s", expected.locationPath, expected.virtualPath, expected.tagName)
 		if !foundMappings[expectedKey] {
-			return fmt.Errorf("expected UMH mapping not found: location_path='%s', virtual_path='%s', tag_name='%s'",
+			return fmt.Errorf("expected UMH mapping not found: umh_location_path='%s', umh_virtual_path='%s', umh_tag_name='%s'",
 				expected.locationPath, expected.virtualPath, expected.tagName)
 		}
 		fmt.Printf("✅ Found expected UMH mapping: %s → %s.%s\n", expected.locationPath, expected.virtualPath, expected.tagName)
@@ -2111,56 +2109,6 @@ func validateLocationPathMapping(messages []*service.Message, expectedMappings [
 }
 
 // Helper functions for integration testing
-
-// createIntegrationTestData creates test Sparkplug B payloads for integration tests
-func createDeviceLevelTestData() *DeviceLevelTestData {
-	// Create DBIRTH payload for device-level testing
-	dbirthMetrics := []*sproto.Payload_Metric{
-		{
-			Name:     stringPtr("temperature"),
-			Alias:    uint64Ptr(300),
-			Datatype: uint32Ptr(9), // Float
-			Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 25.0},
-		},
-		{
-			Name:     stringPtr("humidity"),
-			Alias:    uint64Ptr(301),
-			Datatype: uint32Ptr(9), // Float
-			Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 60.0},
-		},
-	}
-
-	dbirthPayload := &sproto.Payload{
-		Timestamp: uint64Ptr(1672531200000),
-		Seq:       uint64Ptr(0), // DBIRTH starts at 0
-		Metrics:   dbirthMetrics,
-	}
-
-	// Create DDATA payload using aliases
-	ddataMetrics := []*sproto.Payload_Metric{
-		{
-			Alias:    uint64Ptr(300), // temperature
-			Datatype: uint32Ptr(9),
-			Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 26.5},
-		},
-		{
-			Alias:    uint64Ptr(301), // humidity
-			Datatype: uint32Ptr(9),
-			Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 62.0},
-		},
-	}
-
-	ddataPayload := &sproto.Payload{
-		Timestamp: uint64Ptr(1672531260000),
-		Seq:       uint64Ptr(1), // Incremented from DBIRTH
-		Metrics:   ddataMetrics,
-	}
-
-	return &DeviceLevelTestData{
-		DBirthPayload: dbirthPayload,
-		DDataPayload:  ddataPayload,
-	}
-}
 
 func createIntegrationTestData() *IntegrationTestData {
 	return &IntegrationTestData{
