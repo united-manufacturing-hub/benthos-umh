@@ -1467,6 +1467,23 @@ input:
     subscription:
       groups: ["%s"]
 
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |
+            // Skip all messages except DDATA
+            if (msg.meta.spb_message_type != "DDATA") {
+                return null;
+            }
+
+            msg.payload = msg.payload.value;
+            msg.meta.location_path = msg.meta.umh_location_path;
+            msg.meta.tag_name = msg.meta.umh_tag_name;
+            msg.meta.virtual_path = msg.meta.umh_virtual_path;
+            msg.meta.data_contract = "_historian";
+
+            return msg;
+
 output:
   message_capture: {}
 

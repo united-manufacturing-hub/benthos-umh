@@ -182,8 +182,11 @@ type sparkplugOutput struct {
 	seqCounter    uint8
 	metricAliases map[string]uint64      // metric name -> alias
 	metricTypes   map[string]string      // metric name -> type
-	lastValues    map[string]interface{} // metric name -> last value
+	lastValues    map[string]interface{} // metric name -> last value (global/node-level)
 	stateMu       sync.RWMutex
+
+	// Device-specific value tracking for DBIRTH messages
+	deviceLastValues map[string]map[string]interface{} // device_id -> metric_name -> last_value
 
 	// Dynamic alias management for P5 implementation
 	nextAlias         uint64       // Next available alias number for dynamic assignment
@@ -396,6 +399,7 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 		metricAliases:      metricAliases,
 		metricTypes:        metricTypes,
 		lastValues:         make(map[string]interface{}),
+		deviceLastValues:   make(map[string]map[string]interface{}),
 		nextAlias:          nextAlias,
 		rebirthPending:     false,
 		rebirthDebounceMs:  5000, // 5 second debounce
@@ -588,6 +592,9 @@ nbirthReady:
 		return err
 	}
 
+	// Store device values after successful DATA publication for future DBIRTH messages
+	s.storeDeviceLastValues(deviceID, data)
+
 	s.messagesPublished.Incr(1)
 	return nil
 }
@@ -715,7 +722,8 @@ func (s *sparkplugOutput) updateDeviceMetrics(deviceID string, data map[string]i
 //
 // Behavior:
 // - Current message metrics use actual values
-// - Previously seen metrics (not in current message) use null values
+// - Previously seen metrics (not in current message) use their last known values
+// - Metrics with no known values use null values
 // - Ensures Sparkplug B compliance: no metric can appear in DDATA without prior DBIRTH definition
 func (s *sparkplugOutput) getAllDeviceMetrics(deviceID string, currentData map[string]interface{}) map[string]interface{} {
 	if deviceID == "" {
@@ -724,25 +732,58 @@ func (s *sparkplugOutput) getAllDeviceMetrics(deviceID string, currentData map[s
 
 	s.deviceStateMu.RLock()
 	deviceCache := s.deviceMetrics[deviceID]
+	deviceLastValues := s.deviceLastValues[deviceID]
 	s.deviceStateMu.RUnlock()
 
-	// Start with current data
+	// Start with current data (these are the most recent values)
 	allMetrics := make(map[string]interface{})
 	for k, v := range currentData {
 		allMetrics[k] = v
 	}
 
-	// Add cached metrics with null values (DBIRTH requirement)
+	// Add cached metrics with their last known values (preserves state for DBIRTH)
 	if deviceCache != nil {
 		for metricName := range deviceCache {
 			if _, exists := allMetrics[metricName]; !exists {
-				// Set to null for metrics not in current message (DBIRTH spec compliance)
-				allMetrics[metricName] = nil
+				// Use last known value for this device if available
+				if deviceLastValues != nil {
+					if lastValue, hasLastValue := deviceLastValues[metricName]; hasLastValue {
+						allMetrics[metricName] = lastValue
+					} else {
+						// No last value known, use null (DBIRTH spec compliance)
+						allMetrics[metricName] = nil
+					}
+				} else {
+					// No last values stored for this device, use null
+					allMetrics[metricName] = nil
+				}
 			}
 		}
 	}
 
 	return allMetrics
+}
+
+// storeDeviceLastValues stores the current values for a device to be used in future DBIRTH messages.
+// This ensures that when a device publishes DBIRTH with multiple metrics, previously seen metrics
+// retain their last known values instead of being set to null.
+func (s *sparkplugOutput) storeDeviceLastValues(deviceID string, data map[string]interface{}) {
+	if deviceID == "" || len(data) == 0 {
+		return
+	}
+
+	s.deviceStateMu.Lock()
+	defer s.deviceStateMu.Unlock()
+
+	// Initialize device last values if not exists
+	if s.deviceLastValues[deviceID] == nil {
+		s.deviceLastValues[deviceID] = make(map[string]interface{})
+	}
+
+	// Store current values for this device
+	for metricName, value := range data {
+		s.deviceLastValues[deviceID][metricName] = value
+	}
 }
 
 // getStaticEdgeNodeID returns the static Edge Node ID for Sparkplug B compliance.
