@@ -1130,16 +1130,17 @@ func (s *sparkplugOutput) extractMessageData(msg *service.Message) (map[string]i
 		}
 	}
 
-	// Process configured metrics
+	// Process only static configured metrics (from config file)
+	// Dynamic metrics are handled above via tag_name metadata extraction
 	for _, metricConfig := range s.metrics {
 		if _, exists := data[metricConfig.Name]; exists {
-			continue
+			continue // Already extracted via tag_name metadata
 		}
 
-		s.logger.Debugf("extractMessageData: Processing configured metric %s with value_from: %s", metricConfig.Name, metricConfig.ValueFrom)
+		s.logger.Debugf("extractMessageData: Processing static configured metric %s with value_from: %s", metricConfig.Name, metricConfig.ValueFrom)
 		value, err := s.extractValueFromPath(structured, metricConfig.ValueFrom)
 		if err != nil {
-			s.logger.Debugf("Failed to extract value for metric %s: %v", metricConfig.Name, err)
+			s.logger.Debugf("Failed to extract value for static metric %s: %v", metricConfig.Name, err)
 			continue
 		}
 		data[metricConfig.Name] = value
@@ -1463,9 +1464,6 @@ func (s *sparkplugOutput) assignDynamicAliases(newMetrics []string, data map[str
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
-	// Pre-allocate slice to avoid multiple reallocations during concurrent access
-	newConfigs := make([]MetricConfig, 0, len(newMetrics))
-
 	for _, metricName := range newMetrics {
 		// Assign alias
 		s.metricAliases[metricName] = s.nextAlias
@@ -1476,21 +1474,13 @@ func (s *sparkplugOutput) assignDynamicAliases(newMetrics []string, data map[str
 		metricType := s.typeConverter.InferMetricType(value)
 		s.metricTypes[metricName] = metricType
 
-		// Prepare metric configuration
-		metricConfig := MetricConfig{
-			Name:      metricName,
-			Alias:     s.metricAliases[metricName],
-			Type:      metricType,
-			ValueFrom: "value", // Default value path
-		}
-		newConfigs = append(newConfigs, metricConfig)
-
 		s.logger.Infof("Assigned dynamic alias %d to metric '%s' (type: %s)",
 			s.metricAliases[metricName], metricName, metricType)
 	}
 
-	// Single append operation to minimize slice reallocation risk
-	s.metrics = append(s.metrics, newConfigs...)
+	// NOTE: We do NOT append to s.metrics here to avoid global accumulation bug
+	// Dynamic metrics are tracked via s.metricAliases and s.metricTypes maps
+	// s.metrics should only contain static configuration from config file
 }
 
 // triggerRebirth initiates a rebirth sequence with new metrics
