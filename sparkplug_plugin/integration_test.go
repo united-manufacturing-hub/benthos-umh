@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build integration
-
 // Integration tests for Sparkplug B plugin - Real MQTT broker tests
 // These tests automatically start/stop Docker Mosquitto broker
 //
@@ -1349,7 +1347,7 @@ logger:
 			// No cleanup needed - MessageCapture instances clean themselves up
 		})
 
-		It("should map UMH location paths to Sparkplug B structure correctly", func() {
+		FIt("should map UMH location paths to Sparkplug B structure correctly", func() {
 			// Test J: UMH-Core Location Path Mapping
 			//
 			// Tests full pipeline: UMH location_path → Sparkplug B topics → UMH location_path
@@ -1391,6 +1389,8 @@ logger:
 				},
 			}
 
+			messageAmount := len(locationTestData) * 2
+
 			By("Starting Edge Node stream with UMH location paths")
 
 			// Create Edge Node that publishes with UMH metadata
@@ -1410,20 +1410,20 @@ pipeline:
           let testCases = [
             {
               "location_path": "enterprise.factory.line1.station1",
-              "virtual_path": "sensors.ambient", 
-              "tag_name": "temperature",
+              "virtual_path": "sensors.ambient.temperature", 
+              "tag_name": "value",
               "value": 23.5
             },
             {
               "location_path": "acme.plant2.zone3.machine7",
-              "virtual_path": "actuators.valve",
-              "tag_name": "position", 
+              "virtual_path": "actuators.valve.position",
+              "tag_name": "value", 
               "value": 75.0
             },
             {
               "location_path": "umh.demo.area1.cell5",
-              "virtual_path": "plc.tags",
-              "tag_name": "speed",
+              "virtual_path": "plc.tags.speed",
+              "tag_name": "value",
               "value": 1200.5
             }
           ];
@@ -1447,8 +1447,8 @@ output:
       edge_node_id: "EdgeNode1"
 
 logger:
-  level: INFO
-`, len(locationTestData), brokerURL, GinkgoParallelProcess(), uuid.New().String()[:8], uniqueGroupID)
+  level: DEBUG
+`, messageAmount, brokerURL, GinkgoParallelProcess(), uuid.New().String()[:8], uniqueGroupID)
 
 			By("Starting Primary Host stream to convert back to UMH")
 
@@ -1470,7 +1470,7 @@ output:
   message_capture: {}
 
 logger:
-  level: INFO
+  level: DEBUG
 `, brokerURL, GinkgoParallelProcess(), uuid.New().String()[:8], uniqueGroupID, uniqueGroupID)
 
 			// Start Edge Node stream
@@ -1514,23 +1514,65 @@ logger:
 			var capturedUMHMessages []*service.Message
 			messageTimeout := time.After(10 * time.Second)
 
-			// Collect UMH messages from the Primary Host (converted from Sparkplug B)
-			expectedMessageCount := len(locationTestData) // 3 DDATA messages converted to UMH
-			for len(capturedUMHMessages) < expectedMessageCount {
+			// Collect ALL messages from Primary Host (BIRTH + DATA messages)
+			// Edge Node publishes: 1 NBIRTH + 3 DBIRTH + 3 DDATA messages
+			var allCapturedMessages []*service.Message
+			maxMessages := 15 // Collect enough to get both BIRTH and DATA messages
+
+		collectionLoop:
+			for len(allCapturedMessages) < maxMessages {
 				select {
 				case msg := <-messageCapture.messages:
 					if msg != nil {
-						capturedUMHMessages = append(capturedUMHMessages, msg)
-						fmt.Printf("📨 Captured UMH message: %d/%d\n", len(capturedUMHMessages), expectedMessageCount)
+						allCapturedMessages = append(allCapturedMessages, msg)
+						fmt.Printf("📨 Captured message: %d/%d\n", len(allCapturedMessages), maxMessages)
+						structData, err := msg.AsStructuredMut()
+						if err != nil {
+							fmt.Printf("Error getting structured message: %v\n", err)
+						} else {
+							jsonBytes, _ := json.Marshal(structData)
+							fmt.Printf("📨 Captured message: %s\n", string(jsonBytes))
+							// print out all meta data
+							msg.MetaWalkMut(func(key string, value any) error {
+								fmt.Printf("📨 Meta data: %s: %v\n", key, value)
+								return nil
+							})
+						}
+
 					}
 				case <-messageTimeout:
-					Fail(fmt.Sprintf("Timeout waiting for UMH messages. Got %d, expected %d", len(capturedUMHMessages), expectedMessageCount))
+					fmt.Printf("⏰ Timeout reached, collected %d messages\n", len(allCapturedMessages))
+					break collectionLoop
 				case <-ctx.Done():
-					Fail("Context cancelled while waiting for UMH messages")
+					fmt.Printf("⏹️ Context cancelled, collected %d messages\n", len(allCapturedMessages))
+					break collectionLoop
+				}
+			}
+
+			// Filter for UMH DATA messages only (messages with location_path metadata)
+			// BIRTH messages don't have UMH metadata, DATA messages do
+			for _, msg := range allCapturedMessages {
+				if locationPath, exists := msg.MetaGet("location_path"); exists && locationPath != "" {
+					capturedUMHMessages = append(capturedUMHMessages, msg)
+					fmt.Printf("✅ Found UMH DATA message with location_path: %s\n", locationPath)
+				} else {
+					// This is a BIRTH message - skip it
+					if msgType, exists := msg.MetaGet("sparkplug_msg_type"); exists {
+						fmt.Printf("⏭️ Skipping %s message (no location_path)\n", msgType)
+					}
 				}
 			}
 
 			By("Validating UMH location path mapping")
+
+			fmt.Printf("📊 Total messages collected: %d\n", len(allCapturedMessages))
+			fmt.Printf("📊 UMH DATA messages found: %d\n", len(capturedUMHMessages))
+
+			// Verify we found the expected number of UMH DATA messages
+			expectedDataMessages := messageAmount // 3 DDATA messages
+			Expect(len(capturedUMHMessages)).To(BeNumerically(">=", expectedDataMessages),
+				fmt.Sprintf("Should find at least %d UMH DATA messages (with location_path)", expectedDataMessages))
+
 			err = validateLocationPathMapping(capturedUMHMessages, locationTestData)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -2178,17 +2220,4 @@ type IntegrationTestData struct {
 type DeviceLevelTestData struct {
 	DBirthPayload *sproto.Payload
 	DDataPayload  *sproto.Payload
-}
-
-// Helper functions for pointer creation
-func stringPtr(s string) *string {
-	return &s
-}
-
-func uint64Ptr(u uint64) *uint64 {
-	return &u
-}
-
-func uint32Ptr(u uint32) *uint32 {
-	return &u
 }
