@@ -52,6 +52,7 @@ package sparkplug_plugin_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1299,124 +1300,6 @@ logger:
 		})
 	})
 
-	Context("Data Type and Encoding Support", func() {
-		var (
-			brokerURL        string
-			subscriberClient mqtt.Client
-		)
-
-		BeforeEach(func() {
-			brokerURL = os.Getenv("TEST_MQTT_BROKER")
-			if brokerURL == "" {
-				brokerURL = "tcp://127.0.0.1:1883"
-			}
-
-			subscriberClient = createMQTTClient(brokerURL, "test-datatype-subscriber")
-		})
-
-		AfterEach(func() {
-			if subscriberClient != nil && subscriberClient.IsConnected() {
-				subscriberClient.Disconnect(1000)
-			}
-		})
-
-		It("should handle UTF-8 and international metric names", func() {
-			// Test F: UTF-8 Metric Names
-			//
-			// Approach:
-			// 1. Create Edge Node stream with UTF-8 metric names
-			// 2. Use tag_processor to create metrics: 压力 (pressure), 🌡️Temp, Müller, etc.
-			// 3. Validate MQTT subscriber receives correct UTF-8 strings
-			// 4. Verify topic and metric name encoding/decoding
-			//
-			// Key Points:
-			// - Test Chinese characters: 压力
-			// - Test emoji: 🌡️Temp
-			// - Test European characters: Müller, Åström
-			// - Validate protobuf UTF-8 encoding
-			// - Check topic path character handling
-
-			By("Setting up MQTT subscriber for UTF-8 messages")
-			// TODO: Subscribe to spBv1.0/UTF8Test/+/EdgeNode1
-			// TODO: Create channel to collect messages
-
-			By("Starting Edge Node stream with UTF-8 metric names")
-			// TODO: Create Edge Node config with:
-			// - generate input with UTF-8 test data
-			// - tag_processor creating metrics: 压力, 🌡️Temp, Müller, Åström
-			// - sparkplug_b output: group_id=UTF8Test
-
-			By("Validating UTF-8 metric names in protobuf")
-			// TODO: Decode received protobuf messages
-			// TODO: Assert metric names are correctly encoded
-			// TODO: Verify no character corruption or encoding issues
-			// TODO: Check topic path handles UTF-8 correctly
-
-			Skip("Test skeleton - implementation needed")
-		})
-
-		It("should handle all Sparkplug data types correctly", func() {
-			// Test G: Complete Data Type Matrix
-			//
-			// Approach:
-			// 1. Create Edge Node stream publishing all Sparkplug data types
-			// 2. Table-driven test for each data type
-			// 3. Validate protobuf encoding and UMH-Core conversion
-			//
-			// Data Types to Test:
-			// - Int8, Int16, Int32, Int64
-			// - UInt8, UInt16, UInt32, UInt64
-			// - Float, Double
-			// - Boolean
-			// - String
-			// - DateTime
-			// - Text (if supported)
-			//
-			// Key Points:
-			// - Each data type gets its own metric
-			// - Validate protobuf oneof field selection
-			// - Verify UMH-Core JSON conversion correctness
-
-			By("Setting up MQTT subscriber for data type test")
-			// TODO: Subscribe to spBv1.0/DataTypeTest/+/EdgeNode1
-			// TODO: Create channel to collect messages
-
-			By("Starting Edge Node stream with all data types")
-			// TODO: Create Edge Node config with:
-			// - generate input creating all data types
-			// - tag_processor mapping each type to separate metric
-			// - sparkplug_b output: group_id=DataTypeTest
-
-			By("Validating each Sparkplug data type")
-			// TODO: Create table-driven test for each data type
-			// TODO: Decode protobuf and validate correct oneof field
-			// TODO: Verify value preservation and type conversion
-			// TODO: Check UMH-Core JSON representation
-
-			// Data type test cases:
-			testCases := []struct {
-				sparkplugType string
-				testValue     interface{}
-				expectedField string
-			}{
-				{"Int32", int32(-123), "int_value"},
-				{"Int64", int64(-12345), "long_value"},
-				{"Float", float32(3.14), "float_value"},
-				{"Double", float64(3.141592), "double_value"},
-				{"Boolean", true, "boolean_value"},
-				{"String", "test string", "string_value"},
-				// TODO: Add more data types
-			}
-
-			for _, tc := range testCases {
-				By(fmt.Sprintf("Testing %s data type", tc.sparkplugType))
-				// TODO: Validate specific data type encoding
-			}
-
-			Skip("Test skeleton - implementation needed")
-		})
-	})
-
 	Context("UMH Integration and Mapping", func() {
 		var (
 			brokerURL        string
@@ -1443,76 +1326,196 @@ logger:
 			}
 		})
 
-		It("should map Sparkplug topics to UMH location paths correctly", func() {
-			// Test J: Location/Virtual Path Mapping
+		It("should map UMH location paths to Sparkplug B structure correctly", func() {
+			// Test J: UMH-Core Location Path Mapping
 			//
-			// Approach:
-			// 1. Create Edge Node stream with complex location paths
-			// 2. Use Sparkplug B input to process and convert to UMH
-			// 3. Validate location_path and virtual_path mapping
-			// 4. Test colon/dot conversion rules
-			//
-			// Mapping Rules to Test:
-			// - Topic: spBv1.0/FactoryA/DDATA/EdgeNode1/A:B:C
-			// - Metric: x:y.z:w
-			// - Expected: location_path="A.B.C"
-			// - Expected: virtual_path="x.y.z", tag_name="w"
-			//
-			// Key Points:
-			// - Validate topic structure parsing
-			// - Test colon/dot conversion rules
-			// - Verify hierarchical path construction
-			// - Check metric name splitting logic
+			// Tests full pipeline: UMH location_path → Sparkplug B topics → UMH location_path
+			// Validates that hierarchical UMH paths are correctly mapped to/from Sparkplug B structure
+			// This test uses sparkplug_b input to convert back to UMH format for validation
+
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+
+			// Generate unique group ID to avoid cross-contamination
+			uniqueGroupID := fmt.Sprintf("LocationTest-%d-%s", GinkgoParallelProcess(), uuid.New().String()[:8])
 
 			By("Setting up full pipeline for location mapping test")
-			// TODO: Create pipeline:
-			// - Edge Node: sparkplug_b output with complex device paths
-			// - MQTT broker
-			// - Primary Host: sparkplug_b input → message_capture
 
-			By("Publishing messages with complex location paths")
-			// TODO: Create Edge Node config with:
-			// - Location path: enterprise.factory.line1.station1
-			// - Metrics: sensors.ambient.temperature, sensors.vibration.x_axis
-			// - Validate topic structure: .../DDATA/EdgeNode1/enterprise.factory.line1.station1
-
-			By("Validating UMH location path mapping")
-			// TODO: Collect messages from MessageCapture
-			// TODO: Validate location_path metadata
-			// TODO: Validate virtual_path and tag_name splitting
-			// TODO: Check colon/dot conversion rules
-
-			// Test cases for mapping validation:
-			mappingTestCases := []struct {
-				devicePath       string
-				metricName       string
-				expectedLocation string
-				expectedVirtual  string
-				expectedTag      string
+			// Test data with various UMH-Core location path formats
+			locationTestData := []struct {
+				locationPath string
+				virtualPath  string
+				tagName      string
+				value        float64
 			}{
 				{
-					"enterprise:factory:line1:station1",
-					"sensors:ambient:temperature",
-					"enterprise.factory.line1.station1",
-					"sensors.ambient",
-					"temperature",
+					locationPath: "enterprise.factory.line1.station1",
+					virtualPath:  "sensors.ambient",
+					tagName:      "temperature",
+					value:        23.5,
 				},
 				{
-					"simple:device",
-					"metric:name",
-					"simple.device",
-					"metric",
-					"name",
+					locationPath: "acme.plant2.zone3.machine7",
+					virtualPath:  "actuators.valve",
+					tagName:      "position",
+					value:        75.0,
 				},
-				// TODO: Add more mapping test cases
+				{
+					locationPath: "umh.demo.area1.cell5",
+					virtualPath:  "plc.tags",
+					tagName:      "speed",
+					value:        1200.5,
+				},
 			}
 
-			for _, tc := range mappingTestCases {
-				By(fmt.Sprintf("Testing mapping for %s", tc.devicePath))
-				// TODO: Validate specific mapping case
+			By("Starting Edge Node stream with UMH location paths")
+
+			// Create Edge Node that publishes with UMH metadata
+			edgeNodeConfig := fmt.Sprintf(`
+input:
+  generate:
+    interval: "1s"
+    count: %d
+    mapping: |
+      root = {"counter": counter()}
+
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |
+          let counterValue = msg.payload.counter;
+          let testCases = [
+            {
+              "location_path": "enterprise.factory.line1.station1",
+              "virtual_path": "sensors.ambient", 
+              "tag_name": "temperature",
+              "value": 23.5
+            },
+            {
+              "location_path": "acme.plant2.zone3.machine7",
+              "virtual_path": "actuators.valve",
+              "tag_name": "position", 
+              "value": 75.0
+            },
+            {
+              "location_path": "umh.demo.area1.cell5",
+              "virtual_path": "plc.tags",
+              "tag_name": "speed",
+              "value": 1200.5
+            }
+          ];
+          
+          let testCase = testCases[counterValue %% testCases.length];
+          msg.meta.location_path = testCase.location_path;
+          msg.meta.virtual_path = testCase.virtual_path;
+          msg.meta.tag_name = testCase.tag_name;
+          msg.meta.data_contract = "_historian";
+          msg.payload = testCase.value;
+          
+          return msg;
+
+output:
+  sparkplug_b:
+    mqtt:
+      urls: ["%s"]
+      client_id: "test-location-edge-node-%d-%s"
+    identity:
+      group_id: "%s"
+      edge_node_id: "EdgeNode1"
+
+logger:
+  level: INFO
+`, len(locationTestData), brokerURL, GinkgoParallelProcess(), uuid.New().String()[:8], uniqueGroupID)
+
+			By("Starting Primary Host stream to convert back to UMH")
+
+			// Create Primary Host that subscribes and converts back to UMH messages
+			primaryHostConfig := fmt.Sprintf(`
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["%s"]
+      client_id: "test-location-primary-host-%d-%s"
+    subscription:
+      groups: ["%s"]
+
+output:
+  message_capture: {}
+
+logger:
+  level: INFO
+`, brokerURL, GinkgoParallelProcess(), uuid.New().String()[:8], uniqueGroupID)
+
+			// Start Edge Node stream
+			edgeStreamBuilder := service.NewStreamBuilder()
+			err := edgeStreamBuilder.SetYAML(edgeNodeConfig)
+			Expect(err).NotTo(HaveOccurred())
+
+			edgeStream, err := edgeStreamBuilder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			edgeStreamDone := make(chan error, 1)
+			go func() {
+				edgeStreamDone <- edgeStream.Run(ctx)
+			}()
+
+			// Wait a moment for Edge Node to start
+			time.Sleep(2 * time.Second)
+
+			// Start Primary Host stream
+			primaryStreamBuilder := service.NewStreamBuilder()
+			err = primaryStreamBuilder.SetYAML(primaryHostConfig)
+			Expect(err).NotTo(HaveOccurred())
+
+			primaryStream, err := primaryStreamBuilder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			primaryStreamDone := make(chan error, 1)
+			go func() {
+				primaryStreamDone <- primaryStream.Run(ctx)
+			}()
+
+			By("Collecting UMH messages from Primary Host")
+			var capturedUMHMessages []*service.Message
+			messageTimeout := time.After(10 * time.Second)
+
+			// Collect UMH messages from the Primary Host (converted from Sparkplug B)
+			expectedMessageCount := len(locationTestData) // 3 DDATA messages converted to UMH
+			for len(capturedUMHMessages) < expectedMessageCount {
+				select {
+				case msg := <-capturedMessages:
+					if msg != nil {
+						capturedUMHMessages = append(capturedUMHMessages, msg)
+						fmt.Printf("📨 Captured UMH message: %d/%d\n", len(capturedUMHMessages), expectedMessageCount)
+					}
+				case <-messageTimeout:
+					Fail(fmt.Sprintf("Timeout waiting for UMH messages. Got %d, expected %d", len(capturedUMHMessages), expectedMessageCount))
+				case <-ctx.Done():
+					Fail("Context cancelled while waiting for UMH messages")
+				}
 			}
 
-			Skip("Test skeleton - implementation needed")
+			By("Validating UMH location path mapping")
+			err = validateLocationPathMapping(capturedUMHMessages, locationTestData)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Stopping streams")
+			cancel()
+			select {
+			case <-edgeStreamDone:
+				// Edge Node stream stopped
+			case <-time.After(5 * time.Second):
+				Fail("Edge Node stream did not stop within timeout")
+			}
+
+			select {
+			case <-primaryStreamDone:
+				// Primary Host stream stopped
+			case <-time.After(5 * time.Second):
+				Fail("Primary Host stream did not stop within timeout")
+			}
+
+			fmt.Printf("✅ UMH location path mapping test completed successfully\n")
 		})
 	})
 })
@@ -1940,40 +1943,94 @@ func validateBdSeqReset(nbirth1, nbirth2 mqtt.Message) error {
 	return nil
 }
 
-func validateUTF8MetricNames(messages []mqtt.Message, expectedNames []string) error {
-	// TODO: Implement UTF-8 metric name validation
-	// - Decode protobuf messages
-	// - Extract metric names
-	// - Validate UTF-8 encoding correctness
-	// - Check for character corruption
-	// - Return error if validation fails
-	panic("Helper function not implemented")
-}
-
-func validateDataTypeMatrix(messages []mqtt.Message, expectedTypes map[string]interface{}) error {
-	// TODO: Implement data type validation
-	// - Decode protobuf messages
-	// - Validate each data type encoding
-	// - Check protobuf oneof field selection
-	// - Verify value preservation
-	// - Return error if validation fails
-	panic("Helper function not implemented")
-}
-
 func validateLocationPathMapping(messages []*service.Message, expectedMappings []struct {
-	devicePath       string
-	metricName       string
-	expectedLocation string
-	expectedVirtual  string
-	expectedTag      string
+	locationPath string
+	virtualPath  string
+	tagName      string
+	value        float64
 }) error {
-	// TODO: Implement location path mapping validation
-	// - Extract metadata from messages
-	// - Validate location_path construction
-	// - Check virtual_path and tag_name splitting
-	// - Verify colon/dot conversion rules
-	// - Return error if validation fails
-	panic("Helper function not implemented")
+	// UMH location path mapping validation for messages converted from Sparkplug B
+	// Validates that hierarchical paths are correctly preserved through Sparkplug B conversion
+
+	foundMappings := make(map[string]bool)
+
+	fmt.Printf("📊 Validating location path mapping in %d UMH messages\n", len(messages))
+
+	for i, msg := range messages {
+		// Extract UMH metadata from the message
+		locationPath, hasLocationPath := msg.MetaGet("location_path")
+		if !hasLocationPath {
+			return fmt.Errorf("message %d missing location_path metadata", i)
+		}
+
+		virtualPath, hasVirtualPath := msg.MetaGet("virtual_path")
+		if !hasVirtualPath {
+			return fmt.Errorf("message %d missing virtual_path metadata", i)
+		}
+
+		tagName, hasTagName := msg.MetaGet("tag_name")
+		if !hasTagName {
+			return fmt.Errorf("message %d missing tag_name metadata", i)
+		}
+
+		// Get the payload value for validation
+		payloadBytes, err := msg.AsBytes()
+		if err != nil {
+			return fmt.Errorf("message %d failed to get payload: %w", i, err)
+		}
+
+		var payloadValue float64
+		err = json.Unmarshal(payloadBytes, &payloadValue)
+		if err != nil {
+			return fmt.Errorf("message %d failed to unmarshal payload as float64: %w", i, err)
+		}
+
+		// Create mapping key for validation
+		mappingKey := fmt.Sprintf("%s|%s|%s", locationPath, virtualPath, tagName)
+		foundMappings[mappingKey] = true
+
+		fmt.Printf("📝 Found UMH mapping: location_path='%s', virtual_path='%s', tag_name='%s', value=%.2f\n",
+			locationPath, virtualPath, tagName, payloadValue)
+
+		// Validate hierarchical structure preservation
+		if locationPath == "" {
+			return fmt.Errorf("message %d has empty location_path", i)
+		}
+		if virtualPath == "" {
+			return fmt.Errorf("message %d has empty virtual_path", i)
+		}
+		if tagName == "" {
+			return fmt.Errorf("message %d has empty tag_name", i)
+		}
+
+		// Validate location_path format (should be dot-separated)
+		if !strings.Contains(locationPath, ".") {
+			return fmt.Errorf("message %d location_path '%s' should be dot-separated hierarchical path", i, locationPath)
+		}
+
+		// Validate virtual_path format (should be dot-separated)
+		if !strings.Contains(virtualPath, ".") {
+			return fmt.Errorf("message %d virtual_path '%s' should be dot-separated hierarchical path", i, virtualPath)
+		}
+	}
+
+	// Check that all expected mappings were found
+	for _, expected := range expectedMappings {
+		expectedKey := fmt.Sprintf("%s|%s|%s", expected.locationPath, expected.virtualPath, expected.tagName)
+		if !foundMappings[expectedKey] {
+			return fmt.Errorf("expected UMH mapping not found: location_path='%s', virtual_path='%s', tag_name='%s'",
+				expected.locationPath, expected.virtualPath, expected.tagName)
+		}
+		fmt.Printf("✅ Found expected UMH mapping: %s → %s.%s\n", expected.locationPath, expected.virtualPath, expected.tagName)
+	}
+
+	// Verify we found the correct number of unique mappings
+	if len(foundMappings) < len(expectedMappings) {
+		return fmt.Errorf("expected at least %d unique UMH mappings, found %d", len(expectedMappings), len(foundMappings))
+	}
+
+	fmt.Printf("✅ Location path mapping validation passed: all %d UMH hierarchical paths correctly preserved\n", len(expectedMappings))
+	return nil
 }
 
 // Helper functions for integration testing
