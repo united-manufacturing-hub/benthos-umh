@@ -37,10 +37,8 @@ package sparkplug_plugin
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"math/big"
 	"strings"
 	"sync"
 	"time"
@@ -199,6 +197,20 @@ type sparkplugOutput struct {
 	deviceMetrics map[string]map[string]uint64 // Cache metrics per device (device_id -> metric_name -> alias)
 	deviceStateMu sync.RWMutex                 // Thread safety for device state
 
+	// NBIRTH synchronization to prevent DBIRTH before NBIRTH
+	//
+	// CRITICAL SPARKPLUG B SPECIFICATION REQUIREMENT:
+	// According to Sparkplug B spec, NBIRTH MUST be published before any device messages.
+	// Without this synchronization, there's a race condition where:
+	// 1. MQTT client connects → onConnect() callback triggered (async)
+	// 2. First message arrives → Write() method called immediately
+	// 3. DBIRTH gets published before NBIRTH completes (SPEC VIOLATION)
+	//
+	// This synchronization ensures proper message ordering:
+	// NBIRTH (seq=0) → DBIRTH (seq=1,2,3...) → DDATA (seq=4,5,6...)
+	nbirthPublished bool       // Flag to track if NBIRTH has been published
+	nbirthMu        sync.Mutex // Mutex to protect NBIRTH publication
+
 	// Core components
 	mqttClientBuilder *MQTTClientBuilder
 
@@ -349,12 +361,21 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 		metricTypes[name] = metricType
 	}
 
-	// Generate random bdSeq
-	bdSeqBig, err := rand.Int(rand.Reader, big.NewInt(65536))
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate bdSeq: %w", err)
-	}
-	bdSeq := bdSeqBig.Uint64()
+	// BDSEQ IMPLEMENTATION AND LIMITATIONS:
+	//
+	// Sparkplug B v3.0 specification (§5.4) requires:
+	// 1. Initial value: Can be any 64-bit value
+	// 2. Subsequent sessions: MUST increment by exactly +1 for each new MQTT session
+	//
+	// STATELESS LIMITATION:
+	// Benthos components are stateless by design - no persistence across restarts.
+	// Therefore, bdSeq behavior is:
+	// - Within component lifetime: 0 → 1 → 2 → 3 → ... (spec compliant)
+	// - Across component restarts: Resets to 0 (limitation of stateless architecture)
+	//
+	// This is acceptable for many Sparkplug deployments where Edge Nodes reset
+	// bdSeq on restart, but users should be aware of this behavior.
+	bdSeq := uint64(0)
 
 	// Calculate next available alias number (start after configured aliases)
 	nextAlias := uint64(1) // Start from 1, bdSeq uses alias 0
@@ -435,16 +456,32 @@ func (s *sparkplugOutput) Connect(ctx context.Context) error {
 func (s *sparkplugOutput) onConnect(client mqtt.Client) {
 	s.logger.Info("MQTT client connected, publishing BIRTH message")
 
-	// Reset sequence counter on new connection
+	// SEQUENCE COUNTER INITIALIZATION FIX:
+	// Reset sequence counter to 255 so that the first increment results in seq=0 for NBIRTH.
+	// This is a critical fix because both publishBirthMessage() and publishDBIRTH() now
+	// properly increment the sequence counter instead of hardcoding seq=0.
+	//
+	// Previous bug: Both NBIRTH and DBIRTH were hardcoded to seq=0, violating Sparkplug B spec
+	// Fixed sequence progression after connection:
+	// seqCounter=255 → increment → seq=0 (NBIRTH) → seq=1 (DBIRTH) → seq=2,3,4... (DDATA)
 	s.stateMu.Lock()
-	s.seqCounter = 0
+	s.seqCounter = 255
 	s.stateMu.Unlock()
 
-	// Publish BIRTH message
+	// SYNCHRONIZATION PROTOCOL TO PREVENT RACE CONDITION:
+	// Reset the NBIRTH flag and only set it to true after successful NBIRTH publication.
+	// This prevents the Write() method from processing device messages before NBIRTH.
+	//
+	// Previous bug: DBIRTH could be published before NBIRTH due to race condition between
+	// onConnect() callback and Write() method execution, violating Sparkplug B specification.
+	s.nbirthMu.Lock()
+	defer s.nbirthMu.Unlock()
+
 	if err := s.publishBirthMessage(); err != nil {
 		s.logger.Errorf("Failed to publish BIRTH message: %v", err)
 		s.publishErrors.Incr(1)
 	} else {
+		s.nbirthPublished = true // CRITICAL: Mark NBIRTH as published to allow device messages
 		s.birthsPublished.Incr(1)
 		s.logger.Info("Successfully published BIRTH message")
 	}
@@ -452,9 +489,44 @@ func (s *sparkplugOutput) onConnect(client mqtt.Client) {
 
 func (s *sparkplugOutput) onConnectionLost(client mqtt.Client, err error) {
 	s.logger.Errorf("MQTT connection lost: %v", err)
+
+	// Reset NBIRTH flag so it will be republished on reconnection
+	s.nbirthMu.Lock()
+	s.nbirthPublished = false
+	s.nbirthMu.Unlock()
 }
 
 func (s *sparkplugOutput) Write(ctx context.Context, msg *service.Message) error {
+	// Wait for NBIRTH to be published before allowing any device messages
+	// This prevents DBIRTH from being published before NBIRTH (Sparkplug B violation)
+	s.nbirthMu.Lock()
+	nbirthReady := s.nbirthPublished
+	s.nbirthMu.Unlock()
+
+	if !nbirthReady {
+		s.logger.Debug("Waiting for NBIRTH to be published before processing device messages")
+		// Wait for NBIRTH with timeout to prevent infinite blocking
+		timeout := time.After(10 * time.Second)
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-timeout:
+				return fmt.Errorf("timeout waiting for NBIRTH to be published")
+			case <-ticker.C:
+				s.nbirthMu.Lock()
+				if s.nbirthPublished {
+					s.nbirthMu.Unlock()
+					goto nbirthReady
+				}
+				s.nbirthMu.Unlock()
+			}
+		}
+	}
+
+nbirthReady:
+
 	// Extract data from message
 	data, err := s.extractMessageData(msg)
 	if err != nil {
@@ -827,9 +899,26 @@ func (s *sparkplugOutput) publishDBIRTH(deviceID string, data map[string]interfa
 		metrics = append(metrics, metric)
 	}
 
+	// SEQUENCE COUNTER FIX FOR DBIRTH:
+	// DBIRTH must use incremented sequence counter from Edge Node level, NOT reset to 0.
+	// Previous bug: DBIRTH was hardcoded to seq=0, same as NBIRTH, violating Sparkplug B spec.
+	//
+	// Sparkplug B specification requires sequence counter to increment across ALL message types:
+	// - NBIRTH (seq=0)     ← First message after connection
+	// - DBIRTH (seq=1,2,3) ← Device births increment sequence counter
+	// - DDATA  (seq=4,5,6) ← Data messages continue incrementing
+	// - Only DEATH messages should reset to seq=0
+	s.stateMu.Lock()
+	s.seqCounter++
+	if s.seqCounter == 0 {
+		s.sequenceWraps.Incr(1)
+	}
+	currentSeq := s.seqCounter
+	s.stateMu.Unlock()
+
 	birthPayload := &sproto.Payload{
 		Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),
-		Seq:       func() *uint64 { s := uint64(0); return &s }(),
+		Seq:       func() *uint64 { s := uint64(currentSeq); return &s }(),
 		Metrics:   metrics,
 	}
 
@@ -907,9 +996,25 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 	}
 	s.stateMu.RUnlock()
 
+	// SEQUENCE COUNTER FIX FOR NBIRTH:
+	// NBIRTH must use properly incremented sequence counter, NOT hardcoded to 0.
+	// Previous bug: NBIRTH was hardcoded to seq=0, ignoring sequence progression.
+	//
+	// Fixed behavior:
+	// - Initial connection: seqCounter=255 → increment → seq=0 (NBIRTH)
+	// - Rebirth scenarios: seqCounter=X → increment → seq=X+1 (NBIRTH)
+	// This ensures NBIRTH participates in the global Edge Node sequence progression.
+	s.stateMu.Lock()
+	s.seqCounter++
+	if s.seqCounter == 0 {
+		s.sequenceWraps.Incr(1)
+	}
+	currentSeq := s.seqCounter
+	s.stateMu.Unlock()
+
 	birthPayload := &sproto.Payload{
 		Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),
-		Seq:       func() *uint64 { s := uint64(0); return &s }(),
+		Seq:       func() *uint64 { s := uint64(currentSeq); return &s }(),
 		Metrics:   metrics,
 	}
 
