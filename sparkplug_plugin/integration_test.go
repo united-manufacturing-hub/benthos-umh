@@ -1390,7 +1390,7 @@ logger:
 				},
 			}
 
-			messageAmount := len(locationTestData) * 2
+			messageAmount := len(locationTestData) // Each device publishes once correctly
 
 			By("Starting Edge Node stream with UMH location paths")
 
@@ -1491,25 +1491,9 @@ logger:
   level: DEBUG
 `, brokerURL, GinkgoParallelProcess(), uuid.New().String()[:8], uniqueGroupID, uniqueGroupID)
 
-			// Start Edge Node stream
-			edgeStreamBuilder := service.NewStreamBuilder()
-			err := edgeStreamBuilder.SetYAML(edgeNodeConfig)
-			Expect(err).NotTo(HaveOccurred())
-
-			edgeStream, err := edgeStreamBuilder.Build()
-			Expect(err).NotTo(HaveOccurred())
-
-			edgeStreamDone := make(chan error, 1)
-			go func() {
-				edgeStreamDone <- edgeStream.Run(ctx)
-			}()
-
-			// Wait a moment for Edge Node to start
-			time.Sleep(2 * time.Second)
-
-			// Start Primary Host stream
+			// Start Primary Host stream FIRST so it can capture all messages
 			primaryStreamBuilder := service.NewStreamBuilder()
-			err = primaryStreamBuilder.SetYAML(primaryHostConfig)
+			err := primaryStreamBuilder.SetYAML(primaryHostConfig)
 			Expect(err).NotTo(HaveOccurred())
 
 			primaryStream, err := primaryStreamBuilder.Build()
@@ -1521,6 +1505,22 @@ logger:
 			}()
 
 			// Wait for Primary Host to start and MessageCapture to be registered
+			time.Sleep(3 * time.Second)
+
+			// Start Edge Node stream AFTER Primary Host is ready
+			edgeStreamBuilder := service.NewStreamBuilder()
+			err = edgeStreamBuilder.SetYAML(edgeNodeConfig)
+			Expect(err).NotTo(HaveOccurred())
+
+			edgeStream, err := edgeStreamBuilder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			edgeStreamDone := make(chan error, 1)
+			go func() {
+				edgeStreamDone <- edgeStream.Run(ctx)
+			}()
+
+			// Wait for Edge Node to start and publish messages
 			time.Sleep(2 * time.Second)
 
 			By("Collecting UMH messages from Primary Host")
@@ -1589,9 +1589,10 @@ logger:
 			fmt.Printf("📊 UMH DATA messages found: %d\n", len(capturedUMHMessages))
 
 			// Verify we found the expected number of UMH DATA messages
-			expectedDataMessages := messageAmount // 3 DDATA messages
+			// After fixing the global metrics accumulation bug, each device publishes exactly once
+			expectedDataMessages := messageAmount // Should be exactly 3 DDATA messages (one per device)
 			Expect(len(capturedUMHMessages)).To(BeNumerically(">=", expectedDataMessages),
-				fmt.Sprintf("Should find at least %d UMH DATA messages (with location_path)", expectedDataMessages))
+				fmt.Sprintf("Should find at least %d UMH DATA messages (with umh_location_path)", expectedDataMessages))
 
 			err = validateLocationPathMapping(capturedUMHMessages, locationTestData)
 			Expect(err).NotTo(HaveOccurred())
