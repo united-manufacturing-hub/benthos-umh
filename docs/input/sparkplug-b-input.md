@@ -184,3 +184,28 @@ For NDEATH/DDEATH messages, the plugin sets:
 * `event_type`: "device_offline"
 
 **Usage Recommendation**: Use the **primary metadata fields** for most processing logic. The `spb_` prefixed fields are provided for backward compatibility and advanced debugging scenarios.
+
+## Stateless Architecture Considerations
+
+### Understanding bdSeq (Birth-Death Sequence) in Sparkplug B
+
+The Sparkplug B input plugin processes **bdSeq** values from incoming Edge Node messages. Understanding bdSeq behavior is important for monitoring Edge Node session lifecycle:
+
+**Specification-Compliant Edge Nodes:**
+- bdSeq should increment by +1 for each new MQTT session
+- Example: Session 1: bdSeq=0 → Session 2: bdSeq=1 → Session 3: bdSeq=2
+
+**Stateless Edge Nodes (like Benthos Sparkplug B Output):**
+- bdSeq may reset to 0 on Edge Node component restart
+- This is common in container-based or stateless Edge Node implementations
+- Still compliant within individual component lifecycles
+
+### Impact on Input Processing
+
+**What to Expect:**
+- Edge Nodes may send bdSeq=0 after restarts (not necessarily the first session)
+- bdSeq jumps or resets indicate Edge Node restarts or different implementations
+- This is normal behavior for stateless architectures
+
+**Recommendation:**
+The input plugin handles both persistent and stateless Edge Node bdSeq patterns correctly. No special configuration is needed - the plugin automatically adapts to different Edge Node implementations and their bdSeq behaviors.

@@ -134,3 +134,37 @@ This output plugin requires input data to be in **UMH-Core format**:
 - `tag_name`: Metric name (e.g., "temperature", "pressure")
 - `data_contract`: Data contract identifier (e.g., "_sparkplug")
 - `virtual_path`: Optional sub-path within device (e.g., "sensors.ambient")
+
+## Stateless Architecture Limitations
+
+### bdSeq (Birth-Death Sequence) Behavior
+
+The Sparkplug B output plugin implements **bdSeq** (Birth-Death Sequence) according to the Sparkplug B v3.0 specification:
+
+**Within Component Lifetime** (✅ Specification Compliant):
+- bdSeq starts at 0 for the first MQTT session
+- bdSeq increments by +1 for each subsequent MQTT reconnection session
+- Example: Session 1: bdSeq=0 → Session 2: bdSeq=1 → Session 3: bdSeq=2
+
+**Across Component Restarts** (⚠️ Stateless Limitation):
+- bdSeq resets to 0 when the Benthos component is restarted
+- This is a fundamental limitation of Benthos's stateless architecture
+- No persistence mechanism is available (no database/disk storage)
+
+### What This Means for Users
+
+**Expected Behavior:**
+```
+Component Start 1: bdSeq=0 → reconnect → bdSeq=1 → reconnect → bdSeq=2
+Component Restart: bdSeq=0 (resets)
+Component Start 2: bdSeq=0 → reconnect → bdSeq=1 → reconnect → bdSeq=2
+```
+
+**Impact:**
+- **Acceptable** for most Sparkplug deployments where Edge Nodes naturally reset bdSeq on restart
+- **Compatible** with brownfield deployments and development environments  
+- **Limitation** for deployments requiring persistent bdSeq across component restarts
+
+### Recommendation
+
+This stateless behavior is acceptable for the majority of Sparkplug B use cases. Many industrial Edge Node implementations also reset bdSeq on restart. If your specific use case requires persistent bdSeq across component restarts, consider using a dedicated Sparkplug B implementation with persistent storage capabilities.
