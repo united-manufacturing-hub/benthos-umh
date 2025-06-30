@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -28,24 +29,24 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 	Context("Bundle serialization and deserialization", func() {
 		It("successfully encodes and decodes a bundle with time series data", func() {
 			// Create a test bundle
-			originalBundle := &UnsBundle{
-				UnsMap: &TopicMap{
-					Entries: map[string]*TopicInfo{
+			originalBundle := &proto.UnsBundle{
+				UnsMap: &proto.TopicMap{
+					Entries: map[string]*proto.TopicInfo{
 						"test-topic": {
 							Level0:       "enterprise",
 							DataContract: "_historian",
 						},
 					},
 				},
-				Events: &EventTable{
-					Entries: []*EventTableEntry{
+				Events: &proto.EventTable{
+					Entries: []*proto.EventTableEntry{
 						{
 							UnsTreeId: "test-topic",
-							Payload: &EventTableEntry_Ts{
-								Ts: &TimeSeriesPayload{
-									ScalarType:  ScalarType_NUMERIC,
+							Payload: &proto.EventTableEntry_Ts{
+								Ts: &proto.TimeSeriesPayload{
+									ScalarType:  proto.ScalarType_NUMERIC,
 									TimestampMs: 1647753600000,
-									Value: &TimeSeriesPayload_NumericValue{
+									Value: &proto.TimeSeriesPayload_NumericValue{
 										NumericValue: &wrapperspb.DoubleValue{Value: 13.0},
 									},
 								},
@@ -73,12 +74,12 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 
 		It("handles empty bundle", func() {
 			// Create an empty bundle
-			originalBundle := &UnsBundle{
-				UnsMap: &TopicMap{
-					Entries: make(map[string]*TopicInfo),
+			originalBundle := &proto.UnsBundle{
+				UnsMap: &proto.TopicMap{
+					Entries: make(map[string]*proto.TopicInfo),
 				},
-				Events: &EventTable{
-					Entries: make([]*EventTableEntry, 0),
+				Events: &proto.EventTable{
+					Entries: make([]*proto.EventTableEntry, 0),
 				},
 			}
 
@@ -99,9 +100,9 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 
 		It("handles bundle with multiple entries", func() {
 			// Create a bundle with multiple entries
-			originalBundle := &UnsBundle{
-				UnsMap: &TopicMap{
-					Entries: map[string]*TopicInfo{
+			originalBundle := &proto.UnsBundle{
+				UnsMap: &proto.TopicMap{
+					Entries: map[string]*proto.TopicInfo{
 						"topic1": {
 							Level0:       "enterprise",
 							DataContract: "_historian",
@@ -112,15 +113,15 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 						},
 					},
 				},
-				Events: &EventTable{
-					Entries: []*EventTableEntry{
+				Events: &proto.EventTable{
+					Entries: []*proto.EventTableEntry{
 						{
 							UnsTreeId: "topic1",
-							Payload: &EventTableEntry_Ts{
-								Ts: &TimeSeriesPayload{
-									ScalarType:  ScalarType_NUMERIC,
+							Payload: &proto.EventTableEntry_Ts{
+								Ts: &proto.TimeSeriesPayload{
+									ScalarType:  proto.ScalarType_NUMERIC,
 									TimestampMs: 1647753600000,
-									Value: &TimeSeriesPayload_NumericValue{
+									Value: &proto.TimeSeriesPayload_NumericValue{
 										NumericValue: &wrapperspb.DoubleValue{Value: 13.0},
 									},
 								},
@@ -128,11 +129,11 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 						},
 						{
 							UnsTreeId: "topic2",
-							Payload: &EventTableEntry_Ts{
-								Ts: &TimeSeriesPayload{
-									ScalarType:  ScalarType_NUMERIC,
+							Payload: &proto.EventTableEntry_Ts{
+								Ts: &proto.TimeSeriesPayload{
+									ScalarType:  proto.ScalarType_NUMERIC,
 									TimestampMs: 1647753600001,
-									Value: &TimeSeriesPayload_NumericValue{
+									Value: &proto.TimeSeriesPayload_NumericValue{
 										NumericValue: &wrapperspb.DoubleValue{Value: 13.0},
 									},
 								},
@@ -194,24 +195,24 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 
 			It("handles protobuf data", func() {
 				// Create a realistic protobuf-like structure
-				testBundle := &UnsBundle{
-					UnsMap: &TopicMap{
-						Entries: map[string]*TopicInfo{
+				testBundle := &proto.UnsBundle{
+					UnsMap: &proto.TopicMap{
+						Entries: map[string]*proto.TopicInfo{
 							"test.topic.with.long.name": {
 								Level0:       "enterprise",
 								DataContract: "_historian",
 							},
 						},
 					},
-					Events: &EventTable{
-						Entries: []*EventTableEntry{
+					Events: &proto.EventTable{
+						Entries: []*proto.EventTableEntry{
 							{
 								UnsTreeId: "test.topic.with.long.name",
-								Payload: &EventTableEntry_Ts{
-									Ts: &TimeSeriesPayload{
-										ScalarType:  ScalarType_NUMERIC,
+								Payload: &proto.EventTableEntry_Ts{
+									Ts: &proto.TimeSeriesPayload{
+										ScalarType:  proto.ScalarType_NUMERIC,
 										TimestampMs: 1647753600000,
-										Value: &TimeSeriesPayload_NumericValue{
+										Value: &proto.TimeSeriesPayload_NumericValue{
 											NumericValue: &wrapperspb.DoubleValue{Value: 42.5},
 										},
 									},
@@ -294,30 +295,30 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 		Describe("Compression effectiveness", func() {
 			It("achieves good compression ratios on structured data", func() {
 				// Create a bundle with repetitive structured data
-				bundle := &UnsBundle{
-					UnsMap: &TopicMap{
-						Entries: make(map[string]*TopicInfo),
+				bundle := &proto.UnsBundle{
+					UnsMap: &proto.TopicMap{
+						Entries: make(map[string]*proto.TopicInfo),
 					},
-					Events: &EventTable{
-						Entries: make([]*EventTableEntry, 0),
+					Events: &proto.EventTable{
+						Entries: make([]*proto.EventTableEntry, 0),
 					},
 				}
 
 				// Add 100 similar topics and events
 				for i := 0; i < 100; i++ {
 					topicName := fmt.Sprintf("enterprise.site.area.line.workcell%d._historian.temperature", i)
-					bundle.UnsMap.Entries[topicName] = &TopicInfo{
+					bundle.UnsMap.Entries[topicName] = &proto.TopicInfo{
 						Level0:       "enterprise",
 						DataContract: "_historian",
 					}
 
-					bundle.Events.Entries = append(bundle.Events.Entries, &EventTableEntry{
+					bundle.Events.Entries = append(bundle.Events.Entries, &proto.EventTableEntry{
 						UnsTreeId: topicName,
-						Payload: &EventTableEntry_Ts{
-							Ts: &TimeSeriesPayload{
-								ScalarType:  ScalarType_NUMERIC,
+						Payload: &proto.EventTableEntry_Ts{
+							Ts: &proto.TimeSeriesPayload{
+								ScalarType:  proto.ScalarType_NUMERIC,
 								TimestampMs: int64(1647753600000 + i),
-								Value: &TimeSeriesPayload_NumericValue{
+								Value: &proto.TimeSeriesPayload_NumericValue{
 									NumericValue: &wrapperspb.DoubleValue{Value: float64(20 + i%10)},
 								},
 							},
@@ -377,30 +378,30 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 	Context("Bundle compression integration", func() {
 		It("verifies BundleToProtobufBytes actually compresses", func() {
 			// Create a bundle with enough data to show compression
-			bundle := &UnsBundle{
-				UnsMap: &TopicMap{
-					Entries: make(map[string]*TopicInfo),
+			bundle := &proto.UnsBundle{
+				UnsMap: &proto.TopicMap{
+					Entries: make(map[string]*proto.TopicInfo),
 				},
-				Events: &EventTable{
-					Entries: make([]*EventTableEntry, 0),
+				Events: &proto.EventTable{
+					Entries: make([]*proto.EventTableEntry, 0),
 				},
 			}
 
 			// Add structured data that should compress well
 			for i := 0; i < 50; i++ {
 				topicName := fmt.Sprintf("umh.v1.enterprise.factory.line%d._historian.measurement", i)
-				bundle.UnsMap.Entries[topicName] = &TopicInfo{
+				bundle.UnsMap.Entries[topicName] = &proto.TopicInfo{
 					Level0:       "enterprise",
 					DataContract: "_historian",
 				}
 
-				bundle.Events.Entries = append(bundle.Events.Entries, &EventTableEntry{
+				bundle.Events.Entries = append(bundle.Events.Entries, &proto.EventTableEntry{
 					UnsTreeId: topicName,
-					Payload: &EventTableEntry_Ts{
-						Ts: &TimeSeriesPayload{
-							ScalarType:  ScalarType_NUMERIC,
+					Payload: &proto.EventTableEntry_Ts{
+						Ts: &proto.TimeSeriesPayload{
+							ScalarType:  proto.ScalarType_NUMERIC,
 							TimestampMs: int64(1647753600000 + i*1000),
-							Value: &TimeSeriesPayload_NumericValue{
+							Value: &proto.TimeSeriesPayload_NumericValue{
 								NumericValue: &wrapperspb.DoubleValue{Value: 25.0 + float64(i)*0.1},
 							},
 						},
@@ -431,24 +432,24 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 		})
 
 		It("verifies round-trip compression preserves data", func() {
-			originalBundle := &UnsBundle{
-				UnsMap: &TopicMap{
-					Entries: map[string]*TopicInfo{
+			originalBundle := &proto.UnsBundle{
+				UnsMap: &proto.TopicMap{
+					Entries: map[string]*proto.TopicInfo{
 						"test.compression.topic": {
 							Level0:       "enterprise",
 							DataContract: "_historian",
 						},
 					},
 				},
-				Events: &EventTable{
-					Entries: []*EventTableEntry{
+				Events: &proto.EventTable{
+					Entries: []*proto.EventTableEntry{
 						{
 							UnsTreeId: "test.compression.topic",
-							Payload: &EventTableEntry_Ts{
-								Ts: &TimeSeriesPayload{
-									ScalarType:  ScalarType_NUMERIC,
+							Payload: &proto.EventTableEntry_Ts{
+								Ts: &proto.TimeSeriesPayload{
+									ScalarType:  proto.ScalarType_NUMERIC,
 									TimestampMs: 1647753600000,
-									Value: &TimeSeriesPayload_NumericValue{
+									Value: &proto.TimeSeriesPayload_NumericValue{
 										NumericValue: &wrapperspb.DoubleValue{Value: 123.456},
 									},
 								},
@@ -472,7 +473,7 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 			Expect(decodedBundle.UnsMap.Entries["test.compression.topic"].DataContract).To(Equal("_historian"))
 			Expect(decodedBundle.Events.Entries).To(HaveLen(1))
 			Expect(decodedBundle.Events.Entries[0].UnsTreeId).To(Equal("test.compression.topic"))
-			Expect(decodedBundle.Events.Entries[0].Payload.(*EventTableEntry_Ts).Ts.Value.(*TimeSeriesPayload_NumericValue).NumericValue.Value).To(Equal(123.456))
+			Expect(decodedBundle.Events.Entries[0].Payload.(*proto.EventTableEntry_Ts).Ts.Value.(*proto.TimeSeriesPayload_NumericValue).NumericValue.Value).To(Equal(123.456))
 		})
 
 		It("fails properly when given invalid compressed data", func() {
@@ -487,9 +488,9 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 
 			By("Testing with corrupted LZ4 header")
 			// Create valid compressed data, then corrupt it
-			validBundle := &UnsBundle{
-				UnsMap: &TopicMap{
-					Entries: map[string]*TopicInfo{
+			validBundle := &proto.UnsBundle{
+				UnsMap: &proto.TopicMap{
+					Entries: map[string]*proto.TopicInfo{
 						"test": {Level0: "enterprise"},
 					},
 				},

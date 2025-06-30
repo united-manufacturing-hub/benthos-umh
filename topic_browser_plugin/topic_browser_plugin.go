@@ -167,15 +167,16 @@ import (
 	lru "github.com/hashicorp/golang-lru"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
 // topicRingBuffer implements a fixed-size circular buffer for storing the latest events per topic.
 // This prevents data loss while controlling memory usage by automatically overwriting oldest events.
 type topicRingBuffer struct {
-	events   []*EventTableEntry // Fixed-size circular buffer
-	head     int                // Write position (next slot to write)
-	size     int                // Current number of events stored
-	capacity int                // Maximum events per topic (from config)
+	events   []*proto.EventTableEntry // Fixed-size circular buffer
+	head     int                      // Write position (next slot to write)
+	size     int                      // Current number of events stored
+	capacity int                      // Maximum events per topic (from config)
 }
 
 // TopicBrowserProcessor implements the Benthos processor interface for the Topic Browser plugin.
@@ -202,7 +203,7 @@ type TopicBrowserProcessor struct {
 	// New buffering fields for ring buffer implementation
 	messageBuffer []*service.Message          // Unacked original messages
 	topicBuffers  map[string]*topicRingBuffer // Per-topic ring buffers
-	fullTopicMap  map[string]*TopicInfo       // Complete authoritative topic state
+	fullTopicMap  map[string]*proto.TopicInfo // Complete authoritative topic state
 	lastEmitTime  time.Time                   // Last emission timestamp
 	bufferMutex   sync.Mutex                  // Protects all buffer state
 
@@ -508,7 +509,7 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 		maxEventsPerTopic:       maxEventsPerTopic,
 		maxBufferSize:           maxBufferSize,
 		topicBuffers:            make(map[string]*topicRingBuffer),
-		fullTopicMap:            make(map[string]*TopicInfo),
+		fullTopicMap:            make(map[string]*proto.TopicInfo),
 		lastEmitTime:            lastEmitTime,
 		bufferMutex:             sync.Mutex{},
 		eventsOverwritten:       eventsOverwritten,

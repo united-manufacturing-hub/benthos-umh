@@ -28,6 +28,8 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
 // MessageToUNSInfoAndEvent converts a Benthos message to UNS info and event entry.
@@ -38,8 +40,8 @@ import (
 //   - message: The Benthos message to process
 //
 // Returns:
-//   - *TopicInfo: Topic hierarchy information
-//   - *EventTableEntry: Event data
+//   - *proto.TopicInfo: Topic hierarchy information
+//   - *proto.EventTableEntry: Event data
 //   - *string: UNS tree ID (hash of topic info)
 //   - error: Any error that occurred during processing
 //
@@ -49,17 +51,18 @@ import (
 // 3. Converts the message payload to an event entry
 // 4. Generates a unique UNS tree ID for the topic
 // 5. Links the event to the topic via the tree ID
-func MessageToUNSInfoAndEvent(message *service.Message) (*TopicInfo, *EventTableEntry, *string, error) {
-	topic, err := extractTopicFromMessage(message)
+func MessageToUNSInfoAndEvent(message *service.Message) (*proto.TopicInfo, *proto.EventTableEntry, *string, error) {
+	t, err := extractTopicFromMessage(message)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	// Extract UNS Data
-	unsInfo, err := topicToUNSInfo(topic)
+	unsTopic, err := topic.NewUnsTopic(t)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to parse topic '%s': %w", topic, err)
+		return nil, nil, nil, fmt.Errorf("failed to parse topic '%s': %w", t, err)
 	}
+	unsInfo := unsTopic.Info()
 
 	// Extract Event Data - EventTag parameter removed since it's no longer needed
 	event, err := messageToEvent(message)
@@ -111,7 +114,7 @@ func extractKafkaTimestamp(message *service.Message) uint64 {
 //
 // ✅ FIX: Uses null byte delimiters to prevent hash collisions between different segment combinations.
 // For example, ["ab","c"] vs ["a","bc"] would produce different hashes instead of identical ones.
-func HashUNSTableEntry(info *TopicInfo) string {
+func HashUNSTableEntry(info *proto.TopicInfo) string {
 	hasher := xxhash.New()
 
 	// Helper function to write each component followed by NUL delimiter to avoid ambiguity
