@@ -868,6 +868,472 @@ var _ = Describe("Performance Benchmarks", func() {
 	})
 })
 
+var _ = Describe("Sparkplug B Specification Compliance", func() {
+	Context("Sequence and Session Management", func() {
+		var (
+			brokerURL        string
+			edgeNodeClient   mqtt.Client
+			subscriberClient mqtt.Client
+		)
+
+		BeforeEach(func() {
+			brokerURL = os.Getenv("TEST_MQTT_BROKER")
+			if brokerURL == "" {
+				brokerURL = "tcp://127.0.0.1:1883"
+			}
+
+			// Create MQTT clients for direct broker interaction
+			// Note: These are skeleton implementations - will panic until implemented
+			// edgeNodeClient = createMQTTClient(brokerURL, "test-edge-node-client")
+			// subscriberClient = createMQTTClient(brokerURL, "test-subscriber-client")
+		})
+
+		AfterEach(func() {
+			if edgeNodeClient != nil && edgeNodeClient.IsConnected() {
+				edgeNodeClient.Disconnect(1000)
+			}
+			if subscriberClient != nil && subscriberClient.IsConnected() {
+				subscriberClient.Disconnect(1000)
+			}
+		})
+
+		It("should handle sequence counter wrap from 255 to 0", func() {
+			// Test B: Sequence Counter Wrap-Around
+			//
+			// Approach:
+			// 1. Start Edge Node Benthos stream with sparkplug_b output
+			// 2. Use MQTT subscriber to listen on spBv1.0/TestGroup/NDATA/EdgeNode1
+			// 3. Configure Edge Node to publish 260 messages (triggers wrap)
+			// 4. Validate received messages have seq: 0,1,2...254,255,0,1,2,3,4
+			//
+			// Key Points:
+			// - Use generate input with 261 count (1 NBIRTH + 260 NDATA)
+			// - MQTT subscriber decodes protobuf and checks seq field
+			// - No MessageCapture needed - pure MQTT validation
+			// - Assert monotonic sequence with wrap at 255→0
+
+			By("Setting up MQTT subscriber for NDATA messages")
+			// TODO: Subscribe to spBv1.0/TestGroup/NDATA/EdgeNode1
+			// TODO: Create channel to collect received messages
+
+			By("Starting Edge Node stream configured for sequence wrap test")
+			// TODO: Create Edge Node config with:
+			// - generate input: interval=10ms, count=261
+			// - tag_processor: creates different metrics for each message
+			// - sparkplug_b output: group_id=TestGroup, edge_node_id=EdgeNode1
+
+			By("Collecting and validating 261 messages with sequence wrap")
+			// TODO: Wait for 261 messages (1 NBIRTH + 260 NDATA)
+			// TODO: Decode protobuf for each message
+			// TODO: Assert seq field: 0,1,2...254,255,0,1,2,3,4
+			// TODO: Verify wrap occurs exactly at 255→0
+
+			Skip("Test skeleton - implementation needed")
+		})
+
+		It("should handle NDEATH will messages on connection loss", func() {
+			// Test C: NDEATH Will Message
+			//
+			// Approach:
+			// 1. Start Edge Node stream with MQTT will configured
+			// 2. Subscribe to NDEATH topic
+			// 3. Force disconnect Edge Node (hard kill)
+			// 4. Validate broker publishes NDEATH will message
+			//
+			// Key Points:
+			// - Edge Node publishes NBIRTH with bdSeq=0
+			// - Hard disconnect triggers broker will message
+			// - NDEATH should have same bdSeq as NBIRTH
+			// - Validates MQTT will testament mechanism
+
+			By("Setting up MQTT subscriber for NDEATH messages")
+			// TODO: Subscribe to spBv1.0/TestGroup/NDEATH/EdgeNode1
+			// TODO: Create channel to collect NDEATH messages
+
+			By("Starting Edge Node stream with will message configured")
+			// TODO: Create Edge Node config with proper MQTT will
+			// TODO: Start stream and wait for NBIRTH
+			// TODO: Capture bdSeq from NBIRTH message
+
+			By("Force disconnecting Edge Node to trigger will message")
+			// TODO: Use forceDisconnectMQTT() to kill connection
+			// TODO: Validate NDEATH received with correct bdSeq
+			// TODO: Verify will message payload and topic format
+
+			Skip("Test skeleton - implementation needed")
+		})
+
+		It("should increment bdSeq on reconnect after NDEATH", func() {
+			// Test D: bdSeq Increment on Reconnect
+			//
+			// Approach:
+			// 1. Continue from Test C scenario (or recreate)
+			// 2. Restart Edge Node stream after NDEATH
+			// 3. Validate new NBIRTH has bdSeq=1 (incremented)
+			//
+			// Key Points:
+			// - First session: NBIRTH bdSeq=0
+			// - After reconnect: NBIRTH bdSeq=1
+			// - Validates Sparkplug session management
+			// - Can be combined with Test C for efficiency
+
+			By("Setting up MQTT subscriber for NBIRTH messages")
+			// TODO: Subscribe to spBv1.0/TestGroup/NBIRTH/EdgeNode1
+			// TODO: Create channel to collect NBIRTH messages
+
+			By("Starting Edge Node stream and capturing initial bdSeq")
+			// TODO: Start Edge Node stream
+			// TODO: Capture first NBIRTH with bdSeq=0
+
+			By("Disconnecting and reconnecting Edge Node")
+			// TODO: Force disconnect Edge Node
+			// TODO: Restart Edge Node stream
+			// TODO: Capture second NBIRTH with bdSeq=1
+
+			By("Validating bdSeq increment")
+			// TODO: Assert first NBIRTH has bdSeq=0
+			// TODO: Assert second NBIRTH has bdSeq=1
+			// TODO: Verify session state properly reset
+
+			Skip("Test skeleton - implementation needed")
+		})
+	})
+
+	Context("Data Type and Encoding Support", func() {
+		var (
+			brokerURL        string
+			subscriberClient mqtt.Client
+		)
+
+		BeforeEach(func() {
+			brokerURL = os.Getenv("TEST_MQTT_BROKER")
+			if brokerURL == "" {
+				brokerURL = "tcp://127.0.0.1:1883"
+			}
+
+			// Note: Skeleton implementation - will panic until implemented
+			// subscriberClient = createMQTTClient(brokerURL, "test-datatype-subscriber")
+		})
+
+		AfterEach(func() {
+			if subscriberClient != nil && subscriberClient.IsConnected() {
+				subscriberClient.Disconnect(1000)
+			}
+		})
+
+		It("should handle UTF-8 and international metric names", func() {
+			// Test F: UTF-8 Metric Names
+			//
+			// Approach:
+			// 1. Create Edge Node stream with UTF-8 metric names
+			// 2. Use tag_processor to create metrics: 压力 (pressure), 🌡️Temp, Müller, etc.
+			// 3. Validate MQTT subscriber receives correct UTF-8 strings
+			// 4. Verify topic and metric name encoding/decoding
+			//
+			// Key Points:
+			// - Test Chinese characters: 压力
+			// - Test emoji: 🌡️Temp
+			// - Test European characters: Müller, Åström
+			// - Validate protobuf UTF-8 encoding
+			// - Check topic path character handling
+
+			By("Setting up MQTT subscriber for UTF-8 messages")
+			// TODO: Subscribe to spBv1.0/UTF8Test/+/EdgeNode1
+			// TODO: Create channel to collect messages
+
+			By("Starting Edge Node stream with UTF-8 metric names")
+			// TODO: Create Edge Node config with:
+			// - generate input with UTF-8 test data
+			// - tag_processor creating metrics: 压力, 🌡️Temp, Müller, Åström
+			// - sparkplug_b output: group_id=UTF8Test
+
+			By("Validating UTF-8 metric names in protobuf")
+			// TODO: Decode received protobuf messages
+			// TODO: Assert metric names are correctly encoded
+			// TODO: Verify no character corruption or encoding issues
+			// TODO: Check topic path handles UTF-8 correctly
+
+			Skip("Test skeleton - implementation needed")
+		})
+
+		It("should handle all Sparkplug data types correctly", func() {
+			// Test G: Complete Data Type Matrix
+			//
+			// Approach:
+			// 1. Create Edge Node stream publishing all Sparkplug data types
+			// 2. Table-driven test for each data type
+			// 3. Validate protobuf encoding and UMH-Core conversion
+			//
+			// Data Types to Test:
+			// - Int8, Int16, Int32, Int64
+			// - UInt8, UInt16, UInt32, UInt64
+			// - Float, Double
+			// - Boolean
+			// - String
+			// - DateTime
+			// - Text (if supported)
+			//
+			// Key Points:
+			// - Each data type gets its own metric
+			// - Validate protobuf oneof field selection
+			// - Verify UMH-Core JSON conversion correctness
+
+			By("Setting up MQTT subscriber for data type test")
+			// TODO: Subscribe to spBv1.0/DataTypeTest/+/EdgeNode1
+			// TODO: Create channel to collect messages
+
+			By("Starting Edge Node stream with all data types")
+			// TODO: Create Edge Node config with:
+			// - generate input creating all data types
+			// - tag_processor mapping each type to separate metric
+			// - sparkplug_b output: group_id=DataTypeTest
+
+			By("Validating each Sparkplug data type")
+			// TODO: Create table-driven test for each data type
+			// TODO: Decode protobuf and validate correct oneof field
+			// TODO: Verify value preservation and type conversion
+			// TODO: Check UMH-Core JSON representation
+
+			// Data type test cases:
+			testCases := []struct {
+				sparkplugType string
+				testValue     interface{}
+				expectedField string
+			}{
+				{"Int32", int32(-123), "int_value"},
+				{"Int64", int64(-12345), "long_value"},
+				{"Float", float32(3.14), "float_value"},
+				{"Double", float64(3.141592), "double_value"},
+				{"Boolean", true, "boolean_value"},
+				{"String", "test string", "string_value"},
+				// TODO: Add more data types
+			}
+
+			for _, tc := range testCases {
+				By(fmt.Sprintf("Testing %s data type", tc.sparkplugType))
+				// TODO: Validate specific data type encoding
+			}
+
+			Skip("Test skeleton - implementation needed")
+		})
+	})
+
+	Context("UMH Integration and Mapping", func() {
+		var (
+			brokerURL        string
+			capturedMessages chan *service.Message
+		)
+
+		BeforeEach(func() {
+			brokerURL = os.Getenv("TEST_MQTT_BROKER")
+			if brokerURL == "" {
+				brokerURL = "tcp://127.0.0.1:1883"
+			}
+
+			// Use MessageCapture for UMH metadata validation
+			capturedMessages = make(chan *service.Message, 50)
+			captureChannel = capturedMessages
+		})
+
+		AfterEach(func() {
+			if captureChannel != nil {
+				captureChannel = nil
+			}
+			if capturedMessages != nil {
+				close(capturedMessages)
+			}
+		})
+
+		It("should map Sparkplug topics to UMH location paths correctly", func() {
+			// Test J: Location/Virtual Path Mapping
+			//
+			// Approach:
+			// 1. Create Edge Node stream with complex location paths
+			// 2. Use Sparkplug B input to process and convert to UMH
+			// 3. Validate location_path and virtual_path mapping
+			// 4. Test colon/dot conversion rules
+			//
+			// Mapping Rules to Test:
+			// - Topic: spBv1.0/FactoryA/DDATA/EdgeNode1/A:B:C
+			// - Metric: x:y.z:w
+			// - Expected: location_path="FactoryA.EdgeNode1.A:B:C"
+			// - Expected: virtual_path="x:y.z", tag_name="w"
+			//
+			// Key Points:
+			// - Validate topic structure parsing
+			// - Test colon/dot conversion rules
+			// - Verify hierarchical path construction
+			// - Check metric name splitting logic
+
+			By("Setting up full pipeline for location mapping test")
+			// TODO: Create pipeline:
+			// - Edge Node: sparkplug_b output with complex device paths
+			// - MQTT broker
+			// - Primary Host: sparkplug_b input → message_capture
+
+			By("Publishing messages with complex location paths")
+			// TODO: Create Edge Node config with:
+			// - Device path: enterprise:factory:line1:station1
+			// - Metrics: sensors:ambient:temperature, sensors:vibration:x_axis
+			// - Validate topic structure: .../DDATA/EdgeNode1/enterprise:factory:line1:station1
+
+			By("Validating UMH location path mapping")
+			// TODO: Collect messages from MessageCapture
+			// TODO: Validate location_path metadata
+			// TODO: Validate virtual_path and tag_name splitting
+			// TODO: Check colon/dot conversion rules
+
+			// Test cases for mapping validation:
+			mappingTestCases := []struct {
+				devicePath       string
+				metricName       string
+				expectedLocation string
+				expectedVirtual  string
+				expectedTag      string
+			}{
+				{
+					"enterprise:factory:line1:station1",
+					"sensors:ambient:temperature",
+					"TestGroup.EdgeNode1.enterprise:factory:line1:station1",
+					"sensors.ambient",
+					"temperature",
+				},
+				{
+					"simple:device",
+					"metric:name",
+					"TestGroup.EdgeNode1.simple:device",
+					"metric",
+					"name",
+				},
+				// TODO: Add more mapping test cases
+			}
+
+			for _, tc := range mappingTestCases {
+				By(fmt.Sprintf("Testing mapping for %s", tc.devicePath))
+				// TODO: Validate specific mapping case
+			}
+
+			Skip("Test skeleton - implementation needed")
+		})
+	})
+})
+
+// Helper functions for new integration tests
+// TODO: Add these helper functions before the existing helper functions
+
+func createMQTTClient(brokerURL, clientID string) mqtt.Client {
+	// TODO: Implement standardized MQTT client creation
+	// - Set broker URL
+	// - Set client ID
+	// - Configure timeouts
+	// - Return connected client
+	panic("Helper function not implemented")
+}
+
+func forceDisconnectMQTT(client mqtt.Client) {
+	// TODO: Implement abrupt MQTT disconnection
+	// - Use Disconnect(0) for immediate disconnect
+	// - Simulate network failure
+	// - Trigger broker will message
+	panic("Helper function not implemented")
+}
+
+func subscribeToSparkplugTopic(client mqtt.Client, topic string) <-chan mqtt.Message {
+	// TODO: Implement Sparkplug topic subscription
+	// - Subscribe with QoS 1
+	// - Return channel for messages
+	// - Handle subscription errors
+	panic("Helper function not implemented")
+}
+
+func decodeSparkplugPayload(payload []byte) (*sproto.Payload, error) {
+	// TODO: Implement protobuf decoding
+	// - Unmarshal protobuf bytes
+	// - Return Sparkplug payload struct
+	// - Handle decode errors
+	panic("Helper function not implemented")
+}
+
+func createEdgeNodeConfig(brokerURL, groupID, edgeNodeID string, testType string) string {
+	// TODO: Implement Edge Node configuration generator
+	// - Create YAML config for different test types
+	// - Configure input, tag_processor, sparkplug_b output
+	// - Return config string for stream builder
+	panic("Helper function not implemented")
+}
+
+func createUTF8TestData() []map[string]interface{} {
+	// TODO: Implement UTF-8 test data generator
+	// - Create test data with international characters
+	// - Include Chinese: 压力 (pressure)
+	// - Include emoji: 🌡️Temp
+	// - Include European: Müller, Åström
+	// - Return slice of test data maps
+	panic("Helper function not implemented")
+}
+
+func createDataTypeTestData() []map[string]interface{} {
+	// TODO: Implement data type test data generator
+	// - Create test data for all Sparkplug data types
+	// - Include edge cases (min/max values)
+	// - Return slice of test data maps
+	panic("Helper function not implemented")
+}
+
+func validateSequenceWrap(messages []mqtt.Message, expectedCount int) error {
+	// TODO: Implement sequence wrap validation
+	// - Decode protobuf for each message
+	// - Check seq field progression
+	// - Validate wrap from 255 to 0
+	// - Return error if validation fails
+	panic("Helper function not implemented")
+}
+
+func validateBdSeqIncrement(nbirth1, nbirth2 mqtt.Message) error {
+	// TODO: Implement bdSeq increment validation
+	// - Decode both NBIRTH messages
+	// - Extract bdSeq from metrics
+	// - Validate increment (0 → 1)
+	// - Return error if validation fails
+	panic("Helper function not implemented")
+}
+
+func validateUTF8MetricNames(messages []mqtt.Message, expectedNames []string) error {
+	// TODO: Implement UTF-8 metric name validation
+	// - Decode protobuf messages
+	// - Extract metric names
+	// - Validate UTF-8 encoding correctness
+	// - Check for character corruption
+	// - Return error if validation fails
+	panic("Helper function not implemented")
+}
+
+func validateDataTypeMatrix(messages []mqtt.Message, expectedTypes map[string]interface{}) error {
+	// TODO: Implement data type validation
+	// - Decode protobuf messages
+	// - Validate each data type encoding
+	// - Check protobuf oneof field selection
+	// - Verify value preservation
+	// - Return error if validation fails
+	panic("Helper function not implemented")
+}
+
+func validateLocationPathMapping(messages []*service.Message, expectedMappings []struct {
+	devicePath       string
+	metricName       string
+	expectedLocation string
+	expectedVirtual  string
+	expectedTag      string
+}) error {
+	// TODO: Implement location path mapping validation
+	// - Extract metadata from messages
+	// - Validate location_path construction
+	// - Check virtual_path and tag_name splitting
+	// - Verify colon/dot conversion rules
+	// - Return error if validation fails
+	panic("Helper function not implemented")
+}
+
 // Helper functions for integration testing
 
 // createIntegrationTestData creates test Sparkplug B payloads for integration tests
