@@ -970,15 +970,49 @@ var _ = Describe("Sparkplug B Specification Compliance", func() {
 			// Approach:
 			// 1. Start Edge Node stream with MQTT will configured
 			// 2. Subscribe to NDEATH topic
-			// 3. Force disconnect Edge Node (hard kill)
+			// 3. Force disconnect Edge Node (TCP kill, not graceful)
 			// 4. Validate broker publishes NDEATH will message
 
 			By("Setting up MQTT subscriber for all Sparkplug messages")
 			// Subscribe to capture NBIRTH and NDEATH messages
 			allMsgChan := subscribeToSparkplugTopic(subscriberClient, "spBv1.0/TestGroup/+/EdgeNode1")
 
-			By("Starting Edge Node stream with will message configured")
-			edgeConfig := createEdgeNodeConfig(brokerURL, "TestGroup", "EdgeNode1", "ndeath_test")
+			By("Creating Edge Node configuration with short keep-alive for faster will message triggering")
+			// Use a very short keep-alive so broker will detect disconnect quickly
+			edgeConfig := fmt.Sprintf(`
+input:
+  generate:
+    interval: "1s"
+    count: 10
+    mapping: |
+      root = {"value": 42.0}
+
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |
+          msg.meta.location_path = "enterprise.factory.line1.station1"
+          msg.meta.data_contract = "_sparkplug"
+          msg.meta.tag_name = "test_value"
+          msg.meta.virtual_path = "test.ndeath"
+          msg.payload = msg.payload.value
+          
+          return msg
+
+output:
+  sparkplug_b:
+    mqtt:
+      urls: ["%s"]
+      client_id: "test-edge-ndeath-will"
+      keep_alive: "3s"    # Short keep-alive for faster detection
+      connect_timeout: "5s"
+    identity:
+      group_id: "TestGroup"
+      edge_node_id: "EdgeNode1"
+
+logger:
+  level: INFO
+`, brokerURL)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
@@ -1001,7 +1035,7 @@ var _ = Describe("Sparkplug B Specification Compliance", func() {
 			var nbirthFound bool
 
 			// Wait for NBIRTH message (should be first)
-			timeout := time.After(5 * time.Second)
+			timeout := time.After(8 * time.Second)
 			for !nbirthFound {
 				select {
 				case msg := <-allMsgChan:
@@ -1022,7 +1056,7 @@ var _ = Describe("Sparkplug B Specification Compliance", func() {
 			var nbirthBdSeq uint64
 			bdSeqFound := false
 			for _, metric := range nbirthPayload.Metrics {
-				if metric.Name != nil && *metric.Name == "bdSeq" && metric.GetLongValue() != 0 {
+				if metric.Name != nil && *metric.Name == "bdSeq" {
 					nbirthBdSeq = metric.GetLongValue()
 					bdSeqFound = true
 					fmt.Printf("📊 NBIRTH bdSeq: %d\n", nbirthBdSeq)
@@ -1031,50 +1065,56 @@ var _ = Describe("Sparkplug B Specification Compliance", func() {
 			}
 			Expect(bdSeqFound).To(BeTrue(), "bdSeq metric should be found in NBIRTH")
 
-			By("Force disconnecting Edge Node to trigger will message")
-			// Wait a moment for edge node to be fully established
-			time.Sleep(2 * time.Second)
+			By("Simulating abrupt network disconnect (not graceful shutdown)")
+			// Wait for Edge Node to be fully established and send some messages
+			time.Sleep(3 * time.Second)
 
-			// Force disconnect by canceling context - this should trigger will message
+			// Kill the context abruptly - this simulates network failure
+			// The broker should detect timeout and publish the will message
 			cancel()
 
-			// Wait for stream to stop
+			// Don't wait for graceful shutdown - simulate network failure
 			select {
 			case <-edgeStreamDone:
-			case <-time.After(5 * time.Second):
+				// Stream ended
+			case <-time.After(2 * time.Second):
+				// Stream didn't end gracefully - this is good for will message testing
 			}
 
-			By("Validating NDEATH will message")
+			By("Waiting for broker to detect client timeout and publish NDEATH will message")
+			// With 3s keep-alive, broker should detect disconnect and publish will message within ~6-9s
 			var ndeathMsg mqtt.Message
 			var ndeathFound bool
 
-			// Wait for NDEATH will message
-			timeout = time.After(8 * time.Second)
+			// Wait longer for broker to detect timeout and publish will message
+			timeout = time.After(12 * time.Second)
 			for !ndeathFound {
 				select {
 				case msg := <-allMsgChan:
 					if strings.Contains(msg.Topic(), "NDEATH") {
 						ndeathMsg = msg
 						ndeathFound = true
-						fmt.Printf("📨 Captured NDEATH on topic: %s\n", msg.Topic())
+						fmt.Printf("📨 Captured NDEATH will message on topic: %s\n", msg.Topic())
 					}
 				case <-timeout:
-					// NDEATH may not always be guaranteed in test environment
-					// This is acceptable as it depends on broker will message implementation
-					fmt.Printf("⚠️  NDEATH will message not received (acceptable in test environment)\n")
-					return // Skip validation if no will message
+					Fail("NDEATH will message not received - Mosquitto should publish will messages!")
 				}
 			}
 
+			By("Validating NDEATH will message structure")
 			// Validate NDEATH message
 			ndeathPayload, err := decodeSparkplugPayload(ndeathMsg.Payload())
 			Expect(err).NotTo(HaveOccurred())
+
+			// NDEATH should have seq=0 per Sparkplug spec
+			Expect(ndeathPayload.Seq).NotTo(BeNil(), "NDEATH should have sequence number")
+			Expect(*ndeathPayload.Seq).To(Equal(uint64(0)), "NDEATH should have seq=0")
 
 			// NDEATH should have same bdSeq as NBIRTH
 			var ndeathBdSeq uint64
 			bdSeqFoundInDeath := false
 			for _, metric := range ndeathPayload.Metrics {
-				if metric.Name != nil && *metric.Name == "bdSeq" && metric.GetLongValue() != 0 {
+				if metric.Name != nil && *metric.Name == "bdSeq" {
 					ndeathBdSeq = metric.GetLongValue()
 					bdSeqFoundInDeath = true
 					fmt.Printf("📊 NDEATH bdSeq: %d\n", ndeathBdSeq)
@@ -1082,12 +1122,10 @@ var _ = Describe("Sparkplug B Specification Compliance", func() {
 				}
 			}
 
-			if bdSeqFoundInDeath {
-				Expect(ndeathBdSeq).To(Equal(nbirthBdSeq), "NDEATH should have same bdSeq as NBIRTH")
-				fmt.Printf("✅ NDEATH will message validation passed: bdSeq=%d\n", ndeathBdSeq)
-			} else {
-				fmt.Printf("ℹ️  NDEATH message may not contain bdSeq metric (implementation specific)\n")
-			}
+			Expect(bdSeqFoundInDeath).To(BeTrue(), "NDEATH should contain bdSeq metric")
+			Expect(ndeathBdSeq).To(Equal(nbirthBdSeq), "NDEATH should have same bdSeq as NBIRTH")
+
+			fmt.Printf("✅ NDEATH will message test passed: seq=0, bdSeq=%d matches NBIRTH\n", ndeathBdSeq)
 		})
 
 		It("should increment bdSeq on reconnect after NDEATH", func() {
@@ -1356,8 +1394,8 @@ var _ = Describe("Sparkplug B Specification Compliance", func() {
 			// Mapping Rules to Test:
 			// - Topic: spBv1.0/FactoryA/DDATA/EdgeNode1/A:B:C
 			// - Metric: x:y.z:w
-			// - Expected: location_path="FactoryA.EdgeNode1.A:B:C"
-			// - Expected: virtual_path="x:y.z", tag_name="w"
+			// - Expected: location_path="A.B.C"
+			// - Expected: virtual_path="x.y.z", tag_name="w"
 			//
 			// Key Points:
 			// - Validate topic structure parsing
@@ -1373,9 +1411,9 @@ var _ = Describe("Sparkplug B Specification Compliance", func() {
 
 			By("Publishing messages with complex location paths")
 			// TODO: Create Edge Node config with:
-			// - Device path: enterprise:factory:line1:station1
-			// - Metrics: sensors:ambient:temperature, sensors:vibration:x_axis
-			// - Validate topic structure: .../DDATA/EdgeNode1/enterprise:factory:line1:station1
+			// - Location path: enterprise.factory.line1.station1
+			// - Metrics: sensors.ambient.temperature, sensors.vibration.x_axis
+			// - Validate topic structure: .../DDATA/EdgeNode1/enterprise.factory.line1.station1
 
 			By("Validating UMH location path mapping")
 			// TODO: Collect messages from MessageCapture
@@ -1394,14 +1432,14 @@ var _ = Describe("Sparkplug B Specification Compliance", func() {
 				{
 					"enterprise:factory:line1:station1",
 					"sensors:ambient:temperature",
-					"TestGroup.EdgeNode1.enterprise:factory:line1:station1",
+					"enterprise.factory.line1.station1",
 					"sensors.ambient",
 					"temperature",
 				},
 				{
 					"simple:device",
 					"metric:name",
-					"TestGroup.EdgeNode1.simple:device",
+					"simple.device",
 					"metric",
 					"name",
 				},
@@ -1442,8 +1480,8 @@ func createMQTTClient(brokerURL, clientID string) mqtt.Client {
 func forceDisconnectMQTT(client mqtt.Client) {
 	// Abrupt MQTT disconnection to trigger will messages
 	if client != nil && client.IsConnected() {
-		// Disconnect with 0ms timeout = immediate disconnect
-		// This should trigger the broker to publish the will message
+		// Disconnect with 0ms timeout = immediate disconnect without DISCONNECT packet
+		// This simulates network failure and should trigger the broker to publish the will message
 		client.Disconnect(0)
 	}
 }
@@ -1488,21 +1526,21 @@ input:
     interval: "50ms"
     count: 261  # 1 NBIRTH + 260 NDATA
     mapping: |
-      root = {"counter": counter()};
+      root = {"counter": counter()}
 
 pipeline:
   processors:
     - tag_processor:
         defaults: |
-          msg.meta.location_path = "enterprise.factory.line1.station1";
-          msg.meta.data_contract = "_sparkplug";
+          msg.meta.location_path = "enterprise.factory.line1.station1"
+          msg.meta.data_contract = "_sparkplug"
           
-          let counterValue = msg.payload.counter;
-          msg.meta.tag_name = "counter_value";
-          msg.meta.virtual_path = "test.sequence";
-          msg.payload = counterValue;
+          let counterValue = msg.payload.counter
+          msg.meta.tag_name = "counter_value"
+          msg.meta.virtual_path = "test.sequence"
+          msg.payload = counterValue
           
-          return msg;
+          return msg
 
 output:
   sparkplug_b:
@@ -1524,19 +1562,19 @@ input:
     interval: "2s"
     count: 5  # Just a few messages before disconnect
     mapping: |
-      root = {"value": 42.0};
+      root = {"value": 42.0}
 
 pipeline:
   processors:
     - tag_processor:
         defaults: |
-          msg.meta.location_path = "enterprise.factory.line1.station1";
-          msg.meta.data_contract = "_sparkplug";
-          msg.meta.tag_name = "test_value";
-          msg.meta.virtual_path = "test.ndeath";
-          msg.payload = msg.payload.value;
+          msg.meta.location_path = "enterprise.factory.line1.station1"
+          msg.meta.data_contract = "_sparkplug"
+          msg.meta.tag_name = "test_value"
+          msg.meta.virtual_path = "test.ndeath"
+          msg.payload = msg.payload.value
           
-          return msg;
+          return msg
 
 output:
   sparkplug_b:
@@ -1558,34 +1596,34 @@ input:
     interval: "1s"
     count: 8  # Different UTF-8 metrics
     mapping: |
-      root = {"value": counter() * 10.5};
+      root = {"value": counter() * 10.5}
 
 pipeline:
   processors:
     - tag_processor:
         defaults: |
-          msg.meta.location_path = "enterprise.factory.line1.station1";
-          msg.meta.data_contract = "_sparkplug";
+          msg.meta.location_path = "enterprise.factory.line1.station1"
+          msg.meta.data_contract = "_sparkplug"
           
-          let counterValue = msg.payload.value;
-          let idx = counterValue %% 4;
+          let counterValue = msg.payload.value
+          let idx = counterValue %% 4
           
           if (idx == 0) {
-            msg.meta.tag_name = "temperature";
-            msg.meta.virtual_path = "压力.sensors";  # Chinese: pressure
+            msg.meta.tag_name = "temperature"
+            msg.meta.virtual_path = "压力.sensors"  # Chinese: pressure
           } else if (idx == 1) {
-            msg.meta.tag_name = "humidity";
-            msg.meta.virtual_path = "🌡️Temp.ambient";  # Emoji temperature
+            msg.meta.tag_name = "humidity"
+            msg.meta.virtual_path = "🌡️Temp.ambient"  # Emoji temperature
           } else if (idx == 2) {
-            msg.meta.tag_name = "flow";
-            msg.meta.virtual_path = "Müller.station";  # German umlaut
+            msg.meta.tag_name = "flow"
+            msg.meta.virtual_path = "Müller.station"  # German umlaut
           } else {
-            msg.meta.tag_name = "pressure";
-            msg.meta.virtual_path = "Åström.controller";  # Swedish character
+            msg.meta.tag_name = "pressure"
+            msg.meta.virtual_path = "Åström.controller"  # Swedish character
           }
           
-          msg.payload = counterValue;
-          return msg;
+          msg.payload = counterValue
+          return msg
 
 output:
   sparkplug_b:
@@ -1607,44 +1645,44 @@ input:
     interval: "500ms"
     count: 12  # Different data types
     mapping: |
-      root = {"counter": counter()};
+      root = {"counter": counter()}
 
 pipeline:
   processors:
     - tag_processor:
         defaults: |
-          msg.meta.location_path = "enterprise.factory.line1.station1";
-          msg.meta.data_contract = "_sparkplug";
+          msg.meta.location_path = "enterprise.factory.line1.station1"
+          msg.meta.data_contract = "_sparkplug"
           
-          let idx = msg.payload.counter %% 6;
+          let idx = msg.payload.counter %% 6
           
           if (idx == 0) {
-            msg.meta.tag_name = "int32_value";
-            msg.meta.virtual_path = "datatype.test";
-            msg.payload = -12345;  # Int32
+            msg.meta.tag_name = "int32_value"
+            msg.meta.virtual_path = "datatype.test"
+            msg.payload = -12345  # Int32
           } else if (idx == 1) {
-            msg.meta.tag_name = "int64_value";
-            msg.meta.virtual_path = "datatype.test";
-            msg.payload = -123456789;  # Int64
+            msg.meta.tag_name = "int64_value"
+            msg.meta.virtual_path = "datatype.test"
+            msg.payload = -123456789  # Int64
           } else if (idx == 2) {
-            msg.meta.tag_name = "float_value";
-            msg.meta.virtual_path = "datatype.test";
-            msg.payload = 3.14159;  # Float/Double
+            msg.meta.tag_name = "float_value"
+            msg.meta.virtual_path = "datatype.test"
+            msg.payload = 3.14159  # Float/Double
           } else if (idx == 3) {
-            msg.meta.tag_name = "bool_value";
-            msg.meta.virtual_path = "datatype.test";
-            msg.payload = true;  # Boolean
+            msg.meta.tag_name = "bool_value"
+            msg.meta.virtual_path = "datatype.test"
+            msg.payload = true  # Boolean
           } else if (idx == 4) {
-            msg.meta.tag_name = "string_value";
-            msg.meta.virtual_path = "datatype.test";
-            msg.payload = "test string with UTF-8: 测试";  # String
+            msg.meta.tag_name = "string_value"
+            msg.meta.virtual_path = "datatype.test"
+            msg.payload = "test string with UTF-8: 测试"  # String
           } else {
-            msg.meta.tag_name = "double_value";
-            msg.meta.virtual_path = "datatype.test";
-            msg.payload = 2.718281828459045;  # Double precision
+            msg.meta.tag_name = "double_value"
+            msg.meta.virtual_path = "datatype.test"
+            msg.payload = 2.718281828459045  # Double precision
           }
           
-          return msg;
+          return msg
 
 output:
   sparkplug_b:
