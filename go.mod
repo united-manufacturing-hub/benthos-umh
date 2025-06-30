@@ -37,7 +37,7 @@ require (
 	github.com/gopcua/opcua v0.5.3
 	github.com/grid-x/modbus v0.0.0-20250312115347-d1d8b421f52b
 	github.com/hashicorp/golang-lru v0.5.4
-	github.com/pierrec/lz4 v2.6.1+incompatible
+	github.com/pierrec/lz4/v4 v4.1.22
 	github.com/redpanda-data/benthos/v4 v4.49.0
 	github.com/redpanda-data/connect/public/bundle/free/v4 v4.49.1
 	github.com/robinson/gos7 v0.0.0-20241205073040-7ea1d6fb9d20
@@ -303,7 +303,7 @@ require (
 	github.com/paulmach/orb v0.11.1 // indirect
 	github.com/pebbe/zmq4 v1.3.0 // indirect
 	github.com/pgvector/pgvector-go v0.3.0 // indirect
-	github.com/pierrec/lz4/v4 v4.1.22 // indirect
+	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
 	github.com/pinecone-io/go-pinecone v1.1.1 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect

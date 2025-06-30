@@ -20,28 +20,29 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
-func createTestBundle() *UnsBundle {
-	return &UnsBundle{
-		UnsMap: &TopicMap{
-			Entries: map[string]*TopicInfo{
+func createTestBundle() *proto.UnsBundle {
+	return &proto.UnsBundle{
+		UnsMap: &proto.TopicMap{
+			Entries: map[string]*proto.TopicInfo{
 				"test-topic": {
 					Level0:       "enterprise",
 					DataContract: "_historian",
 				},
 			},
 		},
-		Events: &EventTable{
-			Entries: []*EventTableEntry{
+		Events: &proto.EventTable{
+			Entries: []*proto.EventTableEntry{
 				{
 					UnsTreeId: "test-topic",
-					Payload: &EventTableEntry_Ts{
-						Ts: &TimeSeriesPayload{
-							ScalarType:  ScalarType_NUMERIC,
+					Payload: &proto.EventTableEntry_Ts{
+						Ts: &proto.TimeSeriesPayload{
+							ScalarType:  proto.ScalarType_NUMERIC,
 							TimestampMs: 1647753600000,
-							Value: &TimeSeriesPayload_NumericValue{
+							Value: &proto.TimeSeriesPayload_NumericValue{
 								NumericValue: &wrapperspb.DoubleValue{Value: 13.0},
 							},
 						},
@@ -52,20 +53,20 @@ func createTestBundle() *UnsBundle {
 	}
 }
 
-func createLargeBundle(numTopics int, numEvents int) *UnsBundle {
-	bundle := &UnsBundle{
-		UnsMap: &TopicMap{
-			Entries: make(map[string]*TopicInfo),
+func createLargeBundle(numTopics int, numEvents int) *proto.UnsBundle {
+	bundle := &proto.UnsBundle{
+		UnsMap: &proto.TopicMap{
+			Entries: make(map[string]*proto.TopicInfo),
 		},
-		Events: &EventTable{
-			Entries: make([]*EventTableEntry, 0, numEvents),
+		Events: &proto.EventTable{
+			Entries: make([]*proto.EventTableEntry, 0, numEvents),
 		},
 	}
 
 	// Create topics
 	for i := 0; i < numTopics; i++ {
 		topicID := fmt.Sprintf("topic-%d", i)
-		bundle.UnsMap.Entries[topicID] = &TopicInfo{
+		bundle.UnsMap.Entries[topicID] = &proto.TopicInfo{
 			Level0:       "enterprise",
 			DataContract: "_historian",
 		}
@@ -74,13 +75,13 @@ func createLargeBundle(numTopics int, numEvents int) *UnsBundle {
 	// Create events
 	for i := 0; i < numEvents; i++ {
 		topicID := fmt.Sprintf("topic-%d", i%numTopics)
-		bundle.Events.Entries = append(bundle.Events.Entries, &EventTableEntry{
+		bundle.Events.Entries = append(bundle.Events.Entries, &proto.EventTableEntry{
 			UnsTreeId: topicID,
-			Payload: &EventTableEntry_Ts{
-				Ts: &TimeSeriesPayload{
-					ScalarType:  ScalarType_NUMERIC,
+			Payload: &proto.EventTableEntry_Ts{
+				Ts: &proto.TimeSeriesPayload{
+					ScalarType:  proto.ScalarType_NUMERIC,
 					TimestampMs: int64(1647753600000 + i),
-					Value: &TimeSeriesPayload_NumericValue{
+					Value: &proto.TimeSeriesPayload_NumericValue{
 						NumericValue: &wrapperspb.DoubleValue{Value: rand.Float64() * 100},
 					},
 				},

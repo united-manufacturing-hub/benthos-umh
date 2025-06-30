@@ -103,6 +103,14 @@ test-classic-to-core:
 test-downsampler:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./downsampler_plugin/...
 
+.PHONY: test-pkg-umh-topic
+test-pkg-umh-topic:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./pkg/umh/topic/...
+
+.PHONY: bench-pkg-umh-topic
+bench-pkg-umh-topic:
+	go test -bench=. -benchmem ./pkg/umh/topic/...
+  
 .PHONY: test-topic-browser
 test-topic-browser:
 	@TEST_TOPIC_BROWSER=1 \
@@ -139,9 +147,9 @@ test-benthos-topic-browser: target
 ## Generate go files from protobuf for topic browser
 build-protobuf:
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	rm topic_browser_plugin/topic_browser_data.pb.go || true
+	rm pkg/umh/topic/proto/topic_browser_data.pb.go || true
 	protoc \
-		-I=topic_browser_plugin \
-		--go_out=topic_browser_plugin \
-		topic_browser_plugin/topic_browser_data.proto
-	@echo '// Copyright 2025 UMH Systems GmbH\n//\n// Licensed under the Apache License, Version 2.0 (the "License");\n// you may not use this file except in compliance with the License.\n// You may obtain a copy of the License at\n//\n//     http://www.apache.org/licenses/LICENSE-2.0\n//\n// Unless required by applicable law or agreed to in writing, software\n// distributed under the License is distributed on an "AS IS" BASIS,\n// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n// See the License for the specific language governing permissions and\n// limitations under the License.\n\n' | cat - topic_browser_plugin/topic_browser_data.pb.go > temp && mv temp topic_browser_plugin/topic_browser_data.pb.go
+		-I=pkg/umh/topic/proto \
+		--go_out=pkg/umh/topic/proto \
+		pkg/umh/topic/proto/topic_browser_data.proto
+	@echo '// Copyright 2025 UMH Systems GmbH\n//\n// Licensed under the Apache License, Version 2.0 (the "License");\n// you may not use this file except in compliance with the License.\n// You may obtain a copy of the License at\n//\n//     http://www.apache.org/licenses/LICENSE-2.0\n//\n// Unless required by applicable law or agreed to in writing, software\n// distributed under the License is distributed on an "AS IS" BASIS,\n// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n// See the License for the specific language governing permissions and\n// limitations under the License.\n\n' | cat - pkg/umh/topic/proto/topic_browser_data.pb.go > temp && mv temp pkg/umh/topic/proto/topic_browser_data.pb.go
