@@ -1067,6 +1067,8 @@ func (s *sparkplugOutput) extractMessageData(msg *service.Message) (map[string]i
 			// If no configured metrics matched, try to generate metric name from virtual_path:tag_name
 			if len(data) == 0 {
 				if virtualPath, hasVirtualPath := msg.MetaGet("virtual_path"); hasVirtualPath {
+					// convert virtual_path "." to ":"
+					virtualPath = strings.ReplaceAll(virtualPath, ".", ":")
 					// Generate metric name using virtual_path:tag_name format
 					metricName := virtualPath + ":" + tagName
 					s.logger.Debugf("extractMessageData: No matching configured metrics, generating metric name: %s", metricName)

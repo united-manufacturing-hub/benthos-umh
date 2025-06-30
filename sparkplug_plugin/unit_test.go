@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !payload && !flow && !integration
-
 // Unit tests for Sparkplug B plugin core components
 // These tests run offline with no external dependencies (<3s)
 // Build tag exclusion ensures they don't run with other test types
