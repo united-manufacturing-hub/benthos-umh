@@ -144,7 +144,7 @@ Name: "position"
 ```
 
 **Business Rules**:
-- Level0 (enterprise) is mandatory
+- level0 is mandatory
 - Location sublevels are dynamic (can be 0 to N levels)
 - Data contract must start with underscore and cannot be the final segment  
 - Virtual path is optional logical grouping
@@ -270,7 +270,7 @@ processors:
 ### Message Processing Failures
 - **Invalid topic format**: Message skipped, error logged, failure metric incremented
 - **Missing umh_topic**: Message skipped with detailed logging
-- **Malformed JSON**: Graceful fallback, error logged, processing continues
+- **Malformed JSON**: Message skipped, error logged, processing continues
 - **Duplicate timestamps**: Last-write-wins for headers, all events preserved
 
 ### Cache Management
@@ -280,7 +280,7 @@ processors:
 
 ### Network & Serialization
 - **Protobuf failures**: Return error immediately (no partial emission)
-- **Compression failures**: Return error (prevents data corruption)
+- **Compression failures**: Return error immediately (no fallback, prevents data corruption)
 - **Large payloads**: Universal LZ4 compression handles up to multi-megabyte bundles
 
 ### Ring Buffer Edge Cases

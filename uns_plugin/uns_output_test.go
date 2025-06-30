@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
 type TestMessagePublisher interface {
@@ -252,7 +253,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 				var msgs service.MessageBatch
 				for range 10 {
 					msg := service.NewMessage([]byte(`{"data": "test"}`))
-					msg.MetaSet("umh_topic", "umh.v1.abc")
+					msg.MetaSet("umh_topic", "umh.v1.enterprise._historian.test")
 					msgs = append(msgs, msg)
 				}
 				err := outputPlugin.WriteBatch(ctx, msgs)
@@ -267,7 +268,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 				for _, m := range messages {
 					Expect(m.Topic).To(BeEquivalentTo(defaultOutputTopic))
 					Expect(m.Value).To(BeEquivalentTo([]byte(`{"data": "test"}`)))
-					Expect(m.Key).To(BeEquivalentTo([]byte("umh.v1.abc")))
+					Expect(m.Key).To(BeEquivalentTo([]byte("umh.v1.enterprise._historian.test")))
 				}
 			})
 
@@ -293,7 +294,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 				var msgs service.MessageBatch
 				for range 10 {
 					msg := service.NewMessage(nil)
-					msg.MetaSet("umh_topic", "umh.v1.enterprise.messages")
+					msg.MetaSet("umh_topic", "umh.v1.enterprise._historian.messages")
 					msg.SetStructured(map[string]any{
 						"value": "mock message",
 					})
@@ -302,6 +303,155 @@ var _ = Describe("Initializing uns output plugin", func() {
 				err := outputPlugin.WriteBatch(ctx, msgs)
 				Expect(err.Error()).To(BeEquivalentTo("error writing batch output to kafka: leader partition not found"))
 			})
+		})
+
+		When("with umh_topic containing consecutive dots", func() {
+			It("should reject consecutive dots in the message key", func() {
+				msg := service.NewMessage([]byte(`{"value": false, "timestamp_ms": 1750930223716}`))
+				// Set umh_topic with consecutive dots (similar to the original problem)
+				msg.MetaSet("umh_topic", "umh.v1.UMH-Systems-GmbH---Dev-Team......._historian.Root.Objects.SiemensPLC_fallback._System._EnableDiagnostics")
+				msgs := service.MessageBatch{msg}
+
+				err := outputPlugin.WriteBatch(ctx, msgs)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("invalid UMH topic"))
+				Expect(err.Error()).To(ContainSubstring("cannot be empty"))
+			})
+
+			It("should reject multiple consecutive dots in different parts of the topic", func() {
+				msg := service.NewMessage([]byte(`{"value": 42.5, "timestamp_ms": 1750930223716}`))
+				// Test with multiple consecutive dots in different locations
+				msg.MetaSet("umh_topic", "umh.v1.enterprise...site.area.._historian..virtual.path.tag_name")
+				msgs := service.MessageBatch{msg}
+
+				err := outputPlugin.WriteBatch(ctx, msgs)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("invalid UMH topic"))
+				Expect(err.Error()).To(ContainSubstring("cannot be empty"))
+			})
+
+			It("should reject message keys with invalid characters", func() {
+				msg := service.NewMessage([]byte(`{"value": 42.5, "timestamp_ms": 1750930223716}`))
+				// Test with invalid characters
+				msg.MetaSet("umh_topic", "umh.v1.enterprise@#$.site.area._historian.tag")
+				msgs := service.MessageBatch{msg}
+
+				err := outputPlugin.WriteBatch(ctx, msgs)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("invalid UMH topic"))
+				Expect(err.Error()).To(ContainSubstring("invalid characters"))
+			})
+
+			It("should reject message keys with leading dots", func() {
+				msg := service.NewMessage([]byte(`{"value": 42.5, "timestamp_ms": 1750930223716}`))
+				msg.MetaSet("umh_topic", ".umh.v1.enterprise.site.area._historian.tag")
+				msgs := service.MessageBatch{msg}
+
+				err := outputPlugin.WriteBatch(ctx, msgs)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("invalid UMH topic"))
+				Expect(err.Error()).To(ContainSubstring("must start with umh.v1"))
+			})
+
+			It("should reject message keys with trailing dots", func() {
+				msg := service.NewMessage([]byte(`{"value": 42.5, "timestamp_ms": 1750930223716}`))
+				msg.MetaSet("umh_topic", "umh.v1.enterprise.site.area._historian.tag.")
+				msgs := service.MessageBatch{msg}
+
+				err := outputPlugin.WriteBatch(ctx, msgs)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("invalid UMH topic"))
+				Expect(err.Error()).To(ContainSubstring("cannot be empty"))
+			})
+
+			It("should accept valid message keys", func() {
+				msg := service.NewMessage([]byte(`{"value": 42.5, "timestamp_ms": 1750930223716}`))
+				msg.MetaSet("umh_topic", "umh.v1.enterprise.site.area._historian.tag")
+				msgs := service.MessageBatch{msg}
+
+				err := outputPlugin.WriteBatch(ctx, msgs)
+				Expect(err).To(BeNil())
+
+				client, ok := unsClient.client.(TestMessagePublisher)
+				Expect(ok).To(BeTrue())
+				Expect(client.IsProduceSyncCalled()).To(BeTrue())
+
+				messages := client.GetRequestedProduceMessages()
+				Expect(len(messages)).To(Equal(1))
+				Expect(string(messages[0].Key)).To(Equal("umh.v1.enterprise.site.area._historian.tag"))
+			})
+		})
+	})
+})
+
+var _ = Describe("topic validation", func() {
+	Context("when validating message keys", func() {
+		It("should reject six consecutive dots", func() {
+			input := "umh.v1.UMH-Systems-GmbH---Dev-Team......._historian.Root.Objects.tag"
+			_, err := topic.NewUnsTopic(input)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("cannot be empty"))
+		})
+
+		It("should reject multiple groups of consecutive dots", func() {
+			input := "umh.v1.enterprise...site..area.._historian..tag"
+			_, err := topic.NewUnsTopic(input)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("cannot be empty"))
+		})
+
+		It("should reject a very long sequence of dots", func() {
+			input := "umh.v1.enterprise............site.tag"
+			_, err := topic.NewUnsTopic(input)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("must contain a data contract"))
+		})
+
+		It("should accept valid message keys with single dots", func() {
+			input := "umh.v1.enterprise.site.area._historian.tag"
+			_, err := topic.NewUnsTopic(input)
+			Expect(err).To(BeNil())
+		})
+
+		It("should reject invalid characters", func() {
+			input := "umh.v1.enterprise@#$.site%%..area._historian.tag"
+			_, err := topic.NewUnsTopic(input)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("cannot be empty"))
+		})
+
+		It("should reject leading dots", func() {
+			input := ".umh.v1.enterprise.site.tag"
+			_, err := topic.NewUnsTopic(input)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("must start with umh.v1"))
+		})
+
+		It("should reject trailing dots", func() {
+			input := "umh.v1.enterprise.site.tag."
+			_, err := topic.NewUnsTopic(input)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("must contain a data contract"))
+		})
+
+		It("should reject both leading and trailing dots", func() {
+			input := ".umh.v1.enterprise.site.tag."
+			_, err := topic.NewUnsTopic(input)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("must start with umh.v1"))
+		})
+
+		It("should accept valid UMH topics", func() {
+			validTopics := []string{
+				"umh.v1.enterprise.site.area._historian.tag",
+				"umh.v1.acme.berlin.assembly._analytics.temperature",
+				"umh.v1.factory.line1.station2._raw.pressure_sensor",
+			}
+
+			for _, topicStr := range validTopics {
+				_, err := topic.NewUnsTopic(topicStr)
+				Expect(err).To(BeNil(), "Expected topic '%s' to be valid", topicStr)
+			}
 		})
 	})
 })

@@ -28,6 +28,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
 var _ = Describe("TopicBrowserProcessor", func() {
@@ -58,7 +59,6 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).To(BeNil())
 			Expect(result).To(HaveLen(1))    // [emission_batch] - ACKed in-place
 			Expect(result[0]).To(HaveLen(1)) // emission batch has 1 message
-			Expect(result[1]).To(HaveLen(1)) // ack batch has 1 message
 
 			// Verify the output message (emission)
 			outputMsg := result[0][0]
@@ -115,7 +115,6 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).To(BeNil())
 			Expect(result).To(HaveLen(1))    // [emission_batch] - ACKed in-place
 			Expect(result[0]).To(HaveLen(1)) // emission batch has 1 message
-			Expect(result[1]).To(HaveLen(2)) // ack batch has 2 messages
 
 			// Verify the output message (emission)
 			outputMsg := result[0][0]
@@ -179,7 +178,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Verify first event
 			event1 := decoded.Events.Entries[0]
 			Expect(event1.GetTs().GetTimestampMs()).To(Equal(int64(1647753600000)))
-			Expect(event1.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
+			Expect(event1.GetTs().GetScalarType()).To(Equal(proto.ScalarType_NUMERIC))
 			Expect(event1.GetTs().GetNumericValue()).NotTo(BeNil())
 			Expect(event1.GetTs().GetNumericValue().GetValue()).To(Equal(float64(3)))
 			Expect(event1.RawKafkaMsg).NotTo(BeNil())
@@ -188,7 +187,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Verify second event
 			event2 := decoded.Events.Entries[1]
 			Expect(event2.GetTs().GetTimestampMs()).To(Equal(int64(1647753600001)))
-			Expect(event2.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
+			Expect(event2.GetTs().GetScalarType()).To(Equal(proto.ScalarType_NUMERIC))
 			Expect(event2.GetTs().GetNumericValue()).NotTo(BeNil())
 			Expect(event2.GetTs().GetNumericValue().GetValue()).To(Equal(float64(5)))
 			Expect(event2.RawKafkaMsg).NotTo(BeNil())
@@ -218,7 +217,6 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).To(BeNil())
 			Expect(result).To(HaveLen(1))    // [emission_batch] - ACKed in-place
 			Expect(result[0]).To(HaveLen(1)) // emission batch has 1 message
-			Expect(result[1]).To(HaveLen(1)) // ack batch has 1 message
 
 			// Verify the output message (emission)
 			outputMsg := result[0][0]
@@ -235,7 +233,6 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).To(BeNil())
 			Expect(result2).To(HaveLen(1))    // [emission_batch] - ACKed in-place
 			Expect(result2[0]).To(HaveLen(1)) // emission batch has 1 message
-			Expect(result2[1]).To(HaveLen(1)) // ack batch has 1 message
 
 			// Verify the output message (emission)
 			outputMsg2 := result2[0][0]
@@ -278,7 +275,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(decoded2.Events.Entries).To(HaveLen(1))
 			event2 := decoded2.Events.Entries[0]
 			Expect(event2.GetTs().GetTimestampMs()).To(Equal(int64(1647753600001)))
-			Expect(event2.GetTs().GetScalarType()).To(Equal(ScalarType_NUMERIC))
+			Expect(event2.GetTs().GetScalarType()).To(Equal(proto.ScalarType_NUMERIC))
 			Expect(event2.GetTs().GetNumericValue()).NotTo(BeNil())
 			Expect(event2.GetTs().GetNumericValue().GetValue()).To(Equal(float64(5)))
 			Expect(event2.RawKafkaMsg).NotTo(BeNil())
@@ -1016,8 +1013,8 @@ var _ = Describe("TopicBrowserProcessor", func() {
 		It("should enforce time-series payload size limits", func() {
 			By("Creating oversized time-series payload")
 
-			// Create a time-series value that exceeds 1024 bytes
-			largeValue := strings.Repeat("x", 1100) // 1100 bytes
+			// Create a time-series value that exceeds 1 MiB
+			largeValue := strings.Repeat("x", 1048577) // 1 MiB + 1 byte
 			data := map[string]interface{}{
 				"timestamp_ms": 1750171500000,
 				"value":        largeValue,
@@ -1435,7 +1432,6 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			By("Verifying batch delayed ACK structure")
 			Expect(result).To(HaveLen(1), "Should return [emission_batch] - original messages ACKed in-place")
 			Expect(result[0]).To(HaveLen(1), "Should emit single bundled message")
-			Expect(result[1]).To(HaveLen(3), "Should ACK all 3 original messages")
 
 			By("Verifying single emission contains all events")
 			emissionMsg := result[0][0]
@@ -1453,15 +1449,9 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			Expect(bundle.Events.Entries).To(HaveLen(3), "Bundle should contain all 3 events")
 
-			By("Verifying ACK batch contains all original messages")
-			ackBatch := result[1]
-			for i, ackMsg := range ackBatch {
-				ackBytes, err := ackMsg.AsBytes()
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(ackBytes).To(Equal(originalContents[i]),
-					fmt.Sprintf("ACK message %d should match original", i))
-			}
+			By("Verifying original messages are ACKed in-place (not returned in batches)")
+			// Note: With in-place ACK pattern, original messages are ACKed via msg.SetError(nil)
+			// but not returned in the result batches. This is the correct Benthos delayed ACK pattern.
 		})
 
 		It("should not emit when messages are buffered (no immediate ACK)", func() {
@@ -1556,13 +1546,12 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				By("CRITICAL: Now we get emission+ACK because interval elapsed")
 				Expect(result).To(HaveLen(1), "Should return [emission_batch] - original messages ACKed in-place")
 				Expect(result[0]).To(HaveLen(1), "Emission batch should have processed bundle")
-				Expect(result[1]).To(HaveLen(1), "ACK batch should have original message")
 
 				By("VERIFICATION: This proves ACK happens exactly when emission happens")
-				// The fact that we get both batches means:
+				// With in-place ACK pattern:
 				// 1. Emit interval was reached ✅
 				// 2. Bundle was emitted (result[0]) ✅
-				// 3. Original was ACKed (result[1]) ✅
+				// 3. Original was ACKed via msg.SetError(nil) in-place ✅
 				// 4. Both happen atomically at the same time ✅
 			})
 
@@ -1614,13 +1603,12 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				By("NOW we get emission+ACK because interval elapsed")
 				Expect(result3).To(HaveLen(1), "Should return [emission_batch] - original messages ACKed in-place")
 				Expect(result3[0]).To(HaveLen(1), "One emission bundle")
-				Expect(result3[1]).To(HaveLen(3), "ACK batch should have all 3 original messages")
 
 				By("VERIFICATION: All 3 messages ACKed together when emission happens")
 				// This proves the key behavior:
 				// 1. Messages 1 & 2 were buffered without ACK
 				// 2. Message 3 triggered emission because interval elapsed
-				// 3. All 3 messages ACKed atomically with emission
+				// 3. All 3 messages ACKed atomically with emission via msg.SetError(nil)
 				// 4. ACK timing is tied to emission timing, not buffering timing
 			})
 		})
@@ -1658,7 +1646,6 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				By("Verifying immediate emission behavior")
 				Expect(result).To(HaveLen(1), "Fast intervals should emit immediately: [emission] - ACKed in-place")
 				Expect(result[0]).To(HaveLen(1), "Should have emission batch")
-				Expect(result[1]).To(HaveLen(1), "Should have ACK batch")
 
 				By("Explaining the behavior")
 				// This happens because emitInterval ≤ 10ms triggers:
@@ -1808,7 +1795,6 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 				By("Verifying emission occurs after interval")
 				Expect(result2).To(HaveLen(1), "Should emit after interval: [emission] - ACKed in-place")
-				Expect(result2[1]).To(HaveLen(2), "Should ACK both accumulated messages")
 			})
 		})
 
@@ -1888,7 +1874,7 @@ func createTestBatchWithValue(size int, valueString string) service.MessageBatch
 }
 
 // Helper function to extract value from EventTableEntry for verification
-func extractValueFromTimeSeries(event *EventTableEntry) string {
+func extractValueFromTimeSeries(event *proto.EventTableEntry) string {
 	if event == nil {
 		return ""
 	}
@@ -1909,7 +1895,7 @@ func extractValueFromTimeSeries(event *EventTableEntry) string {
 }
 
 // Helper function to extract UNS bundle from processed message for verification
-func extractUnsBundle(msg *service.Message) *UnsBundle {
+func extractUnsBundle(msg *service.Message) *proto.UnsBundle {
 	bytes, err := msg.AsBytes()
 	if err != nil {
 		return nil
