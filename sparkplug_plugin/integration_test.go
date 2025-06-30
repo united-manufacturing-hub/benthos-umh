@@ -41,6 +41,47 @@ import (
 	_ "github.com/united-manufacturing-hub/benthos-umh/tag_processor_plugin" // Import tag processor for full pipeline tests
 )
 
+// Global message capture for tests
+var captureChannel chan *service.Message
+
+// MessageCapture implements service.Output to capture messages for testing
+type MessageCapture struct {
+	messages chan *service.Message
+}
+
+func (m *MessageCapture) Connect(ctx context.Context) error {
+	return nil // Always ready
+}
+
+func (m *MessageCapture) Write(ctx context.Context, msg *service.Message) error {
+	if captureChannel != nil {
+		select {
+		case captureChannel <- msg.Copy():
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			// Channel full, skip message to avoid blocking
+		}
+	}
+	return nil
+}
+
+func (m *MessageCapture) Close(ctx context.Context) error {
+	return nil
+}
+
+func init() {
+	// Register custom output for tests
+	err := service.RegisterOutput("message_capture",
+		service.NewConfigSpec().Field(service.NewStringField("dummy").Default("")),
+		func(conf *service.ParsedConfig, mgr *service.Resources) (service.Output, int, error) {
+			return &MessageCapture{}, 1, nil
+		})
+	if err != nil {
+		panic(err)
+	}
+}
+
 func TestSparkplugIntegrationBroker(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Sparkplug B Integration Test Suite")
@@ -133,11 +174,17 @@ var _ = Describe("Real MQTT Broker Integration", func() {
 		})
 
 		It("should run full Edge Node to Primary Host pipeline (like shell script)", func() {
-			By("Testing complete pipeline: generate → tag_processor → sparkplug_b → sparkplug_b → stdout")
+			By("Creating message capture system for Primary Host")
+
+			// Create channels to capture processed messages from Primary Host
+			capturedMessages := make(chan *service.Message, 20)
+			captureChannel = capturedMessages
+
+			By("Testing complete pipeline: generate → tag_processor → sparkplug_b → sparkplug_b → message_capture")
 
 			// This test replicates what the shell script was actually doing:
 			// 1. Edge Node: generate → tag_processor → sparkplug_b output
-			// 2. Primary Host: sparkplug_b input → stdout
+			// 2. Primary Host: sparkplug_b input → message_capture (instead of stdout)
 			// 3. Real end-to-end communication via MQTT
 
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
@@ -198,7 +245,8 @@ input:
     role: "primary"
 
 output:
-  stdout: {}
+  message_capture:
+    dummy: ""
 
 logger:
   level: INFO
@@ -217,7 +265,7 @@ logger:
 				edgeNodeDone <- edgeStream.Run(ctx)
 			}()
 
-			By("Starting Primary Host stream (sparkplug_b → stdout)")
+			By("Starting Primary Host stream (sparkplug_b → message_capture)")
 			hostStreamBuilder := service.NewStreamBuilder()
 			err = hostStreamBuilder.SetYAML(primaryHostConfig)
 			Expect(err).NotTo(HaveOccurred())
@@ -235,7 +283,7 @@ logger:
 			// 1. Edge Node to start and publish NBIRTH + DBIRTH
 			// 2. Edge Node to generate and publish 3 DDATA messages
 			// 3. Primary Host to receive and process all messages
-			// 4. Full tag_processor → sparkplug_b → MQTT → sparkplug_b → stdout flow
+			// 4. Full tag_processor → sparkplug_b → MQTT → sparkplug_b → message_capture flow
 			time.Sleep(15 * time.Second)
 
 			// Cancel streams
@@ -252,14 +300,103 @@ logger:
 			case <-time.After(5 * time.Second):
 			}
 
-			fmt.Printf("✅ Full pipeline integration test completed - Edge Node ↔ Primary Host via MQTT\n")
+			By("Verifying captured messages from full pipeline")
+
+			// Clean up capture channel
+			captureChannel = nil
+			close(capturedMessages)
+
+			// Collect all captured messages
+			var messages []*service.Message
+			for msg := range capturedMessages {
+				messages = append(messages, msg)
+			}
+
+			fmt.Printf("📥 Captured %d messages from full pipeline\n", len(messages))
+
+			// Verify we received messages (should get NBIRTH, DBIRTH, and DDATA messages)
+			Expect(len(messages)).To(BeNumerically(">=", 3), "Should capture at least 3 messages (NBIRTH, DBIRTH, DDATA)")
+
+			// Count message types
+			msgTypeCounts := make(map[string]int)
+			for _, msg := range messages {
+				if msgType, exists := msg.MetaGet("sparkplug_msg_type"); exists {
+					msgTypeCounts[msgType]++
+				}
+			}
+
+			fmt.Printf("📊 Message type distribution: %+v\n", msgTypeCounts)
+
+			// Should have at least one NBIRTH and one DDATA
+			Expect(msgTypeCounts["NBIRTH"]).To(BeNumerically(">=", 1), "Should have at least one NBIRTH message")
+			Expect(msgTypeCounts["DDATA"]).To(BeNumerically(">=", 1), "Should have at least one DDATA message")
+
+			// Verify message content structure
+			for i, msg := range messages {
+				By(fmt.Sprintf("Validating pipeline message %d", i+1))
+
+				// Check that message has payload
+				payload, err := msg.AsBytes()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(len(payload)).To(BeNumerically(">", 0), "Message should have non-empty payload")
+
+				// Check metadata by walking through it
+				meta := make(map[string]string)
+				err = msg.MetaWalk(func(key, value string) error {
+					meta[key] = value
+					return nil
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Should have sparkplug-related metadata
+				msgType, hasMsgType := meta["sparkplug_msg_type"]
+				Expect(hasMsgType).To(BeTrue(), "Should have sparkplug message type")
+
+				// Handle different message types appropriately
+				if msgType == "NDEATH" {
+					// NDEATH messages have different metadata structure
+					deviceKey, hasDeviceKey := meta["sparkplug_device_key"]
+					eventType, hasEventType := meta["event_type"]
+
+					Expect(hasDeviceKey).To(BeTrue(), "NDEATH should have device key")
+					Expect(hasEventType).To(BeTrue(), "NDEATH should have event type")
+					Expect(eventType).To(Equal("device_offline"))
+					Expect(deviceKey).To(Equal("DeviceLevelTest/StaticEdgeNode01"))
+				} else {
+					// Regular messages should have group_id and edge_node_id
+					groupID, hasGroupID := meta["group_id"]
+					edgeNodeID, hasEdgeNodeID := meta["edge_node_id"]
+
+					if !hasGroupID {
+						fmt.Printf("🔍 Message %d missing group_id, available metadata: %+v\n", i+1, meta)
+					}
+					if !hasEdgeNodeID {
+						fmt.Printf("🔍 Message %d missing edge_node_id, available metadata: %+v\n", i+1, meta)
+					}
+					Expect(hasGroupID).To(BeTrue(), "Should have group ID")
+					Expect(hasEdgeNodeID).To(BeTrue(), "Should have edge node ID")
+
+					// Verify group ID matches what we configured
+					Expect(groupID).To(Equal("DeviceLevelTest"))
+					Expect(edgeNodeID).To(Equal("StaticEdgeNode01"))
+				}
+				fmt.Printf("✅ Pipeline message %d validation passed: type=%s\n", i+1, msgType)
+			}
+
+			fmt.Printf("✅ Full pipeline integration test completed - %d messages captured and validated\n", len(messages))
 		})
 
 		It("should process NBIRTH and NDATA messages end-to-end", func() {
-			By("Creating a stream with the Sparkplug input plugin")
+			By("Creating a message capture system")
+
+			// Create channels to capture processed messages
+			capturedMessages := make(chan *service.Message, 10)
+			captureChannel = capturedMessages
+
+			By("Creating a stream with the Sparkplug input plugin and message capture")
 
 			// Create a stream with the input to test it
-			streamBuilder := service.NewEnvironment().NewStreamBuilder()
+			streamBuilder := service.NewStreamBuilder()
 			err := streamBuilder.SetYAML(fmt.Sprintf(`
 input:
   sparkplug_b:
@@ -275,7 +412,8 @@ input:
       auto_split_metrics: true
 
 output:
-  stdout: {}
+  message_capture:
+    dummy: ""
 
 logger:
   level: INFO
@@ -353,6 +491,8 @@ logger:
 			// Wait for processing
 			time.Sleep(2 * time.Second)
 
+			By("Verifying captured messages")
+
 			// Cancel the context to stop the stream
 			cancel()
 
@@ -366,7 +506,63 @@ logger:
 				fmt.Printf("Stream didn't stop gracefully\n")
 			}
 
-			fmt.Printf("✅ Integration test completed - messages processed successfully\n")
+			// Clean up capture channel
+			captureChannel = nil
+			close(capturedMessages)
+
+			// Collect all captured messages
+			var messages []*service.Message
+			for msg := range capturedMessages {
+				messages = append(messages, msg)
+			}
+
+			fmt.Printf("📥 Captured %d messages\n", len(messages))
+
+			// Verify we received messages
+			Expect(len(messages)).To(BeNumerically(">=", 1), "Should capture at least one message")
+
+			// Verify message content
+			for i, msg := range messages {
+				By(fmt.Sprintf("Validating message %d", i+1))
+
+				// Check that message has payload
+				payload, err := msg.AsBytes()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(len(payload)).To(BeNumerically(">", 0), "Message should have non-empty payload")
+
+				// Check metadata by walking through it
+				meta := make(map[string]string)
+				err = msg.MetaWalk(func(key, value string) error {
+					meta[key] = value
+					return nil
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				fmt.Printf("📋 Message %d metadata: %+v\n", i+1, meta)
+
+				// Should have sparkplug-related metadata
+				msgType, hasMsgType := meta["sparkplug_msg_type"]
+				Expect(hasMsgType).To(BeTrue(), "Should have sparkplug message type")
+
+				// Check message type is valid
+				Expect(msgType).To(BeElementOf([]string{"NBIRTH", "NDATA", "STATE"}), "Should be valid Sparkplug message type")
+
+				// Verify message structure based on type
+				if msgType == "NBIRTH" || msgType == "NDATA" {
+					// Should have group_id and edge_node_id
+					groupID, hasGroupID := meta["group_id"]
+					edgeNodeID, hasEdgeNodeID := meta["edge_node_id"]
+
+					Expect(hasGroupID).To(BeTrue(), "Should have group ID")
+					Expect(hasEdgeNodeID).To(BeTrue(), "Should have edge node ID")
+					Expect(groupID).To(Equal("FactoryA"))
+					Expect(edgeNodeID).To(Equal("Line1"))
+				}
+
+				fmt.Printf("✅ Message %d validation passed: type=%s\n", i+1, msgType)
+			}
+
+			fmt.Printf("✅ Integration test completed - %d messages captured and validated\n", len(messages))
 		})
 
 		It("should handle broker disconnection gracefully", func() {
