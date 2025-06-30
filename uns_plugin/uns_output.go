@@ -17,12 +17,12 @@ package uns_plugin
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
 // init registers the "uns" batch output plugin with Benthos using its configuration and constructor.
@@ -36,10 +36,6 @@ const (
 	defaultBrokerAddress             = "localhost:9092"
 	defaultClientID                  = "umh_core"
 	defaultUMHTopic                  = "${! meta(\"umh_topic\") }"
-)
-
-var (
-	topicSanitizer = regexp.MustCompile(`[^a-zA-Z0-9._\-]`)
 )
 
 // outputConfig returns the Benthos configuration specification for the "uns"
@@ -261,16 +257,6 @@ func (o *unsOutput) verifyOutputTopic(ctx context.Context) error {
 	return nil
 }
 
-// sanitizeMessageKey ensures the key contains only valid characters
-// It replaces invalid characters with underscores and logs a warning if sanitization occurred
-func (o *unsOutput) sanitizeMessageKey(key string) string {
-	sanitizedKey := topicSanitizer.ReplaceAllString(key, "_")
-	if key != sanitizedKey {
-		o.log.Debugf("Message key contained invalid characters and was sanitized: '%s' -> '%s'", key, sanitizedKey)
-	}
-	return sanitizedKey
-}
-
 // extractHeaders extracts all metadata from a message except Kafka-specific ones
 // kafka specific meta fields are injected into the header if the source node is kafka and they can be ignored
 // There could be other meta fields set by the upstream benthos processors and those meta fields should be passed down as kafka headers
@@ -313,7 +299,11 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 			return fmt.Errorf("umh_topic is not set or is empty in message %d, umh_topic is mandatory", i)
 		}
 
-		sanitizedKey := o.sanitizeMessageKey(key)
+		// Validate the UMH topic using the centralized topic library
+		_, err = topic.NewUnsTopic(key)
+		if err != nil {
+			return fmt.Errorf("error validating message key in message %d: invalid UMH topic '%s': %v", i, key, err)
+		}
 
 		headers, err := o.extractHeaders(msg)
 		if err != nil {
@@ -327,13 +317,13 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 
 		record := Record{
 			Topic:   defaultOutputTopic,
-			Key:     []byte(sanitizedKey),
+			Key:     []byte(key),
 			Value:   msgAsBytes,
 			Headers: headers,
 		}
 
 		records = append(records, record)
-		o.log.Tracef("Message %d prepared with key: %s", i, sanitizedKey)
+		o.log.Tracef("Message %d prepared with key: %s", i, key)
 	}
 
 	if err := o.client.ProduceSync(ctx, records); err != nil {

@@ -8,6 +8,8 @@
   - [ifm IO-Link Master / "sensorconnect"](input/ifm-io-link-master-sensorconnect.md)
   - [Beckhoff ADS (community)](input/beckhoff-ads-community.md)
   - [More](https://docs.redpanda.com/redpanda-connect/components/inputs/about/)
+- [Libraries](libraries/README.md)
+  - [UMH Topic Parser](libraries/umh-topic-parser.md)
 - [Processing](processing/README.md)
   - [Tag Processor](processing/tag-processor.md)
   - [Classic to Core Processor](processing/classic-to-core-processor.md)

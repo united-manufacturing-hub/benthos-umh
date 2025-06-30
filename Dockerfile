@@ -23,6 +23,7 @@ ENV GOPROXY=https://golangproxy.umh.app,https://proxy.golang.org,direct
 COPY go.mod go.sum ./
 RUN go mod download
 
+COPY ./pkg ./pkg
 COPY ./cmd ./cmd
 COPY ./downsampler_plugin ./downsampler_plugin
 COPY ./opcua_plugin ./opcua_plugin
