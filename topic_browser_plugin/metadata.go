@@ -130,24 +130,6 @@ func cloneMetadataMap(source map[string]string) map[string]string {
 	return clone
 }
 
-// transferMetadataToMap efficiently transfers metadata from source to dest, clearing dest first.
-// This avoids allocation when we already have a target map to populate.
-//
-// Parameters:
-//   - dest: Target map to populate (will be cleared first)
-//   - source: Source map to copy from
-func transferMetadataToMap(dest, source map[string]string) {
-	// Clear destination first
-	for k := range dest {
-		delete(dest, k)
-	}
-
-	// Copy data from source
-	for k, v := range source {
-		dest[k] = v
-	}
-}
-
 // mergeTopicHeaders efficiently merges Kafka headers from multiple TopicInfo objects
 // with previously cached metadata for a given unsTreeId using pooled maps.
 //
@@ -244,7 +226,7 @@ func (t *TopicBrowserProcessor) mergeTopicHeaders(unsTreeId string, topics []*pr
 //
 // MEMORY OPTIMIZATION STRATEGY:
 // - Only update cache if metadata has actually changed
-// - Use efficient transfer operations when possible to avoid extra allocations
+// - Share references between cache and storage when safe (metadata is immutable)
 // - Work efficiently with pooled maps
 //
 // Parameters:
@@ -253,7 +235,7 @@ func (t *TopicBrowserProcessor) mergeTopicHeaders(unsTreeId string, topics []*pr
 //   - isPooled: Whether this map came from the pool (affects cleanup logic)
 //
 // Returns:
-//   - map[string]string: Map suitable for storing in TopicInfo (may be same as input or new allocation)
+//   - map[string]string: Map suitable for storing in TopicInfo (may be same as input or shared reference)
 func (t *TopicBrowserProcessor) updateTopicCacheAndGetStorageMap(unsTreeId string, headers map[string]string, isPooled bool) map[string]string {
 	t.topicMetadataCacheMutex.Lock()
 	defer t.topicMetadataCacheMutex.Unlock()
@@ -280,24 +262,21 @@ func (t *TopicBrowserProcessor) updateTopicCacheAndGetStorageMap(unsTreeId strin
 	}
 
 	// Data has changed - we need to update cache and return storage-safe map
-	var cacheMap, storageMap map[string]string
+	// OPTIMIZATION: Since metadata maps are immutable after creation, we can safely
+	// share references between cache and storage instead of defensive double-cloning
+	var sharedMap map[string]string
 
 	if isPooled {
-		// Headers is pooled, so we need separate maps for cache and storage
-		cacheMap = cloneMetadataMap(headers)   // Pooled clone for cache
-		storageMap = cloneMetadataMap(headers) // Direct allocation for protobuf (external lifecycle)
+		// Headers is pooled, so we need to clone once for permanent storage
+		// But we can share the single cloned reference between cache and storage
+		sharedMap = cloneMetadataMap(headers) // Single clone for permanent storage
 	} else {
 		// Headers is already a stable reference (not pooled)
-		// We can use it directly for cache, but need a copy for storage to avoid shared references
-		cacheMap = headers
-		storageMap = cloneMetadataMap(headers)
+		// We can share it directly for both cache and storage
+		sharedMap = headers
 	}
 
-	t.topicMetadataCache.Add(unsTreeId, cacheMap)
-	return storageMap
-}
-
-// Legacy function for compatibility - deprecated in favor of updateTopicCacheAndGetStorageMap
-func (t *TopicBrowserProcessor) updateTopicCache(unsTreeId string, headers map[string]string, isPooled bool) {
-	t.updateTopicCacheAndGetStorageMap(unsTreeId, headers, isPooled)
+	// Both cache and storage use the same reference (safe because metadata is immutable)
+	t.topicMetadataCache.Add(unsTreeId, sharedMap)
+	return sharedMap
 }
