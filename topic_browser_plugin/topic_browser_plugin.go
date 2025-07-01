@@ -218,7 +218,14 @@ type TopicBrowserProcessor struct {
 	flushDuration         *service.MetricCounter
 	emissionSize          *service.MetricCounter
 	totalEventsEmitted    *service.MetricCounter
-	// TODO: add last length of full topic map as "total_amount_of_topics"
+
+	// CPU-aware adaptive controller
+	adaptiveController *AdaptiveController
+
+	// Prometheus gauges for CPU-aware metrics
+	cpuLoadGauge        *service.MetricGauge
+	activeIntervalGauge *service.MetricGauge
+	activeTopicsGauge   *service.MetricGauge
 }
 
 func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Message) (service.MessageBatch, error) {
@@ -394,16 +401,46 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 		}
 	}
 
-	// DUAL EMISSION LOGIC: Check for time-based emission after processing all messages
-	// This implements the second emission trigger (interval-based) in addition to
-	// the overflow protection that may have occurred during message processing above.
+	// Notify adaptive controller about the batch (estimate payload size)
+	// This enables CPU-aware adaptation based on message volume and CPU load
+	estimatedPayloadBytes := len(batch) * 1024 // Rough estimate: 1KB per message
+	if t.adaptiveController != nil {
+		t.adaptiveController.OnBatch(estimatedPayloadBytes)
+	}
+
+	// Update CPU-aware metrics
+	t.updateAdaptiveMetrics()
+
+	// ADAPTIVE EMISSION LOGIC: Check CPU-aware adaptive emission after processing all messages
+	// This replaces fixed-interval timing with intelligent CPU and payload-aware timing
 	//
 	// ✅ FIX: Hold mutex during entire check-and-flush to prevent TOCTOU race condition
 	t.bufferMutex.Lock()
 	defer t.bufferMutex.Unlock()
 
-	if time.Since(t.lastEmitTime) >= t.emitInterval {
-		// Time-based emission: emitInterval has elapsed, flush remaining buffer
+	// Use adaptive controller instead of fixed time interval
+	if t.adaptiveController != nil && t.adaptiveController.ShouldFlush() {
+		// Adaptive emission: CPU-aware controller determined it's time to flush
+		intervalResult, err := t.flushBufferAndACKLocked()
+
+		if err != nil {
+			return nil, err
+		}
+
+		// Notify controller that flush was successful
+		t.adaptiveController.OnFlush()
+
+		// Combine both emission types:
+		// 1. overflowEmissionResults: Messages emitted due to buffer overflow protection
+		// 2. intervalResult: Messages emitted due to adaptive timing trigger
+		allResults := overflowEmissionResults
+		if intervalResult != nil {
+			allResults = append(allResults, intervalResult...)
+		}
+
+		return allResults, nil
+	} else if time.Since(t.lastEmitTime) >= t.emitInterval {
+		// Fallback to fixed interval if adaptive controller is not available
 		intervalResult, err := t.flushBufferAndACKLocked()
 
 		if err != nil {
@@ -489,6 +526,7 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 
 	// Handle nil metrics for tests
 	var messagesProcessed, messagesFailed, eventsOverwritten, ringBufferUtilization, flushDuration, emissionSize, totalEventsEmitted *service.MetricCounter
+	var cpuLoadGauge, activeIntervalGauge, activeTopicsGauge *service.MetricGauge
 	if metrics != nil {
 		messagesProcessed = metrics.NewCounter("messages_processed")
 		messagesFailed = metrics.NewCounter("messages_failed")
@@ -497,7 +535,15 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 		flushDuration = metrics.NewCounter("flush_duration")
 		emissionSize = metrics.NewCounter("emission_size")
 		totalEventsEmitted = metrics.NewCounter("total_events_emitted")
+
+		// CPU-aware adaptive metrics (only plugin-specific gauges)
+		cpuLoadGauge = metrics.NewGauge("cpu_load_percent")
+		activeIntervalGauge = metrics.NewGauge("active_emit_interval_seconds")
+		activeTopicsGauge = metrics.NewGauge("active_topics_count")
 	}
+
+	// Initialize CPU-aware adaptive controller
+	adaptiveController := NewAdaptiveController(emitInterval)
 
 	return &TopicBrowserProcessor{
 		topicMetadataCache:      l,
@@ -517,6 +563,10 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 		flushDuration:           flushDuration,
 		emissionSize:            emissionSize,
 		totalEventsEmitted:      totalEventsEmitted,
+		adaptiveController:      adaptiveController,
+		cpuLoadGauge:            cpuLoadGauge,
+		activeIntervalGauge:     activeIntervalGauge,
+		activeTopicsGauge:       activeTopicsGauge,
 	}
 }
 
