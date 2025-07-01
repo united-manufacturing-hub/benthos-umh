@@ -543,7 +543,7 @@ The processor requires that the following metadata fields are set:
 			Advanced()).
 		Field(service.NewIntField("max_events_per_topic_per_interval").
 			Description("Maximum events per topic per emit interval").
-			Default(10).
+			Default(1).
 			Advanced()).
 		Field(service.NewIntField("max_buffer_size").
 			Description("Maximum number of messages to buffer (safety limit)").
