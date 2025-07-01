@@ -257,11 +257,13 @@ var _ = Describe("Real MQTT Broker Integration", func() {
 			// 2. Primary Host: sparkplug_b input → message_capture (instead of stdout)
 			// 3. Real end-to-end communication via MQTT
 
-			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 			defer cancel()
 
 			// Generate unique group ID to avoid cross-contamination with other tests
 			uniqueGroupID := fmt.Sprintf("PipelineTest-%d-%s", GinkgoParallelProcess(), uuid.New().String()[:8])
+
+			By(fmt.Sprintf("Using unique group ID: %s", uniqueGroupID))
 
 			// Edge Node Stream (similar to sparkplug-device-level-test.yaml)
 			edgeNodeConfig := fmt.Sprintf(`
@@ -297,6 +299,11 @@ output:
     mqtt:
       urls: ["%s"]
       client_id: "test-edge-node-%d-%s"
+      qos: 1
+      keep_alive: "60s"
+      connect_timeout: "30s"
+      write_timeout: "10s"
+      clean_session: true
     identity:
       group_id: "%s"
       edge_node_id: "StaticEdgeNode01"
@@ -312,6 +319,10 @@ input:
     mqtt:
       urls: ["%s"]
       client_id: "test-primary-host-%d-%s"
+      qos: 1
+      keep_alive: "60s"
+      connect_timeout: "30s"
+      clean_session: true
     identity:
       group_id: "%s"
       edge_node_id: "PrimaryHost"
@@ -354,6 +365,9 @@ logger:
 			go func() {
 				primaryHostDone <- hostStream.Run(ctx)
 			}()
+
+			// Allow Primary Host stream to connect before Edge Node starts publishing
+			time.Sleep(3 * time.Second)
 
 			By("Waiting for full message pipeline processing")
 			// Wait for:
