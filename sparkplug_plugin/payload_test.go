@@ -1,3 +1,5 @@
+//go:build !integration
+
 // Copyright 2025 UMH Systems GmbH
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,8 +14,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build payload
-
 // Payload tests for Sparkplug B plugin - Static vector validation
 // Tests decode/encode of static Sparkplug B payloads (+2s)
 
@@ -21,7 +21,6 @@ package sparkplug_plugin_test
 
 import (
 	"encoding/base64"
-	"os"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -36,27 +35,7 @@ func TestSparkplugPayloadVectors(t *testing.T) {
 	RunSpecs(t, "Sparkplug B Payload Test Suite")
 }
 
-// Helper functions for payload testing
-func stringPtr(s string) *string {
-	return &s
-}
-
-func uint64Ptr(u uint64) *uint64 {
-	return &u
-}
-
-func uint32Ptr(u uint32) *uint32 {
-	return &u
-}
-
 var _ = Describe("Static Payload Validation", func() {
-	BeforeEach(func() {
-		testActivated := os.Getenv("TEST_SPARKPLUG_UNIT")
-		if testActivated == "" {
-			Skip("Skipping Sparkplug B unit tests: TEST_SPARKPLUG_UNIT not set")
-			return
-		}
-	})
 
 	Context("Test Vector Decoding", func() {
 		It("should decode all generated test vectors successfully", func() {
