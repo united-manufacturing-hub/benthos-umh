@@ -214,27 +214,30 @@ func (fc *FormatConverter) parseUMHMessage(msg *service.Message) (*UMHMessage, e
 
 	// Extract value - try different common field names
 	var value interface{}
+	var valueFound bool
 	if structMap, ok := payload.(map[string]interface{}); ok {
 		// Try common value field names
 		for _, fieldName := range []string{"value", "val", "data", "measurement"} {
 			if v, exists := structMap[fieldName]; exists {
 				value = v
+				valueFound = true
 				break
 			}
 		}
 
 		// If no standard field found, check for tag_name field
-		if value == nil {
+		if !valueFound {
 			if tagName, exists := metadata["tag_name"]; exists {
 				if v, exists := structMap[tagName]; exists {
 					value = v
+					valueFound = true
 				}
 			}
 		}
 	}
 
-	if value == nil {
-		// Use entire payload as value
+	if !valueFound {
+		// Use entire payload as value only if no value field was found
 		value = payload
 	}
 

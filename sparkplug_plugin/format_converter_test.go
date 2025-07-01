@@ -17,7 +17,7 @@
 package sparkplug_plugin
 
 import (
-	"fmt"
+	"encoding/json"
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -58,7 +58,16 @@ var _ = Describe("FormatConverter", func() {
 						Expect(result.EdgeNodeID).To(Equal("EdgeNode1"))
 						Expect(result.DeviceID).To(Equal("enterprise:site:area"))
 						Expect(result.MetricName).To(Equal("temperature"))
-						Expect(result.Value).To(Equal(25.5))
+
+						// JSON parsing preserves numbers as json.Number - convert for comparison
+						if jsonNum, ok := result.Value.(json.Number); ok {
+							floatVal, err := jsonNum.Float64()
+							Expect(err).NotTo(HaveOccurred())
+							Expect(floatVal).To(Equal(25.5))
+						} else {
+							Expect(result.Value).To(Equal(25.5))
+						}
+
 						Expect(result.DataType).To(Equal("double"))
 					},
 				),
@@ -94,8 +103,17 @@ var _ = Describe("FormatConverter", func() {
 						Expect(result.EdgeNodeID).To(Equal("Processor1"))
 						Expect(result.DeviceID).To(Equal("enterprise:plant:zone"))
 						Expect(result.MetricName).To(Equal("count"))
-						Expect(result.Value).To(Equal(1234))
-						Expect(result.DataType).To(Equal("int32"))
+
+						// JSON parsing preserves numbers as json.Number - convert for comparison
+						if jsonNum, ok := result.Value.(json.Number); ok {
+							intVal, err := jsonNum.Int64()
+							Expect(err).NotTo(HaveOccurred())
+							Expect(intVal).To(Equal(int64(1234)))
+						} else {
+							Expect(result.Value).To(Equal(1234))
+						}
+
+						Expect(result.DataType).To(Equal("int64"))
 					},
 				),
 				Entry("UMH message with complex virtual path",
@@ -384,42 +402,114 @@ var _ = Describe("FormatConverter", func() {
 	})
 
 	Describe("Data Type Inference", func() {
-		DescribeTable("should infer correct Sparkplug data types",
-			func(value interface{}, expectedType string) {
-				// Create JSON payload based on the value type with timestamp_ms
-				var jsonPayload string
-				switch v := value.(type) {
-				case string:
-					jsonPayload = fmt.Sprintf(`{"value": "%s", "timestamp_ms": 1640995800000}`, v)
-				case bool:
-					jsonPayload = fmt.Sprintf(`{"value": %t, "timestamp_ms": 1640995800000}`, v)
-				default:
-					jsonPayload = fmt.Sprintf(`{"value": %v, "timestamp_ms": 1640995800000}`, v)
-				}
+		Context("TypeConverter direct testing", func() {
+			var typeConverter *TypeConverter
 
-				msg := service.NewMessage([]byte(jsonPayload))
+			BeforeEach(func() {
+				typeConverter = NewTypeConverter()
+			})
+
+			DescribeTable("should infer correct Sparkplug data types from Go values",
+				func(value interface{}, expectedType string) {
+					inferredType := typeConverter.InferMetricType(value)
+					Expect(inferredType).To(Equal(expectedType))
+				},
+				Entry("boolean true", true, "boolean"),
+				Entry("boolean false", false, "boolean"),
+				Entry("int8", int8(127), "int32"),     // int8 maps to int32 in Sparkplug
+				Entry("int16", int16(32767), "int32"), // int16 maps to int32 in Sparkplug
+				Entry("int32", int32(2147483647), "int32"),
+				Entry("int", int(42), "int32"), // int maps to int32 in Sparkplug
+				Entry("int64", int64(9223372036854775807), "int64"),
+				Entry("uint8", uint8(255), "uint32"),     // uint8 maps to uint32 in Sparkplug
+				Entry("uint16", uint16(65535), "uint32"), // uint16 maps to uint32 in Sparkplug
+				Entry("uint32", uint32(4294967295), "uint32"),
+				Entry("uint64", uint64(18446744073709551615), "uint64"),
+				Entry("float32", float32(3.14), "float"),
+				Entry("float64", float64(3.14159), "double"),
+				Entry("string", "hello", "string"),
+				Entry("json.Number with decimal", json.Number("25.5"), "double"),
+				Entry("json.Number integer", json.Number("42"), "int64"),
+				Entry("unknown type", struct{}{}, "string"), // Unknown types default to string
+			)
+		})
+
+		Context("FormatConverter with realistic JSON scenarios", func() {
+			DescribeTable("should handle realistic UMH JSON data types",
+				func(jsonPayload string, expectedType string) {
+					msg := service.NewMessage([]byte(jsonPayload))
+					msg.MetaSet("location_path", "enterprise.site")
+					msg.MetaSet("tag_name", "test")
+
+					sparkplugMsg, err := converter.EncodeUMHToSparkplug(msg, "TestGroup", "TestNode")
+
+					Expect(err).NotTo(HaveOccurred())
+					Expect(sparkplugMsg.DataType).To(Equal(expectedType))
+				},
+				// These are realistic JSON payloads that UMH systems would actually send
+				Entry("boolean true", `{"value": true, "timestamp_ms": 1640995800000}`, "boolean"),
+				Entry("boolean false", `{"value": false, "timestamp_ms": 1640995800000}`, "boolean"),
+				Entry("integer from PLC", `{"value": 42, "timestamp_ms": 1640995800000}`, "int64"),
+				Entry("decimal from sensor", `{"value": 25.5, "timestamp_ms": 1640995800000}`, "double"),
+				Entry("large integer", `{"value": 9223372036854775807, "timestamp_ms": 1640995800000}`, "int64"),
+				Entry("string status", `{"value": "RUNNING", "timestamp_ms": 1640995800000}`, "string"),
+				Entry("zero value", `{"value": 0, "timestamp_ms": 1640995800000}`, "int64"),
+				Entry("negative integer", `{"value": -100, "timestamp_ms": 1640995800000}`, "int64"),
+				Entry("negative decimal", `{"value": -25.5, "timestamp_ms": 1640995800000}`, "double"),
+				Entry("scientific notation", `{"value": 1.23e5, "timestamp_ms": 1640995800000}`, "double"),
+			)
+		})
+
+		Context("Edge cases in JSON parsing", func() {
+			It("should handle null values gracefully", func() {
+				msg := service.NewMessage([]byte(`{"value": null, "timestamp_ms": 1640995800000}`))
 				msg.MetaSet("location_path", "enterprise.site")
 				msg.MetaSet("tag_name", "test")
 
 				sparkplugMsg, err := converter.EncodeUMHToSparkplug(msg, "TestGroup", "TestNode")
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(sparkplugMsg.DataType).To(Equal(expectedType))
-			},
-			Entry("boolean", true, "boolean"),
-			Entry("int8", int8(127), "int8"),
-			Entry("int16", int16(32767), "int16"),
-			Entry("int32", int32(2147483647), "int32"),
-			Entry("int", int(42), "int32"),
-			Entry("int64", int64(9223372036854775807), "int64"),
-			Entry("uint8", uint8(255), "uint8"),
-			Entry("uint16", uint16(65535), "uint16"),
-			Entry("uint32", uint32(4294967295), "uint32"),
-			Entry("uint64", uint64(18446744073709551615), "uint64"),
-			Entry("float32", float32(3.14), "float"),
-			Entry("float64", float64(3.14159), "double"),
-			Entry("string", "hello", "string"),
-		)
+				// JSON parsing correctly extracts null as nil value
+				Expect(sparkplugMsg.Value).To(BeNil())
+				Expect(sparkplugMsg.DataType).To(Equal("string")) // Default type for unknown/null
+			})
+
+			It("should handle missing value field", func() {
+				msg := service.NewMessage([]byte(`{"timestamp_ms": 1640995800000}`))
+				msg.MetaSet("location_path", "enterprise.site")
+				msg.MetaSet("tag_name", "test")
+
+				sparkplugMsg, err := converter.EncodeUMHToSparkplug(msg, "TestGroup", "TestNode")
+
+				Expect(err).NotTo(HaveOccurred())
+				// Should use entire payload as value
+				Expect(sparkplugMsg.Value).NotTo(BeNil())
+				Expect(sparkplugMsg.DataType).To(Equal("string")) // Complex objects become strings
+			})
+
+			It("should handle alternative value field names", func() {
+				// Test that converter tries different field names
+				testCases := []struct {
+					payload   string
+					fieldName string
+				}{
+					{`{"val": 42.5, "timestamp_ms": 1640995800000}`, "val"},
+					{`{"data": 100, "timestamp_ms": 1640995800000}`, "data"},
+					{`{"measurement": true, "timestamp_ms": 1640995800000}`, "measurement"},
+				}
+
+				for _, tc := range testCases {
+					msg := service.NewMessage([]byte(tc.payload))
+					msg.MetaSet("location_path", "enterprise.site")
+					msg.MetaSet("tag_name", "test")
+
+					sparkplugMsg, err := converter.EncodeUMHToSparkplug(msg, "TestGroup", "TestNode")
+
+					Expect(err).NotTo(HaveOccurred(), "Should handle field name: "+tc.fieldName)
+					Expect(sparkplugMsg.Value).NotTo(BeNil(), "Should extract value from field: "+tc.fieldName)
+				}
+			})
+		})
 	})
 
 	Describe("Round-trip Conversion", func() {
@@ -446,7 +536,15 @@ var _ = Describe("FormatConverter", func() {
 			Expect(umhMsg.TopicInfo.DataContract).To(Equal("_historian"))
 			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("motor.diagnostics"))
 			Expect(umhMsg.TopicInfo.Name).To(Equal("temperature"))
-			Expect(umhMsg.Value).To(Equal(25.5))
+
+			// Handle json.Number comparison properly
+			if jsonNum, ok := umhMsg.Value.(json.Number); ok {
+				floatVal, err := jsonNum.Float64()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(floatVal).To(Equal(25.5))
+			} else {
+				Expect(umhMsg.Value).To(Equal(25.5))
+			}
 		})
 	})
 })
