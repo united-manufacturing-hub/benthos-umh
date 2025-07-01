@@ -26,15 +26,22 @@ http:
   debug_endpoints: true
 
 input:
-  uns:
-    umh_topic: "umh.v1.*"  # Match all UMH topics
-    kafka_topic: "umh.messages"
-    broker_address: "localhost:9092"
-    consumer_group: "benthos_kafka_test_12"
-
+  generate:
+    auto_replay_nacks: true
+    batch_size: 10000
+    count: 0
+    interval: 100ms
+    mapping: root = counter()
 pipeline:
   threads: 1
   processors:
+    - tag_processor:
+        defaults: |
+          msg.meta.location_path = "enterprise.plant1";
+          msg.meta.data_contract = "_historian";
+          msg.meta.tag_name = "my_data_" + msg.payload % 10000;
+          msg.payload = msg.payload;
+          return msg;
     - topic_browser: {}
 
 output:
