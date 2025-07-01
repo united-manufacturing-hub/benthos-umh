@@ -339,6 +339,9 @@ logger:
 				edgeNodeDone <- edgeStream.Run(ctx)
 			}()
 
+			// Allow Edge Node stream to start and establish MQTT connection
+			time.Sleep(2 * time.Second)
+
 			By("Starting Primary Host stream (sparkplug_b → message_capture)")
 			hostStreamBuilder := service.NewStreamBuilder()
 			err = hostStreamBuilder.SetYAML(primaryHostConfig)
