@@ -131,13 +131,20 @@ type TagProcessor struct {
 }
 
 func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics *service.Metrics) (*TagProcessor, error) {
+	// Create a NodeREDJSProcessor for SetupJSEnvironment helper
+	// TODO: Implement VM pooling for tag processor similar to NodeREDJSProcessor
+	jsProcessor, err := nodered_js_plugin.NewNodeREDJSProcessor("", logger, metrics)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create JS processor: %v", err)
+	}
+
 	return &TagProcessor{
 		config:            config,
 		logger:            logger,
 		messagesProcessed: metrics.NewCounter("messages_processed"),
 		messagesErrored:   metrics.NewCounter("messages_errored"),
 		messagesDropped:   metrics.NewCounter("messages_dropped"),
-		jsProcessor:       nodered_js_plugin.NewNodeREDJSProcessor("", logger, metrics),
+		jsProcessor:       jsProcessor,
 	}, nil
 }
 

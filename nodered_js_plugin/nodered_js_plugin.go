@@ -17,6 +17,7 @@ package nodered_js_plugin
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/dop251/goja"
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -24,22 +25,70 @@ import (
 
 // NodeREDJSProcessor defines the processor that wraps the JavaScript processor.
 type NodeREDJSProcessor struct {
-	code              string
+	program           *goja.Program
+	originalCode      string
+	vmpool            sync.Pool
 	logger            *service.Logger
 	messagesProcessed *service.MetricCounter
 	messagesErrored   *service.MetricCounter
 	messagesDropped   *service.MetricCounter
+	vmPoolHits        *service.MetricCounter
+	vmPoolMisses      *service.MetricCounter
 }
 
 // NewNodeREDJSProcessor creates a new NodeREDJSProcessor instance.
-func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service.Metrics) *NodeREDJSProcessor {
-	return &NodeREDJSProcessor{
-		code:              code,
+func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service.Metrics) (*NodeREDJSProcessor, error) {
+	// Compile the JavaScript code once
+	program, err := goja.Compile("nodered-fn.js", code, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compile JavaScript code: %v", err)
+	}
+
+	processor := &NodeREDJSProcessor{
+		program:      program,
+		originalCode: code,
+		vmpool: sync.Pool{
+			New: func() any {
+				return goja.New()
+			},
+		},
 		logger:            logger,
 		messagesProcessed: metrics.NewCounter("messages_processed"),
 		messagesErrored:   metrics.NewCounter("messages_errored"),
 		messagesDropped:   metrics.NewCounter("messages_dropped"),
+		vmPoolHits:        metrics.NewCounter("vm_pool_hits"),
+		vmPoolMisses:      metrics.NewCounter("vm_pool_misses"),
 	}
+
+	return processor, nil
+}
+
+// GetVM acquires a VM from the pool and tracks metrics
+func (u *NodeREDJSProcessor) GetVM() *goja.Runtime {
+	vm := u.vmpool.Get().(*goja.Runtime)
+	if vm == nil {
+		u.vmPoolMisses.Incr(1)
+		return goja.New()
+	}
+	u.vmPoolHits.Incr(1)
+	return vm
+}
+
+// PutVM returns a VM to the pool after proper cleanup
+func (u *NodeREDJSProcessor) PutVM(vm *goja.Runtime) {
+	// Clear any interrupt flag that might be set
+	vm.ClearInterrupt()
+	u.vmpool.Put(vm)
+}
+
+// getVM acquires a VM from the pool and tracks metrics (internal method)
+func (u *NodeREDJSProcessor) getVM() *goja.Runtime {
+	return u.GetVM()
+}
+
+// putVM returns a VM to the pool after proper cleanup (internal method)
+func (u *NodeREDJSProcessor) putVM(vm *goja.Runtime) {
+	u.PutVM(vm)
 }
 
 // ConvertMessageToJSObject converts a Benthos message to a JavaScript-compatible object with the payload being in the payload field.
@@ -120,52 +169,14 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 
 	for _, msg := range batch {
 		u.messagesProcessed.Incr(1)
-		vm := goja.New()
 
-		// Convert message to JS object
-		jsMsg, err := ConvertMessageToJSObject(msg)
+		// Process single message and return VM to pool immediately
+		processedMsg, shouldKeep, err := u.processSingleMessage(msg)
 		if err != nil {
-			u.messagesErrored.Incr(1)
-			u.logger.Errorf("%v\nOriginal message: %v", err, msg)
-			continue
-		}
-
-		// Add metadata to the message wrapper
-		meta := make(map[string]interface{})
-		if err := msg.MetaWalkMut(func(key string, value any) error {
-			meta[key] = value
-			return nil
-		}); err != nil {
-			u.messagesErrored.Incr(1)
-			u.logger.Errorf("Failed to walk message metadata: %v\nOriginal message: %v", err, msg)
-			continue
-		}
-		jsMsg["meta"] = meta
-
-		// Setup JS environment
-		if err := u.SetupJSEnvironment(vm, jsMsg); err != nil {
-			u.messagesErrored.Incr(1)
-			u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
-			continue
-		}
-
-		// Execute the JavaScript code
-		result, err := vm.RunString(u.code)
-		if err != nil {
-			u.messagesErrored.Incr(1)
-			u.logJSError(err, jsMsg)
-			continue
-		}
-
-		// Handle the execution result
-		newMsg, shouldKeep, err := u.HandleExecutionResult(result)
-		if err != nil {
-			u.messagesErrored.Incr(1)
-			u.logger.Errorf("%v\nMessage content: %v\nReturned value: %v", err, jsMsg, result.Export())
 			return nil, err
 		}
 		if shouldKeep {
-			resultBatch = append(resultBatch, newMsg)
+			resultBatch = append(resultBatch, processedMsg)
 		}
 	}
 
@@ -174,6 +185,57 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 	}
 
 	return []service.MessageBatch{resultBatch}, nil
+}
+
+// processSingleMessage processes a single message using a VM from the pool
+func (u *NodeREDJSProcessor) processSingleMessage(msg *service.Message) (*service.Message, bool, error) {
+	vm := u.getVM()
+	defer u.putVM(vm)
+
+	// Convert message to JS object
+	jsMsg, err := ConvertMessageToJSObject(msg)
+	if err != nil {
+		u.messagesErrored.Incr(1)
+		u.logger.Errorf("%v\nOriginal message: %v", err, msg)
+		return nil, false, nil
+	}
+
+	// Add metadata to the message wrapper
+	meta := make(map[string]interface{})
+	if err := msg.MetaWalkMut(func(key string, value any) error {
+		meta[key] = value
+		return nil
+	}); err != nil {
+		u.messagesErrored.Incr(1)
+		u.logger.Errorf("Failed to walk message metadata: %v\nOriginal message: %v", err, msg)
+		return nil, false, nil
+	}
+	jsMsg["meta"] = meta
+
+	// Setup JS environment
+	if err := u.SetupJSEnvironment(vm, jsMsg); err != nil {
+		u.messagesErrored.Incr(1)
+		u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
+		return nil, false, nil
+	}
+
+	// Execute the compiled JavaScript program
+	result, err := vm.RunProgram(u.program)
+	if err != nil {
+		u.messagesErrored.Incr(1)
+		u.logJSError(err, jsMsg)
+		return nil, false, nil
+	}
+
+	// Handle the execution result
+	newMsg, shouldKeep, err := u.HandleExecutionResult(result)
+	if err != nil {
+		u.messagesErrored.Incr(1)
+		u.logger.Errorf("%v\nMessage content: %v\nReturned value: %v", err, jsMsg, result.Export())
+		return nil, false, err
+	}
+
+	return newMsg, shouldKeep, nil
 }
 
 // Helper function to log JavaScript errors
@@ -188,7 +250,7 @@ Code:
 Message content: %v`,
 			jsErr.Error(),
 			stack,
-			u.code,
+			u.originalCode,
 			jsMsg)
 	} else {
 		u.logger.Errorf(`JavaScript execution failed:
@@ -197,7 +259,7 @@ Code:
 %v
 Message content: %v`,
 			err,
-			u.code,
+			u.originalCode,
 			jsMsg)
 	}
 }
@@ -253,7 +315,11 @@ return msg;`))
 					%s
 				})()
 			`, code)
-			return NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics()), nil
+			processor, err := NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics())
+			if err != nil {
+				return nil, err
+			}
+			return processor, nil
 		})
 	if err != nil {
 		panic(err)
