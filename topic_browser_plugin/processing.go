@@ -25,7 +25,8 @@ import (
 //
 // MEMORY OPTIMIZATION STRATEGY:
 // - Use sync.Pool for metadata maps to reduce allocation churn
-// - Reuse existing TopicInfo when metadata hasn't changed
+// - Aggressively reuse existing TopicInfo objects to avoid protobuf cloning
+// - Only clone protobuf objects when metadata has actually changed
 // - Minimize allocations during high-throughput processing
 func (t *TopicBrowserProcessor) bufferMessage(msg *service.Message, event *proto.EventTableEntry, topicInfo *proto.TopicInfo, unsTreeId string) error {
 	t.bufferMutex.Lock()
@@ -43,8 +44,63 @@ func (t *TopicBrowserProcessor) bufferMessage(msg *service.Message, event *proto
 	// Add to per-topic ring buffer
 	t.addEventToTopicBuffer(topic, event)
 
+	// OPTIMIZATION: Check if we already have identical TopicInfo first (before any heavy operations)
+	// This avoids both metadata merging AND protobuf cloning for unchanged topics
+	if existingTopicInfo, exists := t.fullTopicMap[unsTreeId]; exists {
+		// Quick comparison of core TopicInfo fields (non-metadata)
+		if existingTopicInfo.Level0 == topicInfo.Level0 &&
+			existingTopicInfo.DataContract == topicInfo.DataContract &&
+			existingTopicInfo.Name == topicInfo.Name &&
+			len(existingTopicInfo.LocationSublevels) == len(topicInfo.LocationSublevels) {
+
+			// Check location sublevels
+			locationMatch := true
+			for i, level := range topicInfo.LocationSublevels {
+				if i >= len(existingTopicInfo.LocationSublevels) || existingTopicInfo.LocationSublevels[i] != level {
+					locationMatch = false
+					break
+				}
+			}
+
+			// Check virtual path
+			virtualPathMatch := (existingTopicInfo.VirtualPath == nil && topicInfo.VirtualPath == nil) ||
+				(existingTopicInfo.VirtualPath != nil && topicInfo.VirtualPath != nil &&
+					*existingTopicInfo.VirtualPath == *topicInfo.VirtualPath)
+
+			if locationMatch && virtualPathMatch {
+				// Core TopicInfo is identical, now check if incoming metadata would change anything
+				incomingMetadata := topicInfo.Metadata
+				if incomingMetadata == nil {
+					incomingMetadata = make(map[string]string)
+				}
+
+				existingMetadata := existingTopicInfo.Metadata
+				if existingMetadata == nil {
+					existingMetadata = make(map[string]string)
+				}
+
+				// Fast metadata comparison
+				if len(existingMetadata) == len(incomingMetadata) {
+					metadataIdentical := true
+					for key, newValue := range incomingMetadata {
+						if existingValue, exists := existingMetadata[key]; !exists || existingValue != newValue {
+							metadataIdentical = false
+							break
+						}
+					}
+
+					if metadataIdentical {
+						// Perfect match - reuse existing TopicInfo completely (zero allocation!)
+						// No need to update cache, merge metadata, or clone anything
+						return nil
+					}
+				}
+			}
+		}
+	}
+
+	// TopicInfo differs or doesn't exist - need to merge metadata and potentially clone
 	// Update fullTopicMap with cumulative metadata using pooled maps
-	// This maintains the authoritative topic state with merged metadata across all messages
 	cumulativeMetadata, needsReturn := t.mergeTopicHeaders(unsTreeId, []*proto.TopicInfo{topicInfo})
 
 	// Ensure we return pooled map to avoid memory leaks
@@ -54,37 +110,45 @@ func (t *TopicBrowserProcessor) bufferMessage(msg *service.Message, event *proto
 		}
 	}()
 
-	// Check if we already have a TopicInfo with the same metadata
-	// If metadata is identical, reuse the existing TopicInfo object (zero allocation)
+	// OPTIMIZATION: Check if existing TopicInfo can be reused with just metadata update
 	if existingTopicInfo, exists := t.fullTopicMap[unsTreeId]; exists {
-		// Quick comparison of metadata maps
-		if len(existingTopicInfo.Metadata) == len(cumulativeMetadata) {
-			metadataIdentical := true
-			for key, newValue := range cumulativeMetadata {
-				if existingValue, exists := existingTopicInfo.Metadata[key]; !exists || existingValue != newValue {
-					metadataIdentical = false
+		// Check if only metadata changed (core fields are identical)
+		if existingTopicInfo.Level0 == topicInfo.Level0 &&
+			existingTopicInfo.DataContract == topicInfo.DataContract &&
+			existingTopicInfo.Name == topicInfo.Name &&
+			len(existingTopicInfo.LocationSublevels) == len(topicInfo.LocationSublevels) {
+
+			// Check location sublevels and virtual path again (defensive check)
+			canReuseStruct := true
+			for i, level := range topicInfo.LocationSublevels {
+				if i >= len(existingTopicInfo.LocationSublevels) || existingTopicInfo.LocationSublevels[i] != level {
+					canReuseStruct = false
 					break
 				}
 			}
 
-			// If metadata is identical, reuse existing TopicInfo (zero allocation)
-			if metadataIdentical {
-				t.updateTopicCache(unsTreeId, cumulativeMetadata, needsReturn)
-				// No need to update fullTopicMap - it already has the correct data
+			virtualPathMatch := (existingTopicInfo.VirtualPath == nil && topicInfo.VirtualPath == nil) ||
+				(existingTopicInfo.VirtualPath != nil && topicInfo.VirtualPath != nil &&
+					*existingTopicInfo.VirtualPath == *topicInfo.VirtualPath)
+
+			if canReuseStruct && virtualPathMatch {
+				// Only metadata changed - update metadata in-place instead of cloning entire struct
+				// Use optimized cache update that returns storage-ready map
+				storageMap := t.updateTopicCacheAndGetStorageMap(unsTreeId, cumulativeMetadata, needsReturn)
+				existingTopicInfo.Metadata = storageMap
+				// fullTopicMap already points to the updated object
 				return nil
 			}
 		}
 	}
 
-	// Metadata has changed - create new TopicInfo
-	// Use protobuf.Clone() to safely copy protobuf struct without copying internal mutex
+	// Core TopicInfo structure changed - need to clone the entire protobuf object
+	// This is the expensive path that we try to avoid
 	topicInfoWithCumulative := protobuf.Clone(topicInfo).(*proto.TopicInfo)
 
-	// Create a permanent copy of the metadata for the TopicInfo since the pooled map will be reused
-	topicInfoWithCumulative.Metadata = cloneMetadataMap(cumulativeMetadata)
-
-	// Update cache with the merged metadata
-	t.updateTopicCache(unsTreeId, cumulativeMetadata, needsReturn)
+	// Get storage-ready metadata map from cache update (eliminates double cloning)
+	storageMap := t.updateTopicCacheAndGetStorageMap(unsTreeId, cumulativeMetadata, needsReturn)
+	topicInfoWithCumulative.Metadata = storageMap
 
 	// Update full topic map (authoritative state) with cumulative metadata
 	t.fullTopicMap[unsTreeId] = topicInfoWithCumulative
