@@ -70,10 +70,13 @@ import (
 // ~200MB+ of map[string]string objects per processing cycle.
 //
 // MEMORY OPTIMIZATION STRATEGY:
-// - Reuse existing map[string]string instances instead of allocating new ones
-// - Dramatically reduce garbage collection pressure (2.8GB alloc_space → much lower)
+// - Reuse existing map[string]string instances for temporary/working maps
+// - Dramatically reduce garbage collection pressure for short-lived maps
 // - Pool automatically handles cleanup under memory pressure
 // - Thread-safe and well-tested Go standard pattern
+//
+// IMPORTANT: Only use this pool for temporary maps with function-scoped lifecycles!
+// For maps stored in cache/TopicInfo (external lifecycle), use direct allocation.
 var metadataMapPool = sync.Pool{
 	New: func() interface{} {
 		// Pre-allocate with reasonable capacity for typical metadata
@@ -82,17 +85,9 @@ var metadataMapPool = sync.Pool{
 	},
 }
 
-// clonedMetadataMapPool provides a separate pool for maps that need to be stored long-term.
-// This pool is for defensive copies that will outlive the current function scope.
-// Separate from temporary working maps to avoid mixing concerns.
-var clonedMetadataMapPool = sync.Pool{
-	New: func() interface{} {
-		return make(map[string]string, 8)
-	},
-}
-
 // getMetadataMap retrieves a clean metadata map from the pool.
 // The returned map is guaranteed to be empty and ready for use.
+// IMPORTANT: Must be returned via putMetadataMap() when done.
 func getMetadataMap() map[string]string {
 	return metadataMapPool.Get().(map[string]string)
 }
@@ -110,54 +105,24 @@ func putMetadataMap(m map[string]string) {
 	metadataMapPool.Put(m)
 }
 
-// getClonedMetadataMap retrieves a clean map from the cloned map pool.
-// Use this for maps that need to be stored/referenced beyond the current function scope.
-func getClonedMetadataMap() map[string]string {
-	return clonedMetadataMapPool.Get().(map[string]string)
-}
-
-// putClonedMetadataMap returns a cloned metadata map to its pool after clearing it.
-// Only call this when you're absolutely sure the map is no longer referenced anywhere.
-func putClonedMetadataMap(m map[string]string) {
-	for k := range m {
-		delete(m, k)
-	}
-	clonedMetadataMapPool.Put(m)
-}
-
-// cloneMetadataMap creates a defensive copy of a metadata map using pooled allocation.
+// cloneMetadataMap creates a defensive copy of a metadata map using DIRECT allocation.
 // Use this when you need to store a map reference that outlives the current function scope.
 //
-// OPTIMIZATION: Uses sync.Pool to reduce allocations
+// IMPORTANT: Uses direct allocation (not pooled) because cloned maps typically have
+// external lifecycles (stored in cache, TopicInfo, etc.) where we can't control cleanup.
 //
 // Parameters:
 //   - source: The map to clone
 //
 // Returns:
-//   - map[string]string: A pooled map with copied data (safe to store/reference)
+//   - map[string]string: A new map with copied data (safe to store/reference long-term)
 func cloneMetadataMap(source map[string]string) map[string]string {
 	if source == nil {
 		return nil
 	}
 
-	// Use pooled map instead of make() to reduce allocations
-	clone := getClonedMetadataMap()
-
-	// Copy data
-	for k, v := range source {
-		clone[k] = v
-	}
-	return clone
-}
-
-// cloneMetadataMapDirect creates a defensive copy using direct allocation.
-// Use this for maps that will be managed by external systems (like protobuf objects)
-// where we can't control the lifecycle for pool management.
-func cloneMetadataMapDirect(source map[string]string) map[string]string {
-	if source == nil {
-		return nil
-	}
-
+	// Direct allocation for external lifecycle management
+	// These maps are stored in cache/TopicInfo and we can't control when they're freed
 	clone := make(map[string]string, len(source))
 	for k, v := range source {
 		clone[k] = v
@@ -319,13 +284,13 @@ func (t *TopicBrowserProcessor) updateTopicCacheAndGetStorageMap(unsTreeId strin
 
 	if isPooled {
 		// Headers is pooled, so we need separate maps for cache and storage
-		cacheMap = cloneMetadataMap(headers)         // Pooled clone for cache
-		storageMap = cloneMetadataMapDirect(headers) // Direct allocation for protobuf (external lifecycle)
+		cacheMap = cloneMetadataMap(headers)   // Pooled clone for cache
+		storageMap = cloneMetadataMap(headers) // Direct allocation for protobuf (external lifecycle)
 	} else {
 		// Headers is already a stable reference (not pooled)
 		// We can use it directly for cache, but need a copy for storage to avoid shared references
 		cacheMap = headers
-		storageMap = cloneMetadataMapDirect(headers)
+		storageMap = cloneMetadataMap(headers)
 	}
 
 	t.topicMetadataCache.Add(unsTreeId, cacheMap)
