@@ -1,3 +1,5 @@
+//go:build integration
+
 // Copyright 2025 UMH Systems GmbH
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,6 +75,11 @@ import (
 	_ "github.com/united-manufacturing-hub/benthos-umh/tag_processor_plugin" // Import tag processor for full pipeline tests
 )
 
+func TestSparkplugIntegration(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Sparkplug B Integration Test Suite")
+}
+
 // Package-level variables for test infrastructure
 // Simple test-specific MessageCapture - set by each test
 var currentTestCapture *MessageCapture
@@ -120,6 +127,23 @@ func getCurrentTestCapture() *MessageCapture {
 	return currentTestCapture
 }
 
+// Helper functions for integration testing
+func stringPtr(s string) *string {
+	return &s
+}
+
+func uint64Ptr(u uint64) *uint64 {
+	return &u
+}
+
+func uint32Ptr(u uint32) *uint32 {
+	return &u
+}
+
+func boolPtr(b bool) *bool {
+	return &b
+}
+
 func init() {
 	// Register custom output for tests
 	err := service.RegisterOutput("message_capture",
@@ -134,11 +158,6 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-}
-
-func TestSparkplugIntegrationBroker(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Sparkplug B Integration Test Suite")
 }
 
 var _ = BeforeSuite(func() {
@@ -195,6 +214,7 @@ func stopMosquittoContainer() {
 }
 
 var _ = Describe("Real MQTT Broker Integration", func() {
+
 	Context("End-to-End Message Processing", func() {
 		var (
 			brokerURL  string
@@ -1347,7 +1367,7 @@ logger:
 			// No cleanup needed - MessageCapture instances clean themselves up
 		})
 
-		FIt("should map UMH location paths to Sparkplug B structure correctly", func() {
+		It("should map UMH location paths to Sparkplug B structure correctly", func() {
 			// Test J: UMH-Core Location Path Mapping
 			//
 			// Tests full pipeline: UMH location_path → Sparkplug B topics → UMH location_path
@@ -1476,6 +1496,8 @@ pipeline:
                 return null;
             }
 
+            // Use Sparkplug B to format the message
+            msg.meta.timestamp_ms = msg.meta.spb_timestamp;
             msg.payload = msg.payload.value;
             msg.meta.location_path = msg.meta.umh_location_path;
             msg.meta.tag_name = msg.meta.umh_tag_name;

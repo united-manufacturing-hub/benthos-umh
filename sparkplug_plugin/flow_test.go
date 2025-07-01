@@ -1,3 +1,5 @@
+//go:build !integration
+
 // Copyright 2025 UMH Systems GmbH
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,8 +14,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build flow
-
 // Flow tests for Sparkplug B plugin - Lifecycle testing without MQTT
 // Tests complete message lifecycle by feeding vectors to real Input plugin (+3s)
 
@@ -21,7 +21,6 @@ package sparkplug_plugin_test
 
 import (
 	"encoding/base64"
-	"os"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -36,27 +35,7 @@ func TestSparkplugFlowLifecycle(t *testing.T) {
 	RunSpecs(t, "Sparkplug B Flow Test Suite")
 }
 
-// Helper functions for flow testing
-func stringPtr(s string) *string {
-	return &s
-}
-
-func uint64Ptr(u uint64) *uint64 {
-	return &u
-}
-
-func uint32Ptr(u uint32) *uint32 {
-	return &u
-}
-
 var _ = Describe("Lifecycle Flow Tests", func() {
-	BeforeEach(func() {
-		testActivated := os.Getenv("TEST_SPARKPLUG_UNIT")
-		if testActivated == "" {
-			Skip("Skipping Sparkplug B unit tests: TEST_SPARKPLUG_UNIT not set")
-			return
-		}
-	})
 
 	Context("Basic Message Lifecycle", func() {
 		It("should handle NBIRTH → NDATA sequence", func() {
@@ -431,13 +410,6 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 })
 
 var _ = Describe("Message Processing Pipeline", func() {
-	BeforeEach(func() {
-		testActivated := os.Getenv("TEST_SPARKPLUG_UNIT")
-		if testActivated == "" {
-			Skip("Skipping Sparkplug B unit tests: TEST_SPARKPLUG_UNIT not set")
-			return
-		}
-	})
 
 	Context("Message Format Validation", func() {
 		It("should validate Sparkplug message structure", func() {
@@ -713,13 +685,6 @@ var _ = Describe("Message Processing Pipeline", func() {
 })
 
 var _ = Describe("Device-Level Message Handling", func() {
-	BeforeEach(func() {
-		testActivated := os.Getenv("TEST_SPARKPLUG_UNIT")
-		if testActivated == "" {
-			Skip("Skipping Sparkplug B unit tests: TEST_SPARKPLUG_UNIT not set")
-			return
-		}
-	})
 
 	Context("DBIRTH and DDATA Processing", func() {
 		It("should handle DBIRTH → DDATA device lifecycle", func() {

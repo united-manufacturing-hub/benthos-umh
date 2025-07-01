@@ -96,8 +96,7 @@ test-tag-processor:
 
 .PHONY: test-sparkplug
 test-sparkplug:
-	@TEST_SPARKPLUG_UNIT=true \
-		$(GINKGO_CMD) $(GINKGO_FLAGS) ./sparkplug_plugin/...
+	$(GINKGO_CMD) $(GINKGO_FLAGS) ./sparkplug_plugin/...
 
 .PHONY: test-classic-to-core
 test-classic-to-core:

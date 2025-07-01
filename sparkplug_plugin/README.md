@@ -26,21 +26,49 @@ make test-integration-local
 
 ## Testing
 
-### Unit Tests
+Tests are organized using **Go build tags** (the idiomatic approach) for clean separation:
+
+### Unit Tests (Default - Build Tag: `!integration`)
+- **Files**: `*_test.go` with `//go:build !integration`
+- **Purpose**: Fast offline tests for core components (165 specs total)
+- **Duration**: < 3 seconds  
+- **Dependencies**: None (pure Go code)
+- **Includes**: AliasCache, TypeConverter, FormatConverter, Payload validation, Flow testing
 
 ```bash
-cd sparkplug_plugin
-go test -v
+# From project root
+go test ./sparkplug_plugin
+
+# Or with Ginkgo for better output
+ginkgo ./sparkplug_plugin
+
+# From sparkplug_plugin directory
+make test-unit
 ```
 
-**Expected Results**: 90/90 tests passing, including:
+**Expected Results**: 165/165 tests passing, including:
 - Message type parsing and validation
 - Alias resolution logic
 - Sparkplug B specification compliance
 - Configuration validation
 - Error handling scenarios
 
-### Integration Testing
+### Integration Tests (Build Tag: `integration`)
+- **Files**: `integration_test.go` with `//go:build integration`
+- **Purpose**: Real MQTT broker integration, Docker containers (12 specs)
+- **Duration**: ~30 seconds
+- **Dependencies**: Docker (for Mosquitto MQTT broker)
+
+```bash
+# From project root
+go test -tags=integration ./sparkplug_plugin
+
+# Or with Ginkgo
+ginkgo --tags=integration ./sparkplug_plugin
+
+# From sparkplug_plugin directory
+make test-integration
+```
 
 #### Automated Integration Test
 
@@ -101,6 +129,49 @@ Primary Host → STATE → Edge Node (host lifecycle)
 # Stop Benthos processes (Ctrl+C)
 docker stop mosquitto && docker rm mosquitto
 ```
+
+### Test File Structure
+
+```
+sparkplug_plugin/
+├── unit_test.go                 # Core unit tests (//go:build !integration)
+├── format_converter_test.go     # Format conversion unit tests
+├── payload_test.go              # Payload decoding unit tests  
+├── flow_test.go                 # Message flow unit tests
+├── integration_test.go          # Integration tests (//go:build integration)
+└── test_vectors.go              # Test data vectors
+```
+
+### Makefile Targets
+
+From `sparkplug_plugin/` directory:
+
+- `make test` - Unit tests only (default, fast)
+- `make test-unit` - Unit tests with standard output
+- `make test-unit-verbose` - Unit tests with verbose Ginkgo output
+- `make test-integration` - Integration tests with Docker Mosquitto
+- `make test-integration-verbose` - Integration tests with verbose output
+- `make test-all` - All offline tests (unit tests)
+- `make coverage` - Generate test coverage report
+
+### All Tests (Unit + Integration)
+```bash
+# From project root
+go test ./sparkplug_plugin && go test -tags=integration ./sparkplug_plugin
+
+# From sparkplug_plugin directory
+make test-all && make test-integration
+```
+
+### Why Build Tags?
+
+Build tags are the idiomatic Go approach for test separation because:
+
+1. **Standard tooling**: Works with `go test`, `ginkgo`, VS Code, GoLand
+2. **No environment setup**: No need to remember environment variables
+3. **CI/CD friendly**: Easy to separate in GitHub Actions
+4. **Performance**: Unit tests run by default (fast feedback)
+5. **Explicit**: Clear separation of concerns
 
 ### Performance Testing
 
