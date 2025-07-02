@@ -152,21 +152,21 @@ The plugin attaches comprehensive Sparkplug-specific metadata fields to each out
 
 These are the main metadata fields that most users will need for processing Sparkplug messages:
 
-* `sparkplug_msg_type`: The Sparkplug message type (e.g., "NBIRTH", "NDATA", "NDEATH", "DBIRTH", "DDATA", "DDEATH")
-* `group_id`: The Sparkplug Group ID of the source message
-* `edge_node_id`: The Edge Node ID (equipment or gateway name)
-* `device_id`: The Device ID (for metrics from devices under an edge node, empty for node-level messages)
-* `sparkplug_device_key`: Combined device identifier in format "group_id/edge_node_id" or "group_id/edge_node_id/device_id"
-* `mqtt_topic`: The original MQTT topic the message was received from
+* `spb_message_type`: The Sparkplug message type (e.g., "NBIRTH", "NDATA", "NDEATH", "DBIRTH", "DDATA", "DDEATH")
+* `spb_group_id`: The Sparkplug Group ID of the source message
+* `spb_edge_node_id`: The Edge Node ID (equipment or gateway name)
+* `spb_device_id`: The Device ID (for metrics from devices under an edge node, empty for node-level messages)
+* `spb_device_key`: Combined device identifier in format "group_id/edge_node_id" or "group_id/edge_node_id/device_id"
+* `spb_topic`: The original MQTT topic the message was received from
 * `tag_name`: The extracted metric name (for individual metrics when auto_split_metrics is enabled)
 
 #### Secondary Metadata Fields (Advanced)
 
 These fields provide additional Sparkplug context and are primarily for debugging or advanced processing:
 
-* `spb_group`: Same as `group_id` (for backward compatibility)
-* `spb_edge_node`: Same as `edge_node_id` (for backward compatibility)
-* `spb_device`: Same as `device_id` (for backward compatibility)
+* `spb_group`: Same as `spb_group_id` (for backward compatibility)
+* `spb_edge_node`: Same as `spb_edge_node_id` (for backward compatibility)
+* `spb_device`: Same as `spb_device_id` (for backward compatibility)
 * `spb_seq`: The sequence number of the Sparkplug message
 * `spb_bdseq`: The birth-death sequence number of the session
 * `spb_timestamp`: The timestamp (in epoch ms) provided with the metric
