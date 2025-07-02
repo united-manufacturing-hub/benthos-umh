@@ -399,7 +399,7 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 					currentInterval = t.adaptiveController.GetCurrentInterval()
 				}
 
-				t.logger.Infof("CPU-AWARE CATCH-UP [OVERFLOW]: "+
+				t.logger.Debugf("CPU-AWARE CATCH-UP [OVERFLOW]: "+
 					"trigger=buffer_full, "+
 					"strategy=maintain_state_skip_emit_throttled, "+
 					"flush_duration=%v, "+
@@ -466,7 +466,7 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 		emaBytes := t.adaptiveController.emaBytes
 		t.adaptiveController.mu.Unlock()
 
-		t.logger.Infof("CPU-AWARE DEBUG [batch_size=%d]: "+
+		t.logger.Debugf("CPU-AWARE DEBUG [batch_size=%d]: "+
 			"cpu_load=%.1f%%, "+
 			"current_interval=%v, "+
 			"ema_bytes=%.0f, "+
@@ -521,7 +521,7 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 				overflowMessages += len(batch)
 			}
 
-			t.logger.Infof("CPU-AWARE FLUSH [ADAPTIVE]: "+
+			t.logger.Debugf("CPU-AWARE FLUSH [ADAPTIVE]: "+
 				"flush_duration=%v, "+
 				"interval_batches=%d, "+
 				"interval_messages=%d, "+
@@ -573,7 +573,7 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 				overflowMessages += len(batch)
 			}
 
-			t.logger.Infof("CPU-AWARE FLUSH [FIXED-INTERVAL]: "+
+			t.logger.Debugf("CPU-AWARE FLUSH [FIXED-INTERVAL]: "+
 				"flush_duration=%v, "+
 				"interval_batches=%d, "+
 				"interval_messages=%d, "+
@@ -612,7 +612,7 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 				overflowMessages += len(batch)
 			}
 
-			t.logger.Infof("CPU-AWARE EMISSION [OVERFLOW-ONLY]: "+
+			t.logger.Debugf("CPU-AWARE EMISSION [OVERFLOW-ONLY]: "+
 				"overflow_batches=%d, "+
 				"overflow_messages=%d, "+
 				"interval_not_elapsed=true, "+
@@ -627,7 +627,7 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 	// No emissions occurred - messages remain buffered, waiting for next interval
 	// ACK is deferred until emission happens
 	if t.logger != nil {
-		t.logger.Infof("CPU-AWARE NO-EMISSION: "+
+		t.logger.Debugf("CPU-AWARE NO-EMISSION: "+
 			"buffer_size=%d, "+
 			"interval_elapsed=false, "+
 			"should_flush=%t",

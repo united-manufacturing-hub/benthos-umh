@@ -148,13 +148,8 @@ func (c *AdaptiveController) updateInterval() {
 		targetInterval = baseInterval + adjustment
 	}
 
-	// Clamp to bounds
-	if targetInterval < minEmitInterval {
-		targetInterval = minEmitInterval
-	}
-	if targetInterval > maxEmitInterval {
-		targetInterval = maxEmitInterval
-	}
+	// Clamp to bounds using Go 1.21+ min/max built-ins
+	targetInterval = max(minEmitInterval, min(maxEmitInterval, targetInterval))
 
 	// Apply gradual change to prevent oscillation
 	newInterval := c.applyGradualChange(currentInterval, targetInterval)

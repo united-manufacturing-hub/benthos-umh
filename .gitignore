@@ -215,3 +215,6 @@ umh-core-data*.pprof
 
 # Local data directories  
 umh-core-data/
+
+# Diffs
+*.diff

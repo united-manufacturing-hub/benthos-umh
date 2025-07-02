@@ -46,9 +46,7 @@ func getPooledHeaderMap() map[string]string {
 // putPooledHeaderMap returns a header map to the pool after clearing it
 func putPooledHeaderMap(m map[string]string) {
 	// Clear all entries to prevent data leakage between reuses
-	for k := range m {
-		delete(m, k)
-	}
+	clear(m)
 	headerMapPool.Put(m)
 }
 

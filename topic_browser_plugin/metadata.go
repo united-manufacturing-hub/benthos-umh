@@ -15,6 +15,7 @@
 package topic_browser_plugin
 
 import (
+	"maps"
 	"sync"
 
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
@@ -99,9 +100,7 @@ func getMetadataMap() map[string]string {
 //   - m: The map to return to the pool (will be cleared automatically)
 func putMetadataMap(m map[string]string) {
 	// Clear the map before returning to pool to prevent data leakage
-	for k := range m {
-		delete(m, k)
-	}
+	clear(m)
 	metadataMapPool.Put(m)
 }
 
@@ -121,13 +120,8 @@ func cloneMetadataMap(source map[string]string) map[string]string {
 		return nil
 	}
 
-	// Direct allocation for external lifecycle management
-	// These maps are stored in cache/TopicInfo and we can't control when they're freed
-	clone := make(map[string]string, len(source))
-	for k, v := range source {
-		clone[k] = v
-	}
-	return clone
+	// Use Go 1.21+ maps.Clone for more efficient cloning
+	return maps.Clone(source)
 }
 
 // mergeTopicHeaders efficiently merges Kafka headers from multiple TopicInfo objects
@@ -245,19 +239,10 @@ func (t *TopicBrowserProcessor) updateTopicCacheAndGetStorageMap(unsTreeId strin
 		cachedHeaders := stored.(map[string]string)
 
 		// Quick comparison: if maps are identical, skip cache update
-		if len(cachedHeaders) == len(headers) {
-			identical := true
-			for key, newValue := range headers {
-				if cachedValue, exists := cachedHeaders[key]; !exists || cachedValue != newValue {
-					identical = false
-					break
-				}
-			}
-			if identical {
-				// Data is identical, no need to update cache
-				// Return the cached map for storage (no cloning needed!)
-				return cachedHeaders
-			}
+		if maps.Equal(cachedHeaders, headers) {
+			// Data is identical, no need to update cache
+			// Return the cached map for storage (no cloning needed!)
+			return cachedHeaders
 		}
 	}
 

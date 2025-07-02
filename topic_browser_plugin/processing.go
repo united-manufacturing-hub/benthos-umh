@@ -15,6 +15,8 @@
 package topic_browser_plugin
 
 import (
+	"maps"
+
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 	protobuf "google.golang.org/protobuf/proto"
@@ -79,21 +81,11 @@ func (t *TopicBrowserProcessor) bufferMessage(msg *service.Message, event *proto
 					existingMetadata = make(map[string]string)
 				}
 
-				// Fast metadata comparison
-				if len(existingMetadata) == len(incomingMetadata) {
-					metadataIdentical := true
-					for key, newValue := range incomingMetadata {
-						if existingValue, exists := existingMetadata[key]; !exists || existingValue != newValue {
-							metadataIdentical = false
-							break
-						}
-					}
-
-					if metadataIdentical {
-						// Perfect match - reuse existing TopicInfo completely (zero allocation!)
-						// No need to update cache, merge metadata, or clone anything
-						return nil
-					}
+				// Fast metadata comparison using Go 1.21+ maps.Equal
+				if maps.Equal(existingMetadata, incomingMetadata) {
+					// Perfect match - reuse existing TopicInfo completely (zero allocation!)
+					// No need to update cache, merge metadata, or clone anything
+					return nil
 				}
 			}
 		}
