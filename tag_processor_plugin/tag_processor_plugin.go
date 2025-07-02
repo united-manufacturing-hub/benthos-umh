@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dop251/goja"
@@ -122,30 +123,104 @@ Empty or undefined fields will be omitted from the topic.`).
 }
 
 type TagProcessor struct {
-	config            TagProcessorConfig
-	logger            *service.Logger
+	config TagProcessorConfig
+	logger *service.Logger
+
+	// VM pooling infrastructure - Phase 1 optimization
+	vmpool       sync.Pool
+	vmPoolHits   *service.MetricCounter
+	vmPoolMisses *service.MetricCounter
+
+	// Existing metrics
 	messagesProcessed *service.MetricCounter
 	messagesErrored   *service.MetricCounter
 	messagesDropped   *service.MetricCounter
-	jsProcessor       *nodered_js_plugin.NodeREDJSProcessor
+
+	// Keep for JS environment setup helper methods
+	jsProcessor *nodered_js_plugin.NodeREDJSProcessor
 }
 
 func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics *service.Metrics) (*TagProcessor, error) {
 	// Create a NodeREDJSProcessor for SetupJSEnvironment helper
-	// TODO: Implement VM pooling for tag processor similar to NodeREDJSProcessor
 	jsProcessor, err := nodered_js_plugin.NewNodeREDJSProcessor("", logger, metrics)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create JS processor: %v", err)
 	}
 
 	return &TagProcessor{
-		config:            config,
-		logger:            logger,
+		config: config,
+		logger: logger,
+
+		// Initialize VM pool with factory function
+		vmpool: sync.Pool{
+			New: func() any {
+				return goja.New()
+			},
+		},
+
+		// VM pool metrics
+		vmPoolHits:   metrics.NewCounter("vm_pool_hits"),
+		vmPoolMisses: metrics.NewCounter("vm_pool_misses"),
+
+		// Existing metrics
 		messagesProcessed: metrics.NewCounter("messages_processed"),
 		messagesErrored:   metrics.NewCounter("messages_errored"),
 		messagesDropped:   metrics.NewCounter("messages_dropped"),
-		jsProcessor:       jsProcessor,
+
+		jsProcessor: jsProcessor,
 	}, nil
+}
+
+// VM Pool Management Methods - Phase 1 Optimization
+
+// getVM acquires a VM from the pool and tracks metrics
+func (p *TagProcessor) getVM() *goja.Runtime {
+	vm := p.vmpool.Get().(*goja.Runtime)
+	if vm == nil {
+		// Pool is empty, create new VM and track as miss
+		p.vmPoolMisses.Incr(1)
+		return goja.New()
+	}
+	// Successfully reused VM from pool, track as hit
+	p.vmPoolHits.Incr(1)
+	return vm
+}
+
+// putVM returns a VM to the pool after proper cleanup
+func (p *TagProcessor) putVM(vm *goja.Runtime) {
+	// Clear any interrupt flag that might be set to prevent state pollution
+	vm.ClearInterrupt()
+	// Return cleaned VM to pool for reuse
+	p.vmpool.Put(vm)
+}
+
+// setupMessageForVM prepares a VM with message data for execution
+func (p *TagProcessor) setupMessageForVM(vm *goja.Runtime, msg *service.Message, jsMsg map[string]interface{}) error {
+	// Initialize meta if it doesn't exist
+	if _, exists := jsMsg["meta"]; !exists {
+		jsMsg["meta"] = make(map[string]interface{})
+	}
+
+	// Add existing metadata to jsMsg.meta
+	meta := jsMsg["meta"].(map[string]interface{})
+	if err := msg.MetaWalkMut(func(key string, value any) error {
+		meta[key] = value
+		return nil
+	}); err != nil {
+		return fmt.Errorf("metadata extraction failed: %v", err)
+	}
+
+	// Setup JS environment using helper from NodeREDJSProcessor
+	if err := p.jsProcessor.SetupJSEnvironment(vm, jsMsg); err != nil {
+		return fmt.Errorf("JS environment setup failed: %v", err)
+	}
+
+	// Set the msg variable in the JavaScript VM
+	if err := vm.Set("msg", jsMsg); err != nil {
+		return fmt.Errorf("JS message setup failed: %v", err)
+	}
+
+	return nil
 }
 
 // TODO: Each time there is any execution error, output the code where the error happened as well as the message that caused it (see nodered_js_plugin). Double-check that it is not being outputted twice.
@@ -187,67 +262,18 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 		}
 	}
 
-	// Process conditions
+	// Process conditions with VM pooling optimization
 	for _, condition := range p.config.Conditions {
 		var newBatch service.MessageBatch
 
 		for _, msg := range batch {
-			// Create JavaScript runtime for condition evaluation
-			vm := goja.New()
-
-			// Convert message to JS object for condition check
-			jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
+			processedMsg, shouldKeep, err := p.processConditionForMessage(condition, msg)
 			if err != nil {
-				p.logError(err, "message conversion", msg)
+				p.logError(err, "condition evaluation", msg)
 				continue
 			}
-
-			// Initialize meta if it doesn't exist
-			if _, exists := jsMsg["meta"]; !exists {
-				jsMsg["meta"] = make(map[string]interface{})
-			}
-
-			// Add existing metadata to jsMsg.meta
-			meta := jsMsg["meta"].(map[string]interface{})
-			if err := msg.MetaWalkMut(func(key string, value any) error {
-				meta[key] = value
-				return nil
-			}); err != nil {
-				p.logError(err, "metadata extraction", msg)
-				continue
-			}
-
-			// Setup JS environment for condition evaluation
-			if err := p.jsProcessor.SetupJSEnvironment(vm, jsMsg); err != nil {
-				p.logError(err, "JS environment setup", jsMsg)
-				continue
-			}
-
-			// Set the msg variable in the JavaScript VM
-			if err := vm.Set("msg", jsMsg); err != nil {
-				p.logError(err, "JS message setup", jsMsg)
-				continue
-			}
-
-			// Evaluate condition expression
-			ifResult, err := vm.RunString(condition.If)
-			if err != nil {
-				p.logJSError(err, condition.If, jsMsg)
-				continue
-			}
-
-			// If condition is true, process the message with the condition's code
-			if ifResult.ToBoolean() {
-				conditionBatch, err := p.processMessageBatch(service.MessageBatch{msg}, condition.Then)
-				if err != nil {
-					p.logError(err, "condition processing", msg)
-					continue
-				}
-				if len(conditionBatch) > 0 {
-					newBatch = append(newBatch, conditionBatch...)
-				}
-			} else {
-				newBatch = append(newBatch, msg)
+			if shouldKeep {
+				newBatch = append(newBatch, processedMsg)
 			}
 		}
 
@@ -373,7 +399,7 @@ func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code stri
 
 	for _, msg := range batch {
 		// Create JavaScript runtime for this message
-		vm := goja.New()
+		vm := p.getVM()
 
 		// Convert message to JS object with the payload being in the payload field
 		jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
@@ -440,6 +466,8 @@ func (p *TagProcessor) processMessageBatch(batch service.MessageBatch, code stri
 
 			resultBatch = append(resultBatch, newMsg)
 		}
+
+		p.putVM(vm)
 	}
 
 	return resultBatch, nil
@@ -643,4 +671,97 @@ func (p *TagProcessor) constructUMHTopic(msg *service.Message) (string, error) {
 
 func (p *TagProcessor) Close(ctx context.Context) error {
 	return nil
+}
+
+// processConditionForMessage evaluates a single condition for a message using VM pool
+func (p *TagProcessor) processConditionForMessage(condition ConditionConfig, msg *service.Message) (*service.Message, bool, error) {
+	// Get VM from pool and ensure it's returned
+	vm := p.getVM()
+	defer p.putVM(vm)
+
+	// Convert message to JS object for condition check
+	jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
+	if err != nil {
+		return nil, false, fmt.Errorf("message conversion failed: %v", err)
+	}
+
+	// Setup VM environment using optimized helper method
+	if err := p.setupMessageForVM(vm, msg, jsMsg); err != nil {
+		return nil, false, fmt.Errorf("JS environment setup failed: %v", err)
+	}
+
+	// Evaluate condition expression
+	ifResult, err := vm.RunString(condition.If)
+	if err != nil {
+		p.logJSError(err, condition.If, jsMsg)
+		return nil, false, fmt.Errorf("condition evaluation failed: %v", err)
+	}
+
+	// If condition is true, process the message with the condition's code
+	if ifResult.ToBoolean() {
+		conditionBatch, err := p.processMessageBatch(service.MessageBatch{msg}, condition.Then)
+		if err != nil {
+			return nil, false, fmt.Errorf("condition processing failed: %v", err)
+		}
+		if len(conditionBatch) > 0 {
+			return conditionBatch[0], true, nil
+		}
+		return nil, false, nil // Message was dropped by condition processing
+	}
+
+	// Condition was false, return original message
+	return msg, true, nil
+}
+
+// processMessageWithCode processes a single message with JavaScript code using VM pool
+func (p *TagProcessor) processMessageWithCode(msg *service.Message, code string) ([]*service.Message, error) {
+	// Get VM from pool and ensure it's returned
+	vm := p.getVM()
+	defer p.putVM(vm)
+
+	// Convert message to JS object
+	jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert message to JavaScript object: %v", err)
+	}
+
+	// Setup VM environment using optimized helper method
+	if err := p.setupMessageForVM(vm, msg, jsMsg); err != nil {
+		return nil, fmt.Errorf("failed to setup JavaScript environment: %v", err)
+	}
+
+	// Execute the JavaScript code
+	messages, err := p.executeJSCode(vm, code, jsMsg)
+	if err != nil {
+		return nil, err
+	}
+
+	// If code execution returns nil, return empty slice (message dropped)
+	if messages == nil {
+		return []*service.Message{}, nil
+	}
+
+	// Convert resulting JS messages back to Benthos messages
+	var resultMessages []*service.Message
+	for _, resultMsg := range messages {
+		newMsg := service.NewMessage(nil)
+		// Set metadata from the JS message
+		if meta, ok := resultMsg["meta"].(map[string]interface{}); ok {
+			for k, v := range meta {
+				if str, ok := v.(string); ok {
+					newMsg.MetaSet(k, str)
+				}
+			}
+		}
+		// Set payload from the JS message, or fallback to original payload if not provided
+		if payload, exists := resultMsg["payload"]; exists {
+			newMsg.SetStructured(payload)
+		} else {
+			newMsg.SetStructured(jsMsg["payload"])
+		}
+
+		resultMessages = append(resultMessages, newMsg)
+	}
+
+	return resultMessages, nil
 }

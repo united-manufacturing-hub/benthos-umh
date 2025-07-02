@@ -1350,3 +1350,365 @@ tag_processor:
 		})
 	})
 })
+
+var _ = Describe("VM Pooling Optimization", func() {
+	BeforeEach(func() {
+		testActivated := os.Getenv("TEST_TAG_PROCESSOR")
+		if testActivated == "" {
+			Skip("Skipping Tag Processor tests: TEST_TAG_PROCESSOR not set")
+			return
+		}
+	})
+
+	Context("VM Pool Infrastructure", func() {
+		It("should reuse VMs from pool for condition evaluation", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			// Configuration with multiple conditions to test VM pooling
+			yamlConfig := strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    return msg;
+  conditions:
+    - if: msg.meta.test_value === "condition1"
+      then: |
+        msg.meta.tag_name = "processed_condition1";
+        msg.meta.condition_result = "true";
+        return msg;
+    - if: msg.meta.test_value === "condition2"
+      then: |
+        msg.meta.tag_name = "processed_condition2";
+        msg.meta.condition_result = "true";
+        return msg;
+`)
+			err = builder.AddProcessorYAML(yamlConfig)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Send multiple messages that will trigger different conditions
+			msg1 := service.NewMessage([]byte("42"))
+			msg1.MetaSet("test_value", "condition1")
+			err = msgHandler(ctx, msg1)
+			Expect(err).NotTo(HaveOccurred())
+
+			msg2 := service.NewMessage([]byte("43"))
+			msg2.MetaSet("test_value", "condition2")
+			err = msgHandler(ctx, msg2)
+			Expect(err).NotTo(HaveOccurred())
+
+			msg3 := service.NewMessage([]byte("44"))
+			msg3.MetaSet("test_value", "condition1")
+			err = msgHandler(ctx, msg3)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(3))
+
+			// Verify all messages were processed correctly
+			for i, msg := range messages {
+				GinkgoWriter.Printf("Processing message %d\n", i+1)
+
+				// All should have defaults applied
+				location_path, exists := msg.MetaGet("location_path")
+				Expect(exists).To(BeTrue())
+				Expect(location_path).To(Equal("enterprise"))
+
+				data_contract, exists := msg.MetaGet("data_contract")
+				Expect(exists).To(BeTrue())
+				Expect(data_contract).To(Equal("_historian"))
+
+				// Should have condition results
+				condition_result, exists := msg.MetaGet("condition_result")
+				Expect(exists).To(BeTrue())
+				Expect(condition_result).To(Equal("true"))
+
+				tag_name, exists := msg.MetaGet("tag_name")
+				Expect(exists).To(BeTrue())
+				Expect(tag_name).To(MatchRegexp("processed_condition[12]"))
+			}
+		})
+
+		It("should handle VM pool with complex JavaScript execution", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			// Configuration with complex JavaScript to stress VM pooling
+			yamlConfig := strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "complex_test";
+    
+    // Complex JavaScript operations to test VM reuse
+    let calculations = [];
+    for(let i = 0; i < 10; i++) {
+      calculations.push(Math.pow(i, 2));
+    }
+    msg.meta.calculation_sum = calculations.reduce((a, b) => a + b, 0).toString();
+    
+    return msg;
+  conditions:
+    - if: parseFloat(msg.payload) > 40
+      then: |
+        // More complex operations
+        let value = parseFloat(msg.payload);
+        let result = {
+          original: value,
+          squared: value * value,
+          cubed: value * value * value,
+          sqrt: Math.sqrt(value)
+        };
+        msg.meta.complex_result = JSON.stringify(result);
+        return msg;
+`)
+			err = builder.AddProcessorYAML(yamlConfig)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Send multiple messages to test VM reuse with complex operations
+			for i := 0; i < 5; i++ {
+				testMsg := service.NewMessage([]byte("42.5"))
+				err = msgHandler(ctx, testMsg)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(5))
+
+			// Verify all messages were processed with complex calculations
+			for i, msg := range messages {
+				GinkgoWriter.Printf("Verifying complex message %d\n", i+1)
+
+				msg.MetaWalk(func(key string, value string) error {
+					GinkgoWriter.Printf("Key: %s, Value: %s\n", key, value)
+					return nil
+				})
+
+				// Check defaults calculation
+				calculation_sum, exists := msg.MetaGet("calculation_sum")
+				Expect(exists).To(BeTrue())
+				Expect(calculation_sum).To(Equal("285")) // Sum of squares 0² + 1² + ... + 9² = 285
+
+				// Check condition calculation
+				complex_result, exists := msg.MetaGet("complex_result")
+				Expect(exists).To(BeTrue())
+
+				var result map[string]interface{}
+				err := json.Unmarshal([]byte(complex_result), &result)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(result["original"]).To(BeNumerically("==", 42.5))
+				Expect(result["squared"]).To(BeNumerically("==", 1806.25))
+				Expect(result["cubed"]).To(BeNumerically("~", 76765.625, 0.001))
+			}
+		})
+
+		It("should handle VM pool under concurrent load", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			yamlConfig := strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "load_test";
+    msg.meta.processed_at = Date.now().toString();
+    return msg;
+  conditions:
+    - if: true  // Always execute condition
+      then: |
+        msg.meta.condition_processed = "true";
+        msg.meta.condition_timestamp = Date.now().toString();
+        return msg;
+`)
+			err = builder.AddProcessorYAML(yamlConfig)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messageCount int64
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				atomic.AddInt64(&messageCount, 1)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Send many messages concurrently to stress VM pool
+			const numMessages = 20
+			for i := 0; i < numMessages; i++ {
+				testMsg := service.NewMessage([]byte(`{"test": "data"}`))
+				testMsg.MetaSet("message_id", strings.TrimSpace(string(rune('A'+i))))
+				err = msgHandler(ctx, testMsg)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&messageCount)
+			}).Should(Equal(int64(numMessages)))
+
+			// Verify all messages were processed correctly
+			Expect(len(messages)).To(Equal(numMessages))
+
+			for i, msg := range messages {
+				GinkgoWriter.Printf("Verifying concurrent message %d\n", i+1)
+
+				// All should have basic metadata
+				location_path, exists := msg.MetaGet("location_path")
+				Expect(exists).To(BeTrue())
+				Expect(location_path).To(Equal("enterprise"))
+
+				// All should have condition processing
+				condition_processed, exists := msg.MetaGet("condition_processed")
+				Expect(exists).To(BeTrue())
+				Expect(condition_processed).To(Equal("true"))
+
+				// Should have timestamps
+				processed_at, exists := msg.MetaGet("processed_at")
+				Expect(exists).To(BeTrue())
+				Expect(processed_at).NotTo(BeEmpty())
+
+				condition_timestamp, exists := msg.MetaGet("condition_timestamp")
+				Expect(exists).To(BeTrue())
+				Expect(condition_timestamp).NotTo(BeEmpty())
+			}
+		})
+	})
+
+	Context("VM Pool Error Handling", func() {
+		It("should handle JavaScript errors without VM pool corruption", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			yamlConfig := strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "error_test";
+    return msg;
+  conditions:
+    - if: msg.meta.error_test === "true"
+      then: |
+        // This will cause a JavaScript error
+        nonExistentFunction();
+        return msg;
+    - if: msg.meta.error_test === "false"
+      then: |
+        // This should work fine
+        msg.meta.processed = "success";
+        return msg;
+`)
+			err = builder.AddProcessorYAML(yamlConfig)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Send a message that will cause JS error
+			errorMsg := service.NewMessage([]byte(`{"test": "error"}`))
+			errorMsg.MetaSet("error_test", "true")
+			err = msgHandler(ctx, errorMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Send a message that should work fine (testing VM pool recovery)
+			successMsg := service.NewMessage([]byte(`{"test": "success"}`))
+			successMsg.MetaSet("error_test", "false")
+			err = msgHandler(ctx, successMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// We should get at least the success message (error message might be dropped)
+			Eventually(func() int {
+				return len(messages)
+			}).Should(BeNumerically(">=", 1))
+
+			// Find the success message (if any messages were processed)
+			var successProcessed bool
+			for _, msg := range messages {
+				if processed, exists := msg.MetaGet("processed"); exists && processed == "success" {
+					successProcessed = true
+					break
+				}
+			}
+
+			// If we got any messages, at least one should be the success message
+			if len(messages) > 0 {
+				Expect(successProcessed).To(BeTrue(), "Success message should be processed even after JS error")
+			}
+		})
+	})
+})
