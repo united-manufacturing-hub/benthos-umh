@@ -705,8 +705,8 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			}
 		})
 
-		It("should return overflow emissions for proper ACK handling", func() {
-			By("Testing that overflow emissions are actually returned")
+		It("should handle overflow with catch-up processing (ACK without emission)", func() {
+			By("Testing that overflow triggers catch-up processing instead of emission")
 
 			// Fill buffer to capacity (10/10)
 			for i := 0; i < 10; i++ {
@@ -717,22 +717,29 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				Expect(result).To(BeNil(), "No emissions should occur during filling")
 			}
 
-			By("Sending overflow-triggering message and verifying emission results")
-			// This should trigger overflow protection and return emission results
+			By("Sending overflow-triggering message and verifying catch-up processing")
+			// This should trigger catch-up processing (ACK without emission)
 			overflowBatch := createTestBatch(1, "overflow-trigger")
 			results, err := safetyProcessor.ProcessBatch(context.Background(), overflowBatch)
 
-			Expect(err).NotTo(HaveOccurred(), "Overflow protection should succeed")
-			Expect(results).NotTo(BeNil(), "Should return emission results for ACK")
-			Expect(len(results)).To(BeNumerically(">=", 1), "Should have at least one emission batch")
+			Expect(err).NotTo(HaveOccurred(), "Catch-up processing should succeed")
+			Expect(results).To(BeNil(), "Should return nil during catch-up processing (no emission)")
 
-			By("Verifying buffer state after overflow protection")
+			By("Verifying buffer state after catch-up processing")
 			safetyProcessor.bufferMutex.Lock()
 			bufferLen := len(safetyProcessor.messageBuffer)
 			safetyProcessor.bufferMutex.Unlock()
 
-			// Buffer should contain the overflow-triggering message
+			// Buffer should contain the overflow-triggering message after catch-up processing cleared previous messages
 			Expect(bufferLen).To(Equal(1), "Buffer should contain exactly the overflow-triggering message")
+
+			By("Verifying catch-up processing maintains topic state")
+			// The processor should maintain internal topic state even without emission
+			safetyProcessor.bufferMutex.Lock()
+			topicMapSize := len(safetyProcessor.fullTopicMap)
+			safetyProcessor.bufferMutex.Unlock()
+
+			Expect(topicMapSize).To(BeNumerically(">=", 1), "Should maintain topic state during catch-up processing")
 		})
 
 		It("should never exceed maxBufferSize even temporarily", func() {
@@ -769,7 +776,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				fmt.Sprintf("Buffer should never exceed maxBufferSize=5, but reached %d. History: %v", maxObservedSize, sizeHistory))
 		})
 
-		It("should handle precise edge case: 9/10 vs 10/10 behavior", func() {
+		It("should handle precise edge case: 9/10 vs 10/10 vs 11/10 behavior", func() {
 			By("Testing behavior when buffer is at 9/10 (under capacity)")
 
 			// Fill to 9/10
@@ -781,12 +788,12 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				Expect(result).To(BeNil(), "No overflow should occur at 9/10")
 			}
 
-			// Add 10th message - should still not trigger overflow
+			// Add 10th message - should still not trigger overflow (exactly at capacity)
 			batch10 := createTestBatch(1, "edge-test-10th")
 			result10, err := safetyProcessor.ProcessBatch(context.Background(), batch10)
 
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result10).To(BeNil(), "No overflow should occur at exactly 10/10")
+			Expect(result10).To(BeNil(), "No overflow should occur at exactly 10/10 (at capacity)")
 
 			// Verify buffer is at exactly capacity
 			safetyProcessor.bufferMutex.Lock()
@@ -797,19 +804,27 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			By("Testing behavior when buffer is at 10/10 and new message arrives")
 
-			// Add 11th message - should trigger overflow protection
+			// Add 11th message - should trigger catch-up processing (ACK without emission)
 			batch11 := createTestBatch(1, "edge-test-11th")
 			result11, err := safetyProcessor.ProcessBatch(context.Background(), batch11)
 
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result11).NotTo(BeNil(), "Overflow protection should trigger and return emissions")
+			Expect(result11).To(BeNil(), "Catch-up processing should trigger (no emission returned)")
 
-			// Verify buffer now contains only the 11th message
+			// Verify buffer now contains only the 11th message (catch-up processing cleared previous messages)
 			safetyProcessor.bufferMutex.Lock()
 			finalBufferLen := len(safetyProcessor.messageBuffer)
 			safetyProcessor.bufferMutex.Unlock()
 
-			Expect(finalBufferLen).To(Equal(1), "Buffer should contain only the overflow-triggering message")
+			Expect(finalBufferLen).To(Equal(1), "Buffer should contain only the overflow-triggering message after catch-up processing")
+
+			By("Verifying catch-up processing preserved topic state from cleared messages")
+			// Even though messages were cleared, topic state should be preserved
+			safetyProcessor.bufferMutex.Lock()
+			topicMapSize := len(safetyProcessor.fullTopicMap)
+			safetyProcessor.bufferMutex.Unlock()
+
+			Expect(topicMapSize).To(BeNumerically(">=", 1), "Topic state should be preserved during catch-up processing")
 		})
 
 		It("should handle concurrent access with race condition detection", func() {

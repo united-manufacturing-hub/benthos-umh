@@ -30,7 +30,7 @@ input:
     auto_replay_nacks: true
     batch_size: 10000
     count: 0
-    interval: 100ms
+    interval: 1ms
     mapping: root = counter()
 pipeline:
   threads: 1
