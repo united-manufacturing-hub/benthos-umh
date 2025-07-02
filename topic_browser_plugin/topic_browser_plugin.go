@@ -789,9 +789,9 @@ func fastApproxMapSize(m map[string]interface{}) uintptr {
 func estimatePayloadSize(batch service.MessageBatch, logger *service.Logger) int {
 	// Fast approach:
 	var estimatedPayloadBytes int
-	for _, batch := range batch {
-		if batch.HasBytes() {
-			b, err := batch.AsBytes()
+	for _, msg := range batch {
+		if msg.HasBytes() {
+			b, err := msg.AsBytes()
 			if err != nil {
 				// This can never fail, as the message is always in bytes
 				logger.Errorf("Failed to get bytes from message: %v", err)
@@ -799,7 +799,7 @@ func estimatePayloadSize(batch service.MessageBatch, logger *service.Logger) int
 			}
 			estimatedPayloadBytes += len(b)
 		} else { // This is a structured message
-			structured, err := batch.AsStructured()
+			structured, err := msg.AsStructured()
 			if err != nil {
 				// This can never fail, as the message is always structured
 				logger.Errorf("Failed to get structured from message: %v", err)

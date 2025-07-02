@@ -44,6 +44,7 @@ func NewCPUMeter(alpha float64) *CPUMeter {
 }
 
 // GetCPUPercent returns the current CPU usage percentage (0-100) with EMA smoothing.
+// Normalized across all CPU cores (e.g., 100% of one core on a 4-core system = 25%).
 // This method samples CPU usage and applies exponential moving average to prevent
 // rapid oscillations that could cause unstable adaptive behavior.
 func (c *CPUMeter) GetCPUPercent() float64 {
@@ -71,9 +72,9 @@ func (c *CPUMeter) GetCPUPercent() float64 {
 		cpuUsage := totalCPUTime - c.lastUsage
 		cpuPercent = float64(cpuUsage) / float64(wallTime) * 100
 
-		// Ensure that the CPU usage is correct on multi-core systems
-		maxCPU := float64(runtime.NumCPU()) * 100
-		cpuPercent = math.Min(cpuPercent/maxCPU*100, 100)
+		// Normalize to 0-100% by dividing by number of cores
+		// (100% of one core on a 4-core system = 25%)
+		cpuPercent = cpuPercent / float64(runtime.NumCPU())
 
 		// Clamp to reasonable bounds (0-100%)
 		cpuPercent = math.Max(0, math.Min(cpuPercent, 100))
