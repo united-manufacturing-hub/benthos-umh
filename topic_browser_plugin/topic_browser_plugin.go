@@ -658,7 +658,7 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 
 		// CPU-aware adaptive metrics (only plugin-specific gauges)
 		cpuLoadGauge = metrics.NewGauge("cpu_load_percent")
-		activeIntervalGauge = metrics.NewGauge("active_emit_interval_seconds")
+		activeIntervalGauge = metrics.NewGauge("active_emit_interval_milli_seconds")
 		activeTopicsGauge = metrics.NewGauge("active_topics_count")
 	}
 
