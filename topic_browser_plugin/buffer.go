@@ -203,9 +203,7 @@ func (t *TopicBrowserProcessor) clearBuffers() {
 		buffer.size = 0
 		buffer.head = 0
 		// Keep the allocated slice but reset pointers to prevent memory leaks
-		for i := range buffer.events {
-			buffer.events[i] = nil
-		}
+		clear(buffer.events)
 	}
 }
 
@@ -254,12 +252,6 @@ func (t *TopicBrowserProcessor) ackBufferAndClearLocked() int {
 
 	// Process ring buffer events to maintain latest state per topic
 	// (This is similar to flushBufferAndACKLocked but without emission)
-	eventCount := 0
-	for topic := range t.topicBuffers {
-		events := t.getLatestEventsForTopic(topic)
-		eventCount += len(events)
-		// Ring buffers are already updated - we just need to preserve the fullTopicMap
-	}
 
 	// The fullTopicMap already contains the latest cumulative state from
 	// the buffering process - we preserve this state for future emissions
@@ -278,11 +270,8 @@ func (t *TopicBrowserProcessor) ackBufferAndClearLocked() int {
 		buffer := t.topicBuffers[topic]
 		buffer.size = 0
 		buffer.head = 0
-		// Return EventTableEntry objects to memory pool instead of just nil-ing them
-		// This reduces garbage collection pressure by reusing objects
-		for i := range buffer.events {
-			buffer.events[i] = nil
-		}
+		// Keep the allocated slice but reset pointers to prevent memory leaks
+		clear(buffer.events)
 	}
 
 	// Update timestamp to prevent immediate re-emission
