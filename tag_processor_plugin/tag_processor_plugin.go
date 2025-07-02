@@ -131,6 +131,17 @@ type TagProcessor struct {
 	vmPoolHits   *service.MetricCounter
 	vmPoolMisses *service.MetricCounter
 
+	// Compiled programs - Phase 2 optimization
+	defaultsProgram       *goja.Program   // Pre-compiled defaults code
+	conditionPrograms     []*goja.Program // Pre-compiled condition evaluations
+	conditionThenPrograms []*goja.Program // Pre-compiled condition actions
+	advancedProgram       *goja.Program   // Pre-compiled advanced processing
+
+	// Original code for error logging - Phase 2 enhancement
+	originalDefaults   string
+	originalConditions []ConditionConfig
+	originalAdvanced   string
+
 	// Existing metrics
 	messagesProcessed *service.MetricCounter
 	messagesErrored   *service.MetricCounter
@@ -147,7 +158,7 @@ func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics 
 		return nil, fmt.Errorf("failed to create JS processor: %v", err)
 	}
 
-	return &TagProcessor{
+	processor := &TagProcessor{
 		config: config,
 		logger: logger,
 
@@ -162,13 +173,25 @@ func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics 
 		vmPoolHits:   metrics.NewCounter("vm_pool_hits"),
 		vmPoolMisses: metrics.NewCounter("vm_pool_misses"),
 
+		// Store original code for error logging - Phase 2 enhancement
+		originalDefaults:   config.Defaults,
+		originalConditions: config.Conditions,
+		originalAdvanced:   config.AdvancedProcessing,
+
 		// Existing metrics
 		messagesProcessed: metrics.NewCounter("messages_processed"),
 		messagesErrored:   metrics.NewCounter("messages_errored"),
 		messagesDropped:   metrics.NewCounter("messages_dropped"),
 
 		jsProcessor: jsProcessor,
-	}, nil
+	}
+
+	// Phase 2: Compile all JavaScript once at startup to catch errors early and optimize runtime
+	if err := processor.compilePrograms(); err != nil {
+		return nil, fmt.Errorf("failed to compile JavaScript programs: %v", err)
+	}
+
+	return processor, nil
 }
 
 // VM Pool Management Methods - Phase 1 Optimization
@@ -253,21 +276,21 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 	}
 	// ─────────────────────────────────────────────────────────────────────────────
 
-	// Process defaults
-	if p.config.Defaults != "" {
+	// Process defaults with compiled program (Phase 2 optimization)
+	if p.defaultsProgram != nil {
 		var err error
-		batch, err = p.processMessageBatch(batch, p.config.Defaults)
+		batch, err = p.processMessageBatchWithProgram(batch, p.defaultsProgram, "defaults")
 		if err != nil {
 			return nil, fmt.Errorf("error in defaults processing: %v", err)
 		}
 	}
 
-	// Process conditions with VM pooling optimization
-	for _, condition := range p.config.Conditions {
+	// Process conditions with compiled programs (Phase 2 optimization)
+	for i := range p.config.Conditions {
 		var newBatch service.MessageBatch
 
 		for _, msg := range batch {
-			processedMsg, shouldKeep, err := p.processConditionForMessage(condition, msg)
+			processedMsg, shouldKeep, err := p.processConditionForMessageWithProgram(i, msg)
 			if err != nil {
 				p.logError(err, "condition evaluation", msg)
 				continue
@@ -280,10 +303,10 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 		batch = newBatch
 	}
 
-	// Process advanced processing
-	if p.config.AdvancedProcessing != "" {
+	// Process advanced processing with compiled program (Phase 2 optimization)
+	if p.advancedProgram != nil {
 		var err error
-		batch, err = p.processMessageBatch(batch, p.config.AdvancedProcessing)
+		batch, err = p.processMessageBatchWithProgram(batch, p.advancedProgram, "advanced")
 		if err != nil {
 			return nil, fmt.Errorf("error in advanced processing: %v", err)
 		}
@@ -764,4 +787,211 @@ func (p *TagProcessor) processMessageWithCode(msg *service.Message, code string)
 	}
 
 	return resultMessages, nil
+}
+
+// compilePrograms compiles all JavaScript code once at startup for optimal runtime performance
+func (p *TagProcessor) compilePrograms() error {
+	var err error
+
+	// Compile defaults code
+	// WHY: Defaults processing happens for every message batch, so optimization is critical
+	if p.originalDefaults != "" {
+		wrappedCode := fmt.Sprintf(`(function(){%s})()`, p.originalDefaults)
+		p.defaultsProgram, err = goja.Compile("defaults.js", wrappedCode, false)
+		if err != nil {
+			return fmt.Errorf("failed to compile defaults code: %v", err)
+		}
+	}
+
+	// Compile condition programs
+	// WHY: Conditions are evaluated for every message, making this the highest impact optimization
+	p.conditionPrograms = make([]*goja.Program, len(p.originalConditions))
+	p.conditionThenPrograms = make([]*goja.Program, len(p.originalConditions))
+
+	for i, condition := range p.originalConditions {
+		// Compile condition evaluation code
+		// WHY: Boolean condition evaluation happens most frequently
+		p.conditionPrograms[i], err = goja.Compile(
+			fmt.Sprintf("condition-%d-if.js", i),
+			condition.If,
+			false)
+		if err != nil {
+			return fmt.Errorf("failed to compile condition %d 'if' code: %v", i, err)
+		}
+
+		// Compile condition action code
+		// WHY: Action code executes when conditions are true, also frequent
+		wrappedThenCode := fmt.Sprintf(`(function(){%s})()`, condition.Then)
+		p.conditionThenPrograms[i], err = goja.Compile(
+			fmt.Sprintf("condition-%d-then.js", i),
+			wrappedThenCode,
+			false)
+		if err != nil {
+			return fmt.Errorf("failed to compile condition %d 'then' code: %v", i, err)
+		}
+	}
+
+	// Compile advanced processing code
+	// WHY: Advanced processing is less frequent but still benefits from compilation
+	if p.originalAdvanced != "" {
+		wrappedCode := fmt.Sprintf(`(function(){%s})()`, p.originalAdvanced)
+		p.advancedProgram, err = goja.Compile("advanced.js", wrappedCode, false)
+		if err != nil {
+			return fmt.Errorf("failed to compile advanced processing code: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// executeCompiledProgram executes a pre-compiled JavaScript program for optimal performance
+func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Program, jsMsg map[string]interface{}, stageName string) ([]map[string]interface{}, error) {
+	if program == nil {
+		return nil, nil
+	}
+
+	result, err := vm.RunProgram(program)
+	if err != nil {
+		// Use original code for error logging context
+		var originalCode string
+		switch stageName {
+		case "defaults":
+			originalCode = p.originalDefaults
+		case "advanced":
+			originalCode = p.originalAdvanced
+		default:
+			originalCode = fmt.Sprintf("compiled program: %s", stageName)
+		}
+		p.logJSError(err, originalCode, jsMsg)
+		return nil, fmt.Errorf("JavaScript error in %s: %v", stageName, err)
+	}
+
+	if result == nil || goja.IsNull(result) || goja.IsUndefined(result) {
+		return nil, nil
+	}
+
+	switch v := result.Export().(type) {
+	case []interface{}:
+		messages := make([]map[string]interface{}, 0, len(v))
+		for _, msg := range v {
+			if msg == nil {
+				continue
+			}
+			if msgMap, ok := msg.(map[string]interface{}); ok {
+				messages = append(messages, msgMap)
+			} else {
+				return nil, fmt.Errorf("array elements must be message objects")
+			}
+		}
+		return messages, nil
+	case map[string]interface{}:
+		return []map[string]interface{}{v}, nil
+	default:
+		return nil, fmt.Errorf("code must return a message object or array of message objects")
+	}
+}
+
+// processMessageBatchWithProgram processes a batch using a compiled program for Phase 2 optimization
+func (p *TagProcessor) processMessageBatchWithProgram(batch service.MessageBatch, program *goja.Program, stageName string) (service.MessageBatch, error) {
+	if program == nil {
+		return batch, nil
+	}
+
+	var resultBatch service.MessageBatch
+
+	for _, msg := range batch {
+		// Use VM pool for consistent performance
+		vm := p.getVM()
+		defer p.putVM(vm)
+
+		// Convert message to JS object
+		jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
+		if err != nil {
+			p.logError(err, "message conversion", msg)
+			return nil, fmt.Errorf("failed to convert message to JavaScript object: %v", err)
+		}
+
+		// Setup VM environment
+		if err := p.setupMessageForVM(vm, msg, jsMsg); err != nil {
+			p.logError(err, "JS environment setup", jsMsg)
+			return nil, fmt.Errorf("failed to setup JavaScript environment: %v", err)
+		}
+
+		// Execute compiled program for maximum performance
+		messages, err := p.executeCompiledProgram(vm, program, jsMsg, stageName)
+		if err != nil {
+			return nil, err
+		}
+
+		// Handle message dropping
+		if messages == nil {
+			continue
+		}
+
+		// Convert results back to Benthos messages
+		for _, resultMsg := range messages {
+			newMsg := service.NewMessage(nil)
+			// Set metadata from the JS message
+			if meta, ok := resultMsg["meta"].(map[string]interface{}); ok {
+				for k, v := range meta {
+					if str, ok := v.(string); ok {
+						newMsg.MetaSet(k, str)
+					}
+				}
+			}
+			// Set payload
+			if payload, exists := resultMsg["payload"]; exists {
+				newMsg.SetStructured(payload)
+			} else {
+				newMsg.SetStructured(jsMsg["payload"])
+			}
+
+			resultBatch = append(resultBatch, newMsg)
+		}
+	}
+
+	return resultBatch, nil
+}
+
+// processConditionForMessageWithProgram evaluates a condition using compiled programs (Phase 2 optimization)
+func (p *TagProcessor) processConditionForMessageWithProgram(conditionIndex int, msg *service.Message) (*service.Message, bool, error) {
+	// Get VM from pool and ensure it's returned
+	vm := p.getVM()
+	defer p.putVM(vm)
+
+	// Convert message to JS object for condition check
+	jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
+	if err != nil {
+		return nil, false, fmt.Errorf("message conversion failed: %v", err)
+	}
+
+	// Setup VM environment using optimized helper method
+	if err := p.setupMessageForVM(vm, msg, jsMsg); err != nil {
+		return nil, false, fmt.Errorf("JS environment setup failed: %v", err)
+	}
+
+	// Evaluate condition using compiled program
+	ifResult, err := vm.RunProgram(p.conditionPrograms[conditionIndex])
+	if err != nil {
+		p.logJSError(err, p.originalConditions[conditionIndex].If, jsMsg)
+		return nil, false, fmt.Errorf("condition evaluation failed: %v", err)
+	}
+
+	// If condition is true, process the message with the compiled condition action
+	if ifResult.ToBoolean() {
+		conditionBatch, err := p.processMessageBatchWithProgram(
+			service.MessageBatch{msg},
+			p.conditionThenPrograms[conditionIndex],
+			fmt.Sprintf("condition-%d-then", conditionIndex))
+		if err != nil {
+			return nil, false, fmt.Errorf("condition processing failed: %v", err)
+		}
+		if len(conditionBatch) > 0 {
+			return conditionBatch[0], true, nil
+		}
+		return nil, false, nil // Message was dropped by condition processing
+	}
+
+	// Condition was false, return original message
+	return msg, true, nil
 }
