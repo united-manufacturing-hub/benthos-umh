@@ -544,10 +544,18 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	}
 	value := p.convertValue(structured)
 
+	// Determine timestamp - use metadata timestamp_ms if available, otherwise current time
+	timestamp := time.Now().UnixMilli()
+	if timestampStr, exists := msg.MetaGet("timestamp_ms"); exists && timestampStr != "" {
+		if customTimestamp, err := strconv.ParseInt(timestampStr, 10, 64); err == nil {
+			timestamp = customTimestamp
+		}
+	}
+
 	// Build the final payload object
 	finalPayload := map[string]interface{}{
 		"value":        value,
-		"timestamp_ms": time.Now().UnixMilli(),
+		"timestamp_ms": timestamp,
 	}
 
 	newMsg.SetStructured(finalPayload)

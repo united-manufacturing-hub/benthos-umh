@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -1347,6 +1348,128 @@ tag_processor:
 			Eventually(func() int {
 				return len(messages)
 			}).Should(Equal(0))
+		})
+
+		It("should use timestamp_ms from metadata when provided", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.site.area";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Create test message with custom timestamp in metadata
+			testMsg := service.NewMessage([]byte("25.5"))
+			customTimestamp := int64(1640995200000) // 2022-01-01T00:00:00Z
+			testMsg.MetaSet("timestamp_ms", strconv.FormatInt(customTimestamp, 10))
+
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			msg := messages[0]
+			structured, err := msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+
+			timestamp_ms, ok := payload["timestamp_ms"]
+			Expect(ok).To(BeTrue())
+			Expect(timestamp_ms).To(Equal(customTimestamp))
+		})
+
+		It("should fall back to current time when timestamp_ms metadata is invalid", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.site.area";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Create test message with invalid timestamp in metadata
+			testMsg := service.NewMessage([]byte("25.5"))
+			testMsg.MetaSet("timestamp_ms", "invalid_timestamp")
+
+			beforeTime := time.Now().UnixMilli()
+
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			msg := messages[0]
+			structured, err := msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+
+			timestamp_ms, ok := payload["timestamp_ms"]
+			Expect(ok).To(BeTrue())
+
+			afterTime := time.Now().UnixMilli()
+
+			// Should fall back to current time when metadata is invalid
+			Expect(timestamp_ms).To(BeNumerically(">=", beforeTime))
+			Expect(timestamp_ms).To(BeNumerically("<=", afterTime))
 		})
 	})
 })
