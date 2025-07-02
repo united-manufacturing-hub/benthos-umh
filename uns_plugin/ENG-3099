@@ -1,0 +1,200 @@
+Overview and Motivation
+
+The uns_output plugin is responsible for publishing messages into the Unified Namespace (UNS) – specifically into the Kafka (Redpanda) topic umh.messages – using each message’s umh_topic metadata as the Kafka message key. This key encodes the message’s context following the UMH topic convention:
+
+umh.v1.<location_path>.<data_contract>[.<virtual_path>].<tag_name>
+
+
+The location_path, data_contract, etc., are provided as Benthos metadata (usually by the upstream tag processor). The plugin currently does not perform any schema validation on message payloads; it simply forwards the message with all metadata as Kafka headers. To improve data integrity, ticket ENG-3099 requires enhancing uns_output to integrate with Redpanda’s Schema Registry for JSON schema validation. This will ensure that only messages conforming to a known JSON schema (based on the message’s data contract) are published. Non-conformant messages must be dropped with clear warning logs. Strict validation must always be enforced (no “lenient mode”), preserving existing UNS conventions and performance.
+
+Current Behavior of uns_output (Baseline)
+
+Currently, uns_output batches messages (100 or 100ms) and writes them to the fixed topic umh.messages. The Kafka key for each message is taken from msg.meta.umh_topic, which is auto-generated from metadata fields (location_path, data_contract, etc.) upstream. All message metadata (except internal fields like kafka_*) are attached as Kafka headers – this includes the data_contract identifier and other context. The plugin ensures the key contains only valid characters by sanitizing illegal chars to “_”. No schema checks are performed on the message payload; any JSON (or binary) payload is accepted as long as umh_topic is present.
+
+This implementation plan outlines how to introduce JSON schema validation into this flow, leveraging Redpanda’s Schema Registry while respecting the existing key/topic conventions and ensuring minimal performance impact.
+
+Schema Registry Integration Design
+
+1. Schema Retrieval and Caching
+
+On pipeline startup or on the first message for a given data contract, the uns_output plugin will query Redpanda’s Schema Registry for the JSON schema associated with that contract. The “data_contract” is extracted from the message’s UNS key or metadata. We will reuse the UMH topic convention logic (already defined in UMH core and tag processor) to identify the contract: for example, given a key umh.v1.enterprise.site.area._historian.axis.x.position.temperature, the contract is _historian. In practice, the plugin can directly read msg.MetaGet("data_contract") (set by the tag processor) to obtain the contract name. This avoids any fragile string parsing and respects existing meta-field usage. (If the contract metadata were missing for some reason, we could fall back to parsing the umh_topic string using the known format, but in UMH Core this meta is reliably present.)
+
+Once the contract name is determined, the plugin will use a Schema Registry client (e.g. Redpanda/Confluent Schema Registry REST API or the Franz-Go schema registry client) to fetch the latest JSON schema for that contract. The Schema Registry subject naming strategy is assumed to be based on the data contract name (e.g. subject named exactly as the contract, such as _historian or Pump). If the registry returns no schema for that subject (meaning the contract has no registered schema), the plugin will log an info/debug message and bypass validation for that contract – effectively allowing those messages to pass through unvalidated. This “fail-open if schema missing” approach ensures backward compatibility for contracts that haven’t adopted schema enforcement.
+
+To avoid repeated registry lookups (which are HTTP calls), the plugin will implement caching of schemas. We will introduce a cache (e.g. a map in the unsOutput struct) mapping contract -> schema. Once retrieved, a schema is stored in-memory and reused for all subsequent messages with that contract. This cache will treat schema definitions as immutable: Redpanda’s schema registry creates a new version for any schema changes (schemas are never edited in-place), so we can safely cache a schema version indefinitely. The first fetch will typically retrieve the latest version; we assume producers use the latest schema for new messages.
+
+Data structures and code changes: We will add a field to unsOutput, for example:
+
+schemaCache map[string]*JSONSchemaValidator  // cache of compiled schema per contract
+
+
+Where JSONSchemaValidator could be an instance of a JSON Schema validation object (from a chosen Go library, or a custom struct holding the schema). On newUnsOutput initialization, we initialize this map. On the first message of a batch, if contract := msg.MetaGet("data_contract") is not in the cache, we fetch and compile the schema:
+
+if _, found := o.schemaCache[contract]; !found {
+    schema, err := registryClient.GetLatestSchema(contract)
+    if err != nil {
+       // handle registry unreachable or error
+    } else if schema == nil {
+       o.log.Infof("No schema registered for contract '%s'; skipping validation", contract)
+       o.schemaCache[contract] = nil  // mark as no-schema to avoid re-fetch
+    } else {
+       validator := CompileJSONSchema(schema)  // parse JSON schema text
+       o.schemaCache[contract] = validator
+       o.log.Infof("Loaded schema for contract '%s' (version %d)", contract, schema.Version)
+    }
+}
+
+
+(The above is pseudo-code for clarity.)
+
+If the registry client call fails (network issue, etc.), the plugin should fail open or retry gracefully – e.g. log an error and treat it as no schema (to avoid blocking the pipeline). A periodic retry could be scheduled in such error cases.
+
+2. JSON Schema Validation on Message Publish
+
+After retrieving the schema (if any) for the contract, the plugin will validate the message’s payload against that JSON schema before publishing to Kafka. Each message’s content is already accessible as msg.AsBytes() in the WriteBatch loop. We will insert validation logic in this loop for each message:
+
+If a schema (validator) exists in cache for the message’s contract, run the JSON validator on msgAsBytes.
+
+If the message conforms to the schema, proceed as normal (include it in the records batch to send to Kafka).
+
+If the message fails validation, handle as described in step 3 (log and drop).
+
+If no schema is cached for the contract (cache entry is nil meaning contract not registered), skip validation (treat as permitted).
+
+This check will be inserted right after obtaining the message bytes and before appending the record to the batch. Pseudocode within the batch loop:
+
+msgBytes, _ := msg.AsBytes()
+if validator := o.schemaCache[contract]; validator != nil {
+    if err := validator.Validate(msgBytes); err != nil {
+        // validation failed – drop the message
+        o.handleValidationFailure(contract, msg, err)
+        continue  // skip adding to batch
+    }
+}
+// otherwise, no schema or validation passed – proceed to add record
+records = append(records, Record{...})
+
+
+We will use a JSON Schema validation library (for example, the Go jsonschema package or the Franz-Go Schema Registry client’s facilities) to perform the validation. This ensures only JSON payloads that match the schema structure and types will pass. (The UNS deals primarily with JSON payloads, so we focus on JSON Schema – other formats like Avro/Protobuf are out of scope here.)
+
+3. Handling Validation Failures (Logging and Dropping)
+
+If a message’s payload does not conform to the expected schema, the plugin will drop that message and log an actionable warning. Dropping means the message is not published to Redpanda (we simply omit it from the batch of records sent via ProduceSync). By not adding it to records and not returning an error from WriteBatch for that message, we effectively filter it out. This ensures the pipeline continues for subsequent messages – Benthos will consider the message “processed” (acknowledged) even though we chose not to forward it, preventing a retry loop.
+
+The log for a validation failure will be a warning (o.log.Warnf) containing:
+
+The offending message content (or a truncated version if very large),
+
+Relevant metadata (at least the umh_topic key or contract name to identify the source), and
+
+A clear description of the expected schema.
+
+For example, a log entry might read:
+
+WARN: Dropped message with key umh.v1.enterprise.site.area._historian.temperature – schema validation failed for contract _historian. Payload: {"value": 42, "timestamp_ms": "abc"}. Expected schema: { "value": number, "timestamp_ms": integer } (timestamp_ms must be an integer).
+
+In practice, we can obtain a description of the expected schema by leveraging the schema’s metadata or validation error message. Many JSON schema validators provide an error string explaining which rule failed (e.g. “timestamp_ms: expected integer but got string”). We will include such details to pinpoint why the message was rejected. Additionally, we might log the schema’s title or ID if defined (e.g. schema name or version) to help the user locate the full contract definition. The goal is to make the warning actionable – the user should immediately see what was wrong in the message vs what the schema expects.
+
+After logging, the message is omitted from output. No special feedback to the upstream pipeline is needed beyond logging (i.e. we do not propagate an error upstream, since that could halt the pipeline). However, this mechanism will be built in a way that could integrate with UMH Core’s FSM if needed in future (see below).
+
+4. Schema Caching & Refresh Strategy
+
+Caching is crucial for performance: we avoid hitting the schema registry on every message. The strategy is: fetch once per contract and reuse. However, we must also consider schema evolution and long-running pipelines:
+
+Immutability of versions: Because schema versions are immutable and new versions indicate changes, our cached schema (which is the latest at time of fetch) will remain valid for that version. If a schema is updated in the registry (new version added) while the pipeline is running, new messages might start failing validation against the old cached version. We need a way to fetch the updated schema in that case.
+
+Refresh on new contract: When encountering a message with a previously unseen contract, we fetch and cache immediately (as described). This covers dynamic scenarios where a pipeline might start seeing new contract types over time.
+
+Periodic re-check: We can implement a background refresh interval – e.g. every X minutes, re-query the registry for each known contract to see if a new version is available. Given the likely low frequency of schema changes, a moderate interval (e.g. 10-60 minutes) could be used. This ensures the pipeline eventually picks up updates without restart. This can be done by storing a timestamp of last fetch per contract and checking it on each message (if now - lastFetch > interval, trigger a refresh attempt in the background or during message processing).
+
+On-demand refresh (rate-limited fallback): A more responsive strategy is to trigger a refresh when a validation fails unexpectedly. For example, if a message that previously would be valid now fails, it could indicate the schema has changed (producer sending fields from a new schema version). In such a case, the plugin can detect the validation failure and decide to re-fetch the schema immediately (but in a rate-limited way to avoid spamming the registry on every bad message). We could implement this by, for instance, if a validation error occurs and it’s been >N minutes since last schema fetch for this contract, do a one-time schema update: get the latest schema from the registry and update the cache, then re-validate the current message against the new schema. If it passes now, we can accept the message (do not drop it) and log an info that schema was updated to version X. If it still fails or no new schema was found, proceed to drop as before. This fallback lookup ensures minimal disruption when schemas evolve: the first new-format message triggers a schema refresh, then subsequent ones will validate correctly.
+
+We will implement either periodic refresh or on-failure refresh (or a combination) to satisfy the requirement of caching with updates. A straightforward approach is: on each validation failure, attempt one schema refresh (if not done recently). This covers the evolution case without needing a constant timer. Additionally, we’ll always fetch the latest version initially, so we start with the newest schema.
+
+All refresh logic will honor a rate limit (e.g. do not fetch more than once per X minutes per contract) to avoid excessive load on the registry.
+
+5. Strict Validation Enforcement
+
+This feature will be always-on in all environments – there will be no bypass or “dev mode” to relax schema checks. If a schema exists for a contract, it will be enforced unconditionally for every message. The configuration of uns_output will not include any flag to disable validation. This is in line with the requirement that strict validation is always enforced (even in development or testing deployments). Developers should register appropriate schemas for their contracts or disable the schema registry integration entirely if they truly want to bypass it (not recommended). Our implementation will ensure that if a schema is present, every message must conform or it will be dropped, guaranteeing data in the UNS always matches the defined contracts.
+
+(Note: For contracts with no schema registered, the plugin effectively does no validation – but this is the only case where unvalidated data flows through, by design. Teams are encouraged to register schemas for all important contracts to gain the benefits of this validation.)
+
+6. Future FSM Integration (ENG-3096)
+
+While not required in this ticket, we note that in the future this plugin could integrate with UMH Core’s FSM (finite state machine) to signal failures. For example, repeated schema violations might trigger a state change or alert in the system’s monitoring FSM. In the current implementation, we will prepare for this by keeping the validation failure handling logic modular (e.g. in a helper function handleValidationFailure) so that a future update (ENG-3096) can easily hook in, for instance, to send a special control message or update a metric that the FSM monitors. For now, however, the scope is limited to logging and dropping the message – no additional FSM signaling is performed.
+
+Implementation Details in Code
+
+This section outlines where and how the code changes will be made in the benthos-umh repository:
+
+Adding Schema Cache: In uns_plugin/uns_output.go, extend the unsOutput struct to include a cache, e.g. schemaCache map[string]*SchemaValidator and perhaps lastSchemaFetch map[string]time.Time for refresh timing. Initialize these in newUnsOutput after parsing config. The plugin configuration (uns: {}) doesn’t need new YAML fields for this feature, since it’s an internal behavior.
+
+Fetching Schema: We will utilize an HTTP client or library to query Redpanda’s Schema Registry. Redpanda’s registry supports the Confluent Schema Registry API. For JSON Schema, the latest schema for a subject can be retrieved via a GET request to /subjects/<contract>/versions/latest. We can integrate the Franz-Go schema registry client (which is part of twmb/franz-go) for convenience. This would involve importing github.com/twmb/franz-go/pkg/sr and using it to look up the schema. Example flow: srClient := sr.NewClient(<registry_url>); schemaResp, err := srClient.LatestSchema(contractName). The result will include the schema string (JSON Schema text) and version. We then compile this schema text into a validator object. We must ensure to handle authentication or configuration of the registry URL if needed (likely the registry is local to UMH Core’s Redpanda, e.g. localhost:8081 or similar). Because the uns_output plugin already knows the broker address (default localhost:9092), we might assume a default registry URL or derive it (could be configured, but not mentioned in this ticket – presumably it’s a known address).
+
+Message Processing (WriteBatch): Within unsOutput.WriteBatch, integrate validation: after resolving and sanitizing the key and extracting headers, but before appending the record, perform the schema check as described. Pseudo-code placement:
+
+for i, msg := range msgs {
+    key, _ := o.config.umh_topic.TryString(msg)  // existing code:contentReference[oaicite:19]{index=19}
+    ... 
+    sanitizedKey := o.sanitizeMessageKey(key)    // existing code:contentReference[oaicite:20]{index=20}
+    ...
+    msgBytes, _ := msg.AsBytes()                 // existing code:contentReference[oaicite:21]{index=21}
+    
+    contract := msg.MetaGet("data_contract")     // new: get contract name
+    if validator, ok := o.schemaCache[contract]; ok && validator != nil {
+        if err := validator.Validate(msgBytes); err != nil {
+            o.logWarnValidation(contract, sanitizedKey, msgBytes, err)
+            // optional: attempt schema refresh if not recent, then re-validate
+            // if still fails:
+            continue  // drop this message (skip adding to records)
+        }
+    }
+    // Existing: create Record and append:contentReference[oaicite:22]{index=22}
+    record := Record{Topic: defaultOutputTopic, Key: []byte(sanitizedKey), ...}
+    records = append(records, record)
+}
+
+
+We will implement logWarnValidation (or handleValidationFailure) to format the warning log with all required info as discussed. The code will use o.log.Warnf to log the message content and schema expectation. It will also take care of any schema refresh logic: e.g., inside this function, if we haven’t refreshed recently, call registry to check for a new version and update o.schemaCache[contract] if a new schema is found, then possibly retry validation once.
+
+Preserving Headers and Key: We must ensure that even after adding validation, the message key and headers remain unchanged for valid messages. Our integration does not modify sanitizedKey or headers – those are already computed and will be used as-is when constructing the record. We also do not alter the Topic (which remains the constant umh.messages). Thus, the existing routing logic is fully respected. The only change is that some messages might never reach Kafka if they’re invalid.
+
+Performance considerations: JSON schema validation and registry lookups have some overhead. To mitigate this:
+
+Schema fetch happens at most once per contract (plus occasional refreshes), not per message.
+
+Validation uses in-memory compiled schema which is typically very fast (micro-milliseconds for simple schemas).
+
+Batch processing: Since Benthos batches up to 100 messages, we will validate each in the batch. In worst case of 100 messages of different new contract types, we’d fetch 100 schemas on first batch – this is unlikely in practice. Typically, a pipeline deals with one contract or a small fixed set, so caching will kick in quickly.
+
+Logging is only done on failures or first-time fetch (logging every message content on success is not needed and would be too verbose).
+
+Error handling: If the Schema Registry is unreachable or returns an error during fetch, the implementation will log an error and treat it as if no schema was found (thus allowing messages to pass). This prevents the output from blocking the pipeline due to external issues. However, such events should be prominently logged (perhaps as errors) so operators know that validation is not actually occurring. The system can later retry to connect (e.g. next message or with a backoff) to restore validation. This fail-open approach aligns with UMH’s general philosophy of not losing data due to transient errors (as seen in the downsampler’s fail-open policy).
+
+Testing Plan
+
+To ensure the feature works as expected, we will prepare several test cases covering success and failure scenarios:
+
+Valid Message with Known Schema: Publish a message for a contract that has a schema in the registry, where the JSON payload correctly adheres to the schema. Expected: The message is accepted by uns_output and published to umh.messages. No warnings are logged. We should verify that no schema validation errors occur and the message appears in Kafka. (Example: contract _historian with payload {"value": 123, "timestamp_ms": 1680000000000} matches the schema requiring numeric value and integer timestamp_ms.)
+
+Invalid Message (Schema Violation): Publish a message for a contract with a known schema, but introduce a structural error in the payload. Expected: The plugin logs a warning that the message was dropped due to schema validation failure, including the message content and the reason (expected vs actual). The message should not be published to Kafka. We will assert that the Kafka topic has no record of this message. (Example: contract _historian but payload {"value": 45, "timestamp_ms": "bad"} where timestamp_ms is a string instead of an integer – the log should warn that "timestamp_ms" expected type integer.) Also verify that after this drop, the pipeline continues processing subsequent messages normally.
+
+Unknown Contract (No Schema): Publish a message for a contract that is not registered in the schema registry. Expected: On the first such message, uns_output will attempt to fetch the schema, get none, log (at info/debug) that no schema is found for that contract, and then allow the message to be published without validation. We should see the message in Kafka. Subsequent messages of the same contract should not trigger additional fetches (cache should remember no schema). We might also deliberately register a schema for this contract mid-test and send another message to see if a refresh would catch it (depending on implementation of periodic checks).
+
+Schema Evolution (New Version) – Optional: Simulate a schema update scenario. For instance, suppose a contract schema is updated (new version) to allow an extra field, and a message with that new field is sent while the plugin still has the old schema cached. Expected: The first message with the new field might fail validation against the old schema. The plugin should then attempt a refresh (if implemented as on-failure refresh) and retrieve the new schema version. After refresh, the message should validate successfully and be published (with perhaps an info log that schema was updated). We will verify that after the refresh, no further validation errors occur for that new format. If periodic refresh is implemented instead, we’d adjust the test by waiting for the refresh interval or triggering it manually.
+
+Performance/Batch Behavior: Test with a batch of messages to ensure that the plugin can drop one message while still sending others in the batch. For example, if out of 10 messages, 2 are invalid, those 2 should be filtered out and the other 8 delivered. The WriteBatch call should return success (no error) and Kafka should show exactly 8 new messages. Logs should show 2 warnings for the dropped ones.
+
+Registry Error Handling: Induce a Schema Registry failure (e.g. provide wrong URL or shut down the registry service) and send a message with a contract that would normally have a schema. Expected: The plugin logs an error about being unable to fetch the schema, then, since it cannot validate, it allows the message through (fail-open). We confirm the message is published. This tests robustness in case the registry is temporarily down. (We may decide that if the registry is down, perhaps better to drop as a fail-safe, but the plan leans toward fail-open; testing will confirm the chosen policy.)
+
+Each of the above scenarios will be verified with unit tests or integration tests. We can write unit tests using a mock Schema Registry client that returns a sample schema, or “no schema,” or errors, to simulate each case. We’ll also use the Benthos testing framework or an embedded Kafka instance to ensure messages are dropped or forwarded as expected. Additionally, we can add a small E2E test in a dev environment by deploying a pipeline with this plugin and using Redpanda’s registry.
+
+Through these tests, we will ensure that the uns_output plugin enhancement for ENG-3099 meets the requirements: only valid JSON messages get into the UNS, and any issues are clearly logged for operators to act on, without disrupting the overall data flow.
+
+Sources:
+
+UMH Topic Convention & Metadata: Unified Namespace topic format and metadata fields.
+
+Current uns_output Behavior: Code excerpts showing how uns_output uses umh_topic as key and forwards metadata as headers.
+
+Downsampler Reference (fail-open policy): Downsampler plugin design indicating not to lose data on errors.
