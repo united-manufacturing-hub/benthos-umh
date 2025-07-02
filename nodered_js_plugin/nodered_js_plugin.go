@@ -45,13 +45,9 @@ func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 	}
 
 	processor := &NodeREDJSProcessor{
-		program:      program,
-		originalCode: code,
-		vmpool: sync.Pool{
-			New: func() any {
-				return goja.New()
-			},
-		},
+		program:           program,
+		originalCode:      code,
+		vmpool:            sync.Pool{}, // No New function - Get() will return nil when pool is empty
 		logger:            logger,
 		messagesProcessed: metrics.NewCounter("messages_processed"),
 		messagesErrored:   metrics.NewCounter("messages_errored"),
@@ -65,13 +61,13 @@ func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 
 // GetVM acquires a VM from the pool and tracks metrics
 func (u *NodeREDJSProcessor) GetVM() *goja.Runtime {
-	vm := u.vmpool.Get().(*goja.Runtime)
-	if vm == nil {
+	poolResult := u.vmpool.Get()
+	if poolResult == nil {
 		u.vmPoolMisses.Incr(1)
 		return goja.New()
 	}
 	u.vmPoolHits.Incr(1)
-	return vm
+	return poolResult.(*goja.Runtime)
 }
 
 // PutVM returns a VM to the pool after proper cleanup
