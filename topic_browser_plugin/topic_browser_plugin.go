@@ -775,9 +775,13 @@ func fastApproxMapSize(m map[string]interface{}) uintptr {
 	}
 	size := hmapHdr // top-level hmap
 	for k, v := range m {
-		size += strHdr + uintptr(len(k))            // key
-		size += ifaceHdr + reflect.TypeOf(v).Size() // value body
-		size += bucketOv                            // bucket bookkeeping
+		size += strHdr + uintptr(len(k)) // key
+		if v == nil {
+			size += ifaceHdr // empty interface header
+		} else {
+			size += ifaceHdr + reflect.TypeOf(v).Size() // value body
+		}
+		size += bucketOv // bucket bookkeeping
 	}
 	return size
 }

@@ -51,12 +51,12 @@ const (
 // adjust emit intervals for optimal performance without exceeding CPU limits.
 type AdaptiveController struct {
 	mu               sync.Mutex
-	nextFlush        time.Time    // Next scheduled flush time
-	interval         atomic.Value // Current emit interval (time.Duration)
-	emaBytes         float64      // EMA-tracked payload size
-	cpuMeter         *CPUMeter    // CPU usage monitor
-	lastCPUSample    time.Time    // Last CPU sampling time
-	lastPayloadBytes int          // Last payload size
+	nextFlush        time.Time                     // Next scheduled flush time
+	interval         atomic.Pointer[time.Duration] // Current emit interval (time.Duration)
+	emaBytes         float64                       // EMA-tracked payload size
+	cpuMeter         *CPUMeter                     // CPU usage monitor
+	lastCPUSample    time.Time                     // Last CPU sampling time
+	lastPayloadBytes int                           // Last payload size
 }
 
 // NewAdaptiveController creates a new CPU-aware adaptive controller.
@@ -67,7 +67,7 @@ func NewAdaptiveController(initialInterval time.Duration) *AdaptiveController {
 	}
 
 	// Store initial interval atomically
-	ctrl.interval.Store(initialInterval)
+	ctrl.interval.Store(&initialInterval)
 	ctrl.nextFlush = time.Now().Add(initialInterval)
 
 	return ctrl
@@ -110,13 +110,13 @@ func (c *AdaptiveController) OnFlush() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	currentInterval := c.interval.Load().(time.Duration)
+	currentInterval := *c.interval.Load()
 	c.nextFlush = time.Now().Add(currentInterval)
 }
 
 // GetCurrentInterval returns the current adaptive emit interval.
 func (c *AdaptiveController) GetCurrentInterval() time.Duration {
-	return c.interval.Load().(time.Duration)
+	return *c.interval.Load()
 }
 
 // GetCPUPercent returns the current CPU usage percentage.
@@ -142,7 +142,7 @@ func (c *AdaptiveController) GetLastPayloadBytes() int {
 // This is called periodically (every 200ms) to adjust the emit interval.
 func (c *AdaptiveController) updateInterval() {
 	cpuPercent := c.cpuMeter.GetCPUPercent()
-	currentInterval := c.interval.Load().(time.Duration)
+	currentInterval := *c.interval.Load()
 
 	// Determine target interval based on payload size and CPU load
 	var targetInterval time.Duration
@@ -171,7 +171,7 @@ func (c *AdaptiveController) updateInterval() {
 	newInterval := c.applyGradualChange(currentInterval, targetInterval)
 
 	// Update interval atomically
-	c.interval.Store(newInterval)
+	c.interval.Store(&newInterval)
 }
 
 // calculateBaseInterval determines the base interval based on average payload size.

@@ -15,6 +15,8 @@
 package topic_browser_plugin
 
 import (
+	"math"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -69,13 +71,12 @@ func (c *CPUMeter) GetCPUPercent() float64 {
 		cpuUsage := totalCPUTime - c.lastUsage
 		cpuPercent = float64(cpuUsage) / float64(wallTime) * 100
 
+		// Ensure that the CPU usage is correct on multi-core systems
+		maxCPU := float64(runtime.NumCPU()) * 100
+		cpuPercent = math.Min(cpuPercent/maxCPU*100, 100)
+
 		// Clamp to reasonable bounds (0-100%)
-		if cpuPercent < 0 {
-			cpuPercent = 0
-		}
-		if cpuPercent > 100 {
-			cpuPercent = 100
-		}
+		cpuPercent = math.Max(0, math.Min(cpuPercent, 100))
 	}
 
 	// Apply EMA smoothing: new_value = alpha * current + (1-alpha) * previous

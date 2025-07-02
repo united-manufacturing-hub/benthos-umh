@@ -116,10 +116,6 @@ func putMetadataMap(m map[string]string) {
 // Returns:
 //   - map[string]string: A new map with copied data (safe to store/reference long-term)
 func cloneMetadataMap(source map[string]string) map[string]string {
-	if source == nil {
-		return nil
-	}
-
 	// Use Go 1.21+ maps.Clone for more efficient cloning
 	return maps.Clone(source)
 }
