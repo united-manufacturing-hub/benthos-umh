@@ -302,7 +302,6 @@ output:
       qos: 1
       keep_alive: "60s"
       connect_timeout: "30s"
-      write_timeout: "10s"
       clean_session: true
     identity:
       group_id: "%s"
@@ -427,7 +426,7 @@ logger:
 			// Count message types
 			msgTypeCounts := make(map[string]int)
 			for _, msg := range messages {
-				if msgType, exists := msg.MetaGet("sparkplug_msg_type"); exists {
+				if msgType, exists := msg.MetaGet("spb_message_type"); exists {
 					msgTypeCounts[msgType]++
 				}
 			}
@@ -456,13 +455,13 @@ logger:
 				Expect(err).NotTo(HaveOccurred())
 
 				// Should have sparkplug-related metadata
-				msgType, hasMsgType := meta["sparkplug_msg_type"]
+				msgType, hasMsgType := meta["spb_message_type"]
 				Expect(hasMsgType).To(BeTrue(), "Should have sparkplug message type")
 
 				// Handle different message types appropriately
 				if msgType == "NDEATH" {
 					// NDEATH messages have different metadata structure
-					deviceKey, hasDeviceKey := meta["sparkplug_device_key"]
+					deviceKey, hasDeviceKey := meta["spb_device_key"]
 					eventType, hasEventType := meta["event_type"]
 
 					Expect(hasDeviceKey).To(BeTrue(), "NDEATH should have device key")
@@ -471,14 +470,14 @@ logger:
 					Expect(deviceKey).To(Equal(fmt.Sprintf("%s/StaticEdgeNode01", uniqueGroupID)))
 				} else {
 					// Regular messages should have group_id and edge_node_id
-					groupID, hasGroupID := meta["group_id"]
-					edgeNodeID, hasEdgeNodeID := meta["edge_node_id"]
+					groupID, hasGroupID := meta["spb_group_id"]
+					edgeNodeID, hasEdgeNodeID := meta["spb_edge_node_id"]
 
 					if !hasGroupID {
-						fmt.Printf("🔍 Message %d missing group_id, available metadata: %+v\n", i+1, meta)
+						fmt.Printf("🔍 Message %d missing spb_group_id, available metadata: %+v\n", i+1, meta)
 					}
 					if !hasEdgeNodeID {
-						fmt.Printf("🔍 Message %d missing edge_node_id, available metadata: %+v\n", i+1, meta)
+						fmt.Printf("🔍 Message %d missing spb_edge_node_id, available metadata: %+v\n", i+1, meta)
 					}
 					Expect(hasGroupID).To(BeTrue(), "Should have group ID")
 					Expect(hasEdgeNodeID).To(BeTrue(), "Should have edge node ID")
@@ -659,7 +658,7 @@ logger:
 				fmt.Printf("📋 Message %d metadata: %+v\n", i+1, meta)
 
 				// Should have sparkplug-related metadata
-				msgType, hasMsgType := meta["sparkplug_msg_type"]
+				msgType, hasMsgType := meta["spb_message_type"]
 				Expect(hasMsgType).To(BeTrue(), "Should have sparkplug message type")
 
 				// Check message type is valid
@@ -668,8 +667,8 @@ logger:
 				// Verify message structure based on type
 				if msgType == "NBIRTH" || msgType == "NDATA" {
 					// Should have group_id and edge_node_id
-					groupID, hasGroupID := meta["group_id"]
-					edgeNodeID, hasEdgeNodeID := meta["edge_node_id"]
+					groupID, hasGroupID := meta["spb_group_id"]
+					edgeNodeID, hasEdgeNodeID := meta["spb_edge_node_id"]
 
 					Expect(hasGroupID).To(BeTrue(), "Should have group ID")
 					Expect(hasEdgeNodeID).To(BeTrue(), "Should have edge node ID")
