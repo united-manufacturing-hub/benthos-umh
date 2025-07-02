@@ -243,7 +243,8 @@ func BundleToProtobufBytes(bundle *proto.UnsBundle) ([]byte, error) {
 		return []byte{}, err
 	}
 
-	return CompressLZ4(protoBytes)
+	return protoBytes, nil
+	//return CompressLZ4(protoBytes)
 }
 
 // ProtobufBytesToBundleWithCompression converts LZ4-compressed protobuf data back to an UnsBundle.

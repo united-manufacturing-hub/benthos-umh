@@ -27,7 +27,7 @@ clean:
 	@rm -rf target tmp/bin tmp/benthos-*.zip
 
 .PHONY: target
-target: build-protobuf
+target: 
 	@mkdir -p $(dir $(BENTHOS_BIN))
 	@go build \
        -ldflags "-s -w \

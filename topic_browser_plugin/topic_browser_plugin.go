@@ -218,7 +218,15 @@ type TopicBrowserProcessor struct {
 	flushDuration         *service.MetricCounter
 	emissionSize          *service.MetricCounter
 	totalEventsEmitted    *service.MetricCounter
-	// TODO: add last length of full topic map as "total_amount_of_topics"
+	messagesNotEmitted    *service.MetricCounter // New: tracks messages processed but not emitted during catch-up
+
+	// CPU-aware adaptive controller
+	adaptiveController *AdaptiveController
+
+	// Prometheus gauges for CPU-aware metrics
+	cpuLoadGauge        *service.MetricGauge
+	activeIntervalGauge *service.MetricGauge
+	activeTopicsGauge   *service.MetricGauge
 }
 
 func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Message) (service.MessageBatch, error) {
@@ -318,9 +326,7 @@ func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Me
 // NOTE: This is not traditional "backpressure" (signaling upstream to slow down).
 // Instead, it's "buffer overflow protection" via immediate emission to make room.
 func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
-	t.logger.Debugf("DEBUG: ProcessBatch called with %d messages", len(batch))
 	if len(batch) == 0 {
-		t.logger.Debugf("DEBUG: Empty batch, returning nil")
 		return nil, nil
 	}
 
@@ -354,25 +360,35 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 		t.bufferMutex.Lock()
 		wouldExceedCapacity := len(t.messageBuffer) >= t.maxBufferSize
 		if wouldExceedCapacity {
-			// Immediate flush to free buffer space for the incoming message
-			overflowResult, flushErr := t.flushBufferAndACKLocked()
+			// OVERFLOW STRATEGY: ACK without emit + throttling to prevent catch-up loops
+			// Buffer overflow indicates catch-up scenario. We need to:
+			// 1. Maintain latest state per topic (not drop data)
+			// 2. Prevent infinite catch-up loops (add throttling)
+			// 3. ACK messages to progress Kafka offsets
+			// 4. Skip emissions until back to real-time
+
+			// CATCH-UP PROCESSING: ACK without emit to maintain state but reduce downstream pressure
+			ackedCount := t.ackBufferAndClearLocked()
 			t.bufferMutex.Unlock()
 
-			if flushErr != nil {
-				// If flush fails, we can't safely buffer more messages
-				if t.logger != nil {
-					t.logger.Errorf("Buffer overflow flush failed: %v", flushErr)
-				}
-				if t.messagesFailed != nil {
-					t.messagesFailed.Incr(1)
-				}
-				continue
+			// THROTTLING: Calculate delay proportional to work done to prevent catch-up loops
+			// This gives the system breathing room and prevents 100% CPU usage
+			throttleDelay := time.Duration(ackedCount/1000) * time.Millisecond // 1ms per 1000 messages
+			if throttleDelay > 200*time.Millisecond {
+				throttleDelay = 200 * time.Millisecond // Cap at 200ms max
+			} else if throttleDelay < 50*time.Millisecond {
+				throttleDelay = 50 * time.Millisecond // Minimum 50ms
 			}
 
-			// Collect overflow emission results to return to caller
-			if overflowResult != nil {
-				overflowEmissionResults = append(overflowEmissionResults, overflowResult...)
+			// Update metrics for catch-up processing
+			if t.messagesNotEmitted != nil {
+				t.messagesNotEmitted.Incr(int64(ackedCount))
 			}
+
+			// Apply throttling delay AFTER logging but BEFORE processing next batch
+			time.Sleep(throttleDelay)
+
+			// No emission results to collect - we maintain state but skip downstream emission
 		} else {
 			t.bufferMutex.Unlock()
 		}
@@ -394,16 +410,46 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 		}
 	}
 
-	// DUAL EMISSION LOGIC: Check for time-based emission after processing all messages
-	// This implements the second emission trigger (interval-based) in addition to
-	// the overflow protection that may have occurred during message processing above.
+	// Notify adaptive controller about the batch (estimate payload size)
+	// This enables CPU-aware adaptation based on message volume and CPU load
+	estimatedPayloadBytes := len(batch) * 1024 // Rough estimate: 1KB per message
+	if t.adaptiveController != nil {
+		t.adaptiveController.OnBatch(estimatedPayloadBytes)
+	}
+
+	// Update CPU-aware metrics
+	t.updateAdaptiveMetrics()
+
+	// ADAPTIVE EMISSION LOGIC: Check CPU-aware adaptive emission after processing all messages
+	// This replaces fixed-interval timing with intelligent CPU and payload-aware timing
 	//
 	// ✅ FIX: Hold mutex during entire check-and-flush to prevent TOCTOU race condition
 	t.bufferMutex.Lock()
 	defer t.bufferMutex.Unlock()
 
-	if time.Since(t.lastEmitTime) >= t.emitInterval {
-		// Time-based emission: emitInterval has elapsed, flush remaining buffer
+	// Use adaptive controller instead of fixed time interval
+	if t.adaptiveController != nil && t.adaptiveController.ShouldFlush() {
+		// Adaptive emission: CPU-aware controller determined it's time to flush
+		intervalResult, err := t.flushBufferAndACKLocked()
+
+		if err != nil {
+			return nil, err
+		}
+
+		// Notify controller that flush was successful
+		t.adaptiveController.OnFlush()
+
+		// Combine both emission types:
+		// 1. overflowEmissionResults: Messages emitted due to buffer overflow protection
+		// 2. intervalResult: Messages emitted due to adaptive timing trigger
+		allResults := overflowEmissionResults
+		if intervalResult != nil {
+			allResults = append(allResults, intervalResult...)
+		}
+
+		return allResults, nil
+	} else if time.Since(t.lastEmitTime) >= t.emitInterval {
+		// Fallback to fixed interval if adaptive controller is not available
 		intervalResult, err := t.flushBufferAndACKLocked()
 
 		if err != nil {
@@ -429,6 +475,7 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 
 	// No emissions occurred - messages remain buffered, waiting for next interval
 	// ACK is deferred until emission happens
+
 	return nil, nil
 }
 
@@ -488,7 +535,8 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 	}
 
 	// Handle nil metrics for tests
-	var messagesProcessed, messagesFailed, eventsOverwritten, ringBufferUtilization, flushDuration, emissionSize, totalEventsEmitted *service.MetricCounter
+	var messagesProcessed, messagesFailed, eventsOverwritten, ringBufferUtilization, flushDuration, emissionSize, totalEventsEmitted, messagesNotEmitted *service.MetricCounter
+	var cpuLoadGauge, activeIntervalGauge, activeTopicsGauge *service.MetricGauge
 	if metrics != nil {
 		messagesProcessed = metrics.NewCounter("messages_processed")
 		messagesFailed = metrics.NewCounter("messages_failed")
@@ -497,7 +545,16 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 		flushDuration = metrics.NewCounter("flush_duration")
 		emissionSize = metrics.NewCounter("emission_size")
 		totalEventsEmitted = metrics.NewCounter("total_events_emitted")
+		messagesNotEmitted = metrics.NewCounter("messages_not_emitted") // Catch-up processing tracking
+
+		// CPU-aware adaptive metrics (only plugin-specific gauges)
+		cpuLoadGauge = metrics.NewGauge("cpu_load_percent")
+		activeIntervalGauge = metrics.NewGauge("active_emit_interval_seconds")
+		activeTopicsGauge = metrics.NewGauge("active_topics_count")
 	}
+
+	// Initialize CPU-aware adaptive controller
+	adaptiveController := NewAdaptiveController(emitInterval)
 
 	return &TopicBrowserProcessor{
 		topicMetadataCache:      l,
@@ -517,6 +574,11 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 		flushDuration:           flushDuration,
 		emissionSize:            emissionSize,
 		totalEventsEmitted:      totalEventsEmitted,
+		messagesNotEmitted:      messagesNotEmitted,
+		adaptiveController:      adaptiveController,
+		cpuLoadGauge:            cpuLoadGauge,
+		activeIntervalGauge:     activeIntervalGauge,
+		activeTopicsGauge:       activeTopicsGauge,
 	}
 }
 
@@ -543,11 +605,11 @@ The processor requires that the following metadata fields are set:
 			Advanced()).
 		Field(service.NewIntField("max_events_per_topic_per_interval").
 			Description("Maximum events per topic per emit interval").
-			Default(10).
+			Default(1).
 			Advanced()).
 		Field(service.NewIntField("max_buffer_size").
 			Description("Maximum number of messages to buffer (safety limit)").
-			Default(100000).
+			Default(10000).
 			Advanced())
 
 	err := service.RegisterBatchProcessor("topic_browser", spec, func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
