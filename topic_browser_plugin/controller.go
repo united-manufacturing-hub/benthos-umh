@@ -50,12 +50,13 @@ const (
 // This controller uses CPU load and payload size patterns to intelligently
 // adjust emit intervals for optimal performance without exceeding CPU limits.
 type AdaptiveController struct {
-	mu            sync.Mutex
-	nextFlush     time.Time    // Next scheduled flush time
-	interval      atomic.Value // Current emit interval (time.Duration)
-	emaBytes      float64      // EMA-tracked payload size
-	cpuMeter      *CPUMeter    // CPU usage monitor
-	lastCPUSample time.Time    // Last CPU sampling time
+	mu               sync.Mutex
+	nextFlush        time.Time    // Next scheduled flush time
+	interval         atomic.Value // Current emit interval (time.Duration)
+	emaBytes         float64      // EMA-tracked payload size
+	cpuMeter         *CPUMeter    // CPU usage monitor
+	lastCPUSample    time.Time    // Last CPU sampling time
+	lastPayloadBytes int          // Last payload size
 }
 
 // NewAdaptiveController creates a new CPU-aware adaptive controller.
@@ -78,6 +79,7 @@ func NewAdaptiveController(initialInterval time.Duration) *AdaptiveController {
 func (c *AdaptiveController) OnBatch(payloadBytes int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.lastPayloadBytes = payloadBytes
 
 	now := time.Now()
 
@@ -120,6 +122,20 @@ func (c *AdaptiveController) GetCurrentInterval() time.Duration {
 // GetCPUPercent returns the current CPU usage percentage.
 func (c *AdaptiveController) GetCPUPercent() float64 {
 	return c.cpuMeter.GetCPUPercent()
+}
+
+// GetEMABytes returns the current exponential moving average of payload bytes.
+func (c *AdaptiveController) GetEMABytes() float64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.emaBytes
+}
+
+// GetLastPayloadBytes returns the last payload size.
+func (c *AdaptiveController) GetLastPayloadBytes() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastPayloadBytes
 }
 
 // updateInterval implements the core adaptive algorithm based on CPU load and payload patterns.

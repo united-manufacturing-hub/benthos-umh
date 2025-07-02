@@ -15,6 +15,7 @@
 package topic_browser_plugin
 
 import (
+	"sync"
 	"syscall"
 	"time"
 )
@@ -27,6 +28,7 @@ type CPUMeter struct {
 	lastCheck time.Time     // When we last measured
 	smoothed  float64       // EMA-smoothed CPU percentage (0-100)
 	alpha     float64       // EMA smoothing factor (0.2 = fast response, 0.05 = stable)
+	mu        sync.Mutex
 }
 
 // NewCPUMeter creates a new CPU meter with the specified EMA smoothing factor.
@@ -43,6 +45,9 @@ func NewCPUMeter(alpha float64) *CPUMeter {
 // This method samples CPU usage and applies exponential moving average to prevent
 // rapid oscillations that could cause unstable adaptive behavior.
 func (c *CPUMeter) GetCPUPercent() float64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	var rusage syscall.Rusage
 	err := syscall.Getrusage(syscall.RUSAGE_SELF, &rusage)
 	if err != nil {
