@@ -22,6 +22,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru"
@@ -1935,4 +1936,341 @@ func extractUnsBundle(msg *service.Message) *proto.UnsBundle {
 	}
 
 	return bundle
+}
+
+// Benchmark: Payload Size Estimation Performance Comparison
+// This benchmark compares the old simple approach (len(batch) * 1024)
+// vs the new detailed estimatePayloadSize function to measure the actual
+// performance and memory overhead of the more accurate estimation.
+
+// BenchmarkPayloadEstimation compares old vs new payload size estimation approaches
+func BenchmarkPayloadEstimation(b *testing.B) {
+	// Create test logger (nil is fine for benchmarks)
+	logger := &service.Logger{}
+
+	// Test scenarios matching realistic UMH usage patterns
+	scenarios := []struct {
+		name        string
+		batchSize   int
+		messageType string // "bytes", "small_struct", "large_struct", "mixed"
+	}{
+		// Most common: Small historian messages
+		{"Historian_1", 1, "small_struct"},
+		{"Historian_10", 10, "small_struct"},
+		{"Historian_100", 100, "small_struct"},
+		{"Historian_1000", 1000, "small_struct"},
+		// Mixed workload (most realistic for production)
+		{"Mixed_Small_10", 10, "mixed"},
+		{"Mixed_Medium_100", 100, "mixed"},
+		{"Mixed_Large_1000", 1000, "mixed"},
+		// Edge cases: Bytes and larger payloads
+		{"Bytes_10", 10, "bytes"},
+		{"Bytes_100", 100, "bytes"},
+		{"OrderData_10", 10, "large_struct"},
+		{"OrderData_100", 100, "large_struct"},
+	}
+
+	for _, scenario := range scenarios {
+		// Create test batch for this scenario
+		batch := createBenchmarkBatch(scenario.batchSize, scenario.messageType)
+
+		b.Run(scenario.name+"_Old", func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				// OLD IMPLEMENTATION: Simple multiplication
+				_ = len(batch) * 1024
+			}
+		})
+
+		b.Run(scenario.name+"_New", func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				// NEW IMPLEMENTATION: Detailed analysis
+				_ = estimatePayloadSize(batch, logger)
+			}
+		})
+
+		// Memory allocation benchmark
+		b.Run(scenario.name+"_Old_Allocs", func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_ = len(batch) * 1024
+			}
+		})
+
+		b.Run(scenario.name+"_New_Allocs", func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_ = estimatePayloadSize(batch, logger)
+			}
+		})
+	}
+
+	// Accuracy comparison benchmark - measure how close estimates are to actual size
+	b.Run("Accuracy_Comparison", func(b *testing.B) {
+		batch := createBenchmarkBatch(100, "mixed")
+
+		// Calculate actual serialized sizes for comparison
+		var actualTotalSize int
+		for _, msg := range batch {
+			if msg.HasBytes() {
+				bytes, _ := msg.AsBytes()
+				actualTotalSize += len(bytes)
+			} else {
+				// For structured messages, estimate JSON serialization size
+				structured, _ := msg.AsStructured()
+				if jsonBytes, err := json.Marshal(structured); err == nil {
+					actualTotalSize += len(jsonBytes)
+				}
+			}
+		}
+
+		oldEstimate := len(batch) * 1024
+		newEstimate := estimatePayloadSize(batch, logger)
+
+		b.Logf("Batch size: %d messages", len(batch))
+		b.Logf("Actual total size: %d bytes", actualTotalSize)
+		b.Logf("Old estimate: %d bytes (error: %+.1f%%)",
+			oldEstimate, float64(oldEstimate-actualTotalSize)/float64(actualTotalSize)*100)
+		b.Logf("New estimate: %d bytes (error: %+.1f%%)",
+			newEstimate, float64(newEstimate-actualTotalSize)/float64(actualTotalSize)*100)
+
+		// Don't count the logging time
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = estimatePayloadSize(batch, logger)
+		}
+	})
+}
+
+// createBenchmarkBatch creates test message batches with realistic UMH payloads
+// Based on the actual message patterns used in the existing test suite
+func createBenchmarkBatch(size int, messageType string) service.MessageBatch {
+	batch := make(service.MessageBatch, size)
+
+	for i := 0; i < size; i++ {
+		var msg *service.Message
+
+		switch messageType {
+		case "bytes":
+			// Raw byte messages (realistic sizes: 50B to 500B)
+			dataSize := 50 + (i % 450) // 50B to ~500B
+			data := make([]byte, dataSize)
+			for j := range data {
+				data[j] = byte(j % 256)
+			}
+			msg = service.NewMessage(data)
+
+		case "small_struct":
+			// Typical UMH historian messages (matches existing tests)
+			data := map[string]interface{}{
+				"timestamp_ms": time.Now().UnixMilli() + int64(i),
+				"value":        float64(i) * 3.14159,
+			}
+			msg = service.NewMessage(nil)
+			msg.SetStructured(data)
+
+		case "large_struct":
+			// Larger but still realistic UMH messages (order processing, batch data)
+			data := map[string]interface{}{
+				"timestamp_ms": time.Now().UnixMilli() + int64(i),
+				"order_id":     fmt.Sprintf("ORDER_%d", 123456+i),
+				"customer":     fmt.Sprintf("Customer_%d", i%20),
+				"batch_id":     fmt.Sprintf("BATCH_%d_%d", i/100, i%100),
+				"temperature":  20.0 + float64(i%50),
+				"pressure":     1013.25 + float64(i%100)*0.1,
+				"quality":      []string{"good", "acceptable", "poor"}[i%3],
+				"operator":     fmt.Sprintf("op_%d", i%5),
+			}
+			msg = service.NewMessage(nil)
+			msg.SetStructured(data)
+
+		case "mixed":
+			// Mix matching the actual test patterns
+			switch i % 3 {
+			case 0:
+				// Basic historian message (most common pattern)
+				data := map[string]interface{}{
+					"timestamp_ms": time.Now().UnixMilli() + int64(i),
+					"value":        float64(i),
+				}
+				msg = service.NewMessage(nil)
+				msg.SetStructured(data)
+			case 1:
+				// String value historian message
+				data := map[string]interface{}{
+					"timestamp_ms": time.Now().UnixMilli() + int64(i),
+					"value":        fmt.Sprintf("sensor_reading_%d", i),
+				}
+				msg = service.NewMessage(nil)
+				msg.SetStructured(data)
+			case 2:
+				// Multi-field message (like in createTestBatch)
+				data := map[string]interface{}{
+					"timestamp_ms": time.Now().UnixMilli() + int64(i),
+					"value":        fmt.Sprintf("benchmark-test-%d", i),
+				}
+				msg = service.NewMessage(nil)
+				msg.SetStructured(data)
+			}
+		}
+
+		// Use realistic UMH topic patterns from existing tests
+		topics := []string{
+			"umh.v1.test-topic._historian.some_value",
+			"umh.v1.enterprise.plant1.machiningArea.cnc-line.cnc5.plc123._historian.axis.y",
+			"umh.v1.test._historian.benchmark_sensor",
+			"umh.v1.factory.area1._historian.temperature",
+			"umh.v1.plant.line2._historian.pressure",
+		}
+
+		msg.MetaSet("umh_topic", topics[i%len(topics)])
+		msg.MetaSet("source", "benchmark")
+
+		batch[i] = msg
+	}
+
+	return batch
+}
+
+// BenchmarkPayloadEstimationEdgeCases tests realistic edge cases from UMH usage
+func BenchmarkPayloadEstimationEdgeCases(b *testing.B) {
+	logger := &service.Logger{}
+
+	edgeCases := []struct {
+		name         string
+		batchCreator func() service.MessageBatch
+	}{
+		{
+			name: "Empty_Batch",
+			batchCreator: func() service.MessageBatch {
+				return service.MessageBatch{}
+			},
+		},
+		{
+			name: "Single_Large_Message",
+			batchCreator: func() service.MessageBatch {
+				// Large but realistic message (e.g., batch production data)
+				data := make([]byte, 4096) // 4KB raw data
+				for i := range data {
+					data[i] = byte(i % 256)
+				}
+				msg := service.NewMessage(data)
+				msg.MetaSet("umh_topic", "umh.v1.factory._historian.batch_data")
+				return service.MessageBatch{msg}
+			},
+		},
+		{
+			name: "Many_Small_Messages",
+			batchCreator: func() service.MessageBatch {
+				batch := make(service.MessageBatch, 500)
+				for i := 0; i < 500; i++ {
+					data := map[string]interface{}{
+						"timestamp_ms": time.Now().UnixMilli() + int64(i),
+						"value":        float64(i),
+					}
+					msg := service.NewMessage(nil)
+					msg.SetStructured(data)
+					msg.MetaSet("umh_topic", "umh.v1.sensors._historian.temp")
+					batch[i] = msg
+				}
+				return batch
+			},
+		},
+		{
+			name: "Realistic_Order_Data",
+			batchCreator: func() service.MessageBatch {
+				data := map[string]interface{}{
+					"timestamp_ms":  time.Now().UnixMilli(),
+					"order_number":  "ORD-2024-001234",
+					"product_code":  "WIDGET-XL-RED",
+					"quantity":      1500,
+					"customer_id":   "CUST-ACME-001",
+					"operator":      "john.doe",
+					"line_speed":    85.5,
+					"temperature":   22.3,
+					"pressure":      1013.25,
+					"quality_check": "PASSED",
+				}
+				msg := service.NewMessage(nil)
+				msg.SetStructured(data)
+				msg.MetaSet("umh_topic", "umh.v1.production.line1._historian.order_data")
+				return service.MessageBatch{msg}
+			},
+		},
+	}
+
+	for _, edgeCase := range edgeCases {
+		batch := edgeCase.batchCreator()
+
+		b.Run(edgeCase.name+"_Old", func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_ = len(batch) * 1024
+			}
+		})
+
+		b.Run(edgeCase.name+"_New", func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_ = estimatePayloadSize(batch, logger)
+			}
+		})
+	}
+}
+
+// TestPayloadEstimationAccuracy shows the accuracy difference between old and new methods
+func TestPayloadEstimationAccuracy(t *testing.T) {
+	logger := &service.Logger{}
+
+	testCases := []struct {
+		name        string
+		size        int
+		messageType string
+	}{
+		{"Small historian batch", 10, "small_struct"},
+		{"Medium mixed batch", 100, "mixed"},
+		{"Large historian batch", 1000, "small_struct"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			batch := createBenchmarkBatch(tc.size, tc.messageType)
+
+			// Calculate actual serialized size
+			var actualSize int
+			for _, msg := range batch {
+				if msg.HasBytes() {
+					bytes, _ := msg.AsBytes()
+					actualSize += len(bytes)
+				} else {
+					structured, _ := msg.AsStructured()
+					if jsonBytes, err := json.Marshal(structured); err == nil {
+						actualSize += len(jsonBytes)
+					}
+				}
+			}
+
+			// Old method: simple multiplication
+			oldEstimate := len(batch) * 1024
+
+			// New method: detailed analysis
+			newEstimate := estimatePayloadSize(batch, logger)
+
+			// Calculate accuracy
+			oldError := math.Abs(float64(oldEstimate - actualSize))
+			newError := math.Abs(float64(newEstimate - actualSize))
+			improvement := oldError / newError
+
+			t.Logf("%s (%d messages):", tc.name, tc.size)
+			t.Logf("  Actual serialized size: %d bytes", actualSize)
+			t.Logf("  Old estimate (1KB/msg): %d bytes (error: %+.1f%%)",
+				oldEstimate, float64(oldEstimate-actualSize)/float64(actualSize)*100)
+			t.Logf("  New estimate (detailed): %d bytes (error: %+.1f%%)",
+				newEstimate, float64(newEstimate-actualSize)/float64(actualSize)*100)
+			t.Logf("  Accuracy improvement: %.1fx more accurate", improvement)
+		})
+	}
 }
