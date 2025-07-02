@@ -21,7 +21,6 @@ package sparkplug_plugin_test
 
 import (
 	"encoding/base64"
-	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -30,10 +29,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func TestSparkplugFlowLifecycle(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Sparkplug B Flow Test Suite")
-}
+// Flow lifecycle tests - integrated into main test suite
 
 var _ = Describe("Lifecycle Flow Tests", func() {
 

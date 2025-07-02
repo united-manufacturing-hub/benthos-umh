@@ -37,7 +37,7 @@ import (
 
 func TestSparkplugUnit(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Sparkplug B Unit Test Suite")
+	RunSpecs(t, "Sparkplug B Complete Test Suite")
 }
 
 // Helper functions for unit testing
