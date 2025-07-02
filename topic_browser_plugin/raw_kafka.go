@@ -15,6 +15,7 @@
 package topic_browser_plugin
 
 import (
+	"maps"
 	"sync"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -86,9 +87,7 @@ func messageToRawKafkaMsg(message *service.Message) (*proto.EventKafka, error) {
 	// Copy from temporary map to final map
 	// This is necessary because the EventKafka object has a longer lifecycle
 	// than our pooled temporary map
-	for k, v := range tempHeaders {
-		finalHeaders[k] = v
-	}
+	maps.Copy(finalHeaders, tempHeaders)
 
 	// Get raw payload bytes
 	payload, err := message.AsBytes()

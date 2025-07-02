@@ -200,9 +200,7 @@ func (t *TopicBrowserProcessor) mergeTopicHeaders(unsTreeId string, topics []*pr
 
 	// Copy existing cached data if we have it
 	if hasCachedHeaders {
-		for key, value := range cachedHeaders {
-			mergedHeaders[key] = value
-		}
+		maps.Copy(mergedHeaders, cachedHeaders)
 	}
 
 	// Layer on new metadata from current batch
