@@ -286,14 +286,13 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 		var newBatch service.MessageBatch
 
 		for _, msg := range batch {
-			processedMsg, shouldKeep, err := p.processConditionForMessageWithProgram(i, msg)
+			processedMsgs, err := p.processConditionForMessageWithProgram(i, msg)
 			if err != nil {
 				p.logError(err, "condition evaluation", msg)
 				continue
 			}
-			if shouldKeep {
-				newBatch = append(newBatch, processedMsg)
-			}
+			// Append all returned messages (could be 0, 1, or multiple)
+			newBatch = append(newBatch, processedMsgs...)
 		}
 
 		batch = newBatch
@@ -779,7 +778,7 @@ func (p *TagProcessor) processMessageBatchWithProgram(batch service.MessageBatch
 }
 
 // processConditionForMessageWithProgram evaluates a condition using compiled programs (Phase 2 optimization)
-func (p *TagProcessor) processConditionForMessageWithProgram(conditionIndex int, msg *service.Message) (*service.Message, bool, error) {
+func (p *TagProcessor) processConditionForMessageWithProgram(conditionIndex int, msg *service.Message) (service.MessageBatch, error) {
 	// Get VM from pool and ensure it's returned
 	vm := p.getVM()
 	defer p.putVM(vm)
@@ -787,19 +786,19 @@ func (p *TagProcessor) processConditionForMessageWithProgram(conditionIndex int,
 	// Convert message to JS object for condition check
 	jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
 	if err != nil {
-		return nil, false, fmt.Errorf("message conversion failed: %v", err)
+		return nil, fmt.Errorf("message conversion failed: %v", err)
 	}
 
 	// Setup VM environment using optimized helper method
 	if err := p.setupMessageForVM(vm, msg, jsMsg); err != nil {
-		return nil, false, fmt.Errorf("JS environment setup failed: %v", err)
+		return nil, fmt.Errorf("JS environment setup failed: %v", err)
 	}
 
 	// Evaluate condition using compiled program
 	ifResult, err := vm.RunProgram(p.conditionPrograms[conditionIndex])
 	if err != nil {
 		p.logJSError(err, p.originalConditions[conditionIndex].If, jsMsg)
-		return nil, false, fmt.Errorf("condition evaluation failed: %v", err)
+		return nil, fmt.Errorf("condition evaluation failed: %v", err)
 	}
 
 	// If condition is true, process the message with the compiled condition action
@@ -809,14 +808,12 @@ func (p *TagProcessor) processConditionForMessageWithProgram(conditionIndex int,
 			p.conditionThenPrograms[conditionIndex],
 			fmt.Sprintf("condition-%d-then", conditionIndex))
 		if err != nil {
-			return nil, false, fmt.Errorf("condition processing failed: %v", err)
+			return nil, fmt.Errorf("condition processing failed: %v", err)
 		}
-		if len(conditionBatch) > 0 {
-			return conditionBatch[0], true, nil
-		}
-		return nil, false, nil // Message was dropped by condition processing
+		// Return all messages produced by the condition action (could be 0, 1, or multiple)
+		return conditionBatch, nil
 	}
 
 	// Condition was false, return original message
-	return msg, true, nil
+	return service.MessageBatch{msg}, nil
 }
