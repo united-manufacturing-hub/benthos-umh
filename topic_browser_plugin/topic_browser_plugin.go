@@ -326,9 +326,7 @@ func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Me
 // NOTE: This is not traditional "backpressure" (signaling upstream to slow down).
 // Instead, it's "buffer overflow protection" via immediate emission to make room.
 func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
-	t.logger.Debugf("DEBUG: ProcessBatch called with %d messages", len(batch))
 	if len(batch) == 0 {
-		t.logger.Debugf("DEBUG: Empty batch, returning nil")
 		return nil, nil
 	}
 
@@ -369,8 +367,6 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 			// 3. ACK messages to progress Kafka offsets
 			// 4. Skip emissions until back to real-time
 
-			flushStartTime := time.Now()
-
 			// CATCH-UP PROCESSING: ACK without emit to maintain state but reduce downstream pressure
 			ackedCount := t.ackBufferAndClearLocked()
 			t.bufferMutex.Unlock()
@@ -387,35 +383,6 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 			// Update metrics for catch-up processing
 			if t.messagesNotEmitted != nil {
 				t.messagesNotEmitted.Incr(int64(ackedCount))
-			}
-
-			// DEBUG: Log catch-up processing with state preservation
-			if t.logger != nil {
-				flushDuration := time.Since(flushStartTime)
-				currentCPU := 0.0
-				currentInterval := time.Duration(0)
-				if t.adaptiveController != nil {
-					currentCPU = t.adaptiveController.GetCPUPercent()
-					currentInterval = t.adaptiveController.GetCurrentInterval()
-				}
-
-				t.logger.Infof("CPU-AWARE CATCH-UP [OVERFLOW]: "+
-					"trigger=buffer_full, "+
-					"strategy=maintain_state_skip_emit_throttled, "+
-					"flush_duration=%v, "+
-					"throttle_delay=%v, "+
-					"acked_messages=%d, "+
-					"preserved_topics=%d, "+
-					"cpu_load=%.1f%%, "+
-					"adaptive_interval=%v, "+
-					"buffer_size_before=%d",
-					flushDuration,
-					throttleDelay,
-					ackedCount,
-					len(t.fullTopicMap), // Show how many topics we're preserving state for
-					currentCPU,
-					currentInterval,
-					t.maxBufferSize)
 			}
 
 			// Apply throttling delay AFTER logging but BEFORE processing next batch
@@ -453,37 +420,6 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 	// Update CPU-aware metrics
 	t.updateAdaptiveMetrics()
 
-	// DEBUG: Log CPU-aware burst protection behavior after every batch
-	if t.logger != nil && t.adaptiveController != nil {
-		// Gather current state for debug logging
-		currentCPU := t.adaptiveController.GetCPUPercent()
-		currentInterval := t.adaptiveController.GetCurrentInterval()
-		activeTopics := len(t.fullTopicMap)
-		shouldFlush := t.adaptiveController.ShouldFlush()
-
-		// Get controller's internal EMA bytes (requires accessing private field)
-		t.adaptiveController.mu.Lock()
-		emaBytes := t.adaptiveController.emaBytes
-		t.adaptiveController.mu.Unlock()
-
-		t.logger.Infof("CPU-AWARE DEBUG [batch_size=%d]: "+
-			"cpu_load=%.1f%%, "+
-			"current_interval=%v, "+
-			"ema_bytes=%.0f, "+
-			"estimated_payload_bytes=%d, "+
-			"active_topics=%d, "+
-			"should_flush=%t, "+
-			"buffer_size=%d",
-			len(batch),
-			currentCPU,
-			currentInterval,
-			emaBytes,
-			estimatedPayloadBytes,
-			activeTopics,
-			shouldFlush,
-			len(t.messageBuffer))
-	}
-
 	// ADAPTIVE EMISSION LOGIC: Check CPU-aware adaptive emission after processing all messages
 	// This replaces fixed-interval timing with intelligent CPU and payload-aware timing
 	//
@@ -494,7 +430,6 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 	// Use adaptive controller instead of fixed time interval
 	if t.adaptiveController != nil && t.adaptiveController.ShouldFlush() {
 		// Adaptive emission: CPU-aware controller determined it's time to flush
-		flushStartTime := time.Now()
 		intervalResult, err := t.flushBufferAndACKLocked()
 
 		if err != nil {
@@ -503,40 +438,6 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 
 		// Notify controller that flush was successful
 		t.adaptiveController.OnFlush()
-
-		// DEBUG: Log flush results
-		if t.logger != nil {
-			flushDuration := time.Since(flushStartTime)
-			intervalBatches := 0
-			intervalMessages := 0
-			if intervalResult != nil {
-				intervalBatches = len(intervalResult)
-				for _, batch := range intervalResult {
-					intervalMessages += len(batch)
-				}
-			}
-			overflowBatches := len(overflowEmissionResults)
-			overflowMessages := 0
-			for _, batch := range overflowEmissionResults {
-				overflowMessages += len(batch)
-			}
-
-			t.logger.Infof("CPU-AWARE FLUSH [ADAPTIVE]: "+
-				"flush_duration=%v, "+
-				"interval_batches=%d, "+
-				"interval_messages=%d, "+
-				"overflow_batches=%d, "+
-				"overflow_messages=%d, "+
-				"total_emitted=%d, "+
-				"next_interval=%v",
-				flushDuration,
-				intervalBatches,
-				intervalMessages,
-				overflowBatches,
-				overflowMessages,
-				intervalMessages+overflowMessages,
-				t.adaptiveController.GetCurrentInterval())
-		}
 
 		// Combine both emission types:
 		// 1. overflowEmissionResults: Messages emitted due to buffer overflow protection
@@ -549,45 +450,10 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 		return allResults, nil
 	} else if time.Since(t.lastEmitTime) >= t.emitInterval {
 		// Fallback to fixed interval if adaptive controller is not available
-		flushStartTime := time.Now()
 		intervalResult, err := t.flushBufferAndACKLocked()
 
 		if err != nil {
 			return nil, err
-		}
-
-		// DEBUG: Log fixed interval flush results
-		if t.logger != nil {
-			flushDuration := time.Since(flushStartTime)
-			intervalBatches := 0
-			intervalMessages := 0
-			if intervalResult != nil {
-				intervalBatches = len(intervalResult)
-				for _, batch := range intervalResult {
-					intervalMessages += len(batch)
-				}
-			}
-			overflowBatches := len(overflowEmissionResults)
-			overflowMessages := 0
-			for _, batch := range overflowEmissionResults {
-				overflowMessages += len(batch)
-			}
-
-			t.logger.Infof("CPU-AWARE FLUSH [FIXED-INTERVAL]: "+
-				"flush_duration=%v, "+
-				"interval_batches=%d, "+
-				"interval_messages=%d, "+
-				"overflow_batches=%d, "+
-				"overflow_messages=%d, "+
-				"total_emitted=%d, "+
-				"fixed_interval=%v",
-				flushDuration,
-				intervalBatches,
-				intervalMessages,
-				overflowBatches,
-				overflowMessages,
-				intervalMessages+overflowMessages,
-				t.emitInterval)
 		}
 
 		// Combine both emission types:
@@ -604,36 +470,12 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 	// No interval-based emission, but return any overflow emissions that occurred
 	// This happens when buffer overflow protection triggered but interval hasn't elapsed
 	if len(overflowEmissionResults) > 0 {
-		// DEBUG: Log overflow-only emissions
-		if t.logger != nil {
-			overflowBatches := len(overflowEmissionResults)
-			overflowMessages := 0
-			for _, batch := range overflowEmissionResults {
-				overflowMessages += len(batch)
-			}
-
-			t.logger.Infof("CPU-AWARE EMISSION [OVERFLOW-ONLY]: "+
-				"overflow_batches=%d, "+
-				"overflow_messages=%d, "+
-				"interval_not_elapsed=true, "+
-				"remaining_buffer_size=%d",
-				overflowBatches,
-				overflowMessages,
-				len(t.messageBuffer))
-		}
 		return overflowEmissionResults, nil
 	}
 
 	// No emissions occurred - messages remain buffered, waiting for next interval
 	// ACK is deferred until emission happens
-	if t.logger != nil {
-		t.logger.Infof("CPU-AWARE NO-EMISSION: "+
-			"buffer_size=%d, "+
-			"interval_elapsed=false, "+
-			"should_flush=%t",
-			len(t.messageBuffer),
-			t.adaptiveController != nil && t.adaptiveController.ShouldFlush())
-	}
+
 	return nil, nil
 }
 
