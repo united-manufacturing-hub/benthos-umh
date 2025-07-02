@@ -39,7 +39,7 @@ The current `topic_browser_plugin` implementation is **significantly more sophis
 | Issue | **ACTUAL** Current Behavior | Impact Assessment | Reality Check |
 |-------|------------------------------|-------------------|---------------|
 | **Unbounded parsing** | ❌ **INCORRECT** - Buffer overflow protection already exists | LOW - Already handled | Buffer auto-flushes at capacity |
-| **Fixed buffer sizing** | ✅ **CONFIRMED** - `max_buffer_size` is static (default: 100k) | Medium | Could benefit from adaptive sizing |
+| **Fixed buffer sizing** | ✅ **CONFIRMED** - `max_buffer_size` is static (default: 10k) | Medium | Could benefit from adaptive sizing |
 | **Limited observability** | ❌ **INCORRECT** - 7 metrics already tracked | LOW - Metrics exist | Missing buffer health **gauges** only |
 | **No adaptive behavior** | ✅ **CONFIRMED** - Fixed intervals and capacities | Medium | Only missing adaptive emit intervals |
 
@@ -277,7 +277,7 @@ processors:
       lru_size: 50000
       emit_interval: 1s
       max_events_per_topic_per_interval: 10
-      max_buffer_size: 100000
+      max_buffer_size: 10000
       
       # NEW: Adaptive behavior (optional)
       adaptive_emit_interval:

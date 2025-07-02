@@ -226,7 +226,7 @@ processors:
       lru_size: 50000                              # Cache size (default: 50,000 entries)
       emit_interval: "1s"                          # Base emit interval - CPU-aware controller adapts this (default: 1s)
       max_events_per_topic_per_interval: 1        # Ring buffer size per topic - burst protection (default: 1)
-      max_buffer_size: 100000                     # Safety limit for total buffered messages (default: 100,000)
+      max_buffer_size: 10000                     # Safety limit for total buffered messages (default: 10,000)
 ```
 
 ## CPU-Aware Adaptive Behavior
