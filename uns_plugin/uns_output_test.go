@@ -154,8 +154,8 @@ var _ = Describe("Initializing uns output plugin", func() {
 		umh_topic, _ := service.NewInterpolatedString("${! meta(\"umh_topic\") }")
 		unsConf.umh_topic = umh_topic
 		// Initialize the validator
-		validator := schemavalidation.Validator{}
-		outputPlugin = newUnsOutputWithClient(mockClient, unsConf, nil, &validator)
+		validator := schemavalidation.NewValidator()
+		outputPlugin = newUnsOutputWithClient(mockClient, unsConf, nil, validator)
 		unsClient = outputPlugin.(*unsOutput)
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	})

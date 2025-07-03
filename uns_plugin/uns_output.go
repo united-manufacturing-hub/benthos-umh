@@ -157,6 +157,11 @@ func deriveSchemaRegistryURL(brokerAddress string) string {
 	// Take the first broker and trim any whitespace
 	firstBroker := strings.TrimSpace(brokers[0])
 
+	// Check if the first broker is empty
+	if firstBroker == "" {
+		return ""
+	}
+
 	// Split by colon to separate host and port
 	parts := strings.Split(firstBroker, ":")
 	if len(parts) != 2 {
@@ -166,6 +171,10 @@ func deriveSchemaRegistryURL(brokerAddress string) string {
 
 	// Replace the port with schema registry port
 	host := parts[0]
+	// Check if host is empty
+	if host == "" {
+		return ""
+	}
 	return fmt.Sprintf("http://%s:%s", host, defaultSchemaRegistryPort)
 }
 
