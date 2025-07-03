@@ -59,36 +59,51 @@ var _ = Describe("Validator", func() {
 		It("should pass validation for valid data & valid virtual_path", func() {
 			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.vibration.x-axis")
 			Expect(err).To(BeNil())
-			err = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-			Expect(err).To(BeNil())
+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
+			Expect(result.Valid).To(BeTrue())
+			Expect(result.Error).To(BeNil())
+			Expect(result.ContractName).To(Equal("_sensor_data"))
+			Expect(result.ContractVersion).To(Equal(uint64(1)))
 		})
 
 		It("should fail validation for valid data & invalid virtual_path", func() {
 			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.vibration.non-existing")
 			Expect(err).To(BeNil())
-			err = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-			Expect(err).To(Not(BeNil()))
+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
+			Expect(result.Valid).To(BeFalse())
+			Expect(result.Error).To(Not(BeNil()))
+			Expect(result.ContractName).To(Equal("_sensor_data"))
+			Expect(result.ContractVersion).To(Equal(uint64(1)))
 		})
 
 		It("should fail validation for invalid data & valid virtual_path", func() {
 			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.vibration.x-axis")
 			Expect(err).To(BeNil())
-			err = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "not a number"}}`))
-			Expect(err).To(Not(BeNil()))
+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "not a number"}}`))
+			Expect(result.Valid).To(BeFalse())
+			Expect(result.Error).To(Not(BeNil()))
+			Expect(result.ContractName).To(Equal("_sensor_data"))
+			Expect(result.ContractVersion).To(Equal(uint64(1)))
 		})
 
 		It("should fail validation for invalid data & invalid virtual_path", func() {
 			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.vibration.non-existing")
 			Expect(err).To(BeNil())
-			err = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "not a number"}}`))
-			Expect(err).To(Not(BeNil()))
+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "not a number"}}`))
+			Expect(result.Valid).To(BeFalse())
+			Expect(result.Error).To(Not(BeNil()))
+			Expect(result.ContractName).To(Equal("_sensor_data"))
+			Expect(result.ContractVersion).To(Equal(uint64(1)))
 		})
 
 		It("should fail validation for invalid payload format", func() {
 			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.vibration.x-axis")
 			Expect(err).To(BeNil())
-			err = validator.Validate(topic, []byte(`{"value": {"value": 100}}`))
-			Expect(err).To(Not(BeNil()))
+			result := validator.Validate(topic, []byte(`{"value": {"value": 100}}`))
+			Expect(result.Valid).To(BeFalse())
+			Expect(result.Error).To(Not(BeNil()))
+			Expect(result.ContractName).To(Equal("_sensor_data"))
+			Expect(result.ContractVersion).To(Equal(uint64(1)))
 		})
 	})
 
@@ -306,9 +321,10 @@ var _ = Describe("Validator", func() {
 		})
 
 		It("should fail for nil topic", func() {
-			err := validator.Validate(nil, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("UNS topic cannot be nil"))
+			result := validator.Validate(nil, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
+			Expect(result.Valid).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+			Expect(result.Error.Error()).To(ContainSubstring("UNS topic cannot be nil"))
 		})
 
 		It("should fail for topic with empty contract", func() {
@@ -321,65 +337,76 @@ var _ = Describe("Validator", func() {
 		It("should fail for non-existing schema", func() {
 			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existing_contract-v1.temperature")
 			Expect(err).To(BeNil())
-			err = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("schema for contract '_non_existing_contract' version 1 not found"))
+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
+			Expect(result.Valid).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+			Expect(result.Error.Error()).To(ContainSubstring("schema for contract '_non_existing_contract' version 1 not found"))
 		})
 
 		It("should fail for empty JSON payload", func() {
 			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
-			err = validator.Validate(topic, []byte(``))
-			Expect(err).To(HaveOccurred())
+			result := validator.Validate(topic, []byte(``))
+			Expect(result.Valid).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
 		})
 
 		It("should fail for invalid JSON payload", func() {
 			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
-			err = validator.Validate(topic, []byte(`{"invalid": json}`))
-			Expect(err).To(HaveOccurred())
+			result := validator.Validate(topic, []byte(`{"invalid": json}`))
+			Expect(result.Valid).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
 		})
 
 		It("should handle topic with nil virtual path", func() {
 			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
-			err = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-			Expect(err).To(BeNil())
+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
+			Expect(result.Valid).To(BeTrue())
+			Expect(result.Error).To(BeNil())
 		})
 
 		It("should handle topic with virtual path", func() {
 			// This would require a topic with virtual path - depends on topic implementation
 			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.some.path.temperature")
 			Expect(err).To(BeNil())
-			err = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-			// The validation might fail due to virtual path mismatch, but we're testing the code path
-			// The important thing is that it doesn't panic or crash
+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
+			Expect(result.Valid).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
 		})
 
 		It("should provide descriptive error messages", func() {
 			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
-			err = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": "not_a_number", "value": 100}}`))
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("schema validation failed"))
-			Expect(err.Error()).To(ContainSubstring("_sensor_data"))
-			Expect(err.Error()).To(ContainSubstring("version 1"))
+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": "not_a_number", "value": 100}}`))
+			Expect(result.Valid).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
+			Expect(result.Error.Error()).To(ContainSubstring("_sensor_data"))
+			Expect(result.Error.Error()).To(ContainSubstring("version 1"))
 		})
 
 		It("should validate with different data types", func() {
 			// Test with zero values
 			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
-			err = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 0, "value": 0}}`))
-			Expect(err).To(BeNil())
+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 0, "value": 0}}`))
+			Expect(result.Valid).To(BeTrue())
+			Expect(result.Error).To(BeNil())
 
 			// Test with negative values
-			err = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": -25.5}}`))
-			Expect(err).To(BeNil())
+			result = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": -25.5}}`))
+			Expect(result.Valid).To(BeTrue())
+			Expect(result.Error).To(BeNil())
 
 			// Test with large numbers
-			err = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 999999999.999}}`))
-			Expect(err).To(BeNil())
+			result = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 999999999.999}}`))
+			Expect(result.Valid).To(BeTrue())
+			Expect(result.Error).To(BeNil())
 		})
 	})
 
@@ -451,8 +478,9 @@ var _ = Describe("Validator", func() {
 					defer wg.Done()
 					topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._test_contract-v1.test")
 					Expect(err).To(BeNil())
-					err = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-					Expect(err).To(BeNil())
+					result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
+					Expect(result.Valid).To(BeTrue())
+					Expect(result.Error).To(BeNil())
 				}()
 			}
 
@@ -509,8 +537,9 @@ var _ = Describe("Validator", func() {
 					topicString := fmt.Sprintf("umh.v1.enterprise.site.area.%s-v1.test_%d", contractName, index)
 					topic, err := topic.NewUnsTopic(topicString)
 					Expect(err).To(BeNil())
-					err = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-					Expect(err).To(BeNil())
+					result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
+					Expect(result.Valid).To(BeTrue())
+					Expect(result.Error).To(BeNil())
 				}(i)
 			}
 

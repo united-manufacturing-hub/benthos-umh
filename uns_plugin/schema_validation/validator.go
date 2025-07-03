@@ -14,6 +14,18 @@ import (
 // Expected format: "contractname-v123" where 123 is the version number.
 var schemaVersionRegex = regexp.MustCompile(`^(.+)-v(\d+)$`)
 
+// ValidationResult contains information about the validation result and the contract used.
+type ValidationResult struct {
+	// Valid indicates whether the validation passed
+	Valid bool
+	// ContractName is the name of the contract that was validated against
+	ContractName string
+	// ContractVersion is the version of the contract that was validated against
+	ContractVersion uint64
+	// Error contains the validation error if validation failed
+	Error error
+}
+
 // Validator manages schema validation for UNS topics with thread-safe operations.
 type Validator struct {
 	schemas      map[string]*Schema
@@ -29,10 +41,13 @@ func NewValidator() *Validator {
 
 // Validate validates the given UNS topic and payload against the registered schema.
 // It extracts the contract and version from the topic, finds the appropriate schema,
-// and validates the payload structure.
-func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) error {
+// and validates the payload structure. Returns a ValidationResult with contract information.
+func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *ValidationResult {
 	if unsTopic == nil {
-		return fmt.Errorf("UNS topic cannot be nil")
+		return &ValidationResult{
+			Valid: false,
+			Error: fmt.Errorf("UNS topic cannot be nil"),
+		}
 	}
 
 	v.schemasMutex.RLock()
@@ -40,26 +55,45 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) error {
 
 	topicInfo := unsTopic.Info()
 	if topicInfo == nil {
-		return fmt.Errorf("topic info is nil")
+		return &ValidationResult{
+			Valid: false,
+			Error: fmt.Errorf("topic info is nil"),
+		}
 	}
 
 	contract := topicInfo.DataContract
 	if contract == "" {
-		return fmt.Errorf("data contract is empty")
+		return &ValidationResult{
+			Valid: false,
+			Error: fmt.Errorf("data contract is empty"),
+		}
 	}
 
 	contractName, version, err := v.ExtractSchemaVersionFromDataContract(contract)
 	if err != nil {
-		return fmt.Errorf("failed to extract schema version from contract '%s': %w", contract, err)
+		return &ValidationResult{
+			Valid: false,
+			Error: fmt.Errorf("failed to extract schema version from contract '%s': %w", contract, err),
+		}
 	}
 
 	if !v.HasSchema(contractName, version) {
-		return fmt.Errorf("schema for contract '%s' version %d not found", contractName, version)
+		return &ValidationResult{
+			Valid:           false,
+			ContractName:    contractName,
+			ContractVersion: version,
+			Error:           fmt.Errorf("schema for contract '%s' version %d not found", contractName, version),
+		}
 	}
 
 	schema := v.schemas[contractName].GetVersion(version)
 	if schema == nil {
-		return fmt.Errorf("schema for contract '%s' version %d is nil", contractName, version)
+		return &ValidationResult{
+			Valid:           false,
+			ContractName:    contractName,
+			ContractVersion: version,
+			Error:           fmt.Errorf("schema for contract '%s' version %d is nil", contractName, version),
+		}
 	}
 
 	// Build the full path for validation
@@ -74,9 +108,14 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) error {
 	wrappedPayload := []byte(fmt.Sprintf(`{"fields": %s, "virtual_path": "%s"}`,
 		string(payload), fullPath.String()))
 
-	validationResult := schema.Validate(wrappedPayload)
+	validationResult := schema.ValidateJSON(wrappedPayload)
 	if validationResult == nil {
-		return fmt.Errorf("schema validation result is nil")
+		return &ValidationResult{
+			Valid:           false,
+			ContractName:    contractName,
+			ContractVersion: version,
+			Error:           fmt.Errorf("schema validation result is nil"),
+		}
 	}
 
 	if !validationResult.Valid {
@@ -84,11 +123,21 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) error {
 		for _, validationErr := range validationResult.Errors {
 			validationErrors = append(validationErrors, validationErr.Error())
 		}
-		return fmt.Errorf("schema validation failed for contract '%s' version %d: %s",
-			contractName, version, strings.Join(validationErrors, "; "))
+		return &ValidationResult{
+			Valid:           false,
+			ContractName:    contractName,
+			ContractVersion: version,
+			Error: fmt.Errorf("schema validation failed for contract '%s' version %d: %s",
+				contractName, version, strings.Join(validationErrors, "; ")),
+		}
 	}
 
-	return nil
+	return &ValidationResult{
+		Valid:           true,
+		ContractName:    contractName,
+		ContractVersion: version,
+		Error:           nil,
+	}
 }
 
 // ExtractSchemaVersionFromDataContract parses a data contract string to extract

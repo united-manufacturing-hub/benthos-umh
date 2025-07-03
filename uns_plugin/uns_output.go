@@ -17,6 +17,7 @@ package uns_plugin
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -317,10 +318,13 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 		}
 
 		// Validate the payload against the schema
-		err = o.validator.Validate(unsTopic, msgAsBytes)
-		if err != nil {
-			return fmt.Errorf("error validating message payload in message %d: %v", i, err)
+		validationResult := o.validator.Validate(unsTopic, msgAsBytes)
+		if !validationResult.Valid {
+			return fmt.Errorf("error validating message payload in message %d: %v", i, validationResult.Error)
 		}
+		// Add the contract name and version to the headers
+		msg.MetaSet("data_contract_name", validationResult.ContractName)
+		msg.MetaSet("data_contract_version", strconv.FormatUint(validationResult.ContractVersion, 10))
 
 		headers, err := o.extractHeaders(msg)
 		if err != nil {
