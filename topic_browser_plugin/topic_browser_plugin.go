@@ -233,7 +233,6 @@ type TopicBrowserProcessor struct {
 	flushDuration         *service.MetricCounter
 	emissionSize          *service.MetricCounter
 	totalEventsEmitted    *service.MetricCounter
-	messagesNotEmitted    *service.MetricCounter // New: tracks messages processed but not emitted during catch-up
 
 	// CPU-aware adaptive controller
 	adaptiveController *AdaptiveController
@@ -382,22 +381,17 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 
 			flushStartTime := time.Now()
 
-			// CATCH-UP PROCESSING: ACK without emit to maintain state but reduce downstream pressure
-			ackedCount := t.ackBufferAndClearLocked()
+			// CATCH-UP PROCESSING: Clear buffers to maintain state but reduce downstream pressure
+			clearedCount := t.clearBuffersLocked()
 			t.bufferMutex.Unlock()
 
 			// THROTTLING: Calculate delay proportional to work done to prevent catch-up loops
 			// This gives the system breathing room and prevents 100% CPU usage
-			throttleDelay := time.Duration(ackedCount/throttleMessagesPerUnit) * throttleDelayPerKMessages
+			throttleDelay := time.Duration(clearedCount/throttleMessagesPerUnit) * throttleDelayPerKMessages
 			if throttleDelay > maxThrottleDelay {
 				throttleDelay = maxThrottleDelay
 			} else if throttleDelay < minThrottleDelay {
 				throttleDelay = minThrottleDelay
-			}
-
-			// Update metrics for catch-up processing
-			if t.messagesNotEmitted != nil {
-				t.messagesNotEmitted.Incr(int64(ackedCount))
 			}
 
 			// Log catch-up processing with state preservation at trace level
@@ -414,14 +408,14 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 				"strategy=maintain_state_skip_emit_throttled, "+
 				"flush_duration=%v, "+
 				"throttle_delay=%v, "+
-				"acked_messages=%d, "+
+				"cleared_messages=%d, "+
 				"preserved_topics=%d, "+
 				"cpu_load=%.1f%%, "+
 				"adaptive_interval=%v, "+
 				"buffer_size_before=%d",
 				flushDuration,
 				throttleDelay,
-				ackedCount,
+				clearedCount,
 				len(t.fullTopicMap), // Show how many topics we're preserving state for
 				currentCPU,
 				currentInterval,
@@ -510,7 +504,7 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 	if t.adaptiveController != nil && t.adaptiveController.ShouldFlush() {
 		// Adaptive emission: CPU-aware controller determined it's time to flush
 		flushStartTime := time.Now()
-		intervalResult, err := t.flushBufferAndACKLocked()
+		intervalResult, err := t.flushBufferLocked()
 
 		if err != nil {
 			return nil, err
@@ -546,7 +540,7 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 	} else if time.Since(t.lastEmitTime) >= t.emitInterval {
 		// Fallback to fixed interval if adaptive controller is not available
 		flushStartTime := time.Now()
-		intervalResult, err := t.flushBufferAndACKLocked()
+		intervalResult, err := t.flushBufferLocked()
 
 		if err != nil {
 			return nil, err
@@ -608,7 +602,7 @@ func (t *TopicBrowserProcessor) Close(_ context.Context) error {
 	if len(t.messageBuffer) > 0 || len(t.fullTopicMap) > 0 {
 		t.logger.Info("Flushing buffered messages during graceful shutdown")
 		// Use locked version since we already hold the mutex
-		_, err := t.flushBufferAndACKLocked()
+		_, err := t.flushBufferLocked()
 		if err != nil {
 			t.logger.Errorf("Failed to flush buffer during graceful shutdown: %v. Some messages may be lost", err)
 			// Continue with shutdown even if flush fails
@@ -644,7 +638,7 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 	}
 
 	// Handle nil metrics for tests
-	var messagesProcessed, messagesFailed, eventsOverwritten, ringBufferUtilization, flushDuration, emissionSize, totalEventsEmitted, messagesNotEmitted *service.MetricCounter
+	var messagesProcessed, messagesFailed, eventsOverwritten, ringBufferUtilization, flushDuration, emissionSize, totalEventsEmitted *service.MetricCounter
 	var cpuLoadGauge, activeIntervalGauge, activeTopicsGauge *service.MetricGauge
 	if metrics != nil {
 		messagesProcessed = metrics.NewCounter("messages_processed")
@@ -654,7 +648,6 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 		flushDuration = metrics.NewCounter("flush_duration")
 		emissionSize = metrics.NewCounter("emission_size")
 		totalEventsEmitted = metrics.NewCounter("total_events_emitted")
-		messagesNotEmitted = metrics.NewCounter("messages_not_emitted") // Catch-up processing tracking
 
 		// CPU-aware adaptive metrics (only plugin-specific gauges)
 		cpuLoadGauge = metrics.NewGauge("cpu_load_percent")
@@ -683,7 +676,6 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 		flushDuration:           flushDuration,
 		emissionSize:            emissionSize,
 		totalEventsEmitted:      totalEventsEmitted,
-		messagesNotEmitted:      messagesNotEmitted,
 		adaptiveController:      adaptiveController,
 		cpuLoadGauge:            cpuLoadGauge,
 		activeIntervalGauge:     activeIntervalGauge,

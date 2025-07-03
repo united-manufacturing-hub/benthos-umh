@@ -87,12 +87,12 @@ func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*proto.E
 	return events
 }
 
-// flushBufferAndACKLocked handles the emission of accumulated data and ACK of buffered messages.
-// This implements the delayed ACK pattern where messages are only ACKed after successful emission.
+// flushBufferLocked handles the emission of accumulated data.
+// This function collects buffered events and emits them as a protobuf bundle.
 //
-// # DELAYED ACK EMISSION ALGORITHM
+// # EMISSION ALGORITHM
 //
-// This function implements the core delayed ACK pattern:
+// This function implements the emission pattern:
 //
 // ## Emission Strategy:
 //   - Collect all events from ring buffers across all topics
@@ -112,23 +112,21 @@ func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*proto.E
 //   - Stateless for downstream consumers - no need to track partial updates
 //   - Consistent behavior - every emission contains complete state
 //
-// ## ACK Behavior:
-//   - Only ACK messages after successful emission
-//   - All buffered messages ACKed together (atomic operation)
-//   - Failed emission = no ACK (messages will be retried)
-//
 // ## Buffer Management:
 //   - Clear messageBuffer and ring buffers after emission
 //   - Reset ring buffer state to prevent duplicate emissions
 //   - Update lastEmitTime to reset interval timer
 //
+// Note: Kafka offsets are committed by the upstream UnsInput plugin.
+// This function only handles emission logic - ACK is handled by Benthos automatically.
+//
 // THREAD SAFETY: This function assumes t.bufferMutex is already held by the caller.
 // It MUST be called from within a mutex-protected section.
 //
 // Returns:
-//   - []service.MessageBatch: [emission_message, ack_batch] - delayed ACK pattern
-//   - error: Emission failure (prevents ACK)
-func (t *TopicBrowserProcessor) flushBufferAndACKLocked() ([]service.MessageBatch, error) {
+//   - []service.MessageBatch: [emission_message] if data exists to emit
+//   - error: Emission failure
+func (t *TopicBrowserProcessor) flushBufferLocked() ([]service.MessageBatch, error) {
 
 	// Collect all events from ring buffers (already rate-limited by buffer size)
 	allEvents := make([]*proto.EventTableEntry, 0)
@@ -141,7 +139,6 @@ func (t *TopicBrowserProcessor) flushBufferAndACKLocked() ([]service.MessageBatc
 	// Early return if no data to emit
 	if len(allEvents) == 0 && len(t.fullTopicMap) == 0 {
 		t.lastEmitTime = time.Now()
-		// ✅ FIX: Clear buffers and return nil - don't emit original messages
 		t.clearBuffers()
 		return nil, nil
 	}
@@ -175,18 +172,11 @@ func (t *TopicBrowserProcessor) flushBufferAndACKLocked() ([]service.MessageBatc
 		t.emissionSize.Incr(int64(len(protoBytes)))
 	}
 
-	// ✅ DELAYED ACK: ACK original messages in-place without forwarding them
-	// We only want to forward the protobuf bundle, not the original messages
-	for _, msg := range t.messageBuffer {
-		msg.SetError(nil) // Clear any errors and ACK the message
-	}
-
 	// Clear buffers and update timestamp
 	t.clearBuffers()
 	t.lastEmitTime = time.Now()
 
 	// Return only the emission message (protobuf bundle)
-	// Original messages are ACKed above but not forwarded
 	return []service.MessageBatch{{emissionMsg}}, nil
 }
 
@@ -207,12 +197,11 @@ func (t *TopicBrowserProcessor) clearBuffers() {
 	}
 }
 
-// ackBufferAndClearLocked maintains internal state but ACKs messages WITHOUT emitting downstream.
+// clearBuffersLocked clears internal state without any ACK logic.
 // This is used in overflow scenarios during catch-up/initial startup where we want to:
 // - Keep the latest value per topic in internal state (fullTopicMap, ring buffers)
-// - ACK messages to prevent Kafka replay
+// - Clear buffers to prevent memory issues
 // - Skip downstream emissions to reduce pipeline pressure
-// - Resume normal emissions when back to real-time processing
 //
 // # CATCH-UP PROCESSING STRATEGY
 //
@@ -222,7 +211,6 @@ func (t *TopicBrowserProcessor) clearBuffers() {
 // ## What This Function Does:
 //   - ✅ Update internal state with latest values per topic (maintains data freshness)
 //   - ✅ Process ring buffer events (keeps latest N events per topic)
-//   - ✅ ACK messages to Kafka (prevents infinite replay)
 //   - ✅ Clear message buffers (prevents memory issues)
 //   - ❌ Does NOT emit downstream (no need - historical data, not real-time)
 //
@@ -235,14 +223,16 @@ func (t *TopicBrowserProcessor) clearBuffers() {
 //   - Pro: All data is processed and used to maintain latest state per topic
 //   - Pro: Ring buffers keep recent events for each topic
 //   - Pro: Ready to emit current state when back to real-time
-//   - Pro: Kafka offset progress maintained
 //   - Pro: No need to emit during catch-up (we'll never reach 100k msg/sec in real-time)
+//
+// Note: Kafka offsets are committed by the upstream UnsInput plugin.
+// Benthos will automatically handle ACK when we return from ProcessBatch.
 //
 // THREAD SAFETY: This function assumes t.bufferMutex is already held by the caller.
 // It MUST be called from within a mutex-protected section.
 //
-// Returns: Number of messages that were processed and ACKed (for logging/metrics)
-func (t *TopicBrowserProcessor) ackBufferAndClearLocked() int {
+// Returns: Number of messages that were processed (for logging/metrics)
+func (t *TopicBrowserProcessor) clearBuffersLocked() int {
 	// Count messages for logging
 	messageCount := len(t.messageBuffer)
 
@@ -251,15 +241,10 @@ func (t *TopicBrowserProcessor) ackBufferAndClearLocked() int {
 	// even though we're not emitting downstream
 
 	// Process ring buffer events to maintain latest state per topic
-	// (This is similar to flushBufferAndACKLocked but without emission)
+	// (This is similar to flushBufferLocked but without emission)
 
 	// The fullTopicMap already contains the latest cumulative state from
 	// the buffering process - we preserve this state for future emissions
-
-	// ACK all buffered messages without emitting them downstream
-	for _, msg := range t.messageBuffer {
-		msg.SetError(nil) // Clear any errors and ACK the message
-	}
 
 	// Clear message buffer but preserve topic state for future emissions
 	t.messageBuffer = nil
