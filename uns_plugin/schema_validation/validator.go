@@ -49,6 +49,7 @@ type Validator struct {
 	schemas           map[string]*Schema
 	schemasMutex      sync.RWMutex
 	schemaRegistryURL string
+	backgroundFetcher *BackgroundFetcher
 }
 
 // NewValidator creates a new Validator instance with an empty schema registry.
@@ -60,10 +61,18 @@ func NewValidator() *Validator {
 
 // NewValidatorWithRegistry creates a new Validator instance with the specified schema registry URL.
 func NewValidatorWithRegistry(schemaRegistryURL string) *Validator {
-	return &Validator{
+	validator := &Validator{
 		schemas:           make(map[string]*Schema),
 		schemaRegistryURL: schemaRegistryURL,
 	}
+
+	// If a schema registry URL is provided, start the background fetcher
+	if schemaRegistryURL != "" {
+		validator.backgroundFetcher = NewBackgroundFetcher(schemaRegistryURL, validator)
+		validator.backgroundFetcher.Start()
+	}
+
+	return validator
 }
 
 // Validate validates the given UNS topic and payload against the registered schema.
@@ -101,23 +110,29 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 
 	contractName, version, err := v.ExtractSchemaVersionFromDataContract(contract)
 	if err != nil {
+		// For unversioned contracts, always bypass (no fetching of "latest")
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
 			SchemaCheckBypassed: true,
 			ContractName:        contract, // Use the original contract string as fallback
 			ContractVersion:     0,
-			BypassReason:        fmt.Sprintf("failed to extract schema version from contract '%s': %s", contract, err.Error()),
+			BypassReason:        fmt.Sprintf("unversioned contract '%s' - bypassing validation (no latest fetching)", contract),
 			Error:               nil,
 		}
 	}
 
 	if !v.HasSchema(contractName, version) {
+		// Queue the schema for background fetching if we have a background fetcher
+		if v.backgroundFetcher != nil {
+			v.backgroundFetcher.QueueSchema(contractName, version)
+		}
+
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
 			SchemaCheckBypassed: true,
 			ContractName:        contractName,
 			ContractVersion:     version,
-			BypassReason:        fmt.Sprintf("schema for contract '%s' version %d not found", contractName, version),
+			BypassReason:        fmt.Sprintf("schema for contract '%s' version %d not found, queued for background fetch", contractName, version),
 			Error:               nil,
 		}
 	}
@@ -243,4 +258,11 @@ func (v *Validator) HasSchema(contractName string, version uint64) bool {
 	}
 
 	return schema.HasVersion(version)
+}
+
+// Close stops the background fetcher and cleans up resources.
+func (v *Validator) Close() {
+	if v.backgroundFetcher != nil {
+		v.backgroundFetcher.Stop()
+	}
 }

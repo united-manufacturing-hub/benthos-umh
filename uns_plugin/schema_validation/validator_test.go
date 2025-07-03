@@ -367,14 +367,14 @@ var _ = Describe("Validator", func() {
 		})
 
 		It("should bypass validation when version extraction fails", func() {
-			// Create a topic with malformed version format
+			// Create a topic with malformed version format (unversioned contract)
 			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._malformed_contract.temperature")
 			Expect(err).To(BeNil())
 			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
 			Expect(result.SchemaCheckPassed).To(BeFalse())
 			Expect(result.SchemaCheckBypassed).To(BeTrue())
 			Expect(result.Error).To(BeNil())
-			Expect(result.BypassReason).To(ContainSubstring("failed to extract schema version from contract '_malformed_contract'"))
+			Expect(result.BypassReason).To(ContainSubstring("unversioned contract '_malformed_contract' - bypassing validation (no latest fetching)"))
 			Expect(result.ContractName).To(Equal("_malformed_contract"))
 			Expect(result.ContractVersion).To(Equal(uint64(0)))
 		})
