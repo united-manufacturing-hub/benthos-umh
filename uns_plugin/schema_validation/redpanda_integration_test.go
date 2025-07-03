@@ -392,7 +392,7 @@ func setupRedpandaSchemas() error {
 	return nil
 }
 
-var _ = Describe("Real Redpanda Integration Tests", Ordered, func() {
+var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), func() {
 	var validator *Validator
 
 	BeforeAll(func() {
