@@ -1385,13 +1385,12 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				"Original headers must not leak into emission")
 			// Note: Numeric values will be present in processed form, which is expected
 
-			By("Verifying original messages are ACKed in-place (not returned)")
-			// The original messages should be ACKed internally via SetError(nil)
-			// but not returned in the batches since we don't want to forward them.
-			// This is the correct delayed ACK pattern in Benthos:
+			By("Verifying original messages are not returned (only emission)")
+			// The original messages are not returned in the batches since we don't want to forward them.
+			// Benthos handles ACK automatically when ProcessBatch returns successfully:
 			// 1. Buffer original messages until emission
 			// 2. Create and return emission batch (protobuf bundle)
-			// 3. ACK original messages in-place (SetError(nil)) without forwarding)
+			// 3. Benthos ACKs original messages automatically (handled by upstream UnsInput)
 
 			By("Verifying processed bundle contains correct structured data")
 			// Extract and decode the protobuf bundle
@@ -1422,7 +1421,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			}
 		})
 
-		It("should handle multiple messages with correct ACK pattern", func() {
+		It("should handle multiple messages with correct emission pattern", func() {
 			By("Creating multiple original messages")
 			msgs := make(service.MessageBatch, 3)
 			originalContents := make([][]byte, 3)
@@ -1445,8 +1444,8 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			result, err := processor.ProcessBatch(context.Background(), msgs)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying batch delayed ACK structure")
-			Expect(result).To(HaveLen(1), "Should return [emission_batch] - original messages ACKed in-place")
+			By("Verifying batch emission structure")
+			Expect(result).To(HaveLen(1), "Should return [emission_batch] - original messages ACKed by Benthos")
 			Expect(result[0]).To(HaveLen(1), "Should emit single bundled message")
 
 			By("Verifying single emission contains all events")
@@ -1465,12 +1464,12 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			Expect(bundle.Events.Entries).To(HaveLen(3), "Bundle should contain all 3 events")
 
-			By("Verifying original messages are ACKed in-place (not returned in batches)")
-			// Note: With in-place ACK pattern, original messages are ACKed via msg.SetError(nil)
-			// but not returned in the result batches. This is the correct Benthos delayed ACK pattern.
+			By("Verifying original messages are not returned (only emission)")
+			// Note: Original messages are not returned in the result batches.
+			// Benthos handles ACK automatically when ProcessBatch returns successfully.
 		})
 
-		It("should not emit when messages are buffered (no immediate ACK)", func() {
+		It("should not emit when messages are buffered (buffered behavior)", func() {
 			By("Creating processor with long emission interval")
 			longProcessor := NewTopicBrowserProcessor(nil, nil, 100, time.Hour, 10, 100)
 			var err error
@@ -1491,19 +1490,19 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			By("Verifying no emission occurs when buffered")
 			Expect(result).To(BeNil(), "Should return nil when messages are buffered")
 
-			By("Verifying message is held in buffer for future ACK")
+			By("Verifying message is held in buffer for future emission")
 			longProcessor.bufferMutex.Lock()
 			bufferLen := len(longProcessor.messageBuffer)
 			longProcessor.bufferMutex.Unlock()
 
-			Expect(bufferLen).To(Equal(1), "Message should be buffered for future emission/ACK")
+			Expect(bufferLen).To(Equal(1), "Message should be buffered for future emission")
 		})
 	})
 
-	// CORE ACK TIMING VERIFICATION - Simple test for the main concern
-	Describe("ACK Timing: Buffer → Wait → Emit+ACK", func() {
-		Context("Messages should be ACKed only when emitted, not when buffered", func() {
-			It("should NOT ACK messages immediately when buffered (before 1 second)", func() {
+	// CORE TIMING VERIFICATION - Simple test for the main concern
+	Describe("Timing: Buffer → Wait → Emit", func() {
+		Context("Messages should be emitted only when timer elapses, not when buffered", func() {
+			It("should NOT emit messages immediately when buffered (before 1 second)", func() {
 				By("Creating processor with realistic 1 second emit interval")
 				// Use actual 1 second interval (not test milliseconds)
 				realisticProcessor := NewTopicBrowserProcessor(nil, nil, 100, time.Second, 10, 100)
@@ -1519,12 +1518,12 @@ var _ = Describe("TopicBrowserProcessor", func() {
 					"value":        42.0,
 				})
 
-				By("Processing message - should be buffered, NOT ACKed")
+				By("Processing message - should be buffered, NOT emitted")
 				result, err := realisticProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg})
 				Expect(err).NotTo(HaveOccurred())
 
-				By("CRITICAL: No ACK should happen yet (message is buffered)")
-				Expect(result).To(BeNil(), "Should return nil - no emission, no ACK yet")
+				By("CRITICAL: No emission should happen yet (message is buffered)")
+				Expect(result).To(BeNil(), "Should return nil - no emission yet")
 
 				By("Verifying message is buffered internally (waiting for 1 second)")
 				realisticProcessor.bufferMutex.Lock()
@@ -1532,14 +1531,14 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				realisticProcessor.bufferMutex.Unlock()
 				Expect(bufferLen).To(Equal(1), "Message should be buffered, waiting for emit interval")
 
-				By("VERIFICATION: This proves messages are NOT ACKed when buffered")
+				By("VERIFICATION: This proves messages are NOT emitted when buffered")
 				// The fact that ProcessBatch returned nil means:
 				// 1. Message was buffered internally ✅
-				// 2. No ACK batch was returned ✅
-				// 3. Original message remains unACKed until emission ✅
+				// 2. No emission batch was returned ✅
+				// 3. Original message remains buffered until emission ✅
 			})
 
-			It("should ACK messages only when 1 second interval triggers emission", func() {
+			It("should emit messages only when 1 second interval triggers emission", func() {
 				By("Creating processor with very short interval for testing")
 				// Use 1ms for test speed, but concept is same as 1 second
 				fastProcessor := NewTopicBrowserProcessor(nil, nil, 100, time.Millisecond, 10, 100)
@@ -1555,20 +1554,20 @@ var _ = Describe("TopicBrowserProcessor", func() {
 					"value":        123.0,
 				})
 
-				By("Processing message - interval has elapsed, should emit+ACK")
+				By("Processing message - interval has elapsed, should emit")
 				result, err := fastProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg})
 				Expect(err).NotTo(HaveOccurred())
 
-				By("CRITICAL: Now we get emission+ACK because interval elapsed")
-				Expect(result).To(HaveLen(1), "Should return [emission_batch] - original messages ACKed in-place")
+				By("CRITICAL: Now we get emission because interval elapsed")
+				Expect(result).To(HaveLen(1), "Should return [emission_batch] - original messages handled by Benthos")
 				Expect(result[0]).To(HaveLen(1), "Emission batch should have processed bundle")
 
-				By("VERIFICATION: This proves ACK happens exactly when emission happens")
-				// With in-place ACK pattern:
+				By("VERIFICATION: This proves emission happens when interval elapses")
+				// With automatic ACK handling:
 				// 1. Emit interval was reached ✅
 				// 2. Bundle was emitted (result[0]) ✅
-				// 3. Original was ACKed via msg.SetError(nil) in-place ✅
-				// 4. Both happen atomically at the same time ✅
+				// 3. Benthos handles ACK automatically ✅
+				// 4. Emission and ACK happen when ProcessBatch returns ✅
 			})
 
 			It("should demonstrate the exact timing relationship", func() {
@@ -1620,11 +1619,11 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				Expect(result3).To(HaveLen(1), "Should return [emission_batch] - original messages ACKed in-place")
 				Expect(result3[0]).To(HaveLen(1), "One emission bundle")
 
-				By("VERIFICATION: All 3 messages ACKed together when emission happens")
+				By("VERIFICATION: All 3 messages handled together when emission happens")
 				// This proves the key behavior:
-				// 1. Messages 1 & 2 were buffered without ACK
+				// 1. Messages 1 & 2 were buffered without emission
 				// 2. Message 3 triggered emission because interval elapsed
-				// 3. All 3 messages ACKed atomically with emission via msg.SetError(nil)
+				// 3. All 3 messages handled atomically with emission by Benthos
 				// 4. ACK timing is tied to emission timing, not buffering timing
 			})
 		})
@@ -1660,7 +1659,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verifying immediate emission behavior")
-				Expect(result).To(HaveLen(1), "Fast intervals should emit immediately: [emission] - ACKed in-place")
+				Expect(result).To(HaveLen(1), "Fast intervals should emit immediately: [emission] - handled by Benthos")
 				Expect(result[0]).To(HaveLen(1), "Should have emission batch")
 
 				By("Explaining the behavior")
@@ -1691,7 +1690,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 						// Subsequent messages may be buffered or emitted depending on timing
 						// The key point is that fast intervals allow immediate emission capability
 						if result != nil {
-							Expect(result).To(HaveLen(1), "If emitted, should have [emission] - ACKed in-place")
+							Expect(result).To(HaveLen(1), "If emitted, should have [emission] - handled by Benthos")
 						}
 						// Either immediate emission or buffering is acceptable for fast intervals
 					}
@@ -1810,7 +1809,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verifying emission occurs after interval")
-				Expect(result2).To(HaveLen(1), "Should emit after interval: [emission] - ACKed in-place")
+				Expect(result2).To(HaveLen(1), "Should emit after interval: [emission] - handled by Benthos")
 			})
 		})
 
