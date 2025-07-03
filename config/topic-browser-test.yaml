@@ -30,12 +30,12 @@ input:
     umh_topic: "umh.v1.*"  # Match all UMH topics
     kafka_topic: "umh.messages"
     broker_address: "localhost:9092"
-    consumer_group: "benthos_kafka_test"
+    consumer_group: "benthos_kafka_test_12"
 
 pipeline:
+  threads: 1
   processors:
     - topic_browser: {}
 
 output:
-  stdout:
-    codec: lines
+  drop: {}
