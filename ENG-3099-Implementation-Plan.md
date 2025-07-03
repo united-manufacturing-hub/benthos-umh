@@ -818,6 +818,392 @@ output:
 | `redpanda` | `http://redpanda:8081` |
 | `` (empty) | `http://localhost:8081` (fallback) |
 
+## Metrics Implementation
+
+### 7. Schema Validation Metrics
+
+**File**: `uns_plugin/uns_output_metrics.go` (NEW)
+
+Following the established patterns from `uns_input_metrics.go`, we'll implement comprehensive metrics tracking for schema validation:
+
+```go
+// Copyright 2025 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package uns_plugin
+
+import (
+	"time"
+
+	"github.com/redpanda-data/benthos/v4/public/service"
+)
+
+// UnsOutputMetrics provides metrics collection for the UNS output plugin schema validation
+type UnsOutputMetrics struct {
+	// Schema loading metrics
+	SchemasLoadedGauge     *service.MetricGauge
+	SchemaCacheHitCounter  *service.MetricCounter
+	SchemaCacheMissCounter *service.MetricCounter
+	SchemaFetchTimer       *service.MetricTimer
+	
+	// Validation metrics
+	ValidationSuccessCounter *service.MetricCounter
+	ValidationFailureCounter *service.MetricCounter
+	TagValidationFailCounter *service.MetricCounter
+	PayloadValidationFailCounter *service.MetricCounter
+	ValidationTimer          *service.MetricTimer
+	
+	// Error metrics
+	SchemaFetchErrorCounter   *service.MetricCounter
+	SchemaCompileErrorCounter *service.MetricCounter
+}
+
+// NewUnsOutputMetrics creates a new metrics collection for the UNS output plugin
+func NewUnsOutputMetrics(metricsProvider *service.Metrics) *UnsOutputMetrics {
+	return &UnsOutputMetrics{
+		// Schema loading metrics
+		SchemasLoadedGauge:     metricsProvider.NewGauge("output_uns_schemas_loaded"),
+		SchemaCacheHitCounter:  metricsProvider.NewCounter("output_uns_schema_cache_hits"),
+		SchemaCacheMissCounter: metricsProvider.NewCounter("output_uns_schema_cache_misses"),
+		SchemaFetchTimer:       metricsProvider.NewTimer("output_uns_schema_fetch_time"),
+		
+		// Validation metrics
+		ValidationSuccessCounter: metricsProvider.NewCounter("output_uns_validation_success"),
+		ValidationFailureCounter: metricsProvider.NewCounter("output_uns_validation_failure"),
+		TagValidationFailCounter: metricsProvider.NewCounter("output_uns_tag_validation_failure"),
+		PayloadValidationFailCounter: metricsProvider.NewCounter("output_uns_payload_validation_failure"),
+		ValidationTimer:          metricsProvider.NewTimer("output_uns_validation_time"),
+		
+		// Error metrics
+		SchemaFetchErrorCounter:   metricsProvider.NewCounter("output_uns_schema_fetch_errors"),
+		SchemaCompileErrorCounter: metricsProvider.NewCounter("output_uns_schema_compile_errors"),
+	}
+}
+
+// LogSchemaLoaded logs when a schema is successfully loaded
+func (m *UnsOutputMetrics) LogSchemaLoaded(startTime time.Time) {
+	m.SchemaFetchTimer.Timing(int64(time.Since(startTime)))
+	m.SchemasLoadedGauge.Set(1) // Increment loaded schemas count
+}
+
+// LogSchemaCacheHit logs a schema cache hit
+func (m *UnsOutputMetrics) LogSchemaCacheHit() {
+	m.SchemaCacheHitCounter.Incr(1)
+}
+
+// LogSchemaCacheMiss logs a schema cache miss
+func (m *UnsOutputMetrics) LogSchemaCacheMiss() {
+	m.SchemaCacheMissCounter.Incr(1)
+}
+
+// LogValidationSuccess logs a successful validation
+func (m *UnsOutputMetrics) LogValidationSuccess(startTime time.Time) {
+	m.ValidationSuccessCounter.Incr(1)
+	m.ValidationTimer.Timing(int64(time.Since(startTime)))
+}
+
+// LogValidationFailure logs a validation failure with type
+func (m *UnsOutputMetrics) LogValidationFailure(startTime time.Time, failureType string) {
+	m.ValidationFailureCounter.Incr(1)
+	m.ValidationTimer.Timing(int64(time.Since(startTime)))
+	
+	switch failureType {
+	case "tag":
+		m.TagValidationFailCounter.Incr(1)
+	case "payload":
+		m.PayloadValidationFailCounter.Incr(1)
+	}
+}
+
+// LogSchemaFetchError logs a schema fetch error
+func (m *UnsOutputMetrics) LogSchemaFetchError() {
+	m.SchemaFetchErrorCounter.Incr(1)
+}
+
+// LogSchemaCompileError logs a schema compilation error
+func (m *UnsOutputMetrics) LogSchemaCompileError() {
+	m.SchemaCompileErrorCounter.Incr(1)
+}
+
+// NewMockOutputMetrics creates a new metrics collection that doesn't actually record metrics
+// Useful for testing when you don't need real metrics
+func NewMockOutputMetrics() *UnsOutputMetrics {
+	mockResources := service.MockResources()
+	mockMetrics := mockResources.Metrics()
+	return &UnsOutputMetrics{
+		SchemasLoadedGauge:     mockMetrics.NewGauge("output_uns_schemas_loaded"),
+		SchemaCacheHitCounter:  mockMetrics.NewCounter("output_uns_schema_cache_hits"),
+		SchemaCacheMissCounter: mockMetrics.NewCounter("output_uns_schema_cache_misses"),
+		SchemaFetchTimer:       mockMetrics.NewTimer("output_uns_schema_fetch_time"),
+		ValidationSuccessCounter: mockMetrics.NewCounter("output_uns_validation_success"),
+		ValidationFailureCounter: mockMetrics.NewCounter("output_uns_validation_failure"),
+		TagValidationFailCounter: mockMetrics.NewCounter("output_uns_tag_validation_failure"),
+		PayloadValidationFailCounter: mockMetrics.NewCounter("output_uns_payload_validation_failure"),
+		ValidationTimer:          mockMetrics.NewTimer("output_uns_validation_time"),
+		SchemaFetchErrorCounter:   mockMetrics.NewCounter("output_uns_schema_fetch_errors"),
+		SchemaCompileErrorCounter: mockMetrics.NewCounter("output_uns_schema_compile_errors"),
+	}
+}
+```
+
+### 8. Integration with uns_output Plugin
+
+**File**: `uns_plugin/uns_output.go` (MODIFIED)
+
+```go
+// Update unsOutput struct to include metrics
+type unsOutput struct {
+	config        unsOutputConfig
+	client        MessagePublisher
+	schemaCache   *SchemaCache
+	metrics       *UnsOutputMetrics
+	log           *service.Logger
+}
+
+// Update constructor to include metrics
+func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchOutput, service.BatchPolicy, int, error) {
+	// ... existing config parsing ...
+	
+	// Create schema cache if registry URL is provided and not explicitly disabled
+	var schemaCache *SchemaCache
+	if schemaRegistryURL != "" {
+		schemaCache = NewSchemaCache(schemaRegistryURL, mgr.Logger())
+	}
+	
+	// Create metrics
+	metrics := NewUnsOutputMetrics(mgr.Metrics())
+	
+	return newUnsOutputWithClient(NewClient(), config, schemaCache, metrics, mgr.Logger()), batchPolicy, maxInFlight, nil
+}
+
+// Update testable constructor
+func newUnsOutputWithClient(client MessagePublisher, config unsOutputConfig, schemaCache *SchemaCache, metrics *UnsOutputMetrics, logger *service.Logger) service.BatchOutput {
+	return &unsOutput{
+		client:      client,
+		config:      config,
+		schemaCache: schemaCache,
+		metrics:     metrics,
+		log:         logger,
+	}
+}
+
+// Update WriteBatch to include validation with metrics
+func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) error {
+	if len(msgs) == 0 {
+		return nil
+	}
+
+	records := make([]Record, 0, len(msgs))
+	for i, msg := range msgs {
+		// ... existing key validation ...
+		
+		// Perform schema validation if schema cache is available
+		if o.schemaCache != nil {
+			if err := o.validateMessage(ctx, msg, msgAsBytes, i); err != nil {
+				// Message failed validation, but continue with fail-open behavior
+				o.log.Warnf("Schema validation failed for message %d: %v", i, err)
+				// Note: Message is still processed (fail-open behavior)
+			}
+		}
+		
+		// ... rest of existing record preparation ...
+	}
+	
+	// ... existing batch sending logic ...
+}
+
+// validateMessage performs schema validation with metrics tracking
+func (o *unsOutput) validateMessage(ctx context.Context, msg *service.Message, msgBytes []byte, msgIndex int) error {
+	startTime := time.Now()
+	
+	// Get data contract from message metadata
+	contract := msg.MetaGet("data_contract")
+	if contract == "" {
+		o.log.Debugf("No data_contract metadata found for message %d, skipping validation", msgIndex)
+		return nil
+	}
+
+	// Get UNS topic and extract tag name
+	unsTopicKey, err := o.config.umh_topic.TryString(msg)
+	if err != nil {
+		return fmt.Errorf("failed to get UNS topic for message %d: %v", msgIndex, err)
+	}
+
+	tagName, err := extractTagNameFromUNSTopic(unsTopicKey)
+	if err != nil {
+		return fmt.Errorf("failed to extract tag name from UNS topic '%s' for message %d: %v", unsTopicKey, msgIndex, err)
+	}
+
+	// Get validator for this contract
+	validator, err := o.schemaCache.GetValidator(ctx, contract)
+	if err != nil {
+		o.metrics.LogSchemaFetchError()
+		o.log.Errorf("Failed to get validator for contract %s: %v", contract, err)
+		return nil // Fail open - don't block the message
+	}
+
+	if validator == nil {
+		// No schema registered for this contract - skip validation
+		return nil
+	}
+
+	// Perform dual validation (tag name + payload)
+	if err := validator.ValidateTagAndPayload(tagName, msgBytes); err != nil {
+		// Determine failure type
+		failureType := "payload"
+		if strings.Contains(err.Error(), "not allowed for contract") {
+			failureType = "tag"
+		}
+		
+		o.metrics.LogValidationFailure(startTime, failureType)
+		return fmt.Errorf("dual validation failed for contract %s, tag '%s' - %v", contract, tagName, err)
+	}
+
+	o.metrics.LogValidationSuccess(startTime)
+	o.log.Tracef("Message %d passed dual validation: contract=%s, tag=%s", msgIndex, contract, tagName)
+	return nil
+}
+```
+
+### 9. Update SchemaCache to Include Metrics
+
+**File**: `uns_plugin/schema_validator.go` (MODIFIED)
+
+```go
+// Update SchemaCache to include metrics
+type SchemaCache struct {
+	cache            map[string]SchemaValidator
+	lastFetch        map[string]time.Time
+	registryURL      string
+	refreshInterval  time.Duration
+	metrics          *UnsOutputMetrics  // NEW: Add metrics
+	mutex            sync.RWMutex
+	log              *service.Logger
+}
+
+// Update constructor to accept metrics
+func NewSchemaCache(registryURL string, logger *service.Logger) *SchemaCache {
+	return &SchemaCache{
+		cache:           make(map[string]SchemaValidator),
+		lastFetch:       make(map[string]time.Time),
+		registryURL:     registryURL,
+		refreshInterval: 10 * time.Minute,
+		log:             logger,
+		// metrics will be set later via SetMetrics
+	}
+}
+
+// SetMetrics sets the metrics instance for the cache
+func (sc *SchemaCache) SetMetrics(metrics *UnsOutputMetrics) {
+	sc.metrics = metrics
+}
+
+// Update fetchAndCacheSchema to include metrics
+func (sc *SchemaCache) fetchAndCacheSchema(ctx context.Context, contractInfo ContractInfo) (SchemaValidator, error) {
+	// ... existing logic ...
+	
+	// Check cache first
+	if validator, exists := sc.cache[cacheKey]; exists {
+		if sc.metrics != nil {
+			sc.metrics.LogSchemaCacheHit()
+		}
+		// ... existing cache hit logic ...
+	}
+	
+	if sc.metrics != nil {
+		sc.metrics.LogSchemaCacheMiss()
+	}
+	
+	fetchStart := time.Now()
+	client := NewSchemaRegistryClient(sc.registryURL)
+	schemaResp, err := client.GetSchemaForContract(contractInfo)
+	if err != nil {
+		if sc.metrics != nil {
+			sc.metrics.LogSchemaFetchError()
+		}
+		sc.log.Errorf("Failed to fetch schema for contract %s: %v", contractInfo.FullName, err)
+		return nil, nil // Fail open
+	}
+	
+	// ... existing response handling ...
+	
+	// Compile the contract schema
+	validator, err := NewCompiledContractSchema(contractInfo.FullName, []byte(schemaResp.Schema))
+	if err != nil {
+		if sc.metrics != nil {
+			sc.metrics.LogSchemaCompileError()
+		}
+		sc.log.Errorf("Failed to compile contract schema for %s: %v", contractInfo.FullName, err)
+		return nil, nil // Fail open
+	}
+	
+	if sc.metrics != nil {
+		sc.metrics.LogSchemaLoaded(fetchStart)
+	}
+	
+	// ... rest of existing caching logic ...
+}
+```
+
+### 10. Available Metrics
+
+The following metrics will be available through Benthos's metrics system:
+
+**Schema Loading Metrics:**
+- `output_uns_schemas_loaded` (Gauge): Number of loaded schemas
+- `output_uns_schema_cache_hits` (Counter): Schema cache hits
+- `output_uns_schema_cache_misses` (Counter): Schema cache misses
+- `output_uns_schema_fetch_time` (Timer): Time to fetch schemas from registry
+
+**Validation Metrics:**
+- `output_uns_validation_success` (Counter): Successful validations
+- `output_uns_validation_failure` (Counter): Failed validations
+- `output_uns_tag_validation_failure` (Counter): Tag name validation failures
+- `output_uns_payload_validation_failure` (Counter): Payload validation failures
+- `output_uns_validation_time` (Timer): Validation duration
+
+**Error Metrics:**
+- `output_uns_schema_fetch_errors` (Counter): Schema registry fetch errors
+- `output_uns_schema_compile_errors` (Counter): Schema compilation errors
+
+## Benefits of Metrics
+
+### 1. **Data Quality Monitoring**
+- Track validation success/failure rates per contract
+- Identify problematic contracts or schemas
+- Monitor data quality trends over time
+
+### 2. **Performance Monitoring**
+- Track validation latency per contract
+- Monitor cache hit rates
+- Identify performance bottlenecks
+
+### 3. **Operational Insights**
+- See which contracts are most/least used
+- Monitor schema loading and refresh patterns
+- Track schema registry health
+
+### 4. **Debugging Support**
+- Identify which tags are being rejected most often
+- Understand payload validation failure patterns
+- Monitor schema compilation issues
+
+### 5. **Capacity Planning**
+- Understand contract usage patterns
+- Plan schema registry capacity
+- Monitor validation throughput
+
 ## Dependencies
 
 Add to go.mod:
@@ -837,4 +1223,6 @@ go get github.com/kaptinlin/jsonschema@latest
 - ✅ **Performance**: Efficient caching minimizes schema registry load
 - ✅ **Reliability**: Fail-open design prevents data loss
 - ✅ **Rich Error Messages**: Clear validation failure messages for debugging
+- ✅ **Comprehensive Metrics**: Full observability into validation performance and data quality
+- ✅ **Operational Insights**: Track contract usage, validation success rates, and performance metrics
 - ✅ **Maintainability**: Clean, testable architecture with comprehensive test coverage 
