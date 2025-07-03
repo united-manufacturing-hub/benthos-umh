@@ -802,12 +802,12 @@ tag_processor:
   advancedProcessing: |
     let doubledValue = msg.payload * 2;
 
-    msg1 = {
+    let msg1 = {
         payload: msg.payload,
         meta: { ...msg.meta, data_contract: "_historian" }
     };
 
-    msg2 = {
+    let msg2 = {
         payload: doubledValue,
         meta: { ...msg.meta, data_contract: "_analytics", tag_name: msg.meta.tag_name + "_doubled" }
     };
@@ -885,7 +885,7 @@ tag_processor:
 			err = builder.AddProcessorYAML(`
 tag_processor:
   defaults: |
-    msg1 = {
+    let msg1 = {
       payload: msg.payload,
       meta: {
         location_path: "enterprise",
@@ -894,7 +894,7 @@ tag_processor:
       }
     };
 
-    msg2 = {
+    let msg2 = {
       payload: msg.payload,
       meta: {
         location_path: "enterprise",

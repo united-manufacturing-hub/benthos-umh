@@ -208,16 +208,21 @@ func (p *TagProcessor) getVM() *goja.Runtime {
 // putVM returns a VM to the pool after proper cleanup
 func (p *TagProcessor) putVM(vm *goja.Runtime) {
 	// Comprehensive VM cleanup to prevent state leakage
-	p.clearVMState(vm)
+	if err := p.clearVMState(vm); err != nil {
+		p.logger.Errorf("Failed to clear VM state: %v", err)
+		// In case of an error, we do not return the VM to the pool
+		// because it might be in an invalid state
+		return
+	}
 	// Return cleaned VM to pool for reuse
 	p.vmpool.Put(vm)
 }
 
 // clearVMState performs comprehensive cleanup of VM state
-func (p *TagProcessor) clearVMState(vm *goja.Runtime) {
+func (p *TagProcessor) clearVMState(vm *goja.Runtime) error {
 	// Clear any interrupt flag that might be set to prevent state pollution
 	vm.ClearInterrupt()
-	vm.GlobalObject().Set("msg", nil)
+	return vm.GlobalObject().Set("msg", nil)
 }
 
 // setupMessageForVM prepares a VM with message data for execution
