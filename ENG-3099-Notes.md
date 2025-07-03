@@ -33,6 +33,8 @@ dataModels:
 ```
 
 **Transformed to Our Schema:**
+
+**Version 1 Schema:**
 ```json
 {
    "virtual_path": ["value"],
@@ -42,6 +44,39 @@ dataModels:
          "properties": {
             "timestamp_ms": {"type": "number"},
             "value": {"type": "number"}
+         },
+         "required": ["timestamp_ms", "value"]
+      }
+   }
+}
+```
+
+**Version 2 Schema:**
+```json
+{
+   "virtual_path": ["value", "timestamp", "metadata"],
+   "fields": {
+      "value": {
+         "type": "object",
+         "properties": {
+            "timestamp_ms": {"type": "number"},
+            "value": {"type": "number"}
+         },
+         "required": ["timestamp_ms", "value"]
+      },
+      "timestamp": {
+         "type": "object",
+         "properties": {
+            "timestamp_ms": {"type": "number"},
+            "value": {"type": "string"}
+         },
+         "required": ["timestamp_ms", "value"]
+      },
+      "metadata": {
+         "type": "object",
+         "properties": {
+            "timestamp_ms": {"type": "number"},
+            "value": {"type": "object"}
          },
          "required": ["timestamp_ms", "value"]
       }
@@ -75,6 +110,7 @@ dataModels:
 ```
 
 **Transformed to Our Schema:**
+> **Note:** The `metadata` field is not included in the transformed schema because it only has `_model: device-info` (a reference to another schema) without `type: timeseries`. Only fields with `type: timeseries` are included in the virtual_path and fields for direct validation.
 ```json
 {
    "virtual_path": ["sensor", "sensor.temp_reading", "sensor.temp_unit"],
@@ -255,15 +291,61 @@ structure:
 ```
 
 **Generated Virtual Path:** `["motor", "motor.rpm", "motor.temperature", "motor.status"]`
+
+**Generated JSON Schema:**
+```json
+{
+   "virtual_path": ["motor", "motor.rpm", "motor.temperature", "motor.status"],
+   "fields": {
+      "motor": {
+         "type": "object",
+         "properties": {
+            "timestamp_ms": {"type": "number"},
+            "value": {"type": "string"}
+         },
+         "required": ["timestamp_ms", "value"]
+      },
+      "motor.rpm": {
+         "type": "object",
+         "properties": {
+            "timestamp_ms": {"type": "number"},
+            "value": {"type": "number"}
+         },
+         "required": ["timestamp_ms", "value"]
+      },
+      "motor.temperature": {
+         "type": "object",
+         "properties": {
+            "timestamp_ms": {"type": "number"},
+            "value": {"type": "number"}
+         },
+         "required": ["timestamp_ms", "value"]
+      },
+      "motor.status": {
+         "type": "object",
+         "properties": {
+            "timestamp_ms": {"type": "number"},
+            "value": {"type": "string"}
+         },
+         "required": ["timestamp_ms", "value"]
+      }
+   }
+}
+```
+
 **Valid UNS Topics:** 
+- `umh.v1.factory.line1.machine5._motor_controller.motor`
 - `umh.v1.factory.line1.machine5._motor_controller.motor.rpm`
 - `umh.v1.factory.line1.machine5._motor_controller.motor.temperature`
+- `umh.v1.factory.line1.machine5._motor_controller.motor.status`
 
 ### Multi-Sensor Array
 ```yaml
 # Sensor array data model  
 structure:
   sensors:
+    payloadType: string
+    type: timeseries
     subfields:
       temp_01:
         payloadType: number
@@ -276,8 +358,51 @@ structure:
         type: timeseries
 ```
 
-**Generated Virtual Path:** `["sensors.temp_01", "sensors.temp_02", "sensors.humidity"]`
+**Generated Virtual Path:** `["sensors", "sensors.temp_01", "sensors.temp_02", "sensors.humidity"]`
+
+**Generated JSON Schema:**
+```json
+{
+   "virtual_path": ["sensors", "sensors.temp_01", "sensors.temp_02", "sensors.humidity"],
+   "fields": {
+      "sensors": {
+         "type": "object",
+         "properties": {
+            "timestamp_ms": {"type": "number"},
+            "value": {"type": "string"}
+         },
+         "required": ["timestamp_ms", "value"]
+      },
+      "sensors.temp_01": {
+         "type": "object",
+         "properties": {
+            "timestamp_ms": {"type": "number"},
+            "value": {"type": "number"}
+         },
+         "required": ["timestamp_ms", "value"]
+      },
+      "sensors.temp_02": {
+         "type": "object",
+         "properties": {
+            "timestamp_ms": {"type": "number"},
+            "value": {"type": "number"}
+         },
+         "required": ["timestamp_ms", "value"]
+      },
+      "sensors.humidity": {
+         "type": "object",
+         "properties": {
+            "timestamp_ms": {"type": "number"},
+            "value": {"type": "number"}
+         },
+         "required": ["timestamp_ms", "value"]
+      }
+   }
+}
+```
+
 **Valid UNS Topics:**
+- `umh.v1.building.floor2.room201._environmental.sensors`
 - `umh.v1.building.floor2.room201._environmental.sensors.temp_01`
 - `umh.v1.building.floor2.room201._environmental.sensors.humidity`
 
