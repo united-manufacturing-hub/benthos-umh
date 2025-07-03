@@ -249,6 +249,9 @@ func (o *unsOutput) Close(ctx context.Context) error {
 		o.client.Close()
 		o.client = nil
 	}
+	if o.validator != nil {
+		o.validator.Close()
+	}
 	o.log.Infof("uns kafka client closed successfully")
 	return nil
 }
