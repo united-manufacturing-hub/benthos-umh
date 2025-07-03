@@ -26,13 +26,15 @@ Our schemas support **dual validation** with both allowed tag names and tag-spec
 
 ```json
 {
-   "names": [
-      "current",
-      "voltage", 
-      "description"
+   "virtual_path": [
+      "count",
+      "vibration.x-axis", 
+      "vibration.y-axis",
+      "acceleration.x",
+      "serialNumber"
    ],
    "fields": {
-      "current": {
+      "count": {
          "type": "object",
          "properties": {
             "timestamp_ms": {"type": "number"},
@@ -40,7 +42,7 @@ Our schemas support **dual validation** with both allowed tag names and tag-spec
          },
          "required": ["timestamp_ms", "value"]
       },
-      "voltage": {
+      "vibration.x-axis": {
          "type": "object", 
          "properties": {
             "timestamp_ms": {"type": "number"},
@@ -48,7 +50,23 @@ Our schemas support **dual validation** with both allowed tag names and tag-spec
          },
          "required": ["timestamp_ms", "value"]
       },
-      "description": {
+      "vibration.y-axis": {
+         "type": "object", 
+         "properties": {
+            "timestamp_ms": {"type": "number"},
+            "value": {"type": "number"}
+         },
+         "required": ["timestamp_ms", "value"]
+      },
+      "acceleration.x": {
+         "type": "object", 
+         "properties": {
+            "timestamp_ms": {"type": "number"},
+            "value": {"type": "number"}
+         },
+         "required": ["timestamp_ms", "value"]
+      },
+      "serialNumber": {
          "type": "object",
          "properties": {
             "timestamp_ms": {"type": "number"}, 
@@ -209,7 +227,7 @@ import (
 
 // ContractInfo holds parsed contract information
 type ContractInfo struct {
-	BaseContract string // e.g., "_historian" 
+	BaseContract string // e.g., "_pump_data" 
 	Version      *int   // nil for latest, specific number for versioned
 	FullName     string // original contract name
 }
@@ -222,7 +240,7 @@ func ParseContract(contract string) ContractInfo {
 		return ContractInfo{}
 	}
 
-	// Check if contract has version suffix (e.g., "_historianv1", "_historianv34")
+	// Check if contract has version suffix (e.g., "_pump_datav1", "_pump_datav34")
 	matches := contractVersionRegex.FindStringSubmatch(contract)
 	if len(matches) == 3 {
 		baseContract := matches[1]
@@ -354,7 +372,7 @@ import (
 )
 
 // extractTagNameFromUNSTopic extracts the tag name (last part) from a UNS topic
-// Example: "umh.v1.enterprise.site.area._historian.axis.x.position.temperature" -> "temperature"
+// Example: "umh.v1.enterprise.site.area._pump_data.vibration.x-axis" -> "vibration.x-axis"
 func extractTagNameFromUNSTopic(unsTopic string) (string, error) {
 	if unsTopic == "" {
 		return "", fmt.Errorf("UNS topic is empty")
@@ -395,8 +413,8 @@ import (
 
 // ContractSchema represents the dual validation schema structure
 type ContractSchema struct {
-	Names  []string                   `json:"names"`  // Allowed tag names
-	Fields map[string]json.RawMessage `json:"fields"` // Tag-specific JSON schemas
+	VirtualPath []string                   `json:"virtual_path"` // Allowed tag names
+	Fields      map[string]json.RawMessage `json:"fields"`       // Tag-specific JSON schemas
 }
 
 // SchemaValidator interface for dual validation (tag name + payload)
@@ -420,7 +438,7 @@ func NewCompiledContractSchema(contractName string, schemaJSON []byte) (*Compile
 
 	// Build allowed names lookup map
 	allowedNames := make(map[string]bool)
-	for _, name := range contractSchema.Names {
+	for _, name := range contractSchema.VirtualPath {
 		allowedNames[name] = true
 	}
 
@@ -695,22 +713,22 @@ func (o *unsOutput) validateMessage(ctx context.Context, msg *service.Message, m
 #### 6.2 Example Validation Scenarios
 
 **Valid Message:**
-- UNS Topic: `umh.v1.enterprise.site.area._historian.temperature`  
-- Tag Name: `temperature` (extracted from topic)
-- Contract: `_historian` (from metadata)
-- Validation: Check if `temperature` is in allowed names + validate payload against temperature schema
+- UNS Topic: `umh.v1.enterprise.site.area._pump_data.vibration.x-axis`  
+- Tag Name: `vibration.x-axis` (extracted from topic)
+- Contract: `_pump_data` (from metadata)
+- Validation: Check if `vibration.x-axis` is in allowed names + validate payload against vibration.x-axis schema
 
 **Invalid Tag Name:**
-- UNS Topic: `umh.v1.enterprise.site.area._historian.unknown_sensor`
+- UNS Topic: `umh.v1.enterprise.site.area._pump_data.unknown_sensor`
 - Tag Name: `unknown_sensor` 
-- Contract: `_historian`
-- Result: Rejected - "tag 'unknown_sensor' not allowed for contract '_historian'. Allowed tags: [current, voltage, description]"
+- Contract: `_pump_data`
+- Result: Rejected - "tag 'unknown_sensor' not allowed for contract '_pump_data'. Allowed tags: [count, vibration.x-axis, vibration.y-axis, acceleration.x, serialNumber]"
 
 **Invalid Payload:**
-- UNS Topic: `umh.v1.enterprise.site.area._historian.current`
-- Tag Name: `current`
+- UNS Topic: `umh.v1.enterprise.site.area._pump_data.count`
+- Tag Name: `count`
 - Payload: `{"value": "not_a_number", "timestamp_ms": 1680000000000}`
-- Result: Rejected - "payload validation failed for tag 'current': value: expected number, got string"
+- Result: Rejected - "payload validation failed for tag 'count': value: expected number, got string"
 
 ## Testing Strategy
 
@@ -726,9 +744,9 @@ testCases := []struct {
     expected string
     shouldErr bool
 }{
-    {"umh.v1.enterprise.site.area._historian.temperature", "temperature", false},
-    {"umh.v1.site._historian.current", "current", false},
-    {"umh.v1._historian.voltage", "voltage", false},
+    {"umh.v1.enterprise.site.area._pump_data.count", "count", false},
+    {"umh.v1.site._pump_data.vibration.x-axis", "vibration.x-axis", false},
+    {"umh.v1._pump_data.serialNumber", "serialNumber", false},
     {"invalid.topic", "", true},
     {"", "", true},
 }
@@ -739,9 +757,11 @@ testCases := []struct {
 // Test both tag name validation and payload validation
 func TestDualValidation(t *testing.T) {
     schema := ContractSchema{
-        Names: []string{"current", "voltage", "description"},
+        VirtualPath: []string{"count", "vibration.x-axis", "vibration.y-axis", "serialNumber"},
         Fields: map[string]json.RawMessage{
-            "current": []byte(`{"type":"object","properties":{"value":{"type":"number"},"timestamp_ms":{"type":"number"}},"required":["value","timestamp_ms"]}`),
+            "count": []byte(`{"type":"object","properties":{"value":{"type":"number"},"timestamp_ms":{"type":"number"}},"required":["value","timestamp_ms"]}`),
+            "vibration.x-axis": []byte(`{"type":"object","properties":{"value":{"type":"number"},"timestamp_ms":{"type":"number"}},"required":["value","timestamp_ms"]}`),
+            "serialNumber": []byte(`{"type":"object","properties":{"value":{"type":"string"},"timestamp_ms":{"type":"number"}},"required":["value","timestamp_ms"]}`),
             // ... other field schemas
         },
     }
@@ -757,7 +777,7 @@ func TestDualValidation(t *testing.T) {
 ```go
 // Test version-specific validation
 func TestVersionedContractValidation(t *testing.T) {
-    // Test _historianv1 vs _historian (latest) schemas
+    // Test _pump_datav1 vs _pump_data (latest) schemas
     // Ensure versioned schemas don't refresh
     // Test different tag name sets per version
 }
@@ -766,17 +786,17 @@ func TestVersionedContractValidation(t *testing.T) {
 #### 4. Integration Test Examples
 
 **Test Case: Tag Not Allowed**
-- Schema: `{"names": ["current", "voltage"], "fields": {...}}`
-- UNS Topic: `umh.v1.site._historian.pressure`
+- Schema: `{"virtual_path": ["count", "vibration.x-axis", "vibration.y-axis"], "fields": {...}}`
+- UNS Topic: `umh.v1.site._pump_data.pressure`
 - Expected: Message dropped with "tag 'pressure' not allowed" error
 
 **Test Case: Payload Schema Mismatch**
-- Schema: Current field expects `{"value": number, "timestamp_ms": number}`
+- Schema: Count field expects `{"value": number, "timestamp_ms": number}`
 - Payload: `{"value": "string", "timestamp_ms": 123}`
-- Expected: Message dropped with "payload validation failed for tag 'current': value: expected number, got string"
+- Expected: Message dropped with "payload validation failed for tag 'count': value: expected number, got string"
 
 **Test Case: Both Validations Pass**
-- UNS Topic: `umh.v1.site._historian.current`
+- UNS Topic: `umh.v1.site._pump_data.count`
 - Payload: `{"value": 12.5, "timestamp_ms": 1680000000000}`
 - Expected: Message published successfully
 
