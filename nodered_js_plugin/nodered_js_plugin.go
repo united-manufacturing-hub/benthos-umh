@@ -70,11 +70,20 @@ func (u *NodeREDJSProcessor) GetVM() *goja.Runtime {
 	return poolResult.(*goja.Runtime)
 }
 
-// PutVM returns a VM to the pool after proper cleanup
+// PutVM returns a VM to the pool after comprehensive cleanup
 func (u *NodeREDJSProcessor) PutVM(vm *goja.Runtime) {
+	// Comprehensive VM cleanup to prevent state leakage
+	u.clearVMState(vm)
+	// Return cleaned VM to pool for reuse
+	u.vmpool.Put(vm)
+}
+
+// clearVMState performs comprehensive cleanup of VM state
+func (u *NodeREDJSProcessor) clearVMState(vm *goja.Runtime) {
 	// Clear any interrupt flag that might be set
 	vm.ClearInterrupt()
-	u.vmpool.Put(vm)
+
+	vm.GlobalObject().Set("msg", nil)
 }
 
 // getVM acquires a VM from the pool and tracks metrics (internal method)
