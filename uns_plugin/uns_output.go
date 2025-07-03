@@ -36,6 +36,7 @@ const (
 	defaultOutputTopic               = "umh.messages" // by the current state, the output topic must not be changed for this plugin
 	defaultOutputTopicPartitionCount = 1
 	defaultBrokerAddress             = "localhost:9092"
+	defaultSchemaRegistryPort        = "8081"
 	defaultClientID                  = "umh_core"
 	defaultUMHTopic                  = "${! meta(\"umh_topic\") }"
 )
@@ -114,14 +115,27 @@ Traceability header.  Defaults to 'umh-core' but is automatically
 overwritten by UMH Core when the container runs as a protocol-converter:
 'protocol-converter-<INSTANCE>-<NAME>'.
 `).
-			Default(defaultClientID))
+			Default(defaultClientID)).
+		Field(service.NewStringField("schema_registry_url").
+			Description(`
+Schema registry URL for data contract validation.  If not provided, it
+will be automatically derived from the first broker in the broker_address
+list by changing the port to 8081.
+
+Example: If broker_address is "localhost:9092", the schema registry URL
+will be "http://localhost:8081".
+`).
+			Example("http://localhost:8081").
+			Example("https://schema-registry.example.com:8081").
+			Optional())
 }
 
 // Config holds the configuration for the UNS output plugin
 type unsOutputConfig struct {
-	umh_topic     *service.InterpolatedString
-	brokerAddress string
-	bridgedBy     string
+	umh_topic         *service.InterpolatedString
+	brokerAddress     string
+	bridgedBy         string
+	schemaRegistryURL string
 }
 
 type unsOutput struct {
@@ -129,6 +143,30 @@ type unsOutput struct {
 	client    MessagePublisher
 	log       *service.Logger
 	validator *schemavalidation.Validator
+}
+
+// deriveSchemaRegistryURL derives a schema registry URL from the broker address
+// Takes the first broker from a comma-separated list and converts the port to 8081
+func deriveSchemaRegistryURL(brokerAddress string) string {
+	// Split by comma to handle multiple brokers
+	brokers := strings.Split(brokerAddress, ",")
+	if len(brokers) == 0 {
+		return ""
+	}
+
+	// Take the first broker and trim any whitespace
+	firstBroker := strings.TrimSpace(brokers[0])
+
+	// Split by colon to separate host and port
+	parts := strings.Split(firstBroker, ":")
+	if len(parts) != 2 {
+		// If no port specified, assume default and add schema registry port
+		return fmt.Sprintf("http://%s:%s", firstBroker, defaultSchemaRegistryPort)
+	}
+
+	// Replace the port with schema registry port
+	host := parts[0]
+	return fmt.Sprintf("http://%s:%s", host, defaultSchemaRegistryPort)
 }
 
 // newUnsOutput creates a new unsOutput instance by parsing configuration fields for umh_topic, broker address, and bridge name, returning the output, batch policy, max in-flight count, and any error encountered during parsing.
@@ -176,10 +214,22 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 		}
 	}
 
-	// Initialize the validator
-	validator := schemavalidation.Validator{}
+	// Parse schema_registry_url if provided, otherwise derive from broker_address
+	if conf.Contains("schema_registry_url") {
+		schemaRegistryURL, err := conf.FieldString("schema_registry_url")
+		if err != nil {
+			return nil, batchPolicy, 0, fmt.Errorf("error while parsing schema_registry_url field from the config: %v", err)
+		}
+		config.schemaRegistryURL = schemaRegistryURL
+	} else {
+		// Derive schema registry URL from broker address
+		config.schemaRegistryURL = deriveSchemaRegistryURL(config.brokerAddress)
+	}
 
-	return newUnsOutputWithClient(NewClient(), config, mgr.Logger(), &validator), batchPolicy, maxInFlight, nil
+	// Initialize the validator with schema registry URL
+	validator := schemavalidation.NewValidatorWithRegistry(config.schemaRegistryURL)
+
+	return newUnsOutputWithClient(NewClient(), config, mgr.Logger(), validator), batchPolicy, maxInFlight, nil
 }
 
 // Testable constructor that accepts client
@@ -206,6 +256,7 @@ func (o *unsOutput) Close(ctx context.Context) error {
 // Connect initializes the kafka client
 func (o *unsOutput) Connect(ctx context.Context) error {
 	o.log.Infof("Connecting to uns plugin kafka broker: %v", o.config.brokerAddress)
+	o.log.Infof("Using schema registry URL: %v", o.config.schemaRegistryURL)
 
 	if o.client == nil {
 		o.client = NewClient()

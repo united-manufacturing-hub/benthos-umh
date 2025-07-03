@@ -46,14 +46,23 @@ type ValidationResult struct {
 
 // Validator manages schema validation for UNS topics with thread-safe operations.
 type Validator struct {
-	schemas      map[string]*Schema
-	schemasMutex sync.RWMutex
+	schemas           map[string]*Schema
+	schemasMutex      sync.RWMutex
+	schemaRegistryURL string
 }
 
 // NewValidator creates a new Validator instance with an empty schema registry.
 func NewValidator() *Validator {
 	return &Validator{
 		schemas: make(map[string]*Schema),
+	}
+}
+
+// NewValidatorWithRegistry creates a new Validator instance with the specified schema registry URL.
+func NewValidatorWithRegistry(schemaRegistryURL string) *Validator {
+	return &Validator{
+		schemas:           make(map[string]*Schema),
+		schemaRegistryURL: schemaRegistryURL,
 	}
 }
 
