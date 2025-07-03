@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os/exec"
 	"sort"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -305,6 +306,32 @@ func startRedpandaContainer() error {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to start Redpanda container: %w, output: %s", err, string(output))
+	}
+
+	// Wait for Redpanda to actually start up successfully
+	redpandaStarted := false
+	Eventually(func() bool {
+		// Check container logs for successful startup message
+		logsCmd := exec.Command("docker", "logs", redpandaContainerName)
+		logsOutput, err := logsCmd.CombinedOutput()
+		if err != nil {
+			return false
+		}
+
+		logsStr := string(logsOutput)
+		if strings.Contains(logsStr, "Successfully started Redpanda!") {
+			redpandaStarted = true
+			return true
+		}
+
+		return false
+	}, "60s", "2s").Should(BeTrue(), "Redpanda should start successfully")
+
+	if !redpandaStarted {
+		// On failure, dump full logs for debugging
+		logsCmd := exec.Command("docker", "logs", redpandaContainerName)
+		logsOutput, _ := logsCmd.CombinedOutput()
+		return fmt.Errorf("Redpanda failed to start within timeout. Full logs:\n%s", string(logsOutput))
 	}
 
 	return nil
