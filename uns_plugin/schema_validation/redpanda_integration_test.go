@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"sort"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -203,19 +204,24 @@ func (c *RedpandaSchemaRegistryClient) RegisterSchema(subject string, version in
 }
 
 func (c *RedpandaSchemaRegistryClient) WaitForReady() error {
-	maxRetries := 30
-	for i := 0; i < maxRetries; i++ {
+	ready := false
+	Eventually(func() bool {
 		resp, err := c.httpClient.Get(c.baseURL + "/subjects")
 		if err == nil && resp.StatusCode == 200 {
 			resp.Body.Close()
-			return nil
+			ready = true
+			return true
 		}
 		if resp != nil {
 			resp.Body.Close()
 		}
-		time.Sleep(2 * time.Second)
+		return false
+	}, "60s", "2s").Should(BeTrue(), "Schema registry should be ready")
+
+	if !ready {
+		return fmt.Errorf("schema registry not ready after timeout")
 	}
-	return fmt.Errorf("schema registry not ready after %d retries", maxRetries)
+	return nil
 }
 
 func (c *RedpandaSchemaRegistryClient) DeleteAllSubjects() error {
@@ -237,11 +243,23 @@ func (c *RedpandaSchemaRegistryClient) DeleteAllSubjects() error {
 
 	// Delete each subject (hard delete)
 	for _, subject := range subjects {
-		req, err := http.NewRequest("DELETE", c.baseURL+"/subjects/"+subject+"?permanent=true", nil)
+		// First do a soft delete
+		req, err := http.NewRequest("DELETE", c.baseURL+"/subjects/"+subject, nil)
 		if err != nil {
 			continue
 		}
 		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			continue
+		}
+		resp.Body.Close()
+
+		// Then do a hard delete to permanently remove
+		req, err = http.NewRequest("DELETE", c.baseURL+"/subjects/"+subject+"?permanent=true", nil)
+		if err != nil {
+			continue
+		}
+		resp, err = c.httpClient.Do(req)
 		if err != nil {
 			continue
 		}
@@ -254,15 +272,14 @@ func (c *RedpandaSchemaRegistryClient) DeleteAllSubjects() error {
 func cleanupRedpandaContainer() {
 	// Kill and remove any existing container with our name
 	exec.Command("docker", "kill", redpandaContainerName).Run()
-	exec.Command("docker", "rm", redpandaContainerName).Run()
+	exec.Command("docker", "rm", "-f", redpandaContainerName).Run()
 
-	// Wait for container to be removed (e.g check docker ps for any container with our name)
-	for i := 0; i < 10; i++ {
-		if exec.Command("docker", "ps", "-q", "--filter", fmt.Sprintf("name=%s", redpandaContainerName)).Run() != nil {
-			return
-		}
-		time.Sleep(1 * time.Second)
-	}
+	// Wait for container to be removed completely
+	Eventually(func() bool {
+		cmd := exec.Command("docker", "ps", "-a", "-q", "--filter", fmt.Sprintf("name=%s", redpandaContainerName))
+		output, err := cmd.Output()
+		return err != nil || len(output) == 0
+	}, "15s", "1s").Should(BeTrue(), "Container should be removed completely")
 }
 
 func startRedpandaContainer() error {
@@ -306,12 +323,39 @@ func setupRedpandaSchemas() error {
 		return fmt.Errorf("failed to cleanup existing schemas: %w", err)
 	}
 
-	// Wait a bit after cleanup
-	time.Sleep(1 * time.Second)
+	// Wait for schemas to be fully removed
+	Eventually(func() bool {
+		resp, err := client.httpClient.Get(client.baseURL + "/subjects")
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
 
-	// Register all test schemas
+		if resp.StatusCode != 200 {
+			return false
+		}
+
+		var subjects []string
+		if err := json.NewDecoder(resp.Body).Decode(&subjects); err != nil {
+			return false
+		}
+
+		return len(subjects) == 0
+	}, "10s", "500ms").Should(BeTrue(), "Schemas should be fully removed after cleanup")
+
+	// Register all test schemas in version order
 	for subject, versions := range redpandaTestSchemas {
-		for version, schema := range versions {
+		// Get versions in sorted order to ensure consistent registration
+		var sortedVersions []int
+		for version := range versions {
+			sortedVersions = append(sortedVersions, version)
+		}
+
+		// Sort versions to ensure we register in ascending order
+		sort.Ints(sortedVersions)
+
+		for _, version := range sortedVersions {
+			schema := versions[version]
 			if err := client.RegisterSchema(subject, version, schema); err != nil {
 				return fmt.Errorf("failed to register schema %s v%d: %w", subject, version, err)
 			}
@@ -378,13 +422,13 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, func() {
 				validator.backgroundFetcher.processFetchQueue()
 			}
 
-			// Wait a bit more for background fetch to complete
-			time.Sleep(2 * time.Second)
-
-			// Second validation should pass
-			result = validator.Validate(unsTopic, payload)
-			GinkgoWriter.Printf("Second validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
-				result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
+			// Wait for schema to be loaded and validation to pass
+			Eventually(func() bool {
+				result = validator.Validate(unsTopic, payload)
+				GinkgoWriter.Printf("Validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
+					result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
+				return result.SchemaCheckPassed && !result.SchemaCheckBypassed
+			}, "10s", "500ms").Should(BeTrue(), "Schema should be loaded and validation should pass")
 
 			// Check if schema was loaded
 			hasSchema := validator.HasSchema(contractName, 1)
@@ -404,11 +448,13 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, func() {
 			validPayload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
 
 			// Trigger schema load if not already loaded
+			Eventually(func() bool {
+				result := validator.Validate(validTopic, validPayload)
+				return result.SchemaCheckPassed && !result.SchemaCheckBypassed
+			}, "10s", "500ms").Should(BeTrue(), "Schema should be loaded for valid topic")
+
+			// Get the result for further testing
 			result := validator.Validate(validTopic, validPayload)
-			if result.SchemaCheckBypassed {
-				time.Sleep(3 * time.Second)
-				result = validator.Validate(validTopic, validPayload)
-			}
 			Expect(result.SchemaCheckPassed).To(BeTrue())
 
 			// Now test invalid virtual path
@@ -437,10 +483,14 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, func() {
 				if validator.backgroundFetcher != nil {
 					validator.backgroundFetcher.processFetchQueue()
 				}
-				time.Sleep(3 * time.Second)
-				result = validator.Validate(tempTopic, payload)
-				GinkgoWriter.Printf("V2 temperature validation result after fetch: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
-					result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
+
+				// Wait for schema to be loaded
+				Eventually(func() bool {
+					result = validator.Validate(tempTopic, payload)
+					GinkgoWriter.Printf("V2 temperature validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
+						result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
+					return result.SchemaCheckPassed && !result.SchemaCheckBypassed
+				}, "10s", "500ms").Should(BeTrue(), "Schema v2 should be loaded and validation should pass")
 			}
 
 			// Check if schema was loaded
@@ -483,10 +533,14 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, func() {
 				if validator.backgroundFetcher != nil {
 					validator.backgroundFetcher.processFetchQueue()
 				}
-				time.Sleep(3 * time.Second)
-				result = validator.Validate(xAxisTopic, payload)
-				GinkgoWriter.Printf("Second pump data validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
-					result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
+
+				// Wait for schema to be loaded
+				Eventually(func() bool {
+					result = validator.Validate(xAxisTopic, payload)
+					GinkgoWriter.Printf("Pump data validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
+						result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
+					return result.SchemaCheckPassed && !result.SchemaCheckBypassed
+				}, "10s", "500ms").Should(BeTrue(), "Pump data schema should be loaded and validation should pass")
 			}
 
 			// Check if schema was loaded
@@ -518,11 +572,12 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, func() {
 			Expect(err).To(BeNil())
 			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "SN123456789"}}`)
 
+			Eventually(func() bool {
+				result := validator.Validate(serialTopic, payload)
+				return result.SchemaCheckPassed && !result.SchemaCheckBypassed
+			}, "10s", "500ms").Should(BeTrue(), "String data schema should be loaded and validation should pass")
+
 			result := validator.Validate(serialTopic, payload)
-			if result.SchemaCheckBypassed {
-				time.Sleep(3 * time.Second)
-				result = validator.Validate(serialTopic, payload)
-			}
 			Expect(result.SchemaCheckPassed).To(BeTrue())
 			Expect(result.ContractName).To(Equal("_string_data"))
 
@@ -541,11 +596,12 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, func() {
 			Expect(err).To(BeNil())
 			validPayload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
 
+			Eventually(func() bool {
+				result := validator.Validate(validTopic, validPayload)
+				return result.SchemaCheckPassed && !result.SchemaCheckBypassed
+			}, "10s", "500ms").Should(BeTrue(), "Schema should be loaded for invalid payload test")
+
 			result := validator.Validate(validTopic, validPayload)
-			if result.SchemaCheckBypassed {
-				time.Sleep(3 * time.Second)
-				result = validator.Validate(validTopic, validPayload)
-			}
 			Expect(result.SchemaCheckPassed).To(BeTrue())
 
 			// Test missing timestamp_ms
@@ -567,11 +623,12 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, func() {
 			Expect(err).To(BeNil())
 			validPayload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "SN123456789"}}`)
 
+			Eventually(func() bool {
+				result := validator.Validate(validTopic, validPayload)
+				return result.SchemaCheckPassed && !result.SchemaCheckBypassed
+			}, "10s", "500ms").Should(BeTrue(), "String data schema should be loaded for data type test")
+
 			result := validator.Validate(validTopic, validPayload)
-			if result.SchemaCheckBypassed {
-				time.Sleep(3 * time.Second)
-				result = validator.Validate(validTopic, validPayload)
-			}
 			Expect(result.SchemaCheckPassed).To(BeTrue())
 
 			// Test providing number instead of string
@@ -593,8 +650,11 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, func() {
 			Expect(result.BypassReason).To(ContainSubstring("schema for contract '_non_existent_contract' version 1 not found"))
 
 			// Wait for background fetch attempt and verify it still bypasses
-			time.Sleep(3 * time.Second)
-			result = validator.Validate(nonExistentTopic, payload)
+			Eventually(func() bool {
+				result = validator.Validate(nonExistentTopic, payload)
+				return result.SchemaCheckBypassed
+			}, "10s", "500ms").Should(BeTrue(), "Non-existent schema should still bypass after background fetch attempt")
+
 			Expect(result.SchemaCheckBypassed).To(BeTrue())
 		})
 
@@ -628,10 +688,11 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, func() {
 			Expect(result.SchemaCheckBypassed).To(BeTrue())
 
 			// Wait for automatic background fetching (fetch interval is 5 seconds)
-			time.Sleep(6 * time.Second)
+			Eventually(func() bool {
+				result = freshValidator.Validate(unsTopic, payload)
+				return result.SchemaCheckPassed && !result.SchemaCheckBypassed
+			}, "15s", "1s").Should(BeTrue(), "Background fetcher should automatically fetch and validate schema")
 
-			// Now validation should pass
-			result = freshValidator.Validate(unsTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeTrue())
 			Expect(result.SchemaCheckBypassed).To(BeFalse())
 			Expect(result.Error).To(BeNil())
