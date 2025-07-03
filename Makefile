@@ -144,6 +144,10 @@ test-benthos-downsampler-example-one-timeout: target
 test-benthos-topic-browser: target
 	@$(BENTHOS_BIN) -c ./config/topic-browser-test.yaml
 
+.PHONY: test-benthos-opcua-hex
+test-benthos-opcua-hex: target
+	@$(BENTHOS_BIN) -c ./config/opcua-hex-test.yaml
+
 ## Generate go files from protobuf for topic browser
 build-protobuf:
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
