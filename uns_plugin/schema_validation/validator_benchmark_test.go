@@ -1,3 +1,94 @@
+// Copyright 2025 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/*
+Package schemavalidation provides comprehensive benchmarks for UNS schema validation performance.
+
+## Benchmark Results
+
+Performance testing was conducted on Apple M3 Pro to ensure the validator meets the target of 1,000 validations per second.
+
+### Latest Results (Updated with ValidationResult structure and fail-open behavior):
+
+```
+goos: darwin
+goarch: arm64
+pkg: github.com/united-manufacturing-hub/benthos-umh/uns_plugin/schema_validation
+cpu: Apple M3 Pro
+BenchmarkValidation_SingleThread-11                       273523              4422 ns/op            5250 B/op        117 allocs/op
+BenchmarkValidation_Concurrent-11                         622438              1690 ns/op            5203 B/op        117 allocs/op
+BenchmarkValidation_HighThroughput-11                     637519              1631 ns/op            5187 B/op        117 allocs/op
+BenchmarkValidation_RealWorld-11                         1462032               806.9 ns/op          2467 B/op         53 allocs/op
+BenchmarkValidation_MemoryUsage-11                        255853              4479 ns/op            5252 B/op        118 allocs/op
+BenchmarkValidation_DifferentPayloadSizes/PayloadSize_57_bytes-11                 263476              4548 ns/op            5284 B/op        118 allocs/op
+BenchmarkValidation_DifferentPayloadSizes/PayloadSize_65_bytes-11                 261116              4578 ns/op            5298 B/op        118 allocs/op
+BenchmarkValidation_DifferentPayloadSizes/PayloadSize_67_bytes-11                 257691              4558 ns/op            5296 B/op        118 allocs/op
+BenchmarkConcurrentValidation_ScalabilityTest/Goroutines_1-11                     260972              4507 ns/op            5269 B/op        118 allocs/op
+BenchmarkConcurrentValidation_ScalabilityTest/Goroutines_2-11                     413632              2959 ns/op            5376 B/op        118 allocs/op
+BenchmarkConcurrentValidation_ScalabilityTest/Goroutines_4-11                     555212              2063 ns/op            5389 B/op        118 allocs/op
+BenchmarkConcurrentValidation_ScalabilityTest/Goroutines_8-11                     644684              1749 ns/op            5239 B/op        118 allocs/op
+BenchmarkConcurrentValidation_ScalabilityTest/Goroutines_16-11                    665073              1557 ns/op            5178 B/op        118 allocs/op
+BenchmarkConcurrentValidation_ScalabilityTest/Goroutines_32-11                    701659              1611 ns/op            5173 B/op        118 allocs/op
+```
+
+### Performance Analysis:
+
+**Target Achievement:** ✅ **All benchmarks significantly exceed the 1,000 validations/second target**
+
+- **Single-threaded**: 273,523 ops/sec (273x faster than target)
+- **Concurrent**: 622,438 ops/sec (622x faster than target)
+- **High-throughput**: 637,519 ops/sec (637x faster than target)
+- **Real-world mixed**: 1,462,032 ops/sec (1,462x faster than target)
+
+**Memory Efficiency:**
+- **Latency**: 0.81-4.58 μs per validation
+- **Memory**: ~5KB per operation, 117-118 allocations
+- **Scalability**: Excellent performance scaling up to 32 goroutines (2.8x improvement)
+
+**Payload Size Impact:**
+- **Minimal variance**: 4.55-4.58 μs regardless of payload size (57-67 bytes)
+- **Consistent memory**: ~5.3KB per operation across all payload sizes
+
+**Concurrent Scalability:**
+- **1 goroutine**: 4,507 ns/op (222k ops/sec)
+- **32 goroutines**: 1,611 ns/op (621k ops/sec)
+- **Scaling efficiency**: 2.8x improvement with 32x goroutines
+
+### Impact of ValidationResult Structure Changes:
+
+**Performance Impact**: ✅ **Minimal performance impact from fail-open behavior**
+- **Enhanced metadata**: `SchemaCheckPassed`, `SchemaCheckBypassed`, `BypassReason`
+- **Contract tracking**: Full contract name and version information
+- **Bypass tracking**: Detailed reasons for validation bypasses
+- **Fail-open behavior**: Messages pass through when schemas are missing
+
+**New Features:**
+- **Dual boolean flags**: Clear distinction between passed/failed vs bypassed validation
+- **Comprehensive error handling**: Detailed error messages for debugging
+- **Metadata enrichment**: Contract information available for downstream processing
+- **Operational resilience**: System continues operating when schemas are unavailable
+
+### Recommendations:
+
+1. **Production Ready**: Performance easily handles production loads with fail-open safety
+2. **Concurrent Usage**: Optimal performance with 16-32 goroutines
+3. **Memory Stable**: Consistent memory usage across scenarios
+4. **Payload Agnostic**: Performance independent of payload size variations
+5. **Reliable Operation**: Fail-open behavior ensures data continuity
+
+*/
+
 package schemavalidation
 
 import (
@@ -83,9 +174,9 @@ func BenchmarkValidation_SingleThread(b *testing.B) {
 		topicObj := topicObjects[i%len(topicObjects)]
 		payload := payloads[i%len(payloads)]
 
-		err := validator.Validate(topicObj, payload)
-		if err != nil {
-			b.Fatalf("Validation failed: %v", err)
+		result := validator.Validate(topicObj, payload)
+		if !result.SchemaCheckPassed && !result.SchemaCheckBypassed {
+			b.Fatalf("Validation failed: %v", result.Error)
 		}
 	}
 }
@@ -122,9 +213,9 @@ func BenchmarkValidation_Concurrent(b *testing.B) {
 			topicObj := topicObjects[i%len(topicObjects)]
 			payload := payloads[i%len(payloads)]
 
-			err := validator.Validate(topicObj, payload)
-			if err != nil {
-				b.Fatalf("Validation failed: %v", err)
+			result := validator.Validate(topicObj, payload)
+			if !result.SchemaCheckPassed && !result.SchemaCheckBypassed {
+				b.Fatalf("Validation failed: %v", result.Error)
 			}
 			i++
 		}
@@ -242,9 +333,9 @@ func BenchmarkValidation_MemoryUsage(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		err := validator.Validate(topicObj, validNumberPayload)
-		if err != nil {
-			b.Fatalf("Validation failed: %v", err)
+		result := validator.Validate(topicObj, validNumberPayload)
+		if !result.SchemaCheckPassed && !result.SchemaCheckBypassed {
+			b.Fatalf("Validation failed: %v", result.Error)
 		}
 	}
 }
@@ -274,9 +365,9 @@ func BenchmarkValidation_DifferentPayloadSizes(b *testing.B) {
 			b.ReportAllocs()
 
 			for j := 0; j < b.N; j++ {
-				err := validator.Validate(topicObj, payload)
-				if err != nil {
-					b.Fatalf("Validation failed: %v", err)
+				result := validator.Validate(topicObj, payload)
+				if !result.SchemaCheckPassed && !result.SchemaCheckBypassed {
+					b.Fatalf("Validation failed: %v", result.Error)
 				}
 			}
 		})
