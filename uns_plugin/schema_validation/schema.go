@@ -1,3 +1,5 @@
+// Package schemavalidation provides JSON schema validation functionality for UNS topics.
+// It manages schema compilation, versioning, and validation operations with thread-safe access.
 package schemavalidation
 
 import (
@@ -7,22 +9,30 @@ import (
 	"github.com/kaptinlin/jsonschema"
 )
 
-var schemaCompiler = jsonschema.NewCompiler()
-var schemaCompilerMutex sync.Mutex
+// Global schema compiler and mutex for thread-safe schema compilation.
+// These are shared across all schema instances to optimize compilation performance.
+var (
+	schemaCompiler      = jsonschema.NewCompiler()
+	schemaCompilerMutex sync.Mutex
+)
 
+// SchemaVersion represents a compiled JSON schema for a specific version.
 type SchemaVersion struct {
 	JSONSchema *jsonschema.Schema
 }
 
+// SchemaVersions manages multiple versions of a schema.
 type SchemaVersions struct {
 	Versions map[uint64]SchemaVersion
 }
 
+// Schema represents a named schema with multiple versions.
 type Schema struct {
 	Name     string
 	Versions SchemaVersions
 }
 
+// NewSchema creates a new Schema with the given name and initializes an empty version map.
 func NewSchema(name string) *Schema {
 	return &Schema{
 		Name:     name,
@@ -30,13 +40,15 @@ func NewSchema(name string) *Schema {
 	}
 }
 
+// AddVersion compiles and adds a new schema version to this Schema.
+// It returns an error if schema compilation fails.
 func (s *Schema) AddVersion(version uint64, schema []byte) error {
 	schemaCompilerMutex.Lock()
 	defer schemaCompilerMutex.Unlock()
 
 	compiledSchema, err := schemaCompiler.Compile(schema)
 	if err != nil {
-		return fmt.Errorf("error compiling schema: %v", err)
+		return fmt.Errorf("failed to compile schema for version %d: %w", version, err)
 	}
 
 	s.Versions.Versions[version] = SchemaVersion{
@@ -45,18 +57,17 @@ func (s *Schema) AddVersion(version uint64, schema []byte) error {
 	return nil
 }
 
+// HasVersion checks if a specific version exists and has a valid compiled schema.
 func (s *Schema) HasVersion(version uint64) bool {
-	_, ok := s.Versions.Versions[version]
-	if !ok {
-		return false
-	}
-
-	if s.Versions.Versions[version].JSONSchema == nil {
-		return false
-	}
-	return ok
+	schemaVersion, exists := s.Versions.Versions[version]
+	return exists && schemaVersion.JSONSchema != nil
 }
 
+// GetVersion retrieves the compiled JSON schema for the specified version.
+// Returns nil if the version doesn't exist.
 func (s *Schema) GetVersion(version uint64) *jsonschema.Schema {
-	return s.Versions.Versions[version].JSONSchema
+	if schemaVersion, exists := s.Versions.Versions[version]; exists {
+		return schemaVersion.JSONSchema
+	}
+	return nil
 }
