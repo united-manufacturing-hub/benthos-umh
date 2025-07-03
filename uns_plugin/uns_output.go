@@ -23,6 +23,7 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
+	schemavalidation "github.com/united-manufacturing-hub/benthos-umh/uns_plugin/schema_validation"
 )
 
 // init registers the "uns" batch output plugin with Benthos using its configuration and constructor.
@@ -123,9 +124,10 @@ type unsOutputConfig struct {
 }
 
 type unsOutput struct {
-	config unsOutputConfig
-	client MessagePublisher
-	log    *service.Logger
+	config    unsOutputConfig
+	client    MessagePublisher
+	log       *service.Logger
+	validator *schemavalidation.Validator
 }
 
 // newUnsOutput creates a new unsOutput instance by parsing configuration fields for umh_topic, broker address, and bridge name, returning the output, batch policy, max in-flight count, and any error encountered during parsing.
@@ -173,15 +175,19 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 		}
 	}
 
-	return newUnsOutputWithClient(NewClient(), config, mgr.Logger()), batchPolicy, maxInFlight, nil
+	// Initialize the validator
+	validator := schemavalidation.Validator{}
+
+	return newUnsOutputWithClient(NewClient(), config, mgr.Logger(), &validator), batchPolicy, maxInFlight, nil
 }
 
 // Testable constructor that accepts client
-func newUnsOutputWithClient(client MessagePublisher, config unsOutputConfig, logger *service.Logger) service.BatchOutput {
+func newUnsOutputWithClient(client MessagePublisher, config unsOutputConfig, logger *service.Logger, validator *schemavalidation.Validator) service.BatchOutput {
 	return &unsOutput{
-		client: client,
-		config: config,
-		log:    logger,
+		client:    client,
+		config:    config,
+		log:       logger,
+		validator: validator,
 	}
 }
 
@@ -300,19 +306,25 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 		}
 
 		// Validate the UMH topic using the centralized topic library
-		_, err = topic.NewUnsTopic(key)
+		unsTopic, err := topic.NewUnsTopic(key)
 		if err != nil {
 			return fmt.Errorf("error validating message key in message %d: invalid UMH topic '%s': %v", i, key, err)
-		}
-
-		headers, err := o.extractHeaders(msg)
-		if err != nil {
-			return fmt.Errorf("error processing message %d: %v", i, err)
 		}
 
 		msgAsBytes, err := msg.AsBytes()
 		if err != nil {
 			return fmt.Errorf("error getting content of message %d: %v", i, err)
+		}
+
+		// Validate the payload against the schema
+		err = o.validator.Validate(unsTopic, msgAsBytes)
+		if err != nil {
+			return fmt.Errorf("error validating message payload in message %d: %v", i, err)
+		}
+
+		headers, err := o.extractHeaders(msg)
+		if err != nil {
+			return fmt.Errorf("error processing message %d: %v", i, err)
 		}
 
 		record := Record{

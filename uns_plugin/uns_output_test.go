@@ -152,7 +152,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 		}
 		umh_topic, _ := service.NewInterpolatedString("${! meta(\"umh_topic\") }")
 		unsConf.umh_topic = umh_topic
-		outputPlugin = newUnsOutputWithClient(mockClient, unsConf, nil)
+		outputPlugin = newUnsOutputWithClient(mockClient, unsConf, nil, nil)
 		unsClient = outputPlugin.(*unsOutput)
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	})
