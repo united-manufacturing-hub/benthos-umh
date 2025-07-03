@@ -24,6 +24,7 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
+	schemavalidation "github.com/united-manufacturing-hub/benthos-umh/uns_plugin/schema_validation"
 )
 
 type TestMessagePublisher interface {
@@ -152,7 +153,9 @@ var _ = Describe("Initializing uns output plugin", func() {
 		}
 		umh_topic, _ := service.NewInterpolatedString("${! meta(\"umh_topic\") }")
 		unsConf.umh_topic = umh_topic
-		outputPlugin = newUnsOutputWithClient(mockClient, unsConf, nil, nil)
+		// Initialize the validator
+		validator := schemavalidation.Validator{}
+		outputPlugin = newUnsOutputWithClient(mockClient, unsConf, nil, &validator)
 		unsClient = outputPlugin.(*unsOutput)
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	})

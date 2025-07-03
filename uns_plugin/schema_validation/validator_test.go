@@ -366,6 +366,19 @@ var _ = Describe("Validator", func() {
 			Expect(result.ContractVersion).To(Equal(uint64(1)))
 		})
 
+		It("should bypass validation when version extraction fails", func() {
+			// Create a topic with malformed version format
+			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._malformed_contract.temperature")
+			Expect(err).To(BeNil())
+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeTrue())
+			Expect(result.Error).To(BeNil())
+			Expect(result.BypassReason).To(ContainSubstring("failed to extract schema version from contract '_malformed_contract'"))
+			Expect(result.ContractName).To(Equal("_malformed_contract"))
+			Expect(result.ContractVersion).To(Equal(uint64(0)))
+		})
+
 		It("should fail for empty JSON payload", func() {
 			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
