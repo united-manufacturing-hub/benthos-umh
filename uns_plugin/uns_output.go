@@ -319,12 +319,18 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 
 		// Validate the payload against the schema
 		validationResult := o.validator.Validate(unsTopic, msgAsBytes)
-		if !validationResult.Valid {
+		if !validationResult.SchemaCheckPassed && !validationResult.SchemaCheckBypassed {
 			return fmt.Errorf("error validating message payload in message %d: %v", i, validationResult.Error)
 		}
-		// Add the contract name and version to the headers
-		msg.MetaSet("data_contract_name", validationResult.ContractName)
-		msg.MetaSet("data_contract_version", strconv.FormatUint(validationResult.ContractVersion, 10))
+		if validationResult.SchemaCheckPassed {
+			// Add the contract name and version to the headers
+			msg.MetaSet("data_contract_name", validationResult.ContractName)
+			msg.MetaSet("data_contract_version", strconv.FormatUint(validationResult.ContractVersion, 10))
+		} else if validationResult.SchemaCheckBypassed {
+			// Add bypass information if validation was bypassed
+			msg.MetaSet("data_contract_bypassed", "true")
+			msg.MetaSet("data_contract_bypass_reason", validationResult.BypassReason)
+		}
 
 		headers, err := o.extractHeaders(msg)
 		if err != nil {
