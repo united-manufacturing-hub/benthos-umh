@@ -94,8 +94,11 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 	if err != nil {
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
-			SchemaCheckBypassed: false,
-			Error:               fmt.Errorf("failed to extract schema version from contract '%s': %w", contract, err),
+			SchemaCheckBypassed: true,
+			ContractName:        contract, // Use the original contract string as fallback
+			ContractVersion:     0,
+			BypassReason:        fmt.Sprintf("failed to extract schema version from contract '%s': %s", contract, err.Error()),
+			Error:               nil,
 		}
 	}
 
