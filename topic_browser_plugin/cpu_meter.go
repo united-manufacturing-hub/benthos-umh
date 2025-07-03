@@ -72,9 +72,10 @@ func (c *CPUMeter) GetCPUPercent() float64 {
 		cpuUsage := totalCPUTime - c.lastUsage
 		cpuPercent = float64(cpuUsage) / float64(wallTime) * 100
 
-		// Normalize to 0-100% by dividing by number of cores
-		// (100% of one core on a 4-core system = 25%)
-		cpuPercent = cpuPercent / float64(runtime.NumCPU())
+		// Normalize to 0-100% by dividing by GOMAXPROCS
+		// (100% of one core on a 4-core system = 25% with GOMAXPROCS=4)
+		// (100% of one core on a 4-core system = 100% with GOMAXPROCS=1)
+		cpuPercent = cpuPercent / float64(runtime.GOMAXPROCS(0))
 
 		// Clamp to reasonable bounds (0-100%)
 		cpuPercent = math.Max(0, math.Min(cpuPercent, 100))
