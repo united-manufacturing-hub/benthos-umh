@@ -19,6 +19,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
 var _ = Describe("BackgroundFetcher", func() {
@@ -245,6 +246,312 @@ var _ = Describe("Validator with Background Fetcher", func() {
 		It("should not have a background fetcher", func() {
 			validatorWithoutRegistry := NewValidatorWithRegistry("")
 			Expect(validatorWithoutRegistry.backgroundFetcher).To(BeNil())
+		})
+	})
+})
+
+var _ = Describe("Integration: Mock Registry + Validator", func() {
+	var (
+		validator    *Validator
+		mockRegistry *MockSchemaRegistry
+	)
+
+	BeforeEach(func() {
+		// Set up mock registry with test schemas
+		mockRegistry = NewMockSchemaRegistry()
+		mockRegistry.SetupTestSchemas()
+
+		// Create validator with mock registry URL
+		validator = NewValidatorWithRegistry(mockRegistry.URL())
+	})
+
+	AfterEach(func() {
+		if validator != nil {
+			validator.Close()
+		}
+		if mockRegistry != nil {
+			mockRegistry.Close()
+		}
+	})
+
+	Context("when validating messages with existing schemas", func() {
+		It("should validate sensor data v1 successfully", func() {
+			// Load the schema first (simulating background fetch)
+			schemaVersion := mockRegistry.GetSchema("_sensor_data", 1)
+			Expect(schemaVersion).NotTo(BeNil())
+			err := validator.LoadSchema("_sensor_data", 1, []byte(schemaVersion.Schema))
+			Expect(err).To(BeNil())
+
+			// Create a valid UNS topic
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
+			Expect(err).To(BeNil())
+
+			// Create valid payload
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+
+			// Validate
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeTrue())
+			Expect(result.SchemaCheckBypassed).To(BeFalse())
+			Expect(result.Error).To(BeNil())
+			Expect(result.ContractName).To(Equal("_sensor_data"))
+			Expect(result.ContractVersion).To(Equal(uint64(1)))
+		})
+
+		It("should reject sensor data v1 with invalid virtual path", func() {
+			// Load the schema first
+			schemaVersion := mockRegistry.GetSchema("_sensor_data", 1)
+			Expect(schemaVersion).NotTo(BeNil())
+			err := validator.LoadSchema("_sensor_data", 1, []byte(schemaVersion.Schema))
+			Expect(err).To(BeNil())
+
+			// Create UNS topic with invalid virtual path (humidity not allowed in v1)
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.humidity")
+			Expect(err).To(BeNil())
+
+			// Create valid payload
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 65.0}}`)
+
+			// Validate
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
+		})
+
+		It("should validate sensor data v2 with expanded virtual paths", func() {
+			// Load the schema first
+			schemaVersion := mockRegistry.GetSchema("_sensor_data", 2)
+			Expect(schemaVersion).NotTo(BeNil())
+			err := validator.LoadSchema("_sensor_data", 2, []byte(schemaVersion.Schema))
+			Expect(err).To(BeNil())
+
+			// Test temperature (allowed in both v1 and v2)
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v2.temperature")
+			Expect(err).To(BeNil())
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeTrue())
+			Expect(result.Error).To(BeNil())
+
+			// Test humidity (allowed in v2 but not v1)
+			unsTopic, err = topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v2.humidity")
+			Expect(err).To(BeNil())
+			payload = []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 65.0}}`)
+			result = validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeTrue())
+			Expect(result.Error).To(BeNil())
+
+			// Test pressure (allowed in v2 but not v1)
+			unsTopic, err = topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v2.pressure")
+			Expect(err).To(BeNil())
+			payload = []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 1013.25}}`)
+			result = validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeTrue())
+			Expect(result.Error).To(BeNil())
+		})
+
+		It("should validate pump data with complex virtual paths", func() {
+			// Load the schema first
+			schemaVersion := mockRegistry.GetSchema("_pump_data", 1)
+			Expect(schemaVersion).NotTo(BeNil())
+			err := validator.LoadSchema("_pump_data", 1, []byte(schemaVersion.Schema))
+			Expect(err).To(BeNil())
+
+			// Test vibration.x-axis
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data-v1.vibration.x-axis")
+			Expect(err).To(BeNil())
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 0.5}}`)
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeTrue())
+			Expect(result.Error).To(BeNil())
+
+			// Test vibration.y-axis
+			unsTopic, err = topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data-v1.vibration.y-axis")
+			Expect(err).To(BeNil())
+			payload = []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 0.3}}`)
+			result = validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeTrue())
+			Expect(result.Error).To(BeNil())
+
+			// Test count
+			unsTopic, err = topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data-v1.count")
+			Expect(err).To(BeNil())
+			payload = []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 1542}}`)
+			result = validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeTrue())
+			Expect(result.Error).To(BeNil())
+		})
+
+		It("should validate string data types correctly", func() {
+			// Load the schema first
+			schemaVersion := mockRegistry.GetSchema("_string_data", 1)
+			Expect(schemaVersion).NotTo(BeNil())
+			err := validator.LoadSchema("_string_data", 1, []byte(schemaVersion.Schema))
+			Expect(err).To(BeNil())
+
+			// Test string value (serialNumber)
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._string_data-v1.serialNumber")
+			Expect(err).To(BeNil())
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "SN123456789"}}`)
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeTrue())
+			Expect(result.Error).To(BeNil())
+
+			// Test string value (status)
+			unsTopic, err = topic.NewUnsTopic("umh.v1.enterprise.site.area._string_data-v1.status")
+			Expect(err).To(BeNil())
+			payload = []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "RUNNING"}}`)
+			result = validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeTrue())
+			Expect(result.Error).To(BeNil())
+		})
+
+		It("should reject invalid payload formats", func() {
+			// Load the schema first
+			schemaVersion := mockRegistry.GetSchema("_sensor_data", 1)
+			Expect(schemaVersion).NotTo(BeNil())
+			err := validator.LoadSchema("_sensor_data", 1, []byte(schemaVersion.Schema))
+			Expect(err).To(BeNil())
+
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
+			Expect(err).To(BeNil())
+
+			// Missing timestamp_ms
+			payload := []byte(`{"value": {"value": 25.5}}`)
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+
+			// Missing value
+			payload = []byte(`{"value": {"timestamp_ms": 1719859200000}}`)
+			result = validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+
+			// Wrong value type
+			payload = []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "not_a_number"}}`)
+			result = validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+		})
+
+		It("should reject wrong data types for string fields", func() {
+			// Load the schema first
+			schemaVersion := mockRegistry.GetSchema("_string_data", 1)
+			Expect(schemaVersion).NotTo(BeNil())
+			err := validator.LoadSchema("_string_data", 1, []byte(schemaVersion.Schema))
+			Expect(err).To(BeNil())
+
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._string_data-v1.serialNumber")
+			Expect(err).To(BeNil())
+
+			// Provide number instead of string
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 12345}}`)
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+		})
+	})
+
+	Context("when testing background fetching integration", func() {
+		It("should queue and fetch schemas automatically", func() {
+			// Create topic that will trigger background fetch
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
+			Expect(err).To(BeNil())
+
+			// Create valid payload
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+
+			// First validation should bypass (schema not loaded yet)
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeTrue())
+			Expect(result.BypassReason).To(ContainSubstring("schema for contract '_sensor_data' version 1 not found"))
+
+			// Manual trigger of background fetch (in real scenario this would happen automatically)
+			if validator.backgroundFetcher != nil {
+				validator.backgroundFetcher.processFetchQueue()
+			}
+
+			// Now validation should pass
+			result = validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeTrue())
+			Expect(result.SchemaCheckBypassed).To(BeFalse())
+			Expect(result.Error).To(BeNil())
+		})
+	})
+
+	Context("when handling unversioned contracts", func() {
+		It("should bypass validation for unversioned contracts", func() {
+			// Create topic with unversioned contract
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._unversioned_contract.temperature")
+			Expect(err).To(BeNil())
+
+			// Create valid payload
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+
+			// Should bypass validation
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeTrue())
+			Expect(result.BypassReason).To(ContainSubstring("unversioned contract '_unversioned_contract' - bypassing validation (no latest fetching)"))
+			Expect(result.Error).To(BeNil())
+		})
+	})
+
+	Context("when handling missing schemas", func() {
+		It("should bypass validation for non-existent schemas", func() {
+			// Create topic with contract that doesn't exist in mock registry
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent_contract-v1.temperature")
+			Expect(err).To(BeNil())
+
+			// Create valid payload
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+
+			// Should bypass validation
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeTrue())
+			Expect(result.BypassReason).To(ContainSubstring("schema for contract '_non_existent_contract' version 1 not found"))
+			Expect(result.Error).To(BeNil())
+		})
+	})
+
+	Context("when testing schema versioning", func() {
+		It("should handle different schema versions independently", func() {
+			// Load both v1 and v2 schemas
+			schemaV1 := mockRegistry.GetSchema("_sensor_data", 1)
+			Expect(schemaV1).NotTo(BeNil())
+			err := validator.LoadSchema("_sensor_data", 1, []byte(schemaV1.Schema))
+			Expect(err).To(BeNil())
+			schemaV2 := mockRegistry.GetSchema("_sensor_data", 2)
+			Expect(schemaV2).NotTo(BeNil())
+			err = validator.LoadSchema("_sensor_data", 2, []byte(schemaV2.Schema))
+			Expect(err).To(BeNil())
+
+			// Test v1 - should only allow temperature
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
+			Expect(err).To(BeNil())
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeTrue())
+			Expect(result.ContractVersion).To(Equal(uint64(1)))
+
+			// Test v1 with humidity should fail
+			unsTopic, err = topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.humidity")
+			Expect(err).To(BeNil())
+			result = validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+
+			// Test v2 - should allow temperature, humidity, and pressure
+			unsTopic, err = topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v2.humidity")
+			Expect(err).To(BeNil())
+			result = validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeTrue())
+			Expect(result.ContractVersion).To(Equal(uint64(2)))
 		})
 	})
 })
