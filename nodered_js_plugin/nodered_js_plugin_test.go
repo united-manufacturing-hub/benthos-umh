@@ -704,6 +704,60 @@ nodered_js:
 			Expect(structured2).To(Equal("CLEAN: test2"))
 		})
 
+		It("should enforce strict mode and prevent accidental global variables", func() {
+			testActivated := os.Getenv("TEST_NODERED_JS")
+			if testActivated == "" {
+				Skip("Skipping Node-RED JS tests: TEST_NODERED_JS not set")
+				return
+			}
+
+			// Test that accidental global variable creation throws an error
+			builder := service.NewStreamBuilder()
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			// JavaScript code that tries to create an accidental global (should fail in strict mode)
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    // This should throw an error in strict mode
+    accidentalGlobal = "this should fail";
+    msg.payload = "should not reach here";
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Send a message - this should cause an error due to strict mode
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("test")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Wait a bit to see if message gets processed (it shouldn't)
+			time.Sleep(100 * time.Millisecond)
+
+			// Verify no messages were processed due to the strict mode error
+			Expect(len(messages)).To(Equal(0))
+		})
+
 		It("should handle concurrent processing safely", func() {
 			testActivated := os.Getenv("TEST_NODERED_JS")
 			if testActivated == "" {

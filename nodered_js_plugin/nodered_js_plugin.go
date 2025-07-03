@@ -317,6 +317,7 @@ return msg;`))
 			// Wrap the user's code in a function that handles the return value
 			wrappedCode := fmt.Sprintf(`
 				(function(){
+					'use strict';
 					%s
 				})()
 			`, code)

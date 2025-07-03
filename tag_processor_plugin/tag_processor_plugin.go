@@ -382,7 +382,7 @@ Message content: %v`,
 }
 
 func (p *TagProcessor) executeJSCode(vm *goja.Runtime, code string, jsMsg map[string]interface{}) ([]map[string]interface{}, error) {
-	wrappedCode := fmt.Sprintf(`(function(){%s})()`, code)
+	wrappedCode := fmt.Sprintf(`(function(){'use strict';%s})()`, code)
 	result, err := vm.RunString(wrappedCode)
 	if err != nil {
 		p.logJSError(err, code, jsMsg)
@@ -621,7 +621,7 @@ func (p *TagProcessor) compilePrograms() error {
 	// Compile defaults code
 	// WHY: Defaults processing happens for every message batch, so optimization is critical
 	if p.originalDefaults != "" {
-		wrappedCode := fmt.Sprintf(`(function(){%s})()`, p.originalDefaults)
+		wrappedCode := fmt.Sprintf(`(function(){'use strict';%s})()`, p.originalDefaults)
 		p.defaultsProgram, err = goja.Compile("defaults.js", wrappedCode, false)
 		if err != nil {
 			return fmt.Errorf("failed to compile defaults code: %v", err)
@@ -646,7 +646,7 @@ func (p *TagProcessor) compilePrograms() error {
 
 		// Compile condition action code
 		// WHY: Action code executes when conditions are true, also frequent
-		wrappedThenCode := fmt.Sprintf(`(function(){%s})()`, condition.Then)
+		wrappedThenCode := fmt.Sprintf(`(function(){'use strict';%s})()`, condition.Then)
 		p.conditionThenPrograms[i], err = goja.Compile(
 			fmt.Sprintf("condition-%d-then.js", i),
 			wrappedThenCode,
@@ -659,7 +659,7 @@ func (p *TagProcessor) compilePrograms() error {
 	// Compile advanced processing code
 	// WHY: Advanced processing is less frequent but still benefits from compilation
 	if p.originalAdvanced != "" {
-		wrappedCode := fmt.Sprintf(`(function(){%s})()`, p.originalAdvanced)
+		wrappedCode := fmt.Sprintf(`(function(){'use strict';%s})()`, p.originalAdvanced)
 		p.advancedProgram, err = goja.Compile("advanced.js", wrappedCode, false)
 		if err != nil {
 			return fmt.Errorf("failed to compile advanced processing code: %v", err)
