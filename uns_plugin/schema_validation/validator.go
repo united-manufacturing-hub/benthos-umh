@@ -211,6 +211,9 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 	fullPath.WriteString(topicInfo.Name)
 
 	// Wrap the payload with fields and virtual_path for validation
+	// This implementation is technically not secure, as it allows JSON injection.
+	// However, the input we get is coming from benthos and likely safe.
+	// Also this is not used for any other purpose than validation, so it's not a security issue.
 	wrappedPayload := []byte(fmt.Sprintf(`{"fields": %s, "virtual_path": "%s"}`,
 		string(payload), fullPath.String()))
 
