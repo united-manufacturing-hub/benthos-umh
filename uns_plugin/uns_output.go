@@ -17,6 +17,7 @@ package uns_plugin
 import (
 	"context"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -150,9 +151,6 @@ type unsOutput struct {
 func deriveSchemaRegistryURL(brokerAddress string) string {
 	// Split by comma to handle multiple brokers
 	brokers := strings.Split(brokerAddress, ",")
-	if len(brokers) == 0 {
-		return ""
-	}
 
 	// Take the first broker and trim any whitespace
 	firstBroker := strings.TrimSpace(brokers[0])
@@ -162,19 +160,18 @@ func deriveSchemaRegistryURL(brokerAddress string) string {
 		return ""
 	}
 
-	// Split by colon to separate host and port
-	parts := strings.Split(firstBroker, ":")
-	if len(parts) != 2 {
-		// If no port specified, assume default and add schema registry port
+	// Use net.SplitHostPort to properly parse host and port
+	host, _, err := net.SplitHostPort(firstBroker)
+	if err != nil {
+		// If no port specified, assume the entire string is the host
 		return fmt.Sprintf("http://%s:%s", firstBroker, defaultSchemaRegistryPort)
 	}
 
-	// Replace the port with schema registry port
-	host := parts[0]
 	// Check if host is empty
 	if host == "" {
 		return ""
 	}
+
 	return fmt.Sprintf("http://%s:%s", host, defaultSchemaRegistryPort)
 }
 
