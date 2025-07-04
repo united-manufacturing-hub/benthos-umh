@@ -351,6 +351,27 @@ func (o *unsOutput) extractHeaders(msg *service.Message) (map[string][]byte, err
 	return headers, nil
 }
 
+// validateAndEnrichMessage validates the message against the schema and enriches it with contract metadata
+func (o *unsOutput) validateAndEnrichMessage(msg *service.Message, unsTopic *topic.UnsTopic, msgAsBytes []byte, messageIndex int) error {
+	// Validate the payload against the schema
+	validationResult := o.validator.Validate(unsTopic, msgAsBytes)
+	if !validationResult.SchemaCheckPassed && !validationResult.SchemaCheckBypassed {
+		return fmt.Errorf("error validating message payload in message %d: %v", messageIndex, validationResult.Error)
+	}
+
+	if validationResult.SchemaCheckPassed {
+		// Add the contract name and version to the headers
+		msg.MetaSet("data_contract_name", validationResult.ContractName)
+		msg.MetaSet("data_contract_version", strconv.FormatUint(validationResult.ContractVersion, 10))
+	} else if validationResult.SchemaCheckBypassed {
+		// Add bypass information if validation was bypassed
+		msg.MetaSet("data_contract_bypassed", "true")
+		msg.MetaSet("data_contract_bypass_reason", validationResult.BypassReason)
+	}
+
+	return nil
+}
+
 // WriteBatch implements service.BatchOutput.
 func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) error {
 	if len(msgs) == 0 {
@@ -380,19 +401,9 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 			return fmt.Errorf("error getting content of message %d: %v", i, err)
 		}
 
-		// Validate the payload against the schema
-		validationResult := o.validator.Validate(unsTopic, msgAsBytes)
-		if !validationResult.SchemaCheckPassed && !validationResult.SchemaCheckBypassed {
-			return fmt.Errorf("error validating message payload in message %d: %v", i, validationResult.Error)
-		}
-		if validationResult.SchemaCheckPassed {
-			// Add the contract name and version to the headers
-			msg.MetaSet("data_contract_name", validationResult.ContractName)
-			msg.MetaSet("data_contract_version", strconv.FormatUint(validationResult.ContractVersion, 10))
-		} else if validationResult.SchemaCheckBypassed {
-			// Add bypass information if validation was bypassed
-			msg.MetaSet("data_contract_bypassed", "true")
-			msg.MetaSet("data_contract_bypass_reason", validationResult.BypassReason)
+		// Validate and enrich the message
+		if err := o.validateAndEnrichMessage(msg, unsTopic, msgAsBytes, i); err != nil {
+			return err
 		}
 
 		headers, err := o.extractHeaders(msg)
