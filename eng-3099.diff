@@ -1,7 +1,7 @@
-diff --git a/.gitignore b/.gitignore
+diff --git c/.gitignore w/.gitignore
 index a27241b..defeaaa 100644
---- a/.gitignore
-+++ b/.gitignore
+--- c/.gitignore
++++ w/.gitignore
 @@ -203,6 +203,7 @@ dist
  
  # Cover.profile
@@ -10,1737 +10,10 @@ index a27241b..defeaaa 100644
  benthos-umh
  benthos
  
-diff --git a/ENG-3099-Implementation-Plan.md b/ENG-3099-Implementation-Plan.md
-new file mode 100644
-index 0000000..e718b21
---- /dev/null
-+++ b/ENG-3099-Implementation-Plan.md
-@@ -0,0 +1,1248 @@
-+# ENG-3099 Implementation Plan: Schema Registry Integration for uns_output Plugin
-+
-+## Overview
-+
-+This document outlines the implementation plan for integrating JSON schema validation into the `uns_output` plugin using Redpanda's Schema Registry. The enhancement ensures that only messages conforming to registered JSON schemas are published to the UNS, improving data integrity while maintaining the existing fail-open philosophy.
-+
-+## Objectives
-+
-+- **Primary**: Validate message payloads against JSON schemas before publishing to `umh.messages`
-+- **Secondary**: Support versioned data contracts (`_contract`, `_contractv1`, `_contractv34`)
-+- **Tertiary**: Maintain fail-open behavior to prevent data loss on schema registry issues
-+- **Performance**: Minimize impact on throughput through efficient caching
-+
-+## Architecture Overview
-+
-+```
-+Message → Extract data_contract → Parse version → Extract tag_name → Cache lookup → Dual validation → Kafka publish
-+             ↓                                        ↓                    ↓              ↓
-+        (from metadata)                        (from UNS topic)     Schema Registry   1. Tag allowed?
-+                                                                   (if not cached)    2. Payload valid?
-+```
-+
-+## Schema Structure
-+
-+Our schemas support **dual validation** with both allowed tag names and tag-specific payload schemas:
-+
-+```json
-+{
-+   "virtual_path": [
-+      "count",
-+      "vibration.x-axis", 
-+      "vibration.y-axis",
-+      "acceleration.x",
-+      "serialNumber"
-+   ],
-+   "fields": {
-+      "count": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "vibration.x-axis": {
-+         "type": "object", 
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "vibration.y-axis": {
-+         "type": "object", 
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "acceleration.x": {
-+         "type": "object", 
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "serialNumber": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"}, 
-+            "value": {"type": "string"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      }
-+   }
-+}
-+```
-+
-+## Design Decision: Configuration Strategy
-+
-+### Ticket Requirements vs Implementation Plan
-+
-+**Original Ticket (ENG-3099) stated:**
-+> "The plugin configuration (uns: {}) doesn't need new YAML fields for this feature, since it's an internal behavior."
-+
-+**Initial Plan proposed:**
-+> Adding a required `schema_registry_url` configuration field
-+
-+**Resolution: Optional Configuration with Auto-derivation**
-+
-+We chose **Option 2** to balance ticket requirements with practical deployment needs:
-+
-+**✅ Pros of Our Approach:**
-+- **Ticket Compliance**: Works without any configuration changes (auto-derivation)
-+- **Smart Defaults**: Automatically derives `http://localhost:8081` from `localhost:9092`
-+- **Deployment Flexibility**: Supports non-standard registry URLs when needed
-+- **Backward Compatibility**: All existing configurations work unchanged
-+- **Explicit Control**: Allows disabling validation by setting empty string
-+
-+**❌ Rejected Alternatives:**
-+- **Option 1 (Auto-derive only)**: Too rigid for complex deployments
-+- **Required Configuration**: Would break existing configurations
-+- **Environment Variables**: Adds deployment complexity
-+
-+**Implementation Impact:**
-+- Zero breaking changes to existing configurations
-+- Logging shows auto-derived URLs for transparency
-+- Explicit configuration overrides auto-derivation when needed
-+
-+## Implementation Details
-+
-+### 1. Configuration Changes
-+
-+**File**: `uns_plugin/uns_output.go`
-+
-+#### 1.1 Configuration Strategy Decision
-+
-+We implement **Option 2: Optional Configuration with Auto-derivation** to align with the ENG-3099 ticket requirements while maintaining flexibility:
-+
-+**Reasoning:**
-+- **Ticket Alignment**: The original ticket states "The plugin configuration (uns: {}) doesn't need new YAML fields for this feature, since it's an internal behavior"
-+- **Smart Defaults**: Auto-derive schema registry URL from broker address (localhost:9092 → http://localhost:8081)
-+- **Flexibility**: Allow explicit configuration for non-standard deployments
-+- **Backward Compatible**: Existing configurations work unchanged
-+- **Future-proof**: Handles various deployment scenarios gracefully
-+
-+#### 1.2 Update Configuration Struct
-+
-+```go
-+// Update unsOutputConfig struct
-+type unsOutputConfig struct {
-+	umh_topic           *service.InterpolatedString
-+	brokerAddress       string
-+	bridgedBy           string
-+	schemaRegistryURL   string  // NEW: Schema Registry URL (auto-derived or explicit)
-+}
-+```
-+
-+#### 1.3 Add Configuration Field (Optional)
-+
-+```go
-+// In outputConfig() function, add new OPTIONAL field
-+Field(service.NewStringField("schema_registry_url").
-+	Description(`
-+Optional Schema Registry URL for JSON schema validation. If not specified,
-+the URL will be auto-derived from the broker_address (e.g., localhost:9092 
-+becomes http://localhost:8081).
-+
-+Set this explicitly for non-standard deployments or to disable validation 
-+entirely by setting to an empty string.
-+`).
-+	Example("http://localhost:8081").
-+	Optional())
-+```
-+
-+#### 1.4 Auto-derivation Helper Function
-+
-+```go
-+import (
-+	// ... existing imports ...
-+	"strings"
-+)
-+
-+// deriveSchemaRegistryURL automatically derives registry URL from broker address
-+func deriveSchemaRegistryURL(brokerAddress string) string {
-+	if brokerAddress == "" {
-+		return "http://localhost:8081" // fallback default
-+	}
-+	
-+	// Extract host from broker address (e.g., "localhost:9092" -> "localhost")
-+	if strings.Contains(brokerAddress, ":") {
-+		host := strings.Split(brokerAddress, ":")[0]
-+		return fmt.Sprintf("http://%s:8081", host)
-+	}
-+	
-+	// If no port specified, assume it's just the host
-+	return fmt.Sprintf("http://%s:8081", brokerAddress)
-+}
-+```
-+
-+#### 1.5 Update Constructor
-+
-+```go
-+// In newUnsOutput function, implement optional config with auto-derivation
-+var schemaRegistryURL string
-+if conf.Contains("schema_registry_url") {
-+	// Explicit configuration provided
-+	url, err := conf.FieldString("schema_registry_url")
-+	if err != nil {
-+		return nil, batchPolicy, 0, fmt.Errorf("error while parsing schema_registry_url field from the config: %v", err)
-+	}
-+	schemaRegistryURL = url
-+} else {
-+	// Auto-derive from broker address
-+	schemaRegistryURL = deriveSchemaRegistryURL(config.brokerAddress)
-+	mgr.Logger().Infof("Auto-derived schema registry URL: %s (from broker: %s)", 
-+		schemaRegistryURL, config.brokerAddress)
-+}
-+
-+config := unsOutputConfig{
-+	// ... existing fields ...
-+	schemaRegistryURL: schemaRegistryURL,
-+}
-+
-+// Create schema cache if registry URL is provided and not explicitly disabled
-+var schemaCache *SchemaCache
-+if schemaRegistryURL != "" {
-+	schemaCache = NewSchemaCache(schemaRegistryURL, mgr.Logger())
-+}
-+
-+return newUnsOutputWithClient(NewClient(), config, schemaCache, mgr.Logger()), batchPolicy, maxInFlight, nil
-+```
-+
-+### 2. Contract Version Parser
-+
-+**File**: `uns_plugin/contract_parser.go` (NEW)
-+
-+```go
-+package uns_plugin
-+
-+import (
-+	"regexp"
-+	"strconv"
-+)
-+
-+// ContractInfo holds parsed contract information
-+type ContractInfo struct {
-+	BaseContract string // e.g., "_pump_data" 
-+	Version      *int   // nil for latest, specific number for versioned
-+	FullName     string // original contract name
-+}
-+
-+var contractVersionRegex = regexp.MustCompile(`^(.+?)v(\d+)$`)
-+
-+// ParseContract parses a data contract to extract base name and version
-+func ParseContract(contract string) ContractInfo {
-+	if contract == "" {
-+		return ContractInfo{}
-+	}
-+
-+	// Check if contract has version suffix (e.g., "_pump_datav1", "_pump_datav34")
-+	matches := contractVersionRegex.FindStringSubmatch(contract)
-+	if len(matches) == 3 {
-+		baseContract := matches[1]
-+		if version, err := strconv.Atoi(matches[2]); err == nil {
-+			return ContractInfo{
-+				BaseContract: baseContract,
-+				Version:      &version,
-+				FullName:     contract,
-+			}
-+		}
-+	}
-+
-+	// No version suffix, assume latest
-+	return ContractInfo{
-+		BaseContract: contract,
-+		Version:      nil, // latest
-+		FullName:     contract,
-+	}
-+}
-+
-+// CacheKey returns a unique cache key for this contract version
-+func (ci ContractInfo) CacheKey() string {
-+	if ci.Version == nil {
-+		return ci.BaseContract + ":latest"
-+	}
-+	return ci.BaseContract + ":v" + strconv.Itoa(*ci.Version)
-+}
-+
-+// RegistrySubject returns the subject name for schema registry
-+func (ci ContractInfo) RegistrySubject() string {
-+	return ci.BaseContract
-+}
-+```
-+
-+### 3. Schema Registry Client
-+
-+**File**: `uns_plugin/schema_registry_client.go` (NEW)
-+
-+```go
-+package uns_plugin
-+
-+import (
-+	"encoding/json"
-+	"fmt"
-+	"io"
-+	"net/http"
-+	"time"
-+)
-+
-+// SchemaRegistryClient handles communication with Redpanda Schema Registry
-+type SchemaRegistryClient struct {
-+	baseURL    string
-+	httpClient *http.Client
-+}
-+
-+// SchemaResponse represents the response from schema registry
-+type SchemaResponse struct {
-+	ID      int    `json:"id"`
-+	Version int    `json:"version"`
-+	Schema  string `json:"schema"`
-+}
-+
-+// NewSchemaRegistryClient creates a new schema registry client
-+func NewSchemaRegistryClient(baseURL string) *SchemaRegistryClient {
-+	return &SchemaRegistryClient{
-+		baseURL: baseURL,
-+		httpClient: &http.Client{
-+			Timeout: 10 * time.Second,
-+		},
-+	}
-+}
-+
-+// GetSchemaForContract retrieves schema for a contract (latest or specific version)
-+func (c *SchemaRegistryClient) GetSchemaForContract(contractInfo ContractInfo) (*SchemaResponse, error) {
-+	var url string
-+	if contractInfo.Version == nil {
-+		// Get latest version
-+		url = fmt.Sprintf("%s/subjects/%s/versions/latest", c.baseURL, contractInfo.RegistrySubject())
-+	} else {
-+		// Get specific version
-+		url = fmt.Sprintf("%s/subjects/%s/versions/%d", c.baseURL, contractInfo.RegistrySubject(), *contractInfo.Version)
-+	}
-+	
-+	resp, err := c.httpClient.Get(url)
-+	if err != nil {
-+		return nil, fmt.Errorf("failed to fetch schema for contract %s: %w", contractInfo.FullName, err)
-+	}
-+	defer resp.Body.Close()
-+
-+	if resp.StatusCode == 404 {
-+		// No schema registered for this contract/version
-+		return nil, nil
-+	}
-+
-+	if resp.StatusCode != 200 {
-+		return nil, fmt.Errorf("schema registry returned status %d for contract %s", resp.StatusCode, contractInfo.FullName)
-+	}
-+
-+	body, err := io.ReadAll(resp.Body)
-+	if err != nil {
-+		return nil, fmt.Errorf("failed to read response body: %w", err)
-+	}
-+
-+	var schemaResp SchemaResponse
-+	if err := json.Unmarshal(body, &schemaResp); err != nil {
-+		return nil, fmt.Errorf("failed to unmarshal schema response: %w", err)
-+	}
-+
-+	return &schemaResp, nil
-+}
-+
-+// GetLatestSchema - kept for backward compatibility, delegates to GetSchemaForContract
-+func (c *SchemaRegistryClient) GetLatestSchema(contract string) (*SchemaResponse, error) {
-+	contractInfo := ParseContract(contract)
-+	return c.GetSchemaForContract(contractInfo)
-+}
-+```
-+
-+### 4. UMH Topic Parser
-+
-+**File**: `uns_plugin/uns_topic_parser.go` (NEW)
-+
-+```go
-+package uns_plugin
-+
-+import (
-+	"fmt"
-+	"strings"
-+)
-+
-+// extractTagNameFromUNSTopic extracts the tag name (last part) from a UNS topic
-+// Example: "umh.v1.enterprise.site.area._pump_data.vibration.x-axis" -> "vibration.x-axis"
-+func extractTagNameFromUNSTopic(unsTopic string) (string, error) {
-+	if unsTopic == "" {
-+		return "", fmt.Errorf("UNS topic is empty")
-+	}
-+
-+	// Split by dots and get the last part
-+	parts := strings.Split(unsTopic, ".")
-+	if len(parts) < 2 {
-+		return "", fmt.Errorf("invalid UNS topic format: %s", unsTopic)
-+	}
-+
-+	tagName := parts[len(parts)-1]
-+	if tagName == "" {
-+		return "", fmt.Errorf("tag name is empty in UNS topic: %s", unsTopic)
-+	}
-+
-+	return tagName, nil
-+}
-+```
-+
-+### 5. Schema Validator Implementation
-+
-+**File**: `uns_plugin/schema_validator.go` (NEW)
-+
-+```go
-+package uns_plugin
-+
-+import (
-+	"context"
-+	"encoding/json"
-+	"fmt"
-+	"sync"
-+	"time"
-+
-+	"github.com/kaptinlin/jsonschema"
-+	"github.com/redpanda-data/benthos/v4/public/service"
-+)
-+
-+// ContractSchema represents the dual validation schema structure
-+type ContractSchema struct {
-+	VirtualPath []string                   `json:"virtual_path"` // Allowed tag names
-+	Fields      map[string]json.RawMessage `json:"fields"`       // Tag-specific JSON schemas
-+}
-+
-+// SchemaValidator interface for dual validation (tag name + payload)
-+type SchemaValidator interface {
-+	ValidateTagAndPayload(tagName string, payload []byte) error
-+}
-+
-+// CompiledContractSchema wraps a compiled contract schema for dual validation
-+type CompiledContractSchema struct {
-+	contractName    string
-+	allowedNames    map[string]bool                // Fast lookup for allowed tag names
-+	compiledSchemas map[string]*jsonschema.Schema  // Compiled JSON schemas per tag
-+}
-+
-+// NewCompiledContractSchema creates a new compiled contract schema
-+func NewCompiledContractSchema(contractName string, schemaJSON []byte) (*CompiledContractSchema, error) {
-+	var contractSchema ContractSchema
-+	if err := json.Unmarshal(schemaJSON, &contractSchema); err != nil {
-+		return nil, fmt.Errorf("failed to parse contract schema: %w", err)
-+	}
-+
-+	// Build allowed names lookup map
-+	allowedNames := make(map[string]bool)
-+	for _, name := range contractSchema.VirtualPath {
-+		allowedNames[name] = true
-+	}
-+
-+	// Compile JSON schemas for each field
-+	compiler := jsonschema.NewCompiler()
-+	compiledSchemas := make(map[string]*jsonschema.Schema)
-+	
-+	for tagName, fieldSchemaBytes := range contractSchema.Fields {
-+		schema, err := compiler.Compile(fieldSchemaBytes)
-+		if err != nil {
-+			return nil, fmt.Errorf("failed to compile schema for tag '%s': %w", tagName, err)
-+		}
-+		compiledSchemas[tagName] = schema
-+	}
-+
-+	return &CompiledContractSchema{
-+		contractName:    contractName,
-+		allowedNames:    allowedNames,
-+		compiledSchemas: compiledSchemas,
-+	}, nil
-+}
-+
-+// ValidateTagAndPayload performs dual validation: tag name + payload
-+func (c *CompiledContractSchema) ValidateTagAndPayload(tagName string, payload []byte) error {
-+	// Step 1: Validate tag name is allowed
-+	if !c.allowedNames[tagName] {
-+		allowedList := make([]string, 0, len(c.allowedNames))
-+		for name := range c.allowedNames {
-+			allowedList = append(allowedList, name)
-+		}
-+		return fmt.Errorf("tag '%s' not allowed for contract '%s'. Allowed tags: %v", 
-+			tagName, c.contractName, allowedList)
-+	}
-+
-+	// Step 2: Validate payload against tag-specific schema
-+	schema, exists := c.compiledSchemas[tagName]
-+	if !exists {
-+		return fmt.Errorf("no schema defined for tag '%s' in contract '%s'", tagName, c.contractName)
-+	}
-+
-+	result := schema.ValidateJSON(payload)
-+	if !result.IsValid() {
-+		// Create detailed error message from validation result
-+		var errorMsg string
-+		for field, err := range result.Errors {
-+			if errorMsg != "" {
-+				errorMsg += "; "
-+			}
-+			errorMsg += fmt.Sprintf("%s: %s", field, err.Message)
-+		}
-+		return fmt.Errorf("payload validation failed for tag '%s': %s", tagName, errorMsg)
-+	}
-+
-+	return nil
-+}
-+
-+// SchemaCache manages schema retrieval and caching with version support
-+type SchemaCache struct {
-+	cache            map[string]SchemaValidator // cache key -> validator
-+	lastFetch        map[string]time.Time       // cache key -> last fetch time
-+	registryURL      string
-+	refreshInterval  time.Duration
-+	mutex            sync.RWMutex
-+	log              *service.Logger
-+}
-+
-+// NewSchemaCache creates a new schema cache
-+func NewSchemaCache(registryURL string, logger *service.Logger) *SchemaCache {
-+	return &SchemaCache{
-+		cache:           make(map[string]SchemaValidator),
-+		lastFetch:       make(map[string]time.Time),
-+		registryURL:     registryURL,
-+		refreshInterval: 10 * time.Minute, // Configurable refresh interval
-+		log:             logger,
-+	}
-+}
-+
-+// GetValidator retrieves or fetches a validator for the given contract
-+func (sc *SchemaCache) GetValidator(ctx context.Context, contractName string) (SchemaValidator, error) {
-+	if contractName == "" {
-+		return nil, nil // No validation for empty contract
-+	}
-+
-+	contractInfo := ParseContract(contractName)
-+	cacheKey := contractInfo.CacheKey()
-+
-+	sc.mutex.RLock()
-+	validator, exists := sc.cache[cacheKey]
-+	lastFetch := sc.lastFetch[cacheKey]
-+	sc.mutex.RUnlock()
-+
-+	// For versioned contracts, don't refresh (they're immutable)
-+	// For latest contracts, refresh periodically
-+	needsRefresh := !exists
-+	if contractInfo.Version == nil && exists {
-+		// Only refresh "latest" versions periodically
-+		needsRefresh = time.Since(lastFetch) > sc.refreshInterval
-+	}
-+
-+	if needsRefresh {
-+		return sc.fetchAndCacheSchema(ctx, contractInfo)
-+	}
-+
-+	return validator, nil
-+}
-+
-+// fetchAndCacheSchema fetches schema from registry and caches it
-+func (sc *SchemaCache) fetchAndCacheSchema(ctx context.Context, contractInfo ContractInfo) (SchemaValidator, error) {
-+	cacheKey := contractInfo.CacheKey()
-+	
-+	sc.mutex.Lock()
-+	defer sc.mutex.Unlock()
-+
-+	// Double-check pattern - another goroutine might have fetched it
-+	if validator, exists := sc.cache[cacheKey]; exists {
-+		// For versioned contracts, never refresh
-+		if contractInfo.Version != nil {
-+			return validator, nil
-+		}
-+		// For latest, check if we need refresh
-+		if time.Since(sc.lastFetch[cacheKey]) <= sc.refreshInterval {
-+			return validator, nil
-+		}
-+	}
-+
-+	client := NewSchemaRegistryClient(sc.registryURL)
-+	schemaResp, err := client.GetSchemaForContract(contractInfo)
-+	if err != nil {
-+		sc.log.Errorf("Failed to fetch schema for contract %s: %v", contractInfo.FullName, err)
-+		// Return nil validator but don't error - fail open
-+		sc.cache[cacheKey] = nil
-+		sc.lastFetch[cacheKey] = time.Now()
-+		return nil, nil
-+	}
-+
-+	if schemaResp == nil {
-+		// No schema registered
-+		sc.log.Infof("No schema registered for contract '%s'; skipping validation", contractInfo.FullName)
-+		sc.cache[cacheKey] = nil
-+		sc.lastFetch[cacheKey] = time.Now()
-+		return nil, nil
-+	}
-+
-+	// Compile the contract schema (dual validation schema)
-+	validator, err := NewCompiledContractSchema(contractInfo.FullName, []byte(schemaResp.Schema))
-+	if err != nil {
-+		sc.log.Errorf("Failed to compile contract schema for %s: %v", contractInfo.FullName, err)
-+		// Fail open - cache nil validator
-+		sc.cache[cacheKey] = nil
-+		sc.lastFetch[cacheKey] = time.Now()
-+		return nil, nil
-+	}
-+
-+	sc.cache[cacheKey] = validator
-+	sc.lastFetch[cacheKey] = time.Now()
-+
-+	versionInfo := "latest"
-+	if contractInfo.Version != nil {
-+		versionInfo = fmt.Sprintf("v%d", *contractInfo.Version)
-+	}
-+	sc.log.Infof("Loaded dual validation schema for contract '%s' (%s, registry version %d)", 
-+		contractInfo.FullName, versionInfo, schemaResp.Version)
-+	return validator, nil
-+}
-+
-+// RefreshOnValidationFailure attempts to refresh schema when validation fails unexpectedly
-+// Only works for "latest" version contracts - versioned contracts are immutable
-+func (sc *SchemaCache) RefreshOnValidationFailure(ctx context.Context, contractName string) (SchemaValidator, error) {
-+	contractInfo := ParseContract(contractName)
-+	
-+	// Don't refresh versioned contracts - they're immutable
-+	if contractInfo.Version != nil {
-+		return nil, fmt.Errorf("cannot refresh versioned contract %s", contractInfo.FullName)
-+	}
-+
-+	cacheKey := contractInfo.CacheKey()
-+	sc.mutex.Lock()
-+	lastFetch := sc.lastFetch[cacheKey]
-+	sc.mutex.Unlock()
-+
-+	// Rate limit: only refresh if it's been at least 1 minute since last fetch
-+	if time.Since(lastFetch) < time.Minute {
-+		return nil, fmt.Errorf("rate limited: schema refresh attempted too recently")
-+	}
-+
-+	sc.log.Infof("Attempting schema refresh for contract %s due to validation failure", contractInfo.FullName)
-+	return sc.fetchAndCacheSchema(ctx, contractInfo)
-+}
-+```
-+
-+### 6. uns_output Integration
-+
-+**File**: `uns_plugin/uns_output.go` (MODIFIED)
-+
-+#### 6.1 Update Validation Helper Function
-+
-+```go
-+// validateMessage performs dual validation (tag name + payload) for a single message
-+func (o *unsOutput) validateMessage(ctx context.Context, msg *service.Message, msgBytes []byte, msgIndex int) error {
-+	// Get data contract from message metadata
-+	contract := msg.MetaGet("data_contract")
-+	if contract == "" {
-+		o.log.Debugf("No data_contract metadata found for message %d, skipping validation", msgIndex)
-+		return nil
-+	}
-+
-+	// Get UNS topic and extract tag name
-+	unsTopicKey, err := o.config.umh_topic.TryString(msg)
-+	if err != nil {
-+		return fmt.Errorf("failed to get UNS topic for message %d: %v", msgIndex, err)
-+	}
-+
-+	tagName, err := extractTagNameFromUNSTopic(unsTopicKey)
-+	if err != nil {
-+		return fmt.Errorf("failed to extract tag name from UNS topic '%s' for message %d: %v", unsTopicKey, msgIndex, err)
-+	}
-+
-+	// Parse contract to understand version requirements
-+	contractInfo := ParseContract(contract)
-+	if contractInfo.BaseContract == "" {
-+		o.log.Debugf("Could not parse contract '%s' for message %d, skipping validation", contract, msgIndex)
-+		return nil
-+	}
-+
-+	// Get validator for this contract (including version)
-+	validator, err := o.schemaCache.GetValidator(ctx, contract)
-+	if err != nil {
-+		o.log.Errorf("Failed to get validator for contract %s: %v", contract, err)
-+		// Fail open - don't block the message
-+		return nil
-+	}
-+
-+	if validator == nil {
-+		// No schema registered for this contract/version - skip validation
-+		return nil
-+	}
-+
-+	// Perform dual validation (tag name + payload)
-+	if err := validator.ValidateTagAndPayload(tagName, msgBytes); err != nil {
-+		// For versioned contracts, don't attempt refresh (they're immutable)
-+		if contractInfo.Version == nil {
-+			// Try schema refresh only for "latest" version contracts
-+			if refreshedValidator, refreshErr := o.schemaCache.RefreshOnValidationFailure(ctx, contract); refreshErr == nil && refreshedValidator != nil {
-+				// Retry validation with refreshed schema
-+				if retryErr := refreshedValidator.ValidateTagAndPayload(tagName, msgBytes); retryErr == nil {
-+					o.log.Infof("Message %d passed dual validation after schema refresh for contract %s", msgIndex, contract)
-+					return nil
-+				}
-+			}
-+		}
-+
-+		// Log validation failure with detailed information
-+		truncatedPayload := string(msgBytes)
-+		if len(truncatedPayload) > 200 {
-+			truncatedPayload = truncatedPayload[:200] + "..."
-+		}
-+		
-+		versionInfo := "latest"
-+		if contractInfo.Version != nil {
-+			versionInfo = fmt.Sprintf("v%d", *contractInfo.Version)
-+		}
-+		
-+		return fmt.Errorf("dual validation failed for contract %s (%s), tag '%s' - %v. Payload: %s", 
-+			contractInfo.BaseContract, versionInfo, tagName, err, truncatedPayload)
-+	}
-+
-+	o.log.Tracef("Message %d passed dual validation: contract=%s, tag=%s", msgIndex, contract, tagName)
-+	return nil
-+}
-+```
-+
-+#### 6.2 Example Validation Scenarios
-+
-+**Valid Message:**
-+- UNS Topic: `umh.v1.enterprise.site.area._pump_data.vibration.x-axis`  
-+- Tag Name: `vibration.x-axis` (extracted from topic)
-+- Contract: `_pump_data` (from metadata)
-+- Validation: Check if `vibration.x-axis` is in allowed names + validate payload against vibration.x-axis schema
-+
-+**Invalid Tag Name:**
-+- UNS Topic: `umh.v1.enterprise.site.area._pump_data.unknown_sensor`
-+- Tag Name: `unknown_sensor` 
-+- Contract: `_pump_data`
-+- Result: Rejected - "tag 'unknown_sensor' not allowed for contract '_pump_data'. Allowed tags: [count, vibration.x-axis, vibration.y-axis, acceleration.x, serialNumber]"
-+
-+**Invalid Payload:**
-+- UNS Topic: `umh.v1.enterprise.site.area._pump_data.count`
-+- Tag Name: `count`
-+- Payload: `{"value": "not_a_number", "timestamp_ms": 1680000000000}`
-+- Result: Rejected - "payload validation failed for tag 'count': value: expected number, got string"
-+
-+## Testing Strategy
-+
-+Implementation includes comprehensive test coverage for **dual validation** (tag name + payload) with unit tests, integration tests, and performance benchmarks.
-+
-+### Key Test Scenarios
-+
-+#### 1. UNS Topic Parsing Tests
-+```go
-+// Test tag name extraction from various UNS topic formats
-+testCases := []struct {
-+    unsTopic string
-+    expected string
-+    shouldErr bool
-+}{
-+    {"umh.v1.enterprise.site.area._pump_data.count", "count", false},
-+    {"umh.v1.site._pump_data.vibration.x-axis", "vibration.x-axis", false},
-+    {"umh.v1._pump_data.serialNumber", "serialNumber", false},
-+    {"invalid.topic", "", true},
-+    {"", "", true},
-+}
-+```
-+
-+#### 2. Dual Validation Tests
-+```go
-+// Test both tag name validation and payload validation
-+func TestDualValidation(t *testing.T) {
-+    schema := ContractSchema{
-+        VirtualPath: []string{"count", "vibration.x-axis", "vibration.y-axis", "serialNumber"},
-+        Fields: map[string]json.RawMessage{
-+            "count": []byte(`{"type":"object","properties":{"value":{"type":"number"},"timestamp_ms":{"type":"number"}},"required":["value","timestamp_ms"]}`),
-+            "vibration.x-axis": []byte(`{"type":"object","properties":{"value":{"type":"number"},"timestamp_ms":{"type":"number"}},"required":["value","timestamp_ms"]}`),
-+            "serialNumber": []byte(`{"type":"object","properties":{"value":{"type":"string"},"timestamp_ms":{"type":"number"}},"required":["value","timestamp_ms"]}`),
-+            // ... other field schemas
-+        },
-+    }
-+    
-+    // Test valid tag + valid payload
-+    // Test valid tag + invalid payload  
-+    // Test invalid tag + valid payload
-+    // Test invalid tag + invalid payload
-+}
-+```
-+
-+#### 3. Schema Evolution with Versioned Contracts
-+```go
-+// Test version-specific validation
-+func TestVersionedContractValidation(t *testing.T) {
-+    // Test _pump_datav1 vs _pump_data (latest) schemas
-+    // Ensure versioned schemas don't refresh
-+    // Test different tag name sets per version
-+}
-+```
-+
-+#### 4. Integration Test Examples
-+
-+**Test Case: Tag Not Allowed**
-+- Schema: `{"virtual_path": ["count", "vibration.x-axis", "vibration.y-axis"], "fields": {...}}`
-+- UNS Topic: `umh.v1.site._pump_data.pressure`
-+- Expected: Message dropped with "tag 'pressure' not allowed" error
-+
-+**Test Case: Payload Schema Mismatch**
-+- Schema: Count field expects `{"value": number, "timestamp_ms": number}`
-+- Payload: `{"value": "string", "timestamp_ms": 123}`
-+- Expected: Message dropped with "payload validation failed for tag 'count': value: expected number, got string"
-+
-+**Test Case: Both Validations Pass**
-+- UNS Topic: `umh.v1.site._pump_data.count`
-+- Payload: `{"value": 12.5, "timestamp_ms": 1680000000000}`
-+- Expected: Message published successfully
-+
-+## Configuration Examples
-+
-+#### Auto-derived Configuration (Default - Recommended)
-+
-+```yaml
-+output:
-+  uns:
-+    broker_address: "localhost:9092"
-+    # schema_registry_url not specified - auto-derived to http://localhost:8081
-+```
-+
-+#### Explicit Configuration
-+
-+```yaml
-+output:
-+  uns:
-+    schema_registry_url: "http://schema-registry.example.com:8081"
-+    broker_address: "kafka.example.com:9092"
-+```
-+
-+#### Disabled Configuration
-+
-+```yaml
-+output:
-+  uns:
-+    schema_registry_url: ""  # explicitly empty to disable validation
-+    broker_address: "localhost:9092"
-+```
-+
-+#### Auto-derivation Examples
-+
-+| Broker Address | Auto-derived Schema Registry URL |
-+|---|---|
-+| `localhost:9092` | `http://localhost:8081` |
-+| `kafka.example.com:9092` | `http://kafka.example.com:8081` |
-+| `redpanda` | `http://redpanda:8081` |
-+| `` (empty) | `http://localhost:8081` (fallback) |
-+
-+## Metrics Implementation
-+
-+### 7. Schema Validation Metrics
-+
-+**File**: `uns_plugin/uns_output_metrics.go` (NEW)
-+
-+Following the established patterns from `uns_input_metrics.go`, we'll implement comprehensive metrics tracking for schema validation:
-+
-+```go
-+// Copyright 2025 UMH Systems GmbH
-+//
-+// Licensed under the Apache License, Version 2.0 (the "License");
-+// you may not use this file except in compliance with the License.
-+// You may obtain a copy of the License at
-+//
-+//     http://www.apache.org/licenses/LICENSE-2.0
-+//
-+// Unless required by applicable law or agreed to in writing, software
-+// distributed under the License is distributed on an "AS IS" BASIS,
-+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+// See the License for the specific language governing permissions and
-+// limitations under the License.
-+
-+package uns_plugin
-+
-+import (
-+	"time"
-+
-+	"github.com/redpanda-data/benthos/v4/public/service"
-+)
-+
-+// UnsOutputMetrics provides metrics collection for the UNS output plugin schema validation
-+type UnsOutputMetrics struct {
-+	// Schema loading metrics
-+	SchemasLoadedGauge     *service.MetricGauge
-+	SchemaCacheHitCounter  *service.MetricCounter
-+	SchemaCacheMissCounter *service.MetricCounter
-+	SchemaFetchTimer       *service.MetricTimer
-+	
-+	// Validation metrics
-+	ValidationSuccessCounter *service.MetricCounter
-+	ValidationFailureCounter *service.MetricCounter
-+	TagValidationFailCounter *service.MetricCounter
-+	PayloadValidationFailCounter *service.MetricCounter
-+	ValidationTimer          *service.MetricTimer
-+	
-+	// Error metrics
-+	SchemaFetchErrorCounter   *service.MetricCounter
-+	SchemaCompileErrorCounter *service.MetricCounter
-+}
-+
-+// NewUnsOutputMetrics creates a new metrics collection for the UNS output plugin
-+func NewUnsOutputMetrics(metricsProvider *service.Metrics) *UnsOutputMetrics {
-+	return &UnsOutputMetrics{
-+		// Schema loading metrics
-+		SchemasLoadedGauge:     metricsProvider.NewGauge("output_uns_schemas_loaded"),
-+		SchemaCacheHitCounter:  metricsProvider.NewCounter("output_uns_schema_cache_hits"),
-+		SchemaCacheMissCounter: metricsProvider.NewCounter("output_uns_schema_cache_misses"),
-+		SchemaFetchTimer:       metricsProvider.NewTimer("output_uns_schema_fetch_time"),
-+		
-+		// Validation metrics
-+		ValidationSuccessCounter: metricsProvider.NewCounter("output_uns_validation_success"),
-+		ValidationFailureCounter: metricsProvider.NewCounter("output_uns_validation_failure"),
-+		TagValidationFailCounter: metricsProvider.NewCounter("output_uns_tag_validation_failure"),
-+		PayloadValidationFailCounter: metricsProvider.NewCounter("output_uns_payload_validation_failure"),
-+		ValidationTimer:          metricsProvider.NewTimer("output_uns_validation_time"),
-+		
-+		// Error metrics
-+		SchemaFetchErrorCounter:   metricsProvider.NewCounter("output_uns_schema_fetch_errors"),
-+		SchemaCompileErrorCounter: metricsProvider.NewCounter("output_uns_schema_compile_errors"),
-+	}
-+}
-+
-+// LogSchemaLoaded logs when a schema is successfully loaded
-+func (m *UnsOutputMetrics) LogSchemaLoaded(startTime time.Time) {
-+	m.SchemaFetchTimer.Timing(int64(time.Since(startTime)))
-+	m.SchemasLoadedGauge.Set(1) // Increment loaded schemas count
-+}
-+
-+// LogSchemaCacheHit logs a schema cache hit
-+func (m *UnsOutputMetrics) LogSchemaCacheHit() {
-+	m.SchemaCacheHitCounter.Incr(1)
-+}
-+
-+// LogSchemaCacheMiss logs a schema cache miss
-+func (m *UnsOutputMetrics) LogSchemaCacheMiss() {
-+	m.SchemaCacheMissCounter.Incr(1)
-+}
-+
-+// LogValidationSuccess logs a successful validation
-+func (m *UnsOutputMetrics) LogValidationSuccess(startTime time.Time) {
-+	m.ValidationSuccessCounter.Incr(1)
-+	m.ValidationTimer.Timing(int64(time.Since(startTime)))
-+}
-+
-+// LogValidationFailure logs a validation failure with type
-+func (m *UnsOutputMetrics) LogValidationFailure(startTime time.Time, failureType string) {
-+	m.ValidationFailureCounter.Incr(1)
-+	m.ValidationTimer.Timing(int64(time.Since(startTime)))
-+	
-+	switch failureType {
-+	case "tag":
-+		m.TagValidationFailCounter.Incr(1)
-+	case "payload":
-+		m.PayloadValidationFailCounter.Incr(1)
-+	}
-+}
-+
-+// LogSchemaFetchError logs a schema fetch error
-+func (m *UnsOutputMetrics) LogSchemaFetchError() {
-+	m.SchemaFetchErrorCounter.Incr(1)
-+}
-+
-+// LogSchemaCompileError logs a schema compilation error
-+func (m *UnsOutputMetrics) LogSchemaCompileError() {
-+	m.SchemaCompileErrorCounter.Incr(1)
-+}
-+
-+// NewMockOutputMetrics creates a new metrics collection that doesn't actually record metrics
-+// Useful for testing when you don't need real metrics
-+func NewMockOutputMetrics() *UnsOutputMetrics {
-+	mockResources := service.MockResources()
-+	mockMetrics := mockResources.Metrics()
-+	return &UnsOutputMetrics{
-+		SchemasLoadedGauge:     mockMetrics.NewGauge("output_uns_schemas_loaded"),
-+		SchemaCacheHitCounter:  mockMetrics.NewCounter("output_uns_schema_cache_hits"),
-+		SchemaCacheMissCounter: mockMetrics.NewCounter("output_uns_schema_cache_misses"),
-+		SchemaFetchTimer:       mockMetrics.NewTimer("output_uns_schema_fetch_time"),
-+		ValidationSuccessCounter: mockMetrics.NewCounter("output_uns_validation_success"),
-+		ValidationFailureCounter: mockMetrics.NewCounter("output_uns_validation_failure"),
-+		TagValidationFailCounter: mockMetrics.NewCounter("output_uns_tag_validation_failure"),
-+		PayloadValidationFailCounter: mockMetrics.NewCounter("output_uns_payload_validation_failure"),
-+		ValidationTimer:          mockMetrics.NewTimer("output_uns_validation_time"),
-+		SchemaFetchErrorCounter:   mockMetrics.NewCounter("output_uns_schema_fetch_errors"),
-+		SchemaCompileErrorCounter: mockMetrics.NewCounter("output_uns_schema_compile_errors"),
-+	}
-+}
-+```
-+
-+### 8. Integration with uns_output Plugin
-+
-+**File**: `uns_plugin/uns_output.go` (MODIFIED)
-+
-+```go
-+// Update unsOutput struct to include metrics
-+type unsOutput struct {
-+	config        unsOutputConfig
-+	client        MessagePublisher
-+	schemaCache   *SchemaCache
-+	metrics       *UnsOutputMetrics
-+	log           *service.Logger
-+}
-+
-+// Update constructor to include metrics
-+func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchOutput, service.BatchPolicy, int, error) {
-+	// ... existing config parsing ...
-+	
-+	// Create schema cache if registry URL is provided and not explicitly disabled
-+	var schemaCache *SchemaCache
-+	if schemaRegistryURL != "" {
-+		schemaCache = NewSchemaCache(schemaRegistryURL, mgr.Logger())
-+	}
-+	
-+	// Create metrics
-+	metrics := NewUnsOutputMetrics(mgr.Metrics())
-+	
-+	return newUnsOutputWithClient(NewClient(), config, schemaCache, metrics, mgr.Logger()), batchPolicy, maxInFlight, nil
-+}
-+
-+// Update testable constructor
-+func newUnsOutputWithClient(client MessagePublisher, config unsOutputConfig, schemaCache *SchemaCache, metrics *UnsOutputMetrics, logger *service.Logger) service.BatchOutput {
-+	return &unsOutput{
-+		client:      client,
-+		config:      config,
-+		schemaCache: schemaCache,
-+		metrics:     metrics,
-+		log:         logger,
-+	}
-+}
-+
-+// Update WriteBatch to include validation with metrics
-+func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) error {
-+	if len(msgs) == 0 {
-+		return nil
-+	}
-+
-+	records := make([]Record, 0, len(msgs))
-+	for i, msg := range msgs {
-+		// ... existing key validation ...
-+		
-+		// Perform schema validation if schema cache is available
-+		if o.schemaCache != nil {
-+			if err := o.validateMessage(ctx, msg, msgAsBytes, i); err != nil {
-+				// Message failed validation, but continue with fail-open behavior
-+				o.log.Warnf("Schema validation failed for message %d: %v", i, err)
-+				// Note: Message is still processed (fail-open behavior)
-+			}
-+		}
-+		
-+		// ... rest of existing record preparation ...
-+	}
-+	
-+	// ... existing batch sending logic ...
-+}
-+
-+// validateMessage performs schema validation with metrics tracking
-+func (o *unsOutput) validateMessage(ctx context.Context, msg *service.Message, msgBytes []byte, msgIndex int) error {
-+	startTime := time.Now()
-+	
-+	// Get data contract from message metadata
-+	contract := msg.MetaGet("data_contract")
-+	if contract == "" {
-+		o.log.Debugf("No data_contract metadata found for message %d, skipping validation", msgIndex)
-+		return nil
-+	}
-+
-+	// Get UNS topic and extract tag name
-+	unsTopicKey, err := o.config.umh_topic.TryString(msg)
-+	if err != nil {
-+		return fmt.Errorf("failed to get UNS topic for message %d: %v", msgIndex, err)
-+	}
-+
-+	tagName, err := extractTagNameFromUNSTopic(unsTopicKey)
-+	if err != nil {
-+		return fmt.Errorf("failed to extract tag name from UNS topic '%s' for message %d: %v", unsTopicKey, msgIndex, err)
-+	}
-+
-+	// Get validator for this contract
-+	validator, err := o.schemaCache.GetValidator(ctx, contract)
-+	if err != nil {
-+		o.metrics.LogSchemaFetchError()
-+		o.log.Errorf("Failed to get validator for contract %s: %v", contract, err)
-+		return nil // Fail open - don't block the message
-+	}
-+
-+	if validator == nil {
-+		// No schema registered for this contract - skip validation
-+		return nil
-+	}
-+
-+	// Perform dual validation (tag name + payload)
-+	if err := validator.ValidateTagAndPayload(tagName, msgBytes); err != nil {
-+		// Determine failure type
-+		failureType := "payload"
-+		if strings.Contains(err.Error(), "not allowed for contract") {
-+			failureType = "tag"
-+		}
-+		
-+		o.metrics.LogValidationFailure(startTime, failureType)
-+		return fmt.Errorf("dual validation failed for contract %s, tag '%s' - %v", contract, tagName, err)
-+	}
-+
-+	o.metrics.LogValidationSuccess(startTime)
-+	o.log.Tracef("Message %d passed dual validation: contract=%s, tag=%s", msgIndex, contract, tagName)
-+	return nil
-+}
-+```
-+
-+### 9. Update SchemaCache to Include Metrics
-+
-+**File**: `uns_plugin/schema_validator.go` (MODIFIED)
-+
-+```go
-+// Update SchemaCache to include metrics
-+type SchemaCache struct {
-+	cache            map[string]SchemaValidator
-+	lastFetch        map[string]time.Time
-+	registryURL      string
-+	refreshInterval  time.Duration
-+	metrics          *UnsOutputMetrics  // NEW: Add metrics
-+	mutex            sync.RWMutex
-+	log              *service.Logger
-+}
-+
-+// Update constructor to accept metrics
-+func NewSchemaCache(registryURL string, logger *service.Logger) *SchemaCache {
-+	return &SchemaCache{
-+		cache:           make(map[string]SchemaValidator),
-+		lastFetch:       make(map[string]time.Time),
-+		registryURL:     registryURL,
-+		refreshInterval: 10 * time.Minute,
-+		log:             logger,
-+		// metrics will be set later via SetMetrics
-+	}
-+}
-+
-+// SetMetrics sets the metrics instance for the cache
-+func (sc *SchemaCache) SetMetrics(metrics *UnsOutputMetrics) {
-+	sc.metrics = metrics
-+}
-+
-+// Update fetchAndCacheSchema to include metrics
-+func (sc *SchemaCache) fetchAndCacheSchema(ctx context.Context, contractInfo ContractInfo) (SchemaValidator, error) {
-+	// ... existing logic ...
-+	
-+	// Check cache first
-+	if validator, exists := sc.cache[cacheKey]; exists {
-+		if sc.metrics != nil {
-+			sc.metrics.LogSchemaCacheHit()
-+		}
-+		// ... existing cache hit logic ...
-+	}
-+	
-+	if sc.metrics != nil {
-+		sc.metrics.LogSchemaCacheMiss()
-+	}
-+	
-+	fetchStart := time.Now()
-+	client := NewSchemaRegistryClient(sc.registryURL)
-+	schemaResp, err := client.GetSchemaForContract(contractInfo)
-+	if err != nil {
-+		if sc.metrics != nil {
-+			sc.metrics.LogSchemaFetchError()
-+		}
-+		sc.log.Errorf("Failed to fetch schema for contract %s: %v", contractInfo.FullName, err)
-+		return nil, nil // Fail open
-+	}
-+	
-+	// ... existing response handling ...
-+	
-+	// Compile the contract schema
-+	validator, err := NewCompiledContractSchema(contractInfo.FullName, []byte(schemaResp.Schema))
-+	if err != nil {
-+		if sc.metrics != nil {
-+			sc.metrics.LogSchemaCompileError()
-+		}
-+		sc.log.Errorf("Failed to compile contract schema for %s: %v", contractInfo.FullName, err)
-+		return nil, nil // Fail open
-+	}
-+	
-+	if sc.metrics != nil {
-+		sc.metrics.LogSchemaLoaded(fetchStart)
-+	}
-+	
-+	// ... rest of existing caching logic ...
-+}
-+```
-+
-+### 10. Available Metrics
-+
-+The following metrics will be available through Benthos's metrics system:
-+
-+**Schema Loading Metrics:**
-+- `output_uns_schemas_loaded` (Gauge): Number of loaded schemas
-+- `output_uns_schema_cache_hits` (Counter): Schema cache hits
-+- `output_uns_schema_cache_misses` (Counter): Schema cache misses
-+- `output_uns_schema_fetch_time` (Timer): Time to fetch schemas from registry
-+
-+**Validation Metrics:**
-+- `output_uns_validation_success` (Counter): Successful validations
-+- `output_uns_validation_failure` (Counter): Failed validations
-+- `output_uns_tag_validation_failure` (Counter): Tag name validation failures
-+- `output_uns_payload_validation_failure` (Counter): Payload validation failures
-+- `output_uns_validation_time` (Timer): Validation duration
-+
-+**Error Metrics:**
-+- `output_uns_schema_fetch_errors` (Counter): Schema registry fetch errors
-+- `output_uns_schema_compile_errors` (Counter): Schema compilation errors
-+
-+## Benefits of Metrics
-+
-+### 1. **Data Quality Monitoring**
-+- Track validation success/failure rates per contract
-+- Identify problematic contracts or schemas
-+- Monitor data quality trends over time
-+
-+### 2. **Performance Monitoring**
-+- Track validation latency per contract
-+- Monitor cache hit rates
-+- Identify performance bottlenecks
-+
-+### 3. **Operational Insights**
-+- See which contracts are most/least used
-+- Monitor schema loading and refresh patterns
-+- Track schema registry health
-+
-+### 4. **Debugging Support**
-+- Identify which tags are being rejected most often
-+- Understand payload validation failure patterns
-+- Monitor schema compilation issues
-+
-+### 5. **Capacity Planning**
-+- Understand contract usage patterns
-+- Plan schema registry capacity
-+- Monitor validation throughput
-+
-+## Dependencies
-+
-+Add to go.mod:
-+```bash
-+go get github.com/kaptinlin/jsonschema@latest
-+```
-+
-+## Key Benefits
-+
-+- ✅ **Dual Validation**: Validates both tag names (from UNS topic) AND payload structure
-+- ✅ **Data Quality**: Only valid JSON messages with allowed tag names reach the UNS
-+- ✅ **Version Support**: Handles both latest and specific contract versions (`_contract`, `_contractv1`)
-+- ✅ **Zero Configuration**: Auto-derives schema registry URL from broker address
-+- ✅ **Backward Compatible**: Existing configurations work without changes
-+- ✅ **Tag Name Control**: Prevents unauthorized tag names per contract
-+- ✅ **Payload Validation**: Ensures payload matches tag-specific JSON schema
-+- ✅ **Performance**: Efficient caching minimizes schema registry load
-+- ✅ **Reliability**: Fail-open design prevents data loss
-+- ✅ **Rich Error Messages**: Clear validation failure messages for debugging
-+- ✅ **Comprehensive Metrics**: Full observability into validation performance and data quality
-+- ✅ **Operational Insights**: Track contract usage, validation success rates, and performance metrics
-+- ✅ **Maintainability**: Clean, testable architecture with comprehensive test coverage 
-\ No newline at end of file
-diff --git a/ENG-3099-Notes.md b/ENG-3099-Notes.md
-new file mode 100644
-index 0000000..33768f3
---- /dev/null
-+++ b/ENG-3099-Notes.md
-@@ -0,0 +1,465 @@
-+# ENG-3099 Notes: Real-World Data Model Context
-+
-+## Overview
-+
-+This document provides context on the actual data models that will be transformed into the JSON schemas used by our dual validation system in the `uns_output` plugin.
-+
-+## Data Model Structure Examples
-+
-+### Example 1: Simple Sensor Data
-+
-+**Source Data Model:**
-+```yaml
-+sensor-data:
-+  description: "Basic sensor data model"
-+  versions:
-+    v1:
-+      root:
-+        value:
-+          _type: timeseries-number
-+    v2:
-+      root:
-+        value:
-+          _type: timeseries-number
-+        timestamp:
-+          _type: timeseries-string
-+        metadata:
-+          _refModel: "sensor-metadata:v1"
-+```
-+
-+**Transformed to Our Schema:**
-+
-+**Version 1 Schema:**
-+```json
-+{
-+   "virtual_path": ["value"],
-+   "fields": {
-+      "value": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      }
-+   }
-+}
-+```
-+
-+**Version 2 Schema:**
-+```json
-+{
-+   "virtual_path": ["value", "timestamp", "metadata"],
-+   "fields": {
-+      "value": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "timestamp": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "string"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "metadata": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "object"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      }
-+   }
-+}
-+```
-+
-+### Example 2: Complex Pump Model
-+
-+**Source Data Model:**
-+```yaml
-+pump:
-+  description: "pump from vendor ABC"
-+  versions:
-+    v1:
-+      root:
-+        count:
-+          _type: timeseries-number
-+        vibration:
-+          x-axis:
-+            _type: timeseries-number
-+            _description: "vibration measurement on x-axis" 
-+          y-axis:
-+            _type: timeseries-number
-+            _unit: "mm/s"
-+          z-axis:
-+            _type: timeseries-number
-+        motor:
-+          _refModel: "motor:v1"
-+        acceleration:
-+          x:
-+            _type: timeseries-number
-+          y: 
-+            _type: timeseries-number
-+        serialNumber:
-+          _type: timeseries-string
-+```
-+
-+**Transformed to Our Schema:**
-+> **Note:** The `motor` field is not included in the transformed schema because it only has `_refModel: "motor:v1"` (a reference to another model) without a `_type: timeseries-*`. Only fields with `_type: timeseries-*` are included in the virtual_path and fields for direct validation.
-+```json
-+{
-+   "virtual_path": ["count", "vibration.x-axis", "vibration.y-axis", "vibration.z-axis", "acceleration.x", "acceleration.y", "serialNumber"],
-+   "fields": {
-+      "count": {
-+         "type": "object", 
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "vibration.x-axis": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"}, 
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "vibration.y-axis": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "vibration.z-axis": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "acceleration.x": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "acceleration.y": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "serialNumber": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "string"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      }
-+   }
-+}
-+```
-+
-+## Key Mapping Rules
-+
-+### 1. Virtual Path Generation
-+
-+**Simple Structure:**
-+- `value` → `["value"]`
-+
-+**Nested Structure:**
-+- `vibration.x-axis` + `vibration.y-axis` + `vibration.z-axis` → `["vibration.x-axis", "vibration.y-axis", "vibration.z-axis"]`
-+
-+### 2. Payload Type Mapping
-+
-+| Data Model `_type` | JSON Schema `type` |
-+|-------------------|-------------------|
-+| `timeseries-number` | `"number"` |
-+| `timeseries-string` | `"string"` |
-+| `timeseries-boolean` | `"boolean"` |
-+
-+### 3. Timeseries Standard Structure
-+
-+All fields with `_type: timeseries-*` get transformed to:
-+```json
-+{
-+   "type": "object",
-+   "properties": {
-+      "timestamp_ms": {"type": "number"},
-+      "value": {"type": "[extracted_type]"}
-+   },
-+   "required": ["timestamp_ms", "value"]
-+}
-+```
-+
-+### 4. Field Inclusion Rules
-+
-+**Included in virtual_path:**
-+- ✅ Fields with `_type: timeseries-*`
-+- ✅ Nested fields like `vibration.x-axis` when parent has timeseries children
-+
-+**Excluded from virtual_path:**
-+- ❌ Fields with only `_refModel` (references to other models)
-+- ❌ Fields with only metadata (`_description`, `_unit`, etc.) without `_type`
-+
-+## Validation Flow Examples
-+
-+### Example 1: Valid Message
-+
-+**UNS Topic:** `umh.v1.enterprise.site.area._pump_data.vibration.x-axis`
-+**Tag Name Extracted:** `vibration.x-axis`
-+**Contract:** `_pump_data`
-+
-+**Validation Steps:**
-+1. ✅ Check if `vibration.x-axis` exists in `virtual_path`
-+2. ✅ Validate payload against `fields["vibration.x-axis"]` schema
-+
-+**Payload:**
-+```json
-+{
-+   "timestamp_ms": 1680000000000,
-+   "value": 23.5
-+}
-+```
-+
-+**Result:** ✅ Passes both tag name and payload validation
-+
-+### Example 2: Invalid Tag Name
-+
-+**UNS Topic:** `umh.v1.enterprise.site.area._pump_data.unknown_field`
-+**Tag Name Extracted:** `unknown_field`
-+
-+**Validation Steps:**
-+1. ❌ `unknown_field` not found in `virtual_path: ["count", "vibration.x-axis", "vibration.y-axis", "vibration.z-axis", "acceleration.x", "acceleration.y", "serialNumber"]`
-+
-+**Result:** ❌ Rejected with "tag 'unknown_field' not allowed for contract '_pump_data'. Allowed tags: [count, vibration.x-axis, vibration.y-axis, vibration.z-axis, acceleration.x, acceleration.y, serialNumber]"
-+
-+### Example 3: Invalid Payload
-+
-+**UNS Topic:** `umh.v1.enterprise.site.area._pump_data.serialNumber`
-+**Tag Name:** `serialNumber` ✅
-+**Payload:**
-+```json
-+{
-+   "timestamp_ms": "not_a_number",
-+   "value": "ABC123"
-+}
-+```
-+
-+**Validation Steps:**
-+1. ✅ Tag name validation passes
-+2. ❌ Payload validation fails: `timestamp_ms` expected number, got string
-+
-+**Result:** ❌ Rejected with "payload validation failed for tag 'serialNumber': timestamp_ms: expected number, got string"
-+
-+## Version Handling
-+
-+**Data Model Versions:**
-+- `sensor-data` v1 vs v2 → Different virtual paths and field schemas
-+- `pump` v1 vs v2 → Evolution from basic to advanced monitoring
-+- Versioned contracts: `_pump_datav1`, `_pump_datav2`
-+
-+**Schema Registry Mapping:**
-+- `_pump_data` (latest) → Most recent pump model version
-+- `_pump_datav1` → Specific version with locked schema (immutable)
-+
-+## Benefits of This Approach
-+
-+### 1. **Hierarchical Tag Control**
-+- Prevents unauthorized nested tags like `vibration.unauthorized_axis`
-+- Supports complex device hierarchies like `temperature.indoor` and `temperature.outdoor`
-+
-+### 2. **Consistent Timeseries Structure**
-+- All data follows `{timestamp_ms, value}` pattern
-+- Type safety on `value` field based on `_type` (timeseries-number, timeseries-string, etc.)
-+
-+### 3. **Model Evolution Support**
-+- Version v1: Basic monitoring fields
-+- Version v2: Enhanced with additional diagnostics and metadata
-+- Versioned contracts ensure backward compatibility
-+
-+### 4. **Cross-Model References**
-+- `_refModel: "motor:v1"` → Links to other schema definitions
-+- Allows complex validation across related data structures
-+
-+### 5. **Rich Metadata Support**
-+- `_description`, `_unit`, and other metadata enhance field understanding
-+- Metadata is preserved but doesn't affect validation logic
-+
-+## Implementation Notes
-+
-+### Schema Transformation (Outside This PR)
-+The transformation from YAML data models to JSON schemas happens in a separate pipeline/service and is **not part of ENG-3099**. Our validation system only consumes the final JSON schemas.
-+
-+### Tag Name Extraction
-+Our `extractTagNameFromUNSTopic()` function handles both simple and hierarchical tags:
-+- `umh.v1.site._pump_data.count` → `count`
-+- `umh.v1.site._pump_data.vibration.x-axis` → `vibration.x-axis`
-+- `umh.v1.site._environmental.temperature.outdoor` → `temperature.outdoor`
-+
-+### Performance Considerations
-+- Virtual path lookups use hash maps for O(1) tag name validation
-+- Compiled JSON schemas cached per tag for fast payload validation
-+- Hierarchical tags don't impact performance vs simple tags
-+
-+## Real-World Usage Scenarios
-+
-+### Industrial Motor Device
-+```yaml
-+motor:
-+  description: "Industrial motor with diagnostics"
-+  versions:
-+    v1:
-+      root:
-+        rpm:
-+          _type: timeseries-number
-+          _unit: "rpm"
-+        temperature:
-+          _type: timeseries-number
-+          _unit: "°C"
-+        status:
-+          _type: timeseries-string
-+          _description: "Motor status: running, stopped, error"
-+        vibration:
-+          level:
-+            _type: timeseries-number
-+            _unit: "mm/s"
-+```
-+
-+**Generated Virtual Path:** `["rpm", "temperature", "status", "vibration.level"]`
-+
-+**Generated JSON Schema:**
-+```json
-+{
-+   "virtual_path": ["rpm", "temperature", "status", "vibration.level"],
-+   "fields": {
-+      "rpm": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "temperature": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "status": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "string"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "vibration.level": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      }
-+   }
-+}
-+```
-+
-+**Valid UNS Topics:** 
-+- `umh.v1.factory.line1.machine5._motor_controller.rpm`
-+- `umh.v1.factory.line1.machine5._motor_controller.temperature`
-+- `umh.v1.factory.line1.machine5._motor_controller.status`
-+- `umh.v1.factory.line1.machine5._motor_controller.vibration.level`
-+
-+### Environmental Sensors
-+```yaml
-+environmental:
-+  description: "Environmental monitoring sensors"
-+  versions:
-+    v1:
-+      root:
-+        temperature:
-+          outdoor:
-+            _type: timeseries-number
-+            _unit: "°C"
-+          indoor:
-+            _type: timeseries-number
-+            _unit: "°C"
-+        humidity:
-+          _type: timeseries-number
-+          _unit: "%"
-+        pressure:
-+          _type: timeseries-number
-+          _unit: "hPa"
-+```
-+
-+**Generated Virtual Path:** `["temperature.outdoor", "temperature.indoor", "humidity", "pressure"]`
-+
-+**Generated JSON Schema:**
-+```json
-+{
-+   "virtual_path": ["temperature.outdoor", "temperature.indoor", "humidity", "pressure"],
-+   "fields": {
-+      "temperature.outdoor": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "temperature.indoor": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "humidity": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      },
-+      "pressure": {
-+         "type": "object",
-+         "properties": {
-+            "timestamp_ms": {"type": "number"},
-+            "value": {"type": "number"}
-+         },
-+         "required": ["timestamp_ms", "value"]
-+      }
-+   }
-+}
-+```
-+
-+**Valid UNS Topics:**
-+- `umh.v1.building.floor2.room201._environmental.temperature.outdoor`
-+- `umh.v1.building.floor2.room201._environmental.temperature.indoor`
-+- `umh.v1.building.floor2.room201._environmental.humidity`
-+- `umh.v1.building.floor2.room201._environmental.pressure`
-+
-+This rich data model structure provides the foundation for comprehensive validation while maintaining the flexibility needed for complex industrial and IoT use cases. 
-\ No newline at end of file
-diff --git a/Makefile b/Makefile
+diff --git c/Makefile w/Makefile
 index 09e585e..a40a78a 100644
---- a/Makefile
-+++ b/Makefile
+--- c/Makefile
++++ w/Makefile
 @@ -79,7 +79,11 @@ test-opc:
  
  .PHONY: test-uns
@@ -1754,10 +27,13 @@ index 09e585e..a40a78a 100644
  
  .PHONY: test-s7comm
  test-s7comm:
-diff --git a/go.mod b/go.mod
+diff --git c/eng-3099.diff w/eng-3099.diff
+new file mode 100644
+index 0000000..e69de29
+diff --git c/go.mod w/go.mod
 index c78ef0b..e77ab98 100644
---- a/go.mod
-+++ b/go.mod
+--- c/go.mod
++++ w/go.mod
 @@ -37,6 +37,7 @@ require (
  	github.com/gopcua/opcua v0.5.3
  	github.com/grid-x/modbus v0.0.0-20250312115347-d1d8b421f52b
@@ -1804,10 +80,10 @@ index c78ef0b..e77ab98 100644
  	golang.org/x/tools v0.32.0 // indirect
  	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
  	google.golang.org/api v0.226.0 // indirect
-diff --git a/go.sum b/go.sum
+diff --git c/go.sum w/go.sum
 index 130726c..661a088 100644
---- a/go.sum
-+++ b/go.sum
+--- c/go.sum
++++ w/go.sum
 @@ -1220,6 +1220,8 @@ github.com/gobwas/ws v1.0.2/go.mod h1:szmBTxLgaFppYjEmNtny/v3w89xOydFnnZMcgRRu/E
  github.com/goccy/go-json v0.9.11/go.mod h1:6MelG93GURQebXPDq3khkgXZkazVtN9CRI+MGFi0w8I=
  github.com/goccy/go-json v0.10.5 h1:Fq85nIqj+gXn/S5ahsiTlK3TmC85qgirsdTP/+DeaC4=
@@ -1872,892 +148,11 @@ index 130726c..661a088 100644
  golang.org/x/time v0.0.0-20181108054448-85acf8d2951c/go.mod h1:tRJNPiyCQ0inRvYxbN9jk5I+vvW/OXSQhTDSoE431IQ=
  golang.org/x/time v0.0.0-20190308202827-9d24e82272b4/go.mod h1:tRJNPiyCQ0inRvYxbN9jk5I+vvW/OXSQhTDSoE431IQ=
  golang.org/x/time v0.0.0-20191024005414-555d28b269f0/go.mod h1:tRJNPiyCQ0inRvYxbN9jk5I+vvW/OXSQhTDSoE431IQ=
-diff --git a/uns_plugin/schema_validation/background_fetcher.go b/uns_plugin/schema_validation/background_fetcher.go
-new file mode 100644
-index 0000000..507213b
---- /dev/null
-+++ b/uns_plugin/schema_validation/background_fetcher.go
-@@ -0,0 +1,312 @@
-+// Copyright 2025 UMH Systems GmbH
-+//
-+// Licensed under the Apache License, Version 2.0 (the "License");
-+// you may not use this file except in compliance with the License.
-+// You may obtain a copy of the License at
-+//
-+//     http://www.apache.org/licenses/LICENSE-2.0
-+//
-+// Unless required by applicable law or agreed to in writing, software
-+// distributed under the License is distributed on an "AS IS" BASIS,
-+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+// See the License for the specific language governing permissions and
-+// limitations under the License.
-+
-+package schemavalidation
-+
-+import (
-+	"encoding/json"
-+	"fmt"
-+	"io"
-+	"net/http"
-+	"strconv"
-+	"strings"
-+	"sync"
-+	"time"
-+)
-+
-+const (
-+	maxFetchQueueSize = 10               // Maximum number of contracts to fetch
-+	fetchInterval     = 5 * time.Second  // How often to check for new schemas
-+	httpTimeout       = 30 * time.Second // HTTP request timeout
-+)
-+
-+// BackgroundFetcher handles background schema fetching from the registry
-+type BackgroundFetcher struct {
-+	schemaRegistryURL string
-+	httpClient        *http.Client
-+	validator         *Validator
-+
-+	// Queue for contracts to fetch (limited to maxFetchQueueSize)
-+	fetchQueue      map[string]bool // "contractName-v123" -> true
-+	fetchQueueMutex sync.RWMutex
-+
-+	// Control
-+	stopChan  chan struct{}
-+	stopped   bool
-+	stopMutex sync.RWMutex
-+}
-+
-+// SchemaRegistrySubject represents a subject from the schema registry
-+type SchemaRegistrySubject struct {
-+	Subject string `json:"subject"`
-+}
-+
-+// SchemaRegistryVersion represents a version response from the schema registry
-+type SchemaRegistryVersion struct {
-+	Version int    `json:"version"`
-+	ID      int    `json:"id"`
-+	Schema  string `json:"schema"`
-+}
-+
-+// NewBackgroundFetcher creates a new background fetcher
-+func NewBackgroundFetcher(schemaRegistryURL string, validator *Validator) *BackgroundFetcher {
-+	return &BackgroundFetcher{
-+		schemaRegistryURL: schemaRegistryURL,
-+		httpClient: &http.Client{
-+			Timeout: httpTimeout,
-+		},
-+		validator:  validator,
-+		fetchQueue: make(map[string]bool),
-+		stopChan:   make(chan struct{}),
-+	}
-+}
-+
-+// Start begins the background fetching goroutine
-+func (bf *BackgroundFetcher) Start() {
-+	go bf.fetchLoop()
-+}
-+
-+// Stop stops the background fetching goroutine
-+func (bf *BackgroundFetcher) Stop() {
-+	bf.stopMutex.Lock()
-+	defer bf.stopMutex.Unlock()
-+
-+	if !bf.stopped {
-+		close(bf.stopChan)
-+		bf.stopped = true
-+	}
-+}
-+
-+// QueueSchema adds a contract-version combination to the fetch queue
-+func (bf *BackgroundFetcher) QueueSchema(contractName string, version uint64) {
-+	bf.fetchQueueMutex.Lock()
-+	defer bf.fetchQueueMutex.Unlock()
-+
-+	// Check if queue is full
-+	if len(bf.fetchQueue) >= maxFetchQueueSize {
-+		// Queue is full, ignore this request
-+		return
-+	}
-+
-+	key := fmt.Sprintf("%s-v%d", contractName, version)
-+	bf.fetchQueue[key] = true
-+}
-+
-+// fetchLoop is the main background fetching loop
-+func (bf *BackgroundFetcher) fetchLoop() {
-+	ticker := time.NewTicker(fetchInterval)
-+	defer ticker.Stop()
-+
-+	for {
-+		select {
-+		case <-bf.stopChan:
-+			return
-+		case <-ticker.C:
-+			bf.processFetchQueue()
-+		}
-+	}
-+}
-+
-+// processFetchQueue processes all items in the fetch queue
-+func (bf *BackgroundFetcher) processFetchQueue() {
-+	bf.fetchQueueMutex.Lock()
-+	currentQueue := make(map[string]bool)
-+	for k, v := range bf.fetchQueue {
-+		currentQueue[k] = v
-+	}
-+	// Clear the fetch queue
-+	bf.fetchQueue = make(map[string]bool)
-+	bf.fetchQueueMutex.Unlock()
-+
-+	if len(currentQueue) == 0 {
-+		return
-+	}
-+
-+	// Get all available subjects from the registry
-+	subjects, err := bf.getAllSubjects()
-+	if err != nil {
-+		// Log error and re-queue all items
-+		bf.fetchQueueMutex.Lock()
-+		for k, v := range currentQueue {
-+			if len(bf.fetchQueue) < maxFetchQueueSize {
-+				bf.fetchQueue[k] = v
-+			}
-+		}
-+		bf.fetchQueueMutex.Unlock()
-+		return
-+	}
-+
-+	// Process each item in the queue
-+	for queueKey := range currentQueue {
-+		bf.processQueueItem(queueKey, subjects)
-+	}
-+}
-+
-+// getAllSubjects fetches all subjects from the schema registry
-+func (bf *BackgroundFetcher) getAllSubjects() ([]string, error) {
-+	url := fmt.Sprintf("%s/subjects", bf.schemaRegistryURL)
-+
-+	resp, err := bf.httpClient.Get(url)
-+	if err != nil {
-+		return nil, fmt.Errorf("failed to fetch subjects from registry: %w", err)
-+	}
-+	defer resp.Body.Close()
-+
-+	if resp.StatusCode != http.StatusOK {
-+		return nil, fmt.Errorf("schema registry returned status %d when fetching subjects", resp.StatusCode)
-+	}
-+
-+	body, err := io.ReadAll(resp.Body)
-+	if err != nil {
-+		return nil, fmt.Errorf("failed to read subjects response: %w", err)
-+	}
-+
-+	var subjects []string
-+	if err := json.Unmarshal(body, &subjects); err != nil {
-+		return nil, fmt.Errorf("failed to unmarshal subjects response: %w", err)
-+	}
-+
-+	return subjects, nil
-+}
-+
-+// processQueueItem processes a single queue item
-+func (bf *BackgroundFetcher) processQueueItem(queueKey string, subjects []string) {
-+	// Parse the queue key to extract contract name and version
-+	contractName, version, err := bf.parseQueueKey(queueKey)
-+	if err != nil {
-+		// Invalid queue key, skip
-+		return
-+	}
-+
-+	// Check if the contract exists in the subjects list
-+	found := false
-+	for _, subject := range subjects {
-+		if subject == contractName {
-+			found = true
-+			break
-+		}
-+	}
-+
-+	if !found {
-+		// Contract doesn't exist in registry, don't re-queue
-+		return
-+	}
-+
-+	// Check if the specific version exists
-+	versionExists, err := bf.checkVersionExists(contractName, version)
-+	if err != nil {
-+		// Network error, re-queue the item
-+		bf.reQueueItem(queueKey)
-+		return
-+	}
-+
-+	if !versionExists {
-+		// Version doesn't exist, don't re-queue
-+		return
-+	}
-+
-+	// Fetch the schema
-+	schema, err := bf.fetchSchema(contractName, version)
-+	if err != nil {
-+		// Error fetching schema, re-queue the item
-+		bf.reQueueItem(queueKey)
-+		return
-+	}
-+
-+	// Load the schema into the validator
-+	if err := bf.validator.LoadSchema(contractName, version, schema); err != nil {
-+		// Schema loading failed, don't re-queue (likely a schema format issue)
-+		return
-+	}
-+
-+	// Success! Schema loaded, don't re-queue
-+}
-+
-+// parseQueueKey parses a queue key like "contractName-v123" into name and version
-+func (bf *BackgroundFetcher) parseQueueKey(queueKey string) (string, uint64, error) {
-+	parts := strings.Split(queueKey, "-v")
-+	if len(parts) != 2 {
-+		return "", 0, fmt.Errorf("invalid queue key format: %s", queueKey)
-+	}
-+
-+	contractName := parts[0]
-+	version, err := strconv.ParseUint(parts[1], 10, 64)
-+	if err != nil {
-+		return "", 0, fmt.Errorf("invalid version in queue key %s: %w", queueKey, err)
-+	}
-+
-+	return contractName, version, nil
-+}
-+
-+// checkVersionExists checks if a specific version exists for a contract
-+func (bf *BackgroundFetcher) checkVersionExists(contractName string, version uint64) (bool, error) {
-+	url := fmt.Sprintf("%s/subjects/%s/versions/%d", bf.schemaRegistryURL, contractName, version)
-+
-+	resp, err := bf.httpClient.Get(url)
-+	if err != nil {
-+		return false, fmt.Errorf("failed to check version existence: %w", err)
-+	}
-+	defer resp.Body.Close()
-+
-+	if resp.StatusCode == http.StatusNotFound {
-+		return false, nil
-+	}
-+
-+	if resp.StatusCode != http.StatusOK {
-+		return false, fmt.Errorf("schema registry returned status %d when checking version", resp.StatusCode)
-+	}
-+
-+	return true, nil
-+}
-+
-+// fetchSchema fetches the actual schema content
-+func (bf *BackgroundFetcher) fetchSchema(contractName string, version uint64) ([]byte, error) {
-+	url := fmt.Sprintf("%s/subjects/%s/versions/%d", bf.schemaRegistryURL, contractName, version)
-+
-+	resp, err := bf.httpClient.Get(url)
-+	if err != nil {
-+		return nil, fmt.Errorf("failed to fetch schema: %w", err)
-+	}
-+	defer resp.Body.Close()
-+
-+	if resp.StatusCode == http.StatusNotFound {
-+		return nil, fmt.Errorf("schema not found for contract %s version %d", contractName, version)
-+	}
-+
-+	if resp.StatusCode != http.StatusOK {
-+		return nil, fmt.Errorf("schema registry returned status %d when fetching schema", resp.StatusCode)
-+	}
-+
-+	body, err := io.ReadAll(resp.Body)
-+	if err != nil {
-+		return nil, fmt.Errorf("failed to read schema response: %w", err)
-+	}
-+
-+	var versionResp SchemaRegistryVersion
-+	if err := json.Unmarshal(body, &versionResp); err != nil {
-+		return nil, fmt.Errorf("failed to unmarshal schema response: %w", err)
-+	}
-+
-+	return []byte(versionResp.Schema), nil
-+}
-+
-+// reQueueItem re-adds an item to the fetch queue if there's space
-+func (bf *BackgroundFetcher) reQueueItem(queueKey string) {
-+	bf.fetchQueueMutex.Lock()
-+	defer bf.fetchQueueMutex.Unlock()
-+
-+	if len(bf.fetchQueue) < maxFetchQueueSize {
-+		bf.fetchQueue[queueKey] = true
-+	}
-+}
-diff --git a/uns_plugin/schema_validation/background_fetcher_test.go b/uns_plugin/schema_validation/background_fetcher_test.go
-new file mode 100644
-index 0000000..39b239c
---- /dev/null
-+++ b/uns_plugin/schema_validation/background_fetcher_test.go
-@@ -0,0 +1,557 @@
-+// Copyright 2025 UMH Systems GmbH
-+//
-+// Licensed under the Apache License, Version 2.0 (the "License");
-+// you may not use this file except in compliance with the License.
-+// You may obtain a copy of the License at
-+//
-+//     http://www.apache.org/licenses/LICENSE-2.0
-+//
-+// Unless required by applicable law or agreed to in writing, software
-+// distributed under the License is distributed on an "AS IS" BASIS,
-+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+// See the License for the specific language governing permissions and
-+// limitations under the License.
-+
-+package schemavalidation
-+
-+import (
-+	"time"
-+
-+	. "github.com/onsi/ginkgo/v2"
-+	. "github.com/onsi/gomega"
-+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
-+)
-+
-+var _ = Describe("BackgroundFetcher", func() {
-+	var (
-+		fetcher      *BackgroundFetcher
-+		validator    *Validator
-+		mockRegistry *MockSchemaRegistry
-+	)
-+
-+	BeforeEach(func() {
-+		validator = NewValidator()
-+		mockRegistry = NewMockSchemaRegistry()
-+		mockRegistry.SetupTestSchemas()
-+		fetcher = NewBackgroundFetcher(mockRegistry.URL(), validator)
-+	})
-+
-+	AfterEach(func() {
-+		if fetcher != nil {
-+			fetcher.Stop()
-+		}
-+		if mockRegistry != nil {
-+			mockRegistry.Close()
-+		}
-+	})
-+
-+	Context("when creating a new background fetcher", func() {
-+		It("should initialize correctly", func() {
-+			Expect(fetcher.schemaRegistryURL).To(Equal(mockRegistry.URL()))
-+			Expect(fetcher.validator).To(Equal(validator))
-+			Expect(fetcher.fetchQueue).NotTo(BeNil())
-+			Expect(fetcher.httpClient).NotTo(BeNil())
-+		})
-+	})
-+
-+	Context("when queueing schemas", func() {
-+		It("should add schema to queue", func() {
-+			fetcher.QueueSchema("_test_contract", 1)
-+
-+			fetcher.fetchQueueMutex.RLock()
-+			queueSize := len(fetcher.fetchQueue)
-+			hasKey := fetcher.fetchQueue["_test_contract-v1"]
-+			fetcher.fetchQueueMutex.RUnlock()
-+
-+			Expect(queueSize).To(Equal(1))
-+			Expect(hasKey).To(BeTrue())
-+		})
-+
-+		It("should respect maximum queue size", func() {
-+			// Fill the queue beyond the maximum
-+			for i := 0; i < maxFetchQueueSize+5; i++ {
-+				fetcher.QueueSchema("_test_contract", uint64(i))
-+			}
-+
-+			fetcher.fetchQueueMutex.RLock()
-+			queueSize := len(fetcher.fetchQueue)
-+			fetcher.fetchQueueMutex.RUnlock()
-+
-+			Expect(queueSize).To(Equal(maxFetchQueueSize))
-+		})
-+	})
-+
-+	Context("when parsing queue keys", func() {
-+		It("should parse valid queue keys correctly", func() {
-+			contractName, version, err := fetcher.parseQueueKey("_test_contract-v123")
-+			Expect(err).To(BeNil())
-+			Expect(contractName).To(Equal("_test_contract"))
-+			Expect(version).To(Equal(uint64(123)))
-+		})
-+
-+		It("should handle invalid queue keys", func() {
-+			_, _, err := fetcher.parseQueueKey("invalid-key")
-+			Expect(err).To(HaveOccurred())
-+		})
-+	})
-+
-+	Context("when starting and stopping", func() {
-+		It("should start and stop without errors", func() {
-+			fetcher.Start()
-+			time.Sleep(100 * time.Millisecond) // Give it time to start
-+
-+			fetcher.Stop()
-+
-+			fetcher.stopMutex.RLock()
-+			stopped := fetcher.stopped
-+			fetcher.stopMutex.RUnlock()
-+
-+			Expect(stopped).To(BeTrue())
-+		})
-+	})
-+
-+	Context("when fetching schemas from registry", func() {
-+		It("should fetch existing schemas successfully", func() {
-+			// Queue a schema that exists in the mock registry
-+			fetcher.QueueSchema("_sensor_data", 1)
-+
-+			// Process the queue manually
-+			fetcher.processFetchQueue()
-+
-+			// Verify the schema was loaded into the validator
-+			Expect(validator.HasSchema("_sensor_data", 1)).To(BeTrue())
-+		})
-+
-+		It("should handle non-existent subjects", func() {
-+			// Queue a schema for a subject that doesn't exist
-+			fetcher.QueueSchema("_non_existent", 1)
-+
-+			// Process the queue manually
-+			fetcher.processFetchQueue()
-+
-+			// Verify the schema was not loaded
-+			Expect(validator.HasSchema("_non_existent", 1)).To(BeFalse())
-+
-+			// Verify the queue is empty (item was removed)
-+			fetcher.fetchQueueMutex.RLock()
-+			queueSize := len(fetcher.fetchQueue)
-+			fetcher.fetchQueueMutex.RUnlock()
-+			Expect(queueSize).To(Equal(0))
-+		})
-+
-+		It("should handle non-existent versions", func() {
-+			// Queue a schema for a version that doesn't exist
-+			fetcher.QueueSchema("_sensor_data", 999)
-+
-+			// Process the queue manually
-+			fetcher.processFetchQueue()
-+
-+			// Verify the schema was not loaded
-+			Expect(validator.HasSchema("_sensor_data", 999)).To(BeFalse())
-+
-+			// Verify the queue is empty (item was removed)
-+			fetcher.fetchQueueMutex.RLock()
-+			queueSize := len(fetcher.fetchQueue)
-+			fetcher.fetchQueueMutex.RUnlock()
-+			Expect(queueSize).To(Equal(0))
-+		})
-+
-+		It("should handle network errors gracefully", func() {
-+			// Queue a valid schema first
-+			fetcher.QueueSchema("_sensor_data", 1)
-+
-+			// Simulate network error
-+			mockRegistry.SimulateNetworkError(true)
-+
-+			// Process the queue manually
-+			fetcher.processFetchQueue()
-+
-+			// Verify the schema was not loaded due to network error
-+			Expect(validator.HasSchema("_sensor_data", 1)).To(BeFalse())
-+
-+			// Verify the item was re-queued for retry
-+			fetcher.fetchQueueMutex.RLock()
-+			queueSize := len(fetcher.fetchQueue)
-+			hasKey := fetcher.fetchQueue["_sensor_data-v1"]
-+			fetcher.fetchQueueMutex.RUnlock()
-+			Expect(queueSize).To(Equal(1))
-+			Expect(hasKey).To(BeTrue())
-+
-+			// Restore network and try again
-+			mockRegistry.SimulateNetworkError(false)
-+			fetcher.processFetchQueue()
-+
-+			// Now it should succeed
-+			Expect(validator.HasSchema("_sensor_data", 1)).To(BeTrue())
-+		})
-+
-+		It("should fetch multiple schemas concurrently", func() {
-+			// Queue multiple schemas
-+			fetcher.QueueSchema("_sensor_data", 1)
-+			fetcher.QueueSchema("_sensor_data", 2)
-+			fetcher.QueueSchema("_pump_data", 1)
-+			fetcher.QueueSchema("_motor_controller", 3)
-+
-+			// Process the queue manually
-+			fetcher.processFetchQueue()
-+
-+			// Verify all schemas were loaded
-+			Expect(validator.HasSchema("_sensor_data", 1)).To(BeTrue())
-+			Expect(validator.HasSchema("_sensor_data", 2)).To(BeTrue())
-+			Expect(validator.HasSchema("_pump_data", 1)).To(BeTrue())
-+			Expect(validator.HasSchema("_motor_controller", 3)).To(BeTrue())
-+		})
-+	})
-+
-+	Context("when running in background", func() {
-+		It("should automatically process queued items", func() {
-+			// Start the background fetcher
-+			fetcher.Start()
-+
-+			// Queue a schema
-+			fetcher.QueueSchema("_sensor_data", 1)
-+
-+			// Wait for background processing (more than fetchInterval)
-+			time.Sleep(6 * time.Second)
-+
-+			// Verify the schema was automatically loaded
-+			Expect(validator.HasSchema("_sensor_data", 1)).To(BeTrue())
-+
-+			// Stop the fetcher
-+			fetcher.Stop()
-+		})
-+	})
-+})
-+
-+var _ = Describe("Validator with Background Fetcher", func() {
-+	var validator *Validator
-+
-+	BeforeEach(func() {
-+		validator = NewValidatorWithRegistry("http://localhost:8081")
-+	})
-+
-+	AfterEach(func() {
-+		if validator != nil {
-+			validator.Close()
-+		}
-+	})
-+
-+	Context("when created with registry URL", func() {
-+		It("should have a background fetcher", func() {
-+			Expect(validator.backgroundFetcher).NotTo(BeNil())
-+		})
-+	})
-+
-+	Context("when created without registry URL", func() {
-+		It("should not have a background fetcher", func() {
-+			validatorWithoutRegistry := NewValidatorWithRegistry("")
-+			Expect(validatorWithoutRegistry.backgroundFetcher).To(BeNil())
-+		})
-+	})
-+})
-+
-+var _ = Describe("Integration: Mock Registry + Validator", func() {
-+	var (
-+		validator    *Validator
-+		mockRegistry *MockSchemaRegistry
-+	)
-+
-+	BeforeEach(func() {
-+		// Set up mock registry with test schemas
-+		mockRegistry = NewMockSchemaRegistry()
-+		mockRegistry.SetupTestSchemas()
-+
-+		// Create validator with mock registry URL
-+		validator = NewValidatorWithRegistry(mockRegistry.URL())
-+	})
-+
-+	AfterEach(func() {
-+		if validator != nil {
-+			validator.Close()
-+		}
-+		if mockRegistry != nil {
-+			mockRegistry.Close()
-+		}
-+	})
-+
-+	Context("when validating messages with existing schemas", func() {
-+		It("should validate sensor data v1 successfully", func() {
-+			// Load the schema first (simulating background fetch)
-+			schemaVersion := mockRegistry.GetSchema("_sensor_data", 1)
-+			Expect(schemaVersion).NotTo(BeNil())
-+			err := validator.LoadSchema("_sensor_data", 1, []byte(schemaVersion.Schema))
-+			Expect(err).To(BeNil())
-+
-+			// Create a valid UNS topic
-+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
-+			Expect(err).To(BeNil())
-+
-+			// Create valid payload
-+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
-+
-+			// Validate
-+			result := validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeTrue())
-+			Expect(result.SchemaCheckBypassed).To(BeFalse())
-+			Expect(result.Error).To(BeNil())
-+			Expect(result.ContractName).To(Equal("_sensor_data"))
-+			Expect(result.ContractVersion).To(Equal(uint64(1)))
-+		})
-+
-+		It("should reject sensor data v1 with invalid virtual path", func() {
-+			// Load the schema first
-+			schemaVersion := mockRegistry.GetSchema("_sensor_data", 1)
-+			Expect(schemaVersion).NotTo(BeNil())
-+			err := validator.LoadSchema("_sensor_data", 1, []byte(schemaVersion.Schema))
-+			Expect(err).To(BeNil())
-+
-+			// Create UNS topic with invalid virtual path (humidity not allowed in v1)
-+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.humidity")
-+			Expect(err).To(BeNil())
-+
-+			// Create valid payload
-+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 65.0}}`)
-+
-+			// Validate
-+			result := validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeFalse())
-+			Expect(result.SchemaCheckBypassed).To(BeFalse())
-+			Expect(result.Error).To(HaveOccurred())
-+			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
-+		})
-+
-+		It("should validate sensor data v2 with expanded virtual paths", func() {
-+			// Load the schema first
-+			schemaVersion := mockRegistry.GetSchema("_sensor_data", 2)
-+			Expect(schemaVersion).NotTo(BeNil())
-+			err := validator.LoadSchema("_sensor_data", 2, []byte(schemaVersion.Schema))
-+			Expect(err).To(BeNil())
-+
-+			// Test temperature (allowed in both v1 and v2)
-+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v2.temperature")
-+			Expect(err).To(BeNil())
-+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
-+			result := validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeTrue())
-+			Expect(result.Error).To(BeNil())
-+
-+			// Test humidity (allowed in v2 but not v1)
-+			unsTopic, err = topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v2.humidity")
-+			Expect(err).To(BeNil())
-+			payload = []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 65.0}}`)
-+			result = validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeTrue())
-+			Expect(result.Error).To(BeNil())
-+
-+			// Test pressure (allowed in v2 but not v1)
-+			unsTopic, err = topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v2.pressure")
-+			Expect(err).To(BeNil())
-+			payload = []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 1013.25}}`)
-+			result = validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeTrue())
-+			Expect(result.Error).To(BeNil())
-+		})
-+
-+		It("should validate pump data with complex virtual paths", func() {
-+			// Load the schema first
-+			schemaVersion := mockRegistry.GetSchema("_pump_data", 1)
-+			Expect(schemaVersion).NotTo(BeNil())
-+			err := validator.LoadSchema("_pump_data", 1, []byte(schemaVersion.Schema))
-+			Expect(err).To(BeNil())
-+
-+			// Test vibration.x-axis
-+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data-v1.vibration.x-axis")
-+			Expect(err).To(BeNil())
-+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 0.5}}`)
-+			result := validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeTrue())
-+			Expect(result.Error).To(BeNil())
-+
-+			// Test vibration.y-axis
-+			unsTopic, err = topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data-v1.vibration.y-axis")
-+			Expect(err).To(BeNil())
-+			payload = []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 0.3}}`)
-+			result = validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeTrue())
-+			Expect(result.Error).To(BeNil())
-+
-+			// Test count
-+			unsTopic, err = topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data-v1.count")
-+			Expect(err).To(BeNil())
-+			payload = []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 1542}}`)
-+			result = validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeTrue())
-+			Expect(result.Error).To(BeNil())
-+		})
-+
-+		It("should validate string data types correctly", func() {
-+			// Load the schema first
-+			schemaVersion := mockRegistry.GetSchema("_string_data", 1)
-+			Expect(schemaVersion).NotTo(BeNil())
-+			err := validator.LoadSchema("_string_data", 1, []byte(schemaVersion.Schema))
-+			Expect(err).To(BeNil())
-+
-+			// Test string value (serialNumber)
-+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._string_data-v1.serialNumber")
-+			Expect(err).To(BeNil())
-+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "SN123456789"}}`)
-+			result := validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeTrue())
-+			Expect(result.Error).To(BeNil())
-+
-+			// Test string value (status)
-+			unsTopic, err = topic.NewUnsTopic("umh.v1.enterprise.site.area._string_data-v1.status")
-+			Expect(err).To(BeNil())
-+			payload = []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "RUNNING"}}`)
-+			result = validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeTrue())
-+			Expect(result.Error).To(BeNil())
-+		})
-+
-+		It("should reject invalid payload formats", func() {
-+			// Load the schema first
-+			schemaVersion := mockRegistry.GetSchema("_sensor_data", 1)
-+			Expect(schemaVersion).NotTo(BeNil())
-+			err := validator.LoadSchema("_sensor_data", 1, []byte(schemaVersion.Schema))
-+			Expect(err).To(BeNil())
-+
-+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
-+			Expect(err).To(BeNil())
-+
-+			// Missing timestamp_ms
-+			payload := []byte(`{"value": {"value": 25.5}}`)
-+			result := validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeFalse())
-+			Expect(result.Error).To(HaveOccurred())
-+
-+			// Missing value
-+			payload = []byte(`{"value": {"timestamp_ms": 1719859200000}}`)
-+			result = validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeFalse())
-+			Expect(result.Error).To(HaveOccurred())
-+
-+			// Wrong value type
-+			payload = []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "not_a_number"}}`)
-+			result = validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeFalse())
-+			Expect(result.Error).To(HaveOccurred())
-+		})
-+
-+		It("should reject wrong data types for string fields", func() {
-+			// Load the schema first
-+			schemaVersion := mockRegistry.GetSchema("_string_data", 1)
-+			Expect(schemaVersion).NotTo(BeNil())
-+			err := validator.LoadSchema("_string_data", 1, []byte(schemaVersion.Schema))
-+			Expect(err).To(BeNil())
-+
-+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._string_data-v1.serialNumber")
-+			Expect(err).To(BeNil())
-+
-+			// Provide number instead of string
-+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 12345}}`)
-+			result := validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeFalse())
-+			Expect(result.Error).To(HaveOccurred())
-+		})
-+	})
-+
-+	Context("when testing background fetching integration", func() {
-+		It("should queue and fetch schemas automatically", func() {
-+			// Create topic that will trigger background fetch
-+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
-+			Expect(err).To(BeNil())
-+
-+			// Create valid payload
-+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
-+
-+			// First validation should bypass (schema not loaded yet)
-+			result := validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeFalse())
-+			Expect(result.SchemaCheckBypassed).To(BeTrue())
-+			Expect(result.BypassReason).To(ContainSubstring("schema for contract '_sensor_data' version 1 not found"))
-+
-+			// Manual trigger of background fetch (in real scenario this would happen automatically)
-+			if validator.backgroundFetcher != nil {
-+				validator.backgroundFetcher.processFetchQueue()
-+			}
-+
-+			// Now validation should pass
-+			result = validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeTrue())
-+			Expect(result.SchemaCheckBypassed).To(BeFalse())
-+			Expect(result.Error).To(BeNil())
-+		})
-+	})
-+
-+	Context("when handling unversioned contracts", func() {
-+		It("should bypass validation for unversioned contracts", func() {
-+			// Create topic with unversioned contract
-+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._unversioned_contract.temperature")
-+			Expect(err).To(BeNil())
-+
-+			// Create valid payload
-+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
-+
-+			// Should bypass validation
-+			result := validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeFalse())
-+			Expect(result.SchemaCheckBypassed).To(BeTrue())
-+			Expect(result.BypassReason).To(ContainSubstring("unversioned contract '_unversioned_contract' - bypassing validation (no latest fetching)"))
-+			Expect(result.Error).To(BeNil())
-+		})
-+	})
-+
-+	Context("when handling missing schemas", func() {
-+		It("should bypass validation for non-existent schemas", func() {
-+			// Create topic with contract that doesn't exist in mock registry
-+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent_contract-v1.temperature")
-+			Expect(err).To(BeNil())
-+
-+			// Create valid payload
-+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
-+
-+			// Should bypass validation
-+			result := validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeFalse())
-+			Expect(result.SchemaCheckBypassed).To(BeTrue())
-+			Expect(result.BypassReason).To(ContainSubstring("schema for contract '_non_existent_contract' version 1 not found"))
-+			Expect(result.Error).To(BeNil())
-+		})
-+	})
-+
-+	Context("when testing schema versioning", func() {
-+		It("should handle different schema versions independently", func() {
-+			// Load both v1 and v2 schemas
-+			schemaV1 := mockRegistry.GetSchema("_sensor_data", 1)
-+			Expect(schemaV1).NotTo(BeNil())
-+			err := validator.LoadSchema("_sensor_data", 1, []byte(schemaV1.Schema))
-+			Expect(err).To(BeNil())
-+			schemaV2 := mockRegistry.GetSchema("_sensor_data", 2)
-+			Expect(schemaV2).NotTo(BeNil())
-+			err = validator.LoadSchema("_sensor_data", 2, []byte(schemaV2.Schema))
-+			Expect(err).To(BeNil())
-+
-+			// Test v1 - should only allow temperature
-+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
-+			Expect(err).To(BeNil())
-+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
-+			result := validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeTrue())
-+			Expect(result.ContractVersion).To(Equal(uint64(1)))
-+
-+			// Test v1 with humidity should fail
-+			unsTopic, err = topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.humidity")
-+			Expect(err).To(BeNil())
-+			result = validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeFalse())
-+			Expect(result.Error).To(HaveOccurred())
-+
-+			// Test v2 - should allow temperature, humidity, and pressure
-+			unsTopic, err = topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v2.humidity")
-+			Expect(err).To(BeNil())
-+			result = validator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckPassed).To(BeTrue())
-+			Expect(result.ContractVersion).To(Equal(uint64(2)))
-+		})
-+	})
-+})
-diff --git a/uns_plugin/schema_validation/mock_schema_registry.go b/uns_plugin/schema_validation/mock_schema_registry.go
+diff --git c/uns_plugin/schema_validation/mock_schema_registry.go w/uns_plugin/schema_validation/mock_schema_registry.go
 new file mode 100644
 index 0000000..c2cb944
 --- /dev/null
-+++ b/uns_plugin/schema_validation/mock_schema_registry.go
++++ w/uns_plugin/schema_validation/mock_schema_registry.go
 @@ -0,0 +1,379 @@
 +// Copyright 2025 UMH Systems GmbH
 +//
@@ -3138,12 +533,12 @@ index 0000000..c2cb944
 +	}
 +	return versions
 +}
-diff --git a/uns_plugin/schema_validation/redpanda_integration_test.go b/uns_plugin/schema_validation/redpanda_integration_test.go
+diff --git c/uns_plugin/schema_validation/redpanda_integration_test.go w/uns_plugin/schema_validation/redpanda_integration_test.go
 new file mode 100644
-index 0000000..82db4c1
+index 0000000..47d6325
 --- /dev/null
-+++ b/uns_plugin/schema_validation/redpanda_integration_test.go
-@@ -0,0 +1,728 @@
++++ w/uns_plugin/schema_validation/redpanda_integration_test.go
+@@ -0,0 +1,682 @@
 +// Copyright 2025 UMH Systems GmbH
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -3561,7 +956,6 @@ index 0000000..82db4c1
 +		By("Creating validator with real schema registry")
 +		validator = NewValidatorWithRegistry(redpandaSchemaRegistryURL)
 +		Expect(validator).NotTo(BeNil())
-+		Expect(validator.backgroundFetcher).NotTo(BeNil())
 +	})
 +
 +	AfterAll(func() {
@@ -3583,25 +977,10 @@ index 0000000..82db4c1
 +			// Create valid payload
 +			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
 +
-+			// First validation should trigger background fetch
++			// With synchronous fetching, schema should be loaded immediately
 +			result := validator.Validate(unsTopic, payload)
-+			GinkgoWriter.Printf("First validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
++			GinkgoWriter.Printf("Validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
 +				result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
-+			Expect(result.SchemaCheckBypassed).To(BeTrue())
-+			Expect(result.BypassReason).To(ContainSubstring(fmt.Sprintf("schema for contract '%s' version 1 not found", contractName)))
-+
-+			// Manually trigger background fetch to ensure it happens
-+			if validator.backgroundFetcher != nil {
-+				validator.backgroundFetcher.processFetchQueue()
-+			}
-+
-+			// Wait for schema to be loaded and validation to pass
-+			Eventually(func() bool {
-+				result = validator.Validate(unsTopic, payload)
-+				GinkgoWriter.Printf("Validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
-+					result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
-+				return result.SchemaCheckPassed && !result.SchemaCheckBypassed
-+			}, "10s", "500ms").Should(BeTrue(), "Schema should be loaded and validation should pass")
 +
 +			// Check if schema was loaded
 +			hasSchema := validator.HasSchema(contractName, 1)
@@ -3651,19 +1030,9 @@ index 0000000..82db4c1
 +			GinkgoWriter.Printf("V2 temperature validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
 +				result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
 +
++			// With synchronous fetching, schema should be loaded immediately on first validation
 +			if result.SchemaCheckBypassed {
-+				// Manually trigger background fetch to ensure it happens
-+				if validator.backgroundFetcher != nil {
-+					validator.backgroundFetcher.processFetchQueue()
-+				}
-+
-+				// Wait for schema to be loaded
-+				Eventually(func() bool {
-+					result = validator.Validate(tempTopic, payload)
-+					GinkgoWriter.Printf("V2 temperature validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
-+						result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
-+					return result.SchemaCheckPassed && !result.SchemaCheckBypassed
-+				}, "10s", "500ms").Should(BeTrue(), "Schema v2 should be loaded and validation should pass")
++				Fail(fmt.Sprintf("Schema validation was bypassed unexpectedly: %s", result.BypassReason))
 +			}
 +
 +			// Check if schema was loaded
@@ -3701,19 +1070,9 @@ index 0000000..82db4c1
 +			GinkgoWriter.Printf("First pump data validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
 +				result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
 +
++			// With synchronous fetching, schema should be loaded immediately on first validation
 +			if result.SchemaCheckBypassed {
-+				// Manually trigger background fetch to ensure it happens
-+				if validator.backgroundFetcher != nil {
-+					validator.backgroundFetcher.processFetchQueue()
-+				}
-+
-+				// Wait for schema to be loaded
-+				Eventually(func() bool {
-+					result = validator.Validate(xAxisTopic, payload)
-+					GinkgoWriter.Printf("Pump data validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
-+						result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
-+					return result.SchemaCheckPassed && !result.SchemaCheckBypassed
-+				}, "10s", "500ms").Should(BeTrue(), "Pump data schema should be loaded and validation should pass")
++				Fail(fmt.Sprintf("Schema validation was bypassed unexpectedly: %s", result.BypassReason))
 +			}
 +
 +			// Check if schema was loaded
@@ -3820,7 +1179,7 @@ index 0000000..82db4c1
 +			result := validator.Validate(nonExistentTopic, payload)
 +			Expect(result.SchemaCheckPassed).To(BeFalse())
 +			Expect(result.SchemaCheckBypassed).To(BeTrue())
-+			Expect(result.BypassReason).To(ContainSubstring("schema for contract '_non_existent_contract' version 1 not found"))
++			Expect(result.BypassReason).To(ContainSubstring("schema for contract '_non_existent_contract' version 1 does not exist in registry"))
 +
 +			// Wait for background fetch attempt and verify it still bypasses
 +			Eventually(func() bool {
@@ -3845,38 +1204,28 @@ index 0000000..82db4c1
 +		})
 +	})
 +
-+	Context("when testing background fetcher against real registry", func() {
-+		It("should automatically fetch schemas in the background", func() {
-+			// Create a fresh validator to test background fetching
++	Context("when testing foreground fetcher against real registry", func() {
++		It("should automatically fetch schemas in the foreground", func() {
++			// Create a fresh validator to test foreground fetching
 +			freshValidator := NewValidatorWithRegistry(redpandaSchemaRegistryURL)
 +			defer freshValidator.Close()
 +
-+			// Create topic that will trigger background fetch
++			// Create topic that will trigger foreground fetch
 +			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 +			Expect(err).To(BeNil())
 +			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
 +
-+			// First validation should bypass and queue schema for fetch
++			// First validation should not bypass
 +			result := freshValidator.Validate(unsTopic, payload)
-+			Expect(result.SchemaCheckBypassed).To(BeTrue())
-+
-+			// Wait for automatic background fetching (fetch interval is 5 seconds)
-+			Eventually(func() bool {
-+				result = freshValidator.Validate(unsTopic, payload)
-+				return result.SchemaCheckPassed && !result.SchemaCheckBypassed
-+			}, "15s", "1s").Should(BeTrue(), "Background fetcher should automatically fetch and validate schema")
-+
-+			Expect(result.SchemaCheckPassed).To(BeTrue())
 +			Expect(result.SchemaCheckBypassed).To(BeFalse())
-+			Expect(result.Error).To(BeNil())
 +		})
 +	})
 +})
-diff --git a/uns_plugin/schema_validation/schema.go b/uns_plugin/schema_validation/schema.go
+diff --git c/uns_plugin/schema_validation/schema.go w/uns_plugin/schema_validation/schema.go
 new file mode 100644
 index 0000000..f92536d
 --- /dev/null
-+++ b/uns_plugin/schema_validation/schema.go
++++ w/uns_plugin/schema_validation/schema.go
 @@ -0,0 +1,93 @@
 +// Copyright 2025 UMH Systems GmbH
 +//
@@ -3971,11 +1320,11 @@ index 0000000..f92536d
 +	}
 +	return nil
 +}
-diff --git a/uns_plugin/schema_validation/schema_validation_suite_test.go b/uns_plugin/schema_validation/schema_validation_suite_test.go
+diff --git c/uns_plugin/schema_validation/schema_validation_suite_test.go w/uns_plugin/schema_validation/schema_validation_suite_test.go
 new file mode 100644
 index 0000000..69b8317
 --- /dev/null
-+++ b/uns_plugin/schema_validation/schema_validation_suite_test.go
++++ w/uns_plugin/schema_validation/schema_validation_suite_test.go
 @@ -0,0 +1,27 @@
 +// Copyright 2025 UMH Systems GmbH
 +//
@@ -4004,12 +1353,12 @@ index 0000000..69b8317
 +	RegisterFailHandler(Fail)
 +	RunSpecs(t, "SchemaValidation Suite")
 +}
-diff --git a/uns_plugin/schema_validation/validator.go b/uns_plugin/schema_validation/validator.go
+diff --git c/uns_plugin/schema_validation/validator.go w/uns_plugin/schema_validation/validator.go
 new file mode 100644
-index 0000000..54f37b7
+index 0000000..5e7f1bf
 --- /dev/null
-+++ b/uns_plugin/schema_validation/validator.go
-@@ -0,0 +1,268 @@
++++ w/uns_plugin/schema_validation/validator.go
+@@ -0,0 +1,455 @@
 +// Copyright 2025 UMH Systems GmbH
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -4027,13 +1376,23 @@ index 0000000..54f37b7
 +package schemavalidation
 +
 +import (
++	"encoding/json"
 +	"fmt"
++	"io"
++	"net/http"
 +	"regexp"
 +	"strconv"
 +	"strings"
 +	"sync"
++	"time"
 +
 +	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
++)
++
++const (
++	cacheHitTTL  = 0                // Cache successful schema fetches forever (schemas are immutable)
++	cacheMissTTL = 10 * time.Minute // Cache misses for 10 minutes to retry sooner
++	httpTimeout  = 30 * time.Second
 +)
 +
 +// schemaVersionRegex matches data contract names with version suffixes.
@@ -4056,35 +1415,62 @@ index 0000000..54f37b7
 +	Error error
 +}
 +
-+// Validator manages schema validation for UNS topics with thread-safe operations.
-+type Validator struct {
-+	schemas           map[string]*Schema
-+	schemasMutex      sync.RWMutex
-+	schemaRegistryURL string
-+	backgroundFetcher *BackgroundFetcher
++// CacheEntry represents a cached schema entry with TTL
++type CacheEntry struct {
++	// Schema holds the actual schema if it exists, nil if schema doesn't exist
++	Schema *Schema
++	// SchemaExists indicates whether the schema exists in the registry
++	SchemaExists bool
++	// CachedAt is when this entry was cached
++	CachedAt time.Time
++	// ExpiredAt is when this entry expires
++	ExpiresAt time.Time
 +}
 +
-+// NewValidator creates a new Validator instance with an empty schema registry.
++// IsExpired checks if the cache entry has expired
++func (ce *CacheEntry) IsExpired() bool {
++	// Zero time means never expires (for immutable schema hits)
++	if ce.ExpiresAt.IsZero() {
++		return false
++	}
++	return time.Now().After(ce.ExpiresAt)
++}
++
++// SchemaRegistryVersion represents a version response from the schema registry
++type SchemaRegistryVersion struct {
++	Version int    `json:"version"`
++	ID      int    `json:"id"`
++	Schema  string `json:"schema"`
++}
++
++// Validator manages schema validation for UNS topics with TTL-based caching.
++type Validator struct {
++	// Cache maps "contractName-v123" to CacheEntry
++	schemaCache       map[string]*CacheEntry
++	cacheMutex        sync.RWMutex
++	schemaRegistryURL string
++	httpClient        *http.Client
++}
++
++// NewValidator creates a new Validator instance with empty cache.
 +func NewValidator() *Validator {
 +	return &Validator{
-+		schemas: make(map[string]*Schema),
++		schemaCache: make(map[string]*CacheEntry),
++		httpClient: &http.Client{
++			Timeout: httpTimeout,
++		},
 +	}
 +}
 +
 +// NewValidatorWithRegistry creates a new Validator instance with the specified schema registry URL.
 +func NewValidatorWithRegistry(schemaRegistryURL string) *Validator {
-+	validator := &Validator{
-+		schemas:           make(map[string]*Schema),
++	return &Validator{
++		schemaCache:       make(map[string]*CacheEntry),
 +		schemaRegistryURL: schemaRegistryURL,
++		httpClient: &http.Client{
++			Timeout: httpTimeout,
++		},
 +	}
-+
-+	// If a schema registry URL is provided, start the background fetcher
-+	if schemaRegistryURL != "" {
-+		validator.backgroundFetcher = NewBackgroundFetcher(schemaRegistryURL, validator)
-+		validator.backgroundFetcher.Start()
-+	}
-+
-+	return validator
 +}
 +
 +// Validate validates the given UNS topic and payload against the registered schema.
@@ -4098,9 +1484,6 @@ index 0000000..54f37b7
 +			Error:               fmt.Errorf("UNS topic cannot be nil"),
 +		}
 +	}
-+
-+	v.schemasMutex.RLock()
-+	defer v.schemasMutex.RUnlock()
 +
 +	topicInfo := unsTopic.Info()
 +	if topicInfo == nil {
@@ -4133,23 +1516,30 @@ index 0000000..54f37b7
 +		}
 +	}
 +
-+	if !v.HasSchema(contractName, version) {
-+		// Queue the schema for background fetching if we have a background fetcher
-+		if v.backgroundFetcher != nil {
-+			v.backgroundFetcher.QueueSchema(contractName, version)
-+		}
-+
++	// Get schema from cache or fetch synchronously
++	schema, schemaExists, err := v.getSchemaWithCache(contractName, version)
++	if err != nil {
 +		return &ValidationResult{
 +			SchemaCheckPassed:   false,
 +			SchemaCheckBypassed: true,
 +			ContractName:        contractName,
 +			ContractVersion:     version,
-+			BypassReason:        fmt.Sprintf("schema for contract '%s' version %d not found, queued for background fetch", contractName, version),
++			BypassReason:        fmt.Sprintf("failed to fetch schema: %v", err),
 +			Error:               nil,
 +		}
 +	}
 +
-+	schema := v.schemas[contractName].GetVersion(version)
++	if !schemaExists {
++		return &ValidationResult{
++			SchemaCheckPassed:   false,
++			SchemaCheckBypassed: true,
++			ContractName:        contractName,
++			ContractVersion:     version,
++			BypassReason:        fmt.Sprintf("schema for contract '%s' version %d does not exist in registry", contractName, version),
++			Error:               nil,
++		}
++	}
++
 +	if schema == nil {
 +		return &ValidationResult{
 +			SchemaCheckPassed:   false,
@@ -4157,6 +1547,18 @@ index 0000000..54f37b7
 +			ContractName:        contractName,
 +			ContractVersion:     version,
 +			BypassReason:        fmt.Sprintf("schema for contract '%s' version %d is nil", contractName, version),
++			Error:               nil,
++		}
++	}
++
++	jsonSchema := schema.GetVersion(version)
++	if jsonSchema == nil {
++		return &ValidationResult{
++			SchemaCheckPassed:   false,
++			SchemaCheckBypassed: true,
++			ContractName:        contractName,
++			ContractVersion:     version,
++			BypassReason:        fmt.Sprintf("compiled schema for contract '%s' version %d is nil", contractName, version),
 +			Error:               nil,
 +		}
 +	}
@@ -4173,7 +1575,7 @@ index 0000000..54f37b7
 +	wrappedPayload := []byte(fmt.Sprintf(`{"fields": %s, "virtual_path": "%s"}`,
 +		string(payload), fullPath.String()))
 +
-+	validationResult := schema.ValidateJSON(wrappedPayload)
++	validationResult := jsonSchema.ValidateJSON(wrappedPayload)
 +	if validationResult == nil {
 +		return &ValidationResult{
 +			SchemaCheckPassed:   false,
@@ -4206,6 +1608,124 @@ index 0000000..54f37b7
 +		ContractVersion:     version,
 +		Error:               nil,
 +	}
++}
++
++// getSchemaWithCache retrieves schema from cache or fetches it synchronously
++func (v *Validator) getSchemaWithCache(contractName string, version uint64) (*Schema, bool, error) {
++	cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
++
++	// Check cache first
++	v.cacheMutex.RLock()
++	entry, exists := v.schemaCache[cacheKey]
++	v.cacheMutex.RUnlock()
++
++	if exists && !entry.IsExpired() {
++		// Cache hit and not expired
++		return entry.Schema, entry.SchemaExists, nil
++	}
++
++	// Cache miss or expired, fetch synchronously
++	return v.fetchSchemaSync(contractName, version)
++}
++
++// fetchSchemaSync fetches schema synchronously and updates cache
++func (v *Validator) fetchSchemaSync(contractName string, version uint64) (*Schema, bool, error) {
++	cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
++
++	// Double-check locking pattern
++	v.cacheMutex.Lock()
++	defer v.cacheMutex.Unlock()
++
++	// Check if another goroutine already fetched it
++	if entry, exists := v.schemaCache[cacheKey]; exists && !entry.IsExpired() {
++		return entry.Schema, entry.SchemaExists, nil
++	}
++
++	// Fetch from registry
++	schemaBytes, schemaExists, err := v.fetchSchemaFromRegistry(contractName, version)
++	if err != nil {
++		// Cache the error result (schema doesn't exist or fetch failed)
++		v.schemaCache[cacheKey] = &CacheEntry{
++			Schema:       nil,
++			SchemaExists: false,
++			CachedAt:     time.Now(),
++			ExpiresAt:    time.Now().Add(cacheMissTTL),
++		}
++		return nil, false, err
++	}
++
++	if !schemaExists {
++		// Cache the fact that schema doesn't exist
++		v.schemaCache[cacheKey] = &CacheEntry{
++			Schema:       nil,
++			SchemaExists: false,
++			CachedAt:     time.Now(),
++			ExpiresAt:    time.Now().Add(cacheMissTTL),
++		}
++		return nil, false, nil
++	}
++
++	// Compile the schema
++	schema := NewSchema(contractName)
++	if err := schema.AddVersion(version, schemaBytes); err != nil {
++		// Cache the compilation error
++		v.schemaCache[cacheKey] = &CacheEntry{
++			Schema:       nil,
++			SchemaExists: false,
++			CachedAt:     time.Now(),
++			ExpiresAt:    time.Now().Add(cacheMissTTL),
++		}
++		return nil, false, fmt.Errorf("failed to compile schema: %w", err)
++	}
++
++	// Cache the successful result - forever since schemas are immutable
++	expiresAt := time.Time{} // Zero time means never expires
++	if cacheHitTTL > 0 {
++		expiresAt = time.Now().Add(cacheHitTTL)
++	}
++	v.schemaCache[cacheKey] = &CacheEntry{
++		Schema:       schema,
++		SchemaExists: true,
++		CachedAt:     time.Now(),
++		ExpiresAt:    expiresAt,
++	}
++
++	return schema, true, nil
++}
++
++// fetchSchemaFromRegistry fetches schema from the registry
++func (v *Validator) fetchSchemaFromRegistry(contractName string, version uint64) ([]byte, bool, error) {
++	if v.schemaRegistryURL == "" {
++		return nil, false, fmt.Errorf("schema registry URL is not configured")
++	}
++
++	url := fmt.Sprintf("%s/subjects/%s/versions/%d", v.schemaRegistryURL, contractName, version)
++
++	resp, err := v.httpClient.Get(url)
++	if err != nil {
++		return nil, false, fmt.Errorf("failed to fetch schema from registry: %w", err)
++	}
++	defer resp.Body.Close()
++
++	if resp.StatusCode == http.StatusNotFound {
++		return nil, false, nil // Schema doesn't exist
++	}
++
++	if resp.StatusCode != http.StatusOK {
++		return nil, false, fmt.Errorf("schema registry returned status %d", resp.StatusCode)
++	}
++
++	body, err := io.ReadAll(resp.Body)
++	if err != nil {
++		return nil, false, fmt.Errorf("failed to read schema response: %w", err)
++	}
++
++	var versionResp SchemaRegistryVersion
++	if err := json.Unmarshal(body, &versionResp); err != nil {
++		return nil, false, fmt.Errorf("failed to unmarshal schema response: %w", err)
++	}
++
++	return []byte(versionResp.Schema), true, nil
 +}
 +
 +// ExtractSchemaVersionFromDataContract parses a data contract string to extract
@@ -4245,15 +1765,27 @@ index 0000000..54f37b7
 +		return fmt.Errorf("schema cannot be empty for contract '%s' version %d", contractName, version)
 +	}
 +
-+	v.schemasMutex.Lock()
-+	defer v.schemasMutex.Unlock()
++	cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
 +
-+	if _, exists := v.schemas[contractName]; !exists {
-+		v.schemas[contractName] = NewSchema(contractName)
++	v.cacheMutex.Lock()
++	defer v.cacheMutex.Unlock()
++
++	// Create and compile the schema
++	schemaObj := NewSchema(contractName)
++	if err := schemaObj.AddVersion(version, schema); err != nil {
++		return fmt.Errorf("failed to add schema version %d for contract '%s': %w", version, contractName, err)
 +	}
 +
-+	if err := v.schemas[contractName].AddVersion(version, schema); err != nil {
-+		return fmt.Errorf("failed to add schema version %d for contract '%s': %w", version, contractName, err)
++	// Cache the schema - forever since schemas are immutable
++	expiresAt := time.Time{} // Zero time means never expires
++	if cacheHitTTL > 0 {
++		expiresAt = time.Now().Add(cacheHitTTL)
++	}
++	v.schemaCache[cacheKey] = &CacheEntry{
++		Schema:       schemaObj,
++		SchemaExists: true,
++		CachedAt:     time.Now(),
++		ExpiresAt:    expiresAt,
 +	}
 +
 +	return nil
@@ -4261,28 +1793,32 @@ index 0000000..54f37b7
 +
 +// HasSchema checks if a schema exists for the given contract name and version.
 +func (v *Validator) HasSchema(contractName string, version uint64) bool {
-+	v.schemasMutex.RLock()
-+	defer v.schemasMutex.RUnlock()
++	cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
 +
-+	schema, exists := v.schemas[contractName]
-+	if !exists {
++	v.cacheMutex.RLock()
++	defer v.cacheMutex.RUnlock()
++
++	entry, exists := v.schemaCache[cacheKey]
++	if !exists || entry.IsExpired() {
 +		return false
 +	}
 +
-+	return schema.HasVersion(version)
++	return entry.SchemaExists && entry.Schema != nil && entry.Schema.HasVersion(version)
 +}
 +
-+// Close stops the background fetcher and cleans up resources.
++// Close cleans up resources (no background processes to stop anymore)
 +func (v *Validator) Close() {
-+	if v.backgroundFetcher != nil {
-+		v.backgroundFetcher.Stop()
-+	}
++	// No background processes to stop, just clear the cache
++	v.cacheMutex.Lock()
++	defer v.cacheMutex.Unlock()
++
++	v.schemaCache = make(map[string]*CacheEntry)
 +}
-diff --git a/uns_plugin/schema_validation/validator_benchmark_test.go b/uns_plugin/schema_validation/validator_benchmark_test.go
+diff --git c/uns_plugin/schema_validation/validator_benchmark_test.go w/uns_plugin/schema_validation/validator_benchmark_test.go
 new file mode 100644
 index 0000000..aa1cdab
 --- /dev/null
-+++ b/uns_plugin/schema_validation/validator_benchmark_test.go
++++ w/uns_plugin/schema_validation/validator_benchmark_test.go
 @@ -0,0 +1,410 @@
 +// Copyright 2025 UMH Systems GmbH
 +//
@@ -4694,12 +2230,12 @@ index 0000000..aa1cdab
 +		})
 +	}
 +}
-diff --git a/uns_plugin/schema_validation/validator_test.go b/uns_plugin/schema_validation/validator_test.go
+diff --git c/uns_plugin/schema_validation/validator_test.go w/uns_plugin/schema_validation/validator_test.go
 new file mode 100644
-index 0000000..d2fdf3b
+index 0000000..c3dacb7
 --- /dev/null
-+++ b/uns_plugin/schema_validation/validator_test.go
-@@ -0,0 +1,633 @@
++++ w/uns_plugin/schema_validation/validator_test.go
+@@ -0,0 +1,353 @@
 +// Copyright 2025 UMH Systems GmbH
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -4717,8 +2253,7 @@ index 0000000..d2fdf3b
 +package schemavalidation
 +
 +import (
-+	"fmt"
-+	"sync"
++	"time"
 +
 +	. "github.com/onsi/ginkgo/v2"
 +	. "github.com/onsi/gomega"
@@ -4726,56 +2261,50 @@ index 0000000..d2fdf3b
 +)
 +
 +var _ = Describe("Validator", func() {
-+	Context("when validating basic data", func() {
++	var (
++		validator    *Validator
++		mockRegistry *MockSchemaRegistry
++	)
 +
-+		schema := []byte(`
-+		{
-+   "type": "object",
-+   "properties": {
-+		"virtual_path": {
-+          "type": "string",
-+          "enum": ["vibration.x-axis"]
-+       },
-+      "fields": {
-+         "type": "object",
-+         "properties": {
-+            "value": {
-+               "type": "object",
-+               "properties": {
-+                  "timestamp_ms": {"type": "number"},
-+                  "value": {"type": "number"}
-+               },
-+               "required": ["timestamp_ms", "value"],
-+               "additionalProperties": false
-+            }
-+         },
-+         "additionalProperties": false
-+      }
-+   },
-+   "required": ["virtual_path", "fields"],
-+   "additionalProperties": false
-+}`)
-+		var validator *Validator
++	BeforeEach(func() {
++		mockRegistry = NewMockSchemaRegistry()
++		mockRegistry.SetupTestSchemas()
++		validator = NewValidatorWithRegistry(mockRegistry.URL())
++	})
 +
-+		BeforeEach(func() {
-+			validator = NewValidator()
-+			validator.LoadSchema("_sensor_data", 1, schema)
-+			Expect(validator.HasSchema("_sensor_data", 1)).To(BeTrue())
++	AfterEach(func() {
++		if validator != nil {
++			validator.Close()
++		}
++		if mockRegistry != nil {
++			mockRegistry.Close()
++		}
++	})
++
++	Context("when creating a new validator", func() {
++		It("should initialize correctly without registry", func() {
++			validator := NewValidator()
++			Expect(validator.schemaCache).NotTo(BeNil())
++			Expect(validator.httpClient).NotTo(BeNil())
++			Expect(validator.schemaRegistryURL).To(BeEmpty())
 +		})
 +
-+		/*
-+			Test cases:
-+			1. Valid data & valid virtual_path
-+			2. Valid data & invalid virtual_path
-+			3. Invalid data & valid virtual_path
-+			4. Invalid data & invalid virtual_path
-+			5. Invalid payload format
-+		*/
++		It("should initialize correctly with registry", func() {
++			validator := NewValidatorWithRegistry("http://localhost:8081")
++			Expect(validator.schemaCache).NotTo(BeNil())
++			Expect(validator.httpClient).NotTo(BeNil())
++			Expect(validator.schemaRegistryURL).To(Equal("http://localhost:8081"))
++		})
++	})
 +
-+		It("should pass validation for valid data & valid virtual_path", func() {
-+			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.vibration.x-axis")
++	Context("when validating with versioned contracts", func() {
++		It("should successfully validate sensor data v1", func() {
++			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 +			Expect(err).To(BeNil())
-+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
++
++			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
++
++			result := validator.Validate(unsTopic, payload)
 +			Expect(result.SchemaCheckPassed).To(BeTrue())
 +			Expect(result.SchemaCheckBypassed).To(BeFalse())
 +			Expect(result.Error).To(BeNil())
@@ -4783,560 +2312,287 @@ index 0000000..d2fdf3b
 +			Expect(result.ContractVersion).To(Equal(uint64(1)))
 +		})
 +
-+		It("should fail validation for valid data & invalid virtual_path", func() {
-+			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.vibration.non-existing")
++		It("should successfully validate sensor data v2", func() {
++			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v2.temperature")
 +			Expect(err).To(BeNil())
-+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-+			Expect(result.SchemaCheckPassed).To(BeFalse())
++
++			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
++
++			result := validator.Validate(unsTopic, payload)
++			Expect(result.SchemaCheckPassed).To(BeTrue())
 +			Expect(result.SchemaCheckBypassed).To(BeFalse())
-+			Expect(result.Error).To(Not(BeNil()))
++			Expect(result.Error).To(BeNil())
 +			Expect(result.ContractName).To(Equal("_sensor_data"))
-+			Expect(result.ContractVersion).To(Equal(uint64(1)))
++			Expect(result.ContractVersion).To(Equal(uint64(2)))
 +		})
 +
-+		It("should fail validation for invalid data & valid virtual_path", func() {
-+			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.vibration.x-axis")
++		It("should reject invalid virtual path", func() {
++			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.invalid_path")
 +			Expect(err).To(BeNil())
-+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "not a number"}}`))
++
++			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
++
++			result := validator.Validate(unsTopic, payload)
 +			Expect(result.SchemaCheckPassed).To(BeFalse())
 +			Expect(result.SchemaCheckBypassed).To(BeFalse())
-+			Expect(result.Error).To(Not(BeNil()))
-+			Expect(result.ContractName).To(Equal("_sensor_data"))
-+			Expect(result.ContractVersion).To(Equal(uint64(1)))
++			Expect(result.Error).To(HaveOccurred())
++			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
 +		})
 +
-+		It("should fail validation for invalid data & invalid virtual_path", func() {
-+			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.vibration.non-existing")
++		It("should reject invalid payload structure", func() {
++			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 +			Expect(err).To(BeNil())
-+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "not a number"}}`))
-+			Expect(result.SchemaCheckPassed).To(BeFalse())
-+			Expect(result.SchemaCheckBypassed).To(BeFalse())
-+			Expect(result.Error).To(Not(BeNil()))
-+			Expect(result.ContractName).To(Equal("_sensor_data"))
-+			Expect(result.ContractVersion).To(Equal(uint64(1)))
-+		})
 +
-+		It("should fail validation for invalid payload format", func() {
-+			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.vibration.x-axis")
-+			Expect(err).To(BeNil())
-+			result := validator.Validate(topic, []byte(`{"value": {"value": 100}}`))
++			payload := []byte(`{"value": {"timestamp_ms": "invalid", "value": 25.5}}`)
++
++			result := validator.Validate(unsTopic, payload)
 +			Expect(result.SchemaCheckPassed).To(BeFalse())
 +			Expect(result.SchemaCheckBypassed).To(BeFalse())
-+			Expect(result.Error).To(Not(BeNil()))
-+			Expect(result.ContractName).To(Equal("_sensor_data"))
-+			Expect(result.ContractVersion).To(Equal(uint64(1)))
++			Expect(result.Error).To(HaveOccurred())
++			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
 +		})
 +	})
 +
-+	Context("when parsing data contracts", func() {
-+		var validator *Validator
++	Context("when handling non-existent schemas", func() {
++		It("should bypass validation for non-existent contract", func() {
++			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent-v1.temperature")
++			Expect(err).To(BeNil())
 +
-+		BeforeEach(func() {
-+			validator = NewValidator()
++			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
++
++			result := validator.Validate(unsTopic, payload)
++			Expect(result.SchemaCheckPassed).To(BeFalse())
++			Expect(result.SchemaCheckBypassed).To(BeTrue())
++			Expect(result.BypassReason).To(ContainSubstring("does not exist in registry"))
++			Expect(result.ContractName).To(Equal("_non_existent"))
++			Expect(result.ContractVersion).To(Equal(uint64(1)))
 +		})
 +
-+		It("should parse valid contract with version", func() {
++		It("should bypass validation for non-existent version", func() {
++			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v999.temperature")
++			Expect(err).To(BeNil())
++
++			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
++
++			result := validator.Validate(unsTopic, payload)
++			Expect(result.SchemaCheckPassed).To(BeFalse())
++			Expect(result.SchemaCheckBypassed).To(BeTrue())
++			Expect(result.BypassReason).To(ContainSubstring("does not exist in registry"))
++			Expect(result.ContractName).To(Equal("_sensor_data"))
++			Expect(result.ContractVersion).To(Equal(uint64(999)))
++		})
++	})
++
++	Context("when handling unversioned contracts", func() {
++		It("should bypass validation for unversioned contracts", func() {
++			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data.temperature")
++			Expect(err).To(BeNil())
++
++			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
++
++			result := validator.Validate(unsTopic, payload)
++			Expect(result.SchemaCheckPassed).To(BeFalse())
++			Expect(result.SchemaCheckBypassed).To(BeTrue())
++			Expect(result.BypassReason).To(ContainSubstring("unversioned contract"))
++			Expect(result.ContractName).To(Equal("_sensor_data"))
++		})
++	})
++
++	Context("when testing cache behavior", func() {
++		It("should cache successful schema fetches", func() {
++			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
++			Expect(err).To(BeNil())
++
++			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
++
++			// First validation should fetch and cache the schema
++			result1 := validator.Validate(unsTopic, payload)
++			Expect(result1.SchemaCheckPassed).To(BeTrue())
++
++			// Verify schema is cached
++			Expect(validator.HasSchema("_sensor_data", 1)).To(BeTrue())
++
++			// Second validation should use cached schema
++			result2 := validator.Validate(unsTopic, payload)
++			Expect(result2.SchemaCheckPassed).To(BeTrue())
++			Expect(result2.ContractName).To(Equal("_sensor_data"))
++			Expect(result2.ContractVersion).To(Equal(uint64(1)))
++		})
++
++		It("should cache negative results (schema not found)", func() {
++			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent-v1.temperature")
++			Expect(err).To(BeNil())
++
++			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
++
++			// First validation should fetch and cache the negative result
++			result1 := validator.Validate(unsTopic, payload)
++			Expect(result1.SchemaCheckBypassed).To(BeTrue())
++			Expect(result1.BypassReason).To(ContainSubstring("does not exist in registry"))
++
++			// Second validation should use cached negative result
++			result2 := validator.Validate(unsTopic, payload)
++			Expect(result2.SchemaCheckBypassed).To(BeTrue())
++			Expect(result2.BypassReason).To(ContainSubstring("does not exist in registry"))
++		})
++
++		It("should cache successful schema fetches forever", func() {
++			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
++			Expect(err).To(BeNil())
++
++			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
++
++			// Validate to populate cache
++			result := validator.Validate(unsTopic, payload)
++			Expect(result.SchemaCheckPassed).To(BeTrue())
++
++			// Check cache entry exists and never expires
++			validator.cacheMutex.RLock()
++			entry, exists := validator.schemaCache["_sensor_data-v1"]
++			validator.cacheMutex.RUnlock()
++
++			Expect(exists).To(BeTrue())
++			Expect(entry.SchemaExists).To(BeTrue())
++			Expect(entry.Schema).NotTo(BeNil())
++			Expect(entry.IsExpired()).To(BeFalse())
++			Expect(entry.ExpiresAt.IsZero()).To(BeTrue()) // Zero time means never expires
++		})
++
++		It("should cache schema misses for 10 minutes", func() {
++			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent-v1.temperature")
++			Expect(err).To(BeNil())
++
++			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
++
++			// Validate to populate cache with miss
++			result := validator.Validate(unsTopic, payload)
++			Expect(result.SchemaCheckBypassed).To(BeTrue())
++
++			// Check cache entry exists with 10 minute expiration
++			validator.cacheMutex.RLock()
++			entry, exists := validator.schemaCache["_non_existent-v1"]
++			validator.cacheMutex.RUnlock()
++
++			Expect(exists).To(BeTrue())
++			Expect(entry.SchemaExists).To(BeFalse())
++			Expect(entry.Schema).To(BeNil())
++			Expect(entry.IsExpired()).To(BeFalse())
++			Expect(entry.ExpiresAt.IsZero()).To(BeFalse()) // Should have an expiration time
++			Expect(entry.ExpiresAt).To(BeTemporally("~", time.Now().Add(10*time.Minute), time.Second))
++		})
++	})
++
++	Context("when handling contract parsing", func() {
++		It("should parse versioned contracts correctly", func() {
 +			contractName, version, err := validator.ExtractSchemaVersionFromDataContract("_sensor_data-v1")
 +			Expect(err).To(BeNil())
 +			Expect(contractName).To(Equal("_sensor_data"))
 +			Expect(version).To(Equal(uint64(1)))
-+		})
 +
-+		It("should parse contract with multi-digit version", func() {
-+			contractName, version, err := validator.ExtractSchemaVersionFromDataContract("_pump_data-v123")
++			contractName, version, err = validator.ExtractSchemaVersionFromDataContract("_pump_data-v123")
 +			Expect(err).To(BeNil())
 +			Expect(contractName).To(Equal("_pump_data"))
 +			Expect(version).To(Equal(uint64(123)))
 +		})
 +
-+		It("should parse contract with complex name", func() {
-+			contractName, version, err := validator.ExtractSchemaVersionFromDataContract("_complex_sensor_data_v2-v42")
-+			Expect(err).To(BeNil())
-+			Expect(contractName).To(Equal("_complex_sensor_data_v2"))
-+			Expect(version).To(Equal(uint64(42)))
-+		})
-+
-+		It("should fail for empty contract", func() {
-+			_, _, err := validator.ExtractSchemaVersionFromDataContract("")
-+			Expect(err).To(HaveOccurred())
-+			Expect(err.Error()).To(ContainSubstring("contract string is empty"))
-+		})
-+
-+		It("should fail for contract without version", func() {
-+			_, _, err := validator.ExtractSchemaVersionFromDataContract("_sensor_data")
++		It("should reject invalid contract formats", func() {
++			_, _, err := validator.ExtractSchemaVersionFromDataContract("invalid-contract")
 +			Expect(err).To(HaveOccurred())
 +			Expect(err.Error()).To(ContainSubstring("invalid data contract format"))
-+		})
 +
-+		It("should fail for contract with invalid version format", func() {
-+			_, _, err := validator.ExtractSchemaVersionFromDataContract("_sensor_data-vabc")
++			_, _, err = validator.ExtractSchemaVersionFromDataContract("_sensor_data-v")
 +			Expect(err).To(HaveOccurred())
-+			Expect(err.Error()).To(ContainSubstring("invalid data contract format"))
-+		})
 +
-+		It("should fail for contract with non-numeric version", func() {
-+			_, _, err := validator.ExtractSchemaVersionFromDataContract("_sensor_data-v1a2")
++			_, _, err = validator.ExtractSchemaVersionFromDataContract("")
 +			Expect(err).To(HaveOccurred())
-+			Expect(err.Error()).To(ContainSubstring("invalid data contract format"))
-+		})
-+
-+		It("should fail for contract with negative version", func() {
-+			_, _, err := validator.ExtractSchemaVersionFromDataContract("_sensor_data-v-1")
-+			Expect(err).To(HaveOccurred())
-+			Expect(err.Error()).To(ContainSubstring("invalid data contract format"))
 +		})
 +	})
 +
-+	Context("when loading schemas", func() {
-+		var validator *Validator
-+		validSchema := []byte(`{"type": "object", "properties": {"test": {"type": "string"}}}`)
++	Context("when manually loading schemas", func() {
++		It("should load and cache schemas correctly", func() {
++			schema := []byte(`{"type": "object", "properties": {"test": {"type": "string"}}}`)
 +
-+		BeforeEach(func() {
-+			validator = NewValidator()
-+		})
-+
-+		It("should load valid schema successfully", func() {
-+			err := validator.LoadSchema("_test_contract", 1, validSchema)
++			err := validator.LoadSchema("_test_contract", 1, schema)
 +			Expect(err).To(BeNil())
++
++			// Check if schema was cached
 +			Expect(validator.HasSchema("_test_contract", 1)).To(BeTrue())
++
++			// Verify cache entry
++			validator.cacheMutex.RLock()
++			entry, exists := validator.schemaCache["_test_contract-v1"]
++			validator.cacheMutex.RUnlock()
++
++			Expect(exists).To(BeTrue())
++			Expect(entry.SchemaExists).To(BeTrue())
++			Expect(entry.Schema).NotTo(BeNil())
 +		})
 +
-+		It("should load multiple versions of same contract", func() {
-+			schema1 := []byte(`{"type": "object", "properties": {"test1": {"type": "string"}}}`)
-+			schema2 := []byte(`{"type": "object", "properties": {"test2": {"type": "number"}}}`)
++		It("should validate contract name requirements", func() {
++			schema := []byte(`{"type": "object"}`)
 +
-+			err := validator.LoadSchema("_test_contract", 1, schema1)
-+			Expect(err).To(BeNil())
-+
-+			err = validator.LoadSchema("_test_contract", 2, schema2)
-+			Expect(err).To(BeNil())
-+
-+			Expect(validator.HasSchema("_test_contract", 1)).To(BeTrue())
-+			Expect(validator.HasSchema("_test_contract", 2)).To(BeTrue())
-+		})
-+
-+		It("should load multiple contracts", func() {
-+			err := validator.LoadSchema("_contract1", 1, validSchema)
-+			Expect(err).To(BeNil())
-+
-+			err = validator.LoadSchema("_contract2", 1, validSchema)
-+			Expect(err).To(BeNil())
-+
-+			Expect(validator.HasSchema("_contract1", 1)).To(BeTrue())
-+			Expect(validator.HasSchema("_contract2", 1)).To(BeTrue())
-+		})
-+
-+		It("should fail for empty contract name", func() {
-+			err := validator.LoadSchema("", 1, validSchema)
++			err := validator.LoadSchema("invalid_contract", 1, schema)
 +			Expect(err).To(HaveOccurred())
-+			Expect(err.Error()).To(ContainSubstring("contract name cannot be empty"))
-+		})
++			Expect(err.Error()).To(ContainSubstring("must start with an underscore"))
 +
-+		It("should fail for contract name without underscore prefix", func() {
-+			err := validator.LoadSchema("test_contract", 1, validSchema)
++			err = validator.LoadSchema("", 1, schema)
 +			Expect(err).To(HaveOccurred())
-+			Expect(err.Error()).To(ContainSubstring("contract name must start with an underscore"))
-+		})
++			Expect(err.Error()).To(ContainSubstring("cannot be empty"))
 +
-+		It("should fail for empty schema", func() {
-+			err := validator.LoadSchema("_test_contract", 1, []byte{})
++			err = validator.LoadSchema("_test_contract", 1, []byte{})
 +			Expect(err).To(HaveOccurred())
 +			Expect(err.Error()).To(ContainSubstring("schema cannot be empty"))
 +		})
-+
-+		It("should fail for nil schema", func() {
-+			err := validator.LoadSchema("_test_contract", 1, nil)
-+			Expect(err).To(HaveOccurred())
-+			Expect(err.Error()).To(ContainSubstring("schema cannot be empty"))
-+		})
-+
-+		It("should fail for invalid JSON schema", func() {
-+			// Use completely invalid JSON syntax
-+			invalidSchema := []byte(`{"type": "object", "invalid": syntax}`)
-+			err := validator.LoadSchema("_test_contract", 1, invalidSchema)
-+			Expect(err).To(HaveOccurred())
-+			Expect(err.Error()).To(ContainSubstring("failed to add schema version"))
-+		})
-+
-+		It("should fail for malformed JSON", func() {
-+			malformedSchema := []byte(`{"type": "object", "properties":`)
-+			err := validator.LoadSchema("_test_contract", 1, malformedSchema)
-+			Expect(err).To(HaveOccurred())
-+			Expect(err.Error()).To(ContainSubstring("failed to add schema version"))
-+		})
-+
-+		It("should overwrite existing schema version", func() {
-+			schema1 := []byte(`{"type": "object", "properties": {"test1": {"type": "string"}}}`)
-+			schema2 := []byte(`{"type": "object", "properties": {"test2": {"type": "number"}}}`)
-+
-+			err := validator.LoadSchema("_test_contract", 1, schema1)
-+			Expect(err).To(BeNil())
-+
-+			// Load different schema with same version - should overwrite
-+			err = validator.LoadSchema("_test_contract", 1, schema2)
-+			Expect(err).To(BeNil())
-+
-+			Expect(validator.HasSchema("_test_contract", 1)).To(BeTrue())
-+		})
 +	})
 +
-+	Context("when checking schema existence", func() {
-+		var validator *Validator
-+		validSchema := []byte(`{"type": "object", "properties": {"test": {"type": "string"}}}`)
++	Context("when handling network errors", func() {
++		It("should handle schema registry unavailable", func() {
++			validator := NewValidatorWithRegistry("http://localhost:9999") // Invalid URL
 +
-+		BeforeEach(func() {
-+			validator = NewValidator()
-+			validator.LoadSchema("_existing_contract", 1, validSchema)
-+		})
-+
-+		It("should return true for existing contract and version", func() {
-+			Expect(validator.HasSchema("_existing_contract", 1)).To(BeTrue())
-+		})
-+
-+		It("should return false for non-existing contract", func() {
-+			Expect(validator.HasSchema("_non_existing_contract", 1)).To(BeFalse())
-+		})
-+
-+		It("should return false for existing contract with non-existing version", func() {
-+			Expect(validator.HasSchema("_existing_contract", 2)).To(BeFalse())
-+		})
-+
-+		It("should return false for empty contract name", func() {
-+			Expect(validator.HasSchema("", 1)).To(BeFalse())
-+		})
-+	})
-+
-+	Context("when validating with edge cases", func() {
-+		var validator *Validator
-+		validSchema := []byte(`
-+		{
-+			"type": "object",
-+			"properties": {
-+				"virtual_path": {
-+					"type": "string",
-+					"enum": ["temperature", "humidity"]
-+				},
-+				"fields": {
-+					"type": "object",
-+					"properties": {
-+						"value": {
-+							"type": "object",
-+							"properties": {
-+								"timestamp_ms": {"type": "number"},
-+								"value": {"type": "number"}
-+							},
-+							"required": ["timestamp_ms", "value"],
-+							"additionalProperties": false
-+						}
-+					},
-+					"additionalProperties": false
-+				}
-+			},
-+			"required": ["virtual_path", "fields"],
-+			"additionalProperties": false
-+		}`)
-+
-+		BeforeEach(func() {
-+			validator = NewValidator()
-+			validator.LoadSchema("_sensor_data", 1, validSchema)
-+		})
-+
-+		It("should fail for nil topic", func() {
-+			result := validator.Validate(nil, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-+			Expect(result.SchemaCheckPassed).To(BeFalse())
-+			Expect(result.SchemaCheckBypassed).To(BeFalse())
-+			Expect(result.Error).To(HaveOccurred())
-+			Expect(result.Error.Error()).To(ContainSubstring("UNS topic cannot be nil"))
-+		})
-+
-+		It("should fail for topic with empty contract", func() {
-+			// This would require mocking the topic.Info() to return empty contract
-+			// For now, we'll test the contract extraction directly
-+			_, _, err := validator.ExtractSchemaVersionFromDataContract("")
-+			Expect(err).To(HaveOccurred())
-+		})
-+
-+		It("should bypass validation for non-existing schema", func() {
-+			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existing_contract-v1.temperature")
++			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 +			Expect(err).To(BeNil())
-+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
++
++			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
++
++			result := validator.Validate(unsTopic, payload)
 +			Expect(result.SchemaCheckPassed).To(BeFalse())
 +			Expect(result.SchemaCheckBypassed).To(BeTrue())
-+			Expect(result.Error).To(BeNil())
-+			Expect(result.BypassReason).To(ContainSubstring("schema for contract '_non_existing_contract' version 1 not found"))
-+			Expect(result.ContractName).To(Equal("_non_existing_contract"))
-+			Expect(result.ContractVersion).To(Equal(uint64(1)))
-+		})
-+
-+		It("should bypass validation when version extraction fails", func() {
-+			// Create a topic with malformed version format (unversioned contract)
-+			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._malformed_contract.temperature")
-+			Expect(err).To(BeNil())
-+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-+			Expect(result.SchemaCheckPassed).To(BeFalse())
-+			Expect(result.SchemaCheckBypassed).To(BeTrue())
-+			Expect(result.Error).To(BeNil())
-+			Expect(result.BypassReason).To(ContainSubstring("unversioned contract '_malformed_contract' - bypassing validation (no latest fetching)"))
-+			Expect(result.ContractName).To(Equal("_malformed_contract"))
-+			Expect(result.ContractVersion).To(Equal(uint64(0)))
-+		})
-+
-+		It("should fail for empty JSON payload", func() {
-+			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
-+			Expect(err).To(BeNil())
-+			result := validator.Validate(topic, []byte(``))
-+			Expect(result.SchemaCheckPassed).To(BeFalse())
-+			Expect(result.SchemaCheckBypassed).To(BeFalse())
-+			Expect(result.Error).To(HaveOccurred())
-+			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
-+		})
-+
-+		It("should fail for invalid JSON payload", func() {
-+			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
-+			Expect(err).To(BeNil())
-+			result := validator.Validate(topic, []byte(`{"invalid": json}`))
-+			Expect(result.SchemaCheckPassed).To(BeFalse())
-+			Expect(result.SchemaCheckBypassed).To(BeFalse())
-+			Expect(result.Error).To(HaveOccurred())
-+			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
-+		})
-+
-+		It("should handle topic with nil virtual path", func() {
-+			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
-+			Expect(err).To(BeNil())
-+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-+			Expect(result.SchemaCheckPassed).To(BeTrue())
-+			Expect(result.SchemaCheckBypassed).To(BeFalse())
-+			Expect(result.Error).To(BeNil())
-+		})
-+
-+		It("should handle topic with virtual path", func() {
-+			// This would require a topic with virtual path - depends on topic implementation
-+			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.some.path.temperature")
-+			Expect(err).To(BeNil())
-+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-+			Expect(result.SchemaCheckPassed).To(BeFalse())
-+			Expect(result.SchemaCheckBypassed).To(BeFalse())
-+			Expect(result.Error).To(HaveOccurred())
-+			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
-+		})
-+
-+		It("should provide descriptive error messages", func() {
-+			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
-+			Expect(err).To(BeNil())
-+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": "not_a_number", "value": 100}}`))
-+			Expect(result.SchemaCheckPassed).To(BeFalse())
-+			Expect(result.SchemaCheckBypassed).To(BeFalse())
-+			Expect(result.Error).To(HaveOccurred())
-+			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
-+			Expect(result.Error.Error()).To(ContainSubstring("_sensor_data"))
-+			Expect(result.Error.Error()).To(ContainSubstring("version 1"))
-+		})
-+
-+		It("should validate with different data types", func() {
-+			// Test with zero values
-+			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
-+			Expect(err).To(BeNil())
-+			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 0, "value": 0}}`))
-+			Expect(result.SchemaCheckPassed).To(BeTrue())
-+			Expect(result.SchemaCheckBypassed).To(BeFalse())
-+			Expect(result.Error).To(BeNil())
-+
-+			// Test with negative values
-+			result = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": -25.5}}`))
-+			Expect(result.SchemaCheckPassed).To(BeTrue())
-+			Expect(result.SchemaCheckBypassed).To(BeFalse())
-+			Expect(result.Error).To(BeNil())
-+
-+			// Test with large numbers
-+			result = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 999999999.999}}`))
-+			Expect(result.SchemaCheckPassed).To(BeTrue())
-+			Expect(result.SchemaCheckBypassed).To(BeFalse())
-+			Expect(result.Error).To(BeNil())
++			Expect(result.BypassReason).To(ContainSubstring("failed to fetch schema"))
 +		})
 +	})
 +
-+	Context("when handling concurrent operations", func() {
-+		var validator *Validator
-+		validSchema := []byte(`{"type": "object", "properties": {"test": {"type": "string"}}}`)
-+
-+		BeforeEach(func() {
-+			validator = NewValidator()
-+		})
-+
-+		It("should handle concurrent schema loading", func() {
-+			var wg sync.WaitGroup
-+			numGoroutines := 10
-+
-+			for i := 0; i < numGoroutines; i++ {
-+				wg.Add(1)
-+				go func(index int) {
-+					defer wg.Done()
-+					contractName := fmt.Sprintf("_test_contract_%d", index)
-+					err := validator.LoadSchema(contractName, 1, validSchema)
-+					Expect(err).To(BeNil())
-+				}(i)
-+			}
-+
-+			wg.Wait()
-+
-+			// Verify all schemas were loaded
-+			for i := 0; i < numGoroutines; i++ {
-+				contractName := fmt.Sprintf("_test_contract_%d", i)
-+				Expect(validator.HasSchema(contractName, 1)).To(BeTrue())
-+			}
-+		})
-+
-+		It("should handle concurrent validation", func() {
-+			// Load a schema first
-+			err := validator.LoadSchema("_test_contract", 1, []byte(`
-+			{
-+				"type": "object",
-+				"properties": {
-+					"virtual_path": {
-+						"type": "string",
-+						"enum": ["test"]
-+					},
-+					"fields": {
-+						"type": "object",
-+						"properties": {
-+							"value": {
-+								"type": "object",
-+								"properties": {
-+									"timestamp_ms": {"type": "number"},
-+									"value": {"type": "number"}
-+								},
-+								"required": ["timestamp_ms", "value"]
-+							}
-+						}
-+					}
-+				},
-+				"required": ["virtual_path", "fields"]
-+			}`))
++	Context("when closing validator", func() {
++		It("should clear cache on close", func() {
++			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 +			Expect(err).To(BeNil())
 +
-+			var wg sync.WaitGroup
-+			numGoroutines := 10
++			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
 +
-+			for i := 0; i < numGoroutines; i++ {
-+				wg.Add(1)
-+				go func() {
-+					defer wg.Done()
-+					topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._test_contract-v1.test")
-+					Expect(err).To(BeNil())
-+					result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-+					Expect(result.SchemaCheckPassed).To(BeTrue())
-+					Expect(result.SchemaCheckBypassed).To(BeFalse())
-+					Expect(result.Error).To(BeNil())
-+				}()
-+			}
++			// Validate to populate cache
++			result := validator.Validate(unsTopic, payload)
++			Expect(result.SchemaCheckPassed).To(BeTrue())
 +
-+			wg.Wait()
-+		})
++			// Verify cache has entries
++			validator.cacheMutex.RLock()
++			cacheSize := len(validator.schemaCache)
++			validator.cacheMutex.RUnlock()
++			Expect(cacheSize).To(BeNumerically(">", 0))
 +
-+		It("should handle concurrent schema loading and validation", func() {
-+			var wg sync.WaitGroup
-+			numGoroutines := 5
++			// Close validator
++			validator.Close()
 +
-+			// Load schemas concurrently
-+			for i := 0; i < numGoroutines; i++ {
-+				wg.Add(1)
-+				go func(index int) {
-+					defer wg.Done()
-+					contractName := fmt.Sprintf("_concurrent_test_%d", index)
-+					schema := []byte(fmt.Sprintf(`
-+					{
-+						"type": "object",
-+						"properties": {
-+							"virtual_path": {
-+								"type": "string",
-+								"enum": ["test_%d"]
-+							},
-+							"fields": {
-+								"type": "object",
-+								"properties": {
-+									"value": {
-+										"type": "object",
-+										"properties": {
-+											"timestamp_ms": {"type": "number"},
-+											"value": {"type": "number"}
-+										},
-+										"required": ["timestamp_ms", "value"]
-+									}
-+								}
-+							}
-+						},
-+						"required": ["virtual_path", "fields"]
-+					}`, index))
-+					err := validator.LoadSchema(contractName, 1, schema)
-+					Expect(err).To(BeNil())
-+				}(i)
-+			}
-+
-+			wg.Wait()
-+
-+			// Validate with each schema concurrently
-+			for i := 0; i < numGoroutines; i++ {
-+				wg.Add(1)
-+				go func(index int) {
-+					defer wg.Done()
-+					contractName := fmt.Sprintf("_concurrent_test_%d", index)
-+					topicString := fmt.Sprintf("umh.v1.enterprise.site.area.%s-v1.test_%d", contractName, index)
-+					topic, err := topic.NewUnsTopic(topicString)
-+					Expect(err).To(BeNil())
-+					result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-+					Expect(result.SchemaCheckPassed).To(BeTrue())
-+					Expect(result.SchemaCheckBypassed).To(BeFalse())
-+					Expect(result.Error).To(BeNil())
-+				}(i)
-+			}
-+
-+			wg.Wait()
-+		})
-+	})
-+
-+	Context("when handling schema versions", func() {
-+		var validator *Validator
-+
-+		BeforeEach(func() {
-+			validator = NewValidator()
-+		})
-+
-+		It("should handle version zero", func() {
-+			schema := []byte(`{"type": "object", "properties": {"test": {"type": "string"}}}`)
-+			err := validator.LoadSchema("_test_contract", 0, schema)
-+			Expect(err).To(BeNil())
-+			Expect(validator.HasSchema("_test_contract", 0)).To(BeTrue())
-+		})
-+
-+		It("should handle large version numbers", func() {
-+			schema := []byte(`{"type": "object", "properties": {"test": {"type": "string"}}}`)
-+			largeVersion := uint64(18446744073709551615) // max uint64
-+			err := validator.LoadSchema("_test_contract", largeVersion, schema)
-+			Expect(err).To(BeNil())
-+			Expect(validator.HasSchema("_test_contract", largeVersion)).To(BeTrue())
-+		})
-+
-+		It("should maintain separate versions independently", func() {
-+			schema1 := []byte(`{"type": "object", "properties": {"v1_field": {"type": "string"}}}`)
-+			schema2 := []byte(`{"type": "object", "properties": {"v2_field": {"type": "number"}}}`)
-+
-+			err := validator.LoadSchema("_versioned_contract", 1, schema1)
-+			Expect(err).To(BeNil())
-+
-+			err = validator.LoadSchema("_versioned_contract", 2, schema2)
-+			Expect(err).To(BeNil())
-+
-+			Expect(validator.HasSchema("_versioned_contract", 1)).To(BeTrue())
-+			Expect(validator.HasSchema("_versioned_contract", 2)).To(BeTrue())
-+			Expect(validator.HasSchema("_versioned_contract", 3)).To(BeFalse())
++			// Verify cache is cleared
++			validator.cacheMutex.RLock()
++			cacheSize = len(validator.schemaCache)
++			validator.cacheMutex.RUnlock()
++			Expect(cacheSize).To(Equal(0))
 +		})
 +	})
 +})
-diff --git a/uns_plugin/uns_output.go b/uns_plugin/uns_output.go
+diff --git c/uns_plugin/uns_output.go w/uns_plugin/uns_output.go
 index 70ae9a4..0881d4a 100644
---- a/uns_plugin/uns_output.go
-+++ b/uns_plugin/uns_output.go
+--- c/uns_plugin/uns_output.go
++++ w/uns_plugin/uns_output.go
 @@ -17,12 +17,14 @@ package uns_plugin
  import (
  	"context"
@@ -5533,10 +2789,10 @@ index 70ae9a4..0881d4a 100644
  		record := Record{
  			Topic:   defaultOutputTopic,
  			Key:     []byte(key),
-diff --git a/uns_plugin/uns_output_test.go b/uns_plugin/uns_output_test.go
+diff --git c/uns_plugin/uns_output_test.go w/uns_plugin/uns_output_test.go
 index 84285d6..dc4e92d 100644
---- a/uns_plugin/uns_output_test.go
-+++ b/uns_plugin/uns_output_test.go
+--- c/uns_plugin/uns_output_test.go
++++ w/uns_plugin/uns_output_test.go
 @@ -24,6 +24,7 @@ import (
  	"github.com/redpanda-data/benthos/v4/public/service"
  	"github.com/twmb/franz-go/pkg/kgo"

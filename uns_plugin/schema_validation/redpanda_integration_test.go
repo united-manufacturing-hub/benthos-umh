@@ -16,24 +16,23 @@ package schemavalidation
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os/exec"
 	"sort"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/redpanda"
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
-const (
-	redpandaContainerName      = "benthos-umh-test-redpanda"
-	redpandaSchemaRegistryURL  = "http://localhost:8081"
-	redpandaKafkaPort          = "9092"
-	redpandaSchemaRegistryPort = "8081"
+var (
+	redpandaContainer         testcontainers.Container
+	redpandaSchemaRegistryURL string
 )
 
 // RedpandaTestSchemas contains the test schemas we'll load into Redpanda
@@ -270,69 +269,38 @@ func (c *RedpandaSchemaRegistryClient) DeleteAllSubjects() error {
 	return nil
 }
 
+// cleanupRedpandaContainer cleans up the Redpanda container
 func cleanupRedpandaContainer() {
-	// Kill and remove any existing container with our name
-	exec.Command("docker", "kill", redpandaContainerName).Run()
-	exec.Command("docker", "rm", "-f", redpandaContainerName).Run()
-
-	// Wait for container to be removed completely
-	Eventually(func() bool {
-		cmd := exec.Command("docker", "ps", "-a", "-q", "--filter", fmt.Sprintf("name=%s", redpandaContainerName))
-		output, err := cmd.Output()
-		return err != nil || len(output) == 0
-	}, "15s", "1s").Should(BeTrue(), "Container should be removed completely")
+	if redpandaContainer != nil {
+		ctx := context.Background()
+		redpandaContainer.Terminate(ctx)
+		redpandaContainer = nil
+	}
 }
 
+// startRedpandaContainer starts a Redpanda container using testcontainers
 func startRedpandaContainer() error {
 	// Clean up any existing container first
 	cleanupRedpandaContainer()
 
-	// Start Redpanda container
-	cmd := exec.Command("docker", "run", "-d",
-		"--name", redpandaContainerName,
-		"-p", fmt.Sprintf("%s:9092", redpandaKafkaPort),
-		"-p", fmt.Sprintf("%s:8081", redpandaSchemaRegistryPort),
-		"-p", "8082:8082",
-		"-p", "9644:9644",
-		"redpandadata/redpanda:latest",
-		"redpanda", "start",
-		"--overprovisioned",
-		"--smp", "1",
-		"--memory", "1G",
-		"--reserve-memory", "0M",
-		"--node-id", "0",
-		"--check=false")
+	ctx := context.Background()
 
-	output, err := cmd.CombinedOutput()
+	// Create Redpanda container with testcontainers using Docker Hub image
+	container, err := redpanda.Run(ctx,
+		"redpandadata/redpanda:latest")
 	if err != nil {
-		return fmt.Errorf("failed to start Redpanda container: %w, output: %s", err, string(output))
+		return fmt.Errorf("failed to start Redpanda container: %w", err)
 	}
 
-	// Wait for Redpanda to actually start up successfully
-	redpandaStarted := false
-	Eventually(func() bool {
-		// Check container logs for successful startup message
-		logsCmd := exec.Command("docker", "logs", redpandaContainerName)
-		logsOutput, err := logsCmd.CombinedOutput()
-		if err != nil {
-			return false
-		}
-
-		logsStr := string(logsOutput)
-		if strings.Contains(logsStr, "Successfully started Redpanda!") {
-			redpandaStarted = true
-			return true
-		}
-
-		return false
-	}, "60s", "2s").Should(BeTrue(), "Redpanda should start successfully")
-
-	if !redpandaStarted {
-		// On failure, dump full logs for debugging
-		logsCmd := exec.Command("docker", "logs", redpandaContainerName)
-		logsOutput, _ := logsCmd.CombinedOutput()
-		return fmt.Errorf("Redpanda failed to start within timeout. Full logs:\n%s", string(logsOutput))
+	// Get the schema registry URL
+	schemaRegistryURL, err := container.SchemaRegistryAddress(ctx)
+	if err != nil {
+		container.Terminate(ctx)
+		return fmt.Errorf("failed to get schema registry URL: %w", err)
 	}
+
+	redpandaContainer = container
+	redpandaSchemaRegistryURL = schemaRegistryURL
 
 	return nil
 }
@@ -396,16 +364,6 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 	var validator *Validator
 
 	BeforeAll(func() {
-		// Skip if Docker is not available
-		if _, err := exec.LookPath("docker"); err != nil {
-			Skip("Docker not available, skipping Redpanda integration tests")
-		}
-
-		// Check if Docker daemon is running
-		if err := exec.Command("docker", "info").Run(); err != nil {
-			Skip("Docker daemon not running, skipping Redpanda integration tests")
-		}
-
 		By("Starting Redpanda container")
 		Expect(startRedpandaContainer()).To(Succeed())
 
