@@ -27,7 +27,7 @@ import (
 // These are shared across all schema instances to optimize compilation performance.
 var (
 	schemaCompiler      = jsonschema.NewCompiler()
-	schemaCompilerMutex sync.Mutex
+	schemaCompilerMutex sync.RWMutex
 )
 
 // SchemaVersion represents a compiled JSON schema for a specific version.
@@ -73,6 +73,9 @@ func (s *Schema) AddVersion(version uint64, schema []byte) error {
 
 // HasVersion checks if a specific version exists and has a valid compiled schema.
 func (s *Schema) HasVersion(version uint64) bool {
+	schemaCompilerMutex.RLock()
+	defer schemaCompilerMutex.RUnlock()
+
 	schemaVersion, exists := s.Versions.Versions[version]
 	return exists && schemaVersion.JSONSchema != nil
 }
@@ -80,6 +83,9 @@ func (s *Schema) HasVersion(version uint64) bool {
 // GetVersion retrieves the compiled JSON schema for the specified version.
 // Returns nil if the version doesn't exist.
 func (s *Schema) GetVersion(version uint64) *jsonschema.Schema {
+	schemaCompilerMutex.RLock()
+	defer schemaCompilerMutex.RUnlock()
+
 	if schemaVersion, exists := s.Versions.Versions[version]; exists {
 		return schemaVersion.JSONSchema
 	}
