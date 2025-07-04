@@ -194,8 +194,8 @@ func (m *MockSchemaRegistry) handleLatestVersion(w http.ResponseWriter, subject 
 
 // SetupTestSchemas adds common test schemas to the mock registry
 func (m *MockSchemaRegistry) SetupTestSchemas() {
-	// Add a sensor data contract v1 (temperature only)
-	sensorDataV1 := `{
+	// Add sensor data schemas v1 with different data types
+	sensorDataV1NumberSchema := `{
 		"type": "object",
 		"properties": {
 			"virtual_path": {
@@ -221,10 +221,10 @@ func (m *MockSchemaRegistry) SetupTestSchemas() {
 		"required": ["virtual_path", "fields"],
 		"additionalProperties": false
 	}`
-	m.AddSchema("_sensor_data", 1, sensorDataV1)
+	m.AddSchema("_sensor_data_v1_timeseries-number", 1, sensorDataV1NumberSchema)
 
-	// Add a sensor data contract v2 with additional fields
-	sensorDataV2 := `{
+	// Add sensor data schemas v2 with expanded virtual paths and number type
+	sensorDataV2NumberSchema := `{
 		"type": "object",
 		"properties": {
 			"virtual_path": {
@@ -250,10 +250,10 @@ func (m *MockSchemaRegistry) SetupTestSchemas() {
 		"required": ["virtual_path", "fields"],
 		"additionalProperties": false
 	}`
-	m.AddSchema("_sensor_data", 2, sensorDataV2)
+	m.AddSchema("_sensor_data_v2_timeseries-number", 2, sensorDataV2NumberSchema)
 
-	// Add a pump contract v1
-	pumpDataV1 := `{
+	// Add pump data schemas v1 with different data types
+	pumpDataV1NumberSchema := `{
 		"type": "object",
 		"properties": {
 			"virtual_path": {
@@ -279,39 +279,10 @@ func (m *MockSchemaRegistry) SetupTestSchemas() {
 		"required": ["virtual_path", "fields"],
 		"additionalProperties": false
 	}`
-	m.AddSchema("_pump_data", 1, pumpDataV1)
+	m.AddSchema("_pump_data_v1_timeseries-number", 1, pumpDataV1NumberSchema)
 
-	// Add a motor contract v3 (skipping v1 and v2 to test version gaps)
-	motorDataV3 := `{
-		"type": "object",
-		"properties": {
-			"virtual_path": {
-				"type": "string",
-				"enum": ["rpm", "temperature", "status"]
-			},
-			"fields": {
-				"type": "object",
-				"properties": {
-					"value": {
-						"type": "object",
-						"properties": {
-							"timestamp_ms": {"type": "number"},
-							"value": {"type": "number"}
-						},
-						"required": ["timestamp_ms", "value"],
-						"additionalProperties": false
-					}
-				},
-				"additionalProperties": false
-			}
-		},
-		"required": ["virtual_path", "fields"],
-		"additionalProperties": false
-	}`
-	m.AddSchema("_motor_controller", 3, motorDataV3)
-
-	// Add a string value schema for testing different data types
-	stringDataV1 := `{
+	// Add pump data string schema for serial numbers
+	pumpDataV1StringSchema := `{
 		"type": "object",
 		"properties": {
 			"virtual_path": {
@@ -337,7 +308,94 @@ func (m *MockSchemaRegistry) SetupTestSchemas() {
 		"required": ["virtual_path", "fields"],
 		"additionalProperties": false
 	}`
-	m.AddSchema("_string_data", 1, stringDataV1)
+	m.AddSchema("_pump_data_v1_timeseries-string", 1, pumpDataV1StringSchema)
+
+	// Add motor controller schemas v3 (skipping v1 and v2 to test version gaps)
+	motorDataV3NumberSchema := `{
+		"type": "object",
+		"properties": {
+			"virtual_path": {
+				"type": "string",
+				"enum": ["rpm", "temperature", "status"]
+			},
+			"fields": {
+				"type": "object",
+				"properties": {
+					"value": {
+						"type": "object",
+						"properties": {
+							"timestamp_ms": {"type": "number"},
+							"value": {"type": "number"}
+						},
+						"required": ["timestamp_ms", "value"],
+						"additionalProperties": false
+					}
+				},
+				"additionalProperties": false
+			}
+		},
+		"required": ["virtual_path", "fields"],
+		"additionalProperties": false
+	}`
+	m.AddSchema("_motor_controller_v3_timeseries-number", 3, motorDataV3NumberSchema)
+
+	// Add motor controller string schema for status
+	motorDataV3StringSchema := `{
+		"type": "object",
+		"properties": {
+			"virtual_path": {
+				"type": "string",
+				"enum": ["status", "mode"]
+			},
+			"fields": {
+				"type": "object",
+				"properties": {
+					"value": {
+						"type": "object",
+						"properties": {
+							"timestamp_ms": {"type": "number"},
+							"value": {"type": "string"}
+						},
+						"required": ["timestamp_ms", "value"],
+						"additionalProperties": false
+					}
+				},
+				"additionalProperties": false
+			}
+		},
+		"required": ["virtual_path", "fields"],
+		"additionalProperties": false
+	}`
+	m.AddSchema("_motor_controller_v3_timeseries-string", 3, motorDataV3StringSchema)
+
+	// Add string data schemas v1 for testing different data types
+	stringDataV1Schema := `{
+		"type": "object",
+		"properties": {
+			"virtual_path": {
+				"type": "string",
+				"enum": ["serialNumber", "status"]
+			},
+			"fields": {
+				"type": "object",
+				"properties": {
+					"value": {
+						"type": "object",
+						"properties": {
+							"timestamp_ms": {"type": "number"},
+							"value": {"type": "string"}
+						},
+						"required": ["timestamp_ms", "value"],
+						"additionalProperties": false
+					}
+				},
+				"additionalProperties": false
+			}
+		},
+		"required": ["virtual_path", "fields"],
+		"additionalProperties": false
+	}`
+	m.AddSchema("_string_data_v1_timeseries-string", 1, stringDataV1Schema)
 }
 
 // SimulateNetworkError makes the mock server return 500 errors for testing

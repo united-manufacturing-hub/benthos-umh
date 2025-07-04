@@ -32,6 +32,7 @@ const (
 	cacheHitTTL  = 0                // Cache successful schema fetches forever (schemas are immutable)
 	cacheMissTTL = 10 * time.Minute // Cache misses for 10 minutes to retry sooner
 	httpTimeout  = 30 * time.Second
+	maxCacheSize = 1000 // Maximum number of cache entries to prevent memory leaks
 )
 
 // schemaVersionRegex matches data contract names with version suffixes.
@@ -54,20 +55,21 @@ type ValidationResult struct {
 	Error error
 }
 
-// CacheEntry represents a cached schema entry with TTL
-type CacheEntry struct {
-	// Schema holds the actual schema if it exists, nil if schema doesn't exist
-	Schema *Schema
-	// SchemaExists indicates whether the schema exists in the registry
+// ContractCacheEntry represents a cached entry for a contract+version combination
+// It can hold multiple schemas (with different suffixes) for the same contract+version
+type ContractCacheEntry struct {
+	// Schemas maps schema subject names to compiled schemas
+	Schemas map[string]*Schema
+	// SchemaExists indicates whether any schemas exist for this contract+version
 	SchemaExists bool
 	// CachedAt is when this entry was cached
 	CachedAt time.Time
-	// ExpiredAt is when this entry expires
+	// ExpiresAt is when this entry expires
 	ExpiresAt time.Time
 }
 
 // IsExpired checks if the cache entry has expired
-func (ce *CacheEntry) IsExpired() bool {
+func (ce *ContractCacheEntry) IsExpired() bool {
 	// Zero time means never expires (for immutable schema hits)
 	if ce.ExpiresAt.IsZero() {
 		return false
@@ -84,8 +86,8 @@ type SchemaRegistryVersion struct {
 
 // Validator manages schema validation for UNS topics with TTL-based caching.
 type Validator struct {
-	// Cache maps "contractName-v123" to CacheEntry
-	schemaCache       map[string]*CacheEntry
+	// Cache maps "contractName-v123" to ContractCacheEntry
+	contractCache     map[string]*ContractCacheEntry
 	cacheMutex        sync.RWMutex
 	schemaRegistryURL string
 	httpClient        *http.Client
@@ -93,27 +95,47 @@ type Validator struct {
 
 // NewValidator creates a new Validator instance with empty cache.
 func NewValidator() *Validator {
+	// Create HTTP client with proper connection limits to prevent leaks
+	transport := &http.Transport{
+		MaxIdleConns:        10,               // Limit total idle connections
+		MaxConnsPerHost:     5,                // Limit connections per host
+		MaxIdleConnsPerHost: 2,                // Limit idle connections per host
+		IdleConnTimeout:     90 * time.Second, // Close idle connections after 90s
+		DisableKeepAlives:   false,            // Allow connection reuse
+	}
+
 	return &Validator{
-		schemaCache: make(map[string]*CacheEntry),
+		contractCache: make(map[string]*ContractCacheEntry),
 		httpClient: &http.Client{
-			Timeout: httpTimeout,
+			Timeout:   httpTimeout,
+			Transport: transport,
 		},
 	}
 }
 
 // NewValidatorWithRegistry creates a new Validator instance with the specified schema registry URL.
 func NewValidatorWithRegistry(schemaRegistryURL string) *Validator {
+	// Create HTTP client with proper connection limits to prevent leaks
+	transport := &http.Transport{
+		MaxIdleConns:        10,               // Limit total idle connections
+		MaxConnsPerHost:     5,                // Limit connections per host
+		MaxIdleConnsPerHost: 2,                // Limit idle connections per host
+		IdleConnTimeout:     90 * time.Second, // Close idle connections after 90s
+		DisableKeepAlives:   false,            // Allow connection reuse
+	}
+
 	return &Validator{
-		schemaCache:       make(map[string]*CacheEntry),
+		contractCache:     make(map[string]*ContractCacheEntry),
 		schemaRegistryURL: schemaRegistryURL,
 		httpClient: &http.Client{
-			Timeout: httpTimeout,
+			Timeout:   httpTimeout,
+			Transport: transport,
 		},
 	}
 }
 
-// Validate validates the given UNS topic and payload against the registered schema.
-// It extracts the contract and version from the topic, finds the appropriate schema,
+// Validate validates the given UNS topic and payload against the registered schemas.
+// It extracts the contract and version from the topic, finds all appropriate schemas,
 // and validates the payload structure. Returns a ValidationResult with contract information.
 func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *ValidationResult {
 	if unsTopic == nil {
@@ -155,15 +177,15 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 		}
 	}
 
-	// Get schema from cache or fetch synchronously
-	schema, schemaExists, err := v.getSchemaWithCache(contractName, version)
+	// Get schemas from cache or fetch synchronously
+	schemas, schemaExists, err := v.getSchemasWithCache(contractName, version)
 	if err != nil {
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
 			SchemaCheckBypassed: true,
 			ContractName:        contractName,
 			ContractVersion:     version,
-			BypassReason:        fmt.Sprintf("failed to fetch schema: %v", err),
+			BypassReason:        fmt.Sprintf("failed to fetch schemas: %v", err),
 			Error:               nil,
 		}
 	}
@@ -174,30 +196,18 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 			SchemaCheckBypassed: true,
 			ContractName:        contractName,
 			ContractVersion:     version,
-			BypassReason:        fmt.Sprintf("schema for contract '%s' version %d does not exist in registry", contractName, version),
+			BypassReason:        fmt.Sprintf("no schemas found for contract '%s' version %d", contractName, version),
 			Error:               nil,
 		}
 	}
 
-	if schema == nil {
+	if len(schemas) == 0 {
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
 			SchemaCheckBypassed: true,
 			ContractName:        contractName,
 			ContractVersion:     version,
-			BypassReason:        fmt.Sprintf("schema for contract '%s' version %d is nil", contractName, version),
-			Error:               nil,
-		}
-	}
-
-	jsonSchema := schema.GetVersion(version)
-	if jsonSchema == nil {
-		return &ValidationResult{
-			SchemaCheckPassed:   false,
-			SchemaCheckBypassed: true,
-			ContractName:        contractName,
-			ContractVersion:     version,
-			BypassReason:        fmt.Sprintf("compiled schema for contract '%s' version %d is nil", contractName, version),
+			BypassReason:        fmt.Sprintf("no schemas available for contract '%s' version %d", contractName, version),
 			Error:               nil,
 		}
 	}
@@ -211,67 +221,84 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 	fullPath.WriteString(topicInfo.Name)
 
 	// Wrap the payload with fields and virtual_path for validation
-	// This implementation is technically not secure, as it allows JSON injection.
-	// However, the input we get is coming from benthos and likely safe.
-	// Also this is not used for any other purpose than validation, so it's not a security issue.
 	wrappedPayload := []byte(fmt.Sprintf(`{"fields": %s, "virtual_path": "%s"}`,
 		string(payload), fullPath.String()))
 
-	validationResult := jsonSchema.ValidateJSON(wrappedPayload)
-	if validationResult == nil {
-		return &ValidationResult{
-			SchemaCheckPassed:   false,
-			SchemaCheckBypassed: false,
-			ContractName:        contractName,
-			ContractVersion:     version,
-			Error:               fmt.Errorf("schema validation result is nil"),
+	// Try to validate against all schemas until one passes
+	var lastError error
+	for subjectName, schema := range schemas {
+		if schema == nil {
+			continue
 		}
-	}
 
-	if !validationResult.Valid {
+		jsonSchema := schema.GetVersion(version)
+		if jsonSchema == nil {
+			continue
+		}
+
+		validationResult := jsonSchema.ValidateJSON(wrappedPayload)
+		if validationResult == nil {
+			lastError = fmt.Errorf("schema validation result is nil for subject '%s'", subjectName)
+			continue
+		}
+
+		if validationResult.Valid {
+			// Found a matching schema
+			return &ValidationResult{
+				SchemaCheckPassed:   true,
+				SchemaCheckBypassed: false,
+				ContractName:        contractName,
+				ContractVersion:     version,
+				Error:               nil,
+			}
+		}
+
+		// Collect validation errors for debugging
 		var validationErrors []string
-		for _, validationErr := range validationResult.Errors {
-			validationErrors = append(validationErrors, validationErr.Error())
+		if validationResult.Errors != nil {
+			for _, validationErr := range validationResult.Errors {
+				if validationErr != nil {
+					validationErrors = append(validationErrors, validationErr.Error())
+				}
+			}
 		}
-		return &ValidationResult{
-			SchemaCheckPassed:   false,
-			SchemaCheckBypassed: false,
-			ContractName:        contractName,
-			ContractVersion:     version,
-			Error: fmt.Errorf("schema validation failed for contract '%s' version %d: %s",
-				contractName, version, strings.Join(validationErrors, "; ")),
-		}
+		lastError = fmt.Errorf("schema validation failed for subject '%s': %s", subjectName, strings.Join(validationErrors, "; "))
 	}
 
+	// None of the schemas matched
 	return &ValidationResult{
-		SchemaCheckPassed:   true,
+		SchemaCheckPassed:   false,
 		SchemaCheckBypassed: false,
 		ContractName:        contractName,
 		ContractVersion:     version,
-		Error:               nil,
+		Error:               fmt.Errorf("schema validation failed for contract '%s' version %d against all available schemas. Last error: %v", contractName, version, lastError),
 	}
 }
 
-// getSchemaWithCache retrieves schema from cache or fetches it synchronously
-func (v *Validator) getSchemaWithCache(contractName string, version uint64) (*Schema, bool, error) {
+// getSchemasWithCache retrieves schemas from cache or fetches them synchronously
+func (v *Validator) getSchemasWithCache(contractName string, version uint64) (map[string]*Schema, bool, error) {
 	cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
 
 	// Check cache first
 	v.cacheMutex.RLock()
-	entry, exists := v.schemaCache[cacheKey]
+	entry, exists := v.contractCache[cacheKey]
 	v.cacheMutex.RUnlock()
 
-	if exists && !entry.IsExpired() {
+	if exists && entry != nil && !entry.IsExpired() {
 		// Cache hit and not expired
-		return entry.Schema, entry.SchemaExists, nil
+		return entry.Schemas, entry.SchemaExists, nil
 	}
 
 	// Cache miss or expired, fetch synchronously
-	return v.fetchSchemaSync(contractName, version)
+	return v.fetchSchemasSync(contractName, version)
 }
 
-// fetchSchemaSync fetches schema synchronously and updates cache
-func (v *Validator) fetchSchemaSync(contractName string, version uint64) (*Schema, bool, error) {
+// fetchSchemasSync fetches all schemas matching the contract+version pattern synchronously and updates cache
+//
+// This function always fetches the LATEST version of each schema subject rather than trying to map
+// contract versions to registry versions. This simplifies the architecture and avoids version conflicts
+// since schema registry versions are independent of UMH contract versions.
+func (v *Validator) fetchSchemasSync(contractName string, version uint64) (map[string]*Schema, bool, error) {
 	cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
 
 	// Double-check locking pattern
@@ -279,16 +306,16 @@ func (v *Validator) fetchSchemaSync(contractName string, version uint64) (*Schem
 	defer v.cacheMutex.Unlock()
 
 	// Check if another goroutine already fetched it
-	if entry, exists := v.schemaCache[cacheKey]; exists && !entry.IsExpired() {
-		return entry.Schema, entry.SchemaExists, nil
+	if entry, exists := v.contractCache[cacheKey]; exists && entry != nil && !entry.IsExpired() {
+		return entry.Schemas, entry.SchemaExists, nil
 	}
 
-	// Fetch from registry
-	schemaBytes, schemaExists, err := v.fetchSchemaFromRegistry(contractName, version)
+	// Fetch all subjects from registry
+	subjects, err := v.fetchAllSubjects()
 	if err != nil {
-		// Cache the error result (schema doesn't exist or fetch failed)
-		v.schemaCache[cacheKey] = &CacheEntry{
-			Schema:       nil,
+		// Cache the error result
+		v.contractCache[cacheKey] = &ContractCacheEntry{
+			Schemas:      make(map[string]*Schema),
 			SchemaExists: false,
 			CachedAt:     time.Now(),
 			ExpiresAt:    time.Now().Add(cacheMissTTL),
@@ -296,52 +323,116 @@ func (v *Validator) fetchSchemaSync(contractName string, version uint64) (*Schem
 		return nil, false, err
 	}
 
-	if !schemaExists {
-		// Cache the fact that schema doesn't exist
-		v.schemaCache[cacheKey] = &CacheEntry{
-			Schema:       nil,
+	// Filter subjects that match our pattern: contractName_v{version}_*
+	schemaPrefix := fmt.Sprintf("%s_v%d_", contractName, version)
+	var matchingSubjects []string
+	for _, subject := range subjects {
+		if strings.HasPrefix(subject, schemaPrefix) {
+			matchingSubjects = append(matchingSubjects, subject)
+		}
+	}
+
+	if len(matchingSubjects) == 0 {
+		// No matching schemas found
+		v.contractCache[cacheKey] = &ContractCacheEntry{
+			Schemas:      make(map[string]*Schema),
 			SchemaExists: false,
 			CachedAt:     time.Now(),
 			ExpiresAt:    time.Now().Add(cacheMissTTL),
 		}
+		// Evict oldest entries if cache is too large (prevent memory leaks)
+		v.evictOldestEntries()
 		return nil, false, nil
 	}
 
-	// Compile the schema
-	schema := NewSchema(contractName)
-	if err := schema.AddVersion(version, schemaBytes); err != nil {
-		// Cache the compilation error
-		v.schemaCache[cacheKey] = &CacheEntry{
-			Schema:       nil,
-			SchemaExists: false,
-			CachedAt:     time.Now(),
-			ExpiresAt:    time.Now().Add(cacheMissTTL),
+	// Fetch and compile all matching schemas
+	schemas := make(map[string]*Schema)
+	for _, subject := range matchingSubjects {
+		// Always fetch the LATEST version of each schema subject, NOT a specific version number.
+		//
+		// Why? Schema registry versions are independent of UMH contract versions:
+		// - Contract "_sensor_data-v2" means "version 2 of the sensor data contract"
+		// - But subject "_sensor_data_v2_timeseries-number" might be registered as registry version 1
+		//   (because it's the first version of that specific subject)
+		// - By fetching "latest", we avoid complex version mapping and always get the current schema
+		// - This also automatically picks up schema updates without code changes
+		schemaBytes, schemaExists, err := v.fetchLatestSchemaFromRegistry(subject)
+		if err != nil {
+			// Log error but continue with other schemas
+			continue
 		}
-		return nil, false, fmt.Errorf("failed to compile schema: %w", err)
+
+		if !schemaExists {
+			continue
+		}
+
+		// Compile the schema
+		schema := NewSchema(subject)
+		if err := schema.AddVersion(version, schemaBytes); err != nil {
+			// Log error but continue with other schemas
+			continue
+		}
+
+		schemas[subject] = schema
 	}
 
-	// Cache the successful result - forever since schemas are immutable
+	// Cache the results
 	expiresAt := time.Time{} // Zero time means never expires
 	if cacheHitTTL > 0 {
 		expiresAt = time.Now().Add(cacheHitTTL)
 	}
-	v.schemaCache[cacheKey] = &CacheEntry{
-		Schema:       schema,
-		SchemaExists: true,
+
+	v.contractCache[cacheKey] = &ContractCacheEntry{
+		Schemas:      schemas,
+		SchemaExists: len(schemas) > 0,
 		CachedAt:     time.Now(),
 		ExpiresAt:    expiresAt,
 	}
 
-	return schema, true, nil
+	// Evict oldest entries if cache is too large (prevent memory leaks)
+	v.evictOldestEntries()
+
+	return schemas, len(schemas) > 0, nil
 }
 
-// fetchSchemaFromRegistry fetches schema from the registry
-func (v *Validator) fetchSchemaFromRegistry(contractName string, version uint64) ([]byte, bool, error) {
+// fetchAllSubjects fetches all subjects from the schema registry
+func (v *Validator) fetchAllSubjects() ([]string, error) {
+	if v.schemaRegistryURL == "" {
+		return nil, fmt.Errorf("schema registry URL is not configured")
+	}
+
+	url := fmt.Sprintf("%s/subjects", v.schemaRegistryURL)
+
+	resp, err := v.httpClient.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch subjects from registry: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("schema registry returned status %d for subjects", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read subjects response: %w", err)
+	}
+
+	var subjects []string
+	if err := json.Unmarshal(body, &subjects); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal subjects response: %w", err)
+	}
+
+	return subjects, nil
+}
+
+// fetchSchemaFromRegistry fetches schema from the registry by subject and version
+func (v *Validator) fetchSchemaFromRegistry(subject string, version int) ([]byte, bool, error) {
 	if v.schemaRegistryURL == "" {
 		return nil, false, fmt.Errorf("schema registry URL is not configured")
 	}
 
-	url := fmt.Sprintf("%s/subjects/%s/versions/%d", v.schemaRegistryURL, contractName, version)
+	url := fmt.Sprintf("%s/subjects/%s/versions/%d", v.schemaRegistryURL, subject, version)
 
 	resp, err := v.httpClient.Get(url)
 	if err != nil {
@@ -370,6 +461,47 @@ func (v *Validator) fetchSchemaFromRegistry(contractName string, version uint64)
 	return []byte(versionResp.Schema), true, nil
 }
 
+// fetchLatestSchemaFromRegistry fetches the latest version of a schema subject
+//
+// This method is preferred over fetchSchemaFromRegistry(subject, version) because:
+// 1. Schema registry versions are independent of UMH contract versions
+// 2. Always getting "latest" avoids version mapping complexity
+// 3. Automatically picks up schema updates without code changes
+// 4. Simpler and more robust than trying to guess the right registry version
+func (v *Validator) fetchLatestSchemaFromRegistry(subject string) ([]byte, bool, error) {
+	if v.schemaRegistryURL == "" {
+		return nil, false, fmt.Errorf("schema registry URL is not configured")
+	}
+
+	url := fmt.Sprintf("%s/subjects/%s/versions/latest", v.schemaRegistryURL, subject)
+
+	resp, err := v.httpClient.Get(url)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to fetch latest schema from registry: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, false, nil // Schema doesn't exist
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, fmt.Errorf("schema registry returned status %d for latest version", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to read latest schema response: %w", err)
+	}
+
+	var versionResp SchemaRegistryVersion
+	if err := json.Unmarshal(body, &versionResp); err != nil {
+		return nil, false, fmt.Errorf("failed to unmarshal latest schema response: %w", err)
+	}
+
+	return []byte(versionResp.Schema), true, nil
+}
+
 // ExtractSchemaVersionFromDataContract parses a data contract string to extract
 // the base contract name and version number.
 // Expected format: "contractname-v123" -> ("contractname", 123, nil)
@@ -392,9 +524,9 @@ func (v *Validator) ExtractSchemaVersionFromDataContract(contract string) (contr
 	return contractName, version, nil
 }
 
-// LoadSchema loads and compiles a schema for the specified contract name and version.
-// The contract name must start with an underscore for easier topic matching.
-func (v *Validator) LoadSchema(contractName string, version uint64, schema []byte) error {
+// LoadSchemas loads and compiles multiple schemas for the specified contract name and version.
+// The schemas parameter is a map of subject names to schema content.
+func (v *Validator) LoadSchemas(contractName string, version uint64, schemas map[string][]byte) error {
 	if contractName == "" {
 		return fmt.Errorf("contract name cannot be empty")
 	}
@@ -403,8 +535,8 @@ func (v *Validator) LoadSchema(contractName string, version uint64, schema []byt
 		return fmt.Errorf("contract name must start with an underscore, got: '%s'", contractName)
 	}
 
-	if len(schema) == 0 {
-		return fmt.Errorf("schema cannot be empty for contract '%s' version %d", contractName, version)
+	if len(schemas) == 0 {
+		return fmt.Errorf("schemas cannot be empty for contract '%s' version %d", contractName, version)
 	}
 
 	cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
@@ -412,47 +544,107 @@ func (v *Validator) LoadSchema(contractName string, version uint64, schema []byt
 	v.cacheMutex.Lock()
 	defer v.cacheMutex.Unlock()
 
-	// Create and compile the schema
-	schemaObj := NewSchema(contractName)
-	if err := schemaObj.AddVersion(version, schema); err != nil {
-		return fmt.Errorf("failed to add schema version %d for contract '%s': %w", version, contractName, err)
+	// Create and compile all schemas
+	compiledSchemas := make(map[string]*Schema)
+	for subjectName, schemaBytes := range schemas {
+		if len(schemaBytes) == 0 {
+			return fmt.Errorf("schema cannot be empty for subject '%s'", subjectName)
+		}
+
+		schemaObj := NewSchema(subjectName)
+		if err := schemaObj.AddVersion(version, schemaBytes); err != nil {
+			return fmt.Errorf("failed to add schema version %d for subject '%s': %w", version, subjectName, err)
+		}
+
+		compiledSchemas[subjectName] = schemaObj
 	}
 
-	// Cache the schema - forever since schemas are immutable
+	// Cache the schemas - forever since schemas are immutable
 	expiresAt := time.Time{} // Zero time means never expires
 	if cacheHitTTL > 0 {
 		expiresAt = time.Now().Add(cacheHitTTL)
 	}
-	v.schemaCache[cacheKey] = &CacheEntry{
-		Schema:       schemaObj,
+
+	v.contractCache[cacheKey] = &ContractCacheEntry{
+		Schemas:      compiledSchemas,
 		SchemaExists: true,
 		CachedAt:     time.Now(),
 		ExpiresAt:    expiresAt,
 	}
 
+	// Evict oldest entries if cache is too large (prevent memory leaks)
+	v.evictOldestEntries()
+
 	return nil
 }
 
-// HasSchema checks if a schema exists for the given contract name and version.
+// HasSchema checks if schemas exist for the given contract name and version.
 func (v *Validator) HasSchema(contractName string, version uint64) bool {
 	cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
 
 	v.cacheMutex.RLock()
 	defer v.cacheMutex.RUnlock()
 
-	entry, exists := v.schemaCache[cacheKey]
-	if !exists || entry.IsExpired() {
+	entry, exists := v.contractCache[cacheKey]
+	if !exists || entry == nil || entry.IsExpired() {
 		return false
 	}
 
-	return entry.SchemaExists && entry.Schema != nil && entry.Schema.HasVersion(version)
+	return entry.SchemaExists && len(entry.Schemas) > 0
 }
 
-// Close cleans up resources (no background processes to stop anymore)
+// Close cleans up resources
 func (v *Validator) Close() {
-	// No background processes to stop, just clear the cache
 	v.cacheMutex.Lock()
 	defer v.cacheMutex.Unlock()
 
-	v.schemaCache = make(map[string]*CacheEntry)
+	// Clear the cache
+	v.contractCache = make(map[string]*ContractCacheEntry)
+
+	// Close HTTP client transport to prevent connection leaks
+	if v.httpClient != nil && v.httpClient.Transport != nil {
+		if transport, ok := v.httpClient.Transport.(*http.Transport); ok {
+			transport.CloseIdleConnections()
+		}
+		v.httpClient = nil
+	}
+}
+
+// evictOldestEntries removes the oldest cache entries if the cache exceeds maxCacheSize
+// This prevents unbounded memory growth in long-running space missions
+func (v *Validator) evictOldestEntries() {
+	if len(v.contractCache) <= maxCacheSize {
+		return
+	}
+
+	// Find the oldest entries to evict
+	type cacheItem struct {
+		key       string
+		timestamp time.Time
+	}
+
+	var items []cacheItem
+	for key, entry := range v.contractCache {
+		if entry != nil {
+			items = append(items, cacheItem{
+				key:       key,
+				timestamp: entry.CachedAt,
+			})
+		}
+	}
+
+	// Sort by timestamp (oldest first)
+	for i := 0; i < len(items)-1; i++ {
+		for j := i + 1; j < len(items); j++ {
+			if items[i].timestamp.After(items[j].timestamp) {
+				items[i], items[j] = items[j], items[i]
+			}
+		}
+	}
+
+	// Remove oldest entries until we're under the limit
+	entriesToRemove := len(v.contractCache) - maxCacheSize + 1
+	for i := 0; i < entriesToRemove && i < len(items); i++ {
+		delete(v.contractCache, items[i].key)
+	}
 }

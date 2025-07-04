@@ -144,8 +144,14 @@ func setupBenchmarkValidator() *Validator {
 		"additionalProperties": false
 	}`)
 
-	// Load the schema
-	validator.LoadSchema("_sensor_data", 1, sensorSchema)
+	// Load the schemas - the LoadSchemas method expects a map of subject names to schema content
+	schemas := map[string][]byte{
+		"_sensor_data_v1_timeseries-number": sensorSchema,
+	}
+	err := validator.LoadSchemas("_sensor_data", 1, schemas)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to load schemas: %v", err))
+	}
 
 	return validator
 }
