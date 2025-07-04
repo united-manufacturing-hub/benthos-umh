@@ -415,7 +415,6 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 		By("Creating validator with real schema registry")
 		validator = NewValidatorWithRegistry(redpandaSchemaRegistryURL)
 		Expect(validator).NotTo(BeNil())
-		Expect(validator.backgroundFetcher).NotTo(BeNil())
 	})
 
 	AfterAll(func() {
@@ -437,25 +436,10 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 			// Create valid payload
 			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
 
-			// First validation should trigger background fetch
+			// With synchronous fetching, schema should be loaded immediately
 			result := validator.Validate(unsTopic, payload)
-			GinkgoWriter.Printf("First validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
+			GinkgoWriter.Printf("Validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
 				result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
-			Expect(result.SchemaCheckBypassed).To(BeTrue())
-			Expect(result.BypassReason).To(ContainSubstring(fmt.Sprintf("schema for contract '%s' version 1 not found", contractName)))
-
-			// Manually trigger background fetch to ensure it happens
-			if validator.backgroundFetcher != nil {
-				validator.backgroundFetcher.processFetchQueue()
-			}
-
-			// Wait for schema to be loaded and validation to pass
-			Eventually(func() bool {
-				result = validator.Validate(unsTopic, payload)
-				GinkgoWriter.Printf("Validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
-					result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
-				return result.SchemaCheckPassed && !result.SchemaCheckBypassed
-			}, "10s", "500ms").Should(BeTrue(), "Schema should be loaded and validation should pass")
 
 			// Check if schema was loaded
 			hasSchema := validator.HasSchema(contractName, 1)
@@ -505,19 +489,9 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 			GinkgoWriter.Printf("V2 temperature validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
 				result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
 
+			// With synchronous fetching, schema should be loaded immediately on first validation
 			if result.SchemaCheckBypassed {
-				// Manually trigger background fetch to ensure it happens
-				if validator.backgroundFetcher != nil {
-					validator.backgroundFetcher.processFetchQueue()
-				}
-
-				// Wait for schema to be loaded
-				Eventually(func() bool {
-					result = validator.Validate(tempTopic, payload)
-					GinkgoWriter.Printf("V2 temperature validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
-						result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
-					return result.SchemaCheckPassed && !result.SchemaCheckBypassed
-				}, "10s", "500ms").Should(BeTrue(), "Schema v2 should be loaded and validation should pass")
+				Fail(fmt.Sprintf("Schema validation was bypassed unexpectedly: %s", result.BypassReason))
 			}
 
 			// Check if schema was loaded
@@ -555,19 +529,9 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 			GinkgoWriter.Printf("First pump data validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
 				result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
 
+			// With synchronous fetching, schema should be loaded immediately on first validation
 			if result.SchemaCheckBypassed {
-				// Manually trigger background fetch to ensure it happens
-				if validator.backgroundFetcher != nil {
-					validator.backgroundFetcher.processFetchQueue()
-				}
-
-				// Wait for schema to be loaded
-				Eventually(func() bool {
-					result = validator.Validate(xAxisTopic, payload)
-					GinkgoWriter.Printf("Pump data validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
-						result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
-					return result.SchemaCheckPassed && !result.SchemaCheckBypassed
-				}, "10s", "500ms").Should(BeTrue(), "Pump data schema should be loaded and validation should pass")
+				Fail(fmt.Sprintf("Schema validation was bypassed unexpectedly: %s", result.BypassReason))
 			}
 
 			// Check if schema was loaded
@@ -674,7 +638,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 			result := validator.Validate(nonExistentTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeFalse())
 			Expect(result.SchemaCheckBypassed).To(BeTrue())
-			Expect(result.BypassReason).To(ContainSubstring("schema for contract '_non_existent_contract' version 1 not found"))
+			Expect(result.BypassReason).To(ContainSubstring("schema for contract '_non_existent_contract' version 1 does not exist in registry"))
 
 			// Wait for background fetch attempt and verify it still bypasses
 			Eventually(func() bool {
@@ -699,30 +663,20 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 		})
 	})
 
-	Context("when testing background fetcher against real registry", func() {
-		It("should automatically fetch schemas in the background", func() {
-			// Create a fresh validator to test background fetching
+	Context("when testing foreground fetcher against real registry", func() {
+		It("should automatically fetch schemas in the foreground", func() {
+			// Create a fresh validator to test foreground fetching
 			freshValidator := NewValidatorWithRegistry(redpandaSchemaRegistryURL)
 			defer freshValidator.Close()
 
-			// Create topic that will trigger background fetch
+			// Create topic that will trigger foreground fetch
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
 			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
 
-			// First validation should bypass and queue schema for fetch
+			// First validation should not bypass
 			result := freshValidator.Validate(unsTopic, payload)
-			Expect(result.SchemaCheckBypassed).To(BeTrue())
-
-			// Wait for automatic background fetching (fetch interval is 5 seconds)
-			Eventually(func() bool {
-				result = freshValidator.Validate(unsTopic, payload)
-				return result.SchemaCheckPassed && !result.SchemaCheckBypassed
-			}, "15s", "1s").Should(BeTrue(), "Background fetcher should automatically fetch and validate schema")
-
-			Expect(result.SchemaCheckPassed).To(BeTrue())
 			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(BeNil())
 		})
 	})
 })
