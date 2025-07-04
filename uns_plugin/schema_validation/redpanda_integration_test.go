@@ -38,7 +38,7 @@ var (
 // RedpandaTestSchemas contains the test schemas we'll load into Redpanda
 // We'll add a timestamp suffix to avoid conflicts between test runs
 var redpandaTestSchemas = map[string]map[int]string{
-	"_sensor_data": {
+	"_sensor_data_v1_timeseries-number": {
 		1: `{
 			"type": "object",
 			"properties": {
@@ -65,7 +65,9 @@ var redpandaTestSchemas = map[string]map[int]string{
 			"required": ["virtual_path", "fields"],
 			"additionalProperties": false
 		}`,
-		2: `{
+	},
+	"_sensor_data_v2_timeseries-number": {
+		1: `{
 			"type": "object",
 			"properties": {
 				"virtual_path": {
@@ -92,7 +94,7 @@ var redpandaTestSchemas = map[string]map[int]string{
 			"additionalProperties": false
 		}`,
 	},
-	"_pump_data": {
+	"_pump_data_v1_timeseries-number": {
 		1: `{
 			"type": "object",
 			"properties": {
@@ -120,7 +122,35 @@ var redpandaTestSchemas = map[string]map[int]string{
 			"additionalProperties": false
 		}`,
 	},
-	"_string_data": {
+	"_pump_data_v1_timeseries-string": {
+		1: `{
+			"type": "object",
+			"properties": {
+				"virtual_path": {
+					"type": "string",
+					"enum": ["serialNumber", "status"]
+				},
+				"fields": {
+					"type": "object",
+					"properties": {
+						"value": {
+							"type": "object",
+							"properties": {
+								"timestamp_ms": {"type": "number"},
+								"value": {"type": "string"}
+							},
+							"required": ["timestamp_ms", "value"],
+							"additionalProperties": false
+						}
+					},
+					"additionalProperties": false
+				}
+			},
+			"required": ["virtual_path", "fields"],
+			"additionalProperties": false
+		}`,
+	},
+	"_string_data_v1_timeseries-string": {
 		1: `{
 			"type": "object",
 			"properties": {
@@ -157,11 +187,31 @@ type RedpandaSchemaRegistryClient struct {
 }
 
 func NewRedpandaSchemaRegistryClient(baseURL string) *RedpandaSchemaRegistryClient {
+	// Create HTTP client with proper connection limits to prevent leaks
+	transport := &http.Transport{
+		MaxIdleConns:        10,               // Limit total idle connections
+		MaxConnsPerHost:     5,                // Limit connections per host
+		MaxIdleConnsPerHost: 2,                // Limit idle connections per host
+		IdleConnTimeout:     90 * time.Second, // Close idle connections after 90s
+		DisableKeepAlives:   false,            // Allow connection reuse
+	}
+
 	return &RedpandaSchemaRegistryClient{
 		baseURL: baseURL,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout:   30 * time.Second,
+			Transport: transport,
 		},
+	}
+}
+
+// Close cleans up the HTTP client resources
+func (c *RedpandaSchemaRegistryClient) Close() {
+	if c.httpClient != nil && c.httpClient.Transport != nil {
+		if transport, ok := c.httpClient.Transport.(*http.Transport); ok {
+			transport.CloseIdleConnections()
+		}
+		c.httpClient = nil
 	}
 }
 
@@ -269,11 +319,15 @@ func (c *RedpandaSchemaRegistryClient) DeleteAllSubjects() error {
 	return nil
 }
 
-// cleanupRedpandaContainer cleans up the Redpanda container
+// cleanupRedpandaContainer cleans up the Redpanda container with proper timeout handling
 func cleanupRedpandaContainer() {
 	if redpandaContainer != nil {
-		ctx := context.Background()
-		redpandaContainer.Terminate(ctx)
+		// Use a timeout context to prevent hanging during cleanup
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		// Terminate the container (ignoring errors since we're cleaning up)
+		_ = redpandaContainer.Terminate(ctx)
 		redpandaContainer = nil
 	}
 }
@@ -307,6 +361,7 @@ func startRedpandaContainer() error {
 
 func setupRedpandaSchemas() error {
 	client := NewRedpandaSchemaRegistryClient(redpandaSchemaRegistryURL)
+	defer client.Close() // Ensure HTTP client is cleaned up
 
 	// Wait for schema registry to be ready
 	if err := client.WaitForReady(); err != nil {
@@ -364,6 +419,18 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 	var validator *Validator
 
 	BeforeAll(func() {
+		// Add panic recovery to prevent resource leaks on test failures
+		defer func() {
+			if r := recover(); r != nil {
+				GinkgoWriter.Printf("BeforeAll panic recovered: %v\n", r)
+				if validator != nil {
+					validator.Close()
+				}
+				cleanupRedpandaContainer()
+				panic(r) // Re-panic to fail the test
+			}
+		}()
+
 		By("Starting Redpanda container")
 		Expect(startRedpandaContainer()).To(Succeed())
 
@@ -376,8 +443,25 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 	})
 
 	AfterAll(func() {
+		// Ensure cleanup happens even if there are failures
+		defer func() {
+			if r := recover(); r != nil {
+				GinkgoWriter.Printf("AfterAll panic recovered: %v\n", r)
+				// Continue cleanup even after panic
+			}
+
+			// Final cleanup regardless of errors
+			if validator != nil {
+				validator.Close()
+				validator = nil
+			}
+			cleanupRedpandaContainer()
+		}()
+
+		By("Cleaning up validator")
 		if validator != nil {
 			validator.Close()
+			validator = nil
 		}
 
 		By("Cleaning up Redpanda container")
@@ -386,12 +470,11 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 
 	Context("when validating against real Redpanda schema registry", Ordered, func() {
 		It("should successfully validate sensor data v1", func() {
-			// Create UNS topic with unique suffix
-			contractName := "_sensor_data"
-			unsTopic, err := topic.NewUnsTopic(fmt.Sprintf("umh.v1.enterprise.site.area.%s-v1.temperature", contractName))
+			// Create UNS topic - note that the topic still uses the original contract format
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
 
-			// Create valid payload
+			// Create valid payload - raw payload that will be wrapped by validator
 			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
 
 			// With synchronous fetching, schema should be loaded immediately
@@ -399,14 +482,14 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 			GinkgoWriter.Printf("Validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
 				result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
 
-			// Check if schema was loaded
-			hasSchema := validator.HasSchema(contractName, 1)
-			GinkgoWriter.Printf("Has schema %s v1: %v\n", contractName, hasSchema)
+			// Check if schemas were loaded for the contract
+			hasSchema := validator.HasSchema("_sensor_data", 1)
+			GinkgoWriter.Printf("Has schemas for _sensor_data v1: %v\n", hasSchema)
 
 			Expect(result.SchemaCheckPassed).To(BeTrue())
 			Expect(result.SchemaCheckBypassed).To(BeFalse())
 			Expect(result.Error).To(BeNil())
-			Expect(result.ContractName).To(Equal(contractName))
+			Expect(result.ContractName).To(Equal("_sensor_data"))
 			Expect(result.ContractVersion).To(Equal(uint64(1)))
 		})
 
@@ -430,7 +513,9 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 			invalidTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.humidity")
 			Expect(err).To(BeNil())
 
-			result = validator.Validate(invalidTopic, validPayload)
+			// Invalid payload - raw payload for humidity topic (which is not allowed in v1)
+			invalidPayload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			result = validator.Validate(invalidTopic, invalidPayload)
 			Expect(result.SchemaCheckPassed).To(BeFalse())
 			Expect(result.SchemaCheckBypassed).To(BeFalse())
 			Expect(result.Error).To(HaveOccurred())
@@ -454,7 +539,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 
 			// Check if schema was loaded
 			hasSchema := validator.HasSchema("_sensor_data", 2)
-			GinkgoWriter.Printf("Has schema _sensor_data v2: %v\n", hasSchema)
+			GinkgoWriter.Printf("Has schemas for _sensor_data v2: %v\n", hasSchema)
 
 			Expect(result.SchemaCheckPassed).To(BeTrue())
 			Expect(result.ContractVersion).To(Equal(uint64(2)))
@@ -462,8 +547,9 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 			// Test humidity (allowed in v2 but not v1)
 			humidityTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v2.humidity")
 			Expect(err).To(BeNil())
+			humidityPayload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
 
-			result = validator.Validate(humidityTopic, payload)
+			result = validator.Validate(humidityTopic, humidityPayload)
 			Expect(result.SchemaCheckPassed).To(BeTrue())
 			Expect(result.ContractVersion).To(Equal(uint64(2)))
 
@@ -494,7 +580,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 
 			// Check if schema was loaded
 			hasSchema := validator.HasSchema("_pump_data", 1)
-			GinkgoWriter.Printf("Has schema _pump_data v1: %v\n", hasSchema)
+			GinkgoWriter.Printf("Has schemas for _pump_data v1: %v\n", hasSchema)
 
 			Expect(result.SchemaCheckPassed).To(BeTrue())
 			Expect(result.ContractName).To(Equal("_pump_data"))
@@ -502,8 +588,9 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 			// Test vibration.y-axis
 			yAxisTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data-v1.vibration.y-axis")
 			Expect(err).To(BeNil())
+			yAxisPayload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 0.5}}`)
 
-			result = validator.Validate(yAxisTopic, payload)
+			result = validator.Validate(yAxisTopic, yAxisPayload)
 			Expect(result.SchemaCheckPassed).To(BeTrue())
 
 			// Test count
@@ -596,7 +683,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 			result := validator.Validate(nonExistentTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeFalse())
 			Expect(result.SchemaCheckBypassed).To(BeTrue())
-			Expect(result.BypassReason).To(ContainSubstring("schema for contract '_non_existent_contract' version 1 does not exist in registry"))
+			Expect(result.BypassReason).To(ContainSubstring("no schemas found for contract"))
 
 			// Wait for background fetch attempt and verify it still bypasses
 			Eventually(func() bool {
@@ -618,6 +705,42 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 			Expect(result.SchemaCheckBypassed).To(BeTrue())
 			Expect(result.BypassReason).To(ContainSubstring("unversioned contract '_unversioned_contract' - bypassing validation (no latest fetching)"))
 			Expect(result.Error).To(BeNil())
+		})
+
+		It("should validate pump data with string values", func() {
+			// Test serialNumber (string value)
+			serialTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data-v1.serialNumber")
+			Expect(err).To(BeNil())
+			serialPayload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "P001-SN123456789"}}`)
+
+			result := validator.Validate(serialTopic, serialPayload)
+			GinkgoWriter.Printf("Pump string data validation result: SchemaCheckPassed=%v, SchemaCheckBypassed=%v, BypassReason=%s, Error=%v\n",
+				result.SchemaCheckPassed, result.SchemaCheckBypassed, result.BypassReason, result.Error)
+
+			// With synchronous fetching, schema should be loaded immediately on first validation
+			if result.SchemaCheckBypassed {
+				Fail(fmt.Sprintf("Schema validation was bypassed unexpectedly: %s", result.BypassReason))
+			}
+
+			Expect(result.SchemaCheckPassed).To(BeTrue())
+			Expect(result.ContractName).To(Equal("_pump_data"))
+			Expect(result.ContractVersion).To(Equal(uint64(1)))
+
+			// Test status (string value)
+			statusTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data-v1.status")
+			Expect(err).To(BeNil())
+			statusPayload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "RUNNING"}}`)
+
+			result = validator.Validate(statusTopic, statusPayload)
+			Expect(result.SchemaCheckPassed).To(BeTrue())
+			Expect(result.ContractName).To(Equal("_pump_data"))
+
+			// Test that number values fail on string-only virtual paths
+			numberPayload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 12345}}`)
+			result = validator.Validate(serialTopic, numberPayload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
 		})
 	})
 
