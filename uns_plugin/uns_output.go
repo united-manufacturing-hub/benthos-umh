@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -148,7 +149,7 @@ type unsOutput struct {
 
 // deriveSchemaRegistryURL derives a schema registry URL from the broker address
 // Takes the first broker from a comma-separated list and converts the port to 8081
-func deriveSchemaRegistryURL(brokerAddress string) string {
+func deriveSchemaRegistryURL(brokerAddress string) (string, error) {
 	// Split by comma to handle multiple brokers
 	brokers := strings.Split(brokerAddress, ",")
 
@@ -157,22 +158,30 @@ func deriveSchemaRegistryURL(brokerAddress string) string {
 
 	// Check if the first broker is empty
 	if firstBroker == "" {
-		return ""
+		return "", fmt.Errorf("broker address is empty")
 	}
+
+	var schemaRegistryURL string
 
 	// Use net.SplitHostPort to properly parse host and port
 	host, _, err := net.SplitHostPort(firstBroker)
 	if err != nil {
 		// If no port specified, assume the entire string is the host
-		return fmt.Sprintf("http://%s:%s", firstBroker, defaultSchemaRegistryPort)
+		schemaRegistryURL = fmt.Sprintf("http://%s:%s", firstBroker, defaultSchemaRegistryPort)
+	} else {
+		// Check if host is empty
+		if host == "" {
+			return "", fmt.Errorf("host is empty in broker address: %s", firstBroker)
+		}
+		schemaRegistryURL = fmt.Sprintf("http://%s:%s", host, defaultSchemaRegistryPort)
 	}
 
-	// Check if host is empty
-	if host == "" {
-		return ""
+	// Validate the constructed URL
+	if _, err := url.Parse(schemaRegistryURL); err != nil {
+		return "", fmt.Errorf("invalid schema registry URL '%s': %w", schemaRegistryURL, err)
 	}
 
-	return fmt.Sprintf("http://%s:%s", host, defaultSchemaRegistryPort)
+	return schemaRegistryURL, nil
 }
 
 // newUnsOutput creates a new unsOutput instance by parsing configuration fields for umh_topic, broker address, and bridge name, returning the output, batch policy, max in-flight count, and any error encountered during parsing.
@@ -229,7 +238,11 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 		config.schemaRegistryURL = schemaRegistryURL
 	} else {
 		// Derive schema registry URL from broker address
-		config.schemaRegistryURL = deriveSchemaRegistryURL(config.brokerAddress)
+		schemaRegistryURL, err := deriveSchemaRegistryURL(config.brokerAddress)
+		if err != nil {
+			return nil, batchPolicy, 0, fmt.Errorf("error deriving schema registry URL from broker address '%s': %w", config.brokerAddress, err)
+		}
+		config.schemaRegistryURL = schemaRegistryURL
 	}
 
 	// Initialize the validator with schema registry URL
@@ -353,7 +366,8 @@ func (o *unsOutput) validateAndEnrichMessage(msg *service.Message, unsTopic *top
 	// Validate the payload against the schema
 	validationResult := o.validator.Validate(unsTopic, msgAsBytes)
 	if !validationResult.SchemaCheckPassed && !validationResult.SchemaCheckBypassed {
-		return fmt.Errorf("error validating message payload in message %d: %v", messageIndex, validationResult.Error)
+		return fmt.Errorf("schema validation failed for message %d with topic '%s': %v. Please check your payload format and ensure it matches the registered schema",
+			messageIndex, unsTopic.String(), validationResult.Error)
 	}
 
 	if validationResult.SchemaCheckPassed {
