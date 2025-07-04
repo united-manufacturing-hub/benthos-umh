@@ -15,13 +15,23 @@
 package schemavalidation
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
+)
+
+const (
+	cacheHitTTL  = 0                // Cache successful schema fetches forever (schemas are immutable)
+	cacheMissTTL = 10 * time.Minute // Cache misses for 10 minutes to retry sooner
+	httpTimeout  = 30 * time.Second
 )
 
 // schemaVersionRegex matches data contract names with version suffixes.
@@ -44,35 +54,62 @@ type ValidationResult struct {
 	Error error
 }
 
-// Validator manages schema validation for UNS topics with thread-safe operations.
-type Validator struct {
-	schemas           map[string]*Schema
-	schemasMutex      sync.RWMutex
-	schemaRegistryURL string
-	backgroundFetcher *BackgroundFetcher
+// CacheEntry represents a cached schema entry with TTL
+type CacheEntry struct {
+	// Schema holds the actual schema if it exists, nil if schema doesn't exist
+	Schema *Schema
+	// SchemaExists indicates whether the schema exists in the registry
+	SchemaExists bool
+	// CachedAt is when this entry was cached
+	CachedAt time.Time
+	// ExpiredAt is when this entry expires
+	ExpiresAt time.Time
 }
 
-// NewValidator creates a new Validator instance with an empty schema registry.
+// IsExpired checks if the cache entry has expired
+func (ce *CacheEntry) IsExpired() bool {
+	// Zero time means never expires (for immutable schema hits)
+	if ce.ExpiresAt.IsZero() {
+		return false
+	}
+	return time.Now().After(ce.ExpiresAt)
+}
+
+// SchemaRegistryVersion represents a version response from the schema registry
+type SchemaRegistryVersion struct {
+	Version int    `json:"version"`
+	ID      int    `json:"id"`
+	Schema  string `json:"schema"`
+}
+
+// Validator manages schema validation for UNS topics with TTL-based caching.
+type Validator struct {
+	// Cache maps "contractName-v123" to CacheEntry
+	schemaCache       map[string]*CacheEntry
+	cacheMutex        sync.RWMutex
+	schemaRegistryURL string
+	httpClient        *http.Client
+}
+
+// NewValidator creates a new Validator instance with empty cache.
 func NewValidator() *Validator {
 	return &Validator{
-		schemas: make(map[string]*Schema),
+		schemaCache: make(map[string]*CacheEntry),
+		httpClient: &http.Client{
+			Timeout: httpTimeout,
+		},
 	}
 }
 
 // NewValidatorWithRegistry creates a new Validator instance with the specified schema registry URL.
 func NewValidatorWithRegistry(schemaRegistryURL string) *Validator {
-	validator := &Validator{
-		schemas:           make(map[string]*Schema),
+	return &Validator{
+		schemaCache:       make(map[string]*CacheEntry),
 		schemaRegistryURL: schemaRegistryURL,
+		httpClient: &http.Client{
+			Timeout: httpTimeout,
+		},
 	}
-
-	// If a schema registry URL is provided, start the background fetcher
-	if schemaRegistryURL != "" {
-		validator.backgroundFetcher = NewBackgroundFetcher(schemaRegistryURL, validator)
-		validator.backgroundFetcher.Start()
-	}
-
-	return validator
 }
 
 // Validate validates the given UNS topic and payload against the registered schema.
@@ -86,9 +123,6 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 			Error:               fmt.Errorf("UNS topic cannot be nil"),
 		}
 	}
-
-	v.schemasMutex.RLock()
-	defer v.schemasMutex.RUnlock()
 
 	topicInfo := unsTopic.Info()
 	if topicInfo == nil {
@@ -121,23 +155,30 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 		}
 	}
 
-	if !v.HasSchema(contractName, version) {
-		// Queue the schema for background fetching if we have a background fetcher
-		if v.backgroundFetcher != nil {
-			v.backgroundFetcher.QueueSchema(contractName, version)
-		}
-
+	// Get schema from cache or fetch synchronously
+	schema, schemaExists, err := v.getSchemaWithCache(contractName, version)
+	if err != nil {
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
 			SchemaCheckBypassed: true,
 			ContractName:        contractName,
 			ContractVersion:     version,
-			BypassReason:        fmt.Sprintf("schema for contract '%s' version %d not found, queued for background fetch", contractName, version),
+			BypassReason:        fmt.Sprintf("failed to fetch schema: %v", err),
 			Error:               nil,
 		}
 	}
 
-	schema := v.schemas[contractName].GetVersion(version)
+	if !schemaExists {
+		return &ValidationResult{
+			SchemaCheckPassed:   false,
+			SchemaCheckBypassed: true,
+			ContractName:        contractName,
+			ContractVersion:     version,
+			BypassReason:        fmt.Sprintf("schema for contract '%s' version %d does not exist in registry", contractName, version),
+			Error:               nil,
+		}
+	}
+
 	if schema == nil {
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
@@ -145,6 +186,18 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 			ContractName:        contractName,
 			ContractVersion:     version,
 			BypassReason:        fmt.Sprintf("schema for contract '%s' version %d is nil", contractName, version),
+			Error:               nil,
+		}
+	}
+
+	jsonSchema := schema.GetVersion(version)
+	if jsonSchema == nil {
+		return &ValidationResult{
+			SchemaCheckPassed:   false,
+			SchemaCheckBypassed: true,
+			ContractName:        contractName,
+			ContractVersion:     version,
+			BypassReason:        fmt.Sprintf("compiled schema for contract '%s' version %d is nil", contractName, version),
 			Error:               nil,
 		}
 	}
@@ -161,7 +214,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 	wrappedPayload := []byte(fmt.Sprintf(`{"fields": %s, "virtual_path": "%s"}`,
 		string(payload), fullPath.String()))
 
-	validationResult := schema.ValidateJSON(wrappedPayload)
+	validationResult := jsonSchema.ValidateJSON(wrappedPayload)
 	if validationResult == nil {
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
@@ -194,6 +247,124 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 		ContractVersion:     version,
 		Error:               nil,
 	}
+}
+
+// getSchemaWithCache retrieves schema from cache or fetches it synchronously
+func (v *Validator) getSchemaWithCache(contractName string, version uint64) (*Schema, bool, error) {
+	cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
+
+	// Check cache first
+	v.cacheMutex.RLock()
+	entry, exists := v.schemaCache[cacheKey]
+	v.cacheMutex.RUnlock()
+
+	if exists && !entry.IsExpired() {
+		// Cache hit and not expired
+		return entry.Schema, entry.SchemaExists, nil
+	}
+
+	// Cache miss or expired, fetch synchronously
+	return v.fetchSchemaSync(contractName, version)
+}
+
+// fetchSchemaSync fetches schema synchronously and updates cache
+func (v *Validator) fetchSchemaSync(contractName string, version uint64) (*Schema, bool, error) {
+	cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
+
+	// Double-check locking pattern
+	v.cacheMutex.Lock()
+	defer v.cacheMutex.Unlock()
+
+	// Check if another goroutine already fetched it
+	if entry, exists := v.schemaCache[cacheKey]; exists && !entry.IsExpired() {
+		return entry.Schema, entry.SchemaExists, nil
+	}
+
+	// Fetch from registry
+	schemaBytes, schemaExists, err := v.fetchSchemaFromRegistry(contractName, version)
+	if err != nil {
+		// Cache the error result (schema doesn't exist or fetch failed)
+		v.schemaCache[cacheKey] = &CacheEntry{
+			Schema:       nil,
+			SchemaExists: false,
+			CachedAt:     time.Now(),
+			ExpiresAt:    time.Now().Add(cacheMissTTL),
+		}
+		return nil, false, err
+	}
+
+	if !schemaExists {
+		// Cache the fact that schema doesn't exist
+		v.schemaCache[cacheKey] = &CacheEntry{
+			Schema:       nil,
+			SchemaExists: false,
+			CachedAt:     time.Now(),
+			ExpiresAt:    time.Now().Add(cacheMissTTL),
+		}
+		return nil, false, nil
+	}
+
+	// Compile the schema
+	schema := NewSchema(contractName)
+	if err := schema.AddVersion(version, schemaBytes); err != nil {
+		// Cache the compilation error
+		v.schemaCache[cacheKey] = &CacheEntry{
+			Schema:       nil,
+			SchemaExists: false,
+			CachedAt:     time.Now(),
+			ExpiresAt:    time.Now().Add(cacheMissTTL),
+		}
+		return nil, false, fmt.Errorf("failed to compile schema: %w", err)
+	}
+
+	// Cache the successful result - forever since schemas are immutable
+	expiresAt := time.Time{} // Zero time means never expires
+	if cacheHitTTL > 0 {
+		expiresAt = time.Now().Add(cacheHitTTL)
+	}
+	v.schemaCache[cacheKey] = &CacheEntry{
+		Schema:       schema,
+		SchemaExists: true,
+		CachedAt:     time.Now(),
+		ExpiresAt:    expiresAt,
+	}
+
+	return schema, true, nil
+}
+
+// fetchSchemaFromRegistry fetches schema from the registry
+func (v *Validator) fetchSchemaFromRegistry(contractName string, version uint64) ([]byte, bool, error) {
+	if v.schemaRegistryURL == "" {
+		return nil, false, fmt.Errorf("schema registry URL is not configured")
+	}
+
+	url := fmt.Sprintf("%s/subjects/%s/versions/%d", v.schemaRegistryURL, contractName, version)
+
+	resp, err := v.httpClient.Get(url)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to fetch schema from registry: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, false, nil // Schema doesn't exist
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, fmt.Errorf("schema registry returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to read schema response: %w", err)
+	}
+
+	var versionResp SchemaRegistryVersion
+	if err := json.Unmarshal(body, &versionResp); err != nil {
+		return nil, false, fmt.Errorf("failed to unmarshal schema response: %w", err)
+	}
+
+	return []byte(versionResp.Schema), true, nil
 }
 
 // ExtractSchemaVersionFromDataContract parses a data contract string to extract
@@ -233,15 +404,27 @@ func (v *Validator) LoadSchema(contractName string, version uint64, schema []byt
 		return fmt.Errorf("schema cannot be empty for contract '%s' version %d", contractName, version)
 	}
 
-	v.schemasMutex.Lock()
-	defer v.schemasMutex.Unlock()
+	cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
 
-	if _, exists := v.schemas[contractName]; !exists {
-		v.schemas[contractName] = NewSchema(contractName)
+	v.cacheMutex.Lock()
+	defer v.cacheMutex.Unlock()
+
+	// Create and compile the schema
+	schemaObj := NewSchema(contractName)
+	if err := schemaObj.AddVersion(version, schema); err != nil {
+		return fmt.Errorf("failed to add schema version %d for contract '%s': %w", version, contractName, err)
 	}
 
-	if err := v.schemas[contractName].AddVersion(version, schema); err != nil {
-		return fmt.Errorf("failed to add schema version %d for contract '%s': %w", version, contractName, err)
+	// Cache the schema - forever since schemas are immutable
+	expiresAt := time.Time{} // Zero time means never expires
+	if cacheHitTTL > 0 {
+		expiresAt = time.Now().Add(cacheHitTTL)
+	}
+	v.schemaCache[cacheKey] = &CacheEntry{
+		Schema:       schemaObj,
+		SchemaExists: true,
+		CachedAt:     time.Now(),
+		ExpiresAt:    expiresAt,
 	}
 
 	return nil
@@ -249,20 +432,24 @@ func (v *Validator) LoadSchema(contractName string, version uint64, schema []byt
 
 // HasSchema checks if a schema exists for the given contract name and version.
 func (v *Validator) HasSchema(contractName string, version uint64) bool {
-	v.schemasMutex.RLock()
-	defer v.schemasMutex.RUnlock()
+	cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
 
-	schema, exists := v.schemas[contractName]
-	if !exists {
+	v.cacheMutex.RLock()
+	defer v.cacheMutex.RUnlock()
+
+	entry, exists := v.schemaCache[cacheKey]
+	if !exists || entry.IsExpired() {
 		return false
 	}
 
-	return schema.HasVersion(version)
+	return entry.SchemaExists && entry.Schema != nil && entry.Schema.HasVersion(version)
 }
 
-// Close stops the background fetcher and cleans up resources.
+// Close cleans up resources (no background processes to stop anymore)
 func (v *Validator) Close() {
-	if v.backgroundFetcher != nil {
-		v.backgroundFetcher.Stop()
-	}
+	// No background processes to stop, just clear the cache
+	v.cacheMutex.Lock()
+	defer v.cacheMutex.Unlock()
+
+	v.schemaCache = make(map[string]*CacheEntry)
 }

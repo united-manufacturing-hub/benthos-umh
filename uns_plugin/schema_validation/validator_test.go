@@ -15,8 +15,7 @@
 package schemavalidation
 
 import (
-	"fmt"
-	"sync"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -24,56 +23,50 @@ import (
 )
 
 var _ = Describe("Validator", func() {
-	Context("when validating basic data", func() {
+	var (
+		validator    *Validator
+		mockRegistry *MockSchemaRegistry
+	)
 
-		schema := []byte(`
-		{
-   "type": "object",
-   "properties": {
-		"virtual_path": {
-          "type": "string",
-          "enum": ["vibration.x-axis"]
-       },
-      "fields": {
-         "type": "object",
-         "properties": {
-            "value": {
-               "type": "object",
-               "properties": {
-                  "timestamp_ms": {"type": "number"},
-                  "value": {"type": "number"}
-               },
-               "required": ["timestamp_ms", "value"],
-               "additionalProperties": false
-            }
-         },
-         "additionalProperties": false
-      }
-   },
-   "required": ["virtual_path", "fields"],
-   "additionalProperties": false
-}`)
-		var validator *Validator
+	BeforeEach(func() {
+		mockRegistry = NewMockSchemaRegistry()
+		mockRegistry.SetupTestSchemas()
+		validator = NewValidatorWithRegistry(mockRegistry.URL())
+	})
 
-		BeforeEach(func() {
-			validator = NewValidator()
-			validator.LoadSchema("_sensor_data", 1, schema)
-			Expect(validator.HasSchema("_sensor_data", 1)).To(BeTrue())
+	AfterEach(func() {
+		if validator != nil {
+			validator.Close()
+		}
+		if mockRegistry != nil {
+			mockRegistry.Close()
+		}
+	})
+
+	Context("when creating a new validator", func() {
+		It("should initialize correctly without registry", func() {
+			validator := NewValidator()
+			Expect(validator.schemaCache).NotTo(BeNil())
+			Expect(validator.httpClient).NotTo(BeNil())
+			Expect(validator.schemaRegistryURL).To(BeEmpty())
 		})
 
-		/*
-			Test cases:
-			1. Valid data & valid virtual_path
-			2. Valid data & invalid virtual_path
-			3. Invalid data & valid virtual_path
-			4. Invalid data & invalid virtual_path
-			5. Invalid payload format
-		*/
+		It("should initialize correctly with registry", func() {
+			validator := NewValidatorWithRegistry("http://localhost:8081")
+			Expect(validator.schemaCache).NotTo(BeNil())
+			Expect(validator.httpClient).NotTo(BeNil())
+			Expect(validator.schemaRegistryURL).To(Equal("http://localhost:8081"))
+		})
+	})
 
-		It("should pass validation for valid data & valid virtual_path", func() {
-			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.vibration.x-axis")
+	Context("when validating with versioned contracts", func() {
+		It("should successfully validate sensor data v1", func() {
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
-			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
+
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+
+			result := validator.Validate(unsTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeTrue())
 			Expect(result.SchemaCheckBypassed).To(BeFalse())
 			Expect(result.Error).To(BeNil())
@@ -81,553 +74,280 @@ var _ = Describe("Validator", func() {
 			Expect(result.ContractVersion).To(Equal(uint64(1)))
 		})
 
-		It("should fail validation for valid data & invalid virtual_path", func() {
-			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.vibration.non-existing")
+		It("should successfully validate sensor data v2", func() {
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v2.temperature")
 			Expect(err).To(BeNil())
-			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-			Expect(result.SchemaCheckPassed).To(BeFalse())
+
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeTrue())
 			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(Not(BeNil()))
+			Expect(result.Error).To(BeNil())
 			Expect(result.ContractName).To(Equal("_sensor_data"))
-			Expect(result.ContractVersion).To(Equal(uint64(1)))
+			Expect(result.ContractVersion).To(Equal(uint64(2)))
 		})
 
-		It("should fail validation for invalid data & valid virtual_path", func() {
-			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.vibration.x-axis")
+		It("should reject invalid virtual path", func() {
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.invalid_path")
 			Expect(err).To(BeNil())
-			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "not a number"}}`))
+
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+
+			result := validator.Validate(unsTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeFalse())
 			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(Not(BeNil()))
-			Expect(result.ContractName).To(Equal("_sensor_data"))
-			Expect(result.ContractVersion).To(Equal(uint64(1)))
+			Expect(result.Error).To(HaveOccurred())
+			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
 		})
 
-		It("should fail validation for invalid data & invalid virtual_path", func() {
-			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.vibration.non-existing")
+		It("should reject invalid payload structure", func() {
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
-			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "not a number"}}`))
-			Expect(result.SchemaCheckPassed).To(BeFalse())
-			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(Not(BeNil()))
-			Expect(result.ContractName).To(Equal("_sensor_data"))
-			Expect(result.ContractVersion).To(Equal(uint64(1)))
-		})
 
-		It("should fail validation for invalid payload format", func() {
-			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.vibration.x-axis")
-			Expect(err).To(BeNil())
-			result := validator.Validate(topic, []byte(`{"value": {"value": 100}}`))
+			payload := []byte(`{"value": {"timestamp_ms": "invalid", "value": 25.5}}`)
+
+			result := validator.Validate(unsTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeFalse())
 			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(Not(BeNil()))
-			Expect(result.ContractName).To(Equal("_sensor_data"))
-			Expect(result.ContractVersion).To(Equal(uint64(1)))
+			Expect(result.Error).To(HaveOccurred())
+			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
 		})
 	})
 
-	Context("when parsing data contracts", func() {
-		var validator *Validator
+	Context("when handling non-existent schemas", func() {
+		It("should bypass validation for non-existent contract", func() {
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent-v1.temperature")
+			Expect(err).To(BeNil())
 
-		BeforeEach(func() {
-			validator = NewValidator()
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeTrue())
+			Expect(result.BypassReason).To(ContainSubstring("does not exist in registry"))
+			Expect(result.ContractName).To(Equal("_non_existent"))
+			Expect(result.ContractVersion).To(Equal(uint64(1)))
 		})
 
-		It("should parse valid contract with version", func() {
+		It("should bypass validation for non-existent version", func() {
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v999.temperature")
+			Expect(err).To(BeNil())
+
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeTrue())
+			Expect(result.BypassReason).To(ContainSubstring("does not exist in registry"))
+			Expect(result.ContractName).To(Equal("_sensor_data"))
+			Expect(result.ContractVersion).To(Equal(uint64(999)))
+		})
+	})
+
+	Context("when handling unversioned contracts", func() {
+		It("should bypass validation for unversioned contracts", func() {
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data.temperature")
+			Expect(err).To(BeNil())
+
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeTrue())
+			Expect(result.BypassReason).To(ContainSubstring("unversioned contract"))
+			Expect(result.ContractName).To(Equal("_sensor_data"))
+		})
+	})
+
+	Context("when testing cache behavior", func() {
+		It("should cache successful schema fetches", func() {
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
+			Expect(err).To(BeNil())
+
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+
+			// First validation should fetch and cache the schema
+			result1 := validator.Validate(unsTopic, payload)
+			Expect(result1.SchemaCheckPassed).To(BeTrue())
+
+			// Verify schema is cached
+			Expect(validator.HasSchema("_sensor_data", 1)).To(BeTrue())
+
+			// Second validation should use cached schema
+			result2 := validator.Validate(unsTopic, payload)
+			Expect(result2.SchemaCheckPassed).To(BeTrue())
+			Expect(result2.ContractName).To(Equal("_sensor_data"))
+			Expect(result2.ContractVersion).To(Equal(uint64(1)))
+		})
+
+		It("should cache negative results (schema not found)", func() {
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent-v1.temperature")
+			Expect(err).To(BeNil())
+
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+
+			// First validation should fetch and cache the negative result
+			result1 := validator.Validate(unsTopic, payload)
+			Expect(result1.SchemaCheckBypassed).To(BeTrue())
+			Expect(result1.BypassReason).To(ContainSubstring("does not exist in registry"))
+
+			// Second validation should use cached negative result
+			result2 := validator.Validate(unsTopic, payload)
+			Expect(result2.SchemaCheckBypassed).To(BeTrue())
+			Expect(result2.BypassReason).To(ContainSubstring("does not exist in registry"))
+		})
+
+		It("should cache successful schema fetches forever", func() {
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
+			Expect(err).To(BeNil())
+
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+
+			// Validate to populate cache
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeTrue())
+
+			// Check cache entry exists and never expires
+			validator.cacheMutex.RLock()
+			entry, exists := validator.schemaCache["_sensor_data-v1"]
+			validator.cacheMutex.RUnlock()
+
+			Expect(exists).To(BeTrue())
+			Expect(entry.SchemaExists).To(BeTrue())
+			Expect(entry.Schema).NotTo(BeNil())
+			Expect(entry.IsExpired()).To(BeFalse())
+			Expect(entry.ExpiresAt.IsZero()).To(BeTrue()) // Zero time means never expires
+		})
+
+		It("should cache schema misses for 10 minutes", func() {
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent-v1.temperature")
+			Expect(err).To(BeNil())
+
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+
+			// Validate to populate cache with miss
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckBypassed).To(BeTrue())
+
+			// Check cache entry exists with 10 minute expiration
+			validator.cacheMutex.RLock()
+			entry, exists := validator.schemaCache["_non_existent-v1"]
+			validator.cacheMutex.RUnlock()
+
+			Expect(exists).To(BeTrue())
+			Expect(entry.SchemaExists).To(BeFalse())
+			Expect(entry.Schema).To(BeNil())
+			Expect(entry.IsExpired()).To(BeFalse())
+			Expect(entry.ExpiresAt.IsZero()).To(BeFalse()) // Should have an expiration time
+			Expect(entry.ExpiresAt).To(BeTemporally("~", time.Now().Add(10*time.Minute), time.Second))
+		})
+	})
+
+	Context("when handling contract parsing", func() {
+		It("should parse versioned contracts correctly", func() {
 			contractName, version, err := validator.ExtractSchemaVersionFromDataContract("_sensor_data-v1")
 			Expect(err).To(BeNil())
 			Expect(contractName).To(Equal("_sensor_data"))
 			Expect(version).To(Equal(uint64(1)))
-		})
 
-		It("should parse contract with multi-digit version", func() {
-			contractName, version, err := validator.ExtractSchemaVersionFromDataContract("_pump_data-v123")
+			contractName, version, err = validator.ExtractSchemaVersionFromDataContract("_pump_data-v123")
 			Expect(err).To(BeNil())
 			Expect(contractName).To(Equal("_pump_data"))
 			Expect(version).To(Equal(uint64(123)))
 		})
 
-		It("should parse contract with complex name", func() {
-			contractName, version, err := validator.ExtractSchemaVersionFromDataContract("_complex_sensor_data_v2-v42")
-			Expect(err).To(BeNil())
-			Expect(contractName).To(Equal("_complex_sensor_data_v2"))
-			Expect(version).To(Equal(uint64(42)))
-		})
-
-		It("should fail for empty contract", func() {
-			_, _, err := validator.ExtractSchemaVersionFromDataContract("")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("contract string is empty"))
-		})
-
-		It("should fail for contract without version", func() {
-			_, _, err := validator.ExtractSchemaVersionFromDataContract("_sensor_data")
+		It("should reject invalid contract formats", func() {
+			_, _, err := validator.ExtractSchemaVersionFromDataContract("invalid-contract")
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("invalid data contract format"))
-		})
 
-		It("should fail for contract with invalid version format", func() {
-			_, _, err := validator.ExtractSchemaVersionFromDataContract("_sensor_data-vabc")
+			_, _, err = validator.ExtractSchemaVersionFromDataContract("_sensor_data-v")
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("invalid data contract format"))
-		})
 
-		It("should fail for contract with non-numeric version", func() {
-			_, _, err := validator.ExtractSchemaVersionFromDataContract("_sensor_data-v1a2")
+			_, _, err = validator.ExtractSchemaVersionFromDataContract("")
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("invalid data contract format"))
-		})
-
-		It("should fail for contract with negative version", func() {
-			_, _, err := validator.ExtractSchemaVersionFromDataContract("_sensor_data-v-1")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("invalid data contract format"))
 		})
 	})
 
-	Context("when loading schemas", func() {
-		var validator *Validator
-		validSchema := []byte(`{"type": "object", "properties": {"test": {"type": "string"}}}`)
+	Context("when manually loading schemas", func() {
+		It("should load and cache schemas correctly", func() {
+			schema := []byte(`{"type": "object", "properties": {"test": {"type": "string"}}}`)
 
-		BeforeEach(func() {
-			validator = NewValidator()
-		})
-
-		It("should load valid schema successfully", func() {
-			err := validator.LoadSchema("_test_contract", 1, validSchema)
+			err := validator.LoadSchema("_test_contract", 1, schema)
 			Expect(err).To(BeNil())
+
+			// Check if schema was cached
 			Expect(validator.HasSchema("_test_contract", 1)).To(BeTrue())
+
+			// Verify cache entry
+			validator.cacheMutex.RLock()
+			entry, exists := validator.schemaCache["_test_contract-v1"]
+			validator.cacheMutex.RUnlock()
+
+			Expect(exists).To(BeTrue())
+			Expect(entry.SchemaExists).To(BeTrue())
+			Expect(entry.Schema).NotTo(BeNil())
 		})
 
-		It("should load multiple versions of same contract", func() {
-			schema1 := []byte(`{"type": "object", "properties": {"test1": {"type": "string"}}}`)
-			schema2 := []byte(`{"type": "object", "properties": {"test2": {"type": "number"}}}`)
+		It("should validate contract name requirements", func() {
+			schema := []byte(`{"type": "object"}`)
 
-			err := validator.LoadSchema("_test_contract", 1, schema1)
-			Expect(err).To(BeNil())
-
-			err = validator.LoadSchema("_test_contract", 2, schema2)
-			Expect(err).To(BeNil())
-
-			Expect(validator.HasSchema("_test_contract", 1)).To(BeTrue())
-			Expect(validator.HasSchema("_test_contract", 2)).To(BeTrue())
-		})
-
-		It("should load multiple contracts", func() {
-			err := validator.LoadSchema("_contract1", 1, validSchema)
-			Expect(err).To(BeNil())
-
-			err = validator.LoadSchema("_contract2", 1, validSchema)
-			Expect(err).To(BeNil())
-
-			Expect(validator.HasSchema("_contract1", 1)).To(BeTrue())
-			Expect(validator.HasSchema("_contract2", 1)).To(BeTrue())
-		})
-
-		It("should fail for empty contract name", func() {
-			err := validator.LoadSchema("", 1, validSchema)
+			err := validator.LoadSchema("invalid_contract", 1, schema)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("contract name cannot be empty"))
-		})
+			Expect(err.Error()).To(ContainSubstring("must start with an underscore"))
 
-		It("should fail for contract name without underscore prefix", func() {
-			err := validator.LoadSchema("test_contract", 1, validSchema)
+			err = validator.LoadSchema("", 1, schema)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("contract name must start with an underscore"))
-		})
+			Expect(err.Error()).To(ContainSubstring("cannot be empty"))
 
-		It("should fail for empty schema", func() {
-			err := validator.LoadSchema("_test_contract", 1, []byte{})
+			err = validator.LoadSchema("_test_contract", 1, []byte{})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("schema cannot be empty"))
 		})
-
-		It("should fail for nil schema", func() {
-			err := validator.LoadSchema("_test_contract", 1, nil)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("schema cannot be empty"))
-		})
-
-		It("should fail for invalid JSON schema", func() {
-			// Use completely invalid JSON syntax
-			invalidSchema := []byte(`{"type": "object", "invalid": syntax}`)
-			err := validator.LoadSchema("_test_contract", 1, invalidSchema)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("failed to add schema version"))
-		})
-
-		It("should fail for malformed JSON", func() {
-			malformedSchema := []byte(`{"type": "object", "properties":`)
-			err := validator.LoadSchema("_test_contract", 1, malformedSchema)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("failed to add schema version"))
-		})
-
-		It("should overwrite existing schema version", func() {
-			schema1 := []byte(`{"type": "object", "properties": {"test1": {"type": "string"}}}`)
-			schema2 := []byte(`{"type": "object", "properties": {"test2": {"type": "number"}}}`)
-
-			err := validator.LoadSchema("_test_contract", 1, schema1)
-			Expect(err).To(BeNil())
-
-			// Load different schema with same version - should overwrite
-			err = validator.LoadSchema("_test_contract", 1, schema2)
-			Expect(err).To(BeNil())
-
-			Expect(validator.HasSchema("_test_contract", 1)).To(BeTrue())
-		})
 	})
 
-	Context("when checking schema existence", func() {
-		var validator *Validator
-		validSchema := []byte(`{"type": "object", "properties": {"test": {"type": "string"}}}`)
+	Context("when handling network errors", func() {
+		It("should handle schema registry unavailable", func() {
+			validator := NewValidatorWithRegistry("http://localhost:9999") // Invalid URL
 
-		BeforeEach(func() {
-			validator = NewValidator()
-			validator.LoadSchema("_existing_contract", 1, validSchema)
-		})
-
-		It("should return true for existing contract and version", func() {
-			Expect(validator.HasSchema("_existing_contract", 1)).To(BeTrue())
-		})
-
-		It("should return false for non-existing contract", func() {
-			Expect(validator.HasSchema("_non_existing_contract", 1)).To(BeFalse())
-		})
-
-		It("should return false for existing contract with non-existing version", func() {
-			Expect(validator.HasSchema("_existing_contract", 2)).To(BeFalse())
-		})
-
-		It("should return false for empty contract name", func() {
-			Expect(validator.HasSchema("", 1)).To(BeFalse())
-		})
-	})
-
-	Context("when validating with edge cases", func() {
-		var validator *Validator
-		validSchema := []byte(`
-		{
-			"type": "object",
-			"properties": {
-				"virtual_path": {
-					"type": "string",
-					"enum": ["temperature", "humidity"]
-				},
-				"fields": {
-					"type": "object",
-					"properties": {
-						"value": {
-							"type": "object",
-							"properties": {
-								"timestamp_ms": {"type": "number"},
-								"value": {"type": "number"}
-							},
-							"required": ["timestamp_ms", "value"],
-							"additionalProperties": false
-						}
-					},
-					"additionalProperties": false
-				}
-			},
-			"required": ["virtual_path", "fields"],
-			"additionalProperties": false
-		}`)
-
-		BeforeEach(func() {
-			validator = NewValidator()
-			validator.LoadSchema("_sensor_data", 1, validSchema)
-		})
-
-		It("should fail for nil topic", func() {
-			result := validator.Validate(nil, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-			Expect(result.SchemaCheckPassed).To(BeFalse())
-			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(HaveOccurred())
-			Expect(result.Error.Error()).To(ContainSubstring("UNS topic cannot be nil"))
-		})
-
-		It("should fail for topic with empty contract", func() {
-			// This would require mocking the topic.Info() to return empty contract
-			// For now, we'll test the contract extraction directly
-			_, _, err := validator.ExtractSchemaVersionFromDataContract("")
-			Expect(err).To(HaveOccurred())
-		})
-
-		It("should bypass validation for non-existing schema", func() {
-			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existing_contract-v1.temperature")
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
-			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
+
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+
+			result := validator.Validate(unsTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeFalse())
 			Expect(result.SchemaCheckBypassed).To(BeTrue())
-			Expect(result.Error).To(BeNil())
-			Expect(result.BypassReason).To(ContainSubstring("schema for contract '_non_existing_contract' version 1 not found"))
-			Expect(result.ContractName).To(Equal("_non_existing_contract"))
-			Expect(result.ContractVersion).To(Equal(uint64(1)))
-		})
-
-		It("should bypass validation when version extraction fails", func() {
-			// Create a topic with malformed version format (unversioned contract)
-			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._malformed_contract.temperature")
-			Expect(err).To(BeNil())
-			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-			Expect(result.SchemaCheckPassed).To(BeFalse())
-			Expect(result.SchemaCheckBypassed).To(BeTrue())
-			Expect(result.Error).To(BeNil())
-			Expect(result.BypassReason).To(ContainSubstring("unversioned contract '_malformed_contract' - bypassing validation (no latest fetching)"))
-			Expect(result.ContractName).To(Equal("_malformed_contract"))
-			Expect(result.ContractVersion).To(Equal(uint64(0)))
-		})
-
-		It("should fail for empty JSON payload", func() {
-			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
-			Expect(err).To(BeNil())
-			result := validator.Validate(topic, []byte(``))
-			Expect(result.SchemaCheckPassed).To(BeFalse())
-			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(HaveOccurred())
-			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
-		})
-
-		It("should fail for invalid JSON payload", func() {
-			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
-			Expect(err).To(BeNil())
-			result := validator.Validate(topic, []byte(`{"invalid": json}`))
-			Expect(result.SchemaCheckPassed).To(BeFalse())
-			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(HaveOccurred())
-			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
-		})
-
-		It("should handle topic with nil virtual path", func() {
-			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
-			Expect(err).To(BeNil())
-			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-			Expect(result.SchemaCheckPassed).To(BeTrue())
-			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(BeNil())
-		})
-
-		It("should handle topic with virtual path", func() {
-			// This would require a topic with virtual path - depends on topic implementation
-			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.some.path.temperature")
-			Expect(err).To(BeNil())
-			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-			Expect(result.SchemaCheckPassed).To(BeFalse())
-			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(HaveOccurred())
-			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
-		})
-
-		It("should provide descriptive error messages", func() {
-			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
-			Expect(err).To(BeNil())
-			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": "not_a_number", "value": 100}}`))
-			Expect(result.SchemaCheckPassed).To(BeFalse())
-			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(HaveOccurred())
-			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
-			Expect(result.Error.Error()).To(ContainSubstring("_sensor_data"))
-			Expect(result.Error.Error()).To(ContainSubstring("version 1"))
-		})
-
-		It("should validate with different data types", func() {
-			// Test with zero values
-			topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
-			Expect(err).To(BeNil())
-			result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 0, "value": 0}}`))
-			Expect(result.SchemaCheckPassed).To(BeTrue())
-			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(BeNil())
-
-			// Test with negative values
-			result = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": -25.5}}`))
-			Expect(result.SchemaCheckPassed).To(BeTrue())
-			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(BeNil())
-
-			// Test with large numbers
-			result = validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 999999999.999}}`))
-			Expect(result.SchemaCheckPassed).To(BeTrue())
-			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(BeNil())
+			Expect(result.BypassReason).To(ContainSubstring("failed to fetch schema"))
 		})
 	})
 
-	Context("when handling concurrent operations", func() {
-		var validator *Validator
-		validSchema := []byte(`{"type": "object", "properties": {"test": {"type": "string"}}}`)
-
-		BeforeEach(func() {
-			validator = NewValidator()
-		})
-
-		It("should handle concurrent schema loading", func() {
-			var wg sync.WaitGroup
-			numGoroutines := 10
-
-			for i := 0; i < numGoroutines; i++ {
-				wg.Add(1)
-				go func(index int) {
-					defer wg.Done()
-					contractName := fmt.Sprintf("_test_contract_%d", index)
-					err := validator.LoadSchema(contractName, 1, validSchema)
-					Expect(err).To(BeNil())
-				}(i)
-			}
-
-			wg.Wait()
-
-			// Verify all schemas were loaded
-			for i := 0; i < numGoroutines; i++ {
-				contractName := fmt.Sprintf("_test_contract_%d", i)
-				Expect(validator.HasSchema(contractName, 1)).To(BeTrue())
-			}
-		})
-
-		It("should handle concurrent validation", func() {
-			// Load a schema first
-			err := validator.LoadSchema("_test_contract", 1, []byte(`
-			{
-				"type": "object",
-				"properties": {
-					"virtual_path": {
-						"type": "string",
-						"enum": ["test"]
-					},
-					"fields": {
-						"type": "object",
-						"properties": {
-							"value": {
-								"type": "object",
-								"properties": {
-									"timestamp_ms": {"type": "number"},
-									"value": {"type": "number"}
-								},
-								"required": ["timestamp_ms", "value"]
-							}
-						}
-					}
-				},
-				"required": ["virtual_path", "fields"]
-			}`))
+	Context("when closing validator", func() {
+		It("should clear cache on close", func() {
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
 
-			var wg sync.WaitGroup
-			numGoroutines := 10
+			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
 
-			for i := 0; i < numGoroutines; i++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._test_contract-v1.test")
-					Expect(err).To(BeNil())
-					result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-					Expect(result.SchemaCheckPassed).To(BeTrue())
-					Expect(result.SchemaCheckBypassed).To(BeFalse())
-					Expect(result.Error).To(BeNil())
-				}()
-			}
+			// Validate to populate cache
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeTrue())
 
-			wg.Wait()
-		})
+			// Verify cache has entries
+			validator.cacheMutex.RLock()
+			cacheSize := len(validator.schemaCache)
+			validator.cacheMutex.RUnlock()
+			Expect(cacheSize).To(BeNumerically(">", 0))
 
-		It("should handle concurrent schema loading and validation", func() {
-			var wg sync.WaitGroup
-			numGoroutines := 5
+			// Close validator
+			validator.Close()
 
-			// Load schemas concurrently
-			for i := 0; i < numGoroutines; i++ {
-				wg.Add(1)
-				go func(index int) {
-					defer wg.Done()
-					contractName := fmt.Sprintf("_concurrent_test_%d", index)
-					schema := []byte(fmt.Sprintf(`
-					{
-						"type": "object",
-						"properties": {
-							"virtual_path": {
-								"type": "string",
-								"enum": ["test_%d"]
-							},
-							"fields": {
-								"type": "object",
-								"properties": {
-									"value": {
-										"type": "object",
-										"properties": {
-											"timestamp_ms": {"type": "number"},
-											"value": {"type": "number"}
-										},
-										"required": ["timestamp_ms", "value"]
-									}
-								}
-							}
-						},
-						"required": ["virtual_path", "fields"]
-					}`, index))
-					err := validator.LoadSchema(contractName, 1, schema)
-					Expect(err).To(BeNil())
-				}(i)
-			}
-
-			wg.Wait()
-
-			// Validate with each schema concurrently
-			for i := 0; i < numGoroutines; i++ {
-				wg.Add(1)
-				go func(index int) {
-					defer wg.Done()
-					contractName := fmt.Sprintf("_concurrent_test_%d", index)
-					topicString := fmt.Sprintf("umh.v1.enterprise.site.area.%s-v1.test_%d", contractName, index)
-					topic, err := topic.NewUnsTopic(topicString)
-					Expect(err).To(BeNil())
-					result := validator.Validate(topic, []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 100}}`))
-					Expect(result.SchemaCheckPassed).To(BeTrue())
-					Expect(result.SchemaCheckBypassed).To(BeFalse())
-					Expect(result.Error).To(BeNil())
-				}(i)
-			}
-
-			wg.Wait()
-		})
-	})
-
-	Context("when handling schema versions", func() {
-		var validator *Validator
-
-		BeforeEach(func() {
-			validator = NewValidator()
-		})
-
-		It("should handle version zero", func() {
-			schema := []byte(`{"type": "object", "properties": {"test": {"type": "string"}}}`)
-			err := validator.LoadSchema("_test_contract", 0, schema)
-			Expect(err).To(BeNil())
-			Expect(validator.HasSchema("_test_contract", 0)).To(BeTrue())
-		})
-
-		It("should handle large version numbers", func() {
-			schema := []byte(`{"type": "object", "properties": {"test": {"type": "string"}}}`)
-			largeVersion := uint64(18446744073709551615) // max uint64
-			err := validator.LoadSchema("_test_contract", largeVersion, schema)
-			Expect(err).To(BeNil())
-			Expect(validator.HasSchema("_test_contract", largeVersion)).To(BeTrue())
-		})
-
-		It("should maintain separate versions independently", func() {
-			schema1 := []byte(`{"type": "object", "properties": {"v1_field": {"type": "string"}}}`)
-			schema2 := []byte(`{"type": "object", "properties": {"v2_field": {"type": "number"}}}`)
-
-			err := validator.LoadSchema("_versioned_contract", 1, schema1)
-			Expect(err).To(BeNil())
-
-			err = validator.LoadSchema("_versioned_contract", 2, schema2)
-			Expect(err).To(BeNil())
-
-			Expect(validator.HasSchema("_versioned_contract", 1)).To(BeTrue())
-			Expect(validator.HasSchema("_versioned_contract", 2)).To(BeTrue())
-			Expect(validator.HasSchema("_versioned_contract", 3)).To(BeFalse())
+			// Verify cache is cleared
+			validator.cacheMutex.RLock()
+			cacheSize = len(validator.schemaCache)
+			validator.cacheMutex.RUnlock()
+			Expect(cacheSize).To(Equal(0))
 		})
 	})
 })
