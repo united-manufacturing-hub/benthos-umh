@@ -15,7 +15,6 @@
 package topic_browser_plugin
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -90,12 +89,6 @@ func createLargeBundle(numTopics int, numEvents int) *proto.UnsBundle {
 	}
 
 	return bundle
-}
-
-func createFloatBytes(value float64) []byte {
-	bits := make([]byte, 8)
-	binary.LittleEndian.PutUint64(bits, binary.LittleEndian.Uint64(bits))
-	return bits
 }
 
 func BenchmarkBundleToProtobufBytes(b *testing.B) {
