@@ -16,6 +16,7 @@ package topic_browser_plugin
 
 import (
 	"maps"
+	"sync"
 
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
@@ -65,49 +66,138 @@ import (
 // This ensures the Topic Browser UI always shows the complete metadata profile for each topic,
 // regardless of which specific message is being viewed.
 
-// mergeTopicHeaders combines headers from multiple topic infos into a single map.
-// This implements cumulative metadata persistence where each metadata key retains
-// its last known value even if it disappears from subsequent messages.
+// metadataMapPool provides a pool of reusable metadata maps to reduce GC pressure.
+// This addresses the high allocation churn seen in pprof where we were allocating
+// ~200MB+ of map[string]string objects per processing cycle.
 //
-// # CUMULATIVE METADATA ALGORITHM
+// MEMORY OPTIMIZATION STRATEGY:
+// - Reuse existing map[string]string instances for temporary/working maps
+// - Dramatically reduce garbage collection pressure for short-lived maps
+// - Pool automatically handles cleanup under memory pressure
+// - Thread-safe and well-tested Go standard pattern
 //
-// This function implements metadata persistence per key:
+// IMPORTANT: Only use this pool for temporary maps with function-scoped lifecycles!
+// For maps stored in cache/TopicInfo (external lifecycle), use direct allocation.
+var metadataMapPool = sync.Pool{
+	New: func() interface{} {
+		// Pre-allocate with reasonable capacity for typical metadata
+		// Most UMH topics have 3-10 metadata keys (unit, description, etc.)
+		return make(map[string]string, 8)
+	},
+}
+
+// getMetadataMap retrieves a clean metadata map from the pool.
+// The returned map is guaranteed to be empty and ready for use.
+// IMPORTANT: Must be returned via putMetadataMap() when done.
+func getMetadataMap() map[string]string {
+	return metadataMapPool.Get().(map[string]string)
+}
+
+// putMetadataMap returns a metadata map to the pool after clearing it.
+// IMPORTANT: Do not use the map after calling this function - it may be reused by other goroutines.
 //
-// ## Persistence Strategy:
-//   - Start with previously cached metadata (if exists)
-//   - Layer on new metadata from current batch
-//   - Each key keeps its most recent value
-//   - Keys never disappear once seen (Topic Browser requirement)
+// Parameters:
+//   - m: The map to return to the pool (will be cleared automatically)
+func putMetadataMap(m map[string]string) {
+	// Clear the map before returning to pool to prevent data leakage
+	clear(m)
+	metadataMapPool.Put(m)
+}
+
+// cloneMetadataMap creates a defensive copy of a metadata map using DIRECT allocation.
+// Use this when you need to store a map reference that outlives the current function scope.
 //
-// ## Use Case Examples:
-//   - Message 1: {unit: "celsius"} → Store: {unit: "celsius"}
-//   - Message 2: {serial: "ABC123"} → Store: {unit: "celsius", serial: "ABC123"}
-//   - Message 3: {unit: "fahrenheit"} → Store: {unit: "fahrenheit", serial: "ABC123"}
-//   - Message 4: {location: "factory"} → Store: {unit: "fahrenheit", serial: "ABC123", location: "factory"}
+// IMPORTANT: Uses direct allocation (not pooled) because cloned maps typically have
+// external lifecycles (stored in cache, TopicInfo, etc.) where we can't control cleanup.
 //
-// This ensures the Topic Browser UI shows all known metadata about a topic,
-// not just what was in the most recent message.
-//
-// Args:
-//   - unsTreeId: UNS Tree ID for cache lookup of existing metadata
-//   - topics: Topic infos from current batch to merge
+// Parameters:
+//   - source: The map to clone
 //
 // Returns:
-//   - map[string]string: Cumulative metadata with all keys ever seen
-func (t *TopicBrowserProcessor) mergeTopicHeaders(unsTreeId string, topics []*proto.TopicInfo) map[string]string {
-	// Start with previously cached metadata (if exists)
-	mergedHeaders := make(map[string]string)
+//   - map[string]string: A new map with copied data (safe to store/reference long-term)
+func cloneMetadataMap(source map[string]string) map[string]string {
+	// Use Go 1.21+ maps.Clone for more efficient cloning
+	return maps.Clone(source)
+}
 
-	// ✅ FIX: Add mutex protection around cache access to prevent race conditions
+// mergeTopicHeaders efficiently merges Kafka headers from multiple TopicInfo objects
+// with previously cached metadata for a given unsTreeId using pooled maps.
+//
+// MEMORY OPTIMIZATION STRATEGY:
+// - Use sync.Pool to reuse map[string]string objects
+// - Minimize allocations during high-throughput processing
+// - Return cached reference when no changes detected (zero allocation)
+//
+// CONCURRENCY SAFETY:
+// - Mutex protection around cache access
+// - Pooled maps are thread-safe via sync.Pool
+//
+// Parameters:
+//   - unsTreeId: The unique identifier for this topic (xxHash of TopicInfo)
+//   - topics: Slice of TopicInfo objects containing new metadata to merge
+//
+// Returns:
+//   - map[string]string: Merged metadata map (may be cached reference or new allocation)
+//   - bool: True if this is a pooled map that needs to be returned via putMetadataMap()
+//
+// USAGE PATTERN:
+//
+//	mergedHeaders, needsReturn := t.mergeTopicHeaders(unsTreeId, topics)
+//	defer func() {
+//	    if needsReturn {
+//	        putMetadataMap(mergedHeaders)
+//	    }
+//	}()
+func (t *TopicBrowserProcessor) mergeTopicHeaders(unsTreeId string, topics []*proto.TopicInfo) (map[string]string, bool) {
+	// Check cache first - if we have cached data and no changes, return cached reference
 	t.topicMetadataCacheMutex.Lock()
+	var cachedHeaders map[string]string
+	var hasCachedHeaders bool
+
 	if stored, ok := t.topicMetadataCache.Get(unsTreeId); ok {
-		cachedHeaders := stored.(map[string]string)
-		// Copy all previously known metadata
-		for key, value := range cachedHeaders {
-			mergedHeaders[key] = value
+		cachedHeaders = stored.(map[string]string)
+		hasCachedHeaders = true
+	}
+
+	// Quick scan to detect if incoming metadata would change anything
+	hasChanges := false
+	if hasCachedHeaders {
+		for _, topicInfo := range topics {
+			for key, newValue := range topicInfo.Metadata {
+				if cachedValue, exists := cachedHeaders[key]; !exists || cachedValue != newValue {
+					hasChanges = true
+					break
+				}
+			}
+			if hasChanges {
+				break
+			}
+		}
+	} else {
+		// No cached data, so any incoming metadata represents changes
+		for _, topicInfo := range topics {
+			if len(topicInfo.Metadata) > 0 {
+				hasChanges = true
+				break
+			}
 		}
 	}
+
+	// If no changes and we have cached data, return cached reference (zero allocation)
+	if !hasChanges && hasCachedHeaders {
+		t.topicMetadataCacheMutex.Unlock()
+		return cachedHeaders, false // Don't return cached reference to pool
+	}
+
 	t.topicMetadataCacheMutex.Unlock()
+
+	// Changes detected - use pooled map for merging
+	mergedHeaders := getMetadataMap()
+
+	// Copy existing cached data if we have it
+	if hasCachedHeaders {
+		maps.Copy(mergedHeaders, cachedHeaders)
+	}
 
 	// Layer on new metadata from current batch
 	for _, topicInfo := range topics {
@@ -116,14 +206,56 @@ func (t *TopicBrowserProcessor) mergeTopicHeaders(unsTreeId string, topics []*pr
 		}
 	}
 
-	return mergedHeaders
+	return mergedHeaders, true // Caller needs to return this pooled map
 }
 
-// updateTopicCache updates the LRU cache with new topic metadata.
-// This function is used by the ring buffer workflow to maintain cumulative metadata persistence.
-func (t *TopicBrowserProcessor) updateTopicCache(unsTreeId string, headers map[string]string) {
+// updateTopicCache stores the merged metadata for a given unsTreeId in the cache.
+// This function works with both cached references and pooled maps.
+//
+// MEMORY OPTIMIZATION STRATEGY:
+// - Only update cache if metadata has actually changed
+// - Share references between cache and storage when safe (metadata is immutable)
+// - Work efficiently with pooled maps
+//
+// Parameters:
+//   - unsTreeId: The unique identifier for this topic
+//   - headers: The merged metadata map to cache
+//   - isPooled: Whether this map came from the pool (affects cleanup logic)
+//
+// Returns:
+//   - map[string]string: Map suitable for storing in TopicInfo (may be same as input or shared reference)
+func (t *TopicBrowserProcessor) updateTopicCacheAndGetStorageMap(unsTreeId string, headers map[string]string, isPooled bool) map[string]string {
 	t.topicMetadataCacheMutex.Lock()
 	defer t.topicMetadataCacheMutex.Unlock()
 
-	t.topicMetadataCache.Add(unsTreeId, maps.Clone(headers))
+	// Check if we already have this exact data cached
+	if stored, ok := t.topicMetadataCache.Get(unsTreeId); ok {
+		cachedHeaders := stored.(map[string]string)
+
+		// Quick comparison: if maps are identical, skip cache update
+		if maps.Equal(cachedHeaders, headers) {
+			// Data is identical, no need to update cache
+			// Return the cached map for storage (no cloning needed!)
+			return cachedHeaders
+		}
+	}
+
+	// Data has changed - we need to update cache and return storage-safe map
+	// OPTIMIZATION: Since metadata maps are immutable after creation, we can safely
+	// share references between cache and storage instead of defensive double-cloning
+	var sharedMap map[string]string
+
+	if isPooled {
+		// Headers is pooled, so we need to clone once for permanent storage
+		// But we can share the single cloned reference between cache and storage
+		sharedMap = cloneMetadataMap(headers) // Single clone for permanent storage
+	} else {
+		// Headers is already a stable reference (not pooled)
+		// We can share it directly for both cache and storage
+		sharedMap = headers
+	}
+
+	// Both cache and storage use the same reference (safe because metadata is immutable)
+	t.topicMetadataCache.Add(unsTreeId, sharedMap)
+	return sharedMap
 }
