@@ -213,6 +213,11 @@ umh-core-data*.pprof
 
 # Profiling files
 *.pprof
+*.pb
+*.txt
 
 # Local data directories  
 umh-core-data/
+
+# Diffs
+*.diff
