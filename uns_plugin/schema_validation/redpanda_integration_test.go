@@ -49,16 +49,10 @@ var redpandaTestSchemas = map[string]map[int]string{
 				"fields": {
 					"type": "object",
 					"properties": {
-						"value": {
-							"type": "object",
-							"properties": {
-								"timestamp_ms": {"type": "number"},
-								"value": {"type": "number"}
-							},
-							"required": ["timestamp_ms", "value"],
-							"additionalProperties": false
-						}
+						"timestamp_ms": {"type": "number"},
+						"value": {"type": "number"}
 					},
+					"required": ["timestamp_ms", "value"],
 					"additionalProperties": false
 				}
 			},
@@ -77,16 +71,10 @@ var redpandaTestSchemas = map[string]map[int]string{
 				"fields": {
 					"type": "object",
 					"properties": {
-						"value": {
-							"type": "object",
-							"properties": {
-								"timestamp_ms": {"type": "number"},
-								"value": {"type": "number"}
-							},
-							"required": ["timestamp_ms", "value"],
-							"additionalProperties": false
-						}
+						"timestamp_ms": {"type": "number"},
+						"value": {"type": "number"}
 					},
+					"required": ["timestamp_ms", "value"],
 					"additionalProperties": false
 				}
 			},
@@ -105,16 +93,10 @@ var redpandaTestSchemas = map[string]map[int]string{
 				"fields": {
 					"type": "object",
 					"properties": {
-						"value": {
-							"type": "object",
-							"properties": {
-								"timestamp_ms": {"type": "number"},
-								"value": {"type": "number"}
-							},
-							"required": ["timestamp_ms", "value"],
-							"additionalProperties": false
-						}
+						"timestamp_ms": {"type": "number"},
+						"value": {"type": "number"}
 					},
+					"required": ["timestamp_ms", "value"],
 					"additionalProperties": false
 				}
 			},
@@ -133,16 +115,10 @@ var redpandaTestSchemas = map[string]map[int]string{
 				"fields": {
 					"type": "object",
 					"properties": {
-						"value": {
-							"type": "object",
-							"properties": {
-								"timestamp_ms": {"type": "number"},
-								"value": {"type": "string"}
-							},
-							"required": ["timestamp_ms", "value"],
-							"additionalProperties": false
-						}
+						"timestamp_ms": {"type": "number"},
+						"value": {"type": "string"}
 					},
+					"required": ["timestamp_ms", "value"],
 					"additionalProperties": false
 				}
 			},
@@ -161,16 +137,10 @@ var redpandaTestSchemas = map[string]map[int]string{
 				"fields": {
 					"type": "object",
 					"properties": {
-						"value": {
-							"type": "object",
-							"properties": {
-								"timestamp_ms": {"type": "number"},
-								"value": {"type": "string"}
-							},
-							"required": ["timestamp_ms", "value"],
-							"additionalProperties": false
-						}
+						"timestamp_ms": {"type": "number"},
+						"value": {"type": "string"}
 					},
+					"required": ["timestamp_ms", "value"],
 					"additionalProperties": false
 				}
 			},
@@ -475,7 +445,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 			Expect(err).To(BeNil())
 
 			// Create valid payload - raw payload that will be wrapped by validator
-			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			// With synchronous fetching, schema should be loaded immediately
 			result := validator.Validate(unsTopic, payload)
@@ -514,7 +484,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 			Expect(err).To(BeNil())
 
 			// Invalid payload - raw payload for humidity topic (which is not allowed in v1)
-			invalidPayload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			invalidPayload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 			result = validator.Validate(invalidTopic, invalidPayload)
 			Expect(result.SchemaCheckPassed).To(BeFalse())
 			Expect(result.SchemaCheckBypassed).To(BeFalse())
@@ -547,7 +517,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 			// Test humidity (allowed in v2 but not v1)
 			humidityTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v2.humidity")
 			Expect(err).To(BeNil())
-			humidityPayload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			humidityPayload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			result = validator.Validate(humidityTopic, humidityPayload)
 			Expect(result.SchemaCheckPassed).To(BeTrue())
@@ -556,7 +526,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 			// Test pressure (allowed in v2 but not v1)
 			pressureTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v2.pressure")
 			Expect(err).To(BeNil())
-			pressurePayload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 1013.25}}`)
+			pressurePayload := []byte(`{"timestamp_ms": 1719859200000, "value": 1013.25}`)
 
 			result = validator.Validate(pressureTopic, pressurePayload)
 			Expect(result.SchemaCheckPassed).To(BeTrue())

@@ -64,7 +64,7 @@ var _ = Describe("Validator", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
 
-			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			result := validator.Validate(unsTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeTrue())
@@ -78,7 +78,7 @@ var _ = Describe("Validator", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v2.temperature")
 			Expect(err).To(BeNil())
 
-			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			result := validator.Validate(unsTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeTrue())
@@ -92,7 +92,7 @@ var _ = Describe("Validator", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.invalid_path")
 			Expect(err).To(BeNil())
 
-			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			result := validator.Validate(unsTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeFalse())
@@ -105,7 +105,7 @@ var _ = Describe("Validator", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
 
-			payload := []byte(`{"value": {"timestamp_ms": "invalid", "value": 25.5}}`)
+			payload := []byte(`{"timestamp_ms": "invalid", "value": 25.5}`)
 
 			result := validator.Validate(unsTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeFalse())
@@ -120,7 +120,7 @@ var _ = Describe("Validator", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent-v1.temperature")
 			Expect(err).To(BeNil())
 
-			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			result := validator.Validate(unsTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeFalse())
@@ -134,7 +134,7 @@ var _ = Describe("Validator", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v999.temperature")
 			Expect(err).To(BeNil())
 
-			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			result := validator.Validate(unsTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeFalse())
@@ -150,7 +150,7 @@ var _ = Describe("Validator", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data.temperature")
 			Expect(err).To(BeNil())
 
-			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			result := validator.Validate(unsTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeFalse())
@@ -165,7 +165,7 @@ var _ = Describe("Validator", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
 
-			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			// First validation should fetch and cache the schema
 			result1 := validator.Validate(unsTopic, payload)
@@ -185,7 +185,7 @@ var _ = Describe("Validator", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent-v1.temperature")
 			Expect(err).To(BeNil())
 
-			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			// First validation should fetch and cache the negative result
 			result1 := validator.Validate(unsTopic, payload)
@@ -202,7 +202,7 @@ var _ = Describe("Validator", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
 
-			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			// Validate to populate cache
 			result := validator.Validate(unsTopic, payload)
@@ -224,7 +224,7 @@ var _ = Describe("Validator", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent-v1.temperature")
 			Expect(err).To(BeNil())
 
-			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			// Validate to populate cache with miss
 			result := validator.Validate(unsTopic, payload)
@@ -326,7 +326,7 @@ var _ = Describe("Validator", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
 
-			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			result := validator.Validate(unsTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeFalse())
@@ -340,7 +340,7 @@ var _ = Describe("Validator", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
 			Expect(err).To(BeNil())
 
-			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			// Validate to populate cache
 			result := validator.Validate(unsTopic, payload)
@@ -384,16 +384,10 @@ var _ = Describe("Validator", func() {
 					"fields": {
 						"type": "object",
 						"properties": {
-							"value": {
-								"type": "object",
-								"properties": {
-									"timestamp_ms": {"type": "number"},
-									"value": {"type": "number"}
-								},
-								"required": ["timestamp_ms", "value"],
-								"additionalProperties": false
-							}
+							"timestamp_ms": {"type": "number"},
+							"value": {"type": "number"}
 						},
+						"required": ["timestamp_ms", "value"],
 						"additionalProperties": false
 					}
 				},
@@ -413,7 +407,7 @@ var _ = Describe("Validator", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v2.temperature")
 			Expect(err).To(BeNil())
 
-			payload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 25.5}}`)
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			result := freshValidator.Validate(unsTopic, payload)
 
@@ -443,16 +437,10 @@ var _ = Describe("Validator", func() {
 						"fields": {
 							"type": "object",
 							"properties": {
-								"value": {
-									"type": "object",
-									"properties": {
-										"timestamp_ms": {"type": "number"},
-										"value": {"type": "number"}
-									},
-									"required": ["timestamp_ms", "value"],
-									"additionalProperties": false
-								}
+								"timestamp_ms": {"type": "number"},
+								"value": {"type": "number"}
 							},
+							"required": ["timestamp_ms", "value"],
 							"additionalProperties": false
 						}
 					},
@@ -469,16 +457,10 @@ var _ = Describe("Validator", func() {
 						"fields": {
 							"type": "object",
 							"properties": {
-								"value": {
-									"type": "object",
-									"properties": {
-										"timestamp_ms": {"type": "number"},
-										"value": {"type": "string"}
-									},
-									"required": ["timestamp_ms", "value"],
-									"additionalProperties": false
-								}
+								"timestamp_ms": {"type": "number"},
+								"value": {"type": "string"}
 							},
+							"required": ["timestamp_ms", "value"],
 							"additionalProperties": false
 						}
 					},
@@ -493,7 +475,7 @@ var _ = Describe("Validator", func() {
 			// Test numeric value validation (should match number schema)
 			numberTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data-v1.vibration.x-axis")
 			Expect(err).To(BeNil())
-			numberPayload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": 0.5}}`)
+			numberPayload := []byte(`{"timestamp_ms": 1719859200000, "value": 0.5}`)
 
 			result := validator.Validate(numberTopic, numberPayload)
 			Expect(result.SchemaCheckPassed).To(BeTrue())
@@ -505,7 +487,7 @@ var _ = Describe("Validator", func() {
 			// Test string value validation (should match string schema)
 			stringTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data-v1.serialNumber")
 			Expect(err).To(BeNil())
-			stringPayload := []byte(`{"value": {"timestamp_ms": 1719859200000, "value": "SN123456789"}}`)
+			stringPayload := []byte(`{"timestamp_ms": 1719859200000, "value": "SN123456789"}`)
 
 			result = validator.Validate(stringTopic, stringPayload)
 			Expect(result.SchemaCheckPassed).To(BeTrue())
