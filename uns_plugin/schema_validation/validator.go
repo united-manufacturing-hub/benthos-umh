@@ -426,41 +426,6 @@ func (v *Validator) fetchAllSubjects() ([]string, error) {
 	return subjects, nil
 }
 
-// fetchSchemaFromRegistry fetches schema from the registry by subject and version
-func (v *Validator) fetchSchemaFromRegistry(subject string, version int) ([]byte, bool, error) {
-	if v.schemaRegistryURL == "" {
-		return nil, false, fmt.Errorf("schema registry URL is not configured")
-	}
-
-	url := fmt.Sprintf("%s/subjects/%s/versions/%d", v.schemaRegistryURL, subject, version)
-
-	resp, err := v.httpClient.Get(url)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to fetch schema from registry: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, false, nil // Schema doesn't exist
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, false, fmt.Errorf("schema registry returned status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to read schema response: %w", err)
-	}
-
-	var versionResp SchemaRegistryVersion
-	if err := json.Unmarshal(body, &versionResp); err != nil {
-		return nil, false, fmt.Errorf("failed to unmarshal schema response: %w", err)
-	}
-
-	return []byte(versionResp.Schema), true, nil
-}
-
 // fetchLatestSchemaFromRegistry fetches the latest version of a schema subject
 //
 // This method is preferred over fetchSchemaFromRegistry(subject, version) because:
