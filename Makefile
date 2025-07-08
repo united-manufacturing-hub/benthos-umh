@@ -147,6 +147,10 @@ test-benthos-topic-browser: target
 .PHONY: test-benthos-topic-browser-local
 test-benthos-topic-browser-local: target
 	@$(BENTHOS_BIN) -c ./config/topic-browser-test-local.yaml
+  
+.PHONY: test-benthos-opcua-hex
+test-benthos-opcua-hex: target
+	@$(BENTHOS_BIN) -c ./config/opcua-hex-test.yaml
 
 ## Generate go files from protobuf for topic browser
 build-protobuf:
