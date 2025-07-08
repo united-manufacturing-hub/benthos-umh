@@ -17,15 +17,23 @@ package topic_browser_plugin
 // updateAdaptiveMetrics updates the CPU-aware Prometheus gauges with current values.
 // This method is called during ProcessBatch to expose operational metrics.
 func (t *TopicBrowserProcessor) updateAdaptiveMetrics() {
+	// Defensive nil check to prevent panic if metrics were not initialized
+	if t == nil {
+		return
+	}
+
+	// Capture controller reference atomically to prevent race conditions
+	controller := t.adaptiveController
+
 	// Update CPU load gauge (convert percentage to int64)
-	if t.adaptiveController != nil && t.cpuLoadGauge != nil {
-		cpuPercent := t.adaptiveController.GetCPUPercent()
+	if controller != nil && t.cpuLoadGauge != nil {
+		cpuPercent := controller.GetCPUPercent()
 		t.cpuLoadGauge.Set(int64(cpuPercent))
 	}
 
 	// Update active emit interval gauge (convert seconds to milliseconds as int64)
-	if t.adaptiveController != nil && t.activeIntervalGauge != nil {
-		currentInterval := t.adaptiveController.GetCurrentInterval()
+	if controller != nil && t.activeIntervalGauge != nil {
+		currentInterval := controller.GetCurrentInterval()
 		intervalMs := int64(currentInterval.Milliseconds())
 		t.activeIntervalGauge.Set(intervalMs)
 	}

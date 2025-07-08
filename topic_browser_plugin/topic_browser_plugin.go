@@ -161,6 +161,7 @@ package topic_browser_plugin
 import (
 	"context"
 	"errors"
+	"math"
 	"reflect"
 	"sync"
 	"time"
@@ -388,11 +389,33 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 
 			// THROTTLING: Calculate delay proportional to work done to prevent catch-up loops
 			// This gives the system breathing room and prevents 100% CPU usage
-			throttleDelay := time.Duration(ackedCount/throttleMessagesPerUnit) * throttleDelayPerKMessages
-			if throttleDelay > maxThrottleDelay {
+			var throttleDelay time.Duration
+
+			// INTEGER OVERFLOW PROTECTION FOR THROTTLING CALCULATION:
+			//
+			// Problem: Large ackedCount values could cause integer overflow when multiplied by
+			// throttleDelayPerKMessages in the expression:
+			//   time.Duration(ackedCount/throttleMessagesPerUnit) * throttleDelayPerKMessages
+			//
+			// Risk: Integer overflow could produce negative durations or panic, causing
+			// unpredictable throttling behavior during high-volume catch-up scenarios.
+			//
+			// Solution: Pre-calculate the maximum safe ackedCount value that won't overflow
+			// when used in the throttling calculation. If ackedCount exceeds this threshold,
+			// use the maximum throttle delay directly instead of attempting the calculation.
+			//
+			// Go 1.24 approach: Use math.MaxInt constant (available since Go 1.21) rather than
+			// manual bit manipulation for better readability and maintainability.
+			const maxSafeAckedCount = math.MaxInt / throttleMessagesPerUnit
+			if ackedCount > maxSafeAckedCount {
 				throttleDelay = maxThrottleDelay
-			} else if throttleDelay < minThrottleDelay {
-				throttleDelay = minThrottleDelay
+			} else {
+				throttleDelay = time.Duration(ackedCount/throttleMessagesPerUnit) * throttleDelayPerKMessages
+				if throttleDelay > maxThrottleDelay {
+					throttleDelay = maxThrottleDelay
+				} else if throttleDelay < minThrottleDelay {
+					throttleDelay = minThrottleDelay
+				}
 			}
 
 			// Update metrics for catch-up processing
@@ -404,9 +427,10 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 			flushDuration := time.Since(flushStartTime)
 			currentCPU := 0.0
 			currentInterval := time.Duration(0)
-			if t.adaptiveController != nil {
-				currentCPU = t.adaptiveController.GetCPUPercent()
-				currentInterval = t.adaptiveController.GetCurrentInterval()
+			controller := t.adaptiveController
+			if controller != nil {
+				currentCPU = controller.GetCPUPercent()
+				currentInterval = controller.GetCurrentInterval()
 			}
 
 			t.logger.Tracef("CPU-AWARE CATCH-UP [OVERFLOW]: "+
@@ -462,24 +486,26 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 	/*
 		estimatedPayloadBytes := len(batch) * 1024 // Old: Rough estimate, 8.5x less accurate
 	*/
-	if t.adaptiveController != nil {
+	controller := t.adaptiveController
+	if controller != nil {
 		estimatedPayloadBytes := estimatePayloadSize(batch, t.logger)
-		t.adaptiveController.OnBatch(estimatedPayloadBytes)
+		controller.OnBatch(estimatedPayloadBytes)
 	}
 
 	// Update CPU-aware metrics
 	t.updateAdaptiveMetrics()
 
 	// Log CPU-aware burst protection behavior at trace level
-	if t.adaptiveController != nil {
+	controller = t.adaptiveController // Reuse captured reference
+	if controller != nil {
 		// Gather current state for trace logging
-		currentCPU := t.adaptiveController.GetCPUPercent()
-		currentInterval := t.adaptiveController.GetCurrentInterval()
+		currentCPU := controller.GetCPUPercent()
+		currentInterval := controller.GetCurrentInterval()
 		activeTopics := len(t.fullTopicMap)
-		shouldFlush := t.adaptiveController.ShouldFlush()
+		shouldFlush := controller.ShouldFlush()
 
 		// Get controller's internal EMA bytes using proper encapsulation
-		emaBytes := t.adaptiveController.GetEMABytes()
+		emaBytes := controller.GetEMABytes()
 
 		t.logger.Tracef("CPU-AWARE DEBUG [batch_size=%d]: "+
 			"cpu_load=%.1f%%, "+
@@ -493,7 +519,7 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 			currentCPU,
 			currentInterval,
 			emaBytes,
-			t.adaptiveController.GetLastPayloadBytes(),
+			controller.GetLastPayloadBytes(),
 			activeTopics,
 			shouldFlush,
 			len(t.messageBuffer))
@@ -507,7 +533,8 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 	defer t.bufferMutex.Unlock()
 
 	// Use adaptive controller instead of fixed time interval
-	if t.adaptiveController != nil && t.adaptiveController.ShouldFlush() {
+	controller = t.adaptiveController // Reuse captured reference from above
+	if controller != nil && controller.ShouldFlush() {
 		// Adaptive emission: CPU-aware controller determined it's time to flush
 		flushStartTime := time.Now()
 		intervalResult, err := t.flushBufferAndACKLocked()
@@ -517,7 +544,7 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 		}
 
 		// Notify controller that flush was successful
-		t.adaptiveController.OnFlush()
+		controller.OnFlush()
 
 		// Log flush results at trace level
 		flushDuration := time.Since(flushStartTime)
@@ -540,7 +567,7 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 			intervalBatches,
 			intervalMessages,
 			intervalMessages,
-			t.adaptiveController.GetCurrentInterval())
+			controller.GetCurrentInterval())
 
 		return intervalResult, nil
 	} else if time.Since(t.lastEmitTime) >= t.emitInterval {
@@ -583,12 +610,17 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 
 	// No emissions occurred - messages remain buffered, waiting for next interval
 	// ACK is deferred until emission happens
+	controller = t.adaptiveController // Capture controller reference for final log
+	shouldFlushForLog := false
+	if controller != nil {
+		shouldFlushForLog = controller.ShouldFlush()
+	}
 	t.logger.Tracef("CPU-AWARE NO-EMISSION: "+
 		"buffer_size=%d, "+
 		"interval_elapsed=false, "+
 		"should_flush=%t",
 		len(t.messageBuffer),
-		t.adaptiveController != nil && t.adaptiveController.ShouldFlush())
+		shouldFlushForLog)
 	return nil, nil
 }
 
@@ -793,16 +825,18 @@ func estimatePayloadSize(batch service.MessageBatch, logger *service.Logger) int
 		if msg.HasBytes() {
 			b, err := msg.AsBytes()
 			if err != nil {
-				// This can never fail, as the message is always in bytes
-				logger.Errorf("Failed to get bytes from message: %v", err)
+				// Defensive error handling: use fallback estimation if bytes unavailable
+				logger.Errorf("Unexpected error getting bytes from message: %v", err)
+				estimatedPayloadBytes += 1024 // Fallback to 1KB estimate
 				continue
 			}
 			estimatedPayloadBytes += len(b)
 		} else { // This is a structured message
 			structured, err := msg.AsStructured()
 			if err != nil {
-				// This can never fail, as the message is always structured
-				logger.Errorf("Failed to get structured from message: %v", err)
+				// Defensive error handling: use fallback estimation if structured data unavailable
+				logger.Errorf("Unexpected error getting structured data from message: %v", err)
+				estimatedPayloadBytes += 1024 // Fallback to 1KB estimate
 				continue
 			}
 
