@@ -205,16 +205,10 @@ func (m *MockSchemaRegistry) SetupTestSchemas() {
 			"fields": {
 				"type": "object",
 				"properties": {
-					"value": {
-						"type": "object",
-						"properties": {
-							"timestamp_ms": {"type": "number"},
-							"value": {"type": "number"}
-						},
-						"required": ["timestamp_ms", "value"],
-						"additionalProperties": false
-					}
+					"timestamp_ms": {"type": "number"},
+					"value": {"type": "number"}
 				},
+				"required": ["timestamp_ms", "value"],
 				"additionalProperties": false
 			}
 		},
@@ -234,16 +228,10 @@ func (m *MockSchemaRegistry) SetupTestSchemas() {
 			"fields": {
 				"type": "object",
 				"properties": {
-					"value": {
-						"type": "object",
-						"properties": {
-							"timestamp_ms": {"type": "number"},
-							"value": {"type": "number"}
-						},
-						"required": ["timestamp_ms", "value"],
-						"additionalProperties": false
-					}
+					"timestamp_ms": {"type": "number"},
+					"value": {"type": "number"}
 				},
+				"required": ["timestamp_ms", "value"],
 				"additionalProperties": false
 			}
 		},
@@ -263,16 +251,10 @@ func (m *MockSchemaRegistry) SetupTestSchemas() {
 			"fields": {
 				"type": "object",
 				"properties": {
-					"value": {
-						"type": "object",
-						"properties": {
-							"timestamp_ms": {"type": "number"},
-							"value": {"type": "number"}
-						},
-						"required": ["timestamp_ms", "value"],
-						"additionalProperties": false
-					}
+					"timestamp_ms": {"type": "number"},
+					"value": {"type": "number"}
 				},
+				"required": ["timestamp_ms", "value"],
 				"additionalProperties": false
 			}
 		},
@@ -292,16 +274,10 @@ func (m *MockSchemaRegistry) SetupTestSchemas() {
 			"fields": {
 				"type": "object",
 				"properties": {
-					"value": {
-						"type": "object",
-						"properties": {
-							"timestamp_ms": {"type": "number"},
-							"value": {"type": "string"}
-						},
-						"required": ["timestamp_ms", "value"],
-						"additionalProperties": false
-					}
+					"timestamp_ms": {"type": "number"},
+					"value": {"type": "string"}
 				},
+				"required": ["timestamp_ms", "value"],
 				"additionalProperties": false
 			}
 		},
@@ -321,16 +297,10 @@ func (m *MockSchemaRegistry) SetupTestSchemas() {
 			"fields": {
 				"type": "object",
 				"properties": {
-					"value": {
-						"type": "object",
-						"properties": {
-							"timestamp_ms": {"type": "number"},
-							"value": {"type": "number"}
-						},
-						"required": ["timestamp_ms", "value"],
-						"additionalProperties": false
-					}
+					"timestamp_ms": {"type": "number"},
+					"value": {"type": "number"}
 				},
+				"required": ["timestamp_ms", "value"],
 				"additionalProperties": false
 			}
 		},
@@ -350,16 +320,10 @@ func (m *MockSchemaRegistry) SetupTestSchemas() {
 			"fields": {
 				"type": "object",
 				"properties": {
-					"value": {
-						"type": "object",
-						"properties": {
-							"timestamp_ms": {"type": "number"},
-							"value": {"type": "string"}
-						},
-						"required": ["timestamp_ms", "value"],
-						"additionalProperties": false
-					}
+					"timestamp_ms": {"type": "number"},
+					"value": {"type": "string"}
 				},
+				"required": ["timestamp_ms", "value"],
 				"additionalProperties": false
 			}
 		},
