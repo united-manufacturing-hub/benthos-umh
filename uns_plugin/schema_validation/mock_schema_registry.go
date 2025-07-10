@@ -215,7 +215,7 @@ func (m *MockSchemaRegistry) SetupTestSchemas() {
 		"required": ["virtual_path", "fields"],
 		"additionalProperties": false
 	}`
-	m.AddSchema("_sensor_data_v1_timeseries-number", 1, sensorDataV1NumberSchema)
+	m.AddSchema("_sensor_data_v1-timeseries-number", 1, sensorDataV1NumberSchema)
 
 	// Add sensor data schemas v2 with expanded virtual paths and number type
 	sensorDataV2NumberSchema := `{
@@ -238,7 +238,7 @@ func (m *MockSchemaRegistry) SetupTestSchemas() {
 		"required": ["virtual_path", "fields"],
 		"additionalProperties": false
 	}`
-	m.AddSchema("_sensor_data_v2_timeseries-number", 2, sensorDataV2NumberSchema)
+	m.AddSchema("_sensor_data_v2-timeseries-number", 2, sensorDataV2NumberSchema)
 
 	// Add pump data schemas v1 with different data types
 	pumpDataV1NumberSchema := `{
@@ -261,7 +261,7 @@ func (m *MockSchemaRegistry) SetupTestSchemas() {
 		"required": ["virtual_path", "fields"],
 		"additionalProperties": false
 	}`
-	m.AddSchema("_pump_data_v1_timeseries-number", 1, pumpDataV1NumberSchema)
+	m.AddSchema("_pump_data_v1-timeseries-number", 1, pumpDataV1NumberSchema)
 
 	// Add pump data string schema for serial numbers
 	pumpDataV1StringSchema := `{
@@ -284,7 +284,7 @@ func (m *MockSchemaRegistry) SetupTestSchemas() {
 		"required": ["virtual_path", "fields"],
 		"additionalProperties": false
 	}`
-	m.AddSchema("_pump_data_v1_timeseries-string", 1, pumpDataV1StringSchema)
+	m.AddSchema("_pump_data_v1-timeseries-string", 1, pumpDataV1StringSchema)
 
 	// Add motor controller schemas v3 (skipping v1 and v2 to test version gaps)
 	motorDataV3NumberSchema := `{
@@ -307,7 +307,7 @@ func (m *MockSchemaRegistry) SetupTestSchemas() {
 		"required": ["virtual_path", "fields"],
 		"additionalProperties": false
 	}`
-	m.AddSchema("_motor_controller_v3_timeseries-number", 3, motorDataV3NumberSchema)
+	m.AddSchema("_motor_controller_v3-timeseries-number", 3, motorDataV3NumberSchema)
 
 	// Add motor controller string schema for status
 	motorDataV3StringSchema := `{
@@ -330,7 +330,7 @@ func (m *MockSchemaRegistry) SetupTestSchemas() {
 		"required": ["virtual_path", "fields"],
 		"additionalProperties": false
 	}`
-	m.AddSchema("_motor_controller_v3_timeseries-string", 3, motorDataV3StringSchema)
+	m.AddSchema("_motor_controller_v3-timeseries-string", 3, motorDataV3StringSchema)
 
 	// Add string data schemas v1 for testing different data types
 	stringDataV1Schema := `{
@@ -359,7 +359,7 @@ func (m *MockSchemaRegistry) SetupTestSchemas() {
 		"required": ["virtual_path", "fields"],
 		"additionalProperties": false
 	}`
-	m.AddSchema("_string_data_v1_timeseries-string", 1, stringDataV1Schema)
+	m.AddSchema("_string_data_v1-timeseries-string", 1, stringDataV1Schema)
 }
 
 // SimulateNetworkError makes the mock server return 500 errors for testing

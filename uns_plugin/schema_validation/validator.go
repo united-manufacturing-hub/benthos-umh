@@ -419,7 +419,7 @@ func (v *Validator) fetchSchemasSync(contractName string, version uint64) (map[s
 		//
 		// Why? Schema registry versions are independent of UMH contract versions:
 		// - Contract "_sensor_data-v2" means "version 2 of the sensor data contract"
-		// - But subject "_sensor_data_v2_timeseries-number" might be registered as registry version 1
+		// - But subject "_sensor_data_v2-timeseries-number" might be registered as registry version 1
 		//   (because it's the first version of that specific subject)
 		// - By fetching "latest", we avoid complex version mapping and always get the current schema
 		// - This also automatically picks up schema updates without code changes

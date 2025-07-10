@@ -38,7 +38,7 @@ var (
 // RedpandaTestSchemas contains the test schemas we'll load into Redpanda
 // We'll add a timestamp suffix to avoid conflicts between test runs
 var redpandaTestSchemas = map[string]map[int]string{
-	"_sensor_data_v1_timeseries-number": {
+	"_sensor_data_v1-timeseries-number": {
 		1: `{
 			"type": "object",
 			"properties": {
@@ -60,7 +60,7 @@ var redpandaTestSchemas = map[string]map[int]string{
 			"additionalProperties": false
 		}`,
 	},
-	"_sensor_data_v2_timeseries-number": {
+	"_sensor_data_v2-timeseries-number": {
 		1: `{
 			"type": "object",
 			"properties": {
@@ -82,7 +82,7 @@ var redpandaTestSchemas = map[string]map[int]string{
 			"additionalProperties": false
 		}`,
 	},
-	"_pump_data_v1_timeseries-number": {
+	"_pump_data_v1-timeseries-number": {
 		1: `{
 			"type": "object",
 			"properties": {
@@ -104,7 +104,7 @@ var redpandaTestSchemas = map[string]map[int]string{
 			"additionalProperties": false
 		}`,
 	},
-	"_pump_data_v1_timeseries-string": {
+	"_pump_data_v1-timeseries-string": {
 		1: `{
 			"type": "object",
 			"properties": {
@@ -126,7 +126,7 @@ var redpandaTestSchemas = map[string]map[int]string{
 			"additionalProperties": false
 		}`,
 	},
-	"_string_data_v1_timeseries-string": {
+	"_string_data_v1-timeseries-string": {
 		1: `{
 			"type": "object",
 			"properties": {
