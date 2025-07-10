@@ -1,0 +1,28 @@
+input:
+  uns:                       # consume raw UMH topics
+    umh_topics:
+      - umh.v1.corpA.plant-A.aawd._raw.press
+      - umh.v1.corpA.plant-A.aawd._raw.tempF
+      - umh.v1.corpA.plant-A.aawd._raw.run
+
+processors:
+  pipeline:
+    stream_processor:
+      mode: timeseries
+      model:
+        name: pump
+        version: v1
+      output_topic: umh.v1.corpA.plant-A.aawd  # base topic for outputs
+      sources:               # alias → raw topic
+        press: umh.v1.corpA.plant-A.aawd._raw.press
+        tF:    umh.v1.corpA.plant-A.aawd._raw.tempF
+        r:     umh.v1.corpA.plant-A.aawd._raw.run
+      mapping:  # field → JS / constant / alias
+        pressure: press+4.00001
+        temperature: tF*69/31
+        motor: 
+          rpm: press/4
+        serialNumber: '"SN-P42-008"'
+
+output:
+  uns: {}                   # encoder + publish (Optional enforcement, if datacontract exists in schema registry) 
