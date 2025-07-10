@@ -64,14 +64,39 @@ func (sd *StaticDetector) AnalyzeMapping(expression string) (MappingAnalysis, er
 
 // IsStatic determines if a JavaScript expression is static (no source variable dependencies)
 func (sd *StaticDetector) IsStatic(expression string) (bool, []string, error) {
-	// Parse the JavaScript expression
-	program, err := parser.ParseFile(nil, "", expression, 0)
+	// Check for empty expressions
+	if expression == "" {
+		return false, nil, fmt.Errorf("empty expression")
+	}
+
+	// Try parsing as expression first (for object literals)
+	program, err := parser.ParseFile(nil, "", "("+expression+")", 0)
 	if err != nil {
-		return false, nil, err
+		// If wrapping in parentheses fails, try parsing as-is
+		program, err = parser.ParseFile(nil, "", expression, 0)
+		if err != nil {
+			return false, nil, err
+		}
+	}
+
+	// Validate that this is an expression, not a statement
+	if len(program.Body) != 1 {
+		return false, nil, fmt.Errorf("multiple statements not allowed")
+	}
+
+	// Check if the single statement is an expression statement
+	stmt, ok := program.Body[0].(*ast.ExpressionStatement)
+	if !ok {
+		return false, nil, fmt.Errorf("only expressions are allowed, not statements")
+	}
+
+	// Reject function expressions - mappings should be value expressions only
+	if _, isFunctionExpr := stmt.Expression.(*ast.FunctionLiteral); isFunctionExpr {
+		return false, nil, fmt.Errorf("function expressions are not allowed in mappings")
 	}
 
 	// Extract variable references
-	dependencies := sd.extractVariables(program)
+	dependencies := sd.extractVariables(stmt.Expression)
 
 	// Check if any dependencies match source variables
 	var sourceDeps []string

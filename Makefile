@@ -93,6 +93,10 @@ test-s7comm:
 test-sensorconnect:
 	@$(GINKGO_CMD) $(GINKGO_SERIAL_FLAGS) ./sensorconnect_plugin/...
 
+.PHONY: test-stream-processor
+test-stream-processor:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./stream_processor_plugin/...
+
 .PHONY: test-tag-processor
 test-tag-processor:
 	@TEST_TAG_PROCESSOR=true \
