@@ -168,10 +168,10 @@ func BenchmarkValidation_SingleThread(b *testing.B) {
 	validator := setupBenchmarkValidator()
 
 	topics := []string{
-		"umh.v1.enterprise.site.area._sensor_data-v1.vibration.x-axis",
-		"umh.v1.enterprise.site.area._sensor_data-v1.temperature",
-		"umh.v1.enterprise.site.area._sensor_data-v1.humidity",
-		"umh.v1.enterprise.site.area._sensor_data-v1.pressure",
+		"umh.v1.enterprise.site.area._sensor_data_v1.vibration.x-axis",
+		"umh.v1.enterprise.site.area._sensor_data_v1.temperature",
+		"umh.v1.enterprise.site.area._sensor_data_v1.humidity",
+		"umh.v1.enterprise.site.area._sensor_data_v1.pressure",
 	}
 
 	payloads := [][]byte{validNumberPayload, validZeroPayload, validLargePayload}
@@ -205,10 +205,10 @@ func BenchmarkValidation_Concurrent(b *testing.B) {
 	validator := setupBenchmarkValidator()
 
 	topics := []string{
-		"umh.v1.enterprise.site.area._sensor_data-v1.vibration.x-axis",
-		"umh.v1.enterprise.site.area._sensor_data-v1.temperature",
-		"umh.v1.enterprise.site.area._sensor_data-v1.humidity",
-		"umh.v1.enterprise.site.area._sensor_data-v1.pressure",
+		"umh.v1.enterprise.site.area._sensor_data_v1.vibration.x-axis",
+		"umh.v1.enterprise.site.area._sensor_data_v1.temperature",
+		"umh.v1.enterprise.site.area._sensor_data_v1.humidity",
+		"umh.v1.enterprise.site.area._sensor_data_v1.pressure",
 	}
 
 	payloads := [][]byte{validNumberPayload, validZeroPayload, validLargePayload}
@@ -250,7 +250,7 @@ func BenchmarkValidation_HighThroughput(b *testing.B) {
 	tagNames := []string{"vibration.x-axis", "temperature", "humidity", "pressure"}
 
 	for _, tagName := range tagNames {
-		topicStr := fmt.Sprintf("umh.v1.enterprise.site.area._sensor_data-v1.%s", tagName)
+		topicStr := fmt.Sprintf("umh.v1.enterprise.site.area._sensor_data_v1.%s", tagName)
 		topicObj, err := topic.NewUnsTopic(topicStr)
 		if err == nil {
 			topics = append(topics, topicObj)
@@ -289,17 +289,17 @@ func BenchmarkValidation_RealWorld(b *testing.B) {
 		valid    bool
 	}{
 		// Valid scenarios (90%)
-		{"umh.v1.enterprise.site.area._sensor_data-v1.temperature", validNumberPayload, true},
-		{"umh.v1.enterprise.site.area._sensor_data-v1.humidity", validNumberPayload, true},
-		{"umh.v1.enterprise.site.area._sensor_data-v1.pressure", validNumberPayload, true},
-		{"umh.v1.enterprise.site.area._pump_data-v1.count", validNumberPayload, true},
-		{"umh.v1.enterprise.site.area._pump_data-v1.vibration.x-axis", validNumberPayload, true},
-		{"umh.v1.enterprise.site.area._pump_data-v1.vibration.y-axis", validNumberPayload, true},
-		{"umh.v1.enterprise.site.area._pump_data-v1.serialNumber", validNumberPayload, true},
-		{"umh.v1.enterprise.site.area._motor_data-v1.temperature", validNumberPayload, true},
-		{"umh.v1.enterprise.site.area._sensor_data-v2.temperature", validNumberPayload, true},
+		{"umh.v1.enterprise.site.area._sensor_data_v1.temperature", validNumberPayload, true},
+		{"umh.v1.enterprise.site.area._sensor_data_v1.humidity", validNumberPayload, true},
+		{"umh.v1.enterprise.site.area._sensor_data_v1.pressure", validNumberPayload, true},
+		{"umh.v1.enterprise.site.area._pump_data_v1.count", validNumberPayload, true},
+		{"umh.v1.enterprise.site.area._pump_data_v1.vibration.x-axis", validNumberPayload, true},
+		{"umh.v1.enterprise.site.area._pump_data_v1.vibration.y-axis", validNumberPayload, true},
+		{"umh.v1.enterprise.site.area._pump_data_v1.serialNumber", validNumberPayload, true},
+		{"umh.v1.enterprise.site.area._motor_data_v1.temperature", validNumberPayload, true},
+		{"umh.v1.enterprise.site.area._sensor_data_v2.temperature", validNumberPayload, true},
 		// Invalid scenarios (10%)
-		{"umh.v1.enterprise.site.area._sensor_data-v1.invalid_tag", validNumberPayload, false},
+		{"umh.v1.enterprise.site.area._sensor_data_v1.invalid_tag", validNumberPayload, false},
 	}
 
 	// Pre-create topic objects for valid scenarios
@@ -343,7 +343,7 @@ func BenchmarkValidation_RealWorld(b *testing.B) {
 func BenchmarkValidation_MemoryUsage(b *testing.B) {
 	validator := setupBenchmarkValidator()
 
-	topicObj, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
+	topicObj, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
 	if err != nil {
 		b.Fatalf("Failed to create topic: %v", err)
 	}
@@ -363,7 +363,7 @@ func BenchmarkValidation_MemoryUsage(b *testing.B) {
 func BenchmarkValidation_DifferentPayloadSizes(b *testing.B) {
 	validator := setupBenchmarkValidator()
 
-	topicObj, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
+	topicObj, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
 	if err != nil {
 		b.Fatalf("Failed to create topic: %v", err)
 	}
@@ -397,7 +397,7 @@ func BenchmarkValidation_DifferentPayloadSizes(b *testing.B) {
 func BenchmarkConcurrentValidation_ScalabilityTest(b *testing.B) {
 	validator := setupBenchmarkValidator()
 
-	topicObj, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
+	topicObj, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
 	if err != nil {
 		b.Fatalf("Failed to create topic: %v", err)
 	}
