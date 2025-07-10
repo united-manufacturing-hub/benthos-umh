@@ -54,20 +54,36 @@ package stream_processor_plugin
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// ProcessorState holds the variable state for the processor.
+// atomicVariableMap is an immutable snapshot of variables for lock-free reads
+type atomicVariableMap struct {
+	variables map[string]*VariableValue
+	version   uint64 // Version for cache invalidation
+}
+
+// ProcessorState manages processor state with lock-free reads and copy-on-write updates.
 //
-// It provides thread-safe storage for variables using a RWMutex to allow
-// concurrent reads while ensuring write safety. The Variables map stores
-// variable names to their current values with metadata.
+// This implementation uses atomic operations and copy-on-write semantics to optimize
+// read performance, which is critical since reads are much more frequent than writes
+// in the stream processor workload.
 //
-// This struct handles the low-level storage mechanics, while StateManager
-// provides the higher-level coordination and business logic.
+// DESIGN:
+// - Reads are completely lock-free using atomic.Value
+// - Writes use a mutex and create a new immutable copy
+// - Memory overhead is minimal since maps share underlying data
+// - GC pressure is reduced compared to frequent mutex locking
 type ProcessorState struct {
-	Variables map[string]*VariableValue // Thread-safe variable storage
-	mutex     sync.RWMutex              // Protects concurrent access to Variables
+	// Atomic pointer to immutable variable map for lock-free reads
+	atomicVars atomic.Value // *atomicVariableMap
+
+	// Write mutex only used during updates
+	writeMutex sync.Mutex
+
+	// Version counter for cache invalidation
+	version uint64
 }
 
 // VariableValue represents a stored variable value with metadata.
@@ -101,59 +117,85 @@ type VariableValue struct {
 
 // NewProcessorState creates a new processor state instance
 func NewProcessorState() *ProcessorState {
-	return &ProcessorState{
-		Variables: make(map[string]*VariableValue),
+	ps := &ProcessorState{}
+
+	// Initialize with empty variable map
+	initialMap := &atomicVariableMap{
+		variables: make(map[string]*VariableValue),
+		version:   0,
 	}
+	ps.atomicVars.Store(initialMap)
+
+	return ps
+}
+
+// getCurrentVars returns the current variable map (lock-free read)
+func (ps *ProcessorState) getCurrentVars() *atomicVariableMap {
+	return ps.atomicVars.Load().(*atomicVariableMap)
 }
 
 // SetVariable stores a variable value with timestamp and source information
 func (ps *ProcessorState) SetVariable(name string, value interface{}, source string) {
-	ps.mutex.Lock()
-	defer ps.mutex.Unlock()
+	ps.writeMutex.Lock()
+	defer ps.writeMutex.Unlock()
 
-	ps.Variables[name] = &VariableValue{
+	// Get current map
+	currentMap := ps.getCurrentVars()
+
+	// Create new variable value
+	newVariable := &VariableValue{
 		Value:     value,
 		Timestamp: time.Now(),
 		Source:    source,
 	}
+
+	// Create new map with updated variable (copy-on-write)
+	newVariables := make(map[string]*VariableValue, len(currentMap.variables)+1)
+	for k, v := range currentMap.variables {
+		newVariables[k] = v
+	}
+	newVariables[name] = newVariable
+
+	// Create new atomic map and update version
+	atomic.AddUint64(&ps.version, 1)
+	newMap := &atomicVariableMap{
+		variables: newVariables,
+		version:   ps.version,
+	}
+
+	// Atomically update the map pointer
+	ps.atomicVars.Store(newMap)
 }
 
-// GetVariable retrieves a variable value by name
+// GetVariable retrieves a variable value by name (lock-free)
 func (ps *ProcessorState) GetVariable(name string) (*VariableValue, bool) {
-	ps.mutex.RLock()
-	defer ps.mutex.RUnlock()
-
-	value, exists := ps.Variables[name]
+	vars := ps.getCurrentVars()
+	value, exists := vars.variables[name]
 	return value, exists
 }
 
-// GetVariableValue retrieves just the value portion of a variable
+// GetVariableValue retrieves just the value portion of a variable (lock-free)
 func (ps *ProcessorState) GetVariableValue(name string) (interface{}, bool) {
-	ps.mutex.RLock()
-	defer ps.mutex.RUnlock()
-
-	if value, exists := ps.Variables[name]; exists {
+	vars := ps.getCurrentVars()
+	if value, exists := vars.variables[name]; exists {
 		return value.Value, true
 	}
 	return nil, false
 }
 
-// HasVariable checks if a variable exists in the state
+// HasVariable checks if a variable exists in the state (lock-free)
 func (ps *ProcessorState) HasVariable(name string) bool {
-	ps.mutex.RLock()
-	defer ps.mutex.RUnlock()
-
-	_, exists := ps.Variables[name]
+	vars := ps.getCurrentVars()
+	_, exists := vars.variables[name]
 	return exists
 }
 
-// GetAllVariables returns a copy of all variables (thread-safe)
+// GetAllVariables returns a copy of all variables (lock-free read, but creates copies)
 func (ps *ProcessorState) GetAllVariables() map[string]*VariableValue {
-	ps.mutex.RLock()
-	defer ps.mutex.RUnlock()
+	vars := ps.getCurrentVars()
 
-	result := make(map[string]*VariableValue)
-	for name, value := range ps.Variables {
+	result := make(map[string]*VariableValue, len(vars.variables))
+	for name, value := range vars.variables {
 		// Create a copy of the variable value
 		result[name] = &VariableValue{
 			Value:     value.Value,
@@ -164,79 +206,110 @@ func (ps *ProcessorState) GetAllVariables() map[string]*VariableValue {
 	return result
 }
 
-// GetVariableNames returns all variable names currently stored
+// GetVariableNames returns all variable names currently stored (lock-free)
 func (ps *ProcessorState) GetVariableNames() []string {
-	ps.mutex.RLock()
-	defer ps.mutex.RUnlock()
+	vars := ps.getCurrentVars()
 
-	names := make([]string, 0, len(ps.Variables))
-	for name := range ps.Variables {
+	names := make([]string, 0, len(vars.variables))
+	for name := range vars.variables {
 		names = append(names, name)
 	}
 	return names
 }
 
-// HasAllVariables checks if all specified variables exist in the state
+// HasAllVariables checks if all specified variables exist in the state (lock-free)
 func (ps *ProcessorState) HasAllVariables(names []string) bool {
-	ps.mutex.RLock()
-	defer ps.mutex.RUnlock()
+	vars := ps.getCurrentVars()
 
 	for _, name := range names {
-		if _, exists := ps.Variables[name]; !exists {
+		if _, exists := vars.variables[name]; !exists {
 			return false
 		}
 	}
 	return true
 }
 
-// GetVariableContext returns a map of variable names to values for JavaScript context
+// GetVariableContext returns a map of variable names to values for JavaScript context (lock-free)
 func (ps *ProcessorState) GetVariableContext() map[string]interface{} {
-	ps.mutex.RLock()
-	defer ps.mutex.RUnlock()
+	vars := ps.getCurrentVars()
 
-	context := make(map[string]interface{})
-	for name, value := range ps.Variables {
+	context := make(map[string]interface{}, len(vars.variables))
+	for name, value := range vars.variables {
 		context[name] = value.Value
 	}
 	return context
 }
 
-// FillVariableContext fills a pooled context map with variable values
+// FillVariableContext fills a pooled context map with variable values (lock-free)
 func (ps *ProcessorState) FillVariableContext(context map[string]interface{}) {
-	ps.mutex.RLock()
-	defer ps.mutex.RUnlock()
+	vars := ps.getCurrentVars()
 
-	for name, value := range ps.Variables {
+	for name, value := range vars.variables {
 		context[name] = value.Value
 	}
 }
 
 // ClearVariables removes all variables from the state
 func (ps *ProcessorState) ClearVariables() {
-	ps.mutex.Lock()
-	defer ps.mutex.Unlock()
+	ps.writeMutex.Lock()
+	defer ps.writeMutex.Unlock()
 
-	ps.Variables = make(map[string]*VariableValue)
+	// Create new empty map
+	atomic.AddUint64(&ps.version, 1)
+	newMap := &atomicVariableMap{
+		variables: make(map[string]*VariableValue),
+		version:   ps.version,
+	}
+
+	// Atomically update the map pointer
+	ps.atomicVars.Store(newMap)
 }
 
 // RemoveVariable removes a specific variable from the state
 func (ps *ProcessorState) RemoveVariable(name string) bool {
-	ps.mutex.Lock()
-	defer ps.mutex.Unlock()
+	ps.writeMutex.Lock()
+	defer ps.writeMutex.Unlock()
 
-	_, exists := ps.Variables[name]
-	if exists {
-		delete(ps.Variables, name)
+	// Get current map
+	currentMap := ps.getCurrentVars()
+
+	// Check if variable exists
+	_, exists := currentMap.variables[name]
+	if !exists {
+		return false
 	}
-	return exists
+
+	// Create new map without the variable (copy-on-write)
+	newVariables := make(map[string]*VariableValue, len(currentMap.variables)-1)
+	for k, v := range currentMap.variables {
+		if k != name {
+			newVariables[k] = v
+		}
+	}
+
+	// Create new atomic map and update version
+	atomic.AddUint64(&ps.version, 1)
+	newMap := &atomicVariableMap{
+		variables: newVariables,
+		version:   ps.version,
+	}
+
+	// Atomically update the map pointer
+	ps.atomicVars.Store(newMap)
+
+	return true
 }
 
-// GetVariableCount returns the number of variables currently stored
+// GetVariableCount returns the number of variables currently stored (lock-free)
 func (ps *ProcessorState) GetVariableCount() int {
-	ps.mutex.RLock()
-	defer ps.mutex.RUnlock()
+	vars := ps.getCurrentVars()
+	return len(vars.variables)
+}
 
-	return len(ps.Variables)
+// GetStateVersion returns the current state version for cache invalidation (lock-free)
+func (ps *ProcessorState) GetStateVersion() uint64 {
+	vars := ps.getCurrentVars()
+	return vars.version
 }
 
 // StateManager handles source-to-variable resolution and state coordination.

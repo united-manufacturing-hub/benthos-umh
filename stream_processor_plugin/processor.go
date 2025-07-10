@@ -39,9 +39,11 @@ type StreamProcessor struct {
 
 	// Object pools for memory optimization
 	pools *ObjectPools
+
+	// Note: Removed worker pool - sequential processing is simpler and more reliable
 }
 
-// newStreamProcessor creates a new stream processor instance
+// newStreamProcessor creates a new StreamProcessor instance
 func newStreamProcessor(config StreamProcessorConfig, logger *service.Logger, metrics *service.Metrics) (*StreamProcessor, error) {
 	// Validate configuration
 	if err := validateConfig(config); err != nil {
@@ -53,19 +55,22 @@ func newStreamProcessor(config StreamProcessorConfig, logger *service.Logger, me
 		return nil, fmt.Errorf("failed to analyze mappings: %w", err)
 	}
 
-	// Extract source variable names for JavaScript engine
+	// Extract source names from configuration
 	sourceNames := make([]string, 0, len(config.Sources))
 	for sourceName := range config.Sources {
 		sourceNames = append(sourceNames, sourceName)
 	}
 
+	// Create pools first as they're needed by JSEngine
+	pools := NewObjectPools(sourceNames)
+
 	processor := &StreamProcessor{
 		config:       config,
 		logger:       logger,
 		stateManager: NewStateManager(&config),
-		jsEngine:     NewJSEngine(logger, sourceNames),
+		jsEngine:     NewJSEngine(logger, sourceNames, pools),
 		metrics:      NewProcessorMetrics(metrics),
-		pools:        NewObjectPools(),
+		pools:        pools,
 	}
 
 	// Pre-compile all JavaScript expressions for performance
@@ -76,9 +81,6 @@ func newStreamProcessor(config StreamProcessorConfig, logger *service.Logger, me
 	// Log configuration analysis results
 	logger.Infof("Stream processor initialized with %d static mappings and %d dynamic mappings",
 		len(config.StaticMappings), len(config.DynamicMappings))
-
-	// Initialize gauge metrics
-	processor.updateGaugeMetrics()
 
 	return processor, nil
 }
@@ -221,12 +223,22 @@ func (p *StreamProcessor) parseTimeseriesMessage(msg *service.Message) (*Timeser
 
 // processStaticMappings processes all static mappings (expressions with no variable dependencies)
 func (p *StreamProcessor) processStaticMappings(metadata map[string]string, timestampMs int64) ([]*service.Message, error) {
-	var outputMessages []*service.Message
-
 	// Get all static mappings from state manager
 	staticMappings := p.stateManager.GetStaticMappings()
 
+	if len(staticMappings) == 0 {
+		return nil, nil
+	}
+
+	// Process mappings sequentially
+	var outputMessages []*service.Message
 	for _, mapping := range staticMappings {
+		// Get variable context for JavaScript execution using pooled context
+		variableContext := p.pools.GetVariableContext()
+		defer p.pools.PutVariableContext(variableContext)
+
+		p.stateManager.GetState().FillVariableContext(variableContext)
+
 		// Execute static JavaScript expression with timing
 		jsStart := time.Now()
 		result := p.jsEngine.EvaluateStatic(mapping.Expression)
@@ -236,6 +248,7 @@ func (p *StreamProcessor) processStaticMappings(metadata map[string]string, time
 
 		if !result.Success {
 			p.logger.Warnf("Static mapping '%s' failed: %s", mapping.VirtualPath, result.Error)
+			p.metrics.LogMessageErrored()
 			continue
 		}
 
@@ -256,22 +269,34 @@ func (p *StreamProcessor) processStaticMappings(metadata map[string]string, time
 
 // processDynamicMappings processes dynamic mappings that depend on the updated variable
 func (p *StreamProcessor) processDynamicMappings(metadata map[string]string, updatedVariable string, timestampMs int64) ([]*service.Message, error) {
-	var outputMessages []*service.Message
-
 	// Get mappings that depend on the updated variable
 	dependentMappings := p.stateManager.GetDependentMappings(updatedVariable)
 
+	if len(dependentMappings) == 0 {
+		return nil, nil
+	}
+
+	// Filter mappings that have all dependencies satisfied
+	var executableMappings []MappingInfo
 	for _, mapping := range dependentMappings {
-		// Check if all required variables are available
-		allDeps, _ := p.checkAllDependencies(mapping.Dependencies)
-
-		if !allDeps {
+		if allDeps, _ := p.checkAllDependencies(mapping.Dependencies); allDeps {
+			executableMappings = append(executableMappings, mapping)
+		} else {
 			p.logger.Debugf("Skipping mapping '%s' - missing dependencies", mapping.VirtualPath)
-			continue
 		}
+	}
 
+	if len(executableMappings) == 0 {
+		return nil, nil
+	}
+
+	// Process mappings sequentially
+	var outputMessages []*service.Message
+	for _, mapping := range executableMappings {
 		// Get variable context for JavaScript execution using pooled context
 		variableContext := p.pools.GetVariableContext()
+		defer p.pools.PutVariableContext(variableContext)
+
 		p.stateManager.GetState().FillVariableContext(variableContext)
 
 		// Execute dynamic JavaScript expression with timing
@@ -279,13 +304,11 @@ func (p *StreamProcessor) processDynamicMappings(metadata map[string]string, upd
 		result := p.jsEngine.EvaluateDynamic(mapping.Expression, variableContext)
 		jsTime := time.Since(jsStart)
 
-		// Return context to pool
-		p.pools.PutVariableContext(variableContext)
-
 		p.metrics.LogJavaScriptExecution(jsTime, result.Success)
 
 		if !result.Success {
 			p.logger.Warnf("Dynamic mapping '%s' failed: %s", mapping.VirtualPath, result.Error)
+			p.metrics.LogMessageErrored()
 			continue
 		}
 
