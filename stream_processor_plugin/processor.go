@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
@@ -28,8 +29,7 @@ type StreamProcessor struct {
 	logger *service.Logger
 
 	// State management
-	state *ProcessorState
-	mutex sync.RWMutex
+	stateManager *StateManager
 
 	// Metrics
 	messagesProcessed *service.MetricCounter
@@ -43,10 +43,11 @@ type ProcessorState struct {
 	mutex     sync.RWMutex
 }
 
-// VariableValue represents a stored variable value
+// VariableValue represents a stored variable value with metadata
 type VariableValue struct {
-	Value  interface{}
-	Source string
+	Value     interface{}
+	Timestamp time.Time
+	Source    string
 }
 
 // newStreamProcessor creates a new stream processor instance
@@ -62,11 +63,9 @@ func newStreamProcessor(config StreamProcessorConfig, logger *service.Logger, me
 	}
 
 	processor := &StreamProcessor{
-		config: config,
-		logger: logger,
-		state: &ProcessorState{
-			Variables: make(map[string]*VariableValue),
-		},
+		config:            config,
+		logger:            logger,
+		stateManager:      NewStateManager(&config),
 		messagesProcessed: metrics.NewCounter("messages_processed"),
 		messagesErrored:   metrics.NewCounter("messages_errored"),
 		messagesDropped:   metrics.NewCounter("messages_dropped"),
