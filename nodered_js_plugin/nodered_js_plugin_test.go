@@ -17,7 +17,9 @@ package nodered_js_plugin_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -618,6 +620,225 @@ bloblang: 'root = this * 2'
 			bloblangStructured, err := bloblangLastMsg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(bloblangStructured).To(Equal(int64(1998))) // 999 * 2
+		})
+
+		It("should handle VM state cleanup and prevent global variable leakage", func() {
+			testActivated := os.Getenv("TEST_NODERED_JS")
+			if testActivated == "" {
+				Skip("Skipping Node-RED JS tests: TEST_NODERED_JS not set")
+				return
+			}
+
+			// Test msg variable cleanup between messages using single processor
+			builder := service.NewStreamBuilder()
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			// JavaScript code that checks if msg properties persist between messages
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    // Check if msg has a leftover property from previous execution
+    if (msg.leftover) {
+      // This indicates msg wasn't properly cleaned
+      msg.payload = "LEAKED: " + msg.leftover;
+    } else {
+      // Normal processing - add a property that should be cleaned
+      msg.leftover = "should_be_cleaned";
+      msg.payload = "CLEAN: " + msg.payload;
+    }
+    
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Send first message
+			testMsg1 := service.NewMessage(nil)
+			testMsg1.SetStructured("test1")
+			err = msgHandler(ctx, testMsg1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Wait for first message to be processed
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			// Verify first message result
+			structured1, err := messages[0].AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(structured1).To(Equal("CLEAN: test1"))
+
+			// Send second message - should NOT see leaked msg properties
+			testMsg2 := service.NewMessage(nil)
+			testMsg2.SetStructured("test2")
+			err = msgHandler(ctx, testMsg2)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Wait for second message to be processed
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(2))
+
+			// Verify second message result - should be "CLEAN", not "LEAKED"
+			structured2, err := messages[1].AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			// This should be "CLEAN: test2", proving msg state was cleaned
+			Expect(structured2).To(Equal("CLEAN: test2"))
+		})
+
+		It("should enforce strict mode and prevent accidental global variables", func() {
+			testActivated := os.Getenv("TEST_NODERED_JS")
+			if testActivated == "" {
+				Skip("Skipping Node-RED JS tests: TEST_NODERED_JS not set")
+				return
+			}
+
+			// Test that accidental global variable creation throws an error
+			builder := service.NewStreamBuilder()
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			// JavaScript code that tries to create an accidental global (should fail in strict mode)
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    // This should throw an error in strict mode
+    accidentalGlobal = "this should fail";
+    msg.payload = "should not reach here";
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Send a message - this should cause an error due to strict mode
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("test")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Wait a bit to see if message gets processed (it shouldn't)
+			time.Sleep(100 * time.Millisecond)
+
+			// Verify no messages were processed due to the strict mode error
+			Expect(len(messages)).To(Equal(0))
+		})
+
+		It("should handle concurrent processing safely", func() {
+			testActivated := os.Getenv("TEST_NODERED_JS")
+			if testActivated == "" {
+				Skip("Skipping Node-RED JS tests: TEST_NODERED_JS not set")
+				return
+			}
+
+			// Test concurrent processing
+			builder := service.NewStreamBuilder()
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    // Simple transformation to test concurrent access
+    msg.payload = "processed_" + msg.payload;
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Send multiple messages concurrently
+			const numMessages = 20
+			var wg sync.WaitGroup
+
+			for i := 0; i < numMessages; i++ {
+				wg.Add(1)
+				go func(index int) {
+					defer wg.Done()
+					testMsg := service.NewMessage(nil)
+					testMsg.SetStructured(fmt.Sprintf("test_%d", index))
+					err := msgHandler(ctx, testMsg)
+					Expect(err).NotTo(HaveOccurred())
+				}(i)
+			}
+
+			wg.Wait()
+
+			// Wait for all messages to be processed
+			Eventually(func() int {
+				messagesMutex.Lock()
+				count := len(messages)
+				messagesMutex.Unlock()
+				return count
+			}).Should(Equal(numMessages))
+
+			// Verify all messages were processed correctly
+			messagesMutex.Lock()
+			processedPayloads := make(map[string]bool)
+			for _, msg := range messages {
+				structured, err := msg.AsStructured()
+				Expect(err).NotTo(HaveOccurred())
+				payload, ok := structured.(string)
+				Expect(ok).To(BeTrue())
+				processedPayloads[payload] = true
+			}
+			messagesMutex.Unlock()
+
+			// Verify we have the expected number of unique processed messages
+			Expect(len(processedPayloads)).To(Equal(numMessages))
 		})
 	})
 })

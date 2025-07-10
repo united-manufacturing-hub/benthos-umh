@@ -1,0 +1,48 @@
+# Copyright 2025 UMH Systems GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+logger:
+  level: INFO
+  add_timestamp: true
+  static_fields:
+    "@service": benthos-kafka-test
+
+# Enable HTTP server with pprof debug endpoints
+http:
+  enabled: true
+  address: "0.0.0.0:4195"
+  root_path: "/benthos"
+  debug_endpoints: true
+
+input:
+  generate:
+    auto_replay_nacks: true
+    batch_size: 10000
+    count: 0
+    interval: 1ms
+    mapping: root = counter()
+pipeline:
+  threads: 1
+  processors:
+    - tag_processor:
+        defaults: |
+          msg.meta.location_path = "enterprise.plant1";
+          msg.meta.data_contract = "_historian";
+          msg.meta.tag_name = "my_data_" + msg.payload % 10000;
+          msg.payload = msg.payload;
+          return msg;
+    - topic_browser: {}
+
+output:
+  drop: {}
