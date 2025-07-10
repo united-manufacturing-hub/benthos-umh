@@ -92,50 +92,28 @@ func (sd *StaticDetector) deduplicateStrings(slice []string) []string {
 ## Implementation
 
 ```go
-func (sd *StaticDetector) AnalyzeMapping(expression string) MappingAnalysis {
-    analysis := MappingAnalysis{
-        Expression: expression,
-        Type:       UnknownMapping,
+func (sd *StaticDetector) AnalyzeMapping(expression string) (MappingAnalysis, error) {
+    isStatic, deps, err := sd.IsStatic(expression)
+    if err != nil {
+        return MappingAnalysis{}, fmt.Errorf("invalid JavaScript expression '%s': %w", expression, err)
     }
     
-    // Method 1: AST parsing (most reliable)
-    if isStatic, deps, err := sd.IsStatic(expression); err == nil {
-        analysis.Dependencies = deps
-        if isStatic {
-            analysis.Type = StaticMapping
-        } else {
-            analysis.Type = DynamicMapping
-        }
-        analysis.Method = "AST"
-        return analysis
+    mappingType := DynamicMapping
+    if isStatic {
+        mappingType = StaticMapping
     }
     
-    // Method 2: Runtime evaluation (fallback)
-    if sd.IsStaticByEvaluation(expression) {
-        analysis.Type = StaticMapping
-        analysis.Method = "Runtime"
-        return analysis
-    }
-    
-    // Method 3: String analysis (last resort)
-    if isStatic, deps := sd.IsStaticByStringAnalysis(expression); isStatic {
-        analysis.Type = StaticMapping
-        analysis.Dependencies = deps
-        analysis.Method = "String"
-    } else {
-        analysis.Type = DynamicMapping
-        analysis.Dependencies = deps
-        analysis.Method = "String"
-    }
-    
-    return analysis
+    return MappingAnalysis{
+        Expression:   expression,
+        Type:         mappingType,
+        Dependencies: deps,
+    }, nil
 }
 
 type MappingAnalysis struct {
     Expression   string
     Type         MappingType
     Dependencies []string
-    Method       string // Which detection method was used
 }
 ```
 
@@ -163,36 +141,43 @@ expressions := map[string]string{
 }
 
 for name, expr := range expressions {
-    analysis := detector.AnalyzeMapping(expr)
-    fmt.Printf("%s: %s (%s) - deps: %v\n", 
-        name, analysis.Type, analysis.Method, analysis.Dependencies)
+    analysis, err := detector.AnalyzeMapping(expr)
+    if err != nil {
+        fmt.Printf("%s: ERROR - %v\n", name, err)
+        continue
+    }
+    fmt.Printf("%s: %s - deps: %v\n", 
+        name, analysis.Type, analysis.Dependencies)
 }
 ```
 
 ## Expected Output
 
 ```
-pressure: DynamicMapping (AST) - deps: [press]
-temperature: DynamicMapping (AST) - deps: [tF]
-serialNumber: StaticMapping (AST) - deps: []
-deviceType: StaticMapping (AST) - deps: []
-timestamp: StaticMapping (AST) - deps: []
-version: StaticMapping (AST) - deps: []
-combined: DynamicMapping (AST) - deps: [press tF]
+pressure: DynamicMapping - deps: [press]
+temperature: DynamicMapping - deps: [tF]
+serialNumber: StaticMapping - deps: []
+deviceType: StaticMapping - deps: []
+timestamp: StaticMapping - deps: []
+version: StaticMapping - deps: []
+combined: DynamicMapping - deps: [press tF]
 ```
 
 ## Integration with Config Parser
 
 ```go
-func (c *Config) analyzemappings() error {
+func (c *Config) analyzeMappings() error {
     detector := NewStaticDetector(c.Sources)
     
-    c.StaticMappings = make([]MappingInfo, 0)
-    c.DynamicMappings = make([]MappingInfo, 0)
+    c.StaticMappings = make(map[string]MappingInfo)
+    c.DynamicMappings = make(map[string]MappingInfo)
     
     // Flatten nested mappings and analyze each
     for virtualPath, expression := range c.flattenMappings() {
-        analysis := detector.AnalyzeMapping(expression)
+        analysis, err := detector.AnalyzeMapping(expression)
+        if err != nil {
+            return fmt.Errorf("failed to analyze mapping '%s': %w", virtualPath, err)
+        }
         
         mappingInfo := MappingInfo{
             VirtualPath:  virtualPath,
@@ -202,9 +187,9 @@ func (c *Config) analyzemappings() error {
         }
         
         if analysis.Type == StaticMapping {
-            c.StaticMappings = append(c.StaticMappings, mappingInfo)
+            c.StaticMappings[virtualPath] = mappingInfo
         } else {
-            c.DynamicMappings = append(c.DynamicMappings, mappingInfo)
+            c.DynamicMappings[virtualPath] = mappingInfo
         }
     }
     
