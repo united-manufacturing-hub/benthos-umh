@@ -157,7 +157,7 @@ func (t *TopicBrowserProcessor) flushBufferAndACKLocked() ([]service.MessageBatc
 		unsBundle.UnsMap.Entries[treeId] = topic
 	}
 
-	// Serialize and compress bundle
+	// Serialize bundle
 	protoBytes, err := BundleToProtobufBytes(unsBundle)
 	if err != nil {
 		return nil, err
