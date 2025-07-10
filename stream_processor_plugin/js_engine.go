@@ -45,6 +45,9 @@ type JSEngine struct {
 	// Compiled expressions cache for performance
 	compiledExpressions map[string]*goja.Program
 
+	// Static expression results cache
+	staticExpressionCache map[string]JSExecutionResult
+
 	// Configuration
 	sourceNames []string // Available source variable names
 }
@@ -59,11 +62,12 @@ type JSExecutionResult struct {
 // NewJSEngine creates a new JavaScript engine instance
 func NewJSEngine(logger *service.Logger, sourceNames []string) *JSEngine {
 	engine := &JSEngine{
-		logger:              logger,
-		staticRuntime:       goja.New(),
-		dynamicRuntime:      goja.New(),
-		compiledExpressions: make(map[string]*goja.Program),
-		sourceNames:         sourceNames,
+		logger:                logger,
+		staticRuntime:         goja.New(),
+		dynamicRuntime:        goja.New(),
+		compiledExpressions:   make(map[string]*goja.Program),
+		staticExpressionCache: make(map[string]JSExecutionResult),
+		sourceNames:           sourceNames,
 	}
 
 	// Configure runtimes
@@ -190,6 +194,11 @@ func (e *JSEngine) CompileExpression(expression string) error {
 // - Date functions: 'Date.now()'
 // - Math operations: 'Math.PI * 2'
 func (e *JSEngine) EvaluateStatic(expression string) JSExecutionResult {
+	// Check cache first
+	if cached, exists := e.staticExpressionCache[expression]; exists {
+		return cached
+	}
+
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)
@@ -200,26 +209,35 @@ func (e *JSEngine) EvaluateStatic(expression string) JSExecutionResult {
 
 	// Compile expression if not already compiled
 	if err := e.CompileExpression(expression); err != nil {
-		return JSExecutionResult{
+		result := JSExecutionResult{
 			Success: false,
 			Error:   fmt.Sprintf("compilation failed: %v", err),
 		}
+		// Cache the error result to avoid re-compiling
+		e.staticExpressionCache[expression] = result
+		return result
 	}
 
 	// Execute the expression
 	result, err := e.executeExpression(e.staticRuntime, expression)
 	if err != nil {
 		e.logger.Warnf("JavaScript execution failed for static expression '%s': %v", expression, err)
-		return JSExecutionResult{
+		errorResult := JSExecutionResult{
 			Success: false,
 			Error:   err.Error(),
 		}
+		// Cache the error result to avoid re-executing
+		e.staticExpressionCache[expression] = errorResult
+		return errorResult
 	}
 
-	return JSExecutionResult{
+	successResult := JSExecutionResult{
 		Success: true,
 		Value:   result,
 	}
+	// Cache the successful result
+	e.staticExpressionCache[expression] = successResult
+	return successResult
 }
 
 // EvaluateDynamic evaluates a dynamic JavaScript expression with variable context
@@ -329,10 +347,18 @@ func (e *JSEngine) GetSourceVariables() []string {
 	return e.sourceNames
 }
 
+// ClearStaticCache clears the static expression cache
+func (e *JSEngine) ClearStaticCache() {
+	e.staticExpressionCache = make(map[string]JSExecutionResult)
+}
+
 // Close cleans up the JavaScript engine resources
 func (e *JSEngine) Close() error {
 	// Clear compiled expressions
 	e.compiledExpressions = make(map[string]*goja.Program)
+
+	// Clear static expression cache
+	e.staticExpressionCache = make(map[string]JSExecutionResult)
 
 	// Note: Goja runtimes don't need explicit cleanup, they will be garbage collected
 	return nil
