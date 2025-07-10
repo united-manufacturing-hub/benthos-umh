@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 // Copyright 2025 UMH Systems GmbH
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,8 +35,8 @@
 // (Communicator → Front-End) use plain JSON, not this protobuf.
 //
 // Typical flow
-//    ┌───────────┐   UnsBundle  (Block LZ4 + hex)   ┌─────────────┐
-//    │ tag_proc. │ ────────────-----───────────────►│   FSM       │
+//    ┌───────────┐   UnsBundle  (Protobuf + hex)   ┌─────────────┐
+//    │ tag_proc. │ ────────────────────────────────►│   FSM       │
 //    └───────────┘                                  └─────────────┘
 //      UnsBundle.events[*] : EventTableEntry         (~ring-100)
 //      UnsBundle.uns_map   : TopicInfo (complete state)
@@ -53,12 +52,13 @@
 package proto
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	wrapperspb "google.golang.org/protobuf/types/known/wrapperspb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	wrapperspb "google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 const (

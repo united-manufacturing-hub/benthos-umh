@@ -16,9 +16,7 @@ package topic_browser_plugin
 
 import (
 	"fmt"
-	"sync"
 
-	"github.com/pierrec/lz4/v4"
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 	protobuf "google.golang.org/protobuf/proto"
 )
@@ -80,113 +78,6 @@ The above bench results show that the space efficiency vastly outranks the added
 Block compression is applied to all inputs regardless of size, with minimal overhead compared to streaming compression.
 */
 
-// compressionBufferPool reuses compression buffers to eliminate allocations.
-// This pools the actual byte slices used for compression, not the LZ4 objects.
-var compressionBufferPool = sync.Pool{
-	New: func() interface{} {
-		// Start with 64KB buffer, will grow as needed
-		return make([]byte, 0, 64*1024)
-	},
-}
-
-// decompressionBufferPool reuses decompression buffers.
-var decompressionBufferPool = sync.Pool{
-	New: func() interface{} {
-		// Start with 64KB buffer, will grow as needed
-		return make([]byte, 0, 64*1024)
-	},
-}
-
-// CompressLZ4 compresses data using LZ4 block compression with buffer pooling.
-//
-// This function implements memory-optimized LZ4 compression using:
-// - Block-based compression to avoid internal buffer pools
-// - Buffer pooling via sync.Pool to minimize allocations
-// - Optimal buffer sizing with automatic growth
-//
-// Args:
-//   - data: The raw data to compress
-//
-// Returns:
-//   - []byte: LZ4-compressed data
-//   - error: Any compression error
-func CompressLZ4(data []byte) ([]byte, error) {
-	if len(data) == 0 {
-		return []byte{}, nil
-	}
-
-	// Get compression buffer from pool
-	compBuf := compressionBufferPool.Get().([]byte)
-	defer compressionBufferPool.Put(compBuf[:0]) // Return with zero length
-
-	// Ensure buffer has enough capacity for compressed output
-	maxCompressedSize := lz4.CompressBlockBound(len(data))
-	if cap(compBuf) < maxCompressedSize {
-		compBuf = make([]byte, maxCompressedSize)
-	}
-	compBuf = compBuf[:maxCompressedSize] // Set length to max size
-
-	// Use LZ4 block compression - this bypasses ALL internal buffer pools!
-	compressor := &lz4.Compressor{}
-	compressedSize, err := compressor.CompressBlock(data, compBuf)
-	if err != nil {
-		return []byte{}, err
-	}
-
-	// Note: LZ4 documentation states that compressedSize == 0 indicates incompressible data.
-	// However, in practice with protobuf data, LZ4 always returns a valid compressed block
-	// (even if compression ratio is 1.0). This edge case is not expected to occur with
-	// structured protobuf data, so we maintain the "always compressed" design contract.
-
-	// Return only the actual compressed data
-	result := make([]byte, compressedSize)
-	copy(result, compBuf[:compressedSize])
-	return result, nil
-}
-
-// DecompressLZ4 decompresses LZ4-compressed data with buffer pooling.
-//
-// This function implements memory-optimized decompression using:
-// - Block-based decompression to avoid streaming overhead
-// - Buffer pooling via sync.Pool for efficient reuse
-// - Automatic buffer growth when needed
-// - Explicit error handling - no fallbacks for invalid data
-//
-// Args:
-//   - compressedData: The LZ4-compressed data
-//
-// Returns:
-//   - []byte: Decompressed data
-//   - error: Decompression error if data is invalid or corrupted
-func DecompressLZ4(compressedData []byte) ([]byte, error) {
-	if len(compressedData) == 0 {
-		return []byte{}, nil
-	}
-
-	// Get decompression buffer from pool
-	decompBuf := decompressionBufferPool.Get().([]byte)
-	defer decompressionBufferPool.Put(decompBuf[:0]) // Return with zero length
-
-	// LZ4 guarantees that the decompressed size will be less than 255x the compressed size. (https://stackoverflow.com/questions/25740471/lz4-library-decompressed-data-upper-bound-size-estimation)
-	estimatedSize := len(compressedData) * 255
-	if cap(decompBuf) < estimatedSize {
-		decompBuf = make([]byte, estimatedSize)
-	}
-	decompBuf = decompBuf[:cap(decompBuf)] // Use full capacity
-
-	// Decompress using LZ4 block decompression
-	decompressedSize, err := lz4.UncompressBlock(compressedData, decompBuf)
-	if err != nil {
-		// Return error - no fallback, caller must handle
-		return nil, err
-	}
-
-	// Return only the actual decompressed data
-	result := make([]byte, decompressedSize)
-	copy(result, decompBuf[:decompressedSize])
-	return result, nil
-}
-
 // bundleToProtobuf converts an UNSBundle (containing both Topics and Events) to a protobuf representation
 func bundleToProtobuf(bundle *proto.UnsBundle) ([]byte, error) {
 	protoBytes, err := protobuf.Marshal(bundle)
@@ -206,89 +97,102 @@ func protobufBytesToBundle(protoBytes []byte) (*proto.UnsBundle, error) {
 	return bundle, nil
 }
 
-// BundleToProtobufBytes converts an UnsBundle to LZ4-compressed protobuf bytes.
+// BundleToProtobufBytes converts an UnsBundle to uncompressed protobuf bytes.
 //
-// # OPTIMIZED LZ4 COMPRESSION WITH BUFFER POOLING
+// # UNCOMPRESSED PROTOBUF SERIALIZATION
 //
-// This function implements a memory-optimized compression strategy using:
+// This function provides direct protobuf serialization without compression for:
 //
-// ## Block-Based Compression Strategy:
-//   - Uses LZ4 block compression instead of streaming to avoid internal buffer pools
-//   - Eliminates the 32MB+ lz4.init.newBufferPool allocations completely
-//   - Pools the actual compression buffers via sync.Pool
-//   - No LZ4 writer objects or internal state management
+// ## Simplified Data Processing:
+//   - Direct protobuf bytes without compression overhead
+//   - Eliminates compression/decompression CPU cycles
+//   - Reduces processing complexity and potential failure points
+//   - Simplified debugging and data inspection
 //
 // ## Performance Benefits:
-//   - Eliminates the 60%+ heap usage from LZ4 internal buffer pools
-//   - Dramatically reduces GC pressure from constant allocations
-//   - Same compression ratio (84%+) with much lower memory footprint
-//   - Thread-safe buffer pooling via sync.Pool
+//   - No compression CPU overhead during serialization
+//   - Eliminated compression buffer allocations
+//   - Faster processing for small to medium payloads
+//   - Reduced memory pressure from compression operations
 //
-// ## LZ4 Configuration:
-//   - Block compression with optimal buffer sizing
-//   - Always-on compression for predictable output format
-//   - Automatic buffer growth when needed, with pooled reuse
+// ## Use Cases:
+//   - High-frequency small payloads where compression overhead exceeds benefits
+//   - Debugging scenarios where raw protobuf inspection is needed
+//   - Systems where network bandwidth is not the primary constraint
+//   - Real-time processing where CPU cycles are more valuable than bandwidth
 //
-// Returns the LZ4-compressed byte array, along with an error if any occurs.
+// Returns the uncompressed protobuf byte array, along with an error if any occurs.
 //
 // Args:
-//   - bundle: The UnsBundle to serialize and compress
+//   - bundle: The UnsBundle to serialize
 //
 // Returns:
-//   - []byte: LZ4-compressed protobuf bytes (always compressed)
-//   - error: Any marshaling or compression error
+//   - []byte: Uncompressed protobuf bytes
+//   - error: Any marshaling error
 func BundleToProtobufBytes(bundle *proto.UnsBundle) ([]byte, error) {
 	protoBytes, err := bundleToProtobuf(bundle)
 	if err != nil {
 		return []byte{}, err
 	}
 
-	return CompressLZ4(protoBytes)
+	return protoBytes, nil
 }
 
-// ProtobufBytesToBundleWithCompression converts LZ4-compressed protobuf data back to an UnsBundle.
+// ProtobufBytesToBundle converts uncompressed protobuf data back to an UnsBundle.
 //
-// # OPTIMIZED LZ4 DECOMPRESSION WITH BUFFER POOLING
+// # DIRECT PROTOBUF DESERIALIZATION
 //
-// This function implements memory-optimized decompression using:
+// This function provides direct protobuf deserialization without decompression for:
 //
-// ## Block-Based Decompression Strategy:
-//   - Uses LZ4 block decompression to avoid streaming overhead
-//   - Eliminates LZ4 reader internal buffer allocations
-//   - Pools decompression buffers via sync.Pool for reuse
-//   - Direct block decompression without state management
+// ## Simplified Data Processing:
+//   - Direct protobuf parsing without decompression overhead
+//   - Eliminates decompression CPU cycles and potential failure points
+//   - Simplified error handling with single failure mode
+//   - Reduced processing complexity
 //
 // ## Performance Benefits:
-//   - No streaming reader allocations or internal LZ4 pools
-//   - Efficient buffer reuse reduces allocation pressure
-//   - Consistent decompression performance across operations
-//   - Memory-efficient handling of large compressed bundles
+//   - No decompression CPU overhead during deserialization
+//   - Eliminated decompression buffer allocations
+//   - Faster processing for small to medium payloads
+//   - Reduced memory pressure from decompression operations
 //
 // ## Error Handling:
-//   - Explicit error reporting for decompression failures
-//   - No silent fallbacks that could mask data corruption
-//   - Clear distinction between compression errors and protobuf errors
+//   - Single error mode: protobuf parsing failures
+//   - Clear and direct error reporting
+//   - No compression-related error handling complexity
 //
 // Returns the decoded UnsBundle or an error if decoding fails.
 //
 // Args:
-//   - compressedBytes: The LZ4-compressed protobuf bytes
+//   - protoBytes: The uncompressed protobuf bytes
 //
 // Returns:
 //   - *UnsBundle: The decoded bundle
-//   - error: Any decompression or decoding error
-func ProtobufBytesToBundleWithCompression(compressedBytes []byte) (*proto.UnsBundle, error) {
-	// Decompress the LZ4-compressed data
-	decompressedBytes, err := DecompressLZ4(compressedBytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decompress LZ4 data: %w", err)
-	}
-
-	// Convert the decompressed data back to a protobuf bundle
-	bundle, err := protobufBytesToBundle(decompressedBytes)
+//   - error: Any protobuf parsing error
+func ProtobufBytesToBundle(protoBytes []byte) (*proto.UnsBundle, error) {
+	// Convert the protobuf data to a bundle
+	bundle, err := protobufBytesToBundle(protoBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse protobuf data: %w", err)
 	}
 
 	return bundle, nil
+}
+
+// ProtobufBytesToBundleWithCompression is a backward compatibility function that handles protobuf data.
+//
+// DEPRECATED: This function is deprecated and will be removed in a future version.
+// Use ProtobufBytesToBundle instead for new code.
+//
+// This function now processes uncompressed protobuf data directly, despite its name referencing compression.
+// The name is retained for backward compatibility with existing code that expects this function signature.
+//
+// Args:
+//   - protoBytes: The uncompressed protobuf bytes
+//
+// Returns:
+//   - *UnsBundle: The decoded bundle
+//   - error: Any protobuf parsing error
+func ProtobufBytesToBundleWithCompression(protoBytes []byte) (*proto.UnsBundle, error) {
+	return ProtobufBytesToBundle(protoBytes)
 }

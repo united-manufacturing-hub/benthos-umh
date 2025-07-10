@@ -68,7 +68,7 @@ func main() {
 		log.Fatalf("Error decoding hex: %v", err)
 	}
 
-	// Decode protobuf (with optimized LZ4 block decompression)
+	// Decode protobuf data
 	bundle, err := topic_browser_plugin.ProtobufBytesToBundleWithCompression(protoBytes)
 	if err != nil {
 		log.Fatalf("Error decoding protobuf: %v", err)
