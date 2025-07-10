@@ -9,3 +9,18 @@ alwaysApply: false
 - We use Ginkgo v2 & Gomega for testing
 - Do not remove focused tests
 - Do not remove existing documentation, unless they are being replaced with a better or more up to date one.
+- Use newer Go versions methods and API's if applicable
+
+## Go Versions
+go1.21: builtins=min / max / clear; pkgs=slices(All,Values,Delete,Insert,Concat,…), maps(Copy,Clone,Equal,Keys,…), cmp(Ordered,Less,Compare), log/slog(Logger,Handler,Record,Level…), testing/slogtest(Run); lang: new package-init order algo, extra-power type-inference, nil-panic now *PanicNilError*; min / max / clear are part of the spec now. ([go.dev][1])
+
+go1.22: builtins=-; pkgs=math/rand/v2(ChaCha8,PCG,Uint64,IntN,N,…), go/version(Compare,Valid,MustParse); lang: “for i := range N” loop syntax, per-iteration loop vars, opt-in range-over-func iterator preview. ([go.dev][2])
+
+go1.23: builtins=-; pkgs=iter(Seq,All,Collect,…), unique(Make,Handle), structs(HostLayout); std-helpers: slices.Iterator ops, maps.Iterator ops; lang: for-range accepts iterator-funcs, generic alias types preview (GOEXPERIMENT=aliastypeparams). ([go.dev][3])
+
+go1.24: builtins=-; pkgs=crypto/hkdf(Extract,Expand), crypto/pbkdf2(Key), crypto/sha3(New224/New256,SHAKE,cSHAKE), crypto/mlkem(KeyGen,Encaps,Decaps), weak(New,Ptr), testing/synctest(Run,Wait); lang: generic type aliases final, Swiss-table map backend, runtime.AddCleanup finalizers, os.Root dir-scoped FS ops. ([go.dev][4])
+
+[1]: https://go.dev/doc/go1.21 "Go 1.21 Release Notes - The Go Programming Language"
+[2]: https://go.dev/doc/go1.22 "Go 1.22 Release Notes - The Go Programming Language"
+[3]: https://go.dev/doc/go1.23 "Go 1.23 Release Notes - The Go Programming Language"
+[4]: https://go.dev/doc/go1.24 "Go 1.24 Release Notes - The Go Programming Language"
