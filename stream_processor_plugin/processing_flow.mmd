@@ -8,8 +8,9 @@ flowchart TD
     E -->|Yes| F[Extract variable name<br/>from source mapping]
     F --> G[Store variable value<br/>in processor state]
     G --> H[Find mappings that<br/>reference this variable]
-    H --> I{Found mappings<br/>using this variable?}
-    I -->|No| J[No output - variable<br/>not used in any mapping]
+    H --> H2[Add static mappings<br/>to processing queue]
+    H2 --> I{Found mappings<br/>using this variable?}
+    I -->|No| I2[Process static mappings only]
     I -->|Yes| K[For each mapping that<br/>uses this variable]
     K --> L{All referenced<br/>variables available?}
     L -->|No| M[Skip this mapping<br/>- missing dependencies]
@@ -28,10 +29,11 @@ flowchart TD
     M --> W
     P --> W
     C --> Y[Return empty batch]
-    J --> Y
+    I2 --> K
     
     style A fill:#e1f5fe
     style H fill:#ffeb3b
+    style H2 fill:#e8f5e8
     style X fill:#c8e6c9
     style Y fill:#ffcdd2
     style N fill:#fff3e0
