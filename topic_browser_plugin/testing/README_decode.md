@@ -7,12 +7,12 @@ This tool properly decodes the UNS Bundle protobuf messages produced by the topi
 CyberChef struggles with the protobuf format because:
 
 1. **Complex nested structures**: The UnsBundle contains multiple nested oneOf fields and repeated structures
-2. **LZ4 block compression**: All messages are LZ4 block-compressed (optimized for memory efficiency), but CyberChef may not detect this properly
+2. **Protobuf binary format**: Binary protobuf data requires schema knowledge for proper parsing
 3. **Batched data**: Multiple events are batched together, making manual parsing confusing
 
 ## Solution
 
-Use the provided Go decoder which understands the protobuf schema and handles optimized LZ4 block decompression automatically.
+Use the provided Go decoder which understands the protobuf schema and handles protobuf parsing automatically.
 
 ## Usage
 
@@ -96,7 +96,7 @@ The data you were seeing in CyberChef represents:
 
 1. **Batched messages**: Multiple events processed together for efficiency
 2. **Topic deduplication**: Topic metadata is only sent when it changes (using LRU cache)
-3. **Block compression**: All bundles use optimized LZ4 block compression for memory efficiency and reduced network traffic
+3. **Binary serialization**: All bundles use protobuf binary format for efficient data representation
 4. **Hierarchical structure**: UMH's ISA-95 based hierarchy (enterprise → plant → area → line → device)
 
 This is normal behavior for the UMH topic browser processor - it's designed to minimize traffic by batching events and only sending topic changes when necessary. 
