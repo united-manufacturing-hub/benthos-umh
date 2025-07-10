@@ -230,13 +230,13 @@ func (p *StreamProcessor) processStaticMappings(metadata map[string]string, time
 		return nil, nil
 	}
 
+	// Get variable context for JavaScript execution using pooled context (reuse across iterations)
+	variableContext := p.pools.GetVariableContext()
+	defer p.pools.PutVariableContext(variableContext)
+
 	// Process mappings sequentially with pre-allocated slice
 	outputMessages := make([]*service.Message, 0, len(staticMappings))
 	for _, mapping := range staticMappings {
-		// Get variable context for JavaScript execution using pooled context
-		variableContext := p.pools.GetVariableContext()
-		defer p.pools.PutVariableContext(variableContext)
-
 		p.stateManager.GetState().FillVariableContext(variableContext)
 
 		// Execute static JavaScript expression with timing using pre-compiled program
@@ -290,13 +290,13 @@ func (p *StreamProcessor) processDynamicMappings(metadata map[string]string, upd
 		return nil, nil
 	}
 
+	// Get variable context for JavaScript execution using pooled context (reuse across iterations)
+	variableContext := p.pools.GetVariableContext()
+	defer p.pools.PutVariableContext(variableContext)
+
 	// Process mappings sequentially with pre-allocated slice
 	outputMessages := make([]*service.Message, 0, len(executableMappings))
 	for _, mapping := range executableMappings {
-		// Get variable context for JavaScript execution using pooled context
-		variableContext := p.pools.GetVariableContext()
-		defer p.pools.PutVariableContext(variableContext)
-
 		p.stateManager.GetState().FillVariableContext(variableContext)
 
 		// Execute dynamic JavaScript expression with timing using pre-compiled program
