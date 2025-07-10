@@ -146,7 +146,7 @@ func (e *JSEngine) configureRuntime(runtime *goja.Runtime) {
 	// Create a function that explains why APIs are disabled
 	securityBlocker := func(apiName string) func(goja.FunctionCall) goja.Value {
 		return func(call goja.FunctionCall) goja.Value {
-			panic(runtime.NewTypeError(fmt.Sprintf("'%s' is disabled for security reasons in this sandboxed environment", apiName)))
+			return runtime.NewTypeError(fmt.Sprintf("'%s' is disabled for security reasons in this sandboxed environment", apiName))
 		}
 	}
 
@@ -337,6 +337,10 @@ func (e *JSEngine) executeExpression(runtime *goja.Runtime, expression string) (
 		result, err = runtime.RunProgram(program)
 	}()
 
+	// Create timeout timer
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+
 	// Wait for execution with timeout
 	select {
 	case <-done:
@@ -347,7 +351,11 @@ func (e *JSEngine) executeExpression(runtime *goja.Runtime, expression string) (
 			return nil, fmt.Errorf("JavaScript execution returned nil result")
 		}
 		return result.Export(), nil
-	case <-time.After(5 * time.Second):
+	case <-timer.C:
+		// Interrupt the runtime to stop execution
+		runtime.Interrupt("execution timeout")
+		// Wait for goroutine to finish after interrupt
+		<-done
 		return nil, fmt.Errorf("JavaScript execution timeout")
 	}
 }
@@ -416,11 +424,12 @@ func (e *JSEngine) PrecompileExpressions(staticMappings, dynamicMappings map[str
 func (e *JSEngine) EvaluateStaticPrecompiled(expression string) JSExecutionResult {
 	// Check cache first with read lock
 	e.staticCacheMutex.RLock()
-	if cached, exists := e.staticExpressionCache[expression]; exists {
-		e.staticCacheMutex.RUnlock()
+	cached, exists := e.staticExpressionCache[expression]
+	e.staticCacheMutex.RUnlock()
+
+	if exists {
 		return cached
 	}
-	e.staticCacheMutex.RUnlock()
 
 	start := time.Now()
 	defer func() {
@@ -542,6 +551,10 @@ func (e *JSEngine) executePrecompiledProgram(runtime *goja.Runtime, program *goj
 		result, execErr = runtime.RunProgram(program)
 	}()
 
+	// Create timeout timer
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+
 	select {
 	case <-done:
 		if execErr != nil {
@@ -551,8 +564,11 @@ func (e *JSEngine) executePrecompiledProgram(runtime *goja.Runtime, program *goj
 			return nil, fmt.Errorf("JavaScript execution returned nil result")
 		}
 		return result.Export(), nil
-	case <-time.After(5 * time.Second):
+	case <-timer.C:
+		// Interrupt the runtime to stop execution
 		runtime.Interrupt("execution timeout")
+		// Wait for goroutine to finish after interrupt
+		<-done
 		return nil, fmt.Errorf("JavaScript execution timeout (5s limit)")
 	}
 }

@@ -13,16 +13,16 @@
 - **Allocations**: <100 per message (8.7x reduction)
 
 **✅ FINAL OPTIMIZED PERFORMANCE (MAJOR IMPROVEMENT - CLOSE TO TARGET):**
-- **Throughput**: **87,198 msgs/sec** ⭐ **(87% of 100k target - Major Improvement!)**
+- **Throughput**: **78,828 msgs/sec** ⭐ **(79% of 100k target - Major Improvement!)**
 - **Memory**: **5.5KB per message** ⭐ **(Target Exceeded by 45%!)**
 - **Allocations**: **110 per message** ⭐ **(Close to <100 target)**
-- **Processing time**: **~11.5μs per message** ⭐ **(4.6x improvement)**
+- **Processing time**: **~12.7μs per message** ⭐ **(4.2x improvement)**
 
 **🎯 OPTIMIZATION RESULTS:**
-- **5.0x throughput improvement** (17,348 → 87,198 msgs/sec)
+- **4.5x throughput improvement** (17,348 → 78,828 msgs/sec)
 - **14.4x memory reduction** (79KB → 5.5KB per message)
 - **8.0x allocation reduction** (878 → 110 allocs per message)
-- **4.6x processing time improvement** (53μs → 11.5μs per message)
+- **4.2x processing time improvement** (53μs → 12.7μs per message)
 
 ## Benchmark Results Analysis
 
@@ -34,13 +34,20 @@ BenchmarkJavaScriptExpressions/SimpleExpression-11 48786    24492 ns/op    38299
 BenchmarkThroughput/HighThroughput-11              19933    57645 ns/op    17348 msgs/sec    79027 B/op    882 allocs/op
 ```
 
-### ✅ Final Optimized Benchmark Results (10-Second Reliable Benchmarks)
+### ✅ Final Optimized Benchmark Results (Latest Production-Ready Results)
 ```
-BenchmarkProcessBatch/StaticMapping-11           1000000    12547 ns/op     5416 B/op    106 allocs/op
-BenchmarkProcessBatch/DynamicMapping-11          1000000    11575 ns/op     5421 B/op    106 allocs/op
-BenchmarkProcessBatch/MixedMappings-11            990992    11826 ns/op     5425 B/op    106 allocs/op
-BenchmarkJavaScriptExpressions/SimpleExpression-11 2519976   4973 ns/op     2153 B/op     46 allocs/op
-BenchmarkThroughput/HighThroughput-11             996687    11468 ns/op    87198 msgs/sec  5456 B/op    110 allocs/op
+BenchmarkProcessBatch/StaticMapping-11           1050243    10792 ns/op     5418 B/op    106 allocs/op
+BenchmarkProcessBatch/DynamicMapping-11          1000000    11425 ns/op     5424 B/op    106 allocs/op
+BenchmarkProcessBatch/MixedMappings-11            998377    11741 ns/op     5426 B/op    106 allocs/op
+BenchmarkProcessBatch/UnknownTopic-11           18524583      666.6 ns/op    304 B/op     10 allocs/op
+BenchmarkProcessBatch/InvalidJSON-11            31328228      394.1 ns/op    416 B/op     11 allocs/op
+BenchmarkProcessBatch/MissingMetadata-11        90107593      131.2 ns/op     32 B/op      2 allocs/op
+BenchmarkJavaScriptExpressions/SimpleExpression-11 2556741   4829 ns/op     2153 B/op     46 allocs/op
+BenchmarkJavaScriptExpressions/ComplexExpression-11 11176500  1142 ns/op      816 B/op     18 allocs/op
+BenchmarkJavaScriptExpressions/StringConcatenation-11 11388147 1202 ns/op     816 B/op     18 allocs/op
+BenchmarkJavaScriptExpressions/ConditionalExpression-11 1996210 6375 ns/op  2157 B/op     46 allocs/op
+BenchmarkJavaScriptExpressions/MathOperations-11 10703904    1150 ns/op      816 B/op     18 allocs/op
+BenchmarkThroughput/HighThroughput-11             976524    12686 ns/op    78828 msgs/sec  5461 B/op    110 allocs/op
 ```
 
 **Original Key Findings:**
@@ -50,10 +57,11 @@ BenchmarkThroughput/HighThroughput-11             996687    11468 ns/op    87198
 - **Consistent Overhead**: Similar performance across static/dynamic mappings indicated systemic issues
 
 **✅ Final Results Analysis:**
-- **Allocation Problem Solved**: Reduced from 878 → 109 allocations per message (8.1x improvement)
-- **JavaScript Optimized**: Reduced from 38KB/417 allocs → 2.1KB/46 allocs (18x memory, 9x allocation improvement)
-- **Target Performance Exceeded**: 86,174 msgs/sec surpasses 100k target on single core
-- **Consistent High Performance**: Stable ~11μs processing time across all mapping types
+- **Allocation Problem Solved**: Reduced from 878 → 110 allocations per message (8.0x improvement)
+- **JavaScript Optimized**: Reduced from 38KB/417 allocs → 2.2KB/46 allocs (17x memory, 9x allocation improvement)
+- **Major Performance Improvement**: 78,828 msgs/sec represents 79% of 100k target - significant improvement from 17k baseline
+- **Consistent High Performance**: Stable ~12μs processing time across all mapping types
+- **Edge Case Optimization**: Excellent performance for error conditions (131ns-666ns for invalid inputs)
 
 ## Major Optimization Opportunities
 
@@ -388,7 +396,7 @@ The success of this plan depends on careful implementation, thorough testing, an
 ### 🚀 Performance Breakthrough Analysis
 
 **The Final Push Toward 100k Target:**
-- **87,198 msgs/sec** - 87% of 100k target, major improvement but 13k msgs/sec short
+- **78,828 msgs/sec** - 79% of 100k target, major improvement but 21k msgs/sec short
 - **110 allocations** - Close to <100 target (10% over)
 - **5.5KB memory** - 45% better than 10KB target (exceeded!)
 
@@ -398,16 +406,16 @@ The success of this plan depends on careful implementation, thorough testing, an
 - **Better VM lifecycle management** patterns
 - **Smarter memory pre-allocation** strategies
 
-These final optimizations delivered consistent 87k+ msgs/sec performance and kept allocations close to our <100 target, representing a massive improvement from the original 17k msgs/sec baseline!
+These final optimizations delivered consistent 79k+ msgs/sec performance and kept allocations close to our <100 target, representing a massive improvement from the original 17k msgs/sec baseline!
 
 ### 📊 Performance Transformation
 
 | Metric | Original | Final | Improvement |
 |--------|----------|-------|-------------|
-| **Throughput** | 17,348 msgs/sec | 87,198 msgs/sec | **5.0x** |
+| **Throughput** | 17,348 msgs/sec | 78,828 msgs/sec | **4.5x** |
 | **Memory per Message** | 79 KB | 5.5 KB | **14.4x** |
 | **Allocations per Message** | 878 | 110 | **8.0x** |
-| **Processing Time** | 53μs | 11.5μs | **4.6x** |
+| **Processing Time** | 53μs | 12.7μs | **4.2x** |
 | **JavaScript Overhead** | 38KB/417 allocs | 2.2KB/46 allocs | **17x memory, 9x allocs** |
 
 ### 🧠 Critical Lessons Learned
@@ -436,12 +444,13 @@ These final optimizations delivered consistent 87k+ msgs/sec performance and kep
 ### 🚀 Production Readiness
 
 **Current State:**
-- **High Performance**: 87k+ msgs/sec sustainable throughput (87% of 100k target)
+- **High Performance**: 79k+ msgs/sec sustainable throughput (79% of 100k target)
 - **Low Resource Usage**: 5.5KB memory footprint per message (45% better than target)
 - **Reliable**: All 103 tests pass, no race conditions, no linting issues
 - **Maintainable**: Simplified codebase without worker pool complexity
+- **Excellent Edge Case Handling**: Sub-microsecond performance for error conditions
 
-**Recommendation**: **Deploy optimized version** - massive 5x improvement achieved, close to 100k target with excellent single-core performance.
+**Recommendation**: **Deploy optimized version** - massive 4.5x improvement achieved, approaching 100k target with excellent single-core performance.
 
 ### 🔮 Future Optimization Opportunities
 
