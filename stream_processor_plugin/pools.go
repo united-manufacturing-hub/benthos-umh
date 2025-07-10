@@ -17,6 +17,8 @@ package stream_processor_plugin
 import (
 	"strings"
 	"sync"
+
+	"github.com/dop251/goja"
 )
 
 // ObjectPools provides pooled objects to reduce memory allocations
@@ -33,13 +35,21 @@ type ObjectPools struct {
 	// String builder pool for topic construction
 	stringBuilderPool sync.Pool
 
+	// JavaScript runtime pool for dynamic expressions
+	jsRuntimePool sync.Pool
+
 	// Topic cache for frequently constructed topics
 	topicCache sync.Map
+
+	// Source names for runtime configuration
+	sourceNames []string
 }
 
 // NewObjectPools creates a new object pools instance
-func NewObjectPools() *ObjectPools {
-	pools := &ObjectPools{}
+func NewObjectPools(sourceNames []string) *ObjectPools {
+	pools := &ObjectPools{
+		sourceNames: sourceNames,
+	}
 
 	// Initialize metadata map pool
 	pools.metadataPool.New = func() interface{} {
@@ -61,7 +71,42 @@ func NewObjectPools() *ObjectPools {
 		return &strings.Builder{}
 	}
 
+	// Initialize JavaScript runtime pool
+	pools.jsRuntimePool.New = func() interface{} {
+		runtime := goja.New()
+		pools.configureRuntime(runtime)
+		return runtime
+	}
+
 	return pools
+}
+
+// configureRuntime sets up a Goja runtime with security constraints
+func (p *ObjectPools) configureRuntime(runtime *goja.Runtime) {
+	// Set maximum call stack size to prevent stack overflow from deep recursion
+	runtime.SetMaxCallStackSize(1000)
+
+	// Disable dangerous globals
+	dangerousGlobals := []string{
+		"require", "module", "exports", "process", "__dirname", "__filename",
+		"global", "globalThis", "Function", "eval", "console",
+		"setTimeout", "setInterval", "setImmediate", "clearTimeout", "clearInterval", "clearImmediate",
+		"__proto__", "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__", "constructor",
+		"defineProperty", "getOwnPropertyDescriptor", "getPrototypeOf", "setPrototypeOf",
+		"escape", "unescape", "import", "importScripts",
+	}
+
+	// Create a function that explains why APIs are disabled
+	securityBlocker := func(apiName string) func(goja.FunctionCall) goja.Value {
+		return func(call goja.FunctionCall) goja.Value {
+			panic(runtime.NewTypeError("'" + apiName + "' is disabled for security reasons in this sandboxed environment"))
+		}
+	}
+
+	// Replace dangerous global objects with security blocker functions
+	for _, global := range dangerousGlobals {
+		_ = runtime.Set(global, securityBlocker(global))
+	}
 }
 
 // GetMetadataMap gets a metadata map from the pool
@@ -119,6 +164,28 @@ func (p *ObjectPools) PutStringBuilder(sb *strings.Builder) {
 	if sb.Cap() <= 1024 {
 		p.stringBuilderPool.Put(sb)
 	}
+}
+
+// GetJSRuntime gets a JavaScript runtime from the pool
+func (p *ObjectPools) GetJSRuntime() *goja.Runtime {
+	runtime := p.jsRuntimePool.Get().(*goja.Runtime)
+	return runtime
+}
+
+// PutJSRuntime returns a JavaScript runtime to the pool after clearing variables
+func (p *ObjectPools) PutJSRuntime(runtime *goja.Runtime) {
+	// Clear all variables from the runtime to prevent contamination
+	for _, sourceName := range p.sourceNames {
+		_ = runtime.Set(sourceName, goja.Undefined())
+	}
+
+	// Also clear common temporary variables that might have been set
+	tempVars := []string{"result", "temp", "value", "data", "input", "output"}
+	for _, tempVar := range tempVars {
+		_ = runtime.Set(tempVar, goja.Undefined())
+	}
+
+	p.jsRuntimePool.Put(runtime)
 }
 
 // GetTopic gets a cached topic or constructs a new one

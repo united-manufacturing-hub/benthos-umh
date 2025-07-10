@@ -16,6 +16,7 @@ package stream_processor_plugin
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/dop251/goja"
@@ -44,9 +45,14 @@ type JSEngine struct {
 
 	// Compiled expressions cache for performance
 	compiledExpressions map[string]*goja.Program
+	compiledMutex       sync.RWMutex // Protects compiledExpressions
 
 	// Static expression results cache
 	staticExpressionCache map[string]JSExecutionResult
+	staticCacheMutex      sync.RWMutex // Protects staticExpressionCache
+
+	// Object pools for runtime reuse
+	pools *ObjectPools
 
 	// Configuration
 	sourceNames []string // Available source variable names
@@ -60,13 +66,14 @@ type JSExecutionResult struct {
 }
 
 // NewJSEngine creates a new JavaScript engine instance
-func NewJSEngine(logger *service.Logger, sourceNames []string) *JSEngine {
+func NewJSEngine(logger *service.Logger, sourceNames []string, pools *ObjectPools) *JSEngine {
 	engine := &JSEngine{
 		logger:                logger,
 		staticRuntime:         goja.New(),
 		dynamicRuntime:        goja.New(),
 		compiledExpressions:   make(map[string]*goja.Program),
 		staticExpressionCache: make(map[string]JSExecutionResult),
+		pools:                 pools,
 		sourceNames:           sourceNames,
 	}
 
@@ -169,10 +176,13 @@ func (e *JSEngine) ValidateExpression(expression string) error {
 
 // CompileExpression compiles and caches a JavaScript expression
 func (e *JSEngine) CompileExpression(expression string) error {
-	// Check if already compiled
+	// Check if already compiled with read lock
+	e.compiledMutex.RLock()
 	if _, exists := e.compiledExpressions[expression]; exists {
+		e.compiledMutex.RUnlock()
 		return nil
 	}
+	e.compiledMutex.RUnlock()
 
 	// Compile the expression
 	program, err := goja.Compile("expression", expression, false)
@@ -180,8 +190,13 @@ func (e *JSEngine) CompileExpression(expression string) error {
 		return fmt.Errorf("failed to compile expression '%s': %w", expression, err)
 	}
 
-	// Cache the compiled program
-	e.compiledExpressions[expression] = program
+	// Cache the compiled program with write lock
+	e.compiledMutex.Lock()
+	// Double-check in case another goroutine compiled it while we were compiling
+	if _, exists := e.compiledExpressions[expression]; !exists {
+		e.compiledExpressions[expression] = program
+	}
+	e.compiledMutex.Unlock()
 	return nil
 }
 
@@ -194,10 +209,13 @@ func (e *JSEngine) CompileExpression(expression string) error {
 // - Date functions: 'Date.now()'
 // - Math operations: 'Math.PI * 2'
 func (e *JSEngine) EvaluateStatic(expression string) JSExecutionResult {
-	// Check cache first
+	// Check cache first with read lock
+	e.staticCacheMutex.RLock()
 	if cached, exists := e.staticExpressionCache[expression]; exists {
+		e.staticCacheMutex.RUnlock()
 		return cached
 	}
+	e.staticCacheMutex.RUnlock()
 
 	start := time.Now()
 	defer func() {
@@ -214,7 +232,9 @@ func (e *JSEngine) EvaluateStatic(expression string) JSExecutionResult {
 			Error:   fmt.Sprintf("compilation failed: %v", err),
 		}
 		// Cache the error result to avoid re-compiling
+		e.staticCacheMutex.Lock()
 		e.staticExpressionCache[expression] = result
+		e.staticCacheMutex.Unlock()
 		return result
 	}
 
@@ -227,7 +247,9 @@ func (e *JSEngine) EvaluateStatic(expression string) JSExecutionResult {
 			Error:   err.Error(),
 		}
 		// Cache the error result to avoid re-executing
+		e.staticCacheMutex.Lock()
 		e.staticExpressionCache[expression] = errorResult
+		e.staticCacheMutex.Unlock()
 		return errorResult
 	}
 
@@ -236,7 +258,9 @@ func (e *JSEngine) EvaluateStatic(expression string) JSExecutionResult {
 		Value:   result,
 	}
 	// Cache the successful result
+	e.staticCacheMutex.Lock()
 	e.staticExpressionCache[expression] = successResult
+	e.staticCacheMutex.Unlock()
 	return successResult
 }
 
@@ -265,9 +289,9 @@ func (e *JSEngine) EvaluateDynamic(expression string, variables map[string]inter
 		}
 	}
 
-	// Create a new runtime instance for this execution to avoid variable contamination
-	runtime := goja.New()
-	e.configureRuntime(runtime)
+	// Get a pooled runtime instance instead of creating new one
+	runtime := e.pools.GetJSRuntime()
+	defer e.pools.PutJSRuntime(runtime)
 
 	// Inject variables into the runtime
 	for name, value := range variables {
@@ -296,7 +320,10 @@ func (e *JSEngine) EvaluateDynamic(expression string, variables map[string]inter
 // executeExpression executes a compiled JavaScript expression in the given runtime
 func (e *JSEngine) executeExpression(runtime *goja.Runtime, expression string) (interface{}, error) {
 	// Get the compiled program
+	e.compiledMutex.RLock()
 	program, exists := e.compiledExpressions[expression]
+	e.compiledMutex.RUnlock()
+
 	if !exists {
 		return nil, fmt.Errorf("expression not compiled: %s", expression)
 	}
@@ -349,16 +376,22 @@ func (e *JSEngine) GetSourceVariables() []string {
 
 // ClearStaticCache clears the static expression cache
 func (e *JSEngine) ClearStaticCache() {
+	e.staticCacheMutex.Lock()
 	e.staticExpressionCache = make(map[string]JSExecutionResult)
+	e.staticCacheMutex.Unlock()
 }
 
 // Close cleans up the JavaScript engine resources
 func (e *JSEngine) Close() error {
 	// Clear compiled expressions
+	e.compiledMutex.Lock()
 	e.compiledExpressions = make(map[string]*goja.Program)
+	e.compiledMutex.Unlock()
 
 	// Clear static expression cache
+	e.staticCacheMutex.Lock()
 	e.staticExpressionCache = make(map[string]JSExecutionResult)
+	e.staticCacheMutex.Unlock()
 
 	// Note: Goja runtimes don't need explicit cleanup, they will be garbage collected
 	return nil
