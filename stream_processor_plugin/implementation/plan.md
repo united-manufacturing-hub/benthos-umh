@@ -151,6 +151,16 @@ type MappingInfo struct {
     Type         MappingType
     Dependencies []string  // Source variables this mapping depends on
 }
+
+type Config struct {
+    Mode            string
+    Model           ModelConfig
+    OutputTopic     string
+    Sources         map[string]string  // alias -> topic
+    Mapping         map[string]interface{}  // raw mapping config
+    StaticMappings  map[string]MappingInfo  // pre-analyzed static mappings
+    DynamicMappings map[string]MappingInfo  // pre-analyzed dynamic mappings
+}
 ```
 
 **Static Detection Algorithm**:
@@ -164,9 +174,8 @@ type MappingInfo struct {
 
 ```go
 type ProcessorState struct {
-    Variables      map[string]*VariableValue
-    StaticMappings []MappingInfo  // Pre-identified static mappings
-    mutex          sync.RWMutex
+    Variables map[string]*VariableValue
+    mutex     sync.RWMutex
 }
 
 type VariableValue struct {
@@ -253,6 +262,7 @@ type VariableValue struct {
 ```
 stream_processor_plugin/
 ├── config.go                    # Configuration parsing and validation
+├── static_detection.go          # Static mapping analysis using AST parsing
 ├── state.go                     # Variable state management
 ├── js_engine.go                 # JavaScript runtime integration
 ├── processor.go                 # Main BatchProcessor implementation
@@ -294,9 +304,8 @@ stream_processor_plugin/
 
 ## Dependencies
 
-- `github.com/dop251/goja` - JavaScript runtime
+- `github.com/dop251/goja` - JavaScript runtime and AST parser
 - `github.com/redpanda-data/benthos/v4/public/service` - Benthos service
-- JavaScript AST parser (for static mapping identification)
 - Standard Go sync, time, and testing packages
 
 ## Security Considerations
