@@ -16,6 +16,7 @@ package schemavalidation
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -698,6 +699,279 @@ var _ = Describe("Validator", func() {
 			Expect(result.SchemaCheckBypassed).To(BeFalse())
 			Expect(result.Error).To(HaveOccurred())
 			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
+		})
+	})
+
+	Context("when testing enhanced error messages", func() {
+		It("should include valid virtual_path values in error message with multiple schema types", func() {
+			// Create schemas with both timeseries-number and timeseries-string types
+			// Each with different virtual_path enum values to test comprehensive enhancement
+			schemas := map[string][]byte{
+				"_sensor_data_v1-timeseries-number": []byte(`{
+					"type": "object",
+					"properties": {
+						"virtual_path": {
+							"type": "string",
+							"enum": ["temperature", "pressure", "flow_rate", "rpm"]
+						},
+						"fields": {
+							"type": "object",
+							"properties": {
+								"timestamp_ms": {"type": "number"},
+								"value": {"type": "number"}
+							},
+							"required": ["timestamp_ms", "value"],
+							"additionalProperties": false
+						}
+					},
+					"required": ["virtual_path", "fields"],
+					"additionalProperties": false
+				}`),
+				"_sensor_data_v1-timeseries-string": []byte(`{
+					"type": "object",
+					"properties": {
+						"virtual_path": {
+							"type": "string",
+							"enum": ["device_id", "status", "location", "operator"]
+						},
+						"fields": {
+							"type": "object",
+							"properties": {
+								"timestamp_ms": {"type": "number"},
+								"value": {"type": "string"}
+							},
+							"required": ["timestamp_ms", "value"],
+							"additionalProperties": false
+						}
+					},
+					"required": ["virtual_path", "fields"],
+					"additionalProperties": false
+				}`),
+			}
+
+			err := validator.LoadSchemas("_sensor_data", 1, schemas)
+			Expect(err).To(BeNil())
+
+			// Test with invalid virtual_path that doesn't match any schema
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.invalid_sensor_path")
+			Expect(err).To(BeNil())
+
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
+
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+
+			// Verify that the error message contains enhanced virtual_path information
+			errorMsg := result.Error.Error()
+			Expect(errorMsg).To(ContainSubstring("virtual_path"))
+			// Can be either "does not match" (singular) or "do not match" (plural)
+			matchesPattern := strings.Contains(errorMsg, "does not match") || strings.Contains(errorMsg, "do not match")
+			Expect(matchesPattern).To(BeTrue(), "Expected error message to contain 'does not match' or 'do not match' but got: %s", errorMsg)
+
+			// Should contain ALL valid virtual_path values from ALL schemas, sorted alphabetically with schema types
+			// Expected format: "Valid virtual_paths are: [device_id (timeseries-string), flow_rate (timeseries-number), location (timeseries-string), operator (timeseries-string), pressure (timeseries-number), rpm (timeseries-number), status (timeseries-string), temperature (timeseries-number)]. Your virtual_path is: invalid_sensor_path"
+			Expect(errorMsg).To(ContainSubstring("Valid virtual_paths are: ["))
+			Expect(errorMsg).To(ContainSubstring("device_id (timeseries-string)"))
+			Expect(errorMsg).To(ContainSubstring("flow_rate (timeseries-number)"))
+			Expect(errorMsg).To(ContainSubstring("location (timeseries-string)"))
+			Expect(errorMsg).To(ContainSubstring("operator (timeseries-string)"))
+			Expect(errorMsg).To(ContainSubstring("pressure (timeseries-number)"))
+			Expect(errorMsg).To(ContainSubstring("rpm (timeseries-number)"))
+			Expect(errorMsg).To(ContainSubstring("status (timeseries-string)"))
+			Expect(errorMsg).To(ContainSubstring("temperature (timeseries-number)"))
+			Expect(errorMsg).To(ContainSubstring("Your virtual_path is: invalid_sensor_path"))
+		})
+
+		It("should enhance error message with exact format for timeseries-number schema", func() {
+			// Test with only timeseries-number schema to verify exact message format
+			schemas := map[string][]byte{
+				"_test_contract_v1-timeseries-number": []byte(`{
+					"type": "object",
+					"properties": {
+						"virtual_path": {
+							"type": "string",
+							"enum": ["temperature", "humidity", "pressure"]
+						},
+						"fields": {
+							"type": "object",
+							"properties": {
+								"timestamp_ms": {"type": "number"},
+								"value": {"type": "number"}
+							},
+							"required": ["timestamp_ms", "value"],
+							"additionalProperties": false
+						}
+					},
+					"required": ["virtual_path", "fields"],
+					"additionalProperties": false
+				}`),
+			}
+
+			err := validator.LoadSchemas("_test_contract", 1, schemas)
+			Expect(err).To(BeNil())
+
+			// Test with invalid virtual_path
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._test_contract_v1.invalid_path")
+			Expect(err).To(BeNil())
+
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
+
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+
+			// Verify exact error message format
+			errorMsg := result.Error.Error()
+			Expect(errorMsg).To(ContainSubstring("schema validation failed for contract '_test_contract' version 1"))
+			Expect(errorMsg).To(ContainSubstring("schema validation failed for subject '_test_contract_v1-timeseries-number'"))
+			Expect(errorMsg).To(ContainSubstring("virtual_path"))
+			Expect(errorMsg).To(ContainSubstring("does not match"))
+			// Should contain all valid virtual_path values sorted alphabetically with schema types
+			Expect(errorMsg).To(ContainSubstring("Valid virtual_paths are: [humidity (timeseries-number), pressure (timeseries-number), temperature (timeseries-number)]"))
+			Expect(errorMsg).To(ContainSubstring("Your virtual_path is: invalid_path"))
+		})
+
+		It("should enhance error message with exact format for timeseries-string schema", func() {
+			// Test with only timeseries-string schema to verify exact message format
+			schemas := map[string][]byte{
+				"_test_contract_v1-timeseries-string": []byte(`{
+					"type": "object",
+					"properties": {
+						"virtual_path": {
+							"type": "string",
+							"enum": ["device_id", "status", "location"]
+						},
+						"fields": {
+							"type": "object",
+							"properties": {
+								"timestamp_ms": {"type": "number"},
+								"value": {"type": "string"}
+							},
+							"required": ["timestamp_ms", "value"],
+							"additionalProperties": false
+						}
+					},
+					"required": ["virtual_path", "fields"],
+					"additionalProperties": false
+				}`),
+			}
+
+			err := validator.LoadSchemas("_test_contract", 1, schemas)
+			Expect(err).To(BeNil())
+
+			// Test with invalid virtual_path
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._test_contract_v1.invalid_path")
+			Expect(err).To(BeNil())
+
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": "test_value"}`)
+
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+
+			// Verify exact error message format
+			errorMsg := result.Error.Error()
+			Expect(errorMsg).To(ContainSubstring("schema validation failed for contract '_test_contract' version 1"))
+			Expect(errorMsg).To(ContainSubstring("schema validation failed for subject '_test_contract_v1-timeseries-string'"))
+			Expect(errorMsg).To(ContainSubstring("virtual_path"))
+			Expect(errorMsg).To(ContainSubstring("does not match"))
+			// Should contain all valid virtual_path values sorted alphabetically with schema types
+			Expect(errorMsg).To(ContainSubstring("Valid virtual_paths are: [device_id (timeseries-string), location (timeseries-string), status (timeseries-string)]"))
+			Expect(errorMsg).To(ContainSubstring("Your virtual_path is: invalid_path"))
+		})
+
+		It("should not enhance error messages for non-virtual_path validation errors", func() {
+			// Create a test schema
+			schemas := map[string][]byte{
+				"_test_contract_v1-timeseries-number": []byte(`{
+					"type": "object",
+					"properties": {
+						"virtual_path": {
+							"type": "string",
+							"enum": ["temperature", "humidity", "pressure"]
+						},
+						"fields": {
+							"type": "object",
+							"properties": {
+								"timestamp_ms": {"type": "number"},
+								"value": {"type": "number"}
+							},
+							"required": ["timestamp_ms", "value"],
+							"additionalProperties": false
+						}
+					},
+					"required": ["virtual_path", "fields"],
+					"additionalProperties": false
+				}`),
+			}
+
+			err := validator.LoadSchemas("_test_contract", 1, schemas)
+			Expect(err).To(BeNil())
+
+			// Test with valid virtual_path but invalid payload structure (wrong data type)
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._test_contract_v1.temperature")
+			Expect(err).To(BeNil())
+
+			payload := []byte(`{"timestamp_ms": "invalid_type", "value": 25.5}`)
+
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+
+			// Verify that the error message does NOT contain the valid virtual_path values
+			// (because this is not a virtual_path validation error)
+			errorMsg := result.Error.Error()
+			Expect(errorMsg).ToNot(ContainSubstring("Valid virtual_paths are"))
+		})
+
+		It("should use singular grammar when only one virtual_path is available", func() {
+			// Create a test schema with only one virtual_path value
+			schemas := map[string][]byte{
+				"_test_contract_v1-timeseries-number": []byte(`{
+					"type": "object",
+					"properties": {
+						"virtual_path": {
+							"type": "string",
+							"enum": ["temperature"]
+						},
+						"fields": {
+							"type": "object",
+							"properties": {
+								"timestamp_ms": {"type": "number"},
+								"value": {"type": "number"}
+							},
+							"required": ["timestamp_ms", "value"],
+							"additionalProperties": false
+						}
+					},
+					"required": ["virtual_path", "fields"],
+					"additionalProperties": false
+				}`),
+			}
+
+			err := validator.LoadSchemas("_test_contract", 1, schemas)
+			Expect(err).To(BeNil())
+
+			// Test with invalid virtual_path
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._test_contract_v1.invalid_path")
+			Expect(err).To(BeNil())
+
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
+
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+
+			// Verify singular grammar is used
+			errorMsg := result.Error.Error()
+			Expect(errorMsg).To(ContainSubstring("Valid virtual_paths is: [temperature (timeseries-number)]"))
+			Expect(errorMsg).To(ContainSubstring("Your virtual_path is: invalid_path"))
 		})
 	})
 })

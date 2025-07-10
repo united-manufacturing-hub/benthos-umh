@@ -33,6 +33,7 @@ var (
 // SchemaVersion represents a compiled JSON schema for a specific version.
 type SchemaVersion struct {
 	JSONSchema *jsonschema.Schema
+	RawSchema  []byte // Store original schema bytes for error enhancement
 }
 
 // SchemaVersions manages multiple versions of a schema.
@@ -67,6 +68,7 @@ func (s *Schema) AddVersion(version uint64, schema []byte) error {
 
 	s.Versions.Versions[version] = SchemaVersion{
 		JSONSchema: compiledSchema,
+		RawSchema:  schema, // Store original schema bytes
 	}
 	return nil
 }
@@ -88,6 +90,18 @@ func (s *Schema) GetVersion(version uint64) *jsonschema.Schema {
 
 	if schemaVersion, exists := s.Versions.Versions[version]; exists {
 		return schemaVersion.JSONSchema
+	}
+	return nil
+}
+
+// GetRawSchemaBytes retrieves the original schema bytes for the specified version.
+// Returns nil if the version doesn't exist.
+func (s *Schema) GetRawSchemaBytes(version uint64) []byte {
+	schemaCompilerMutex.RLock()
+	defer schemaCompilerMutex.RUnlock()
+
+	if schemaVersion, exists := s.Versions.Versions[version]; exists {
+		return schemaVersion.RawSchema
 	}
 	return nil
 }
