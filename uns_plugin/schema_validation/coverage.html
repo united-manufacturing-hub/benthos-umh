@@ -1,0 +1,1298 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>schema_validation: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/united-manufacturing-hub/benthos-umh/uns_plugin/schema_validation/mock_schema_registry.go (51.5%)</option>
+				
+				<option value="file1">github.com/united-manufacturing-hub/benthos-umh/uns_plugin/schema_validation/schema.go (64.7%)</option>
+				
+				<option value="file2">github.com/united-manufacturing-hub/benthos-umh/uns_plugin/schema_validation/validator.go (77.8%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">// Copyright 2025 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package schemavalidation
+
+import (
+        "encoding/json"
+        "fmt"
+        "net/http"
+        "net/http/httptest"
+        "strconv"
+        "strings"
+)
+
+// MockSchemaRegistry simulates Redpanda's Schema Registry for testing
+type MockSchemaRegistry struct {
+        server  *httptest.Server
+        schemas map[string]map[int]*MockSchemaVersion // subject -&gt; version -&gt; schema
+}
+
+// MockSchemaVersion represents a schema version in the mock registry
+type MockSchemaVersion struct {
+        ID      int    `json:"id"`
+        Version int    `json:"version"`
+        Schema  string `json:"schema"`
+        Subject string `json:"subject"`
+}
+
+// NewMockSchemaRegistry creates a new mock schema registry server
+func NewMockSchemaRegistry() *MockSchemaRegistry <span class="cov8" title="1">{
+        mock := &amp;MockSchemaRegistry{
+                schemas: make(map[string]map[int]*MockSchemaVersion),
+        }
+
+        // Create HTTP server with Redpanda-compatible API
+        mux := http.NewServeMux()
+        mux.HandleFunc("/subjects", mock.handleSubjects)
+        mux.HandleFunc("/subjects/", mock.handleSubjectVersions)
+
+        mock.server = httptest.NewServer(mux)
+        return mock
+}</span>
+
+// URL returns the base URL of the mock server
+func (m *MockSchemaRegistry) URL() string <span class="cov8" title="1">{
+        return m.server.URL
+}</span>
+
+// Close shuts down the mock server
+func (m *MockSchemaRegistry) Close() <span class="cov8" title="1">{
+        m.server.Close()
+}</span>
+
+// AddSchema adds a schema to the mock registry
+func (m *MockSchemaRegistry) AddSchema(subject string, version int, schema string) <span class="cov8" title="1">{
+        if m.schemas[subject] == nil </span><span class="cov8" title="1">{
+                m.schemas[subject] = make(map[int]*MockSchemaVersion)
+        }</span>
+
+        // Generate a unique ID (simple incrementing for mock)
+        <span class="cov8" title="1">id := len(m.schemas) + version*1000
+
+        m.schemas[subject][version] = &amp;MockSchemaVersion{
+                ID:      id,
+                Version: version,
+                Schema:  schema,
+                Subject: subject,
+        }</span>
+}
+
+// RemoveSchema removes a schema from the mock registry
+func (m *MockSchemaRegistry) RemoveSchema(subject string, version int) <span class="cov0" title="0">{
+        if versions, exists := m.schemas[subject]; exists </span><span class="cov0" title="0">{
+                delete(versions, version)
+                if len(versions) == 0 </span><span class="cov0" title="0">{
+                        delete(m.schemas, subject)
+                }</span>
+        }
+}
+
+// GetSchema gets a schema from the mock registry
+func (m *MockSchemaRegistry) GetSchema(subject string, version int) *MockSchemaVersion <span class="cov0" title="0">{
+        if versions, exists := m.schemas[subject]; exists </span><span class="cov0" title="0">{
+                return versions[version]
+        }</span>
+        <span class="cov0" title="0">return nil</span>
+}
+
+// handleSubjects handles GET /subjects - returns all available subjects
+func (m *MockSchemaRegistry) handleSubjects(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
+        if r.Method != http.MethodGet </span><span class="cov0" title="0">{
+                http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+                return
+        }</span>
+
+        // Collect all subjects
+        <span class="cov8" title="1">var subjects []string
+        for subject := range m.schemas </span><span class="cov8" title="1">{
+                subjects = append(subjects, subject)
+        }</span>
+
+        <span class="cov8" title="1">w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(subjects)</span>
+}
+
+// handleSubjectVersions handles requests to /subjects/{subject}/versions/{version}
+func (m *MockSchemaRegistry) handleSubjectVersions(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
+        if r.Method != http.MethodGet </span><span class="cov0" title="0">{
+                http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+                return
+        }</span>
+
+        // Parse the URL path: /subjects/{subject}/versions/{version}
+        <span class="cov8" title="1">path := strings.TrimPrefix(r.URL.Path, "/subjects/")
+        parts := strings.Split(path, "/")
+
+        if len(parts) &lt; 3 || parts[1] != "versions" </span><span class="cov0" title="0">{
+                http.Error(w, "Invalid path", http.StatusBadRequest)
+                return
+        }</span>
+
+        <span class="cov8" title="1">subject := parts[0]
+        versionStr := parts[2]
+
+        // Handle "latest" version request
+        if versionStr == "latest" </span><span class="cov8" title="1">{
+                m.handleLatestVersion(w, subject)
+                return
+        }</span>
+
+        // Parse version number
+        <span class="cov0" title="0">version, err := strconv.Atoi(versionStr)
+        if err != nil </span><span class="cov0" title="0">{
+                http.Error(w, "Invalid version format", http.StatusBadRequest)
+                return
+        }</span>
+
+        // Check if subject exists
+        <span class="cov0" title="0">versions, subjectExists := m.schemas[subject]
+        if !subjectExists </span><span class="cov0" title="0">{
+                http.Error(w, fmt.Sprintf(`{"error_code":40401,"message":"Subject '%s' not found."}`, subject), http.StatusNotFound)
+                return
+        }</span>
+
+        // Check if version exists
+        <span class="cov0" title="0">schema, versionExists := versions[version]
+        if !versionExists </span><span class="cov0" title="0">{
+                http.Error(w, fmt.Sprintf(`{"error_code":40402,"message":"Version %d not found for subject '%s'."}`, version, subject), http.StatusNotFound)
+                return
+        }</span>
+
+        // Return the schema version (Redpanda format)
+        <span class="cov0" title="0">w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(schema)</span>
+}
+
+// handleLatestVersion handles requests for the latest version of a subject
+func (m *MockSchemaRegistry) handleLatestVersion(w http.ResponseWriter, subject string) <span class="cov8" title="1">{
+        versions, subjectExists := m.schemas[subject]
+        if !subjectExists </span><span class="cov0" title="0">{
+                http.Error(w, fmt.Sprintf(`{"error_code":40401,"message":"Subject '%s' not found."}`, subject), http.StatusNotFound)
+                return
+        }</span>
+
+        // Find the latest version
+        <span class="cov8" title="1">var latestVersion int
+        var latestSchema *MockSchemaVersion
+        for version, schema := range versions </span><span class="cov8" title="1">{
+                if version &gt; latestVersion </span><span class="cov8" title="1">{
+                        latestVersion = version
+                        latestSchema = schema
+                }</span>
+        }
+
+        <span class="cov8" title="1">if latestSchema == nil </span><span class="cov0" title="0">{
+                http.Error(w, fmt.Sprintf(`{"error_code":40402,"message":"No versions found for subject '%s'."}`, subject), http.StatusNotFound)
+                return
+        }</span>
+
+        <span class="cov8" title="1">w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(latestSchema)</span>
+}
+
+// SetupTestSchemas adds common test schemas to the mock registry
+func (m *MockSchemaRegistry) SetupTestSchemas() <span class="cov8" title="1">{
+        // Add sensor data schemas v1 with different data types
+        sensorDataV1NumberSchema := `{
+                "type": "object",
+                "properties": {
+                        "virtual_path": {
+                                "type": "string",
+                                "enum": ["temperature"]
+                        },
+                        "fields": {
+                                "type": "object",
+                                "properties": {
+                                        "timestamp_ms": {"type": "number"},
+                                        "value": {"type": "number"}
+                                },
+                                "required": ["timestamp_ms", "value"],
+                                "additionalProperties": false
+                        }
+                },
+                "required": ["virtual_path", "fields"],
+                "additionalProperties": false
+        }`
+        m.AddSchema("_sensor_data_v1-timeseries-number", 1, sensorDataV1NumberSchema)
+
+        // Add sensor data schemas v2 with expanded virtual paths and number type
+        sensorDataV2NumberSchema := `{
+                "type": "object",
+                "properties": {
+                        "virtual_path": {
+                                "type": "string",
+                                "enum": ["temperature", "humidity", "pressure"]
+                        },
+                        "fields": {
+                                "type": "object",
+                                "properties": {
+                                        "timestamp_ms": {"type": "number"},
+                                        "value": {"type": "number"}
+                                },
+                                "required": ["timestamp_ms", "value"],
+                                "additionalProperties": false
+                        }
+                },
+                "required": ["virtual_path", "fields"],
+                "additionalProperties": false
+        }`
+        m.AddSchema("_sensor_data_v2-timeseries-number", 2, sensorDataV2NumberSchema)
+
+        // Add pump data schemas v1 with different data types
+        pumpDataV1NumberSchema := `{
+                "type": "object",
+                "properties": {
+                        "virtual_path": {
+                                "type": "string",
+                                "enum": ["vibration.x-axis", "vibration.y-axis", "count"]
+                        },
+                        "fields": {
+                                "type": "object",
+                                "properties": {
+                                        "timestamp_ms": {"type": "number"},
+                                        "value": {"type": "number"}
+                                },
+                                "required": ["timestamp_ms", "value"],
+                                "additionalProperties": false
+                        }
+                },
+                "required": ["virtual_path", "fields"],
+                "additionalProperties": false
+        }`
+        m.AddSchema("_pump_data_v1-timeseries-number", 1, pumpDataV1NumberSchema)
+
+        // Add pump data string schema for serial numbers
+        pumpDataV1StringSchema := `{
+                "type": "object",
+                "properties": {
+                        "virtual_path": {
+                                "type": "string",
+                                "enum": ["serialNumber", "status"]
+                        },
+                        "fields": {
+                                "type": "object",
+                                "properties": {
+                                        "timestamp_ms": {"type": "number"},
+                                        "value": {"type": "string"}
+                                },
+                                "required": ["timestamp_ms", "value"],
+                                "additionalProperties": false
+                        }
+                },
+                "required": ["virtual_path", "fields"],
+                "additionalProperties": false
+        }`
+        m.AddSchema("_pump_data_v1-timeseries-string", 1, pumpDataV1StringSchema)
+
+        // Add motor controller schemas v3 (skipping v1 and v2 to test version gaps)
+        motorDataV3NumberSchema := `{
+                "type": "object",
+                "properties": {
+                        "virtual_path": {
+                                "type": "string",
+                                "enum": ["rpm", "temperature", "status"]
+                        },
+                        "fields": {
+                                "type": "object",
+                                "properties": {
+                                        "timestamp_ms": {"type": "number"},
+                                        "value": {"type": "number"}
+                                },
+                                "required": ["timestamp_ms", "value"],
+                                "additionalProperties": false
+                        }
+                },
+                "required": ["virtual_path", "fields"],
+                "additionalProperties": false
+        }`
+        m.AddSchema("_motor_controller_v3-timeseries-number", 3, motorDataV3NumberSchema)
+
+        // Add motor controller string schema for status
+        motorDataV3StringSchema := `{
+                "type": "object",
+                "properties": {
+                        "virtual_path": {
+                                "type": "string",
+                                "enum": ["status", "mode"]
+                        },
+                        "fields": {
+                                "type": "object",
+                                "properties": {
+                                        "timestamp_ms": {"type": "number"},
+                                        "value": {"type": "string"}
+                                },
+                                "required": ["timestamp_ms", "value"],
+                                "additionalProperties": false
+                        }
+                },
+                "required": ["virtual_path", "fields"],
+                "additionalProperties": false
+        }`
+        m.AddSchema("_motor_controller_v3-timeseries-string", 3, motorDataV3StringSchema)
+
+        // Add string data schemas v1 for testing different data types
+        stringDataV1Schema := `{
+                "type": "object",
+                "properties": {
+                        "virtual_path": {
+                                "type": "string",
+                                "enum": ["serialNumber", "status"]
+                        },
+                        "fields": {
+                                "type": "object",
+                                "properties": {
+                                        "value": {
+                                                "type": "object",
+                                                "properties": {
+                                                        "timestamp_ms": {"type": "number"},
+                                                        "value": {"type": "string"}
+                                                },
+                                                "required": ["timestamp_ms", "value"],
+                                                "additionalProperties": false
+                                        }
+                                },
+                                "additionalProperties": false
+                        }
+                },
+                "required": ["virtual_path", "fields"],
+                "additionalProperties": false
+        }`
+        m.AddSchema("_string_data_v1-timeseries-string", 1, stringDataV1Schema)
+}</span>
+
+// SimulateNetworkError makes the mock server return 500 errors for testing
+func (m *MockSchemaRegistry) SimulateNetworkError(enable bool) <span class="cov0" title="0">{
+        if enable </span><span class="cov0" title="0">{
+                // Replace handlers with error handlers
+                mux := http.NewServeMux()
+                mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) </span><span class="cov0" title="0">{
+                        http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+                }</span>)
+                <span class="cov0" title="0">m.server.Config.Handler = mux</span>
+        } else<span class="cov0" title="0"> {
+                // Restore normal handlers
+                mux := http.NewServeMux()
+                mux.HandleFunc("/subjects", m.handleSubjects)
+                mux.HandleFunc("/subjects/", m.handleSubjectVersions)
+                m.server.Config.Handler = mux
+        }</span>
+}
+
+// GetRegisteredSubjects returns all subjects currently in the mock registry
+func (m *MockSchemaRegistry) GetRegisteredSubjects() []string <span class="cov0" title="0">{
+        var subjects []string
+        for subject := range m.schemas </span><span class="cov0" title="0">{
+                subjects = append(subjects, subject)
+        }</span>
+        <span class="cov0" title="0">return subjects</span>
+}
+
+// GetVersionsForSubject returns all versions for a given subject
+func (m *MockSchemaRegistry) GetVersionsForSubject(subject string) []int <span class="cov0" title="0">{
+        var versions []int
+        if subjectVersions, exists := m.schemas[subject]; exists </span><span class="cov0" title="0">{
+                for version := range subjectVersions </span><span class="cov0" title="0">{
+                        versions = append(versions, version)
+                }</span>
+        }
+        <span class="cov0" title="0">return versions</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">// Copyright 2025 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package schemavalidation provides JSON schema validation functionality for UNS topics.
+// It manages schema compilation, versioning, and validation operations with thread-safe access.
+package schemavalidation
+
+import (
+        "fmt"
+        "sync"
+
+        "github.com/kaptinlin/jsonschema"
+)
+
+// Global schema compiler and mutex for thread-safe schema compilation.
+// These are shared across all schema instances to optimize compilation performance.
+var (
+        schemaCompiler      = jsonschema.NewCompiler()
+        schemaCompilerMutex sync.RWMutex
+)
+
+// SchemaVersion represents a compiled JSON schema for a specific version.
+type SchemaVersion struct {
+        JSONSchema *jsonschema.Schema
+}
+
+// SchemaVersions manages multiple versions of a schema.
+type SchemaVersions struct {
+        Versions map[uint64]SchemaVersion
+}
+
+// Schema represents a named schema with multiple versions.
+type Schema struct {
+        Name     string
+        Versions SchemaVersions
+}
+
+// NewSchema creates a new Schema with the given name and initializes an empty version map.
+func NewSchema(name string) *Schema <span class="cov8" title="1">{
+        return &amp;Schema{
+                Name:     name,
+                Versions: SchemaVersions{Versions: make(map[uint64]SchemaVersion)},
+        }
+}</span>
+
+// AddVersion compiles and adds a new schema version to this Schema.
+// It returns an error if schema compilation fails.
+func (s *Schema) AddVersion(version uint64, schema []byte) error <span class="cov8" title="1">{
+        schemaCompilerMutex.Lock()
+        defer schemaCompilerMutex.Unlock()
+
+        compiledSchema, err := schemaCompiler.Compile(schema)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to compile schema for version %d: %w", version, err)
+        }</span>
+
+        <span class="cov8" title="1">s.Versions.Versions[version] = SchemaVersion{
+                JSONSchema: compiledSchema,
+        }
+        return nil</span>
+}
+
+// HasVersion checks if a specific version exists and has a valid compiled schema.
+func (s *Schema) HasVersion(version uint64) bool <span class="cov0" title="0">{
+        schemaCompilerMutex.RLock()
+        defer schemaCompilerMutex.RUnlock()
+
+        schemaVersion, exists := s.Versions.Versions[version]
+        return exists &amp;&amp; schemaVersion.JSONSchema != nil
+}</span>
+
+// GetVersion retrieves the compiled JSON schema for the specified version.
+// Returns nil if the version doesn't exist.
+func (s *Schema) GetVersion(version uint64) *jsonschema.Schema <span class="cov8" title="1">{
+        schemaCompilerMutex.RLock()
+        defer schemaCompilerMutex.RUnlock()
+
+        if schemaVersion, exists := s.Versions.Versions[version]; exists </span><span class="cov8" title="1">{
+                return schemaVersion.JSONSchema
+        }</span>
+        <span class="cov0" title="0">return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">// Copyright 2025 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package schemavalidation
+
+import (
+        "encoding/json"
+        "fmt"
+        "io"
+        "net/http"
+        "regexp"
+        "sort"
+        "strconv"
+        "strings"
+        "sync"
+        "time"
+
+        "github.com/redpanda-data/benthos/v4/public/service"
+        "github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
+)
+
+const (
+        cacheHitTTL  = 0                // Cache successful schema fetches forever (schemas are immutable)
+        cacheMissTTL = 10 * time.Minute // Cache misses for 10 minutes to retry sooner
+        httpTimeout  = 30 * time.Second
+        maxCacheSize = 1000 // Maximum number of cache entries to prevent memory leaks
+)
+
+// schemaVersionRegex matches data contract names with version suffixes.
+// Expected format: "contractname_v123" where 123 is the version number.
+var schemaVersionRegex = regexp.MustCompile(`^(.+)_v(\d+)$`)
+
+// ValidationResult contains information about the validation result and the contract used.
+type ValidationResult struct {
+        // SchemaCheckPassed indicates whether the schema validation passed
+        SchemaCheckPassed bool
+        // SchemaCheckBypassed indicates whether the schema validation was bypassed
+        SchemaCheckBypassed bool
+        // ContractName is the name of the contract that was validated against
+        ContractName string
+        // ContractVersion is the version of the contract that was validated against
+        ContractVersion uint64
+        // BypassReason indicates why validation was bypassed (empty if not bypassed)
+        BypassReason string
+        // Error contains the validation error if validation failed
+        Error error
+}
+
+// ContractCacheEntry represents a cached entry for a contract+version combination
+// It can hold multiple schemas (with different suffixes) for the same contract+version
+type ContractCacheEntry struct {
+        // Schemas maps schema subject names to compiled schemas
+        Schemas map[string]*Schema
+        // SchemaExists indicates whether any schemas exist for this contract+version
+        SchemaExists bool
+        // CachedAt is when this entry was cached
+        CachedAt time.Time
+        // ExpiresAt is when this entry expires
+        ExpiresAt time.Time
+}
+
+// IsExpired checks if the cache entry has expired
+func (ce *ContractCacheEntry) IsExpired() bool <span class="cov8" title="1">{
+        // Zero time means never expires (for immutable schema hits)
+        if ce.ExpiresAt.IsZero() </span><span class="cov8" title="1">{
+                return false
+        }</span>
+        <span class="cov8" title="1">return time.Now().After(ce.ExpiresAt)</span>
+}
+
+// SchemaRegistryVersion represents a version response from the schema registry
+type SchemaRegistryVersion struct {
+        Version int    `json:"version"`
+        ID      int    `json:"id"`
+        Schema  string `json:"schema"`
+}
+
+// Validator manages schema validation for UNS topics with TTL-based caching.
+type Validator struct {
+        // Cache maps "contractName-v123" to ContractCacheEntry
+        contractCache     map[string]*ContractCacheEntry
+        cacheMutex        sync.RWMutex
+        schemaRegistryURL string
+        httpClient        *http.Client
+        logger            *service.Logger
+}
+
+// createHTTPTransport creates a properly configured HTTP transport for the validator
+func createHTTPTransport() *http.Transport <span class="cov8" title="1">{
+        return &amp;http.Transport{
+                MaxIdleConns:        10,               // Limit total idle connections
+                MaxConnsPerHost:     5,                // Limit connections per host
+                MaxIdleConnsPerHost: 2,                // Limit idle connections per host
+                IdleConnTimeout:     90 * time.Second, // Close idle connections after 90s
+                DisableKeepAlives:   false,            // Allow connection reuse
+        }
+}</span>
+
+// NewValidator creates a new Validator instance with empty cache.
+func NewValidator() *Validator <span class="cov8" title="1">{
+        return &amp;Validator{
+                contractCache: make(map[string]*ContractCacheEntry),
+                httpClient: &amp;http.Client{
+                        Timeout:   httpTimeout,
+                        Transport: createHTTPTransport(),
+                },
+                logger: nil, // No logger by default
+        }
+}</span>
+
+// NewValidatorWithRegistry creates a new Validator instance with the specified schema registry URL.
+func NewValidatorWithRegistry(schemaRegistryURL string) *Validator <span class="cov8" title="1">{
+        return &amp;Validator{
+                contractCache:     make(map[string]*ContractCacheEntry),
+                schemaRegistryURL: schemaRegistryURL,
+                httpClient: &amp;http.Client{
+                        Timeout:   httpTimeout,
+                        Transport: createHTTPTransport(),
+                },
+                logger: nil, // No logger by default
+        }
+}</span>
+
+// NewValidatorWithRegistryAndLogger creates a new Validator instance with the specified schema registry URL and logger.
+func NewValidatorWithRegistryAndLogger(schemaRegistryURL string, logger *service.Logger) *Validator <span class="cov8" title="1">{
+        return &amp;Validator{
+                contractCache:     make(map[string]*ContractCacheEntry),
+                schemaRegistryURL: schemaRegistryURL,
+                httpClient: &amp;http.Client{
+                        Timeout:   httpTimeout,
+                        Transport: createHTTPTransport(),
+                },
+                logger: logger,
+        }
+}</span>
+
+// SetLogger sets the logger for the validator (for backward compatibility)
+func (v *Validator) SetLogger(logger *service.Logger) <span class="cov8" title="1">{
+        v.logger = logger
+}</span>
+
+// debugf logs a debug message if logger is available
+func (v *Validator) debugf(format string, args ...interface{}) <span class="cov8" title="1">{
+        if v.logger != nil </span><span class="cov0" title="0">{
+                v.logger.Infof(format, args...)
+        }</span>
+}
+
+// Validate validates the given UNS topic and payload against the registered schemas.
+// It extracts the contract and version from the topic, finds all appropriate schemas,
+// and validates the payload structure. Returns a ValidationResult with contract information.
+func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *ValidationResult <span class="cov8" title="1">{
+        if unsTopic == nil </span><span class="cov0" title="0">{
+                v.debugf("Validator.Validate: UNS topic is nil")
+                return &amp;ValidationResult{
+                        SchemaCheckPassed:   false,
+                        SchemaCheckBypassed: false,
+                        Error:               fmt.Errorf("UNS topic cannot be nil"),
+                }
+        }</span>
+
+        <span class="cov8" title="1">topicInfo := unsTopic.Info()
+        if topicInfo == nil </span><span class="cov0" title="0">{
+                v.debugf("Validator.Validate: topic info is nil")
+                return &amp;ValidationResult{
+                        SchemaCheckPassed:   false,
+                        SchemaCheckBypassed: false,
+                        Error:               fmt.Errorf("topic info is nil"),
+                }
+        }</span>
+
+        <span class="cov8" title="1">contract := topicInfo.DataContract
+        if contract == "" </span><span class="cov0" title="0">{
+                v.debugf("Validator.Validate: data contract is empty")
+                return &amp;ValidationResult{
+                        SchemaCheckPassed:   false,
+                        SchemaCheckBypassed: false,
+                        Error:               fmt.Errorf("data contract is empty"),
+                }
+        }</span>
+
+        <span class="cov8" title="1">v.debugf("Validator.Validate: Starting validation for contract='%s', payload length=%d", contract, len(payload))
+
+        contractName, version, err := v.ExtractSchemaVersionFromDataContract(contract)
+        if err != nil </span><span class="cov8" title="1">{
+                v.debugf("Validator.Validate: Unversioned contract '%s', bypassing validation", contract)
+                // For unversioned contracts, always bypass (no fetching of "latest")
+                return &amp;ValidationResult{
+                        SchemaCheckPassed:   false,
+                        SchemaCheckBypassed: true,
+                        ContractName:        contract, // Use the original contract string as fallback
+                        ContractVersion:     0,
+                        BypassReason:        fmt.Sprintf("unversioned contract '%s' - bypassing validation (no latest fetching)", contract),
+                        Error:               nil,
+                }
+        }</span>
+
+        <span class="cov8" title="1">v.debugf("Validator.Validate: Extracted contractName='%s', version=%d", contractName, version)
+
+        // Get schemas from cache or fetch synchronously
+        schemas, schemaExists, err := v.getSchemasWithCache(contractName, version)
+        if err != nil </span><span class="cov8" title="1">{
+                v.debugf("Validator.Validate: Failed to get schemas for %s v%d: %v", contractName, version, err)
+                return &amp;ValidationResult{
+                        SchemaCheckPassed:   false,
+                        SchemaCheckBypassed: true,
+                        ContractName:        contractName,
+                        ContractVersion:     version,
+                        BypassReason:        fmt.Sprintf("failed to fetch schemas: %v", err),
+                        Error:               nil,
+                }
+        }</span>
+
+        <span class="cov8" title="1">if !schemaExists </span><span class="cov8" title="1">{
+                v.debugf("Validator.Validate: No schemas found for contract '%s' version %d", contractName, version)
+                return &amp;ValidationResult{
+                        SchemaCheckPassed:   false,
+                        SchemaCheckBypassed: true,
+                        ContractName:        contractName,
+                        ContractVersion:     version,
+                        BypassReason:        fmt.Sprintf("no schemas found for contract '%s' version %d", contractName, version),
+                        Error:               nil,
+                }
+        }</span>
+
+        <span class="cov8" title="1">if len(schemas) == 0 </span><span class="cov0" title="0">{
+                v.debugf("Validator.Validate: No schemas available for contract '%s' version %d", contractName, version)
+                return &amp;ValidationResult{
+                        SchemaCheckPassed:   false,
+                        SchemaCheckBypassed: true,
+                        ContractName:        contractName,
+                        ContractVersion:     version,
+                        BypassReason:        fmt.Sprintf("no schemas available for contract '%s' version %d", contractName, version),
+                        Error:               nil,
+                }
+        }</span>
+
+        <span class="cov8" title="1">v.debugf("Validator.Validate: Found %d schemas for contract '%s' version %d", len(schemas), contractName, version)
+
+        // Build the full path for validation
+        var fullPath strings.Builder
+        if topicInfo.VirtualPath != nil </span><span class="cov8" title="1">{
+                fullPath.WriteString(*topicInfo.VirtualPath)
+                fullPath.WriteString(".")
+        }</span>
+        <span class="cov8" title="1">fullPath.WriteString(topicInfo.Name)
+
+        virtualPath := fullPath.String()
+        v.debugf("Validator.Validate: Virtual path='%s'", virtualPath)
+
+        // Wrap the payload with fields and virtual_path for validation
+        wrappedPayload := []byte(fmt.Sprintf(`{"fields": %s, "virtual_path": "%s"}`,
+                string(payload), virtualPath))
+
+        v.debugf("Validator.Validate: Wrapped payload: %s", string(wrappedPayload))
+
+        // Try to validate against all schemas until one passes
+        var lastError error
+        schemaCount := 0
+        for subjectName, schema := range schemas </span><span class="cov8" title="1">{
+                schemaCount++
+                v.debugf("Validator.Validate: Trying schema %d/%d: subject='%s'", schemaCount, len(schemas), subjectName)
+
+                if schema == nil </span><span class="cov0" title="0">{
+                        v.debugf("Validator.Validate: Schema is nil for subject '%s'", subjectName)
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">jsonSchema := schema.GetVersion(version)
+                if jsonSchema == nil </span><span class="cov0" title="0">{
+                        v.debugf("Validator.Validate: No schema version %d found for subject '%s'", version, subjectName)
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">v.debugf("Validator.Validate: Validating against schema for subject '%s'", subjectName)
+
+                validationResult := jsonSchema.ValidateJSON(wrappedPayload)
+                if validationResult == nil </span><span class="cov0" title="0">{
+                        lastError = fmt.Errorf("schema validation result is nil for subject '%s'", subjectName)
+                        v.debugf("Validator.Validate: Validation result is nil for subject '%s'", subjectName)
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">if validationResult.Valid </span><span class="cov8" title="1">{
+                        v.debugf("Validator.Validate: SUCCESS! Schema validation passed for subject '%s'", subjectName)
+                        // Found a matching schema
+                        return &amp;ValidationResult{
+                                SchemaCheckPassed:   true,
+                                SchemaCheckBypassed: false,
+                                ContractName:        contractName,
+                                ContractVersion:     version,
+                                Error:               nil,
+                        }
+                }</span>
+
+                // Collect validation errors for debugging
+                <span class="cov8" title="1">var validationErrors []string
+                if validationResult.Errors != nil </span><span class="cov8" title="1">{
+                        for _, validationErr := range validationResult.Errors </span><span class="cov8" title="1">{
+                                if validationErr != nil </span><span class="cov8" title="1">{
+                                        validationErrors = append(validationErrors, validationErr.Error())
+                                }</span>
+                        }
+                }
+                <span class="cov8" title="1">lastError = fmt.Errorf("schema validation failed for subject '%s': %s", subjectName, strings.Join(validationErrors, "; "))
+                v.debugf("Validator.Validate: Schema validation failed for subject '%s': %s", subjectName, strings.Join(validationErrors, "; "))</span>
+        }
+
+        // None of the schemas matched
+        <span class="cov8" title="1">v.debugf("Validator.Validate: FAILED! No schemas matched for contract '%s' version %d. Last error: %v", contractName, version, lastError)
+        return &amp;ValidationResult{
+                SchemaCheckPassed:   false,
+                SchemaCheckBypassed: false,
+                ContractName:        contractName,
+                ContractVersion:     version,
+                Error:               fmt.Errorf("schema validation failed for contract '%s' version %d against all available schemas. Last error: %v", contractName, version, lastError),
+        }</span>
+}
+
+// getSchemasWithCache retrieves schemas from cache or fetches them synchronously
+func (v *Validator) getSchemasWithCache(contractName string, version uint64) (map[string]*Schema, bool, error) <span class="cov8" title="1">{
+        cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
+
+        // Check cache first
+        v.cacheMutex.RLock()
+        entry, exists := v.contractCache[cacheKey]
+        v.cacheMutex.RUnlock()
+
+        if exists &amp;&amp; entry != nil &amp;&amp; !entry.IsExpired() </span><span class="cov8" title="1">{
+                // Cache hit and not expired
+                v.debugf("getSchemasWithCache: CACHE HIT for key='%s', schemas=%d", cacheKey, len(entry.Schemas))
+                return entry.Schemas, entry.SchemaExists, nil
+        }</span>
+
+        <span class="cov8" title="1">v.debugf("getSchemasWithCache: CACHE MISS for key='%s', fetching from registry", cacheKey)
+
+        // Cache miss or expired, fetch synchronously
+        return v.fetchSchemasSync(contractName, version)</span>
+}
+
+// fetchSchemasSync fetches all schemas matching the contract+version pattern synchronously and updates cache
+//
+// This function always fetches the LATEST version of each schema subject rather than trying to map
+// contract versions to registry versions. This simplifies the architecture and avoids version conflicts
+// since schema registry versions are independent of UMH contract versions.
+func (v *Validator) fetchSchemasSync(contractName string, version uint64) (map[string]*Schema, bool, error) <span class="cov8" title="1">{
+        cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
+
+        v.debugf("fetchSchemasSync: Fetching schemas for contractName='%s', version=%d", contractName, version)
+
+        // Double-check locking pattern
+        v.cacheMutex.Lock()
+        defer v.cacheMutex.Unlock()
+
+        // Check if another goroutine already fetched it
+        if entry, exists := v.contractCache[cacheKey]; exists &amp;&amp; entry != nil &amp;&amp; !entry.IsExpired() </span><span class="cov0" title="0">{
+                v.debugf("fetchSchemasSync: Another goroutine already fetched key='%s'", cacheKey)
+                return entry.Schemas, entry.SchemaExists, nil
+        }</span>
+
+        // Fetch all subjects from registry
+        <span class="cov8" title="1">subjects, err := v.fetchAllSubjects()
+        if err != nil </span><span class="cov8" title="1">{
+                v.debugf("fetchSchemasSync: Failed to fetch subjects from registry: %v", err)
+                // Cache the error result
+                v.contractCache[cacheKey] = &amp;ContractCacheEntry{
+                        Schemas:      make(map[string]*Schema),
+                        SchemaExists: false,
+                        CachedAt:     time.Now(),
+                        ExpiresAt:    time.Now().Add(cacheMissTTL),
+                }
+                return nil, false, err
+        }</span>
+
+        <span class="cov8" title="1">v.debugf("fetchSchemasSync: Found %d subjects in registry", len(subjects))
+
+        // Filter subjects that match our pattern: contractName_v{version}-*
+        schemaPrefix := fmt.Sprintf("%s_v%d-", contractName, version)
+        var matchingSubjects []string
+        for _, subject := range subjects </span><span class="cov8" title="1">{
+                if strings.HasPrefix(subject, schemaPrefix) </span><span class="cov8" title="1">{
+                        matchingSubjects = append(matchingSubjects, subject)
+                }</span>
+        }
+
+        <span class="cov8" title="1">v.debugf("fetchSchemasSync: Looking for subjects with prefix='%s', found %d matches: %v", schemaPrefix, len(matchingSubjects), matchingSubjects)
+
+        if len(matchingSubjects) == 0 </span><span class="cov8" title="1">{
+                v.debugf("fetchSchemasSync: No matching subjects found for prefix='%s'", schemaPrefix)
+                // No matching schemas found
+                v.contractCache[cacheKey] = &amp;ContractCacheEntry{
+                        Schemas:      make(map[string]*Schema),
+                        SchemaExists: false,
+                        CachedAt:     time.Now(),
+                        ExpiresAt:    time.Now().Add(cacheMissTTL),
+                }
+                // Evict oldest entries if cache is too large (prevent memory leaks)
+                v.evictOldestEntries()
+                return nil, false, nil
+        }</span>
+
+        // Fetch and compile all matching schemas
+        <span class="cov8" title="1">schemas := make(map[string]*Schema)
+        for _, subject := range matchingSubjects </span><span class="cov8" title="1">{
+                v.debugf("fetchSchemasSync: Fetching latest schema for subject='%s'", subject)
+
+                // Always fetch the LATEST version of each schema subject, NOT a specific version number.
+                //
+                // Why? Schema registry versions are independent of UMH contract versions:
+                // - Contract "_sensor_data-v2" means "version 2 of the sensor data contract"
+                // - But subject "_sensor_data_v2-timeseries-number" might be registered as registry version 1
+                //   (because it's the first version of that specific subject)
+                // - By fetching "latest", we avoid complex version mapping and always get the current schema
+                // - This also automatically picks up schema updates without code changes
+                schemaBytes, schemaExists, err := v.fetchLatestSchemaFromRegistry(subject)
+                if err != nil </span><span class="cov0" title="0">{
+                        v.debugf("fetchSchemasSync: Failed to fetch schema for subject='%s': %v", subject, err)
+                        // Log error but continue with other schemas
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">if !schemaExists </span><span class="cov0" title="0">{
+                        v.debugf("fetchSchemasSync: Schema does not exist for subject='%s'", subject)
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">v.debugf("fetchSchemasSync: Successfully fetched schema for subject='%s', size=%d bytes", subject, len(schemaBytes))
+
+                // Compile the schema
+                schema := NewSchema(subject)
+                if err := schema.AddVersion(version, schemaBytes); err != nil </span><span class="cov0" title="0">{
+                        v.debugf("fetchSchemasSync: Failed to compile schema for subject='%s': %v", subject, err)
+                        // Log error but continue with other schemas
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">schemas[subject] = schema
+                v.debugf("fetchSchemasSync: Successfully compiled schema for subject='%s'", subject)</span>
+        }
+
+        <span class="cov8" title="1">v.debugf("fetchSchemasSync: Successfully compiled %d schemas for contractName='%s' version %d", len(schemas), contractName, version)
+
+        // Cache the results
+        expiresAt := time.Time{} // Zero time means never expires
+        if cacheHitTTL &gt; 0 </span><span class="cov0" title="0">{
+                expiresAt = time.Now().Add(cacheHitTTL)
+        }</span>
+
+        <span class="cov8" title="1">v.contractCache[cacheKey] = &amp;ContractCacheEntry{
+                Schemas:      schemas,
+                SchemaExists: len(schemas) &gt; 0,
+                CachedAt:     time.Now(),
+                ExpiresAt:    expiresAt,
+        }
+
+        // Evict oldest entries if cache is too large (prevent memory leaks)
+        v.evictOldestEntries()
+
+        return schemas, len(schemas) &gt; 0, nil</span>
+}
+
+// fetchAllSubjects fetches all subjects from the schema registry
+func (v *Validator) fetchAllSubjects() ([]string, error) <span class="cov8" title="1">{
+        if v.schemaRegistryURL == "" </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("schema registry URL is not configured")
+        }</span>
+
+        <span class="cov8" title="1">url := fmt.Sprintf("%s/subjects", v.schemaRegistryURL)
+        v.debugf("fetchAllSubjects: Fetching subjects from URL='%s'", url)
+
+        resp, err := v.httpClient.Get(url)
+        if err != nil </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("failed to fetch subjects from registry: %w", err)
+        }</span>
+        <span class="cov8" title="1">defer resp.Body.Close()
+
+        if resp.StatusCode != http.StatusOK </span><span class="cov0" title="0">{
+                v.debugf("fetchAllSubjects: Registry returned status=%d", resp.StatusCode)
+                return nil, fmt.Errorf("schema registry returned status %d for subjects", resp.StatusCode)
+        }</span>
+
+        <span class="cov8" title="1">body, err := io.ReadAll(resp.Body)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to read subjects response: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">var subjects []string
+        if err := json.Unmarshal(body, &amp;subjects); err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to unmarshal subjects response: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">v.debugf("fetchAllSubjects: Retrieved %d subjects from registry", len(subjects))
+        return subjects, nil</span>
+}
+
+// fetchLatestSchemaFromRegistry fetches the latest version of a schema subject
+//
+// This method is preferred over fetchSchemaFromRegistry(subject, version) because:
+// 1. Schema registry versions are independent of UMH contract versions
+// 2. Always getting "latest" avoids version mapping complexity
+// 3. Automatically picks up schema updates without code changes
+// 4. Simpler and more robust than trying to guess the right registry version
+func (v *Validator) fetchLatestSchemaFromRegistry(subject string) ([]byte, bool, error) <span class="cov8" title="1">{
+        if v.schemaRegistryURL == "" </span><span class="cov0" title="0">{
+                return nil, false, fmt.Errorf("schema registry URL is not configured")
+        }</span>
+
+        <span class="cov8" title="1">url := fmt.Sprintf("%s/subjects/%s/versions/latest", v.schemaRegistryURL, subject)
+        v.debugf("fetchLatestSchemaFromRegistry: Fetching schema from URL='%s'", url)
+
+        resp, err := v.httpClient.Get(url)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, false, fmt.Errorf("failed to fetch latest schema from registry: %w", err)
+        }</span>
+        <span class="cov8" title="1">defer resp.Body.Close()
+
+        if resp.StatusCode == http.StatusNotFound </span><span class="cov0" title="0">{
+                v.debugf("fetchLatestSchemaFromRegistry: Schema not found (404) for subject='%s'", subject)
+                return nil, false, nil // Schema doesn't exist
+        }</span>
+
+        <span class="cov8" title="1">if resp.StatusCode != http.StatusOK </span><span class="cov0" title="0">{
+                v.debugf("fetchLatestSchemaFromRegistry: Registry returned status=%d for subject='%s'", resp.StatusCode, subject)
+                return nil, false, fmt.Errorf("schema registry returned status %d for latest version", resp.StatusCode)
+        }</span>
+
+        <span class="cov8" title="1">body, err := io.ReadAll(resp.Body)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, false, fmt.Errorf("failed to read latest schema response: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">var versionResp SchemaRegistryVersion
+        if err := json.Unmarshal(body, &amp;versionResp); err != nil </span><span class="cov0" title="0">{
+                return nil, false, fmt.Errorf("failed to unmarshal latest schema response: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">v.debugf("fetchLatestSchemaFromRegistry: Successfully fetched schema for subject='%s', version=%d, id=%d", subject, versionResp.Version, versionResp.ID)
+        return []byte(versionResp.Schema), true, nil</span>
+}
+
+// ExtractSchemaVersionFromDataContract parses a data contract string to extract
+// the base contract name and version number.
+// Expected format: "contractname_v123" -&gt; ("contractname", 123, nil)
+func (v *Validator) ExtractSchemaVersionFromDataContract(contract string) (contractName string, version uint64, err error) <span class="cov8" title="1">{
+        if contract == "" </span><span class="cov8" title="1">{
+                return "", 0, fmt.Errorf("contract string is empty")
+        }</span>
+
+        <span class="cov8" title="1">matches := schemaVersionRegex.FindStringSubmatch(contract)
+        if len(matches) != 3 </span><span class="cov8" title="1">{
+                return "", 0, fmt.Errorf("invalid data contract format '%s', expected format: 'name_v123'", contract)
+        }</span>
+
+        <span class="cov8" title="1">contractName = matches[1]
+        version, err = strconv.ParseUint(matches[2], 10, 64)
+        if err != nil </span><span class="cov0" title="0">{
+                return "", 0, fmt.Errorf("invalid version number '%s' in contract '%s': %w", matches[2], contract, err)
+        }</span>
+
+        <span class="cov8" title="1">return contractName, version, nil</span>
+}
+
+// LoadSchemas loads and compiles multiple schemas for the specified contract name and version.
+// The schemas parameter is a map of subject names to schema content.
+func (v *Validator) LoadSchemas(contractName string, version uint64, schemas map[string][]byte) error <span class="cov8" title="1">{
+        if contractName == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("contract name cannot be empty")
+        }</span>
+
+        <span class="cov8" title="1">if !strings.HasPrefix(contractName, "_") </span><span class="cov8" title="1">{
+                return fmt.Errorf("contract name must start with an underscore, got: '%s'", contractName)
+        }</span>
+
+        <span class="cov8" title="1">if len(schemas) == 0 </span><span class="cov8" title="1">{
+                return fmt.Errorf("schemas cannot be empty for contract '%s' version %d", contractName, version)
+        }</span>
+
+        <span class="cov8" title="1">cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
+
+        v.cacheMutex.Lock()
+        defer v.cacheMutex.Unlock()
+
+        // Create and compile all schemas
+        compiledSchemas := make(map[string]*Schema)
+        for subjectName, schemaBytes := range schemas </span><span class="cov8" title="1">{
+                if len(schemaBytes) == 0 </span><span class="cov8" title="1">{
+                        return fmt.Errorf("schema cannot be empty for subject '%s'", subjectName)
+                }</span>
+
+                <span class="cov8" title="1">schemaObj := NewSchema(subjectName)
+                if err := schemaObj.AddVersion(version, schemaBytes); err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("failed to add schema version %d for subject '%s': %w", version, subjectName, err)
+                }</span>
+
+                <span class="cov8" title="1">compiledSchemas[subjectName] = schemaObj</span>
+        }
+
+        // Cache the schemas - forever since schemas are immutable
+        <span class="cov8" title="1">expiresAt := time.Time{} // Zero time means never expires
+        if cacheHitTTL &gt; 0 </span><span class="cov0" title="0">{
+                expiresAt = time.Now().Add(cacheHitTTL)
+        }</span>
+
+        <span class="cov8" title="1">v.contractCache[cacheKey] = &amp;ContractCacheEntry{
+                Schemas:      compiledSchemas,
+                SchemaExists: true,
+                CachedAt:     time.Now(),
+                ExpiresAt:    expiresAt,
+        }
+
+        // Evict oldest entries if cache is too large (prevent memory leaks)
+        v.evictOldestEntries()
+
+        return nil</span>
+}
+
+// HasSchema checks if schemas exist for the given contract name and version.
+func (v *Validator) HasSchema(contractName string, version uint64) bool <span class="cov8" title="1">{
+        cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
+
+        v.cacheMutex.RLock()
+        defer v.cacheMutex.RUnlock()
+
+        entry, exists := v.contractCache[cacheKey]
+        if !exists || entry == nil || entry.IsExpired() </span><span class="cov0" title="0">{
+                return false
+        }</span>
+
+        <span class="cov8" title="1">return entry.SchemaExists &amp;&amp; len(entry.Schemas) &gt; 0</span>
+}
+
+// Close cleans up resources
+func (v *Validator) Close() <span class="cov8" title="1">{
+        v.cacheMutex.Lock()
+        defer v.cacheMutex.Unlock()
+
+        // Clear the cache
+        v.contractCache = make(map[string]*ContractCacheEntry)
+
+        // Close HTTP client transport to prevent connection leaks
+        if v.httpClient != nil &amp;&amp; v.httpClient.Transport != nil </span><span class="cov8" title="1">{
+                if transport, ok := v.httpClient.Transport.(*http.Transport); ok </span><span class="cov8" title="1">{
+                        transport.CloseIdleConnections()
+                }</span>
+                <span class="cov8" title="1">v.httpClient = nil</span>
+        }
+}
+
+// evictOldestEntries removes the oldest cache entries if the cache exceeds maxCacheSize
+// This prevents unbounded memory growth in long-running space missions
+func (v *Validator) evictOldestEntries() <span class="cov8" title="1">{
+        if len(v.contractCache) &lt;= maxCacheSize </span><span class="cov8" title="1">{
+                return
+        }</span>
+
+        // Find the oldest entries to evict
+        <span class="cov0" title="0">type cacheItem struct {
+                key       string
+                timestamp time.Time
+        }
+
+        var items []cacheItem
+        for key, entry := range v.contractCache </span><span class="cov0" title="0">{
+                if entry != nil </span><span class="cov0" title="0">{
+                        items = append(items, cacheItem{
+                                key:       key,
+                                timestamp: entry.CachedAt,
+                        })
+                }</span>
+        }
+
+        // Sort by timestamp (oldest first)
+        <span class="cov0" title="0">sort.Slice(items, func(i, j int) bool </span><span class="cov0" title="0">{
+                return items[i].timestamp.Before(items[j].timestamp)
+        }</span>)
+
+        // Remove oldest entries until we're under the limit
+        <span class="cov0" title="0">entriesToRemove := len(v.contractCache) - maxCacheSize + 1
+        for i := 0; i &lt; entriesToRemove &amp;&amp; i &lt; len(items); i++ </span><span class="cov0" title="0">{
+                delete(v.contractCache, items[i].key)
+        }</span>
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>
