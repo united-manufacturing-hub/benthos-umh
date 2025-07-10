@@ -37,17 +37,46 @@ type StreamProcessor struct {
 	messagesDropped   *service.MetricCounter
 }
 
-// ProcessorState holds the variable state for the processor
+// ProcessorState holds the variable state for the processor.
+//
+// It provides thread-safe storage for variables using a RWMutex to allow
+// concurrent reads while ensuring write safety. The Variables map stores
+// variable names to their current values with metadata.
+//
+// This struct handles the low-level storage mechanics, while StateManager
+// provides the higher-level coordination and business logic.
 type ProcessorState struct {
-	Variables map[string]*VariableValue
-	mutex     sync.RWMutex
+	Variables map[string]*VariableValue // Thread-safe variable storage
+	mutex     sync.RWMutex              // Protects concurrent access to Variables
 }
 
-// VariableValue represents a stored variable value with metadata
+// VariableValue represents a stored variable value with metadata.
+//
+// Each field serves a specific purpose in the dependency-based evaluation system:
+//
+// Value: The actual data value received from the source topic (e.g., 1.23, "active", true).
+// This is what gets used in JavaScript expressions and calculations.
+//
+// Timestamp: When this variable was last updated. Critical for timeseries data to:
+// - Ensure proper ordering of events
+// - Detect stale data that might need refreshing
+// - Enable time-based calculations and filtering
+// - Support debugging by showing when variables were last seen
+//
+// Source: The source identifier (e.g., "press", "tF", "r") that provided this value.
+// Essential for:
+// - DEBUGGING: Trace which input caused a calculation failure
+// - VALIDATION: Verify variables come from expected sources
+// - MONITORING: Track which sources are active/inactive
+// - AUDITING: Maintain clear data lineage through the system
+//
+// Example: VariableValue{Value: 1.23, Source: "press", Timestamp: 2024-01-15T10:30:00Z}
+// means the "press" variable was set to 1.23 at the given timestamp from topic
+// "umh.v1.corpA.plant-A.aawd._raw.press".
 type VariableValue struct {
-	Value     interface{}
-	Timestamp time.Time
-	Source    string
+	Value     interface{} // The actual data value from the source
+	Timestamp time.Time   // When this variable was last updated
+	Source    string      // Which source provided this value (for traceability)
 }
 
 // newStreamProcessor creates a new stream processor instance

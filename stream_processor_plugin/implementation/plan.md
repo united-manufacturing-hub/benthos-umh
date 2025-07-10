@@ -36,6 +36,11 @@ The `stream_processor` is a specialized Benthos processor designed to collect ti
    - Error tracking per source/virtual path
    - Variable resolution success rates
 
+6. **Optimizations & Benchmarks**
+   - Create benchmarks, to validate how many messages can be proceessed per second.
+      - Goal: >100k msg/sec
+   - Consider optimizations to reduce memory/cpu usage or to speed up processing
+
 ## Configuration Structure
 
 ```yaml
