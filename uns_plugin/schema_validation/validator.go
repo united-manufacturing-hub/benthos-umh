@@ -20,6 +20,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -95,22 +96,24 @@ type Validator struct {
 	logger            *service.Logger
 }
 
-// NewValidator creates a new Validator instance with empty cache.
-func NewValidator() *Validator {
-	// Create HTTP client with proper connection limits to prevent leaks
-	transport := &http.Transport{
+// createHTTPTransport creates a properly configured HTTP transport for the validator
+func createHTTPTransport() *http.Transport {
+	return &http.Transport{
 		MaxIdleConns:        10,               // Limit total idle connections
 		MaxConnsPerHost:     5,                // Limit connections per host
 		MaxIdleConnsPerHost: 2,                // Limit idle connections per host
 		IdleConnTimeout:     90 * time.Second, // Close idle connections after 90s
 		DisableKeepAlives:   false,            // Allow connection reuse
 	}
+}
 
+// NewValidator creates a new Validator instance with empty cache.
+func NewValidator() *Validator {
 	return &Validator{
 		contractCache: make(map[string]*ContractCacheEntry),
 		httpClient: &http.Client{
 			Timeout:   httpTimeout,
-			Transport: transport,
+			Transport: createHTTPTransport(),
 		},
 		logger: nil, // No logger by default
 	}
@@ -118,21 +121,12 @@ func NewValidator() *Validator {
 
 // NewValidatorWithRegistry creates a new Validator instance with the specified schema registry URL.
 func NewValidatorWithRegistry(schemaRegistryURL string) *Validator {
-	// Create HTTP client with proper connection limits to prevent leaks
-	transport := &http.Transport{
-		MaxIdleConns:        10,               // Limit total idle connections
-		MaxConnsPerHost:     5,                // Limit connections per host
-		MaxIdleConnsPerHost: 2,                // Limit idle connections per host
-		IdleConnTimeout:     90 * time.Second, // Close idle connections after 90s
-		DisableKeepAlives:   false,            // Allow connection reuse
-	}
-
 	return &Validator{
 		contractCache:     make(map[string]*ContractCacheEntry),
 		schemaRegistryURL: schemaRegistryURL,
 		httpClient: &http.Client{
 			Timeout:   httpTimeout,
-			Transport: transport,
+			Transport: createHTTPTransport(),
 		},
 		logger: nil, // No logger by default
 	}
@@ -140,21 +134,12 @@ func NewValidatorWithRegistry(schemaRegistryURL string) *Validator {
 
 // NewValidatorWithRegistryAndLogger creates a new Validator instance with the specified schema registry URL and logger.
 func NewValidatorWithRegistryAndLogger(schemaRegistryURL string, logger *service.Logger) *Validator {
-	// Create HTTP client with proper connection limits to prevent leaks
-	transport := &http.Transport{
-		MaxIdleConns:        10,               // Limit total idle connections
-		MaxConnsPerHost:     5,                // Limit connections per host
-		MaxIdleConnsPerHost: 2,                // Limit idle connections per host
-		IdleConnTimeout:     90 * time.Second, // Close idle connections after 90s
-		DisableKeepAlives:   false,            // Allow connection reuse
-	}
-
 	return &Validator{
 		contractCache:     make(map[string]*ContractCacheEntry),
 		schemaRegistryURL: schemaRegistryURL,
 		httpClient: &http.Client{
 			Timeout:   httpTimeout,
-			Transport: transport,
+			Transport: createHTTPTransport(),
 		},
 		logger: logger,
 	}
@@ -696,13 +681,9 @@ func (v *Validator) evictOldestEntries() {
 	}
 
 	// Sort by timestamp (oldest first)
-	for i := 0; i < len(items)-1; i++ {
-		for j := i + 1; j < len(items); j++ {
-			if items[i].timestamp.After(items[j].timestamp) {
-				items[i], items[j] = items[j], items[i]
-			}
-		}
-	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].timestamp.Before(items[j].timestamp)
+	})
 
 	// Remove oldest entries until we're under the limit
 	entriesToRemove := len(v.contractCache) - maxCacheSize + 1
