@@ -13,6 +13,7 @@ The `stream_processor` is a specialized Benthos processor designed to collect ti
    - Validate JavaScript expressions and topic patterns
    - Handle nested mapping fields for virtual paths (e.g., motor.rpm)
    - Validate that mapping expressions only reference source variables
+   - Identify static mappings (expressions that don't reference any source variables)
 
 2. **State Manager** (`state.go`)
    - Variable storage with thread-safe access
@@ -21,7 +22,8 @@ The `stream_processor` is a specialized Benthos processor designed to collect ti
 
 3. **JavaScript Engine** (`js_engine.go`)
    - Goja runtime integration for mapping expressions
-   - Variable context injection
+   - Variable context injection for dynamic mappings
+   - Static expression evaluation (no variables needed)
    - Expression validation and execution
 
 4. **Message Processor** (`processor.go`)
@@ -70,7 +72,9 @@ stream_processor:
    - Store value with timestamp in variable state
 
 3. **Mapping Execution**
-   - For each virtual path in mapping configuration:
+   - For static mappings (identified at startup):
+     - Always execute and generate output messages
+   - For dynamic mappings that reference the received variable:
      - Check if all referenced variables are available
      - Execute JavaScript expression with variable context
      - Generate output message with calculated value
@@ -86,15 +90,27 @@ stream_processor:
 
 See processing_flow.svg
 
-**Key Behavior**: The processor implements dependency-based evaluation. When a variable is received, only mappings that actually reference that variable are evaluated. This means:
+**Key Behavior**: The processor implements dependency-based evaluation with special handling for static mappings:
+
+1. **Static Mappings**: Identified at startup and evaluated on every incoming message
+2. **Dynamic Mappings**: Only evaluated when their dependent variables are received
 
 Example with variables `a`, `b` available and mappings:
-- `x: a+b`
-- `y: c+b` 
-- `z: a+c`
-- `f: r+a`
+- `x: a+b` (dynamic - depends on `a`, `b`)
+- `y: c+b` (dynamic - depends on `c`, `b`)
+- `z: a+c` (dynamic - depends on `a`, `c`)
+- `static: '"constant"'` (static - no dependencies)
 
-When variable `c` is received, only `y` and `z` are evaluated (they depend on `c`), even though `x` could also be calculated.
+When variable `c` is received:
+- `y` and `z` are evaluated (they depend on `c`)
+- `static` is also evaluated (always emitted)
+- `x` is not evaluated (doesn't depend on `c`)
+
+**Static Mapping Examples**:
+- `serialNumber: '"SN-P42-008"'` (string constant)
+- `deviceType: '"pump"'` (string constant) 
+- `version: 42` (numeric constant)
+- `timestamp: Date.now()` (dynamic constant - evaluated each time)
 
 **Important Constraint**: Mappings can only reference variables from the sources configuration, not other computed mappings. For example, `pressure` cannot reference `temperature` from the mapping - it can only reference source variables like `press`, `tF`, `r`.
 
@@ -117,12 +133,40 @@ Examples:
 
 The data contract is generated from the model configuration, and the virtual path is generated from the mapping structure.
 
+### Static Mapping Identification
+
+At processor initialization, mappings are analyzed to determine their dependencies:
+
+```go
+type MappingType int
+
+const (
+    StaticMapping  MappingType = iota  // No source variable dependencies
+    DynamicMapping                     // References one or more source variables
+)
+
+type MappingInfo struct {
+    VirtualPath  string
+    Expression   string
+    Type         MappingType
+    Dependencies []string  // Source variables this mapping depends on
+}
+```
+
+**Static Detection Algorithm**:
+1. Parse JavaScript expression using AST analysis
+2. Extract all variable references
+3. Check if any references match configured source variable names
+4. If no matches found → Static mapping
+5. If matches found → Dynamic mapping with dependency list
+
 ### State Management
 
 ```go
 type ProcessorState struct {
-    Variables map[string]*VariableValue
-    mutex     sync.RWMutex
+    Variables      map[string]*VariableValue
+    StaticMappings []MappingInfo  // Pre-identified static mappings
+    mutex          sync.RWMutex
 }
 
 type VariableValue struct {
@@ -225,6 +269,7 @@ stream_processor_plugin/
 
 ### Phase 1: Core Infrastructure
 - [ ] Config parsing and validation
+- [ ] Static mapping identification and AST analysis
 - [ ] Basic state management
 - [ ] Plugin registration
 - [ ] Unit test framework
@@ -251,6 +296,7 @@ stream_processor_plugin/
 
 - `github.com/dop251/goja` - JavaScript runtime
 - `github.com/redpanda-data/benthos/v4/public/service` - Benthos service
+- JavaScript AST parser (for static mapping identification)
 - Standard Go sync, time, and testing packages
 
 ## Security Considerations
