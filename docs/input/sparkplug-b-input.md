@@ -4,7 +4,13 @@
 
 The **Sparkplug B Input plugin** allows the United Manufacturing Hub (UMH) to ingest data from MQTT brokers using the Sparkplug B specification. It subscribes to Sparkplug B MQTT topics (e.g., device birth/data/death messages) and converts the incoming Protobuf payloads into UMH-compatible messages. It maintains the stateful context required by Sparkplug B – tracking device birth certificates, metric alias mapping, and sequence numbers – so that incoming data is interpreted correctly.
 
-This input plugin is designed to seamlessly integrate Sparkplug-enabled edge devices into the UMH **Unified Namespace**. It automatically decodes Sparkplug messages and enriches them with metadata (such as metric names, types, and timestamps) to fit the UMH-Core data model. By default, each Sparkplug metric is emitted as an individual message into the pipeline, complete with a unified `umh_topic` and additional meta fields.
+This input plugin is designed to seamlessly integrate Sparkplug-enabled edge devices into the UMH **Unified Namespace**. It automatically decodes Sparkplug messages and enriches them with metadata (such as metric names, types, and timestamps) to fit the UMH-Core data model. 
+
+## Message Processing
+
+The Sparkplug B input plugin **always splits metrics** into individual messages to ensure UMH-Core format compatibility. Each Sparkplug metric becomes a separate Benthos message for downstream processing.
+
+*Note: This behavior is required for UMH-Core format and cannot be disabled.*
 
 ## Sparkplug B in UMH Architecture
 
@@ -43,6 +49,47 @@ UNS → [UNS Input](uns-input.md) → UMH-Core Format → [Sparkplug B Output Pl
 
 Unlike the original Parris Method which creates separate state management per GroupID, UMH's approach enables unified state management across all organizational levels by preserving hierarchy in `device_id` and `metric_name` fields, allowing scalable multi-enterprise/multi-site data ingestion without state explosion.
 
+## Deployment Considerations
+
+### Multiple Instance Support
+
+**Secondary Host (Default - `role: "host"`)**: 
+✅ **Safe for multiple instances** - Read-only operation, no conflicts
+
+**Primary Host (`role: "primary"`)**: 
+⚠️ **Single instance only** - Publishes STATE messages for host arbitration
+
+### Deployment Patterns
+
+```yaml
+# ✅ SAFE: Multiple Secondary Hosts for load balancing
+instance-1:
+  sparkplug_b:
+    role: "host"  # Default - read-only
+instance-2:
+  sparkplug_b:
+    role: "host"  # Default - read-only
+
+# ❌ CONFLICT: Multiple Primary Hosts
+instance-1:
+  sparkplug_b:
+    role: "primary"  # STATE publisher
+instance-2:
+  sparkplug_b:
+    role: "primary"  # STATE conflict!
+
+# ✅ RECOMMENDED: One Primary + Multiple Secondary
+primary-host:
+  sparkplug_b:
+    role: "primary"    # STATE coordination
+secondary-1:
+  sparkplug_b:
+    role: "host"       # Data processing
+secondary-2:
+  sparkplug_b:
+    role: "host"       # Load balancing
+```
+
 ## Quick Start
 
 Most users should use this simple configuration to read Sparkplug B data:
@@ -66,13 +113,17 @@ processing:
           # msg.meta.virtual_path = "..."; # automatic from the metric name (see also output plugin)  
           # msg.meta.tag_name = "..."; # automatic from the metric name (see also output plugin)
 
-          msg.meta.data_contract = "_sparkplug";  # the target data contract
+          # For Sparkplug B input data, use _raw data contract
+          msg.meta.data_contract = "_raw";
+          
+          # Note: UMH conversion will use this data contract
+          # Common options: "_raw", "_historian", "_sparkplug"
 
 output:
   uns: {}
 ```
 
-This configuration safely reads all Sparkplug B messages and converts them to UMH-Core format. Multiple instances can run simultaneously without conflicts.
+This configuration safely reads all Sparkplug B messages and converts them to UMH-Core format. Multiple Secondary Host instances (default role) can run simultaneously without conflicts for load balancing and redundancy.
 
 **To publish data as Sparkplug B**: After processing in the UNS, use the [Sparkplug B Output plugin](../output/sparkplug-b-output.md) to convert UMH-Core data back to Sparkplug B format for external systems.
 
@@ -159,7 +210,7 @@ For advanced users who need to understand the different host roles:
 #### Secondary Host (Default - Recommended)
 - **Role**: `"host"` (default, no configuration needed)
 - **Behavior**: Read-only, no STATE message publishing
-- **Use Case**: Safe for brownfield deployments, multiple instances can run simultaneously
+- **Use Case**: Safe for brownfield deployments, multiple instances can run simultaneously for load balancing
 - **Requirements**: None (edge_node_id is optional)
 
 #### Primary Host (Advanced Use Only)
@@ -167,6 +218,7 @@ For advanced users who need to understand the different host roles:
 - **Behavior**: Publishes STATE Birth/Death messages for host arbitration
 - **Use Case**: SCADA/HMI applications that need to coordinate with Edge Nodes
 - **Requirements**: `edge_node_id` is required (used as `host_id`)
+- **Deployment**: Single instance only (multiple Primary Hosts create STATE conflicts)
 
 **Edge Node Role**: The input plugin cannot act as an Edge Node (that's the role of the [Sparkplug B Output plugin](../output/sparkplug-b-output.md)). Edge Nodes publish NBIRTH/NDATA messages, while Host applications (like this input plugin) consume and process Sparkplug B data.
 
