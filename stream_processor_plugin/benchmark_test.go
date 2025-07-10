@@ -160,11 +160,12 @@ func BenchmarkBatchProcessing(b *testing.B) {
 
 				msg := service.NewMessage(payloadBytes)
 				// Alternate between different topics
-				if i%3 == 0 {
+				switch i % 3 {
+				case 0:
 					msg.MetaSet("umh_topic", "umh.v1.corpA.plant-A.aawd._raw.press")
-				} else if i%3 == 1 {
+				case 1:
 					msg.MetaSet("umh_topic", "umh.v1.corpA.plant-A.aawd._raw.tempF")
-				} else {
+				default:
 					msg.MetaSet("umh_topic", "umh.v1.corpA.plant-A.aawd._raw.run")
 				}
 				batch[i] = msg
@@ -295,7 +296,7 @@ func BenchmarkVariableResolution(b *testing.B) {
 		tempMsg.MetaSet("umh_topic", "umh.v1.corpA.plant-A.aawd._raw.tempF")
 
 		// Prime the processor
-		processor.ProcessBatch(ctx, service.MessageBatch{pressMsg, tempMsg})
+		_, _ = processor.ProcessBatch(ctx, service.MessageBatch{pressMsg, tempMsg})
 
 		// Test performance with existing state
 		inputPayload := TimeseriesMessage{
@@ -328,7 +329,7 @@ func BenchmarkVariableResolution(b *testing.B) {
 		inputMsg.MetaSet("umh_topic", "umh.v1.corpA.plant-A.aawd._raw.press")
 
 		// Pre-populate with same variable
-		processor.ProcessBatch(ctx, service.MessageBatch{inputMsg})
+		_, _ = processor.ProcessBatch(ctx, service.MessageBatch{inputMsg})
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {

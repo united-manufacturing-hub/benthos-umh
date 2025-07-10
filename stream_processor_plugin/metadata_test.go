@@ -15,6 +15,7 @@
 package stream_processor_plugin
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -55,7 +56,8 @@ var _ = Describe("Metadata Preservation", func() {
 
 	AfterEach(func() {
 		if processor != nil {
-			processor.Close(nil)
+			err := processor.Close(context.TODO())
+			Expect(err).To(BeNil())
 		}
 	})
 
@@ -78,12 +80,13 @@ var _ = Describe("Metadata Preservation", func() {
 
 			// Extract metadata
 			metadata := make(map[string]string)
-			originalMsg.MetaWalk(func(key, value string) error {
+			err = originalMsg.MetaWalk(func(key, value string) error {
 				if key != "umh_topic" {
 					metadata[key] = value
 				}
 				return nil
 			})
+			Expect(err).To(BeNil())
 
 			// Create output message
 			outputMsg, err := processor.createOutputMessage(
@@ -131,12 +134,13 @@ var _ = Describe("Metadata Preservation", func() {
 
 			// Extract metadata
 			metadata := make(map[string]string)
-			originalMsg.MetaWalk(func(key, value string) error {
+			err = originalMsg.MetaWalk(func(key, value string) error {
 				if key != "umh_topic" {
 					metadata[key] = value
 				}
 				return nil
 			})
+			Expect(err).To(BeNil())
 
 			// Create output message
 			outputMsg, err := processor.createOutputMessage(
@@ -173,12 +177,13 @@ var _ = Describe("Metadata Preservation", func() {
 
 			// Extract metadata
 			metadata := make(map[string]string)
-			originalMsg.MetaWalk(func(key, value string) error {
+			err = originalMsg.MetaWalk(func(key, value string) error {
 				if key != "umh_topic" {
 					metadata[key] = value
 				}
 				return nil
 			})
+			Expect(err).To(BeNil())
 
 			// Create output message
 			outputMsg, err := processor.createOutputMessage(
