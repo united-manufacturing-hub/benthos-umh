@@ -6,6 +6,43 @@ The **Sparkplug B Input plugin** allows the United Manufacturing Hub (UMH) to in
 
 This input plugin is designed to seamlessly integrate Sparkplug-enabled edge devices into the UMH **Unified Namespace**. It automatically decodes Sparkplug messages and enriches them with metadata (such as metric names, types, and timestamps) to fit the UMH-Core data model. By default, each Sparkplug metric is emitted as an individual message into the pipeline, complete with a unified `umh_topic` and additional meta fields.
 
+## Sparkplug B in UMH Architecture
+
+### UMH's Modified Parris Method
+
+UMH implements a **Modified Parris Method** that distributes hierarchy across both `device_id` and `metric_name` fields instead of cramming everything into `GroupID`. This approach provides significant advantages for multi-site deployments (e.g., a single UMH instance can ingest data from multiple sites):
+
+**Key Innovation**: 
+- **Location Hierarchy** → `device_id`: `"enterprise.site.area.line"` → `"enterprise:site:area:line"`
+- **Virtual Path Hierarchy** → `metric_name`: `"motor.diagnostics" + "temperature"` → `"motor:diagnostics:temperature"`
+
+### Architecture Roles
+
+**Sparkplug B Input Plugin** (this plugin):
+- **Role**: Host (Secondary Host by default, Primary Host optional)
+- **Function**: Consumes Sparkplug B messages from external systems
+- **Output**: Converts to UMH-Core format for UNS integration
+
+**Sparkplug B Output Plugin** ([see output documentation](../output/sparkplug-b-output.md)):
+- **Role**: Edge Node
+- **Function**: Publishes UMH-Core data as Sparkplug B messages
+- **Input**: Receives UMH-Core format from UNS
+
+### Integration with UMH Unified Namespace
+
+The Sparkplug B plugins integrate seamlessly with the UMH UNS architecture:
+
+**Data Ingestion Flow**:
+
+External Sparkplug B Systems → Sparkplug B Input Plugin (Host) → [tag_processor](../processors/tag_processor.md) → [UNS Output](../output/uns-output.md) → UNS
+
+**Data Publication Flow**:
+UNS → [UNS Input](../input/uns-input.md) → UMH-Core Format → [Sparkplug B Output Plugin](../output/sparkplug-b-output.md) (Edge Node) → External Systems
+
+### Why Modified Parris Method Matters
+
+Unlike the original Parris Method which creates separate state management per GroupID, UMH's approach enables unified state management across all organizational levels by preserving hierarchy in `device_id` and `metric_name` fields, allowing scalable multi-enterprise/multi-site data ingestion without state explosion.
+
 ## Quick Start
 
 Most users should use this simple configuration to read Sparkplug B data:
@@ -37,9 +74,11 @@ output:
 
 This configuration safely reads all Sparkplug B messages and converts them to UMH-Core format. Multiple instances can run simultaneously without conflicts.
 
+**To publish data as Sparkplug B**: After processing in the UNS, use the [Sparkplug B Output plugin](sparkplug-b-output.md) to convert UMH-Core data back to Sparkplug B format for external systems.
+
 ### Sparkplug B to UMH-Core Mapping
 
-Here's how a Sparkplug B message maps to UMH-Core:
+Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Method:
 
 **Input Sparkplug B Message:**
 - **Topic**: `spBv1.0/FactoryA/DDATA/EdgeNode1/enterprise:factory:line1:station1`
@@ -72,6 +111,8 @@ Here's how a Sparkplug B message maps to UMH-Core:
 3. **Sparkplug Protobuf**: Metric value and timestamp → UMH-Core format `{"value": X, "timestamp_ms": Y}`
 4. **Data Contract**: Automatically set by tag_processor to `"_sparkplug"`
 
+**Reverse Transformation**: The [Sparkplug B Output plugin](sparkplug-b-output.md) performs the inverse transformation to convert UMH-Core messages back to Sparkplug B format.
+
 ## Configuration Reference
 
 ### MQTT Section
@@ -97,8 +138,6 @@ Here's how a Sparkplug B message maps to UMH-Core:
 |-------|------|---------|-------------|
 | `subscription.groups` | `[]string` | `[]` | Groups to subscribe to (empty = all groups) |
 
-
-
 ---
 
 ## Technical Details
@@ -118,6 +157,8 @@ For advanced users who need to understand the different host roles:
 - **Behavior**: Publishes STATE Birth/Death messages for host arbitration
 - **Use Case**: SCADA/HMI applications that need to coordinate with Edge Nodes
 - **Requirements**: `edge_node_id` is required (used as `host_id`)
+
+**Edge Node Role**: The input plugin cannot act as an Edge Node (that's the role of the [Sparkplug B Output plugin](sparkplug-b-output.md)). Edge Nodes publish NBIRTH/NDATA messages, while Host applications (like this input plugin) consume and process Sparkplug B data.
 
 **Advanced Primary Host Configuration:**
 ```yaml
@@ -209,3 +250,5 @@ The Sparkplug B input plugin processes **bdSeq** values from incoming Edge Node 
 
 **Recommendation:**
 The input plugin handles both persistent and stateless Edge Node bdSeq patterns correctly. No special configuration is needed - the plugin automatically adapts to different Edge Node implementations and their bdSeq behaviors.
+
+

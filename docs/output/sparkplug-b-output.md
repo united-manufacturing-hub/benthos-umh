@@ -8,6 +8,13 @@ Sparkplug B is an open standard for MQTT-based industrial IoT communication that
 
 **UMH-Core Format Requirement**: This output plugin only accepts data in the UMH-Core format (`{"value": X, "timestamp_ms": Y}`). When using the `uns` input plugin, data is already in the correct format. For other input sources, use the `tag_processor` to convert data to UMH-Core format before this output plugin.
 
+**For Sparkplug B Architecture Overview**: See the [Sparkplug B Input plugin documentation](../input/sparkplug-b-input.md) for a comprehensive explanation of:
+- UMH's Modified Parris Method and how it differs from industry standards
+- Integration with the UMH Unified Namespace architecture
+- Host vs Edge Node roles and their relationship
+
+This output plugin implements the **Edge Node** role that complements the **Host** role of the input plugin.
+
 ## Quick Start
 
 ```yaml
