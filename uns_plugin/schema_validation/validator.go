@@ -37,8 +37,8 @@ const (
 )
 
 // schemaVersionRegex matches data contract names with version suffixes.
-// Expected format: "contractname-v123" or "contractname_v123" where 123 is the version number.
-var schemaVersionRegex = regexp.MustCompile(`^(.+)-v(\d+)$|^(.+)_v(\d+)$`)
+// Expected format: "contractname_v123" where 123 is the version number.
+var schemaVersionRegex = regexp.MustCompile(`^(.+)_v(\d+)$`)
 
 // ValidationResult contains information about the validation result and the contract used.
 type ValidationResult struct {
@@ -566,7 +566,7 @@ func (v *Validator) fetchLatestSchemaFromRegistry(subject string) ([]byte, bool,
 
 // ExtractSchemaVersionFromDataContract parses a data contract string to extract
 // the base contract name and version number.
-// Expected format: "contractname_v123" or "contractname-v123" -> ("contractname", 123, nil)
+// Expected format: "contractname_v123" -> ("contractname", 123, nil)
 func (v *Validator) ExtractSchemaVersionFromDataContract(contract string) (contractName string, version uint64, err error) {
 	if contract == "" {
 		return "", 0, fmt.Errorf("contract string is empty")
@@ -574,7 +574,7 @@ func (v *Validator) ExtractSchemaVersionFromDataContract(contract string) (contr
 
 	matches := schemaVersionRegex.FindStringSubmatch(contract)
 	if len(matches) != 3 {
-		return "", 0, fmt.Errorf("invalid data contract format '%s', expected format: 'name_v123' or 'name-v123'", contract)
+		return "", 0, fmt.Errorf("invalid data contract format '%s', expected format: 'name_v123'", contract)
 	}
 
 	contractName = matches[1]
