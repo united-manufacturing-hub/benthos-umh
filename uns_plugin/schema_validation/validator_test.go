@@ -373,31 +373,31 @@ var _ = Describe("Validator", func() {
 			// Create a fresh mock registry for this test
 			freshRegistry := NewMockSchemaRegistry()
 
-			// Register _sensor_data_v2_* schema as version 1 (first version of this subject)
+			// Register _sensor_data_v2-* schema as version 1 (first version of this subject)
 			// This mimics the real Redpanda setup where each subject starts at version 1
 			sensorDataV2Schema := `{
-				"type": "object",
-				"properties": {
-					"virtual_path": {
-						"type": "string",
-						"enum": ["temperature", "humidity", "pressure"]
-					},
-					"fields": {
-						"type": "object",
-						"properties": {
-							"timestamp_ms": {"type": "number"},
-							"value": {"type": "number"}
-						},
-						"required": ["timestamp_ms", "value"],
-						"additionalProperties": false
-					}
+			"type": "object",
+			"properties": {
+				"virtual_path": {
+					"type": "string",
+					"enum": ["temperature", "humidity", "pressure"]
 				},
-				"required": ["virtual_path", "fields"],
-				"additionalProperties": false
-			}`
+				"fields": {
+					"type": "object",
+					"properties": {
+						"timestamp_ms": {"type": "number"},
+						"value": {"type": "number"}
+					},
+					"required": ["timestamp_ms", "value"],
+					"additionalProperties": false
+				}
+			},
+			"required": ["virtual_path", "fields"],
+			"additionalProperties": false
+		}`
 
 			// Register the v2 schema as version 1 in the registry (this is the current behavior)
-			freshRegistry.AddSchema("_sensor_data_v2_timeseries-number", 1, sensorDataV2Schema)
+			freshRegistry.AddSchema("_sensor_data_v2-timeseries-number", 1, sensorDataV2Schema)
 
 			// Create validator with this registry
 			freshValidator := NewValidatorWithRegistry(freshRegistry.URL())
