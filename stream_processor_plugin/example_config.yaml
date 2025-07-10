@@ -20,6 +20,7 @@ processors:
       mapping:  # field → JS / constant / alias
         pressure: press+4.00001      # dynamic - depends on 'press'
         temperature: tF*69/31        # dynamic - depends on 'tF' 
+        combined: press+tF           # dynamic - depends on 'press' and 'tF'
         motor: 
           rpm: press/4               # dynamic - depends on 'press'
         serialNumber: '"SN-P42-008"' # static - always emitted

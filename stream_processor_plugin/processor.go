@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
@@ -72,31 +73,45 @@ func newStreamProcessor(config StreamProcessorConfig, logger *service.Logger, me
 	logger.Infof("Stream processor initialized with %d static mappings and %d dynamic mappings",
 		len(config.StaticMappings), len(config.DynamicMappings))
 
+	// Initialize gauge metrics
+	processor.updateGaugeMetrics()
+
 	return processor, nil
 }
 
 // ProcessBatch processes a batch of messages according to the stream processing workflow
 func (p *StreamProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+	batchStart := time.Now()
 	p.logger.Debugf("Processing batch of %d messages", len(batch))
 
 	var resultBatch service.MessageBatch
 
 	for _, msg := range batch {
+		messageStart := time.Now()
 		outputMessages, err := p.processMessage(msg)
+		processingTime := time.Since(messageStart)
+
 		if err != nil {
 			p.logger.Warnf("Failed to process message: %v", err)
-			p.metrics.MessagesErrored.Incr(1)
+			p.metrics.LogMessageErrored()
 			continue
 		}
 
 		if len(outputMessages) == 0 {
-			p.metrics.MessagesDropped.Incr(1)
+			p.metrics.LogMessageDropped()
 			continue
 		}
 
 		resultBatch = append(resultBatch, outputMessages...)
-		p.metrics.MessagesProcessed.Incr(1)
+		p.metrics.LogMessageProcessed(processingTime)
+		p.metrics.LogOutputGeneration(len(outputMessages))
 	}
+
+	// Log batch processing completion
+	p.metrics.LogBatchProcessing(time.Since(batchStart))
+
+	// Update gauge metrics periodically (at end of each batch)
+	p.updateGaugeMetrics()
 
 	if len(resultBatch) == 0 {
 		return nil, nil
@@ -139,7 +154,6 @@ func (p *StreamProcessor) processMessage(msg *service.Message) ([]*service.Messa
 
 	// Step 5: Store variable value in processor state
 	p.stateManager.GetState().SetVariable(variableName, messageData.Value, variableName)
-
 	p.logger.Debugf("Updated variable '%s' with value %v", variableName, messageData.Value)
 
 	// Step 6: Find and process mappings
@@ -149,6 +163,7 @@ func (p *StreamProcessor) processMessage(msg *service.Message) ([]*service.Messa
 	staticOutputs, err := p.processStaticMappings(metadata, messageData.TimestampMs)
 	if err != nil {
 		p.logger.Warnf("Error processing static mappings: %v", err)
+		p.metrics.LogMessageErrored()
 	} else {
 		outputMessages = append(outputMessages, staticOutputs...)
 	}
@@ -157,6 +172,7 @@ func (p *StreamProcessor) processMessage(msg *service.Message) ([]*service.Messa
 	dynamicOutputs, err := p.processDynamicMappings(metadata, variableName, messageData.TimestampMs)
 	if err != nil {
 		p.logger.Warnf("Error processing dynamic mappings: %v", err)
+		p.metrics.LogMessageErrored()
 	} else {
 		outputMessages = append(outputMessages, dynamicOutputs...)
 	}
@@ -205,8 +221,13 @@ func (p *StreamProcessor) processStaticMappings(metadata map[string]string, time
 	staticMappings := p.stateManager.GetStaticMappings()
 
 	for _, mapping := range staticMappings {
-		// Execute static JavaScript expression
+		// Execute static JavaScript expression with timing
+		jsStart := time.Now()
 		result := p.jsEngine.EvaluateStatic(mapping.Expression)
+		jsTime := time.Since(jsStart)
+
+		p.metrics.LogJavaScriptExecution(jsTime, result.Success)
+
 		if !result.Success {
 			p.logger.Warnf("Static mapping '%s' failed: %s", mapping.VirtualPath, result.Error)
 			continue
@@ -216,6 +237,7 @@ func (p *StreamProcessor) processStaticMappings(metadata map[string]string, time
 		outputMsg, err := p.createOutputMessage(metadata, mapping.VirtualPath, result.Value, timestampMs)
 		if err != nil {
 			p.logger.Warnf("Failed to create output message for static mapping '%s': %v", mapping.VirtualPath, err)
+			p.metrics.LogMessageErrored()
 			continue
 		}
 
@@ -235,7 +257,9 @@ func (p *StreamProcessor) processDynamicMappings(metadata map[string]string, upd
 
 	for _, mapping := range dependentMappings {
 		// Check if all required variables are available
-		if !p.hasAllDependencies(mapping.Dependencies) {
+		allDeps, _ := p.checkAllDependencies(mapping.Dependencies)
+
+		if !allDeps {
 			p.logger.Debugf("Skipping mapping '%s' - missing dependencies", mapping.VirtualPath)
 			continue
 		}
@@ -243,8 +267,13 @@ func (p *StreamProcessor) processDynamicMappings(metadata map[string]string, upd
 		// Get variable context for JavaScript execution
 		variableContext := p.stateManager.GetState().GetVariableContext()
 
-		// Execute dynamic JavaScript expression
+		// Execute dynamic JavaScript expression with timing
+		jsStart := time.Now()
 		result := p.jsEngine.EvaluateDynamic(mapping.Expression, variableContext)
+		jsTime := time.Since(jsStart)
+
+		p.metrics.LogJavaScriptExecution(jsTime, result.Success)
+
 		if !result.Success {
 			p.logger.Warnf("Dynamic mapping '%s' failed: %s", mapping.VirtualPath, result.Error)
 			continue
@@ -254,6 +283,7 @@ func (p *StreamProcessor) processDynamicMappings(metadata map[string]string, upd
 		outputMsg, err := p.createOutputMessage(metadata, mapping.VirtualPath, result.Value, timestampMs)
 		if err != nil {
 			p.logger.Warnf("Failed to create output message for dynamic mapping '%s': %v", mapping.VirtualPath, err)
+			p.metrics.LogMessageErrored()
 			continue
 		}
 
@@ -264,15 +294,32 @@ func (p *StreamProcessor) processDynamicMappings(metadata map[string]string, upd
 	return outputMessages, nil
 }
 
-// hasAllDependencies checks if all required variables are available in the state
-func (p *StreamProcessor) hasAllDependencies(dependencies []string) bool {
+// checkAllDependencies checks if all required variables are available in the state
+// Returns (allSatisfied, partialSatisfied) where:
+// - allSatisfied: true if all dependencies are available
+// - partialSatisfied: true if some (but not all) dependencies are available
+func (p *StreamProcessor) checkAllDependencies(dependencies []string) (bool, bool) {
 	state := p.stateManager.GetState()
+	satisfiedCount := 0
+
 	for _, dep := range dependencies {
-		if !state.HasVariable(dep) {
-			return false
+		if state.HasVariable(dep) {
+			satisfiedCount++
 		}
 	}
-	return true
+
+	allSatisfied := satisfiedCount == len(dependencies)
+	partialSatisfied := satisfiedCount > 0 && satisfiedCount < len(dependencies)
+
+	return allSatisfied, partialSatisfied
+}
+
+// updateGaugeMetrics updates gauge metrics for active resources
+func (p *StreamProcessor) updateGaugeMetrics() {
+	totalMappings := int64(len(p.config.StaticMappings) + len(p.config.DynamicMappings))
+	totalVariables := int64(p.stateManager.GetState().GetVariableCount())
+
+	p.metrics.UpdateActiveMetrics(totalMappings, totalVariables)
 }
 
 // createOutputMessage creates a new UMH output message with proper topic construction
