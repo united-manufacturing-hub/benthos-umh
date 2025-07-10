@@ -36,6 +36,9 @@ type StreamProcessor struct {
 
 	// Metrics
 	metrics *ProcessorMetrics
+
+	// Object pools for memory optimization
+	pools *ObjectPools
 }
 
 // newStreamProcessor creates a new stream processor instance
@@ -62,6 +65,7 @@ func newStreamProcessor(config StreamProcessorConfig, logger *service.Logger, me
 		stateManager: NewStateManager(&config),
 		jsEngine:     NewJSEngine(logger, sourceNames),
 		metrics:      NewProcessorMetrics(metrics),
+		pools:        NewObjectPools(),
 	}
 
 	// Pre-compile all JavaScript expressions for performance
@@ -143,8 +147,10 @@ func (p *StreamProcessor) processMessage(msg *service.Message) ([]*service.Messa
 		return nil, nil
 	}
 
-	// Step 4: Extract metadata once for efficiency
-	metadata := make(map[string]string)
+	// Step 4: Extract metadata once for efficiency using pooled map
+	metadata := p.pools.GetMetadataMap()
+	defer p.pools.PutMetadataMap(metadata)
+
 	_ = msg.MetaWalk(func(key, value string) error {
 		if key != "umh_topic" { // Skip umh_topic as it will be overridden
 			metadata[key] = value
@@ -264,13 +270,17 @@ func (p *StreamProcessor) processDynamicMappings(metadata map[string]string, upd
 			continue
 		}
 
-		// Get variable context for JavaScript execution
-		variableContext := p.stateManager.GetState().GetVariableContext()
+		// Get variable context for JavaScript execution using pooled context
+		variableContext := p.pools.GetVariableContext()
+		p.stateManager.GetState().FillVariableContext(variableContext)
 
 		// Execute dynamic JavaScript expression with timing
 		jsStart := time.Now()
 		result := p.jsEngine.EvaluateDynamic(mapping.Expression, variableContext)
 		jsTime := time.Since(jsStart)
+
+		// Return context to pool
+		p.pools.PutVariableContext(variableContext)
 
 		p.metrics.LogJavaScriptExecution(jsTime, result.Success)
 
@@ -324,9 +334,17 @@ func (p *StreamProcessor) updateGaugeMetrics() {
 
 // createOutputMessage creates a new UMH output message with proper topic construction
 func (p *StreamProcessor) createOutputMessage(metadata map[string]string, virtualPath string, value interface{}, timestampMs int64) (*service.Message, error) {
-	// Construct output topic: <output_topic>.<data_contract>.<virtual_path>
-	dataContract := fmt.Sprintf("_%s_%s", p.config.Model.Name, p.config.Model.Version)
-	outputTopic := fmt.Sprintf("%s.%s.%s", p.config.OutputTopic, dataContract, virtualPath)
+	// Construct data contract using pooled string builder
+	sb := p.pools.GetStringBuilder()
+	sb.WriteByte('_')
+	sb.WriteString(p.config.Model.Name)
+	sb.WriteByte('_')
+	sb.WriteString(p.config.Model.Version)
+	dataContract := sb.String()
+	p.pools.PutStringBuilder(sb)
+
+	// Get cached or construct output topic efficiently
+	outputTopic := p.pools.GetTopic(p.config.OutputTopic, dataContract, virtualPath)
 
 	// Create UMH-core timeseries message payload
 	payload := TimeseriesMessage{

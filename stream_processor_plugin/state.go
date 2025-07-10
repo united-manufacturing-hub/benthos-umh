@@ -201,6 +201,16 @@ func (ps *ProcessorState) GetVariableContext() map[string]interface{} {
 	return context
 }
 
+// FillVariableContext fills a pooled context map with variable values
+func (ps *ProcessorState) FillVariableContext(context map[string]interface{}) {
+	ps.mutex.RLock()
+	defer ps.mutex.RUnlock()
+
+	for name, value := range ps.Variables {
+		context[name] = value.Value
+	}
+}
+
 // ClearVariables removes all variables from the state
 func (ps *ProcessorState) ClearVariables() {
 	ps.mutex.Lock()
