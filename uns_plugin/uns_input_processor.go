@@ -24,29 +24,46 @@ import (
 
 // MessageProcessor handles the transformation of Kafka records to Benthos messages
 type MessageProcessor struct {
-	topicRegex *regexp.Regexp
-	metrics    *UnsInputMetrics
+	topicRegexes []*regexp.Regexp
+	metrics      *UnsInputMetrics
 }
 
-// NewMessageProcessor creates a new MessageProcessor with the specified topic regex
-func NewMessageProcessor(topicPattern string, metrics *UnsInputMetrics) (*MessageProcessor, error) {
-	topicRegex, err := regexp.Compile(topicPattern)
-	if err != nil {
-		return nil, err
+// NewMessageProcessor creates a new MessageProcessor with the specified topic regex patterns
+func NewMessageProcessor(topicPatterns []string, metrics *UnsInputMetrics) (*MessageProcessor, error) {
+	if len(topicPatterns) == 0 {
+		return nil, fmt.Errorf("at least one topic pattern must be provided")
+	}
+
+	topicRegexes := make([]*regexp.Regexp, len(topicPatterns))
+	for i, pattern := range topicPatterns {
+		topicRegex, err := regexp.Compile(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("failed to compile regex pattern '%s': %v", pattern, err)
+		}
+		topicRegexes[i] = topicRegex
 	}
 
 	return &MessageProcessor{
-		topicRegex: topicRegex,
-		metrics:    metrics,
+		topicRegexes: topicRegexes,
+		metrics:      metrics,
 	}, nil
 }
 
-// ProcessRecord processes a single Kafka record and returns a Benthos message if it matches the topic regex
-// Returns nil if the record doesn't match the topic regex
+// ProcessRecord processes a single Kafka record and returns a Benthos message if it matches any of the topic regexes
+// Returns nil if the record doesn't match any topic regex
 func (p *MessageProcessor) ProcessRecord(record *kgo.Record) *service.Message {
 	p.metrics.LogRecordReceived()
 
-	if !p.topicRegex.Match(record.Key) {
+	// Check if the record key matches any of the topic regexes
+	matched := false
+	for _, regex := range p.topicRegexes {
+		if regex.Match(record.Key) {
+			matched = true
+			break
+		}
+	}
+
+	if !matched {
 		return nil
 	}
 
