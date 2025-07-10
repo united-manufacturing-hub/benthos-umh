@@ -69,9 +69,10 @@ func NewObjectPools(sourceNames []string) *ObjectPools {
 		return make(map[string]interface{}, 16) // Pre-allocate for common variable count
 	}
 
-	// Initialize byte buffer pool
+	// Initialize byte buffer pool with pointer to avoid allocations
 	pools.byteBufferPool.New = func() interface{} {
-		return make([]byte, 0, 256) // Pre-allocate 256 bytes for typical JSON payloads
+		buf := make([]byte, 0, 256) // Pre-allocate 256 bytes for typical JSON payloads
+		return &buf
 	}
 
 	// Initialize string builder pool
@@ -158,15 +159,16 @@ func (p *ObjectPools) PutVariableContext(ctx map[string]interface{}) {
 
 // GetByteBuffer gets a byte buffer from the pool
 func (p *ObjectPools) GetByteBuffer() []byte {
-	buf := p.byteBufferPool.Get().([]byte)
-	return buf[:0] // Reset length but keep capacity
+	bufPtr := p.byteBufferPool.Get().(*[]byte)
+	*bufPtr = (*bufPtr)[:0] // Reset length but keep capacity
+	return *bufPtr
 }
 
 // PutByteBuffer returns a byte buffer to the pool
 func (p *ObjectPools) PutByteBuffer(buf []byte) {
 	// Only pool buffers that aren't too large to prevent memory bloat
 	if cap(buf) <= 4096 {
-		p.byteBufferPool.Put(buf)
+		p.byteBufferPool.Put(&buf)
 	}
 }
 
@@ -207,15 +209,15 @@ func (p *ObjectPools) PutJSRuntime(runtime *goja.Runtime) {
 	p.jsRuntimePool.Put(runtime)
 }
 
-// MarshalJSON marshals a value to JSON using pooled buffer - optimized for simple structures
-func (p *ObjectPools) MarshalJSON(v interface{}) ([]byte, error) {
+// MarshalToJSON marshals a value to JSON using pooled buffer - optimized for simple structures
+func (p *ObjectPools) MarshalToJSON(v interface{}) ([]byte, error) {
 	// For simple structures like TimeseriesMessage, direct json.Marshal is often faster
 	// than the pooling overhead. Use the standard library.
 	return json.Marshal(v)
 }
 
-// UnmarshalJSON unmarshals JSON bytes into a value using pooled decoder
-func (p *ObjectPools) UnmarshalJSON(data []byte, v interface{}) error {
+// UnmarshalFromJSON unmarshals JSON bytes into a value using pooled decoder
+func (p *ObjectPools) UnmarshalFromJSON(data []byte, v interface{}) error {
 	return json.Unmarshal(data, v)
 }
 

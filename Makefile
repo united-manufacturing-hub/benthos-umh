@@ -118,6 +118,10 @@ test-pkg-umh-topic:
 .PHONY: bench-pkg-umh-topic
 bench-pkg-umh-topic:
 	go test -bench=. -benchmem ./pkg/umh/topic/...
+
+.PHONY: bench-stream-processor
+bench-stream-processor:
+	go test -bench=. -benchmem -benchtime=10s ./stream_processor_plugin/...
   
 .PHONY: test-topic-browser
 test-topic-browser:
@@ -176,3 +180,9 @@ build-protobuf:
 .PHONY: serve-pprof
 serve-pprof:
 	go tool pprof -http=:8080 localhost:4195/debug/pprof/profile
+
+## Correctness
+validate-stream-processor:
+	golangci-lint run ./stream_processor_plugin
+	nilaway ./stream_processor_plugin
+	deadcode -test ./stream_processor_plugin

@@ -204,7 +204,7 @@ func (p *StreamProcessor) parseTimeseriesMessage(msg *service.Message) (*Timeser
 
 	// Parse JSON payload using pooled operations
 	var tsMsg TimeseriesMessage
-	if err := p.pools.UnmarshalJSON(payloadBytes, &tsMsg); err != nil {
+	if err := p.pools.UnmarshalFromJSON(payloadBytes, &tsMsg); err != nil {
 		return nil, fmt.Errorf("invalid JSON payload: %w", err)
 	}
 
