@@ -28,7 +28,7 @@ output:
     identity:
       group_id: "FactoryA"
       edge_node_id: "EdgeNode1"
-      # device_id is auto-generated from message metadata "location_path"
+      # device_id is optional - if not specified, generated from location_path metadata
 ```
 
 This configuration reads UMH-Core data and publishes it as Sparkplug B messages. The output plugin always acts as an Edge Node in the Sparkplug B ecosystem.
@@ -82,12 +82,12 @@ identity:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `mqtt.urls` | `[]string` | **required** | List of MQTT broker URLs |
-| `mqtt.client_id` | `string` | `"benthos-sparkplug"` | MQTT client identifier |
+| `mqtt.client_id` | `string` | `"benthos-sparkplug-output"` | MQTT client identifier |
 | `mqtt.credentials.username` | `string` | `""` | MQTT username |
 | `mqtt.credentials.password` | `string` | `""` | MQTT password |
 | `mqtt.qos` | `int` | `1` | MQTT QoS level |
-| `mqtt.keep_alive` | `duration` | `"30s"` | MQTT keep alive interval |
-| `mqtt.connect_timeout` | `duration` | `"10s"` | Connection timeout |
+| `mqtt.keep_alive` | `duration` | `"60s"` | MQTT keep alive interval |
+| `mqtt.connect_timeout` | `duration` | `"30s"` | Connection timeout |
 | `mqtt.clean_session` | `bool` | `true` | MQTT clean session flag |
 
 ### Identity Section
@@ -118,6 +118,12 @@ Each metric in the `metrics` array supports:
 | **units** | `string` | no | Engineering units (e.g., "°C", "bar") |
 | **is_historical** | `bool` | no | Whether this is historical data |
 | **metadata** | `object` | no | Additional key-value metadata |
+
+### Behaviour Section
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `behaviour.auto_extract_tag_name` | `bool` | `true` | Whether to automatically extract tag_name from message metadata |
+| `behaviour.retain_last_values` | `bool` | `true` | Whether to retain last known values for BIRTH messages after reconnection |
 
 
 
