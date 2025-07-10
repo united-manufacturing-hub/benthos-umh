@@ -83,7 +83,8 @@ var _ = Describe("Processing Flow Coverage", func() {
 
 	AfterEach(func() {
 		if processor != nil {
-			processor.Close(ctx)
+			err := processor.Close(ctx)
+			Expect(err).To(BeNil())
 		}
 		cancel()
 	})

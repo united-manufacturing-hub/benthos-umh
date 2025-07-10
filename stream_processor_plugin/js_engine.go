@@ -73,19 +73,85 @@ func NewJSEngine(logger *service.Logger, sourceNames []string) *JSEngine {
 	return engine
 }
 
-// configureRuntime sets up a Goja runtime with security constraints
-func (e *JSEngine) configureRuntime(runtime *goja.Runtime) {
-	// Add built-in JavaScript objects that are safe to use
-	runtime.Set("Math", runtime.GlobalObject().Get("Math"))
-	runtime.Set("JSON", runtime.GlobalObject().Get("JSON"))
-	runtime.Set("Date", runtime.GlobalObject().Get("Date"))
-	runtime.Set("Number", runtime.GlobalObject().Get("Number"))
-	runtime.Set("String", runtime.GlobalObject().Get("String"))
-	runtime.Set("Array", runtime.GlobalObject().Get("Array"))
-	runtime.Set("Object", runtime.GlobalObject().Get("Object"))
+// Disable dangerous globals
+var dangerousGlobals = []string{
+	// Module system - prevents loading external modules/files
+	"require", // Node.js module loader
+	"module",  // Current module object
+	"exports", // Module exports object
 
-	// Set execution timeout to prevent infinite loops
+	// Process and environment access
+	"process",    // Node.js process object (exit, env vars, etc.)
+	"__dirname",  // Current directory path
+	"__filename", // Current file path
+
+	// Global scope access - prevents escaping sandbox
+	"global",     // Node.js global object
+	"globalThis", // Universal global object reference
+
+	// Code execution - prevents dynamic code execution
+	"Function", // Function constructor (can execute strings as code)
+	"eval",     // Direct code evaluation
+
+	// I/O and debugging
+	"console", // Console output (potential info leakage)
+
+	// Async operations - prevents background execution
+	"setTimeout",     // Schedule delayed execution
+	"setInterval",    // Schedule repeated execution
+	"setImmediate",   // Schedule immediate execution
+	"clearTimeout",   // Clear scheduled timeout
+	"clearInterval",  // Clear scheduled interval
+	"clearImmediate", // Clear scheduled immediate
+
+	// Prototype manipulation - critical for preventing sandbox escapes
+	"__proto__",        // Prototype chain access (major security risk)
+	"__defineGetter__", // Define property getters
+	"__defineSetter__", // Define property setters
+	"__lookupGetter__", // Lookup property getters
+	"__lookupSetter__", // Lookup property setters
+	"constructor",      // Constructor property access
+
+	// Object manipulation methods that can lead to escapes
+	"defineProperty",           // Object.defineProperty equivalent
+	"getOwnPropertyDescriptor", // Property descriptor access
+	"getPrototypeOf",           // Prototype chain traversal
+	"setPrototypeOf",           // Prototype chain modification
+
+	// Legacy/deprecated but potentially dangerous functions
+	"escape",   // Legacy escape function
+	"unescape", // Legacy unescape function
+
+	// Import/dynamic loading (ES6+ features if supported)
+	"import",        // Dynamic import
+	"importScripts", // Web Worker script import
+}
+
+// configureRuntime sets up a Goja runtime with security constraints
+//
+// Security measures:
+// - Removes eval() and Function() constructor to prevent code injection
+// - Sets maximum call stack size to prevent stack overflow from deep recursion
+// - Execution timeout (5s) is handled in executeExpression() to prevent infinite loops
+//
+// Note: Goja already provides a sandboxed environment without Node.js/browser APIs
+func (e *JSEngine) configureRuntime(runtime *goja.Runtime) {
+	// Set maximum call stack size to prevent stack overflow from deep recursion
 	runtime.SetMaxCallStackSize(1000)
+
+	// Create a function that explains why APIs are disabled
+	securityBlocker := func(apiName string) func(goja.FunctionCall) goja.Value {
+		return func(call goja.FunctionCall) goja.Value {
+			panic(runtime.NewTypeError(fmt.Sprintf("'%s' is disabled for security reasons in this sandboxed environment", apiName)))
+		}
+	}
+
+	// Replace dangerous global objects with security blocker functions
+	for _, global := range dangerousGlobals {
+		_ = runtime.Set(global, securityBlocker(global))
+	}
+
+	// Built-in safe objects (Math, JSON, Date, etc.) are available by default
 }
 
 // ValidateExpression validates a JavaScript expression syntax
@@ -189,7 +255,7 @@ func (e *JSEngine) EvaluateDynamic(expression string, variables map[string]inter
 	for name, value := range variables {
 		// Only inject variables that are in the source configuration
 		if e.isValidSourceVariable(name) {
-			runtime.Set(name, value)
+			_ = runtime.Set(name, value)
 		}
 	}
 

@@ -72,7 +72,8 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 
 	AfterEach(func() {
 		if processor != nil {
-			processor.Close(ctx)
+			err := processor.Close(ctx)
+			Expect(err).To(BeNil())
 		}
 		cancel()
 	})
@@ -319,7 +320,10 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 
 				complexProcessor, err := newStreamProcessor(complexConfig, resources.Logger(), resources.Metrics())
 				Expect(err).ToNot(HaveOccurred())
-				defer complexProcessor.Close(ctx)
+				defer func() {
+					err := complexProcessor.Close(ctx)
+					Expect(err).To(BeNil())
+				}()
 
 				inputPayload := TimeseriesMessage{
 					Value:       25.5,
@@ -404,7 +408,10 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 
 				dependentProcessor, err := newStreamProcessor(dependentConfig, resources.Logger(), resources.Metrics())
 				Expect(err).ToNot(HaveOccurred())
-				defer dependentProcessor.Close(ctx)
+				defer func() {
+					err := dependentProcessor.Close(ctx)
+					Expect(err).To(BeNil())
+				}()
 
 				// Send only press, not tF
 				pressPayload := TimeseriesMessage{
@@ -549,7 +556,10 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 
 			errorProcessor, err := newStreamProcessor(errorConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
-			defer errorProcessor.Close(ctx)
+			defer func() {
+				err := errorProcessor.Close(ctx)
+				Expect(err).To(BeNil())
+			}()
 
 			inputPayload := TimeseriesMessage{
 				Value:       25.5,

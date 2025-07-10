@@ -145,7 +145,7 @@ func (p *StreamProcessor) processMessage(msg *service.Message) ([]*service.Messa
 
 	// Step 4: Extract metadata once for efficiency
 	metadata := make(map[string]string)
-	msg.MetaWalk(func(key, value string) error {
+	_ = msg.MetaWalk(func(key, value string) error {
 		if key != "umh_topic" { // Skip umh_topic as it will be overridden
 			metadata[key] = value
 		}
