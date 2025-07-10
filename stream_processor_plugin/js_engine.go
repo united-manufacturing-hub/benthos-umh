@@ -305,6 +305,9 @@ func (e *JSEngine) executeExpression(runtime *goja.Runtime, expression string) (
 		if err != nil {
 			return nil, err
 		}
+		if result == nil {
+			return nil, fmt.Errorf("JavaScript execution returned nil result")
+		}
 		return result.Export(), nil
 	case <-time.After(5 * time.Second):
 		return nil, fmt.Errorf("JavaScript execution timeout")
