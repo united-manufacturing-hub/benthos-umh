@@ -1,0 +1,135 @@
+// Copyright 2025 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package stream_processor_plugin
+
+import (
+	"context"
+	"fmt"
+	"sync"
+
+	"github.com/redpanda-data/benthos/v4/public/service"
+)
+
+// StreamProcessor is the main processor implementation
+type StreamProcessor struct {
+	config StreamProcessorConfig
+	logger *service.Logger
+
+	// State management
+	state *ProcessorState
+	mutex sync.RWMutex
+
+	// Metrics
+	messagesProcessed *service.MetricCounter
+	messagesErrored   *service.MetricCounter
+	messagesDropped   *service.MetricCounter
+}
+
+// ProcessorState holds the variable state for the processor
+type ProcessorState struct {
+	Variables map[string]*VariableValue
+	mutex     sync.RWMutex
+}
+
+// VariableValue represents a stored variable value
+type VariableValue struct {
+	Value  interface{}
+	Source string
+}
+
+// newStreamProcessor creates a new stream processor instance
+func newStreamProcessor(config StreamProcessorConfig, logger *service.Logger, metrics *service.Metrics) (*StreamProcessor, error) {
+	// Validate configuration
+	if err := validateConfig(config); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	// Analyze mappings to identify static vs dynamic
+	if err := analyzeMappingsWithDetection(&config); err != nil {
+		return nil, fmt.Errorf("failed to analyze mappings: %w", err)
+	}
+
+	processor := &StreamProcessor{
+		config: config,
+		logger: logger,
+		state: &ProcessorState{
+			Variables: make(map[string]*VariableValue),
+		},
+		messagesProcessed: metrics.NewCounter("messages_processed"),
+		messagesErrored:   metrics.NewCounter("messages_errored"),
+		messagesDropped:   metrics.NewCounter("messages_dropped"),
+	}
+
+	// Log configuration analysis results
+	logger.Infof("Stream processor initialized with %d static mappings and %d dynamic mappings",
+		len(config.StaticMappings), len(config.DynamicMappings))
+
+	return processor, nil
+}
+
+// ProcessBatch processes a batch of messages
+func (p *StreamProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+	p.logger.Debugf("Processing batch of %d messages", len(batch))
+
+	var resultBatch service.MessageBatch
+
+	for _, msg := range batch {
+		// For now, just pass through the message
+		// TODO: Implement actual stream processing logic
+		resultBatch = append(resultBatch, msg)
+		p.messagesProcessed.Incr(1)
+	}
+
+	if len(resultBatch) == 0 {
+		return nil, nil
+	}
+
+	return []service.MessageBatch{resultBatch}, nil
+}
+
+// Close closes the processor
+func (p *StreamProcessor) Close(ctx context.Context) error {
+	p.logger.Debug("Closing stream processor")
+	return nil
+}
+
+// validateConfig validates the stream processor configuration
+func validateConfig(config StreamProcessorConfig) error {
+	if config.Mode == "" {
+		return fmt.Errorf("mode is required")
+	}
+
+	if config.Mode != "timeseries" {
+		return fmt.Errorf("unsupported mode: %s (only 'timeseries' is supported)", config.Mode)
+	}
+
+	if config.Model.Name == "" {
+		return fmt.Errorf("model name is required")
+	}
+
+	if config.Model.Version == "" {
+		return fmt.Errorf("model version is required")
+	}
+
+	if config.OutputTopic == "" {
+		return fmt.Errorf("output_topic is required")
+	}
+
+	if len(config.Sources) == 0 {
+		return fmt.Errorf("at least one source mapping is required")
+	}
+
+	return nil
+}
