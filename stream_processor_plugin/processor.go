@@ -202,9 +202,9 @@ func (p *StreamProcessor) parseTimeseriesMessage(msg *service.Message) (*Timeser
 		return nil, fmt.Errorf("failed to get message payload: %w", err)
 	}
 
-	// Parse JSON payload
+	// Parse JSON payload using pooled operations
 	var tsMsg TimeseriesMessage
-	if err := json.Unmarshal(payloadBytes, &tsMsg); err != nil {
+	if err := p.pools.UnmarshalJSON(payloadBytes, &tsMsg); err != nil {
 		return nil, fmt.Errorf("invalid JSON payload: %w", err)
 	}
 
@@ -230,8 +230,8 @@ func (p *StreamProcessor) processStaticMappings(metadata map[string]string, time
 		return nil, nil
 	}
 
-	// Process mappings sequentially
-	var outputMessages []*service.Message
+	// Process mappings sequentially with pre-allocated slice
+	outputMessages := make([]*service.Message, 0, len(staticMappings))
 	for _, mapping := range staticMappings {
 		// Get variable context for JavaScript execution using pooled context
 		variableContext := p.pools.GetVariableContext()
@@ -239,9 +239,9 @@ func (p *StreamProcessor) processStaticMappings(metadata map[string]string, time
 
 		p.stateManager.GetState().FillVariableContext(variableContext)
 
-		// Execute static JavaScript expression with timing
+		// Execute static JavaScript expression with timing using pre-compiled program
 		jsStart := time.Now()
-		result := p.jsEngine.EvaluateStatic(mapping.Expression)
+		result := p.jsEngine.EvaluateStaticPrecompiled(mapping.Expression)
 		jsTime := time.Since(jsStart)
 
 		p.metrics.LogJavaScriptExecution(jsTime, result.Success)
@@ -277,7 +277,7 @@ func (p *StreamProcessor) processDynamicMappings(metadata map[string]string, upd
 	}
 
 	// Filter mappings that have all dependencies satisfied
-	var executableMappings []MappingInfo
+	executableMappings := make([]MappingInfo, 0, len(dependentMappings))
 	for _, mapping := range dependentMappings {
 		if allDeps, _ := p.checkAllDependencies(mapping.Dependencies); allDeps {
 			executableMappings = append(executableMappings, mapping)
@@ -290,8 +290,8 @@ func (p *StreamProcessor) processDynamicMappings(metadata map[string]string, upd
 		return nil, nil
 	}
 
-	// Process mappings sequentially
-	var outputMessages []*service.Message
+	// Process mappings sequentially with pre-allocated slice
+	outputMessages := make([]*service.Message, 0, len(executableMappings))
 	for _, mapping := range executableMappings {
 		// Get variable context for JavaScript execution using pooled context
 		variableContext := p.pools.GetVariableContext()
@@ -299,9 +299,9 @@ func (p *StreamProcessor) processDynamicMappings(metadata map[string]string, upd
 
 		p.stateManager.GetState().FillVariableContext(variableContext)
 
-		// Execute dynamic JavaScript expression with timing
+		// Execute dynamic JavaScript expression with timing using pre-compiled program
 		jsStart := time.Now()
-		result := p.jsEngine.EvaluateDynamic(mapping.Expression, variableContext)
+		result := p.jsEngine.EvaluateDynamicPrecompiled(mapping.Expression, variableContext)
 		jsTime := time.Since(jsStart)
 
 		p.metrics.LogJavaScriptExecution(jsTime, result.Success)
@@ -411,24 +411,7 @@ func (p *StreamProcessor) Close(ctx context.Context) error {
 
 // precompileExpressions pre-compiles all JavaScript expressions for performance
 func (p *StreamProcessor) precompileExpressions() error {
-	p.logger.Debug("Pre-compiling JavaScript expressions")
-
-	// Compile static mappings
-	for virtualPath, mapping := range p.config.StaticMappings {
-		if err := p.jsEngine.CompileExpression(mapping.Expression); err != nil {
-			return fmt.Errorf("failed to compile static mapping '%s': %w", virtualPath, err)
-		}
-	}
-
-	// Compile dynamic mappings
-	for virtualPath, mapping := range p.config.DynamicMappings {
-		if err := p.jsEngine.CompileExpression(mapping.Expression); err != nil {
-			return fmt.Errorf("failed to compile dynamic mapping '%s': %w", virtualPath, err)
-		}
-	}
-
-	p.logger.Infof("Successfully pre-compiled %d JavaScript expressions",
-		len(p.config.StaticMappings)+len(p.config.DynamicMappings))
-
-	return nil
+	// Use the new high-performance JavaScript engine pre-compilation
+	// This is a major optimization that eliminates parsing overhead during execution
+	return p.jsEngine.PrecompileExpressions(p.config.StaticMappings, p.config.DynamicMappings)
 }
