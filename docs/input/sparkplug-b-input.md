@@ -4,13 +4,7 @@
 
 The **Sparkplug B Input plugin** allows the United Manufacturing Hub (UMH) to ingest data from MQTT brokers using the Sparkplug B specification. It subscribes to Sparkplug B MQTT topics (e.g., device birth/data/death messages) and converts the incoming Protobuf payloads into UMH-compatible messages. It maintains the stateful context required by Sparkplug B – tracking device birth certificates, metric alias mapping, and sequence numbers – so that incoming data is interpreted correctly.
 
-This input plugin is designed to seamlessly integrate Sparkplug-enabled edge devices into the UMH **Unified Namespace**. It automatically decodes Sparkplug messages and enriches them with metadata (such as metric names, types, and timestamps) to fit the UMH-Core data model. 
-
-## Message Processing
-
-The Sparkplug B input plugin **always splits metrics** into individual messages to ensure UMH-Core format compatibility. Each Sparkplug metric becomes a separate Benthos message for downstream processing.
-
-*Note: This behavior is required for UMH-Core format and cannot be disabled.*
+This input plugin is designed to seamlessly integrate Sparkplug-enabled edge devices into the UMH **Unified Namespace**. It automatically decodes Sparkplug messages and enriches them with metadata (such as metric names, types, and timestamps) to fit the UMH-Core data model.
 
 ## Sparkplug B in UMH Architecture
 
@@ -48,47 +42,6 @@ UNS → [UNS Input](uns-input.md) → UMH-Core Format → [Sparkplug B Output Pl
 ### Why Modified Parris Method Matters
 
 Unlike the original Parris Method which creates separate state management per GroupID, UMH's approach enables unified state management across all organizational levels by preserving hierarchy in `device_id` and `metric_name` fields, allowing scalable multi-enterprise/multi-site data ingestion without state explosion.
-
-## Deployment Considerations
-
-### Multiple Instance Support
-
-**Secondary Host (Default - `role: "host"`)**: 
-✅ **Safe for multiple instances** - Read-only operation, no conflicts
-
-**Primary Host (`role: "primary"`)**: 
-⚠️ **Single instance only** - Publishes STATE messages for host arbitration
-
-### Deployment Patterns
-
-```yaml
-# ✅ SAFE: Multiple Secondary Hosts for load balancing
-instance-1:
-  sparkplug_b:
-    role: "host"  # Default - read-only
-instance-2:
-  sparkplug_b:
-    role: "host"  # Default - read-only
-
-# ❌ CONFLICT: Multiple Primary Hosts
-instance-1:
-  sparkplug_b:
-    role: "primary"  # STATE publisher
-instance-2:
-  sparkplug_b:
-    role: "primary"  # STATE conflict!
-
-# ✅ RECOMMENDED: One Primary + Multiple Secondary
-primary-host:
-  sparkplug_b:
-    role: "primary"    # STATE coordination
-secondary-1:
-  sparkplug_b:
-    role: "host"       # Data processing
-secondary-2:
-  sparkplug_b:
-    role: "host"       # Load balancing
-```
 
 ## Quick Start
 
@@ -247,6 +200,16 @@ The Primary Host uses the `edge_node_id` configuration field as the `host_id` fo
 
 **Important**: Primary Host STATE topics do NOT include the `group_id` (per Sparkplug B v3.0 specification). This allows Edge Nodes across all groups to detect the Primary Host for proper session management.
 
+### Deployment Considerations
+
+#### Multiple Instance Support
+
+**Secondary Host (Default - `role: "host"`)**: 
+✅ **Safe for multiple instances** - Read-only operation, no conflicts
+
+**Primary Host (`role: "primary"`)**: 
+⚠️ **Single instance only** - Publishes STATE messages for host arbitration
+
 ### Metadata Enrichment
 
 The plugin attaches comprehensive Sparkplug-specific metadata fields to each output message. These are organized into **primary fields** (commonly used) and **secondary fields** (for advanced use cases):
@@ -299,6 +262,12 @@ When UMH conversion is successful, additional metadata is added:
 * `umh_conversion_error`: Error message if conversion failed
 
 **Usage Recommendation**: Use the **primary metadata fields** for most processing logic. The `spb_` prefixed fields are provided for backward compatibility and advanced debugging scenarios.
+
+### Message Processing
+
+The Sparkplug B input plugin **always splits metrics** into individual messages to ensure UMH-Core format compatibility. Each Sparkplug metric becomes a separate Benthos message for downstream processing.
+
+*Note: This behavior is required for UMH-Core format and cannot be disabled.*
 
 ## Stateless Architecture Considerations
 
