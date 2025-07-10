@@ -119,7 +119,7 @@ func (p *ObjectPools) configureRuntime(runtime *goja.Runtime) {
 	// Create a function that explains why APIs are disabled
 	securityBlocker := func(apiName string) func(goja.FunctionCall) goja.Value {
 		return func(call goja.FunctionCall) goja.Value {
-			panic(runtime.NewTypeError("'" + apiName + "' is disabled for security reasons in this sandboxed environment"))
+			return runtime.NewTypeError("'" + apiName + "' is disabled for security reasons in this sandboxed environment")
 		}
 	}
 
