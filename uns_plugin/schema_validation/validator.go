@@ -153,7 +153,7 @@ func (v *Validator) SetLogger(logger *service.Logger) {
 // debugf logs a debug message if logger is available
 func (v *Validator) debugf(format string, args ...interface{}) {
 	if v.logger != nil {
-		v.logger.Debugf(format, args...)
+		v.logger.Infof(format, args...)
 	}
 }
 
@@ -385,8 +385,8 @@ func (v *Validator) fetchSchemasSync(contractName string, version uint64) (map[s
 
 	v.debugf("fetchSchemasSync: Found %d subjects in registry", len(subjects))
 
-	// Filter subjects that match our pattern: contractName_v{version}_*
-	schemaPrefix := fmt.Sprintf("%s_v%d_", contractName, version)
+	// Filter subjects that match our pattern: contractName_v{version}-*
+	schemaPrefix := fmt.Sprintf("%s_v%d-", contractName, version)
 	var matchingSubjects []string
 	for _, subject := range subjects {
 		if strings.HasPrefix(subject, schemaPrefix) {
