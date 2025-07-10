@@ -12,6 +12,43 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package stream_processor_plugin provides state management for the Benthos stream processor.
+//
+// STATE MANAGEMENT SYSTEM OVERVIEW:
+//
+// The state management system is designed to handle timeseries data processing with
+// dependency-based evaluation. It solves several key challenges:
+//
+//  1. THREAD-SAFE VARIABLE STORAGE: Multiple goroutines may process incoming messages
+//     simultaneously, so we need thread-safe access to shared variable state.
+//
+//  2. DEPENDENCY TRACKING: Variables can depend on other variables through JavaScript
+//     expressions. We need to track which variables have been updated to determine
+//     which mappings should be re-evaluated.
+//
+//  3. SOURCE TRACEABILITY: Each variable value must be traceable back to its source
+//     topic (e.g., "press", "tF", "r") for debugging and validation purposes.
+//
+//  4. TIMESTAMP TRACKING: For timeseries data, we need to know when each variable
+//     was last updated to ensure proper ordering and freshness.
+//
+//  5. PERFORMANCE OPTIMIZATION: Only re-evaluate mappings when their dependencies
+//     have changed, rather than recalculating everything on every message.
+//
+// WHY VariableValue HAS A SOURCE FIELD:
+//
+// The Source field in VariableValue serves multiple purposes:
+// - DEBUGGING: When a mapping fails, we can trace which source topic provided the problematic data
+// - VALIDATION: Ensures variables are coming from expected sources as configured
+// - AUDITING: Provides a clear audit trail of data flow through the system
+// - MONITORING: Enables monitoring of which sources are active vs. inactive
+//
+// EXAMPLE FLOW:
+// 1. Message arrives with umh_topic="umh.v1.corpA.plant-A.aawd._raw.press"
+// 2. StateManager resolves this to variable "press" based on Sources configuration
+// 3. Variable stored as VariableValue{Value: 1.23, Source: "press", Timestamp: now}
+// 4. Dependent mappings (like "efficiency = press / target") are identified
+// 5. Only those mappings are re-evaluated, not all mappings
 package stream_processor_plugin
 
 import (
@@ -152,7 +189,28 @@ func (ps *ProcessorState) GetVariableCount() int {
 	return len(ps.Variables)
 }
 
-// StateManager handles source-to-variable resolution and state coordination
+// StateManager handles source-to-variable resolution and state coordination.
+//
+// It serves as the central coordinator between incoming UMH topics and the processor's
+// internal variable state. The StateManager is responsible for:
+//
+//  1. TOPIC-TO-VARIABLE RESOLUTION: Converting incoming UMH topics like
+//     "umh.v1.corpA.plant-A.aawd._raw.press" to variable names like "press" based on
+//     the configured Sources mapping.
+//
+//  2. DEPENDENCY ANALYSIS: Determining which JavaScript mappings need to be
+//     re-evaluated when a particular variable is updated.
+//
+//  3. EXECUTION PLANNING: Identifying which mappings can be executed based on
+//     available variable dependencies.
+//
+//  4. STATIC MAPPING COORDINATION: Managing mappings that should be emitted
+//     on every message regardless of variable updates.
+//
+// The StateManager acts as a facade over the ProcessorState, providing
+// higher-level operations that understand the stream processor's configuration
+// and business logic, while the ProcessorState handles the low-level
+// thread-safe storage operations.
 type StateManager struct {
 	state  *ProcessorState
 	config *StreamProcessorConfig
@@ -171,7 +229,15 @@ func (sm *StateManager) GetState() *ProcessorState {
 	return sm.state
 }
 
-// ResolveVariableFromTopic determines the variable name from an incoming UMH topic
+// ResolveVariableFromTopic determines the variable name from an incoming UMH topic.
+//
+// This is a core method that enables the dependency-based evaluation system.
+// It maps incoming UMH topics to variable names based on the configured Sources.
+//
+// Example: If Sources config contains {"press": "umh.v1.corpA.plant-A.aawd._raw.press"},
+// then topic "umh.v1.corpA.plant-A.aawd._raw.press" resolves to variable "press".
+//
+// Returns the variable name and true if a mapping exists, empty string and false otherwise.
 func (sm *StateManager) ResolveVariableFromTopic(topic string) (string, bool) {
 	// Find which source this topic matches
 	for variableName, sourceTopic := range sm.config.Sources {
@@ -182,7 +248,18 @@ func (sm *StateManager) ResolveVariableFromTopic(topic string) (string, bool) {
 	return "", false
 }
 
-// GetDependentMappings returns all mappings that depend on the given variable
+// GetDependentMappings returns all mappings that depend on the given variable.
+//
+// This method is essential for the performance optimization strategy - instead of
+// re-evaluating all mappings when any variable changes, we only re-evaluate
+// mappings that actually use the changed variable.
+//
+// Example: If variable "press" is updated, this method returns only mappings
+// like "efficiency = press / target" or "quality = press > threshold", not
+// unrelated mappings like "temperature_status = tF > 50".
+//
+// The dependencies are pre-calculated during startup through static analysis
+// of the JavaScript expressions.
 func (sm *StateManager) GetDependentMappings(variableName string) []MappingInfo {
 	var dependentMappings []MappingInfo
 
