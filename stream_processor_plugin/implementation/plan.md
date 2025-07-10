@@ -31,15 +31,16 @@ The `stream_processor` is a specialized Benthos processor designed to collect ti
    - UNS message parsing and validation
    - Output message generation with topic construction
 
-5. **Metrics & Monitoring** (`metrics.go`)
-   - Processing counters and timers
-   - Error tracking per source/virtual path
-   - Variable resolution success rates
+5. **Metrics & Monitoring** (`metrics.go`) ✅
+   - Essential processing metrics (messages, errors, outputs)
+   - JavaScript execution performance tracking
+   - Processing timing and throughput monitoring
+   - Resource utilization (active mappings and variables)
 
-6. **Optimizations & Benchmarks**
-   - Create benchmarks, to validate how many messages can be proceessed per second.
-      - Goal: >100k msg/sec
-   - Consider optimizations to reduce memory/cpu usage or to speed up processing
+6. **Optimizations & Benchmarks** ✅
+   - ✅ Create benchmarks, to validate how many messages can be proceessed per second.
+      - ❌ Goal: >100k msg/sec (Currently achieving ~36k msg/sec - see PERFORMANCE.md)
+   - ⏳ Consider optimizations to reduce memory/cpu usage or to speed up processing
 
 ## Configuration Structure
 
@@ -238,15 +239,21 @@ type VariableValue struct {
 
 ## Performance Considerations
 
+**📊 See [PERFORMANCE.md](./PERFORMANCE.md) for detailed benchmark results and analysis.**
+
+**Current Status**: ~36k msg/sec (64% below 100k target)
+
 ### Memory Management
 - Simple variable storage without TTL
 - Variables overwritten on new values
 - Memory usage scales with number of unique sources
+- **Current**: 37.6 KB allocated per message (512 allocations)
 
 ### Processing Efficiency
 - Compiled JS expressions (where possible)
 - Efficient variable lookup structures
 - Batch processing optimizations
+- **Bottlenecks**: Per-message overhead (27μs), memory allocations, JS context setup
 
 ## Documentation Requirements
 
@@ -271,12 +278,15 @@ stream_processor_plugin/
 ├── state.go                     # Variable state management
 ├── js_engine.go                 # JavaScript runtime integration
 ├── processor.go                 # Main BatchProcessor implementation
-├── metrics.go                   # Metrics collection
+├── metrics.go                   # Comprehensive metrics collection
 ├── stream_processor_plugin.go   # Plugin registration and init
 ├── stream_processor_plugin_test.go       # Unit tests
 ├── stream_processor_plugin_suite_test.go # Test suite
 ├── integration_test.go          # Integration tests
+├── benchmark_test.go            # Performance benchmarks
 ├── example_config.yaml          # Example configuration
+├── PERFORMANCE.md               # Performance analysis and results
+├── METRICS.md                   # Comprehensive metrics documentation
 └── README.md                    # Plugin-specific documentation
 ```
 
@@ -322,7 +332,16 @@ stream_processor_plugin/
 
 ## Monitoring and Observability
 
-- Metrics for processing rates, errors, and latency
-- Variable resolution success rates
-- Per-source and per-virtual path performance tracking
-- JavaScript execution timing and errors 
+**📊 See [METRICS.md](./METRICS.md) for essential metrics documentation.**
+
+### Simplified Metrics System ✅
+- **Core Processing**: Message throughput, error rates, drop rates, outputs generated
+- **JavaScript Performance**: Execution timing and error rates
+- **Performance Monitoring**: Batch and message processing times
+- **Resource Utilization**: Active mappings and variables tracking
+
+### Key Performance Indicators
+- **Throughput**: ~36k msg/sec (target: >100k msg/sec)
+- **Error Rate**: <5% for production workloads
+- **Dependency Satisfaction**: >80% for healthy operation
+- **JavaScript Execution**: <10μs per expression evaluation 
