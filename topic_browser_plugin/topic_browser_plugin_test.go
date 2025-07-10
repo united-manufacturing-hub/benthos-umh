@@ -145,10 +145,10 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				ENDENDENDEND
 			*/
 
-			// Let's only focus on the 2nd line (f643 - LZ4 block compressed format)
+			// Let's only focus on the 2nd line (0a70 - uncompressed protobuf format)
 			dataLine := strings.Split(string(outBytes), "\n")[1]
-			// Expect it to begin with f643 (LZ4 block compressed protobuf format)
-			Expect(dataLine[:4]).To(Equal("f643"))
+			// Expect it to begin with 0a70 (uncompressed protobuf format)
+			Expect(dataLine[:4]).To(Equal("0a70"))
 
 			// Hex decode it
 			hexDecoded, err := hex.DecodeString(dataLine)
@@ -244,10 +244,10 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).To(BeNil())
 			Expect(outBytes2).NotTo(BeNil())
 
-			// Let's only focus on the 2nd line (f643 - LZ4 block compressed format)
+			// Let's only focus on the 2nd line (0a70 - uncompressed protobuf format)
 			dataLine := strings.Split(string(outBytes2), "\n")[1]
-			// Expect it to begin with f643 (LZ4 block compressed protobuf format)
-			Expect(dataLine[:4]).To(Equal("f643"))
+			// Expect it to begin with 0a70 (uncompressed protobuf format)
+			Expect(dataLine[:4]).To(Equal("0a70"))
 
 			// Hex decode it
 			hexDecoded, err := hex.DecodeString(dataLine)
@@ -1399,8 +1399,8 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(len(emissionLines)).To(BeNumerically(">=", 2), "Should have data lines")
 
 			dataLine := emissionLines[1]
-			// Note: LZ4 format varies but should start with f6
-			Expect(dataLine).To(HavePrefix("f6"), "Should be LZ4 compressed protobuf")
+			// Note: Uncompressed protobuf format should start with 0a
+			Expect(dataLine).To(HavePrefix("0a"), "Should be uncompressed protobuf")
 
 			hexDecoded, err := hex.DecodeString(dataLine)
 			Expect(err).NotTo(HaveOccurred())
