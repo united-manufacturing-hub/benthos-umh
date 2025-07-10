@@ -23,14 +23,18 @@ import (
 
 // Constants for default configuration values
 const (
-	defaultInputKafkaTopic        = "umh.messages"
-	defaultTopicKey               = ".*"
-	defaultConsumerGroup          = "uns_plugin"
-	defaultConnIdleTimeout        = 15 * time.Minute
-	defaultDialTimeout            = 10 * time.Second
-	defaultFetchMaxBytes          = 100e6 // 100MB
-	defaultFetchMaxPartitionBytes = 100e6 // 100MB
-	defaultFetchMinBytes          = 50e6  // 50MB
+	defaultInputKafkaTopic = "umh.messages"
+	defaultTopicKey        = ".*"
+	defaultConsumerGroup   = "uns_plugin"
+	defaultConnIdleTimeout = 15 * time.Minute
+	defaultDialTimeout     = 10 * time.Second
+
+	// MEMORY OPTIMIZATION: Reduced from 100MB to prevent OOM kills
+	// Previous values caused 1.7GB+ allocations in franz-go decompression
+	// New values target ~170MB peak allocation (10x reduction)
+	defaultFetchMaxBytes          = 10e6 // 10MB (was 100MB)
+	defaultFetchMaxPartitionBytes = 10e6 // 10MB (was 100MB)
+	defaultFetchMinBytes          = 1e6  // 1MB (was 50MB)
 	defaultFetchMaxWaitTime       = 1 * time.Second
 )
 
