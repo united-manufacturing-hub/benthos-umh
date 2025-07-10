@@ -1917,7 +1917,7 @@ func extractUnsBundle(msg *service.Message) *proto.UnsBundle {
 		return nil
 	}
 
-	// Split the message - second line contains the LZ4 compressed protobuf data
+	// Split the message - second line contains the protobuf data
 	lines := strings.Split(string(bytes), "\n")
 	if len(lines) < 2 {
 		return nil
@@ -1929,7 +1929,7 @@ func extractUnsBundle(msg *service.Message) *proto.UnsBundle {
 		return nil
 	}
 
-	// Parse the protobuf bundle with compression handling
+	// Parse the protobuf bundle
 	bundle, err := ProtobufBytesToBundleWithCompression(hexDecoded)
 	if err != nil {
 		return nil

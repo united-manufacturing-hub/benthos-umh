@@ -179,12 +179,16 @@ func ProtobufBytesToBundle(protoBytes []byte) (*proto.UnsBundle, error) {
 	return bundle, nil
 }
 
-// ProtobufBytesToBundleWithCompression is a backward compatibility alias for ProtobufBytesToBundle.
-// This function is deprecated and will be removed in a future version.
-// Use ProtobufBytesToBundle instead.
+// ProtobufBytesToBundleWithCompression is a backward compatibility function that handles protobuf data.
+//
+// DEPRECATED: This function is deprecated and will be removed in a future version.
+// Use ProtobufBytesToBundle instead for new code.
+//
+// This function now processes uncompressed protobuf data directly, despite its name referencing compression.
+// The name is retained for backward compatibility with existing code that expects this function signature.
 //
 // Args:
-//   - protoBytes: The uncompressed protobuf bytes (no longer compressed)
+//   - protoBytes: The uncompressed protobuf bytes
 //
 // Returns:
 //   - *UnsBundle: The decoded bundle
