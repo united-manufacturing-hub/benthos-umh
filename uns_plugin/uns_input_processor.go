@@ -36,11 +36,15 @@ func NewMessageProcessor(topicPatterns []string, metrics *UnsInputMetrics) (*Mes
 	}
 
 	// Combine all patterns into one: (?:pattern1)|(?:pattern2)|(?:pattern3)
-	escapedPatterns := make([]string, len(topicPatterns))
+	wrappedPatterns := make([]string, len(topicPatterns))
 	for i, pattern := range topicPatterns {
-		escapedPatterns[i] = fmt.Sprintf("(?:%s)", pattern)
+		// Validate individual pattern first
+		if _, err := regexp.Compile(pattern); err != nil {
+			return nil, fmt.Errorf("invalid regex pattern at index %d: %s - %v", i, pattern, err)
+		}
+		wrappedPatterns[i] = fmt.Sprintf("(?:%s)", pattern)
 	}
-	combinedPattern := strings.Join(escapedPatterns, "|")
+	combinedPattern := strings.Join(wrappedPatterns, "|")
 
 	topicRegex, err := regexp.Compile(combinedPattern)
 	if err != nil {
