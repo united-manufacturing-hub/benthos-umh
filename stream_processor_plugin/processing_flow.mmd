@@ -1,0 +1,38 @@
+flowchart TD
+    A[Input Message] --> B{Has umh_topic<br/>metadata?}
+    B -->|No| C[Skip Message]
+    B -->|Yes| D{Valid timeseries<br/>format?}
+    D -->|No| C
+    D -->|Yes| E{Topic matches<br/>configured sources?}
+    E -->|No| C
+    E -->|Yes| F[Extract variable name<br/>from source mapping]
+    F --> G[Store variable value<br/>in processor state]
+    G --> H[Find mappings that<br/>reference this variable]
+    H --> I{Found mappings<br/>using this variable?}
+    I -->|No| J[No output - variable<br/>not used in any mapping]
+    I -->|Yes| K[For each mapping that<br/>uses this variable]
+    K --> L{All referenced<br/>variables available?}
+    L -->|No| M[Skip this mapping<br/>- missing dependencies]
+    L -->|Yes| N[Execute JavaScript<br/>expression]
+    N --> O{JS execution<br/>successful?}
+    O -->|No| P[Log error,<br/>continue processing]
+    O -->|Yes| Q[Create output message<br/>with calculated value]
+    Q --> R[Construct output topic:<br/>output_topic.data_contract.virtual_path]
+    R --> S[Set umh_topic metadata<br/>to constructed topic]
+    S --> T[Preserve original<br/>timestamp_ms]
+    T --> U[Format as UMH-core<br/>timeseries structure]
+    U --> V[Add to output batch]
+    V --> W{More dependent mappings<br/>to process?}
+    W -->|Yes| K
+    W -->|No| X[Return processed<br/>message batch]
+    M --> W
+    P --> W
+    C --> Y[Return empty batch]
+    J --> Y
+    
+    style A fill:#e1f5fe
+    style H fill:#ffeb3b
+    style X fill:#c8e6c9
+    style Y fill:#ffcdd2
+    style N fill:#fff3e0
+    style R fill:#f3e5f5 
