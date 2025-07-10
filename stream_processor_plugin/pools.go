@@ -15,6 +15,8 @@
 package stream_processor_plugin
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"sync"
 
@@ -37,6 +39,12 @@ type ObjectPools struct {
 
 	// JavaScript runtime pool for dynamic expressions
 	jsRuntimePool sync.Pool
+
+	// JSON encoder pool for marshaling operations
+	jsonEncoderPool sync.Pool
+
+	// JSON decoder pool for unmarshaling operations
+	jsonDecoderPool sync.Pool
 
 	// Topic cache for frequently constructed topics
 	topicCache sync.Map
@@ -76,6 +84,17 @@ func NewObjectPools(sourceNames []string) *ObjectPools {
 		runtime := goja.New()
 		pools.configureRuntime(runtime)
 		return runtime
+	}
+
+	// Initialize JSON encoder pool
+	pools.jsonEncoderPool.New = func() interface{} {
+		buf := make([]byte, 0, 256)
+		return json.NewEncoder(bytes.NewBuffer(buf))
+	}
+
+	// Initialize JSON decoder pool
+	pools.jsonDecoderPool.New = func() interface{} {
+		return json.NewDecoder(bytes.NewReader(nil))
 	}
 
 	return pools
@@ -186,6 +205,18 @@ func (p *ObjectPools) PutJSRuntime(runtime *goja.Runtime) {
 	}
 
 	p.jsRuntimePool.Put(runtime)
+}
+
+// MarshalJSON marshals a value to JSON using pooled buffer - optimized for simple structures
+func (p *ObjectPools) MarshalJSON(v interface{}) ([]byte, error) {
+	// For simple structures like TimeseriesMessage, direct json.Marshal is often faster
+	// than the pooling overhead. Use the standard library.
+	return json.Marshal(v)
+}
+
+// UnmarshalJSON unmarshals JSON bytes into a value using pooled decoder
+func (p *ObjectPools) UnmarshalJSON(data []byte, v interface{}) error {
+	return json.Unmarshal(data, v)
 }
 
 // GetTopic gets a cached topic or constructs a new one

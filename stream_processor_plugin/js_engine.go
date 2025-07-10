@@ -23,19 +23,7 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-// JSEngine manages JavaScript runtime for expression evaluation
-//
-// This engine provides:
-// - Sandboxed JavaScript execution using Goja runtime
-// - Variable context injection for dynamic mappings
-// - Static expression evaluation (no variables needed)
-// - Error handling with fail-open policy
-// - Expression validation and compilation
-//
-// SECURITY: The engine is sandboxed and only allows access to:
-// - Source variables from the configuration
-// - Built-in JavaScript functions (Math, JSON, etc.)
-// - No access to system resources or Node.js modules
+// JSEngine handles JavaScript expression evaluation with caching and pooling
 type JSEngine struct {
 	logger *service.Logger
 
@@ -43,13 +31,17 @@ type JSEngine struct {
 	staticRuntime  *goja.Runtime // For static expressions (no variables)
 	dynamicRuntime *goja.Runtime // For dynamic expressions (with variables)
 
-	// Compiled expressions cache for performance
+	// Compiled expressions cache for performance - OPTIMIZATION: Store compiled programs
 	compiledExpressions map[string]*goja.Program
 	compiledMutex       sync.RWMutex // Protects compiledExpressions
 
 	// Static expression results cache
 	staticExpressionCache map[string]JSExecutionResult
 	staticCacheMutex      sync.RWMutex // Protects staticExpressionCache
+
+	// NEW: Pre-compiled programs for static/dynamic mappings
+	precompiledPrograms map[string]*goja.Program // Pre-compiled mapping expressions
+	precompiledMutex    sync.RWMutex             // Protects precompiledPrograms
 
 	// Object pools for runtime reuse
 	pools *ObjectPools
@@ -73,6 +65,7 @@ func NewJSEngine(logger *service.Logger, sourceNames []string, pools *ObjectPool
 		dynamicRuntime:        goja.New(),
 		compiledExpressions:   make(map[string]*goja.Program),
 		staticExpressionCache: make(map[string]JSExecutionResult),
+		precompiledPrograms:   make(map[string]*goja.Program),
 		pools:                 pools,
 		sourceNames:           sourceNames,
 	}
@@ -381,6 +374,186 @@ func (e *JSEngine) ClearStaticCache() {
 	e.staticCacheMutex.Unlock()
 }
 
+// PrecompileExpressions pre-compiles all static and dynamic mapping expressions for optimal performance
+// This is a major optimization that eliminates JavaScript parsing/compilation overhead during runtime
+func (e *JSEngine) PrecompileExpressions(staticMappings, dynamicMappings map[string]MappingInfo) error {
+	e.precompiledMutex.Lock()
+	defer e.precompiledMutex.Unlock()
+
+	e.logger.Debug("Pre-compiling JavaScript expressions for performance optimization")
+
+	// Pre-compile static mappings
+	for virtualPath, mapping := range staticMappings {
+		program, err := goja.Compile(
+			fmt.Sprintf("static-%s", virtualPath),
+			mapping.Expression,
+			false)
+		if err != nil {
+			return fmt.Errorf("failed to pre-compile static mapping '%s': %w", virtualPath, err)
+		}
+		e.precompiledPrograms[mapping.Expression] = program
+	}
+
+	// Pre-compile dynamic mappings
+	for virtualPath, mapping := range dynamicMappings {
+		program, err := goja.Compile(
+			fmt.Sprintf("dynamic-%s", virtualPath),
+			mapping.Expression,
+			false)
+		if err != nil {
+			return fmt.Errorf("failed to pre-compile dynamic mapping '%s': %w", virtualPath, err)
+		}
+		e.precompiledPrograms[mapping.Expression] = program
+	}
+
+	totalCompiled := len(staticMappings) + len(dynamicMappings)
+	e.logger.Infof("Successfully pre-compiled %d JavaScript expressions for optimal performance", totalCompiled)
+
+	return nil
+}
+
+// EvaluateStaticPrecompiled evaluates a static expression using pre-compiled program for optimal performance
+func (e *JSEngine) EvaluateStaticPrecompiled(expression string) JSExecutionResult {
+	// Check cache first with read lock
+	e.staticCacheMutex.RLock()
+	if cached, exists := e.staticExpressionCache[expression]; exists {
+		e.staticCacheMutex.RUnlock()
+		return cached
+	}
+	e.staticCacheMutex.RUnlock()
+
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start)
+		if duration > 10*time.Millisecond {
+			e.logger.Warnf("Slow JavaScript execution: %s took %v", expression, duration)
+		}
+	}()
+
+	// Get pre-compiled program
+	e.precompiledMutex.RLock()
+	program, exists := e.precompiledPrograms[expression]
+	e.precompiledMutex.RUnlock()
+
+	if !exists {
+		// Fallback to regular compilation (shouldn't happen if precompilation worked)
+		e.logger.Warnf("Expression not pre-compiled, falling back to runtime compilation: %s", expression)
+		return e.EvaluateStatic(expression)
+	}
+
+	// Execute pre-compiled program for optimal performance
+	result, err := e.executePrecompiledProgram(e.staticRuntime, program)
+	if err != nil {
+		e.logger.Warnf("JavaScript execution failed for static expression '%s': %v", expression, err)
+		errorResult := JSExecutionResult{
+			Success: false,
+			Error:   err.Error(),
+		}
+		// Cache the error result
+		e.staticCacheMutex.Lock()
+		e.staticExpressionCache[expression] = errorResult
+		e.staticCacheMutex.Unlock()
+		return errorResult
+	}
+
+	successResult := JSExecutionResult{
+		Success: true,
+		Value:   result,
+	}
+	// Cache the successful result
+	e.staticCacheMutex.Lock()
+	e.staticExpressionCache[expression] = successResult
+	e.staticCacheMutex.Unlock()
+	return successResult
+}
+
+// EvaluateDynamicPrecompiled evaluates a dynamic expression using pre-compiled program for optimal performance
+func (e *JSEngine) EvaluateDynamicPrecompiled(expression string, variables map[string]interface{}) JSExecutionResult {
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start)
+		if duration > 10*time.Millisecond {
+			e.logger.Warnf("Slow JavaScript execution: %s took %v", expression, duration)
+		}
+	}()
+
+	// Get pre-compiled program
+	e.precompiledMutex.RLock()
+	program, exists := e.precompiledPrograms[expression]
+	e.precompiledMutex.RUnlock()
+
+	if !exists {
+		// Fallback to regular compilation (shouldn't happen if precompilation worked)
+		e.logger.Warnf("Expression not pre-compiled, falling back to runtime compilation: %s", expression)
+		return e.EvaluateDynamic(expression, variables)
+	}
+
+	// Get a pooled runtime for thread safety
+	runtime := e.pools.GetJSRuntime()
+	defer e.pools.PutJSRuntime(runtime)
+
+	// Set variables in the runtime
+	for name, value := range variables {
+		if !e.isValidSourceVariable(name) {
+			return JSExecutionResult{
+				Success: false,
+				Error:   fmt.Sprintf("invalid variable name: %s", name),
+			}
+		}
+		if err := runtime.Set(name, value); err != nil {
+			return JSExecutionResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to set variable %s: %v", name, err),
+			}
+		}
+	}
+
+	// Execute pre-compiled program for optimal performance
+	result, err := e.executePrecompiledProgram(runtime, program)
+	if err != nil {
+		e.logger.Warnf("JavaScript execution failed for dynamic expression '%s': %v", expression, err)
+		return JSExecutionResult{
+			Success: false,
+			Error:   err.Error(),
+		}
+	}
+
+	return JSExecutionResult{
+		Success: true,
+		Value:   result,
+	}
+}
+
+// executePrecompiledProgram executes a pre-compiled program with timeout protection
+func (e *JSEngine) executePrecompiledProgram(runtime *goja.Runtime, program *goja.Program) (interface{}, error) {
+	done := make(chan struct{})
+	var result goja.Value
+	var execErr error
+
+	// Run with timeout
+	go func() {
+		defer close(done)
+		defer func() {
+			if r := recover(); r != nil {
+				execErr = fmt.Errorf("JavaScript panic: %v", r)
+			}
+		}()
+
+		result, execErr = runtime.RunProgram(program)
+	}()
+
+	select {
+	case <-done:
+		if execErr != nil {
+			return nil, execErr
+		}
+		return result.Export(), nil
+	case <-time.After(5 * time.Second):
+		runtime.Interrupt("execution timeout")
+		return nil, fmt.Errorf("JavaScript execution timeout (5s limit)")
+	}
+}
+
 // Close cleans up the JavaScript engine resources
 func (e *JSEngine) Close() error {
 	// Clear compiled expressions
@@ -392,6 +565,11 @@ func (e *JSEngine) Close() error {
 	e.staticCacheMutex.Lock()
 	e.staticExpressionCache = make(map[string]JSExecutionResult)
 	e.staticCacheMutex.Unlock()
+
+	// Clear pre-compiled programs
+	e.precompiledMutex.Lock()
+	e.precompiledPrograms = make(map[string]*goja.Program)
+	e.precompiledMutex.Unlock()
 
 	// Note: Goja runtimes don't need explicit cleanup, they will be garbage collected
 	return nil
