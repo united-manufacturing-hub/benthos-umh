@@ -313,7 +313,12 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 				}
 			}
 		}
-		lastError = fmt.Errorf("schema validation failed for subject '%s': %s", subjectName, strings.Join(validationErrors, "; "))
+
+		baseError := fmt.Errorf("schema validation failed for subject '%s': %s", subjectName, strings.Join(validationErrors, "; "))
+
+		// Enhance the error message if it's about virtual_path validation
+		lastError = v.enhanceVirtualPathError(baseError, subjectName, schemas, version, virtualPath)
+
 		v.debugf("Validator.Validate: Schema validation failed for subject '%s': %s", subjectName, strings.Join(validationErrors, "; "))
 	}
 
@@ -690,4 +695,117 @@ func (v *Validator) evictOldestEntries() {
 	for i := 0; i < entriesToRemove && i < len(items); i++ {
 		delete(v.contractCache, items[i].key)
 	}
+}
+
+// extractValidVirtualPaths extracts valid virtual_path enum values from a JSON schema
+func extractValidVirtualPaths(schemaBytes []byte) []string {
+	var schema map[string]interface{}
+	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
+		return nil
+	}
+
+	// Navigate to properties.virtual_path.enum
+	if properties, ok := schema["properties"].(map[string]interface{}); ok {
+		if virtualPath, ok := properties["virtual_path"].(map[string]interface{}); ok {
+			if enumValues, ok := virtualPath["enum"].([]interface{}); ok {
+				var validPaths []string
+				for _, value := range enumValues {
+					if str, ok := value.(string); ok {
+						validPaths = append(validPaths, str)
+					}
+				}
+				return validPaths
+			}
+		}
+	}
+	return nil
+}
+
+// enhanceVirtualPathError enhances the error message if it's about virtual_path validation
+func (v *Validator) enhanceVirtualPathError(originalError error, subjectName string, schemas map[string]*Schema, version uint64, userVirtualPath string) error {
+	if originalError == nil {
+		return originalError
+	}
+
+	errorMsg := originalError.Error()
+
+	// Check if the error is about virtual_path validation
+	if strings.Contains(errorMsg, "virtual_path") && (strings.Contains(errorMsg, "does not match") || strings.Contains(errorMsg, "do not match")) {
+		// Collect all valid virtual_path values from all schemas with their types
+		type virtualPathInfo struct {
+			path       string
+			schemaType string
+		}
+
+		var allValidPaths []virtualPathInfo
+
+		// Extract virtual_path values from all schemas
+		for currentSubjectName, schema := range schemas {
+			if schema == nil {
+				continue
+			}
+
+			var schemaBytes []byte
+			// First try to get schema bytes from the locally stored schema
+			if rawSchema := schema.GetRawSchemaBytes(version); rawSchema != nil {
+				schemaBytes = rawSchema
+			} else {
+				// If no local schema bytes, try to fetch from registry
+				schemaBytes, _, _ = v.fetchLatestSchemaFromRegistry(currentSubjectName)
+			}
+
+			if schemaBytes != nil {
+				validPaths := extractValidVirtualPaths(schemaBytes)
+				if len(validPaths) > 0 {
+					// Extract schema type from subject name (e.g., "timeseries-number" from "_sensor_data_v1-timeseries-number")
+					schemaType := extractSchemaTypeFromSubject(currentSubjectName)
+
+					for _, path := range validPaths {
+						allValidPaths = append(allValidPaths, virtualPathInfo{
+							path:       path,
+							schemaType: schemaType,
+						})
+					}
+				}
+			}
+		}
+
+		if len(allValidPaths) > 0 {
+			// Sort alphabetically by path name
+			sort.Slice(allValidPaths, func(i, j int) bool {
+				return allValidPaths[i].path < allValidPaths[j].path
+			})
+
+			// Format the valid paths with their schema types
+			var formattedPaths []string
+			for _, pathInfo := range allValidPaths {
+				formattedPaths = append(formattedPaths, fmt.Sprintf("%s (%s)", pathInfo.path, pathInfo.schemaType))
+			}
+
+			// Use proper grammar (singular vs plural)
+			verb := "are"
+			if len(formattedPaths) == 1 {
+				verb = "is"
+			}
+
+			enhancedMsg := fmt.Sprintf("%s. Valid virtual_paths %s: [%s]. Your virtual_path is: %s",
+				errorMsg, verb, strings.Join(formattedPaths, ", "), userVirtualPath)
+			return fmt.Errorf("%s", enhancedMsg)
+		}
+	}
+
+	return originalError
+}
+
+// extractSchemaTypeFromSubject extracts the schema type from a subject name
+// e.g., "_sensor_data_v1-timeseries-number" -> "timeseries-number"
+func extractSchemaTypeFromSubject(subjectName string) string {
+	// Find the first occurrence of "-" after the version part to get the schema type
+	// Pattern: contractName_v{version}-{schemaType}
+	versionPattern := regexp.MustCompile(`_v\d+-`)
+	match := versionPattern.FindStringIndex(subjectName)
+	if match != nil && match[1] < len(subjectName) {
+		return subjectName[match[1]:]
+	}
+	return "unknown"
 }
