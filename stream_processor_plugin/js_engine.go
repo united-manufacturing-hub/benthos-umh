@@ -547,6 +547,9 @@ func (e *JSEngine) executePrecompiledProgram(runtime *goja.Runtime, program *goj
 		if execErr != nil {
 			return nil, execErr
 		}
+		if result == nil {
+			return nil, fmt.Errorf("JavaScript execution returned nil result")
+		}
 		return result.Export(), nil
 	case <-time.After(5 * time.Second):
 		runtime.Interrupt("execution timeout")
