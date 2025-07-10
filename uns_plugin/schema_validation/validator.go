@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
@@ -91,6 +92,7 @@ type Validator struct {
 	cacheMutex        sync.RWMutex
 	schemaRegistryURL string
 	httpClient        *http.Client
+	logger            *service.Logger
 }
 
 // NewValidator creates a new Validator instance with empty cache.
@@ -110,6 +112,7 @@ func NewValidator() *Validator {
 			Timeout:   httpTimeout,
 			Transport: transport,
 		},
+		logger: nil, // No logger by default
 	}
 }
 
@@ -131,6 +134,41 @@ func NewValidatorWithRegistry(schemaRegistryURL string) *Validator {
 			Timeout:   httpTimeout,
 			Transport: transport,
 		},
+		logger: nil, // No logger by default
+	}
+}
+
+// NewValidatorWithRegistryAndLogger creates a new Validator instance with the specified schema registry URL and logger.
+func NewValidatorWithRegistryAndLogger(schemaRegistryURL string, logger *service.Logger) *Validator {
+	// Create HTTP client with proper connection limits to prevent leaks
+	transport := &http.Transport{
+		MaxIdleConns:        10,               // Limit total idle connections
+		MaxConnsPerHost:     5,                // Limit connections per host
+		MaxIdleConnsPerHost: 2,                // Limit idle connections per host
+		IdleConnTimeout:     90 * time.Second, // Close idle connections after 90s
+		DisableKeepAlives:   false,            // Allow connection reuse
+	}
+
+	return &Validator{
+		contractCache:     make(map[string]*ContractCacheEntry),
+		schemaRegistryURL: schemaRegistryURL,
+		httpClient: &http.Client{
+			Timeout:   httpTimeout,
+			Transport: transport,
+		},
+		logger: logger,
+	}
+}
+
+// SetLogger sets the logger for the validator (for backward compatibility)
+func (v *Validator) SetLogger(logger *service.Logger) {
+	v.logger = logger
+}
+
+// debugf logs a debug message if logger is available
+func (v *Validator) debugf(format string, args ...interface{}) {
+	if v.logger != nil {
+		v.logger.Infof(format, args...)
 	}
 }
 
@@ -139,7 +177,7 @@ func NewValidatorWithRegistry(schemaRegistryURL string) *Validator {
 // and validates the payload structure. Returns a ValidationResult with contract information.
 func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *ValidationResult {
 	if unsTopic == nil {
-		fmt.Printf("[DEBUG] Validator.Validate: UNS topic is nil\n")
+		v.debugf("Validator.Validate: UNS topic is nil")
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
 			SchemaCheckBypassed: false,
@@ -149,7 +187,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 
 	topicInfo := unsTopic.Info()
 	if topicInfo == nil {
-		fmt.Printf("[DEBUG] Validator.Validate: topic info is nil\n")
+		v.debugf("Validator.Validate: topic info is nil")
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
 			SchemaCheckBypassed: false,
@@ -159,7 +197,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 
 	contract := topicInfo.DataContract
 	if contract == "" {
-		fmt.Printf("[DEBUG] Validator.Validate: data contract is empty\n")
+		v.debugf("Validator.Validate: data contract is empty")
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
 			SchemaCheckBypassed: false,
@@ -167,11 +205,11 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 		}
 	}
 
-	fmt.Printf("[DEBUG] Validator.Validate: Starting validation for contract='%s', payload length=%d\n", contract, len(payload))
+	v.debugf("Validator.Validate: Starting validation for contract='%s', payload length=%d", contract, len(payload))
 
 	contractName, version, err := v.ExtractSchemaVersionFromDataContract(contract)
 	if err != nil {
-		fmt.Printf("[DEBUG] Validator.Validate: Unversioned contract '%s', bypassing validation\n", contract)
+		v.debugf("Validator.Validate: Unversioned contract '%s', bypassing validation", contract)
 		// For unversioned contracts, always bypass (no fetching of "latest")
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
@@ -183,12 +221,12 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 		}
 	}
 
-	fmt.Printf("[DEBUG] Validator.Validate: Extracted contractName='%s', version=%d\n", contractName, version)
+	v.debugf("Validator.Validate: Extracted contractName='%s', version=%d", contractName, version)
 
 	// Get schemas from cache or fetch synchronously
 	schemas, schemaExists, err := v.getSchemasWithCache(contractName, version)
 	if err != nil {
-		fmt.Printf("[DEBUG] Validator.Validate: Failed to get schemas for %s v%d: %v\n", contractName, version, err)
+		v.debugf("Validator.Validate: Failed to get schemas for %s v%d: %v", contractName, version, err)
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
 			SchemaCheckBypassed: true,
@@ -200,7 +238,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 	}
 
 	if !schemaExists {
-		fmt.Printf("[DEBUG] Validator.Validate: No schemas found for contract '%s' version %d\n", contractName, version)
+		v.debugf("Validator.Validate: No schemas found for contract '%s' version %d", contractName, version)
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
 			SchemaCheckBypassed: true,
@@ -212,7 +250,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 	}
 
 	if len(schemas) == 0 {
-		fmt.Printf("[DEBUG] Validator.Validate: No schemas available for contract '%s' version %d\n", contractName, version)
+		v.debugf("Validator.Validate: No schemas available for contract '%s' version %d", contractName, version)
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
 			SchemaCheckBypassed: true,
@@ -223,7 +261,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 		}
 	}
 
-	fmt.Printf("[DEBUG] Validator.Validate: Found %d schemas for contract '%s' version %d\n", len(schemas), contractName, version)
+	v.debugf("Validator.Validate: Found %d schemas for contract '%s' version %d", len(schemas), contractName, version)
 
 	// Build the full path for validation
 	var fullPath strings.Builder
@@ -234,43 +272,43 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 	fullPath.WriteString(topicInfo.Name)
 
 	virtualPath := fullPath.String()
-	fmt.Printf("[DEBUG] Validator.Validate: Virtual path='%s'\n", virtualPath)
+	v.debugf("Validator.Validate: Virtual path='%s'", virtualPath)
 
 	// Wrap the payload with fields and virtual_path for validation
 	wrappedPayload := []byte(fmt.Sprintf(`{"fields": %s, "virtual_path": "%s"}`,
 		string(payload), virtualPath))
 
-	fmt.Printf("[DEBUG] Validator.Validate: Wrapped payload: %s\n", string(wrappedPayload))
+	v.debugf("Validator.Validate: Wrapped payload: %s", string(wrappedPayload))
 
 	// Try to validate against all schemas until one passes
 	var lastError error
 	schemaCount := 0
 	for subjectName, schema := range schemas {
 		schemaCount++
-		fmt.Printf("[DEBUG] Validator.Validate: Trying schema %d/%d: subject='%s'\n", schemaCount, len(schemas), subjectName)
+		v.debugf("Validator.Validate: Trying schema %d/%d: subject='%s'", schemaCount, len(schemas), subjectName)
 
 		if schema == nil {
-			fmt.Printf("[DEBUG] Validator.Validate: Schema is nil for subject '%s'\n", subjectName)
+			v.debugf("Validator.Validate: Schema is nil for subject '%s'", subjectName)
 			continue
 		}
 
 		jsonSchema := schema.GetVersion(version)
 		if jsonSchema == nil {
-			fmt.Printf("[DEBUG] Validator.Validate: No schema version %d found for subject '%s'\n", version, subjectName)
+			v.debugf("Validator.Validate: No schema version %d found for subject '%s'", version, subjectName)
 			continue
 		}
 
-		fmt.Printf("[DEBUG] Validator.Validate: Validating against schema for subject '%s'\n", subjectName)
+		v.debugf("Validator.Validate: Validating against schema for subject '%s'", subjectName)
 
 		validationResult := jsonSchema.ValidateJSON(wrappedPayload)
 		if validationResult == nil {
 			lastError = fmt.Errorf("schema validation result is nil for subject '%s'", subjectName)
-			fmt.Printf("[DEBUG] Validator.Validate: Validation result is nil for subject '%s'\n", subjectName)
+			v.debugf("Validator.Validate: Validation result is nil for subject '%s'", subjectName)
 			continue
 		}
 
 		if validationResult.Valid {
-			fmt.Printf("[DEBUG] Validator.Validate: SUCCESS! Schema validation passed for subject '%s'\n", subjectName)
+			v.debugf("Validator.Validate: SUCCESS! Schema validation passed for subject '%s'", subjectName)
 			// Found a matching schema
 			return &ValidationResult{
 				SchemaCheckPassed:   true,
@@ -291,11 +329,11 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 			}
 		}
 		lastError = fmt.Errorf("schema validation failed for subject '%s': %s", subjectName, strings.Join(validationErrors, "; "))
-		fmt.Printf("[DEBUG] Validator.Validate: Schema validation failed for subject '%s': %s\n", subjectName, strings.Join(validationErrors, "; "))
+		v.debugf("Validator.Validate: Schema validation failed for subject '%s': %s", subjectName, strings.Join(validationErrors, "; "))
 	}
 
 	// None of the schemas matched
-	fmt.Printf("[DEBUG] Validator.Validate: FAILED! No schemas matched for contract '%s' version %d. Last error: %v\n", contractName, version, lastError)
+	v.debugf("Validator.Validate: FAILED! No schemas matched for contract '%s' version %d. Last error: %v", contractName, version, lastError)
 	return &ValidationResult{
 		SchemaCheckPassed:   false,
 		SchemaCheckBypassed: false,
@@ -316,11 +354,11 @@ func (v *Validator) getSchemasWithCache(contractName string, version uint64) (ma
 
 	if exists && entry != nil && !entry.IsExpired() {
 		// Cache hit and not expired
-		fmt.Printf("[DEBUG] getSchemasWithCache: CACHE HIT for key='%s', schemas=%d\n", cacheKey, len(entry.Schemas))
+		v.debugf("getSchemasWithCache: CACHE HIT for key='%s', schemas=%d", cacheKey, len(entry.Schemas))
 		return entry.Schemas, entry.SchemaExists, nil
 	}
 
-	fmt.Printf("[DEBUG] getSchemasWithCache: CACHE MISS for key='%s', fetching from registry\n", cacheKey)
+	v.debugf("getSchemasWithCache: CACHE MISS for key='%s', fetching from registry", cacheKey)
 
 	// Cache miss or expired, fetch synchronously
 	return v.fetchSchemasSync(contractName, version)
@@ -334,7 +372,7 @@ func (v *Validator) getSchemasWithCache(contractName string, version uint64) (ma
 func (v *Validator) fetchSchemasSync(contractName string, version uint64) (map[string]*Schema, bool, error) {
 	cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
 
-	fmt.Printf("[DEBUG] fetchSchemasSync: Fetching schemas for contractName='%s', version=%d\n", contractName, version)
+	v.debugf("fetchSchemasSync: Fetching schemas for contractName='%s', version=%d", contractName, version)
 
 	// Double-check locking pattern
 	v.cacheMutex.Lock()
@@ -342,14 +380,14 @@ func (v *Validator) fetchSchemasSync(contractName string, version uint64) (map[s
 
 	// Check if another goroutine already fetched it
 	if entry, exists := v.contractCache[cacheKey]; exists && entry != nil && !entry.IsExpired() {
-		fmt.Printf("[DEBUG] fetchSchemasSync: Another goroutine already fetched key='%s'\n", cacheKey)
+		v.debugf("fetchSchemasSync: Another goroutine already fetched key='%s'", cacheKey)
 		return entry.Schemas, entry.SchemaExists, nil
 	}
 
 	// Fetch all subjects from registry
 	subjects, err := v.fetchAllSubjects()
 	if err != nil {
-		fmt.Printf("[DEBUG] fetchSchemasSync: Failed to fetch subjects from registry: %v\n", err)
+		v.debugf("fetchSchemasSync: Failed to fetch subjects from registry: %v", err)
 		// Cache the error result
 		v.contractCache[cacheKey] = &ContractCacheEntry{
 			Schemas:      make(map[string]*Schema),
@@ -360,7 +398,7 @@ func (v *Validator) fetchSchemasSync(contractName string, version uint64) (map[s
 		return nil, false, err
 	}
 
-	fmt.Printf("[DEBUG] fetchSchemasSync: Found %d subjects in registry\n", len(subjects))
+	v.debugf("fetchSchemasSync: Found %d subjects in registry", len(subjects))
 
 	// Filter subjects that match our pattern: contractName_v{version}_*
 	schemaPrefix := fmt.Sprintf("%s_v%d_", contractName, version)
@@ -371,10 +409,10 @@ func (v *Validator) fetchSchemasSync(contractName string, version uint64) (map[s
 		}
 	}
 
-	fmt.Printf("[DEBUG] fetchSchemasSync: Looking for subjects with prefix='%s', found %d matches: %v\n", schemaPrefix, len(matchingSubjects), matchingSubjects)
+	v.debugf("fetchSchemasSync: Looking for subjects with prefix='%s', found %d matches: %v", schemaPrefix, len(matchingSubjects), matchingSubjects)
 
 	if len(matchingSubjects) == 0 {
-		fmt.Printf("[DEBUG] fetchSchemasSync: No matching subjects found for prefix='%s'\n", schemaPrefix)
+		v.debugf("fetchSchemasSync: No matching subjects found for prefix='%s'", schemaPrefix)
 		// No matching schemas found
 		v.contractCache[cacheKey] = &ContractCacheEntry{
 			Schemas:      make(map[string]*Schema),
@@ -390,7 +428,7 @@ func (v *Validator) fetchSchemasSync(contractName string, version uint64) (map[s
 	// Fetch and compile all matching schemas
 	schemas := make(map[string]*Schema)
 	for _, subject := range matchingSubjects {
-		fmt.Printf("[DEBUG] fetchSchemasSync: Fetching latest schema for subject='%s'\n", subject)
+		v.debugf("fetchSchemasSync: Fetching latest schema for subject='%s'", subject)
 
 		// Always fetch the LATEST version of each schema subject, NOT a specific version number.
 		//
@@ -402,31 +440,31 @@ func (v *Validator) fetchSchemasSync(contractName string, version uint64) (map[s
 		// - This also automatically picks up schema updates without code changes
 		schemaBytes, schemaExists, err := v.fetchLatestSchemaFromRegistry(subject)
 		if err != nil {
-			fmt.Printf("[DEBUG] fetchSchemasSync: Failed to fetch schema for subject='%s': %v\n", subject, err)
+			v.debugf("fetchSchemasSync: Failed to fetch schema for subject='%s': %v", subject, err)
 			// Log error but continue with other schemas
 			continue
 		}
 
 		if !schemaExists {
-			fmt.Printf("[DEBUG] fetchSchemasSync: Schema does not exist for subject='%s'\n", subject)
+			v.debugf("fetchSchemasSync: Schema does not exist for subject='%s'", subject)
 			continue
 		}
 
-		fmt.Printf("[DEBUG] fetchSchemasSync: Successfully fetched schema for subject='%s', size=%d bytes\n", subject, len(schemaBytes))
+		v.debugf("fetchSchemasSync: Successfully fetched schema for subject='%s', size=%d bytes", subject, len(schemaBytes))
 
 		// Compile the schema
 		schema := NewSchema(subject)
 		if err := schema.AddVersion(version, schemaBytes); err != nil {
-			fmt.Printf("[DEBUG] fetchSchemasSync: Failed to compile schema for subject='%s': %v\n", subject, err)
+			v.debugf("fetchSchemasSync: Failed to compile schema for subject='%s': %v", subject, err)
 			// Log error but continue with other schemas
 			continue
 		}
 
 		schemas[subject] = schema
-		fmt.Printf("[DEBUG] fetchSchemasSync: Successfully compiled schema for subject='%s'\n", subject)
+		v.debugf("fetchSchemasSync: Successfully compiled schema for subject='%s'", subject)
 	}
 
-	fmt.Printf("[DEBUG] fetchSchemasSync: Successfully compiled %d schemas for contractName='%s' version %d\n", len(schemas), contractName, version)
+	v.debugf("fetchSchemasSync: Successfully compiled %d schemas for contractName='%s' version %d", len(schemas), contractName, version)
 
 	// Cache the results
 	expiresAt := time.Time{} // Zero time means never expires
@@ -454,7 +492,7 @@ func (v *Validator) fetchAllSubjects() ([]string, error) {
 	}
 
 	url := fmt.Sprintf("%s/subjects", v.schemaRegistryURL)
-	fmt.Printf("[DEBUG] fetchAllSubjects: Fetching subjects from URL='%s'\n", url)
+	v.debugf("fetchAllSubjects: Fetching subjects from URL='%s'", url)
 
 	resp, err := v.httpClient.Get(url)
 	if err != nil {
@@ -463,7 +501,7 @@ func (v *Validator) fetchAllSubjects() ([]string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("[DEBUG] fetchAllSubjects: Registry returned status=%d\n", resp.StatusCode)
+		v.debugf("fetchAllSubjects: Registry returned status=%d", resp.StatusCode)
 		return nil, fmt.Errorf("schema registry returned status %d for subjects", resp.StatusCode)
 	}
 
@@ -477,7 +515,7 @@ func (v *Validator) fetchAllSubjects() ([]string, error) {
 		return nil, fmt.Errorf("failed to unmarshal subjects response: %w", err)
 	}
 
-	fmt.Printf("[DEBUG] fetchAllSubjects: Retrieved %d subjects from registry\n", len(subjects))
+	v.debugf("fetchAllSubjects: Retrieved %d subjects from registry", len(subjects))
 	return subjects, nil
 }
 
@@ -494,7 +532,7 @@ func (v *Validator) fetchLatestSchemaFromRegistry(subject string) ([]byte, bool,
 	}
 
 	url := fmt.Sprintf("%s/subjects/%s/versions/latest", v.schemaRegistryURL, subject)
-	fmt.Printf("[DEBUG] fetchLatestSchemaFromRegistry: Fetching schema from URL='%s'\n", url)
+	v.debugf("fetchLatestSchemaFromRegistry: Fetching schema from URL='%s'", url)
 
 	resp, err := v.httpClient.Get(url)
 	if err != nil {
@@ -503,12 +541,12 @@ func (v *Validator) fetchLatestSchemaFromRegistry(subject string) ([]byte, bool,
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		fmt.Printf("[DEBUG] fetchLatestSchemaFromRegistry: Schema not found (404) for subject='%s'\n", subject)
+		v.debugf("fetchLatestSchemaFromRegistry: Schema not found (404) for subject='%s'", subject)
 		return nil, false, nil // Schema doesn't exist
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("[DEBUG] fetchLatestSchemaFromRegistry: Registry returned status=%d for subject='%s'\n", resp.StatusCode, subject)
+		v.debugf("fetchLatestSchemaFromRegistry: Registry returned status=%d for subject='%s'", resp.StatusCode, subject)
 		return nil, false, fmt.Errorf("schema registry returned status %d for latest version", resp.StatusCode)
 	}
 
@@ -522,7 +560,7 @@ func (v *Validator) fetchLatestSchemaFromRegistry(subject string) ([]byte, bool,
 		return nil, false, fmt.Errorf("failed to unmarshal latest schema response: %w", err)
 	}
 
-	fmt.Printf("[DEBUG] fetchLatestSchemaFromRegistry: Successfully fetched schema for subject='%s', version=%d, id=%d\n", subject, versionResp.Version, versionResp.ID)
+	v.debugf("fetchLatestSchemaFromRegistry: Successfully fetched schema for subject='%s', version=%d, id=%d", subject, versionResp.Version, versionResp.ID)
 	return []byte(versionResp.Schema), true, nil
 }
 

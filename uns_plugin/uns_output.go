@@ -246,7 +246,7 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 	}
 
 	// Initialize the validator with schema registry URL
-	validator := schemavalidation.NewValidatorWithRegistry(config.schemaRegistryURL)
+	validator := schemavalidation.NewValidatorWithRegistryAndLogger(config.schemaRegistryURL, mgr.Logger())
 
 	return newUnsOutputWithClient(NewClient(), config, mgr.Logger(), validator), batchPolicy, maxInFlight, nil
 }

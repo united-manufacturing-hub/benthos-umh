@@ -19,6 +19,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
@@ -513,5 +514,37 @@ var _ = Describe("Validator", func() {
 			Expect(result.Error).To(HaveOccurred())
 			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
 		})
+	})
+})
+
+// Test the logger integration
+var _ = Describe("Validator Logger Integration", func() {
+	var validator *Validator
+	var mockLogger *service.Logger
+
+	BeforeEach(func() {
+		// Create a mock logger (this will be nil in practice but we test the nil-safety)
+		mockLogger = nil
+		validator = NewValidatorWithRegistryAndLogger("http://localhost:8081", mockLogger)
+	})
+
+	It("should handle nil logger gracefully", func() {
+		// This should not panic even with nil logger
+		validator.debugf("Test debug message: %s", "should not crash")
+
+		// Verify logger can be set after creation
+		validator.SetLogger(mockLogger)
+
+		// This should also not panic
+		validator.debugf("Another test message: %d", 42)
+	})
+
+	It("should create validator with registry and logger", func() {
+		// Test with nil logger (common case)
+		validator := NewValidatorWithRegistryAndLogger("http://test:8081", nil)
+
+		Expect(validator).ToNot(BeNil())
+		Expect(validator.logger).To(BeNil())
+		Expect(validator.schemaRegistryURL).To(Equal("http://test:8081"))
 	})
 })
