@@ -18,8 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
-	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
@@ -36,51 +34,7 @@ type StreamProcessor struct {
 	jsEngine *JSEngine
 
 	// Metrics
-	messagesProcessed *service.MetricCounter
-	messagesErrored   *service.MetricCounter
-	messagesDropped   *service.MetricCounter
-}
-
-// ProcessorState holds the variable state for the processor.
-//
-// It provides thread-safe storage for variables using a RWMutex to allow
-// concurrent reads while ensuring write safety. The Variables map stores
-// variable names to their current values with metadata.
-//
-// This struct handles the low-level storage mechanics, while StateManager
-// provides the higher-level coordination and business logic.
-type ProcessorState struct {
-	Variables map[string]*VariableValue // Thread-safe variable storage
-	mutex     sync.RWMutex              // Protects concurrent access to Variables
-}
-
-// VariableValue represents a stored variable value with metadata.
-//
-// Each field serves a specific purpose in the dependency-based evaluation system:
-//
-// Value: The actual data value received from the source topic (e.g., 1.23, "active", true).
-// This is what gets used in JavaScript expressions and calculations.
-//
-// Timestamp: When this variable was last updated. Critical for timeseries data to:
-// - Ensure proper ordering of events
-// - Detect stale data that might need refreshing
-// - Enable time-based calculations and filtering
-// - Support debugging by showing when variables were last seen
-//
-// Source: The source identifier (e.g., "press", "tF", "r") that provided this value.
-// Essential for:
-// - DEBUGGING: Trace which input caused a calculation failure
-// - VALIDATION: Verify variables come from expected sources
-// - MONITORING: Track which sources are active/inactive
-// - AUDITING: Maintain clear data lineage through the system
-//
-// Example: VariableValue{Value: 1.23, Source: "press", Timestamp: 2024-01-15T10:30:00Z}
-// means the "press" variable was set to 1.23 at the given timestamp from topic
-// "umh.v1.corpA.plant-A.aawd._raw.press".
-type VariableValue struct {
-	Value     interface{} // The actual data value from the source
-	Timestamp time.Time   // When this variable was last updated
-	Source    string      // Which source provided this value (for traceability)
+	metrics *ProcessorMetrics
 }
 
 // newStreamProcessor creates a new stream processor instance
@@ -102,13 +56,11 @@ func newStreamProcessor(config StreamProcessorConfig, logger *service.Logger, me
 	}
 
 	processor := &StreamProcessor{
-		config:            config,
-		logger:            logger,
-		stateManager:      NewStateManager(&config),
-		jsEngine:          NewJSEngine(logger, sourceNames),
-		messagesProcessed: metrics.NewCounter("messages_processed"),
-		messagesErrored:   metrics.NewCounter("messages_errored"),
-		messagesDropped:   metrics.NewCounter("messages_dropped"),
+		config:       config,
+		logger:       logger,
+		stateManager: NewStateManager(&config),
+		jsEngine:     NewJSEngine(logger, sourceNames),
+		metrics:      NewProcessorMetrics(metrics),
 	}
 
 	// Pre-compile all JavaScript expressions for performance
@@ -133,17 +85,17 @@ func (p *StreamProcessor) ProcessBatch(ctx context.Context, batch service.Messag
 		outputMessages, err := p.processMessage(msg)
 		if err != nil {
 			p.logger.Warnf("Failed to process message: %v", err)
-			p.messagesErrored.Incr(1)
+			p.metrics.MessagesErrored.Incr(1)
 			continue
 		}
 
 		if len(outputMessages) == 0 {
-			p.messagesDropped.Incr(1)
+			p.metrics.MessagesDropped.Incr(1)
 			continue
 		}
 
 		resultBatch = append(resultBatch, outputMessages...)
-		p.messagesProcessed.Incr(1)
+		p.metrics.MessagesProcessed.Incr(1)
 	}
 
 	if len(resultBatch) == 0 {
@@ -389,35 +341,6 @@ func (p *StreamProcessor) precompileExpressions() error {
 
 	p.logger.Infof("Successfully pre-compiled %d JavaScript expressions",
 		len(p.config.StaticMappings)+len(p.config.DynamicMappings))
-
-	return nil
-}
-
-// validateConfig validates the stream processor configuration
-func validateConfig(config StreamProcessorConfig) error {
-	if config.Mode == "" {
-		return fmt.Errorf("mode is required")
-	}
-
-	if config.Mode != "timeseries" {
-		return fmt.Errorf("unsupported mode: %s (only 'timeseries' is supported)", config.Mode)
-	}
-
-	if config.Model.Name == "" {
-		return fmt.Errorf("model name is required")
-	}
-
-	if config.Model.Version == "" {
-		return fmt.Errorf("model version is required")
-	}
-
-	if config.OutputTopic == "" {
-		return fmt.Errorf("output_topic is required")
-	}
-
-	if len(config.Sources) == 0 {
-		return fmt.Errorf("at least one source mapping is required")
-	}
 
 	return nil
 }
