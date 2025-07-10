@@ -62,7 +62,7 @@ var _ = Describe("Validator", func() {
 
 	Context("when validating with versioned contracts", func() {
 		It("should successfully validate sensor data v1", func() {
-			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
 			Expect(err).To(BeNil())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
@@ -76,7 +76,7 @@ var _ = Describe("Validator", func() {
 		})
 
 		It("should successfully validate sensor data v2", func() {
-			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v2.temperature")
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v2.temperature")
 			Expect(err).To(BeNil())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
@@ -90,7 +90,7 @@ var _ = Describe("Validator", func() {
 		})
 
 		It("should reject invalid virtual path", func() {
-			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.invalid_path")
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.invalid_path")
 			Expect(err).To(BeNil())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
@@ -103,7 +103,7 @@ var _ = Describe("Validator", func() {
 		})
 
 		It("should reject invalid payload structure", func() {
-			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
 			Expect(err).To(BeNil())
 
 			payload := []byte(`{"timestamp_ms": "invalid", "value": 25.5}`)
@@ -118,7 +118,7 @@ var _ = Describe("Validator", func() {
 
 	Context("when handling non-existent schemas", func() {
 		It("should bypass validation for non-existent contract", func() {
-			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent-v1.temperature")
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent_v1.temperature")
 			Expect(err).To(BeNil())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
@@ -132,7 +132,7 @@ var _ = Describe("Validator", func() {
 		})
 
 		It("should bypass validation for non-existent version", func() {
-			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v999.temperature")
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v999.temperature")
 			Expect(err).To(BeNil())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
@@ -163,7 +163,7 @@ var _ = Describe("Validator", func() {
 
 	Context("when testing cache behavior", func() {
 		It("should cache successful schema fetches", func() {
-			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
 			Expect(err).To(BeNil())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
@@ -183,7 +183,7 @@ var _ = Describe("Validator", func() {
 		})
 
 		It("should cache negative results (schema not found)", func() {
-			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent-v1.temperature")
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent_v1.temperature")
 			Expect(err).To(BeNil())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
@@ -200,7 +200,7 @@ var _ = Describe("Validator", func() {
 		})
 
 		It("should cache successful schema fetches forever", func() {
-			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
 			Expect(err).To(BeNil())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
@@ -222,7 +222,7 @@ var _ = Describe("Validator", func() {
 		})
 
 		It("should cache schema misses for 10 minutes", func() {
-			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent-v1.temperature")
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent_v1.temperature")
 			Expect(err).To(BeNil())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
@@ -247,12 +247,12 @@ var _ = Describe("Validator", func() {
 
 	Context("when handling contract parsing", func() {
 		It("should parse versioned contracts correctly", func() {
-			contractName, version, err := validator.ExtractSchemaVersionFromDataContract("_sensor_data-v1")
+			contractName, version, err := validator.ExtractSchemaVersionFromDataContract("_sensor_data_v1")
 			Expect(err).To(BeNil())
 			Expect(contractName).To(Equal("_sensor_data"))
 			Expect(version).To(Equal(uint64(1)))
 
-			contractName, version, err = validator.ExtractSchemaVersionFromDataContract("_pump_data-v123")
+			contractName, version, err = validator.ExtractSchemaVersionFromDataContract("_pump_data_v123")
 			Expect(err).To(BeNil())
 			Expect(contractName).To(Equal("_pump_data"))
 			Expect(version).To(Equal(uint64(123)))
@@ -263,7 +263,7 @@ var _ = Describe("Validator", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("invalid data contract format"))
 
-			_, _, err = validator.ExtractSchemaVersionFromDataContract("_sensor_data-v")
+			_, _, err = validator.ExtractSchemaVersionFromDataContract("_sensor_data_v")
 			Expect(err).To(HaveOccurred())
 
 			_, _, err = validator.ExtractSchemaVersionFromDataContract("")
@@ -324,7 +324,7 @@ var _ = Describe("Validator", func() {
 		It("should handle schema registry unavailable", func() {
 			validator := NewValidatorWithRegistry("http://localhost:9999") // Invalid URL
 
-			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
 			Expect(err).To(BeNil())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
@@ -338,7 +338,7 @@ var _ = Describe("Validator", func() {
 
 	Context("when closing validator", func() {
 		It("should clear cache on close", func() {
-			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v1.temperature")
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
 			Expect(err).To(BeNil())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
@@ -405,7 +405,7 @@ var _ = Describe("Validator", func() {
 			defer freshRegistry.Close()
 
 			// Test v2 contract (which should look for _sensor_data_v2_* schemas)
-			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data-v2.temperature")
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v2.temperature")
 			Expect(err).To(BeNil())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
@@ -474,7 +474,7 @@ var _ = Describe("Validator", func() {
 			Expect(err).To(BeNil())
 
 			// Test numeric value validation (should match number schema)
-			numberTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data-v1.vibration.x-axis")
+			numberTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data_v1.vibration.x-axis")
 			Expect(err).To(BeNil())
 			numberPayload := []byte(`{"timestamp_ms": 1719859200000, "value": 0.5}`)
 
@@ -486,7 +486,7 @@ var _ = Describe("Validator", func() {
 			Expect(result.ContractVersion).To(Equal(uint64(1)))
 
 			// Test string value validation (should match string schema)
-			stringTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data-v1.serialNumber")
+			stringTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data_v1.serialNumber")
 			Expect(err).To(BeNil())
 			stringPayload := []byte(`{"timestamp_ms": 1719859200000, "value": "SN123456789"}`)
 
@@ -498,7 +498,7 @@ var _ = Describe("Validator", func() {
 			Expect(result.ContractVersion).To(Equal(uint64(1)))
 
 			// Test invalid virtual path (should fail against all schemas)
-			invalidTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data-v1.invalid_path")
+			invalidTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data_v1.invalid_path")
 			Expect(err).To(BeNil())
 
 			result = validator.Validate(invalidTopic, numberPayload)

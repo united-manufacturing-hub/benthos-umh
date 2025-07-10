@@ -168,7 +168,7 @@ func (v *Validator) SetLogger(logger *service.Logger) {
 // debugf logs a debug message if logger is available
 func (v *Validator) debugf(format string, args ...interface{}) {
 	if v.logger != nil {
-		v.logger.Infof(format, args...)
+		v.logger.Debugf(format, args...)
 	}
 }
 
