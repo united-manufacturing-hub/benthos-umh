@@ -17,6 +17,7 @@ package uns_plugin
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -24,8 +25,8 @@ import (
 
 // MessageProcessor handles the transformation of Kafka records to Benthos messages
 type MessageProcessor struct {
-	topicRegexes []*regexp.Regexp
-	metrics      *UnsInputMetrics
+	topicRegex *regexp.Regexp
+	metrics    *UnsInputMetrics
 }
 
 // NewMessageProcessor creates a new MessageProcessor with the specified topic regex patterns
@@ -34,18 +35,21 @@ func NewMessageProcessor(topicPatterns []string, metrics *UnsInputMetrics) (*Mes
 		return nil, fmt.Errorf("at least one topic pattern must be provided")
 	}
 
-	topicRegexes := make([]*regexp.Regexp, len(topicPatterns))
+	// Combine all patterns into one: (?:pattern1)|(?:pattern2)|(?:pattern3)
+	escapedPatterns := make([]string, len(topicPatterns))
 	for i, pattern := range topicPatterns {
-		topicRegex, err := regexp.Compile(pattern)
-		if err != nil {
-			return nil, fmt.Errorf("failed to compile regex pattern '%s': %v", pattern, err)
-		}
-		topicRegexes[i] = topicRegex
+		escapedPatterns[i] = fmt.Sprintf("(?:%s)", pattern)
+	}
+	combinedPattern := strings.Join(escapedPatterns, "|")
+
+	topicRegex, err := regexp.Compile(combinedPattern)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compile combined regex pattern: %v", err)
 	}
 
 	return &MessageProcessor{
-		topicRegexes: topicRegexes,
-		metrics:      metrics,
+		topicRegex: topicRegex,
+		metrics:    metrics,
 	}, nil
 }
 
@@ -54,16 +58,8 @@ func NewMessageProcessor(topicPatterns []string, metrics *UnsInputMetrics) (*Mes
 func (p *MessageProcessor) ProcessRecord(record *kgo.Record) *service.Message {
 	p.metrics.LogRecordReceived()
 
-	// Check if the record key matches any of the topic regexes
-	matched := false
-	for _, regex := range p.topicRegexes {
-		if regex.Match(record.Key) {
-			matched = true
-			break
-		}
-	}
-
-	if !matched {
+	// Check if the record key matches the combined topic regex
+	if !p.topicRegex.Match(record.Key) {
 		return nil
 	}
 
