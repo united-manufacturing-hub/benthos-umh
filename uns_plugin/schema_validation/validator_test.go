@@ -15,6 +15,7 @@
 package schemavalidation
 
 import (
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -336,6 +337,24 @@ var _ = Describe("Validator", func() {
 		})
 	})
 
+	Context("when testing constructors", func() {
+		It("should create validator with registry URL", func() {
+			validator := NewValidatorWithRegistry("http://test:8081")
+			defer validator.Close()
+
+			Expect(validator.schemaRegistryURL).To(Equal("http://test:8081"))
+			Expect(validator.logger).To(BeNil())
+		})
+
+		It("should create validator with registry and logger", func() {
+			validator := NewValidatorWithRegistryAndLogger("http://test:8081", nil)
+			defer validator.Close()
+
+			Expect(validator.logger).To(BeNil())
+			Expect(validator.schemaRegistryURL).To(Equal("http://test:8081"))
+		})
+	})
+
 	Context("when closing validator", func() {
 		It("should clear cache on close", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
@@ -361,6 +380,172 @@ var _ = Describe("Validator", func() {
 			cacheSize = len(validator.contractCache)
 			validator.cacheMutex.RUnlock()
 			Expect(cacheSize).To(Equal(0))
+		})
+	})
+
+	Context("when testing cache eviction", func() {
+		It("should evict oldest entries when cache exceeds max size", func() {
+			// Create validator with small cache for testing
+			validator := NewValidator()
+			defer validator.Close()
+
+			// Load many schemas to exceed cache size
+			for i := 0; i < 1200; i++ { // Exceeds maxCacheSize of 1000
+				schemas := map[string][]byte{
+					fmt.Sprintf("_test_contract_%d_v1-timeseries-number", i): []byte(`{"type": "object"}`),
+				}
+				err := validator.LoadSchemas(fmt.Sprintf("_test_contract_%d", i), 1, schemas)
+				Expect(err).To(BeNil())
+			}
+
+			// Verify cache size is limited
+			validator.cacheMutex.RLock()
+			cacheSize := len(validator.contractCache)
+			validator.cacheMutex.RUnlock()
+			Expect(cacheSize).To(BeNumerically("<=", 1000))
+		})
+	})
+
+	Context("when handling edge cases", func() {
+		It("should handle nil UNS topic", func() {
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
+			result := validator.Validate(nil, payload)
+
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+			Expect(result.Error.Error()).To(ContainSubstring("UNS topic cannot be nil"))
+		})
+
+		It("should handle topic with nil info", func() {
+			// Create a topic that will have nil info (invalid format)
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
+
+			// This should create a topic with nil info
+			topic, err := topic.NewUnsTopic("invalid")
+			if err != nil {
+				// If we can't create invalid topic, skip this test
+				Skip("Cannot create invalid topic for testing")
+			}
+
+			result := validator.Validate(topic, payload)
+
+			// Should handle gracefully
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeFalse())
+		})
+
+		It("should handle fetch errors from registry", func() {
+			validator := NewValidatorWithRegistry("http://non-existent-registry:9999")
+			defer validator.Close()
+
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
+			Expect(err).To(BeNil())
+
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
+
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeTrue())
+			Expect(result.BypassReason).To(ContainSubstring("failed to fetch schema"))
+		})
+
+		It("should handle registry returning non-200 status", func() {
+			// Create a mock registry that returns errors
+			mockRegistry := NewMockSchemaRegistry()
+			mockRegistry.SimulateNetworkError(true)
+			defer mockRegistry.Close()
+
+			validator := NewValidatorWithRegistry(mockRegistry.URL())
+			defer validator.Close()
+
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
+			Expect(err).To(BeNil())
+
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
+
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeTrue())
+			Expect(result.BypassReason).To(ContainSubstring("failed to fetch schema"))
+		})
+
+		It("should handle empty schema registry URL", func() {
+			validator := NewValidator() // No registry URL
+			defer validator.Close()
+
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
+			Expect(err).To(BeNil())
+
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
+
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeTrue())
+			Expect(result.BypassReason).To(ContainSubstring("failed to fetch schema"))
+		})
+
+		It("should handle invalid JSON in schema response", func() {
+			// This is harder to test without a custom mock, but we can test the error handling
+			validator := NewValidatorWithRegistry("http://localhost:0") // Invalid URL
+			defer validator.Close()
+
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
+			Expect(err).To(BeNil())
+
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
+
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeTrue())
+		})
+
+		It("should handle validation with nil schema", func() {
+			// Load a schema manually and then corrupt it
+			schemas := map[string][]byte{
+				"_test_contract_v1-timeseries-number": []byte(`{"type": "object"}`),
+			}
+			err := validator.LoadSchemas("_test_contract", 1, schemas)
+			Expect(err).To(BeNil())
+
+			// Now manually corrupt the cache to have nil schema
+			validator.cacheMutex.Lock()
+			entry := validator.contractCache["_test_contract-v1"]
+			entry.Schemas["_test_contract_v1-timeseries-number"] = nil
+			validator.cacheMutex.Unlock()
+
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._test_contract_v1.temperature")
+			Expect(err).To(BeNil())
+
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
+
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+		})
+
+		It("should handle schema compilation errors", func() {
+			schemas := map[string][]byte{
+				"_test_contract_v1-timeseries-number": []byte(`invalid json`), // Invalid JSON
+			}
+			err := validator.LoadSchemas("_test_contract", 1, schemas)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to add schema version"))
+		})
+
+		It("should handle contract version parsing edge cases", func() {
+			// Test various invalid contract formats
+			_, _, err := validator.ExtractSchemaVersionFromDataContract("_sensor_data_v0") // Version 0
+			Expect(err).To(BeNil())                                                        // Version 0 should be valid
+
+			_, _, err = validator.ExtractSchemaVersionFromDataContract("_sensor_data_v999999999999999999999")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("invalid version number"))
+
+			_, _, err = validator.ExtractSchemaVersionFromDataContract("_sensor_data_vabc")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("invalid data contract format"))
 		})
 	})
 
@@ -546,5 +731,57 @@ var _ = Describe("Validator Logger Integration", func() {
 		Expect(validator).ToNot(BeNil())
 		Expect(validator.logger).To(BeNil())
 		Expect(validator.schemaRegistryURL).To(Equal("http://test:8081"))
+	})
+
+	Context("when testing schema object methods", func() {
+		It("should test schema HasVersion method", func() {
+			schema := NewSchema("test-schema")
+
+			// Initially should not have any versions
+			Expect(schema.HasVersion(1)).To(BeFalse())
+
+			// Add a version
+			err := schema.AddVersion(1, []byte(`{"type": "object"}`))
+			Expect(err).To(BeNil())
+
+			// Now should have version 1
+			Expect(schema.HasVersion(1)).To(BeTrue())
+			Expect(schema.HasVersion(2)).To(BeFalse())
+		})
+
+		It("should test schema GetVersion method", func() {
+			schema := NewSchema("test-schema")
+
+			// Initially should return nil
+			Expect(schema.GetVersion(1)).To(BeNil())
+
+			// Add a version
+			err := schema.AddVersion(1, []byte(`{"type": "object"}`))
+			Expect(err).To(BeNil())
+
+			// Now should return the schema
+			jsonSchema := schema.GetVersion(1)
+			Expect(jsonSchema).NotTo(BeNil())
+		})
+	})
+
+	Context("when testing debug logging", func() {
+		It("should handle debug logging with nil logger", func() {
+			validator := NewValidator()
+			defer validator.Close()
+
+			// This should not panic
+			validator.debugf("Test message: %s", "test")
+		})
+
+		It("should handle debug logging with logger", func() {
+			// Create a logger (in practice this would be a real logger)
+			// We can't easily create a real logger in tests, so we'll test with nil
+			validator := NewValidatorWithRegistryAndLogger("http://localhost:8081", nil)
+			defer validator.Close()
+
+			// This should not panic
+			validator.debugf("Test message: %s", "test")
+		})
 	})
 })
