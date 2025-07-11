@@ -18,9 +18,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 	"testing"
 	"time"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
@@ -504,9 +506,9 @@ func BenchmarkMemoryUsage(b *testing.B) {
 
 // Helper function to create processor with custom mapping
 func createProcessorWithMapping(mapping map[string]interface{}) (*processor2.StreamProcessor, error) {
-	config := StreamProcessorConfig{
+	cfg := config.StreamProcessorConfig{
 		Mode: "timeseries",
-		Model: ModelConfig{
+		Model: config.ModelConfig{
 			Name:    "test",
 			Version: "v1",
 		},
@@ -520,14 +522,14 @@ func createProcessorWithMapping(mapping map[string]interface{}) (*processor2.Str
 	}
 
 	resources := service.MockResources()
-	return processor2.newStreamProcessor(config, resources.Logger(), resources.Metrics())
+	return processor2.NewStreamProcessor(cfg, resources.Logger(), resources.Metrics())
 }
 
 // Helper function to create test processor
 func createTestProcessor() (*processor2.StreamProcessor, error) {
-	config := StreamProcessorConfig{
+	cfg := config.StreamProcessorConfig{
 		Mode: "timeseries",
-		Model: ModelConfig{
+		Model: config.ModelConfig{
 			Name:    "pump",
 			Version: "v1",
 		},
@@ -550,5 +552,5 @@ func createTestProcessor() (*processor2.StreamProcessor, error) {
 	}
 
 	resources := service.MockResources()
-	return processor2.newStreamProcessor(config, resources.Logger(), resources.Metrics())
+	return processor2.NewStreamProcessor(cfg, resources.Logger(), resources.Metrics())
 }

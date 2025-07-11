@@ -16,10 +16,11 @@ package state_test
 
 import (
 	"fmt"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 	"sync"
 	"time"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/state"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -27,14 +28,14 @@ import (
 
 var _ = Describe("StateManager", func() {
 	var (
-		stateManager *StateManager
-		config       *config.StreamProcessorConfig
+		stateManager *state.StateManager
+		cfg          *config.StreamProcessorConfig
 	)
 
 	BeforeEach(func() {
-		config = &config.StreamProcessorConfig{
+		cfg = &config.StreamProcessorConfig{
 			Mode:        "timeseries",
-			Model:       stream_processor_plugin.ModelConfig{Name: "test", Version: "v1"},
+			Model:       config.ModelConfig{Name: "test", Version: "v1"},
 			OutputTopic: "test.output",
 			Sources: map[string]string{
 				"pressure":    "ia/raw/opcua/default/press",
@@ -77,7 +78,7 @@ var _ = Describe("StateManager", func() {
 			},
 		}
 
-		stateManager = NewStateManager(config)
+		stateManager = state.NewStateManager(cfg)
 	})
 
 	Context("ProcessorState Variable Management", func() {
