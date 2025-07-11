@@ -152,27 +152,21 @@ Name: "position"
 
 ## Performance Optimizations
 
-### LZ4 Compression Strategy
+### Data Serialization Strategy
 
-The processor uses **optimized block-based LZ4 compression** for all protobuf output:
+The processor uses **direct protobuf serialization** for all output:
 
-#### Compression Algorithm
-- **Strategy**: Always compress with LZ4 block compression (memory-optimized)
-- **No threshold**: All protobuf payloads are compressed regardless of size
-- **Implementation**: Direct block compression instead of streaming API
-- **Detection**: Downstream consumers detect LZ4 via magic number: [0x04, 0x22, 0x4d, 0x18]
+#### Serialization Approach
+- **Strategy**: Direct protobuf serialization without compression
+- **No threshold**: All payloads are processed using the same format
+- **Implementation**: Direct binary serialization for efficiency
+- **Detection**: Downstream consumers parse protobuf directly
 
-#### Performance Optimization (NEW)
-- **Memory efficiency**: Eliminates 32MB+ internal LZ4 buffer pools from streaming API
-- **Buffer pooling**: Uses sync.Pool for reusable compression buffers
-- **Heap reduction**: ~65% reduction in heap usage vs. streaming compression
-- **GC pressure**: ~93% reduction in garbage collection overhead
-
-#### Why Block-Based Compression
-- **Simplicity**: No threshold logic or conditional paths
-- **Predictability**: Downstream always expects LZ4 format
-- **Memory efficiency**: Block compression avoids internal buffer pool allocations
-- **Performance**: Optimized for discrete message compression (vs. continuous streams)
+#### Performance Benefits
+- **Reduced CPU overhead**: Eliminates compression/decompression cycles
+- **Simplified processing**: Direct protobuf parsing without decompression
+- **Lower memory usage**: No compression buffer allocations
+- **Faster processing**: Optimized for small to medium payloads common in UMH
 
 ### LRU Cache Optimization
 
@@ -209,7 +203,7 @@ Efficient binary serialization with forward/backward compatibility:
 #### Network Format
 ```
 STARTSTARTSTART
-<hex-encoded-protobuf-or-lz4-data>
+<hex-encoded-protobuf-data>
 ENDDATAENDDATAENDDATA  
 <unix-timestamp-ms>
 ENDENDENDEND
@@ -309,8 +303,8 @@ The processor exposes additional Prometheus metrics for operational visibility:
 
 ### Network & Serialization
 - **Protobuf failures**: Return error immediately (no partial emission)
-- **Compression failures**: Return error immediately (no fallback, prevents data corruption)
-- **Large payloads**: Universal LZ4 compression handles up to multi-megabyte bundles
+- **Serialization failures**: Return error immediately (no partial data emission)
+- **Large payloads**: Direct protobuf serialization handles up to multi-megabyte bundles efficiently
 
 ### Ring Buffer Edge Cases
 - **Buffer overflow**: Oldest events automatically discarded when ring buffer full
