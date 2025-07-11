@@ -1,4 +1,4 @@
-package js_security
+package js_security_test
 
 import (
 	"fmt"

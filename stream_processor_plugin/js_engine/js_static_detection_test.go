@@ -12,16 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package js_engine
+package js_engine_test
 
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
 )
 
 var _ = Describe("Static Detection Edge Cases", func() {
-	var detector *StaticDetector
+	var detector *js_engine.StaticDetector
 
 	BeforeEach(func() {
 		sources := map[string]string{
@@ -31,7 +32,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			"voltage": "topic4",
 			"current": "topic5",
 		}
-		detector = NewStaticDetector(sources)
+		detector = js_engine.NewStaticDetector(sources)
 	})
 
 	Describe("Basic Constants", func() {
@@ -475,7 +476,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 				"$voltage": "topic3",
 				"_current": "topic4",
 			}
-			specialDetector := NewStaticDetector(specialSources)
+			specialDetector := js_engine.NewStaticDetector(specialSources)
 
 			testCases := map[string][]string{
 				"press_1 + 10":  {"press_1"},
