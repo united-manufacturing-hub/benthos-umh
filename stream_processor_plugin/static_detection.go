@@ -170,25 +170,84 @@ func (sd *StaticDetector) walkAST(node ast.Node, variables *[]string) {
 }
 
 // isBuiltIn checks if a name is a built-in JavaScript object or function
+// This list is specifically tailored for Goja which implements ES5.1 + select ES6 features
 func (sd *StaticDetector) isBuiltIn(name string) bool {
 	builtIns := map[string]bool{
-		"Date":       true,
-		"Math":       true,
-		"JSON":       true,
-		"console":    true,
-		"parseInt":   true,
-		"parseFloat": true,
-		"Number":     true,
-		"String":     true,
-		"Boolean":    true,
-		"Array":      true,
-		"Object":     true,
-		"undefined":  true,
-		"null":       true,
-		"true":       true,
-		"false":      true,
-		"Infinity":   true,
-		"NaN":        true,
+		// ===== ES5.1 GLOBAL VALUES =====
+		"undefined": true,
+		"null":      true,
+		"true":      true,
+		"false":     true,
+		"Infinity":  true,
+		"NaN":       true,
+
+		// ===== ES5.1 GLOBAL FUNCTIONS =====
+		"eval":               true,
+		"parseInt":           true,
+		"parseFloat":         true,
+		"isNaN":              true,
+		"isFinite":           true,
+		"decodeURI":          true,
+		"decodeURIComponent": true,
+		"encodeURI":          true,
+		"encodeURIComponent": true,
+		"escape":             true, // Deprecated but still exists
+		"unescape":           true, // Deprecated but still exists
+
+		// ===== ES5.1 CONSTRUCTOR FUNCTIONS =====
+		"Object":   true,
+		"Function": true,
+		"Array":    true,
+		"String":   true,
+		"Boolean":  true,
+		"Number":   true,
+		"Date":     true,
+		"RegExp":   true,
+
+		// ===== ES5.1 ERROR CONSTRUCTORS =====
+		"Error":          true,
+		"EvalError":      true,
+		"RangeError":     true,
+		"ReferenceError": true,
+		"SyntaxError":    true,
+		"TypeError":      true,
+		"URIError":       true,
+
+		// ===== ES5.1 NON-CONSTRUCTOR GLOBAL OBJECTS =====
+		"Math": true,
+		"JSON": true,
+
+		// ===== ES6 FEATURES SUPPORTED BY GOJA =====
+		"Map":     true,
+		"Set":     true,
+		"WeakMap": true,
+		"WeakSet": true,
+		"Promise": true,
+		"Symbol":  true,
+		"Proxy":   true,
+		"Reflect": true,
+
+		// ===== COMMONLY AVAILABLE (NOT ECMASCRIPT STANDARD) =====
+		"console": true, // Widely available, often considered built-in
+
+		// ===== ES6+ FEATURES NOT SUPPORTED BY GOJA =====
+		// NOTE: These are commented out because Goja doesn't implement them
+		// If you're using a different JS engine, you might want to include these:
+		//
+		// "BigInt":               true, // Not implemented in Goja
+		// "WeakRef":              true, // Not possible due to Go GC
+		// "FinalizationRegistry": true, // Not possible due to Go GC
+		// "ArrayBuffer":          true, // Limited/no support
+		// "DataView":             true, // Limited/no support
+		// "Int8Array":            true, // Limited/no support
+		// "Uint8Array":           true, // Limited/no support
+		// "Float32Array":         true, // Limited/no support
+		// etc. (other TypedArrays)
+		//
+		// "Intl":                 true, // Not implemented
+		// "Atomics":              true, // Not implemented
+		// "SharedArrayBuffer":    true, // Not implemented
+		// "AggregateError":       true, // ES2021, not supported
 	}
 	return builtIns[name]
 }
