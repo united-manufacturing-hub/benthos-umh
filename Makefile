@@ -79,7 +79,11 @@ test-opc:
 
 .PHONY: test-uns
 test-uns:
-	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./uns_plugin/...
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!redpanda' ./uns_plugin/...
+
+.PHONY: test-uns-redpanda
+test-uns-redpanda:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS)  ./uns_plugin/...
 
 .PHONY: test-s7comm
 test-s7comm:
