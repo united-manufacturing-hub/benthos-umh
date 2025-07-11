@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package js_engine
+package js_engine_test
 
 import (
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 	"time"
 
@@ -26,17 +27,17 @@ import (
 
 var _ = Describe("JSEngine", func() {
 	var (
-		jsEngine  *JSEngine
-		logger    *service.Logger
-		pools     *pools.ObjectPools
-		resources *service.Resources
+		jsEngine    *js_engine.JSEngine
+		logger      *service.Logger
+		objectPools *pools.ObjectPools
+		resources   *service.Resources
 	)
 
 	BeforeEach(func() {
 		resources = service.MockResources()
 		logger = resources.Logger()
-		pools = pools.NewObjectPools([]string{"press", "temp", "flow"}, logger)
-		jsEngine = NewJSEngine(logger, []string{"press", "temp", "flow"}, pools)
+		objectPools = pools.NewObjectPools([]string{"press", "temp", "flow"}, logger)
+		jsEngine = js_engine.NewJSEngine(logger, []string{"press", "temp", "flow"}, objectPools)
 	})
 
 	AfterEach(func() {
@@ -422,7 +423,7 @@ var _ = Describe("JSEngine", func() {
 	Describe("Security and Configuration", func() {
 		It("should handle configuration with nil logger", func() {
 			// Test JS engine with nil logger to improve coverage
-			engineWithNilLogger := NewJSEngine(nil, []string{"temp", "press"}, pools)
+			engineWithNilLogger := js_engine.NewJSEngine(nil, []string{"temp", "press"}, objectPools)
 			Expect(engineWithNilLogger).ToNot(BeNil())
 
 			// Should still work without logger
