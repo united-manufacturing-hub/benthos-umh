@@ -17,6 +17,7 @@ package stream_processor_plugin
 import (
 	"context"
 	"encoding/json"
+	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -26,7 +27,7 @@ import (
 
 var _ = Describe("Metadata Preservation", func() {
 	var (
-		processor *StreamProcessor
+		processor *processor2.StreamProcessor
 		resources *service.Resources
 	)
 
@@ -50,7 +51,7 @@ var _ = Describe("Metadata Preservation", func() {
 		}
 
 		var err error
-		processor, err = newStreamProcessor(testConfig, resources.Logger(), resources.Metrics())
+		processor, err = processor2.newStreamProcessor(testConfig, resources.Logger(), resources.Metrics())
 		Expect(err).ToNot(HaveOccurred())
 	})
 
@@ -64,7 +65,7 @@ var _ = Describe("Metadata Preservation", func() {
 	Describe("createOutputMessage", func() {
 		It("should preserve metadata from original message", func() {
 			// Create original message with metadata
-			originalPayload := TimeseriesMessage{
+			originalPayload := processor2.TimeseriesMessage{
 				Value:       25.5,
 				TimestampMs: time.Now().UnixMilli(),
 			}
@@ -122,7 +123,7 @@ var _ = Describe("Metadata Preservation", func() {
 
 		It("should handle messages with no additional metadata", func() {
 			// Create original message with only umh_topic
-			originalPayload := TimeseriesMessage{
+			originalPayload := processor2.TimeseriesMessage{
 				Value:       25.5,
 				TimestampMs: time.Now().UnixMilli(),
 			}
@@ -165,7 +166,7 @@ var _ = Describe("Metadata Preservation", func() {
 		})
 
 		It("should create correct payload structure", func() {
-			originalPayload := TimeseriesMessage{
+			originalPayload := processor2.TimeseriesMessage{
 				Value:       25.5,
 				TimestampMs: time.Now().UnixMilli(),
 			}
@@ -198,7 +199,7 @@ var _ = Describe("Metadata Preservation", func() {
 			outputBytes, err := outputMsg.AsBytes()
 			Expect(err).ToNot(HaveOccurred())
 
-			var outputPayload TimeseriesMessage
+			var outputPayload processor2.TimeseriesMessage
 			err = json.Unmarshal(outputBytes, &outputPayload)
 			Expect(err).ToNot(HaveOccurred())
 

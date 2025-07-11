@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package stream_processor_plugin
+package state
 
 import (
 	"fmt"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin"
 	"sync"
 	"time"
 
@@ -26,13 +27,13 @@ import (
 var _ = Describe("StateManager", func() {
 	var (
 		stateManager *StateManager
-		config       *StreamProcessorConfig
+		config       *config.StreamProcessorConfig
 	)
 
 	BeforeEach(func() {
-		config = &StreamProcessorConfig{
+		config = &config.StreamProcessorConfig{
 			Mode:        "timeseries",
-			Model:       ModelConfig{Name: "test", Version: "v1"},
+			Model:       stream_processor_plugin.ModelConfig{Name: "test", Version: "v1"},
 			OutputTopic: "test.output",
 			Sources: map[string]string{
 				"pressure":    "ia/raw/opcua/default/press",
@@ -45,31 +46,31 @@ var _ = Describe("StateManager", func() {
 				"rpm":         "rpm",
 				"location":    "\"Factory-A\"",
 			},
-			StaticMappings: map[string]MappingInfo{
+			StaticMappings: map[string]config.MappingInfo{
 				"location": {
 					VirtualPath:  "location",
 					Expression:   "\"Factory-A\"",
-					Type:         StaticMapping,
+					Type:         config.StaticMapping,
 					Dependencies: []string{},
 				},
 			},
-			DynamicMappings: map[string]MappingInfo{
+			DynamicMappings: map[string]config.MappingInfo{
 				"pressure": {
 					VirtualPath:  "pressure",
 					Expression:   "pressure * 0.001",
-					Type:         DynamicMapping,
+					Type:         config.DynamicMapping,
 					Dependencies: []string{"pressure"},
 				},
 				"temperature": {
 					VirtualPath:  "temperature",
 					Expression:   "temperature + 273.15",
-					Type:         DynamicMapping,
+					Type:         config.DynamicMapping,
 					Dependencies: []string{"temperature"},
 				},
 				"rpm": {
 					VirtualPath:  "rpm",
 					Expression:   "rpm",
-					Type:         DynamicMapping,
+					Type:         config.DynamicMapping,
 					Dependencies: []string{"rpm"},
 				},
 			},
@@ -233,7 +234,7 @@ var _ = Describe("StateManager", func() {
 			Expect(len(staticMappings)).To(Equal(1))
 			Expect(staticMappings[0].VirtualPath).To(Equal("location"))
 			Expect(staticMappings[0].Expression).To(Equal("\"Factory-A\""))
-			Expect(staticMappings[0].Type).To(Equal(StaticMapping))
+			Expect(staticMappings[0].Type).To(Equal(config.StaticMapping))
 		})
 
 		It("should identify dependent mappings", func() {

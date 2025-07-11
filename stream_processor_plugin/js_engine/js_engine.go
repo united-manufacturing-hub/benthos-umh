@@ -12,10 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package stream_processor_plugin
+package js_engine
 
 import (
 	"fmt"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_security"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 	"sync"
 	"time"
 
@@ -44,7 +47,7 @@ type JSEngine struct {
 	precompiledMutex    sync.RWMutex             // Protects precompiledPrograms
 
 	// Object pools for runtime reuse
-	pools *ObjectPools
+	pools *pools.ObjectPools
 
 	// Configuration
 	sourceNames []string // Available source variable names
@@ -58,7 +61,7 @@ type JSExecutionResult struct {
 }
 
 // NewJSEngine creates a new JavaScript engine instance
-func NewJSEngine(logger *service.Logger, sourceNames []string, pools *ObjectPools) *JSEngine {
+func NewJSEngine(logger *service.Logger, sourceNames []string, pools *pools.ObjectPools) *JSEngine {
 	engine := &JSEngine{
 		logger:                logger,
 		staticRuntime:         goja.New(),
@@ -71,8 +74,8 @@ func NewJSEngine(logger *service.Logger, sourceNames []string, pools *ObjectPool
 	}
 
 	// Configure runtimes using shared security configuration
-	ConfigureJSRuntime(engine.staticRuntime, logger)
-	ConfigureJSRuntime(engine.dynamicRuntime, logger)
+	js_security.ConfigureJSRuntime(engine.staticRuntime, logger)
+	js_security.ConfigureJSRuntime(engine.dynamicRuntime, logger)
 
 	return engine
 }
@@ -132,7 +135,7 @@ func (e *JSEngine) EvaluateStatic(expression string) JSExecutionResult {
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)
-		LogSlowExecution(e.logger, expression, duration)
+		js_security.LogSlowExecution(e.logger, expression, duration)
 	}()
 
 	// Compile expression if not already compiled
@@ -186,7 +189,7 @@ func (e *JSEngine) EvaluateDynamic(expression string, variables map[string]inter
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)
-		LogSlowExecution(e.logger, expression, duration)
+		js_security.LogSlowExecution(e.logger, expression, duration)
 	}()
 
 	// Compile expression if not already compiled
@@ -321,7 +324,7 @@ func (e *JSEngine) ClearStaticCache() {
 
 // PrecompileExpressions pre-compiles all static and dynamic mapping expressions for optimal performance
 // This is a major optimization that eliminates JavaScript parsing/compilation overhead during runtime
-func (e *JSEngine) PrecompileExpressions(staticMappings, dynamicMappings map[string]MappingInfo) error {
+func (e *JSEngine) PrecompileExpressions(staticMappings, dynamicMappings map[string]config.MappingInfo) error {
 	e.precompiledMutex.Lock()
 	defer e.precompiledMutex.Unlock()
 
@@ -371,7 +374,7 @@ func (e *JSEngine) EvaluateStaticPrecompiled(expression string) JSExecutionResul
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)
-		LogSlowExecution(e.logger, expression, duration)
+		js_security.LogSlowExecution(e.logger, expression, duration)
 	}()
 
 	// Get pre-compiled program
@@ -416,7 +419,7 @@ func (e *JSEngine) EvaluateDynamicPrecompiled(expression string, variables map[s
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)
-		LogSlowExecution(e.logger, expression, duration)
+		js_security.LogSlowExecution(e.logger, expression, duration)
 	}()
 
 	// Get pre-compiled program

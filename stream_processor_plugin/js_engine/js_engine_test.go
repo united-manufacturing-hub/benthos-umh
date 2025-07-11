@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package stream_processor_plugin
+package js_engine
 
 import (
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -26,14 +28,14 @@ var _ = Describe("JSEngine", func() {
 	var (
 		jsEngine  *JSEngine
 		logger    *service.Logger
-		pools     *ObjectPools
+		pools     *pools.ObjectPools
 		resources *service.Resources
 	)
 
 	BeforeEach(func() {
 		resources = service.MockResources()
 		logger = resources.Logger()
-		pools = NewObjectPools([]string{"press", "temp", "flow"}, logger)
+		pools = pools.NewObjectPools([]string{"press", "temp", "flow"}, logger)
 		jsEngine = NewJSEngine(logger, []string{"press", "temp", "flow"}, pools)
 	})
 
@@ -213,10 +215,10 @@ var _ = Describe("JSEngine", func() {
 	Describe("EvaluateDynamicPrecompiled", func() {
 		BeforeEach(func() {
 			// Pre-compile some test expressions
-			staticMappings := map[string]MappingInfo{
+			staticMappings := map[string]config.MappingInfo{
 				"static_test": {Expression: `"test_value"`},
 			}
-			dynamicMappings := map[string]MappingInfo{
+			dynamicMappings := map[string]config.MappingInfo{
 				"dynamic_test": {Expression: "press * 2"},
 			}
 			err := jsEngine.PrecompileExpressions(staticMappings, dynamicMappings)
@@ -334,10 +336,10 @@ var _ = Describe("JSEngine", func() {
 
 		It("should handle precompiled execution timeouts", func() {
 			// Pre-compile a timeout expression
-			staticMappings := map[string]MappingInfo{
+			staticMappings := map[string]config.MappingInfo{
 				"timeout_test": {Expression: "while(true) {}"},
 			}
-			dynamicMappings := map[string]MappingInfo{}
+			dynamicMappings := map[string]config.MappingInfo{}
 			err := jsEngine.PrecompileExpressions(staticMappings, dynamicMappings)
 			Expect(err).ToNot(HaveOccurred())
 
@@ -497,18 +499,18 @@ var _ = Describe("JSEngine", func() {
 		It("should handle precompilation with empty mappings", func() {
 			// Test precompilation with empty mappings
 			err := jsEngine.PrecompileExpressions(
-				map[string]MappingInfo{}, // Empty static mappings
-				map[string]MappingInfo{}, // Empty dynamic mappings
+				map[string]config.MappingInfo{}, // Empty static mappings
+				map[string]config.MappingInfo{}, // Empty dynamic mappings
 			)
 			Expect(err).ToNot(HaveOccurred())
 		})
 
 		It("should handle precompilation errors", func() {
 			// Test precompilation with invalid expressions
-			staticMappings := map[string]MappingInfo{
+			staticMappings := map[string]config.MappingInfo{
 				"invalid_static": {Expression: "invalid syntax +++"},
 			}
-			dynamicMappings := map[string]MappingInfo{
+			dynamicMappings := map[string]config.MappingInfo{
 				"invalid_dynamic": {Expression: "another invalid +++"},
 			}
 

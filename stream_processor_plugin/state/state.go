@@ -49,10 +49,11 @@
 // 3. Variable stored as VariableValue{Value: 1.23, Source: "press", Timestamp: now}
 // 4. Dependent mappings (like "efficiency = press / target") are identified
 // 5. Only those mappings are re-evaluated, not all mappings
-package stream_processor_plugin
+package state
 
 import (
 	"fmt"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -336,11 +337,11 @@ func (ps *ProcessorState) GetStateVersion() uint64 {
 // thread-safe storage operations.
 type StateManager struct {
 	state  *ProcessorState
-	config *StreamProcessorConfig
+	config *config.StreamProcessorConfig
 }
 
 // NewStateManager creates a new state manager with the given configuration
-func NewStateManager(config *StreamProcessorConfig) *StateManager {
+func NewStateManager(config *config.StreamProcessorConfig) *StateManager {
 	return &StateManager{
 		state:  NewProcessorState(),
 		config: config,
@@ -383,8 +384,8 @@ func (sm *StateManager) ResolveVariableFromTopic(topic string) (string, bool) {
 //
 // The dependencies are pre-calculated during startup through static analysis
 // of the JavaScript expressions.
-func (sm *StateManager) GetDependentMappings(variableName string) []MappingInfo {
-	var dependentMappings []MappingInfo
+func (sm *StateManager) GetDependentMappings(variableName string) []config.MappingInfo {
+	var dependentMappings []config.MappingInfo
 
 	// Check dynamic mappings for dependencies
 	for _, mapping := range sm.config.DynamicMappings {
@@ -400,8 +401,8 @@ func (sm *StateManager) GetDependentMappings(variableName string) []MappingInfo 
 }
 
 // GetExecutableMappings returns mappings that can be executed based on current state
-func (sm *StateManager) GetExecutableMappings(variableName string) []MappingInfo {
-	var executableMappings []MappingInfo
+func (sm *StateManager) GetExecutableMappings(variableName string) []config.MappingInfo {
+	var executableMappings []config.MappingInfo
 
 	// Get all mappings that depend on this variable
 	dependentMappings := sm.GetDependentMappings(variableName)
@@ -417,8 +418,8 @@ func (sm *StateManager) GetExecutableMappings(variableName string) []MappingInfo
 }
 
 // GetStaticMappings returns all static mappings that should be executed
-func (sm *StateManager) GetStaticMappings() []MappingInfo {
-	var staticMappings []MappingInfo
+func (sm *StateManager) GetStaticMappings() []config.MappingInfo {
+	var staticMappings []config.MappingInfo
 
 	for _, mapping := range sm.config.StaticMappings {
 		staticMappings = append(staticMappings, mapping)

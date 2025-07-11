@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package stream_processor_plugin
+package state
 
 import (
 	. "github.com/onsi/ginkgo/v2"

@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 	"testing"
 	"time"
 
@@ -36,7 +37,7 @@ func BenchmarkProcessBatch(b *testing.B) {
 
 	b.Run("StaticMapping", func(b *testing.B) {
 		// Test static mapping performance - should be fastest
-		inputPayload := TimeseriesMessage{
+		inputPayload := processor2.TimeseriesMessage{
 			Value:       25.5,
 			TimestampMs: time.Now().UnixMilli(),
 		}
@@ -56,7 +57,7 @@ func BenchmarkProcessBatch(b *testing.B) {
 
 	b.Run("DynamicMapping", func(b *testing.B) {
 		// Test dynamic mapping performance - includes JS evaluation
-		inputPayload := TimeseriesMessage{
+		inputPayload := processor2.TimeseriesMessage{
 			Value:       25.5,
 			TimestampMs: time.Now().UnixMilli(),
 		}
@@ -76,7 +77,7 @@ func BenchmarkProcessBatch(b *testing.B) {
 
 	b.Run("MixedMappings", func(b *testing.B) {
 		// Test mixed static and dynamic mappings
-		inputPayload := TimeseriesMessage{
+		inputPayload := processor2.TimeseriesMessage{
 			Value:       25.5,
 			TimestampMs: time.Now().UnixMilli(),
 		}
@@ -96,7 +97,7 @@ func BenchmarkProcessBatch(b *testing.B) {
 
 	b.Run("UnknownTopic", func(b *testing.B) {
 		// Test performance with unknown topics (should be fast skip)
-		inputPayload := TimeseriesMessage{
+		inputPayload := processor2.TimeseriesMessage{
 			Value:       25.5,
 			TimestampMs: time.Now().UnixMilli(),
 		}
@@ -130,7 +131,7 @@ func BenchmarkProcessBatch(b *testing.B) {
 
 	b.Run("MissingMetadata", func(b *testing.B) {
 		// Test performance with missing umh_topic metadata (should be fastest skip)
-		inputPayload := TimeseriesMessage{
+		inputPayload := processor2.TimeseriesMessage{
 			Value:       25.5,
 			TimestampMs: time.Now().UnixMilli(),
 		}
@@ -166,7 +167,7 @@ func BenchmarkBatchProcessing(b *testing.B) {
 			// Create batch with mixed messages
 			batch := make(service.MessageBatch, size)
 			for i := 0; i < size; i++ {
-				inputPayload := TimeseriesMessage{
+				inputPayload := processor2.TimeseriesMessage{
 					Value:       25.5 + float64(i),
 					TimestampMs: time.Now().UnixMilli(),
 				}
@@ -246,7 +247,7 @@ func BenchmarkJavaScriptExpressions(b *testing.B) {
 			}
 
 			// Create input message
-			inputPayload := TimeseriesMessage{
+			inputPayload := processor2.TimeseriesMessage{
 				Value:       25.5,
 				TimestampMs: time.Now().UnixMilli(),
 			}
@@ -277,7 +278,7 @@ func BenchmarkVariableResolution(b *testing.B) {
 
 	b.Run("FirstVariable", func(b *testing.B) {
 		// Test performance when setting first variable
-		inputPayload := TimeseriesMessage{
+		inputPayload := processor2.TimeseriesMessage{
 			Value:       25.5,
 			TimestampMs: time.Now().UnixMilli(),
 		}
@@ -297,7 +298,7 @@ func BenchmarkVariableResolution(b *testing.B) {
 
 	b.Run("SubsequentVariables", func(b *testing.B) {
 		// Pre-populate state with initial variables
-		initialPayload := TimeseriesMessage{
+		initialPayload := processor2.TimeseriesMessage{
 			Value:       25.5,
 			TimestampMs: time.Now().UnixMilli(),
 		}
@@ -313,7 +314,7 @@ func BenchmarkVariableResolution(b *testing.B) {
 		_, _ = processor.ProcessBatch(ctx, service.MessageBatch{pressMsg, tempMsg})
 
 		// Test performance with existing state
-		inputPayload := TimeseriesMessage{
+		inputPayload := processor2.TimeseriesMessage{
 			Value:       30.0,
 			TimestampMs: time.Now().UnixMilli(),
 		}
@@ -333,7 +334,7 @@ func BenchmarkVariableResolution(b *testing.B) {
 
 	b.Run("VariableOverwrite", func(b *testing.B) {
 		// Test performance when overwriting existing variables
-		inputPayload := TimeseriesMessage{
+		inputPayload := processor2.TimeseriesMessage{
 			Value:       25.5,
 			TimestampMs: time.Now().UnixMilli(),
 		}
@@ -348,7 +349,7 @@ func BenchmarkVariableResolution(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			// Update with new value
-			newPayload := TimeseriesMessage{
+			newPayload := processor2.TimeseriesMessage{
 				Value:       25.5 + float64(i),
 				TimestampMs: time.Now().UnixMilli(),
 			}
@@ -378,7 +379,7 @@ func BenchmarkThroughput(b *testing.B) {
 		// 60% pressure, 30% temperature, 10% run status
 		messages := make([]*service.Message, 100)
 		for i := 0; i < 100; i++ {
-			inputPayload := TimeseriesMessage{
+			inputPayload := processor2.TimeseriesMessage{
 				Value:       25.5 + float64(i%10),
 				TimestampMs: time.Now().UnixMilli(),
 			}
@@ -414,7 +415,7 @@ func BenchmarkThroughput(b *testing.B) {
 
 	b.Run("HighThroughput", func(b *testing.B) {
 		// Test high-throughput scenario
-		inputPayload := TimeseriesMessage{
+		inputPayload := processor2.TimeseriesMessage{
 			Value:       25.5,
 			TimestampMs: time.Now().UnixMilli(),
 		}
@@ -454,7 +455,7 @@ func BenchmarkMemoryUsage(b *testing.B) {
 
 	b.Run("MessageCreation", func(b *testing.B) {
 		// Test memory allocation for message creation
-		inputPayload := TimeseriesMessage{
+		inputPayload := processor2.TimeseriesMessage{
 			Value:       25.5,
 			TimestampMs: time.Now().UnixMilli(),
 		}
@@ -477,7 +478,7 @@ func BenchmarkMemoryUsage(b *testing.B) {
 		// Test memory usage as state accumulates
 		messages := make([]*service.Message, 1000)
 		for i := 0; i < 1000; i++ {
-			inputPayload := TimeseriesMessage{
+			inputPayload := processor2.TimeseriesMessage{
 				Value:       25.5 + float64(i),
 				TimestampMs: time.Now().UnixMilli(),
 			}
@@ -502,7 +503,7 @@ func BenchmarkMemoryUsage(b *testing.B) {
 }
 
 // Helper function to create processor with custom mapping
-func createProcessorWithMapping(mapping map[string]interface{}) (*StreamProcessor, error) {
+func createProcessorWithMapping(mapping map[string]interface{}) (*processor2.StreamProcessor, error) {
 	config := StreamProcessorConfig{
 		Mode: "timeseries",
 		Model: ModelConfig{
@@ -519,11 +520,11 @@ func createProcessorWithMapping(mapping map[string]interface{}) (*StreamProcesso
 	}
 
 	resources := service.MockResources()
-	return newStreamProcessor(config, resources.Logger(), resources.Metrics())
+	return processor2.newStreamProcessor(config, resources.Logger(), resources.Metrics())
 }
 
 // Helper function to create test processor
-func createTestProcessor() (*StreamProcessor, error) {
+func createTestProcessor() (*processor2.StreamProcessor, error) {
 	config := StreamProcessorConfig{
 		Mode: "timeseries",
 		Model: ModelConfig{
@@ -549,5 +550,5 @@ func createTestProcessor() (*StreamProcessor, error) {
 	}
 
 	resources := service.MockResources()
-	return newStreamProcessor(config, resources.Logger(), resources.Metrics())
+	return processor2.newStreamProcessor(config, resources.Logger(), resources.Metrics())
 }

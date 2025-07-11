@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package stream_processor_plugin
+package pools
 
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/constants"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_security"
 	"strings"
 	"sync"
 
@@ -75,7 +77,7 @@ func NewObjectPools(sourceNames []string, logger *service.Logger) *ObjectPools {
 
 	// Initialize byte buffer pool with pointer to avoid allocations
 	pools.byteBufferPool.New = func() interface{} {
-		buf := make([]byte, 0, DefaultByteBufferSize) // Pre-allocate for typical JSON payloads
+		buf := make([]byte, 0, constants.DefaultByteBufferSize) // Pre-allocate for typical JSON payloads
 		return &buf
 	}
 
@@ -87,13 +89,13 @@ func NewObjectPools(sourceNames []string, logger *service.Logger) *ObjectPools {
 	// Initialize JavaScript runtime pool
 	pools.jsRuntimePool.New = func() interface{} {
 		runtime := goja.New()
-		ConfigureJSRuntime(runtime, logger)
+		js_security.ConfigureJSRuntime(runtime, logger)
 		return runtime
 	}
 
 	// Initialize JSON encoder pool
 	pools.jsonEncoderPool.New = func() interface{} {
-		buf := make([]byte, 0, DefaultByteBufferSize)
+		buf := make([]byte, 0, constants.DefaultByteBufferSize)
 		return json.NewEncoder(bytes.NewBuffer(buf))
 	}
 
@@ -143,7 +145,7 @@ func (p *ObjectPools) GetByteBuffer() []byte {
 // PutByteBuffer returns a byte buffer to the pool
 func (p *ObjectPools) PutByteBuffer(buf []byte) {
 	// Only pool buffers that aren't too large to prevent memory bloat
-	if cap(buf) <= MaxPooledBufferSize {
+	if cap(buf) <= constants.MaxPooledBufferSize {
 		p.byteBufferPool.Put(&buf)
 	}
 }
@@ -158,7 +160,7 @@ func (p *ObjectPools) GetStringBuilder() *strings.Builder {
 // PutStringBuilder returns a string builder to the pool
 func (p *ObjectPools) PutStringBuilder(sb *strings.Builder) {
 	// Only pool builders that aren't too large
-	if sb.Cap() <= MaxPooledStringBuilderSize {
+	if sb.Cap() <= constants.MaxPooledStringBuilderSize {
 		p.stringBuilderPool.Put(sb)
 	}
 }

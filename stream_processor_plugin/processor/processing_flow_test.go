@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package stream_processor_plugin
+package processor
 
 import (
 	"context"
 	"encoding/json"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -32,7 +33,7 @@ var _ = Describe("Processing Flow Coverage", func() {
 		resources  *service.Resources
 		ctx        context.Context
 		cancel     context.CancelFunc
-		baseConfig StreamProcessorConfig
+		baseConfig config.StreamProcessorConfig
 	)
 
 	BeforeEach(func() {
@@ -40,10 +41,10 @@ var _ = Describe("Processing Flow Coverage", func() {
 		resources = service.MockResources()
 
 		// Base configuration for all tests
-		baseConfig = StreamProcessorConfig{
+		baseConfig = config.StreamProcessorConfig{
 			Mode:        "timeseries",
 			OutputTopic: "umh.v1.corpA.plant-A.aawd",
-			Model: ModelConfig{
+			Model: stream_processor_plugin.ModelConfig{
 				Name:    "pump",
 				Version: "v1",
 			},
@@ -127,7 +128,7 @@ var _ = Describe("Processing Flow Coverage", func() {
 		It("should skip message and return empty batch when umh_topic is missing", func() {
 			// Route: Input Message → No umh_topic metadata → Skip Message → Return empty batch
 
-			processor, err := newStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
+			processor, err := NewStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 
 			// Create message without umh_topic metadata
@@ -151,7 +152,7 @@ var _ = Describe("Processing Flow Coverage", func() {
 		It("should skip message with invalid JSON", func() {
 			// Route: Input Message → Has umh_topic → Invalid timeseries format → Skip Message → Return empty batch
 
-			processor, err := newStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
+			processor, err := NewStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 
 			msg := service.NewMessage([]byte("invalid json"))
@@ -165,7 +166,7 @@ var _ = Describe("Processing Flow Coverage", func() {
 		It("should skip message missing value field", func() {
 			// Route: Input Message → Has umh_topic → Invalid timeseries format → Skip Message → Return empty batch
 
-			processor, err := newStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
+			processor, err := NewStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 
 			invalidPayload := map[string]interface{}{
@@ -186,7 +187,7 @@ var _ = Describe("Processing Flow Coverage", func() {
 		It("should skip message missing timestamp_ms field", func() {
 			// Route: Input Message → Has umh_topic → Invalid timeseries format → Skip Message → Return empty batch
 
-			processor, err := newStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
+			processor, err := NewStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 
 			invalidPayload := map[string]interface{}{
@@ -209,7 +210,7 @@ var _ = Describe("Processing Flow Coverage", func() {
 		It("should skip message with unrecognized topic", func() {
 			// Route: Input Message → Has umh_topic → Valid timeseries → Topic doesn't match sources → Skip Message → Return empty batch
 
-			processor, err := newStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
+			processor, err := NewStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 
 			msg := createValidMessage("umh.v1.corpA.plant-A.aawd._raw.unknown", 25.5)
@@ -222,7 +223,7 @@ var _ = Describe("Processing Flow Coverage", func() {
 		It("should skip message with partially matching topic", func() {
 			// Route: Input Message → Has umh_topic → Valid timeseries → Topic doesn't match sources → Skip Message → Return empty batch
 
-			processor, err := newStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
+			processor, err := NewStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 
 			msg := createValidMessage("umh.v1.corpA.plant-A.aawd._raw.press.extra", 25.5)
@@ -247,7 +248,7 @@ var _ = Describe("Processing Flow Coverage", func() {
 				"timestamp":    "Date.now()",
 			}
 
-			processor, err := newStreamProcessor(staticOnlyConfig, resources.Logger(), resources.Metrics())
+			processor, err := NewStreamProcessor(staticOnlyConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 
 			msg := createValidMessage("umh.v1.corpA.plant-A.aawd._raw.press", 25.5)
@@ -277,7 +278,7 @@ var _ = Describe("Processing Flow Coverage", func() {
 			// Route: Input Message → Valid → Topic matches → Extract variable → Store value →
 			//        Find mappings → Found dependent mappings → Missing dependencies → Skip mapping → Return batch
 
-			processor, err := newStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
+			processor, err := NewStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 
 			// Send only press (efficiency needs both press and flow)
@@ -306,7 +307,7 @@ var _ = Describe("Processing Flow Coverage", func() {
 		It("should process mappings when some dependencies become available", func() {
 			// Route: Multiple messages showing dependency resolution
 
-			processor, err := newStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
+			processor, err := NewStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 
 			// First message: press
@@ -347,7 +348,7 @@ var _ = Describe("Processing Flow Coverage", func() {
 				"staticMapping":  `"this_works"`,
 			}
 
-			processor, err := newStreamProcessor(errorConfig, resources.Logger(), resources.Metrics())
+			processor, err := NewStreamProcessor(errorConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 
 			msg := createValidMessage("umh.v1.corpA.plant-A.aawd._raw.press", 50.0)
@@ -381,7 +382,7 @@ var _ = Describe("Processing Flow Coverage", func() {
 				"validMapping":   "press * 2",
 			}
 
-			processor, err := newStreamProcessor(errorConfig, resources.Logger(), resources.Metrics())
+			processor, err := NewStreamProcessor(errorConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 
 			msg := createValidMessage("umh.v1.corpA.plant-A.aawd._raw.press", 25.0)
@@ -407,7 +408,7 @@ var _ = Describe("Processing Flow Coverage", func() {
 			//        Find mappings → Found dependent mappings → All dependencies available →
 			//        JS execution successful → Create output message → Return batch
 
-			processor, err := newStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
+			processor, err := NewStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 
 			// Send all variables to satisfy all dependencies
@@ -457,7 +458,7 @@ var _ = Describe("Processing Flow Coverage", func() {
 		It("should only generate mappings that depend on the updated variable", func() {
 			// Test that powerRatio is only generated when press or temp changes, not flow
 
-			processor, err := newStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
+			processor, err := NewStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 
 			// Send all variables first
@@ -505,7 +506,7 @@ var _ = Describe("Processing Flow Coverage", func() {
 		It("should preserve message metadata and timestamps", func() {
 			// Test that output messages preserve original metadata and timestamps
 
-			processor, err := newStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
+			processor, err := NewStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 
 			originalTimestamp := time.Now().UnixMilli()
@@ -558,7 +559,7 @@ var _ = Describe("Processing Flow Coverage", func() {
 		It("should handle rapid successive messages correctly", func() {
 			// Test that rapid processing doesn't cause race conditions
 
-			processor, err := newStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
+			processor, err := NewStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 
 			// Send rapid sequence of messages
@@ -595,7 +596,7 @@ var _ = Describe("Processing Flow Coverage", func() {
 		It("should handle batch processing correctly", func() {
 			// Test processing multiple messages in a single batch
 
-			processor, err := newStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
+			processor, err := NewStreamProcessor(baseConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 
 			// Create a batch with multiple messages

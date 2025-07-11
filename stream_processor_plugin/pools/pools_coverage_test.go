@@ -12,12 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package stream_processor_plugin
+package pools
 
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_security"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/metrics"
 )
 
 var _ = Describe("ObjectPools Coverage Tests", func() {
@@ -177,7 +179,7 @@ var _ = Describe("ObjectPools Coverage Tests", func() {
 			Expect(runtime).ToNot(BeNil())
 
 			// Configure runtime should work without errors
-			ConfigureJSRuntime(runtime, pools.logger)
+			js_security.ConfigureJSRuntime(runtime, pools.logger)
 
 			// Verify that dangerous globals are replaced with security blockers
 			// The security blocker should return a TypeError when called
@@ -222,7 +224,7 @@ var _ = Describe("ObjectPools Coverage Tests", func() {
 	Describe("Metrics Coverage", func() {
 		It("should create mock metrics for testing", func() {
 			// Test the NewMockMetrics function to improve coverage
-			mockMetrics := NewMockMetrics()
+			mockMetrics := metrics.NewMockMetrics()
 			Expect(mockMetrics).ToNot(BeNil())
 			Expect(mockMetrics.MessagesProcessed).ToNot(BeNil())
 			Expect(mockMetrics.MessagesErrored).ToNot(BeNil())

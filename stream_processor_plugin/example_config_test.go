@@ -17,6 +17,7 @@ package stream_processor_plugin
 import (
 	"context"
 	"encoding/json"
+	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -26,7 +27,7 @@ import (
 
 var _ = Describe("Example Config Test", func() {
 	var (
-		processor *StreamProcessor
+		processor *processor2.StreamProcessor
 		ctx       context.Context
 		cancel    context.CancelFunc
 	)
@@ -61,7 +62,7 @@ var _ = Describe("Example Config Test", func() {
 
 		resources := service.MockResources()
 		var err error
-		processor, err = newStreamProcessor(config, resources.Logger(), resources.Metrics())
+		processor, err = processor2.newStreamProcessor(config, resources.Logger(), resources.Metrics())
 		Expect(err).ToNot(HaveOccurred())
 	})
 
@@ -75,7 +76,7 @@ var _ = Describe("Example Config Test", func() {
 
 	// Helper function to create a message with the given topic and value
 	createMessage := func(topic string, value float64) *service.Message {
-		payload := TimeseriesMessage{
+		payload := processor2.TimeseriesMessage{
 			Value:       value,
 			TimestampMs: time.Now().UnixMilli(),
 		}
@@ -95,7 +96,7 @@ var _ = Describe("Example Config Test", func() {
 				topic, exists := msg.MetaGet("umh_topic")
 				Expect(exists).To(BeTrue())
 
-				var payload TimeseriesMessage
+				var payload processor2.TimeseriesMessage
 				msgBytes, err := msg.AsBytes()
 				Expect(err).ToNot(HaveOccurred())
 				err = json.Unmarshal(msgBytes, &payload)

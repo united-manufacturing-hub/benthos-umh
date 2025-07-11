@@ -21,6 +21,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/constants"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 	"math"
 	"testing"
 
@@ -173,12 +175,12 @@ func getFuzzSeedInputs() []FuzzTestCase {
 // runSingleFuzzTest executes a single fuzz test case
 func runSingleFuzzTest(t *testing.T, topic, payload, mappingStr string) {
 	// Skip extremely long inputs to prevent timeout
-	if len(topic) > MaxTopicLength || len(payload) > MaxInputLength || len(mappingStr) > MaxInputLength {
+	if len(topic) > constants.MaxTopicLength || len(payload) > constants.MaxInputLength || len(mappingStr) > constants.MaxInputLength {
 		return
 	}
 
 	// Test with timeout to prevent infinite loops
-	ctx, cancel := context.WithTimeout(context.Background(), DefaultJSTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), constants.DefaultJSTimeout)
 	defer cancel()
 
 	// Create and test processor
@@ -196,7 +198,7 @@ func runSingleFuzzTest(t *testing.T, topic, payload, mappingStr string) {
 }
 
 // createTestProcessor creates a processor instance for testing
-func createTestProcessor(t *testing.T, mappingStr string) *StreamProcessor {
+func createTestProcessor(t *testing.T, mappingStr string) *processor.StreamProcessor {
 	config := createFuzzConfig(mappingStr)
 	processor, err := createFuzzProcessor(config)
 	if err != nil {
@@ -207,7 +209,7 @@ func createTestProcessor(t *testing.T, mappingStr string) *StreamProcessor {
 }
 
 // testMessageProcessing tests the core message processing functionality
-func testMessageProcessing(t *testing.T, processor *StreamProcessor, ctx context.Context, topic, payload, mappingStr string) {
+func testMessageProcessing(t *testing.T, processor *processor.StreamProcessor, ctx context.Context, topic, payload, mappingStr string) {
 	// Process message with panic recovery
 	func() {
 		defer func() {
@@ -301,7 +303,7 @@ mapping: {}
 }
 
 // createFuzzProcessor creates a processor instance for fuzzing
-func createFuzzProcessor(config *service.ParsedConfig) (*StreamProcessor, error) {
+func createFuzzProcessor(config *service.ParsedConfig) (*processor.StreamProcessor, error) {
 	// Parse configuration into StreamProcessorConfig
 	sources, err := config.FieldStringMap("sources")
 	if err != nil {
@@ -331,11 +333,11 @@ func createFuzzProcessor(config *service.ParsedConfig) (*StreamProcessor, error)
 	}
 
 	resources := service.MockResources()
-	return newStreamProcessor(streamConfig, resources.Logger(), resources.Metrics())
+	return processor.newStreamProcessor(streamConfig, resources.Logger(), resources.Metrics())
 }
 
 // testEdgeCases tests additional edge cases with the same inputs
-func testEdgeCases(t *testing.T, processor *StreamProcessor, topic, payload, mappingStr string) {
+func testEdgeCases(t *testing.T, processor *processor.StreamProcessor, topic, payload, mappingStr string) {
 	ctx := context.Background()
 
 	// Test empty message
@@ -346,7 +348,7 @@ func testEdgeCases(t *testing.T, processor *StreamProcessor, topic, payload, map
 }
 
 // testEmptyMessage tests processing with empty message content
-func testEmptyMessage(t *testing.T, processor *StreamProcessor, ctx context.Context, topic string) {
+func testEmptyMessage(t *testing.T, processor *processor.StreamProcessor, ctx context.Context, topic string) {
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -365,7 +367,7 @@ func testEmptyMessage(t *testing.T, processor *StreamProcessor, ctx context.Cont
 }
 
 // testInvalidMetadata tests processing with invalid metadata
-func testInvalidMetadata(t *testing.T, processor *StreamProcessor, ctx context.Context, payload string) {
+func testInvalidMetadata(t *testing.T, processor *processor.StreamProcessor, ctx context.Context, payload string) {
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -394,8 +396,8 @@ func sanitizeVariables(vars map[string]interface{}) map[string]interface{} {
 			}
 		case string:
 			// Limit string length to prevent memory exhaustion
-			if len(val) > MaxStringLength {
-				sanitized[k] = val[:MaxStringLength]
+			if len(val) > constants.MaxStringLength {
+				sanitized[k] = val[:constants.MaxStringLength]
 			} else {
 				sanitized[k] = val
 			}
