@@ -20,41 +20,42 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_security"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/metrics"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 )
 
 var _ = Describe("ObjectPools Coverage Tests", func() {
 	var (
-		pools     *ObjectPools
-		resources *service.Resources
+		objectPools *pools.ObjectPools
+		resources   *service.Resources
 	)
 
 	BeforeEach(func() {
 		resources = service.MockResources()
-		pools = NewObjectPools([]string{"temp", "press", "flow"}, resources.Logger())
+		objectPools = pools.NewObjectPools([]string{"temp", "press", "flow"}, resources.Logger())
 	})
 
 	Describe("GetByteBuffer and PutByteBuffer", func() {
 		It("should get and return byte buffers", func() {
 			// Get a buffer
-			buf1 := pools.GetByteBuffer()
+			buf1 := objectPools.GetByteBuffer()
 			Expect(buf1).ToNot(BeNil())
 			Expect(len(buf1)).To(Equal(0))
 
 			// Get another buffer
-			buf2 := pools.GetByteBuffer()
+			buf2 := objectPools.GetByteBuffer()
 			Expect(buf2).ToNot(BeNil())
 
 			// Put buffers back
-			pools.PutByteBuffer(buf1)
-			pools.PutByteBuffer(buf2)
+			objectPools.PutByteBuffer(buf1)
+			objectPools.PutByteBuffer(buf2)
 
 			// Get a buffer again - should potentially reuse one
-			buf3 := pools.GetByteBuffer()
+			buf3 := objectPools.GetByteBuffer()
 			Expect(buf3).ToNot(BeNil())
 
 			// Test with oversized buffer (should not be pooled)
 			largeBuf := make([]byte, 5000) // Larger than 4096 limit
-			pools.PutByteBuffer(largeBuf)
+			objectPools.PutByteBuffer(largeBuf)
 		})
 	})
 
@@ -66,7 +67,7 @@ var _ = Describe("ObjectPools Coverage Tests", func() {
 				"run":   true,
 			}
 
-			result, err := pools.MarshalToJSON(data)
+			result, err := objectPools.MarshalToJSON(data)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(result).ToNot(BeEmpty())
 			Expect(string(result)).To(ContainSubstring("temp"))
@@ -75,7 +76,7 @@ var _ = Describe("ObjectPools Coverage Tests", func() {
 
 		It("should handle simple structures", func() {
 			simple := "test string"
-			result, err := pools.MarshalToJSON(simple)
+			result, err := objectPools.MarshalToJSON(simple)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(string(result)).To(Equal(`"test string"`))
 		})
@@ -84,17 +85,17 @@ var _ = Describe("ObjectPools Coverage Tests", func() {
 	Describe("ClearTopicCache", func() {
 		It("should clear the topic cache", func() {
 			// Create some cached topics
-			topic1 := pools.GetTopic("umh.v1.corp.plant", "data_v1", "temp")
-			topic2 := pools.GetTopic("umh.v1.corp.plant", "data_v1", "press")
+			topic1 := objectPools.GetTopic("umh.v1.corp.plant", "data_v1", "temp")
+			topic2 := objectPools.GetTopic("umh.v1.corp.plant", "data_v1", "press")
 
 			Expect(topic1).ToNot(BeEmpty())
 			Expect(topic2).ToNot(BeEmpty())
 
 			// Clear the cache
-			pools.ClearTopicCache()
+			objectPools.ClearTopicCache()
 
 			// Topics should still be constructible but cache is cleared
-			topic3 := pools.GetTopic("umh.v1.corp.plant", "data_v1", "temp")
+			topic3 := objectPools.GetTopic("umh.v1.corp.plant", "data_v1", "temp")
 			Expect(topic3).To(Equal(topic1)) // Same result, but freshly constructed
 		})
 	})
@@ -102,54 +103,54 @@ var _ = Describe("ObjectPools Coverage Tests", func() {
 	Describe("Pool Reuse", func() {
 		It("should reuse metadata maps", func() {
 			// Get a map
-			map1 := pools.GetMetadataMap()
+			map1 := objectPools.GetMetadataMap()
 			map1["test"] = "value"
 
 			// Return it
-			pools.PutMetadataMap(map1)
+			objectPools.PutMetadataMap(map1)
 
 			// Get another map - should be cleared
-			map2 := pools.GetMetadataMap()
+			map2 := objectPools.GetMetadataMap()
 			Expect(map2).ToNot(BeNil())
 			Expect(len(map2)).To(Equal(0)) // Should be cleared
 		})
 
 		It("should reuse variable contexts", func() {
 			// Get a context
-			ctx1 := pools.GetVariableContext()
+			ctx1 := objectPools.GetVariableContext()
 			ctx1["temp"] = 25.5
 
 			// Return it
-			pools.PutVariableContext(ctx1)
+			objectPools.PutVariableContext(ctx1)
 
 			// Get another context - should be cleared
-			ctx2 := pools.GetVariableContext()
+			ctx2 := objectPools.GetVariableContext()
 			Expect(ctx2).ToNot(BeNil())
 			Expect(len(ctx2)).To(Equal(0)) // Should be cleared
 		})
 
 		It("should reuse string builders", func() {
 			// Get a builder
-			sb1 := pools.GetStringBuilder()
+			sb1 := objectPools.GetStringBuilder()
 			sb1.WriteString("test")
 
 			// Return it
-			pools.PutStringBuilder(sb1)
+			objectPools.PutStringBuilder(sb1)
 
 			// Get another builder - should be reset
-			sb2 := pools.GetStringBuilder()
+			sb2 := objectPools.GetStringBuilder()
 			Expect(sb2).ToNot(BeNil())
 			Expect(sb2.Len()).To(Equal(0)) // Should be reset
 
 			// Test with oversized builder (should not be pooled)
-			largeSb := pools.GetStringBuilder()
+			largeSb := objectPools.GetStringBuilder()
 			largeSb.Grow(2000) // Larger than 1024 limit
-			pools.PutStringBuilder(largeSb)
+			objectPools.PutStringBuilder(largeSb)
 		})
 
 		It("should handle JS runtime cleanup properly", func() {
 			// Get a runtime
-			runtime1 := pools.GetJSRuntime()
+			runtime1 := objectPools.GetJSRuntime()
 			Expect(runtime1).ToNot(BeNil())
 
 			// Set some variables that should be cleaned up
@@ -161,13 +162,13 @@ var _ = Describe("ObjectPools Coverage Tests", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			// Return it to pool - cleanup should succeed
-			pools.PutJSRuntime(runtime1)
+			objectPools.PutJSRuntime(runtime1)
 
 			// Get another runtime - should be a clean runtime
-			runtime2 := pools.GetJSRuntime()
+			runtime2 := objectPools.GetJSRuntime()
 			Expect(runtime2).ToNot(BeNil())
 
-			pools.PutJSRuntime(runtime2)
+			objectPools.PutJSRuntime(runtime2)
 		})
 	})
 
@@ -175,11 +176,11 @@ var _ = Describe("ObjectPools Coverage Tests", func() {
 		It("should handle security configuration gracefully", func() {
 			// Test that configureRuntime doesn't panic even if some operations fail
 			// This tests the error handling paths in configureRuntime
-			runtime := pools.GetJSRuntime()
+			runtime := objectPools.GetJSRuntime()
 			Expect(runtime).ToNot(BeNil())
 
 			// Configure runtime should work without errors
-			js_security.ConfigureJSRuntime(runtime, pools.logger)
+			js_security.ConfigureJSRuntime(runtime, resources.Logger())
 
 			// Verify that dangerous globals are replaced with security blockers
 			// The security blocker should return a TypeError when called
@@ -187,12 +188,12 @@ var _ = Describe("ObjectPools Coverage Tests", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(result.String()).To(Equal("function")) // eval is replaced with a function that blocks
 
-			pools.PutJSRuntime(runtime)
+			objectPools.PutJSRuntime(runtime)
 		})
 
 		It("should handle runtime cleanup edge cases", func() {
 			// Test cleanup with a runtime that has been interrupted
-			runtime := pools.GetJSRuntime()
+			runtime := objectPools.GetJSRuntime()
 			Expect(runtime).ToNot(BeNil())
 
 			// Interrupt the runtime
@@ -203,12 +204,12 @@ var _ = Describe("ObjectPools Coverage Tests", func() {
 			_ = runtime.Set("result", "test")
 
 			// Return to pool - should handle interrupted runtime gracefully
-			pools.PutJSRuntime(runtime)
+			objectPools.PutJSRuntime(runtime)
 		})
 
 		It("should test pools with nil logger", func() {
 			// Create pools with nil logger to test error handling paths
-			poolsWithNilLogger := NewObjectPools([]string{"temp", "press"}, nil)
+			poolsWithNilLogger := pools.NewObjectPools([]string{"temp", "press"}, nil)
 			Expect(poolsWithNilLogger).ToNot(BeNil())
 
 			// Test runtime configuration with nil logger

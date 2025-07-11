@@ -18,10 +18,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
 	pools2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -32,7 +34,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 	var (
 		processor  *processor2.StreamProcessor
 		resources  *service.Resources
-		testConfig StreamProcessorConfig
+		testConfig config.StreamProcessorConfig
 		ctx        context.Context
 		cancel     context.CancelFunc
 	)
@@ -44,10 +46,10 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 		resources = service.MockResources()
 
 		// Create test configuration
-		testConfig = StreamProcessorConfig{
+		testConfig = config.StreamProcessorConfig{
 			Mode:        "timeseries",
 			OutputTopic: "umh.v1.corpA.plant-A.aawd",
-			Model: ModelConfig{
+			Model: config.ModelConfig{
 				Name:    "pump",
 				Version: "v1",
 			},
@@ -69,7 +71,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 
 		// Create processor
 		var err error
-		processor, err = processor2.newStreamProcessor(testConfig, resources.Logger(), resources.Metrics())
+		processor, err = processor2.NewStreamProcessor(testConfig, resources.Logger(), resources.Metrics())
 		Expect(err).ToNot(HaveOccurred())
 	})
 
@@ -321,7 +323,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 					"constTest": "42",
 				}
 
-				complexProcessor, err := processor2.newStreamProcessor(complexConfig, resources.Logger(), resources.Metrics())
+				complexProcessor, err := processor2.NewStreamProcessor(complexConfig, resources.Logger(), resources.Metrics())
 				Expect(err).ToNot(HaveOccurred())
 				defer func() {
 					err := complexProcessor.Close(ctx)
@@ -409,7 +411,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 					"efficiency": "press / tF * 100", // Depends on both press and tF
 				}
 
-				dependentProcessor, err := processor2.newStreamProcessor(dependentConfig, resources.Logger(), resources.Metrics())
+				dependentProcessor, err := processor2.NewStreamProcessor(dependentConfig, resources.Logger(), resources.Metrics())
 				Expect(err).ToNot(HaveOccurred())
 				defer func() {
 					err := dependentProcessor.Close(ctx)
@@ -557,7 +559,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 				"invalidMapping": "nonexistent_var + 1", // This should fail
 			}
 
-			errorProcessor, err := processor2.newStreamProcessor(errorConfig, resources.Logger(), resources.Metrics())
+			errorProcessor, err := processor2.NewStreamProcessor(errorConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 			defer func() {
 				err := errorProcessor.Close(ctx)
@@ -674,7 +676,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 					"dangerousMapping": op.expression, // This should fail
 				}
 
-				dangerousProcessor, err := processor2.newStreamProcessor(dangerousConfig, resources.Logger(), resources.Metrics())
+				dangerousProcessor, err := processor2.NewStreamProcessor(dangerousConfig, resources.Logger(), resources.Metrics())
 				Expect(err).ToNot(HaveOccurred())
 
 				inputPayload := processor2.TimeseriesMessage{
@@ -757,7 +759,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 				"conditional": "press > 20 ? 'high' : 'low'",
 			}
 
-			safeProcessor, err := processor2.newStreamProcessor(safeConfig, resources.Logger(), resources.Metrics())
+			safeProcessor, err := processor2.NewStreamProcessor(safeConfig, resources.Logger(), resources.Metrics())
 			Expect(err).ToNot(HaveOccurred())
 			defer func() {
 				err := safeProcessor.Close(ctx)

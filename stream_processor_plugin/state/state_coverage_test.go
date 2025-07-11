@@ -17,30 +17,31 @@ package state_test
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/state"
 )
 
 var _ = Describe("State Coverage Tests", func() {
 	var (
-		state *ProcessorState
+		processorState *state.ProcessorState
 	)
 
 	BeforeEach(func() {
-		state = NewProcessorState()
+		processorState = state.NewProcessorState()
 	})
 
 	Describe("GetVariableValue", func() {
 		It("should return variable value for existing variable", func() {
 			// Set a variable
-			state.SetVariable("temp", 25.5, "test_source")
+			processorState.SetVariable("temp", 25.5, "test_source")
 
 			// Get the value
-			value, exists := state.GetVariableValue("temp")
+			value, exists := processorState.GetVariableValue("temp")
 			Expect(exists).To(BeTrue())
 			Expect(value).To(BeNumerically("==", 25.5))
 		})
 
 		It("should return nil for non-existing variable", func() {
-			value, exists := state.GetVariableValue("nonexistent")
+			value, exists := processorState.GetVariableValue("nonexistent")
 			Expect(exists).To(BeFalse())
 			Expect(value).To(BeNil())
 		})
@@ -49,27 +50,27 @@ var _ = Describe("State Coverage Tests", func() {
 	Describe("GetVariableNames", func() {
 		It("should return all variable names", func() {
 			// Set some variables
-			state.SetVariable("temp", 25.5, "test_source")
-			state.SetVariable("press", 100.0, "test_source")
-			state.SetVariable("flow", 50.0, "test_source")
+			processorState.SetVariable("temp", 25.5, "test_source")
+			processorState.SetVariable("press", 100.0, "test_source")
+			processorState.SetVariable("flow", 50.0, "test_source")
 
-			names := state.GetVariableNames()
+			names := processorState.GetVariableNames()
 			Expect(names).To(ConsistOf("temp", "press", "flow"))
 		})
 
 		It("should return empty slice for no variables", func() {
-			names := state.GetVariableNames()
+			names := processorState.GetVariableNames()
 			Expect(names).To(BeEmpty())
 		})
 	})
 
 	Describe("GetStateVersion", func() {
 		It("should return increasing version numbers", func() {
-			initialVersion := state.GetStateVersion()
+			initialVersion := processorState.GetStateVersion()
 
 			// Setting a variable should increment version
-			state.SetVariable("temp", 25.5, "test_source")
-			newVersion := state.GetStateVersion()
+			processorState.SetVariable("temp", 25.5, "test_source")
+			newVersion := processorState.GetStateVersion()
 
 			Expect(newVersion).To(BeNumerically(">", initialVersion))
 		})

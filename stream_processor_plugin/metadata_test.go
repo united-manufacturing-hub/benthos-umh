@@ -17,8 +17,10 @@ package stream_processor_plugin_test
 import (
 	"context"
 	"encoding/json"
-	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 	"time"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -34,10 +36,10 @@ var _ = Describe("Metadata Preservation", func() {
 	BeforeEach(func() {
 		resources = service.MockResources()
 
-		testConfig := StreamProcessorConfig{
+		testConfig := config.StreamProcessorConfig{
 			Mode:        "timeseries",
 			OutputTopic: "umh.v1.corpA.plant-A.aawd",
-			Model: ModelConfig{
+			Model: config.ModelConfig{
 				Name:    "pump",
 				Version: "v1",
 			},
@@ -51,7 +53,7 @@ var _ = Describe("Metadata Preservation", func() {
 		}
 
 		var err error
-		processor, err = processor2.newStreamProcessor(testConfig, resources.Logger(), resources.Metrics())
+		processor, err = processor2.NewStreamProcessor(testConfig, resources.Logger(), resources.Metrics())
 		Expect(err).ToNot(HaveOccurred())
 	})
 

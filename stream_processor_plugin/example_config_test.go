@@ -17,8 +17,10 @@ package stream_processor_plugin_test
 import (
 	"context"
 	"encoding/json"
-	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 	"time"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -36,10 +38,10 @@ var _ = Describe("Example Config Test", func() {
 		ctx, cancel = context.WithCancel(context.Background())
 
 		// Use the exact configuration from example_config.yaml
-		config := StreamProcessorConfig{
+		cfg := config.StreamProcessorConfig{
 			Mode:        "timeseries",
 			OutputTopic: "umh.v1.corpA.plant-A.aawd",
-			Model: ModelConfig{
+			Model: config.ModelConfig{
 				Name:    "pump",
 				Version: "v1",
 			},
@@ -62,7 +64,7 @@ var _ = Describe("Example Config Test", func() {
 
 		resources := service.MockResources()
 		var err error
-		processor, err = processor2.newStreamProcessor(config, resources.Logger(), resources.Metrics())
+		processor, err = processor2.NewStreamProcessor(cfg, resources.Logger(), resources.Metrics())
 		Expect(err).ToNot(HaveOccurred())
 	})
 

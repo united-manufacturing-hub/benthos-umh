@@ -38,10 +38,11 @@ require (
 	github.com/grid-x/modbus v0.0.0-20250312115347-d1d8b421f52b
 	github.com/hashicorp/golang-lru v0.5.4
 	github.com/kaptinlin/jsonschema v0.4.6
-	github.com/pierrec/lz4/v4 v4.1.22
 	github.com/redpanda-data/benthos/v4 v4.49.0
 	github.com/redpanda-data/connect/public/bundle/free/v4 v4.49.1
 	github.com/robinson/gos7 v0.0.0-20241205073040-7ea1d6fb9d20
+	github.com/testcontainers/testcontainers-go v0.37.0
+	github.com/testcontainers/testcontainers-go/modules/redpanda v0.37.0
 	github.com/twmb/franz-go v1.18.1
 	github.com/twmb/franz-go/pkg/kadm v1.15.0
 	golang.org/x/crypto v0.37.0
@@ -331,6 +332,7 @@ require (
 	github.com/pebbe/zmq4 v1.3.0 // indirect
 	github.com/pgvector/pgvector-go v0.3.0 // indirect
 	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
+	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/pinecone-io/go-pinecone v1.1.1 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
@@ -371,8 +373,6 @@ require (
 	github.com/sourcegraph/conc v0.3.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/stretchr/testify v1.10.0 // indirect
-	github.com/testcontainers/testcontainers-go v0.37.0 // indirect
-	github.com/testcontainers/testcontainers-go/modules/redpanda v0.37.0 // indirect
 	github.com/tetratelabs/wazero v1.9.0 // indirect
 	github.com/tilinna/z85 v1.0.0 // indirect
 	github.com/timeplus-io/proton-go-driver/v2 v2.0.19 // indirect
