@@ -17,7 +17,6 @@ package stream_processor_plugin
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"sync"
 
@@ -76,7 +75,7 @@ func NewObjectPools(sourceNames []string, logger *service.Logger) *ObjectPools {
 
 	// Initialize byte buffer pool with pointer to avoid allocations
 	pools.byteBufferPool.New = func() interface{} {
-		buf := make([]byte, 0, 256) // Pre-allocate 256 bytes for typical JSON payloads
+		buf := make([]byte, 0, DefaultByteBufferSize) // Pre-allocate for typical JSON payloads
 		return &buf
 	}
 
@@ -88,13 +87,13 @@ func NewObjectPools(sourceNames []string, logger *service.Logger) *ObjectPools {
 	// Initialize JavaScript runtime pool
 	pools.jsRuntimePool.New = func() interface{} {
 		runtime := goja.New()
-		pools.configureRuntime(runtime)
+		ConfigureJSRuntime(runtime, logger)
 		return runtime
 	}
 
 	// Initialize JSON encoder pool
 	pools.jsonEncoderPool.New = func() interface{} {
-		buf := make([]byte, 0, 256)
+		buf := make([]byte, 0, DefaultByteBufferSize)
 		return json.NewEncoder(bytes.NewBuffer(buf))
 	}
 
@@ -104,44 +103,6 @@ func NewObjectPools(sourceNames []string, logger *service.Logger) *ObjectPools {
 	}
 
 	return pools
-}
-
-// configureRuntime sets up a Goja runtime with security constraints
-func (p *ObjectPools) configureRuntime(runtime *goja.Runtime) {
-	// Set maximum call stack size to prevent stack overflow from deep recursion
-	runtime.SetMaxCallStackSize(1000)
-
-	// Disable dangerous globals
-	dangerousGlobals := []string{
-		"require", "module", "exports", "process", "__dirname", "__filename",
-		"global", "globalThis", "Function", "eval", "console",
-		"setTimeout", "setInterval", "setImmediate", "clearTimeout", "clearInterval", "clearImmediate",
-		"__proto__", "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__", "constructor",
-		"defineProperty", "getOwnPropertyDescriptor", "getPrototypeOf", "setPrototypeOf",
-		"escape", "unescape", "import", "importScripts",
-	}
-
-	// Create a function that explains why APIs are disabled
-	securityBlocker := func(apiName string) func(goja.FunctionCall) goja.Value {
-		return func(call goja.FunctionCall) goja.Value {
-			// Log the security violation
-			if p.logger != nil {
-				p.logger.Warnf("Security violation: attempted to call disabled function '%s'", apiName)
-			}
-			// Throw a TypeError to stop execution
-			panic(runtime.NewTypeError(fmt.Sprintf("'%s' is disabled for security reasons in this sandboxed environment", apiName)))
-		}
-	}
-
-	// Replace dangerous global objects with security blocker functions
-	for _, global := range dangerousGlobals {
-		if err := runtime.Set(global, securityBlocker(global)); err != nil {
-			// Log warning but continue - this is security hardening, not critical
-			if p.logger != nil {
-				p.logger.Warnf("Failed to disable dangerous global '%s': %v", global, err)
-			}
-		}
-	}
 }
 
 // GetMetadataMap gets a metadata map from the pool
@@ -182,7 +143,7 @@ func (p *ObjectPools) GetByteBuffer() []byte {
 // PutByteBuffer returns a byte buffer to the pool
 func (p *ObjectPools) PutByteBuffer(buf []byte) {
 	// Only pool buffers that aren't too large to prevent memory bloat
-	if cap(buf) <= 4096 {
+	if cap(buf) <= MaxPooledBufferSize {
 		p.byteBufferPool.Put(&buf)
 	}
 }
@@ -197,7 +158,7 @@ func (p *ObjectPools) GetStringBuilder() *strings.Builder {
 // PutStringBuilder returns a string builder to the pool
 func (p *ObjectPools) PutStringBuilder(sb *strings.Builder) {
 	// Only pool builders that aren't too large
-	if sb.Cap() <= 1024 {
+	if sb.Cap() <= MaxPooledStringBuilderSize {
 		p.stringBuilderPool.Put(sb)
 	}
 }

@@ -177,7 +177,7 @@ var _ = Describe("ObjectPools Coverage Tests", func() {
 			Expect(runtime).ToNot(BeNil())
 
 			// Configure runtime should work without errors
-			pools.configureRuntime(runtime)
+			ConfigureJSRuntime(runtime, pools.logger)
 
 			// Verify that dangerous globals are replaced with security blockers
 			// The security blocker should return a TypeError when called

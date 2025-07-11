@@ -70,108 +70,11 @@ func NewJSEngine(logger *service.Logger, sourceNames []string, pools *ObjectPool
 		sourceNames:           sourceNames,
 	}
 
-	// Configure runtimes
-	engine.configureRuntime(engine.staticRuntime)
-	engine.configureRuntime(engine.dynamicRuntime)
+	// Configure runtimes using shared security configuration
+	ConfigureJSRuntime(engine.staticRuntime, logger)
+	ConfigureJSRuntime(engine.dynamicRuntime, logger)
 
 	return engine
-}
-
-// Disable dangerous globals
-var dangerousGlobals = []string{
-	// ===== CODE EXECUTION - CRITICAL SECURITY RISK =====
-	"eval",     // Direct code evaluation - MUST block for security
-	"Function", // Function constructor (can execute strings as code)
-
-	// ===== MODULE SYSTEM (Node.js specific - may not exist in Goja) =====
-	"require",    // Node.js module loader
-	"module",     // Current module object
-	"exports",    // Module exports object
-	"__dirname",  // Current directory path
-	"__filename", // Current file path
-
-	// ===== GLOBAL SCOPE ACCESS =====
-	"global",     // Node.js global object
-	"globalThis", // ES2020 universal global object reference
-
-	// ===== PROCESS AND ENVIRONMENT (Node.js specific) =====
-	"process", // Node.js process object (exit, env vars, etc.)
-
-	// ===== ASYNC OPERATIONS (Browser/Node.js APIs) =====
-	"setTimeout",     // Schedule delayed execution
-	"setInterval",    // Schedule repeated execution
-	"setImmediate",   // Schedule immediate execution (Node.js)
-	"clearTimeout",   // Clear scheduled timeout
-	"clearInterval",  // Clear scheduled interval
-	"clearImmediate", // Clear scheduled immediate (Node.js)
-
-	// ===== I/O AND DEBUGGING =====
-	"console", // Console output (already in your built-ins, consider if you want it)
-
-	// ===== PROTOTYPE MANIPULATION - SANDBOX ESCAPE RISKS =====
-	"__proto__",        // Prototype chain access (major security risk)
-	"__defineGetter__", // Define property getters (deprecated)
-	"__defineSetter__", // Define property setters (deprecated)
-	"__lookupGetter__", // Lookup property getters (deprecated)
-	"__lookupSetter__", // Lookup property setters (deprecated)
-
-	// ===== IMPORT/DYNAMIC LOADING (ES6+ features) =====
-	"import",        // Dynamic import (ES2020)
-	"importScripts", // Web Worker script import (Browser API)
-
-	// ===== REFLECTION APIS THAT COULD BE DANGEROUS =====
-	// Note: These are legitimate ES6 features but could be used for sandbox escapes
-	"Reflect", // ES6 Reflect API - consider if you need this
-	"Proxy",   // ES6 Proxy API - can intercept operations, consider security implications
-
-	// ===== REMOVED FROM YOUR ORIGINAL LIST =====
-	// These are commented out because they're either:
-	// 1. Legitimate built-ins you probably want to keep
-	// 2. Property names rather than global identifiers
-	// 3. Not actual global variables
-
-	// "constructor",      // This is a property, not a global - removing
-	// "defineProperty",   // This would be Object.defineProperty - not a global
-	// "getOwnPropertyDescriptor", // This would be Object.getOwnPropertyDescriptor - not a global
-	// "getPrototypeOf",   // This would be Object.getPrototypeOf - not a global
-	// "setPrototypeOf",   // This would be Object.setPrototypeOf - not a global
-	// "escape",           // Legitimate ES5.1 built-in, deprecated but not dangerous
-	// "unescape",         // Legitimate ES5.1 built-in, deprecated but not dangerous
-}
-
-// configureRuntime sets up a Goja runtime with security constraints
-//
-// Security measures:
-// - Removes eval() and Function() constructor to prevent code injection
-// - Sets maximum call stack size to prevent stack overflow from deep recursion
-// - Execution timeout (5s) is handled in executeExpression() to prevent infinite loops
-//
-// Note: Goja already provides a sandboxed environment without Node.js/browser APIs
-func (e *JSEngine) configureRuntime(runtime *goja.Runtime) {
-	// Set maximum call stack size to prevent stack overflow from deep recursion
-	runtime.SetMaxCallStackSize(1000)
-
-	// Create a function that explains why APIs are disabled
-	securityBlocker := func(apiName string) func(goja.FunctionCall) goja.Value {
-		return func(call goja.FunctionCall) goja.Value {
-			// Log the security violation
-			if e.logger != nil {
-				e.logger.Warnf("Security violation: attempted to call disabled function '%s'", apiName)
-			}
-			// Throw a TypeError to stop execution
-			panic(runtime.NewTypeError(fmt.Sprintf("'%s' is disabled for security reasons in this sandboxed environment", apiName)))
-		}
-	}
-
-	// Replace dangerous global objects with security blocker functions
-	for _, global := range dangerousGlobals {
-		if err := runtime.Set(global, securityBlocker(global)); err != nil {
-			// Log warning but continue - this is security hardening, not critical
-			e.logger.Warnf("Failed to disable dangerous global '%s': %v", global, err)
-		}
-	}
-
-	// Built-in safe objects (Math, JSON, Date, etc.) are available by default
 }
 
 // ValidateExpression validates a JavaScript expression syntax
@@ -229,9 +132,7 @@ func (e *JSEngine) EvaluateStatic(expression string) JSExecutionResult {
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)
-		if duration > 10*time.Millisecond {
-			e.logger.Warnf("Slow JavaScript execution: %s took %v", expression, duration)
-		}
+		LogSlowExecution(e.logger, expression, duration)
 	}()
 
 	// Compile expression if not already compiled
@@ -285,9 +186,7 @@ func (e *JSEngine) EvaluateDynamic(expression string, variables map[string]inter
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)
-		if duration > 10*time.Millisecond {
-			e.logger.Warnf("Slow JavaScript execution: %s took %v", expression, duration)
-		}
+		LogSlowExecution(e.logger, expression, duration)
 	}()
 
 	// Compile expression if not already compiled
@@ -472,9 +371,7 @@ func (e *JSEngine) EvaluateStaticPrecompiled(expression string) JSExecutionResul
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)
-		if duration > 10*time.Millisecond {
-			e.logger.Warnf("Slow JavaScript execution: %s took %v", expression, duration)
-		}
+		LogSlowExecution(e.logger, expression, duration)
 	}()
 
 	// Get pre-compiled program
@@ -519,9 +416,7 @@ func (e *JSEngine) EvaluateDynamicPrecompiled(expression string, variables map[s
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)
-		if duration > 10*time.Millisecond {
-			e.logger.Warnf("Slow JavaScript execution: %s took %v", expression, duration)
-		}
+		LogSlowExecution(e.logger, expression, duration)
 	}()
 
 	// Get pre-compiled program
