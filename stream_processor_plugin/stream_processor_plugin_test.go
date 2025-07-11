@@ -17,6 +17,8 @@ package stream_processor_plugin
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	config2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
 )
 
 var _ = Describe("StreamProcessor", func() {
@@ -30,7 +32,7 @@ var _ = Describe("StreamProcessor", func() {
 				Sources:     map[string]string{"press": "test.source"},
 			}
 
-			err := validateConfig(config)
+			err := config2.validateConfig(config)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("unsupported mode"))
 		})
@@ -43,7 +45,7 @@ var _ = Describe("StreamProcessor", func() {
 				Sources:     map[string]string{"press": "test.source"},
 			}
 
-			err := validateConfig(config)
+			err := config2.validateConfig(config)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("model name is required"))
 		})
@@ -56,7 +58,7 @@ var _ = Describe("StreamProcessor", func() {
 				Sources:     map[string]string{"press": "test.source"},
 			}
 
-			err := validateConfig(config)
+			err := config2.validateConfig(config)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("model version is required"))
 		})
@@ -69,7 +71,7 @@ var _ = Describe("StreamProcessor", func() {
 				Sources:     map[string]string{"press": "test.source"},
 			}
 
-			err := validateConfig(config)
+			err := config2.validateConfig(config)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("output_topic is required"))
 		})
@@ -82,7 +84,7 @@ var _ = Describe("StreamProcessor", func() {
 				Sources:     map[string]string{},
 			}
 
-			err := validateConfig(config)
+			err := config2.validateConfig(config)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("at least one source mapping is required"))
 		})
@@ -95,13 +97,13 @@ var _ = Describe("StreamProcessor", func() {
 				Sources:     map[string]string{"press": "test.source"},
 			}
 
-			err := validateConfig(config)
+			err := config2.validateConfig(config)
 			Expect(err).ToNot(HaveOccurred())
 		})
 	})
 
 	Describe("Static Mapping Detection", func() {
-		var detector *StaticDetector
+		var detector *js_engine.StaticDetector
 
 		BeforeEach(func() {
 			sources := map[string]string{
@@ -109,7 +111,7 @@ var _ = Describe("StreamProcessor", func() {
 				"tF":    "topic2",
 				"r":     "topic3",
 			}
-			detector = NewStaticDetector(sources)
+			detector = js_engine.NewStaticDetector(sources)
 		})
 
 		It("should identify static string constants", func() {
@@ -168,7 +170,7 @@ var _ = Describe("StreamProcessor", func() {
 				"serialNumber": `"SN-123"`,
 			}
 
-			result := flattenMappings(input)
+			result := FlattenMappings(input)
 			Expect(result).To(HaveKeyWithValue("pressure", "press + 4"))
 			Expect(result).To(HaveKeyWithValue("temperature", "tF * 2"))
 			Expect(result).To(HaveKeyWithValue("serialNumber", `"SN-123"`))
@@ -183,7 +185,7 @@ var _ = Describe("StreamProcessor", func() {
 				"serialNumber": `"SN-123"`,
 			}
 
-			result := flattenMappings(input)
+			result := FlattenMappings(input)
 			Expect(result).To(HaveKeyWithValue("motor.rpm", "press / 4"))
 			Expect(result).To(HaveKeyWithValue("motor.temperature", "tF + 273.15"))
 			Expect(result).To(HaveKeyWithValue("serialNumber", `"SN-123"`))
@@ -201,7 +203,7 @@ var _ = Describe("StreamProcessor", func() {
 				},
 			}
 
-			result := flattenMappings(input)
+			result := FlattenMappings(input)
 			Expect(result).To(HaveKeyWithValue("device.motor.axis.x", "press"))
 			Expect(result).To(HaveKeyWithValue("device.motor.axis.y", "tF"))
 		})
@@ -220,7 +222,7 @@ var _ = Describe("StreamProcessor", func() {
 				},
 			}
 
-			err := analyzeMappingsWithDetection(&config)
+			err := js_engine.analyzeMappingsWithDetection(&config)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(config.StaticMappings).To(HaveKey("serialNumber"))
 			Expect(config.DynamicMappings).To(HaveKey("pressure"))
@@ -235,7 +237,7 @@ var _ = Describe("StreamProcessor", func() {
 				Mapping:     nil,
 			}
 
-			err := analyzeMappingsWithDetection(&config)
+			err := js_engine.analyzeMappingsWithDetection(&config)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(config.StaticMappings).To(BeEmpty())
 			Expect(config.DynamicMappings).To(BeEmpty())
@@ -245,9 +247,9 @@ var _ = Describe("StreamProcessor", func() {
 	Describe("Utility Functions", func() {
 		It("should check variable containment correctly", func() {
 			dependencies := []string{"press", "tF", "r"}
-			Expect(containsVariable(dependencies, "press")).To(BeTrue())
-			Expect(containsVariable(dependencies, "tF")).To(BeTrue())
-			Expect(containsVariable(dependencies, "unknown")).To(BeFalse())
+			Expect(js_engine.containsVariable(dependencies, "press")).To(BeTrue())
+			Expect(js_engine.containsVariable(dependencies, "tF")).To(BeTrue())
+			Expect(js_engine.containsVariable(dependencies, "unknown")).To(BeFalse())
 		})
 	})
 })

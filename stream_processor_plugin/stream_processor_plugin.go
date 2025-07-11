@@ -16,50 +16,17 @@ package stream_processor_plugin
 
 import (
 	"fmt"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
-
-// StreamProcessorConfig holds the configuration for the stream processor
-type StreamProcessorConfig struct {
-	Mode        string                 `json:"mode" yaml:"mode"`
-	Model       ModelConfig            `json:"model" yaml:"model"`
-	OutputTopic string                 `json:"output_topic" yaml:"output_topic"`
-	Sources     map[string]string      `json:"sources" yaml:"sources"`
-	Mapping     map[string]interface{} `json:"mapping" yaml:"mapping"`
-
-	// Pre-analyzed mappings for runtime efficiency
-	StaticMappings  map[string]MappingInfo `json:"-" yaml:"-"`
-	DynamicMappings map[string]MappingInfo `json:"-" yaml:"-"`
-}
-
-// ModelConfig defines the model name and version
-type ModelConfig struct {
-	Name    string `json:"name" yaml:"name"`
-	Version string `json:"version" yaml:"version"`
-}
-
-// MappingType defines the type of mapping (static or dynamic)
-type MappingType int
-
-const (
-	StaticMapping  MappingType = iota // No source variable dependencies
-	DynamicMapping                    // References one or more source variables
-)
-
-// MappingInfo contains information about a mapping
-type MappingInfo struct {
-	VirtualPath  string
-	Expression   string
-	Type         MappingType
-	Dependencies []string // Source variables this mapping depends on
-}
 
 func init() {
 	spec := service.NewConfigSpec().
 		Version("1.0.0").
 		Summary("A processor for collecting timeseries data from multiple UNS sources and generating transformed messages").
-		Description(`The stream_processor is a specialized Benthos processor designed to collect timeseries data from multiple UNS sources, 
+		Description(`The stream_processor is a specialized Benthos processor designed to collect timeseries data from multiple UNS sources,
 maintain state for variable mappings, and generate transformed messages using JavaScript expressions. It operates exclusively with UNS input/output.
 
 The processor implements dependency-based evaluation:
@@ -138,23 +105,23 @@ Where data_contract is "_<model_name>_<model_version>" and virtual_path is the m
 				}
 			}
 
-			config := StreamProcessorConfig{
+			config := config.StreamProcessorConfig{
 				Mode:        mode,
-				Model:       ModelConfig{Name: modelName, Version: modelVersion},
+				Model:       config.ModelConfig{Name: modelName, Version: modelVersion},
 				OutputTopic: outputTopic,
 				Sources:     sources,
 				Mapping:     mapping,
 			}
 
-			return newStreamProcessor(config, mgr.Logger(), mgr.Metrics())
+			return processor.NewStreamProcessor(config, mgr.Logger(), mgr.Metrics())
 		})
 	if err != nil {
 		panic(err)
 	}
 }
 
-// flattenMappings flattens nested mapping structures into dot notation
-func flattenMappings(mapping map[string]interface{}) map[string]string {
+// FlattenMappings flattens nested mapping structures into dot notation
+func FlattenMappings(mapping map[string]interface{}) map[string]string {
 	result := make(map[string]string)
 	flattenHelper(mapping, "", result)
 	return result

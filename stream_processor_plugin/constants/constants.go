@@ -12,14 +12,48 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package stream_processor_plugin
+package constants
 
-import (
-	"fmt"
-	"time"
+import "time"
 
-	"github.com/dop251/goja"
-	"github.com/redpanda-data/benthos/v4/public/service"
+// Processing constants
+const (
+	// Default processing mode
+	DefaultMode = "timeseries"
+
+	// Memory allocation constants
+	DefaultMetadataMapSize   = 8   // Pre-allocate for common metadata count
+	DefaultVariableMapSize   = 16  // Pre-allocate for common variable count
+	DefaultStringBuilderSize = 256 // For topic construction
+
+	// JavaScript execution limits
+	DefaultJSTimeout = 5 * time.Second // Timeout for JS execution
+	MaxStringLength  = 1000            // Limit string length to prevent memory exhaustion
+	MaxInputLength   = 10000           // Max input length for fuzz testing
+	MaxTopicLength   = 1000            // Max topic length for fuzz testing
+
+	// Topic construction constants
+	TopicSeparator     = "."
+	DataContractPrefix = "_"
+
+	// Metadata keys
+	UMHTopicKey = "umh_topic"
+
+	// Error messages
+	ErrMissingMode           = "mode is required"
+	ErrUnsupportedMode       = "unsupported mode: %s (only 'timeseries' is supported)"
+	ErrMissingOutputTopic    = "output_topic is required"
+	ErrMissingModelName      = "model name is required"
+	ErrMissingModelVersion   = "model version is required"
+	ErrMissingSourceMappings = "at least one source mapping is required"
+	ErrMissingTimestamp      = "missing or invalid timestamp_ms"
+	ErrMissingValue          = "missing value field"
+	ErrInvalidJSON           = "invalid JSON payload: %w"
+	ErrInvalidConfiguration  = "invalid configuration: %w"
+	ErrMarshalPayload        = "failed to marshal payload: %w"
+	ErrGetPayload            = "failed to get message payload: %w"
+	ErrAnalyzeMappings       = "failed to analyze mappings: %w"
+	ErrPrecompileExpressions = "failed to pre-compile expressions: %w"
 )
 
 // Constants for JavaScript runtime configuration
@@ -93,62 +127,4 @@ var DangerousGlobals = []string{
 	// ===== DEPRECATED BUT POTENTIALLY DANGEROUS =====
 	"escape",   // Deprecated URL encoding function
 	"unescape", // Deprecated URL decoding function
-}
-
-// ConfigureJSRuntime sets up a Goja runtime with security constraints.
-//
-// This function consolidates the security configuration that was previously
-// duplicated in both JSEngine and ObjectPools. It:
-//
-// - Sets maximum call stack size to prevent stack overflow from deep recursion
-// - Disables dangerous global functions/objects that could be used for code injection
-// - Execution timeout (5s) should be handled in executeExpression() to prevent infinite loops
-//
-// Note: Goja already provides a sandboxed environment without Node.js/browser APIs,
-// but this provides additional hardening against potential escape attempts.
-func ConfigureJSRuntime(runtime *goja.Runtime, logger *service.Logger) {
-	// Set maximum call stack size to prevent stack overflow from deep recursion
-	runtime.SetMaxCallStackSize(JSCallStackSize)
-
-	// Create security blocker function
-	securityBlocker := CreateSecurityBlocker(runtime, logger)
-
-	// Replace dangerous global objects with security blocker functions
-	for _, global := range DangerousGlobals {
-		if err := runtime.Set(global, securityBlocker(global)); err != nil {
-			// Log warning but continue - this is security hardening, not critical
-			if logger != nil {
-				logger.Warnf("Failed to disable dangerous global '%s': %v", global, err)
-			}
-		}
-	}
-
-	// Built-in safe objects (Math, JSON, Date, etc.) are available by default
-}
-
-// CreateSecurityBlocker creates a security blocker function for dangerous globals.
-//
-// This function returns a closure that can be used to replace dangerous JavaScript
-// globals with functions that log security violations and throw errors when called.
-func CreateSecurityBlocker(runtime *goja.Runtime, logger *service.Logger) func(string) func(goja.FunctionCall) goja.Value {
-	return func(apiName string) func(goja.FunctionCall) goja.Value {
-		return func(call goja.FunctionCall) goja.Value {
-			// Log the security violation
-			if logger != nil {
-				logger.Warnf("Security violation: attempted to call disabled function '%s'", apiName)
-			}
-			// Throw a TypeError to stop execution
-			panic(runtime.NewTypeError(fmt.Sprintf("'%s' is disabled for security reasons in this sandboxed environment", apiName)))
-		}
-	}
-}
-
-// LogSlowExecution logs a warning if JavaScript execution takes longer than the threshold.
-//
-// This helper function consolidates the slow execution logging that was duplicated
-// across multiple methods in JSEngine.
-func LogSlowExecution(logger *service.Logger, expression string, duration time.Duration) {
-	if duration > SlowExecutionThreshold {
-		logger.Warnf("Slow JavaScript execution: %s took %v", expression, duration)
-	}
 }

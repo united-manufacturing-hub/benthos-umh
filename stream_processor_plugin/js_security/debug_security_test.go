@@ -1,7 +1,9 @@
-package stream_processor_plugin
+package js_security
 
 import (
 	"fmt"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 	"testing"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -12,8 +14,8 @@ func TestSecurityBlockerDebug(t *testing.T) {
 	resources := service.MockResources()
 
 	// Create pools and JS engine
-	pools := NewObjectPools([]string{"press"}, resources.Logger())
-	jsEngine := NewJSEngine(resources.Logger(), []string{"press"}, pools)
+	pools := pools.NewObjectPools([]string{"press"}, resources.Logger())
+	jsEngine := js_engine.NewJSEngine(resources.Logger(), []string{"press"}, pools)
 	defer func() {
 		err := jsEngine.Close()
 		if err != nil {

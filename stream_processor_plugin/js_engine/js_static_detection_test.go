@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package stream_processor_plugin
+package js_engine
 
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 )
 
 var _ = Describe("Static Detection Edge Cases", func() {
@@ -45,7 +46,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for _, expr := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(StaticMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.StaticMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(BeEmpty(), "Expression: %s", expr)
 			}
 		})
@@ -64,7 +65,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for _, expr := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(StaticMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.StaticMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(BeEmpty(), "Expression: %s", expr)
 			}
 		})
@@ -80,7 +81,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for _, expr := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(StaticMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.StaticMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(BeEmpty(), "Expression: %s", expr)
 			}
 		})
@@ -98,7 +99,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for _, expr := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(StaticMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.StaticMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(BeEmpty(), "Expression: %s", expr)
 			}
 		})
@@ -117,7 +118,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for _, expr := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(StaticMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.StaticMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(BeEmpty(), "Expression: %s", expr)
 			}
 		})
@@ -131,7 +132,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for _, expr := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(StaticMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.StaticMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(BeEmpty(), "Expression: %s", expr)
 			}
 		})
@@ -148,7 +149,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for _, expr := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(StaticMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.StaticMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(BeEmpty(), "Expression: %s", expr)
 			}
 		})
@@ -167,7 +168,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for expr, expectedDeps := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(DynamicMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.DynamicMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(ConsistOf(expectedDeps), "Expression: %s", expr)
 			}
 		})
@@ -183,7 +184,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for _, expr := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(StaticMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.StaticMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(BeEmpty(), "Expression: %s", expr)
 			}
 		})
@@ -205,7 +206,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for expr, expectedDeps := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(DynamicMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.DynamicMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(ConsistOf(expectedDeps), "Expression: %s", expr)
 			}
 		})
@@ -223,7 +224,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for _, expr := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(StaticMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.StaticMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(BeEmpty(), "Expression: %s", expr)
 			}
 		})
@@ -240,7 +241,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for expr, expectedDeps := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(DynamicMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.DynamicMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(ConsistOf(expectedDeps), "Expression: %s", expr)
 			}
 		})
@@ -255,7 +256,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for expr, expectedDeps := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(DynamicMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.DynamicMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(ConsistOf(expectedDeps), "Expression: %s", expr)
 			}
 		})
@@ -270,7 +271,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for expr, expectedDeps := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(DynamicMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.DynamicMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(ConsistOf(expectedDeps), "Expression: %s", expr)
 			}
 		})
@@ -287,7 +288,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for _, expr := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(StaticMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.StaticMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(BeEmpty(), "Expression: %s", expr)
 			}
 		})
@@ -306,7 +307,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for expr, expectedDeps := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(DynamicMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.DynamicMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(ConsistOf(expectedDeps), "Expression: %s", expr)
 			}
 		})
@@ -322,7 +323,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for _, expr := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(StaticMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.StaticMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(BeEmpty(), "Expression: %s", expr)
 			}
 		})
@@ -340,7 +341,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for expr, expectedDeps := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(DynamicMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.DynamicMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(ConsistOf(expectedDeps), "Expression: %s", expr)
 			}
 		})
@@ -355,7 +356,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for _, expr := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(StaticMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.StaticMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(BeEmpty(), "Expression: %s", expr)
 			}
 		})
@@ -374,7 +375,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for expr, expectedDeps := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(DynamicMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.DynamicMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(ConsistOf(expectedDeps), "Expression: %s", expr)
 			}
 		})
@@ -390,7 +391,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for _, expr := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(StaticMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.StaticMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(BeEmpty(), "Expression: %s", expr)
 			}
 		})
@@ -408,7 +409,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for expr, expectedDeps := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(DynamicMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.DynamicMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(ConsistOf(expectedDeps), "Expression: %s", expr)
 			}
 		})
@@ -423,7 +424,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for _, expr := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(StaticMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.StaticMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(BeEmpty(), "Expression: %s", expr)
 			}
 		})
@@ -462,7 +463,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 
 			analysis, err := detector.AnalyzeMapping(longExpr)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(analysis.Type).To(Equal(DynamicMapping))
+			Expect(analysis.Type).To(Equal(config.DynamicMapping))
 			Expect(analysis.Dependencies).To(ConsistOf("press"))
 		})
 
@@ -486,7 +487,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for expr, expectedDeps := range testCases {
 				analysis, err := specialDetector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(DynamicMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.DynamicMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(ConsistOf(expectedDeps), "Expression: %s", expr)
 			}
 		})
@@ -504,7 +505,7 @@ var _ = Describe("Static Detection Edge Cases", func() {
 			for expr, expectedDeps := range testCases {
 				analysis, err := detector.AnalyzeMapping(expr)
 				Expect(err).ToNot(HaveOccurred(), "Expression: %s", expr)
-				Expect(analysis.Type).To(Equal(DynamicMapping), "Expression: %s", expr)
+				Expect(analysis.Type).To(Equal(config.DynamicMapping), "Expression: %s", expr)
 				Expect(analysis.Dependencies).To(ConsistOf(expectedDeps), "Expression: %s", expr)
 			}
 		})

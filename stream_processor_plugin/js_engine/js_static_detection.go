@@ -12,10 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package stream_processor_plugin
+package js_engine
 
 import (
 	"fmt"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 	"slices"
 
 	"github.com/dop251/goja/ast"
@@ -39,7 +41,7 @@ func NewStaticDetector(sources map[string]string) *StaticDetector {
 // MappingAnalysis contains the result of analyzing a mapping expression
 type MappingAnalysis struct {
 	Expression   string
-	Type         MappingType
+	Type         config.MappingType
 	Dependencies []string
 }
 
@@ -50,9 +52,9 @@ func (sd *StaticDetector) AnalyzeMapping(expression string) (MappingAnalysis, er
 		return MappingAnalysis{}, fmt.Errorf("invalid JavaScript expression '%s': %w", expression, err)
 	}
 
-	mappingType := DynamicMapping
+	mappingType := config.DynamicMapping
 	if isStatic {
-		mappingType = StaticMapping
+		mappingType = config.StaticMapping
 	}
 
 	return MappingAnalysis{
@@ -265,36 +267,36 @@ func (sd *StaticDetector) deduplicateStrings(slice []string) []string {
 	return result
 }
 
-// analyzeMappingsWithDetection performs the actual mapping analysis using AST parsing
-func analyzeMappingsWithDetection(config *StreamProcessorConfig) error {
-	config.StaticMappings = make(map[string]MappingInfo)
-	config.DynamicMappings = make(map[string]MappingInfo)
+// AnalyzeMappingsWithDetection performs the actual mapping analysis using AST parsing
+func AnalyzeMappingsWithDetection(cfg *config.StreamProcessorConfig) error {
+	cfg.StaticMappings = make(map[string]config.MappingInfo)
+	cfg.DynamicMappings = make(map[string]config.MappingInfo)
 
-	if config.Mapping == nil {
+	if cfg.Mapping == nil {
 		return nil
 	}
 
-	detector := NewStaticDetector(config.Sources)
+	detector := NewStaticDetector(cfg.Sources)
 
 	// Flatten nested mappings and analyze each
-	flattened := flattenMappings(config.Mapping)
+	flattened := stream_processor_plugin.FlattenMappings(cfg.Mapping)
 	for virtualPath, expression := range flattened {
 		analysis, err := detector.AnalyzeMapping(expression)
 		if err != nil {
 			return fmt.Errorf("failed to analyze mapping '%s': %w", virtualPath, err)
 		}
 
-		mappingInfo := MappingInfo{
+		mappingInfo := config.MappingInfo{
 			VirtualPath:  virtualPath,
 			Expression:   expression,
 			Type:         analysis.Type,
 			Dependencies: analysis.Dependencies,
 		}
 
-		if analysis.Type == StaticMapping {
-			config.StaticMappings[virtualPath] = mappingInfo
+		if analysis.Type == config.StaticMapping {
+			cfg.StaticMappings[virtualPath] = mappingInfo
 		} else {
-			config.DynamicMappings[virtualPath] = mappingInfo
+			cfg.DynamicMappings[virtualPath] = mappingInfo
 		}
 	}
 

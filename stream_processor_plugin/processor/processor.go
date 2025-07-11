@@ -12,12 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package stream_processor_plugin
+package processor
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
+	metrics2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/metrics"
+	pools2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/state"
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -25,51 +30,51 @@ import (
 
 // StreamProcessor is the main processor implementation
 type StreamProcessor struct {
-	config StreamProcessorConfig
+	config config.StreamProcessorConfig
 	logger *service.Logger
 
 	// State management
-	stateManager *StateManager
+	stateManager *state.StateManager
 
 	// JavaScript engine for expression evaluation
-	jsEngine *JSEngine
+	jsEngine *js_engine.JSEngine
 
 	// Metrics
-	metrics *ProcessorMetrics
+	metrics *metrics2.ProcessorMetrics
 
 	// Object pools for memory optimization
-	pools *ObjectPools
+	pools *pools2.ObjectPools
 
 	// Note: Removed worker pool - sequential processing is simpler and more reliable
 }
 
-// newStreamProcessor creates a new StreamProcessor instance
-func newStreamProcessor(config StreamProcessorConfig, logger *service.Logger, metrics *service.Metrics) (*StreamProcessor, error) {
+// NewStreamProcessor creates a new StreamProcessor instance
+func NewStreamProcessor(cfg config.StreamProcessorConfig, logger *service.Logger, metrics *service.Metrics) (*StreamProcessor, error) {
 	// Validate configuration
-	if err := validateConfig(config); err != nil {
+	if err := config.ValidateConfig(cfg); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	// Analyze mappings to identify static vs dynamic
-	if err := analyzeMappingsWithDetection(&config); err != nil {
+	if err := js_engine.AnalyzeMappingsWithDetection(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to analyze mappings: %w", err)
 	}
 
 	// Extract source names from configuration
-	sourceNames := make([]string, 0, len(config.Sources))
-	for sourceName := range config.Sources {
+	sourceNames := make([]string, 0, len(cfg.Sources))
+	for sourceName := range cfg.Sources {
 		sourceNames = append(sourceNames, sourceName)
 	}
 
 	// Create pools first as they're needed by JSEngine
-	pools := NewObjectPools(sourceNames, logger)
+	pools := pools2.NewObjectPools(sourceNames, logger)
 
 	processor := &StreamProcessor{
-		config:       config,
+		config:       cfg,
 		logger:       logger,
-		stateManager: NewStateManager(&config),
-		jsEngine:     NewJSEngine(logger, sourceNames, pools),
-		metrics:      NewProcessorMetrics(metrics),
+		stateManager: state.NewStateManager(&cfg),
+		jsEngine:     js_engine.NewJSEngine(logger, sourceNames, pools),
+		metrics:      metrics2.NewProcessorMetrics(metrics),
 		pools:        pools,
 	}
 
@@ -80,7 +85,7 @@ func newStreamProcessor(config StreamProcessorConfig, logger *service.Logger, me
 
 	// Log configuration analysis results
 	logger.Infof("Stream processor initialized with %d static mappings and %d dynamic mappings",
-		len(config.StaticMappings), len(config.DynamicMappings))
+		len(cfg.StaticMappings), len(cfg.DynamicMappings))
 
 	return processor, nil
 }
@@ -277,7 +282,7 @@ func (p *StreamProcessor) processDynamicMappings(metadata map[string]string, upd
 	}
 
 	// Filter mappings that have all dependencies satisfied
-	executableMappings := make([]MappingInfo, 0, len(dependentMappings))
+	executableMappings := make([]config.MappingInfo, 0, len(dependentMappings))
 	for _, mapping := range dependentMappings {
 		if allDeps, _ := p.checkAllDependencies(mapping.Dependencies); allDeps {
 			executableMappings = append(executableMappings, mapping)
