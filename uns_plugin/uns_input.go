@@ -45,7 +45,7 @@ type UnsInput struct {
 // newUnsInput creates a new UnsInput instance from Benthos configuration
 func newUnsInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
 	// Parse configuration
-	config, err := ParseFromBenthos(conf)
+	config, err := ParseFromBenthos(conf, mgr.Logger())
 	if err != nil {
 		return nil, err
 	}
@@ -64,9 +64,9 @@ func NewUnsInput(client MessageConsumer, config UnsInputConfig, logger *service.
 	metrics := NewUnsInputMetrics(metricsProvider)
 
 	// Create a message processor
-	processor, err := NewMessageProcessor(config.umhTopic, metrics)
+	processor, err := NewMessageProcessor(config.umhTopics, metrics)
 	if err != nil {
-		return nil, fmt.Errorf("error creating message processor: %v", err)
+		return nil, fmt.Errorf("failed to create message processor: %v", err)
 	}
 
 	// Create the UnsInput
@@ -81,6 +81,9 @@ func NewUnsInput(client MessageConsumer, config UnsInputConfig, logger *service.
 	// Create the ack function once
 	input.ackFunction = input.createAckFunction()
 
+	logger.Infof("Starting UNS input plugin with broker: %s, kafka_topic: %s, umh_topics: %v",
+		input.config.brokerAddress, input.config.inputKafkaTopic, input.config.umhTopics)
+
 	return input, nil
 }
 
@@ -92,8 +95,8 @@ func (u *UnsInput) Connect(ctx context.Context) error {
 		u.client = NewConsumerClient()
 	}
 
-	u.log.Infof("creating kafka client with plugin config broker: %v, input_kafka_topic: %v, topic: %v",
-		u.config.brokerAddress, u.config.inputKafkaTopic, u.config.umhTopic)
+	u.log.Infof("creating kafka client with plugin config broker: %v, input_kafka_topic: %v, topics: %v",
+		u.config.brokerAddress, u.config.inputKafkaTopic, u.config.umhTopics)
 
 	connectStart := time.Now()
 	err := u.client.Connect(

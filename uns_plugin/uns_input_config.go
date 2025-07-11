@@ -40,7 +40,7 @@ const (
 
 // UnsInputConfig holds the configuration for the UNS input plugin
 type UnsInputConfig struct {
-	umhTopic        string
+	umhTopics       []string
 	inputKafkaTopic string
 	brokerAddress   string
 	consumerGroup   string
@@ -49,7 +49,7 @@ type UnsInputConfig struct {
 // NewDefaultUnsInputConfig creates a new input config with default values
 func NewDefaultUnsInputConfig() UnsInputConfig {
 	return UnsInputConfig{
-		umhTopic:        defaultTopicKey,
+		umhTopics:       []string{defaultTopicKey},
 		inputKafkaTopic: defaultInputKafkaTopic,
 		brokerAddress:   defaultBrokerAddress,
 		consumerGroup:   defaultConsumerGroup,
@@ -57,23 +57,57 @@ func NewDefaultUnsInputConfig() UnsInputConfig {
 }
 
 // ParseFromBenthos parses configuration from Benthos config into UnsInputConfig
-func ParseFromBenthos(conf *service.ParsedConfig) (UnsInputConfig, error) {
+func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsInputConfig, error) {
 	config := NewDefaultUnsInputConfig()
 
-	// Parse umh_topic (preferred) or topic (deprecated) - regex pattern for message key filtering
-	if conf.Contains("umh_topic") {
+	// Check that only one of umh_topic, umh_topics, or topic is provided
+	hasUmhTopic := conf.Contains("umh_topic")
+	hasUmhTopics := conf.Contains("umh_topics")
+	hasDeprecatedTopic := conf.Contains("topic")
+
+	// Count how many topic fields are provided
+	topicFieldCount := 0
+	if hasUmhTopic {
+		topicFieldCount++
+	}
+	if hasUmhTopics {
+		topicFieldCount++
+	}
+	if hasDeprecatedTopic {
+		topicFieldCount++
+	}
+
+	if topicFieldCount > 1 {
+		return config, fmt.Errorf("only one of 'umh_topic', 'umh_topics', or 'topic' can be specified")
+	}
+
+	// Parse umh_topics (preferred) - list of regex patterns for message key filtering
+	if hasUmhTopics {
+		topics, err := conf.FieldStringList("umh_topics")
+		if err != nil {
+			return config, fmt.Errorf("error while parsing the 'umh_topics' field from the plugin's config: %v", err)
+		}
+		if len(topics) == 0 {
+			return config, fmt.Errorf("'umh_topics' field cannot be empty")
+		}
+		config.umhTopics = topics
+	} else if hasUmhTopic {
+		// Parse umh_topic (single pattern) - convert to list internally
 		topic, err := conf.FieldString("umh_topic")
 		if err != nil {
 			return config, fmt.Errorf("error while parsing the 'umh_topic' field from the plugin's config: %v", err)
 		}
-		config.umhTopic = topic
-	} else if conf.Contains("topic") {
+		config.umhTopics = []string{topic}
+	} else if hasDeprecatedTopic {
+		// Parse topic (deprecated) - convert to list internally
 		topic, err := conf.FieldString("topic")
 		if err != nil {
 			return config, fmt.Errorf("error while parsing the 'topic' field from the plugin's config: %v", err)
 		}
-		config.umhTopic = topic
-		// TODO: Add deprecation warning log here when logger is available
+		config.umhTopics = []string{topic}
+		if logger != nil {
+			logger.Warnf("'topic' field is deprecated. Please use 'umh_topic' instead.")
+		}
 	}
 
 	// Parse kafka_topic (the actual Kafka topic to consume from)
@@ -114,7 +148,7 @@ func RegisterConfigSpec() *service.ConfigSpec {
 	The uns_plugin input consumes messages from the United Manufacturing Hub's kafka messaging system.
 	This input plugin is optimized for communication with UMH core components and handles the complexities of Kafka for you.
 
-	All messages are read from the uns topic 'umh.messages' by default, with messages being filtered by the regular expression specified in the plugin config field 'umh_topic'. This becomes crucial for streaming out the data of interest from the uns topic.
+	All messages are read from the uns topic 'umh.messages' by default, with messages being filtered by the regular expression(s) specified in the plugin config field 'umh_topic' or 'umh_topics'. This becomes crucial for streaming out the data of interest from the uns topic.
 
 	By default, the plugin connects to the Kafka broker at localhost:9092 with the consumer group id specified in the plugin config. The consumer group id is usually derived from the UMH workloads like protocol converter names.
 		`).
@@ -125,13 +159,27 @@ func RegisterConfigSpec() *service.ConfigSpec {
 	The topic should follow the UMH naming convention: umh.v1.enterprise.site.area.tag
 	(e.g., 'umh.v1.acme.berlin.assembly.temperature')
 	(e.g., 'umh.v1.acme.berlin.+' # regex to match all areas and tags under brelin site )
+
+	Cannot be used together with 'umh_topics'.
 		`).
 			Example("umh.v1.acme.berlin.assembly.temperature").
 			Example(`umh\.v1\..+`).
 			Default(defaultTopicKey)).
+		Field(service.NewStringListField("umh_topics").
+			Description(`
+	List of keys used to filter the messages. Each value in the 'umh_topics' list will be used to compare against the message key in kafka. The 'umh_topics' field allows regular expressions which should be compatible with RE2 regex engine.
+
+	The topics should follow the UMH naming convention: umh.v1.enterprise.site.area.tag
+	(e.g., ['umh.v1.acme.berlin.assembly.temperature', 'umh.v1.acme.munich.packaging.pressure'])
+	(e.g., ['umh.v1.acme.berlin.+', 'umh.v1.acme.munich.+'] # regex to match all areas and tags under both sites)
+
+	Cannot be used together with 'umh_topic'.
+		`).
+			Example([]string{"umh.v1.acme.berlin.assembly.temperature", "umh.v1.acme.munich.packaging.pressure"}).
+			Example([]string{`umh\.v1\.acme\.berlin\..+`, `umh\.v1\.acme\.munich\..+`})).
 		Field(service.NewStringField("topic").
 			Description(`
-	[DEPRECATED] Use 'umh_topic' instead. Key used to filter the messages for backwards compatibility.
+	[DEPRECATED] Use 'umh_topic' or 'umh_topics' instead. Key used to filter the messages for backwards compatibility.
 		`).
 			Example("umh.v1.acme.berlin.assembly.temperature").
 			Example(`umh\.v1\..+`).

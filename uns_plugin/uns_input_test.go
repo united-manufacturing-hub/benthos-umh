@@ -146,7 +146,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 	)
 
 	inputConfig := UnsInputConfig{
-		umhTopic:        defaultTopicKey,
+		umhTopics:       []string{defaultTopicKey},
 		inputKafkaTopic: defaultInputKafkaTopic,
 		brokerAddress:   defaultBrokerAddress,
 		consumerGroup:   defaultConsumerGroup,
@@ -334,7 +334,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 			When("specific topic filter is applied", func() {
 				BeforeEach(func() {
 					inputConfig := UnsInputConfig{
-						umhTopic:        "umh\\.v1\\.acme\\.berlin\\.assembly\\.temperature",
+						umhTopics:       []string{"umh\\.v1\\.acme\\.berlin\\.assembly\\.temperature"},
 						inputKafkaTopic: defaultInputKafkaTopic,
 						brokerAddress:   defaultBrokerAddress,
 						consumerGroup:   defaultConsumerGroup,
@@ -354,6 +354,90 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 					kafka_key, ok := batch[0].MetaGet("kafka_msg_key")
 					Expect(kafka_key).To(Equal("umh.v1.acme.berlin.assembly.temperature"))
 					Expect(ok).To(BeTrue())
+				})
+			})
+
+			When("multiple topic filters are applied", func() {
+				BeforeEach(func() {
+					inputConfig := UnsInputConfig{
+						umhTopics: []string{
+							"umh\\.v1\\.acme\\.berlin\\.assembly\\.temperature",
+							"umh\\.v1\\.acme\\.munich\\..*",
+							"umh\\.v1\\.example\\..*\\.status",
+						},
+						inputKafkaTopic: defaultInputKafkaTopic,
+						brokerAddress:   defaultBrokerAddress,
+						consumerGroup:   defaultConsumerGroup,
+					}
+					resources = service.MockResources()
+					var err error
+					inputPlugin, err = NewUnsInput(mockClient, inputConfig, resources.Logger(), resources.Metrics())
+					Expect(err).To(BeNil())
+					unsClient = inputPlugin.(*UnsInput)
+
+					// Set up mock with multiple records - some matching, some not
+					mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
+						records := []*kgo.Record{
+							{
+								Key:   []byte("umh.v1.acme.berlin.assembly.temperature"), // Matches first pattern
+								Value: []byte(`{"value": 23.5}`),
+								Topic: "umh.messages",
+							},
+							{
+								Key:   []byte("umh.v1.acme.berlin.assembly.pressure"), // Doesn't match any pattern
+								Value: []byte(`{"value": 1013.25}`),
+								Topic: "umh.messages",
+							},
+							{
+								Key:   []byte("umh.v1.acme.munich.line1.speed"), // Matches second pattern
+								Value: []byte(`{"value": 150.0}`),
+								Topic: "umh.messages",
+							},
+							{
+								Key:   []byte("umh.v1.acme.munich.line2.temperature"), // Matches second pattern
+								Value: []byte(`{"value": 45.2}`),
+								Topic: "umh.messages",
+							},
+							{
+								Key:   []byte("umh.v1.example.plant1.status"), // Matches third pattern
+								Value: []byte(`{"value": "running"}`),
+								Topic: "umh.messages",
+							},
+							{
+								Key:   []byte("umh.v1.other.plant1.temperature"), // Doesn't match any pattern
+								Value: []byte(`{"value": 25.0}`),
+								Topic: "umh.messages",
+							},
+						}
+						return &MockFetches{
+							empty:   false,
+							records: records,
+						}
+					})
+				})
+
+				It("should return only records matching any of the filters", func() {
+					batch, _, err := inputPlugin.ReadBatch(ctx)
+					Expect(err).To(BeNil())
+					Expect(batch).NotTo(BeNil())
+					Expect(len(batch)).To(Equal(4)) // 4 records should match the patterns
+
+					// Verify the matching records
+					expectedKeys := []string{
+						"umh.v1.acme.berlin.assembly.temperature",
+						"umh.v1.acme.munich.line1.speed",
+						"umh.v1.acme.munich.line2.temperature",
+						"umh.v1.example.plant1.status",
+					}
+
+					actualKeys := make([]string, len(batch))
+					for i, msg := range batch {
+						key, ok := msg.MetaGet("kafka_msg_key")
+						Expect(ok).To(BeTrue())
+						actualKeys[i] = key
+					}
+
+					Expect(actualKeys).To(ConsistOf(expectedKeys))
 				})
 			})
 		})
@@ -422,7 +506,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 		When("the topic regex is invalid", func() {
 			It("should throw an error", func() {
 				invalidInputConfig := UnsInputConfig{
-					umhTopic:        "[0-9", // Invalid regex
+					umhTopics:       []string{"[0-9"}, // Invalid regex
 					inputKafkaTopic: defaultInputKafkaTopic,
 					brokerAddress:   defaultBrokerAddress,
 					consumerGroup:   defaultConsumerGroup,
