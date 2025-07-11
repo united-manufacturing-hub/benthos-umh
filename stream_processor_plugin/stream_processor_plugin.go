@@ -105,7 +105,7 @@ Where data_contract is "_<model_name>_<model_version>" and virtual_path is the m
 				}
 			}
 
-			config := config.StreamProcessorConfig{
+			cfg := config.StreamProcessorConfig{
 				Mode:        mode,
 				Model:       config.ModelConfig{Name: modelName, Version: modelVersion},
 				OutputTopic: outputTopic,
@@ -113,35 +113,9 @@ Where data_contract is "_<model_name>_<model_version>" and virtual_path is the m
 				Mapping:     mapping,
 			}
 
-			return processor.NewStreamProcessor(config, mgr.Logger(), mgr.Metrics())
+			return processor.NewStreamProcessor(cfg, mgr.Logger(), mgr.Metrics())
 		})
 	if err != nil {
 		panic(err)
-	}
-}
-
-// FlattenMappings flattens nested mapping structures into dot notation
-func FlattenMappings(mapping map[string]interface{}) map[string]string {
-	result := make(map[string]string)
-	flattenHelper(mapping, "", result)
-	return result
-}
-
-// flattenHelper recursively flattens nested structures
-func flattenHelper(obj map[string]interface{}, prefix string, result map[string]string) {
-	for key, value := range obj {
-		path := key
-		if prefix != "" {
-			path = prefix + "." + key
-		}
-
-		switch v := value.(type) {
-		case string:
-			result[path] = v
-		case map[string]interface{}:
-			flattenHelper(v, path, result)
-		default:
-			result[path] = fmt.Sprintf("%v", v)
-		}
 	}
 }

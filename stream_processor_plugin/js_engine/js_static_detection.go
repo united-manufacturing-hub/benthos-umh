@@ -16,8 +16,8 @@ package js_engine
 
 import (
 	"fmt"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/mapping"
 	"slices"
 
 	"github.com/dop251/goja/ast"
@@ -279,7 +279,7 @@ func AnalyzeMappingsWithDetection(cfg *config.StreamProcessorConfig) error {
 	detector := NewStaticDetector(cfg.Sources)
 
 	// Flatten nested mappings and analyze each
-	flattened := stream_processor_plugin.FlattenMappings(cfg.Mapping)
+	flattened := mapping.FlattenMappings(cfg.Mapping)
 	for virtualPath, expression := range flattened {
 		analysis, err := detector.AnalyzeMapping(expression)
 		if err != nil {

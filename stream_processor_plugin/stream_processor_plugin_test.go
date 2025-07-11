@@ -25,9 +25,9 @@ var _ = Describe("StreamProcessor", func() {
 
 	Describe("Configuration Validation", func() {
 		It("should reject invalid mode", func() {
-			config := StreamProcessorConfig{
+			config := config2.StreamProcessorConfig{
 				Mode:        "invalid",
-				Model:       ModelConfig{Name: "pump", Version: "v1"},
+				Model:       config2.ModelConfig{Name: "pump", Version: "v1"},
 				OutputTopic: "test.topic",
 				Sources:     map[string]string{"press": "test.source"},
 			}
