@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 
+	"sync"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -1056,6 +1058,69 @@ var _ = Describe("Validator Logger Integration", func() {
 
 			// This should not panic
 			validator.debugf("Test message: %s", "test")
+		})
+	})
+
+	Describe("Closed Validator", func() {
+		var validator *Validator
+
+		BeforeEach(func() {
+			validator = NewValidatorWithRegistry("http://test-registry")
+		})
+
+		It("should prevent HTTP operations after Close", func() {
+			// Close the validator
+			validator.Close()
+
+			// Verify that operations requiring HTTP client fail gracefully
+			subjects, err := validator.fetchAllSubjects()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("validator is closed"))
+			Expect(subjects).To(BeNil())
+
+			// Verify that fetchLatestSchemaFromRegistry also fails gracefully
+			schema, exists, err := validator.fetchLatestSchemaFromRegistry("test-subject")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("validator is closed"))
+			Expect(exists).To(BeFalse())
+			Expect(schema).To(BeNil())
+		})
+
+		It("should allow multiple Close calls without panic", func() {
+			// Multiple Close calls should be safe
+			validator.Close()
+			validator.Close()
+			validator.Close()
+
+			// Verify validator is still closed
+			Expect(validator.isClosed()).To(BeTrue())
+		})
+
+		It("should check isClosed method", func() {
+			// Initially not closed
+			Expect(validator.isClosed()).To(BeFalse())
+
+			// After Close, should be closed
+			validator.Close()
+			Expect(validator.isClosed()).To(BeTrue())
+		})
+
+		It("should handle Close with concurrent operations", func() {
+			// Start multiple goroutines that try to close the validator
+			var wg sync.WaitGroup
+			for i := 0; i < 10; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					validator.Close()
+				}()
+			}
+
+			// Wait for all goroutines to complete
+			wg.Wait()
+
+			// Validator should be closed exactly once
+			Expect(validator.isClosed()).To(BeTrue())
 		})
 	})
 })
