@@ -203,6 +203,7 @@ dist
 
 # Cover.profile
 *.profile
+*.profile.*
 benthos-umh
 benthos
 
