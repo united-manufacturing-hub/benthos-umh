@@ -53,10 +53,11 @@ package state
 
 import (
 	"fmt"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 )
 
 // atomicVariableMap is an immutable snapshot of variables for lock-free reads
@@ -84,7 +85,7 @@ type ProcessorState struct {
 	writeMutex sync.Mutex
 
 	// Version counter for cache invalidation
-	version uint64
+	version atomic.Uint64
 }
 
 // VariableValue represents a stored variable value with metadata.
@@ -158,10 +159,10 @@ func (ps *ProcessorState) SetVariable(name string, value interface{}, source str
 	newVariables[name] = newVariable
 
 	// Create new atomic map and update version
-	atomic.AddUint64(&ps.version, 1)
+	ps.version.Add(1)
 	newMap := &atomicVariableMap{
 		variables: newVariables,
-		version:   ps.version,
+		version:   ps.version.Load(),
 	}
 
 	// Atomically update the map pointer
@@ -256,10 +257,10 @@ func (ps *ProcessorState) ClearVariables() {
 	defer ps.writeMutex.Unlock()
 
 	// Create new empty map
-	atomic.AddUint64(&ps.version, 1)
+	ps.version.Add(1)
 	newMap := &atomicVariableMap{
 		variables: make(map[string]*VariableValue),
-		version:   ps.version,
+		version:   ps.version.Load(),
 	}
 
 	// Atomically update the map pointer
@@ -289,10 +290,10 @@ func (ps *ProcessorState) RemoveVariable(name string) bool {
 	}
 
 	// Create new atomic map and update version
-	atomic.AddUint64(&ps.version, 1)
+	ps.version.Add(1)
 	newMap := &atomicVariableMap{
 		variables: newVariables,
-		version:   ps.version,
+		version:   ps.version.Load(),
 	}
 
 	// Atomically update the map pointer
