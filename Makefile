@@ -97,6 +97,12 @@ test-sensorconnect:
 test-stream-processor:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) --race ./stream_processor_plugin/...
 
+.PHONY: fuzz-stream-processor
+fuzz-stream-processor:
+	@echo "Running fuzz tests for stream processor (press Ctrl+C to stop)..."
+	@cd stream_processor_plugin && go test -tags=fuzz -fuzz=FuzzStreamProcessor -fuzztime=30s
+
+
 .PHONY: test-tag-processor
 test-tag-processor:
 	@TEST_TAG_PROCESSOR=true \
