@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -94,6 +95,8 @@ type Validator struct {
 	schemaRegistryURL string
 	httpClient        *http.Client
 	logger            *service.Logger
+	// closed is an atomic flag to indicate if the validator is closed
+	closed int32 // 0 = not closed, 1 = closed
 }
 
 // createHTTPTransport creates a properly configured HTTP transport for the validator
@@ -477,6 +480,11 @@ func (v *Validator) fetchSchemasSync(contractName string, version uint64) (map[s
 
 // fetchAllSubjects fetches all subjects from the schema registry
 func (v *Validator) fetchAllSubjects() ([]string, error) {
+	// Check if validator is closed
+	if v.isClosed() {
+		return nil, fmt.Errorf("validator is closed")
+	}
+
 	if v.schemaRegistryURL == "" {
 		return nil, fmt.Errorf("schema registry URL is not configured")
 	}
@@ -517,6 +525,11 @@ func (v *Validator) fetchAllSubjects() ([]string, error) {
 // 3. Automatically picks up schema updates without code changes
 // 4. Simpler and more robust than trying to guess the right registry version
 func (v *Validator) fetchLatestSchemaFromRegistry(subject string) ([]byte, bool, error) {
+	// Check if validator is closed
+	if v.isClosed() {
+		return nil, false, fmt.Errorf("validator is closed")
+	}
+
 	if v.schemaRegistryURL == "" {
 		return nil, false, fmt.Errorf("schema registry URL is not configured")
 	}
@@ -645,20 +658,28 @@ func (v *Validator) HasSchema(contractName string, version uint64) bool {
 	return entry.SchemaExists && len(entry.Schemas) > 0
 }
 
+// isClosed checks if the validator is closed
+func (v *Validator) isClosed() bool {
+	return atomic.LoadInt32(&v.closed) == 1
+}
+
 // Close cleans up resources
 func (v *Validator) Close() {
-	v.cacheMutex.Lock()
-	defer v.cacheMutex.Unlock()
+	// Use atomic Compare-And-Swap to ensure Close is only executed once
+	if atomic.CompareAndSwapInt32(&v.closed, 0, 1) {
+		v.cacheMutex.Lock()
+		defer v.cacheMutex.Unlock()
 
-	// Clear the cache
-	v.contractCache = make(map[string]*ContractCacheEntry)
+		// Clear the cache
+		v.contractCache = make(map[string]*ContractCacheEntry)
 
-	// Close HTTP client transport to prevent connection leaks
-	if v.httpClient != nil && v.httpClient.Transport != nil {
-		if transport, ok := v.httpClient.Transport.(*http.Transport); ok {
-			transport.CloseIdleConnections()
+		// Close HTTP client transport to prevent connection leaks
+		// Keep httpClient alive but close idle connections
+		if v.httpClient != nil && v.httpClient.Transport != nil {
+			if transport, ok := v.httpClient.Transport.(*http.Transport); ok {
+				transport.CloseIdleConnections()
+			}
 		}
-		v.httpClient = nil
 	}
 }
 

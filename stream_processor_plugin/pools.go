@@ -17,10 +17,12 @@ package stream_processor_plugin
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 
 	"github.com/dop251/goja"
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 // ObjectPools provides pooled objects to reduce memory allocations
@@ -51,12 +53,15 @@ type ObjectPools struct {
 
 	// Source names for runtime configuration
 	sourceNames []string
+
+	logger *service.Logger
 }
 
 // NewObjectPools creates a new object pools instance
-func NewObjectPools(sourceNames []string) *ObjectPools {
+func NewObjectPools(sourceNames []string, logger *service.Logger) *ObjectPools {
 	pools := &ObjectPools{
 		sourceNames: sourceNames,
+		logger:      logger,
 	}
 
 	// Initialize metadata map pool
@@ -119,13 +124,23 @@ func (p *ObjectPools) configureRuntime(runtime *goja.Runtime) {
 	// Create a function that explains why APIs are disabled
 	securityBlocker := func(apiName string) func(goja.FunctionCall) goja.Value {
 		return func(call goja.FunctionCall) goja.Value {
-			return runtime.NewTypeError("'" + apiName + "' is disabled for security reasons in this sandboxed environment")
+			// Log the security violation
+			if p.logger != nil {
+				p.logger.Warnf("Security violation: attempted to call disabled function '%s'", apiName)
+			}
+			// Throw a TypeError to stop execution
+			panic(runtime.NewTypeError(fmt.Sprintf("'%s' is disabled for security reasons in this sandboxed environment", apiName)))
 		}
 	}
 
 	// Replace dangerous global objects with security blocker functions
 	for _, global := range dangerousGlobals {
-		_ = runtime.Set(global, securityBlocker(global))
+		if err := runtime.Set(global, securityBlocker(global)); err != nil {
+			// Log warning but continue - this is security hardening, not critical
+			if p.logger != nil {
+				p.logger.Warnf("Failed to disable dangerous global '%s': %v", global, err)
+			}
+		}
 	}
 }
 
@@ -194,19 +209,46 @@ func (p *ObjectPools) GetJSRuntime() *goja.Runtime {
 }
 
 // PutJSRuntime returns a JavaScript runtime to the pool after clearing variables
+// If cleanup fails, the runtime is discarded to prevent contamination
 func (p *ObjectPools) PutJSRuntime(runtime *goja.Runtime) {
+	cleanupSuccessful := true
+
 	// Clear all variables from the runtime to prevent contamination
 	for _, sourceName := range p.sourceNames {
-		_ = runtime.Set(sourceName, goja.Undefined())
+		if err := runtime.Set(sourceName, goja.Undefined()); err != nil {
+			// Log cleanup failure - this is critical for pool hygiene
+			if p.logger != nil {
+				p.logger.Warnf("Failed to clear source variable '%s' from JS runtime during cleanup: %v", sourceName, err)
+			}
+			cleanupSuccessful = false
+		}
 	}
 
 	// Also clear common temporary variables that might have been set
 	tempVars := []string{"result", "temp", "value", "data", "input", "output"}
 	for _, tempVar := range tempVars {
-		_ = runtime.Set(tempVar, goja.Undefined())
+		if err := runtime.Set(tempVar, goja.Undefined()); err != nil {
+			// Log cleanup failure - this is critical for pool hygiene
+			if p.logger != nil {
+				p.logger.Warnf("Failed to clear temporary variable '%s' from JS runtime during cleanup: %v", tempVar, err)
+			}
+			cleanupSuccessful = false
+		}
 	}
 
-	p.jsRuntimePool.Put(runtime)
+	// Clear any interrupt state to ensure clean state for next use
+	runtime.ClearInterrupt()
+
+	// Only return to pool if cleanup was successful
+	if cleanupSuccessful {
+		p.jsRuntimePool.Put(runtime)
+	} else {
+		// Discard the contaminated runtime - pool will create a new one when needed
+		if p.logger != nil {
+			p.logger.Warnf("Discarding JS runtime due to cleanup failures - pool will create a new runtime when needed")
+		}
+		// Don't put the runtime back in the pool - let it be garbage collected
+	}
 }
 
 // MarshalToJSON marshals a value to JSON using pooled buffer - optimized for simple structures

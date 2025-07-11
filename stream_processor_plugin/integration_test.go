@@ -619,4 +619,191 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 			Expect(len(batches[0])).To(BeNumerically(">", 0))
 		})
 	})
+
+	Describe("Security Tests", func() {
+		It("should show what happens when we execute dangerous JavaScript directly", func() {
+			// First, let's see what the JavaScript engine directly returns for dangerous operations
+			dangerousOperations := []string{
+				"eval('1+1')",
+				"Function('return 1+1')()",
+				"require('fs')",
+				"console.log('test')",
+			}
+
+			// Create a simple JS engine to test directly
+			pools := NewObjectPools([]string{"press"}, resources.Logger())
+			jsEngine := NewJSEngine(resources.Logger(), []string{"press"}, pools)
+			defer func() {
+				err := jsEngine.Close()
+				Expect(err).ToNot(HaveOccurred())
+			}()
+
+			for _, expr := range dangerousOperations {
+				By(fmt.Sprintf("Testing direct JS execution: %s", expr))
+				result := jsEngine.EvaluateStatic(expr)
+				By(fmt.Sprintf("Result - Success: %t, Value: %v, Error: %s", result.Success, result.Value, result.Error))
+			}
+		})
+
+		It("should block dangerous JavaScript operations in real processing pipeline", func() {
+			// Test that security blockers actually prevent dangerous operations
+			// when JavaScript expressions are processed through the real stream processor
+
+			dangerousOperations := []struct {
+				name       string
+				expression string
+			}{
+				{"eval", "eval('1+1')"},
+				{"Function constructor", "Function('return 1+1')()"},
+				{"require", "require('fs')"},
+				{"process", "process.exit()"},
+				{"setTimeout", "setTimeout(function(){}, 100)"},
+				{"console", "console.log('test')"},
+			}
+
+			for _, op := range dangerousOperations {
+				By(fmt.Sprintf("Testing dangerous operation: %s with expression: %s", op.name, op.expression))
+
+				// Create config with dangerous operation
+				dangerousConfig := testConfig
+				dangerousConfig.Mapping = map[string]interface{}{
+					"safeMapping":      "press + 1",   // This should work
+					"dangerousMapping": op.expression, // This should fail
+				}
+
+				dangerousProcessor, err := newStreamProcessor(dangerousConfig, resources.Logger(), resources.Metrics())
+				Expect(err).ToNot(HaveOccurred())
+
+				inputPayload := TimeseriesMessage{
+					Value:       25.5,
+					TimestampMs: time.Now().UnixMilli(),
+				}
+				payloadBytes, err := json.Marshal(inputPayload)
+				Expect(err).ToNot(HaveOccurred())
+
+				inputMsg := service.NewMessage(payloadBytes)
+				inputMsg.MetaSet("umh_topic", "umh.v1.corpA.plant-A.aawd._raw.press")
+
+				// Process the message - should not crash but should skip dangerous mapping
+				batches, err := dangerousProcessor.ProcessBatch(ctx, service.MessageBatch{inputMsg})
+				Expect(err).ToNot(HaveOccurred())
+
+				// Log what actually happened for debugging
+				By(fmt.Sprintf("Processing result: batches count = %d", len(batches)))
+				if len(batches) > 0 {
+					By(fmt.Sprintf("First batch message count = %d", len(batches[0])))
+				}
+
+				// Verify results
+				if len(batches) > 0 {
+					safeFound := false
+					dangerousFound := false
+
+					for i, msg := range batches[0] {
+						if topic, exists := msg.MetaGet("umh_topic"); exists {
+							By(fmt.Sprintf("Message %d: topic = %s", i, topic))
+
+							if topic == "umh.v1.corpA.plant-A.aawd._pump_v1.safeMapping" {
+								safeFound = true
+
+								// Verify the safe mapping actually worked
+								var payload TimeseriesMessage
+								payloadBytes, err := msg.AsBytes()
+								Expect(err).ToNot(HaveOccurred())
+								err = json.Unmarshal(payloadBytes, &payload)
+								Expect(err).ToNot(HaveOccurred())
+								Expect(payload.Value).To(BeNumerically("==", 26.5))
+								By(fmt.Sprintf("Safe mapping worked: value = %v", payload.Value))
+							}
+							if topic == "umh.v1.corpA.plant-A.aawd._pump_v1.dangerousMapping" {
+								dangerousFound = true
+								// Let's see what value the dangerous operation actually produced
+								var payload TimeseriesMessage
+								payloadBytes, err := msg.AsBytes()
+								Expect(err).ToNot(HaveOccurred())
+								err = json.Unmarshal(payloadBytes, &payload)
+								Expect(err).ToNot(HaveOccurred())
+								By(fmt.Sprintf("UNEXPECTED: Dangerous operation '%s' succeeded with value: %v", op.expression, payload.Value))
+							}
+						}
+					}
+
+					By(fmt.Sprintf("Results for %s: safeFound=%t, dangerousFound=%t", op.name, safeFound, dangerousFound))
+
+					// Safe mapping should work
+					Expect(safeFound).To(BeTrue(), "Safe mapping should work for operation: %s", op.name)
+
+					// Dangerous mapping should be blocked (not present in output)
+					Expect(dangerousFound).To(BeFalse(), "Dangerous operation '%s' should be blocked: %s", op.name, op.expression)
+				}
+
+				// Clean up
+				err = dangerousProcessor.Close(ctx)
+				Expect(err).To(BeNil())
+			}
+		})
+
+		It("should allow safe JavaScript operations", func() {
+			// Verify that legitimate operations still work
+			safeConfig := testConfig
+			safeConfig.Mapping = map[string]interface{}{
+				"mathOp":      "Math.PI * 2",
+				"dateOp":      "Date.now()",
+				"jsonOp":      "JSON.stringify({test: 42})",
+				"arithmetic":  "press * 2 + 1",
+				"conditional": "press > 20 ? 'high' : 'low'",
+			}
+
+			safeProcessor, err := newStreamProcessor(safeConfig, resources.Logger(), resources.Metrics())
+			Expect(err).ToNot(HaveOccurred())
+			defer func() {
+				err := safeProcessor.Close(ctx)
+				Expect(err).To(BeNil())
+			}()
+
+			inputPayload := TimeseriesMessage{
+				Value:       25.5,
+				TimestampMs: time.Now().UnixMilli(),
+			}
+			payloadBytes, err := json.Marshal(inputPayload)
+			Expect(err).ToNot(HaveOccurred())
+
+			inputMsg := service.NewMessage(payloadBytes)
+			inputMsg.MetaSet("umh_topic", "umh.v1.corpA.plant-A.aawd._raw.press")
+
+			batches, err := safeProcessor.ProcessBatch(ctx, service.MessageBatch{inputMsg})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(batches).ToNot(BeEmpty())
+
+			// Verify all safe operations produced outputs
+			outputs := make(map[string]interface{})
+			for _, msg := range batches[0] {
+				if topic, exists := msg.MetaGet("umh_topic"); exists {
+					var payload TimeseriesMessage
+					payloadBytes, err := msg.AsBytes()
+					Expect(err).ToNot(HaveOccurred())
+					err = json.Unmarshal(payloadBytes, &payload)
+					Expect(err).ToNot(HaveOccurred())
+
+					outputs[topic] = payload.Value
+				}
+			}
+
+			// Check that all safe operations worked
+			Expect(outputs).To(HaveKey("umh.v1.corpA.plant-A.aawd._pump_v1.mathOp"))
+			Expect(outputs["umh.v1.corpA.plant-A.aawd._pump_v1.mathOp"]).To(BeNumerically("~", 6.283185, 0.001))
+
+			Expect(outputs).To(HaveKey("umh.v1.corpA.plant-A.aawd._pump_v1.dateOp"))
+			Expect(outputs["umh.v1.corpA.plant-A.aawd._pump_v1.dateOp"]).To(BeNumerically(">", 0))
+
+			Expect(outputs).To(HaveKey("umh.v1.corpA.plant-A.aawd._pump_v1.jsonOp"))
+			Expect(outputs["umh.v1.corpA.plant-A.aawd._pump_v1.jsonOp"]).To(Equal(`{"test":42}`))
+
+			Expect(outputs).To(HaveKey("umh.v1.corpA.plant-A.aawd._pump_v1.arithmetic"))
+			Expect(outputs["umh.v1.corpA.plant-A.aawd._pump_v1.arithmetic"]).To(BeNumerically("==", 52))
+
+			Expect(outputs).To(HaveKey("umh.v1.corpA.plant-A.aawd._pump_v1.conditional"))
+			Expect(outputs["umh.v1.corpA.plant-A.aawd._pump_v1.conditional"]).To(Equal("high"))
+		})
+	})
 })

@@ -95,7 +95,7 @@ test-sensorconnect:
 
 .PHONY: test-stream-processor
 test-stream-processor:
-	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./stream_processor_plugin/...
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) --race ./stream_processor_plugin/...
 
 .PHONY: test-tag-processor
 test-tag-processor:
@@ -186,3 +186,4 @@ validate-stream-processor:
 	golangci-lint run ./stream_processor_plugin
 	nilaway ./stream_processor_plugin
 	deadcode -test ./stream_processor_plugin
+	staticcheck ./stream_processor_plugin

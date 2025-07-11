@@ -154,13 +154,21 @@ func (e *JSEngine) configureRuntime(runtime *goja.Runtime) {
 	// Create a function that explains why APIs are disabled
 	securityBlocker := func(apiName string) func(goja.FunctionCall) goja.Value {
 		return func(call goja.FunctionCall) goja.Value {
-			return runtime.NewTypeError(fmt.Sprintf("'%s' is disabled for security reasons in this sandboxed environment", apiName))
+			// Log the security violation
+			if e.logger != nil {
+				e.logger.Warnf("Security violation: attempted to call disabled function '%s'", apiName)
+			}
+			// Throw a TypeError to stop execution
+			panic(runtime.NewTypeError(fmt.Sprintf("'%s' is disabled for security reasons in this sandboxed environment", apiName)))
 		}
 	}
 
 	// Replace dangerous global objects with security blocker functions
 	for _, global := range dangerousGlobals {
-		_ = runtime.Set(global, securityBlocker(global))
+		if err := runtime.Set(global, securityBlocker(global)); err != nil {
+			// Log warning but continue - this is security hardening, not critical
+			e.logger.Warnf("Failed to disable dangerous global '%s': %v", global, err)
+		}
 	}
 
 	// Built-in safe objects (Math, JSON, Date, etc.) are available by default
@@ -170,7 +178,7 @@ func (e *JSEngine) configureRuntime(runtime *goja.Runtime) {
 func (e *JSEngine) ValidateExpression(expression string) error {
 	_, err := goja.Compile("validation", expression, false)
 	if err != nil {
-		return fmt.Errorf("invalid JavaScript expression: %w", err)
+		return fmt.Errorf("invalid JavaScript expression '%s': %w. Please check syntax and try again", expression, err)
 	}
 	return nil
 }
@@ -188,7 +196,7 @@ func (e *JSEngine) CompileExpression(expression string) error {
 	// Compile the expression
 	program, err := goja.Compile("expression", expression, false)
 	if err != nil {
-		return fmt.Errorf("failed to compile expression '%s': %w", expression, err)
+		return fmt.Errorf("failed to compile JavaScript expression '%s': %w. Please check syntax and try again", expression, err)
 	}
 
 	// Cache the compiled program with write lock
@@ -230,7 +238,7 @@ func (e *JSEngine) EvaluateStatic(expression string) JSExecutionResult {
 	if err := e.CompileExpression(expression); err != nil {
 		result := JSExecutionResult{
 			Success: false,
-			Error:   fmt.Sprintf("compilation failed: %v", err),
+			Error:   fmt.Sprintf("Failed to compile JavaScript expression '%s': %v. Please check syntax and try again", expression, err),
 		}
 		// Cache the error result to avoid re-compiling
 		e.staticCacheMutex.Lock()
@@ -245,7 +253,7 @@ func (e *JSEngine) EvaluateStatic(expression string) JSExecutionResult {
 		e.logger.Warnf("JavaScript execution failed for static expression '%s': %v", expression, err)
 		errorResult := JSExecutionResult{
 			Success: false,
-			Error:   err.Error(),
+			Error:   fmt.Sprintf("Failed to execute JavaScript expression '%s': %v", expression, err),
 		}
 		// Cache the error result to avoid re-executing
 		e.staticCacheMutex.Lock()
@@ -286,19 +294,32 @@ func (e *JSEngine) EvaluateDynamic(expression string, variables map[string]inter
 	if err := e.CompileExpression(expression); err != nil {
 		return JSExecutionResult{
 			Success: false,
-			Error:   fmt.Sprintf("compilation failed: %v", err),
+			Error:   fmt.Sprintf("Failed to compile JavaScript expression '%s': %v. Please check syntax and try again", expression, err),
 		}
 	}
 
 	// Get a pooled runtime instance instead of creating new one
 	runtime := e.pools.GetJSRuntime()
+	runtime.ClearInterrupt() // Clear any previous interrupt state from timeout
 	defer e.pools.PutJSRuntime(runtime)
+
+	// Validate all variables first
+	for name := range variables {
+		if !e.isValidSourceVariable(name) {
+			return JSExecutionResult{
+				Success: false,
+				Error:   fmt.Sprintf("Invalid variable name '%s'. Valid variables are: %v", name, e.sourceNames),
+			}
+		}
+	}
 
 	// Inject variables into the runtime
 	for name, value := range variables {
-		// Only inject variables that are in the source configuration
-		if e.isValidSourceVariable(name) {
-			_ = runtime.Set(name, value)
+		if err := runtime.Set(name, value); err != nil {
+			return JSExecutionResult{
+				Success: false,
+				Error:   fmt.Sprintf("Failed to set variable '%s' to value '%v': %v", name, value, err),
+			}
 		}
 	}
 
@@ -308,7 +329,7 @@ func (e *JSEngine) EvaluateDynamic(expression string, variables map[string]inter
 		e.logger.Warnf("JavaScript execution failed for dynamic expression '%s': %v", expression, err)
 		return JSExecutionResult{
 			Success: false,
-			Error:   err.Error(),
+			Error:   fmt.Sprintf("Failed to execute JavaScript expression '%s': %v", expression, err),
 		}
 	}
 
@@ -326,7 +347,7 @@ func (e *JSEngine) executeExpression(runtime *goja.Runtime, expression string) (
 	e.compiledMutex.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("expression not compiled: %s", expression)
+		return nil, fmt.Errorf("JavaScript expression '%s' not compiled. Please call CompileExpression first", expression)
 	}
 
 	// Execute with timeout protection
@@ -338,7 +359,7 @@ func (e *JSEngine) executeExpression(runtime *goja.Runtime, expression string) (
 		defer close(done)
 		defer func() {
 			if r := recover(); r != nil {
-				err = fmt.Errorf("JavaScript execution panic: %v", r)
+				err = fmt.Errorf("JavaScript execution panic: %v. Please check the expression for runtime errors", r)
 			}
 		}()
 
@@ -356,15 +377,24 @@ func (e *JSEngine) executeExpression(runtime *goja.Runtime, expression string) (
 			return nil, err
 		}
 		if result == nil {
-			return nil, fmt.Errorf("JavaScript execution returned nil result")
+			return nil, fmt.Errorf("JavaScript execution returned nil result. Please check that the expression returns a value")
+		}
+		if result.ExportType() == nil {
+			return nil, fmt.Errorf("JavaScript execution returned nil result. Please check that the expression returns a value")
 		}
 		return result.Export(), nil
 	case <-timer.C:
 		// Interrupt the runtime to stop execution
 		runtime.Interrupt("execution timeout")
-		// Wait for goroutine to finish after interrupt
-		<-done
-		return nil, fmt.Errorf("JavaScript execution timeout")
+		// Wait for goroutine to finish after interrupt with a second timeout
+		select {
+		case <-done:
+			// Goroutine finished after interrupt
+		case <-time.After(1 * time.Second):
+			// Goroutine didn't finish - log warning about potential resource leak
+			e.logger.Warnf("JavaScript execution goroutine may be stuck after timeout")
+		}
+		return nil, fmt.Errorf("JavaScript execution exceeded 5 second timeout limit. Consider simplifying the expression, avoiding infinite loops, or reducing computational complexity")
 	}
 }
 
@@ -405,7 +435,7 @@ func (e *JSEngine) PrecompileExpressions(staticMappings, dynamicMappings map[str
 			mapping.Expression,
 			false)
 		if err != nil {
-			return fmt.Errorf("failed to pre-compile static mapping '%s': %w", virtualPath, err)
+			return fmt.Errorf("failed to pre-compile static mapping '%s' with expression '%s': %w. Please check syntax and try again", virtualPath, mapping.Expression, err)
 		}
 		e.precompiledPrograms[mapping.Expression] = program
 	}
@@ -417,7 +447,7 @@ func (e *JSEngine) PrecompileExpressions(staticMappings, dynamicMappings map[str
 			mapping.Expression,
 			false)
 		if err != nil {
-			return fmt.Errorf("failed to pre-compile dynamic mapping '%s': %w", virtualPath, err)
+			return fmt.Errorf("failed to pre-compile dynamic mapping '%s' with expression '%s': %w. Please check syntax and try again", virtualPath, mapping.Expression, err)
 		}
 		e.precompiledPrograms[mapping.Expression] = program
 	}
@@ -464,7 +494,7 @@ func (e *JSEngine) EvaluateStaticPrecompiled(expression string) JSExecutionResul
 		e.logger.Warnf("JavaScript execution failed for static expression '%s': %v", expression, err)
 		errorResult := JSExecutionResult{
 			Success: false,
-			Error:   err.Error(),
+			Error:   fmt.Sprintf("Failed to execute pre-compiled JavaScript expression '%s': %v", expression, err),
 		}
 		// Cache the error result
 		e.staticCacheMutex.Lock()
@@ -507,20 +537,25 @@ func (e *JSEngine) EvaluateDynamicPrecompiled(expression string, variables map[s
 
 	// Get a pooled runtime for thread safety
 	runtime := e.pools.GetJSRuntime()
+	runtime.ClearInterrupt() // Clear any previous interrupt state from timeout
 	defer e.pools.PutJSRuntime(runtime)
 
-	// Set variables in the runtime
-	for name, value := range variables {
+	// Validate all variables first
+	for name := range variables {
 		if !e.isValidSourceVariable(name) {
 			return JSExecutionResult{
 				Success: false,
-				Error:   fmt.Sprintf("invalid variable name: %s", name),
+				Error:   fmt.Sprintf("Invalid variable name '%s'. Valid variables are: %v", name, e.sourceNames),
 			}
 		}
+	}
+
+	// Set variables in the runtime
+	for name, value := range variables {
 		if err := runtime.Set(name, value); err != nil {
 			return JSExecutionResult{
 				Success: false,
-				Error:   fmt.Sprintf("failed to set variable %s: %v", name, err),
+				Error:   fmt.Sprintf("Failed to set variable '%s' to value '%v': %v", name, value, err),
 			}
 		}
 	}
@@ -531,7 +566,7 @@ func (e *JSEngine) EvaluateDynamicPrecompiled(expression string, variables map[s
 		e.logger.Warnf("JavaScript execution failed for dynamic expression '%s': %v", expression, err)
 		return JSExecutionResult{
 			Success: false,
-			Error:   err.Error(),
+			Error:   fmt.Sprintf("Failed to execute pre-compiled JavaScript expression '%s': %v", expression, err),
 		}
 	}
 
@@ -552,7 +587,7 @@ func (e *JSEngine) executePrecompiledProgram(runtime *goja.Runtime, program *goj
 		defer close(done)
 		defer func() {
 			if r := recover(); r != nil {
-				execErr = fmt.Errorf("JavaScript panic: %v", r)
+				execErr = fmt.Errorf("JavaScript panic: %v. Please check the expression for runtime errors", r)
 			}
 		}()
 
@@ -569,15 +604,24 @@ func (e *JSEngine) executePrecompiledProgram(runtime *goja.Runtime, program *goj
 			return nil, execErr
 		}
 		if result == nil {
-			return nil, fmt.Errorf("JavaScript execution returned nil result")
+			return nil, fmt.Errorf("JavaScript execution returned nil result. Please check that the expression returns a value")
+		}
+		if result.ExportType() == nil {
+			return nil, fmt.Errorf("JavaScript execution returned nil result. Please check that the expression returns a value")
 		}
 		return result.Export(), nil
 	case <-timer.C:
 		// Interrupt the runtime to stop execution
 		runtime.Interrupt("execution timeout")
-		// Wait for goroutine to finish after interrupt
-		<-done
-		return nil, fmt.Errorf("JavaScript execution timeout (5s limit)")
+		// Wait for goroutine to finish after interrupt with a second timeout
+		select {
+		case <-done:
+			// Goroutine finished after interrupt
+		case <-time.After(1 * time.Second):
+			// Goroutine didn't finish - log warning about potential resource leak
+			e.logger.Warnf("JavaScript execution goroutine may be stuck after timeout (precompiled)")
+		}
+		return nil, fmt.Errorf("JavaScript execution exceeded 5 second timeout limit. Consider simplifying the expression, avoiding infinite loops, or reducing computational complexity")
 	}
 }
 
