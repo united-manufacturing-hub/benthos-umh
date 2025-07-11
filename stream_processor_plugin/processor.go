@@ -62,7 +62,7 @@ func newStreamProcessor(config StreamProcessorConfig, logger *service.Logger, me
 	}
 
 	// Create pools first as they're needed by JSEngine
-	pools := NewObjectPools(sourceNames)
+	pools := NewObjectPools(sourceNames, logger)
 
 	processor := &StreamProcessor{
 		config:       config,
