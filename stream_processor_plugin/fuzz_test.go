@@ -23,224 +23,249 @@ import (
 	"fmt"
 	"math"
 	"testing"
-	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
+
+// FuzzTestCase represents a single test case for fuzzing
+type FuzzTestCase struct {
+	Topic   string
+	Payload string
+	Mapping string
+}
 
 // FuzzStreamProcessor is the main fuzz entry point that tests the stream processor
 // at the highest level by fuzzing the Process method with various inputs.
 // This comprehensively tests all underlying functionality including JavaScript
 // evaluation, variable handling, message processing, and security constraints.
 func FuzzStreamProcessor(f *testing.F) {
-	// Seed inputs for comprehensive fuzzing coverage
-	seedInputs := []struct {
-		topic   string
-		payload string
-		mapping string
-	}{
+	// Add seed inputs to fuzzer
+	for _, seed := range getFuzzSeedInputs() {
+		f.Add(seed.Topic, seed.Payload, seed.Mapping)
+	}
+
+	f.Fuzz(func(t *testing.T, topic, payload, mappingStr string) {
+		runSingleFuzzTest(t, topic, payload, mappingStr)
+	})
+}
+
+// getFuzzSeedInputs returns comprehensive seed inputs for fuzzing
+func getFuzzSeedInputs() []FuzzTestCase {
+	return []FuzzTestCase{
 		// Valid UMH topics with various data types
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.press",
-			`{"value": 25.5, "timestamp_ms": 1234567890}`,
-			`{"result": "press + 1", "status": "press > 20 ? 'high' : 'low'"}`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.press",
+			Payload: `{"value": 25.5, "timestamp_ms": 1234567890}`,
+			Mapping: `{"result": "press + 1", "status": "press > 20 ? 'high' : 'low'"}`,
 		},
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.temp",
-			`{"value": 80.0, "timestamp_ms": 1234567890}`,
-			`{"celsius": "temp", "fahrenheit": "temp * 9/5 + 32"}`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.temp",
+			Payload: `{"value": 80.0, "timestamp_ms": 1234567890}`,
+			Mapping: `{"celsius": "temp", "fahrenheit": "temp * 9/5 + 32"}`,
 		},
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.flow",
-			`{"value": 100.0, "timestamp_ms": 1234567890}`,
-			`{"flow_rate": "flow", "flow_status": "flow > 50 ? 'normal' : 'low'"}`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.flow",
+			Payload: `{"value": 100.0, "timestamp_ms": 1234567890}`,
+			Mapping: `{"flow_rate": "flow", "flow_status": "flow > 50 ? 'normal' : 'low'"}`,
 		},
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.run",
-			`{"value": true, "timestamp_ms": 1234567890}`,
-			`{"running": "run", "status_code": "run ? 1 : 0"}`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.run",
+			Payload: `{"value": true, "timestamp_ms": 1234567890}`,
+			Mapping: `{"running": "run", "status_code": "run ? 1 : 0"}`,
 		},
 
 		// Edge cases with special values
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.press",
-			`{"value": 0, "timestamp_ms": 1234567890}`,
-			`{"result": "press / 0", "check": "isFinite(press) ? press : 0"}`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.press",
+			Payload: `{"value": 0, "timestamp_ms": 1234567890}`,
+			Mapping: `{"result": "press / 0", "check": "isFinite(press) ? press : 0"}`,
 		},
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.temp",
-			`{"value": null, "timestamp_ms": 1234567890}`,
-			`{"temp_check": "temp == null ? 'no_data' : temp"}`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.temp",
+			Payload: `{"value": null, "timestamp_ms": 1234567890}`,
+			Mapping: `{"temp_check": "temp == null ? 'no_data' : temp"}`,
 		},
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.press",
-			`{"value": -999.99, "timestamp_ms": 1234567890}`,
-			`{"abs_press": "Math.abs(press)", "valid": "press > -1000"}`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.press",
+			Payload: `{"value": -999.99, "timestamp_ms": 1234567890}`,
+			Mapping: `{"abs_press": "Math.abs(press)", "valid": "press > -1000"}`,
 		},
 
 		// Complex expressions
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.press",
-			`{"value": 25.5, "timestamp_ms": 1234567890}`,
-			`{"complex": "Math.sqrt(Math.pow(press, 2) + Math.pow(temp || 0, 2))", "rounded": "Math.round(press * 100) / 100"}`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.press",
+			Payload: `{"value": 25.5, "timestamp_ms": 1234567890}`,
+			Mapping: `{"complex": "Math.sqrt(Math.pow(press, 2) + Math.pow(temp || 0, 2))", "rounded": "Math.round(press * 100) / 100"}`,
 		},
 
 		// String processing
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.status",
-			`{"value": "running", "timestamp_ms": 1234567890}`,
-			`{"upper": "status.toUpperCase()", "length": "status.length"}`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.status",
+			Payload: `{"value": "running", "timestamp_ms": 1234567890}`,
+			Mapping: `{"upper": "status.toUpperCase()", "length": "status.length"}`,
 		},
 
 		// Invalid/malformed inputs
 		{
-			"invalid.topic.structure",
-			`{"value": 25.5, "timestamp_ms": 1234567890}`,
-			`{"result": "42"}`,
+			Topic:   "invalid.topic.structure",
+			Payload: `{"value": 25.5, "timestamp_ms": 1234567890}`,
+			Mapping: `{"result": "42"}`,
 		},
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.press",
-			`invalid json payload`,
-			`{"result": "press"}`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.press",
+			Payload: `invalid json payload`,
+			Mapping: `{"result": "press"}`,
 		},
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.press",
-			`{"value": 25.5, "timestamp_ms": 1234567890}`,
-			`invalid mapping json`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.press",
+			Payload: `{"value": 25.5, "timestamp_ms": 1234567890}`,
+			Mapping: `invalid mapping json`,
 		},
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.press",
-			`{"value": 25.5, "timestamp_ms": 1234567890}`,
-			`{"result": ""}`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.press",
+			Payload: `{"value": 25.5, "timestamp_ms": 1234567890}`,
+			Mapping: `{"result": ""}`,
 		},
 
 		// Security test cases (should be blocked)
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.press",
-			`{"value": 25.5, "timestamp_ms": 1234567890}`,
-			`{"danger": "eval('1+1')", "safe": "press"}`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.press",
+			Payload: `{"value": 25.5, "timestamp_ms": 1234567890}`,
+			Mapping: `{"danger": "eval('1+1')", "safe": "press"}`,
 		},
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.press",
-			`{"value": 25.5, "timestamp_ms": 1234567890}`,
-			`{"danger": "Function('return 1+1')()", "safe": "press"}`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.press",
+			Payload: `{"value": 25.5, "timestamp_ms": 1234567890}`,
+			Mapping: `{"danger": "Function('return 1+1')()", "safe": "press"}`,
 		},
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.press",
-			`{"value": 25.5, "timestamp_ms": 1234567890}`,
-			`{"danger": "require('fs')", "safe": "press"}`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.press",
+			Payload: `{"value": 25.5, "timestamp_ms": 1234567890}`,
+			Mapping: `{"danger": "require('fs')", "safe": "press"}`,
 		},
 
 		// Performance stress cases
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.press",
-			`{"value": 2.0, "timestamp_ms": 1234567890}`,
-			`{"power": "Math.pow(press, 100)", "factorial": "press > 10 ? 'too_big' : press"}`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.press",
+			Payload: `{"value": 2.0, "timestamp_ms": 1234567890}`,
+			Mapping: `{"power": "Math.pow(press, 100)", "factorial": "press > 10 ? 'too_big' : press"}`,
 		},
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.press",
-			`{"value": 25.5, "timestamp_ms": 1234567890}`,
-			`{"loop_test": "press > 0 ? 'positive' : 'negative'"}`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.press",
+			Payload: `{"value": 25.5, "timestamp_ms": 1234567890}`,
+			Mapping: `{"loop_test": "press > 0 ? 'positive' : 'negative'"}`,
 		},
 
 		// Empty/minimal cases
 		{
-			"",
-			`{}`,
-			`{}`,
+			Topic:   "",
+			Payload: `{}`,
+			Mapping: `{}`,
 		},
 		{
-			"umh.v1.corpA.plant-A.aawd._raw.press",
-			`{"value": 25.5, "timestamp_ms": 1234567890}`,
-			`{}`,
+			Topic:   "umh.v1.corpA.plant-A.aawd._raw.press",
+			Payload: `{"value": 25.5, "timestamp_ms": 1234567890}`,
+			Mapping: `{}`,
 		},
 	}
+}
 
-	// Add seed inputs to fuzzer
-	for _, seed := range seedInputs {
-		f.Add(seed.topic, seed.payload, seed.mapping)
+// runSingleFuzzTest executes a single fuzz test case
+func runSingleFuzzTest(t *testing.T, topic, payload, mappingStr string) {
+	// Skip extremely long inputs to prevent timeout
+	if len(topic) > MaxTopicLength || len(payload) > MaxInputLength || len(mappingStr) > MaxInputLength {
+		return
 	}
 
-	f.Fuzz(func(t *testing.T, topic, payload, mappingStr string) {
-		// Skip extremely long inputs to prevent timeout
-		if len(topic) > 1000 || len(payload) > 10000 || len(mappingStr) > 10000 {
-			return
-		}
+	// Test with timeout to prevent infinite loops
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultJSTimeout)
+	defer cancel()
 
-		// Test with timeout to prevent infinite loops
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+	// Create and test processor
+	processor := createTestProcessor(t, mappingStr)
+	if processor == nil {
+		return // Configuration error, skip
+	}
+	defer processor.Close(ctx)
 
-		// Create processor configuration
-		config := createFuzzConfig(mappingStr)
+	// Test main processing flow
+	testMessageProcessing(t, processor, ctx, topic, payload, mappingStr)
 
-		// Create processor instance
-		processor, err := createFuzzProcessor(config)
-		if err != nil {
-			// Configuration errors are expected for invalid inputs
-			return
-		}
+	// Test additional edge cases
+	testEdgeCases(t, processor, topic, payload, mappingStr)
+}
+
+// createTestProcessor creates a processor instance for testing
+func createTestProcessor(t *testing.T, mappingStr string) *StreamProcessor {
+	config := createFuzzConfig(mappingStr)
+	processor, err := createFuzzProcessor(config)
+	if err != nil {
+		// Configuration errors are expected for invalid inputs
+		return nil
+	}
+	return processor
+}
+
+// testMessageProcessing tests the core message processing functionality
+func testMessageProcessing(t *testing.T, processor *StreamProcessor, ctx context.Context, topic, payload, mappingStr string) {
+	// Process message with panic recovery
+	func() {
 		defer func() {
-			if processor != nil {
-				processor.Close(ctx)
+			if r := recover(); r != nil {
+				t.Errorf("Processor panicked for topic=%q, payload=%q, mapping=%q: %v",
+					topic, payload, mappingStr, r)
 			}
 		}()
 
-		// Create message
-		msg := service.NewMessage([]byte(payload))
-		if topic != "" {
-			msg.MetaSet("umh_topic", topic)
+		// Create and process message
+		msg := createTestMessage(topic, payload)
+		batch := service.MessageBatch{msg}
+		results, err := processor.ProcessBatch(ctx, batch)
+
+		// Verify results
+		if err != nil {
+			// Processing errors are expected for invalid inputs
+			return
 		}
 
-		// Process message with panic recovery
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					t.Errorf("Processor panicked for topic=%q, payload=%q, mapping=%q: %v",
-						topic, payload, mappingStr, r)
-				}
-			}()
+		validateProcessingResults(t, results)
+	}()
+}
 
-			// Process the message
-			batch := service.MessageBatch{msg}
-			results, err := processor.ProcessBatch(ctx, batch)
+// createTestMessage creates a test message with the given topic and payload
+func createTestMessage(topic, payload string) *service.Message {
+	msg := service.NewMessage([]byte(payload))
+	if topic != "" {
+		msg.MetaSet("umh_topic", topic)
+	}
+	return msg
+}
 
-			// Verify results are valid
+// validateProcessingResults validates that processing results are structurally correct
+func validateProcessingResults(t *testing.T, results []service.MessageBatch) {
+	for _, resultBatch := range results {
+		for _, resultMsg := range resultBatch {
+			if resultMsg == nil {
+				t.Error("Got nil message in result")
+				continue
+			}
+
+			// Verify message has valid content
+			content, err := resultMsg.AsBytes()
 			if err != nil {
-				// Processing errors are expected for invalid inputs
-				return
+				t.Errorf("Failed to get message content: %v", err)
+				continue
 			}
 
-			// Verify output structure
-			for _, resultBatch := range results {
-				for _, resultMsg := range resultBatch {
-					// Verify message is valid
-					if resultMsg == nil {
-						t.Error("Got nil message in result")
-						continue
-					}
-
-					// Verify message has content
-					content, err := resultMsg.AsBytes()
-					if err != nil {
-						t.Errorf("Failed to get message content: %v", err)
-						continue
-					}
-
-					// Verify content is valid JSON if non-empty
-					if len(content) > 0 {
-						var parsed interface{}
-						if err := json.Unmarshal(content, &parsed); err != nil {
-							t.Errorf("Result message is not valid JSON: %v", err)
-						}
-					}
+			// Verify content is valid JSON if non-empty
+			if len(content) > 0 {
+				var parsed interface{}
+				if err := json.Unmarshal(content, &parsed); err != nil {
+					t.Errorf("Result message is not valid JSON: %v", err)
 				}
 			}
-		}()
-
-		// Test various edge cases with the same inputs
-		testEdgeCases(t, processor, topic, payload, mappingStr)
-	})
+		}
+	}
 }
 
 // createFuzzConfig creates a processor configuration from fuzzed mapping string
@@ -314,11 +339,14 @@ func testEdgeCases(t *testing.T, processor *StreamProcessor, topic, payload, map
 	ctx := context.Background()
 
 	// Test empty message
-	emptyMsg := service.NewMessage([]byte{})
-	if topic != "" {
-		emptyMsg.MetaSet("umh_topic", topic)
-	}
+	testEmptyMessage(t, processor, ctx, topic)
 
+	// Test message with invalid metadata
+	testInvalidMetadata(t, processor, ctx, payload)
+}
+
+// testEmptyMessage tests processing with empty message content
+func testEmptyMessage(t *testing.T, processor *StreamProcessor, ctx context.Context, topic string) {
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -326,20 +354,27 @@ func testEdgeCases(t *testing.T, processor *StreamProcessor, topic, payload, map
 			}
 		}()
 
+		emptyMsg := service.NewMessage([]byte{})
+		if topic != "" {
+			emptyMsg.MetaSet("umh_topic", topic)
+		}
+
 		batch := service.MessageBatch{emptyMsg}
 		_, _ = processor.ProcessBatch(ctx, batch)
 	}()
+}
 
-	// Test message with invalid metadata
-	invalidMsg := service.NewMessage([]byte(payload))
-	invalidMsg.MetaSet("umh_topic", string([]byte{0x00, 0x01, 0x02})) // Invalid UTF-8
-
+// testInvalidMetadata tests processing with invalid metadata
+func testInvalidMetadata(t *testing.T, processor *StreamProcessor, ctx context.Context, payload string) {
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
 				t.Errorf("Processor panicked with invalid metadata: %v", r)
 			}
 		}()
+
+		invalidMsg := service.NewMessage([]byte(payload))
+		invalidMsg.MetaSet("umh_topic", string([]byte{0x00, 0x01, 0x02})) // Invalid UTF-8
 
 		batch := service.MessageBatch{invalidMsg}
 		_, _ = processor.ProcessBatch(ctx, batch)
@@ -359,8 +394,8 @@ func sanitizeVariables(vars map[string]interface{}) map[string]interface{} {
 			}
 		case string:
 			// Limit string length to prevent memory exhaustion
-			if len(val) > 1000 {
-				sanitized[k] = val[:1000]
+			if len(val) > MaxStringLength {
+				sanitized[k] = val[:MaxStringLength]
 			} else {
 				sanitized[k] = val
 			}
