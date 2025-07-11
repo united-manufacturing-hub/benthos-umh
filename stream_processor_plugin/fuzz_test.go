@@ -189,7 +189,7 @@ func FuzzStreamProcessor(f *testing.F) {
 		// Create message
 		msg := service.NewMessage([]byte(payload))
 		if topic != "" {
-			msg.MetaSet("kafka_topic", topic)
+			msg.MetaSet("umh_topic", topic)
 		}
 
 		// Process message with panic recovery
@@ -203,7 +203,7 @@ func FuzzStreamProcessor(f *testing.F) {
 
 			// Process the message
 			batch := service.MessageBatch{msg}
-			results, err := processor.Process(ctx, batch)
+			results, err := processor.ProcessBatch(ctx, batch)
 
 			// Verify results are valid
 			if err != nil {
@@ -277,8 +277,36 @@ mapping: {}
 
 // createFuzzProcessor creates a processor instance for fuzzing
 func createFuzzProcessor(config *service.ParsedConfig) (*StreamProcessor, error) {
+	// Parse configuration into StreamProcessorConfig
+	sources, err := config.FieldStringMap("sources")
+	if err != nil {
+		return nil, err
+	}
+
+	var mapping map[string]interface{}
+	if config.Contains("mapping") {
+		mappingAny, err := config.FieldAny("mapping")
+		if err != nil {
+			return nil, err
+		}
+		if m, ok := mappingAny.(map[string]interface{}); ok {
+			mapping = m
+		}
+	}
+
+	streamConfig := StreamProcessorConfig{
+		Mode:        "timeseries",
+		OutputTopic: "umh.v1.corpA.plant-A.aawd",
+		Model: ModelConfig{
+			Name:    "fuzz",
+			Version: "v1",
+		},
+		Sources: sources,
+		Mapping: mapping,
+	}
+
 	resources := service.MockResources()
-	return NewStreamProcessor(config, resources)
+	return newStreamProcessor(streamConfig, resources.Logger(), resources.Metrics())
 }
 
 // testEdgeCases tests additional edge cases with the same inputs
@@ -288,7 +316,7 @@ func testEdgeCases(t *testing.T, processor *StreamProcessor, topic, payload, map
 	// Test empty message
 	emptyMsg := service.NewMessage([]byte{})
 	if topic != "" {
-		emptyMsg.MetaSet("kafka_topic", topic)
+		emptyMsg.MetaSet("umh_topic", topic)
 	}
 
 	func() {
@@ -299,12 +327,12 @@ func testEdgeCases(t *testing.T, processor *StreamProcessor, topic, payload, map
 		}()
 
 		batch := service.MessageBatch{emptyMsg}
-		_, _ = processor.Process(ctx, batch)
+		_, _ = processor.ProcessBatch(ctx, batch)
 	}()
 
 	// Test message with invalid metadata
 	invalidMsg := service.NewMessage([]byte(payload))
-	invalidMsg.MetaSet("kafka_topic", string([]byte{0x00, 0x01, 0x02})) // Invalid UTF-8
+	invalidMsg.MetaSet("umh_topic", string([]byte{0x00, 0x01, 0x02})) // Invalid UTF-8
 
 	func() {
 		defer func() {
@@ -314,7 +342,7 @@ func testEdgeCases(t *testing.T, processor *StreamProcessor, topic, payload, map
 		}()
 
 		batch := service.MessageBatch{invalidMsg}
-		_, _ = processor.Process(ctx, batch)
+		_, _ = processor.ProcessBatch(ctx, batch)
 	}()
 }
 

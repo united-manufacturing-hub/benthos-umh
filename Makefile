@@ -100,7 +100,7 @@ test-stream-processor:
 .PHONY: fuzz-stream-processor
 fuzz-stream-processor:
 	@echo "Running fuzz tests for stream processor (press Ctrl+C to stop)..."
-	@cd stream_processor_plugin && go test -tags=fuzz -fuzz=FuzzStreamProcessor -fuzztime=30s
+	@cd stream_processor_plugin && go test -tags=fuzz -fuzz=FuzzStreamProcessor
 
 
 .PHONY: test-tag-processor
