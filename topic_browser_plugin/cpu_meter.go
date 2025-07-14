@@ -15,6 +15,8 @@
 package topic_browser_plugin
 
 import (
+	"math"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -44,8 +46,42 @@ func NewCPUMeter(alpha float64) *CPUMeter {
 // Normalized across all CPU cores (e.g., 100% of one core on a 4-core system = 25%).
 // This method samples CPU usage and applies exponential moving average to prevent
 // rapid oscillations that could cause unstable adaptive behavior.
-//
-// Platform-specific implementation is provided in cpu_meter_unix.go and cpu_meter_windows.go.
 func (c *CPUMeter) GetCPUPercent() float64 {
-	return c.getCPUPercent()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Get platform-specific total CPU time
+	totalCPUTime, err := c.getTotalCPUTime()
+	if err != nil {
+		// If we can't get CPU usage, return the last known smoothed value
+		// This prevents errors from disrupting the adaptive algorithm
+		return c.smoothed
+	}
+
+	now := time.Now()
+	wallTime := now.Sub(c.lastCheck)
+
+	// Calculate CPU percentage over the elapsed wall time
+	var cpuPercent float64
+	if wallTime > 0 && c.lastCheck != (time.Time{}) {
+		cpuUsage := totalCPUTime - c.lastUsage
+		cpuPercent = float64(cpuUsage) / float64(wallTime) * 100
+
+		// Normalize to 0-100% by dividing by GOMAXPROCS
+		// (100% of one core on a 4-core system = 25% with GOMAXPROCS=4)
+		// (100% of one core on a 4-core system = 100% with GOMAXPROCS=1)
+		cpuPercent = cpuPercent / float64(runtime.GOMAXPROCS(0))
+
+		// Clamp to reasonable bounds (0-100%)
+		cpuPercent = math.Max(0, math.Min(cpuPercent, 100))
+	}
+
+	// Apply EMA smoothing: new_value = alpha * current + (1-alpha) * previous
+	c.smoothed = c.alpha*cpuPercent + (1-c.alpha)*c.smoothed
+
+	// Update tracking variables for next measurement
+	c.lastUsage = totalCPUTime
+	c.lastCheck = now
+
+	return c.smoothed
 }
