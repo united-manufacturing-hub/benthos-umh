@@ -15,17 +15,11 @@
 package topic_browser_plugin
 
 import (
-	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
-
-func TestCPUMeter(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "CPU Meter Suite")
-}
 
 var _ = Describe("CPUMeter", func() {
 	Context("when created with valid alpha", func() {
