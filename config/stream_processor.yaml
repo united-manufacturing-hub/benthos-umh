@@ -1,0 +1,44 @@
+# Copyright 2025 UMH Systems GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+input:
+  uns:                       # consume raw UMH topics
+    umh_topics:
+      - umh.v1.corpA.plant-A.aawd._raw.press
+      - umh.v1.corpA.plant-A.aawd._raw.tempF
+      - umh.v1.corpA.plant-A.aawd._raw.run
+
+processors:
+  pipeline:
+    stream_processor:
+      mode: timeseries
+      model:
+        name: pump
+        version: v1
+      output_topic: umh.v1.corpA.plant-A.aawd  # base topic for outputs
+      sources:               # alias → raw topic
+        press: umh.v1.corpA.plant-A.aawd._raw.press
+        tF:    umh.v1.corpA.plant-A.aawd._raw.tempF
+        r:     umh.v1.corpA.plant-A.aawd._raw.run
+      mapping:  # field → JS / constant / alias
+        pressure: press+4.00001      # dynamic - depends on 'press'
+        temperature: tF*69/31        # dynamic - depends on 'tF' 
+        combined: press+tF           # dynamic - depends on 'press' and 'tF'
+        motor: 
+          rpm: press/4               # dynamic - depends on 'press'
+        serialNumber: '"SN-P42-008"' # static - always emitted
+        deviceType: '"pump"'         # static - always emitted
+
+output:
+  uns: {}                   # encoder + publish (Optional enforcement, if datacontract exists in schema registry) 
