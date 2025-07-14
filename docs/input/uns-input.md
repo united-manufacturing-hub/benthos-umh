@@ -6,6 +6,7 @@
 
 #### 1 Quick-start (99 % of users)
 
+**Single topic pattern:**
 ```yaml
 input:
   uns:                     # nothing else needed on UMH Core
@@ -22,15 +23,36 @@ output:
   uns: {}                  # hand the curated data back to UMH Core
 ```
 
+**Multiple topic patterns (preferred for multiple filters):**
+```yaml
+input:
+  uns:
+    umh_topics:            # list of regex patterns
+      - "umh\\.v1\\.acme\\.berlin\\..+"
+      - "umh\\.v1\\.acme\\.munich\\..+"
+      - "umh\\.v1\\.acme\\.paris\\.production\\..+"
+pipeline:
+  processors:
+    - tag_processor:       # same pipeline as above
+        defaults: |
+          msg.meta.location_path = "enterprise.demo.plant1.line1.plc1";
+          msg.meta.data_contract = "_historian";
+          msg.meta.tag_name      = "value";
+          return msg;
+output:
+  uns: {}
+```
+
 | What | Default inside UMH Core |
 |------|------------------------|
 | **Broker address** | `localhost:9092` (embedded Redpanda) |
 | **Kafka topic** | **`umh.messages`** (hard-wired) |
 | **Consumer group** | `uns_plugin` |
-| **Filter regex** | `.*` → receive all keys; override with topic: to limit what you pull |
+| **Filter regex** | `.*` → receive all keys; override with `umh_topic:` (single pattern) or `umh_topics:` (multiple patterns) to limit what you pull |
 
 #### 2 Optional overrides
 
+**Single topic pattern:**
 ```yaml
 input:
   uns:
@@ -39,11 +61,24 @@ input:
     consumer_group:  "analytics_reader"
 ```
 
+**Multiple topic patterns:**
+```yaml
+input:
+  uns:
+    umh_topics:          # list of regex patterns
+      - "umh\\.v1\\.acme\\.berlin\\..*"
+      - "umh\\.v1\\.acme\\.munich\\..*"
+    broker_address:  "edge-redpanda:9092"
+    consumer_group:  "analytics_reader"
+```
+
 | Field | Purpose & Default |
 |-------|-------------------|
-| `umh_topic` | Regex against the Kafka key (UMH topic). Default `.*`. |
+| `umh_topic` | **Single regex pattern** against the Kafka key (UMH topic). Default `.*`. Cannot be used with `umh_topics`. |
+| `umh_topics` | **List of regex patterns** against the Kafka key (UMH topic). Preferred for multiple filters. Cannot be used with `umh_topic`. |
 | `broker_address` | Comma-separated bootstrap list. Default `localhost:9092`. |
 | `consumer_group` | Consumer-group ID (offset tracking). Default `uns_plugin`. |
+| `topic` | **[DEPRECATED]** Use `umh_topic` instead. Still supported for backward compatibility. |
 
 #### 3 What the plugin does behind the scenes
 
@@ -62,8 +97,8 @@ input:
 
 4. **Batch-safe ACK** – commits offsets only when the whole Benthos batch succeeds.
 
-**Performance note**
-A very complex regular expression can cost CPU (back-tracking). Stick to anchored, specific patterns such as
+**Performance notes**
+- A very complex regular expression can cost CPU (back-tracking). Stick to anchored, specific patterns such as
 `umh\\.v1\\.acme\\.(berlin|munich)\\..*` rather than `.*temperature.*` if throughput matters.
 
 #### 4 Typical end-to-end flow
@@ -79,8 +114,8 @@ Use this pattern when you need to tap into the Unified Namespace, enrich / trans
 
 #### 5 FAQs / Troubleshooting
 
-- **"No messages appear"** – your regex under `topic:` filtered everything out.
-  Start with `.*`, verify flow, then tighten the pattern.
+- **"No messages appear"** – your regex under `umh_topic:` or `umh_topics:` filtered everything out.
+  Start with `.*` (or `[".*"]` for umh_topics), verify flow, then tighten the pattern.
 
 - **"consumer group lag grows forever"** – your pipeline never ACKs.
   Check downstream processors / outputs for errors; the input only commits on ACK.

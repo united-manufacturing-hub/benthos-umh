@@ -32,7 +32,7 @@ func BenchmarkProcessRecord(b *testing.B) {
 
 	b.Run("MatchingTopic", func(b *testing.B) {
 		// Create processor with a specific topic regex
-		processor, err := NewMessageProcessor("umh\\.v1\\.acme\\.berlin\\..*", metrics)
+		processor, err := NewMessageProcessor([]string{"umh\\.v1\\.acme\\.berlin\\..*"}, metrics)
 		if err != nil {
 			b.Fatalf("Failed to create message processor: %v", err)
 		}
@@ -55,7 +55,7 @@ func BenchmarkProcessRecord(b *testing.B) {
 
 	b.Run("NonMatchingTopic", func(b *testing.B) {
 		// Create processor with a specific topic regex
-		processor, _ := NewMessageProcessor("umh\\.v1\\.acme\\.berlin\\..*", metrics)
+		processor, _ := NewMessageProcessor([]string{"umh\\.v1\\.acme\\.berlin\\..*"}, metrics)
 
 		// Create sample record that doesn't match the filter
 		record := &kgo.Record{
@@ -75,7 +75,7 @@ func BenchmarkProcessRecord(b *testing.B) {
 
 	b.Run("WildcardTopicRegex", func(b *testing.B) {
 		// Create processor with a wildcard regex (matches everything)
-		processor, _ := NewMessageProcessor(".*", metrics)
+		processor, _ := NewMessageProcessor([]string{".*"}, metrics)
 
 		// Create sample record
 		record := &kgo.Record{
@@ -95,7 +95,7 @@ func BenchmarkProcessRecord(b *testing.B) {
 
 	b.Run("ComplexTopicRegex", func(b *testing.B) {
 		// Create processor with a more complex regex pattern
-		processor, _ := NewMessageProcessor("umh\\.v1\\.acme\\.(berlin|munich)\\.(assembly|packaging)\\.[a-z]+", metrics)
+		processor, _ := NewMessageProcessor([]string{"umh\\.v1\\.acme\\.(berlin|munich)\\.(assembly|packaging)\\.[a-z]+"}, metrics)
 
 		// Create sample record
 		record := &kgo.Record{
@@ -115,7 +115,7 @@ func BenchmarkProcessRecord(b *testing.B) {
 
 	b.Run("RecordWithManyHeaders", func(b *testing.B) {
 		// Create processor with a simple regex
-		processor, _ := NewMessageProcessor("umh\\.v1\\..*", metrics)
+		processor, _ := NewMessageProcessor([]string{"umh\\.v1\\..*"}, metrics)
 
 		// Create sample record with many headers
 		headers := make([]kgo.RecordHeader, 20)
@@ -176,7 +176,7 @@ func BenchmarkProcessRecords(b *testing.B) {
 	for _, size := range benchmarkSizes {
 		b.Run("AllMatching_"+strconv.Itoa(size), func(b *testing.B) {
 			// Create processor with a topic regex that matches all records
-			processor, _ := NewMessageProcessor("umh\\.v1\\..*", metrics)
+			processor, _ := NewMessageProcessor([]string{"umh\\.v1\\..*"}, metrics)
 
 			// Create fetches with all matching records
 			fetches := createMockFetches(size, true)
@@ -192,7 +192,7 @@ func BenchmarkProcessRecords(b *testing.B) {
 
 		b.Run("HalfMatching_"+strconv.Itoa(size), func(b *testing.B) {
 			// Create processor with a topic regex
-			processor, _ := NewMessageProcessor("umh\\.v1\\..*", metrics)
+			processor, _ := NewMessageProcessor([]string{"umh\\.v1\\..*"}, metrics)
 
 			// Create fetches with half matching records
 			fetches := createMockFetches(size, false)
@@ -246,10 +246,11 @@ func BenchmarkMessageProcessor_Creation(b *testing.B) {
 		b.Run(pattern.name, func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, _ = NewMessageProcessor(pattern.pattern, metrics)
+				_, _ = NewMessageProcessor([]string{pattern.pattern}, metrics)
 			}
 		})
 	}
+
 }
 
 // BenchmarkUnsInput_ReadBatch measures the performance of reading batches
@@ -293,7 +294,7 @@ func BenchmarkUnsInput_ReadBatch(b *testing.B) {
 
 			// Create UnsInput with default config
 			inputConfig := UnsInputConfig{
-				umhTopic:        "umh\\.v1\\..*",
+				umhTopics:       []string{"umh\\.v1\\..*"},
 				inputKafkaTopic: defaultInputKafkaTopic,
 				brokerAddress:   defaultBrokerAddress,
 				consumerGroup:   defaultConsumerGroup,
@@ -368,7 +369,7 @@ func BenchmarkAckFunction(b *testing.B) {
 
 			// Create UnsInput
 			inputConfig := UnsInputConfig{
-				umhTopic:        "umh\\.v1\\..*",
+				umhTopics:       []string{"umh\\.v1\\..*"},
 				inputKafkaTopic: defaultInputKafkaTopic,
 				brokerAddress:   defaultBrokerAddress,
 				consumerGroup:   defaultConsumerGroup,
