@@ -93,6 +93,16 @@ test-s7comm:
 test-sensorconnect:
 	@$(GINKGO_CMD) $(GINKGO_SERIAL_FLAGS) ./sensorconnect_plugin/...
 
+.PHONY: test-stream-processor
+test-stream-processor:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) --race ./stream_processor_plugin/...
+
+.PHONY: fuzz-stream-processor
+fuzz-stream-processor:
+	@echo "Running fuzz tests for stream processor (press Ctrl+C to stop)..."
+	@cd stream_processor_plugin && go test -tags=fuzz -fuzz=FuzzStreamProcessor
+
+
 .PHONY: test-tag-processor
 test-tag-processor:
 	@TEST_TAG_PROCESSOR=true \
@@ -114,6 +124,10 @@ test-pkg-umh-topic:
 .PHONY: bench-pkg-umh-topic
 bench-pkg-umh-topic:
 	go test -bench=. -benchmem ./pkg/umh/topic/...
+
+.PHONY: bench-stream-processor
+bench-stream-processor:
+	go test -bench=. -benchmem -benchtime=10s ./stream_processor_plugin/...
   
 .PHONY: test-topic-browser
 test-topic-browser:
@@ -172,3 +186,10 @@ build-protobuf:
 .PHONY: serve-pprof
 serve-pprof:
 	go tool pprof -http=:8080 localhost:4195/debug/pprof/profile
+
+## Correctness
+validate-stream-processor:
+	golangci-lint run ./stream_processor_plugin
+	nilaway ./stream_processor_plugin
+	deadcode -test ./stream_processor_plugin
+	staticcheck ./stream_processor_plugin
