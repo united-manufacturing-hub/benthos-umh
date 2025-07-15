@@ -60,9 +60,8 @@ func NewDefaultUnsInputConfig() UnsInputConfig {
 func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsInputConfig, error) {
 	config := NewDefaultUnsInputConfig()
 
-	// Collect topics from all available sources and deduplicate
+	// Collect topics from all available sources
 	var allTopics []string
-	topicSeen := make(map[string]bool)
 
 	// Parse umh_topics (preferred) - list of regex patterns for message key filtering
 	if conf.Contains("umh_topics") {
@@ -70,47 +69,43 @@ func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsIn
 		if err != nil {
 			return config, fmt.Errorf("error while parsing the 'umh_topics' field from the plugin's config: %v", err)
 		}
-		for _, topic := range topics {
-			if !topicSeen[topic] {
-				allTopics = append(allTopics, topic)
-				topicSeen[topic] = true
-			}
-		}
+		allTopics = append(allTopics, topics...)
 	}
 
-	// Parse umh_topic (single pattern) - add to list if not already present
+	// Parse umh_topic (single pattern) - add to list
 	if conf.Contains("umh_topic") {
 		topic, err := conf.FieldString("umh_topic")
 		if err != nil {
 			return config, fmt.Errorf("error while parsing the 'umh_topic' field from the plugin's config: %v", err)
 		}
-		if !topicSeen[topic] {
-			allTopics = append(allTopics, topic)
-			topicSeen[topic] = true
-		}
+		allTopics = append(allTopics, topic)
 	}
 
-	// Parse topic (deprecated) - add to list if not already present
+	// Parse topic (deprecated) - add to list
 	if conf.Contains("topic") {
 		topic, err := conf.FieldString("topic")
 		if err != nil {
 			return config, fmt.Errorf("error while parsing the 'topic' field from the plugin's config: %v", err)
 		}
-		if !topicSeen[topic] {
-			allTopics = append(allTopics, topic)
-			topicSeen[topic] = true
-		}
+		allTopics = append(allTopics, topic)
 		if logger != nil {
 			logger.Warnf("'topic' field is deprecated. Please use 'umh_topic' or 'umh_topics' instead.")
 		}
 	}
 
-	// Set the deduplicated list, ensuring we have at least one topic
+	// Deduplicate and set topics
 	if len(allTopics) > 0 {
-		config.umhTopics = allTopics
-	}
-	// Ensure we have at least one topic
-	if len(allTopics) == 0 {
+		// Create a map to deduplicate while preserving order
+		seen := make(map[string]bool)
+		var deduplicatedTopics []string
+		for _, topic := range allTopics {
+			if !seen[topic] {
+				seen[topic] = true
+				deduplicatedTopics = append(deduplicatedTopics, topic)
+			}
+		}
+		config.umhTopics = deduplicatedTopics
+	} else {
 		return config, fmt.Errorf("no topics found in the plugin's config")
 	}
 
