@@ -106,7 +106,7 @@ func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsIn
 		}
 		config.umhTopics = deduplicatedTopics
 	} else {
-		return config, fmt.Errorf("no topics found in the plugin's config")
+		return config, fmt.Errorf("no topics found in the plugin's config: specify at least one of 'umh_topic', 'umh_topics' or 'topic' fields")
 	}
 
 	// Parse kafka_topic (the actual Kafka topic to consume from)
