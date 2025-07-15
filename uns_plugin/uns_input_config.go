@@ -60,54 +60,53 @@ func NewDefaultUnsInputConfig() UnsInputConfig {
 func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsInputConfig, error) {
 	config := NewDefaultUnsInputConfig()
 
-	// Check that only one of umh_topic, umh_topics, or topic is provided
-	hasUmhTopic := conf.Contains("umh_topic")
-	hasUmhTopics := conf.Contains("umh_topics")
-	hasDeprecatedTopic := conf.Contains("topic")
-
-	// Count how many topic fields are provided
-	topicFieldCount := 0
-	if hasUmhTopic {
-		topicFieldCount++
-	}
-	if hasUmhTopics {
-		topicFieldCount++
-	}
-	if hasDeprecatedTopic {
-		topicFieldCount++
-	}
-
-	if topicFieldCount > 1 {
-		return config, fmt.Errorf("only one of 'umh_topic', 'umh_topics', or 'topic' can be specified")
-	}
+	// Collect topics from all available sources
+	var allTopics []string
 
 	// Parse umh_topics (preferred) - list of regex patterns for message key filtering
-	if hasUmhTopics {
+	if conf.Contains("umh_topics") {
 		topics, err := conf.FieldStringList("umh_topics")
 		if err != nil {
 			return config, fmt.Errorf("error while parsing the 'umh_topics' field from the plugin's config: %v", err)
 		}
-		if len(topics) == 0 {
-			return config, fmt.Errorf("'umh_topics' field cannot be empty")
-		}
-		config.umhTopics = topics
-	} else if hasUmhTopic {
-		// Parse umh_topic (single pattern) - convert to list internally
+		allTopics = append(allTopics, topics...)
+	}
+
+	// Parse umh_topic (single pattern) - add to list
+	if conf.Contains("umh_topic") {
 		topic, err := conf.FieldString("umh_topic")
 		if err != nil {
 			return config, fmt.Errorf("error while parsing the 'umh_topic' field from the plugin's config: %v", err)
 		}
-		config.umhTopics = []string{topic}
-	} else if hasDeprecatedTopic {
-		// Parse topic (deprecated) - convert to list internally
+		allTopics = append(allTopics, topic)
+	}
+
+	// Parse topic (deprecated) - add to list
+	if conf.Contains("topic") {
 		topic, err := conf.FieldString("topic")
 		if err != nil {
 			return config, fmt.Errorf("error while parsing the 'topic' field from the plugin's config: %v", err)
 		}
-		config.umhTopics = []string{topic}
+		allTopics = append(allTopics, topic)
 		if logger != nil {
-			logger.Warnf("'topic' field is deprecated. Please use 'umh_topic' instead.")
+			logger.Warnf("'topic' field is deprecated. Please use 'umh_topic' or 'umh_topics' instead.")
 		}
+	}
+
+	// Deduplicate and set topics
+	if len(allTopics) > 0 {
+		// Create a map to deduplicate while preserving order
+		seen := make(map[string]bool)
+		var deduplicatedTopics []string
+		for _, topic := range allTopics {
+			if !seen[topic] {
+				seen[topic] = true
+				deduplicatedTopics = append(deduplicatedTopics, topic)
+			}
+		}
+		config.umhTopics = deduplicatedTopics
+	} else {
+		return config, fmt.Errorf("no topics found in the plugin's config: specify at least one of 'umh_topic', 'umh_topics' or 'topic' fields")
 	}
 
 	// Parse kafka_topic (the actual Kafka topic to consume from)
