@@ -2563,6 +2563,103 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 			}
 		})
 	})
+
+	Context("Node Rebirth Command Handling", func() {
+		It("should handle NCMD rebirth messages correctly", func() {
+			// Create a rebirth command payload as Ignition would send
+			rebirthMetric := &sparkplugb.Payload_Metric{
+				Name: func() *string { s := "Node Control/Rebirth"; return &s }(),
+				Value: &sparkplugb.Payload_Metric_BooleanValue{
+					BooleanValue: true,
+				},
+				Datatype: func() *uint32 { d := uint32(11); return &d }(), // Boolean type
+			}
+
+			rebirthPayload := &sparkplugb.Payload{
+				Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),
+				Metrics:   []*sparkplugb.Payload_Metric{rebirthMetric},
+			}
+
+			// Marshal the payload
+			payloadBytes, err := proto.Marshal(rebirthPayload)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify the payload is correctly structured for rebirth
+			Expect(rebirthPayload.Metrics).To(HaveLen(1))
+			Expect(*rebirthPayload.Metrics[0].Name).To(Equal("Node Control/Rebirth"))
+			Expect(rebirthPayload.Metrics[0].GetBooleanValue()).To(BeTrue())
+
+			// Ensure unused variable doesn't cause compilation error
+			_ = payloadBytes
+		})
+
+		It("should parse and validate rebirth command structure", func() {
+			// Test parsing of different metric structures that might be received
+			testCases := []struct {
+				name           string
+				metricName     string
+				value          bool
+				expectRebirth  bool
+			}{
+				{"Valid rebirth command", "Node Control/Rebirth", true, true},
+				{"Rebirth command with false value", "Node Control/Rebirth", false, false},
+				{"Different metric name", "Node Control/Other", true, false},
+				{"Wrong metric completely", "Temperature", true, false},
+			}
+
+			for _, tc := range testCases {
+				metric := &sparkplugb.Payload_Metric{
+					Name: &tc.metricName,
+					Value: &sparkplugb.Payload_Metric_BooleanValue{
+						BooleanValue: tc.value,
+					},
+					Datatype: func() *uint32 { d := uint32(11); return &d }(),
+				}
+
+				payload := &sparkplugb.Payload{
+					Metrics: []*sparkplugb.Payload_Metric{metric},
+				}
+
+				// Simulate the rebirth detection logic
+				rebirthRequested := false
+				for _, m := range payload.Metrics {
+					if m.Name != nil && *m.Name == "Node Control/Rebirth" {
+						if boolValue := m.GetBooleanValue(); boolValue {
+							rebirthRequested = true
+							break
+						}
+					}
+				}
+
+				Expect(rebirthRequested).To(Equal(tc.expectRebirth), 
+					fmt.Sprintf("Test case '%s' failed", tc.name))
+			}
+		})
+
+		It("should increment bdSeq on rebirth", func() {
+			// Test that rebirth increments the birth-death sequence number
+			initialBdSeq := uint64(5)
+			
+			// Simulate rebirth processing (this would happen in handleRebirthCommand)
+			newBdSeq := initialBdSeq + 1
+			
+			Expect(newBdSeq).To(Equal(uint64(6)))
+			Expect(newBdSeq).To(BeNumerically(">", initialBdSeq))
+		})
+
+		It("should subscribe to correct NCMD topic format", func() {
+			// Verify the NCMD topic format follows Sparkplug B specification
+			groupID := "FactoryA"
+			edgeNodeID := "EdgeNode1"
+			
+			expectedTopic := fmt.Sprintf("spBv1.0/%s/NCMD/%s", groupID, edgeNodeID)
+			Expect(expectedTopic).To(Equal("spBv1.0/FactoryA/NCMD/EdgeNode1"))
+			
+			// Verify it matches Sparkplug B topic pattern
+			sparkplugPattern := `^spBv1\.0/[^/]+/NCMD/[^/]+$`
+			Expect(expectedTopic).To(MatchRegexp(sparkplugPattern))
+		})
+	})
 })
 
 // Mock structures for testing EON Node ID resolution

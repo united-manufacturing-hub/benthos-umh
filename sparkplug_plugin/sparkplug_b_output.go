@@ -490,6 +490,19 @@ func (s *sparkplugOutput) onConnect(client mqtt.Client) {
 		s.birthsPublished.Incr(1)
 		s.logger.Info("Successfully published BIRTH message")
 	}
+
+	// Subscribe to node rebirth commands (NCMD) 
+	// Edge Nodes must listen for rebirth requests from Host applications
+	ncmdTopic := fmt.Sprintf("spBv1.0/%s/NCMD/%s", s.config.Identity.GroupID, s.config.Identity.EdgeNodeID)
+	s.logger.Infof("Subscribing to node rebirth commands on topic: %s", ncmdTopic)
+	
+	token := client.Subscribe(ncmdTopic, 1, s.handleRebirthCommand)
+	if token.Wait() && token.Error() != nil {
+		s.logger.Errorf("Failed to subscribe to rebirth commands: %v", token.Error())
+		s.publishErrors.Incr(1)
+	} else {
+		s.logger.Info("Successfully subscribed to node rebirth commands")
+	}
 }
 
 func (s *sparkplugOutput) onConnectionLost(client mqtt.Client, err error) {
@@ -499,6 +512,87 @@ func (s *sparkplugOutput) onConnectionLost(client mqtt.Client, err error) {
 	s.nbirthMu.Lock()
 	s.nbirthPublished = false
 	s.nbirthMu.Unlock()
+}
+
+// handleRebirthCommand processes incoming NCMD messages with rebirth requests
+func (s *sparkplugOutput) handleRebirthCommand(client mqtt.Client, msg mqtt.Message) {
+	s.logger.Infof("Received rebirth command on topic: %s", msg.Topic())
+
+	// Debug: Log raw payload bytes for troubleshooting
+	s.logger.Infof("Raw NCMD payload size: %d bytes", len(msg.Payload()))
+
+	// Parse the Sparkplug B payload
+	var payload sparkplugb.Payload
+	if err := proto.Unmarshal(msg.Payload(), &payload); err != nil {
+		s.logger.Errorf("Failed to unmarshal rebirth command payload: %v", err)
+		payloadLen := len(msg.Payload())
+		if payloadLen > 100 {
+			payloadLen = 100
+		}
+		s.logger.Errorf("Raw payload (first %d bytes): %x", payloadLen, msg.Payload()[:payloadLen])
+		return
+	}
+
+	// Debug: Log payload contents
+	s.logger.Infof("Parsed NCMD payload - metrics count: %d, timestamp: %v", len(payload.Metrics), payload.Timestamp)
+	for i, metric := range payload.Metrics {
+		name := "nil"
+		if metric.Name != nil {
+			name = *metric.Name
+		}
+		alias := "nil"
+		if metric.Alias != nil {
+			alias = fmt.Sprintf("%d", *metric.Alias)
+		}
+		s.logger.Infof("Metric %d: name='%s', alias=%s, datatype=%v, hasBoolean=%v", i, name, alias, metric.Datatype, metric.GetBooleanValue())
+	}
+
+	// Look for the "Node Control/Rebirth" metric
+	// Can be either named metric OR alias 0 (per Sparkplug B spec)
+	rebirthRequested := false
+	for _, metric := range payload.Metrics {
+		isRebirthMetric := false
+		
+		// Check named metric
+		if metric.Name != nil && *metric.Name == "Node Control/Rebirth" {
+			isRebirthMetric = true
+		}
+		
+		// Check alias-based metric (alias 1 = "Node Control/Rebirth" in Ignition)
+		// Note: Different implementations use different aliases for rebirth
+		if metric.Alias != nil && (*metric.Alias == 0 || *metric.Alias == 1) {
+			isRebirthMetric = true
+		}
+		
+		// If this is a rebirth metric with boolean true value
+		if isRebirthMetric && metric.GetBooleanValue() {
+			rebirthRequested = true
+			s.logger.Infof("Found rebirth request - name: %v, alias: %v, boolean: %v", 
+				metric.Name, metric.Alias, metric.GetBooleanValue())
+			break
+		}
+	}
+
+	if !rebirthRequested {
+		s.logger.Infof("No valid rebirth request found - looking for 'Node Control/Rebirth' with boolean true")
+		return
+	}
+
+	s.logger.Info("Processing node rebirth request - republishing BIRTH message")
+
+	// Increment bdSeq for the rebirth
+	s.stateMu.Lock()
+	s.bdSeq++
+	s.stateMu.Unlock()
+
+	// Republish NBIRTH with incremented bdSeq
+	if err := s.publishBirthMessage(); err != nil {
+		s.logger.Errorf("Failed to republish BIRTH message after rebirth request: %v", err)
+		s.publishErrors.Incr(1)
+	} else {
+		s.birthsPublished.Incr(1)
+		s.logger.Info("Successfully republished BIRTH message in response to rebirth request")
+	}
 }
 
 func (s *sparkplugOutput) Write(ctx context.Context, msg *service.Message) error {
