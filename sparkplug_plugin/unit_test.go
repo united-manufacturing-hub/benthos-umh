@@ -31,6 +31,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
+	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"github.com/weekaung/sparkplugb-client/sproto"
 	"google.golang.org/protobuf/proto"
 )
@@ -1411,6 +1412,49 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 
 			// Payload timestamp should remain unchanged
 			Expect(*payload.Timestamp).To(Equal(originalTimestamp), "Historical timestamps should be preserved")
+		})
+
+		It("should support metric-level timestamps with official protobuf", func() {
+			// Test metric-level timestamp functionality using the official Eclipse Tahu protobuf
+			// This functionality was added to ensure Sparkplug B specification compliance
+			
+			timestampValue := uint64(1640995200000) // Example timestamp
+			
+			// Create a metric with timestamp using the official protobuf
+			metric := &sparkplugb.Payload_Metric{
+				Name:      func() *string { s := "test_metric"; return &s }(),
+				Timestamp: &timestampValue, // This field is available in the official protobuf
+				Value: &sparkplugb.Payload_Metric_DoubleValue{
+					DoubleValue: 25.5,
+				},
+				Datatype: func() *uint32 { d := uint32(10); return &d }(), // Double type
+			}
+			
+			// Verify timestamp is properly set
+			Expect(metric.Timestamp).NotTo(BeNil(), "Metric should have timestamp field")
+			Expect(*metric.Timestamp).To(Equal(timestampValue), "Metric timestamp should match set value")
+			
+			// Verify the metric can be marshaled and unmarshaled with timestamp intact
+			payload := &sparkplugb.Payload{
+				Timestamp: &timestampValue,
+				Seq:       func() *uint64 { s := uint64(1); return &s }(),
+				Metrics:   []*sparkplugb.Payload_Metric{metric},
+			}
+			
+			// Marshal to protobuf bytes
+			payloadBytes, err := proto.Marshal(payload)
+			Expect(err).NotTo(HaveOccurred(), "Should marshal payload with metric timestamps")
+			
+			// Unmarshal and verify timestamp is preserved
+			var reconstructedPayload sparkplugb.Payload
+			err = proto.Unmarshal(payloadBytes, &reconstructedPayload)
+			Expect(err).NotTo(HaveOccurred(), "Should unmarshal payload with metric timestamps")
+			
+			// Verify metric timestamp is preserved
+			Expect(len(reconstructedPayload.Metrics)).To(Equal(1), "Should have one metric")
+			reconstructedMetric := reconstructedPayload.Metrics[0]
+			Expect(reconstructedMetric.Timestamp).NotTo(BeNil(), "Reconstructed metric should have timestamp")
+			Expect(*reconstructedMetric.Timestamp).To(Equal(timestampValue), "Reconstructed timestamp should match original")
 		})
 	})
 
