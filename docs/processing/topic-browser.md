@@ -224,18 +224,47 @@ ENDENDENDEND
 processors:
   - topic_browser:
       lru_size: 50000                              # Cache size (default: 50,000 entries)
-      emit_interval: "1s"                          # Emission interval (default: 1s)
-      max_events_per_topic_per_interval: 10       # Ring buffer size per topic (default: 10)
-      max_buffer_size: 100000                     # Safety limit for total buffered messages (default: 100,000)
+      emit_interval: "1s"                          # Base emit interval - CPU-aware controller adapts this (default: 1s)
+      max_events_per_topic_per_interval: 1        # Ring buffer size per topic - burst protection (default: 1)
+      max_buffer_size: 10000                     # Safety limit for total buffered messages (default: 10,000)
 ```
+
+## CPU-Aware Adaptive Behavior
+
+The topic browser processor automatically adapts its emit intervals based on CPU load and payload patterns **without requiring any configuration**. This intelligent resource management ensures optimal performance while preventing CPU saturation.
+
+### Algorithm Overview
+
+- **CPU Monitoring**: Samples CPU usage every 200ms using `syscall.Getrusage`
+- **EMA Smoothing**: Applies exponential moving average (α=0.2) to prevent oscillation
+- **Payload Awareness**: Adjusts intervals based on message volume patterns
+- **Adaptive Range**: Emit intervals dynamically adjust between 1s-15s
+- **Gradual Changes**: Maximum 2s adjustment per cycle for stability
+
+### Behavior by Load Pattern
+
+| Scenario | CPU Load | Payload Size | Adaptive Interval | Result |
+|----------|----------|--------------|-------------------|---------|
+| High traffic burst | >90% | Large (>50KB) | 1s (minimum) | Fast emission, better compression |
+| Normal operation | 70-90% | Medium (1-10KB) | 4-8s | Balanced performance |
+| Low traffic | <70% | Small (<1KB) | 8-15s | CPU conservation |
+| CPU saturation | >90% | Any | Increases gradually | Prevents overload |
+
+### Exposed Metrics
+
+The processor exposes additional Prometheus metrics for operational visibility:
+
+- `cpu_load_percent`: Current CPU usage percentage (0-100)
+- `active_emit_interval_seconds`: Current adaptive emit interval in milliseconds
+- `active_topics_count`: Number of active topics being tracked
 
 ### Configuration Parameters
 
 | Parameter | Default | Purpose | Tuning Guidance |
 |-----------|---------|---------|-----------------|
 | `lru_size` | 50,000 | LRU cache size for cumulative metadata storage | Adjust based on topic cardinality |
-| `emit_interval` | 1s | Maximum buffering time before emission | Lower for real-time, higher for throughput |
-| `max_events_per_topic_per_interval` | 10 | Ring buffer size per topic | Increase for high-frequency topics |
+| `emit_interval` | 1s | Base emit interval for CPU-aware adaptation | Used as starting point for adaptive algorithm |
+| `max_events_per_topic_per_interval` | 1 | Ring buffer size per topic (burst protection) | Increased from 10→1 for maximum burst protection |
 | `max_buffer_size` | 100,000 | Safety limit for total buffered messages | Set based on available memory |
 
 ### Sizing Guidelines
