@@ -593,6 +593,63 @@ func (s *sparkplugOutput) handleRebirthCommand(client mqtt.Client, msg mqtt.Mess
 		s.birthsPublished.Incr(1)
 		s.logger.Info("Successfully republished BIRTH message in response to rebirth request")
 	}
+
+	// Actively publish DBIRTH for all known devices
+	// This is required by Sparkplug B specification: after rebirth, all devices must republish DBIRTH
+	s.deviceStateMu.Lock()
+	knownDevices := make([]string, 0, len(s.deviceMetrics))
+	for deviceID := range s.deviceMetrics {
+		if deviceID != "" { // Skip empty device IDs (node-level metrics)
+			knownDevices = append(knownDevices, deviceID)
+		}
+	}
+	
+	// Reset device state to allow DBIRTH republishing
+	s.seenDevices = make(map[string]bool)
+	s.deviceStateMu.Unlock()
+
+	// Publish DBIRTH for all known devices immediately
+	for _, deviceID := range knownDevices {
+		s.logger.Infof("Publishing DBIRTH for device '%s' after rebirth", deviceID)
+		
+		// Get all cached metrics for this device
+		s.deviceStateMu.RLock()
+		deviceCache := s.deviceMetrics[deviceID]
+		s.deviceStateMu.RUnlock()
+		
+		// Convert cached metrics to format expected by getAllDeviceMetrics
+		allDeviceMetrics := make(map[string]interface{})
+		if s.deviceLastValues != nil {
+			s.deviceStateMu.RLock()
+			if lastValues, exists := s.deviceLastValues[deviceID]; exists {
+				for key, value := range lastValues {
+					allDeviceMetrics[key] = value
+				}
+			}
+			s.deviceStateMu.RUnlock()
+		}
+		
+		// If we have cached metrics but no last values, use empty data to trigger DBIRTH
+		if len(deviceCache) > 0 && len(allDeviceMetrics) == 0 {
+			// Use empty metrics map to get all known metrics for DBIRTH
+			allDeviceMetrics = s.getAllDeviceMetrics(deviceID, make(map[string]interface{}))
+		}
+		
+		if len(allDeviceMetrics) > 0 {
+			if err := s.publishDBIRTH(deviceID, allDeviceMetrics); err != nil {
+				s.logger.Errorf("Failed to publish DBIRTH for device '%s' after rebirth: %v", deviceID, err)
+				s.publishErrors.Incr(1)
+			} else {
+				s.markDeviceSeen(deviceID)
+				s.birthsPublished.Incr(1)
+				s.logger.Infof("Successfully published DBIRTH for device '%s' after rebirth", deviceID)
+			}
+		} else {
+			s.logger.Warnf("No metrics found for device '%s', skipping DBIRTH after rebirth", deviceID)
+		}
+	}
+	
+	s.logger.Infof("Completed rebirth - published DBIRTH for %d devices", len(knownDevices))
 }
 
 func (s *sparkplugOutput) Write(ctx context.Context, msg *service.Message) error {
