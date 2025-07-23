@@ -1,9 +1,22 @@
 # OPC UA (Output)
 
-The **OPC UA output** plugin writes data into an OPC UA server (e.g., a PLC). This plugin supports optional read-back (handshake) to confirm the write.
+The **OPC UA output** plugin writes data into an OPC UA server (e.g., a PLC). This plugin supports optional read-back (handshake) to confirm the write and dynamic configuration through interpolated fields.
 
 > **Data Transformations**\
 > It is recommended to perform JSON-to-field transformations _before_ this plugin (e.g., via Node-RED JavaScript or [Bloblang](https://www.benthos.dev/docs/guides/bloblang/about)). That way, you feed the final fields directly to this plugin without extra logic here.
+
+## Dynamic Configuration Support
+
+The OPC UA output plugin supports interpolated strings for the following fields:
+- `nodeId` - Dynamically determine which OPC UA node to write to based on message content
+- `username` - Dynamic authentication credentials from environment variables or message metadata
+- `password` - Dynamic authentication credentials from environment variables or message metadata
+
+This enables use cases such as:
+- Routing writes to different nodes based on message content
+- Using environment variables for credentials
+- Implementing credential rotation through metadata
+- Building flexible, reusable configurations
 
 ***
 
@@ -14,7 +27,8 @@ output:
   opcua:
     # endpoint, username, password, securityMode, securityPolicy, serverCertificateFingerprint, clientCertificate
     # see OPC UA Input for more information
-
+    
+    # Static configuration example
     nodeMappings:
       - nodeId: "ns=2;s=MySetpoint"
         valueFrom: "setpoint"   # The JSON field to write
@@ -126,6 +140,53 @@ handshake:
 ```
 
 The plugin will write to the OPC UA server but **not** confirm. It will “succeed” as soon as the write request is sent.
+
+***
+
+**Dynamic Configuration Example**
+
+The OPC UA output plugin supports dynamic node IDs and credentials using interpolated fields:
+
+```yaml
+output:
+  opcua:
+    endpoint: "opc.tcp://localhost:4840"
+    
+    # Dynamic credentials from environment variables
+    username: "${! env(\"OPC_USERNAME\") }"
+    password: "${! env(\"OPC_PASSWORD\") }"
+    
+    # Dynamic node mapping based on message content
+    nodeMappings:
+      - nodeId: "${! json(\"target_node\") }"     # Node ID from message field
+        valueFrom: "value"
+        dataType: "String"
+```
+
+**Example with message routing:**
+
+```yaml
+pipeline:
+  processors:
+    - mapping: |
+        # Route to different nodes based on tag type
+        root.target_node = match this.tag_type {
+          "color" => "ns=2;s=[default]/PaintRoom1/Spraytan1/Color",
+          "speed" => "ns=2;s=[default]/PaintRoom1/Spraytan1/Speed",
+          "temp"  => "ns=2;s=[default]/PaintRoom1/Spraytan1/Temperature"
+        }
+        root.value = this.tag_value
+
+output:
+  opcua:
+    endpoint: "opc.tcp://plc.factory.local:4840"
+    nodeMappings:
+      - nodeId: "${! json(\"target_node\") }"
+        valueFrom: "value"
+        dataType: "Double"
+```
+
+This enables building reusable configurations that adapt to different environments and message types without hardcoding node paths.
 
 ***
 
