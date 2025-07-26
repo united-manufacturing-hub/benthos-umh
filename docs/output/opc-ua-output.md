@@ -143,7 +143,7 @@ The plugin will write to the OPC UA server but **not** confirm. It will “succe
 
 ***
 
-**Dynamic Configuration Example**
+## Dynamic Configuration Example
 
 The OPC UA output plugin supports dynamic node IDs and credentials using interpolated fields:
 
@@ -205,3 +205,4 @@ For many industrial use cases, you might need more than just writing a value and
    * _Future_: We may add an advanced handshake config that reads a different node (rather than the same node) and checks for a specific “ACK” value.
 
 With Benthos, the “at least once” acknowledgment ensures that if writing fails, the message can be retried or routed. This plugin’s minimal default handshake (read-back from the same node) is a strong start for safer OPC UA setpoints, and we’ll grow it over time if more advanced scenarios are needed.
+
