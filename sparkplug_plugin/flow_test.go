@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
-	"github.com/weekaung/sparkplugb-client/sproto"
+	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -45,7 +45,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			nbirthBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var nbirthPayload sproto.Payload
+			var nbirthPayload sparkplugb.Payload
 			err = proto.Unmarshal(nbirthBytes, &nbirthPayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -67,7 +67,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			ndataBytes, err := base64.StdEncoding.DecodeString(ndataVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var ndataPayload sproto.Payload
+			var ndataPayload sparkplugb.Payload
 			err = proto.Unmarshal(ndataBytes, &ndataPayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -99,7 +99,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			nbirthBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var nbirthPayload sproto.Payload
+			var nbirthPayload sparkplugb.Payload
 			err = proto.Unmarshal(nbirthBytes, &nbirthPayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -113,7 +113,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 				ndataBytes, err := base64.StdEncoding.DecodeString(ndataVector.Base64Data)
 				Expect(err).NotTo(HaveOccurred())
 
-				var ndataPayload sproto.Payload
+				var ndataPayload sparkplugb.Payload
 				err = proto.Unmarshal(ndataBytes, &ndataPayload)
 				Expect(err).NotTo(HaveOccurred())
 
@@ -127,7 +127,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			ndeathBytes, err := base64.StdEncoding.DecodeString(ndeathVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var ndeathPayload sproto.Payload
+			var ndeathPayload sparkplugb.Payload
 			err = proto.Unmarshal(ndeathBytes, &ndeathPayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -152,7 +152,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			nbirthBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var nbirthPayload sproto.Payload
+			var nbirthPayload sparkplugb.Payload
 			err = proto.Unmarshal(nbirthBytes, &nbirthPayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -167,7 +167,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			gapBytes, err := base64.StdEncoding.DecodeString(gapVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var gapPayload sproto.Payload
+			var gapPayload sparkplugb.Payload
 			err = proto.Unmarshal(gapBytes, &gapPayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -195,7 +195,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			ndataBytes, err := base64.StdEncoding.DecodeString(ndataVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var ndataPayload sproto.Payload
+			var ndataPayload sparkplugb.Payload
 			err = proto.Unmarshal(ndataBytes, &ndataPayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -217,7 +217,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			wraparoundBytes, err := base64.StdEncoding.DecodeString(wraparoundVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var wraparoundPayload sproto.Payload
+			var wraparoundPayload sparkplugb.Payload
 			err = proto.Unmarshal(wraparoundBytes, &wraparoundPayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -247,7 +247,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			largeBytes, err := base64.StdEncoding.DecodeString(largeVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var largePayload sproto.Payload
+			var largePayload sparkplugb.Payload
 			err = proto.Unmarshal(largeBytes, &largePayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -256,16 +256,16 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			Expect(aliasCount).To(BeNumerically(">=", 100)) // Large payload has 100+ metrics
 
 			// Create simulated NDATA with multiple aliases
-			simulatedNData := []*sproto.Payload_Metric{
+			simulatedNData := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(100), // Should resolve to Metric_99
 					Datatype: uint32Ptr(10),
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 123.45},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 123.45},
 				},
 				{
 					Alias:    uint64Ptr(50), // Should resolve to Metric_49
 					Datatype: uint32Ptr(10),
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 67.89},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 67.89},
 				},
 			}
 
@@ -286,7 +286,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 
 			// Device 1
 			device1Key := "Factory/Line1"
-			device1Metrics := []*sproto.Payload_Metric{
+			device1Metrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Temperature"),
 					Alias: uint64Ptr(100),
@@ -297,7 +297,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 
 			// Device 2 (same alias, different name)
 			device2Key := "Factory/Line2"
-			device2Metrics := []*sproto.Payload_Metric{
+			device2Metrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Pressure"),
 					Alias: uint64Ptr(100), // Same alias as device1
@@ -307,22 +307,22 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			Expect(count2).To(Equal(1))
 
 			// Test independent resolution
-			data1 := []*sproto.Payload_Metric{
+			data1 := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(100),
 					Datatype: uint32Ptr(9),
-					Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 25.5},
+					Value:    &sparkplugb.Payload_Metric_FloatValue{FloatValue: 25.5},
 				},
 			}
 			resolved1 := cache.ResolveAliases(device1Key, data1)
 			Expect(resolved1).To(Equal(1))
 			Expect(*data1[0].Name).To(Equal("Temperature"))
 
-			data2 := []*sproto.Payload_Metric{
+			data2 := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(100),
 					Datatype: uint32Ptr(10),
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 1013.25},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1013.25},
 				},
 			}
 			resolved2 := cache.ResolveAliases(device2Key, data2)
@@ -340,13 +340,13 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			// Test malformed protobuf handling
 			malformedData := []byte{0xFF, 0xFE, 0xFD, 0xFC} // Invalid protobuf
 
-			var payload sproto.Payload
+			var payload sparkplugb.Payload
 			err := proto.Unmarshal(malformedData, &payload)
 			Expect(err).To(HaveOccurred()) // Should fail to unmarshal
 
 			// Test recovery after malformed message
 			// Cache should remain functional
-			validMetrics := []*sproto.Payload_Metric{
+			validMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Temperature"),
 					Alias: uint64Ptr(100),
@@ -356,10 +356,10 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			Expect(count).To(Equal(1))
 
 			// Test partial payload corruption
-			partiallyCorrupted := &sproto.Payload{
+			partiallyCorrupted := &sparkplugb.Payload{
 				Timestamp: uint64Ptr(1672531320000),
 				Seq:       uint64Ptr(1),
-				Metrics: []*sproto.Payload_Metric{
+				Metrics: []*sparkplugb.Payload_Metric{
 					{
 						// Missing required fields - should be handled gracefully
 						Alias: uint64Ptr(100),
@@ -379,7 +379,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			deviceKey := "Factory/Line1"
 
 			// Cache some aliases
-			metrics := []*sproto.Payload_Metric{
+			metrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Temperature"),
 					Alias: uint64Ptr(100),
@@ -392,11 +392,11 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			cache.Clear()
 
 			// Verify cache is empty
-			dataMetrics := []*sproto.Payload_Metric{
+			dataMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(100),
 					Datatype: uint32Ptr(9),
-					Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 25.5},
+					Value:    &sparkplugb.Payload_Metric_FloatValue{FloatValue: 25.5},
 				},
 			}
 			resolvedCount := cache.ResolveAliases(deviceKey, dataMetrics)
@@ -689,28 +689,28 @@ var _ = Describe("Device-Level Message Handling", func() {
 			deviceKey := "Factory/Line1/Machine1" // Device-level key
 
 			// Step 1: DBIRTH message with device metrics
-			dbirthMetrics := []*sproto.Payload_Metric{
+			dbirthMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:     stringPtr("Motor_Speed"),
 					Alias:    uint64Ptr(200),
 					Datatype: uint32Ptr(10), // Double
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 1800.0},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1800.0},
 				},
 				{
 					Name:     stringPtr("Motor_Temperature"),
 					Alias:    uint64Ptr(201),
 					Datatype: uint32Ptr(9), // Float
-					Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 65.5},
+					Value:    &sparkplugb.Payload_Metric_FloatValue{FloatValue: 65.5},
 				},
 				{
 					Name:     stringPtr("Motor_Status"),
 					Alias:    uint64Ptr(202),
 					Datatype: uint32Ptr(11), // Boolean
-					Value:    &sproto.Payload_Metric_BooleanValue{BooleanValue: true},
+					Value:    &sparkplugb.Payload_Metric_BooleanValue{BooleanValue: true},
 				},
 			}
 
-			dbirthPayload := &sproto.Payload{
+			dbirthPayload := &sparkplugb.Payload{
 				Timestamp: uint64Ptr(1672531320000),
 				Seq:       uint64Ptr(0), // DBIRTH starts at 0
 				Metrics:   dbirthMetrics,
@@ -721,20 +721,20 @@ var _ = Describe("Device-Level Message Handling", func() {
 			Expect(aliasCount).To(Equal(3))
 
 			// Step 2: DDATA message using aliases
-			ddataMetrics := []*sproto.Payload_Metric{
+			ddataMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(200), // Motor_Speed
 					Datatype: uint32Ptr(10),
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 1850.0},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1850.0},
 				},
 				{
 					Alias:    uint64Ptr(201), // Motor_Temperature
 					Datatype: uint32Ptr(9),
-					Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 68.2},
+					Value:    &sparkplugb.Payload_Metric_FloatValue{FloatValue: 68.2},
 				},
 			}
 
-			ddataPayload := &sproto.Payload{
+			ddataPayload := &sparkplugb.Payload{
 				Timestamp: uint64Ptr(1672531380000),
 				Seq:       uint64Ptr(1), // Incremented from DBIRTH
 				Metrics:   ddataMetrics,
@@ -755,7 +755,7 @@ var _ = Describe("Device-Level Message Handling", func() {
 
 			// Node-level metrics
 			nodeKey := "Factory/Line1"
-			nodeMetrics := []*sproto.Payload_Metric{
+			nodeMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Line_Status"),
 					Alias: uint64Ptr(100),
@@ -766,7 +766,7 @@ var _ = Describe("Device-Level Message Handling", func() {
 
 			// Device-level metrics (same line, different device)
 			deviceKey := "Factory/Line1/Machine1"
-			deviceMetrics := []*sproto.Payload_Metric{
+			deviceMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Machine_Status"),
 					Alias: uint64Ptr(100), // Same alias as node, but different context
@@ -776,22 +776,22 @@ var _ = Describe("Device-Level Message Handling", func() {
 			Expect(deviceCount).To(Equal(1))
 
 			// Test independent resolution
-			nodeData := []*sproto.Payload_Metric{
+			nodeData := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(100),
 					Datatype: uint32Ptr(11),
-					Value:    &sproto.Payload_Metric_BooleanValue{BooleanValue: true},
+					Value:    &sparkplugb.Payload_Metric_BooleanValue{BooleanValue: true},
 				},
 			}
 			nodeResolved := cache.ResolveAliases(nodeKey, nodeData)
 			Expect(nodeResolved).To(Equal(1))
 			Expect(*nodeData[0].Name).To(Equal("Line_Status"))
 
-			deviceData := []*sproto.Payload_Metric{
+			deviceData := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(100),
 					Datatype: uint32Ptr(11),
-					Value:    &sproto.Payload_Metric_BooleanValue{BooleanValue: false},
+					Value:    &sparkplugb.Payload_Metric_BooleanValue{BooleanValue: false},
 				},
 			}
 			deviceResolved := cache.ResolveAliases(deviceKey, deviceData)
@@ -805,7 +805,7 @@ var _ = Describe("Device-Level Message Handling", func() {
 
 			// Device 1
 			device1Key := "Factory/Line1/Machine1"
-			device1Metrics := []*sproto.Payload_Metric{
+			device1Metrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Speed"),
 					Alias: uint64Ptr(200),
@@ -816,7 +816,7 @@ var _ = Describe("Device-Level Message Handling", func() {
 
 			// Device 2 (same line, different machine)
 			device2Key := "Factory/Line1/Machine2"
-			device2Metrics := []*sproto.Payload_Metric{
+			device2Metrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Pressure"),
 					Alias: uint64Ptr(200), // Same alias, different device
@@ -826,22 +826,22 @@ var _ = Describe("Device-Level Message Handling", func() {
 			Expect(count2).To(Equal(1))
 
 			// Test independent resolution
-			data1 := []*sproto.Payload_Metric{
+			data1 := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(200),
 					Datatype: uint32Ptr(10),
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 1200.0},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1200.0},
 				},
 			}
 			resolved1 := cache.ResolveAliases(device1Key, data1)
 			Expect(resolved1).To(Equal(1))
 			Expect(*data1[0].Name).To(Equal("Speed"))
 
-			data2 := []*sproto.Payload_Metric{
+			data2 := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(200),
 					Datatype: uint32Ptr(10),
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 15.5},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 15.5},
 				},
 			}
 			resolved2 := cache.ResolveAliases(device2Key, data2)

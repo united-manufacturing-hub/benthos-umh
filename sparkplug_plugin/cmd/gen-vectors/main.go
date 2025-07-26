@@ -24,7 +24,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/weekaung/sparkplugb-client/sproto"
+	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -81,23 +81,23 @@ func generateHappyPathVectors() {
 
 	// NBIRTH with corrected format from expert.md
 	nbirth := createNBirth(0, []Metric{
-		{Name: "bdSeq", Alias: 1, DataType: sproto.DataType_UInt64, Value: uint64(88)},
-		{Name: "Node Control/Rebirth", Alias: 2, DataType: sproto.DataType_Boolean, Value: false},
-		{Name: "Temperature", Alias: 100, DataType: sproto.DataType_Double, Value: 21.5},
+		{Name: "bdSeq", Alias: 1, DataType: uint32(8), Value: uint64(88)},
+		{Name: "Node Control/Rebirth", Alias: 2, DataType: uint32(11), Value: false},
+		{Name: "Temperature", Alias: 100, DataType: uint32(10), Value: 21.5},
 	})
 	fmt.Printf("	{\"NBIRTH_V1\", \"%s\", \"Basic node birth with temperature\", \"NBIRTH\", 3},\n",
 		b64(nbirth))
 
 	// NDATA with temperature update
 	ndata := createNData(1, []Metric{
-		{Alias: 100, DataType: sproto.DataType_Double, Value: 22.5},
+		{Alias: 100, DataType: uint32(10), Value: 22.5},
 	})
 	fmt.Printf("	{\"NDATA_V1\", \"%s\", \"Temperature update by alias\", \"NDATA\", 1},\n",
 		b64(ndata))
 
 	// NDEATH
 	ndeath := createNDeath([]Metric{
-		{Name: "bdSeq", DataType: sproto.DataType_UInt64, Value: uint64(0)},
+		{Name: "bdSeq", DataType: uint32(8), Value: uint64(0)},
 	})
 	fmt.Printf("	{\"NDEATH_V1\", \"%s\", \"Node death certificate\", \"NDEATH\", 1},\n",
 		b64(ndeath))
@@ -108,21 +108,21 @@ func generateEdgeCaseVectors() {
 
 	// Sequence gap
 	ndataGap := createNData(5, []Metric{
-		{Alias: 100, DataType: sproto.DataType_Double, Value: 27.0},
+		{Alias: 100, DataType: uint32(10), Value: 27.0},
 	})
 	fmt.Printf("	{\"NDATA_GAP\", \"%s\", \"Sequence gap 1→5\", \"NDATA\", 1},\n",
 		b64(ndataGap))
 
 	// Pre-birth data
 	ndataPreBirth := createNData(1, []Metric{
-		{Alias: 100, DataType: sproto.DataType_Double, Value: 25.0},
+		{Alias: 100, DataType: uint32(10), Value: 25.0},
 	})
 	fmt.Printf("	{\"NDATA_BEFORE_BIRTH\", \"%s\", \"Data without birth context\", \"NDATA\", 1},\n",
 		b64(ndataPreBirth))
 
 	// Sequence wraparound
 	ndataWrap := createNData(0, []Metric{
-		{Alias: 100, DataType: sproto.DataType_Double, Value: 30.0},
+		{Alias: 100, DataType: uint32(10), Value: 30.0},
 	})
 	fmt.Printf("	{\"NDATA_WRAPAROUND\", \"%s\", \"Sequence wraparound 255→0\", \"NDATA\", 1},\n",
 		b64(ndataWrap))
@@ -133,14 +133,14 @@ func generatePerformanceVectors() {
 
 	// Large NBIRTH with many metrics
 	var metrics []Metric
-	metrics = append(metrics, Metric{Name: "bdSeq", Alias: 1, DataType: sproto.DataType_UInt64, Value: uint64(88)})
-	metrics = append(metrics, Metric{Name: "Node Control/Rebirth", Alias: 2, DataType: sproto.DataType_Boolean, Value: false})
+	metrics = append(metrics, Metric{Name: "bdSeq", Alias: 1, DataType: uint32(8), Value: uint64(88)})
+	metrics = append(metrics, Metric{Name: "Node Control/Rebirth", Alias: 2, DataType: uint32(11), Value: false})
 
 	for i := 1; i <= 100; i++ {
 		metrics = append(metrics, Metric{
 			Name:     fmt.Sprintf("Metric_%d", i),
 			Alias:    uint64(i),
-			DataType: sproto.DataType_Double,
+			DataType: uint32(10),
 			Value:    float64(i) * 1.5,
 		})
 	}
@@ -154,16 +154,16 @@ func generatePerformanceVectors() {
 type Metric struct {
 	Name     string
 	Alias    uint64
-	DataType sproto.DataType
+	DataType uint32
 	Value    interface{}
 }
 
 func createNBirth(seq uint64, metrics []Metric) []byte {
 	timestamp := uint64(time.Now().UnixMilli())
-	payload := &sproto.Payload{
+	payload := &sparkplugb.Payload{
 		Timestamp: &timestamp,
 		Seq:       &seq,
-		Metrics:   make([]*sproto.Payload_Metric, len(metrics)),
+		Metrics:   make([]*sparkplugb.Payload_Metric, len(metrics)),
 	}
 
 	for i, metric := range metrics {
@@ -179,10 +179,10 @@ func createNBirth(seq uint64, metrics []Metric) []byte {
 
 func createNData(seq uint64, metrics []Metric) []byte {
 	timestamp := uint64(time.Now().UnixMilli())
-	payload := &sproto.Payload{
+	payload := &sparkplugb.Payload{
 		Timestamp: &timestamp,
 		Seq:       &seq,
-		Metrics:   make([]*sproto.Payload_Metric, len(metrics)),
+		Metrics:   make([]*sparkplugb.Payload_Metric, len(metrics)),
 	}
 
 	for i, metric := range metrics {
@@ -199,10 +199,10 @@ func createNData(seq uint64, metrics []Metric) []byte {
 func createNDeath(metrics []Metric) []byte {
 	timestamp := uint64(time.Now().UnixMilli())
 	seq := uint64(0) // Death messages reset sequence
-	payload := &sproto.Payload{
+	payload := &sparkplugb.Payload{
 		Timestamp: &timestamp,
 		Seq:       &seq,
-		Metrics:   make([]*sproto.Payload_Metric, len(metrics)),
+		Metrics:   make([]*sparkplugb.Payload_Metric, len(metrics)),
 	}
 
 	for i, metric := range metrics {
@@ -216,9 +216,9 @@ func createNDeath(metrics []Metric) []byte {
 	return data
 }
 
-func createProtoMetric(metric Metric, includeName bool) *sproto.Payload_Metric {
+func createProtoMetric(metric Metric, includeName bool) *sparkplugb.Payload_Metric {
 	datatype := uint32(metric.DataType)
-	protoMetric := &sproto.Payload_Metric{
+	protoMetric := &sparkplugb.Payload_Metric{
 		Datatype: &datatype,
 	}
 
@@ -232,13 +232,13 @@ func createProtoMetric(metric Metric, includeName bool) *sproto.Payload_Metric {
 	// Set value based on type
 	switch v := metric.Value.(type) {
 	case bool:
-		protoMetric.Value = &sproto.Payload_Metric_BooleanValue{BooleanValue: v}
+		protoMetric.Value = &sparkplugb.Payload_Metric_BooleanValue{BooleanValue: v}
 	case uint64:
-		protoMetric.Value = &sproto.Payload_Metric_LongValue{LongValue: v}
+		protoMetric.Value = &sparkplugb.Payload_Metric_LongValue{LongValue: v}
 	case float64:
-		protoMetric.Value = &sproto.Payload_Metric_DoubleValue{DoubleValue: v}
+		protoMetric.Value = &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: v}
 	case string:
-		protoMetric.Value = &sproto.Payload_Metric_StringValue{StringValue: v}
+		protoMetric.Value = &sparkplugb.Payload_Metric_StringValue{StringValue: v}
 	default:
 		log.Fatalf("Unsupported metric value type: %T", v)
 	}

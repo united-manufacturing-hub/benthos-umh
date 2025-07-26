@@ -24,7 +24,7 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	"github.com/weekaung/sparkplugb-client/sproto"
+	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -452,7 +452,7 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 	s.logger.Debugf("🔍 processSparkplugMessage: attempting to unmarshal %d bytes as Sparkplug payload", len(mqttMsg.payload))
 
 	// Decode Sparkplug payload
-	var payload sproto.Payload
+	var payload sparkplugb.Payload
 	if err := proto.Unmarshal(mqttMsg.payload, &payload); err != nil {
 		s.logger.Errorf("Failed to unmarshal Sparkplug payload from topic %s: %v", mqttMsg.topic, err)
 		s.messagesErrored.Incr(1)
@@ -515,7 +515,7 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 //
 // Key behavior: Caches alias → metric name mappings from BIRTH certificates
 // for use in subsequent DATA message resolution.
-func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload *sproto.Payload) {
+func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
@@ -553,7 +553,7 @@ func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload 
 	s.logger.Debugf("Processed %s for device %s", msgType, deviceKey)
 }
 
-func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *sproto.Payload) {
+func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
@@ -585,7 +585,7 @@ func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *
 	s.resolveAliases(deviceKey, payload.Metrics)
 }
 
-func (s *sparkplugInput) processDeathMessage(deviceKey, msgType string, payload *sproto.Payload) {
+func (s *sparkplugInput) processDeathMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
@@ -597,7 +597,7 @@ func (s *sparkplugInput) processDeathMessage(deviceKey, msgType string, payload 
 	s.logger.Debugf("Processed %s for device %s", msgType, deviceKey)
 }
 
-func (s *sparkplugInput) processCommandMessage(deviceKey, msgType string, payload *sproto.Payload, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (s *sparkplugInput) processCommandMessage(deviceKey, msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	s.logger.Debugf("⚡ processCommandMessage: processing %s for device %s with %d metrics", msgType, deviceKey, len(payload.Metrics))
 
 	// Update node state timestamp for activity tracking
@@ -710,7 +710,7 @@ func (s *sparkplugInput) Close(ctx context.Context) error {
 }
 
 // Helper methods that delegate to the existing processor logic where possible
-func (s *sparkplugInput) cacheAliases(deviceKey string, metrics []*sproto.Payload_Metric) {
+func (s *sparkplugInput) cacheAliases(deviceKey string, metrics []*sparkplugb.Payload_Metric) {
 	// DEBUG: Log before alias caching as recommended in the plan
 	s.logger.Debugf("🗃️ cacheAliases: starting to cache aliases for deviceKey=%s, %d metrics", deviceKey, len(metrics))
 
@@ -736,7 +736,7 @@ func (s *sparkplugInput) cacheAliases(deviceKey string, metrics []*sproto.Payloa
 //
 // Critical for Device-Level PARRIS: DDATA messages contain only aliases (for efficiency),
 // but downstream processing needs the original metric names from the DBIRTH certificate.
-func (s *sparkplugInput) resolveAliases(deviceKey string, metrics []*sproto.Payload_Metric) {
+func (s *sparkplugInput) resolveAliases(deviceKey string, metrics []*sparkplugb.Payload_Metric) {
 	// DEBUG: Log before alias resolution as recommended in the plan
 	s.logger.Debugf("🔍 resolveAliases: starting to resolve aliases for deviceKey=%s, %d metrics", deviceKey, len(metrics))
 
@@ -766,7 +766,7 @@ func (s *sparkplugInput) parseSparkplugTopicDetailed(topic string) (string, stri
 }
 
 // Message creation methods
-func (s *sparkplugInput) createSplitMessages(payload *sproto.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	var batch service.MessageBatch
 
 	for _, metric := range payload.Metrics {
@@ -783,7 +783,7 @@ func (s *sparkplugInput) createSplitMessages(payload *sproto.Payload, msgType, d
 	return batch
 }
 
-func (s *sparkplugInput) createMessageFromMetric(metric *sproto.Payload_Metric, payload *sproto.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) *service.Message {
+func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) *service.Message {
 	// Extract metric value as JSON (always preserve Sparkplug B format)
 	value := s.extractMetricValue(metric)
 	if value == nil {
@@ -881,7 +881,7 @@ func (s *sparkplugInput) createDeathEventMessage(msgType, deviceKey string, topi
 	return service.MessageBatch{msg}
 }
 
-func (s *sparkplugInput) extractMetricValue(metric *sproto.Payload_Metric) []byte {
+func (s *sparkplugInput) extractMetricValue(metric *sparkplugb.Payload_Metric) []byte {
 	// Create a simple JSON structure with the metric value
 	result := make(map[string]interface{})
 
@@ -900,17 +900,17 @@ func (s *sparkplugInput) extractMetricValue(metric *sproto.Payload_Metric) []byt
 		result["value"] = nil
 	} else if value := metric.GetValue(); value != nil {
 		switch v := value.(type) {
-		case *sproto.Payload_Metric_IntValue:
+		case *sparkplugb.Payload_Metric_IntValue:
 			result["value"] = v.IntValue
-		case *sproto.Payload_Metric_LongValue:
+		case *sparkplugb.Payload_Metric_LongValue:
 			result["value"] = v.LongValue
-		case *sproto.Payload_Metric_FloatValue:
+		case *sparkplugb.Payload_Metric_FloatValue:
 			result["value"] = v.FloatValue
-		case *sproto.Payload_Metric_DoubleValue:
+		case *sparkplugb.Payload_Metric_DoubleValue:
 			result["value"] = v.DoubleValue
-		case *sproto.Payload_Metric_BooleanValue:
+		case *sparkplugb.Payload_Metric_BooleanValue:
 			result["value"] = v.BooleanValue
-		case *sproto.Payload_Metric_StringValue:
+		case *sparkplugb.Payload_Metric_StringValue:
 			result["value"] = v.StringValue
 		default:
 			result["value"] = nil
@@ -986,17 +986,17 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 	}
 
 	// Create rebirth command payload
-	rebirthMetric := &sproto.Payload_Metric{
+	rebirthMetric := &sparkplugb.Payload_Metric{
 		Name: func() *string { s := "Node Control/Rebirth"; return &s }(),
-		Value: &sproto.Payload_Metric_BooleanValue{
+		Value: &sparkplugb.Payload_Metric_BooleanValue{
 			BooleanValue: true,
 		},
 		Datatype: func() *uint32 { d := uint32(SparkplugDataTypeBoolean); return &d }(),
 	}
 
-	cmdPayload := &sproto.Payload{
+	cmdPayload := &sparkplugb.Payload{
 		Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),
-		Metrics:   []*sproto.Payload_Metric{rebirthMetric},
+		Metrics:   []*sparkplugb.Payload_Metric{rebirthMetric},
 	}
 
 	payloadBytes, err := proto.Marshal(cmdPayload)
@@ -1048,7 +1048,7 @@ func (s *sparkplugInput) validateSequenceNumber(lastSeq, currentSeq uint8) bool 
 
 // tryAddUMHMetadata attempts to convert Sparkplug B data to UMH format and add UMH metadata.
 // This is a non-failing operation - if conversion fails, it adds status flags and continues.
-func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sproto.Payload_Metric, payload *sproto.Payload, topicInfo *TopicInfo) {
+func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
 	// Only attempt conversion if we have necessary data
 	if topicInfo.Device == "" || metric == nil {
 		msg.MetaSet("umh_conversion_status", "skipped_insufficient_data")
@@ -1114,7 +1114,7 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sproto.
 }
 
 // extractMetricValueRaw extracts the raw value from a Sparkplug metric without JSON wrapping
-func (s *sparkplugInput) extractMetricValueRaw(metric *sproto.Payload_Metric) interface{} {
+func (s *sparkplugInput) extractMetricValueRaw(metric *sparkplugb.Payload_Metric) interface{} {
 	// Check for null value
 	if metric.IsNull != nil && *metric.IsNull {
 		return nil
@@ -1123,17 +1123,17 @@ func (s *sparkplugInput) extractMetricValueRaw(metric *sproto.Payload_Metric) in
 	// Extract value based on type
 	if value := metric.GetValue(); value != nil {
 		switch v := value.(type) {
-		case *sproto.Payload_Metric_IntValue:
+		case *sparkplugb.Payload_Metric_IntValue:
 			return v.IntValue
-		case *sproto.Payload_Metric_LongValue:
+		case *sparkplugb.Payload_Metric_LongValue:
 			return v.LongValue
-		case *sproto.Payload_Metric_FloatValue:
+		case *sparkplugb.Payload_Metric_FloatValue:
 			return v.FloatValue
-		case *sproto.Payload_Metric_DoubleValue:
+		case *sparkplugb.Payload_Metric_DoubleValue:
 			return v.DoubleValue
-		case *sproto.Payload_Metric_BooleanValue:
+		case *sparkplugb.Payload_Metric_BooleanValue:
 			return v.BooleanValue
-		case *sproto.Payload_Metric_StringValue:
+		case *sparkplugb.Payload_Metric_StringValue:
 			return v.StringValue
 		default:
 			return nil

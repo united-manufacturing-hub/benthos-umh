@@ -524,7 +524,7 @@ func (s *sparkplugOutput) handleRebirthCommand(client mqtt.Client, msg mqtt.Mess
 	// Parse the Sparkplug B payload
 	var payload sparkplugb.Payload
 	if err := proto.Unmarshal(msg.Payload(), &payload); err != nil {
-		s.logger.Errorf("Failed to unmarshal rebirth command payload: %v", err)
+		s.logger.Errorf("Failed to unmarshal rebirth command payload: %v. This may indicate an incompatible Sparkplug B message format or corrupted payload", err)
 		payloadLen := len(msg.Payload())
 		if payloadLen > 100 {
 			payloadLen = 100
@@ -534,7 +534,7 @@ func (s *sparkplugOutput) handleRebirthCommand(client mqtt.Client, msg mqtt.Mess
 	}
 
 	// Debug: Log payload contents
-	s.logger.Infof("Parsed NCMD payload - metrics count: %d, timestamp: %v", len(payload.Metrics), payload.Timestamp)
+	s.logger.Debugf("Parsed NCMD payload - metrics count: %d, timestamp: %v", len(payload.Metrics), payload.Timestamp)
 	for i, metric := range payload.Metrics {
 		name := "nil"
 		if metric.Name != nil {
@@ -544,23 +544,22 @@ func (s *sparkplugOutput) handleRebirthCommand(client mqtt.Client, msg mqtt.Mess
 		if metric.Alias != nil {
 			alias = fmt.Sprintf("%d", *metric.Alias)
 		}
-		s.logger.Infof("Metric %d: name='%s', alias=%s, datatype=%v, hasBoolean=%v", i, name, alias, metric.Datatype, metric.GetBooleanValue())
+		s.logger.Debugf("Metric %d: name='%s', alias=%s, datatype=%v, hasBoolean=%v", i, name, alias, metric.Datatype, metric.GetBooleanValue())
 	}
 
 	// Look for the "Node Control/Rebirth" metric
-	// Can be either named metric OR alias 0 (per Sparkplug B spec)
+	// Per Sparkplug B spec: MUST check for "Node Control/Rebirth" name first (spec compliant)
+	// Only use alias if name is not provided
 	rebirthRequested := false
 	for _, metric := range payload.Metrics {
 		isRebirthMetric := false
 		
-		// Check named metric
+		// Check named metric first (spec compliant approach)
 		if metric.Name != nil && *metric.Name == "Node Control/Rebirth" {
 			isRebirthMetric = true
-		}
-		
-		// Check alias-based metric (alias 1 = "Node Control/Rebirth" in Ignition)
-		// Note: Different implementations use different aliases for rebirth
-		if metric.Alias != nil && (*metric.Alias == 0 || *metric.Alias == 1) {
+		} else if metric.Name == nil && metric.Alias != nil && *metric.Alias == 1 {
+			// Only check alias if name is not provided
+			// Alias 1 is reserved for "Node Control/Rebirth" in NBIRTH
 			isRebirthMetric = true
 		}
 		
@@ -597,15 +596,16 @@ func (s *sparkplugOutput) handleRebirthCommand(client mqtt.Client, msg mqtt.Mess
 	// Actively publish DBIRTH for all known devices
 	// This is required by Sparkplug B specification: after rebirth, all devices must republish DBIRTH
 	s.deviceStateMu.Lock()
+	// Reset device state to allow DBIRTH republishing
+	s.seenDevices = make(map[string]bool)
+	
+	// Collect known devices
 	knownDevices := make([]string, 0, len(s.deviceMetrics))
 	for deviceID := range s.deviceMetrics {
 		if deviceID != "" { // Skip empty device IDs (node-level metrics)
 			knownDevices = append(knownDevices, deviceID)
 		}
 	}
-	
-	// Reset device state to allow DBIRTH republishing
-	s.seenDevices = make(map[string]bool)
 	s.deviceStateMu.Unlock()
 
 	// Publish DBIRTH for all known devices immediately
@@ -1474,10 +1474,27 @@ func (s *sparkplugOutput) setMetricTimestamp(metric *sparkplugb.Payload_Metric, 
 	// Get current timestamp in milliseconds
 	timestamp := uint64(time.Now().UnixMilli())
 	
-	// Try to extract timestamp from message metadata first
-	if metaTS, exists := msg.MetaGet("timestamp_ms"); exists && metaTS != "" {
-		if parsedTS, err := strconv.ParseUint(metaTS, 10, 64); err == nil {
-			timestamp = parsedTS
+	// Check for timestamp_ms in the message payload first (UMH-Core format)
+	if structured, err := msg.AsStructured(); err == nil {
+		if structMap, ok := structured.(map[string]interface{}); ok {
+			if tsValue, exists := structMap["timestamp_ms"]; exists {
+				switch v := tsValue.(type) {
+				case float64:
+					timestamp = uint64(v)
+				case int64:
+					timestamp = uint64(v)
+				case int:
+					timestamp = uint64(v)
+				case string:
+					if parsedTS, err := strconv.ParseUint(v, 10, 64); err == nil {
+						timestamp = parsedTS
+					}
+				case json.Number:
+					if parsedTS, err := v.Int64(); err == nil {
+						timestamp = uint64(parsedTS)
+					}
+				}
+			}
 		}
 	}
 	
