@@ -44,7 +44,6 @@ require (
 	github.com/robinson/gos7 v0.0.0-20241205073040-7ea1d6fb9d20
 	github.com/twmb/franz-go v1.18.1
 	github.com/twmb/franz-go/pkg/kadm v1.15.0
-	github.com/weekaung/sparkplugb-client v0.0.0-20231221094327-a52557e3202a
 	golang.org/x/crypto v0.38.0
 	golang.org/x/exp v0.0.0-20250531010427-b6e5de432a8b
 	golang.org/x/time v0.11.0

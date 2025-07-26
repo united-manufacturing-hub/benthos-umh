@@ -68,7 +68,7 @@ import (
 	_ "github.com/redpanda-data/benthos/v4/public/components/io"
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	"github.com/weekaung/sparkplugb-client/sproto"
+	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
 
 	_ "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"     // Import to register
@@ -519,10 +519,7 @@ output:
 logger:
   level: INFO
 `, brokerURL, GinkgoParallelProcess(), uuid.New().String()[:8]))
-			if err != nil {
-				// Skip if there's a configuration parsing issue
-				Skip(fmt.Sprintf("Configuration parsing issue - skipping stream test: %v", err))
-			}
+			Expect(err).NotTo(HaveOccurred(), "Failed to parse stream configuration")
 
 			By("Starting the stream (this starts the input plugin)")
 
@@ -530,10 +527,7 @@ logger:
 			defer cancel()
 
 			stream, err := streamBuilder.Build()
-			if err != nil {
-				// Skip if there's a configuration issue with outputs
-				Skip(fmt.Sprintf("Configuration issue - skipping stream test: %v", err))
-			}
+			Expect(err).NotTo(HaveOccurred(), "Failed to build stream")
 
 			// Start the stream in background
 			streamDone := make(chan error, 1)
@@ -729,9 +723,8 @@ logger:
 
 			inputClient = mqtt.NewClient(inputOpts)
 			token := inputClient.Connect()
-			if !token.WaitTimeout(10*time.Second) || token.Error() != nil {
-				Skip("No MQTT broker available for plugin-to-plugin test")
-			}
+			Expect(token.Wait()).To(BeTrue(), "Failed to connect input client to MQTT broker")
+			Expect(token.Error()).NotTo(HaveOccurred(), "Input client connection error")
 
 			// Create output side client (simulates edge node)
 			outputOpts := mqtt.NewClientOptions()
@@ -741,9 +734,8 @@ logger:
 
 			outputClient = mqtt.NewClient(outputOpts)
 			token = outputClient.Connect()
-			if !token.WaitTimeout(10*time.Second) || token.Error() != nil {
-				Skip("No MQTT broker available for plugin-to-plugin test")
-			}
+			Expect(token.Wait()).To(BeTrue(), "Failed to connect output client to MQTT broker")
+			Expect(token.Error()).NotTo(HaveOccurred(), "Output client connection error")
 		})
 
 		AfterEach(func() {
@@ -782,14 +774,14 @@ logger:
 			By("Simulating rebirth request from primary host")
 
 			// Create rebirth command payload
-			rebirthCmd := &sproto.Payload{
+			rebirthCmd := &sparkplugb.Payload{
 				Timestamp: uint64Ptr(uint64(time.Now().UnixMilli())),
 				Seq:       uint64Ptr(0),
-				Metrics: []*sproto.Payload_Metric{
+				Metrics: []*sparkplugb.Payload_Metric{
 					{
 						Name:     stringPtr("Node Control/Rebirth"),
 						Datatype: uint32Ptr(11), // Boolean
-						Value:    &sproto.Payload_Metric_BooleanValue{BooleanValue: true},
+						Value:    &sparkplugb.Payload_Metric_BooleanValue{BooleanValue: true},
 					},
 				},
 			}
@@ -906,9 +898,8 @@ var _ = Describe("Performance Benchmarks", func() {
 
 			mqttClient = mqtt.NewClient(opts)
 			token := mqttClient.Connect()
-			if !token.WaitTimeout(10*time.Second) || token.Error() != nil {
-				Skip("No MQTT broker available for performance test")
-			}
+			Expect(token.Wait()).To(BeTrue(), "Failed to connect to MQTT broker for performance test")
+			Expect(token.Error()).NotTo(HaveOccurred(), "MQTT connection error in performance test")
 		})
 
 		AfterEach(func() {
@@ -948,17 +939,17 @@ var _ = Describe("Performance Benchmarks", func() {
 			By("Creating large NBIRTH message with many metrics")
 
 			// Create NBIRTH with 100 metrics
-			metrics := make([]*sproto.Payload_Metric, 100)
+			metrics := make([]*sparkplugb.Payload_Metric, 100)
 			for i := 0; i < 100; i++ {
-				metrics[i] = &sproto.Payload_Metric{
+				metrics[i] = &sparkplugb.Payload_Metric{
 					Name:     stringPtr(fmt.Sprintf("Metric_%d", i)),
 					Alias:    uint64Ptr(uint64(i + 100)),
 					Datatype: uint32Ptr(10), // Double
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: float64(i) * 1.5},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: float64(i) * 1.5},
 				}
 			}
 
-			largeBirth := &sproto.Payload{
+			largeBirth := &sparkplugb.Payload{
 				Timestamp: uint64Ptr(uint64(time.Now().UnixMilli())),
 				Seq:       uint64Ptr(0),
 				Metrics:   metrics,
@@ -1653,6 +1644,223 @@ logger:
 
 			fmt.Printf("✅ UMH location path mapping test completed successfully\n")
 		})
+
+		It("should handle NCMD rebirth commands and republish NBIRTH with incremented bdSeq", func() {
+			By("Creating test configuration")
+			
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			
+			// Generate unique IDs for this test
+			uniqueGroupID := fmt.Sprintf("RebirthTest-%d-%s", GinkgoParallelProcess(), uuid.New().String()[:8])
+			edgeNodeID := "TestEdgeNode"
+			
+			By(fmt.Sprintf("Using group ID: %s", uniqueGroupID))
+			
+			// Variables to track bdSeq values
+			var initialBdSeq uint64
+			var rebirthBdSeq uint64
+			var nbirthCount int
+			var deviceBirthCount int
+			
+			// Subscribe to all messages for this group
+			messageReceived := make(chan mqtt.Message, 100)
+			topicPattern := fmt.Sprintf("spBv1.0/%s/#", uniqueGroupID)
+			
+			mqttOpts := mqtt.NewClientOptions()
+			mqttOpts.AddBroker(brokerURL)
+			mqttOpts.SetClientID(fmt.Sprintf("test-rebirth-monitor-%d-%s", GinkgoParallelProcess(), uuid.New().String()[:8]))
+			
+			monitorClient := mqtt.NewClient(mqttOpts)
+			token := monitorClient.Connect()
+			Expect(token.Wait()).To(BeTrue())
+			Expect(token.Error()).NotTo(HaveOccurred())
+			defer monitorClient.Disconnect(250)
+			
+			token = monitorClient.Subscribe(topicPattern, 1, func(client mqtt.Client, msg mqtt.Message) {
+				fmt.Printf("📥 Received message on topic: %s\n", msg.Topic())
+				messageReceived <- msg
+			})
+			Expect(token.Wait()).To(BeTrue())
+			Expect(token.Error()).NotTo(HaveOccurred())
+			
+			By("Starting Edge Node with sparkplug_b output")
+			
+			edgeNodeConfig := fmt.Sprintf(`
+input:
+  generate:
+    interval: "5s"
+    count: 5
+    mapping: |
+      root = {"counter": counter()}
+
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |
+          msg.meta.location_path = "enterprise.factory.line1.device1"
+          msg.meta.data_contract = "_sparkplug"
+          msg.meta.tag_name = "temperature"
+          msg.meta.virtual_path = "sensors.temp1"
+          msg.payload = 20.0 + (msg.payload.counter %% 10)
+          return msg
+
+output:
+  sparkplug_b:
+    mqtt:
+      urls: ["%s"]
+      client_id: "edge-node-rebirth-%d-%s"
+      qos: 1
+      keep_alive: "30s"
+      connect_timeout: "10s"
+      clean_session: true
+    identity:
+      group_id: "%s"
+      edge_node_id: "%s"
+
+logger:
+  level: INFO
+`, brokerURL, GinkgoParallelProcess(), uuid.New().String()[:8], uniqueGroupID, edgeNodeID)
+			
+			edgeStreamBuilder := service.NewStreamBuilder()
+			err := edgeStreamBuilder.SetYAML(edgeNodeConfig)
+			Expect(err).NotTo(HaveOccurred())
+			
+			edgeStream, err := edgeStreamBuilder.Build()
+			Expect(err).NotTo(HaveOccurred())
+			
+			edgeDone := make(chan error, 1)
+			go func() {
+				edgeDone <- edgeStream.Run(ctx)
+			}()
+			
+			By("Waiting for initial NBIRTH and capturing bdSeq")
+			
+			// Wait for the initial NBIRTH
+			timeout := time.After(10 * time.Second)
+			nbirthReceived := false
+			
+		waitForInitialNBirth:
+			for !nbirthReceived {
+				select {
+				case msg := <-messageReceived:
+					if strings.Contains(msg.Topic(), "/NBIRTH/") {
+						var payload sparkplugb.Payload
+						err := proto.Unmarshal(msg.Payload(), &payload)
+						Expect(err).NotTo(HaveOccurred())
+						
+						// Find bdSeq metric
+						for _, metric := range payload.Metrics {
+							if metric.Name != nil && *metric.Name == "bdSeq" {
+								initialBdSeq = metric.GetLongValue()
+								fmt.Printf("✅ Captured initial bdSeq: %d\n", initialBdSeq)
+								nbirthReceived = true
+								nbirthCount++
+								break
+							}
+						}
+					} else if strings.Contains(msg.Topic(), "/DBIRTH/") {
+						deviceBirthCount++
+						fmt.Printf("📝 Received DBIRTH message\n")
+					}
+				case <-timeout:
+					Fail("Timeout waiting for initial NBIRTH")
+				}
+			}
+			
+			// Wait a bit to ensure system is stable
+			time.Sleep(2 * time.Second)
+			
+			By("Sending NCMD rebirth command")
+			
+			// Create rebirth command
+			rebirthCmd := &sparkplugb.Payload{
+				Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),
+				Seq:       func() *uint64 { s := uint64(0); return &s }(),
+				Metrics: []*sparkplugb.Payload_Metric{
+					{
+						Name: func() *string { s := "Node Control/Rebirth"; return &s }(),
+						Value: &sparkplugb.Payload_Metric_BooleanValue{
+							BooleanValue: true,
+						},
+						Datatype: func() *uint32 { d := uint32(11); return &d }(), // Boolean
+					},
+				},
+			}
+			
+			cmdBytes, err := proto.Marshal(rebirthCmd)
+			Expect(err).NotTo(HaveOccurred())
+			
+			// Publish NCMD
+			ncmdTopic := fmt.Sprintf("spBv1.0/%s/NCMD/%s", uniqueGroupID, edgeNodeID)
+			token = monitorClient.Publish(ncmdTopic, 1, false, cmdBytes)
+			Expect(token.Wait()).To(BeTrue())
+			Expect(token.Error()).NotTo(HaveOccurred())
+			
+			fmt.Printf("📤 Sent rebirth command to: %s\n", ncmdTopic)
+			
+			By("Waiting for new NBIRTH with incremented bdSeq")
+			
+			// Reset counters for rebirth
+			deviceBirthCount = 0
+			timeout = time.After(10 * time.Second)
+			rebirthReceived := false
+			
+		waitForRebirth:
+			for !rebirthReceived {
+				select {
+				case msg := <-messageReceived:
+					if strings.Contains(msg.Topic(), "/NBIRTH/") {
+						var payload sparkplugb.Payload
+						err := proto.Unmarshal(msg.Payload(), &payload)
+						Expect(err).NotTo(HaveOccurred())
+						
+						// Find bdSeq metric
+						for _, metric := range payload.Metrics {
+							if metric.Name != nil && *metric.Name == "bdSeq" {
+								rebirthBdSeq = metric.GetLongValue()
+								fmt.Printf("✅ Captured rebirth bdSeq: %d\n", rebirthBdSeq)
+								rebirthReceived = true
+								nbirthCount++
+								break
+							}
+						}
+					} else if strings.Contains(msg.Topic(), "/DBIRTH/") {
+						deviceBirthCount++
+						fmt.Printf("📝 Received DBIRTH message after rebirth\n")
+					}
+				case <-timeout:
+					Fail("Timeout waiting for rebirth NBIRTH")
+				}
+			}
+			
+			By("Verifying rebirth behavior")
+			
+			// Verify bdSeq was incremented
+			Expect(rebirthBdSeq).To(Equal(initialBdSeq + 1), 
+				fmt.Sprintf("bdSeq should increment from %d to %d on rebirth", initialBdSeq, initialBdSeq+1))
+			
+			// Verify we received exactly 2 NBIRTHs (initial + rebirth)
+			Expect(nbirthCount).To(Equal(2), "Should receive exactly 2 NBIRTH messages")
+			
+			// Verify devices were rebirthed
+			Expect(deviceBirthCount).To(BeNumerically(">", 0), "Should receive DBIRTH messages after rebirth")
+			
+			fmt.Printf("✅ Rebirth test completed successfully:\n")
+			fmt.Printf("   - Initial bdSeq: %d\n", initialBdSeq)
+			fmt.Printf("   - Rebirth bdSeq: %d\n", rebirthBdSeq)
+			fmt.Printf("   - NBIRTH count: %d\n", nbirthCount)
+			fmt.Printf("   - DBIRTH count after rebirth: %d\n", deviceBirthCount)
+			
+			// Clean shutdown
+			cancel()
+			select {
+			case <-edgeDone:
+				fmt.Println("✅ Edge node stopped cleanly")
+			case <-time.After(5 * time.Second):
+				fmt.Println("⚠️ Edge node stop timeout")
+			}
+		})
 	})
 })
 
@@ -1700,9 +1908,9 @@ func subscribeToSparkplugTopic(client mqtt.Client, topic string) <-chan mqtt.Mes
 	return msgChan
 }
 
-func decodeSparkplugPayload(payload []byte) (*sproto.Payload, error) {
+func decodeSparkplugPayload(payload []byte) (*sparkplugb.Payload, error) {
 	// Protobuf decoding for Sparkplug payloads
-	var sparkplugPayload sproto.Payload
+	var sparkplugPayload sparkplugb.Payload
 	err := proto.Unmarshal(payload, &sparkplugPayload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode Sparkplug protobuf: %w", err)
@@ -2168,48 +2376,48 @@ func validateLocationPathMapping(messages []*service.Message, expectedMappings [
 
 func createIntegrationTestData() *IntegrationTestData {
 	return &IntegrationTestData{
-		NBirthPayload: &sproto.Payload{
+		NBirthPayload: &sparkplugb.Payload{
 			Timestamp: uint64Ptr(uint64(time.Now().UnixMilli())),
 			Seq:       uint64Ptr(0),
-			Metrics: []*sproto.Payload_Metric{
+			Metrics: []*sparkplugb.Payload_Metric{
 				{
 					Name:     stringPtr("bdSeq"),
 					Alias:    uint64Ptr(0),
 					Datatype: uint32Ptr(7), // UInt64
-					Value:    &sproto.Payload_Metric_LongValue{LongValue: 12345},
+					Value:    &sparkplugb.Payload_Metric_LongValue{LongValue: 12345},
 				},
 				{
 					Name:     stringPtr("Node Control/Rebirth"),
 					Datatype: uint32Ptr(11), // Boolean
-					Value:    &sproto.Payload_Metric_BooleanValue{BooleanValue: false},
+					Value:    &sparkplugb.Payload_Metric_BooleanValue{BooleanValue: false},
 				},
 				{
 					Name:     stringPtr("Temperature"),
 					Alias:    uint64Ptr(100),
 					Datatype: uint32Ptr(10), // Double
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 25.5},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 25.5},
 				},
 				{
 					Name:     stringPtr("Pressure"),
 					Alias:    uint64Ptr(101),
 					Datatype: uint32Ptr(10), // Double
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 1013.25},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1013.25},
 				},
 			},
 		},
-		NDataPayload: &sproto.Payload{
+		NDataPayload: &sparkplugb.Payload{
 			Timestamp: uint64Ptr(uint64(time.Now().UnixMilli())),
 			Seq:       uint64Ptr(1),
-			Metrics: []*sproto.Payload_Metric{
+			Metrics: []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(100), // Should resolve to "Temperature"
 					Datatype: uint32Ptr(10),  // Double
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 26.8},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 26.8},
 				},
 				{
 					Alias:    uint64Ptr(101), // Should resolve to "Pressure"
 					Datatype: uint32Ptr(10),  // Double
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 1015.5},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1015.5},
 				},
 			},
 		},
@@ -2217,11 +2425,11 @@ func createIntegrationTestData() *IntegrationTestData {
 }
 
 type IntegrationTestData struct {
-	NBirthPayload *sproto.Payload
-	NDataPayload  *sproto.Payload
+	NBirthPayload *sparkplugb.Payload
+	NDataPayload  *sparkplugb.Payload
 }
 
 type DeviceLevelTestData struct {
-	DBirthPayload *sproto.Payload
-	DDataPayload  *sproto.Payload
+	DBirthPayload *sparkplugb.Payload
+	DDataPayload  *sparkplugb.Payload
 }
