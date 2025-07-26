@@ -158,11 +158,18 @@ func (g *OPCUAConnection) getUserAuthenticationType() ua.UserTokenType {
 	switch {
 	case g.UserPrivateKey != "" && g.UserCertificate != "":
 		return ua.UserTokenTypeCertificate
-	case g.Username != "" && g.Password != "":
+	case g.hasUsernamePassword():
 		return ua.UserTokenTypeUserName
 	default:
 		return ua.UserTokenTypeAnonymous
 	}
+}
+
+// hasUsernamePassword checks if both username and password are configured
+func (g *OPCUAConnection) hasUsernamePassword() bool {
+	username, _ := g.ResolveUsername()
+	password, _ := g.ResolvePassword()
+	return username != "" && password != ""
 }
 
 // explicitely check if security is selected + only allow specified settings
