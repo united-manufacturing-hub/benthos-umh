@@ -32,7 +32,6 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
-	"github.com/weekaung/sparkplugb-client/sproto"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -68,7 +67,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 
 	Context("Alias Resolution", func() {
 		It("should cache aliases from BIRTH metrics", func() {
-			metrics := []*sproto.Payload_Metric{
+			metrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Temperature"),
 					Alias: uint64Ptr(100),
@@ -89,7 +88,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 
 		It("should resolve metric aliases from NBIRTH context", func() {
 			// First cache aliases from NBIRTH
-			birthMetrics := []*sproto.Payload_Metric{
+			birthMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Temperature"),
 					Alias: uint64Ptr(100),
@@ -102,14 +101,14 @@ var _ = Describe("AliasCache Unit Tests", func() {
 			cache.CacheAliases("TestFactory/Line1", birthMetrics)
 
 			// Now test alias resolution in NDATA
-			dataMetrics := []*sproto.Payload_Metric{
+			dataMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Alias: uint64Ptr(100), // Should resolve to "Temperature"
-					Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: 25.5},
+					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 25.5},
 				},
 				{
 					Alias: uint64Ptr(101), // Should resolve to "Pressure"
-					Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: 1013.25},
+					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1013.25},
 				},
 			}
 
@@ -121,7 +120,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 
 		It("should handle alias collisions in NBIRTH", func() {
 			// Create metrics with duplicate aliases (collision)
-			metrics := []*sproto.Payload_Metric{
+			metrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("MotorRPM"),
 					Alias: uint64Ptr(5),
@@ -142,7 +141,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 
 		It("should reset alias cache on session restart", func() {
 			// Cache initial aliases
-			metrics := []*sproto.Payload_Metric{
+			metrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Temperature"),
 					Alias: uint64Ptr(100),
@@ -154,10 +153,10 @@ var _ = Describe("AliasCache Unit Tests", func() {
 			cache.Clear()
 
 			// Verify cache is empty by trying to resolve
-			dataMetrics := []*sproto.Payload_Metric{
+			dataMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Alias: uint64Ptr(100),
-					Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: 25.5},
+					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 25.5},
 				},
 			}
 			count := cache.ResolveAliases("TestFactory/Line1", dataMetrics)
@@ -166,7 +165,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 
 		It("should handle multiple devices independently", func() {
 			// Cache aliases for device 1
-			device1Metrics := []*sproto.Payload_Metric{
+			device1Metrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Temperature"),
 					Alias: uint64Ptr(100),
@@ -176,7 +175,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 			Expect(count1).To(Equal(1))
 
 			// Cache aliases for device 2
-			device2Metrics := []*sproto.Payload_Metric{
+			device2Metrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Pressure"),
 					Alias: uint64Ptr(100), // Same alias, different device
@@ -186,20 +185,20 @@ var _ = Describe("AliasCache Unit Tests", func() {
 			Expect(count2).To(Equal(1))
 
 			// Test resolution for each device independently
-			dataMetrics1 := []*sproto.Payload_Metric{
+			dataMetrics1 := []*sparkplugb.Payload_Metric{
 				{
 					Alias: uint64Ptr(100),
-					Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: 25.5},
+					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 25.5},
 				},
 			}
 			resolved1 := cache.ResolveAliases("TestFactory/Line1", dataMetrics1)
 			Expect(resolved1).To(Equal(1))
 			Expect(*dataMetrics1[0].Name).To(Equal("Temperature"))
 
-			dataMetrics2 := []*sproto.Payload_Metric{
+			dataMetrics2 := []*sparkplugb.Payload_Metric{
 				{
 					Alias: uint64Ptr(100),
-					Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: 1013.25},
+					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1013.25},
 				},
 			}
 			resolved2 := cache.ResolveAliases("TestFactory/Line2", dataMetrics2)
@@ -209,7 +208,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 
 		It("should handle edge cases gracefully", func() {
 			// Test empty device key
-			metrics := []*sproto.Payload_Metric{
+			metrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Temperature"),
 					Alias: uint64Ptr(100),
@@ -223,7 +222,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 			Expect(count).To(Equal(0))
 
 			// Test metrics without name or alias
-			invalidMetrics := []*sproto.Payload_Metric{
+			invalidMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Name: stringPtr("Temperature"), // Missing alias
 				},
@@ -783,18 +782,18 @@ var _ = Describe("MessageProcessor Unit Tests", func() {
 	Context("Message Type Processing", func() {
 		It("should process BIRTH messages and extract aliases", func() {
 			// Test BIRTH message processing (migrated from old input test)
-			birthMetrics := []*sproto.Payload_Metric{
+			birthMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:     stringPtr("bdSeq"),
 					Alias:    uint64Ptr(1),
 					Datatype: uint32Ptr(7), // Int64
-					Value:    &sproto.Payload_Metric_LongValue{LongValue: 12345},
+					Value:    &sparkplugb.Payload_Metric_LongValue{LongValue: 12345},
 				},
 				{
 					Name:     stringPtr("Temperature"),
 					Alias:    uint64Ptr(100),
 					Datatype: uint32Ptr(9), // Float
-					Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 25.5},
+					Value:    &sparkplugb.Payload_Metric_FloatValue{FloatValue: 25.5},
 				},
 			}
 
@@ -812,16 +811,16 @@ var _ = Describe("MessageProcessor Unit Tests", func() {
 
 		It("should process DATA messages with alias resolution", func() {
 			// Test DATA message processing (migrated from old input test)
-			dataMetrics := []*sproto.Payload_Metric{
+			dataMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(100), // Temperature alias
 					Datatype: uint32Ptr(9),
-					Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 26.8},
+					Value:    &sparkplugb.Payload_Metric_FloatValue{FloatValue: 26.8},
 				},
 				{
 					Alias:    uint64Ptr(101), // Pressure alias
 					Datatype: uint32Ptr(10),
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 1015.50},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1015.50},
 				},
 			}
 
@@ -839,11 +838,11 @@ var _ = Describe("MessageProcessor Unit Tests", func() {
 			cache := sparkplug_plugin.NewAliasCache()
 
 			// Attempt to resolve aliases without cached BIRTH data
-			dataMetrics := []*sproto.Payload_Metric{
+			dataMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(100),
 					Datatype: uint32Ptr(9),
-					Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 25.0},
+					Value:    &sparkplugb.Payload_Metric_FloatValue{FloatValue: 25.0},
 				},
 			}
 
@@ -857,18 +856,18 @@ var _ = Describe("MessageProcessor Unit Tests", func() {
 
 		It("should handle message splitting configuration", func() {
 			// Test split_metrics behavior (migrated from old input test)
-			multiMetricPayload := []*sproto.Payload_Metric{
+			multiMetricPayload := []*sparkplugb.Payload_Metric{
 				{
 					Name:     stringPtr("Temperature"),
 					Alias:    uint64Ptr(100),
 					Datatype: uint32Ptr(9),
-					Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 25.5},
+					Value:    &sparkplugb.Payload_Metric_FloatValue{FloatValue: 25.5},
 				},
 				{
 					Name:     stringPtr("Pressure"),
 					Alias:    uint64Ptr(101),
 					Datatype: uint32Ptr(10),
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 1013.25},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1013.25},
 				},
 			}
 
@@ -1157,7 +1156,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 			payloadBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var payload sproto.Payload
+			var payload sparkplugb.Payload
 			err = proto.Unmarshal(payloadBytes, &payload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1176,12 +1175,12 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 						bdSeqFound = true
 						// bdSeq must be UInt64 type
 						Expect(metric.Datatype).NotTo(BeNil())
-						Expect(*metric.Datatype).To(Equal(uint32(sproto.DataType_UInt64)))
+						Expect(*metric.Datatype).To(Equal(uint32(8))) // UInt64 type
 					}
 					if *metric.Name == "Node Control/Rebirth" {
 						// Node Control must be Boolean type
 						Expect(metric.Datatype).NotTo(BeNil())
-						Expect(*metric.Datatype).To(Equal(uint32(sproto.DataType_Boolean)))
+						Expect(*metric.Datatype).To(Equal(uint32(11))) // Boolean type
 					}
 				}
 			}
@@ -1197,7 +1196,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 			payloadBytes, err := base64.StdEncoding.DecodeString(ndeathVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var payload sproto.Payload
+			var payload sparkplugb.Payload
 			err = proto.Unmarshal(payloadBytes, &payload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1215,7 +1214,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 			Expect(bdSeqMetric.Name).NotTo(BeNil())
 			Expect(*bdSeqMetric.Name).To(Equal("bdSeq"))
 			Expect(bdSeqMetric.Datatype).NotTo(BeNil())
-			Expect(*bdSeqMetric.Datatype).To(Equal(uint32(sproto.DataType_UInt64)))
+			Expect(*bdSeqMetric.Datatype).To(Equal(uint32(8))) // UInt64 type
 		})
 
 		It("should validate alias uniqueness in BIRTH messages", func() {
@@ -1224,7 +1223,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 			payloadBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var payload sproto.Payload
+			var payload sparkplugb.Payload
 			err = proto.Unmarshal(payloadBytes, &payload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1299,7 +1298,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 			payloadBytes, err := base64.StdEncoding.DecodeString(gapVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var payload sproto.Payload
+			var payload sparkplugb.Payload
 			err = proto.Unmarshal(payloadBytes, &payload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1363,7 +1362,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 			payloadBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var payload sproto.Payload
+			var payload sparkplugb.Payload
 			err = proto.Unmarshal(payloadBytes, &payload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1383,7 +1382,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 					payloadBytes, err := base64.StdEncoding.DecodeString(vector.Base64Data)
 					Expect(err).NotTo(HaveOccurred(), "Base64 decoding should succeed for "+vector.Name)
 
-					var payload sproto.Payload
+					var payload sparkplugb.Payload
 					err = proto.Unmarshal(payloadBytes, &payload)
 					Expect(err).NotTo(HaveOccurred(), "Protobuf unmarshaling should succeed for "+vector.Name)
 
@@ -1400,7 +1399,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 			payloadBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var payload sproto.Payload
+			var payload sparkplugb.Payload
 			err = proto.Unmarshal(payloadBytes, &payload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1418,7 +1417,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 			// Test metric-level timestamp functionality using the official Eclipse Tahu protobuf
 			// This functionality was added to ensure Sparkplug B specification compliance
 			
-			timestampValue := uint64(1640995200000) // Example timestamp
+			timestampValue := uint64(time.Now().UnixMilli()) // Current timestamp
 			
 			// Create a metric with timestamp using the official protobuf
 			metric := &sparkplugb.Payload_Metric{
@@ -1611,15 +1610,15 @@ var _ = Describe("P9 Edge Case Validation", func() {
 			cache := sparkplug_plugin.NewAliasCache()
 
 			// Simulate established session with cached aliases
-			metrics := []*sproto.Payload_Metric{
+			metrics := []*sparkplugb.Payload_Metric{
 				{Name: stringPtr("Temperature"), Alias: uint64Ptr(1)},
 				{Name: stringPtr("Pressure"), Alias: uint64Ptr(2)},
 			}
 			cache.CacheAliases("Factory/Line1", metrics)
 
 			// Verify aliases are cached
-			dataMetrics := []*sproto.Payload_Metric{
-				{Alias: uint64Ptr(1), Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: 25.5}},
+			dataMetrics := []*sparkplugb.Payload_Metric{
+				{Alias: uint64Ptr(1), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 25.5}},
 			}
 			resolved := cache.ResolveAliases("Factory/Line1", dataMetrics)
 			Expect(resolved).To(Equal(1))
@@ -1629,7 +1628,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 			// For persistent sessions (Clean Session = false), aliases should persist
 
 			// Test reconnection with new BIRTH message
-			newMetrics := []*sproto.Payload_Metric{
+			newMetrics := []*sparkplugb.Payload_Metric{
 				{Name: stringPtr("Temperature"), Alias: uint64Ptr(1)},
 				{Name: stringPtr("Pressure"), Alias: uint64Ptr(2)},
 				{Name: stringPtr("Humidity"), Alias: uint64Ptr(3)}, // New metric after reconnect
@@ -1696,12 +1695,12 @@ var _ = Describe("P9 Edge Case Validation", func() {
 			cache := sparkplug_plugin.NewAliasCache()
 
 			// Create 500+ metrics
-			largeMetrics := make([]*sproto.Payload_Metric, 500)
+			largeMetrics := make([]*sparkplugb.Payload_Metric, 500)
 			for i := 0; i < 500; i++ {
-				largeMetrics[i] = &sproto.Payload_Metric{
+				largeMetrics[i] = &sparkplugb.Payload_Metric{
 					Name:  stringPtr(fmt.Sprintf("Metric_%d", i)),
 					Alias: uint64Ptr(uint64(i + 1)),
-					Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: float64(i)},
+					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: float64(i)},
 				}
 			}
 
@@ -1719,9 +1718,9 @@ var _ = Describe("P9 Edge Case Validation", func() {
 			cache := sparkplug_plugin.NewAliasCache()
 
 			// Create large alias table (1000 metrics)
-			largeMetrics := make([]*sproto.Payload_Metric, 1000)
+			largeMetrics := make([]*sparkplugb.Payload_Metric, 1000)
 			for i := 0; i < 1000; i++ {
-				largeMetrics[i] = &sproto.Payload_Metric{
+				largeMetrics[i] = &sparkplugb.Payload_Metric{
 					Name:  stringPtr(fmt.Sprintf("Metric_%d", i)),
 					Alias: uint64Ptr(uint64(i + 1)),
 				}
@@ -1729,11 +1728,11 @@ var _ = Describe("P9 Edge Case Validation", func() {
 			cache.CacheAliases("Factory/LargeLine", largeMetrics)
 
 			// Test resolution performance
-			testMetrics := make([]*sproto.Payload_Metric, 100)
+			testMetrics := make([]*sparkplugb.Payload_Metric, 100)
 			for i := 0; i < 100; i++ {
-				testMetrics[i] = &sproto.Payload_Metric{
+				testMetrics[i] = &sparkplugb.Payload_Metric{
 					Alias: uint64Ptr(uint64(i + 1)),
-					Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: float64(i)},
+					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: float64(i)},
 				}
 			}
 
@@ -1750,19 +1749,19 @@ var _ = Describe("P9 Edge Case Validation", func() {
 			// MQTT has practical limits around 256MB, but Sparkplug should be much smaller
 
 			// Create a reasonably large payload
-			metrics := make([]*sproto.Payload_Metric, 100)
+			metrics := make([]*sparkplugb.Payload_Metric, 100)
 			for i := 0; i < 100; i++ {
 				// Create metrics with various data types
-				metrics[i] = &sproto.Payload_Metric{
+				metrics[i] = &sparkplugb.Payload_Metric{
 					Name:  stringPtr(fmt.Sprintf("LongMetricNameForTesting_%d", i)),
 					Alias: uint64Ptr(uint64(i + 1)),
-					Value: &sproto.Payload_Metric_StringValue{
+					Value: &sparkplugb.Payload_Metric_StringValue{
 						StringValue: strings.Repeat("TestData", 10), // 80 characters
 					},
 				}
 			}
 
-			payload := &sproto.Payload{
+			payload := &sparkplugb.Payload{
 				Timestamp: uint64Ptr(uint64(time.Now().UnixMilli())),
 				Metrics:   metrics,
 				Seq:       uint64Ptr(1),
@@ -1781,7 +1780,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 	Context("Edge Cases", func() {
 		It("should handle UTF-8 and special characters in metric names", func() {
 			// Test Unicode and special character handling
-			specialMetrics := []*sproto.Payload_Metric{
+			specialMetrics := []*sparkplugb.Payload_Metric{
 				{Name: stringPtr("Temperature_°C"), Alias: uint64Ptr(1)},
 				{Name: stringPtr("Druck_μBar"), Alias: uint64Ptr(2)},
 				{Name: stringPtr("速度_RPM"), Alias: uint64Ptr(3)},
@@ -1796,9 +1795,9 @@ var _ = Describe("P9 Edge Case Validation", func() {
 			Expect(count).To(Equal(7), "Should handle all special character metrics")
 
 			// Test resolution
-			testMetrics := []*sproto.Payload_Metric{
-				{Alias: uint64Ptr(1), Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: 25.5}},
-				{Alias: uint64Ptr(3), Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: 1500}},
+			testMetrics := []*sparkplugb.Payload_Metric{
+				{Alias: uint64Ptr(1), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 25.5}},
+				{Alias: uint64Ptr(3), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1500}},
 			}
 
 			resolved := cache.ResolveAliases("Factory/International", testMetrics)
@@ -1809,17 +1808,17 @@ var _ = Describe("P9 Edge Case Validation", func() {
 
 		It("should handle historical flag processing", func() {
 			// Test historical data flag handling
-			historicalMetrics := []*sproto.Payload_Metric{
+			historicalMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:         stringPtr("HistoricalTemp"),
 					Alias:        uint64Ptr(1),
-					Value:        &sproto.Payload_Metric_DoubleValue{DoubleValue: 25.5},
+					Value:        &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 25.5},
 					IsHistorical: boolPtr(true),
 				},
 				{
 					Name:         stringPtr("CurrentTemp"),
 					Alias:        uint64Ptr(2),
-					Value:        &sproto.Payload_Metric_DoubleValue{DoubleValue: 26.0},
+					Value:        &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 26.0},
 					IsHistorical: boolPtr(false),
 				},
 			}
@@ -1839,13 +1838,13 @@ var _ = Describe("P9 Edge Case Validation", func() {
 
 			// Test that historical payloads can be created with timestamps
 			now := time.Now()
-			historicalPayload := &sproto.Payload{
+			historicalPayload := &sparkplugb.Payload{
 				Timestamp: uint64Ptr(uint64(now.Add(-1 * time.Hour).UnixMilli())),
 				Metrics:   historicalMetrics,
 				Seq:       uint64Ptr(1),
 			}
 
-			currentPayload := &sproto.Payload{
+			currentPayload := &sparkplugb.Payload{
 				Timestamp: uint64Ptr(uint64(now.UnixMilli())),
 				Metrics:   historicalMetrics,
 				Seq:       uint64Ptr(2),
@@ -1861,29 +1860,29 @@ var _ = Describe("P9 Edge Case Validation", func() {
 			cache := sparkplug_plugin.NewAliasCache()
 
 			// Node-level metrics (no device in key)
-			nodeMetrics := []*sproto.Payload_Metric{
+			nodeMetrics := []*sparkplugb.Payload_Metric{
 				{Name: stringPtr("NodeCPU"), Alias: uint64Ptr(1)},
 				{Name: stringPtr("NodeMemory"), Alias: uint64Ptr(2)},
 			}
 			cache.CacheAliases("Factory/Gateway", nodeMetrics)
 
 			// Device-level metrics (with device in key)
-			deviceMetrics := []*sproto.Payload_Metric{
+			deviceMetrics := []*sparkplugb.Payload_Metric{
 				{Name: stringPtr("DeviceTemp"), Alias: uint64Ptr(1)}, // Same alias, different scope
 				{Name: stringPtr("DevicePressure"), Alias: uint64Ptr(2)},
 			}
 			cache.CacheAliases("Factory/Gateway/Device1", deviceMetrics)
 
 			// Test independent resolution
-			nodeData := []*sproto.Payload_Metric{
-				{Alias: uint64Ptr(1), Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: 75.5}},
+			nodeData := []*sparkplugb.Payload_Metric{
+				{Alias: uint64Ptr(1), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 75.5}},
 			}
 			nodeResolved := cache.ResolveAliases("Factory/Gateway", nodeData)
 			Expect(nodeResolved).To(Equal(1))
 			Expect(*nodeData[0].Name).To(Equal("NodeCPU"))
 
-			deviceData := []*sproto.Payload_Metric{
-				{Alias: uint64Ptr(1), Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: 25.5}},
+			deviceData := []*sparkplugb.Payload_Metric{
+				{Alias: uint64Ptr(1), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 25.5}},
 			}
 			deviceResolved := cache.ResolveAliases("Factory/Gateway/Device1", deviceData)
 			Expect(deviceResolved).To(Equal(1))
@@ -1892,21 +1891,21 @@ var _ = Describe("P9 Edge Case Validation", func() {
 
 		It("should handle null and empty value edge cases", func() {
 			// Test handling of null/empty values
-			edgeCaseMetrics := []*sproto.Payload_Metric{
+			edgeCaseMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("EmptyString"),
 					Alias: uint64Ptr(1),
-					Value: &sproto.Payload_Metric_StringValue{StringValue: ""},
+					Value: &sparkplugb.Payload_Metric_StringValue{StringValue: ""},
 				},
 				{
 					Name:  stringPtr("ZeroValue"),
 					Alias: uint64Ptr(2),
-					Value: &sproto.Payload_Metric_DoubleValue{DoubleValue: 0.0},
+					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 0.0},
 				},
 				{
 					Name:  stringPtr("FalseBoolean"),
 					Alias: uint64Ptr(3),
-					Value: &sproto.Payload_Metric_BooleanValue{BooleanValue: false},
+					Value: &sparkplugb.Payload_Metric_BooleanValue{BooleanValue: false},
 				},
 				{
 					Name:  stringPtr("NoValue"),
@@ -1920,7 +1919,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 			Expect(count).To(Equal(4), "Should handle all edge case metrics")
 
 			// Test resolution of edge cases
-			testData := []*sproto.Payload_Metric{
+			testData := []*sparkplugb.Payload_Metric{
 				{Alias: uint64Ptr(1)}, // Empty string metric
 				{Alias: uint64Ptr(4)}, // Null value metric
 			}
@@ -1933,7 +1932,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 
 		It("should handle metric name collisions and duplicates", func() {
 			// Test handling of duplicate metric names (should be avoided but handled gracefully)
-			duplicateMetrics := []*sproto.Payload_Metric{
+			duplicateMetrics := []*sparkplugb.Payload_Metric{
 				{Name: stringPtr("Temperature"), Alias: uint64Ptr(1)},
 				{Name: stringPtr("Temperature"), Alias: uint64Ptr(2)}, // Duplicate name, different alias
 				{Name: stringPtr("Pressure"), Alias: uint64Ptr(3)},
@@ -2565,99 +2564,210 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 	})
 
 	Context("Node Rebirth Command Handling", func() {
-		It("should handle NCMD rebirth messages correctly", func() {
-			// Create a rebirth command payload as Ignition would send
+		It("should correctly identify rebirth commands in NCMD payloads", func() {
+			// This test verifies the rebirth command detection logic
+			// which is the core functionality needed for handling rebirths
+			
+			testCases := []struct {
+				name           string
+				payload        *sparkplugb.Payload
+				expectRebirth  bool
+			}{
+				{
+					name: "Valid rebirth command with name",
+					payload: &sparkplugb.Payload{
+						Metrics: []*sparkplugb.Payload_Metric{
+							{
+								Name: func() *string { s := "Node Control/Rebirth"; return &s }(),
+								Value: &sparkplugb.Payload_Metric_BooleanValue{
+									BooleanValue: true,
+								},
+							},
+						},
+					},
+					expectRebirth: true,
+				},
+				{
+					name: "Rebirth command with false value",
+					payload: &sparkplugb.Payload{
+						Metrics: []*sparkplugb.Payload_Metric{
+							{
+								Name: func() *string { s := "Node Control/Rebirth"; return &s }(),
+								Value: &sparkplugb.Payload_Metric_BooleanValue{
+									BooleanValue: false,
+								},
+							},
+						},
+					},
+					expectRebirth: false,
+				},
+				{
+					name: "Rebirth command using alias only (no name)",
+					payload: &sparkplugb.Payload{
+						Metrics: []*sparkplugb.Payload_Metric{
+							{
+								Alias: func() *uint64 { a := uint64(1); return &a }(),
+								Value: &sparkplugb.Payload_Metric_BooleanValue{
+									BooleanValue: true,
+								},
+							},
+						},
+					},
+					expectRebirth: true,
+				},
+				{
+					name: "Different metric name",
+					payload: &sparkplugb.Payload{
+						Metrics: []*sparkplugb.Payload_Metric{
+							{
+								Name: func() *string { s := "Temperature"; return &s }(),
+								Value: &sparkplugb.Payload_Metric_DoubleValue{
+									DoubleValue: 25.5,
+								},
+							},
+						},
+					},
+					expectRebirth: false,
+				},
+			}
+
+			for _, tc := range testCases {
+				By(fmt.Sprintf("Testing: %s", tc.name))
+				
+				// This simulates the actual rebirth detection logic from handleRebirthCommand
+				rebirthRequested := false
+				for _, metric := range tc.payload.Metrics {
+					isRebirthMetric := false
+					
+					// Check named metric first (spec compliant approach)
+					if metric.Name != nil && *metric.Name == "Node Control/Rebirth" {
+						isRebirthMetric = true
+					} else if metric.Name == nil && metric.Alias != nil && *metric.Alias == 1 {
+						// Only check alias if name is not provided
+						// Alias 1 is reserved for "Node Control/Rebirth" in NBIRTH
+						isRebirthMetric = true
+					}
+					
+					// If this is a rebirth metric with boolean true value
+					if isRebirthMetric && metric.GetBooleanValue() {
+						rebirthRequested = true
+						break
+					}
+				}
+				
+				Expect(rebirthRequested).To(Equal(tc.expectRebirth), 
+					fmt.Sprintf("Test case '%s' failed", tc.name))
+			}
+		})
+
+		It("should marshal and unmarshal rebirth command payloads correctly", func() {
+			// Test that rebirth command payloads can be correctly marshaled/unmarshaled
+			// This is critical for MQTT message handling
+			
 			rebirthMetric := &sparkplugb.Payload_Metric{
 				Name: func() *string { s := "Node Control/Rebirth"; return &s }(),
+				Alias: func() *uint64 { a := uint64(1); return &a }(),
 				Value: &sparkplugb.Payload_Metric_BooleanValue{
 					BooleanValue: true,
 				},
 				Datatype: func() *uint32 { d := uint32(11); return &d }(), // Boolean type
 			}
 
-			rebirthPayload := &sparkplugb.Payload{
+			originalPayload := &sparkplugb.Payload{
 				Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),
+				Seq:       func() *uint64 { s := uint64(42); return &s }(),
 				Metrics:   []*sparkplugb.Payload_Metric{rebirthMetric},
 			}
 
 			// Marshal the payload
-			payloadBytes, err := proto.Marshal(rebirthPayload)
+			payloadBytes, err := proto.Marshal(originalPayload)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(payloadBytes).NotTo(BeEmpty())
+
+			// Unmarshal the payload
+			var decodedPayload sparkplugb.Payload
+			err = proto.Unmarshal(payloadBytes, &decodedPayload)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Verify the payload is correctly structured for rebirth
-			Expect(rebirthPayload.Metrics).To(HaveLen(1))
-			Expect(*rebirthPayload.Metrics[0].Name).To(Equal("Node Control/Rebirth"))
-			Expect(rebirthPayload.Metrics[0].GetBooleanValue()).To(BeTrue())
-
-			// Ensure unused variable doesn't cause compilation error
-			_ = payloadBytes
+			// Verify the decoded payload matches
+			Expect(decodedPayload.Metrics).To(HaveLen(1))
+			Expect(*decodedPayload.Metrics[0].Name).To(Equal("Node Control/Rebirth"))
+			Expect(*decodedPayload.Metrics[0].Alias).To(Equal(uint64(1)))
+			Expect(decodedPayload.Metrics[0].GetBooleanValue()).To(BeTrue())
+			Expect(*decodedPayload.Seq).To(Equal(uint64(42)))
 		})
 
-		It("should parse and validate rebirth command structure", func() {
-			// Test parsing of different metric structures that might be received
+		It("should handle bdSeq increment logic correctly", func() {
+			// Test the bdSeq increment logic that occurs during rebirth
+			// This is a critical part of the Sparkplug B specification
+			
 			testCases := []struct {
-				name           string
-				metricName     string
-				value          bool
-				expectRebirth  bool
+				name          string
+				initialBdSeq  uint64
+				expectedBdSeq uint64
 			}{
-				{"Valid rebirth command", "Node Control/Rebirth", true, true},
-				{"Rebirth command with false value", "Node Control/Rebirth", false, false},
-				{"Different metric name", "Node Control/Other", true, false},
-				{"Wrong metric completely", "Temperature", true, false},
+				{"Normal increment", 5, 6},
+				{"From zero", 0, 1},
+				{"Large value", 1000, 1001},
+				{"Near max uint64", ^uint64(0) - 1, ^uint64(0)}, // Max uint64 - 1
 			}
-
+			
 			for _, tc := range testCases {
-				metric := &sparkplugb.Payload_Metric{
-					Name: &tc.metricName,
-					Value: &sparkplugb.Payload_Metric_BooleanValue{
-						BooleanValue: tc.value,
-					},
-					Datatype: func() *uint32 { d := uint32(11); return &d }(),
-				}
-
-				payload := &sparkplugb.Payload{
-					Metrics: []*sparkplugb.Payload_Metric{metric},
-				}
-
-				// Simulate the rebirth detection logic
-				rebirthRequested := false
-				for _, m := range payload.Metrics {
-					if m.Name != nil && *m.Name == "Node Control/Rebirth" {
-						if boolValue := m.GetBooleanValue(); boolValue {
-							rebirthRequested = true
-							break
-						}
-					}
-				}
-
-				Expect(rebirthRequested).To(Equal(tc.expectRebirth), 
-					fmt.Sprintf("Test case '%s' failed", tc.name))
+				By(fmt.Sprintf("Testing: %s", tc.name))
+				
+				// Simulate the bdSeq increment that happens in handleRebirthCommand
+				bdSeq := tc.initialBdSeq
+				bdSeq++
+				
+				Expect(bdSeq).To(Equal(tc.expectedBdSeq))
+				Expect(bdSeq).To(BeNumerically(">", tc.initialBdSeq))
 			}
+			
+			// Special case: test wrap around
+			By("Testing bdSeq wrap around at max uint64")
+			maxBdSeq := ^uint64(0) // Max uint64
+			wrappedBdSeq := maxBdSeq + 1
+			Expect(wrappedBdSeq).To(Equal(uint64(0))) // Should wrap to 0
 		})
 
-		It("should increment bdSeq on rebirth", func() {
-			// Test that rebirth increments the birth-death sequence number
-			initialBdSeq := uint64(5)
-			
-			// Simulate rebirth processing (this would happen in handleRebirthCommand)
-			newBdSeq := initialBdSeq + 1
-			
-			Expect(newBdSeq).To(Equal(uint64(6)))
-			Expect(newBdSeq).To(BeNumerically(">", initialBdSeq))
-		})
-
-		It("should subscribe to correct NCMD topic format", func() {
+		It("should generate correct NCMD topic format", func() {
 			// Verify the NCMD topic format follows Sparkplug B specification
-			groupID := "FactoryA"
-			edgeNodeID := "EdgeNode1"
+			// This is critical for receiving rebirth commands from host applications
 			
-			expectedTopic := fmt.Sprintf("spBv1.0/%s/NCMD/%s", groupID, edgeNodeID)
-			Expect(expectedTopic).To(Equal("spBv1.0/FactoryA/NCMD/EdgeNode1"))
+			testCases := []struct {
+				groupID      string
+				edgeNodeID   string
+				expectedTopic string
+			}{
+				{
+					groupID:      "FactoryA",
+					edgeNodeID:   "EdgeNode1",
+					expectedTopic: "spBv1.0/FactoryA/NCMD/EdgeNode1",
+				},
+				{
+					groupID:      "Plant-123",
+					edgeNodeID:   "Line_4_Node",
+					expectedTopic: "spBv1.0/Plant-123/NCMD/Line_4_Node",
+				},
+				{
+					groupID:      "TestGroup",
+					edgeNodeID:   "TestNode",
+					expectedTopic: "spBv1.0/TestGroup/NCMD/TestNode",
+				},
+			}
 			
-			// Verify it matches Sparkplug B topic pattern
-			sparkplugPattern := `^spBv1\.0/[^/]+/NCMD/[^/]+$`
-			Expect(expectedTopic).To(MatchRegexp(sparkplugPattern))
+			for _, tc := range testCases {
+				By(fmt.Sprintf("Testing topic generation for %s/%s", tc.groupID, tc.edgeNodeID))
+				
+				// This is how the NCMD topic is generated in the actual code
+				actualTopic := fmt.Sprintf("spBv1.0/%s/NCMD/%s", tc.groupID, tc.edgeNodeID)
+				
+				Expect(actualTopic).To(Equal(tc.expectedTopic))
+				
+				// Verify it matches Sparkplug B topic pattern
+				sparkplugPattern := `^spBv1\.0/[^/]+/NCMD/[^/]+$`
+				Expect(actualTopic).To(MatchRegexp(sparkplugPattern))
+			}
 		})
 	})
 })
