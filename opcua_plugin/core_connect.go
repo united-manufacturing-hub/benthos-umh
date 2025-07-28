@@ -93,15 +93,7 @@ func (g *OPCUAConnection) GetOPCUAClientOptions(
 		g.Log.Infof("Using anonymous login")
 	case ua.UserTokenTypeUserName:
 		g.Log.Infof("Using username/password login")
-		username, err := g.ResolveUsername()
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve username: %w", err)
-		}
-		password, err := g.ResolvePassword()
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve password: %w", err)
-		}
-		opts = append(opts, opcua.AuthUsername(username, password))
+		opts = append(opts, opcua.AuthUsername(g.Username, g.Password))
 	case ua.UserTokenTypeCertificate:
 		g.Log.Info("Using User Certificate based authentication")
 		userCertificateOpts, err := g.parseUserCertificateOptions()
