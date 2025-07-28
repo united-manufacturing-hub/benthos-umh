@@ -32,15 +32,13 @@ var OPCUAConnectionConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringField("endpoint").
 		Description("The OPC UA server endpoint to connect to.").
 		Example("opc.tcp://localhost:4840")).
-	Field(service.NewInterpolatedStringField("username").
-		Description("The username for authentication. Supports dynamic values through interpolation.").
+	Field(service.NewStringField("username").
+		Description("The username for authentication.").
 		Default("").
-		Example("${! env(\"OPC_USERNAME\") }").
 		Advanced()).
-	Field(service.NewInterpolatedStringField("password").
-		Description("The password for authentication. Supports dynamic values through interpolation.").
+	Field(service.NewStringField("password").
+		Description("The password for authentication.").
 		Default("").
-		Example("${! env(\"OPC_PASSWORD\") }").
 		Secret().
 		Advanced()).
 	Field(service.NewIntField("sessionTimeout").
@@ -91,8 +89,8 @@ var OPCUAConnectionConfigSpec = service.NewConfigSpec().
 // OPCUAConnection represents the common connection configuration for OPC UA plugins
 type OPCUAConnection struct {
 	Endpoint                     string
-	Username                     *service.InterpolatedString
-	Password                     *service.InterpolatedString
+	Username                     string
+	Password                     string
 	SecurityMode                 string
 	SecurityPolicy               string
 	ClientCertificate            string
@@ -128,10 +126,10 @@ func ParseConnectionConfig(conf *service.ParsedConfig, mgr *service.Resources) (
 	if conn.Endpoint, err = conf.FieldString("endpoint"); err != nil {
 		return nil, err
 	}
-	if conn.Username, err = conf.FieldInterpolatedString("username"); err != nil {
+	if conn.Username, err = conf.FieldString("username"); err != nil {
 		return nil, err
 	}
-	if conn.Password, err = conf.FieldInterpolatedString("password"); err != nil {
+	if conn.Password, err = conf.FieldString("password"); err != nil {
 		return nil, err
 	}
 	if conn.SecurityMode, err = conf.FieldString("securityMode"); err != nil {
@@ -174,33 +172,6 @@ func ParseConnectionConfig(conf *service.ParsedConfig, mgr *service.Resources) (
 	return conn, nil
 }
 
-// ResolveUsername resolves the interpolated username string
-func (c *OPCUAConnection) ResolveUsername() (string, error) {
-	if c.Username == nil {
-		return "", nil
-	}
-	// For connection config, we don't have a specific message context
-	// so we use Static() which returns the literal value or default
-	value, exists := c.Username.Static()
-	if !exists {
-		return "", nil
-	}
-	return value, nil
-}
-
-// ResolvePassword resolves the interpolated password string
-func (c *OPCUAConnection) ResolvePassword() (string, error) {
-	if c.Password == nil {
-		return "", nil
-	}
-	// For connection config, we don't have a specific message context
-	// so we use Static() which returns the literal value or default
-	value, exists := c.Password.Static()
-	if !exists {
-		return "", nil
-	}
-	return value, nil
-}
 
 // cleanupBrowsing ensures the browsing goroutine is properly stopped and cleaned up
 func (g *OPCUAConnection) cleanupBrowsing() {
