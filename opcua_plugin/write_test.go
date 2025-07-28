@@ -118,15 +118,18 @@ opcua:
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
+				nodeID, _ := service.NewInterpolatedString("ns=4;i=6210")
+				dataType, _ := service.NewInterpolatedString("Float")
+				
 				output := &OPCUAOutput{
 					OPCUAConnection: &OPCUAConnection{
 						Endpoint: fmt.Sprintf("opc.tcp://%s:%s", opcsimIp, opcsimPort),
 					},
 					NodeMappings: []NodeMapping{
 						{
-							NodeID:    "ns=4;i=6210",
+							NodeID:    nodeID,
 							ValueFrom: "setpoint",
-							DataType:  "Float",
+							DataType:  dataType,
 						},
 					},
 				}
