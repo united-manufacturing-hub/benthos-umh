@@ -52,6 +52,10 @@ func uint32Ptr(u uint32) *uint32 {
 	return &u
 }
 
+func boolPtr(b bool) *bool {
+	return &b
+}
+
 
 var _ = Describe("AliasCache Unit Tests", func() {
 
