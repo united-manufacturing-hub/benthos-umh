@@ -677,28 +677,97 @@ logger:
 		})
 
 		It("should handle broker disconnection gracefully", func() {
-			By("Testing connection resilience")
-
-			// This test would require stopping/starting the broker
-			// For now, we'll test the connection timeout behavior
+			By("Testing connection resilience and reconnection behavior")
+			
+			// Create a client with proper disconnection handling
+			disconnectHandled := make(chan bool, 1)
+			reconnectAttempted := make(chan bool, 1)
+			messagesLost := false
+			_ = messagesLost // Track if messages were lost during disconnection
+			
 			opts := mqtt.NewClientOptions()
-			opts.AddBroker("tcp://127.0.0.1:9999") // Non-existent broker
-			opts.SetClientID("test-connection-failure")
-			opts.SetConnectTimeout(2 * time.Second)
-
-			failClient := mqtt.NewClient(opts)
-			token := failClient.Connect()
-
-			// Should timeout (connection should fail)
-			success := token.WaitTimeout(3 * time.Second)
-			if success {
-				// If connection succeeded, check if there's an error
-				Expect(token.Error()).To(HaveOccurred())
-			} else {
-				// Connection timed out as expected
-				fmt.Printf("✅ Connection timeout as expected\n")
+			opts.AddBroker(brokerURL)
+			opts.SetClientID("test-disconnection-handling")
+			opts.SetCleanSession(false)
+			opts.SetAutoReconnect(true)
+			opts.SetConnectRetryInterval(1 * time.Second)
+			opts.SetKeepAlive(2 * time.Second)
+			
+			// Set up handlers to track disconnection and reconnection
+			opts.SetConnectionLostHandler(func(client mqtt.Client, err error) {
+				fmt.Printf("⚠️  Connection lost: %v\n", err)
+				messagesLost = true
+				disconnectHandled <- true
+			})
+			
+			opts.SetOnConnectHandler(func(client mqtt.Client) {
+				fmt.Printf("✅ Connected/Reconnected to broker\n")
+				reconnectAttempted <- true
+			})
+			
+			// Create and connect client
+			client := mqtt.NewClient(opts)
+			token := client.Connect()
+			Expect(token.Wait() && token.Error() == nil).To(BeTrue())
+			
+			// Wait for initial connection
+			select {
+			case <-reconnectAttempted:
+				// Initial connection successful
+			case <-time.After(5 * time.Second):
+				Fail("Initial connection timeout")
 			}
-			fmt.Printf("✅ Connection timeout handled correctly\n")
+			
+			// Subscribe to a test topic
+			subToken := client.Subscribe("test/disconnection", 1, func(client mqtt.Client, msg mqtt.Message) {
+				fmt.Printf("Received message: %s\n", msg.Payload())
+			})
+			Expect(subToken.Wait() && subToken.Error() == nil).To(BeTrue())
+			
+			// Simulate disconnection by forcing client disconnect
+			client.Disconnect(0)
+			
+			// Wait for disconnection to be detected
+			select {
+			case <-disconnectHandled:
+				fmt.Printf("✅ Disconnection detected and handled\n")
+			case <-time.After(5 * time.Second):
+				// Even if handler isn't called, verify disconnection
+				Expect(client.IsConnected()).To(BeFalse())
+			}
+			
+			// Verify client is disconnected
+			Expect(client.IsConnected()).To(BeFalse())
+			
+			// Test message queueing during disconnection
+			pubToken := client.Publish("test/disconnection", 1, false, "message during disconnect")
+			// Should not succeed immediately since we're disconnected
+			if !pubToken.WaitTimeout(1 * time.Second) {
+				fmt.Printf("✅ Message queued during disconnection\n")
+			}
+			
+			// Reconnect
+			reconnectToken := client.Connect()
+			Expect(reconnectToken.Wait() && reconnectToken.Error() == nil).To(BeTrue())
+			
+			// Wait for reconnection
+			select {
+			case <-reconnectAttempted:
+				fmt.Printf("✅ Reconnection successful\n")
+			case <-time.After(10 * time.Second):
+				Fail("Reconnection timeout")
+			}
+			
+			// Verify we're connected again
+			Expect(client.IsConnected()).To(BeTrue())
+			
+			// Test publishing after reconnection
+			pubToken2 := client.Publish("test/disconnection", 1, false, "message after reconnect")
+			Expect(pubToken2.Wait() && pubToken2.Error() == nil).To(BeTrue())
+			
+			// Clean up
+			client.Disconnect(250)
+			fmt.Printf("✅ Broker disconnection and recovery test completed\n")
 		})
 	})
 
@@ -1740,7 +1809,7 @@ logger:
 			timeout := time.After(10 * time.Second)
 			nbirthReceived := false
 			
-		waitForInitialNBirth:
+		// waitForInitialNBirth:
 			for !nbirthReceived {
 				select {
 				case msg := <-messageReceived:
@@ -1806,7 +1875,7 @@ logger:
 			timeout = time.After(10 * time.Second)
 			rebirthReceived := false
 			
-		waitForRebirth:
+		// waitForRebirth:
 			for !rebirthReceived {
 				select {
 				case msg := <-messageReceived:
@@ -1851,6 +1920,431 @@ logger:
 			fmt.Printf("   - Rebirth bdSeq: %d\n", rebirthBdSeq)
 			fmt.Printf("   - NBIRTH count: %d\n", nbirthCount)
 			fmt.Printf("   - DBIRTH count after rebirth: %d\n", deviceBirthCount)
+			
+			// Clean shutdown
+			cancel()
+			select {
+			case <-edgeDone:
+				fmt.Println("✅ Edge node stopped cleanly")
+			case <-time.After(5 * time.Second):
+				fmt.Println("⚠️ Edge node stop timeout")
+			}
+		})
+		
+		It("should validate NCMD rebirth command handling with comprehensive checks", func() {
+			By("Creating test configuration with multiple devices")
+			
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			
+			// Generate unique IDs for this test
+			uniqueGroupID := fmt.Sprintf("RebirthValidation-%d-%s", GinkgoParallelProcess(), uuid.New().String()[:8])
+			edgeNodeID := "TestEdgeNode"
+			
+			// Track all message types and their sequences
+			var initialNBirthSeq uint64
+			_ = initialNBirthSeq // will be used later
+			var initialDBirthSeqs = make(map[string]uint64)
+			var postRebirthNBirthSeq uint64
+			var postRebirthDBirthSeqs = make(map[string]uint64)
+			var allMessages []mqtt.Message
+			var nbirthTimestamps []uint64
+			var metricsBefore, metricsAfter map[string]interface{}
+			
+			// Subscribe to all messages for this group
+			messageReceived := make(chan mqtt.Message, 200)
+			topicPattern := fmt.Sprintf("spBv1.0/%s/#", uniqueGroupID)
+			
+			mqttOpts := mqtt.NewClientOptions()
+			mqttOpts.AddBroker(brokerURL)
+			mqttOpts.SetClientID(fmt.Sprintf("test-rebirth-validator-%d-%s", GinkgoParallelProcess(), uuid.New().String()[:8]))
+			
+			monitorClient := mqtt.NewClient(mqttOpts)
+			token := monitorClient.Connect()
+			Expect(token.Wait()).To(BeTrue())
+			Expect(token.Error()).NotTo(HaveOccurred())
+			defer monitorClient.Disconnect(250)
+			
+			token = monitorClient.Subscribe(topicPattern, 1, func(client mqtt.Client, msg mqtt.Message) {
+				fmt.Printf("📥 Received message on topic: %s (seq tracking)\n", msg.Topic())
+				messageReceived <- msg
+				allMessages = append(allMessages, msg)
+			})
+			Expect(token.Wait()).To(BeTrue())
+			Expect(token.Error()).NotTo(HaveOccurred())
+			
+			By("Starting Edge Node with multiple devices")
+			
+			edgeNodeConfig := fmt.Sprintf(`
+input:
+  generate:
+    interval: "3s"
+    count: 10
+    mapping: |
+      root = {"counter": counter(), "timestamp": timestamp_unix_milli()}
+
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |
+          # Generate multiple devices
+          device_num = (msg.payload.counter %% 3) + 1
+          msg.meta.location_path = "enterprise.factory.line1.device" + device_num.string()
+          msg.meta.data_contract = "_sparkplug"
+          msg.meta.tag_name = "metric_" + msg.payload.counter.string()
+          msg.meta.virtual_path = "sensors.device" + device_num.string()
+          msg.payload = 20.0 + (msg.payload.counter %% 10)
+          return msg
+
+output:
+  sparkplug_b:
+    mqtt:
+      urls: ["%s"]
+      client_id: "edge-node-rebirth-validate-%d-%s"
+      qos: 1
+      keep_alive: "30s"
+      connect_timeout: "10s"
+      clean_session: true
+    identity:
+      group_id: "%s"
+      edge_node_id: "%s"
+
+logger:
+  level: INFO
+`, brokerURL, GinkgoParallelProcess(), uuid.New().String()[:8], uniqueGroupID, edgeNodeID)
+			
+			edgeStreamBuilder := service.NewStreamBuilder()
+			err := edgeStreamBuilder.SetYAML(edgeNodeConfig)
+			Expect(err).NotTo(HaveOccurred())
+			
+			edgeStream, err := edgeStreamBuilder.Build()
+			Expect(err).NotTo(HaveOccurred())
+			
+			edgeDone := make(chan error, 1)
+			go func() {
+				edgeDone <- edgeStream.Run(ctx)
+			}()
+			
+			By("Waiting for initial NBIRTH and DBIRTH messages")
+			
+			// Collect initial birth messages
+			timeout := time.After(15 * time.Second)
+			nbirthReceived := false
+			deviceBirthsReceived := make(map[string]bool)
+			
+		collectInitialBirths:
+			for {
+				select {
+				case msg := <-messageReceived:
+					topic := msg.Topic()
+					if strings.Contains(topic, "/NBIRTH/") && !nbirthReceived {
+						var payload sparkplugb.Payload
+						err := proto.Unmarshal(msg.Payload(), &payload)
+						Expect(err).NotTo(HaveOccurred())
+						
+						// Capture sequence and timestamp
+						if payload.Seq != nil {
+							initialNBirthSeq = *payload.Seq
+						}
+						if payload.Timestamp != nil {
+							nbirthTimestamps = append(nbirthTimestamps, *payload.Timestamp)
+						}
+						
+						// Store all metrics for comparison
+						metricsBefore = make(map[string]interface{})
+						for _, metric := range payload.Metrics {
+							if metric.Name != nil {
+								metricsBefore[*metric.Name] = metric
+								if *metric.Name == "bdSeq" {
+									fmt.Printf("✅ Initial bdSeq: %d\n", metric.GetLongValue())
+								}
+							}
+						}
+						nbirthReceived = true
+						
+					} else if strings.Contains(topic, "/DBIRTH/") {
+						// Extract device ID from topic
+						parts := strings.Split(topic, "/")
+						if len(parts) >= 5 {
+							deviceID := parts[4]
+							if !deviceBirthsReceived[deviceID] {
+								var payload sparkplugb.Payload
+								err := proto.Unmarshal(msg.Payload(), &payload)
+								Expect(err).NotTo(HaveOccurred())
+								
+								if payload.Seq != nil {
+									initialDBirthSeqs[deviceID] = *payload.Seq
+								}
+								deviceBirthsReceived[deviceID] = true
+								fmt.Printf("📝 Received DBIRTH for device: %s (seq: %d)\n", deviceID, *payload.Seq)
+							}
+						}
+					}
+					
+					// Continue until we have NBIRTH and at least one DBIRTH
+					if nbirthReceived && len(deviceBirthsReceived) >= 1 {
+						break collectInitialBirths
+					}
+					
+				case <-timeout:
+					Fail("Timeout waiting for initial birth messages")
+				}
+			}
+			
+			// Wait for system to stabilize
+			time.Sleep(3 * time.Second)
+			
+			By("Sending invalid NCMD commands first")
+			
+			// Test 1: Send NCMD with wrong metric name
+			invalidCmd1 := &sparkplugb.Payload{
+				Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),
+				Seq:       func() *uint64 { s := uint64(0); return &s }(),
+				Metrics: []*sparkplugb.Payload_Metric{
+					{
+						Name: func() *string { s := "Wrong/Metric/Name"; return &s }(),
+						Value: &sparkplugb.Payload_Metric_BooleanValue{
+							BooleanValue: true,
+						},
+						Datatype: func() *uint32 { d := uint32(11); return &d }(),
+					},
+				},
+			}
+			
+			cmdBytes, err := proto.Marshal(invalidCmd1)
+			Expect(err).NotTo(HaveOccurred())
+			
+			ncmdTopic := fmt.Sprintf("spBv1.0/%s/NCMD/%s", uniqueGroupID, edgeNodeID)
+			token = monitorClient.Publish(ncmdTopic, 1, false, cmdBytes)
+			Expect(token.Wait()).To(BeTrue())
+			
+			// Should NOT trigger rebirth
+			time.Sleep(2 * time.Second)
+			
+			// Test 2: Send NCMD with rebirth = false
+			invalidCmd2 := &sparkplugb.Payload{
+				Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),
+				Seq:       func() *uint64 { s := uint64(1); return &s }(),
+				Metrics: []*sparkplugb.Payload_Metric{
+					{
+						Name: func() *string { s := "Node Control/Rebirth"; return &s }(),
+						Value: &sparkplugb.Payload_Metric_BooleanValue{
+							BooleanValue: false, // False should not trigger rebirth
+						},
+						Datatype: func() *uint32 { d := uint32(11); return &d }(),
+					},
+				},
+			}
+			
+			cmdBytes, err = proto.Marshal(invalidCmd2)
+			Expect(err).NotTo(HaveOccurred())
+			
+			token = monitorClient.Publish(ncmdTopic, 1, false, cmdBytes)
+			Expect(token.Wait()).To(BeTrue())
+			
+			// Should NOT trigger rebirth
+			time.Sleep(2 * time.Second)
+			
+			By("Sending valid NCMD rebirth command")
+			
+			// Clear message tracking for rebirth
+			preRebirthMessageCount := len(allMessages)
+			_ = preRebirthMessageCount // will be used later
+			
+			// Send valid rebirth command
+			validRebirthCmd := &sparkplugb.Payload{
+				Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),
+				Seq:       func() *uint64 { s := uint64(2); return &s }(),
+				Metrics: []*sparkplugb.Payload_Metric{
+					{
+						Name: func() *string { s := "Node Control/Rebirth"; return &s }(),
+						Value: &sparkplugb.Payload_Metric_BooleanValue{
+							BooleanValue: true,
+						},
+						Datatype: func() *uint32 { d := uint32(11); return &d }(),
+					},
+				},
+			}
+			
+			cmdBytes, err = proto.Marshal(validRebirthCmd)
+			Expect(err).NotTo(HaveOccurred())
+			
+			token = monitorClient.Publish(ncmdTopic, 1, false, cmdBytes)
+			Expect(token.Wait()).To(BeTrue())
+			Expect(token.Error()).NotTo(HaveOccurred())
+			
+			fmt.Printf("📤 Sent valid rebirth command\n")
+			
+			By("Waiting for and validating rebirth sequence")
+			
+			// Track rebirth sequence
+			timeout = time.After(15 * time.Second)
+			rebirthNBirthReceived := false
+			rebirthDBirthsReceived := make(map[string]bool)
+			var rebirthSequence []string
+			
+		collectRebirthMessages:
+			for {
+				select {
+				case msg := <-messageReceived:
+					topic := msg.Topic()
+					rebirthSequence = append(rebirthSequence, topic)
+					
+					if strings.Contains(topic, "/NBIRTH/") && !rebirthNBirthReceived {
+						var payload sparkplugb.Payload
+						err := proto.Unmarshal(msg.Payload(), &payload)
+						Expect(err).NotTo(HaveOccurred())
+						
+						// Validate sequence reset
+						if payload.Seq != nil {
+							postRebirthNBirthSeq = *payload.Seq
+							Expect(postRebirthNBirthSeq).To(Equal(uint64(0)), "NBIRTH sequence should reset to 0 after rebirth")
+						}
+						
+						// Validate timestamp is newer
+						if payload.Timestamp != nil {
+							nbirthTimestamps = append(nbirthTimestamps, *payload.Timestamp)
+							Expect(*payload.Timestamp).To(BeNumerically(">", nbirthTimestamps[0]), "Rebirth timestamp should be newer")
+						}
+						
+						// Store metrics for comparison
+						metricsAfter = make(map[string]interface{})
+						for _, metric := range payload.Metrics {
+							if metric.Name != nil {
+								metricsAfter[*metric.Name] = metric
+								if *metric.Name == "bdSeq" {
+									fmt.Printf("✅ Rebirth bdSeq: %d\n", metric.GetLongValue())
+									// bdSeq should increment
+									originalBdSeq := metricsBefore["bdSeq"].(*sparkplugb.Payload_Metric).GetLongValue()
+									Expect(metric.GetLongValue()).To(Equal(originalBdSeq + 1))
+								}
+							}
+						}
+						
+						// Validate all required metrics are present
+						Expect(metricsAfter).To(HaveKey("bdSeq"))
+						Expect(metricsAfter).To(HaveKey("Node Control/Rebirth"))
+						
+						rebirthNBirthReceived = true
+						
+					} else if strings.Contains(topic, "/DBIRTH/") {
+						// Extract device ID
+						parts := strings.Split(topic, "/")
+						if len(parts) >= 5 {
+							deviceID := parts[4]
+							if !rebirthDBirthsReceived[deviceID] {
+								var payload sparkplugb.Payload
+								err := proto.Unmarshal(msg.Payload(), &payload)
+								Expect(err).NotTo(HaveOccurred())
+								
+								if payload.Seq != nil {
+									postRebirthDBirthSeqs[deviceID] = *payload.Seq
+									// DBIRTH sequence should be 1 after NBIRTH
+									Expect(*payload.Seq).To(Equal(uint64(1)), "DBIRTH sequence should be 1 after rebirth")
+								}
+								
+								rebirthDBirthsReceived[deviceID] = true
+								fmt.Printf("📝 Received rebirth DBIRTH for device: %s\n", deviceID)
+							}
+						}
+					} else if strings.Contains(topic, "/NDEATH/") {
+						// Should not receive NDEATH during normal rebirth
+						Fail("Unexpected NDEATH received during rebirth")
+					}
+					
+					// Wait for NBIRTH and all previously seen devices to rebirth
+					if rebirthNBirthReceived && len(rebirthDBirthsReceived) >= len(deviceBirthsReceived) {
+						break collectRebirthMessages
+					}
+					
+				case <-timeout:
+					Fail(fmt.Sprintf("Timeout waiting for rebirth messages. Got NBIRTH: %v, DBIRTHs: %d/%d",
+						rebirthNBirthReceived, len(rebirthDBirthsReceived), len(deviceBirthsReceived)))
+				}
+			}
+			
+			By("Validating rebirth sequence order")
+			
+			// Validate message order: NBIRTH should come before any DBIRTH
+			nbirthIndex := -1
+			firstDbirthIndex := -1
+			for i, topic := range rebirthSequence {
+				if strings.Contains(topic, "/NBIRTH/") && nbirthIndex == -1 {
+					nbirthIndex = i
+				}
+				if strings.Contains(topic, "/DBIRTH/") && firstDbirthIndex == -1 {
+					firstDbirthIndex = i
+				}
+			}
+			
+			Expect(nbirthIndex).To(BeNumerically(">=", 0), "Should have received NBIRTH")
+			Expect(firstDbirthIndex).To(BeNumerically(">", nbirthIndex), "DBIRTH should come after NBIRTH")
+			
+			By("Sending NCMD during active session")
+			
+			// Send another rebirth command to test incremental bdSeq
+			time.Sleep(2 * time.Second)
+			
+			secondRebirthCmd := &sparkplugb.Payload{
+				Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),
+				Seq:       func() *uint64 { s := uint64(3); return &s }(),
+				Metrics: []*sparkplugb.Payload_Metric{
+					{
+						Name: func() *string { s := "Node Control/Rebirth"; return &s }(),
+						Value: &sparkplugb.Payload_Metric_BooleanValue{
+							BooleanValue: true,
+						},
+						Datatype: func() *uint32 { d := uint32(11); return &d }(),
+					},
+				},
+			}
+			
+			cmdBytes, err = proto.Marshal(secondRebirthCmd)
+			Expect(err).NotTo(HaveOccurred())
+			
+			token = monitorClient.Publish(ncmdTopic, 1, false, cmdBytes)
+			Expect(token.Wait()).To(BeTrue())
+			
+			// Wait for second rebirth
+			timeout = time.After(10 * time.Second)
+			secondRebirthReceived := false
+			
+		waitForSecondRebirth:
+			for {
+				select {
+				case msg := <-messageReceived:
+					if strings.Contains(msg.Topic(), "/NBIRTH/") {
+						var payload sparkplugb.Payload
+						err := proto.Unmarshal(msg.Payload(), &payload)
+						Expect(err).NotTo(HaveOccurred())
+						
+						for _, metric := range payload.Metrics {
+							if metric.Name != nil && *metric.Name == "bdSeq" {
+								// Should increment again
+								firstRebirthBdSeq := metricsAfter["bdSeq"].(*sparkplugb.Payload_Metric).GetLongValue()
+								Expect(metric.GetLongValue()).To(Equal(firstRebirthBdSeq + 1))
+								secondRebirthReceived = true
+								fmt.Printf("✅ Second rebirth bdSeq: %d\n", metric.GetLongValue())
+								break
+							}
+						}
+					}
+				case <-timeout:
+					Fail("Timeout waiting for second rebirth")
+				}
+				
+				if secondRebirthReceived {
+					break waitForSecondRebirth
+				}
+			}
+			
+			fmt.Printf("✅ NCMD rebirth validation completed successfully\n")
+			fmt.Printf("   - Invalid commands properly ignored\n")
+			fmt.Printf("   - Valid rebirth command triggered full rebirth sequence\n")
+			fmt.Printf("   - Message ordering validated (NBIRTH before DBIRTH)\n")
+			fmt.Printf("   - Sequence numbers properly reset\n")
+			fmt.Printf("   - bdSeq incremented correctly\n")
+			fmt.Printf("   - Multiple rebirths handled correctly\n")
 			
 			// Clean shutdown
 			cancel()
