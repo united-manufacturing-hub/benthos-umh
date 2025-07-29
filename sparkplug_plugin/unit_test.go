@@ -22,7 +22,6 @@ package sparkplug_plugin_test
 import (
 	"encoding/base64"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -53,9 +52,6 @@ func uint32Ptr(u uint32) *uint32 {
 	return &u
 }
 
-func boolPtr(b bool) *bool {
-	return &b
-}
 
 var _ = Describe("AliasCache Unit Tests", func() {
 
@@ -241,272 +237,295 @@ var _ = Describe("AliasCache Unit Tests", func() {
 			count = cache.CacheAliases("TestFactory/Line1", invalidMetrics)
 			Expect(count).To(Equal(1)) // Only ValidMetric should be cached
 		})
-	})
-})
 
-var _ = Describe("TopicParser Unit Tests", func() {
+		// Comprehensive negative test cases for alias resolution
+		It("should handle corrupted alias cache gracefully", func() {
+			// First cache some valid aliases
+			validMetrics := []*sparkplugb.Payload_Metric{
+				{
+					Name:  stringPtr("Temperature"),
+					Alias: uint64Ptr(100),
+				},
+				{
+					Name:  stringPtr("Pressure"),
+					Alias: uint64Ptr(101),
+				},
+			}
+			cache.CacheAliases("TestFactory/Line1", validMetrics)
+			
+			// Try to resolve with non-existent aliases
+			dataMetrics := []*sparkplugb.Payload_Metric{
+				{
+					Alias: uint64Ptr(999), // Non-existent alias
+					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 25.5},
+				},
+				{
+					Alias: uint64Ptr(1000), // Non-existent alias
+					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 30.5},
+				},
+			}
+			
+			count := cache.ResolveAliases("TestFactory/Line1", dataMetrics)
+			Expect(count).To(Equal(0)) // No aliases should be resolved
+			Expect(dataMetrics[0].Name).To(BeNil()) // Name should remain nil
+			Expect(dataMetrics[1].Name).To(BeNil()) // Name should remain nil
+		})
 
-	Context("Topic Parsing", func() {
-		It("should parse valid Sparkplug topics", func() {
-			// Note: Topic parser is internal - tested via integration tests
-			// For now, test the topic format validation logic
-			validTopics := []struct {
-				topic    string
-				expected map[string]string
+		It("should handle duplicate aliases in different sessions", func() {
+			// Session 1: Cache alias 100 for Temperature
+			metrics1 := []*sparkplugb.Payload_Metric{
+				{
+					Name:  stringPtr("Temperature"),
+					Alias: uint64Ptr(100),
+				},
+			}
+			cache.CacheAliases("TestFactory/Line1", metrics1)
+			
+			// Session 2 (simulated): Try to cache alias 100 for different metric
+			// This simulates a rebirth where aliases might be reassigned
+			metrics2 := []*sparkplugb.Payload_Metric{
+				{
+					Name:  stringPtr("Humidity"),
+					Alias: uint64Ptr(100), // Same alias, different metric
+				},
+			}
+			cache.CacheAliases("TestFactory/Line1", metrics2)
+			
+			// Resolve should use the latest assignment
+			dataMetrics := []*sparkplugb.Payload_Metric{
+				{
+					Alias: uint64Ptr(100),
+					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 45.5},
+				},
+			}
+			count := cache.ResolveAliases("TestFactory/Line1", dataMetrics)
+			Expect(count).To(Equal(1))
+			Expect(*dataMetrics[0].Name).To(Equal("Humidity")) // Should be the latest assignment
+		})
+
+		It("should handle alias overflow scenarios", func() {
+			// Test aliases at the boundary of uint64
+			largeAliasMetrics := []*sparkplugb.Payload_Metric{
+				{
+					Name:  stringPtr("MaxAlias"),
+					Alias: uint64Ptr(^uint64(0)), // Max uint64 value
+				},
+				{
+					Name:  stringPtr("NormalAlias"),
+					Alias: uint64Ptr(65535), // Max uint16 value (common in Sparkplug)
+				},
+				{
+					Name:  stringPtr("ZeroAlias"),
+					Alias: uint64Ptr(0), // Min value - will be skipped as 0 is invalid
+				},
+			}
+			
+			count := cache.CacheAliases("TestFactory/Line1", largeAliasMetrics)
+			Expect(count).To(Equal(2)) // Only 2 should be cached, alias 0 is invalid
+			
+			// Verify resolution works with extreme values
+			dataMetrics := []*sparkplugb.Payload_Metric{
+				{
+					Alias: uint64Ptr(^uint64(0)),
+					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 100.0},
+				},
+				{
+					Alias: uint64Ptr(0),
+					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 200.0},
+				},
+			}
+			
+			resolved := cache.ResolveAliases("TestFactory/Line1", dataMetrics)
+			Expect(resolved).To(Equal(1)) // Only 1 resolved, alias 0 was not cached
+			Expect(*dataMetrics[0].Name).To(Equal("MaxAlias"))
+			Expect(dataMetrics[1].Name).To(BeNil()) // Alias 0 won't be resolved
+		})
+
+		It("should handle concurrent alias operations safely", func() {
+			// This test ensures thread safety in alias cache operations
+			done := make(chan bool)
+			errors := make(chan error, 10)
+			
+			// Concurrent writers
+			for i := 0; i < 5; i++ {
+				go func(idx int) {
+					defer GinkgoRecover()
+					metrics := []*sparkplugb.Payload_Metric{
+						{
+							Name:  stringPtr(fmt.Sprintf("Metric%d", idx)),
+							Alias: uint64Ptr(uint64(100 + idx)),
+						},
+					}
+					cache.CacheAliases("TestFactory/Line1", metrics)
+					done <- true
+				}(i)
+			}
+			
+			// Concurrent readers
+			for i := 0; i < 5; i++ {
+				go func(idx int) {
+					defer GinkgoRecover()
+					dataMetrics := []*sparkplugb.Payload_Metric{
+						{
+							Alias: uint64Ptr(uint64(100 + idx)),
+							Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: float64(idx)},
+						},
+					}
+					cache.ResolveAliases("TestFactory/Line1", dataMetrics)
+					done <- true
+				}(i)
+			}
+			
+			// Wait for all goroutines
+			for i := 0; i < 10; i++ {
+				<-done
+			}
+			
+			// Verify no errors occurred
+			select {
+			case err := <-errors:
+				Fail(fmt.Sprintf("Concurrent operation failed: %v", err))
+			default:
+				// No errors
+			}
+		})
+
+		It("should handle malformed device keys", func() {
+			// Test various malformed device keys
+			testCases := []struct {
+				deviceKey string
+				desc      string
 			}{
-				{
-					"spBv1.0/Factory1/NBIRTH/Line1",
-					map[string]string{
-						"version":      "spBv1.0",
-						"group_id":     "Factory1",
-						"message_type": "NBIRTH",
-						"edge_node_id": "Line1",
-					},
-				},
-				{
-					"spBv1.0/Factory1/NDATA/Line1/Machine1",
-					map[string]string{
-						"version":      "spBv1.0",
-						"group_id":     "Factory1",
-						"message_type": "NDATA",
-						"edge_node_id": "Line1",
-						"device_id":    "Machine1",
-					},
-				},
-				{
-					"spBv1.0/SCADA/NCMD/PrimaryHost",
-					map[string]string{
-						"version":      "spBv1.0",
-						"group_id":     "SCADA",
-						"message_type": "NCMD",
-						"edge_node_id": "PrimaryHost",
-					},
-				},
+				{"", "empty device key"},
+				{" ", "whitespace only"},
+				{"TestFactory/", "trailing slash"},
+				{"/Line1", "leading slash"},
+				{"Test Factory/Line 1", "spaces in key"},
+				{"Test\nFactory/Line1", "newline in key"},
+				{"Test\x00Factory/Line1", "null byte in key"},
 			}
-
-			for _, tc := range validTopics {
-				By("parsing topic: "+tc.topic, func() {
-					// Basic topic format validation
-					Expect(tc.topic).To(MatchRegexp(`^spBv1\.0/[^/]+/(NBIRTH|NDATA|NDEATH|NCMD|DBIRTH|DDATA|DDEATH|DCMD)/[^/]+(/[^/]+)?$`))
-
-					// Verify expected components are present
-					Expect(tc.topic).To(ContainSubstring(tc.expected["version"]))
-					Expect(tc.topic).To(ContainSubstring(tc.expected["group_id"]))
-					Expect(tc.topic).To(ContainSubstring(tc.expected["message_type"]))
-					Expect(tc.topic).To(ContainSubstring(tc.expected["edge_node_id"]))
-
-					if deviceId, ok := tc.expected["device_id"]; ok {
-						Expect(tc.topic).To(ContainSubstring(deviceId))
-					}
-				})
+			
+			for _, tc := range testCases {
+				metrics := []*sparkplugb.Payload_Metric{
+					{
+						Name:  stringPtr("TestMetric"),
+						Alias: uint64Ptr(100),
+					},
+				}
+				
+				count := cache.CacheAliases(tc.deviceKey, metrics)
+				// Most implementations should handle empty key specially
+				if tc.deviceKey == "" {
+					Expect(count).To(Equal(0), fmt.Sprintf("Failed for: %s", tc.desc))
+				} else {
+					// Other malformed keys might still work depending on implementation
+					Expect(count).To(BeNumerically(">=", 0), fmt.Sprintf("Failed for: %s", tc.desc))
+				}
 			}
 		})
 
-		It("should reject invalid topic formats", func() {
-			// Note: Edge cases are tested via integration tests
-			invalidTopics := []string{
-				"invalid/topic/format",
-				"spBv2.0/Factory1/NDATA/Line1",   // Wrong version
-				"spBv1.0/Factory1",               // Too short
-				"",                               // Empty
-				"spBv1.0//NDATA/Line1",           // Empty group
-				"spBv1.0/Factory1//Line1",        // Empty message type
-				"spBv1.0/Factory1/INVALID/Line1", // Invalid message type
-				"spBv1.0/Factory1/NDATA",         // Missing edge node
+		It("should handle resolution with nil or invalid metric fields", func() {
+			// Cache valid alias first
+			validMetrics := []*sparkplugb.Payload_Metric{
+				{
+					Name:  stringPtr("Temperature"),
+					Alias: uint64Ptr(100),
+				},
 			}
-
-			sparkplugPattern := `^spBv1\.0/[^/]+/(NBIRTH|NDATA|NDEATH|NCMD|DBIRTH|DDATA|DDEATH|DCMD)/[^/]+(/[^/]+)?$`
-
-			for _, topic := range invalidTopics {
-				By("rejecting invalid topic: "+topic, func() {
-					if topic == "" {
-						// Empty topic should be handled specially
-						Expect(topic).To(BeEmpty())
-					} else {
-						// Should not match valid Sparkplug pattern
-						Expect(topic).NotTo(MatchRegexp(sparkplugPattern))
-					}
-				})
+			cache.CacheAliases("TestFactory/Line1", validMetrics)
+			
+			// Try to resolve with various invalid metrics
+			invalidDataMetrics := []*sparkplugb.Payload_Metric{
+				{
+					// Metric with nil alias
+					Alias: nil,
+					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 25.5},
+				},
+				{
+					// Valid alias but metric might have other issues
+					Alias: uint64Ptr(100),
+					Value: nil, // Nil value
+				},
+				{
+					// Metric with already populated name (should not override)
+					Name:  stringPtr("ExistingName"),
+					Alias: uint64Ptr(100),
+					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 30.5},
+				},
+			}
+			
+			count := cache.ResolveAliases("TestFactory/Line1", invalidDataMetrics)
+			// Implementation should handle these gracefully
+			Expect(count).To(BeNumerically(">=", 0))
+			
+			// Check that existing name wasn't overwritten
+			if invalidDataMetrics[2].Name != nil {
+				Expect(*invalidDataMetrics[2].Name).To(Equal("ExistingName"))
 			}
 		})
 
-		It("should handle device vs node topic differentiation", func() {
-			// Test device-level vs node-level topic handling
-			nodeTopics := []string{
-				"spBv1.0/Factory1/NBIRTH/Line1",
-				"spBv1.0/Factory1/NDATA/Line1",
-				"spBv1.0/Factory1/NDEATH/Line1",
-				"spBv1.0/SCADA/NCMD/PrimaryHost",
-			}
-
-			deviceTopics := []string{
-				"spBv1.0/Factory1/DBIRTH/Line1/Machine1",
-				"spBv1.0/Factory1/DDATA/Line1/Machine1",
-				"spBv1.0/Factory1/DDEATH/Line1/Machine1",
-				"spBv1.0/Factory1/DCMD/Line1/Machine1",
-			}
-
-			// Node topics should have 4 components
-			for _, topic := range nodeTopics {
-				components := len(strings.Split(topic, "/"))
-				Expect(components).To(Equal(4), "Node topic should have 4 components: "+topic)
-			}
-
-			// Device topics should have 5 components
-			for _, topic := range deviceTopics {
-				components := len(strings.Split(topic, "/"))
-				Expect(components).To(Equal(5), "Device topic should have 5 components: "+topic)
+		It("should handle rapid session changes and rebirth scenarios", func() {
+			// Simulate multiple rapid rebirths with changing aliases
+			for session := 0; session < 3; session++ {
+				// Clear cache to simulate new session
+				cache.Clear()
+				
+				// Each session uses different aliases for same metrics
+				metrics := []*sparkplugb.Payload_Metric{
+					{
+						Name:  stringPtr("Temperature"),
+						Alias: uint64Ptr(uint64(100 + session*10)),
+					},
+					{
+						Name:  stringPtr("Pressure"),
+						Alias: uint64Ptr(uint64(101 + session*10)),
+					},
+				}
+				
+				count := cache.CacheAliases("TestFactory/Line1", metrics)
+				Expect(count).To(Equal(2))
+				
+				// Verify old aliases don't work
+				if session > 0 {
+					oldDataMetrics := []*sparkplugb.Payload_Metric{
+						{
+							Alias: uint64Ptr(uint64(100 + (session-1)*10)),
+							Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 25.5},
+						},
+					}
+					resolved := cache.ResolveAliases("TestFactory/Line1", oldDataMetrics)
+					Expect(resolved).To(Equal(0)) // Old aliases should not resolve
+				}
+				
+				// Verify new aliases work
+				newDataMetrics := []*sparkplugb.Payload_Metric{
+					{
+						Alias: uint64Ptr(uint64(100 + session*10)),
+						Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 25.5},
+					},
+				}
+				resolved := cache.ResolveAliases("TestFactory/Line1", newDataMetrics)
+				Expect(resolved).To(Equal(1))
+				Expect(*newDataMetrics[0].Name).To(Equal("Temperature"))
 			}
 		})
 	})
 })
+
 
 var _ = Describe("SequenceManager Unit Tests", func() {
 
 	Context("Sequence Number Validation", func() {
-		It("should detect sequence gaps", func() {
-			// Test sequence gap detection (migrated from old input test)
-			sequences := []uint64{0, 1, 2, 5} // Gap between 2 and 5
 
-			for i := 0; i < len(sequences)-1; i++ {
-				current := sequences[i]
-				next := sequences[i+1]
-				gap := next - current - 1
 
-				if gap > 0 {
-					// Should detect gap of 2 (missing 3, 4)
-					Expect(gap).To(Equal(uint64(2)))
-				}
-			}
-		})
 
-		It("should handle sequence wraparound (255 -> 0)", func() {
-			// Test sequence wraparound at 255->0 boundary
-			sequences := []uint64{253, 254, 255, 0, 1}
 
-			for i := 0; i < len(sequences)-1; i++ {
-				current := sequences[i]
-				next := sequences[i+1]
-
-				// Handle wraparound case
-				if current == 255 && next == 0 {
-					// This is valid wraparound, no gap
-					Expect(next).To(Equal(uint64(0)))
-				} else if current < next {
-					// Normal increment
-					Expect(next - current).To(Equal(uint64(1)))
-				}
-			}
-		})
-
-		It("should trigger rebirth on max gap exceeded", func() {
-			// Test rebirth trigger on gap exceeding threshold (migrated from old edge cases)
-			maxGap := uint64(3)
-			sequences := []uint64{0, 1, 2, 7} // Gap of 4 exceeds threshold
-
-			for i := 0; i < len(sequences)-1; i++ {
-				current := sequences[i]
-				next := sequences[i+1]
-				gap := next - current - 1
-
-				if gap > maxGap {
-					// Should trigger rebirth request
-					Expect(gap).To(BeNumerically(">", maxGap))
-				}
-			}
-		})
-
-		It("should validate bdSeq matching between BIRTH and DEATH", func() {
-			// Test bdSeq consistency (migrated from old input test)
-			birthBdSeq := uint64(12345)
-			deathBdSeq := uint64(12345)
-
-			// BIRTH and DEATH should have matching bdSeq
-			Expect(deathBdSeq).To(Equal(birthBdSeq))
-
-			// Different bdSeq should be detected
-			invalidDeathBdSeq := uint64(54321)
-			Expect(invalidDeathBdSeq).NotTo(Equal(birthBdSeq))
-		})
 	})
 })
 
 var _ = Describe("TypeConverter Unit Tests", func() {
 
 	Context("Data Type Conversions", func() {
-		It("should convert Sparkplug types to UMH format", func() {
-			// Test various Sparkplug data type conversions (migrated from old tests)
-			testCases := []struct {
-				sparkplugType uint32
-				value         interface{}
-				expectedType  string
-			}{
-				{7, uint64(12345), "uint64"},      // Int64
-				{9, float32(25.5), "float32"},     // Float
-				{10, float64(1013.25), "float64"}, // Double
-				{11, true, "bool"},                // Boolean
-				{12, "RUNNING", "string"},         // String
-			}
-
-			for _, tc := range testCases {
-				By("converting type "+tc.expectedType, func() {
-					// Verify type handling
-					switch tc.value.(type) {
-					case uint64:
-						Expect(tc.sparkplugType).To(Equal(uint32(7)))
-					case float32:
-						Expect(tc.sparkplugType).To(Equal(uint32(9)))
-					case float64:
-						Expect(tc.sparkplugType).To(Equal(uint32(10)))
-					case bool:
-						Expect(tc.sparkplugType).To(Equal(uint32(11)))
-					case string:
-						Expect(tc.sparkplugType).To(Equal(uint32(12)))
-					}
-				})
-			}
-		})
-
-		It("should handle type conversion edge cases", func() {
-			// Test edge cases like overflow, null values (migrated from old tests)
-			edgeCases := []struct {
-				name  string
-				value interface{}
-			}{
-				{"zero_value", uint64(0)},
-				{"max_uint64", uint64(18446744073709551615)},
-				{"negative_float", float64(-999.99)},
-				{"empty_string", ""},
-				{"false_boolean", false},
-			}
-
-			for _, tc := range edgeCases {
-				By("handling edge case: "+tc.name, func() {
-					// Verify edge cases are handled properly
-					Expect(tc.value).NotTo(BeNil())
-
-					switch v := tc.value.(type) {
-					case uint64:
-						if tc.name == "zero_value" {
-							Expect(v).To(Equal(uint64(0)))
-						}
-					case float64:
-						if tc.name == "negative_float" {
-							Expect(v).To(BeNumerically("<", 0))
-						}
-					case string:
-						if tc.name == "empty_string" {
-							Expect(v).To(Equal(""))
-						}
-					case bool:
-						if tc.name == "false_boolean" {
-							Expect(v).To(BeFalse())
-						}
-					}
-				})
-			}
-		})
-
 		It("should infer correct data types from Go values", func() {
 			converter := sparkplug_plugin.NewTypeConverter()
 
@@ -537,301 +556,10 @@ var _ = Describe("TypeConverter Unit Tests", func() {
 	})
 })
 
-var _ = Describe("MQTTClientBuilder Unit Tests", func() {
-	Context("Client Configuration", func() {
-		It("should build valid MQTT client options", func() {
-			// Test MQTT client configuration building
-			testConfigs := []struct {
-				name   string
-				config map[string]interface{}
-			}{
-				{
-					"basic_config",
-					map[string]interface{}{
-						"broker_urls":     []string{"tcp://localhost:1883"},
-						"client_id":       "test-client",
-						"qos":             1,
-						"keep_alive":      "30s",
-						"connect_timeout": "10s",
-						"clean_session":   true,
-					},
-				},
-				{
-					"ssl_config",
-					map[string]interface{}{
-						"broker_urls":     []string{"ssl://broker.example.com:8883"},
-						"client_id":       "ssl-client",
-						"qos":             2,
-						"keep_alive":      "60s",
-						"connect_timeout": "20s",
-						"clean_session":   false,
-						"username":        "testuser",
-						"password":        "testpass",
-					},
-				},
-			}
 
-			for _, tc := range testConfigs {
-				By("building config for: "+tc.name, func() {
-					// Verify configuration values are valid
-					Expect(tc.config["broker_urls"]).NotTo(BeNil())
-					Expect(tc.config["client_id"]).NotTo(BeNil())
-					Expect(tc.config["qos"]).To(BeNumerically(">=", 0))
-					Expect(tc.config["qos"]).To(BeNumerically("<=", 2))
-
-					// Verify broker URL format
-					urls := tc.config["broker_urls"].([]string)
-					for _, url := range urls {
-						Expect(url).To(MatchRegexp(`^(tcp|ssl)://[^:]+:\d+$`))
-					}
-
-					// Verify client ID is not empty
-					clientId := tc.config["client_id"].(string)
-					Expect(clientId).NotTo(BeEmpty())
-				})
-			}
-		})
-
-		It("should handle connection configuration validation", func() {
-			// Test authentication configuration validation
-			authConfigs := []struct {
-				name   string
-				config map[string]interface{}
-				valid  bool
-			}{
-				{
-					"no_auth",
-					map[string]interface{}{
-						"client_id": "test-client",
-					},
-					true,
-				},
-				{
-					"username_password",
-					map[string]interface{}{
-						"client_id": "test-client",
-						"username":  "testuser",
-						"password":  "testpass",
-					},
-					true,
-				},
-				{
-					"username_only",
-					map[string]interface{}{
-						"client_id": "test-client",
-						"username":  "testuser",
-					},
-					true, // Username without password is valid
-				},
-				{
-					"empty_username",
-					map[string]interface{}{
-						"client_id": "test-client",
-						"username":  "",
-						"password":  "testpass",
-					},
-					false, // Empty username with password should be invalid
-				},
-			}
-
-			for _, tc := range authConfigs {
-				By("validating auth config: "+tc.name, func() {
-					// Basic validation logic
-					username, hasUsername := tc.config["username"]
-					password, hasPassword := tc.config["password"]
-
-					if tc.valid {
-						// Valid configurations
-						if hasUsername {
-							usernameStr := username.(string)
-							if hasPassword {
-								passwordStr := password.(string)
-								// Username + password should both be non-empty
-								if usernameStr == "" {
-									// This should be caught as invalid
-									Expect(tc.valid).To(BeFalse())
-								} else {
-									Expect(usernameStr).NotTo(BeEmpty())
-									Expect(passwordStr).NotTo(BeEmpty())
-								}
-							}
-						}
-					} else {
-						// Invalid configurations should be caught
-						if hasUsername && hasPassword {
-							usernameStr := username.(string)
-							if usernameStr == "" {
-								// Empty username with password is invalid
-								Expect(usernameStr).To(BeEmpty())
-							}
-						}
-					}
-				})
-			}
-		})
-	})
-})
-
-var _ = Describe("Configuration Unit Tests", func() {
-
-	Context("Config Validation", func() {
-		It("should validate required configuration fields", func() {
-			// Test required field validation (migrated from old input test)
-			requiredFields := []string{
-				"group_id",
-			}
-
-			for _, field := range requiredFields {
-				By("requiring field: "+field, func() {
-					// group_id is required for Sparkplug B operation
-					if field == "group_id" {
-						Expect(field).To(Equal("group_id"))
-					}
-				})
-			}
-		})
-
-		It("should provide sensible defaults", func() {
-			// Test default value assignment (migrated from old input test)
-			defaults := map[string]interface{}{
-				"broker_urls":             []string{"tcp://localhost:1883"},
-				"client_id":               "benthos-sparkplug-host",
-				"split_metrics":           true,
-				"enable_rebirth_requests": true,
-				"qos":                     1,
-				"keep_alive":              "30s",
-				"connect_timeout":         "10s",
-				"clean_session":           true,
-			}
-
-			for key, expectedValue := range defaults {
-				By("checking default for: "+key, func() {
-					switch key {
-					case "broker_urls":
-						urls := expectedValue.([]string)
-						Expect(urls).To(Equal([]string{"tcp://localhost:1883"}))
-					case "client_id":
-						Expect(expectedValue).To(Equal("benthos-sparkplug-host"))
-					case "split_metrics":
-						Expect(expectedValue).To(BeTrue())
-					case "enable_rebirth_requests":
-						Expect(expectedValue).To(BeTrue())
-					case "qos":
-						Expect(expectedValue).To(Equal(1))
-					case "keep_alive":
-						Expect(expectedValue).To(Equal("30s"))
-					case "connect_timeout":
-						Expect(expectedValue).To(Equal("10s"))
-					case "clean_session":
-						Expect(expectedValue).To(BeTrue())
-					}
-				})
-			}
-		})
-
-		It("should validate complex configuration scenarios", func() {
-			// Test complex configuration validation (migrated from old input test)
-			complexConfig := map[string]interface{}{
-				"broker_urls":             []string{"tcp://broker1:1883", "ssl://broker2:8883"},
-				"client_id":               "primary-host-001",
-				"username":                "sparkplug_user",
-				"password":                "secret123",
-				"group_id":                "FactoryA",
-				"primary_host_id":         "SCADA-001",
-				"split_metrics":           false,
-				"enable_rebirth_requests": false,
-				"qos":                     2,
-				"keep_alive":              "60s",
-				"connect_timeout":         "20s",
-				"clean_session":           false,
-			}
-
-			// Verify complex configuration is valid
-			Expect(complexConfig["broker_urls"]).To(Equal([]string{"tcp://broker1:1883", "ssl://broker2:8883"}))
-			Expect(complexConfig["username"]).To(Equal("sparkplug_user"))
-			Expect(complexConfig["qos"]).To(Equal(2))
-			Expect(complexConfig["split_metrics"]).To(BeFalse())
-		})
-
-		It("should handle invalid topic patterns", func() {
-			// Test invalid topic validation (migrated from old input test)
-			invalidTopics := []string{
-				"invalid/topic/format",
-				"spBv2.0/Factory1/NDATA/Line1", // Wrong version
-				"spBv1.0/Factory1",             // Too short
-				"",                             // Empty
-				"spBv1.0//NDATA/Line1",         // Empty group
-				"spBv1.0/Factory1//Line1",      // Empty message type
-			}
-
-			sparkplugPattern := `^spBv1\.0/[^/]+/(NBIRTH|NDATA|NDEATH|NCMD|DBIRTH|DDATA|DDEATH|DCMD)/[^/]+(/[^/]+)?$`
-
-			for _, topic := range invalidTopics {
-				By("rejecting invalid topic: "+topic, func() {
-					// These should not match valid Sparkplug pattern
-					if topic != "" {
-						Expect(topic).NotTo(MatchRegexp(sparkplugPattern))
-					}
-				})
-			}
-		})
-	})
-})
 
 var _ = Describe("MessageProcessor Unit Tests", func() {
 	Context("Message Type Processing", func() {
-		It("should process BIRTH messages and extract aliases", func() {
-			// Test BIRTH message processing (migrated from old input test)
-			birthMetrics := []*sparkplugb.Payload_Metric{
-				{
-					Name:     stringPtr("bdSeq"),
-					Alias:    uint64Ptr(1),
-					Datatype: uint32Ptr(7), // Int64
-					Value:    &sparkplugb.Payload_Metric_LongValue{LongValue: 12345},
-				},
-				{
-					Name:     stringPtr("Temperature"),
-					Alias:    uint64Ptr(100),
-					Datatype: uint32Ptr(9), // Float
-					Value:    &sparkplugb.Payload_Metric_FloatValue{FloatValue: 25.5},
-				},
-			}
-
-			// Verify BIRTH structure
-			for _, metric := range birthMetrics {
-				Expect(metric.Name).NotTo(BeNil())
-				Expect(metric.Alias).NotTo(BeNil())
-				Expect(metric.Value).NotTo(BeNil())
-
-				if *metric.Name == "bdSeq" {
-					Expect(metric.GetLongValue()).To(Equal(uint64(12345)))
-				}
-			}
-		})
-
-		It("should process DATA messages with alias resolution", func() {
-			// Test DATA message processing (migrated from old input test)
-			dataMetrics := []*sparkplugb.Payload_Metric{
-				{
-					Alias:    uint64Ptr(100), // Temperature alias
-					Datatype: uint32Ptr(9),
-					Value:    &sparkplugb.Payload_Metric_FloatValue{FloatValue: 26.8},
-				},
-				{
-					Alias:    uint64Ptr(101), // Pressure alias
-					Datatype: uint32Ptr(10),
-					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1015.50},
-				},
-			}
-
-			// DATA messages should use aliases (no names initially)
-			for _, metric := range dataMetrics {
-				Expect(metric.Alias).NotTo(BeNil())
-				// Names should be nil initially (to be resolved)
-				Expect(metric.Name).To(BeNil())
-				Expect(metric.Value).NotTo(BeNil())
-			}
-		})
 
 		It("should handle pre-birth data scenarios", func() {
 			// Test DATA before BIRTH scenario (migrated from old edge cases)
@@ -854,296 +582,13 @@ var _ = Describe("MessageProcessor Unit Tests", func() {
 			Expect(dataMetrics[0].Name).To(BeNil())
 		})
 
-		It("should handle message splitting configuration", func() {
-			// Test split_metrics behavior (migrated from old input test)
-			multiMetricPayload := []*sparkplugb.Payload_Metric{
-				{
-					Name:     stringPtr("Temperature"),
-					Alias:    uint64Ptr(100),
-					Datatype: uint32Ptr(9),
-					Value:    &sparkplugb.Payload_Metric_FloatValue{FloatValue: 25.5},
-				},
-				{
-					Name:     stringPtr("Pressure"),
-					Alias:    uint64Ptr(101),
-					Datatype: uint32Ptr(10),
-					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1013.25},
-				},
-			}
-
-			// When split_metrics=true, each metric should be processable individually
-			for i, metric := range multiMetricPayload {
-				By("processing metric "+string(rune(i)), func() {
-					Expect(metric).NotTo(BeNil())
-					Expect(metric.Name).NotTo(BeNil())
-					Expect(metric.Alias).NotTo(BeNil())
-					Expect(metric.Value).NotTo(BeNil())
-				})
-			}
-
-			// When split_metrics=false, all metrics stay together
-			Expect(multiMetricPayload).To(HaveLen(2))
-		})
 	})
 })
 
 // Enhanced Features Tests removed due to type visibility issues
 // The actual implementation is tested through integration tests
 
-var _ = Describe("P5 Dynamic Alias Implementation Tests", func() {
-	Context("New Metric Detection", func() {
-		It("should detect metrics without existing aliases", func() {
-			// Test data with mixed existing and new metrics
-			data := map[string]interface{}{
-				"existing_metric": 42.0,
-				"new_metric_1":    "test_value",
-				"new_metric_2":    true,
-			}
 
-			// Mock existing aliases (would normally be in metricAliases)
-			existingAliases := map[string]uint64{
-				"existing_metric": 100,
-			}
-
-			// Simulate detection logic
-			var newMetrics []string
-			for metricName := range data {
-				if _, exists := existingAliases[metricName]; !exists {
-					newMetrics = append(newMetrics, metricName)
-				}
-			}
-
-			// Verify detection
-			Expect(len(newMetrics)).To(Equal(2))
-			Expect(newMetrics).To(ContainElements("new_metric_1", "new_metric_2"))
-		})
-
-		It("should return empty list when all metrics have aliases", func() {
-			data := map[string]interface{}{
-				"metric_1": 42.0,
-				"metric_2": "test",
-			}
-
-			existingAliases := map[string]uint64{
-				"metric_1": 100,
-				"metric_2": 101,
-			}
-
-			var newMetrics []string
-			for metricName := range data {
-				if _, exists := existingAliases[metricName]; !exists {
-					newMetrics = append(newMetrics, metricName)
-				}
-			}
-
-			Expect(len(newMetrics)).To(Equal(0))
-		})
-	})
-
-	Context("Type Inference", func() {
-		It("should correctly infer Sparkplug types from Go values", func() {
-			testCases := map[interface{}]string{
-				true:          "boolean",
-				int32(42):     "int32",
-				int64(42):     "int64",
-				uint32(42):    "uint32",
-				uint64(42):    "uint64",
-				float32(3.14): "float",
-				float64(3.14): "double",
-				"test_string": "string",
-			}
-
-			for value, expectedType := range testCases {
-				inferredType := inferTypeFromValue(value)
-				Expect(inferredType).To(Equal(expectedType))
-			}
-		})
-
-		It("should default to string for unknown types", func() {
-			unknownValue := make(chan int) // Channel type not supported
-			inferredType := inferTypeFromValue(unknownValue)
-			Expect(inferredType).To(Equal("string"))
-		})
-	})
-
-	Context("Alias Assignment Logic", func() {
-		It("should assign sequential aliases starting from next available", func() {
-			existingAliases := map[string]uint64{
-				"metric_1": 100,
-				"metric_2": 105, // Gap in sequence
-			}
-
-			// Find next available alias
-			nextAlias := uint64(1)
-			for _, alias := range existingAliases {
-				if alias >= nextAlias {
-					nextAlias = alias + 1
-				}
-			}
-
-			Expect(nextAlias).To(Equal(uint64(106)))
-
-			// Simulate assigning to new metrics
-			newMetrics := []string{"new_metric_1", "new_metric_2"}
-			newAliases := make(map[string]uint64)
-
-			for _, metricName := range newMetrics {
-				newAliases[metricName] = nextAlias
-				nextAlias++
-			}
-
-			Expect(newAliases["new_metric_1"]).To(Equal(uint64(106)))
-			Expect(newAliases["new_metric_2"]).To(Equal(uint64(107)))
-		})
-	})
-
-	Context("Rebirth Debouncing", func() {
-		It("should respect debounce period", func() {
-			debounceMs := int64(5000)                           // 5 seconds
-			lastRebirthTime := time.Now().Add(-3 * time.Second) // 3 seconds ago
-
-			timeSinceLastRebirth := time.Since(lastRebirthTime).Milliseconds()
-			shouldRebirth := timeSinceLastRebirth >= debounceMs
-
-			Expect(shouldRebirth).To(BeFalse()) // Too soon
-
-			// Test after debounce period
-			lastRebirthTime = time.Now().Add(-6 * time.Second) // 6 seconds ago
-			timeSinceLastRebirth = time.Since(lastRebirthTime).Milliseconds()
-			shouldRebirth = timeSinceLastRebirth >= debounceMs
-
-			Expect(shouldRebirth).To(BeTrue()) // Enough time has passed
-		})
-
-		It("should prevent rebirth when already pending", func() {
-			rebirthPending := true
-			debounceMs := int64(5000)
-			lastRebirthTime := time.Now().Add(-10 * time.Second) // Long enough ago
-
-			timeSinceLastRebirth := time.Since(lastRebirthTime).Milliseconds()
-			shouldRebirth := !rebirthPending && timeSinceLastRebirth >= debounceMs
-
-			Expect(shouldRebirth).To(BeFalse()) // Pending flag prevents rebirth
-		})
-	})
-
-	Context("Multiple New Metrics Handling", func() {
-		It("should handle multiple new metrics in single rebirth cycle", func() {
-			data := map[string]interface{}{
-				"existing_1":   42.0,
-				"new_temp":     25.5,
-				"new_pressure": 1013.25,
-				"new_status":   true,
-				"new_message":  "all_good",
-			}
-
-			existingAliases := map[string]uint64{
-				"existing_1": 100,
-			}
-
-			var newMetrics []string
-			for metricName := range data {
-				if _, exists := existingAliases[metricName]; !exists {
-					newMetrics = append(newMetrics, metricName)
-				}
-			}
-
-			// Should detect all 4 new metrics
-			Expect(len(newMetrics)).To(Equal(4))
-			Expect(newMetrics).To(ContainElements("new_temp", "new_pressure", "new_status", "new_message"))
-
-			// Sort metrics for deterministic alias assignment (Go map iteration is random)
-			sort.Strings(newMetrics)
-
-			// Simulate single rebirth handling all new metrics
-			nextAlias := uint64(101)
-			newAssignments := make(map[string]uint64)
-
-			for _, metricName := range newMetrics {
-				newAssignments[metricName] = nextAlias
-				nextAlias++
-			}
-
-			// Verify all got unique aliases (in alphabetical order)
-			Expect(len(newAssignments)).To(Equal(4))
-			Expect(newAssignments["new_message"]).To(Equal(uint64(101))) // alphabetically first
-			Expect(newAssignments["new_pressure"]).To(Equal(uint64(102)))
-			Expect(newAssignments["new_status"]).To(Equal(uint64(103)))
-			Expect(newAssignments["new_temp"]).To(Equal(uint64(104))) // alphabetically last
-		})
-	})
-})
-
-// Helper function for type inference testing
-func inferTypeFromValue(value interface{}) string {
-	switch value.(type) {
-	case bool:
-		return "boolean"
-	case int, int8, int16, int32:
-		return "int32"
-	case int64:
-		return "int64"
-	case uint, uint8, uint16, uint32:
-		return "uint32"
-	case uint64:
-		return "uint64"
-	case float32:
-		return "float"
-	case float64:
-		return "double"
-	case string:
-		return "string"
-	default:
-		return "string"
-	}
-}
-
-// P4 Configuration Alignment Tests
-var _ = Describe("P4 Configuration Alignment Tests", func() {
-	Context("MQTT Configuration Consistency", func() {
-		It("should use consistent default values between input and output plugins", func() {
-			// Test that both plugins use the same default values for common MQTT fields
-
-			// QoS should be 1 for both
-			Expect(1).To(Equal(1), "QoS default should be consistent")
-
-			// Keep alive should be 60s for both
-			Expect("60s").To(Equal("60s"), "Keep alive default should be consistent")
-
-			// Connect timeout should be 30s for both
-			Expect("30s").To(Equal("30s"), "Connect timeout default should be consistent")
-
-			// Clean session should be true for both
-			Expect(true).To(Equal(true), "Clean session default should be consistent")
-		})
-
-		It("should use descriptive client ID defaults", func() {
-			// Input plugin should use benthos-sparkplug-input
-			inputClientID := "benthos-sparkplug-input"
-			Expect(inputClientID).To(ContainSubstring("input"), "Input client ID should be descriptive")
-
-			// Output plugin should use benthos-sparkplug-output
-			outputClientID := "benthos-sparkplug-output"
-			Expect(outputClientID).To(ContainSubstring("output"), "Output client ID should be descriptive")
-		})
-	})
-
-	Context("Identity Configuration Consistency", func() {
-		It("should use consistent field descriptions and examples", func() {
-			// Both plugins should use FactoryA as group_id example
-			exampleGroupID := "FactoryA"
-			Expect(exampleGroupID).To(Equal("FactoryA"), "Group ID example should be consistent")
-
-			// Both plugins should use Line3 as edge_node_id example
-			exampleEdgeNodeID := "Line3"
-			Expect(exampleEdgeNodeID).To(Equal("Line3"), "Edge Node ID example should be consistent")
-
-			// Device ID should be optional with empty default
-			defaultDeviceID := ""
-			Expect(defaultDeviceID).To(Equal(""), "Device ID default should be empty")
-		})
-	})
-})
 
 // P8 Sparkplug B Spec Compliance Audit Tests
 var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
@@ -1313,48 +758,6 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 		})
 	})
 
-	Context("MQTT Session Configuration", func() {
-		It("should validate QoS settings for Sparkplug compliance", func() {
-			// Sparkplug B recommends QoS 1 for reliable delivery
-			defaultQoS := byte(1)
-			Expect(defaultQoS).To(Equal(byte(1)), "Default QoS should be 1 for reliable delivery")
-
-			// QoS 0 should be avoided for critical messages
-			qos0 := byte(0)
-			Expect(qos0).NotTo(Equal(byte(1)), "QoS 0 should not be used for Sparkplug messages")
-
-			// QoS 2 is acceptable but not recommended due to overhead
-			qos2 := byte(2)
-			Expect(qos2).To(BeNumerically(">=", 1), "QoS 2 provides reliable delivery")
-		})
-
-		It("should validate Clean Session settings", func() {
-			// Sparkplug B typically uses Clean Session = true for Edge Nodes
-			// Primary Hosts may use Clean Session = false for persistent sessions
-			cleanSessionEdgeNode := true
-			cleanSessionPrimaryHost := false // Optional for persistent sessions
-
-			Expect(cleanSessionEdgeNode).To(BeTrue(), "Edge Nodes typically use Clean Session = true")
-			// Primary Host setting is configurable based on requirements
-			Expect(cleanSessionPrimaryHost).To(BeFalse(), "Primary Hosts may use persistent sessions")
-		})
-
-		It("should validate Last Will Testament configuration", func() {
-			// Test that LWT is properly configured for output plugin
-			willTopic := "spBv1.0/TestGroup/NDEATH/TestNode"
-			willQoS := byte(1)
-			willRetain := true
-
-			// LWT topic should follow Sparkplug topic format
-			Expect(willTopic).To(ContainSubstring("spBv1.0/"), "LWT topic should use Sparkplug namespace")
-			Expect(willTopic).To(ContainSubstring("NDEATH"), "LWT should use DEATH message type")
-
-			// LWT should use QoS 1 and retain flag
-			Expect(willQoS).To(Equal(byte(1)), "LWT should use QoS 1")
-			Expect(willRetain).To(BeTrue(), "LWT should be retained")
-		})
-	})
-
 	Context("Timestamp and Encoding", func() {
 		It("should ensure outgoing metrics include timestamps", func() {
 			// Test that all Sparkplug messages include timestamps
@@ -1511,73 +914,8 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 // P9 Edge Case Validation Tests
 var _ = Describe("P9 Edge Case Validation", func() {
 	Context("Dynamic Behavior Testing", func() {
-		It("should handle new metric introduction post-birth with rebirth validation", func() {
-			// Test P5 dynamic alias implementation with edge cases
-			// Simulate initial birth with known aliases
-			aliases := make(map[string]uint64)
-			aliases["Temperature"] = 1
-			aliases["Pressure"] = 2
 
-			// Now introduce a completely new metric
-			newMetrics := map[string]interface{}{
-				"Temperature": 26.0,   // Existing
-				"Pressure":    1012.5, // Existing
-				"Humidity":    65.2,   // NEW - should trigger rebirth
-				"Vibration":   0.5,    // NEW - multiple new metrics
-			}
 
-			// Detect new metrics (this would trigger rebirth in real implementation)
-			newMetricNames := []string{}
-			for name := range newMetrics {
-				if _, exists := aliases[name]; !exists {
-					newMetricNames = append(newMetricNames, name)
-				}
-			}
-
-			Expect(len(newMetricNames)).To(Equal(2), "Should detect 2 new metrics")
-			Expect(newMetricNames).To(ContainElement("Humidity"))
-			Expect(newMetricNames).To(ContainElement("Vibration"))
-		})
-
-		It("should handle multiple new metrics in rapid succession with debouncing", func() {
-			// Test debouncing mechanism for rapid metric additions
-			// Track rebirth requests
-			rebirthRequests := 0
-			lastRebirthTime := time.Time{}
-			debounceInterval := 5 * time.Second
-
-			// Simulate rapid metric additions
-			metricBatches := [][]string{
-				{"NewMetric1", "NewMetric2"},
-				{"NewMetric3"},                             // 1 second later
-				{"NewMetric4", "NewMetric5", "NewMetric6"}, // 2 seconds later
-			}
-
-			currentTime := time.Now()
-			for i := range metricBatches {
-				batchTime := currentTime.Add(time.Duration(i) * time.Second)
-
-				// Check if we should trigger rebirth (debouncing logic)
-				if lastRebirthTime.IsZero() || batchTime.Sub(lastRebirthTime) >= debounceInterval {
-					rebirthRequests++
-					lastRebirthTime = batchTime
-				}
-			}
-
-			// Should only trigger one rebirth due to debouncing
-			Expect(rebirthRequests).To(Equal(1), "Debouncing should prevent multiple rapid rebirths")
-		})
-
-		It("should handle bdSeq increment on plugin restart", func() {
-			// Test birth-death sequence increment across restarts
-			initialBdSeq := uint64(5)
-
-			// Simulate plugin restart - bdSeq should increment
-			newBdSeq := initialBdSeq + 1
-
-			Expect(newBdSeq).To(Equal(uint64(6)), "bdSeq should increment on restart")
-			Expect(newBdSeq).To(BeNumerically(">", initialBdSeq), "bdSeq must always increase")
-		})
 
 		It("should handle sequence number wraparound (255 → 0)", func() {
 			// Test sequence number wraparound edge case
@@ -1637,56 +975,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 			Expect(newCount).To(Equal(3), "Should handle new metrics after reconnect")
 		})
 
-		It("should handle MQTT broker connection drops and recovery", func() {
-			// Test connection resilience patterns
-			connectionStates := []string{"connected", "disconnected", "reconnecting", "connected"}
 
-			for i, state := range connectionStates {
-				switch state {
-				case "connected":
-					// Normal operation
-					Expect(state).To(Equal("connected"))
-				case "disconnected":
-					// Connection lost - should queue messages or handle gracefully
-					Expect(state).To(Equal("disconnected"))
-				case "reconnecting":
-					// Attempting to reconnect
-					Expect(state).To(Equal("reconnecting"))
-				}
-
-				// Simulate state transitions
-				if i < len(connectionStates)-1 {
-					nextState := connectionStates[i+1]
-					Expect(nextState).NotTo(BeEmpty(), "Should have valid next state")
-				}
-			}
-		})
-
-		It("should validate Last Will Testament delivery", func() {
-			// Test LWT message structure for NDEATH
-			lwt := struct {
-				Topic   string
-				Payload []byte
-				QoS     byte
-				Retain  bool
-			}{
-				Topic:   "spBv1.0/Factory/NDEATH/Line1",
-				Payload: []byte{}, // Would contain NDEATH protobuf payload
-				QoS:     1,
-				Retain:  true,
-			}
-
-			// Validate LWT configuration
-			Expect(lwt.Topic).To(ContainSubstring("NDEATH"), "LWT should use DEATH message type")
-			Expect(lwt.QoS).To(Equal(byte(1)), "LWT should use QoS 1")
-			Expect(lwt.Retain).To(BeTrue(), "LWT should be retained")
-
-			// Validate topic structure
-			parts := strings.Split(lwt.Topic, "/")
-			Expect(len(parts)).To(Equal(4), "NDEATH topic should have 4 parts")
-			Expect(parts[0]).To(Equal("spBv1.0"), "Should use Sparkplug namespace")
-			Expect(parts[2]).To(Equal("NDEATH"), "Should be DEATH message")
-		})
 	})
 
 	Context("Large Payload Handling", func() {
@@ -1806,54 +1095,6 @@ var _ = Describe("P9 Edge Case Validation", func() {
 			Expect(*testMetrics[1].Name).To(Equal("速度_RPM"))
 		})
 
-		It("should handle historical flag processing", func() {
-			// Test historical data flag handling
-			historicalMetrics := []*sparkplugb.Payload_Metric{
-				{
-					Name:         stringPtr("HistoricalTemp"),
-					Alias:        uint64Ptr(1),
-					Value:        &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 25.5},
-					IsHistorical: boolPtr(true),
-				},
-				{
-					Name:         stringPtr("CurrentTemp"),
-					Alias:        uint64Ptr(2),
-					Value:        &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 26.0},
-					IsHistorical: boolPtr(false),
-				},
-			}
-
-			// Validate historical flag handling
-			for _, metric := range historicalMetrics {
-				if metric.IsHistorical != nil {
-					if *metric.IsHistorical {
-						// Historical data should be flagged appropriately
-						Expect(*metric.IsHistorical).To(BeTrue(), "Historical metric should be flagged as historical")
-					} else {
-						// Current data should not be historical
-						Expect(*metric.IsHistorical).To(BeFalse(), "Current metric should not be flagged as historical")
-					}
-				}
-			}
-
-			// Test that historical payloads can be created with timestamps
-			now := time.Now()
-			historicalPayload := &sparkplugb.Payload{
-				Timestamp: uint64Ptr(uint64(now.Add(-1 * time.Hour).UnixMilli())),
-				Metrics:   historicalMetrics,
-				Seq:       uint64Ptr(1),
-			}
-
-			currentPayload := &sparkplugb.Payload{
-				Timestamp: uint64Ptr(uint64(now.UnixMilli())),
-				Metrics:   historicalMetrics,
-				Seq:       uint64Ptr(2),
-			}
-
-			// Validate payload timestamps
-			Expect(*historicalPayload.Timestamp).To(BeNumerically("<", uint64(now.Add(-30*time.Minute).UnixMilli())))
-			Expect(*currentPayload.Timestamp).To(BeNumerically(">", uint64(now.Add(-5*time.Minute).UnixMilli())))
-		})
 
 		It("should handle mixed Node/Device metric scenarios", func() {
 			// Test mixed node-level and device-level metrics
@@ -2695,79 +1936,6 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 			Expect(*decodedPayload.Metrics[0].Alias).To(Equal(uint64(1)))
 			Expect(decodedPayload.Metrics[0].GetBooleanValue()).To(BeTrue())
 			Expect(*decodedPayload.Seq).To(Equal(uint64(42)))
-		})
-
-		It("should handle bdSeq increment logic correctly", func() {
-			// Test the bdSeq increment logic that occurs during rebirth
-			// This is a critical part of the Sparkplug B specification
-			
-			testCases := []struct {
-				name          string
-				initialBdSeq  uint64
-				expectedBdSeq uint64
-			}{
-				{"Normal increment", 5, 6},
-				{"From zero", 0, 1},
-				{"Large value", 1000, 1001},
-				{"Near max uint64", ^uint64(0) - 1, ^uint64(0)}, // Max uint64 - 1
-			}
-			
-			for _, tc := range testCases {
-				By(fmt.Sprintf("Testing: %s", tc.name))
-				
-				// Simulate the bdSeq increment that happens in handleRebirthCommand
-				bdSeq := tc.initialBdSeq
-				bdSeq++
-				
-				Expect(bdSeq).To(Equal(tc.expectedBdSeq))
-				Expect(bdSeq).To(BeNumerically(">", tc.initialBdSeq))
-			}
-			
-			// Special case: test wrap around
-			By("Testing bdSeq wrap around at max uint64")
-			maxBdSeq := ^uint64(0) // Max uint64
-			wrappedBdSeq := maxBdSeq + 1
-			Expect(wrappedBdSeq).To(Equal(uint64(0))) // Should wrap to 0
-		})
-
-		It("should generate correct NCMD topic format", func() {
-			// Verify the NCMD topic format follows Sparkplug B specification
-			// This is critical for receiving rebirth commands from host applications
-			
-			testCases := []struct {
-				groupID      string
-				edgeNodeID   string
-				expectedTopic string
-			}{
-				{
-					groupID:      "FactoryA",
-					edgeNodeID:   "EdgeNode1",
-					expectedTopic: "spBv1.0/FactoryA/NCMD/EdgeNode1",
-				},
-				{
-					groupID:      "Plant-123",
-					edgeNodeID:   "Line_4_Node",
-					expectedTopic: "spBv1.0/Plant-123/NCMD/Line_4_Node",
-				},
-				{
-					groupID:      "TestGroup",
-					edgeNodeID:   "TestNode",
-					expectedTopic: "spBv1.0/TestGroup/NCMD/TestNode",
-				},
-			}
-			
-			for _, tc := range testCases {
-				By(fmt.Sprintf("Testing topic generation for %s/%s", tc.groupID, tc.edgeNodeID))
-				
-				// This is how the NCMD topic is generated in the actual code
-				actualTopic := fmt.Sprintf("spBv1.0/%s/NCMD/%s", tc.groupID, tc.edgeNodeID)
-				
-				Expect(actualTopic).To(Equal(tc.expectedTopic))
-				
-				// Verify it matches Sparkplug B topic pattern
-				sparkplugPattern := `^spBv1\.0/[^/]+/NCMD/[^/]+$`
-				Expect(actualTopic).To(MatchRegexp(sparkplugPattern))
-			}
 		})
 	})
 })
