@@ -563,7 +563,7 @@ func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *
 		expectedSeq := uint8((int(state.lastSeq) + 1) % 256)
 
 		// Validate sequence according to Sparkplug B specification
-		isValidSequence := s.validateSequenceNumber(state.lastSeq, currentSeq)
+		isValidSequence := ValidateSequenceNumber(state.lastSeq, currentSeq)
 
 		if !isValidSequence {
 			s.logger.Warnf("Sequence gap detected for device %s: expected %d, got %d",
@@ -1015,35 +1015,19 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 	s.logger.Infof("Sent rebirth request to %s on topic %s", deviceKey, topic)
 }
 
-// validateSequenceNumber checks if a received sequence number is valid according to Sparkplug B spec
-func (s *sparkplugInput) validateSequenceNumber(lastSeq, currentSeq uint8) bool {
-	// Calculate expected next sequence with wraparound
+// ValidateSequenceNumber checks if a received sequence number is valid according to Sparkplug B spec
+// Exported for testing purposes to ensure sequence validation logic is properly tested
+//
+// According to the Sparkplug B specification (https://github.com/eclipse-sparkplug/sparkplug/blob/master/specification/src/main/asciidoc/chapters/Sparkplug_5_Operational_Behavior.adoc):
+// - Sequence numbers must arrive in sequential order (0, 1, 2, ... 255, 0, 1, ...)
+// - ANY gap in sequence numbers should trigger a rebirth request after a configurable timeout
+// - This function only validates strict sequential order; timeout-based reordering is handled elsewhere
+func ValidateSequenceNumber(lastSeq, currentSeq uint8) bool {
+	// Calculate expected next sequence with wraparound (0-255)
 	expectedNext := uint8((int(lastSeq) + 1) % 256)
 
-	// Direct match is valid
-	if currentSeq == expectedNext {
-		return true
-	}
-
-	// Handle wraparound case (255 -> 0)
-	if lastSeq == 255 && currentSeq == 0 {
-		return true
-	}
-
-	// Allow small gaps based on default tolerance (5)
-	maxGap := uint8(5) // Default gap tolerance per Sparkplug spec
-
-	// Calculate gap size
-	var gap uint8
-	if currentSeq > lastSeq {
-		gap = currentSeq - lastSeq - 1
-	} else {
-		// Handle wraparound gap calculation
-		gap = uint8((256 - int(lastSeq) - 1) + int(currentSeq))
-	}
-
-	// Allow small gaps within tolerance
-	return gap <= maxGap
+	// Only accept the exact next sequence number or valid wraparound
+	return currentSeq == expectedNext
 }
 
 // tryAddUMHMetadata attempts to convert Sparkplug B data to UMH format and add UMH metadata.
