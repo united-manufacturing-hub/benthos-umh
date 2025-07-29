@@ -519,7 +519,7 @@ func (s *sparkplugOutput) handleRebirthCommand(client mqtt.Client, msg mqtt.Mess
 	s.logger.Infof("Received rebirth command on topic: %s", msg.Topic())
 
 	// Debug: Log raw payload bytes for troubleshooting
-	s.logger.Infof("Raw NCMD payload size: %d bytes", len(msg.Payload()))
+	s.logger.Debugf("Raw NCMD payload size: %d bytes", len(msg.Payload()))
 
 	// Parse the Sparkplug B payload
 	var payload sparkplugb.Payload
