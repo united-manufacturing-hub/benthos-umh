@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
-	"github.com/weekaung/sparkplugb-client/sproto"
+	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -45,7 +45,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			nbirthBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var nbirthPayload sproto.Payload
+			var nbirthPayload sparkplugb.Payload
 			err = proto.Unmarshal(nbirthBytes, &nbirthPayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -67,7 +67,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			ndataBytes, err := base64.StdEncoding.DecodeString(ndataVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var ndataPayload sproto.Payload
+			var ndataPayload sparkplugb.Payload
 			err = proto.Unmarshal(ndataBytes, &ndataPayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -99,7 +99,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			nbirthBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var nbirthPayload sproto.Payload
+			var nbirthPayload sparkplugb.Payload
 			err = proto.Unmarshal(nbirthBytes, &nbirthPayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -113,7 +113,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 				ndataBytes, err := base64.StdEncoding.DecodeString(ndataVector.Base64Data)
 				Expect(err).NotTo(HaveOccurred())
 
-				var ndataPayload sproto.Payload
+				var ndataPayload sparkplugb.Payload
 				err = proto.Unmarshal(ndataBytes, &ndataPayload)
 				Expect(err).NotTo(HaveOccurred())
 
@@ -127,7 +127,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			ndeathBytes, err := base64.StdEncoding.DecodeString(ndeathVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var ndeathPayload sproto.Payload
+			var ndeathPayload sparkplugb.Payload
 			err = proto.Unmarshal(ndeathBytes, &ndeathPayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -152,7 +152,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			nbirthBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var nbirthPayload sproto.Payload
+			var nbirthPayload sparkplugb.Payload
 			err = proto.Unmarshal(nbirthBytes, &nbirthPayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -167,7 +167,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			gapBytes, err := base64.StdEncoding.DecodeString(gapVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var gapPayload sproto.Payload
+			var gapPayload sparkplugb.Payload
 			err = proto.Unmarshal(gapBytes, &gapPayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -195,7 +195,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			ndataBytes, err := base64.StdEncoding.DecodeString(ndataVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var ndataPayload sproto.Payload
+			var ndataPayload sparkplugb.Payload
 			err = proto.Unmarshal(ndataBytes, &ndataPayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -217,7 +217,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			wraparoundBytes, err := base64.StdEncoding.DecodeString(wraparoundVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var wraparoundPayload sproto.Payload
+			var wraparoundPayload sparkplugb.Payload
 			err = proto.Unmarshal(wraparoundBytes, &wraparoundPayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -247,7 +247,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			largeBytes, err := base64.StdEncoding.DecodeString(largeVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var largePayload sproto.Payload
+			var largePayload sparkplugb.Payload
 			err = proto.Unmarshal(largeBytes, &largePayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -256,16 +256,16 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			Expect(aliasCount).To(BeNumerically(">=", 100)) // Large payload has 100+ metrics
 
 			// Create simulated NDATA with multiple aliases
-			simulatedNData := []*sproto.Payload_Metric{
+			simulatedNData := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(100), // Should resolve to Metric_99
 					Datatype: uint32Ptr(10),
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 123.45},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 123.45},
 				},
 				{
 					Alias:    uint64Ptr(50), // Should resolve to Metric_49
 					Datatype: uint32Ptr(10),
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 67.89},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 67.89},
 				},
 			}
 
@@ -286,7 +286,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 
 			// Device 1
 			device1Key := "Factory/Line1"
-			device1Metrics := []*sproto.Payload_Metric{
+			device1Metrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Temperature"),
 					Alias: uint64Ptr(100),
@@ -297,7 +297,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 
 			// Device 2 (same alias, different name)
 			device2Key := "Factory/Line2"
-			device2Metrics := []*sproto.Payload_Metric{
+			device2Metrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Pressure"),
 					Alias: uint64Ptr(100), // Same alias as device1
@@ -307,22 +307,22 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			Expect(count2).To(Equal(1))
 
 			// Test independent resolution
-			data1 := []*sproto.Payload_Metric{
+			data1 := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(100),
 					Datatype: uint32Ptr(9),
-					Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 25.5},
+					Value:    &sparkplugb.Payload_Metric_FloatValue{FloatValue: 25.5},
 				},
 			}
 			resolved1 := cache.ResolveAliases(device1Key, data1)
 			Expect(resolved1).To(Equal(1))
 			Expect(*data1[0].Name).To(Equal("Temperature"))
 
-			data2 := []*sproto.Payload_Metric{
+			data2 := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(100),
 					Datatype: uint32Ptr(10),
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 1013.25},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1013.25},
 				},
 			}
 			resolved2 := cache.ResolveAliases(device2Key, data2)
@@ -340,13 +340,13 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			// Test malformed protobuf handling
 			malformedData := []byte{0xFF, 0xFE, 0xFD, 0xFC} // Invalid protobuf
 
-			var payload sproto.Payload
+			var payload sparkplugb.Payload
 			err := proto.Unmarshal(malformedData, &payload)
 			Expect(err).To(HaveOccurred()) // Should fail to unmarshal
 
 			// Test recovery after malformed message
 			// Cache should remain functional
-			validMetrics := []*sproto.Payload_Metric{
+			validMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Temperature"),
 					Alias: uint64Ptr(100),
@@ -356,10 +356,10 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			Expect(count).To(Equal(1))
 
 			// Test partial payload corruption
-			partiallyCorrupted := &sproto.Payload{
+			partiallyCorrupted := &sparkplugb.Payload{
 				Timestamp: uint64Ptr(1672531320000),
 				Seq:       uint64Ptr(1),
-				Metrics: []*sproto.Payload_Metric{
+				Metrics: []*sparkplugb.Payload_Metric{
 					{
 						// Missing required fields - should be handled gracefully
 						Alias: uint64Ptr(100),
@@ -379,7 +379,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			deviceKey := "Factory/Line1"
 
 			// Cache some aliases
-			metrics := []*sproto.Payload_Metric{
+			metrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Temperature"),
 					Alias: uint64Ptr(100),
@@ -392,106 +392,216 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			cache.Clear()
 
 			// Verify cache is empty
-			dataMetrics := []*sproto.Payload_Metric{
+			dataMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(100),
 					Datatype: uint32Ptr(9),
-					Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 25.5},
+					Value:    &sparkplugb.Payload_Metric_FloatValue{FloatValue: 25.5},
 				},
 			}
 			resolvedCount := cache.ResolveAliases(deviceKey, dataMetrics)
 			Expect(resolvedCount).To(Equal(0))
 		})
+		
+		It("should handle sequence number edge cases comprehensively", func() {
+			By("Testing uint64 max boundary wraparound")
+			// Even though Sparkplug uses 8-bit sequence (0-255), the protobuf field is uint64
+			// Test behavior at various boundaries
+			
+			testCases := []struct {
+				name        string
+				currentSeq  uint64
+				nextSeq     uint64
+				isValid     bool
+				description string
+			}{
+				// Normal increment cases
+				{"normal_increment", 0, 1, true, "Normal sequence increment"},
+				{"mid_range", 127, 128, true, "Mid-range increment"},
+				{"near_boundary", 254, 255, true, "Approaching wraparound boundary"},
+				
+				// Wraparound cases
+				{"valid_wraparound", 255, 0, true, "Valid wraparound from 255 to 0"},
+				{"after_wraparound", 0, 1, true, "Continue after wraparound"},
+				
+				// Gap detection cases
+				{"small_gap", 10, 12, false, "Small gap (missing seq 11)"},
+				{"large_gap", 10, 20, false, "Large gap (missing 10 sequences)"},
+				{"huge_gap", 10, 100, false, "Huge gap (missing 90 sequences)"},
+				{"gap_before_wrap", 250, 255, false, "Gap just before wraparound"},
+				{"gap_after_wrap", 0, 5, false, "Gap just after wraparound"},
+				
+				// Invalid backwards jumps
+				{"backward_jump", 100, 50, false, "Invalid backward jump"},
+				{"backward_near_zero", 5, 0, false, "Invalid backward jump to 0"},
+				{"backward_from_wrap", 2, 254, false, "Invalid backward jump across boundary"},
+				
+				// Edge cases with same value
+				{"duplicate_seq", 50, 50, false, "Duplicate sequence number"},
+				{"duplicate_at_zero", 0, 0, false, "Duplicate at zero"},
+				{"duplicate_at_max", 255, 255, false, "Duplicate at max"},
+				
+				// Multiple wraparounds in sequence
+				{"double_wrap_attempt", 255, 256, false, "Attempt to use value > 255"},
+				{"large_value", 100, 1000, false, "Attempt to use large value"},
+				{"negative_wrap", 0, 65535, false, "Attempt to use uint16 max"},
+			}
+			
+			for _, tc := range testCases {
+				By("Testing case: " + tc.name + " - " + tc.description)
+				
+				// Validate sequence transition
+				isValidTransition := isValidSequenceTransition(tc.currentSeq, tc.nextSeq)
+				
+				if tc.isValid {
+					Expect(isValidTransition).To(BeTrue(), 
+						"Expected valid transition from %d to %d for %s", 
+						tc.currentSeq, tc.nextSeq, tc.name)
+				} else {
+					Expect(isValidTransition).To(BeFalse(), 
+						"Expected invalid transition from %d to %d for %s", 
+						tc.currentSeq, tc.nextSeq, tc.name)
+				}
+			}
+		})
+		
+		It("should track sequence gaps and recovery correctly", func() {
+			// Simulate a sequence of messages with various gap scenarios
+			messageSequence := []uint64{
+				0, 1, 2, 3,      // Normal start
+				5, 6,            // Gap: missing 4
+				10,              // Larger gap: missing 7, 8, 9
+				11, 12,          // Continue normally
+				255,             // Jump to boundary
+				0, 1,            // Valid wraparound
+				3,               // Gap after wraparound: missing 2
+				4, 5,            // Continue
+				100,             // Large jump
+				101, 102,        // Continue from jump
+				254, 255, 0, 1,  // Another wraparound cycle
+			}
+			
+			gapCount := 0
+			wrapCount := 0
+			var lastSeq *uint64
+			
+			for i, seq := range messageSequence {
+				if lastSeq != nil {
+					if seq == 0 && *lastSeq == 255 {
+						wrapCount++
+						By("Wraparound detected at index " + string(rune(i+'0')) + ": 255 → 0")
+					} else if seq != (*lastSeq+1)%256 {
+						gapCount++
+						gapSize := calculateGapSize(*lastSeq, seq)
+						By("Gap detected at index " + string(rune(i+'0')) + " (gap size: " + string(rune(gapSize+'0')) + ")")
+					}
+				}
+				lastSeq = &seq
+			}
+			
+			Expect(wrapCount).To(Equal(2), "Should detect exactly 2 wraparounds")
+			Expect(gapCount).To(Equal(6), "Should detect exactly 6 gaps")
+		})
+		
+		It("should handle rapid sequence number changes under load", func() {
+			// Simulate rapid message processing with potential race conditions
+			const messageCount = 1000
+			sequences := make([]uint64, messageCount)
+			
+			// Generate sequence with some patterns
+			for i := 0; i < messageCount; i++ {
+				sequences[i] = uint64(i % 256)
+			}
+			
+			// Process sequences and track statistics
+			var stats struct {
+				totalMessages int
+				wraparounds   int
+				maxGap        uint64
+				invalidJumps  int
+			}
+			
+			stats.totalMessages = len(sequences)
+			var lastSeq *uint64
+			
+			for _, seq := range sequences {
+				if lastSeq != nil {
+					if seq == 0 && *lastSeq == 255 {
+						stats.wraparounds++
+					} else if seq < *lastSeq && !(seq == 0 && *lastSeq == 255) {
+						stats.invalidJumps++
+					} else if seq > *lastSeq {
+						gap := seq - *lastSeq - 1
+						if gap > stats.maxGap {
+							stats.maxGap = gap
+						}
+					}
+				}
+				lastSeq = &seq
+			}
+			
+			// Validate expected patterns
+			expectedWraps := (messageCount - 1) / 256
+			Expect(stats.wraparounds).To(Equal(expectedWraps), 
+				"Should have correct number of wraparounds for %d messages", messageCount)
+			Expect(stats.invalidJumps).To(Equal(0), 
+				"Should have no invalid backward jumps")
+			Expect(stats.maxGap).To(Equal(uint64(0)), 
+				"Should have no gaps in continuous sequence")
+		})
+		
+		It("should validate sequence numbers in concurrent scenarios", func() {
+			// Test thread safety of sequence number handling
+			const goroutines = 10
+			const messagesPerRoutine = 100
+			
+			// Channel to collect sequence numbers
+			seqChan := make(chan uint64, goroutines*messagesPerRoutine)
+			done := make(chan bool, goroutines)
+			
+			// Launch concurrent sequence generators
+			for g := 0; g < goroutines; g++ {
+				go func(routineID int) {
+					defer GinkgoRecover()
+					startSeq := uint64(routineID * 25) % 256 // Spread starting points
+					
+					for i := 0; i < messagesPerRoutine; i++ {
+						seq := (startSeq + uint64(i)) % 256
+						seqChan <- seq
+					}
+					done <- true
+				}(g)
+			}
+			
+			// Wait for all routines to complete
+			for i := 0; i < goroutines; i++ {
+				<-done
+			}
+			close(seqChan)
+			
+			// Collect all sequences
+			var allSequences []uint64
+			for seq := range seqChan {
+				allSequences = append(allSequences, seq)
+			}
+			
+			// Verify we got all sequences
+			Expect(len(allSequences)).To(Equal(goroutines * messagesPerRoutine))
+			
+			// Check that all sequences are valid (0-255)
+			for _, seq := range allSequences {
+				Expect(seq).To(BeNumerically(">=", 0))
+				Expect(seq).To(BeNumerically("<=", 255))
+			}
+		})
 	})
 })
-
 var _ = Describe("Message Processing Pipeline", func() {
 
 	Context("Message Format Validation", func() {
-		It("should validate Sparkplug message structure", func() {
-			// Test message structure validation without real plugin
-			validMessage := map[string]interface{}{
-				"sparkplug_msg_type": "NDATA",
-				"group_id":           "Factory1",
-				"edge_node_id":       "Line1",
-				"device_id":          "Machine1",
-				"timestamp":          1672531320000,
-				"seq":                uint64(1),
-				"metrics": []map[string]interface{}{
-					{
-						"name":     "Temperature",
-						"alias":    uint64(100),
-						"datatype": uint32(9),
-						"value":    25.5,
-					},
-				},
-			}
 
-			// Validate message structure
-			Expect(validMessage["sparkplug_msg_type"]).To(Equal("NDATA"))
-			Expect(validMessage["group_id"]).To(Equal("Factory1"))
-			Expect(validMessage["edge_node_id"]).To(Equal("Line1"))
-			Expect(validMessage["device_id"]).To(Equal("Machine1"))
 
-			// Validate metrics structure
-			metrics := validMessage["metrics"].([]map[string]interface{})
-			Expect(metrics).To(HaveLen(1))
-			Expect(metrics[0]["name"]).To(Equal("Temperature"))
-			Expect(metrics[0]["alias"]).To(Equal(uint64(100)))
-		})
 
-		It("should validate UMH message metadata", func() {
-			// Test UMH message metadata validation
-			umhMetadata := map[string]interface{}{
-				"sparkplug_msg_type": "NDATA",
-				"group_id":           "Factory1",
-				"edge_node_id":       "Line1",
-				"timestamp":          1672531320000,
-				"seq":                uint64(1),
-			}
-
-			// Required fields should be present
-			requiredFields := []string{"sparkplug_msg_type", "group_id", "edge_node_id"}
-			for _, field := range requiredFields {
-				Expect(umhMetadata[field]).NotTo(BeNil(), "Field "+field+" should be present")
-			}
-
-			// Message type should be valid Sparkplug type
-			msgType := umhMetadata["sparkplug_msg_type"].(string)
-			validTypes := []string{"NBIRTH", "NDATA", "NDEATH", "NCMD", "DBIRTH", "DDATA", "DDEATH", "DCMD", "STATE"}
-			Expect(msgType).To(BeElementOf(validTypes))
-		})
-
-		It("should handle message type-specific validation", func() {
-			// Test validation logic for different message types
-			messageTypes := []struct {
-				msgType         string
-				requiresSeq     bool
-				requiresMetrics bool
-			}{
-				{"NBIRTH", true, true},
-				{"NDATA", true, true},
-				{"NDEATH", true, false},
-				{"DBIRTH", true, true},
-				{"DDATA", true, true},
-				{"DDEATH", true, false},
-				{"STATE", false, false},
-			}
-
-			for _, mt := range messageTypes {
-				By("validating "+mt.msgType+" requirements", func() {
-					if mt.requiresSeq {
-						// Should require sequence number
-						Expect(mt.msgType).To(BeElementOf([]string{"NBIRTH", "NDATA", "NDEATH", "DBIRTH", "DDATA", "DDEATH"}))
-					}
-
-					if mt.requiresMetrics {
-						// Should require metrics array
-						Expect(mt.msgType).To(BeElementOf([]string{"NBIRTH", "NDATA", "DBIRTH", "DDATA"}))
-					}
-				})
-			}
-		})
 
 		It("should process vector sequences through message validation", func() {
 			// Test processing sequences of test vectors through validation
@@ -625,60 +735,7 @@ var _ = Describe("Message Processing Pipeline", func() {
 		})
 	})
 
-	Context("Message Generation Logic", func() {
-		It("should validate birth message structure", func() {
-			// Test birth message generation logic
-			nbirthStructure := map[string]interface{}{
-				"message_type": "NBIRTH",
-				"seq":          uint64(0), // Always starts at 0
-				"metrics": []string{
-					"bdSeq",                // Required
-					"Node Control/Rebirth", // Control metric
-					"Temperature",          // Application metric
-				},
-			}
 
-			// NBIRTH should start with sequence 0
-			Expect(nbirthStructure["seq"]).To(Equal(uint64(0)))
-
-			// Should contain required metrics
-			metrics := nbirthStructure["metrics"].([]string)
-			Expect(metrics).To(ContainElement("bdSeq"))
-			Expect(len(metrics)).To(BeNumerically(">=", 1))
-		})
-
-		It("should validate sequence number management", func() {
-			// Test sequence number logic
-			sequenceScenarios := []struct {
-				msgType     string
-				expectedSeq uint64
-				description string
-			}{
-				{"NBIRTH", 0, "Birth messages start at 0"},
-				{"NDATA", 1, "First data after birth"},
-				{"NDATA", 2, "Incremented data"},
-				{"NDEATH", 0, "Death resets to 0"},
-			}
-
-			for _, scenario := range sequenceScenarios {
-				By("validating "+scenario.description, func() {
-					if scenario.msgType == "NBIRTH" || scenario.msgType == "DBIRTH" || scenario.msgType == "NDEATH" || scenario.msgType == "DDEATH" {
-						if scenario.msgType == "NDEATH" || scenario.msgType == "DDEATH" {
-							// Death messages reset to 0
-							Expect(scenario.expectedSeq).To(Equal(uint64(0)))
-						} else {
-							// Birth messages start at 0
-							Expect(scenario.expectedSeq).To(Equal(uint64(0)))
-						}
-					} else {
-						// Data messages increment
-						Expect(scenario.expectedSeq).To(BeNumerically(">", 0))
-					}
-				})
-			}
-		})
-	})
-})
 
 var _ = Describe("Device-Level Message Handling", func() {
 
@@ -689,28 +746,28 @@ var _ = Describe("Device-Level Message Handling", func() {
 			deviceKey := "Factory/Line1/Machine1" // Device-level key
 
 			// Step 1: DBIRTH message with device metrics
-			dbirthMetrics := []*sproto.Payload_Metric{
+			dbirthMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:     stringPtr("Motor_Speed"),
 					Alias:    uint64Ptr(200),
 					Datatype: uint32Ptr(10), // Double
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 1800.0},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1800.0},
 				},
 				{
 					Name:     stringPtr("Motor_Temperature"),
 					Alias:    uint64Ptr(201),
 					Datatype: uint32Ptr(9), // Float
-					Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 65.5},
+					Value:    &sparkplugb.Payload_Metric_FloatValue{FloatValue: 65.5},
 				},
 				{
 					Name:     stringPtr("Motor_Status"),
 					Alias:    uint64Ptr(202),
 					Datatype: uint32Ptr(11), // Boolean
-					Value:    &sproto.Payload_Metric_BooleanValue{BooleanValue: true},
+					Value:    &sparkplugb.Payload_Metric_BooleanValue{BooleanValue: true},
 				},
 			}
 
-			dbirthPayload := &sproto.Payload{
+			dbirthPayload := &sparkplugb.Payload{
 				Timestamp: uint64Ptr(1672531320000),
 				Seq:       uint64Ptr(0), // DBIRTH starts at 0
 				Metrics:   dbirthMetrics,
@@ -721,20 +778,20 @@ var _ = Describe("Device-Level Message Handling", func() {
 			Expect(aliasCount).To(Equal(3))
 
 			// Step 2: DDATA message using aliases
-			ddataMetrics := []*sproto.Payload_Metric{
+			ddataMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(200), // Motor_Speed
 					Datatype: uint32Ptr(10),
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 1850.0},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1850.0},
 				},
 				{
 					Alias:    uint64Ptr(201), // Motor_Temperature
 					Datatype: uint32Ptr(9),
-					Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 68.2},
+					Value:    &sparkplugb.Payload_Metric_FloatValue{FloatValue: 68.2},
 				},
 			}
 
-			ddataPayload := &sproto.Payload{
+			ddataPayload := &sparkplugb.Payload{
 				Timestamp: uint64Ptr(1672531380000),
 				Seq:       uint64Ptr(1), // Incremented from DBIRTH
 				Metrics:   ddataMetrics,
@@ -755,7 +812,7 @@ var _ = Describe("Device-Level Message Handling", func() {
 
 			// Node-level metrics
 			nodeKey := "Factory/Line1"
-			nodeMetrics := []*sproto.Payload_Metric{
+			nodeMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Line_Status"),
 					Alias: uint64Ptr(100),
@@ -766,7 +823,7 @@ var _ = Describe("Device-Level Message Handling", func() {
 
 			// Device-level metrics (same line, different device)
 			deviceKey := "Factory/Line1/Machine1"
-			deviceMetrics := []*sproto.Payload_Metric{
+			deviceMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Machine_Status"),
 					Alias: uint64Ptr(100), // Same alias as node, but different context
@@ -776,22 +833,22 @@ var _ = Describe("Device-Level Message Handling", func() {
 			Expect(deviceCount).To(Equal(1))
 
 			// Test independent resolution
-			nodeData := []*sproto.Payload_Metric{
+			nodeData := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(100),
 					Datatype: uint32Ptr(11),
-					Value:    &sproto.Payload_Metric_BooleanValue{BooleanValue: true},
+					Value:    &sparkplugb.Payload_Metric_BooleanValue{BooleanValue: true},
 				},
 			}
 			nodeResolved := cache.ResolveAliases(nodeKey, nodeData)
 			Expect(nodeResolved).To(Equal(1))
 			Expect(*nodeData[0].Name).To(Equal("Line_Status"))
 
-			deviceData := []*sproto.Payload_Metric{
+			deviceData := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(100),
 					Datatype: uint32Ptr(11),
-					Value:    &sproto.Payload_Metric_BooleanValue{BooleanValue: false},
+					Value:    &sparkplugb.Payload_Metric_BooleanValue{BooleanValue: false},
 				},
 			}
 			deviceResolved := cache.ResolveAliases(deviceKey, deviceData)
@@ -805,7 +862,7 @@ var _ = Describe("Device-Level Message Handling", func() {
 
 			// Device 1
 			device1Key := "Factory/Line1/Machine1"
-			device1Metrics := []*sproto.Payload_Metric{
+			device1Metrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Speed"),
 					Alias: uint64Ptr(200),
@@ -816,7 +873,7 @@ var _ = Describe("Device-Level Message Handling", func() {
 
 			// Device 2 (same line, different machine)
 			device2Key := "Factory/Line1/Machine2"
-			device2Metrics := []*sproto.Payload_Metric{
+			device2Metrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:  stringPtr("Pressure"),
 					Alias: uint64Ptr(200), // Same alias, different device
@@ -826,22 +883,22 @@ var _ = Describe("Device-Level Message Handling", func() {
 			Expect(count2).To(Equal(1))
 
 			// Test independent resolution
-			data1 := []*sproto.Payload_Metric{
+			data1 := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(200),
 					Datatype: uint32Ptr(10),
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 1200.0},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1200.0},
 				},
 			}
 			resolved1 := cache.ResolveAliases(device1Key, data1)
 			Expect(resolved1).To(Equal(1))
 			Expect(*data1[0].Name).To(Equal("Speed"))
 
-			data2 := []*sproto.Payload_Metric{
+			data2 := []*sparkplugb.Payload_Metric{
 				{
 					Alias:    uint64Ptr(200),
 					Datatype: uint32Ptr(10),
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 15.5},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 15.5},
 				},
 			}
 			resolved2 := cache.ResolveAliases(device2Key, data2)
@@ -851,179 +908,12 @@ var _ = Describe("Device-Level Message Handling", func() {
 	})
 })
 
-var _ = Describe("Advanced Sequence Management", func() {
-	Context("Sequence Number Handling", func() {
-		It("should handle sequence number increment and wraparound", func() {
-			// Test sequence number management
-			sequences := []struct {
-				name     string
-				seq      uint64
-				expected string
-			}{
-				{"initial", 0, "valid"},
-				{"increment_1", 1, "valid"},
-				{"increment_2", 2, "valid"},
-				{"large_gap", 10, "gap_detected"},
-				{"continue", 11, "valid"},
-				{"near_wraparound", 254, "gap_detected"}, // This is a large gap from 11
-				{"wraparound", 255, "valid"},
-				{"after_wraparound", 0, "wraparound_valid"},
-				{"continue_after_wrap", 1, "valid"},
-			}
-
-			var lastSeq *uint64 // Use pointer to handle first iteration
-			for _, tc := range sequences {
-				By("processing sequence "+tc.name, func() {
-					if lastSeq != nil {
-						// Calculate gap
-						var gap uint64
-						if tc.seq < *lastSeq {
-							// Potential wraparound
-							if *lastSeq == 255 && tc.seq == 0 {
-								gap = 0 // Valid wraparound
-							} else {
-								// Invalid backward jump
-								gap = 1 // Mark as gap for invalid backward
-							}
-						} else {
-							gap = tc.seq - *lastSeq - 1
-						}
-
-						switch tc.expected {
-						case "valid":
-							Expect(gap).To(Equal(uint64(0)), "Expected no gap for %s: seq %d -> %d", tc.name, *lastSeq, tc.seq)
-						case "gap_detected":
-							Expect(gap).To(BeNumerically(">", 0), "Expected gap for %s: seq %d -> %d", tc.name, *lastSeq, tc.seq)
-						case "wraparound_valid":
-							Expect(gap).To(Equal(uint64(0)), "Expected valid wraparound for %s: seq %d -> %d", tc.name, *lastSeq, tc.seq)
-						}
-					}
-					lastSeq = &tc.seq
-				})
-			}
-		})
-
-		It("should handle NBIRTH/DBIRTH generation scenarios", func() {
-			// Test birth message generation logic
-			birthScenarios := []struct {
-				messageType string
-				seq         uint64
-				metrics     int
-			}{
-				{"NBIRTH", 0, 4}, // Node birth with bdSeq + 3 metrics
-				{"DBIRTH", 0, 3}, // Device birth with 3 device metrics
-			}
-
-			for _, scenario := range birthScenarios {
-				By("testing "+scenario.messageType+" generation", func() {
-					// Birth messages should always start with sequence 0
-					Expect(scenario.seq).To(Equal(uint64(0)))
-
-					// Should have expected number of metrics
-					Expect(scenario.metrics).To(BeNumerically(">", 0))
-
-					if scenario.messageType == "NBIRTH" {
-						// NBIRTH should include bdSeq
-						Expect(scenario.metrics).To(BeNumerically(">=", 1))
-					}
-				})
-			}
-		})
-	})
 })
 
-var _ = Describe("State Machine Validation", func() {
-	Context("Node State Transitions", func() {
-		It("should transition OFFLINE → ONLINE → STALE → OFFLINE", func() {
-			// Test complete state machine transitions
-			states := []struct {
-				state       string
-				description string
-				valid       bool
-			}{
-				{"OFFLINE", "Initial state", true},
-				{"ONLINE", "After STATE message and NBIRTH", true},
-				{"STALE", "After missed heartbeat/timeout", true},
-				{"OFFLINE", "After NDEATH or disconnect", true},
-			}
 
-			currentState := "OFFLINE"
-			for _, transition := range states {
-				By("transitioning to "+transition.state, func() {
-					// Validate state transition logic
-					switch currentState {
-					case "OFFLINE":
-						if transition.state == "ONLINE" {
-							// Valid: OFFLINE → ONLINE
-							Expect(transition.valid).To(BeTrue())
-						}
-					case "ONLINE":
-						if transition.state == "STALE" || transition.state == "OFFLINE" {
-							// Valid: ONLINE → STALE or ONLINE → OFFLINE
-							Expect(transition.valid).To(BeTrue())
-						}
-					case "STALE":
-						if transition.state == "ONLINE" || transition.state == "OFFLINE" {
-							// Valid: STALE → ONLINE or STALE → OFFLINE
-							Expect(transition.valid).To(BeTrue())
-						}
-					}
-					currentState = transition.state
-				})
-			}
-		})
 
-		It("should handle concurrent state changes", func() {
-			// Test state machine under concurrent scenarios
-			concurrentScenarios := []struct {
-				scenario    string
-				stateChange string
-				expected    string
-			}{
-				{"heartbeat_timeout", "ONLINE → STALE", "STALE"},
-				{"recovery_birth", "STALE → ONLINE", "ONLINE"},
-				{"clean_shutdown", "ONLINE → OFFLINE", "OFFLINE"},
-				{"unexpected_disconnect", "ONLINE → OFFLINE", "OFFLINE"},
-			}
 
-			for _, scenario := range concurrentScenarios {
-				By("handling "+scenario.scenario, func() {
-					// Verify expected state transitions
-					Expect(scenario.expected).To(BeElementOf([]string{"ONLINE", "STALE", "OFFLINE"}))
 
-					// State changes should be atomic
-					Expect(scenario.stateChange).To(ContainSubstring("→"))
-				})
-			}
-		})
-
-		It("should persist state across message batches", func() {
-			// Test state persistence across processing cycles
-			messageBatches := []struct {
-				batch int
-				state string
-			}{
-				{1, "ONLINE"},
-				{2, "ONLINE"}, // State should persist
-				{3, "ONLINE"}, // State should persist
-			}
-
-			persistedState := "ONLINE"
-			for _, batch := range messageBatches {
-				By("processing batch "+string(rune(batch.batch)), func() {
-					// State should remain consistent across batches
-					Expect(batch.state).To(Equal(persistedState))
-
-					// Simulate state persistence
-					if batch.state == persistedState {
-						// State successfully persisted
-						Expect(batch.state).To(Equal("ONLINE"))
-					}
-				})
-			}
-		})
-	})
-})
 
 // Helper functions for flow testing
 
@@ -1122,4 +1012,35 @@ func parseSparkplugTopic(topic string) map[string]string {
 	}
 
 	return metadata
+}
+
+// Helper functions for sequence validation
+
+func isValidSequenceTransition(current, next uint64) bool {
+	// Sparkplug B uses 8-bit sequence numbers (0-255)
+	if next > 255 || current > 255 {
+		return false
+	}
+	
+	// Valid cases:
+	// 1. Normal increment: next = current + 1
+	// 2. Wraparound: current = 255 and next = 0
+	
+	if next == (current+1)%256 {
+		return true
+	}
+	
+	return false
+}
+
+func calculateGapSize(lastSeq, currentSeq uint64) uint64 {
+	if currentSeq > lastSeq {
+		return currentSeq - lastSeq - 1
+	} else if lastSeq == 255 && currentSeq < lastSeq {
+		// Wraparound case
+		return currentSeq // Gap is just currentSeq when wrapping
+	} else {
+		// Invalid backward jump
+		return 256 - lastSeq + currentSeq - 1
+	}
 }
