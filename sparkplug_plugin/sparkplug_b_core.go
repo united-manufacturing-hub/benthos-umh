@@ -109,11 +109,17 @@ func (ac *AliasCache) ResolveAliases(deviceKey string, metrics []*sparkplugb.Pay
 
 	ac.mu.RLock()
 	aliasMap, exists := ac.cache[deviceKey]
-	ac.mu.RUnlock()
-
 	if !exists || len(aliasMap) == 0 {
+		ac.mu.RUnlock()
 		return 0
 	}
+	
+	// Create a copy of the alias map to avoid holding the lock during metric updates
+	aliasMapCopy := make(map[uint64]string, len(aliasMap))
+	for k, v := range aliasMap {
+		aliasMapCopy[k] = v
+	}
+	ac.mu.RUnlock()
 
 	count := 0
 	for _, metric := range metrics {
@@ -122,7 +128,7 @@ func (ac *AliasCache) ResolveAliases(deviceKey string, metrics []*sparkplugb.Pay
 		}
 		// If metric has an alias but no name, try to resolve it
 		if metric.Alias != nil && *metric.Alias != 0 && (metric.Name == nil || *metric.Name == "") {
-			if name, found := aliasMap[*metric.Alias]; found {
+			if name, found := aliasMapCopy[*metric.Alias]; found {
 				metric.Name = &name
 				count++
 			}

@@ -1,9 +1,0 @@
-input:
-  sparkplug_b:
-    mqtt:
-      urls: ["tcp://localhost:1883"]
-    identity:
-      group_id: "DeviceLevelTest"
-    role: "host"
-output:
-  stdout: {}
