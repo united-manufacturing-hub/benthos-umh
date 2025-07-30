@@ -21,11 +21,13 @@ package sparkplug_plugin_test
 
 import (
 	"encoding/base64"
+	"fmt"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
-	"github.com/weekaung/sparkplugb-client/sproto"
+	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -40,14 +42,79 @@ var _ = Describe("Static Payload Validation", func() {
 					payloadBytes, err := base64.StdEncoding.DecodeString(vector.Base64Data)
 					Expect(err).NotTo(HaveOccurred(), "Failed to decode Base64 for "+vector.Name)
 
-					var payload sproto.Payload
+					var payload sparkplugb.Payload
 					err = proto.Unmarshal(payloadBytes, &payload)
 					Expect(err).NotTo(HaveOccurred(), "Failed to unmarshal protobuf for "+vector.Name)
 
-					// Verify basic payload structure
+					// Enhanced payload structure validation
 					Expect(payload.Metrics).To(HaveLen(vector.MetricCount), "Metric count mismatch for "+vector.Name)
-					if len(payload.Metrics) > 0 {
-						Expect(payload.Metrics[0]).NotTo(BeNil(), "First metric should not be nil for "+vector.Name)
+					
+					// Validate timestamp is present and reasonable
+					Expect(payload.Timestamp).NotTo(BeNil(), "Payload should have timestamp for "+vector.Name)
+					if payload.Timestamp != nil {
+						// Timestamp should be a reasonable Unix millisecond value
+						// Between year 2020 and 2030 in milliseconds
+						minTime := uint64(1577836800000) // Jan 1, 2020
+						maxTime := uint64(1893456000000) // Jan 1, 2030
+						Expect(*payload.Timestamp).To(BeNumerically(">=", minTime), "Timestamp too old for "+vector.Name)
+						Expect(*payload.Timestamp).To(BeNumerically("<=", maxTime), "Timestamp too far in future for "+vector.Name)
+					}
+					
+					// Validate sequence number based on message type
+					if strings.Contains(vector.Name, "BIRTH") || strings.Contains(vector.Name, "DEATH") {
+						Expect(payload.Seq).NotTo(BeNil(), "BIRTH/DEATH messages must have sequence for "+vector.Name)
+						if strings.Contains(vector.Name, "BIRTH") && !strings.Contains(vector.Name, "DBIRTH") && !strings.Contains(vector.Name, "_BEFORE_") {
+							Expect(*payload.Seq).To(Equal(uint64(0)), "BIRTH messages should have seq=0 for "+vector.Name)
+						}
+					} else if strings.Contains(vector.Name, "DATA") {
+						Expect(payload.Seq).NotTo(BeNil(), "DATA messages must have sequence for "+vector.Name)
+						if payload.Seq != nil {
+							Expect(*payload.Seq).To(BeNumerically(">=", 0), "Sequence must be non-negative for "+vector.Name)
+							Expect(*payload.Seq).To(BeNumerically("<=", 255), "Sequence must be <= 255 for "+vector.Name)
+						}
+					}
+					
+					// Validate each metric in detail
+					for i, metric := range payload.Metrics {
+						Expect(metric).NotTo(BeNil(), fmt.Sprintf("Metric %d should not be nil for %s", i, vector.Name))
+						
+						// Validate metric has either name or alias (or both)
+						hasName := metric.Name != nil && *metric.Name != ""
+						hasAlias := metric.Alias != nil
+						Expect(hasName || hasAlias).To(BeTrue(), 
+							fmt.Sprintf("Metric %d must have name or alias for %s", i, vector.Name))
+						
+						// Validate datatype is present and valid
+						Expect(metric.Datatype).NotTo(BeNil(), 
+							fmt.Sprintf("Metric %d must have datatype for %s", i, vector.Name))
+						if metric.Datatype != nil {
+							// Sparkplug B datatypes: 1-12, 13-14, 15-17
+							validTypes := []uint32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}
+							Expect(validTypes).To(ContainElement(*metric.Datatype),
+								fmt.Sprintf("Metric %d has invalid datatype %d for %s", i, *metric.Datatype, vector.Name))
+						}
+						
+						// Validate timestamp if present
+						if metric.Timestamp != nil {
+							minTime := uint64(1577836800000) // Jan 1, 2020
+							maxTime := uint64(1893456000000) // Jan 1, 2030
+							Expect(*metric.Timestamp).To(BeNumerically(">=", minTime), 
+								fmt.Sprintf("Metric %d timestamp too old for %s", i, vector.Name))
+							Expect(*metric.Timestamp).To(BeNumerically("<=", maxTime), 
+								fmt.Sprintf("Metric %d timestamp too far in future for %s", i, vector.Name))
+						}
+						
+						// Special validation for specific metrics
+						if hasName && *metric.Name == "bdSeq" {
+							// bdSeq should be UInt64 type
+							Expect(*metric.Datatype).To(Equal(uint32(8)), "bdSeq must be UInt64 type")
+							Expect(metric.GetLongValue()).To(BeNumerically(">=", 0), "bdSeq must be non-negative")
+						}
+						
+						if hasName && *metric.Name == "Node Control/Rebirth" {
+							// Rebirth control should be Boolean type
+							Expect(*metric.Datatype).To(Equal(uint32(11)), "Node Control/Rebirth must be Boolean type")
+						}
 					}
 				})
 			}
@@ -60,7 +127,7 @@ var _ = Describe("Static Payload Validation", func() {
 			payloadBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var payload sproto.Payload
+			var payload sparkplugb.Payload
 			err = proto.Unmarshal(payloadBytes, &payload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -88,7 +155,7 @@ var _ = Describe("Static Payload Validation", func() {
 			payloadBytes, err := base64.StdEncoding.DecodeString(ndataVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var payload sproto.Payload
+			var payload sparkplugb.Payload
 			err = proto.Unmarshal(payloadBytes, &payload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -116,7 +183,7 @@ var _ = Describe("Static Payload Validation", func() {
 			payloadBytes, err := base64.StdEncoding.DecodeString(ndeathVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var payload sproto.Payload
+			var payload sparkplugb.Payload
 			err = proto.Unmarshal(payloadBytes, &payload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -142,7 +209,7 @@ var _ = Describe("Static Payload Validation", func() {
 			payloadBytes, err := base64.StdEncoding.DecodeString(largeVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var payload sproto.Payload
+			var payload sparkplugb.Payload
 			err = proto.Unmarshal(payloadBytes, &payload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -169,7 +236,7 @@ var _ = Describe("Static Payload Validation", func() {
 					payloadBytes, err := base64.StdEncoding.DecodeString(vector.Base64Data)
 					Expect(err).NotTo(HaveOccurred())
 
-					var payload sproto.Payload
+					var payload sparkplugb.Payload
 					err = proto.Unmarshal(payloadBytes, &payload)
 					Expect(err).NotTo(HaveOccurred())
 
@@ -188,7 +255,7 @@ var _ = Describe("Static Payload Validation", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Decode
-			var payload sproto.Payload
+			var payload sparkplugb.Payload
 			err = proto.Unmarshal(originalBytes, &payload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -197,7 +264,7 @@ var _ = Describe("Static Payload Validation", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Decode again to verify structure
-			var payload2 sproto.Payload
+			var payload2 sparkplugb.Payload
 			err = proto.Unmarshal(newBytes, &payload2)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -209,59 +276,59 @@ var _ = Describe("Static Payload Validation", func() {
 
 		It("should handle metric value types correctly", func() {
 			// Test all Sparkplug data types with proper validation
-			testMetrics := []*sproto.Payload_Metric{
+			testMetrics := []*sparkplugb.Payload_Metric{
 				{
 					Name:     stringPtr("Int8_Value"),
 					Alias:    uint64Ptr(1),
 					Datatype: uint32Ptr(1), // Int8
-					Value:    &sproto.Payload_Metric_IntValue{IntValue: 127},
+					Value:    &sparkplugb.Payload_Metric_IntValue{IntValue: 127},
 				},
 				{
 					Name:     stringPtr("Int16_Value"),
 					Alias:    uint64Ptr(2),
 					Datatype: uint32Ptr(2), // Int16
-					Value:    &sproto.Payload_Metric_IntValue{IntValue: 32767},
+					Value:    &sparkplugb.Payload_Metric_IntValue{IntValue: 32767},
 				},
 				{
 					Name:     stringPtr("Int32_Value"),
 					Alias:    uint64Ptr(3),
 					Datatype: uint32Ptr(3), // Int32
-					Value:    &sproto.Payload_Metric_IntValue{IntValue: 2147483647},
+					Value:    &sparkplugb.Payload_Metric_IntValue{IntValue: 2147483647},
 				},
 				{
 					Name:     stringPtr("Int64_Value"),
 					Alias:    uint64Ptr(4),
 					Datatype: uint32Ptr(7), // Int64
-					Value:    &sproto.Payload_Metric_LongValue{LongValue: 9223372036854775807},
+					Value:    &sparkplugb.Payload_Metric_LongValue{LongValue: 9223372036854775807},
 				},
 				{
 					Name:     stringPtr("Float_Value"),
 					Alias:    uint64Ptr(5),
 					Datatype: uint32Ptr(9), // Float
-					Value:    &sproto.Payload_Metric_FloatValue{FloatValue: 3.14159},
+					Value:    &sparkplugb.Payload_Metric_FloatValue{FloatValue: 3.14159},
 				},
 				{
 					Name:     stringPtr("Double_Value"),
 					Alias:    uint64Ptr(6),
 					Datatype: uint32Ptr(10), // Double
-					Value:    &sproto.Payload_Metric_DoubleValue{DoubleValue: 2.718281828459045},
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 2.718281828459045},
 				},
 				{
 					Name:     stringPtr("Boolean_Value"),
 					Alias:    uint64Ptr(7),
 					Datatype: uint32Ptr(11), // Boolean
-					Value:    &sproto.Payload_Metric_BooleanValue{BooleanValue: true},
+					Value:    &sparkplugb.Payload_Metric_BooleanValue{BooleanValue: true},
 				},
 				{
 					Name:     stringPtr("String_Value"),
 					Alias:    uint64Ptr(8),
 					Datatype: uint32Ptr(12), // String
-					Value:    &sproto.Payload_Metric_StringValue{StringValue: "Test String"},
+					Value:    &sparkplugb.Payload_Metric_StringValue{StringValue: "Test String"},
 				},
 			}
 
 			// Create payload with all data types
-			testPayload := &sproto.Payload{
+			testPayload := &sparkplugb.Payload{
 				Timestamp: uint64Ptr(1672531320000),
 				Seq:       uint64Ptr(0),
 				Metrics:   testMetrics,
@@ -271,7 +338,7 @@ var _ = Describe("Static Payload Validation", func() {
 			encodedData, err := proto.Marshal(testPayload)
 			Expect(err).NotTo(HaveOccurred())
 
-			var decodedPayload sproto.Payload
+			var decodedPayload sparkplugb.Payload
 			err = proto.Unmarshal(encodedData, &decodedPayload)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -318,7 +385,7 @@ var _ = Describe("Static Payload Validation", func() {
 					Expect(err).NotTo(HaveOccurred())
 
 					// This should be fast (<1ms for small payloads)
-					var payload sproto.Payload
+					var payload sparkplugb.Payload
 					err = proto.Unmarshal(payloadBytes, &payload)
 					Expect(err).NotTo(HaveOccurred())
 				})
@@ -332,7 +399,7 @@ var _ = Describe("Static Payload Validation", func() {
 			payloadBytes, err := base64.StdEncoding.DecodeString(largeVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
-			var payload sproto.Payload
+			var payload sparkplugb.Payload
 			err = proto.Unmarshal(payloadBytes, &payload)
 			Expect(err).NotTo(HaveOccurred())
 

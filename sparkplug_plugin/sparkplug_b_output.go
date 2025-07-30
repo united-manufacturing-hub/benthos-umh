@@ -39,13 +39,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	"github.com/weekaung/sparkplugb-client/sproto"
+	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -489,6 +490,19 @@ func (s *sparkplugOutput) onConnect(client mqtt.Client) {
 		s.birthsPublished.Incr(1)
 		s.logger.Info("Successfully published BIRTH message")
 	}
+
+	// Subscribe to node rebirth commands (NCMD) 
+	// Edge Nodes must listen for rebirth requests from Host applications
+	ncmdTopic := fmt.Sprintf("spBv1.0/%s/NCMD/%s", s.config.Identity.GroupID, s.config.Identity.EdgeNodeID)
+	s.logger.Infof("Subscribing to node rebirth commands on topic: %s", ncmdTopic)
+	
+	token := client.Subscribe(ncmdTopic, 1, s.handleRebirthCommand)
+	if token.Wait() && token.Error() != nil {
+		s.logger.Errorf("Failed to subscribe to rebirth commands: %v", token.Error())
+		s.publishErrors.Incr(1)
+	} else {
+		s.logger.Info("Successfully subscribed to node rebirth commands")
+	}
 }
 
 func (s *sparkplugOutput) onConnectionLost(client mqtt.Client, err error) {
@@ -498,6 +512,144 @@ func (s *sparkplugOutput) onConnectionLost(client mqtt.Client, err error) {
 	s.nbirthMu.Lock()
 	s.nbirthPublished = false
 	s.nbirthMu.Unlock()
+}
+
+// handleRebirthCommand processes incoming NCMD messages with rebirth requests
+func (s *sparkplugOutput) handleRebirthCommand(client mqtt.Client, msg mqtt.Message) {
+	s.logger.Infof("Received rebirth command on topic: %s", msg.Topic())
+
+	// Debug: Log raw payload bytes for troubleshooting
+	s.logger.Debugf("Raw NCMD payload size: %d bytes", len(msg.Payload()))
+
+	// Parse the Sparkplug B payload
+	var payload sparkplugb.Payload
+	if err := proto.Unmarshal(msg.Payload(), &payload); err != nil {
+		s.logger.Errorf("Failed to unmarshal rebirth command payload: %v. This may indicate an incompatible Sparkplug B message format or corrupted payload", err)
+		payloadLen := len(msg.Payload())
+		if payloadLen > 100 {
+			payloadLen = 100
+		}
+		s.logger.Errorf("Raw payload (first %d bytes): %x", payloadLen, msg.Payload()[:payloadLen])
+		return
+	}
+
+	// Debug: Log payload contents
+	s.logger.Debugf("Parsed NCMD payload - metrics count: %d, timestamp: %v", len(payload.Metrics), payload.Timestamp)
+	for i, metric := range payload.Metrics {
+		name := "nil"
+		if metric.Name != nil {
+			name = *metric.Name
+		}
+		alias := "nil"
+		if metric.Alias != nil {
+			alias = fmt.Sprintf("%d", *metric.Alias)
+		}
+		s.logger.Debugf("Metric %d: name='%s', alias=%s, datatype=%v, hasBoolean=%v", i, name, alias, metric.Datatype, metric.GetBooleanValue())
+	}
+
+	// Look for the "Node Control/Rebirth" metric
+	// Per Sparkplug B spec: MUST check for "Node Control/Rebirth" name first (spec compliant)
+	// Only use alias if name is not provided
+	rebirthRequested := false
+	for _, metric := range payload.Metrics {
+		isRebirthMetric := false
+		
+		// Check named metric first (spec compliant approach)
+		if metric.Name != nil && *metric.Name == "Node Control/Rebirth" {
+			isRebirthMetric = true
+		} else if metric.Name == nil && metric.Alias != nil && *metric.Alias == 1 {
+			// Only check alias if name is not provided
+			// Alias 1 is reserved for "Node Control/Rebirth" in NBIRTH
+			isRebirthMetric = true
+		}
+		
+		// If this is a rebirth metric with boolean true value
+		if isRebirthMetric && metric.GetBooleanValue() {
+			rebirthRequested = true
+			s.logger.Infof("Found rebirth request - name: %v, alias: %v, boolean: %v", 
+				metric.Name, metric.Alias, metric.GetBooleanValue())
+			break
+		}
+	}
+
+	if !rebirthRequested {
+		s.logger.Infof("No valid rebirth request found - looking for 'Node Control/Rebirth' with boolean true")
+		return
+	}
+
+	s.logger.Info("Processing node rebirth request - republishing BIRTH message")
+
+	// Increment bdSeq for the rebirth
+	s.stateMu.Lock()
+	s.bdSeq++
+	s.stateMu.Unlock()
+
+	// Republish NBIRTH with incremented bdSeq
+	if err := s.publishBirthMessage(); err != nil {
+		s.logger.Errorf("Failed to republish BIRTH message after rebirth request: %v", err)
+		s.publishErrors.Incr(1)
+	} else {
+		s.birthsPublished.Incr(1)
+		s.logger.Info("Successfully republished BIRTH message in response to rebirth request")
+	}
+
+	// Actively publish DBIRTH for all known devices
+	// This is required by Sparkplug B specification: after rebirth, all devices must republish DBIRTH
+	s.deviceStateMu.Lock()
+	// Reset device state to allow DBIRTH republishing
+	s.seenDevices = make(map[string]bool)
+	
+	// Collect known devices
+	knownDevices := make([]string, 0, len(s.deviceMetrics))
+	for deviceID := range s.deviceMetrics {
+		if deviceID != "" { // Skip empty device IDs (node-level metrics)
+			knownDevices = append(knownDevices, deviceID)
+		}
+	}
+	s.deviceStateMu.Unlock()
+
+	// Publish DBIRTH for all known devices immediately
+	for _, deviceID := range knownDevices {
+		s.logger.Infof("Publishing DBIRTH for device '%s' after rebirth", deviceID)
+		
+		// Get all cached metrics for this device
+		s.deviceStateMu.RLock()
+		deviceCache := s.deviceMetrics[deviceID]
+		s.deviceStateMu.RUnlock()
+		
+		// Convert cached metrics to format expected by getAllDeviceMetrics
+		allDeviceMetrics := make(map[string]interface{})
+		if s.deviceLastValues != nil {
+			s.deviceStateMu.RLock()
+			if lastValues, exists := s.deviceLastValues[deviceID]; exists {
+				for key, value := range lastValues {
+					allDeviceMetrics[key] = value
+				}
+			}
+			s.deviceStateMu.RUnlock()
+		}
+		
+		// If we have cached metrics but no last values, use empty data to trigger DBIRTH
+		if len(deviceCache) > 0 && len(allDeviceMetrics) == 0 {
+			// Use empty metrics map to get all known metrics for DBIRTH
+			allDeviceMetrics = s.getAllDeviceMetrics(deviceID, make(map[string]interface{}))
+		}
+		
+		if len(allDeviceMetrics) > 0 {
+			if err := s.publishDBIRTH(deviceID, allDeviceMetrics); err != nil {
+				s.logger.Errorf("Failed to publish DBIRTH for device '%s' after rebirth: %v", deviceID, err)
+				s.publishErrors.Incr(1)
+			} else {
+				s.markDeviceSeen(deviceID)
+				s.birthsPublished.Incr(1)
+				s.logger.Infof("Successfully published DBIRTH for device '%s' after rebirth", deviceID)
+			}
+		} else {
+			s.logger.Warnf("No metrics found for device '%s', skipping DBIRTH after rebirth", deviceID)
+		}
+	}
+	
+	s.logger.Infof("Completed rebirth - published DBIRTH for %d devices", len(knownDevices))
 }
 
 func (s *sparkplugOutput) Write(ctx context.Context, msg *service.Message) error {
@@ -832,18 +984,18 @@ func (s *sparkplugOutput) createDeathMessage(msg *service.Message) (string, []by
 		topic = fmt.Sprintf("spBv1.0/%s/NDEATH/%s", s.config.Identity.GroupID, eonNodeID)
 	}
 
-	bdSeqMetric := &sproto.Payload_Metric{
+	bdSeqMetric := &sparkplugb.Payload_Metric{
 		Name: func() *string { s := "bdSeq"; return &s }(),
-		Value: &sproto.Payload_Metric_LongValue{
+		Value: &sparkplugb.Payload_Metric_LongValue{
 			LongValue: s.bdSeq,
 		},
 		Datatype: func() *uint32 { d := uint32(4); return &d }(),
 	}
 
-	deathPayload := &sproto.Payload{
+	deathPayload := &sparkplugb.Payload{
 		Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),
 		Seq:       func() *uint64 { s := uint64(0); return &s }(), // NDEATH must have seq=0 per Sparkplug spec
-		Metrics:   []*sproto.Payload_Metric{bdSeqMetric},
+		Metrics:   []*sparkplugb.Payload_Metric{bdSeqMetric},
 	}
 
 	payloadBytes, err := proto.Marshal(deathPayload)
@@ -873,12 +1025,12 @@ func (s *sparkplugOutput) publishDBIRTH(deviceID string, data map[string]interfa
 	eonNodeID := s.getStaticEdgeNodeID()
 	topic := fmt.Sprintf("spBv1.0/%s/DBIRTH/%s/%s", s.config.Identity.GroupID, eonNodeID, deviceID)
 
-	var metrics []*sproto.Payload_Metric
+	var metrics []*sparkplugb.Payload_Metric
 
 	// Add configured metrics for this device
 	s.stateMu.RLock()
 	for _, metricConfig := range s.metrics {
-		metric := &sproto.Payload_Metric{
+		metric := &sparkplugb.Payload_Metric{
 			Name:     func() *string { s := metricConfig.Name; return &s }(),
 			Alias:    &metricConfig.Alias,
 			Datatype: s.getSparkplugDataType(metricConfig.Type),
@@ -893,7 +1045,8 @@ func (s *sparkplugOutput) publishDBIRTH(deviceID string, data map[string]interfa
 		} else {
 			metric.IsNull = func() *bool { b := true; return &b }()
 		}
-
+		
+		s.setDBirthMetricTimestamp(metric)
 		metrics = append(metrics, metric)
 	}
 
@@ -930,13 +1083,14 @@ func (s *sparkplugOutput) publishDBIRTH(deviceID string, data map[string]interfa
 		metricType := s.metricTypes[metricName]
 		s.stateMu.RUnlock()
 
-		metric := &sproto.Payload_Metric{
+		metric := &sparkplugb.Payload_Metric{
 			Name:     func() *string { s := metricName; return &s }(),
 			Alias:    &alias,
 			Datatype: s.getSparkplugDataType(metricType),
 		}
 
 		s.setMetricValue(metric, value, metricType)
+		s.setDBirthMetricTimestamp(metric)
 		metrics = append(metrics, metric)
 	}
 
@@ -957,7 +1111,7 @@ func (s *sparkplugOutput) publishDBIRTH(deviceID string, data map[string]interfa
 	currentSeq := s.seqCounter
 	s.stateMu.Unlock()
 
-	birthPayload := &sproto.Payload{
+	birthPayload := &sparkplugb.Payload{
 		Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),
 		Seq:       func() *uint64 { s := uint64(currentSeq); return &s }(),
 		Metrics:   metrics,
@@ -990,13 +1144,13 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 		topic = fmt.Sprintf("spBv1.0/%s/NBIRTH/%s", s.config.Identity.GroupID, eonNodeID)
 	}
 
-	var metrics []*sproto.Payload_Metric
+	var metrics []*sparkplugb.Payload_Metric
 
 	// Add bdSeq metric (required by Sparkplug spec)
-	bdSeqMetric := &sproto.Payload_Metric{
+	bdSeqMetric := &sparkplugb.Payload_Metric{
 		Name:  func() *string { s := "bdSeq"; return &s }(),
 		Alias: func() *uint64 { a := uint64(0); return &a }(),
-		Value: &sproto.Payload_Metric_LongValue{
+		Value: &sparkplugb.Payload_Metric_LongValue{
 			LongValue: s.bdSeq,
 		},
 		Datatype: func() *uint32 { d := uint32(4); return &d }(),
@@ -1004,10 +1158,10 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 	metrics = append(metrics, bdSeqMetric)
 
 	// Add Node Control/Rebirth metric (required by Sparkplug spec for Edge Nodes)
-	nodeControlMetric := &sproto.Payload_Metric{
+	nodeControlMetric := &sparkplugb.Payload_Metric{
 		Name:  func() *string { s := "Node Control/Rebirth"; return &s }(),
 		Alias: func() *uint64 { a := uint64(1); return &a }(),
-		Value: &sproto.Payload_Metric_BooleanValue{
+		Value: &sparkplugb.Payload_Metric_BooleanValue{
 			BooleanValue: false, // Always false in NBIRTH
 		},
 		Datatype: func() *uint32 { d := uint32(11); return &d }(), // Boolean type
@@ -1017,7 +1171,7 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 	// Add configured metrics
 	s.stateMu.RLock()
 	for _, metricConfig := range s.metrics {
-		metric := &sproto.Payload_Metric{
+		metric := &sparkplugb.Payload_Metric{
 			Name:     func() *string { s := metricConfig.Name; return &s }(),
 			Alias:    &metricConfig.Alias,
 			Datatype: s.getSparkplugDataType(metricConfig.Type),
@@ -1032,7 +1186,8 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 		} else {
 			metric.IsNull = func() *bool { b := true; return &b }()
 		}
-
+		
+		s.setDBirthMetricTimestamp(metric)
 		metrics = append(metrics, metric)
 	}
 	s.stateMu.RUnlock()
@@ -1053,7 +1208,7 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 	currentSeq := s.seqCounter
 	s.stateMu.Unlock()
 
-	birthPayload := &sproto.Payload{
+	birthPayload := &sparkplugb.Payload{
 		Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),
 		Seq:       func() *uint64 { s := uint64(currentSeq); return &s }(),
 		Metrics:   metrics,
@@ -1212,8 +1367,9 @@ func (s *sparkplugOutput) publishDataMessage(data map[string]interface{}, msg *s
 	currentSeq := s.seqCounter
 	s.stateMu.Unlock()
 
-	var metrics []*sproto.Payload_Metric
+	var metrics []*sparkplugb.Payload_Metric
 
+	s.logger.Debugf("Starting metrics creation loop - data map has %d entries: %v", len(data), data)
 	for metricName, value := range data {
 		s.stateMu.RLock()
 		alias, hasAlias := s.metricAliases[metricName]
@@ -1226,12 +1382,14 @@ func (s *sparkplugOutput) publishDataMessage(data map[string]interface{}, msg *s
 			continue
 		}
 
-		metric := &sproto.Payload_Metric{
+		metric := &sparkplugb.Payload_Metric{
 			Alias:    &alias,
 			Datatype: s.getSparkplugDataType(metricType),
 		}
 
 		s.setMetricValue(metric, value, metricType)
+		s.logger.Debugf("About to call setMetricTimestamp for metric: %s", metricName)
+		s.setMetricTimestamp(metric, msg)
 		metrics = append(metrics, metric)
 
 		if s.retainLastValues {
@@ -1246,7 +1404,7 @@ func (s *sparkplugOutput) publishDataMessage(data map[string]interface{}, msg *s
 		return nil // Don't error on empty messages - may happen during dynamic alias assignment
 	}
 
-	dataPayload := &sproto.Payload{
+	dataPayload := &sparkplugb.Payload{
 		Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),
 		Seq:       func() *uint64 { s := uint64(currentSeq); return &s }(),
 		Metrics:   metrics,
@@ -1281,33 +1439,76 @@ func (s *sparkplugOutput) getSparkplugDataType(typeStr string) *uint32 {
 	return &defaultType
 }
 
-func (s *sparkplugOutput) setMetricValue(metric *sproto.Payload_Metric, value interface{}, metricType string) {
+func (s *sparkplugOutput) setMetricValue(metric *sparkplugb.Payload_Metric, value interface{}, metricType string) {
 	switch strings.ToLower(metricType) {
 	case "int8", "int16", "int32":
 		if intVal, ok := s.convertToUint32(value); ok {
-			metric.Value = &sproto.Payload_Metric_IntValue{IntValue: intVal}
+			metric.Value = &sparkplugb.Payload_Metric_IntValue{IntValue: intVal}
 		}
 	case "int64":
 		if longVal, ok := s.convertToInt64(value); ok {
-			metric.Value = &sproto.Payload_Metric_LongValue{LongValue: longVal}
+			metric.Value = &sparkplugb.Payload_Metric_LongValue{LongValue: longVal}
 		}
 	case "float":
 		if floatVal, ok := s.convertToFloat32(value); ok {
-			metric.Value = &sproto.Payload_Metric_FloatValue{FloatValue: floatVal}
+			metric.Value = &sparkplugb.Payload_Metric_FloatValue{FloatValue: floatVal}
 		}
 	case "double":
 		if doubleVal, ok := s.convertToFloat64(value); ok {
-			metric.Value = &sproto.Payload_Metric_DoubleValue{DoubleValue: doubleVal}
+			metric.Value = &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: doubleVal}
 		}
 	case "boolean":
 		if boolVal, ok := s.convertToBool(value); ok {
-			metric.Value = &sproto.Payload_Metric_BooleanValue{BooleanValue: boolVal}
+			metric.Value = &sparkplugb.Payload_Metric_BooleanValue{BooleanValue: boolVal}
 		}
 	case "string":
 		if strVal, ok := s.convertToString(value); ok {
-			metric.Value = &sproto.Payload_Metric_StringValue{StringValue: strVal}
+			metric.Value = &sparkplugb.Payload_Metric_StringValue{StringValue: strVal}
 		}
 	}
+}
+
+// setMetricTimestamp sets the timestamp field on a Sparkplug B metric using direct field assignment
+// Now uses the complete official protobuf definition that includes timestamp field support
+func (s *sparkplugOutput) setMetricTimestamp(metric *sparkplugb.Payload_Metric, msg *service.Message) {
+	// Get current timestamp in milliseconds
+	timestamp := uint64(time.Now().UnixMilli())
+	
+	// Check for timestamp_ms in the message payload first (UMH-Core format)
+	if structured, err := msg.AsStructured(); err == nil {
+		if structMap, ok := structured.(map[string]interface{}); ok {
+			if tsValue, exists := structMap["timestamp_ms"]; exists {
+				switch v := tsValue.(type) {
+				case float64:
+					timestamp = uint64(v)
+				case int64:
+					timestamp = uint64(v)
+				case int:
+					timestamp = uint64(v)
+				case string:
+					if parsedTS, err := strconv.ParseUint(v, 10, 64); err == nil {
+						timestamp = parsedTS
+					}
+				case json.Number:
+					if parsedTS, err := v.Int64(); err == nil {
+						timestamp = uint64(parsedTS)
+					}
+				}
+			}
+		}
+	}
+	
+	// Direct field assignment using the complete protobuf definition
+	metric.Timestamp = &timestamp
+	s.logger.Debugf("Set metric timestamp: %d", timestamp)
+}
+
+// setDBirthMetricTimestamp sets the timestamp field on a DBIRTH metric using current time
+func (s *sparkplugOutput) setDBirthMetricTimestamp(metric *sparkplugb.Payload_Metric) {
+	timestamp := uint64(time.Now().UnixMilli())
+	
+	// Direct field assignment using the complete protobuf definition
+	metric.Timestamp = &timestamp
 }
 
 func (s *sparkplugOutput) convertToUint32(value interface{}) (uint32, bool) {

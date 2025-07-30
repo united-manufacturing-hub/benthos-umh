@@ -24,7 +24,7 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	"github.com/weekaung/sparkplugb-client/sproto"
+	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
@@ -66,7 +66,7 @@ func NewAliasCache() *AliasCache {
 //
 // Device-Level PARRIS architecture: DBIRTH messages define all metric aliases for a device,
 // enabling efficient DDATA transmission using numeric aliases instead of full metric names.
-func (ac *AliasCache) CacheAliases(deviceKey string, metrics []*sproto.Payload_Metric) int {
+func (ac *AliasCache) CacheAliases(deviceKey string, metrics []*sparkplugb.Payload_Metric) int {
 	if deviceKey == "" || len(metrics) == 0 {
 		return 0
 	}
@@ -102,7 +102,7 @@ func (ac *AliasCache) CacheAliases(deviceKey string, metrics []*sproto.Payload_M
 // Device-Level PARRIS: DDATA messages contain numeric aliases (e.g., alias=1) which
 // this function resolves back to meaningful names (e.g., "temperature:value") using
 // the cached DBIRTH certificate vocabulary.
-func (ac *AliasCache) ResolveAliases(deviceKey string, metrics []*sproto.Payload_Metric) int {
+func (ac *AliasCache) ResolveAliases(deviceKey string, metrics []*sparkplugb.Payload_Metric) int {
 	if deviceKey == "" || len(metrics) == 0 {
 		return 0
 	}
@@ -261,7 +261,7 @@ func NewMessageProcessor(logger *service.Logger) *MessageProcessor {
 }
 
 // CreateSplitMessages creates individual messages for each metric.
-func (mp *MessageProcessor) CreateSplitMessages(originalMsg *service.Message, payload *sproto.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (mp *MessageProcessor) CreateSplitMessages(originalMsg *service.Message, payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	var batch service.MessageBatch
 
 	for _, metric := range payload.Metrics {
@@ -295,7 +295,7 @@ func (mp *MessageProcessor) CreateSplitMessages(originalMsg *service.Message, pa
 }
 
 // CreateSingleMessage creates a single message with the full payload.
-func (mp *MessageProcessor) CreateSingleMessage(originalMsg *service.Message, payload *sproto.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (mp *MessageProcessor) CreateSingleMessage(originalMsg *service.Message, payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	// Convert to JSON
 	jsonBytes, err := protojson.MarshalOptions{
 		UseProtoNames:   true,
@@ -330,7 +330,7 @@ func (mp *MessageProcessor) setCommonMetadata(msg *service.Message, msgType, dev
 }
 
 // extractMetricValue extracts the value from a Sparkplug metric and returns JSON bytes.
-func (mp *MessageProcessor) extractMetricValue(metric *sproto.Payload_Metric) []byte {
+func (mp *MessageProcessor) extractMetricValue(metric *sparkplugb.Payload_Metric) []byte {
 	// Create a simple JSON structure with the metric value
 	result := make(map[string]interface{})
 
@@ -340,17 +340,17 @@ func (mp *MessageProcessor) extractMetricValue(metric *sproto.Payload_Metric) []
 		result["quality"] = "BAD"
 	} else if metric.Value != nil {
 		switch v := metric.Value.(type) {
-		case *sproto.Payload_Metric_IntValue:
+		case *sparkplugb.Payload_Metric_IntValue:
 			result["value"] = v.IntValue
-		case *sproto.Payload_Metric_LongValue:
+		case *sparkplugb.Payload_Metric_LongValue:
 			result["value"] = v.LongValue
-		case *sproto.Payload_Metric_FloatValue:
+		case *sparkplugb.Payload_Metric_FloatValue:
 			result["value"] = v.FloatValue
-		case *sproto.Payload_Metric_DoubleValue:
+		case *sparkplugb.Payload_Metric_DoubleValue:
 			result["value"] = v.DoubleValue
-		case *sproto.Payload_Metric_BooleanValue:
+		case *sparkplugb.Payload_Metric_BooleanValue:
 			result["value"] = v.BooleanValue
-		case *sproto.Payload_Metric_StringValue:
+		case *sparkplugb.Payload_Metric_StringValue:
 			result["value"] = v.StringValue
 		default:
 			result["value"] = nil
@@ -454,7 +454,7 @@ func (tc *TypeConverter) GetSparkplugDataType(typeStr string) *uint32 {
 }
 
 // SetMetricValue sets the appropriate value field in a Sparkplug metric based on the type.
-func (tc *TypeConverter) SetMetricValue(metric *sproto.Payload_Metric, value interface{}, metricType string) {
+func (tc *TypeConverter) SetMetricValue(metric *sparkplugb.Payload_Metric, value interface{}, metricType string) {
 	if value == nil {
 		isNull := true
 		metric.IsNull = &isNull
@@ -464,40 +464,40 @@ func (tc *TypeConverter) SetMetricValue(metric *sproto.Payload_Metric, value int
 	switch metricType {
 	case "int8", "int16", "int32":
 		if v, ok := tc.ConvertToInt32(value); ok {
-			metric.Value = &sproto.Payload_Metric_IntValue{IntValue: v}
+			metric.Value = &sparkplugb.Payload_Metric_IntValue{IntValue: v}
 		}
 	case "int64":
 		if v, ok := tc.convertToInt64(value); ok {
-			metric.Value = &sproto.Payload_Metric_LongValue{LongValue: v}
+			metric.Value = &sparkplugb.Payload_Metric_LongValue{LongValue: v}
 		}
 	case "uint8", "uint16", "uint32":
 		if v, ok := tc.ConvertToInt32(value); ok {
-			metric.Value = &sproto.Payload_Metric_IntValue{IntValue: v}
+			metric.Value = &sparkplugb.Payload_Metric_IntValue{IntValue: v}
 		}
 	case "uint64":
 		if v, ok := tc.convertToInt64(value); ok {
-			metric.Value = &sproto.Payload_Metric_LongValue{LongValue: v}
+			metric.Value = &sparkplugb.Payload_Metric_LongValue{LongValue: v}
 		}
 	case "float":
 		if v, ok := tc.convertToFloat32(value); ok {
-			metric.Value = &sproto.Payload_Metric_FloatValue{FloatValue: v}
+			metric.Value = &sparkplugb.Payload_Metric_FloatValue{FloatValue: v}
 		}
 	case "double":
 		if v, ok := tc.convertToFloat64(value); ok {
-			metric.Value = &sproto.Payload_Metric_DoubleValue{DoubleValue: v}
+			metric.Value = &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: v}
 		}
 	case "boolean":
 		if v, ok := tc.ConvertToBool(value); ok {
-			metric.Value = &sproto.Payload_Metric_BooleanValue{BooleanValue: v}
+			metric.Value = &sparkplugb.Payload_Metric_BooleanValue{BooleanValue: v}
 		}
 	case "string":
 		if v, ok := tc.convertToString(value); ok {
-			metric.Value = &sproto.Payload_Metric_StringValue{StringValue: v}
+			metric.Value = &sparkplugb.Payload_Metric_StringValue{StringValue: v}
 		}
 	default:
 		// Default to double
 		if v, ok := tc.convertToFloat64(value); ok {
-			metric.Value = &sproto.Payload_Metric_DoubleValue{DoubleValue: v}
+			metric.Value = &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: v}
 		}
 	}
 }
