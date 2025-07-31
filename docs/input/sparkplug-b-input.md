@@ -54,9 +54,7 @@ input:
       urls: ["tcp://localhost:1883"]
     identity:
       group_id: "DeviceLevelTest"
-    # role: "host" is default - no configuration needed
-    subscription:
-      groups: []  # Empty = subscribe to all groups
+    # mode: "secondary_passive" is default - safest for brownfield deployments
 
 processing:
   processors:
@@ -76,7 +74,7 @@ output:
   uns: {}
 ```
 
-This configuration safely reads all Sparkplug B messages and converts them to UMH-Core format. Multiple Secondary Host instances (default role) can run simultaneously without conflicts for load balancing and redundancy.
+This configuration safely reads all Sparkplug B messages and converts them to UMH-Core format. The default `secondary_passive` mode is read-only and won't interfere with existing Sparkplug infrastructure, making it safe to run multiple instances for load balancing and redundancy.
 
 **To publish data as Sparkplug B**: After processing in the UNS, use the [Sparkplug B Output plugin](../output/sparkplug-b-output.md) to convert UMH-Core data back to Sparkplug B format for external systems.
 
@@ -140,74 +138,200 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `identity.group_id` | `string` | **required** | Sparkplug B Group ID |
-| `identity.edge_node_id` | `string` | `""` | Optional: For advanced Primary Host configuration only |
+| `identity.edge_node_id` | `string` | `""` | Required only for `primary` mode (used as host_id for STATE topic) |
 
-### Role Section
+### Mode Section
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `role` | `string` | `"host"` | Sparkplug Host role: `"host"` (Secondary Host) or `"primary"` (Primary Host) |
+| `mode` | `string` | `"secondary_passive"` | Operating mode for the Sparkplug B input plugin |
 
-### Subscription Section
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `subscription.groups` | `[]string` | `[]` | Groups to subscribe to (empty = all groups) |
+**Available Modes:**
+- `"secondary_passive"` (default): Read-only consumer, no rebirth commands sent
+- `"secondary_active"`: Consumer that can request rebirths when needed
+- `"primary"`: Full Primary Host with STATE publishing and session management
 
 ---
 
 ## Technical Details
 
-### Host Roles and STATE Messages
+### Operating Modes Explained
 
-For advanced users who need to understand the different host roles:
+The Sparkplug B input plugin offers three operating modes that automatically configure all necessary settings. These modes provide clear choices for different deployment scenarios while eliminating the complexity of understanding Sparkplug B roles.
 
-#### Secondary Host (Default - Recommended)
-- **Role**: `"host"` (default, no configuration needed)
-- **Behavior**: Read-only, no STATE message publishing
-- **Use Case**: Safe for brownfield deployments, multiple instances can run simultaneously for load balancing
-- **Requirements**: None (edge_node_id is optional)
+#### Mode Overview
 
-#### Primary Host (Advanced Use Only)
-- **Role**: `"primary"` (explicit configuration required)
-- **Behavior**: Publishes STATE Birth/Death messages for host arbitration
-- **Use Case**: SCADA/HMI applications that need to coordinate with Edge Nodes
-- **Requirements**: `edge_node_id` is required (used as `host_id`)
-- **Deployment**: Single instance only (multiple Primary Hosts create STATE conflicts)
+| Mode | Role | Description | Safe for Brownfield |
+|------|------|-------------|---------------------|
+| `secondary_passive` | Secondary Host (Muted) | Read-only consumer, no rebirth commands | ✅ Yes (Default) |
+| `secondary_active` | Secondary Host (Unmuted) | Consumer that can request rebirths | ✅ Yes |
+| `primary` | Primary Host | Full host with STATE publishing | ⚠️ May conflict |
 
-**Edge Node Role**: The input plugin cannot act as an Edge Node (that's the role of the [Sparkplug B Output plugin](../output/sparkplug-b-output.md)). Edge Nodes publish NBIRTH/NDATA messages, while Host applications (like this input plugin) consume and process Sparkplug B data.
+#### Mode: `secondary_passive` (Default)
 
-**Advanced Primary Host Configuration:**
+**What it does:**
+- Operates as a read-only Secondary Host
+- **Does NOT send rebirth commands** (fully passive)
+- Does NOT publish STATE messages
+- Safe to run multiple instances for scalability
+- Consumes all Sparkplug B messages without interfering
+
+**When to use:**
+- ✅ **Default choice** - Safest option for any deployment
+- ✅ **Brownfield deployments** - Existing infrastructure remains undisturbed
+- ✅ **Multi-consumer environments** - Prevents rebirth storms
+- ✅ **Uncertain scenarios** - When you're not sure about the infrastructure
+
+**Configuration:**
 ```yaml
 input:
   sparkplug_b:
     mqtt:
       urls: ["tcp://localhost:1883"]
     identity:
-      group_id: "DeviceLevelTest"
-      edge_node_id: "PrimaryHost"  # Required: used as host_id for STATE topic
-    role: "primary"  # Primary Host: publishes STATE, tracks sequences
-    subscription:
-      groups: ["FactoryA", "TestGroup"]  # Specific groups or empty for all
+      group_id: "FactoryA"
+    # mode: "secondary_passive" is the default
 ```
 
-**Primary Host STATE Topic (Sparkplug v3.0):**
+**Technical behavior:** Pure consumer mode with no command publishing capabilities.
+
+#### Mode: `secondary_active`
+
+**What it does:**
+- Operates as an active Secondary Host
+- **Can send rebirth commands** when needed
+- Does NOT publish STATE messages
+- Can run multiple instances (though rebirth storms possible)
+- Actively manages alias resolution through rebirth requests
+
+**When to use:**
+- ✅ **Single consumer deployments** - You're the only Sparkplug B consumer
+- ✅ **Controlled environments** - You understand the rebirth implications
+- ✅ **Active data management needed** - You need to request fresh BIRTH certificates
+
+**Configuration:**
+```yaml
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+    identity:
+      group_id: "FactoryA"
+    mode: "secondary_active"
+```
+
+**Technical behavior:** Secondary Host with NCMD/DCMD publishing for rebirth requests.
+
+#### Mode: `primary`
+
+**What it does:**
+- Operates as the Primary Host per Sparkplug B specification
+- Publishes STATE messages for Edge Node coordination
+- Monitors sequence numbers and manages sessions
+- Single instance only (multiple Primary Hosts conflict)
+- Full control over Edge Node behavior
+
+**When to use:**
+- ✅ **Greenfield deployments** - UMH is your only Sparkplug B application
+- ✅ **Full control needed** - You want Edge Nodes to buffer data when offline
+- ✅ **Spec compliance required** - Strict Sparkplug B v3.0 compliance
+
+**Configuration:**
+```yaml
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+    identity:
+      group_id: "FactoryA"
+      edge_node_id: "UMH_Primary"  # Required for STATE topic
+    mode: "primary"
+```
+
+**Technical behavior:** Full Primary Host with STATE publishing and session management.
+
+#### Understanding Rebirth Storms
+
+**What is a rebirth storm?**
+A cascading effect that occurs when multiple Secondary Hosts simultaneously request rebirths from Edge Nodes, potentially overwhelming the MQTT infrastructure with redundant BIRTH messages.
+
+**Scenario:**
+1. Edge Node publishes DDATA with aliases
+2. Multiple consumers don't have the alias mappings
+3. All consumers simultaneously request rebirth
+4. Edge Node publishes NBIRTH/DBIRTH for each request
+5. Network and broker become saturated
+
+**Prevention:**
+- Use `secondary_passive` mode (default) in multi-consumer environments
+- Only use `secondary_active` when you're the sole consumer
+- Coordinate rebirth requests if multiple active consumers are necessary
+
+#### Choosing the Right Mode
+
+**Start with `secondary_passive` if:**
+- You have any existing Sparkplug B infrastructure
+- Multiple applications consume the same data
+- You're unsure about the deployment environment
+- You want the safest, most compatible option
+
+**Consider `secondary_active` if:**
+- You're the only Sparkplug B consumer
+- You need to actively request BIRTH certificates
+- You understand and can manage rebirth timing
+- Network bandwidth isn't a concern
+
+**Use `primary` only if:**
+- You're building a greenfield Sparkplug B system
+- No other Primary Hosts exist in your infrastructure
+- You need Edge Nodes to respect your online/offline state
+- You require full Sparkplug B specification compliance
+
+
+### Advanced Configuration Options
+
+For users who need fine-grained control beyond the simplified modes, additional configuration options are available:
+
+```yaml
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+    identity:
+      group_id: "FactoryA"
+      edge_node_id: "CustomHost"  # Optional for secondary modes
+    mode: "secondary_passive"
+    
+    # Advanced options (usually not needed)
+    subscription:
+      groups: ["GroupA", "GroupB"]  # Specific groups instead of all
+    
+    # Future options (planned):
+    # include_data_contract_in_device_id: true  # Add data contract to device ID
+```
+
+### STATE Topic Behavior (primary mode only)
+
+When using `primary` mode, the plugin publishes STATE messages according to Sparkplug B v3.0:
+
 ```
 spBv1.0/STATE/<host_id>
 ```
 
-The Primary Host uses the `edge_node_id` configuration field as the `host_id` for STATE messages. For example:
-- Configuration: `edge_node_id: "PrimaryHost"`  
-- STATE topic: `spBv1.0/STATE/PrimaryHost`
-
-**Important**: Primary Host STATE topics do NOT include the `group_id` (per Sparkplug B v3.0 specification). This allows Edge Nodes across all groups to detect the Primary Host for proper session management.
+- The `edge_node_id` is used as the `host_id`
+- STATE topics do NOT include `group_id` (per specification)
+- This allows Edge Nodes across all groups to detect the Primary Host
 
 ### Deployment Considerations
 
 #### Multiple Instance Support
 
-**Secondary Host (Default - `role: "host"`)**: 
-✅ **Safe for multiple instances** - Read-only operation, no conflicts
+**`secondary_passive` mode (default)**: 
+✅ **Safe for multiple instances** - No STATE conflicts, no rebirth storms, load balancing friendly
 
-**Primary Host (`role: "primary"`)**: 
+**`secondary_active` mode**: 
+✅ **Can run multiple instances** - But be aware of potential rebirth storms
+
+**`primary` mode**: 
 ⚠️ **Single instance only** - Publishes STATE messages for host arbitration
 
 ### Metadata Enrichment
@@ -230,9 +354,9 @@ These are the main metadata fields that most users will need for processing Spar
 
 These fields provide additional Sparkplug context and are primarily for debugging or advanced processing:
 
-* `spb_group`: Same as `spb_group_id` (for backward compatibility)
-* `spb_edge_node`: Same as `spb_edge_node_id` (for backward compatibility)
-* `spb_device`: Same as `spb_device_id` (for backward compatibility)
+* `spb_group`: Same as `spb_group_id` (alternative field name)
+* `spb_edge_node`: Same as `spb_edge_node_id` (alternative field name)
+* `spb_device`: Same as `spb_device_id` (alternative field name)
 * `spb_sequence`: The sequence number of the Sparkplug message
 * `spb_bdseq`: The birth-death sequence number of the session
 * `spb_timestamp`: The timestamp (in epoch ms) provided with the metric
@@ -261,11 +385,11 @@ When UMH conversion is successful, additional metadata is added:
 * `umh_topic`: Complete UMH topic string
 * `umh_conversion_error`: Error message if conversion failed
 
-**Usage Recommendation**: Use the **primary metadata fields** for most processing logic. The `spb_` prefixed fields are provided for backward compatibility and advanced debugging scenarios.
+**Usage Recommendation**: Use the **primary metadata fields** for most processing logic. The alternative `spb_` prefixed fields are provided for consistency and advanced debugging scenarios.
 
 ### Message Processing
 
-The Sparkplug B input plugin **always splits metrics** into individual messages to ensure UMH-Core format compatibility. Each Sparkplug metric becomes a separate Benthos message for downstream processing.
+The Sparkplug B input plugin **always splits metrics** into individual messages to ensure UMH-Core format compliance. Each Sparkplug metric becomes a separate Benthos message for downstream processing.
 
 *Note: This behavior is required for UMH-Core format and cannot be disabled.*
 
@@ -293,5 +417,4 @@ The Sparkplug B input plugin processes **bdSeq** values from incoming Edge Node 
 
 **Recommendation:**
 The input plugin handles both persistent and stateless Edge Node bdSeq patterns correctly. No special configuration is needed - the plugin automatically adapts to different Edge Node implementations and their bdSeq behaviors.
-
 
