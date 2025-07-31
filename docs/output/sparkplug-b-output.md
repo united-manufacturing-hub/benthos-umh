@@ -4,7 +4,18 @@
 
 The **Sparkplug B Output plugin** allows the United Manufacturing Hub (UMH) to publish industrial IoT data to MQTT brokers using the Sparkplug B specification. It acts as an **Edge Node** in the Sparkplug B ecosystem, converting UMH-Core messages into standardized MQTT-based Sparkplug B protocol with protobuf encoding and alias management.
 
-Sparkplug B is an open standard for MQTT-based industrial IoT communication that minimizes bandwidth usage through metric aliases and efficient protobuf encoding. This output plugin always operates as an Edge Node - the role is implicit based on the plugin type (output plugins publish data, input plugins consume data).
+Sparkplug B is an open standard for MQTT-based industrial IoT communication that minimizes bandwidth usage through metric aliases and efficient protobuf encoding. 
+
+### Why Edge Node Only?
+
+This output plugin **always operates as an Edge Node** because:
+
+1. **Role Clarity**: In Sparkplug B architecture, data sources (PLCs, sensors, gateways) are Edge Nodes, while data consumers (SCADA, historians) are Hosts
+2. **UMH Philosophy**: UMH acts as a data source when publishing to external systems, naturally fitting the Edge Node role
+3. **No Conflicts**: Edge Nodes don't publish STATE messages, avoiding conflicts with existing Primary Hosts in your infrastructure
+4. **Responds to Hosts**: Edge Nodes listen for rebirth commands from Host applications, enabling proper Sparkplug B session management
+
+The complementary [Sparkplug B Input plugin](../input/sparkplug-b-input.md) handles the Host role for consuming Sparkplug B data.
 
 **UMH-Core Format Requirement**: This output plugin only accepts data in the UMH-Core format (`{"value": X, "timestamp_ms": Y}`). When using the `uns` input plugin, data is already in the correct format. For other input sources, use the `tag_processor` to convert data to UMH-Core format before this output plugin.
 
@@ -126,6 +137,36 @@ Each metric in the `metrics` array supports:
 | `behaviour.retain_last_values` | `bool` | `true` | Whether to retain last known values for BIRTH messages after reconnection |
 
 
+
+## Edge Node Behavior
+
+### Automatic Session Management
+
+As a Sparkplug B Edge Node, this plugin handles the complete session lifecycle:
+
+1. **Connection**: Publishes NBIRTH with all configured metrics and bdSeq
+2. **Device Discovery**: Publishes DBIRTH when new devices (location_paths) appear
+3. **Data Flow**: Publishes DDATA with efficient alias-based encoding
+4. **Disconnection**: NDEATH published automatically via MQTT Last Will Testament
+
+### Rebirth Command Handling
+
+The Edge Node listens for rebirth requests from Host applications on the NCMD topic:
+
+```
+spBv1.0/<group_id>/NCMD/<edge_node_id>
+```
+
+**When a rebirth is requested:**
+1. bdSeq increments by +1
+2. Republishes NBIRTH with all node-level metrics
+3. Republishes DBIRTH for all known devices
+4. Resumes normal DDATA publishing
+
+**Why This Matters:**
+- Hosts can request fresh BIRTH certificates after restart
+- Ensures alias mappings stay synchronized
+- Maintains Sparkplug B session integrity
 
 ## Data Format Requirements
 
