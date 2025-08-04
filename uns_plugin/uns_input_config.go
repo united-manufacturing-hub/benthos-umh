@@ -93,6 +93,11 @@ func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsIn
 		}
 	}
 
+	// If there is no entry in allTopics, we will add the defaultTopicKey
+	if len(allTopics) == 0 {
+		allTopics = append(allTopics, defaultTopicKey)
+	}
+
 	// Deduplicate and set topics
 	if len(allTopics) > 0 {
 		// Create a map to deduplicate while preserving order
@@ -107,15 +112,6 @@ func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsIn
 		config.umhTopics = deduplicatedTopics
 	} else {
 		return config, fmt.Errorf("no topics found in the plugin's config: specify at least one of 'umh_topic', 'umh_topics' or 'topic' fields")
-	}
-
-	// If we have more then 1 allTopics, we will remove the .* (defaultTopicKey) from the list
-	if len(allTopics) > 1 {
-		for i, topic := range allTopics {
-			if topic == defaultTopicKey {
-				allTopics = append(allTopics[:i], allTopics[i+1:]...)
-			}
-		}
 	}
 
 	// Parse kafka_topic (the actual Kafka topic to consume from)
@@ -171,8 +167,7 @@ func RegisterConfigSpec() *service.ConfigSpec {
 	Cannot be used together with 'umh_topics'.
 		`).
 			Example("umh.v1.acme.berlin.assembly.temperature").
-			Example(`umh\.v1\..+`).
-			Default(defaultTopicKey)).
+			Example(`umh\.v1\..+`).Optional()).
 		Field(service.NewStringListField("umh_topics").
 			Description(`
 	List of keys used to filter the messages. Each value in the 'umh_topics' list will be used to compare against the message key in kafka. The 'umh_topics' field allows regular expressions which should be compatible with RE2 regex engine.
@@ -191,14 +186,14 @@ func RegisterConfigSpec() *service.ConfigSpec {
 		`).
 			Example("umh.v1.acme.berlin.assembly.temperature").
 			Example(`umh\.v1\..+`).
-			Default(defaultTopicKey).
+			Optional().
 			Advanced()).
 		Field(service.NewStringField("kafka_topic").
 			Description(`
 	The input kafka topic to read messages from. By default the messages will be consumed from 'umh.messages' topic.
 			`).
 			Example("umh.messages").
-			Default(defaultInputKafkaTopic)).
+			Optional()).
 		Field(service.NewStringField("broker_address").
 			Description(`
 The Kafka broker address to connect to. This can be a single address or multiple addresses
