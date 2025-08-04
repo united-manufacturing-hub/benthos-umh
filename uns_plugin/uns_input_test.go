@@ -334,7 +334,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 			When("specific topic filter is applied", func() {
 				BeforeEach(func() {
 					inputConfig := UnsInputConfig{
-						umhTopics:       []string{"umh\\.v1\\.acme\\.berlin\\.assembly\\.temperature"},
+						umhTopics:       []string{`umh\.v1\.acme\.berlin\.assembly\.temperature`},
 						inputKafkaTopic: defaultInputKafkaTopic,
 						brokerAddress:   defaultBrokerAddress,
 						consumerGroup:   defaultConsumerGroup,
@@ -361,9 +361,9 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 				BeforeEach(func() {
 					inputConfig := UnsInputConfig{
 						umhTopics: []string{
-							"umh\\.v1\\.acme\\.berlin\\.assembly\\.temperature",
-							"umh\\.v1\\.acme\\.munich\\..*",
-							"umh\\.v1\\.example\\..*\\.status",
+							`umh\.v1\.acme\.berlin\.assembly\.temperature`,
+							`umh\.v1\.acme\.munich\..*`,
+							`umh\.v1\.example\..*\.status`,
 						},
 						inputKafkaTopic: defaultInputKafkaTopic,
 						brokerAddress:   defaultBrokerAddress,
@@ -520,5 +520,208 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 			})
 		})
+
+		When("filtering _mitarbeiter vs _maschine topics", func() {
+			BeforeEach(func() {
+				// Test the specific regex pattern from the user's issue
+				inputConfig := UnsInputConfig{
+					umhTopics:       []string{`^umh\.v1\.umh-ep(?:\.[^._][^.]*)+\._mitarbeiter\.[^._][^.]*$`},
+					inputKafkaTopic: defaultInputKafkaTopic,
+					brokerAddress:   defaultBrokerAddress,
+					consumerGroup:   defaultConsumerGroup,
+				}
+				resources = service.MockResources()
+				var err error
+				inputPlugin, err = NewUnsInput(mockClient, inputConfig, resources.Logger(), resources.Metrics())
+				Expect(err).To(BeNil())
+				unsClient = inputPlugin.(*UnsInput)
+
+				// Set up mock with both _mitarbeiter and _maschine topics
+				mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
+					records := []*kgo.Record{
+						{
+							Key:   []byte("umh.v1.umh-ep.1000.000902._mitarbeiter.setzeStatus"), // Should match
+							Value: []byte(`{"value": "active"}`),
+							Topic: "umh.messages",
+						},
+						{
+							Key:   []byte("umh.v1.umh-ep.1000.000902._maschine.setzeStatus"), // Should NOT match
+							Value: []byte(`{"value": "running"}`),
+							Topic: "umh.messages",
+						},
+						{
+							Key:   []byte("umh.v1.umh-ep.1000.000865._mitarbeiter.status"), // Should match
+							Value: []byte(`{"value": "present"}`),
+							Topic: "umh.messages",
+						},
+						{
+							Key:   []byte("umh.v1.umh-ep.1000.000865._maschine.setzeStatus"), // Should NOT match
+							Value: []byte(`{"value": "idle"}`),
+							Topic: "umh.messages",
+						},
+						{
+							Key:   []byte("umh.v1.other.1000.000902._mitarbeiter.status"), // Should NOT match (different prefix)
+							Value: []byte(`{"value": "away"}`),
+							Topic: "umh.messages",
+						},
+					}
+					return &MockFetches{
+						empty:   false,
+						records: records,
+					}
+				})
+			})
+
+			It("should only return _mitarbeiter topics and filter out _maschine topics", func() {
+				batch, _, err := inputPlugin.ReadBatch(ctx)
+				Expect(err).To(BeNil())
+				Expect(batch).NotTo(BeNil())
+				Expect(len(batch)).To(Equal(2), "Should only match 2 _mitarbeiter topics")
+
+				// Verify only _mitarbeiter topics are returned
+				expectedKeys := []string{
+					"umh.v1.umh-ep.1000.000902._mitarbeiter.setzeStatus",
+					"umh.v1.umh-ep.1000.000865._mitarbeiter.status",
+				}
+
+				actualKeys := make([]string, len(batch))
+				for i, msg := range batch {
+					key, ok := msg.MetaGet("kafka_msg_key")
+					Expect(ok).To(BeTrue())
+					actualKeys[i] = key
+					// Ensure no _maschine topics are present
+					Expect(key).NotTo(ContainSubstring("_maschine"))
+					Expect(key).To(ContainSubstring("_mitarbeiter"))
+				}
+
+				Expect(actualKeys).To(ConsistOf(expectedKeys))
+			})
+		})
 	})
+})
+
+var _ = Describe("MessageProcessor regex filtering", Label("message_processor"), func() {
+	var (
+		processor *MessageProcessor
+		metrics   *UnsInputMetrics
+		record    *kgo.Record
+	)
+
+	BeforeEach(func() {
+		resources := service.MockResources()
+		metrics = NewUnsInputMetrics(resources.Metrics())
+	})
+
+	Context("when testing _mitarbeiter vs _maschine topic filtering", func() {
+		BeforeEach(func() {
+			// Create processor with the specific regex pattern
+			var err error
+			processor, err = NewMessageProcessor(
+				[]string{`^umh\.v1\.umh-ep(?:\.[^._][^.]*)+\._mitarbeiter\.[^._][^.]*$`},
+				metrics,
+			)
+			Expect(err).To(BeNil())
+		})
+
+		It("should match _mitarbeiter topics", func() {
+			testCases := []struct {
+				key         string
+				shouldMatch bool
+				description string
+			}{
+				{
+					key:         "umh.v1.umh-ep.1000.000902._mitarbeiter.setzeStatus",
+					shouldMatch: true,
+					description: "_mitarbeiter topic should match",
+				},
+				{
+					key:         "umh.v1.umh-ep.1000.000865._mitarbeiter.status",
+					shouldMatch: true,
+					description: "_mitarbeiter topic with different ID should match",
+				},
+				{
+					key:         "umh.v1.umh-ep.plant1.area2._mitarbeiter.action",
+					shouldMatch: true,
+					description: "_mitarbeiter topic with different hierarchy should match",
+				},
+			}
+
+			for _, tc := range testCases {
+				record = &kgo.Record{
+					Key:   []byte(tc.key),
+					Value: []byte(`{"test": "value"}`),
+					Topic: "umh.messages",
+				}
+
+				msg := processor.ProcessRecord(record)
+				if tc.shouldMatch {
+					Expect(msg).NotTo(BeNil(), "Expected %s to match but got nil", tc.description)
+					umhTopic, exists := msg.MetaGet("umh_topic")
+					Expect(exists).To(BeTrue())
+					Expect(umhTopic).To(Equal(tc.key))
+				} else {
+					Expect(msg).To(BeNil(), "Expected %s to not match but got message", tc.description)
+				}
+			}
+		})
+
+		It("should NOT match _maschine topics", func() {
+			testCases := []struct {
+				key         string
+				shouldMatch bool
+				description string
+			}{
+				{
+					key:         "umh.v1.umh-ep.1000.000902._maschine.setzeStatus",
+					shouldMatch: false,
+					description: "_maschine topic should NOT match",
+				},
+				{
+					key:         "umh.v1.umh-ep.1000.000865._maschine.setzeStatus",
+					shouldMatch: false,
+					description: "_maschine topic with different ID should NOT match",
+				},
+				{
+					key:         "umh.v1.umh-ep.plant1.area2._maschine.action",
+					shouldMatch: false,
+					description: "_maschine topic with different hierarchy should NOT match",
+				},
+			}
+
+			for _, tc := range testCases {
+				record = &kgo.Record{
+					Key:   []byte(tc.key),
+					Value: []byte(`{"test": "value"}`),
+					Topic: "umh.messages",
+				}
+
+				msg := processor.ProcessRecord(record)
+				if tc.shouldMatch {
+					Expect(msg).NotTo(BeNil(), "Expected %s to match but got nil", tc.description)
+				} else {
+					Expect(msg).To(BeNil(), "Expected %s to not match but got message", tc.description)
+				}
+			}
+		})
+
+		It("should NOT match topics with wrong prefix", func() {
+			testCases := []string{
+				"umh.v1.other.1000.000902._mitarbeiter.status",        // Wrong prefix
+				"umh.v2.umh-ep.1000.000902._mitarbeiter.status",       // Wrong version
+				"different.v1.umh-ep.1000.000902._mitarbeiter.status", // Wrong namespace
+			}
+
+			for _, key := range testCases {
+				record = &kgo.Record{
+					Key:   []byte(key),
+					Value: []byte(`{"test": "value"}`),
+					Topic: "umh.messages",
+				}
+
+				msg := processor.ProcessRecord(record)
+				Expect(msg).To(BeNil(), "Expected %s to not match but got message", key)
+			}
+		})
+	})
+
 })
