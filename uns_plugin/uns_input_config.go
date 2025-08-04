@@ -109,6 +109,15 @@ func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsIn
 		return config, fmt.Errorf("no topics found in the plugin's config: specify at least one of 'umh_topic', 'umh_topics' or 'topic' fields")
 	}
 
+	// If we have more then 1 allTopics, we will remove the .* (defaultTopicKey) from the list
+	if len(allTopics) > 1 {
+		for i, topic := range allTopics {
+			if topic == defaultTopicKey {
+				allTopics = append(allTopics[:i], allTopics[i+1:]...)
+			}
+		}
+	}
+
 	// Parse kafka_topic (the actual Kafka topic to consume from)
 	if conf.Contains("kafka_topic") {
 		inputKafkaTopic, err := conf.FieldString("kafka_topic")
