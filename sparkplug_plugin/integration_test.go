@@ -876,6 +876,266 @@ logger:
 			}
 		})
 
+		It("should handle three-mode system correctly", func() {
+			By("Testing secondary_passive, secondary_active, and primary modes")
+
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			// Generate unique group ID for this test
+			uniqueGroupID := fmt.Sprintf("ThreeMode-%d-%s", GinkgoParallelProcess(), uuid.New().String()[:8])
+
+			// Monitor client to track messages
+			monitorOpts := mqtt.NewClientOptions()
+			monitorOpts.AddBroker(brokerURL)
+			monitorOpts.SetClientID(fmt.Sprintf("test-monitor-%d-%s", GinkgoParallelProcess(), uuid.New().String()[:8]))
+			monitorClient := mqtt.NewClient(monitorOpts)
+			token := monitorClient.Connect()
+			Expect(token.Wait()).To(BeTrue())
+			Expect(token.Error()).NotTo(HaveOccurred())
+			defer monitorClient.Disconnect(250)
+
+			// Track messages
+			rebirthCommandsSent := make(chan string, 10)
+			stateMessagesReceived := make(chan string, 10)
+
+			// Subscribe to NCMD and DCMD (rebirth commands)
+			token = monitorClient.Subscribe(fmt.Sprintf("spBv1.0/%s/NCMD/+", uniqueGroupID), 1, func(client mqtt.Client, msg mqtt.Message) {
+				fmt.Printf("📥 NCMD received on topic: %s\n", msg.Topic())
+				rebirthCommandsSent <- msg.Topic()
+			})
+			Expect(token.Wait()).To(BeTrue())
+
+			token = monitorClient.Subscribe(fmt.Sprintf("spBv1.0/%s/DCMD/+/+", uniqueGroupID), 1, func(client mqtt.Client, msg mqtt.Message) {
+				fmt.Printf("📥 DCMD received on topic: %s\n", msg.Topic())
+				rebirthCommandsSent <- msg.Topic()
+			})
+			Expect(token.Wait()).To(BeTrue())
+
+			// Subscribe to STATE messages
+			token = monitorClient.Subscribe("spBv1.0/STATE/+", 1, func(client mqtt.Client, msg mqtt.Message) {
+				fmt.Printf("📥 STATE received: %s = %s\n", msg.Topic(), string(msg.Payload()))
+				stateMessagesReceived <- string(msg.Payload())
+			})
+			Expect(token.Wait()).To(BeTrue())
+
+			By("Testing secondary_passive mode (no rebirth commands)")
+
+			// Secondary Passive config
+			passiveConfig := fmt.Sprintf(`
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["%s"]
+      client_id: "test-passive-%d-%s"
+    identity:
+      group_id: "%s"
+    role: "secondary_passive"
+output:
+  drop: {}
+`, brokerURL, GinkgoParallelProcess(), uuid.New().String()[:8], uniqueGroupID)
+
+			passiveBuilder := service.NewStreamBuilder()
+			err := passiveBuilder.SetYAML(passiveConfig)
+			Expect(err).NotTo(HaveOccurred())
+
+			passiveStream, err := passiveBuilder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			passiveDone := make(chan error, 1)
+			go func() {
+				passiveDone <- passiveStream.Run(ctx)
+			}()
+
+			// Wait for connection
+			time.Sleep(2 * time.Second)
+
+			// First send a BIRTH message to establish sequence
+			birthPayload := &sparkplugb.Payload{
+				Timestamp: uint64Ptr(uint64(time.Now().UnixMilli())),
+				Seq:       uint64Ptr(0), // Initial sequence
+				Metrics: []*sparkplugb.Payload_Metric{
+					{
+						Name:     stringPtr("test"),
+						Datatype: uint32Ptr(10), // Double
+						Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1.0},
+					},
+				},
+			}
+
+			birthBytes, err := proto.Marshal(birthPayload)
+			Expect(err).NotTo(HaveOccurred())
+
+			birthTopic := fmt.Sprintf("spBv1.0/%s/DBIRTH/TestNode/TestDevice", uniqueGroupID)
+			token = monitorClient.Publish(birthTopic, 1, false, birthBytes)
+			Expect(token.Wait()).To(BeTrue())
+
+			// Wait for BIRTH to be processed
+			time.Sleep(1 * time.Second)
+
+			// Now simulate sequence error by publishing DDATA with wrong sequence
+			testPayload := &sparkplugb.Payload{
+				Timestamp: uint64Ptr(uint64(time.Now().UnixMilli())),
+				Seq:       uint64Ptr(99), // Wrong sequence (should be 1)
+				Metrics: []*sparkplugb.Payload_Metric{
+					{
+						Name:     stringPtr("test"),
+						Datatype: uint32Ptr(10), // Double
+						Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 42.0},
+					},
+				},
+			}
+
+			dataBytes, err := proto.Marshal(testPayload)
+			Expect(err).NotTo(HaveOccurred())
+
+			topic := fmt.Sprintf("spBv1.0/%s/DDATA/TestNode/TestDevice", uniqueGroupID)
+			token = monitorClient.Publish(topic, 1, false, dataBytes)
+			Expect(token.Wait()).To(BeTrue())
+
+			// Verify NO rebirth command sent
+			select {
+			case cmd := <-rebirthCommandsSent:
+				Fail(fmt.Sprintf("Secondary passive should not send rebirth commands, but sent to: %s", cmd))
+			case <-time.After(3 * time.Second):
+				fmt.Printf("✅ Secondary passive correctly suppressed rebirth command\n")
+			}
+
+			// Verify NO STATE message
+			select {
+			case state := <-stateMessagesReceived:
+				Fail(fmt.Sprintf("Secondary passive should not publish STATE, but published: %s", state))
+			case <-time.After(1 * time.Second):
+				fmt.Printf("✅ Secondary passive correctly did not publish STATE\n")
+			}
+
+			// Stop passive stream
+			cancel()
+			select {
+			case <-passiveDone:
+			case <-time.After(5 * time.Second):
+			}
+
+			By("Testing secondary_active mode (sends rebirth commands)")
+
+			ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel2()
+
+			// Secondary Active config
+			activeConfig := fmt.Sprintf(`
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["%s"]
+      client_id: "test-active-%d-%s"
+    identity:
+      group_id: "%s"
+    role: "secondary_active"
+output:
+  drop: {}
+`, brokerURL, GinkgoParallelProcess(), uuid.New().String()[:8], uniqueGroupID)
+
+			activeBuilder := service.NewStreamBuilder()
+			err = activeBuilder.SetYAML(activeConfig)
+			Expect(err).NotTo(HaveOccurred())
+
+			activeStream, err := activeBuilder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			activeDone := make(chan error, 1)
+			go func() {
+				activeDone <- activeStream.Run(ctx2)
+			}()
+
+			// Wait for connection
+			time.Sleep(2 * time.Second)
+
+			// Send BIRTH message again to establish sequence for secondary_active
+			token = monitorClient.Publish(birthTopic, 1, false, birthBytes)
+			Expect(token.Wait()).To(BeTrue())
+
+			// Wait for BIRTH to be processed
+			time.Sleep(1 * time.Second)
+
+			// Publish DDATA with wrong sequence again
+			token = monitorClient.Publish(topic, 1, false, dataBytes)
+			Expect(token.Wait()).To(BeTrue())
+
+			// Verify rebirth command IS sent
+			select {
+			case cmd := <-rebirthCommandsSent:
+				fmt.Printf("✅ Secondary active correctly sent rebirth command to: %s\n", cmd)
+				Expect(cmd).To(Or(ContainSubstring("/NCMD/"), ContainSubstring("/DCMD/")))
+			case <-time.After(5 * time.Second):
+				Fail("Secondary active should send rebirth command on sequence error")
+			}
+
+			// Verify NO STATE message
+			select {
+			case state := <-stateMessagesReceived:
+				Fail(fmt.Sprintf("Secondary active should not publish STATE, but published: %s", state))
+			case <-time.After(1 * time.Second):
+				fmt.Printf("✅ Secondary active correctly did not publish STATE\n")
+			}
+
+			// Stop active stream
+			cancel2()
+			select {
+			case <-activeDone:
+			case <-time.After(5 * time.Second):
+			}
+
+			By("Testing primary mode (publishes STATE)")
+
+			ctx3, cancel3 := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel3()
+
+			// Primary config
+			primaryConfig := fmt.Sprintf(`
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["%s"]
+      client_id: "test-primary-%d-%s"
+    identity:
+      group_id: "%s"
+      edge_node_id: "TestPrimary"
+    role: "primary"
+output:
+  drop: {}
+`, brokerURL, GinkgoParallelProcess(), uuid.New().String()[:8], uniqueGroupID)
+
+			primaryBuilder := service.NewStreamBuilder()
+			err = primaryBuilder.SetYAML(primaryConfig)
+			Expect(err).NotTo(HaveOccurred())
+
+			primaryStream, err := primaryBuilder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			primaryDone := make(chan error, 1)
+			go func() {
+				primaryDone <- primaryStream.Run(ctx3)
+			}()
+
+			// Verify STATE ONLINE message
+			select {
+			case state := <-stateMessagesReceived:
+				fmt.Printf("✅ Primary mode published STATE: %s\n", state)
+				Expect(state).To(Equal("ONLINE"))
+			case <-time.After(5 * time.Second):
+				Fail("Primary mode should publish STATE ONLINE on connect")
+			}
+
+			// Stop primary stream
+			cancel3()
+			select {
+			case <-primaryDone:
+			case <-time.After(5 * time.Second):
+			}
+
+			fmt.Printf("✅ Three-mode system test completed successfully\n")
+		})
+
 		It("should handle multiple edge nodes publishing to same broker", func() {
 			By("Testing multi-edge node scenario")
 

@@ -12,7 +12,7 @@ This input plugin is designed to seamlessly integrate Sparkplug-enabled edge dev
 
 UMH implements a **Modified Parris Method** that distributes hierarchy across both `device_id` and `metric_name` fields instead of cramming everything into `GroupID`. This approach provides significant advantages for multi-site deployments (e.g., a single UMH instance can ingest data from multiple sites):
 
-**Key Innovation**: 
+**Key Innovation**:
 - **Location Hierarchy** → `device_id`: `"enterprise.site.area.line"` → `"enterprise:site:area:line"`
 - **Virtual Path Hierarchy** → `metric_name`: `"motor.diagnostics" + "temperature"` → `"motor:diagnostics:temperature"`
 
@@ -61,12 +61,12 @@ processing:
     - tag_processor:
         defaults: |
           # msg.meta.location_path = "..."; # automatic from the device_id (see also output plugin)
-          # msg.meta.virtual_path = "..."; # automatic from the metric name (see also output plugin)  
+          # msg.meta.virtual_path = "..."; # automatic from the metric name (see also output plugin)
           # msg.meta.tag_name = "..."; # automatic from the metric name (see also output plugin)
 
           # For Sparkplug B input data, use _raw data contract
           msg.meta.data_contract = "_raw";
-          
+
           # Note: UMH conversion will use this data contract
           # Common options: "_raw", "_historian", "_sparkplug"
 
@@ -84,7 +84,7 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 
 **Input Sparkplug B Message:**
 - **Topic**: `spBv1.0/FactoryA/DDATA/EdgeNode1/enterprise:factory:line1:station1`
-- **Metric Name**: `sensors:ambient:temperature` 
+- **Metric Name**: `sensors:ambient:temperature`
 - **Payload**: Protobuf with metric alias, value 23.5, timestamp
 
 **↓ Results in Structured JSON Message:**
@@ -102,7 +102,7 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 ```json
 {
   "spb_group_id": "FactoryA",
-  "spb_edge_node_id": "EdgeNode1", 
+  "spb_edge_node_id": "EdgeNode1",
   "spb_device_id": "enterprise:factory:line1:station1",
   "spb_metric_name": "sensors:ambient:temperature",
   "spb_message_type": "DDATA",
@@ -300,11 +300,11 @@ input:
       group_id: "FactoryA"
       edge_node_id: "CustomHost"  # Optional for secondary modes
     mode: "secondary_passive"
-    
+
     # Advanced options (usually not needed)
     subscription:
       groups: ["GroupA", "GroupB"]  # Specific groups instead of all
-    
+
     # Future options (planned):
     # include_data_contract_in_device_id: true  # Add data contract to device ID
 ```
@@ -325,13 +325,13 @@ spBv1.0/STATE/<host_id>
 
 #### Multiple Instance Support
 
-**`secondary_passive` mode (default)**: 
+**`secondary_passive` mode (default)**:
 ✅ **Safe for multiple instances** - No STATE conflicts, no rebirth storms, load balancing friendly
 
-**`secondary_active` mode**: 
+**`secondary_active` mode**:
 ✅ **Can run multiple instances** - But be aware of potential rebirth storms
 
-**`primary` mode**: 
+**`primary` mode**:
 ⚠️ **Single instance only** - Publishes STATE messages for host arbitration
 
 ### Metadata Enrichment
@@ -367,7 +367,7 @@ These fields provide additional Sparkplug context and are primarily for debuggin
 #### Special Message Types
 
 For STATE messages, the plugin sets:
-* `event_type`: "state_change" 
+* `event_type`: "state_change"
 * `node_state`: The state value ("ONLINE" or "OFFLINE")
 
 For NDEATH/DDEATH messages, the plugin sets:

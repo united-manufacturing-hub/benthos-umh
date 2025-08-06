@@ -50,16 +50,17 @@ func init() {
 	inputSpec := service.NewConfigSpec().
 		Version("2.0.0").
 		Summary("Sparkplug B MQTT input with idiomatic configuration").
-		Description(`A Sparkplug B input plugin with Host-only roles (Sparkplug B specification compliant):
+		Description(`A Sparkplug B input plugin with three Host modes:
 
-SPARKPLUG B HOST ROLES:
-- Secondary Host (default): Read-only, safe for brownfield deployments, no STATE publishing
-- Primary Host (opt-in): Publishes STATE messages, tracks sequences, issues rebirth commands
+SPARKPLUG B HOST MODES:
+- secondary_passive (default): Read-only consumer, no rebirth commands, safe for brownfield
+- secondary_active: Active consumer, sends rebirth commands, no STATE publishing
+- primary: Full Primary Host with STATE publishing and session management
 
 Key features:
-- Clean configuration structure with mqtt/identity/subscription/behaviour sections
-- Specification-compliant Host-only roles (input plugins cannot be Edge Nodes)
-- Automatic STATE topic management with LWT (Primary Host only)
+- Three-mode system for different deployment scenarios
+- Safe default mode prevents rebirth storms
+- Automatic STATE topic management with LWT (Primary mode only)
 - Sequence number validation and rebirth coordination
 - Alias resolution using BIRTH message metadata
 - Configurable message processing (splitting, extraction, filtering)
@@ -115,8 +116,8 @@ Key features:
 			Description("Sparkplug identity configuration")).
 		// Role Configuration
 		Field(service.NewStringField("role").
-			Description("Sparkplug Host role: 'host' (Secondary Host, default) or 'primary' (Primary Host)").
-			Default("host")).
+			Description("Sparkplug Host mode: 'secondary_passive' (default), 'secondary_active', or 'primary'").
+			Default("secondary_passive")).
 		// Subscription Configuration
 		Field(service.NewObjectField("subscription",
 			service.NewStringListField("groups").
@@ -170,6 +171,7 @@ type sparkplugInput struct {
 	birthsProcessed   *service.MetricCounter
 	deathsProcessed   *service.MetricCounter
 	rebirthsRequested *service.MetricCounter
+	rebirthsSuppressed *service.MetricCounter
 	sequenceErrors    *service.MetricCounter
 	aliasResolutions  *service.MetricCounter
 }
@@ -250,14 +252,16 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 		return nil, fmt.Errorf("failed to parse role: %w", err)
 	}
 
-	// Only support new role names (no backward compatibility)
+	// Parse role into three-mode system
 	switch roleStr {
-	case "host":
-		config.Role = RoleSecondaryHost
+	case "secondary_passive":
+		config.Role = RoleSecondaryPassive
+	case "secondary_active":
+		config.Role = RoleSecondaryActive
 	case "primary":
 		config.Role = RolePrimaryHost
 	default:
-		return nil, fmt.Errorf("invalid role '%s': must be 'host' (Secondary Host) or 'primary' (Primary Host)", roleStr)
+		return nil, fmt.Errorf("invalid role '%s': must be 'secondary_passive' (default), 'secondary_active', or 'primary'", roleStr)
 	}
 
 	// Parse subscription section using namespace (optional)
@@ -298,6 +302,7 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 		birthsProcessed:   mgr.Metrics().NewCounter("births_processed"),
 		deathsProcessed:   mgr.Metrics().NewCounter("deaths_processed"),
 		rebirthsRequested: mgr.Metrics().NewCounter("rebirths_requested"),
+		rebirthsSuppressed: mgr.Metrics().NewCounter("rebirths_suppressed"),
 		sequenceErrors:    mgr.Metrics().NewCounter("sequence_errors"),
 		aliasResolutions:  mgr.Metrics().NewCounter("alias_resolutions"),
 	}
@@ -966,6 +971,13 @@ func (s *sparkplugInput) getDataTypeName(datatype uint32) string {
 }
 
 func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
+	// Check if role allows rebirth requests
+	if s.config.Role == RoleSecondaryPassive {
+		s.logger.Debugf("Rebirth request suppressed for device %s (secondary_passive mode)", deviceKey)
+		s.rebirthsSuppressed.Incr(1)
+		return
+	}
+	
 	if s.client == nil || !s.client.IsConnected() {
 		return
 	}

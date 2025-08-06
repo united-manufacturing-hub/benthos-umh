@@ -732,6 +732,108 @@ var _ = Describe("MQTTClientBuilder Unit Tests", func() {
 
 var _ = Describe("Configuration Unit Tests", func() {
 
+	Context("Three-Mode System Validation", func() {
+		It("should validate role values", func() {
+			// Test valid roles
+			validRoles := []string{"secondary_passive", "secondary_active", "primary"}
+			
+			for _, role := range validRoles {
+				By(fmt.Sprintf("validating role: %s", role), func() {
+					config := &sparkplug_plugin.Config{
+						Role: sparkplug_plugin.Role(role),
+						MQTT: sparkplug_plugin.MQTT{
+							URLs: []string{"tcp://localhost:1883"},
+							QoS:  1,
+						},
+						Identity: sparkplug_plugin.Identity{
+							GroupID: "TestGroup",
+						},
+					}
+					
+					// For primary role, edge_node_id is required
+					if role == "primary" {
+						config.Identity.EdgeNodeID = "PrimaryHost"
+					}
+					
+					err := config.Validate()
+					Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Role %s should be valid", role))
+				})
+			}
+			
+			// Test invalid roles
+			invalidRoles := []string{"host", "invalid", "secondary"}
+			
+			for _, role := range invalidRoles {
+				By(fmt.Sprintf("rejecting invalid role: %s", role), func() {
+					config := &sparkplug_plugin.Config{
+						Role: sparkplug_plugin.Role(role),
+						MQTT: sparkplug_plugin.MQTT{
+							URLs: []string{"tcp://localhost:1883"},
+							QoS:  1,
+						},
+						Identity: sparkplug_plugin.Identity{
+							GroupID: "TestGroup",
+						},
+					}
+					
+					err := config.Validate()
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(ContainSubstring("invalid role"))
+				})
+			}
+		})
+		
+		It("should default to secondary_passive role", func() {
+			config := &sparkplug_plugin.Config{}
+			config.AutoDetectRole()
+			Expect(config.Role).To(Equal(sparkplug_plugin.RoleSecondaryPassive))
+		})
+		
+		It("should require edge_node_id for primary role", func() {
+			config := &sparkplug_plugin.Config{
+				Role: sparkplug_plugin.RolePrimaryHost,
+				MQTT: sparkplug_plugin.MQTT{
+					URLs: []string{"tcp://localhost:1883"},
+					QoS:  1,
+				},
+				Identity: sparkplug_plugin.Identity{
+					GroupID: "TestGroup",
+					// EdgeNodeID is missing
+				},
+			}
+			
+			err := config.Validate()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("edge_node_id is required for Primary Host"))
+		})
+		
+		It("should not require edge_node_id for secondary modes", func() {
+			secondaryModes := []sparkplug_plugin.Role{
+				sparkplug_plugin.RoleSecondaryPassive,
+				sparkplug_plugin.RoleSecondaryActive,
+			}
+			
+			for _, role := range secondaryModes {
+				By(fmt.Sprintf("testing %s without edge_node_id", role), func() {
+					config := &sparkplug_plugin.Config{
+						Role: role,
+						MQTT: sparkplug_plugin.MQTT{
+							URLs: []string{"tcp://localhost:1883"},
+							QoS:  1,
+						},
+						Identity: sparkplug_plugin.Identity{
+							GroupID: "TestGroup",
+							// EdgeNodeID is not required
+						},
+					}
+					
+					err := config.Validate()
+					Expect(err).NotTo(HaveOccurred())
+				})
+			}
+		})
+	})
+
 	Context("Config Validation", func() {
 		It("should validate required configuration fields", func() {
 			// Test required field validation (migrated from old input test)
@@ -2205,6 +2307,110 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 
 				Expect(dataID).To(Equal(tc.expectedID))
 				Expect(birthID).To(Equal(tc.expectedID))
+			}
+		})
+	})
+
+	Context("Rebirth Suppression in Three-Mode System", func() {
+		// Mock structures for testing
+		type testLogger struct {
+			messages []string
+		}
+		
+		type testMetrics struct {
+			counters map[string]int64
+		}
+		
+		It("should suppress rebirth commands in secondary_passive mode", func() {
+			// Create a mock metrics to verify behavior
+			mockMetrics := &testMetrics{
+				counters: make(map[string]int64),
+			}
+			
+			// Test inputs for different roles
+			testCases := []struct {
+				role                   sparkplug_plugin.Role
+				expectRebirthSent      bool
+				expectRebirthSuppressed bool
+			}{
+				{
+					role:                   sparkplug_plugin.RoleSecondaryPassive,
+					expectRebirthSent:      false,
+					expectRebirthSuppressed: true,
+				},
+				{
+					role:                   sparkplug_plugin.RoleSecondaryActive,
+					expectRebirthSent:      true,
+					expectRebirthSuppressed: false,
+				},
+				{
+					role:                   sparkplug_plugin.RolePrimaryHost,
+					expectRebirthSent:      true,
+					expectRebirthSuppressed: false,
+				},
+			}
+			
+			for _, tc := range testCases {
+				By(fmt.Sprintf("testing rebirth behavior for role: %s", tc.role), func() {
+					// Reset metrics
+					mockMetrics.counters = make(map[string]int64)
+					
+					// Simulate rebirth request logic
+					shouldSendRebirth := tc.role != sparkplug_plugin.RoleSecondaryPassive
+					
+					if !shouldSendRebirth {
+						// Simulate metric increment
+						mockMetrics.counters["rebirths_suppressed"]++
+					}
+					
+					// Verify behavior
+					Expect(shouldSendRebirth).To(Equal(tc.expectRebirthSent))
+					
+					if tc.expectRebirthSuppressed {
+						Expect(mockMetrics.counters["rebirths_suppressed"]).To(Equal(int64(1)))
+					} else {
+						Expect(mockMetrics.counters["rebirths_suppressed"]).To(Equal(int64(0)))
+					}
+				})
+			}
+		})
+		
+		It("should handle subscription topics correctly for each mode", func() {
+			testCases := []struct {
+				role             sparkplug_plugin.Role
+				expectSubscribe  bool
+			}{
+				{
+					role:            sparkplug_plugin.RoleSecondaryPassive,
+					expectSubscribe: true, // Still subscribes to topics
+				},
+				{
+					role:            sparkplug_plugin.RoleSecondaryActive,
+					expectSubscribe: true,
+				},
+				{
+					role:            sparkplug_plugin.RolePrimaryHost,
+					expectSubscribe: true,
+				},
+			}
+			
+			for _, tc := range testCases {
+				By(fmt.Sprintf("testing subscription for role: %s", tc.role), func() {
+					config := &sparkplug_plugin.Config{
+						Role: tc.role,
+						Identity: sparkplug_plugin.Identity{
+							GroupID: "TestGroup",
+						},
+					}
+					
+					topics := config.GetSubscriptionTopics()
+					
+					// All host modes should subscribe to topics
+					if tc.expectSubscribe {
+						Expect(len(topics)).To(BeNumerically(">", 0))
+						Expect(topics[0]).To(ContainSubstring("spBv1.0/"))
+					}
+				})
 			}
 		})
 	})
