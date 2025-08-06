@@ -54,5 +54,6 @@ header:
     - 'cover.profile'
     - 'topic_browser_plugin/testing/sample_output.txt'
     - 'topic_browser_plugin/testing/sample_output_small.txt'
+    - 'stream_processor_plugin/docs/diagrams/processing_flow.*'
 
   comment: never

@@ -52,26 +52,26 @@
 //  1. Full emission: Complete topic map + latest events from all active topics
 //  2. No emission: No messages processed and emit_interval not elapsed
 //
-// # LZ4 COMPRESSION STRATEGY (MEMORY-OPTIMIZED)
+// # PROTOBUF SERIALIZATION STRATEGY
 //
-// The plugin uses **optimized block-based LZ4 compression** for all payloads:
+// The plugin uses **direct protobuf serialization** for all payloads:
 //
-// ## Compression Strategy:
-//   - All protobuf payloads are LZ4 block-compressed (memory-optimized)
-//   - No size threshold - compression applied universally
-//   - Block compression API eliminates 32MB+ internal buffer pool allocations
-//   - Uses sync.Pool for reusable compression buffers to minimize GC pressure
-//   - Downstream consumers always expect LZ4 format
+// ## Serialization Strategy:
+//   - All payloads are serialized directly to protobuf format
+//   - No compression overhead for faster processing
+//   - Optimized for small to medium UMH payloads
+//   - Simplified data pipeline without compression/decompression steps
+//   - Downstream consumers parse protobuf directly
 //
 // ## Performance Benefits:
-//   - **65% heap reduction**: Eliminates LZ4 streaming API's internal buffer pools
-//   - **93% GC reduction**: sync.Pool reuses buffers instead of constant allocation
-//   - **Memory efficiency**: Block compression optimized for discrete message compression
-//   - **Same compression ratio**: Maintains 84%+ compression efficiency
+//   - **Reduced CPU overhead**: No compression/decompression cycles
+//   - **Lower memory usage**: No compression buffer allocations
+//   - **Simplified processing**: Direct protobuf parsing
+//   - **Faster throughput**: Optimized for high-frequency small payloads
 //
-// ## Compression Detection:
-//   - Downstream consumers detect LZ4 via magic number: [0x04, 0x22, 0x4d, 0x18]
-//   - See BundleToProtobufBytes() for optimized block compression implementation
+// ## Data Format:
+//   - Downstream consumers receive uncompressed protobuf data
+//   - See BundleToProtobufBytes() for direct serialization implementation
 //
 // # EDGE CASE HANDLING
 //
@@ -90,15 +90,15 @@
 //
 // ## Network and Serialization Edge Cases:
 //  1. **Protobuf Marshaling Failures**: Error returned, no partial data emitted
-//  2. **LZ4 Block Compression Failures**: Error returned, prevents data corruption
-//  3. **Very Large Payloads**: Block LZ4 compression reduces from ~5MB to ~750KB with minimal memory overhead
+//  2. **Serialization Failures**: Error returned, prevents data corruption
+//  3. **Very Large Payloads**: Direct protobuf serialization handles multi-megabyte payloads efficiently
 //
 // # OUTPUT FORMAT SPECIFICATION
 //
 // The final output uses a specific wire format for umh-core consumption:
 //
 //	STARTSTARTSTART
-//	<hex-encoded-protobuf-or-lz4-data>
+//	<hex-encoded-protobuf-data>
 //	ENDDATAENDDATAENDDATA
 //	<unix-timestamp-ms>
 //	ENDENDENDEND

@@ -17,6 +17,7 @@ package uns_plugin
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -28,11 +29,26 @@ type MessageProcessor struct {
 	metrics    *UnsInputMetrics
 }
 
-// NewMessageProcessor creates a new MessageProcessor with the specified topic regex
-func NewMessageProcessor(topicPattern string, metrics *UnsInputMetrics) (*MessageProcessor, error) {
-	topicRegex, err := regexp.Compile(topicPattern)
+// NewMessageProcessor creates a new MessageProcessor with the specified topic regex patterns
+func NewMessageProcessor(topicPatterns []string, metrics *UnsInputMetrics) (*MessageProcessor, error) {
+	if len(topicPatterns) == 0 {
+		return nil, fmt.Errorf("at least one topic pattern must be provided")
+	}
+
+	// Combine all patterns into one: (?:pattern1)|(?:pattern2)|(?:pattern3)
+	wrappedPatterns := make([]string, len(topicPatterns))
+	for i, pattern := range topicPatterns {
+		// Validate individual pattern first
+		if _, err := regexp.Compile(pattern); err != nil {
+			return nil, fmt.Errorf("invalid regex pattern at index %d: %s - %v", i, pattern, err)
+		}
+		wrappedPatterns[i] = fmt.Sprintf("(?:%s)", pattern)
+	}
+	combinedPattern := strings.Join(wrappedPatterns, "|")
+
+	topicRegex, err := regexp.Compile(combinedPattern)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to compile combined regex pattern: %v", err)
 	}
 
 	return &MessageProcessor{
@@ -41,11 +57,12 @@ func NewMessageProcessor(topicPattern string, metrics *UnsInputMetrics) (*Messag
 	}, nil
 }
 
-// ProcessRecord processes a single Kafka record and returns a Benthos message if it matches the topic regex
-// Returns nil if the record doesn't match the topic regex
+// ProcessRecord processes a single Kafka record and returns a Benthos message if it matches any of the topic regexes
+// Returns nil if the record doesn't match any topic regex
 func (p *MessageProcessor) ProcessRecord(record *kgo.Record) *service.Message {
 	p.metrics.LogRecordReceived()
 
+	// Check if the record key matches the combined topic regex
 	if !p.topicRegex.Match(record.Key) {
 		return nil
 	}
@@ -62,7 +79,7 @@ func (p *MessageProcessor) ProcessRecord(record *kgo.Record) *service.Message {
 	// Add kafka meta fields
 	msg.MetaSetMut("kafka_msg_key", record.Key)
 	msg.MetaSetMut("kafka_topic", record.Topic)
-	msg.MetaSetMut("umh_topic", record.Key) // UMH topic structure from Kafka message key (e.g., "umh.v1.enterprise.plant1._historian.temperature")
+	msg.MetaSetMut("umh_topic", string(record.Key)) // UMH topic structure from Kafka message key (e.g., "umh.v1.enterprise.plant1._historian.temperature")
 
 	// Add Kafka timestamp (when the record was written to Kafka) - this is used by the topic browser for ProducedAtMs
 	msg.MetaSetMut("kafka_timestamp_ms", fmt.Sprintf("%d", record.Timestamp.UnixMilli()))
