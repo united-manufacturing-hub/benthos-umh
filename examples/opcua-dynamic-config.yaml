@@ -1,0 +1,107 @@
+# Example of using InterpolatedStringField in OPC UA plugin
+# This demonstrates dynamic configuration capabilities
+
+input:
+  # Read from a source that provides node IDs and credentials
+  generate:
+    interval: "5s"
+    count: 0
+    mapping: |
+      # Simulate receiving different node IDs dynamically
+      root.nodeId = if random_int() % 2 == 0 {
+        "ns=2;s=[default]/PaintRoom1/Spraytan1/Color"
+      } else {
+        "ns=2;s=[default]/PaintRoom1/CarsPainted"
+      }
+      root.value = "Value_" + timestamp_unix().string()
+      root.dataType = "String"
+
+      # Set OPC credentials as metadata (could come from secure store)
+      meta set("opc_user", "admin")
+      meta set("opc_pass", "password123")
+
+pipeline:
+  processors:
+    - label: "Log the dynamic configuration"
+      stdout:
+        codec: lines
+
+output:
+  opcua:
+    endpoint: "opc.tcp://localhost:4840"
+    
+    # Dynamic credentials from environment variables or metadata
+    username: "${! env(\"OPC_USERNAME\").or(meta(\"opc_user\")) }"
+    password: "${! env(\"OPC_PASSWORD\").or(meta(\"opc_pass\")) }"
+    
+    securityPolicy: None
+    
+    # Dynamic node mapping based on message content
+    nodeMappings:
+      - nodeId: "${! json(\"nodeId\") }"          # Dynamic node ID from message
+        valueFrom: "value"                        # Field in message containing the value
+        dataType: "${! json(\"dataType\") }"      # Dynamic data type from message
+    
+    handshake:
+      enabled: true
+      readbackTimeoutMs: 2000
+
+---
+
+# Alternative example: Writing to multiple dynamic nodes
+input:
+  sparkplug_b:
+    broker:
+      inputs:
+        - mqtt:
+            urls:
+              - "tcp://localhost:1883"
+            topics:
+              - "spBv1.0/+/DCMD/+/+"
+            client_id: "benthos-opc-writer"
+
+pipeline:
+  processors:
+    - label: "Map Sparkplug commands to OPC writes"
+      mapping: |
+        # Extract node ID from Sparkplug metric name
+        let metric_name = this.metrics.0.name
+        
+        # Map metric names to OPC node IDs dynamically
+        root.nodeId = match $metric_name {
+          "Color" => "ns=2;s=[default]/PaintRoom1/Spraytan1/Color",
+          "Speed" => "ns=2;s=[default]/PaintRoom1/Spraytan1/Speed",
+          "Temperature" => "ns=2;s=[default]/PaintRoom1/Spraytan1/Temperature",
+          _ => deleted()
+        }
+        
+        root.value = this.metrics.0.value
+        root.dataType = match this.metrics.0.datatype {
+          12 => "String",    # String type in Sparkplug
+          3 => "Int32",      # Int32 type in Sparkplug
+          9 => "Double",     # Double type in Sparkplug
+          _ => "String"      # Default to String
+        }
+
+output:
+  switch:
+    - check: this.exists("nodeId")
+      output:
+        opcua:
+          endpoint: "opc.tcp://ignition:62541"
+          securityPolicy: None
+          
+          # Use environment variables for credentials
+          username: "${! env(\"OPC_USER\").or(\"\") }"
+          password: "${! env(\"OPC_PASS\").or(\"\") }"
+          
+          nodeMappings:
+            - nodeId: "${! json(\"nodeId\") }"
+              valueFrom: "value"
+              dataType: "${! json(\"dataType\") }"
+          
+          handshake:
+            enabled: true
+    
+    - output:
+        reject: "No valid OPC node mapping found"
