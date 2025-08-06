@@ -18,11 +18,10 @@ import (
 	"math"
 	"runtime"
 	"sync"
-	"syscall"
 	"time"
 )
 
-// CPUMeter tracks CPU usage using syscall.Getrusage with EMA smoothing.
+// CPUMeter tracks CPU usage using platform-specific implementations with EMA smoothing.
 // Uses exponential moving average to provide stable CPU load measurements
 // that don't oscillate rapidly.
 type CPUMeter struct {
@@ -51,8 +50,8 @@ func (c *CPUMeter) GetCPUPercent() float64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	var rusage syscall.Rusage
-	err := syscall.Getrusage(syscall.RUSAGE_SELF, &rusage)
+	// Get platform-specific total CPU time
+	totalCPUTime, err := c.getTotalCPUTime()
 	if err != nil {
 		// If we can't get CPU usage, return the last known smoothed value
 		// This prevents errors from disrupting the adaptive algorithm
@@ -61,10 +60,6 @@ func (c *CPUMeter) GetCPUPercent() float64 {
 
 	now := time.Now()
 	wallTime := now.Sub(c.lastCheck)
-
-	// Convert rusage timeval to time.Duration
-	totalCPUTime := time.Duration(rusage.Utime.Sec+rusage.Stime.Sec)*time.Second +
-		time.Duration(rusage.Utime.Usec+rusage.Stime.Usec)*time.Microsecond
 
 	// Calculate CPU percentage over the elapsed wall time
 	var cpuPercent float64

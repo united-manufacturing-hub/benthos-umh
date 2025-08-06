@@ -16,6 +16,8 @@ This section covers Benthos input plugins for collecting data from various indus
 
 - **[Ethernet/IP](ethernet-ip.md)** - Interfaces with Rockwell and other Ethernet/IP compatible controllers, mainly supporting the CIP protocol.
 
+- **[UNS Input](uns-input.md)** - Connects to UMH Core's Unified Namespace to consume and filter messages using regex patterns against UMH topic keys.
+
 - **[More Input Plugins](https://docs.redpanda.com/redpanda-connect/components/inputs/about/)** - Additional built-in input plugins available in Benthos/Redpanda Connect for various data sources.
 
 ## Choosing the Right Input Plugin
@@ -26,5 +28,6 @@ This section covers Benthos input plugins for collecting data from various indus
 - Use **Beckhoff ADS** specifically for Beckhoff PLC systems and TwinCAT environments
 - Use **Siemens S7** for industrial Siemens devices that communicate via Siemens protocol
 - Use **Ethernet/IP** for CompactLogix, ControlLogix, Micro800er series, that communicate via CIP protocol
+- Use **UNS Input** when working within UMH Core to consume and filter messages from the Unified Namespace
 - Explore **additional input plugins** for other protocols like HTTP, MQTT, databases, file systems, and more
 

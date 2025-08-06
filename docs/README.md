@@ -14,6 +14,7 @@ Learn more by visiting our [Protocol Converter product page](https://www.umh.app
   * [Beckhoff ADS (community)](input/beckhoff-ads-community.md)
   * [Siemens S7](input/siemens-s7.md)
   * [Ethernet/IP](input/ethernet-ip.md)
+  * [UNS Input](input/uns-input.md)
   * [More](https://docs.redpanda.com/redpanda-connect/components/inputs/about/)
 * [Processing](processing/README.md)
   * [Tag Processor](processing/tag-processor.md)

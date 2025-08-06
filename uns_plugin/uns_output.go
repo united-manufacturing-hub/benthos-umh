@@ -17,12 +17,16 @@ package uns_plugin
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
+	schemavalidation "github.com/united-manufacturing-hub/benthos-umh/uns_plugin/schema_validation"
 )
 
 // init registers the "uns" batch output plugin with Benthos using its configuration and constructor.
@@ -34,6 +38,7 @@ const (
 	defaultOutputTopic               = "umh.messages" // by the current state, the output topic must not be changed for this plugin
 	defaultOutputTopicPartitionCount = 1
 	defaultBrokerAddress             = "localhost:9092"
+	defaultSchemaRegistryPort        = "8081"
 	defaultClientID                  = "umh_core"
 	defaultUMHTopic                  = "${! meta(\"umh_topic\") }"
 )
@@ -112,20 +117,71 @@ Traceability header.  Defaults to 'umh-core' but is automatically
 overwritten by UMH Core when the container runs as a protocol-converter:
 'protocol-converter-<INSTANCE>-<NAME>'.
 `).
-			Default(defaultClientID))
+			Default(defaultClientID)).
+		Field(service.NewStringField("schema_registry_url").
+			Description(`
+Schema registry URL for data contract validation.  If not provided, it
+will be automatically derived from the first broker in the broker_address
+list by changing the port to 8081.
+
+Example: If broker_address is "localhost:9092", the schema registry URL
+will be "http://localhost:8081".
+`).
+			Example("http://localhost:8081").
+			Example("https://schema-registry.example.com:8081").
+			Optional())
 }
 
 // Config holds the configuration for the UNS output plugin
 type unsOutputConfig struct {
-	umh_topic     *service.InterpolatedString
-	brokerAddress string
-	bridgedBy     string
+	umh_topic         *service.InterpolatedString
+	brokerAddress     string
+	bridgedBy         string
+	schemaRegistryURL string
 }
 
 type unsOutput struct {
-	config unsOutputConfig
-	client MessagePublisher
-	log    *service.Logger
+	config    unsOutputConfig
+	client    MessagePublisher
+	log       *service.Logger
+	validator *schemavalidation.Validator
+}
+
+// deriveSchemaRegistryURL derives a schema registry URL from the broker address
+// Takes the first broker from a comma-separated list and converts the port to 8081
+func deriveSchemaRegistryURL(brokerAddress string) (string, error) {
+	// Split by comma to handle multiple brokers
+	brokers := strings.Split(brokerAddress, ",")
+
+	// Take the first broker and trim any whitespace
+	firstBroker := strings.TrimSpace(brokers[0])
+
+	// Check if the first broker is empty
+	if firstBroker == "" {
+		return "", fmt.Errorf("broker address is empty")
+	}
+
+	var schemaRegistryURL string
+
+	// Use net.SplitHostPort to properly parse host and port
+	host, _, err := net.SplitHostPort(firstBroker)
+	if err != nil {
+		// If no port specified, assume the entire string is the host
+		schemaRegistryURL = fmt.Sprintf("http://%s:%s", firstBroker, defaultSchemaRegistryPort)
+	} else {
+		// Check if host is empty
+		if host == "" {
+			return "", fmt.Errorf("host is empty in broker address: %s", firstBroker)
+		}
+		schemaRegistryURL = fmt.Sprintf("http://%s:%s", host, defaultSchemaRegistryPort)
+	}
+
+	// Validate the constructed URL
+	if _, err := url.Parse(schemaRegistryURL); err != nil {
+		return "", fmt.Errorf("invalid schema registry URL '%s': %w", schemaRegistryURL, err)
+	}
+
+	return schemaRegistryURL, nil
 }
 
 // newUnsOutput creates a new unsOutput instance by parsing configuration fields for umh_topic, broker address, and bridge name, returning the output, batch policy, max in-flight count, and any error encountered during parsing.
@@ -173,15 +229,35 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 		}
 	}
 
-	return newUnsOutputWithClient(NewClient(), config, mgr.Logger()), batchPolicy, maxInFlight, nil
+	// Parse schema_registry_url if provided, otherwise derive from broker_address
+	if conf.Contains("schema_registry_url") {
+		schemaRegistryURL, err := conf.FieldString("schema_registry_url")
+		if err != nil {
+			return nil, batchPolicy, 0, fmt.Errorf("error while parsing schema_registry_url field from the config: %v", err)
+		}
+		config.schemaRegistryURL = schemaRegistryURL
+	} else {
+		// Derive schema registry URL from broker address
+		schemaRegistryURL, err := deriveSchemaRegistryURL(config.brokerAddress)
+		if err != nil {
+			return nil, batchPolicy, 0, fmt.Errorf("error deriving schema registry URL from broker address '%s': %w", config.brokerAddress, err)
+		}
+		config.schemaRegistryURL = schemaRegistryURL
+	}
+
+	// Initialize the validator with schema registry URL
+	validator := schemavalidation.NewValidatorWithRegistryAndLogger(config.schemaRegistryURL, mgr.Logger())
+
+	return newUnsOutputWithClient(NewClient(), config, mgr.Logger(), validator), batchPolicy, maxInFlight, nil
 }
 
 // Testable constructor that accepts client
-func newUnsOutputWithClient(client MessagePublisher, config unsOutputConfig, logger *service.Logger) service.BatchOutput {
+func newUnsOutputWithClient(client MessagePublisher, config unsOutputConfig, logger *service.Logger, validator *schemavalidation.Validator) service.BatchOutput {
 	return &unsOutput{
-		client: client,
-		config: config,
-		log:    logger,
+		client:    client,
+		config:    config,
+		log:       logger,
+		validator: validator,
 	}
 }
 
@@ -192,6 +268,9 @@ func (o *unsOutput) Close(ctx context.Context) error {
 		o.client.Close()
 		o.client = nil
 	}
+	if o.validator != nil {
+		o.validator.Close()
+	}
 	o.log.Infof("uns kafka client closed successfully")
 	return nil
 }
@@ -199,6 +278,7 @@ func (o *unsOutput) Close(ctx context.Context) error {
 // Connect initializes the kafka client
 func (o *unsOutput) Connect(ctx context.Context) error {
 	o.log.Infof("Connecting to uns plugin kafka broker: %v", o.config.brokerAddress)
+	o.log.Infof("Using schema registry URL: %v", o.config.schemaRegistryURL)
 
 	if o.client == nil {
 		o.client = NewClient()
@@ -281,6 +361,28 @@ func (o *unsOutput) extractHeaders(msg *service.Message) (map[string][]byte, err
 	return headers, nil
 }
 
+// validateAndEnrichMessage validates the message against the schema and enriches it with contract metadata
+func (o *unsOutput) validateAndEnrichMessage(msg *service.Message, unsTopic *topic.UnsTopic, msgAsBytes []byte, messageIndex int) error {
+	// Validate the payload against the schema
+	validationResult := o.validator.Validate(unsTopic, msgAsBytes)
+	if !validationResult.SchemaCheckPassed && !validationResult.SchemaCheckBypassed {
+		return fmt.Errorf("schema validation failed for message %d with topic '%s': %v. Please check your payload format and ensure it matches the registered schema",
+			messageIndex, unsTopic.String(), validationResult.Error)
+	}
+
+	if validationResult.SchemaCheckPassed {
+		// Add the contract name and version to the headers
+		msg.MetaSet("data_contract_name", validationResult.ContractName)
+		msg.MetaSet("data_contract_version", strconv.FormatUint(validationResult.ContractVersion, 10))
+	} else if validationResult.SchemaCheckBypassed {
+		// Add bypass information if validation was bypassed
+		msg.MetaSet("data_contract_bypassed", "true")
+		msg.MetaSet("data_contract_bypass_reason", validationResult.BypassReason)
+	}
+
+	return nil
+}
+
 // WriteBatch implements service.BatchOutput.
 func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) error {
 	if len(msgs) == 0 {
@@ -300,19 +402,24 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 		}
 
 		// Validate the UMH topic using the centralized topic library
-		_, err = topic.NewUnsTopic(key)
+		unsTopic, err := topic.NewUnsTopic(key)
 		if err != nil {
 			return fmt.Errorf("error validating message key in message %d: invalid UMH topic '%s': %v", i, key, err)
-		}
-
-		headers, err := o.extractHeaders(msg)
-		if err != nil {
-			return fmt.Errorf("error processing message %d: %v", i, err)
 		}
 
 		msgAsBytes, err := msg.AsBytes()
 		if err != nil {
 			return fmt.Errorf("error getting content of message %d: %v", i, err)
+		}
+
+		// Validate and enrich the message
+		if err := o.validateAndEnrichMessage(msg, unsTopic, msgAsBytes, i); err != nil {
+			return err
+		}
+
+		headers, err := o.extractHeaders(msg)
+		if err != nil {
+			return fmt.Errorf("error processing message %d: %v", i, err)
 		}
 
 		record := Record{
