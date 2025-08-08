@@ -55,5 +55,6 @@ header:
     - 'topic_browser_plugin/testing/sample_output.txt'
     - 'topic_browser_plugin/testing/sample_output_small.txt'
     - 'stream_processor_plugin/docs/diagrams/processing_flow.*'
+    - 'sparkplug_plugin/sparkplugb/sparkplug_b_official.pb.go'
 
   comment: never

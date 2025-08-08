@@ -517,16 +517,6 @@ var _ = Describe("AliasCache Unit Tests", func() {
 })
 
 
-var _ = Describe("SequenceManager Unit Tests", func() {
-
-	Context("Sequence Number Validation", func() {
-
-
-
-
-	})
-})
-
 var _ = Describe("TypeConverter Unit Tests", func() {
 
 	Context("Data Type Conversions", func() {
