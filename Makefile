@@ -108,6 +108,10 @@ test-tag-processor:
 	@TEST_TAG_PROCESSOR=true \
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./tag_processor_plugin/...
 
+.PHONY: test-sparkplug
+test-sparkplug:
+	$(GINKGO_CMD) $(GINKGO_FLAGS) ./sparkplug_plugin/...
+
 .PHONY: test-classic-to-core
 test-classic-to-core:
 	@TEST_CLASSIC_TO_CORE=1 \

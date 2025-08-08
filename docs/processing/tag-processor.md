@@ -649,6 +649,29 @@ Output:
 
 UMH Topic: `umh.v1.enterprise.area._workorder.maintenance`
 
+7. **Setting Custom Timestamps**
+
+By default, the tag processor uses the current time. You can set custom timestamps using the `timestamp_ms` metadata field (Unix milliseconds as string):
+
+```yaml
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.site.area";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
+    
+    // Use OPC UA timestamp
+    if (msg.meta.opcua_source_timestamp) {
+      msg.meta.timestamp_ms = new Date(msg.meta.opcua_source_timestamp).getTime().toString();
+    }
+    // Or use Sparkplug B timestamp directly
+    if (msg.meta.spb_timestamp) {
+      msg.meta.timestamp_ms = msg.meta.spb_timestamp;
+    }
+    
+    return msg;
+```
+
 **Note:** In the `tag_processor`, the resulting payload will always include `timestamp_ms` and one additional key corresponding to the `tag_name`. If you need to fully control the resulting payload structure, consider using the `nodered_js` processor instead. You can set the topic and payload manually, as shown below:
 
 ```yaml
