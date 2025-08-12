@@ -28,8 +28,10 @@ import (
 	"github.com/gopcua/opcua/ua"
 )
 
-const SubscribeTimeoutContext = 3 * time.Second
-const DefaultPollRate = 1000
+const (
+	SubscribeTimeoutContext = 3 * time.Second
+	DefaultPollRate         = 1000
+)
 
 var OPCUAConfigSpec = OPCUAConnectionConfigSpec.
 	Summary("OPC UA input plugin").
@@ -47,7 +49,6 @@ var OPCUAConfigSpec = OPCUAConnectionConfigSpec.
 		Default(DefaultPollRate))
 
 func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
-
 	// Parse all nodeIDs to validate them.
 	// loop through all nodeIDs, parse them and put them into a slice
 	var parsedNodeIDs []*ua.NodeID
@@ -119,7 +120,6 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 }
 
 func init() {
-
 	err := service.RegisterBatchInput(
 		"opcua", OPCUAConfigSpec,
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
@@ -179,6 +179,10 @@ func (g *OPCUAInput) startBrowsing(ctx context.Context) {
 			g.Close(ctx) // Safe to call Close here as we're in a separate goroutine
 			return
 		}
+		g.Log.Infof("Subscription revised: publishInterval=%v keepAlive=%d lifetime=%d",
+			g.Subscription.RevisedPublishingInterval,
+			g.Subscription.RevisedMaxKeepAliveCount,
+			g.Subscription.RevisedLifetimeCount)
 
 		g.LastHeartbeatMessageReceived.Store(uint32(time.Now().Unix()))
 	}()
@@ -439,7 +443,6 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 // accurately represents the OPC UA node's current value. Additionally, it marks heartbeat messages
 // when applicable, facilitating heartbeat monitoring within the system.
 func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef NodeDef) *service.Message {
-
 	b, tagType := g.getBytesFromValue(dataValue, nodeDef)
 	message := service.NewMessage(b)
 
