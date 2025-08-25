@@ -573,7 +573,7 @@ var _ = Describe("TypeConverter Unit Tests", func() {
 
 			for value, expectedType := range values {
 				inferredType := converter.InferMetricType(value)
-				Expect(inferredType).To(Equal(expectedType), "Value %v should infer type %s", value, expectedType)
+				Expect(inferredType).To(Equal(expectedType), fmt.Sprintf("value=%v expectedType=%q", value, expectedType))
 			}
 
 			// Test unknown type (should default to string)
@@ -936,7 +936,7 @@ var _ = Describe("MessageProcessor Unit Tests", func() {
 				{
 					Name:     stringPtr("bdSeq"),
 					Alias:    uint64Ptr(1),
-					Datatype: uint32Ptr(7), // Int64
+					Datatype: uint32Ptr(8), // UInt64 (Sparkplug spec)
 					Value:    &sparkplugb.Payload_Metric_LongValue{LongValue: 12345},
 				},
 				{

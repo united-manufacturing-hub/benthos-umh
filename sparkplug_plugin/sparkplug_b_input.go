@@ -146,6 +146,7 @@ type sparkplugInput struct {
 	// MQTT client and state
 	client   mqtt.Client
 	messages chan mqttMessage
+	done     chan struct{} // Signal for graceful shutdown
 	mu       sync.RWMutex
 	closed   bool
 
@@ -288,6 +289,7 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 		config:            config,
 		logger:            mgr.Logger(),
 		messages:          make(chan mqttMessage, 1000),
+		done:              make(chan struct{}),
 		nodeStates:        make(map[string]*nodeState),
 		legacyAliasCache:  make(map[string]map[uint64]string),
 		aliasCache:        NewAliasCache(),
@@ -388,12 +390,13 @@ func (s *sparkplugInput) onConnectionLost(client mqtt.Client, err error) {
 }
 
 func (s *sparkplugInput) messageHandler(client mqtt.Client, msg mqtt.Message) {
-	s.mu.RLock()
-	closed := s.closed
-	s.mu.RUnlock()
-
-	if closed {
+	// Check if we're shutting down
+	select {
+	case <-s.done:
+		// Shutting down, don't process
 		return
+	default:
+		// Continue processing
 	}
 
 	// DEBUG: Log entry point as recommended in the plan
@@ -402,10 +405,13 @@ func (s *sparkplugInput) messageHandler(client mqtt.Client, msg mqtt.Message) {
 
 	s.messagesReceived.Incr(1)
 
-	// Non-blocking send to message channel
+	// Non-blocking send to message channel with shutdown check
 	select {
 	case s.messages <- mqttMessage{topic: msg.Topic(), payload: msg.Payload()}:
 		s.logger.Debugf("✅ messageHandler: queued message for processing")
+	case <-s.done:
+		// Shutting down, drop message silently
+		return
 	default:
 		s.logger.Warn("Message buffer full, dropping message")
 		s.messagesDropped.Incr(1)
@@ -416,6 +422,8 @@ func (s *sparkplugInput) ReadBatch(ctx context.Context) (service.MessageBatch, s
 	select {
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
+	case <-s.done:
+		return nil, nil, service.ErrEndOfInput
 	case mqttMsg := <-s.messages:
 		s.logger.Debugf("🔍 ReadBatch: processing message from topic %s", mqttMsg.topic)
 		batch, err := s.processSparkplugMessage(mqttMsg)
@@ -693,6 +701,9 @@ func (s *sparkplugInput) processStateMessage(deviceKey, msgType string, topicInf
 }
 
 func (s *sparkplugInput) Close(ctx context.Context) error {
+	// Signal shutdown to all goroutines first
+	close(s.done)
+
 	s.mu.Lock()
 	s.closed = true
 	s.mu.Unlock()
@@ -708,6 +719,8 @@ func (s *sparkplugInput) Close(ctx context.Context) error {
 		s.client.Disconnect(1000)
 	}
 
+	// Close the messages channel after MQTT is disconnected
+	// The done channel ensures no more sends will occur
 	close(s.messages)
 
 	s.logger.Info("Sparkplug input closed")
@@ -1064,12 +1077,19 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	}
 
 	// Create SparkplugMessage struct for conversion
+	var dataType string
+	if metric.Datatype != nil {
+		dataType = s.convertSparkplugDataTypeToString(*metric.Datatype)
+	} else {
+		dataType = "unknown"
+	}
+	
 	sparkplugMsg := &SparkplugMessage{
 		GroupID:    topicInfo.Group,
 		EdgeNodeID: topicInfo.EdgeNode,
 		DeviceID:   topicInfo.Device,
 		Value:      rawValue,
-		DataType:   s.convertSparkplugDataTypeToString(*metric.Datatype),
+		DataType:   dataType,
 		Timestamp:  time.Now(), // Will be overridden below if payload has timestamp
 	}
 
