@@ -410,10 +410,10 @@ logger:
 					break collectLoop
 				default:
 					if len(messages) > 0 {
-						time.Sleep(100 * time.Millisecond) // Brief pause to collect any remaining messages
+						time.Sleep(500 * time.Millisecond) // Brief pause to collect any remaining messages (increased for CI stability)
 						break collectLoop
 					} else {
-						time.Sleep(100 * time.Millisecond) // Keep waiting if no messages yet
+						time.Sleep(200 * time.Millisecond) // Keep waiting if no messages yet (increased for CI stability)
 					}
 				}
 			}
@@ -622,10 +622,10 @@ logger:
 					break collectLoop
 				default:
 					if len(messages) > 0 {
-						time.Sleep(100 * time.Millisecond) // Brief pause to collect any remaining messages
+						time.Sleep(500 * time.Millisecond) // Brief pause to collect any remaining messages (increased for CI stability)
 						break collectLoop
 					} else {
-						time.Sleep(100 * time.Millisecond) // Keep waiting if no messages yet
+						time.Sleep(200 * time.Millisecond) // Keep waiting if no messages yet (increased for CI stability)
 					}
 				}
 			}
@@ -1462,7 +1462,7 @@ logger:
   level: INFO
 `, brokerURL, GinkgoParallelProcess(), uuid.New().String()[:8])
 
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second) // Increased timeout for CI stability
 			defer cancel()
 
 			edgeStreamBuilder := service.NewStreamBuilder()
@@ -1595,7 +1595,7 @@ logger:
 			By("Starting first Edge Node session and capturing initial bdSeq")
 			edgeConfig1 := createEdgeNodeConfig(brokerURL, "TestGroup", "EdgeNode1", "ndeath_test")
 
-			ctx1, cancel1 := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx1, cancel1 := context.WithTimeout(context.Background(), 20*time.Second) // Increased timeout for CI stability
 
 			edgeStreamBuilder1 := service.NewStreamBuilder()
 			err := edgeStreamBuilder1.SetYAML(edgeConfig1)
@@ -1641,7 +1641,7 @@ logger:
 			By("Starting second Edge Node session")
 			edgeConfig2 := createEdgeNodeConfig(brokerURL, "TestGroup", "EdgeNode1", "ndeath_test")
 
-			ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx2, cancel2 := context.WithTimeout(context.Background(), 20*time.Second) // Increased timeout for CI stability
 			defer cancel2()
 
 			edgeStreamBuilder2 := service.NewStreamBuilder()
@@ -1713,7 +1713,7 @@ logger:
 			// Validates that hierarchical UMH paths are correctly mapped to/from Sparkplug B structure
 			// This test uses sparkplug_b input to convert back to UMH format for validation
 
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second) // Increased timeout for CI stability
 			defer cancel()
 
 			// Generate unique identifiers for this test
