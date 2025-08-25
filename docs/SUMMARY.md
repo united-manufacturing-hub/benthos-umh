@@ -2,6 +2,7 @@
 
 - [Introduction](README.md)
 - [Input](input/README.md)
+  - [Sparkplug B (Input)](input/sparkplug-b-input.md)
   - [OPC UA (Input)](input/opc-ua-input.md)
   - [Modbus](input/modbus.md)
   - [ifm IO-Link Master / "sensorconnect"](input/ifm-io-link-master-sensorconnect.md)
@@ -19,6 +20,7 @@
   - [Node-RED JavaScript Processor](processing/node-red-javascript-processor.md)
   - [More](https://docs.redpanda.com/redpanda-connect/components/processors/about/)
 - [Output](output/README.md)
+  - [Sparkplug B (Output)](output/sparkplug-b-output.md)
   - [UNS (Output)](output/uns-output.md)
   - [OPC UA (Output)](output/opc-ua-output.md)
   - [More](https://docs.redpanda.com/redpanda-connect/components/outputs/about/)

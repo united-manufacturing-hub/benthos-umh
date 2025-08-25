@@ -1,0 +1,98 @@
+# Sparkplug B Plugin - Test Infrastructure
+# Build targets for clean separation of test concerns via build tags
+# Following the test strategy documented in README.md
+
+.PHONY: all help test test-unit test-payload test-flow test-all test-manual test-integration test-integration-local generate-vectors clean coverage
+
+# Alias required by CI linters
+all: test
+
+# Default: fast unit tests only (<3s)
+test: test-unit
+
+# Help target - show available commands
+help:
+	@echo "Sparkplug B Test Targets:"
+	@echo "  test          - Fast unit tests only (<3s)"
+	@echo "  test-unit     - Unit tests (AliasCache, TopicParser, etc.)"
+	@echo "  test-unit-verbose - Unit tests with verbose Ginkgo output"
+	@echo "  test-all      - All offline tests (<3s)"
+	@echo "  test-integration - Full integration tests with automatic Docker Mosquitto"
+	@echo "  test-integration-verbose - Integration tests with verbose output"
+	@echo "  test-manual-debug - Manual debugging with separate terminals"
+	@echo "  generate-vectors - Regenerate test vectors"
+	@echo "  clean         - Clean temporary files"
+	@echo "  coverage      - Generate coverage report"
+
+# Unit tests (no build tag = always runs, default)
+test-unit:
+	@echo "🧪 Running Sparkplug unit tests (offline, <3s)..."
+	cd .. && go test -race -v ./sparkplug_plugin
+
+# All unit tests with verbose Ginkgo output
+test-unit-verbose:
+	@echo "🧪 Running Sparkplug unit tests with verbose output..."
+	cd .. && ginkgo -v ./sparkplug_plugin
+
+# Full offline test suite (<3s total)
+test-all:
+	@echo "🚀 Running all offline tests (unit tests)..."
+	@$(MAKE) test-unit
+	@echo "✅ All offline tests completed successfully"
+
+# Integration tests (fully automated with Docker Mosquitto)
+test-integration:
+	@echo "🔌 Running integration tests with automatic Docker Mosquitto..."
+	cd .. && go test -race -v -tags=integration ./sparkplug_plugin
+
+# Integration tests with verbose Ginkgo output
+test-integration-verbose:
+	@echo "🔌 Running integration tests with verbose output..."
+	cd .. && ginkgo -v --tags=integration ./sparkplug_plugin
+
+# Manual debugging with separate terminals
+test-manual-debug:
+	@echo "🚀 Manual Debugging Setup (for development):"
+	@echo "  1. Terminal 1 - Start Edge Node:"
+	@echo "     cd /workspaces/benthos-umh && ./benthos -c config/sparkplug-device-level-test.yaml"
+	@echo "  2. Terminal 2 - Start Primary Host:"
+	@echo "     cd /workspaces/benthos-umh && ./benthos -c config/sparkplug-device-level-primary-host.yaml"
+	@echo "  3. Both will use Docker mosquitto if running or localhost:1883"
+	@echo "  Note: You can start mosquitto manually: docker run -d --name debug-mosquitto -p 1883:1883 eclipse-mosquitto:2"
+	@echo "  Cleanup: docker stop debug-mosquitto && docker rm debug-mosquitto"
+
+# Regenerate test vectors (when spec changes)
+generate-vectors:
+	@echo "⚙️  Generating test vectors..."
+	cd .. && go run ./sparkplug_plugin/cmd/gen-vectors > sparkplug_plugin/test_vectors.go
+	cd .. && go fmt sparkplug_plugin/test_vectors.go
+	@echo "✅ Test vectors regenerated"
+
+# Clean up temporary files
+clean:
+	@echo "🧹 Cleaning temporary files..."
+	rm -f cover.out coverage.html
+	rm -rf tmp/
+	@echo "✅ Clean complete"
+
+# Show test coverage
+coverage:
+	@echo "📊 Generating coverage report..."
+	cd .. && go test -race -v -coverprofile=cover.out ./sparkplug_plugin
+	cd .. && go tool cover -html=cover.out -o sparkplug_plugin/coverage.html
+	@echo "📊 Coverage report: sparkplug_plugin/coverage.html"
+
+# Validate infrastructure works
+validate:
+	@echo "🔍 Validating test infrastructure..."
+	@echo "1. Checking if unit tests exist..."
+	@test -f unit_test.go || echo "❌ unit_test.go missing"
+	@echo "2. Checking if payload tests exist..."
+	@test -f payload_test.go || echo "❌ payload_test.go missing"
+	@echo "3. Checking if flow tests exist..."
+	@test -f flow_test.go || echo "❌ flow_test.go missing"
+	@echo "4. Checking if integration tests exist..."
+	@test -f integration_test.go || echo "❌ integration_test.go missing"
+	@echo "5. Checking if vector generator exists..."
+	@test -f cmd/gen-vectors/main.go || echo "❌ cmd/gen-vectors/main.go missing"
+	@echo "✅ Infrastructure validation complete" 

@@ -33,6 +33,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/danomagnum/gologix v0.27.2-beta
 	github.com/dop251/goja v0.0.0-20250309171923-bcd7cc6bf64c
+	github.com/eclipse/paho.mqtt.golang v1.5.0
 	github.com/google/uuid v1.6.0
 	github.com/gopcua/opcua v0.5.3
 	github.com/grid-x/modbus v0.0.0-20250312115347-d1d8b421f52b
@@ -47,6 +48,7 @@ require (
 	github.com/twmb/franz-go/pkg/kadm v1.15.0
 	golang.org/x/crypto v0.37.0
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394
+	golang.org/x/sys v0.32.0
 	golang.org/x/time v0.11.0
 	google.golang.org/protobuf v1.36.5
 )
@@ -191,7 +193,6 @@ require (
 	github.com/eapache/go-xerial-snappy v0.0.0-20230731223053-c322873962e3 // indirect
 	github.com/eapache/queue v1.1.0 // indirect
 	github.com/ebitengine/purego v0.8.2 // indirect
-	github.com/eclipse/paho.mqtt.golang v1.5.0 // indirect
 	github.com/elastic/elastic-transport-go/v8 v8.6.1 // indirect
 	github.com/elastic/go-elasticsearch/v8 v8.17.1 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.32.4 // indirect
@@ -420,7 +421,6 @@ require (
 	golang.org/x/net v0.39.0 // indirect
 	golang.org/x/oauth2 v0.29.0 // indirect
 	golang.org/x/sync v0.14.0 // indirect
-	golang.org/x/sys v0.32.0 // indirect
 	golang.org/x/term v0.31.0 // indirect
 	golang.org/x/text v0.25.0 // indirect
 	golang.org/x/tools v0.32.0 // indirect
