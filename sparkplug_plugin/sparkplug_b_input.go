@@ -636,6 +636,9 @@ func (s *sparkplugInput) processCommandMessage(deviceKey, msgType string, payloa
 		}
 	}
 
+	// Resolve aliases in command message (same as data messages)
+	s.resolveAliases(deviceKey, payload.Metrics)
+
 	// Create batch from command metrics - always split for UMH-Core format
 	batch := s.createSplitMessages(payload, msgType, deviceKey, topicInfo, originalTopic)
 
