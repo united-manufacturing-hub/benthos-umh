@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dop251/goja"
@@ -149,6 +150,10 @@ type TagProcessor struct {
 
 	// Keep for JS environment setup helper methods
 	jsProcessor *nodered_js_plugin.NodeREDJSProcessor
+
+	// Timestamp deduplication for avoiding duplicate timestamp_ms values
+	lastTimestampMs int64
+	timestampOffset int64
 }
 
 func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics *service.Metrics) (*TagProcessor, error) {
@@ -526,9 +531,10 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	value := p.convertValue(structured)
 
 	// Build the final payload object
+	timestampMs := p.getTimestampMs()
 	finalPayload := map[string]interface{}{
 		"value":        value,
-		"timestamp_ms": time.Now().UnixMilli(),
+		"timestamp_ms": timestampMs,
 	}
 
 	newMsg.SetStructured(finalPayload)
@@ -542,6 +548,31 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	newMsg.MetaSet("umh_topic", topic)
 
 	return newMsg, nil
+}
+
+// getTimestampMs generates a timestamp in milliseconds for when this message is being processed.
+// NOTE: this is implemented, because we got an issue where the timestamp was basically duplicated
+// in messages with different values and lead to database conflicts.
+func (p *TagProcessor) getTimestampMs() int64 {
+	currentTimeMs := time.Now().UnixMilli()
+
+	// Ensure no duplicate timestamps by incrementing if we detect a duplicate
+	lastTimestamp := atomic.LoadInt64(&p.lastTimestampMs)
+
+	var finalTimestamp int64
+	if currentTimeMs <= lastTimestamp {
+		// If current time is same or earlier than last timestamp, increment from last
+		finalTimestamp = lastTimestamp + 1
+		offset := atomic.AddInt64(&p.timestampOffset, 1)
+		p.logger.Debugf("Prevented duplicate timestamp: current=%d, last=%d, using=%d (offset: %d)",
+			currentTimeMs, lastTimestamp, finalTimestamp, offset)
+	} else {
+		finalTimestamp = currentTimeMs
+	}
+
+	atomic.StoreInt64(&p.lastTimestampMs, finalTimestamp)
+
+	return finalTimestamp
 }
 
 // convertValue recursively converts values to their appropriate types

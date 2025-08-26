@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -1465,14 +1466,14 @@ tag_processor:
     msg.meta.location_path = "enterprise";
     msg.meta.data_contract = "_historian";
     msg.meta.tag_name = "complex_test";
-    
+
     // Complex JavaScript operations to test VM reuse
     let calculations = [];
     for(let i = 0; i < 10; i++) {
       calculations.push(Math.pow(i, 2));
     }
     msg.meta.calculation_sum = calculations.reduce((a, b) => a + b, 0).toString();
-    
+
     return msg;
   conditions:
     - if: parseFloat(msg.payload) > 40
@@ -1708,6 +1709,212 @@ tag_processor:
 			// If we got any messages, at least one should be the success message
 			if len(messages) > 0 {
 				Expect(successProcessed).To(BeTrue(), "Success message should be processed even after JS error")
+			}
+		})
+	})
+
+	When("testing timestamp deduplication", func() {
+		It("should generate unique timestamps for rapid message processing", func() {
+			builder := service.NewStreamBuilder()
+
+			// Add producer function
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			// Configure tag processor with minimal settings
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Send multiple messages rapidly to test timestamp uniqueness
+			numMessages := 10
+			values := []string{
+				"2025-01-26T07:20:52.337615Z",
+				"2025-01-26T07:20:52.4011646Z",
+				"2025-01-26T07:20:52.4637109Z",
+				"2025-01-26T07:20:52.5259881Z",
+			}
+
+			// Send messages rapidly - this simulates the scenario from your logs
+			for i := 0; i < numMessages; i++ {
+				value := values[i%len(values)]
+				err := msgHandler(ctx, service.NewMessage([]byte(value)))
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			// Wait for processing
+			time.Sleep(500 * time.Millisecond)
+
+			messagesMutex.Lock()
+			processedMessages := make([]*service.Message, len(messages))
+			copy(processedMessages, messages)
+			messagesMutex.Unlock()
+
+			Expect(len(processedMessages)).To(BeNumerically(">=", numMessages))
+
+			// Extract timestamps from processed messages
+			var timestamps []int64
+			for _, msg := range processedMessages {
+				payload, err := msg.AsBytes()
+				Expect(err).NotTo(HaveOccurred())
+
+				var data map[string]interface{}
+				err = json.Unmarshal(payload, &data)
+				Expect(err).NotTo(HaveOccurred())
+
+				timestampMs, ok := data["timestamp_ms"]
+				Expect(ok).To(BeTrue(), "Message should have timestamp_ms field")
+
+				// Handle both float64 and int64 from JSON
+				var ts int64
+				switch v := timestampMs.(type) {
+				case float64:
+					ts = int64(v)
+				case int64:
+					ts = v
+				default:
+					Fail("timestamp_ms should be a number")
+				}
+				timestamps = append(timestamps, ts)
+			}
+
+			// Verify all timestamps are unique - this is the key test!
+			uniqueTimestamps := make(map[int64]bool)
+			for i, ts := range timestamps {
+				Expect(uniqueTimestamps[ts]).To(BeFalse(),
+					"Timestamp %d at index %d should be unique (no duplicates allowed)", ts, i)
+				uniqueTimestamps[ts] = true
+			}
+
+			// Verify timestamps are monotonically increasing
+			for i := 1; i < len(timestamps); i++ {
+				Expect(timestamps[i]).To(BeNumerically(">=", timestamps[i-1]),
+					"Timestamp at index %d (%d) should be >= previous (%d)",
+					i, timestamps[i], timestamps[i-1])
+			}
+		})
+
+		It("should handle the exact scenario from the logs without duplicates", func() {
+			builder := service.NewStreamBuilder()
+
+			// Add producer function
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			// Configure tag processor
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "CurrentTime";
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Send the exact values from your logs that were causing duplicates
+			logValues := []string{
+				"2025-01-26T07:20:52.337615Z",
+				"2025-01-26T07:20:52.4011646Z",
+				"2025-01-26T07:20:52.4637109Z",
+				"2025-01-26T07:20:52.5259881Z",
+			}
+
+			// Send messages rapidly as they would come from OPC-UA
+			for _, value := range logValues {
+				err := msgHandler(ctx, service.NewMessage([]byte(value)))
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			// Wait for processing
+			time.Sleep(500 * time.Millisecond)
+
+			Expect(len(messages)).To(Equal(len(logValues)))
+
+			// Extract and verify timestamps
+			var results []struct {
+				timestamp int64
+				value     string
+			}
+
+			for _, msg := range messages {
+				payload, err := msg.AsBytes()
+				Expect(err).NotTo(HaveOccurred())
+
+				var data map[string]interface{}
+				err = json.Unmarshal(payload, &data)
+				Expect(err).NotTo(HaveOccurred())
+
+				timestampMs, ok := data["timestamp_ms"]
+				Expect(ok).To(BeTrue())
+
+				var ts int64
+				switch v := timestampMs.(type) {
+				case float64:
+					ts = int64(v)
+				case int64:
+					ts = v
+				}
+
+				value, ok := data["value"]
+				Expect(ok).To(BeTrue())
+
+				results = append(results, struct {
+					timestamp int64
+					value     string
+				}{timestamp: ts, value: value.(string)})
+			}
+
+			// The critical test: verify all timestamps are unique!
+			seenTimestamps := make(map[int64]bool)
+			for _, result := range results {
+				Expect(seenTimestamps[result.timestamp]).To(BeFalse())
+				seenTimestamps[result.timestamp] = true
 			}
 		})
 	})
