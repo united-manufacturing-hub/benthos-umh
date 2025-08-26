@@ -98,17 +98,26 @@ func (u *UnsInput) Connect(ctx context.Context) error {
 	u.log.Infof("creating kafka client with plugin config broker: %v, input_kafka_topic: %v, topics: %v",
 		u.config.brokerAddress, u.config.inputKafkaTopic, u.config.umhTopics)
 
+	// Determine offset reset strategy
+	var resetOffset kgo.Offset
+	switch u.config.consumeResetOffset {
+	case "latest":
+		resetOffset = kgo.NewOffset().AtEnd()
+	default: // "earliest"
+		resetOffset = kgo.NewOffset().AtStart()
+	}
+
 	connectStart := time.Now()
 	err := u.client.Connect(
-		kgo.SeedBrokers(u.config.brokerAddress),           // use the configured broker address
-		kgo.AllowAutoTopicCreation(),                      // Allow creating the topic if it doesn't exist
-		kgo.ClientID(defaultClientID),                     // client id for all requests sent to the broker
-		kgo.ConnIdleTimeout(defaultConnIdleTimeout),       // Rough amount of time to allow connections to be idle
-		kgo.DialTimeout(defaultDialTimeout),               // Timeout while connecting to the broker
-		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()), // Resets the offset to the earliest partition offset
-		kgo.ConsumerGroup(u.config.consumerGroup),         // Set the consumer group id
-		kgo.ConsumeTopics(u.config.inputKafkaTopic),       // Set the topics to consume
-		kgo.DisableAutoCommit(),                           // Disable auto committing offsets, since we commit offsets manually via the ack function
+		kgo.SeedBrokers(u.config.brokerAddress),     // use the configured broker address
+		kgo.AllowAutoTopicCreation(),                // Allow creating the topic if it doesn't exist
+		kgo.ClientID(defaultClientID),               // client id for all requests sent to the broker
+		kgo.ConnIdleTimeout(defaultConnIdleTimeout), // Rough amount of time to allow connections to be idle
+		kgo.DialTimeout(defaultDialTimeout),         // Timeout while connecting to the broker
+		kgo.ConsumeResetOffset(resetOffset),         // Reset offset based on configuration
+		kgo.ConsumerGroup(u.config.consumerGroup),   // Set the consumer group id
+		kgo.ConsumeTopics(u.config.inputKafkaTopic), // Set the topics to consume
+		kgo.DisableAutoCommit(),                     // Disable auto committing offsets, since we commit offsets manually via the ack function
 
 		// High-performance settings
 		kgo.FetchMaxBytes(defaultFetchMaxBytes),                   // Configures the maximum number of bytes per request the broker will return
