@@ -564,7 +564,7 @@ func (p *TagProcessor) getTimestampMs() int64 {
 		// If current time is same or earlier than last timestamp, increment from last
 		finalTimestamp = lastTimestamp + 1
 		offset := atomic.AddInt64(&p.timestampOffset, 1)
-		p.logger.Debugf("Prevented duplicate timestamp: current=%d, last=%d, using=%d (offset: %d)",
+		p.logger.Warnf("Prevented duplicate timestamp: current=%d, last=%d, using=%d (offset: %d)",
 			currentTimeMs, lastTimestamp, finalTimestamp, offset)
 	} else {
 		finalTimestamp = currentTimeMs
