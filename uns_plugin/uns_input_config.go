@@ -40,19 +40,21 @@ const (
 
 // UnsInputConfig holds the configuration for the UNS input plugin
 type UnsInputConfig struct {
-	umhTopics       []string
-	inputKafkaTopic string
-	brokerAddress   string
-	consumerGroup   string
+	umhTopics            []string
+	inputKafkaTopic      string
+	brokerAddress        string
+	consumerGroup        string
+	consumeResetOffset   string
 }
 
 // NewDefaultUnsInputConfig creates a new input config with default values
 func NewDefaultUnsInputConfig() UnsInputConfig {
 	return UnsInputConfig{
-		umhTopics:       []string{defaultTopicKey},
-		inputKafkaTopic: defaultInputKafkaTopic,
-		brokerAddress:   defaultBrokerAddress,
-		consumerGroup:   defaultConsumerGroup,
+		umhTopics:          []string{defaultTopicKey},
+		inputKafkaTopic:    defaultInputKafkaTopic,
+		brokerAddress:      defaultBrokerAddress,
+		consumerGroup:      defaultConsumerGroup,
+		consumeResetOffset: "earliest",
 	}
 }
 
@@ -141,6 +143,18 @@ func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsIn
 		config.consumerGroup = cg
 	}
 
+	// Parse consume_reset_offset
+	if conf.Contains("consume_reset_offset") {
+		offset, err := conf.FieldString("consume_reset_offset")
+		if err != nil {
+			return config, fmt.Errorf("error while parsing the 'consume_reset_offset' from the plugin's config: %v", err)
+		}
+		if offset != "earliest" && offset != "latest" {
+			return config, fmt.Errorf("invalid value for 'consume_reset_offset': %s. Valid values are 'earliest' or 'latest'", offset)
+		}
+		config.consumeResetOffset = offset
+	}
+
 	return config, nil
 }
 
@@ -207,5 +221,14 @@ In most UMH deployments, the default value is sufficient as Kafka runs on the sa
 	The consumer group id to be used by the plugin. The default consumer group id is uns_plugin. This is an optional plugin input and can be used by the users if one wants to read the topic with a different consumer group discarding the previous consumed offsets.
 	`).
 			Example("uns_consumer_group").
-			Default(defaultConsumerGroup))
+			Default(defaultConsumerGroup)).
+		Field(service.NewStringField("consume_reset_offset").
+			Description(`
+	Specifies where to start consuming when no committed offset exists or when the committed offset is invalid. Valid values are:
+	- 'earliest': Reset to the earliest available offset (equivalent to AtStart)
+	- 'latest': Reset to the latest available offset (equivalent to AtEnd)
+	`).
+			Example("earliest").
+			Example("latest").
+			Default("earliest"))
 }
