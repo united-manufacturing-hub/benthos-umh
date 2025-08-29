@@ -119,7 +119,7 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		if err != nil {
 			return nil, fmt.Errorf("nodeId is required in node mapping %d: %w", i, err)
 		}
-		
+
 		// For validation during config parsing, we'll check if it's a static value
 		// Dynamic values will be validated at runtime
 		staticNodeID, exists := nodeIDInterp.Static()
@@ -225,7 +225,7 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 		dataType string
 	}
 	var writes []nodeWrite
-	
+
 	for _, mapping := range o.NodeMappings {
 		// Resolve the interpolated node ID
 		nodeID, err := mapping.NodeID.TryString(msg)
@@ -235,7 +235,7 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 		if nodeID == "" || nodeID == "null" {
 			return fmt.Errorf("nodeId resolved to empty or null value")
 		}
-		
+
 		// Resolve the interpolated data type
 		dataType, err := mapping.DataType.TryString(msg)
 		if err != nil {
@@ -244,7 +244,7 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 		if dataType == "" || dataType == "null" {
 			return fmt.Errorf("dataType resolved to empty or null value")
 		}
-		
+
 		// Validate dataType at runtime
 		supportedTypes := []string{
 			"Boolean", "SByte", "Byte", "Int16", "UInt16", "Int32", "UInt32",
@@ -261,7 +261,7 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 			return fmt.Errorf("unsupported dataType '%s'. Supported types are: %s",
 				dataType, strings.Join(supportedTypes, ", "))
 		}
-		
+
 		// Try to get the value from the structured content
 		if contentMap, ok := content.(map[string]interface{}); ok {
 			if val, exists := contentMap[mapping.ValueFrom]; exists {
@@ -316,7 +316,26 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 					write.nodeID, attempt, o.MaxWriteAttempts, err)
 				o.Log.Warnf("%v", writeErr)
 				if attempt < o.MaxWriteAttempts {
-					time.Sleep(time.Duration(o.TimeBetweenRetriesMs) * time.Millisecond)
+					select {
+					case <-time.After(time.Duration(o.TimeBetweenRetriesMs) * time.Millisecond):
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+					continue
+				}
+				return writeErr
+			}
+
+			if len(resp.Results) == 0 {
+				writeErr = fmt.Errorf("no results for node %s (attempt %d/%d)",
+					write.nodeID, attempt, o.MaxWriteAttempts)
+				o.Log.Warnf("%v", writeErr)
+				if attempt < o.MaxWriteAttempts {
+					select {
+					case <-time.After(time.Duration(o.TimeBetweenRetriesMs) * time.Millisecond):
+					case <-ctx.Done():
+						return ctx.Err()
+					}
 					continue
 				}
 				return writeErr
@@ -327,7 +346,11 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 					write.nodeID, resp.Results[0], attempt, o.MaxWriteAttempts)
 				o.Log.Warnf("%v", writeErr)
 				if attempt < o.MaxWriteAttempts {
-					time.Sleep(time.Duration(o.TimeBetweenRetriesMs) * time.Millisecond)
+					select {
+					case <-time.After(time.Duration(o.TimeBetweenRetriesMs) * time.Millisecond):
+					case <-ctx.Done():
+						return ctx.Err()
+					}
 					continue
 				}
 				return writeErr
@@ -340,7 +363,11 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 						write.nodeID, attempt, o.MaxWriteAttempts, err)
 					o.Log.Warnf("%v", writeErr)
 					if attempt < o.MaxWriteAttempts {
-						time.Sleep(time.Duration(o.TimeBetweenRetriesMs) * time.Millisecond)
+						select {
+						case <-time.After(time.Duration(o.TimeBetweenRetriesMs) * time.Millisecond):
+						case <-ctx.Done():
+							return ctx.Err()
+						}
 						continue
 					}
 					return writeErr

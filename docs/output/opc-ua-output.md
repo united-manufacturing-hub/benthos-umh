@@ -9,8 +9,6 @@ The **OPC UA output** plugin writes data into an OPC UA server (e.g., a PLC). Th
 
 The OPC UA output plugin supports interpolated strings for the following fields:
 - `nodeId` - Dynamically determine which OPC UA node to write to based on message content
-- `username` - Dynamic authentication credentials from environment variables or message metadata
-- `password` - Dynamic authentication credentials from environment variables or message metadata
 
 This enables use cases such as:
 - Routing writes to different nodes based on message content
@@ -25,9 +23,9 @@ This enables use cases such as:
 ```yaml
 output:
   opcua:
-    # endpoint, username, password, securityMode, securityPolicy, serverCertificateFingerprint, clientCertificate
+    # endpoint, securityMode, securityPolicy, serverCertificateFingerprint, clientCertificate
     # see OPC UA Input for more information
-    
+
     # Static configuration example
     nodeMappings:
       - nodeId: "ns=2;s=MySetpoint"
@@ -151,11 +149,11 @@ The OPC UA output plugin supports dynamic node IDs and credentials using interpo
 output:
   opcua:
     endpoint: "opc.tcp://localhost:4840"
-    
+
     # Dynamic credentials from environment variables
     username: "${! env(\"OPC_USERNAME\") }"
     password: "${! env(\"OPC_PASSWORD\") }"
-    
+
     # Dynamic node mapping based on message content
     nodeMappings:
       - nodeId: "${! json(\"target_node\") }"     # Node ID from message field
