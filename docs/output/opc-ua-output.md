@@ -12,8 +12,6 @@ The OPC UA output plugin supports interpolated strings for the following fields:
 
 This enables use cases such as:
 - Routing writes to different nodes based on message content
-- Using environment variables for credentials
-- Implementing credential rotation through metadata
 - Building flexible, reusable configurations
 
 ***
@@ -143,16 +141,12 @@ The plugin will write to the OPC UA server but **not** confirm. It will “succe
 
 ## Dynamic Configuration Example
 
-The OPC UA output plugin supports dynamic node IDs and credentials using interpolated fields:
+The OPC UA output plugin supports dynamic node IDs using interpolated fields:
 
 ```yaml
 output:
   opcua:
     endpoint: "opc.tcp://localhost:4840"
-
-    # Dynamic credentials from environment variables
-    username: "${! env(\"OPC_USERNAME\") }"
-    password: "${! env(\"OPC_PASSWORD\") }"
 
     # Dynamic node mapping based on message content
     nodeMappings:
