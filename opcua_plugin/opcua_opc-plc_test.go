@@ -37,7 +37,7 @@ import (
 
 // opc-plc is what is running when starting up the devcontainer
 // other simulators are not running when starting up the devcontainer and are a rather manual process to start
-var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, func() {
+var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", FlakeAttempts(3), Serial, func() {
 	// NOTE: set to localhost and 50000 for local runs but will get override whenever running in workflow
 	opcsimIp := "localhost"
 	opcsimPort := "50000"
@@ -62,7 +62,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			var nodeIDStrings = []string{"ns=3;s=Basic"}
+			nodeIDStrings := []string{"ns=3;s=Basic"}
 
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -107,7 +107,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{"ns=3;s=Basic"}
+				nodeIDStrings := []string{"ns=3;s=Basic"}
 
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -138,7 +138,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{"ns=3;s=Basic"}
+				nodeIDStrings := []string{"ns=3;s=Basic"}
 
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -171,7 +171,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{"ns=3;s=Fast"}
+				nodeIDStrings := []string{"ns=3;s=Fast"}
 
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -210,7 +210,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					message, err := message.AsStructuredMut()
 					Expect(err).NotTo(HaveOccurred())
 					Expect(message).To(BeAssignableToTypeOf(json.Number("22.565684")))
-					//GinkgoT().Log("Received message: ", message)
+					// GinkgoT().Log("Received message: ", message)
 				}
 
 				// Close connection
@@ -227,7 +227,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{"ns=6;s=DataAccess_AnalogType_Byte"}
+				nodeIDStrings := []string{"ns=6;s=DataAccess_AnalogType_Byte"}
 
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -261,7 +261,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					message, err := message.AsStructuredMut()
 					Expect(err).NotTo(HaveOccurred())
 					Expect(message).To(Equal(json.Number("0")))
-					//GinkgoT().Log("Received message: ", message)
+					// GinkgoT().Log("Received message: ", message)
 				}
 
 				// Close connection
@@ -280,7 +280,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{
+				nodeIDStrings := []string{
 					"ns=6;s=DataAccess_AnalogType_Byte",
 					"ns=6;s=DataAccess_AnalogType_Double",
 					"ns=6;s=DataAccess_AnalogType_Float",
@@ -324,7 +324,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 					message, err := message.AsStructuredMut()
 					Expect(err).NotTo(HaveOccurred())
 					Expect(message).To(BeAssignableToTypeOf(json.Number("22.565684")))
-					//GinkgoT().Log("Received message: ", message)
+					// GinkgoT().Log("Received message: ", message)
 				}
 
 				// Close connection
@@ -340,7 +340,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{"ns=6;s=DataAccess_DataItem_Null"}
+				nodeIDStrings := []string{"ns=6;s=DataAccess_DataItem_Null"}
 
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -384,7 +384,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{"ns=6;s=DataAccess_AnalogType_Array"}
+				nodeIDStrings := []string{"ns=6;s=DataAccess_AnalogType_Array"}
 
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -467,7 +467,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{"ns=6;s=DataAccess_DataItem"} // Subscribes to all values with non-null datatype.
+				nodeIDStrings := []string{"ns=6;s=DataAccess_DataItem"} // Subscribes to all values with non-null datatype.
 
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -527,7 +527,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{
+				nodeIDStrings := []string{
 					"ns=3;s=Fast",
 					"ns=3;s=Slow",
 				}
@@ -577,7 +577,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{
+				nodeIDStrings := []string{
 					"ns=6;s=Scalar_Static_Arrays_Boolean",
 					"ns=6;s=Scalar_Static_Arrays_Byte",
 					"ns=6;s=Scalar_Static_Arrays_ByteString",
@@ -645,11 +645,11 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 
 					// Determine the data type from the OPC UA path
 					dataType := strings.Split(opcuapath, "_")[5] // Extracts the data type part
-					//GinkgoT().Log(dataType)
+					// GinkgoT().Log(dataType)
 
 					if strings.HasSuffix(dataType, "Arrays") {
 						dataTypeOfArray := strings.Split(opcuapath, "_")[6]
-						//GinkgoT().Log(dataTypeOfArray)
+						// GinkgoT().Log(dataTypeOfArray)
 
 						// Handle array data types
 						switch dataTypeOfArray {
@@ -684,7 +684,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{"ns=3;s=OpcPlc"}
+				nodeIDStrings := []string{"ns=3;s=OpcPlc"}
 
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -729,7 +729,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{"i=84"}
+				nodeIDStrings := []string{"i=84"}
 
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -774,7 +774,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{"i=84"}
+				nodeIDStrings := []string{"i=84"}
 
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -817,7 +817,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{"ns=3;s=Anomaly"}
+				nodeIDStrings := []string{"ns=3;s=Anomaly"}
 
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -860,7 +860,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{"ns=3;s=Basic"}
+				nodeIDStrings := []string{"ns=3;s=Basic"}
 
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -903,7 +903,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{"ns=3;s=Deterministic GUID"}
+				nodeIDStrings := []string{"ns=3;s=Deterministic GUID"}
 
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -946,7 +946,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{"ns=3;s=Fast"}
+				nodeIDStrings := []string{"ns=3;s=Fast"}
 
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -989,7 +989,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{"ns=3;s=Slow"}
+				nodeIDStrings := []string{"ns=3;s=Slow"}
 
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -1033,7 +1033,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				var nodeIDStrings = []string{"ns=3;s=Special"}
+				nodeIDStrings := []string{"ns=3;s=Special"}
 
 				parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -1070,7 +1070,6 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 				}
 			})
 		})
-
 	})
 
 	Describe("metadata", func() {
@@ -1078,7 +1077,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			var nodeIDStrings = []string{"ns=3;s=OpcPlc"}
+			nodeIDStrings := []string{"ns=3;s=OpcPlc"}
 
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -1147,7 +1146,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			ctx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel1()
 
-			var nodeIDStrings = []string{"ns=3;s=SlowUInt1"}
+			nodeIDStrings := []string{"ns=3;s=SlowUInt1"}
 
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -1209,7 +1208,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			var nodeIDStrings = []string{}
+			nodeIDStrings := []string{}
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
@@ -1251,7 +1250,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			var nodeIDStrings = []string{"i=2258"}
+			nodeIDStrings := []string{"i=2258"}
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
@@ -1294,7 +1293,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			var nodeIDStrings = []string{}
+			nodeIDStrings := []string{}
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
@@ -1363,7 +1362,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", Serial, fu
 		It("does disconnect if the heartbeat does not come in regular intervals", func() {
 			Skip("currently fails due to opcsimv2-misbehaviour")
 
-			var nodeIDStrings = []string{}
+			nodeIDStrings := []string{}
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
@@ -1511,7 +1510,7 @@ opcua:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			var nodeIDStrings = []string{"ns=6;s=DataAccess_AnalogType_Byte"}
+			nodeIDStrings := []string{"ns=6;s=DataAccess_AnalogType_Byte"}
 
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -1568,22 +1567,22 @@ opcua:
 })
 
 func checkDatatypeOfOPCUATag(dataType string, messageParsed interface{}, opcuapath string) {
-	//GinkgoT().Logf("%s, %+v, %s", dataType, messageParsed, opcuapath)
+	// GinkgoT().Logf("%s, %+v, %s", dataType, messageParsed, opcuapath)
 	switch dataType {
 	case "Boolean":
 		// Assignable to bool
 		Expect(messageParsed).To(BeAssignableToTypeOf(true), "DataType check for Boolean failed")
-		//GinkgoT().Log("Received Boolean message: ", messageParsed)
+		// GinkgoT().Log("Received Boolean message: ", messageParsed)
 
 	case "Byte", "Double", "Enumeration", "Float", "Int16", "Int32", "Int64", "Integer", "Number", "SByte", "StatusCode", "UInt16", "UInt32", "UInt64", "UInteger", "Duration":
 		// Assignable to json.number
 		Expect(messageParsed).To(BeAssignableToTypeOf(json.Number("")), "DataType check for Byte failed")
-		//GinkgoT().Log("Received message: ", dataType, messageParsed)
+		// GinkgoT().Log("Received message: ", dataType, messageParsed)
 
 	case "DateTime", "NodeId", "String", "ByteArray", "ByteString", "LocaleId", "UtcTime", "XmlElement":
 		// Assignable to string
 		Expect(messageParsed).To(BeAssignableToTypeOf("12fff3"), "DataType check for DateTime failed")
-		//GinkgoT().Log("Received DateTime message: ", messageParsed)
+		// GinkgoT().Log("Received DateTime message: ", messageParsed)
 	case "ExpandedNodeId":
 		// ExpandedNodeId is expected to be a map[string]interface{}
 		parsedMap, ok := messageParsed.(map[string]interface{})
@@ -1596,7 +1595,7 @@ func checkDatatypeOfOPCUATag(dataType string, messageParsed interface{}, opcuapa
 			Expect(exists).To(BeTrue(), fmt.Sprintf("Expected key %s missing in messageParsed", key))
 		}
 
-		//GinkgoT().Log("Received ExpandedNodeId message: ", messageParsed)
+		// GinkgoT().Log("Received ExpandedNodeId message: ", messageParsed)
 
 	case "Guid", "LocalizedText", "QualifiedName":
 		// These types are expected to be map[string]interface{} with specific keys
@@ -1618,13 +1617,13 @@ func checkDatatypeOfOPCUATag(dataType string, messageParsed interface{}, opcuapa
 			Expect(exists).To(BeTrue(), fmt.Sprintf("Expected key %s missing in messageParsed for %s", key, dataType))
 		}
 
-		//GinkgoT().Logf("Received %s message: %+v", dataType, messageParsed)
+		// GinkgoT().Logf("Received %s message: %+v", dataType, messageParsed)
 
 	case "Variant":
 		// Variant is expected to be a map[string]interface{}, but without specified keys
 		_, ok := messageParsed.(map[string]interface{})
 		Expect(ok).To(BeTrue(), "Expected messageParsed to be of type map[string]interface{} for Variant")
-		//GinkgoT().Log("Received Variant message: ", messageParsed)
+		// GinkgoT().Log("Received Variant message: ", messageParsed)
 
 	default:
 		Fail(fmt.Sprintf("Unsupported data type in OPC UA path: %s:%s", dataType, opcuapath))

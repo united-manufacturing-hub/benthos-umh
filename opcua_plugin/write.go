@@ -43,9 +43,9 @@ type OPCUAOutput struct {
 
 // NodeMapping defines how to map message fields to OPC UA nodes
 type NodeMapping struct {
-	NodeID    string `json:"nodeId"`
-	ValueFrom string `json:"valueFrom"`
-	DataType  string `json:"dataType"`
+	NodeID    *service.InterpolatedString `json:"nodeId"`
+	ValueFrom string                      `json:"valueFrom"`
+	DataType  *service.InterpolatedString `json:"dataType"`
 }
 
 // opcuaOutputConfig creates and returns a configuration spec for the OPC UA output
@@ -54,15 +54,17 @@ func opcuaOutputConfig() *service.ConfigSpec {
 		Summary("OPC UA output plugin").
 		Description("The OPC UA output plugin writes data to an OPC UA server and optionally verifies the write via a read-back handshake.").
 		Field(service.NewObjectListField("nodeMappings",
-			service.NewStringField("nodeId").
-				Description("The OPC UA node ID to write to.").
-				Example("ns=2;s=MyVariable"),
+			service.NewInterpolatedStringField("nodeId").
+				Description("The OPC UA node ID to write to. Supports dynamic values through interpolation.").
+				Example("ns=2;s=MyVariable").
+				Example("ns=2;s=${! json(\"nodeId\") }"),
 			service.NewStringField("valueFrom").
 				Description("The field in the input message to get the value from.").
 				Example("value"),
-			service.NewStringField("dataType").
-				Description("The OPC UA data type for the value.").
-				Example("Int32")).
+			service.NewInterpolatedStringField("dataType").
+				Description("The OPC UA data type for the value. Supports dynamic values through interpolation.").
+				Example("Int32").
+				Example("${! json(\"dataType\") }")).
 			Description("List of node mappings defining which message fields to write to which OPC UA nodes")).
 		Field(service.NewObjectField("handshake",
 			service.NewBoolField("enabled").
@@ -112,18 +114,20 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	for i := 0; i < len(nodeMappingsConf); i++ {
 		mapConf := nodeMappingsConf[i]
 
-		// Get nodeId and validate it
-		nodeID, err := mapConf.FieldString("nodeId")
+		// Get nodeId as InterpolatedString
+		nodeIDInterp, err := mapConf.FieldInterpolatedString("nodeId")
 		if err != nil {
 			return nil, fmt.Errorf("nodeId is required in node mapping %d: %w", i, err)
 		}
-		if nodeID == "" {
-			return nil, fmt.Errorf("nodeId in node mapping %d cannot be empty. Please provide a valid OPC UA node ID (e.g., 'ns=2;s=MyVariable')", i)
-		}
 
-		// Validate nodeId format
-		if _, err := ua.ParseNodeID(nodeID); err != nil {
-			return nil, fmt.Errorf("invalid nodeId format in node mapping %d: %s. Expected format examples: 'ns=2;s=MyVariable', 'i=85', 'ns=3;i=1000'. Error: %v", i, nodeID, err)
+		// For validation during config parsing, we'll check if it's a static value
+		// Dynamic values will be validated at runtime
+		staticNodeID, exists := nodeIDInterp.Static()
+		if exists && staticNodeID != "" {
+			// Validate static nodeId format
+			if _, err := ua.ParseNodeID(staticNodeID); err != nil {
+				return nil, fmt.Errorf("invalid nodeId format in node mapping %d: %s. Expected format examples: 'ns=2;s=MyVariable', 'i=85', 'ns=3;i=1000'. Error: %v", i, staticNodeID, err)
+			}
 		}
 
 		// Get valueFrom and validate it
@@ -135,33 +139,38 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service
 			return nil, fmt.Errorf("valueFrom in node mapping %d cannot be empty. Please specify the message field to read the value from (e.g., 'value', 'data.temperature')", i)
 		}
 
-		// Get and validate dataType
-		dataType, err := mapConf.FieldString("dataType")
+		// Get dataType as InterpolatedString
+		dataTypeInterp, err := mapConf.FieldInterpolatedString("dataType")
 		if err != nil {
 			return nil, fmt.Errorf("dataType is required in node mapping %d: %w", i, err)
 		}
 
-		// Validate dataType is supported
-		supportedTypes := []string{
-			"Boolean", "SByte", "Byte", "Int16", "UInt16", "Int32", "UInt32",
-			"Int64", "UInt64", "Float", "Double", "String", "DateTime",
-		}
-		validType := false
-		for _, t := range supportedTypes {
-			if dataType == t {
-				validType = true
-				break
+		// For validation during config parsing, we'll check if it's a static value
+		// Dynamic values will be validated at runtime
+		staticDataType, exists := dataTypeInterp.Static()
+		if exists && staticDataType != "" {
+			// Validate static dataType is supported
+			supportedTypes := []string{
+				"Boolean", "SByte", "Byte", "Int16", "UInt16", "Int32", "UInt32",
+				"Int64", "UInt64", "Float", "Double", "String", "DateTime",
 			}
-		}
-		if !validType {
-			return nil, fmt.Errorf("unsupported dataType '%s' in node mapping %d. Supported types are: %s",
-				dataType, i, strings.Join(supportedTypes, ", "))
+			validType := false
+			for _, t := range supportedTypes {
+				if staticDataType == t {
+					validType = true
+					break
+				}
+			}
+			if !validType {
+				return nil, fmt.Errorf("unsupported dataType '%s' in node mapping %d. Supported types are: %s",
+					staticDataType, i, strings.Join(supportedTypes, ", "))
+			}
 		}
 
 		output.NodeMappings = append(output.NodeMappings, NodeMapping{
-			NodeID:    nodeID,
+			NodeID:    nodeIDInterp,
 			ValueFrom: valueFrom,
-			DataType:  dataType,
+			DataType:  dataTypeInterp,
 		})
 	}
 
@@ -209,13 +218,58 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 		return fmt.Errorf("error getting message content: %w", err)
 	}
 
-	// Extract values from message
-	values := make(map[string]interface{})
+	// Extract values and resolve node IDs from message
+	type nodeWrite struct {
+		nodeID   string
+		value    interface{}
+		dataType string
+	}
+	var writes []nodeWrite
+
 	for _, mapping := range o.NodeMappings {
+		// Resolve the interpolated node ID
+		nodeID, err := mapping.NodeID.TryString(msg)
+		if err != nil {
+			return fmt.Errorf("failed to resolve nodeId: %w", err)
+		}
+		if nodeID == "" || nodeID == "null" {
+			return fmt.Errorf("nodeId resolved to empty or null value")
+		}
+
+		// Resolve the interpolated data type
+		dataType, err := mapping.DataType.TryString(msg)
+		if err != nil {
+			return fmt.Errorf("failed to resolve dataType: %w", err)
+		}
+		if dataType == "" || dataType == "null" {
+			return fmt.Errorf("dataType resolved to empty or null value")
+		}
+
+		// Validate dataType at runtime
+		supportedTypes := []string{
+			"Boolean", "SByte", "Byte", "Int16", "UInt16", "Int32", "UInt32",
+			"Int64", "UInt64", "Float", "Double", "String", "DateTime",
+		}
+		validType := false
+		for _, t := range supportedTypes {
+			if dataType == t {
+				validType = true
+				break
+			}
+		}
+		if !validType {
+			return fmt.Errorf("unsupported dataType '%s'. Supported types are: %s",
+				dataType, strings.Join(supportedTypes, ", "))
+		}
+
 		// Try to get the value from the structured content
 		if contentMap, ok := content.(map[string]interface{}); ok {
 			if val, exists := contentMap[mapping.ValueFrom]; exists {
-				values[mapping.NodeID] = val
+				writes = append(writes, nodeWrite{
+					nodeID:   nodeID,
+					value:    val,
+					dataType: dataType,
+				})
 			} else {
 				return fmt.Errorf("field %s not found in message", mapping.ValueFrom)
 			}
@@ -225,22 +279,17 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 	}
 
 	// Write values to OPC UA nodes
-	for _, mapping := range o.NodeMappings {
-		val := values[mapping.NodeID]
-		if val == nil {
-			return fmt.Errorf("value for node %s is nil", mapping.NodeID)
-		}
-
+	for _, write := range writes {
 		// Parse the node ID
-		nodeID, err := ua.ParseNodeID(mapping.NodeID)
+		nodeID, err := ua.ParseNodeID(write.nodeID)
 		if err != nil {
-			return fmt.Errorf("invalid node ID %s: %w", mapping.NodeID, err)
+			return fmt.Errorf("invalid node ID %s: %w", write.nodeID, err)
 		}
 
 		// Convert value to OPC UA variant
-		variant, err := o.convertToVariant(val, mapping.DataType)
+		variant, err := o.convertToVariant(write.value, write.dataType)
 		if err != nil {
-			return fmt.Errorf("error converting value for node %s: %w", mapping.NodeID, err)
+			return fmt.Errorf("error converting value for node %s: %w", write.nodeID, err)
 		}
 
 		// Prepare write request
@@ -264,10 +313,29 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 			resp, err := o.Client.Write(ctx, req)
 			if err != nil {
 				writeErr = fmt.Errorf("error writing to node %s (attempt %d/%d): %w",
-					mapping.NodeID, attempt, o.MaxWriteAttempts, err)
+					write.nodeID, attempt, o.MaxWriteAttempts, err)
 				o.Log.Warnf("%v", writeErr)
 				if attempt < o.MaxWriteAttempts {
-					time.Sleep(time.Duration(o.TimeBetweenRetriesMs) * time.Millisecond)
+					select {
+					case <-time.After(time.Duration(o.TimeBetweenRetriesMs) * time.Millisecond):
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+					continue
+				}
+				return writeErr
+			}
+
+			if len(resp.Results) == 0 {
+				writeErr = fmt.Errorf("no results for node %s (attempt %d/%d)",
+					write.nodeID, attempt, o.MaxWriteAttempts)
+				o.Log.Warnf("%v", writeErr)
+				if attempt < o.MaxWriteAttempts {
+					select {
+					case <-time.After(time.Duration(o.TimeBetweenRetriesMs) * time.Millisecond):
+					case <-ctx.Done():
+						return ctx.Err()
+					}
 					continue
 				}
 				return writeErr
@@ -275,10 +343,14 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 
 			if resp.Results[0] != ua.StatusOK {
 				writeErr = fmt.Errorf("write failed for node %s with status %v (attempt %d/%d)",
-					mapping.NodeID, resp.Results[0], attempt, o.MaxWriteAttempts)
+					write.nodeID, resp.Results[0], attempt, o.MaxWriteAttempts)
 				o.Log.Warnf("%v", writeErr)
 				if attempt < o.MaxWriteAttempts {
-					time.Sleep(time.Duration(o.TimeBetweenRetriesMs) * time.Millisecond)
+					select {
+					case <-time.After(time.Duration(o.TimeBetweenRetriesMs) * time.Millisecond):
+					case <-ctx.Done():
+						return ctx.Err()
+					}
 					continue
 				}
 				return writeErr
@@ -288,10 +360,14 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 			if o.HandshakeEnabled {
 				if err := o.verifyWrite(ctx, nodeID, variant); err != nil {
 					writeErr = fmt.Errorf("handshake verification failed for node %s (attempt %d/%d): %w",
-						mapping.NodeID, attempt, o.MaxWriteAttempts, err)
+						write.nodeID, attempt, o.MaxWriteAttempts, err)
 					o.Log.Warnf("%v", writeErr)
 					if attempt < o.MaxWriteAttempts {
-						time.Sleep(time.Duration(o.TimeBetweenRetriesMs) * time.Millisecond)
+						select {
+						case <-time.After(time.Duration(o.TimeBetweenRetriesMs) * time.Millisecond):
+						case <-ctx.Done():
+							return ctx.Err()
+						}
 						continue
 					}
 					return writeErr
@@ -300,7 +376,7 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 
 			// If we get here, the write was successful
 			if attempt > 1 {
-				o.Log.Infof("Successfully wrote to node %s after %d attempts", mapping.NodeID, attempt)
+				o.Log.Infof("Successfully wrote to node %s after %d attempts", write.nodeID, attempt)
 			}
 			writeErr = nil
 			break
