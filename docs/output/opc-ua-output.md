@@ -9,9 +9,11 @@ The **OPC UA output** plugin writes data into an OPC UA server (e.g., a PLC). Th
 
 The OPC UA output plugin supports interpolated strings for the following fields:
 - `nodeId` - Dynamically determine which OPC UA node to write to based on message content
+- `dataType` - Dynamically determine the OPC UA data type based on message content
 
 This enables use cases such as:
 - Routing writes to different nodes based on message content
+- Dynamically selecting data types based on message metadata
 - Building flexible, reusable configurations
 
 ***
@@ -21,7 +23,7 @@ This enables use cases such as:
 ```yaml
 output:
   opcua:
-    # endpoint, securityMode, securityPolicy, serverCertificateFingerprint, clientCertificate
+    # endpoint, username, password, securityMode, securityPolicy, serverCertificateFingerprint, clientCertificate
     # see OPC UA Input for more information
 
     # Static configuration example
@@ -152,7 +154,7 @@ output:
     nodeMappings:
       - nodeId: "${! json(\"target_node\") }"     # Node ID from message field
         valueFrom: "value"
-        dataType: "String"
+        dataType: "${! json(\"dataType\") }"      # Data type from message field
 ```
 
 **Example with message routing:**
@@ -167,6 +169,12 @@ pipeline:
           "speed" => "ns=2;s=[default]/PaintRoom1/Spraytan1/Speed",
           "temp"  => "ns=2;s=[default]/PaintRoom1/Spraytan1/Temperature"
         }
+        # Set appropriate data type based on tag type
+        root.target_datatype = match this.tag_type {
+          "color" => "String",
+          "speed" => "Double", 
+          "temp"  => "Float"
+        }
         root.value = this.tag_value
 
 output:
@@ -175,7 +183,7 @@ output:
     nodeMappings:
       - nodeId: "${! json(\"target_node\") }"
         valueFrom: "value"
-        dataType: "Double"
+        dataType: "${! json(\"target_datatype\") }"
 ```
 
 This enables building reusable configurations that adapt to different environments and message types without hardcoding node paths.
