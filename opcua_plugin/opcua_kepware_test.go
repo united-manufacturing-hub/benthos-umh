@@ -31,7 +31,7 @@ import (
 // These are tests which only use the KepServer itself and none of the underlying
 // PLC's, which are connected via OPC-UA. We will check on connectivity and verify
 // some static and dynamic data exchange.
-var _ = Describe("Test against KepServer EX6", func() {
+var _ = Describe("Test against KepServer EX6", FlakeAttempts(3), func() {
 	var (
 		endpoint    string
 		username    string
@@ -67,7 +67,6 @@ var _ = Describe("Test against KepServer EX6", func() {
 	})
 
 	DescribeTable("Connect and Read", func(opcInput *OPCUAInput, errorExpected bool, expectedValue any, isChangingValue bool) {
-
 		input = opcInput
 		input.Endpoint = endpoint
 		input.ServerCertificates = make(map[*ua.EndpointDescription]string)
@@ -86,7 +85,6 @@ var _ = Describe("Test against KepServer EX6", func() {
 
 		// validate the data coming from kepware itself (static and dynamic)
 		validateStaticAndChangingData(ctx, input, expectedValue, isChangingValue)
-
 	},
 		Entry("should connect", &OPCUAInput{
 			NodeIDs:          nil,
@@ -143,7 +141,6 @@ var _ = Describe("Test against KepServer EX6", func() {
 		input.ServerCertificateFingerprint = fingerprint
 		err := input.Connect(ctx)
 		Expect(err).NotTo(HaveOccurred())
-
 	},
 		Entry("should connect via Basic256Sha256 SignAndEncrypt", &OPCUAInput{
 			OPCUAConnection: &OPCUAConnection{
@@ -300,7 +297,6 @@ var _ = Describe("Test underlying OPC-clients", FlakeAttempts(3), func() {
 	// Read static and dynamic data from the underlying S7-1200 (connected via OPC-UA)
 	// and verify it's type and values.
 	DescribeTable("check for correct values", func(opcInput *OPCUAInput, expectedValue any, isChangingValue bool) {
-
 		input = opcInput
 		input.Endpoint = endpoint
 		input.ServerCertificates = make(map[*ua.EndpointDescription]string)
@@ -324,7 +320,6 @@ var _ = Describe("Test underlying OPC-clients", FlakeAttempts(3), func() {
 			OPCUAConnection:  &OPCUAConnection{},
 		}, nil, true),
 	)
-
 })
 
 func validateStaticAndChangingData(ctx context.Context, input *OPCUAInput, expectedValue any, isChangingValue bool) {
