@@ -1,0 +1,74 @@
+# Copyright 2025 UMH Systems GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Sparkplug B Edge Node Configuration - Minimal Setup
+# Publishes simple test data every 2 seconds
+# Requires: docker run -d --name mosquitto -p 1883:1883 eclipse-mosquitto:1.6
+
+input:
+  generate:
+    interval: "2s"
+    mapping: |
+      root = {
+        "counter": counter()
+      }
+
+pipeline:
+  processors:
+    # Convert to UMH-core format using tag_processor
+    - tag_processor:
+        defaults: |
+          // Set UMH asset hierarchy - THIS WILL BE CONVERTED TO EON NODE ID
+          msg.meta.location_path = "enterprise.factory.line1.station1";
+          msg.meta.data_contract = "_historian";
+
+          // Store the counter value before modifying payload
+          let counterValue = msg.payload.counter;
+
+          // Determine tag name based on counter value
+          if (counterValue % 2 == 0) {
+            msg.meta.tag_name = "value";
+            msg.meta.virtual_path = "temperature";
+            // Simulate temperature data
+            msg.payload = 25.0 + (counterValue % 10);
+          } else {
+            msg.meta.tag_name = "value";
+            msg.meta.virtual_path = "humidity";
+            // Simulate humidity data
+            msg.payload = 60.0 + (counterValue % 20);
+          }
+
+          return msg;
+
+output:
+  broker:
+    outputs:
+      - stdout: {}
+      - sparkplug_b:
+          mqtt:
+            urls: ["tcp://localhost:1883"]
+
+          # Edge Node identity - DEVICE-LEVEL PARRIS DEMO
+          identity:
+            group_id: "DeviceLevelTest"
+            edge_node_id: "StaticEdgeNode01"
+            # device_id will be generated from location_path via PARRIS Method
+
+          # Configure as Edge Node (publishes data)
+          role: "edge_node"
+
+logger:
+  level: "DEBUG"
+  format: "logfmt"
+  add_timestamp: true
