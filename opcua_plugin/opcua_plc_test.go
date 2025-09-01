@@ -31,7 +31,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("Getting Nodes for a OPC Ua server in a tree datastructure", func() {
+var _ = Describe("Getting Nodes for a OPC Ua server in a tree datastructure", FlakeAttempts(3), func() {
 	var ctx context.Context
 	var cancel context.CancelFunc
 	var endpoint string
@@ -81,13 +81,11 @@ var _ = Describe("Getting Nodes for a OPC Ua server in a tree datastructure", fu
 					}
 				}
 			}()
-
 		})
 	})
 })
 
-var _ = Describe("Test Against Siemens S7", Serial, func() {
-
+var _ = Describe("Test Against Siemens S7", FlakeAttempts(3), Serial, func() {
 	var endpoint string
 	var fingerprint string
 	var input *OPCUAInput
@@ -122,7 +120,6 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 
 	Describe("Connect", func() {
 		It("should connect", func() {
-
 			nodeIDStrings := []string{"ns=4;i=2"}
 
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
@@ -226,7 +223,7 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 		It("should return data changes", func() {
 			var err error
 
-			var nodeIDStrings = []string{"ns=4;i=6"}
+			nodeIDStrings := []string{"ns=4;i=6"}
 
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -253,8 +250,7 @@ var _ = Describe("Test Against Siemens S7", Serial, func() {
 	})
 })
 
-var _ = Describe("Test Against WAGO PLC", Serial, func() {
-
+var _ = Describe("Test Against WAGO PLC", FlakeAttempts(3), Serial, func() {
 	var endpoint string
 	var username string
 	var password string
@@ -352,7 +348,6 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 	Describe("Connect with Username and Password", func() {
 		Context("when using incorrect credentials", func() {
 			It("should fail to connect", func() {
-
 				input = &OPCUAInput{
 					OPCUAConnection: &OPCUAConnection{
 						Endpoint:           endpoint,
@@ -371,7 +366,6 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 
 		Context("when using correct credentials", func() {
 			It("should successfully connect", func() {
-
 				input = &OPCUAInput{
 					OPCUAConnection: &OPCUAConnection{
 						Endpoint:           endpoint,
@@ -389,12 +383,10 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 	})
 
 	Describe("Parse Nodes", func() {
-
 		It("should parse node IDs", func() {
-
 			var err error
 
-			var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
+			nodeIDStrings := []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
 
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -416,10 +408,9 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 
 	When("Reading a batch", func() {
 		It("should return a batch of messages", FlakeAttempts(3), func() {
-
 			var err error
 
-			var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
+			nodeIDStrings := []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL"}
 
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -457,10 +448,9 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 
 	When("Subscribing", func() {
 		It("should return data changes", FlakeAttempts(3), func() {
-
 			var err error
 
-			var nodeIDStrings = []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL", "ns=4;s=|vprop|WAGO 750-8101 PFC100 CS 2ETH.Application.RevisionCounter"}
+			nodeIDStrings := []string{"ns=4;s=|var|WAGO 750-8101 PFC100 CS 2ETH.Application.GVL", "ns=4;s=|vprop|WAGO 750-8101 PFC100 CS 2ETH.Application.RevisionCounter"}
 
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
@@ -507,7 +497,6 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 
 				Expect(message).To(BeAssignableToTypeOf(exampleNumber)) // it should be a number
 			}
-
 		})
 	})
 
@@ -518,7 +507,6 @@ var _ = Describe("Test Against WAGO PLC", Serial, func() {
 		input.ServerCertificateFingerprint = fingerprint
 		err := input.Connect(ctx)
 		Expect(err).NotTo(HaveOccurred())
-
 	},
 		Entry("should connect via Basic256Sha256", &OPCUAInput{
 			OPCUAConnection: &OPCUAConnection{

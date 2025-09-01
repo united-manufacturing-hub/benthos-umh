@@ -1,9 +1,20 @@
 # OPC UA (Output)
 
-The **OPC UA output** plugin writes data into an OPC UA server (e.g., a PLC). This plugin supports optional read-back (handshake) to confirm the write.
+The **OPC UA output** plugin writes data into an OPC UA server (e.g., a PLC). This plugin supports optional read-back (handshake) to confirm the write and dynamic configuration through interpolated fields.
 
 > **Data Transformations**\
 > It is recommended to perform JSON-to-field transformations _before_ this plugin (e.g., via Node-RED JavaScript or [Bloblang](https://www.benthos.dev/docs/guides/bloblang/about)). That way, you feed the final fields directly to this plugin without extra logic here.
+
+## Dynamic Configuration Support
+
+The OPC UA output plugin supports interpolated strings for the following fields:
+- `nodeId` - Dynamically determine which OPC UA node to write to based on message content
+- `dataType` - Dynamically determine the OPC UA data type based on message content
+
+This enables use cases such as:
+- Routing writes to different nodes based on message content
+- Dynamically selecting data types based on message metadata
+- Building flexible, reusable configurations
 
 ***
 
@@ -15,6 +26,7 @@ output:
     # endpoint, username, password, securityMode, securityPolicy, serverCertificateFingerprint, clientCertificate
     # see OPC UA Input for more information
 
+    # Static configuration example
     nodeMappings:
       - nodeId: "ns=2;s=MySetpoint"
         valueFrom: "setpoint"   # The JSON field to write
@@ -129,6 +141,55 @@ The plugin will write to the OPC UA server but **not** confirm. It will “succe
 
 ***
 
+## Dynamic Configuration Example
+
+The OPC UA output plugin supports dynamic node IDs using interpolated fields:
+
+```yaml
+output:
+  opcua:
+    endpoint: "opc.tcp://localhost:4840"
+
+    # Dynamic node mapping based on message content
+    nodeMappings:
+      - nodeId: "${! json(\"target_node\") }"     # Node ID from message field
+        valueFrom: "value"
+        dataType: "${! json(\"dataType\") }"      # Data type from message field
+```
+
+**Example with message routing:**
+
+```yaml
+pipeline:
+  processors:
+    - mapping: |
+        # Route to different nodes based on tag type
+        root.target_node = match this.tag_type {
+          "color" => "ns=2;s=[default]/PaintRoom1/Spraytan1/Color",
+          "speed" => "ns=2;s=[default]/PaintRoom1/Spraytan1/Speed",
+          "temp"  => "ns=2;s=[default]/PaintRoom1/Spraytan1/Temperature"
+        }
+        # Set appropriate data type based on tag type
+        root.target_datatype = match this.tag_type {
+          "color" => "String",
+          "speed" => "Double", 
+          "temp"  => "Float"
+        }
+        root.value = this.tag_value
+
+output:
+  opcua:
+    endpoint: "opc.tcp://plc.factory.local:4840"
+    nodeMappings:
+      - nodeId: "${! json(\"target_node\") }"
+        valueFrom: "value"
+        dataType: "${! json(\"target_datatype\") }"
+```
+
+This enables building reusable configurations that adapt to different environments and message types without hardcoding node paths.
+
+***
+
 **Implementation Details & Future Outlook**
 
 For many industrial use cases, you might need more than just writing a value and reading it back:
@@ -144,3 +205,4 @@ For many industrial use cases, you might need more than just writing a value and
    * _Future_: We may add an advanced handshake config that reads a different node (rather than the same node) and checks for a specific “ACK” value.
 
 With Benthos, the “at least once” acknowledgment ensures that if writing fails, the message can be retried or routed. This plugin’s minimal default handshake (read-back from the same node) is a strong start for safer OPC UA setpoints, and we’ll grow it over time if more advanced scenarios are needed.
+
