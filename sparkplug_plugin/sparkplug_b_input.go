@@ -1121,7 +1121,13 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 
 	// Conversion successful - add UMH metadata
 	msg.MetaSet("umh_conversion_status", "success")
-	msg.MetaSet("umh_location_path", umhMsg.TopicInfo.Level0+"."+strings.Join(umhMsg.TopicInfo.LocationSublevels, "."))
+	
+	// Build location path without trailing dots when LocationSublevels is empty
+	locationPath := umhMsg.TopicInfo.Level0
+	if len(umhMsg.TopicInfo.LocationSublevels) > 0 {
+		locationPath = locationPath + "." + strings.Join(umhMsg.TopicInfo.LocationSublevels, ".")
+	}
+	msg.MetaSet("umh_location_path", locationPath)
 	msg.MetaSet("umh_tag_name", umhMsg.TopicInfo.Name) // UMH terminology (only when conversion succeeds)
 	msg.MetaSet("umh_data_contract", umhMsg.TopicInfo.DataContract)
 	if umhMsg.TopicInfo.VirtualPath != nil {

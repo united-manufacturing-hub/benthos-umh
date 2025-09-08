@@ -237,6 +237,57 @@ var _ = Describe("FormatConverter", func() {
 						Expect(result.Value).To(Equal("RUNNING"))
 					},
 				),
+				Entry("Sparkplug message with empty LocationSublevels (ENG-3428 regression test)",
+					&SparkplugMessage{
+						GroupID:    "Group1",
+						EdgeNodeID: "RealisticNode",
+						DeviceID:   "RealisticDevice",
+						MetricName: "Realistic4",
+						Value:      99.85813327919277,
+						DataType:   "double",
+						Timestamp:  time.Now(),
+					},
+					"_historian",
+					func(result *UMHMessage) {
+						// Verify the topic doesn't have double dots
+						Expect(result.Topic.String()).To(Equal("umh.v1.RealisticDevice._historian.Realistic4"))
+						Expect(result.Topic.String()).NotTo(ContainSubstring(".."))
+						
+						// Verify the structure
+						Expect(result.TopicInfo.Level0).To(Equal("RealisticDevice"))
+						Expect(result.TopicInfo.LocationSublevels).To(BeEmpty())
+						Expect(result.TopicInfo.DataContract).To(Equal("_historian"))
+						Expect(result.TopicInfo.VirtualPath).To(BeNil())
+						Expect(result.TopicInfo.Name).To(Equal("Realistic4"))
+						Expect(result.Value).To(Equal(99.85813327919277))
+					},
+				),
+				Entry("Sparkplug message with empty LocationSublevels and virtual path",
+					&SparkplugMessage{
+						GroupID:    "Group1",
+						EdgeNodeID: "Node1",
+						DeviceID:   "SimpleDevice",
+						MetricName: "motor:diagnostics:rpm",
+						Value:      1500.0,
+						DataType:   "double",
+						Timestamp:  time.Now(),
+					},
+					"_raw",
+					func(result *UMHMessage) {
+						// Verify valid topic without double dots
+						Expect(result.Topic.String()).To(Equal("umh.v1.SimpleDevice._raw.motor.diagnostics.rpm"))
+						Expect(result.Topic.String()).NotTo(ContainSubstring(".."))
+						
+						// Verify structure with empty sublevels but with virtual path
+						Expect(result.TopicInfo.Level0).To(Equal("SimpleDevice"))
+						Expect(result.TopicInfo.LocationSublevels).To(BeEmpty())
+						Expect(result.TopicInfo.DataContract).To(Equal("_raw"))
+						Expect(result.TopicInfo.VirtualPath).NotTo(BeNil())
+						Expect(*result.TopicInfo.VirtualPath).To(Equal("motor.diagnostics"))
+						Expect(result.TopicInfo.Name).To(Equal("rpm"))
+						Expect(result.Value).To(Equal(1500.0))
+					},
+				),
 			)
 		})
 

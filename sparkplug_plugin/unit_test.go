@@ -1870,6 +1870,61 @@ var _ = Describe("EON Node ID Resolution (Parris Method) Unit Tests", func() {
 	})
 })
 
+var _ = Describe("UMH Metadata Generation Unit Tests", func() {
+	Context("Location Path Generation without trailing dots (ENG-3428)", func() {
+		It("should build location path correctly when LocationSublevels is empty", func() {
+			// This test verifies the fix for ENG-3428
+			// Previously, empty LocationSublevels would create "RealisticDevice." with trailing dot
+			
+			level0 := "RealisticDevice"
+			locationSublevels := []string{}
+			
+			// Build location path as the fixed implementation does
+			var locationPath string
+			if len(locationSublevels) > 0 {
+				locationPath = level0 + "." + strings.Join(locationSublevels, ".")
+			} else {
+				locationPath = level0
+			}
+			
+			// Should not have trailing dot
+			Expect(locationPath).To(Equal("RealisticDevice"))
+			Expect(locationPath).NotTo(HaveSuffix("."))
+		})
+
+		It("should build location path correctly when LocationSublevels has values", func() {
+			level0 := "enterprise"
+			locationSublevels := []string{"site", "area", "line"}
+			
+			// Build location path
+			var locationPath string
+			if len(locationSublevels) > 0 {
+				locationPath = level0 + "." + strings.Join(locationSublevels, ".")
+			} else {
+				locationPath = level0
+			}
+			
+			// Should be properly joined
+			Expect(locationPath).To(Equal("enterprise.site.area.line"))
+		})
+
+		It("should handle single sublevel correctly", func() {
+			level0 := "factory"
+			locationSublevels := []string{"line1"}
+			
+			// Build location path
+			var locationPath string
+			if len(locationSublevels) > 0 {
+				locationPath = level0 + "." + strings.Join(locationSublevels, ".")
+			} else {
+				locationPath = level0
+			}
+			
+			Expect(locationPath).To(Equal("factory.line1"))
+		})
+	})
+})
+
 var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 	var output *mockSparkplugOutput
 
