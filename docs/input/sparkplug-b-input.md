@@ -385,20 +385,28 @@ When UMH conversion is successful, additional metadata is added:
 * `umh_topic`: Complete UMH topic string
 * `umh_conversion_error`: Error message if conversion failed
 
-**Important Note on Sanitization**: When conversion fails due to invalid characters, the plugin still provides sanitized `umh_location_path` and `umh_tag_name` metadata to allow tag processors to handle the message. The sanitization follows these rules:
+**Automatic Sanitization**: The plugin automatically sanitizes Sparkplug metric names and device IDs before UMH conversion to ensure compatibility. The sanitization follows these rules:
 - Forward slashes (`/`) are replaced with dots (`.`) to preserve hierarchical structure
-- Invalid characters (anything except `a-z`, `A-Z`, `0-9`, `.`, `_`, `-`) are replaced with underscores (`_`)
+- Colons (`:`) are preserved as they indicate virtual path boundaries in Sparkplug
+- Invalid characters (anything except `a-z`, `A-Z`, `0-9`, `.`, `_`, `-`, `:`) are replaced with underscores (`_`)
 - Multiple consecutive dots are collapsed into a single dot to prevent invalid topic structures
 - Leading and trailing dots are removed to prevent invalid topic structures
-- Examples:
-  - `Refrigeration/Tower1/Pumps/chemHOA` → `Refrigeration.Tower1.Pumps.chemHOA`
-  - `Device@Name#123` → `Device_Name_123`
-  - `Area/Zone@1/Device#2` → `Area.Zone_1.Device_2`
-  - `Path//with///slashes` → `Path.with.slashes` (double dots prevented)
-  - `/hello/` → `hello` (leading/trailing dots removed)
-  - `.test.` → `test` (explicit dots trimmed)
 
-This ensures that messages with non-compliant Sparkplug metric names can still be processed by the UMH system.
+Examples:
+- `Refrigeration/Tower1/Pumps/chemHOA` → `Refrigeration.Tower1.Pumps.chemHOA`
+- `Device@Name#123` → `Device_Name_123`
+- `Area/Zone@1/Device#2` → `Area.Zone_1.Device_2`
+- `Path//with///slashes` → `Path.with.slashes` (double dots prevented)
+- `/hello/` → `hello` (leading/trailing dots removed)
+- `vpath:segment/name:metric` → `vpath:segment.name:metric` (colons preserved for virtual paths)
+
+When sanitization occurs, the plugin adds metadata fields:
+- `spb_original_metric_name`: The original metric name before sanitization
+- `spb_sanitized_metric_name`: The sanitized metric name used for UMH conversion
+- `spb_original_device_id`: The original device ID (if sanitized)
+- `spb_sanitized_device_id`: The sanitized device ID (if sanitized)
+
+This ensures that messages with non-compliant Sparkplug names are automatically converted to valid UMH topics while preserving the original values for reference.
 
 **Usage Recommendation**: Use the **primary metadata fields** for most processing logic. The alternative `spb_` prefixed fields are provided for consistency and advanced debugging scenarios.
 

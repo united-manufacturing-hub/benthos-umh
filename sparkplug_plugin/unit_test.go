@@ -1886,6 +1886,14 @@ var _ = Describe("UMH Metadata Generation Unit Tests", func() {
 			Expect(sparkplugplugin.SanitizeForUMH("Special!@#$%^&*()")).To(Equal("Special__________"))
 		})
 		
+		It("should replace colons with underscores", func() {
+			// Colons are not valid in UMH topics, replaced with underscores
+			// The format converter handles colon-splitting BEFORE sanitization
+			Expect(sparkplugplugin.SanitizeForUMH("virtual:path:metric")).To(Equal("virtual_path_metric"))
+			Expect(sparkplugplugin.SanitizeForUMH("motor:diagnostics")).To(Equal("motor_diagnostics"))
+			Expect(sparkplugplugin.SanitizeForUMH(":leading:trailing:")).To(Equal("_leading_trailing_"))
+		})
+		
 		It("should handle mixed cases correctly", func() {
 			// Test combination of slash and invalid characters
 			Expect(sparkplugplugin.SanitizeForUMH("Area/Zone@1/Device#2")).To(Equal("Area.Zone_1.Device_2"))
