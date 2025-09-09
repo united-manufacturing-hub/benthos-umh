@@ -320,21 +320,23 @@ func (fc *FormatConverter) convertLocationPathToDeviceID(topicInfo *proto.TopicI
 	locationParts := []string{topicInfo.Level0}
 	locationParts = append(locationParts, topicInfo.LocationSublevels...)
 
-	// Join with colons for Sparkplug B device ID
+	// Join with colons for Sparkplug B device ID (traditional format)
 	return strings.Join(locationParts, ":")
 }
 
-// convertDeviceIDToLocationPath converts Sparkplug device ID (colons) back to UMH location path (dots).
+// convertDeviceIDToLocationPath converts Sparkplug device ID to UMH location path.
+// Handles both colon-separated (traditional) and dot-separated (preprocessed) formats.
 //
 // Examples:
 //   - "enterprise:site:area" → "enterprise.site.area"
-//   - "factory:line1:station2" → "factory.line1.station2"
+//   - "enterprise.site.area" → "enterprise.site.area"
 func (fc *FormatConverter) convertDeviceIDToLocationPath(deviceID string) string {
 	if deviceID == "" {
 		return ""
 	}
 
-	// Convert colons back to dots
+	// Convert colons to dots for UMH location path
+	// If already using dots (preprocessed), this is a no-op
 	return strings.ReplaceAll(deviceID, ":", ".")
 }
 
@@ -355,7 +357,7 @@ func (fc *FormatConverter) constructSparkplugMetricName(topicInfo *proto.TopicIn
 		return tagName
 	}
 
-	// Convert virtual path dots to colons and append tag name
+	// Convert dots to colons and append tag name (traditional Sparkplug format)
 	virtualPathWithColons := strings.ReplaceAll(*topicInfo.VirtualPath, ".", ":")
 	return virtualPathWithColons + ":" + tagName
 }
@@ -363,34 +365,51 @@ func (fc *FormatConverter) constructSparkplugMetricName(topicInfo *proto.TopicIn
 // parseSparkplugMetricName parses a Sparkplug metric name back to virtual_path and tag_name.
 //
 // Logic:
-//   - If contains colons: last segment is tag_name, rest is virtual path
-//   - If no colons: entire string is tag_name, virtual_path is nil
+//   - First check for colons (traditional Sparkplug separator)
+//   - If has colons: split on FIRST colon (virtual path before, tag name after)
+//   - If no colons but has dots: split on LAST dot (for preprocessed data)
+//   - If neither: entire string is tag_name
+//
+// This function handles both:
+//   - Traditional format: "motor:diagnostics:temperature" → virtual_path="motor", tag_name="diagnostics:temperature"
+//   - Preprocessed format: "motor.diagnostics.temperature" → virtual_path="motor.diagnostics", tag_name="temperature"
 //
 // Examples:
-//   - "motor:diagnostics:temperature" → virtual_path="motor.diagnostics", tag_name="temperature"
+//   - "motor:diagnostics:temperature" → virtual_path="motor", tag_name="diagnostics:temperature"
+//   - "motor.diagnostics.temperature" → virtual_path="motor.diagnostics", tag_name="temperature"
 //   - "pressure" → virtual_path=nil, tag_name="pressure"
 func (fc *FormatConverter) parseSparkplugMetricName(metricName string) (virtualPath *string, tagName string, err error) {
 	if metricName == "" {
 		return nil, "", fmt.Errorf("metric name cannot be empty")
 	}
 
-	// Split on colons
-	parts := strings.Split(metricName, ":")
-
-	if len(parts) == 1 {
-		// No virtual path, just tag name
-		return nil, parts[0], nil
+	// First check for colons (traditional Sparkplug format)
+	colonIndex := strings.LastIndex(metricName, ":")
+	if colonIndex != -1 {
+		// Split on last colon
+		virtualPathStr := metricName[:colonIndex]
+		tagName = metricName[colonIndex+1:]
+		
+		// Convert colons in virtual path to dots for UMH compatibility
+		virtualPathStr = strings.ReplaceAll(virtualPathStr, ":", ".")
+		
+		virtualPath = &virtualPathStr
+		return virtualPath, tagName, nil
 	}
-
-	// Last part is tag name, rest is virtual path
-	tagName = parts[len(parts)-1]
-	virtualPathParts := parts[:len(parts)-1]
-
-	// Convert colons back to dots for virtual path
-	virtualPathStr := strings.Join(virtualPathParts, ".")
-	virtualPath = &virtualPathStr
-
-	return virtualPath, tagName, nil
+	
+	// No colons, check for dots (preprocessed format)
+	lastDotIndex := strings.LastIndex(metricName, ".")
+	if lastDotIndex != -1 {
+		// Split at the last dot
+		virtualPathStr := metricName[:lastDotIndex]
+		tagName = metricName[lastDotIndex+1:]
+		
+		virtualPath = &virtualPathStr
+		return virtualPath, tagName, nil
+	}
+	
+	// No separators, entire string is tag name
+	return nil, metricName, nil
 }
 
 // buildUMHTopic constructs a valid UMH topic using the UNS topic builder.

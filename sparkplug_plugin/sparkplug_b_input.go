@@ -1114,8 +1114,15 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	originalMetricName := sparkplugMsg.MetricName
 	originalDeviceID := sparkplugMsg.DeviceID
 	
-	// Try UMH conversion with ORIGINAL values (including colons for virtual paths)
-	// The converter needs colons to properly split virtual paths
+	// Convert both slashes and colons to dots for consistent hierarchical representation
+	// This allows the converter to properly split virtual paths
+	// Examples:
+	// - "Refrigeration/receiverLevel" → "Refrigeration.receiverLevel" 
+	// - "vpath:segment:metric" → "vpath.segment.metric"
+	sparkplugMsg.MetricName = strings.ReplaceAll(sparkplugMsg.MetricName, "/", ".")
+	sparkplugMsg.MetricName = strings.ReplaceAll(sparkplugMsg.MetricName, ":", ".")
+	
+	// Try UMH conversion with normalized metric name
 	umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
 	if err != nil {
 		msg.MetaSet("umh_conversion_status", "failed")

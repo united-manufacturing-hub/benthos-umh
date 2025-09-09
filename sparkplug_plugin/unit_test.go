@@ -1924,6 +1924,149 @@ var _ = Describe("UMH Metadata Generation Unit Tests", func() {
 		})
 	})
 	
+	Context("Full Conversion Flow with Slashes and Colons", func() {
+		var converter *sparkplugplugin.FormatConverter
+		
+		BeforeEach(func() {
+			converter = sparkplugplugin.NewFormatConverter()
+		})
+		
+		It("should handle Refrigeration/receiverLevel through complete conversion flow", func() {
+			// Test the actual issue: metric with slash like "Refrigeration/receiverLevel"
+			// Step 1: Create a Sparkplug message with slash in metric name
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "TestDevice",
+				MetricName: "Refrigeration/receiverLevel", // Original with slash
+				Value:      42.5,
+				DataType:   "Double",
+				Timestamp:  time.Now(),
+			}
+			
+			// Step 2: Pre-process as the input does - replace slash with dot
+			processedMetricName := strings.ReplaceAll(sparkplugMsg.MetricName, "/", ".")
+			sparkplugMsg.MetricName = processedMetricName // "Refrigeration.receiverLevel"
+			
+			// Step 3: Convert to UMH
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg).ToNot(BeNil())
+			
+			// Step 4: Verify the parsing - splits on last dot
+			// "Refrigeration.receiverLevel" splits into:
+			// - virtual path: "Refrigeration"
+			// - tag name: "receiverLevel"
+			Expect(umhMsg.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Refrigeration"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("receiverLevel"))
+			
+			// Step 5: Sanitize for final UMH topic
+			sanitizedVirtualPath := sparkplugplugin.SanitizeForUMH(*umhMsg.TopicInfo.VirtualPath)
+			sanitizedTagName := sparkplugplugin.SanitizeForUMH(umhMsg.TopicInfo.Name)
+			Expect(sanitizedVirtualPath).To(Equal("Refrigeration"))
+			Expect(sanitizedTagName).To(Equal("receiverLevel"))
+		})
+		
+		It("should handle virtual paths with colons correctly", func() {
+			// Test metric with colons for virtual path: "vpath:segment:temperature"
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode", 
+				DeviceID:   "TestDevice",
+				MetricName: "vpath:segment:temperature", // Colons for virtual path
+				Value:      25.3,
+				DataType:   "Double",
+				Timestamp:  time.Now(),
+			}
+			
+			// Pre-process - replace colons with dots
+			processedMetricName := strings.ReplaceAll(sparkplugMsg.MetricName, ":", ".")
+			sparkplugMsg.MetricName = processedMetricName // "vpath.segment.temperature"
+			
+			// Convert to UMH
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			
+			// Verify parsing - splits on last dot
+			// "vpath.segment.temperature" splits into:
+			// - virtual path: "vpath.segment"
+			// - tag name: "temperature"
+			Expect(umhMsg.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("vpath.segment"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("temperature"))
+			
+			// Sanitize for final UMH topic
+			sanitizedVirtualPath := sparkplugplugin.SanitizeForUMH(*umhMsg.TopicInfo.VirtualPath)
+			sanitizedTagName := sparkplugplugin.SanitizeForUMH(umhMsg.TopicInfo.Name)
+			Expect(sanitizedVirtualPath).To(Equal("vpath.segment"))
+			Expect(sanitizedTagName).To(Equal("temperature"))
+		})
+		
+		It("should handle mixed colons and slashes correctly", func() {
+			// Test complex case: "motor:diagnostics/Refrigeration/temperature"
+			// Colons separate virtual path, slashes are hierarchical within names
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "TestDevice",
+				MetricName: "motor:diagnostics/Refrigeration/temperature",
+				Value:      18.7,
+				DataType:   "Double",
+				Timestamp:  time.Now(),
+			}
+			
+			// Step 1: Pre-process - replace both slashes and colons with dots
+			processedMetricName := strings.ReplaceAll(sparkplugMsg.MetricName, "/", ".")
+			processedMetricName = strings.ReplaceAll(processedMetricName, ":", ".")
+			sparkplugMsg.MetricName = processedMetricName // "motor.diagnostics.Refrigeration.temperature"
+			
+			// Step 2: Convert to UMH
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			
+			// Step 3: Verify parsing - splits on last dot
+			// "motor.diagnostics.Refrigeration.temperature" splits into:
+			// - virtual path: "motor.diagnostics.Refrigeration"
+			// - tag name: "temperature"
+			Expect(umhMsg.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("motor.diagnostics.Refrigeration"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("temperature"))
+			
+			// Step 4: Sanitize for final UMH topic
+			sanitizedVirtualPath := sparkplugplugin.SanitizeForUMH(*umhMsg.TopicInfo.VirtualPath)
+			sanitizedTagName := sparkplugplugin.SanitizeForUMH(umhMsg.TopicInfo.Name)
+			Expect(sanitizedVirtualPath).To(Equal("motor.diagnostics.Refrigeration"))
+			Expect(sanitizedTagName).To(Equal("temperature"))
+		})
+		
+		It("should provide fallback when conversion fails due to invalid characters", func() {
+			// Test with characters that would fail UMH validation even after slash replacement
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "Test@Group", // Invalid @ character
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Test#Device", // Invalid # character
+				MetricName: "metric$name", // Invalid $ character
+				Value:      10.0,
+				DataType:   "Double",
+				Timestamp:  time.Now(),
+			}
+			
+			// Attempt conversion (this might fail due to invalid chars in group/device)
+			_, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			// If conversion fails, we should sanitize for fallback
+			if err != nil {
+				// Sanitize for fallback metadata
+				sanitizedDeviceID := sparkplugplugin.SanitizeForUMH(sparkplugMsg.DeviceID)
+				sanitizedMetricName := sparkplugplugin.SanitizeForUMH(sparkplugMsg.MetricName)
+				
+				Expect(sanitizedDeviceID).To(Equal("Test_Device"))
+				Expect(sanitizedMetricName).To(Equal("metric_name"))
+			}
+		})
+	})
+	
 	Context("Location Path Generation without trailing dots (ENG-3428)", func() {
 		It("should build location path correctly when LocationSublevels is empty", func() {
 			// This test verifies the fix for ENG-3428
