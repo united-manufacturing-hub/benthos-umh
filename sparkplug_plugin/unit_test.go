@@ -29,7 +29,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
+	sparkplugplugin "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
 )
@@ -59,10 +59,10 @@ func boolPtr(b bool) *bool {
 
 var _ = Describe("AliasCache Unit Tests", func() {
 
-	var cache *sparkplug_plugin.AliasCache
+	var cache *sparkplugplugin.AliasCache
 
 	BeforeEach(func() {
-		cache = sparkplug_plugin.NewAliasCache()
+		cache = sparkplugplugin.NewAliasCache()
 	})
 
 	Context("Alias Resolution", func() {
@@ -555,7 +555,7 @@ var _ = Describe("TypeConverter Unit Tests", func() {
 		})
 
 		It("should infer correct data types from Go values", func() {
-			converter := sparkplug_plugin.NewTypeConverter()
+			converter := sparkplugplugin.NewTypeConverter()
 
 			// Test various value types
 			values := map[interface{}]string{
@@ -729,13 +729,13 @@ var _ = Describe("Configuration Unit Tests", func() {
 			
 			for _, role := range validRoles {
 				By(fmt.Sprintf("validating role: %s", role), func() {
-					config := &sparkplug_plugin.Config{
-						Role: sparkplug_plugin.Role(role),
-						MQTT: sparkplug_plugin.MQTT{
+					config := &sparkplugplugin.Config{
+						Role: sparkplugplugin.Role(role),
+						MQTT: sparkplugplugin.MQTT{
 							URLs: []string{"tcp://localhost:1883"},
 							QoS:  1,
 						},
-						Identity: sparkplug_plugin.Identity{
+						Identity: sparkplugplugin.Identity{
 							GroupID: "TestGroup",
 						},
 					}
@@ -755,13 +755,13 @@ var _ = Describe("Configuration Unit Tests", func() {
 			
 			for _, role := range invalidRoles {
 				By(fmt.Sprintf("rejecting invalid role: %s", role), func() {
-					config := &sparkplug_plugin.Config{
-						Role: sparkplug_plugin.Role(role),
-						MQTT: sparkplug_plugin.MQTT{
+					config := &sparkplugplugin.Config{
+						Role: sparkplugplugin.Role(role),
+						MQTT: sparkplugplugin.MQTT{
 							URLs: []string{"tcp://localhost:1883"},
 							QoS:  1,
 						},
-						Identity: sparkplug_plugin.Identity{
+						Identity: sparkplugplugin.Identity{
 							GroupID: "TestGroup",
 						},
 					}
@@ -774,19 +774,19 @@ var _ = Describe("Configuration Unit Tests", func() {
 		})
 		
 		It("should default to secondary_passive role", func() {
-			config := &sparkplug_plugin.Config{}
+			config := &sparkplugplugin.Config{}
 			config.AutoDetectRole()
-			Expect(config.Role).To(Equal(sparkplug_plugin.RoleSecondaryPassive))
+			Expect(config.Role).To(Equal(sparkplugplugin.RoleSecondaryPassive))
 		})
 		
 		It("should require edge_node_id for primary role", func() {
-			config := &sparkplug_plugin.Config{
-				Role: sparkplug_plugin.RolePrimaryHost,
-				MQTT: sparkplug_plugin.MQTT{
+			config := &sparkplugplugin.Config{
+				Role: sparkplugplugin.RolePrimaryHost,
+				MQTT: sparkplugplugin.MQTT{
 					URLs: []string{"tcp://localhost:1883"},
 					QoS:  1,
 				},
-				Identity: sparkplug_plugin.Identity{
+				Identity: sparkplugplugin.Identity{
 					GroupID: "TestGroup",
 					// EdgeNodeID is missing
 				},
@@ -798,20 +798,20 @@ var _ = Describe("Configuration Unit Tests", func() {
 		})
 		
 		It("should not require edge_node_id for secondary modes", func() {
-			secondaryModes := []sparkplug_plugin.Role{
-				sparkplug_plugin.RoleSecondaryPassive,
-				sparkplug_plugin.RoleSecondaryActive,
+			secondaryModes := []sparkplugplugin.Role{
+				sparkplugplugin.RoleSecondaryPassive,
+				sparkplugplugin.RoleSecondaryActive,
 			}
 			
 			for _, role := range secondaryModes {
 				By(fmt.Sprintf("testing %s without edge_node_id", role), func() {
-					config := &sparkplug_plugin.Config{
+					config := &sparkplugplugin.Config{
 						Role: role,
-						MQTT: sparkplug_plugin.MQTT{
+						MQTT: sparkplugplugin.MQTT{
 							URLs: []string{"tcp://localhost:1883"},
 							QoS:  1,
 						},
-						Identity: sparkplug_plugin.Identity{
+						Identity: sparkplugplugin.Identity{
 							GroupID: "TestGroup",
 							// EdgeNodeID is not required
 						},
@@ -985,7 +985,7 @@ var _ = Describe("MessageProcessor Unit Tests", func() {
 
 		It("should handle pre-birth data scenarios", func() {
 			// Test DATA before BIRTH scenario (migrated from old edge cases)
-			cache := sparkplug_plugin.NewAliasCache()
+			cache := sparkplugplugin.NewAliasCache()
 
 			// Attempt to resolve aliases without cached BIRTH data
 			dataMetrics := []*sparkplugb.Payload_Metric{
@@ -1044,7 +1044,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 	Context("Birth/Death Message Compliance", func() {
 		It("should verify NBIRTH includes all required fields", func() {
 			// Test NBIRTH message structure compliance
-			nbirthVector := sparkplug_plugin.GetTestVector("NBIRTH_V1")
+			nbirthVector := sparkplugplugin.GetTestVector("NBIRTH_V1")
 			Expect(nbirthVector).NotTo(BeNil())
 
 			payloadBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
@@ -1084,7 +1084,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 
 		It("should verify NDEATH has correct payload structure", func() {
 			// Test NDEATH message structure compliance
-			ndeathVector := sparkplug_plugin.GetTestVector("NDEATH_V1")
+			ndeathVector := sparkplugplugin.GetTestVector("NDEATH_V1")
 			Expect(ndeathVector).NotTo(BeNil())
 
 			payloadBytes, err := base64.StdEncoding.DecodeString(ndeathVector.Base64Data)
@@ -1113,7 +1113,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 
 		It("should validate alias uniqueness in BIRTH messages", func() {
 			// Test that BIRTH messages don't have duplicate aliases (spec requirement)
-			nbirthVector := sparkplug_plugin.GetTestVector("NBIRTH_V1")
+			nbirthVector := sparkplugplugin.GetTestVector("NBIRTH_V1")
 			payloadBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1142,7 +1142,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 	Context("Sequence Number Management", func() {
 		It("should implement proper seq counter (0-255 with wraparound)", func() {
 			// Test sequence number wraparound behavior
-			sequenceManager := sparkplug_plugin.NewSequenceManager()
+			sequenceManager := sparkplugplugin.NewSequenceManager()
 
 			// Test normal increment - starts at 0
 			seq1 := sequenceManager.NextSequence()
@@ -1176,7 +1176,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 				{1, 5, false},  // Large gap
 			}
 
-			sequenceManager := sparkplug_plugin.NewSequenceManager()
+			sequenceManager := sparkplugplugin.NewSequenceManager()
 			for _, test := range sequences {
 				isValid := sequenceManager.IsSequenceValid(test.current, test.received)
 				Expect(isValid).To(Equal(test.isValid),
@@ -1186,7 +1186,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 
 		It("should handle out-of-order sequence detection", func() {
 			// Test that out-of-order sequences are properly detected
-			gapVector := sparkplug_plugin.GetTestVector("NDATA_GAP")
+			gapVector := sparkplugplugin.GetTestVector("NDATA_GAP")
 			Expect(gapVector).NotTo(BeNil())
 
 			payloadBytes, err := base64.StdEncoding.DecodeString(gapVector.Base64Data)
@@ -1210,7 +1210,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 	Context("Timestamp and Encoding", func() {
 		It("should ensure outgoing metrics include timestamps", func() {
 			// Test that all Sparkplug messages include timestamps
-			nbirthVector := sparkplug_plugin.GetTestVector("NBIRTH_V1")
+			nbirthVector := sparkplugplugin.GetTestVector("NBIRTH_V1")
 			payloadBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1229,7 +1229,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 
 		It("should validate Protobuf encoding completeness", func() {
 			// Test that all test vectors can be properly decoded
-			for _, vector := range sparkplug_plugin.TestVectors {
+			for _, vector := range sparkplugplugin.TestVectors {
 				By("validating protobuf encoding for "+vector.Name, func() {
 					payloadBytes, err := base64.StdEncoding.DecodeString(vector.Base64Data)
 					Expect(err).NotTo(HaveOccurred(), "Base64 decoding should succeed for "+vector.Name)
@@ -1247,7 +1247,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 
 		It("should preserve historical timestamps in input processing", func() {
 			// Test that historical timestamps are preserved
-			nbirthVector := sparkplug_plugin.GetTestVector("NBIRTH_V1")
+			nbirthVector := sparkplugplugin.GetTestVector("NBIRTH_V1")
 			payloadBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1312,7 +1312,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 	Context("Topic Namespace Compliance", func() {
 		It("should validate Sparkplug topic format", func() {
 			// Test Sparkplug topic namespace compliance (§8.2)
-			topicParser := sparkplug_plugin.NewTopicParser()
+			topicParser := sparkplugplugin.NewTopicParser()
 
 			validTopics := []string{
 				"spBv1.0/Group1/NBIRTH/EdgeNode1",
@@ -1335,7 +1335,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 
 		It("should validate message type classification", func() {
 			// Test message type validation
-			topicParser := sparkplug_plugin.NewTopicParser()
+			topicParser := sparkplugplugin.NewTopicParser()
 
 			// Birth messages
 			Expect(topicParser.IsBirthMessage("NBIRTH")).To(BeTrue())
@@ -1368,7 +1368,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 
 		It("should handle sequence number wraparound (255 → 0)", func() {
 			// Test sequence number wraparound edge case
-			sequenceManager := sparkplug_plugin.NewSequenceManager()
+			sequenceManager := sparkplugplugin.NewSequenceManager()
 
 			// Test wraparound scenarios
 			wrapCases := []struct {
@@ -1394,7 +1394,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 	Context("Connection Handling", func() {
 		It("should handle Primary Host disconnect/reconnect behavior", func() {
 			// Test primary host connection resilience
-			cache := sparkplug_plugin.NewAliasCache()
+			cache := sparkplugplugin.NewAliasCache()
 
 			// Simulate established session with cached aliases
 			metrics := []*sparkplugb.Payload_Metric{
@@ -1430,7 +1430,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 	Context("Large Payload Handling", func() {
 		It("should handle Birth messages with 500+ metrics", func() {
 			// Test large payload handling
-			cache := sparkplug_plugin.NewAliasCache()
+			cache := sparkplugplugin.NewAliasCache()
 
 			// Create 500+ metrics
 			largeMetrics := make([]*sparkplugb.Payload_Metric, 500)
@@ -1453,7 +1453,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 
 		It("should validate performance impact of large alias tables", func() {
 			// Test alias resolution performance with large tables
-			cache := sparkplug_plugin.NewAliasCache()
+			cache := sparkplugplugin.NewAliasCache()
 
 			// Create large alias table (1000 metrics)
 			largeMetrics := make([]*sparkplugb.Payload_Metric, 1000)
@@ -1528,7 +1528,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 				{Name: stringPtr("Metric/With/Slashes"), Alias: uint64Ptr(7)},
 			}
 
-			cache := sparkplug_plugin.NewAliasCache()
+			cache := sparkplugplugin.NewAliasCache()
 			count := cache.CacheAliases("Factory/International", specialMetrics)
 			Expect(count).To(Equal(7), "Should handle all special character metrics")
 
@@ -1595,7 +1595,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 
 		It("should handle mixed Node/Device metric scenarios", func() {
 			// Test mixed node-level and device-level metrics
-			cache := sparkplug_plugin.NewAliasCache()
+			cache := sparkplugplugin.NewAliasCache()
 
 			// Node-level metrics (no device in key)
 			nodeMetrics := []*sparkplugb.Payload_Metric{
@@ -1652,7 +1652,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 				},
 			}
 
-			cache := sparkplug_plugin.NewAliasCache()
+			cache := sparkplugplugin.NewAliasCache()
 			count := cache.CacheAliases("Factory/EdgeCases", edgeCaseMetrics)
 			Expect(count).To(Equal(4), "Should handle all edge case metrics")
 
@@ -1676,7 +1676,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 				{Name: stringPtr("Pressure"), Alias: uint64Ptr(3)},
 			}
 
-			cache := sparkplug_plugin.NewAliasCache()
+			cache := sparkplugplugin.NewAliasCache()
 			count := cache.CacheAliases("Factory/Duplicates", duplicateMetrics)
 
 			// Implementation should handle this gracefully
@@ -1871,6 +1871,51 @@ var _ = Describe("EON Node ID Resolution (Parris Method) Unit Tests", func() {
 })
 
 var _ = Describe("UMH Metadata Generation Unit Tests", func() {
+	Context("Sanitization for UMH compatibility", func() {
+		It("should replace forward slashes with dots", func() {
+			// Test slash replacement - slashes become dots for hierarchical representation
+			Expect(sparkplugplugin.SanitizeForUMH("Refrigeration/Tower1/Pumps/chemHOA")).To(Equal("Refrigeration.Tower1.Pumps.chemHOA"))
+			Expect(sparkplugplugin.SanitizeForUMH("Level1/Level2/Level3")).To(Equal("Level1.Level2.Level3"))
+			Expect(sparkplugplugin.SanitizeForUMH("/StartSlash/EndSlash/")).To(Equal("StartSlash.EndSlash"))  // Leading/trailing dots trimmed
+		})
+		
+		It("should replace invalid characters with underscores", func() {
+			// Test invalid character replacement
+			Expect(sparkplugplugin.SanitizeForUMH("Device@Name#123")).To(Equal("Device_Name_123"))
+			Expect(sparkplugplugin.SanitizeForUMH("Tag with spaces")).To(Equal("Tag_with_spaces"))
+			Expect(sparkplugplugin.SanitizeForUMH("Special!@#$%^&*()")).To(Equal("Special__________"))
+		})
+		
+		It("should handle mixed cases correctly", func() {
+			// Test combination of slash and invalid characters
+			Expect(sparkplugplugin.SanitizeForUMH("Area/Zone@1/Device#2")).To(Equal("Area.Zone_1.Device_2"))
+			Expect(sparkplugplugin.SanitizeForUMH("Plant/Building 1/Floor-2/Room_3")).To(Equal("Plant.Building_1.Floor-2.Room_3"))
+		})
+		
+		It("should preserve valid characters", func() {
+			// Test that valid characters are not changed
+			Expect(sparkplugplugin.SanitizeForUMH("Valid_Name-123.test")).To(Equal("Valid_Name-123.test"))
+			Expect(sparkplugplugin.SanitizeForUMH("abcABC123._-")).To(Equal("abcABC123._-"))
+		})
+		
+		It("should handle empty strings", func() {
+			Expect(sparkplugplugin.SanitizeForUMH("")).To(Equal(""))
+		})
+		
+		It("should prevent double dots and trim leading/trailing dots", func() {
+			// Test that multiple slashes don't create double dots
+			Expect(sparkplugplugin.SanitizeForUMH("//")).To(Equal(""))  // All dots trimmed
+			Expect(sparkplugplugin.SanitizeForUMH("a//b")).To(Equal("a.b"))
+			Expect(sparkplugplugin.SanitizeForUMH("/hello/")).To(Equal("hello"))  // Leading/trailing dots trimmed
+			Expect(sparkplugplugin.SanitizeForUMH("path///with////many/////slashes")).To(Equal("path.with.many.slashes"))
+			// Even with replacement of invalid chars, no double dots should appear
+			Expect(sparkplugplugin.SanitizeForUMH("/@hello/")).To(Equal("_hello"))  // Leading/trailing dots trimmed
+			// Test explicit leading/trailing dots are trimmed
+			Expect(sparkplugplugin.SanitizeForUMH(".test.")).To(Equal("test"))
+			Expect(sparkplugplugin.SanitizeForUMH("...test...")).To(Equal("test"))
+		})
+	})
+	
 	Context("Location Path Generation without trailing dots (ENG-3428)", func() {
 		It("should build location path correctly when LocationSublevels is empty", func() {
 			// This test verifies the fix for ENG-3428
@@ -2374,22 +2419,22 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 			
 			// Test inputs for different roles
 			testCases := []struct {
-				role                   sparkplug_plugin.Role
+				role                   sparkplugplugin.Role
 				expectRebirthSent      bool
 				expectRebirthSuppressed bool
 			}{
 				{
-					role:                   sparkplug_plugin.RoleSecondaryPassive,
+					role:                   sparkplugplugin.RoleSecondaryPassive,
 					expectRebirthSent:      false,
 					expectRebirthSuppressed: true,
 				},
 				{
-					role:                   sparkplug_plugin.RoleSecondaryActive,
+					role:                   sparkplugplugin.RoleSecondaryActive,
 					expectRebirthSent:      true,
 					expectRebirthSuppressed: false,
 				},
 				{
-					role:                   sparkplug_plugin.RolePrimaryHost,
+					role:                   sparkplugplugin.RolePrimaryHost,
 					expectRebirthSent:      true,
 					expectRebirthSuppressed: false,
 				},
@@ -2401,7 +2446,7 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 					mockMetrics.counters = make(map[string]int64)
 					
 					// Simulate rebirth request logic
-					shouldSendRebirth := tc.role != sparkplug_plugin.RoleSecondaryPassive
+					shouldSendRebirth := tc.role != sparkplugplugin.RoleSecondaryPassive
 					
 					if !shouldSendRebirth {
 						// Simulate metric increment
@@ -2422,28 +2467,28 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 		
 		It("should handle subscription topics correctly for each mode", func() {
 			testCases := []struct {
-				role             sparkplug_plugin.Role
+				role             sparkplugplugin.Role
 				expectSubscribe  bool
 			}{
 				{
-					role:            sparkplug_plugin.RoleSecondaryPassive,
+					role:            sparkplugplugin.RoleSecondaryPassive,
 					expectSubscribe: true, // Still subscribes to topics
 				},
 				{
-					role:            sparkplug_plugin.RoleSecondaryActive,
+					role:            sparkplugplugin.RoleSecondaryActive,
 					expectSubscribe: true,
 				},
 				{
-					role:            sparkplug_plugin.RolePrimaryHost,
+					role:            sparkplugplugin.RolePrimaryHost,
 					expectSubscribe: true,
 				},
 			}
 			
 			for _, tc := range testCases {
 				By(fmt.Sprintf("testing subscription for role: %s", tc.role), func() {
-					config := &sparkplug_plugin.Config{
+					config := &sparkplugplugin.Config{
 						Role: tc.role,
-						Identity: sparkplug_plugin.Identity{
+						Identity: sparkplugplugin.Identity{
 							GroupID: "TestGroup",
 						},
 					}
@@ -2598,7 +2643,7 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 
 // Mock structures for testing EON Node ID resolution
 type mockSparkplugOutput struct {
-	config sparkplug_plugin.Config
+	config sparkplugplugin.Config
 	logger mockLogger
 	// NEW: State management fields for Edge Node ID consistency fix
 	cachedLocationPath string
@@ -2608,8 +2653,8 @@ type mockSparkplugOutput struct {
 
 func newMockSparkplugOutput() *mockSparkplugOutput {
 	return &mockSparkplugOutput{
-		config: sparkplug_plugin.Config{
-			Identity: sparkplug_plugin.Identity{
+		config: sparkplugplugin.Config{
+			Identity: sparkplugplugin.Identity{
 				GroupID:    "TestGroup",
 				EdgeNodeID: "",
 				DeviceID:   "",

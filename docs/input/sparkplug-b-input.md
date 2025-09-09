@@ -378,12 +378,27 @@ For NDEATH/DDEATH messages, the plugin sets:
 When UMH conversion is successful, additional metadata is added:
 
 * `umh_conversion_status`: "success", "failed", "skipped_insufficient_data", or "failed_no_value"
-* `umh_location_path`: Converted UMH location path (dots format)
-* `umh_tag_name`: UMH tag name extracted from metric name
+* `umh_location_path`: Converted UMH location path (dots format, sanitized)
+* `umh_tag_name`: UMH tag name extracted from metric name (sanitized)
 * `umh_data_contract`: UMH data contract (e.g., "_raw", "_historian")
-* `umh_virtual_path`: UMH virtual path if present in metric name
+* `umh_virtual_path`: UMH virtual path if present in metric name (sanitized)
 * `umh_topic`: Complete UMH topic string
 * `umh_conversion_error`: Error message if conversion failed
+
+**Important Note on Sanitization**: When conversion fails due to invalid characters, the plugin still provides sanitized `umh_location_path` and `umh_tag_name` metadata to allow tag processors to handle the message. The sanitization follows these rules:
+- Forward slashes (`/`) are replaced with dots (`.`) to preserve hierarchical structure
+- Invalid characters (anything except `a-z`, `A-Z`, `0-9`, `.`, `_`, `-`) are replaced with underscores (`_`)
+- Multiple consecutive dots are collapsed into a single dot to prevent invalid topic structures
+- Leading and trailing dots are removed to prevent invalid topic structures
+- Examples:
+  - `Refrigeration/Tower1/Pumps/chemHOA` → `Refrigeration.Tower1.Pumps.chemHOA`
+  - `Device@Name#123` → `Device_Name_123`
+  - `Area/Zone@1/Device#2` → `Area.Zone_1.Device_2`
+  - `Path//with///slashes` → `Path.with.slashes` (double dots prevented)
+  - `/hello/` → `hello` (leading/trailing dots removed)
+  - `.test.` → `test` (explicit dots trimmed)
+
+This ensures that messages with non-compliant Sparkplug metric names can still be processed by the UMH system.
 
 **Usage Recommendation**: Use the **primary metadata fields** for most processing logic. The alternative `spb_` prefixed fields are provided for consistency and advanced debugging scenarios.
 

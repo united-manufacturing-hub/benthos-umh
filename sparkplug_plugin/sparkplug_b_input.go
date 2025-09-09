@@ -1116,6 +1116,21 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 		msg.MetaSet("umh_conversion_status", "failed")
 		msg.MetaSet("umh_conversion_error", err.Error())
 		s.logger.Debugf("UMH conversion failed for metric %s: %v", sparkplugMsg.MetricName, err)
+		
+		// Even on conversion failure, provide sanitized metadata for tag processor
+		// This allows the tag processor to handle the message with custom logic
+		if sparkplugMsg != nil {
+			// Sanitize device ID and metric name for UMH compatibility
+			// Replace '/' with '.' for hierarchical representation
+			// Replace other invalid characters with '_'
+			sanitizedDeviceID := s.sanitizeForUMH(sparkplugMsg.DeviceID)
+			sanitizedMetricName := s.sanitizeForUMH(sparkplugMsg.MetricName)
+			
+			// Set sanitized metadata
+			msg.MetaSet("umh_location_path", sanitizedDeviceID)
+			msg.MetaSet("umh_tag_name", sanitizedMetricName)
+			// Data contract should be set by tag processor based on requirements
+		}
 		return
 	}
 
@@ -1136,6 +1151,53 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	msg.MetaSet("umh_topic", umhMsg.Topic.String())
 
 	s.logger.Debugf("Successfully added UMH metadata for metric %s -> %s", sparkplugMsg.MetricName, umhMsg.Topic.String())
+}
+
+// SanitizeForUMH sanitizes a string to be compatible with UMH topic requirements
+// Valid characters are: a-z, A-Z, 0-9, dot (.), underscore (_), hyphen (-)
+// Forward slashes (/) are always replaced with dots (.) for hierarchical representation
+// All other invalid characters are replaced with underscores (_)
+// Multiple consecutive dots are collapsed into a single dot to prevent invalid topic structures
+// Leading and trailing dots are removed to prevent invalid topic structures
+func SanitizeForUMH(input string) string {
+	if input == "" {
+		return ""
+	}
+	
+	// First pass: replace slashes with dots for hierarchical paths
+	result := strings.ReplaceAll(input, "/", ".")
+	
+	// Second pass: replace any remaining invalid characters with underscores
+	// Valid: a-z, A-Z, 0-9, dot, underscore, hyphen
+	var sanitized strings.Builder
+	for _, char := range result {
+		if (char >= 'a' && char <= 'z') || 
+		   (char >= 'A' && char <= 'Z') || 
+		   (char >= '0' && char <= '9') || 
+		   char == '.' || char == '_' || char == '-' {
+			sanitized.WriteRune(char)
+		} else {
+			sanitized.WriteRune('_')
+		}
+	}
+	
+	// Third pass: collapse multiple consecutive dots into a single dot
+	// This prevents issues like "//" becoming ".."
+	finalResult := sanitized.String()
+	for strings.Contains(finalResult, "..") {
+		finalResult = strings.ReplaceAll(finalResult, "..", ".")
+	}
+	
+	// Fourth pass: trim leading and trailing dots
+	// This prevents issues with virtual paths and location paths in topics
+	finalResult = strings.Trim(finalResult, ".")
+	
+	return finalResult
+}
+
+// sanitizeForUMH is a method wrapper for the exported SanitizeForUMH function
+func (s *sparkplugInput) sanitizeForUMH(input string) string {
+	return SanitizeForUMH(input)
 }
 
 // extractMetricValueRaw extracts the raw value from a Sparkplug metric without JSON wrapping
