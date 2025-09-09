@@ -384,12 +384,17 @@ When UMH conversion is successful, additional metadata is added:
 * `umh_virtual_path`: UMH virtual path if present in metric name (sanitized)
 * `umh_conversion_error`: Error message if conversion failed
 
-**Automatic Sanitization**: The plugin automatically sanitizes Sparkplug metric names and device IDs before UMH conversion to ensure compatibility. The sanitization follows these rules:
+**Automatic Sanitization**: The plugin processes Sparkplug metric names to ensure UMH compatibility:
+1. Original metric names (with colons) are passed to the format converter for virtual path detection
+2. The converter splits on colons to extract virtual paths (e.g., `vpath:segment:metric` → virtual_path=`vpath.segment`, tag_name=`metric`)
+3. After conversion, all resulting fields are sanitized for UMH topics
+
+Sanitization rules:
 - Forward slashes (`/`) are replaced with dots (`.`) to preserve hierarchical structure
-- Colons (`:`) are preserved as they indicate virtual path boundaries in Sparkplug
-- Invalid characters (anything except `a-z`, `A-Z`, `0-9`, `.`, `_`, `-`, `:`) are replaced with underscores (`_`)
-- Multiple consecutive dots are collapsed into a single dot to prevent invalid topic structures
-- Leading and trailing dots are removed to prevent invalid topic structures
+- Invalid characters including colons are replaced with underscores (`_`)
+- Valid characters are: `a-z`, `A-Z`, `0-9`, `.`, `_`, `-`
+- Multiple consecutive dots are collapsed into a single dot
+- Leading and trailing dots are removed
 
 Examples:
 - `Refrigeration/Tower1/Pumps/chemHOA` → `Refrigeration.Tower1.Pumps.chemHOA`
@@ -397,7 +402,7 @@ Examples:
 - `Area/Zone@1/Device#2` → `Area.Zone_1.Device_2`
 - `Path//with///slashes` → `Path.with.slashes` (double dots prevented)
 - `/hello/` → `hello` (leading/trailing dots removed)
-- `vpath:segment/name:metric` → `vpath:segment.name:metric` (colons preserved for virtual paths)
+- `vpath:segment:metric` → `vpath_segment_metric` (colons replaced with underscores)
 
 When sanitization occurs, the plugin adds metadata fields:
 - `spb_original_metric_name`: The original metric name before sanitization
