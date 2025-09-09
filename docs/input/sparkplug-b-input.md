@@ -382,7 +382,6 @@ When UMH conversion is successful, additional metadata is added:
 * `umh_tag_name`: UMH tag name extracted from metric name (sanitized)
 * `umh_data_contract`: UMH data contract (e.g., "_raw", "_historian")
 * `umh_virtual_path`: UMH virtual path if present in metric name (sanitized)
-* `umh_topic`: Complete UMH topic string
 * `umh_conversion_error`: Error message if conversion failed
 
 **Automatic Sanitization**: The plugin automatically sanitizes Sparkplug metric names and device IDs before UMH conversion to ensure compatibility. The sanitization follows these rules:

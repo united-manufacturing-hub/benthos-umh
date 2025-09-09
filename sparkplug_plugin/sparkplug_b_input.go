@@ -1210,6 +1210,7 @@ func SanitizeForUMH(input string) string {
 	// Second pass: replace invalid characters with underscores
 	// Valid UMH topic characters: a-z, A-Z, 0-9, dot, underscore, hyphen
 	var sanitized strings.Builder
+	sanitized.Grow(len(result)) // Pre-allocate for performance
 	for _, char := range result {
 		if (char >= 'a' && char <= 'z') || 
 		   (char >= 'A' && char <= 'Z') || 
