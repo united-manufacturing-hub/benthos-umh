@@ -344,7 +344,9 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 	}
 
 	if len(resultBatch) == 0 {
-		return nil, nil
+		// Return empty slice instead of nil to indicate successful filtering
+		// See: github.com/redpanda-data/benthos/v4/internal/component/processor/auto_observed.go:263-264
+		return []service.MessageBatch{}, nil
 	}
 
 	return []service.MessageBatch{resultBatch}, nil

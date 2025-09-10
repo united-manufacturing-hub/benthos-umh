@@ -251,7 +251,17 @@ func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Me
 		return nil, err
 	}
 	if len(messageBatch) == 0 {
-		return nil, nil
+		// Return empty batch instead of nil to indicate successful filtering
+		// This prevents Benthos from counting this as a processor error
+		// 
+		// In Benthos, returning (nil, nil) from a processor can be interpreted as an error
+		// condition by the monitoring layer, while returning an empty MessageBatch is
+		// the correct way to indicate that a message was successfully processed but filtered out.
+		//
+		// Reference: github.com/redpanda-data/benthos/v4/internal/component/processor/auto_observed.go:100-106
+		// When a processor's Process method returns (nil, err), the error is logged as "Processor failed: %v"
+		// However, the service layer's handling of nil vs empty batch differs in how it's counted in metrics.
+		return service.MessageBatch{}, nil
 	}
 	return messageBatch[0], nil
 }
@@ -344,8 +354,10 @@ func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Me
 func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	t.logger.Debugf("DEBUG: ProcessBatch called with %d messages", len(batch))
 	if len(batch) == 0 {
-		t.logger.Debugf("DEBUG: Empty batch, returning nil")
-		return nil, nil
+		t.logger.Debugf("DEBUG: Empty batch, returning empty slice")
+		// Return empty slice instead of nil to indicate successful processing with no output
+		// See: github.com/redpanda-data/benthos/v4/internal/component/processor/auto_observed.go:263-264
+		return []service.MessageBatch{}, nil
 	}
 
 	// Note: Buffer overflow protection uses "ACK without emit" strategy for catch-up scenarios
@@ -621,7 +633,10 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 		"should_flush=%t",
 		len(t.messageBuffer),
 		shouldFlushForLog)
-	return nil, nil
+	// Return empty slice to indicate successful buffering (not an error)
+	// Messages are held in buffer for later emission
+	// See: github.com/redpanda-data/benthos/v4/internal/component/processor/auto_observed.go:263-264
+	return []service.MessageBatch{}, nil
 }
 
 // Core processing functions are now in separate files:
