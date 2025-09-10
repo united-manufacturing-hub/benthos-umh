@@ -77,12 +77,13 @@ identity:
 
 **↓ Results in Sparkplug B Message:**
 - **Topic**: `spBv1.0/FactoryA/DDATA/EdgeNode1/enterprise:factory:line1:station1`
-- **Metric Name**: `sensors:ambient:temperature` (virtual_path + tag_name with colons)
+- **Metric Name**: `sensors:ambient:temperature` (virtual_path + tag_name joined with colons)
 - **Payload**: Protobuf with metric alias, value 23.5, timestamp
 
 **Key Transformations:**
 1. **Location Path**: `enterprise.factory.line1.station1` → Device ID `enterprise:factory:line1:station1` (dots → colons)
-2. **Virtual Path + Tag Name**: `sensors.ambient` + `temperature` → Metric Name `sensors:ambient:temperature` (dots → colons)
+2. **Virtual Path + Tag Name**: `sensors.ambient` + `temperature` → Metric Name `sensors:ambient:temperature` (joined with colons)
+   - Note: The input plugin can parse metrics with colons, slashes, or dots as separators
 3. **UMH-Core Format**: `{"value": 23.5, "timestamp_ms": 1672531200000}` → Sparkplug protobuf metric
 4. **Topic Structure**: Uses configured `group_id` and `edge_node_id` from output plugin configuration
 
