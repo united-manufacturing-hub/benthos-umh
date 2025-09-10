@@ -1110,24 +1110,51 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 		sparkplugMsg.Timestamp = time.UnixMilli(int64(*payload.Timestamp))
 	}
 
-	// Try UMH conversion
+	// Store original values before any sanitization
+	originalMetricName := sparkplugMsg.MetricName
+	originalDeviceID := sparkplugMsg.DeviceID
+	
+	// Try UMH conversion - the converter will handle any necessary sanitization
 	umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
 	if err != nil {
 		msg.MetaSet("umh_conversion_status", "failed")
 		msg.MetaSet("umh_conversion_error", err.Error())
 		s.logger.Debugf("UMH conversion failed for metric %s: %v", sparkplugMsg.MetricName, err)
+		
+		// Provide original values as fallback metadata
+		if sparkplugMsg != nil {
+			msg.MetaSet("spb_device_id", originalDeviceID)
+			msg.MetaSet("spb_metric_name", originalMetricName)
+		}
 		return
 	}
 
 	// Conversion successful - add UMH metadata
 	msg.MetaSet("umh_conversion_status", "success")
-	msg.MetaSet("umh_location_path", umhMsg.TopicInfo.Level0+"."+strings.Join(umhMsg.TopicInfo.LocationSublevels, "."))
-	msg.MetaSet("umh_tag_name", umhMsg.TopicInfo.Name) // UMH terminology (only when conversion succeeds)
+	
+	// Build location path without trailing dots when LocationSublevels is empty
+	locationPath := umhMsg.TopicInfo.Level0
+	if len(umhMsg.TopicInfo.LocationSublevels) > 0 {
+		locationPath = locationPath + "." + strings.Join(umhMsg.TopicInfo.LocationSublevels, ".")
+	}
+	
+	// The converter has already sanitized all fields, so we can use them directly
+	msg.MetaSet("umh_location_path", locationPath)
+	msg.MetaSet("umh_tag_name", umhMsg.TopicInfo.Name)
 	msg.MetaSet("umh_data_contract", umhMsg.TopicInfo.DataContract)
+	
+	// Add virtual path if present
 	if umhMsg.TopicInfo.VirtualPath != nil {
 		msg.MetaSet("umh_virtual_path", *umhMsg.TopicInfo.VirtualPath)
 	}
-	msg.MetaSet("umh_topic", umhMsg.Topic.String())
+	
+	// Add debug metadata for traceability
+	if originalMetricName != sparkplugMsg.MetricName {
+		msg.MetaSet("spb_original_metric_name", originalMetricName)
+	}
+	if originalDeviceID != "" && originalDeviceID != sparkplugMsg.DeviceID {
+		msg.MetaSet("spb_original_device_id", originalDeviceID)
+	}
 
 	s.logger.Debugf("Successfully added UMH metadata for metric %s -> %s", sparkplugMsg.MetricName, umhMsg.Topic.String())
 }

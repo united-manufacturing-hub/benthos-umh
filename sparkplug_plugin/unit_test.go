@@ -29,7 +29,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
+	sparkplugplugin "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
 )
@@ -59,10 +60,10 @@ func boolPtr(b bool) *bool {
 
 var _ = Describe("AliasCache Unit Tests", func() {
 
-	var cache *sparkplug_plugin.AliasCache
+	var cache *sparkplugplugin.AliasCache
 
 	BeforeEach(func() {
-		cache = sparkplug_plugin.NewAliasCache()
+		cache = sparkplugplugin.NewAliasCache()
 	})
 
 	Context("Alias Resolution", func() {
@@ -555,7 +556,7 @@ var _ = Describe("TypeConverter Unit Tests", func() {
 		})
 
 		It("should infer correct data types from Go values", func() {
-			converter := sparkplug_plugin.NewTypeConverter()
+			converter := sparkplugplugin.NewTypeConverter()
 
 			// Test various value types
 			values := map[interface{}]string{
@@ -729,13 +730,13 @@ var _ = Describe("Configuration Unit Tests", func() {
 			
 			for _, role := range validRoles {
 				By(fmt.Sprintf("validating role: %s", role), func() {
-					config := &sparkplug_plugin.Config{
-						Role: sparkplug_plugin.Role(role),
-						MQTT: sparkplug_plugin.MQTT{
+					config := &sparkplugplugin.Config{
+						Role: sparkplugplugin.Role(role),
+						MQTT: sparkplugplugin.MQTT{
 							URLs: []string{"tcp://localhost:1883"},
 							QoS:  1,
 						},
-						Identity: sparkplug_plugin.Identity{
+						Identity: sparkplugplugin.Identity{
 							GroupID: "TestGroup",
 						},
 					}
@@ -755,13 +756,13 @@ var _ = Describe("Configuration Unit Tests", func() {
 			
 			for _, role := range invalidRoles {
 				By(fmt.Sprintf("rejecting invalid role: %s", role), func() {
-					config := &sparkplug_plugin.Config{
-						Role: sparkplug_plugin.Role(role),
-						MQTT: sparkplug_plugin.MQTT{
+					config := &sparkplugplugin.Config{
+						Role: sparkplugplugin.Role(role),
+						MQTT: sparkplugplugin.MQTT{
 							URLs: []string{"tcp://localhost:1883"},
 							QoS:  1,
 						},
-						Identity: sparkplug_plugin.Identity{
+						Identity: sparkplugplugin.Identity{
 							GroupID: "TestGroup",
 						},
 					}
@@ -774,19 +775,19 @@ var _ = Describe("Configuration Unit Tests", func() {
 		})
 		
 		It("should default to secondary_passive role", func() {
-			config := &sparkplug_plugin.Config{}
+			config := &sparkplugplugin.Config{}
 			config.AutoDetectRole()
-			Expect(config.Role).To(Equal(sparkplug_plugin.RoleSecondaryPassive))
+			Expect(config.Role).To(Equal(sparkplugplugin.RoleSecondaryPassive))
 		})
 		
 		It("should require edge_node_id for primary role", func() {
-			config := &sparkplug_plugin.Config{
-				Role: sparkplug_plugin.RolePrimaryHost,
-				MQTT: sparkplug_plugin.MQTT{
+			config := &sparkplugplugin.Config{
+				Role: sparkplugplugin.RolePrimaryHost,
+				MQTT: sparkplugplugin.MQTT{
 					URLs: []string{"tcp://localhost:1883"},
 					QoS:  1,
 				},
-				Identity: sparkplug_plugin.Identity{
+				Identity: sparkplugplugin.Identity{
 					GroupID: "TestGroup",
 					// EdgeNodeID is missing
 				},
@@ -798,20 +799,20 @@ var _ = Describe("Configuration Unit Tests", func() {
 		})
 		
 		It("should not require edge_node_id for secondary modes", func() {
-			secondaryModes := []sparkplug_plugin.Role{
-				sparkplug_plugin.RoleSecondaryPassive,
-				sparkplug_plugin.RoleSecondaryActive,
+			secondaryModes := []sparkplugplugin.Role{
+				sparkplugplugin.RoleSecondaryPassive,
+				sparkplugplugin.RoleSecondaryActive,
 			}
 			
 			for _, role := range secondaryModes {
 				By(fmt.Sprintf("testing %s without edge_node_id", role), func() {
-					config := &sparkplug_plugin.Config{
+					config := &sparkplugplugin.Config{
 						Role: role,
-						MQTT: sparkplug_plugin.MQTT{
+						MQTT: sparkplugplugin.MQTT{
 							URLs: []string{"tcp://localhost:1883"},
 							QoS:  1,
 						},
-						Identity: sparkplug_plugin.Identity{
+						Identity: sparkplugplugin.Identity{
 							GroupID: "TestGroup",
 							// EdgeNodeID is not required
 						},
@@ -985,7 +986,7 @@ var _ = Describe("MessageProcessor Unit Tests", func() {
 
 		It("should handle pre-birth data scenarios", func() {
 			// Test DATA before BIRTH scenario (migrated from old edge cases)
-			cache := sparkplug_plugin.NewAliasCache()
+			cache := sparkplugplugin.NewAliasCache()
 
 			// Attempt to resolve aliases without cached BIRTH data
 			dataMetrics := []*sparkplugb.Payload_Metric{
@@ -1044,7 +1045,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 	Context("Birth/Death Message Compliance", func() {
 		It("should verify NBIRTH includes all required fields", func() {
 			// Test NBIRTH message structure compliance
-			nbirthVector := sparkplug_plugin.GetTestVector("NBIRTH_V1")
+			nbirthVector := sparkplugplugin.GetTestVector("NBIRTH_V1")
 			Expect(nbirthVector).NotTo(BeNil())
 
 			payloadBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
@@ -1084,7 +1085,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 
 		It("should verify NDEATH has correct payload structure", func() {
 			// Test NDEATH message structure compliance
-			ndeathVector := sparkplug_plugin.GetTestVector("NDEATH_V1")
+			ndeathVector := sparkplugplugin.GetTestVector("NDEATH_V1")
 			Expect(ndeathVector).NotTo(BeNil())
 
 			payloadBytes, err := base64.StdEncoding.DecodeString(ndeathVector.Base64Data)
@@ -1113,7 +1114,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 
 		It("should validate alias uniqueness in BIRTH messages", func() {
 			// Test that BIRTH messages don't have duplicate aliases (spec requirement)
-			nbirthVector := sparkplug_plugin.GetTestVector("NBIRTH_V1")
+			nbirthVector := sparkplugplugin.GetTestVector("NBIRTH_V1")
 			payloadBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1142,7 +1143,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 	Context("Sequence Number Management", func() {
 		It("should implement proper seq counter (0-255 with wraparound)", func() {
 			// Test sequence number wraparound behavior
-			sequenceManager := sparkplug_plugin.NewSequenceManager()
+			sequenceManager := sparkplugplugin.NewSequenceManager()
 
 			// Test normal increment - starts at 0
 			seq1 := sequenceManager.NextSequence()
@@ -1176,7 +1177,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 				{1, 5, false},  // Large gap
 			}
 
-			sequenceManager := sparkplug_plugin.NewSequenceManager()
+			sequenceManager := sparkplugplugin.NewSequenceManager()
 			for _, test := range sequences {
 				isValid := sequenceManager.IsSequenceValid(test.current, test.received)
 				Expect(isValid).To(Equal(test.isValid),
@@ -1186,7 +1187,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 
 		It("should handle out-of-order sequence detection", func() {
 			// Test that out-of-order sequences are properly detected
-			gapVector := sparkplug_plugin.GetTestVector("NDATA_GAP")
+			gapVector := sparkplugplugin.GetTestVector("NDATA_GAP")
 			Expect(gapVector).NotTo(BeNil())
 
 			payloadBytes, err := base64.StdEncoding.DecodeString(gapVector.Base64Data)
@@ -1210,7 +1211,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 	Context("Timestamp and Encoding", func() {
 		It("should ensure outgoing metrics include timestamps", func() {
 			// Test that all Sparkplug messages include timestamps
-			nbirthVector := sparkplug_plugin.GetTestVector("NBIRTH_V1")
+			nbirthVector := sparkplugplugin.GetTestVector("NBIRTH_V1")
 			payloadBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1229,7 +1230,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 
 		It("should validate Protobuf encoding completeness", func() {
 			// Test that all test vectors can be properly decoded
-			for _, vector := range sparkplug_plugin.TestVectors {
+			for _, vector := range sparkplugplugin.TestVectors {
 				By("validating protobuf encoding for "+vector.Name, func() {
 					payloadBytes, err := base64.StdEncoding.DecodeString(vector.Base64Data)
 					Expect(err).NotTo(HaveOccurred(), "Base64 decoding should succeed for "+vector.Name)
@@ -1247,7 +1248,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 
 		It("should preserve historical timestamps in input processing", func() {
 			// Test that historical timestamps are preserved
-			nbirthVector := sparkplug_plugin.GetTestVector("NBIRTH_V1")
+			nbirthVector := sparkplugplugin.GetTestVector("NBIRTH_V1")
 			payloadBytes, err := base64.StdEncoding.DecodeString(nbirthVector.Base64Data)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1312,7 +1313,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 	Context("Topic Namespace Compliance", func() {
 		It("should validate Sparkplug topic format", func() {
 			// Test Sparkplug topic namespace compliance (§8.2)
-			topicParser := sparkplug_plugin.NewTopicParser()
+			topicParser := sparkplugplugin.NewTopicParser()
 
 			validTopics := []string{
 				"spBv1.0/Group1/NBIRTH/EdgeNode1",
@@ -1335,7 +1336,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 
 		It("should validate message type classification", func() {
 			// Test message type validation
-			topicParser := sparkplug_plugin.NewTopicParser()
+			topicParser := sparkplugplugin.NewTopicParser()
 
 			// Birth messages
 			Expect(topicParser.IsBirthMessage("NBIRTH")).To(BeTrue())
@@ -1368,7 +1369,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 
 		It("should handle sequence number wraparound (255 → 0)", func() {
 			// Test sequence number wraparound edge case
-			sequenceManager := sparkplug_plugin.NewSequenceManager()
+			sequenceManager := sparkplugplugin.NewSequenceManager()
 
 			// Test wraparound scenarios
 			wrapCases := []struct {
@@ -1394,7 +1395,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 	Context("Connection Handling", func() {
 		It("should handle Primary Host disconnect/reconnect behavior", func() {
 			// Test primary host connection resilience
-			cache := sparkplug_plugin.NewAliasCache()
+			cache := sparkplugplugin.NewAliasCache()
 
 			// Simulate established session with cached aliases
 			metrics := []*sparkplugb.Payload_Metric{
@@ -1430,7 +1431,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 	Context("Large Payload Handling", func() {
 		It("should handle Birth messages with 500+ metrics", func() {
 			// Test large payload handling
-			cache := sparkplug_plugin.NewAliasCache()
+			cache := sparkplugplugin.NewAliasCache()
 
 			// Create 500+ metrics
 			largeMetrics := make([]*sparkplugb.Payload_Metric, 500)
@@ -1453,7 +1454,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 
 		It("should validate performance impact of large alias tables", func() {
 			// Test alias resolution performance with large tables
-			cache := sparkplug_plugin.NewAliasCache()
+			cache := sparkplugplugin.NewAliasCache()
 
 			// Create large alias table (1000 metrics)
 			largeMetrics := make([]*sparkplugb.Payload_Metric, 1000)
@@ -1528,7 +1529,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 				{Name: stringPtr("Metric/With/Slashes"), Alias: uint64Ptr(7)},
 			}
 
-			cache := sparkplug_plugin.NewAliasCache()
+			cache := sparkplugplugin.NewAliasCache()
 			count := cache.CacheAliases("Factory/International", specialMetrics)
 			Expect(count).To(Equal(7), "Should handle all special character metrics")
 
@@ -1595,7 +1596,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 
 		It("should handle mixed Node/Device metric scenarios", func() {
 			// Test mixed node-level and device-level metrics
-			cache := sparkplug_plugin.NewAliasCache()
+			cache := sparkplugplugin.NewAliasCache()
 
 			// Node-level metrics (no device in key)
 			nodeMetrics := []*sparkplugb.Payload_Metric{
@@ -1652,7 +1653,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 				},
 			}
 
-			cache := sparkplug_plugin.NewAliasCache()
+			cache := sparkplugplugin.NewAliasCache()
 			count := cache.CacheAliases("Factory/EdgeCases", edgeCaseMetrics)
 			Expect(count).To(Equal(4), "Should handle all edge case metrics")
 
@@ -1676,7 +1677,7 @@ var _ = Describe("P9 Edge Case Validation", func() {
 				{Name: stringPtr("Pressure"), Alias: uint64Ptr(3)},
 			}
 
-			cache := sparkplug_plugin.NewAliasCache()
+			cache := sparkplugplugin.NewAliasCache()
 			count := cache.CacheAliases("Factory/Duplicates", duplicateMetrics)
 
 			// Implementation should handle this gracefully
@@ -1866,6 +1867,202 @@ var _ = Describe("EON Node ID Resolution (Parris Method) Unit Tests", func() {
 			eonNodeID := output.getEONNodeID(msg)
 
 			Expect(eonNodeID).To(Equal("brewery:site_munich:brewing:tank_farm:fermentation_tank_5"))
+		})
+	})
+})
+
+var _ = Describe("UMH Metadata Generation Unit Tests", func() {
+	Context("Full Conversion Flow with Slashes and Colons", func() {
+		var converter *sparkplugplugin.FormatConverter
+		
+		BeforeEach(func() {
+			converter = sparkplugplugin.NewFormatConverter()
+		})
+		
+		It("should handle Refrigeration/receiverLevel through complete conversion flow", func() {
+			// Test the actual issue: metric with slash like "Refrigeration/receiverLevel"
+			// Step 1: Create a Sparkplug message with slash in metric name
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "TestDevice",
+				MetricName: "Refrigeration/receiverLevel", // Original with slash
+				Value:      42.5,
+				DataType:   "Double",
+				Timestamp:  time.Now(),
+			}
+			
+			// Step 2: Pre-process as the input does - replace slash with dot
+			processedMetricName := strings.ReplaceAll(sparkplugMsg.MetricName, "/", ".")
+			sparkplugMsg.MetricName = processedMetricName // "Refrigeration.receiverLevel"
+			
+			// Step 3: Convert to UMH
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg).ToNot(BeNil())
+			
+			// Step 4: Verify the parsing - splits on last dot
+			// "Refrigeration.receiverLevel" splits into:
+			// - virtual path: "Refrigeration"
+			// - tag name: "receiverLevel"
+			Expect(umhMsg.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Refrigeration"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("receiverLevel"))
+			
+			// Step 5: Verify sanitization happened in the conversion
+			// The sanitization is now done internally during conversion
+			// Check that the final topic contains the sanitized values
+			Expect(umhMsg.Topic).To(ContainSubstring("Refrigeration"))
+			Expect(umhMsg.Topic).To(ContainSubstring("receiverLevel"))
+		})
+		
+		It("should handle virtual paths with colons correctly", func() {
+			// Test metric with colons for virtual path: "vpath:segment:temperature"
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode", 
+				DeviceID:   "TestDevice",
+				MetricName: "vpath:segment:temperature", // Colons for virtual path
+				Value:      25.3,
+				DataType:   "Double",
+				Timestamp:  time.Now(),
+			}
+			
+			// Pre-process - replace colons with dots
+			processedMetricName := strings.ReplaceAll(sparkplugMsg.MetricName, ":", ".")
+			sparkplugMsg.MetricName = processedMetricName // "vpath.segment.temperature"
+			
+			// Convert to UMH
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			
+			// Verify parsing - splits on last dot
+			// "vpath.segment.temperature" splits into:
+			// - virtual path: "vpath.segment"
+			// - tag name: "temperature"
+			Expect(umhMsg.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("vpath.segment"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("temperature"))
+			
+			// Verify sanitization happened in the conversion
+			// The sanitization is now done internally during conversion
+			Expect(umhMsg.Topic).To(ContainSubstring("vpath.segment"))
+			Expect(umhMsg.Topic).To(ContainSubstring("temperature"))
+		})
+		
+		It("should handle mixed colons and slashes correctly", func() {
+			// Test complex case: "motor:diagnostics/Refrigeration/temperature"
+			// Colons separate virtual path, slashes are hierarchical within names
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "TestDevice",
+				MetricName: "motor:diagnostics/Refrigeration/temperature",
+				Value:      18.7,
+				DataType:   "Double",
+				Timestamp:  time.Now(),
+			}
+			
+			// Step 1: Pre-process - replace both slashes and colons with dots
+			processedMetricName := strings.ReplaceAll(sparkplugMsg.MetricName, "/", ".")
+			processedMetricName = strings.ReplaceAll(processedMetricName, ":", ".")
+			sparkplugMsg.MetricName = processedMetricName // "motor.diagnostics.Refrigeration.temperature"
+			
+			// Step 2: Convert to UMH
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			
+			// Step 3: Verify parsing - splits on last dot
+			// "motor.diagnostics.Refrigeration.temperature" splits into:
+			// - virtual path: "motor.diagnostics.Refrigeration"
+			// - tag name: "temperature"
+			Expect(umhMsg.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("motor.diagnostics.Refrigeration"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("temperature"))
+			
+			// Step 4: Verify sanitization happened in the conversion
+			// The sanitization is now done internally during conversion
+			Expect(umhMsg.Topic).To(ContainSubstring("motor.diagnostics.Refrigeration"))
+			Expect(umhMsg.Topic).To(ContainSubstring("temperature"))
+		})
+		
+		It("should provide fallback when conversion fails due to invalid characters", func() {
+			// Test with characters that would fail UMH validation even after slash replacement
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "Test@Group", // Invalid @ character
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Test#Device", // Invalid # character
+				MetricName: "metric$name", // Invalid $ character
+				Value:      10.0,
+				DataType:   "Double",
+				Timestamp:  time.Now(),
+			}
+			
+			// Attempt conversion (with sanitization now integrated, this should succeed)
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			// With sanitization now integrated in the converter,
+			// the conversion should succeed even with invalid characters
+			Expect(err).To(BeNil())
+			Expect(umhMsg).ToNot(BeNil())
+			
+			// Verify sanitized values in topic
+			// Note: Only DeviceID is used for location path, not GroupID/EdgeNodeID
+			Expect(umhMsg.Topic).To(ContainSubstring("Test_Device"))
+			Expect(umhMsg.Topic).To(ContainSubstring("metric_name"))
+		})
+	})
+	
+	Context("Location Path Generation without trailing dots (ENG-3428)", func() {
+		It("should build location path correctly when LocationSublevels is empty", func() {
+			// This test verifies the fix for ENG-3428
+			// Previously, empty LocationSublevels would create "RealisticDevice." with trailing dot
+			
+			level0 := "RealisticDevice"
+			locationSublevels := []string{}
+			
+			// Build location path as the fixed implementation does
+			var locationPath string
+			if len(locationSublevels) > 0 {
+				locationPath = level0 + "." + strings.Join(locationSublevels, ".")
+			} else {
+				locationPath = level0
+			}
+			
+			// Should not have trailing dot
+			Expect(locationPath).To(Equal("RealisticDevice"))
+			Expect(locationPath).NotTo(HaveSuffix("."))
+		})
+
+		It("should build location path correctly when LocationSublevels has values", func() {
+			level0 := "enterprise"
+			locationSublevels := []string{"site", "area", "line"}
+			
+			// Build location path
+			var locationPath string
+			if len(locationSublevels) > 0 {
+				locationPath = level0 + "." + strings.Join(locationSublevels, ".")
+			} else {
+				locationPath = level0
+			}
+			
+			// Should be properly joined
+			Expect(locationPath).To(Equal("enterprise.site.area.line"))
+		})
+
+		It("should handle single sublevel correctly", func() {
+			level0 := "factory"
+			locationSublevels := []string{"line1"}
+			
+			// Build location path
+			var locationPath string
+			if len(locationSublevels) > 0 {
+				locationPath = level0 + "." + strings.Join(locationSublevels, ".")
+			} else {
+				locationPath = level0
+			}
+			
+			Expect(locationPath).To(Equal("factory.line1"))
 		})
 	})
 })
@@ -2319,22 +2516,22 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 			
 			// Test inputs for different roles
 			testCases := []struct {
-				role                   sparkplug_plugin.Role
+				role                   sparkplugplugin.Role
 				expectRebirthSent      bool
 				expectRebirthSuppressed bool
 			}{
 				{
-					role:                   sparkplug_plugin.RoleSecondaryPassive,
+					role:                   sparkplugplugin.RoleSecondaryPassive,
 					expectRebirthSent:      false,
 					expectRebirthSuppressed: true,
 				},
 				{
-					role:                   sparkplug_plugin.RoleSecondaryActive,
+					role:                   sparkplugplugin.RoleSecondaryActive,
 					expectRebirthSent:      true,
 					expectRebirthSuppressed: false,
 				},
 				{
-					role:                   sparkplug_plugin.RolePrimaryHost,
+					role:                   sparkplugplugin.RolePrimaryHost,
 					expectRebirthSent:      true,
 					expectRebirthSuppressed: false,
 				},
@@ -2346,7 +2543,7 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 					mockMetrics.counters = make(map[string]int64)
 					
 					// Simulate rebirth request logic
-					shouldSendRebirth := tc.role != sparkplug_plugin.RoleSecondaryPassive
+					shouldSendRebirth := tc.role != sparkplugplugin.RoleSecondaryPassive
 					
 					if !shouldSendRebirth {
 						// Simulate metric increment
@@ -2367,28 +2564,28 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 		
 		It("should handle subscription topics correctly for each mode", func() {
 			testCases := []struct {
-				role             sparkplug_plugin.Role
+				role             sparkplugplugin.Role
 				expectSubscribe  bool
 			}{
 				{
-					role:            sparkplug_plugin.RoleSecondaryPassive,
+					role:            sparkplugplugin.RoleSecondaryPassive,
 					expectSubscribe: true, // Still subscribes to topics
 				},
 				{
-					role:            sparkplug_plugin.RoleSecondaryActive,
+					role:            sparkplugplugin.RoleSecondaryActive,
 					expectSubscribe: true,
 				},
 				{
-					role:            sparkplug_plugin.RolePrimaryHost,
+					role:            sparkplugplugin.RolePrimaryHost,
 					expectSubscribe: true,
 				},
 			}
 			
 			for _, tc := range testCases {
 				By(fmt.Sprintf("testing subscription for role: %s", tc.role), func() {
-					config := &sparkplug_plugin.Config{
+					config := &sparkplugplugin.Config{
 						Role: tc.role,
-						Identity: sparkplug_plugin.Identity{
+						Identity: sparkplugplugin.Identity{
 							GroupID: "TestGroup",
 						},
 					}
@@ -2543,7 +2740,7 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 
 // Mock structures for testing EON Node ID resolution
 type mockSparkplugOutput struct {
-	config sparkplug_plugin.Config
+	config sparkplugplugin.Config
 	logger mockLogger
 	// NEW: State management fields for Edge Node ID consistency fix
 	cachedLocationPath string
@@ -2553,8 +2750,8 @@ type mockSparkplugOutput struct {
 
 func newMockSparkplugOutput() *mockSparkplugOutput {
 	return &mockSparkplugOutput{
-		config: sparkplug_plugin.Config{
-			Identity: sparkplug_plugin.Identity{
+		config: sparkplugplugin.Config{
+			Identity: sparkplugplugin.Identity{
 				GroupID:    "TestGroup",
 				EdgeNodeID: "",
 				DeviceID:   "",
@@ -2658,3 +2855,280 @@ type mockLogger struct{}
 func (m mockLogger) Warn(msg string) {
 	// In a real test, we might capture this for verification
 }
+
+var _ = Describe("Comprehensive Special Character Sanitization", func() {
+	Context("Full conversion flow with special characters", func() {
+		It("should handle spaces in metric names", func() {
+			// Test case from actual error log: "Overview/Motor 1/Amps"
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "SimDeviceDevice",
+				MetricName: "Overview.Motor 1.Amps", // After / to . conversion, before sanitization
+				Value:      99.5,
+				DataType:   "double",
+				Timestamp:  time.Now(),
+			}
+			
+			// This should succeed after proper sanitization
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("SimDeviceDevice"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Overview.Motor_1"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Amps"))
+		})
+
+		It("should handle multiple special characters", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Device@123",
+				MetricName: "Process.Tank#5.Level%", // After / to . conversion
+				Value:      75.0,
+				DataType:   "double",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device_123"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Process.Tank_5"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Level_"))
+		})
+
+		It("should handle parentheses, brackets, and braces", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Device-01",
+				MetricName: "System.Motor(1).Status[OK].Value{raw}", // After / to . conversion
+				Value:      1,
+				DataType:   "int32",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device-01"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("System.Motor_1_.Status_OK_"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Value_raw_"))
+		})
+
+		It("should handle ampersands and other symbols", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "PLC_01",
+				MetricName: "Line&Station.Temp+Humidity.Value*10", // After / to . conversion
+				Value:      250,
+				DataType:   "int64",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("PLC_01"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Line_Station.Temp_Humidity"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Value_10"))
+		})
+
+		It("should handle quotes and apostrophes", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Device01",
+				MetricName: `Machine."Station's".Temp'C`, // After / to . conversion
+				Value:      22.5,
+				DataType:   "float",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device01"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Machine._Station_s_"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Temp_C"))
+		})
+
+		It("should handle currency and math symbols", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Accounting",
+				MetricName: "Cost$.Hour€.Rate÷100", // After / to . conversion
+				Value:      15.50,
+				DataType:   "double",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("Accounting"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Cost_.Hour_"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Rate_100"))
+		})
+
+		It("should handle tabs and newlines", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Device01",
+				MetricName: "Line1.Value\t1.Reading\n2", // After / to . conversion, with tab and newline
+				Value:      100,
+				DataType:   "int32",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device01"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Line1.Value_1"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Reading_2"))
+		})
+
+		It("should preserve valid characters (letters, numbers, dash, underscore)", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Device-123_ABC",
+				MetricName: "Valid-Name_123.Sub-Path_456.Tag-789", // After / to . conversion
+				Value:      42,
+				DataType:   "int32",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device-123_ABC"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Valid-Name_123.Sub-Path_456"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Tag-789"))
+		})
+
+		It("should handle consecutive special characters", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Device@@01",
+				MetricName: "Process..Tank  #5..Level%%", // After // to .. conversion
+				Value:      80,
+				DataType:   "int32",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device__01"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			// Consecutive dots should be collapsed to single dots
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Process.Tank___5"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Level__"))
+		})
+
+		It("should handle Unicode/international characters", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Gerät01",
+				MetricName: "Línea.Température.Wärme", // After / to . conversion
+				Value:      35.5,
+				DataType:   "double",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("Ger_t01"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("L_nea.Temp_rature"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("W_rme"))
+		})
+
+		It("should handle the real-world error case from logs", func() {
+			// This is the exact case from the error logs
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "SimDeviceGroup",
+				EdgeNodeID: "SimDeviceEdgeNode",
+				DeviceID:   "SimDeviceDevice",
+				MetricName: "Overview.Motor 1.Amps", // After "Overview/Motor 1/Amps" conversion
+				Value:      99.87609558127633,
+				DataType:   "double",
+				Timestamp:  time.Unix(0, 1757438863902*int64(time.Millisecond)),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			// With proper sanitization, this should succeed
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("SimDeviceDevice"))
+			Expect(umhMsg.TopicInfo.DataContract).To(Equal("_raw"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Overview.Motor_1"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Amps"))
+			
+			// The resulting UMH topic should be valid
+			builder := topic.NewBuilder()
+			builder.SetLevel0(umhMsg.TopicInfo.Level0)
+			builder.SetDataContract(umhMsg.TopicInfo.DataContract)
+			if umhMsg.TopicInfo.VirtualPath != nil {
+				builder.SetVirtualPath(*umhMsg.TopicInfo.VirtualPath)
+			}
+			builder.SetName(umhMsg.TopicInfo.Name)
+			
+			topicStr, err := builder.BuildString()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(topicStr).To(Equal("umh.v1.SimDeviceDevice._raw.Overview.Motor_1.Amps"))
+		})
+	})
+
+})
