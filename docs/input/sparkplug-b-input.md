@@ -414,11 +414,14 @@ Examples:
 - `/hello123/test/` → virtual_path=`hello123`, tag_name=`test` (slashes trimmed, then split)
 - `vpath:segment:metric` → virtual_path=`vpath.segment`, tag_name=`metric` (colons to dots)
 
-When sanitization occurs, the plugin adds metadata fields:
-- `spb_original_metric_name`: The original metric name before sanitization
-- `spb_sanitized_metric_name`: The sanitized metric name used for UMH conversion
-- `spb_original_device_id`: The original device ID (if sanitized)
-- `spb_sanitized_device_id`: The sanitized device ID (if sanitized)
+When sanitization occurs, the plugin preserves the original values in metadata:
+- `spb_original_metric_name`: The original metric name before sanitization (if different from spb_metric_name)
+- `spb_original_device_id`: The original device ID before sanitization (if different from spb_device_id)
+
+The sanitized values are available in the UMH metadata fields:
+- `umh_location_path`: The sanitized location path (from device ID)
+- `umh_virtual_path`: The sanitized virtual path (from metric name)
+- `umh_tag_name`: The sanitized tag name (from metric name)
 
 This ensures that messages with non-compliant Sparkplug names are automatically converted to valid UMH topics while preserving the original values for reference.
 
