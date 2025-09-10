@@ -263,6 +263,11 @@ func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Me
 		// However, the service layer's handling of nil vs empty batch differs in how it's counted in metrics.
 		return service.MessageBatch{}, nil
 	}
+	
+	// Note: ProcessBatch only returns 0 or 1 batch in this implementation:
+	//   - Empty slice when buffering messages (no emission yet)  
+	//   - Single batch containing the protobuf bundle when emitting
+	// We can safely return messageBatch[0] as there's never more than one batch
 	return messageBatch[0], nil
 }
 
