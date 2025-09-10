@@ -29,6 +29,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 	sparkplugplugin "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
@@ -2909,3 +2910,328 @@ type mockLogger struct{}
 func (m mockLogger) Warn(msg string) {
 	// In a real test, we might capture this for verification
 }
+
+var _ = Describe("Comprehensive Special Character Sanitization", func() {
+	Context("Full conversion flow with special characters", func() {
+		It("should handle spaces in metric names", func() {
+			// Test case from actual error log: "Overview/Motor 1/Amps"
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "SimDeviceDevice",
+				MetricName: "Overview.Motor 1.Amps", // After / to . conversion, before sanitization
+				Value:      99.5,
+				DataType:   "double",
+				Timestamp:  time.Now(),
+			}
+			
+			// This should succeed after proper sanitization
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("SimDeviceDevice"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Overview.Motor_1"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Amps"))
+		})
+
+		It("should handle multiple special characters", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Device@123",
+				MetricName: "Process.Tank#5.Level%", // After / to . conversion
+				Value:      75.0,
+				DataType:   "double",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device_123"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Process.Tank_5"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Level_"))
+		})
+
+		It("should handle parentheses, brackets, and braces", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Device-01",
+				MetricName: "System.Motor(1).Status[OK].Value{raw}", // After / to . conversion
+				Value:      1,
+				DataType:   "int32",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device-01"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("System.Motor_1_.Status_OK_"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Value_raw_"))
+		})
+
+		It("should handle ampersands and other symbols", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "PLC_01",
+				MetricName: "Line&Station.Temp+Humidity.Value*10", // After / to . conversion
+				Value:      250,
+				DataType:   "int64",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("PLC_01"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Line_Station.Temp_Humidity"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Value_10"))
+		})
+
+		It("should handle quotes and apostrophes", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Device01",
+				MetricName: `Machine."Station's".Temp'C`, // After / to . conversion
+				Value:      22.5,
+				DataType:   "float",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device01"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Machine._Station_s_"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Temp_C"))
+		})
+
+		It("should handle currency and math symbols", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Accounting",
+				MetricName: "Cost$.Hour€.Rate÷100", // After / to . conversion
+				Value:      15.50,
+				DataType:   "double",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("Accounting"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Cost_.Hour_"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Rate_100"))
+		})
+
+		It("should handle tabs and newlines", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Device01",
+				MetricName: "Line1.Value\t1.Reading\n2", // After / to . conversion, with tab and newline
+				Value:      100,
+				DataType:   "int32",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device01"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Line1.Value_1"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Reading_2"))
+		})
+
+		It("should preserve valid characters (letters, numbers, dash, underscore)", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Device-123_ABC",
+				MetricName: "Valid-Name_123.Sub-Path_456.Tag-789", // After / to . conversion
+				Value:      42,
+				DataType:   "int32",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device-123_ABC"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Valid-Name_123.Sub-Path_456"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Tag-789"))
+		})
+
+		It("should handle consecutive special characters", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Device@@01",
+				MetricName: "Process..Tank  #5..Level%%", // After // to .. conversion
+				Value:      80,
+				DataType:   "int32",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device__01"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			// Consecutive dots should be collapsed to single dots
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Process.Tank___5"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Level__"))
+		})
+
+		It("should handle Unicode/international characters", func() {
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "TestGroup",
+				EdgeNodeID: "TestNode",
+				DeviceID:   "Gerät01",
+				MetricName: "Línea.Température.Wärme", // After / to . conversion
+				Value:      35.5,
+				DataType:   "double",
+				Timestamp:  time.Now(),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("Ger_t01"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("L_nea.Temp_rature"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("W_rme"))
+		})
+
+		It("should handle the real-world error case from logs", func() {
+			// This is the exact case from the error logs
+			converter := sparkplugplugin.NewFormatConverter()
+			
+			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
+				GroupID:    "SimDeviceGroup",
+				EdgeNodeID: "SimDeviceEdgeNode",
+				DeviceID:   "SimDeviceDevice",
+				MetricName: "Overview.Motor 1.Amps", // After "Overview/Motor 1/Amps" conversion
+				Value:      99.87609558127633,
+				DataType:   "double",
+				Timestamp:  time.Unix(0, 1757438863902*int64(time.Millisecond)),
+			}
+			
+			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
+			
+			// With proper sanitization, this should succeed
+			Expect(err).NotTo(HaveOccurred())
+			Expect(umhMsg).NotTo(BeNil())
+			Expect(umhMsg.TopicInfo.Level0).To(Equal("SimDeviceDevice"))
+			Expect(umhMsg.TopicInfo.DataContract).To(Equal("_raw"))
+			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Overview.Motor_1"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Amps"))
+			
+			// The resulting UMH topic should be valid
+			builder := topic.NewBuilder()
+			builder.SetLevel0(umhMsg.TopicInfo.Level0)
+			builder.SetDataContract(umhMsg.TopicInfo.DataContract)
+			if umhMsg.TopicInfo.VirtualPath != nil {
+				builder.SetVirtualPath(*umhMsg.TopicInfo.VirtualPath)
+			}
+			builder.SetName(umhMsg.TopicInfo.Name)
+			
+			topicStr, err := builder.BuildString()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(topicStr).To(Equal("umh.v1.SimDeviceDevice._raw.Overview.Motor_1.Amps"))
+		})
+	})
+
+	Context("Sanitization function", func() {
+		It("should sanitize all invalid characters to underscores", func() {
+			tests := []struct {
+				input    string
+				expected string
+			}{
+				// Spaces
+				{"Motor 1", "Motor_1"},
+				{"Line  2", "Line__2"},
+				
+				// Special symbols
+				{"Tank#5", "Tank_5"},
+				{"Level%", "Level_"},
+				{"Value@100", "Value_100"},
+				{"Cost$", "Cost_"},
+				{"Rate€", "Rate_"},
+				
+				// Brackets and parentheses
+				{"Motor(1)", "Motor_1_"},
+				{"Status[OK]", "Status_OK_"},
+				{"Value{raw}", "Value_raw_"},
+				
+				// Math symbols
+				{"Value+10", "Value_10"},
+				{"Rate*2", "Rate_2"},
+				{"Total=100", "Total_100"},
+				{"Diff÷2", "Diff_2"},
+				
+				// Quotes
+				{`Station's`, "Station_s"},
+				{`"quoted"`, "_quoted_"},
+				
+				// Valid characters preserved
+				{"Valid-Name_123", "Valid-Name_123"},
+				{"test.path", "test.path"},
+				
+				// Mixed
+				{"Motor 1/Status[OK]", "Motor_1.Status_OK_"},
+				{"Line#1/Tank 2/Level%", "Line_1.Tank_2.Level_"},
+			}
+			
+			for _, test := range tests {
+				result := sparkplugplugin.SanitizeForUMH(test.input)
+				Expect(result).To(Equal(test.expected), 
+					fmt.Sprintf("SanitizeForUMH(%q) should return %q", test.input, test.expected))
+			}
+		})
+	})
+})

@@ -75,6 +75,13 @@ func NewFormatConverter() *FormatConverter {
 	}
 }
 
+// sanitizeForUMH sanitizes a string to be compatible with UMH topic requirements.
+// It replaces all invalid characters with underscores while preserving dots, dashes, and underscores.
+// This method delegates to the global SanitizeForUMH function for consistency.
+func (fc *FormatConverter) sanitizeForUMH(input string) string {
+	return SanitizeForUMH(input)
+}
+
 // UMHMessage represents a parsed UMH message with structured topic information.
 type UMHMessage struct {
 	Topic      *topic.UnsTopic   // Parsed UMH topic
@@ -163,12 +170,22 @@ func (fc *FormatConverter) EncodeUMHToSparkplug(msg *service.Message, groupID, e
 func (fc *FormatConverter) DecodeSparkplugToUMH(sparkplugMsg *SparkplugMessage, dataContract string) (*UMHMessage, error) {
 	// Convert device ID back to location path
 	locationPath := fc.convertDeviceIDToLocationPath(sparkplugMsg.DeviceID)
+	
+	// Sanitize location path for UMH compatibility
+	locationPath = fc.sanitizeForUMH(locationPath)
 
 	// Parse metric name to extract virtual path and tag name
 	virtualPath, tagName, err := fc.parseSparkplugMetricName(sparkplugMsg.MetricName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse Sparkplug metric name: %w", err)
 	}
+	
+	// Sanitize virtual path and tag name for UMH compatibility
+	if virtualPath != nil && *virtualPath != "" {
+		sanitizedVP := fc.sanitizeForUMH(*virtualPath)
+		virtualPath = &sanitizedVP
+	}
+	tagName = fc.sanitizeForUMH(tagName)
 
 	// Build UMH topic using the UNS topic package
 	umhTopic, err := fc.buildUMHTopic(locationPath, dataContract, virtualPath, tagName)
