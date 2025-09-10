@@ -794,7 +794,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			result10, err := safetyProcessor.ProcessBatch(context.Background(), batch10)
 
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result10).To(BeNil(), "No overflow should occur at exactly 10/10 (at capacity)")
+			Expect(result10).To(Equal([]service.MessageBatch{}), "No overflow should occur at exactly 10/10 (at capacity) - returns empty slice")
 
 			// Verify buffer is at exactly capacity
 			safetyProcessor.bufferMutex.Lock()
@@ -810,7 +810,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			result11, err := safetyProcessor.ProcessBatch(context.Background(), batch11)
 
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result11).To(BeNil(), "Catch-up processing should trigger (no emission returned)")
+			Expect(result11).To(Equal([]service.MessageBatch{}), "Catch-up processing should trigger (no emission returned) - returns empty slice")
 
 			// Verify buffer now contains only the 11th message (catch-up processing cleared previous messages)
 			safetyProcessor.bufferMutex.Lock()
@@ -1588,7 +1588,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 				result1, err := mediumProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg1})
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result1).To(BeNil(), "First message buffered, no ACK yet")
+				Expect(result1).To(Equal([]service.MessageBatch{}), "First message buffered - returns empty slice")
 
 				By("Second message immediately after - still buffered (no ACK)")
 				msg2 := service.NewMessage(nil)
@@ -1600,7 +1600,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 				result2, err := mediumProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg2})
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result2).To(BeNil(), "Second message also buffered, no ACK yet")
+				Expect(result2).To(Equal([]service.MessageBatch{}), "Second message also buffered - returns empty slice")
 
 				By("Waiting for emit interval to pass")
 				time.Sleep(150 * time.Millisecond) // Wait longer than 100ms interval
@@ -1793,7 +1793,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 				result1, err := mediumProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg1})
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result1).To(BeNil(), "First message should be buffered")
+				Expect(result1).To(Equal([]service.MessageBatch{}), "First message should be buffered - returns empty slice")
 
 				By("Waiting for interval to elapse")
 				time.Sleep(150 * time.Millisecond) // Wait longer than 100ms interval
