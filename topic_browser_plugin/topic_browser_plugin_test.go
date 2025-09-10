@@ -87,7 +87,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg})
 			Expect(err).To(BeNil())
-			Expect(result).To(BeNil())
+			Expect(result).To(Equal([]service.MessageBatch{}), "Should return empty slice when no metadata")
 		})
 
 		It("caches UNS map entries", func() {
@@ -431,10 +431,10 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			By("Verifying emission occurs at boundary")
 			// Either result1 or result2 should have emissions (or both)
 			totalEmissions := 0
-			if result1 != nil {
+			if result1 != nil && len(result1) > 0 {
 				totalEmissions += len(result1)
 			}
-			if result2 != nil {
+			if result2 != nil && len(result2) > 0 {
 				totalEmissions += len(result2)
 			}
 
@@ -715,7 +715,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				result, err := safetyProcessor.ProcessBatch(context.Background(), batch)
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(BeNil(), "No emissions should occur during filling")
+				Expect(result).To(Equal([]service.MessageBatch{}), "No emissions should occur during filling - returns empty slice")
 			}
 
 			By("Sending overflow-triggering message and verifying catch-up processing")
@@ -724,7 +724,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			results, err := safetyProcessor.ProcessBatch(context.Background(), overflowBatch)
 
 			Expect(err).NotTo(HaveOccurred(), "Catch-up processing should succeed")
-			Expect(results).To(BeNil(), "Should return nil during catch-up processing (no emission)")
+			Expect(results).To(Equal([]service.MessageBatch{}), "Should return empty slice during catch-up processing (no emission)")
 
 			By("Verifying buffer state after catch-up processing")
 			safetyProcessor.bufferMutex.Lock()
@@ -786,7 +786,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				result, err := safetyProcessor.ProcessBatch(context.Background(), batch)
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(BeNil(), "No overflow should occur at 9/10")
+				Expect(result).To(Equal([]service.MessageBatch{}), "No overflow should occur at 9/10 - returns empty slice")
 			}
 
 			// Add 10th message - should still not trigger overflow (exactly at capacity)
@@ -1079,7 +1079,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			By("Verifying no invalid data is emitted")
 			// Should not emit invalid data - either nil result or empty batches
-			if result != nil {
+			if result != nil && len(result) > 0 {
 				Expect(len(result)).To(BeNumerically("<=", 2), "Should not emit more than expected batches")
 				if len(result) > 0 {
 					// If emission occurs, it should be valid data, not malformed input
@@ -1295,7 +1295,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			By("Verifying some processing occurred (valid messages handled)")
 			// At minimum, the valid messages should be processed somehow
 			// The exact behavior may vary (skip invalid, process valid, etc.)
-			if result != nil {
+			if result != nil && len(result) > 0 {
 				Expect(len(result)).To(BeNumerically(">=", 0), "Result should be valid structure")
 				if len(result) > 0 {
 					// If any processing occurred, structure should be valid
@@ -1489,7 +1489,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Verifying no emission occurs when buffered")
-			Expect(result).To(BeNil(), "Should return nil when messages are buffered")
+			Expect(result).To(Equal([]service.MessageBatch{}), "Should return empty slice when messages are buffered")
 
 			By("Verifying message is held in buffer for future ACK")
 			longProcessor.bufferMutex.Lock()
@@ -1524,7 +1524,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				By("CRITICAL: No ACK should happen yet (message is buffered)")
-				Expect(result).To(BeNil(), "Should return nil - no emission, no ACK yet")
+				Expect(result).To(Equal([]service.MessageBatch{}), "Should return empty slice - no emission yet")
 
 				By("Verifying message is buffered internally (waiting for 1 second)")
 				realisticProcessor.bufferMutex.Lock()
@@ -1533,7 +1533,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				Expect(bufferLen).To(Equal(1), "Message should be buffered, waiting for emit interval")
 
 				By("VERIFICATION: This proves messages are NOT ACKed when buffered")
-				// The fact that ProcessBatch returned nil means:
+				// The fact that ProcessBatch returned empty slice means:
 				// 1. Message was buffered internally ✅
 				// 2. No ACK batch was returned ✅
 				// 3. Original message remains unACKed until emission ✅
@@ -1690,7 +1690,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 					} else {
 						// Subsequent messages may be buffered or emitted depending on timing
 						// The key point is that fast intervals allow immediate emission capability
-						if result != nil {
+						if result != nil && len(result) > 0 {
 							Expect(result).To(HaveLen(1), "If emitted, should have [emission] - ACKed in-place")
 						}
 						// Either immediate emission or buffering is acceptable for fast intervals
@@ -1728,7 +1728,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verifying buffered behavior (no immediate emission)")
-				Expect(result).To(BeNil(), "Realistic intervals should buffer messages initially")
+				Expect(result).To(Equal([]service.MessageBatch{}), "Realistic intervals should buffer messages initially - returns empty slice")
 
 				By("Verifying message is held in buffer")
 				realisticProcessor.bufferMutex.Lock()
@@ -1758,7 +1758,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 					Expect(err).NotTo(HaveOccurred())
 
 					By(fmt.Sprintf("Verifying message %d is buffered", i))
-					Expect(result).To(BeNil(), "Messages should be buffered, not emitted immediately")
+					Expect(result).To(Equal([]service.MessageBatch{}), "Messages should be buffered, not emitted immediately - returns empty slice")
 				}
 
 				By("Verifying all messages are accumulated in buffer")
