@@ -318,7 +318,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Create wrapper function to capture emission times
 			captureEmissionWrapper := func(batch service.MessageBatch) ([]service.MessageBatch, error) {
 				result, err := realisticProcessor.ProcessBatch(context.Background(), batch)
-				if result != nil && len(result) > 0 {
+				if len(result) > 0 {
 					emissionMutex.Lock()
 					emissionTimes = append(emissionTimes, time.Now())
 					emissionMutex.Unlock()
@@ -379,7 +379,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				batch := createTestBatch(1, fmt.Sprintf("rapid-buffer-%d", i))
 				result, err := realisticProcessor.ProcessBatch(context.Background(), batch)
 				Expect(err).NotTo(HaveOccurred())
-				if result != nil && len(result) > 0 {
+				if len(result) > 0 {
 					rapidResults = append(rapidResults, result)
 				}
 				time.Sleep(100 * time.Millisecond) // 100ms between batches
@@ -406,7 +406,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Should get emission after crossing time boundary
-			if result != nil && len(result) > 0 {
+			if len(result) > 0 {
 				Expect(len(result)).To(BeNumerically(">", 0),
 					"Should emit buffered messages after crossing time boundary")
 			}
@@ -431,10 +431,10 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			By("Verifying emission occurs at boundary")
 			// Either result1 or result2 should have emissions (or both)
 			totalEmissions := 0
-			if result1 != nil && len(result1) > 0 {
+			if len(result1) > 0 {
 				totalEmissions += len(result1)
 			}
-			if result2 != nil && len(result2) > 0 {
+			if len(result2) > 0 {
 				totalEmissions += len(result2)
 			}
 
@@ -957,7 +957,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			Expect(err).NotTo(HaveOccurred(), "json.Number should process without error")
 
-			if result != nil && len(result) > 0 && len(result[0]) > 0 {
+			if len(result) > 0 && len(result[0]) > 0 {
 				By("Extracting and verifying the UNS bundle from pipeline output")
 
 				// Extract the UNS bundle from the processed message
@@ -1019,7 +1019,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// Should process large payloads without issue
 
-			if result != nil && len(result) > 0 && len(result[0]) > 0 {
+			if len(result) > 0 && len(result[0]) > 0 {
 				By("Verifying payload is processed correctly")
 				// Can check that the result contains data
 				Expect(result[0][0]).NotTo(BeNil())
@@ -1079,7 +1079,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			By("Verifying no invalid data is emitted")
 			// Should not emit invalid data - either nil result or empty batches
-			if result != nil && len(result) > 0 {
+			if len(result) > 0 {
 				Expect(len(result)).To(BeNumerically("<=", 2), "Should not emit more than expected batches")
 				if len(result) > 0 {
 					// If emission occurs, it should be valid data, not malformed input
@@ -1137,7 +1137,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).NotTo(HaveOccurred(), "Processor should handle nil values gracefully")
 
 			By("Verifying processor state remains consistent")
-			if result != nil && len(result) > 0 {
+			if len(result) > 0 {
 				// If processed, result should be valid
 				Expect(result).To(HaveLen(1), "If processed, should have [emission] - ACKed in-place")
 			}
@@ -1181,7 +1181,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			nanResult, nanErr := errorProcessor.ProcessBatch(context.Background(), service.MessageBatch{nanMsg})
 			Expect(nanErr).NotTo(HaveOccurred(), "Should handle NaN values gracefully")
 			// Verify result structure if processing occurred
-			if nanResult != nil && len(nanResult) > 0 {
+			if len(nanResult) > 0 {
 				Expect(len(nanResult)).To(BeNumerically("<=", 2), "NaN result should have valid structure")
 			}
 
@@ -1199,7 +1199,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			infResult, infErr := errorProcessor.ProcessBatch(context.Background(), service.MessageBatch{infMsg})
 			Expect(infErr).NotTo(HaveOccurred(), "Should handle Infinity values gracefully")
 			// Verify result structure if processing occurred
-			if infResult != nil && len(infResult) > 0 {
+			if len(infResult) > 0 {
 				Expect(len(infResult)).To(BeNumerically("<=", 2), "Infinity result should have valid structure")
 			}
 
@@ -1217,7 +1217,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			negInfResult, negInfErr := errorProcessor.ProcessBatch(context.Background(), service.MessageBatch{negInfMsg})
 			Expect(negInfErr).NotTo(HaveOccurred(), "Should handle negative Infinity values gracefully")
 			// Verify result structure if processing occurred
-			if negInfResult != nil && len(negInfResult) > 0 {
+			if len(negInfResult) > 0 {
 				Expect(len(negInfResult)).To(BeNumerically("<=", 2), "Negative Infinity result should have valid structure")
 			}
 
@@ -1295,7 +1295,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			By("Verifying some processing occurred (valid messages handled)")
 			// At minimum, the valid messages should be processed somehow
 			// The exact behavior may vary (skip invalid, process valid, etc.)
-			if result != nil && len(result) > 0 {
+			if len(result) > 0 {
 				Expect(len(result)).To(BeNumerically(">=", 0), "Result should be valid structure")
 				if len(result) > 0 {
 					// If any processing occurred, structure should be valid
@@ -1690,7 +1690,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 					} else {
 						// Subsequent messages may be buffered or emitted depending on timing
 						// The key point is that fast intervals allow immediate emission capability
-						if result != nil && len(result) > 0 {
+						if len(result) > 0 {
 							Expect(result).To(HaveLen(1), "If emitted, should have [emission] - ACKed in-place")
 						}
 						// Either immediate emission or buffering is acceptable for fast intervals
