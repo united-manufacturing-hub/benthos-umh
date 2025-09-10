@@ -1114,39 +1114,17 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	originalMetricName := sparkplugMsg.MetricName
 	originalDeviceID := sparkplugMsg.DeviceID
 	
-	// Convert both slashes and colons to dots for consistent hierarchical representation
-	// This allows the converter to properly split virtual paths
-	// Examples:
-	// - "Refrigeration/receiverLevel" → "Refrigeration.receiverLevel" 
-	// - "vpath:segment:metric" → "vpath.segment.metric"
-	sparkplugMsg.MetricName = strings.ReplaceAll(sparkplugMsg.MetricName, "/", ".")
-	sparkplugMsg.MetricName = strings.ReplaceAll(sparkplugMsg.MetricName, ":", ".")
-	
-	// Try UMH conversion with normalized metric name
+	// Try UMH conversion - the converter will handle any necessary sanitization
 	umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
 	if err != nil {
 		msg.MetaSet("umh_conversion_status", "failed")
 		msg.MetaSet("umh_conversion_error", err.Error())
 		s.logger.Debugf("UMH conversion failed for metric %s: %v", sparkplugMsg.MetricName, err)
 		
-		// Provide fallback metadata with sanitized values
+		// Provide original values as fallback metadata
 		if sparkplugMsg != nil {
-			// Sanitize the original values for fallback metadata
-			sanitizedDeviceID := s.sanitizeForUMH(sparkplugMsg.DeviceID)
-			sanitizedMetricName := s.sanitizeForUMH(sparkplugMsg.MetricName)
-			
-			msg.MetaSet("umh_location_path", sanitizedDeviceID)
-			msg.MetaSet("umh_tag_name", sanitizedMetricName)
-			
-			// Add debug metadata if sanitization occurred
-			if originalMetricName != sanitizedMetricName {
-				msg.MetaSet("spb_original_metric_name", originalMetricName)
-				msg.MetaSet("spb_sanitized_metric_name", sanitizedMetricName)
-			}
-			if originalDeviceID != "" && originalDeviceID != sanitizedDeviceID {
-				msg.MetaSet("spb_original_device_id", originalDeviceID)
-				msg.MetaSet("spb_sanitized_device_id", sanitizedDeviceID)
-			}
+			msg.MetaSet("spb_device_id", originalDeviceID)
+			msg.MetaSet("spb_metric_name", originalMetricName)
 		}
 		return
 	}
@@ -1160,26 +1138,17 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 		locationPath = locationPath + "." + strings.Join(umhMsg.TopicInfo.LocationSublevels, ".")
 	}
 	
-	// Sanitize all UMH fields to ensure they're valid for UMH topics
-	// The converter properly split virtual paths using colons, now we sanitize the results
-	sanitizedLocationPath := s.sanitizeForUMH(locationPath)
-	sanitizedTagName := s.sanitizeForUMH(umhMsg.TopicInfo.Name)
-	
-	msg.MetaSet("umh_location_path", sanitizedLocationPath)
-	msg.MetaSet("umh_tag_name", sanitizedTagName)
+	// The converter has already sanitized all fields, so we can use them directly
+	msg.MetaSet("umh_location_path", locationPath)
+	msg.MetaSet("umh_tag_name", umhMsg.TopicInfo.Name)
 	msg.MetaSet("umh_data_contract", umhMsg.TopicInfo.DataContract)
 	
-	// Sanitize virtual path if present
+	// Add virtual path if present
 	if umhMsg.TopicInfo.VirtualPath != nil {
-		sanitizedVirtualPath := s.sanitizeForUMH(*umhMsg.TopicInfo.VirtualPath)
-		msg.MetaSet("umh_virtual_path", sanitizedVirtualPath)
+		msg.MetaSet("umh_virtual_path", *umhMsg.TopicInfo.VirtualPath)
 	}
 	
-	// Rebuild the topic with sanitized components
-	// Note: We can't use umhMsg.Topic.String() directly as it has unsanitized values
-	// The tag processor will build the final topic from these sanitized metadata fields
-	
-	// Add debug metadata if any sanitization occurred
+	// Add debug metadata for traceability
 	if originalMetricName != sparkplugMsg.MetricName {
 		msg.MetaSet("spb_original_metric_name", originalMetricName)
 	}
@@ -1188,64 +1157,6 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	}
 
 	s.logger.Debugf("Successfully added UMH metadata for metric %s -> %s", sparkplugMsg.MetricName, umhMsg.Topic.String())
-}
-
-// SanitizeForUMH sanitizes a string to be compatible with UMH topic requirements.
-// UMH topics only allow characters: a-z, A-Z, 0-9, dot (.), underscore (_), hyphen (-)
-//
-// Key transformations:
-// - Forward slashes (/) → dots (.) to preserve hierarchical structure
-// - Colons (:) → underscores (_) as they're not valid in UMH topics
-// - All other invalid characters → underscores (_)
-//
-// Usage Pattern:
-// This function is called AFTER the format converter has processed the original
-// Sparkplug metric names. The converter uses colons to split virtual paths first,
-// then we sanitize each resulting component (location_path, virtual_path, tag_name)
-// to ensure they're valid for UMH topics.
-//
-// Post-processing: Multiple dots are collapsed and leading/trailing dots removed
-// to prevent invalid UMH topic structures.
-func SanitizeForUMH(input string) string {
-	if input == "" {
-		return ""
-	}
-	
-	// First pass: replace slashes with dots for hierarchical paths
-	result := strings.ReplaceAll(input, "/", ".")
-	
-	// Second pass: replace invalid characters with underscores
-	// Valid UMH topic characters: a-z, A-Z, 0-9, dot, underscore, hyphen
-	var sanitized strings.Builder
-	sanitized.Grow(len(result)) // Pre-allocate for performance
-	for _, char := range result {
-		if (char >= 'a' && char <= 'z') || 
-		   (char >= 'A' && char <= 'Z') || 
-		   (char >= '0' && char <= '9') || 
-		   char == '.' || char == '_' || char == '-' {
-			sanitized.WriteRune(char)
-		} else {
-			sanitized.WriteRune('_')
-		}
-	}
-	
-	// Third pass: collapse multiple consecutive dots
-	// Prevents "//" → ".." which would create invalid UMH topic segments
-	finalResult := sanitized.String()
-	for strings.Contains(finalResult, "..") {
-		finalResult = strings.ReplaceAll(finalResult, "..", ".")
-	}
-	
-	// Fourth pass: trim leading and trailing dots
-	// Prevents topic structure issues in UMH location_path and virtual_path
-	finalResult = strings.Trim(finalResult, ".")
-	
-	return finalResult
-}
-
-// sanitizeForUMH is a method wrapper for the exported SanitizeForUMH function
-func (s *sparkplugInput) sanitizeForUMH(input string) string {
-	return SanitizeForUMH(input)
 }
 
 // extractMetricValueRaw extracts the raw value from a Sparkplug metric without JSON wrapping

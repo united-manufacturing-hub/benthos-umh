@@ -14,7 +14,10 @@ UMH implements a **Modified Parris Method** that distributes hierarchy across bo
 
 **Key Innovation**:
 - **Location Hierarchy** → `device_id`: `"enterprise.site.area.line"` → `"enterprise:site:area:line"`
-- **Virtual Path Hierarchy** → `metric_name`: `"motor.diagnostics" + "temperature"` → `"motor:diagnostics:temperature"`
+- **Virtual Path Hierarchy** → `metric_name`: Supports multiple separators:
+  - Colons: `"motor:diagnostics:temperature"` → virtual_path=`"motor.diagnostics"` + tag_name=`"temperature"`
+  - Slashes: `"motor/diagnostics/temperature"` → virtual_path=`"motor.diagnostics"` + tag_name=`"temperature"`
+  - Dots: `"motor.diagnostics.temperature"` → virtual_path=`"motor.diagnostics"` + tag_name=`"temperature"`
 
 ### Architecture Roles
 
@@ -84,7 +87,7 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 
 **Input Sparkplug B Message:**
 - **Topic**: `spBv1.0/FactoryA/DDATA/EdgeNode1/enterprise:factory:line1:station1`
-- **Metric Name**: `sensors:ambient:temperature`
+- **Metric Name**: `sensors:ambient:temperature` (or `sensors/ambient/temperature` or `sensors.ambient.temperature`)
 - **Payload**: Protobuf with metric alias, value 23.5, timestamp
 
 **↓ Results in Structured JSON Message:**
@@ -114,7 +117,10 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 
 **Key Transformations:**
 1. **Device ID to Location Path**: `enterprise:factory:line1:station1` → `location_path: "enterprise.factory.line1.station1"` (colons → dots)
-2. **Metric Name Parsing**: `sensors:ambient:temperature` → `virtual_path: "sensors.ambient"` + `tag_name: "temperature"` (colons → dots)
+2. **Metric Name Parsing**: Splits on last separator (priority: colon > slash > dot)
+   - `sensors:ambient:temperature` → `virtual_path: "sensors.ambient"` + `tag_name: "temperature"`
+   - `sensors/ambient/temperature` → `virtual_path: "sensors.ambient"` + `tag_name: "temperature"`
+   - `sensors.ambient.temperature` → `virtual_path: "sensors.ambient"` + `tag_name: "temperature"`
 3. **Sparkplug Protobuf**: Metric value and alias → Structured JSON format `{"name": "...", "alias": X, "value": Y}`
 4. **Topic Components**: Group/EdgeNode from MQTT topic used for `spb_group_id` and `spb_edge_node_id` metadata
 
@@ -384,14 +390,18 @@ When UMH conversion is successful, additional metadata is added:
 * `umh_virtual_path`: UMH virtual path if present in metric name (sanitized)
 * `umh_conversion_error`: Error message if conversion failed
 
-**Automatic Sanitization**: The plugin processes Sparkplug metric names to ensure UMH compatibility:
-1. Original metric names (with colons) are passed to the format converter for virtual path detection
-2. The converter splits on colons to extract virtual paths (e.g., `vpath:segment:metric` → virtual_path=`vpath.segment`, tag_name=`metric`)
-3. After conversion, all resulting fields are sanitized for UMH topics
+**Automatic Sanitization**: The plugin handles Sparkplug metric names to ensure UMH compatibility through a clear architectural boundary at the format conversion layer:
 
-Sanitization rules:
-- Forward slashes (`/`) are replaced with dots (`.`) to preserve hierarchical structure
-- Invalid characters including colons are replaced with underscores (`_`)
+1. **Input Processing**: Sparkplug messages are received with their original metric names intact (no preprocessing)
+2. **Format Conversion**: The format converter parses and sanitizes during the conversion to UMH format:
+   - Splits metric names to extract virtual paths (priority: colon > slash > dot)
+   - Example: `vpath:segment:metric` → virtual_path=`vpath.segment`, tag_name=`metric`
+   - Trims leading/trailing separators before parsing
+3. **Sanitization**: Applied only at the conversion boundary to preserve data integrity
+
+Sanitization rules (applied during conversion):
+- Hierarchy separators (`/`, `:`) are converted to dots (`.`) to preserve structure
+- Invalid characters are replaced with underscores (`_`)
 - Valid characters are: `a-z`, `A-Z`, `0-9`, `.`, `_`, `-`
 - Multiple consecutive dots are collapsed into a single dot
 - Leading and trailing dots are removed
@@ -401,8 +411,8 @@ Examples:
 - `Device@Name#123` → `Device_Name_123`
 - `Area/Zone@1/Device#2` → `Area.Zone_1.Device_2`
 - `Path//with///slashes` → `Path.with.slashes` (double dots prevented)
-- `/hello/` → `hello` (leading/trailing dots removed)
-- `vpath:segment:metric` → `vpath_segment_metric` (colons replaced with underscores)
+- `/hello123/test/` → virtual_path=`hello123`, tag_name=`test` (slashes trimmed, then split)
+- `vpath:segment:metric` → virtual_path=`vpath.segment`, tag_name=`metric` (colons to dots)
 
 When sanitization occurs, the plugin adds metadata fields:
 - `spb_original_metric_name`: The original metric name before sanitization

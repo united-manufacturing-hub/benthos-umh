@@ -4,7 +4,7 @@ Developer documentation for the Sparkplug B Benthos plugin. For user documentati
 
 ## Development Status
 
-- ✅ **90/90 Unit Tests Passing**
+- ✅ **189/189 Unit Tests Passing**
 - ✅ **Integration Tests Validated** 
 - ✅ **Sparkplug B v3.0 Compliant**
 - ✅ **Production Ready**
@@ -30,10 +30,10 @@ Tests are organized using **Go build tags** (the idiomatic approach) for clean s
 
 ### Unit Tests (Default - Build Tag: `!integration`)
 - **Files**: `*_test.go` with `//go:build !integration`
-- **Purpose**: Fast offline tests for core components (165 specs total)
+- **Purpose**: Fast offline tests for core components (189 specs total)
 - **Duration**: < 3 seconds  
 - **Dependencies**: None (pure Go code)
-- **Includes**: AliasCache, TypeConverter, FormatConverter, Payload validation, Flow testing
+- **Includes**: AliasCache, TypeConverter, FormatConverter, Payload validation, Flow testing, Sanitization
 
 ```bash
 # From project root
@@ -46,7 +46,7 @@ ginkgo ./sparkplug_plugin
 make test-unit
 ```
 
-**Expected Results**: 165/165 tests passing, including:
+**Expected Results**: 189/189 tests passing, including:
 - Message type parsing and validation
 - Alias resolution logic
 - Sparkplug B specification compliance

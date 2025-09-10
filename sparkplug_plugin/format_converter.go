@@ -76,10 +76,52 @@ func NewFormatConverter() *FormatConverter {
 }
 
 // sanitizeForUMH sanitizes a string to be compatible with UMH topic requirements.
-// It replaces all invalid characters with underscores while preserving dots, dashes, and underscores.
-// This method delegates to the global SanitizeForUMH function for consistency.
+// UMH topics only allow characters: a-z, A-Z, 0-9, dot (.), underscore (_), hyphen (-)
+//
+// Transformation logic:
+// 1. Forward slashes (/) and colons (:) → dots (.) to preserve hierarchical structure
+// 2. All other invalid characters → underscores (_)
+// 3. Multiple consecutive dots are collapsed to single dots
+// 4. Leading and trailing dots are removed
+//
+// This sanitization happens at the conversion boundary to ensure UMH compatibility
+// while preserving the original Sparkplug data structure.
 func (fc *FormatConverter) sanitizeForUMH(input string) string {
-	return SanitizeForUMH(input)
+	if input == "" {
+		return ""
+	}
+	
+	// First pass: convert hierarchy separators to dots
+	result := strings.ReplaceAll(input, "/", ".")
+	result = strings.ReplaceAll(result, ":", ".")
+	
+	// Second pass: replace all other invalid characters with underscores
+	// Valid UMH topic characters: a-z, A-Z, 0-9, dot, underscore, hyphen
+	var sanitized strings.Builder
+	sanitized.Grow(len(result)) // Pre-allocate for performance
+	for _, char := range result {
+		if (char >= 'a' && char <= 'z') || 
+		   (char >= 'A' && char <= 'Z') || 
+		   (char >= '0' && char <= '9') || 
+		   char == '.' || char == '_' || char == '-' {
+			sanitized.WriteRune(char)
+		} else {
+			sanitized.WriteRune('_')
+		}
+	}
+	
+	// Third pass: collapse multiple consecutive dots
+	// Prevents "//" or "::" → ".." which would create invalid UMH topic segments
+	finalResult := sanitized.String()
+	for strings.Contains(finalResult, "..") {
+		finalResult = strings.ReplaceAll(finalResult, "..", ".")
+	}
+	
+	// Fourth pass: trim leading and trailing dots
+	// Prevents topic structure issues in UMH
+	finalResult = strings.Trim(finalResult, ".")
+	
+	return finalResult
 }
 
 // UMHMessage represents a parsed UMH message with structured topic information.
@@ -381,18 +423,15 @@ func (fc *FormatConverter) constructSparkplugMetricName(topicInfo *proto.TopicIn
 
 // parseSparkplugMetricName parses a Sparkplug metric name back to virtual_path and tag_name.
 //
-// Logic:
-//   - First check for colons (traditional Sparkplug separator)
-//   - If has colons: split on FIRST colon (virtual path before, tag name after)
-//   - If no colons but has dots: split on LAST dot (for preprocessed data)
-//   - If neither: entire string is tag_name
-//
-// This function handles both:
-//   - Traditional format: "motor:diagnostics:temperature" → virtual_path="motor", tag_name="diagnostics:temperature"
-//   - Preprocessed format: "motor.diagnostics.temperature" → virtual_path="motor.diagnostics", tag_name="temperature"
+// Priority order for separators:
+//   1. Colons (:) - traditional Sparkplug separator, split on LAST colon
+//   2. Forward slashes (/) - hierarchical paths, split on LAST slash  
+//   3. Dots (.) - fallback for already converted data, split on LAST dot
+//   4. No separators - entire string is tag_name
 //
 // Examples:
-//   - "motor:diagnostics:temperature" → virtual_path="motor", tag_name="diagnostics:temperature"
+//   - "motor:diagnostics:temperature" → virtual_path="motor.diagnostics", tag_name="temperature"
+//   - "Refrigeration/Motor 1/Amps" → virtual_path="Refrigeration.Motor 1", tag_name="Amps"
 //   - "motor.diagnostics.temperature" → virtual_path="motor.diagnostics", tag_name="temperature"
 //   - "pressure" → virtual_path=nil, tag_name="pressure"
 func (fc *FormatConverter) parseSparkplugMetricName(metricName string) (virtualPath *string, tagName string, err error) {
@@ -400,7 +439,13 @@ func (fc *FormatConverter) parseSparkplugMetricName(metricName string) (virtualP
 		return nil, "", fmt.Errorf("metric name cannot be empty")
 	}
 
-	// First check for colons (traditional Sparkplug format)
+	// Trim leading and trailing slashes/colons/dots for cleaner parsing
+	metricName = strings.Trim(metricName, "/:.")
+	if metricName == "" {
+		return nil, "", fmt.Errorf("metric name cannot be empty after trimming")
+	}
+
+	// Priority 1: Check for colons (traditional Sparkplug format)
 	colonIndex := strings.LastIndex(metricName, ":")
 	if colonIndex != -1 {
 		// Split on last colon
@@ -414,7 +459,21 @@ func (fc *FormatConverter) parseSparkplugMetricName(metricName string) (virtualP
 		return virtualPath, tagName, nil
 	}
 	
-	// No colons, check for dots (preprocessed format)
+	// Priority 2: Check for forward slashes (hierarchical paths like "Refrigeration/Motor 1/Amps")
+	slashIndex := strings.LastIndex(metricName, "/")
+	if slashIndex != -1 {
+		// Split on last slash
+		virtualPathStr := metricName[:slashIndex]
+		tagName = metricName[slashIndex+1:]
+		
+		// Convert slashes in virtual path to dots for UMH compatibility
+		virtualPathStr = strings.ReplaceAll(virtualPathStr, "/", ".")
+		
+		virtualPath = &virtualPathStr
+		return virtualPath, tagName, nil
+	}
+	
+	// Priority 3: Check for dots (fallback for already converted data)
 	lastDotIndex := strings.LastIndex(metricName, ".")
 	if lastDotIndex != -1 {
 		// Split at the last dot

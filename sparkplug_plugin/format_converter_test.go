@@ -604,3 +604,210 @@ var _ = Describe("FormatConverter", func() {
 func stringPtr(s string) *string {
 	return &s
 }
+
+var _ = Describe("Sanitization for UMH compatibility", func() {
+	var converter *FormatConverter
+	
+	BeforeEach(func() {
+		converter = NewFormatConverter()
+	})
+	
+	// Helper to create a test SparkplugMessage with required fields
+	createTestMessage := func(metricName string) *SparkplugMessage {
+		return &SparkplugMessage{
+			GroupID:    "TestGroup",
+			EdgeNodeID: "TestNode",
+			DeviceID:   "TestDevice",
+			MetricName: metricName,
+			Value:      42.0,
+			DataType:   "Double",
+			Timestamp:  time.Now(),
+		}
+	}
+	
+	Context("SanitizeForUMH tests", func() {
+		It("should replace forward slashes with dots", func() {
+			// Test slash replacement - slashes become dots for hierarchical representation
+			// "Refrigeration/Tower1/Pumps/chemHOA" -> virtual_path="Refrigeration.Tower1.Pumps", tag_name="chemHOA"
+			msg := createTestMessage("Refrigeration/Tower1/Pumps/chemHOA")
+			umhMsg, err := converter.DecodeSparkplugToUMH(msg, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Refrigeration.Tower1.Pumps"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("chemHOA"))
+			
+			// "Level1/Level2/Level3" -> virtual_path="Level1.Level2", tag_name="Level3"
+			msg2 := createTestMessage("Level1/Level2/Level3")
+			umhMsg2, err := converter.DecodeSparkplugToUMH(msg2, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg2.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg2.TopicInfo.VirtualPath).To(Equal("Level1.Level2"))
+			Expect(umhMsg2.TopicInfo.Name).To(Equal("Level3"))
+			
+			// "/hello123/test/" -> should trim slashes, virtual_path="hello123", tag_name="test"
+			msg3 := createTestMessage("/hello123/test/")
+			umhMsg3, err := converter.DecodeSparkplugToUMH(msg3, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg3.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg3.TopicInfo.VirtualPath).To(Equal("hello123"))
+			Expect(umhMsg3.TopicInfo.Name).To(Equal("test"))
+		})
+		
+		It("should replace invalid characters with underscores", func() {
+			// Test invalid character replacement
+			// "Device@Name#123" -> no separator, so tag_name="Device_Name_123"
+			msg := createTestMessage("Device@Name#123")
+			umhMsg, err := converter.DecodeSparkplugToUMH(msg, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg.TopicInfo.VirtualPath).To(BeNil())
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Device_Name_123"))
+			
+			// "Tag with spaces" -> tag_name="Tag_with_spaces"
+			msg2 := createTestMessage("Tag with spaces")
+			umhMsg2, err := converter.DecodeSparkplugToUMH(msg2, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg2.TopicInfo.VirtualPath).To(BeNil())
+			Expect(umhMsg2.TopicInfo.Name).To(Equal("Tag_with_spaces"))
+			
+			// "Special!@#$%^&*()" -> tag_name="Special__________"
+			msg3 := createTestMessage("Special!@#$%^&*()")
+			umhMsg3, err := converter.DecodeSparkplugToUMH(msg3, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg3.TopicInfo.VirtualPath).To(BeNil())
+			Expect(umhMsg3.TopicInfo.Name).To(Equal("Special__________"))
+		})
+		
+		It("should replace colons with dots", func() {
+			// Colons are hierarchy separators in Sparkplug, replaced with dots for UMH
+			// "virtual:path:metric" -> virtual_path="virtual.path", tag_name="metric"
+			msg := createTestMessage("virtual:path:metric")
+			umhMsg, err := converter.DecodeSparkplugToUMH(msg, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("virtual.path"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("metric"))
+			
+			// "motor:diagnostics" -> virtual_path="motor", tag_name="diagnostics"
+			msg2 := createTestMessage("motor:diagnostics")
+			umhMsg2, err := converter.DecodeSparkplugToUMH(msg2, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg2.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg2.TopicInfo.VirtualPath).To(Equal("motor"))
+			Expect(umhMsg2.TopicInfo.Name).To(Equal("diagnostics"))
+			
+			// ":leading:trailing:" -> gets trimmed to "leading:trailing", virtual_path="leading", tag_name="trailing"
+			msg3 := createTestMessage(":leading:trailing:")
+			umhMsg3, err := converter.DecodeSparkplugToUMH(msg3, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg3.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg3.TopicInfo.VirtualPath).To(Equal("leading"))
+			Expect(umhMsg3.TopicInfo.Name).To(Equal("trailing"))
+		})
+		
+		It("should handle mixed cases correctly", func() {
+			// Test combination of slash and invalid characters
+			// "Area/Zone@1/Device#2" -> virtual_path="Area.Zone_1", tag_name="Device_2"
+			msg := createTestMessage("Area/Zone@1/Device#2")
+			umhMsg, err := converter.DecodeSparkplugToUMH(msg, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Area.Zone_1"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("Device_2"))
+			
+			// "Plant/Building 1/Floor-2/Room_3" -> virtual_path="Plant.Building_1.Floor-2", tag_name="Room_3"
+			msg2 := createTestMessage("Plant/Building 1/Floor-2/Room_3")
+			umhMsg2, err := converter.DecodeSparkplugToUMH(msg2, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg2.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg2.TopicInfo.VirtualPath).To(Equal("Plant.Building_1.Floor-2"))
+			Expect(umhMsg2.TopicInfo.Name).To(Equal("Room_3"))
+		})
+		
+		It("should preserve valid characters", func() {
+			// Test that valid characters are not changed
+			// "Valid_Name-123.test" -> virtual_path="Valid_Name-123", tag_name="test" (split on last dot)
+			msg := createTestMessage("Valid_Name-123.test")
+			umhMsg, err := converter.DecodeSparkplugToUMH(msg, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Valid_Name-123"))
+			Expect(umhMsg.TopicInfo.Name).To(Equal("test"))
+			
+			// "abcABC123._-" -> has a dot separator, virtual_path="abcABC123", tag_name="_-"
+			msg2 := createTestMessage("abcABC123._-")
+			umhMsg2, err := converter.DecodeSparkplugToUMH(msg2, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg2.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg2.TopicInfo.VirtualPath).To(Equal("abcABC123"))
+			Expect(umhMsg2.TopicInfo.Name).To(Equal("_-"))
+			
+			// "abcABC123_-" -> no separator, tag_name="abcABC123_-"
+			msg3 := createTestMessage("abcABC123_-")
+			umhMsg3, err := converter.DecodeSparkplugToUMH(msg3, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg3.TopicInfo.VirtualPath).To(BeNil())
+			Expect(umhMsg3.TopicInfo.Name).To(Equal("abcABC123_-"))
+		})
+		
+		It("should handle empty strings", func() {
+			msg := createTestMessage("")
+			_, err := converter.DecodeSparkplugToUMH(msg, "_raw")
+			// Empty metric name should result in error
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("metric name cannot be empty"))
+		})
+		
+		It("should prevent double dots and trim leading/trailing dots", func() {
+			// Test that multiple slashes don't create double dots
+			// "//" -> trimmed to empty string
+			msg := createTestMessage("//")
+			_, err := converter.DecodeSparkplugToUMH(msg, "_raw")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("metric name cannot be empty after trimming"))
+			
+			// "a//b" -> virtual_path="a", tag_name="b" (double slash creates empty segment, sanitized to single dot)
+			msg2 := createTestMessage("a//b")
+			umhMsg2, err := converter.DecodeSparkplugToUMH(msg2, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg2.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg2.TopicInfo.VirtualPath).To(Equal("a"))
+			Expect(umhMsg2.TopicInfo.Name).To(Equal("b"))
+			
+			// "/hello/" -> trimmed to "hello", no separator, tag_name="hello"
+			msg3 := createTestMessage("/hello/")
+			umhMsg3, err := converter.DecodeSparkplugToUMH(msg3, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg3.TopicInfo.VirtualPath).To(BeNil())
+			Expect(umhMsg3.TopicInfo.Name).To(Equal("hello"))
+			
+			// "path///with////many/////slashes" -> virtual_path="path.with.many", tag_name="slashes"
+			msg4 := createTestMessage("path///with////many/////slashes")
+			umhMsg4, err := converter.DecodeSparkplugToUMH(msg4, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg4.TopicInfo.VirtualPath).ToNot(BeNil())
+			Expect(*umhMsg4.TopicInfo.VirtualPath).To(Equal("path.with.many"))
+			Expect(umhMsg4.TopicInfo.Name).To(Equal("slashes"))
+			
+			// "/@hello/" -> trimmed to "@hello", tag_name="_hello" (@ sanitized to _)
+			msg5 := createTestMessage("/@hello/")
+			umhMsg5, err := converter.DecodeSparkplugToUMH(msg5, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg5.TopicInfo.VirtualPath).To(BeNil())
+			Expect(umhMsg5.TopicInfo.Name).To(Equal("_hello"))
+			
+			// ".test." -> trimmed to "test", no separator, tag_name="test"
+			msg6 := createTestMessage(".test.")
+			umhMsg6, err := converter.DecodeSparkplugToUMH(msg6, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg6.TopicInfo.VirtualPath).To(BeNil())
+			Expect(umhMsg6.TopicInfo.Name).To(Equal("test"))
+			
+			// "...test..." -> trimmed to "test", no separator, tag_name="test"
+			msg7 := createTestMessage("...test...")
+			umhMsg7, err := converter.DecodeSparkplugToUMH(msg7, "_raw")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(umhMsg7.TopicInfo.VirtualPath).To(BeNil())
+			Expect(umhMsg7.TopicInfo.Name).To(Equal("test"))
+		})
+	})
+})
