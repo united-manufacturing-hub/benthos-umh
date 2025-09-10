@@ -383,8 +383,8 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 
 			flushStartTime := time.Now()
 
-			// CATCH-UP PROCESSING: ACK without emit to maintain state but reduce downstream pressure
-			ackedCount := t.ackBufferAndClearLocked()
+			// CATCH-UP PROCESSING: Clear buffers to maintain state but reduce downstream pressure
+			clearedCount := t.clearBuffersLocked()
 			t.bufferMutex.Unlock()
 
 			// THROTTLING: Calculate delay proportional to work done to prevent catch-up loops
@@ -393,24 +393,24 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 
 			// INTEGER OVERFLOW PROTECTION FOR THROTTLING CALCULATION:
 			//
-			// Problem: Large ackedCount values could cause integer overflow when multiplied by
+			// Problem: Large clearedCount values could cause integer overflow when multiplied by
 			// throttleDelayPerKMessages in the expression:
-			//   time.Duration(ackedCount/throttleMessagesPerUnit) * throttleDelayPerKMessages
+			//   time.Duration(clearedCount/throttleMessagesPerUnit) * throttleDelayPerKMessages
 			//
 			// Risk: Integer overflow could produce negative durations or panic, causing
 			// unpredictable throttling behavior during high-volume catch-up scenarios.
 			//
-			// Solution: Pre-calculate the maximum safe ackedCount value that won't overflow
-			// when used in the throttling calculation. If ackedCount exceeds this threshold,
+			// Solution: Pre-calculate the maximum safe clearedCount value that won't overflow
+			// when used in the throttling calculation. If clearedCount exceeds this threshold,
 			// use the maximum throttle delay directly instead of attempting the calculation.
 			//
 			// Go 1.24 approach: Use math.MaxInt constant (available since Go 1.21) rather than
 			// manual bit manipulation for better readability and maintainability.
-			const maxSafeAckedCount = math.MaxInt / throttleMessagesPerUnit
-			if ackedCount > maxSafeAckedCount {
+			const maxSafeClearedCount = math.MaxInt / throttleMessagesPerUnit
+			if clearedCount > maxSafeClearedCount {
 				throttleDelay = maxThrottleDelay
 			} else {
-				throttleDelay = time.Duration(ackedCount/throttleMessagesPerUnit) * throttleDelayPerKMessages
+				throttleDelay = time.Duration(clearedCount/throttleMessagesPerUnit) * throttleDelayPerKMessages
 				if throttleDelay > maxThrottleDelay {
 					throttleDelay = maxThrottleDelay
 				} else if throttleDelay < minThrottleDelay {
@@ -420,7 +420,7 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 
 			// Update metrics for catch-up processing
 			if t.messagesNotEmitted != nil {
-				t.messagesNotEmitted.Incr(int64(ackedCount))
+				t.messagesNotEmitted.Incr(int64(clearedCount))
 			}
 
 			// Log catch-up processing with state preservation at trace level
@@ -438,14 +438,14 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 				"strategy=maintain_state_skip_emit_throttled, "+
 				"flush_duration=%v, "+
 				"throttle_delay=%v, "+
-				"acked_messages=%d, "+
+				"cleared_messages=%d, "+
 				"preserved_topics=%d, "+
 				"cpu_load=%.1f%%, "+
 				"adaptive_interval=%v, "+
 				"buffer_size_before=%d",
 				flushDuration,
 				throttleDelay,
-				ackedCount,
+				clearedCount,
 				len(t.fullTopicMap), // Show how many topics we're preserving state for
 				currentCPU,
 				currentInterval,
@@ -537,7 +537,7 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 	if controller != nil && controller.ShouldFlush() {
 		// Adaptive emission: CPU-aware controller determined it's time to flush
 		flushStartTime := time.Now()
-		intervalResult, err := t.flushBufferAndACKLocked()
+		intervalResult, err := t.flushBufferLocked()
 
 		if err != nil {
 			return nil, err
@@ -573,7 +573,7 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 	} else if time.Since(t.lastEmitTime) >= t.emitInterval {
 		// Fallback to fixed interval if adaptive controller is not available
 		flushStartTime := time.Now()
-		intervalResult, err := t.flushBufferAndACKLocked()
+		intervalResult, err := t.flushBufferLocked()
 
 		if err != nil {
 			return nil, err
@@ -640,7 +640,7 @@ func (t *TopicBrowserProcessor) Close(_ context.Context) error {
 	if len(t.messageBuffer) > 0 || len(t.fullTopicMap) > 0 {
 		t.logger.Info("Flushing buffered messages during graceful shutdown")
 		// Use locked version since we already hold the mutex
-		_, err := t.flushBufferAndACKLocked()
+		_, err := t.flushBufferLocked()
 		if err != nil {
 			t.logger.Errorf("Failed to flush buffer during graceful shutdown: %v. Some messages may be lost", err)
 			// Continue with shutdown even if flush fails
