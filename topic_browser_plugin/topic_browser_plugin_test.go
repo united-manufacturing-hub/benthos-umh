@@ -87,7 +87,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg})
 			Expect(err).To(BeNil())
-			Expect(result).To(BeNil())
+			Expect(result).To(Equal([]service.MessageBatch{}), "Should return empty slice when no metadata")
 		})
 
 		It("caches UNS map entries", func() {
@@ -318,7 +318,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Create wrapper function to capture emission times
 			captureEmissionWrapper := func(batch service.MessageBatch) ([]service.MessageBatch, error) {
 				result, err := realisticProcessor.ProcessBatch(context.Background(), batch)
-				if result != nil && len(result) > 0 {
+				if len(result) > 0 {
 					emissionMutex.Lock()
 					emissionTimes = append(emissionTimes, time.Now())
 					emissionMutex.Unlock()
@@ -379,7 +379,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				batch := createTestBatch(1, fmt.Sprintf("rapid-buffer-%d", i))
 				result, err := realisticProcessor.ProcessBatch(context.Background(), batch)
 				Expect(err).NotTo(HaveOccurred())
-				if result != nil && len(result) > 0 {
+				if len(result) > 0 {
 					rapidResults = append(rapidResults, result)
 				}
 				time.Sleep(100 * time.Millisecond) // 100ms between batches
@@ -406,7 +406,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Should get emission after crossing time boundary
-			if result != nil && len(result) > 0 {
+			if len(result) > 0 {
 				Expect(len(result)).To(BeNumerically(">", 0),
 					"Should emit buffered messages after crossing time boundary")
 			}
@@ -431,10 +431,10 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			By("Verifying emission occurs at boundary")
 			// Either result1 or result2 should have emissions (or both)
 			totalEmissions := 0
-			if result1 != nil {
+			if len(result1) > 0 {
 				totalEmissions += len(result1)
 			}
-			if result2 != nil {
+			if len(result2) > 0 {
 				totalEmissions += len(result2)
 			}
 
@@ -715,7 +715,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				result, err := safetyProcessor.ProcessBatch(context.Background(), batch)
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(BeNil(), "No emissions should occur during filling")
+				Expect(result).To(Equal([]service.MessageBatch{}), "No emissions should occur during filling - returns empty slice")
 			}
 
 			By("Sending overflow-triggering message and verifying catch-up processing")
@@ -724,7 +724,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			results, err := safetyProcessor.ProcessBatch(context.Background(), overflowBatch)
 
 			Expect(err).NotTo(HaveOccurred(), "Catch-up processing should succeed")
-			Expect(results).To(BeNil(), "Should return nil during catch-up processing (no emission)")
+			Expect(results).To(Equal([]service.MessageBatch{}), "Should return empty slice during catch-up processing (no emission)")
 
 			By("Verifying buffer state after catch-up processing")
 			safetyProcessor.bufferMutex.Lock()
@@ -786,7 +786,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				result, err := safetyProcessor.ProcessBatch(context.Background(), batch)
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(BeNil(), "No overflow should occur at 9/10")
+				Expect(result).To(Equal([]service.MessageBatch{}), "No overflow should occur at 9/10 - returns empty slice")
 			}
 
 			// Add 10th message - should still not trigger overflow (exactly at capacity)
@@ -794,7 +794,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			result10, err := safetyProcessor.ProcessBatch(context.Background(), batch10)
 
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result10).To(BeNil(), "No overflow should occur at exactly 10/10 (at capacity)")
+			Expect(result10).To(Equal([]service.MessageBatch{}), "No overflow should occur at exactly 10/10 (at capacity) - returns empty slice")
 
 			// Verify buffer is at exactly capacity
 			safetyProcessor.bufferMutex.Lock()
@@ -810,7 +810,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			result11, err := safetyProcessor.ProcessBatch(context.Background(), batch11)
 
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result11).To(BeNil(), "Catch-up processing should trigger (no emission returned)")
+			Expect(result11).To(Equal([]service.MessageBatch{}), "Catch-up processing should trigger (no emission returned) - returns empty slice")
 
 			// Verify buffer now contains only the 11th message (catch-up processing cleared previous messages)
 			safetyProcessor.bufferMutex.Lock()
@@ -957,7 +957,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			Expect(err).NotTo(HaveOccurred(), "json.Number should process without error")
 
-			if result != nil && len(result) > 0 && len(result[0]) > 0 {
+			if len(result) > 0 && len(result[0]) > 0 {
 				By("Extracting and verifying the UNS bundle from pipeline output")
 
 				// Extract the UNS bundle from the processed message
@@ -1019,7 +1019,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// Should process large payloads without issue
 
-			if result != nil && len(result) > 0 && len(result[0]) > 0 {
+			if len(result) > 0 && len(result[0]) > 0 {
 				By("Verifying payload is processed correctly")
 				// Can check that the result contains data
 				Expect(result[0][0]).NotTo(BeNil())
@@ -1079,7 +1079,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			By("Verifying no invalid data is emitted")
 			// Should not emit invalid data - either nil result or empty batches
-			if result != nil {
+			if len(result) > 0 {
 				Expect(len(result)).To(BeNumerically("<=", 2), "Should not emit more than expected batches")
 				if len(result) > 0 {
 					// If emission occurs, it should be valid data, not malformed input
@@ -1137,7 +1137,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).NotTo(HaveOccurred(), "Processor should handle nil values gracefully")
 
 			By("Verifying processor state remains consistent")
-			if result != nil && len(result) > 0 {
+			if len(result) > 0 {
 				// If processed, result should be valid
 				Expect(result).To(HaveLen(1), "If processed, should have [emission] - ACKed in-place")
 			}
@@ -1181,7 +1181,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			nanResult, nanErr := errorProcessor.ProcessBatch(context.Background(), service.MessageBatch{nanMsg})
 			Expect(nanErr).NotTo(HaveOccurred(), "Should handle NaN values gracefully")
 			// Verify result structure if processing occurred
-			if nanResult != nil && len(nanResult) > 0 {
+			if len(nanResult) > 0 {
 				Expect(len(nanResult)).To(BeNumerically("<=", 2), "NaN result should have valid structure")
 			}
 
@@ -1199,7 +1199,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			infResult, infErr := errorProcessor.ProcessBatch(context.Background(), service.MessageBatch{infMsg})
 			Expect(infErr).NotTo(HaveOccurred(), "Should handle Infinity values gracefully")
 			// Verify result structure if processing occurred
-			if infResult != nil && len(infResult) > 0 {
+			if len(infResult) > 0 {
 				Expect(len(infResult)).To(BeNumerically("<=", 2), "Infinity result should have valid structure")
 			}
 
@@ -1217,7 +1217,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			negInfResult, negInfErr := errorProcessor.ProcessBatch(context.Background(), service.MessageBatch{negInfMsg})
 			Expect(negInfErr).NotTo(HaveOccurred(), "Should handle negative Infinity values gracefully")
 			// Verify result structure if processing occurred
-			if negInfResult != nil && len(negInfResult) > 0 {
+			if len(negInfResult) > 0 {
 				Expect(len(negInfResult)).To(BeNumerically("<=", 2), "Negative Infinity result should have valid structure")
 			}
 
@@ -1295,7 +1295,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			By("Verifying some processing occurred (valid messages handled)")
 			// At minimum, the valid messages should be processed somehow
 			// The exact behavior may vary (skip invalid, process valid, etc.)
-			if result != nil {
+			if len(result) > 0 {
 				Expect(len(result)).To(BeNumerically(">=", 0), "Result should be valid structure")
 				if len(result) > 0 {
 					// If any processing occurred, structure should be valid
@@ -1489,7 +1489,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Verifying no emission occurs when buffered")
-			Expect(result).To(BeNil(), "Should return nil when messages are buffered")
+			Expect(result).To(Equal([]service.MessageBatch{}), "Should return empty slice when messages are buffered")
 
 			By("Verifying message is held in buffer for future ACK")
 			longProcessor.bufferMutex.Lock()
@@ -1524,7 +1524,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				By("CRITICAL: No ACK should happen yet (message is buffered)")
-				Expect(result).To(BeNil(), "Should return nil - no emission, no ACK yet")
+				Expect(result).To(Equal([]service.MessageBatch{}), "Should return empty slice - no emission yet")
 
 				By("Verifying message is buffered internally (waiting for 1 second)")
 				realisticProcessor.bufferMutex.Lock()
@@ -1533,7 +1533,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				Expect(bufferLen).To(Equal(1), "Message should be buffered, waiting for emit interval")
 
 				By("VERIFICATION: This proves messages are NOT ACKed when buffered")
-				// The fact that ProcessBatch returned nil means:
+				// The fact that ProcessBatch returned empty slice means:
 				// 1. Message was buffered internally ✅
 				// 2. No ACK batch was returned ✅
 				// 3. Original message remains unACKed until emission ✅
@@ -1588,7 +1588,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 				result1, err := mediumProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg1})
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result1).To(BeNil(), "First message buffered, no ACK yet")
+				Expect(result1).To(Equal([]service.MessageBatch{}), "First message buffered - returns empty slice")
 
 				By("Second message immediately after - still buffered (no ACK)")
 				msg2 := service.NewMessage(nil)
@@ -1600,7 +1600,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 				result2, err := mediumProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg2})
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result2).To(BeNil(), "Second message also buffered, no ACK yet")
+				Expect(result2).To(Equal([]service.MessageBatch{}), "Second message also buffered - returns empty slice")
 
 				By("Waiting for emit interval to pass")
 				time.Sleep(150 * time.Millisecond) // Wait longer than 100ms interval
@@ -1690,7 +1690,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 					} else {
 						// Subsequent messages may be buffered or emitted depending on timing
 						// The key point is that fast intervals allow immediate emission capability
-						if result != nil {
+						if len(result) > 0 {
 							Expect(result).To(HaveLen(1), "If emitted, should have [emission] - ACKed in-place")
 						}
 						// Either immediate emission or buffering is acceptable for fast intervals
@@ -1728,7 +1728,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verifying buffered behavior (no immediate emission)")
-				Expect(result).To(BeNil(), "Realistic intervals should buffer messages initially")
+				Expect(result).To(Equal([]service.MessageBatch{}), "Realistic intervals should buffer messages initially - returns empty slice")
 
 				By("Verifying message is held in buffer")
 				realisticProcessor.bufferMutex.Lock()
@@ -1758,7 +1758,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 					Expect(err).NotTo(HaveOccurred())
 
 					By(fmt.Sprintf("Verifying message %d is buffered", i))
-					Expect(result).To(BeNil(), "Messages should be buffered, not emitted immediately")
+					Expect(result).To(Equal([]service.MessageBatch{}), "Messages should be buffered, not emitted immediately - returns empty slice")
 				}
 
 				By("Verifying all messages are accumulated in buffer")
@@ -1793,7 +1793,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 				result1, err := mediumProcessor.ProcessBatch(context.Background(), service.MessageBatch{msg1})
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result1).To(BeNil(), "First message should be buffered")
+				Expect(result1).To(Equal([]service.MessageBatch{}), "First message should be buffered - returns empty slice")
 
 				By("Waiting for interval to elapse")
 				time.Sleep(150 * time.Millisecond) // Wait longer than 100ms interval
