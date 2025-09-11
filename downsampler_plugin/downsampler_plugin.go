@@ -485,7 +485,9 @@ func (p *DownsamplerProcessor) ProcessBatch(ctx context.Context, batch service.M
 
 	// Return all batches (idle flush + regular processing)
 	if len(outBatches) == 0 {
-		return nil, nil
+		// Return empty slice instead of nil to indicate successful filtering
+		// See: github.com/redpanda-data/benthos/v4/internal/component/processor/auto_observed.go:263-264
+		return []service.MessageBatch{}, nil
 	}
 	return outBatches, nil
 }

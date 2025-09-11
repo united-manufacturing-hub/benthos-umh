@@ -141,9 +141,10 @@ func (t *TopicBrowserProcessor) flushBufferAndACKLocked() ([]service.MessageBatc
 	// Early return if no data to emit
 	if len(allEvents) == 0 && len(t.fullTopicMap) == 0 {
 		t.lastEmitTime = time.Now()
-		// ✅ FIX: Clear buffers and return nil - don't emit original messages
 		t.clearBuffers()
-		return nil, nil
+		// Return empty slice instead of nil to indicate successful processing with no output
+		// See: github.com/redpanda-data/benthos/v4/internal/component/processor/auto_observed.go:263-264
+		return []service.MessageBatch{}, nil
 	}
 
 	// Create UNS bundle
