@@ -703,16 +703,6 @@ func (s *sparkplugInput) processStateMessage(deviceKey, msgType string, topicInf
 		msg.MetaSet("spb_device_id_sanitized", s.sanitizeForTopic(topicInfo.Device))
 	}
 	msg.MetaSet("spb_device_key_sanitized", s.sanitizeForTopic(deviceKey))
-	
-	// Build hierarchical version for state messages
-	hierarchicalKey := s.sanitizeForTopic(topicInfo.Group)
-	if topicInfo.EdgeNode != "" {
-		hierarchicalKey += "." + s.sanitizeForTopic(topicInfo.EdgeNode)
-		if topicInfo.Device != "" {
-			hierarchicalKey += "." + s.sanitizeForTopic(topicInfo.Device)
-		}
-	}
-	msg.MetaSet("spb_device_key_hierarchical", hierarchicalKey)
 	msg.MetaSet("event_type", "state_change")
 	msg.MetaSet("spb_state", statePayload)
 
@@ -848,16 +838,6 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 		msg.MetaSet("spb_device_id_sanitized", s.sanitizeForTopic(topicInfo.Device))
 	}
 	msg.MetaSet("spb_device_key_sanitized", s.sanitizeForTopic(deviceKey))
-	
-	// Build hierarchical version of device key (dots instead of slashes)
-	hierarchicalKey := s.sanitizeForTopic(topicInfo.Group)
-	if topicInfo.EdgeNode != "" {
-		hierarchicalKey += "." + s.sanitizeForTopic(topicInfo.EdgeNode)
-		if topicInfo.Device != "" {
-			hierarchicalKey += "." + s.sanitizeForTopic(topicInfo.Device)
-		}
-	}
-	msg.MetaSet("spb_device_key_hierarchical", hierarchicalKey)
 
 	// Set Sparkplug B metric name
 	metricName := "unknown_metric"
@@ -942,16 +922,6 @@ func (s *sparkplugInput) createDeathEventMessage(msgType, deviceKey string, topi
 		msg.MetaSet("spb_device_id_sanitized", s.sanitizeForTopic(topicInfo.Device))
 	}
 	msg.MetaSet("spb_device_key_sanitized", s.sanitizeForTopic(deviceKey))
-	
-	// Build hierarchical version for death events
-	hierarchicalKey := s.sanitizeForTopic(topicInfo.Group)
-	if topicInfo.EdgeNode != "" {
-		hierarchicalKey += "." + s.sanitizeForTopic(topicInfo.EdgeNode)
-		if topicInfo.Device != "" {
-			hierarchicalKey += "." + s.sanitizeForTopic(topicInfo.Device)
-		}
-	}
-	msg.MetaSet("spb_device_key_hierarchical", hierarchicalKey)
 	msg.MetaSet("event_type", "device_offline")
 
 	return service.MessageBatch{msg}
