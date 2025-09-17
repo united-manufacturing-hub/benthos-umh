@@ -695,6 +695,14 @@ func (s *sparkplugInput) processStateMessage(deviceKey, msgType string, topicInf
 	if topicInfo.Device != "" {
 		msg.MetaSet("spb_device_id", topicInfo.Device)
 	}
+	
+	// Add pre-sanitized versions for state messages
+	msg.MetaSet("spb_group_id_sanitized", s.sanitizeForTopic(topicInfo.Group))
+	msg.MetaSet("spb_edge_node_id_sanitized", s.sanitizeForTopic(topicInfo.EdgeNode))
+	if topicInfo.Device != "" {
+		msg.MetaSet("spb_device_id_sanitized", s.sanitizeForTopic(topicInfo.Device))
+	}
+	msg.MetaSet("spb_device_key_sanitized", s.sanitizeForTopic(deviceKey))
 	msg.MetaSet("event_type", "state_change")
 	msg.MetaSet("spb_state", statePayload)
 
@@ -822,6 +830,14 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	msg.MetaSet("spb_message_type", msgType)
 	msg.MetaSet("spb_device_key", deviceKey)
 	msg.MetaSet("spb_topic", originalTopic)
+	
+	// Add pre-sanitized versions for easier processing
+	msg.MetaSet("spb_group_id_sanitized", s.sanitizeForTopic(topicInfo.Group))
+	msg.MetaSet("spb_edge_node_id_sanitized", s.sanitizeForTopic(topicInfo.EdgeNode))
+	if topicInfo.Device != "" {
+		msg.MetaSet("spb_device_id_sanitized", s.sanitizeForTopic(topicInfo.Device))
+	}
+	msg.MetaSet("spb_device_key_sanitized", s.sanitizeForTopic(deviceKey))
 
 	// Set Sparkplug B metric name
 	metricName := "unknown_metric"
@@ -831,6 +847,7 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 		metricName = fmt.Sprintf("alias_%d", *metric.Alias)
 	}
 	msg.MetaSet("spb_metric_name", metricName)
+	msg.MetaSet("spb_metric_name_sanitized", s.sanitizeForTopic(metricName))
 
 	// Set sequence and timing metadata
 	if payload.Seq != nil {
@@ -897,6 +914,14 @@ func (s *sparkplugInput) createDeathEventMessage(msgType, deviceKey string, topi
 	if topicInfo.Device != "" {
 		msg.MetaSet("spb_device_id", topicInfo.Device)
 	}
+	
+	// Add pre-sanitized versions for death events
+	msg.MetaSet("spb_group_id_sanitized", s.sanitizeForTopic(topicInfo.Group))
+	msg.MetaSet("spb_edge_node_id_sanitized", s.sanitizeForTopic(topicInfo.EdgeNode))
+	if topicInfo.Device != "" {
+		msg.MetaSet("spb_device_id_sanitized", s.sanitizeForTopic(topicInfo.Device))
+	}
+	msg.MetaSet("spb_device_key_sanitized", s.sanitizeForTopic(deviceKey))
 	msg.MetaSet("event_type", "device_offline")
 
 	return service.MessageBatch{msg}
@@ -948,6 +973,30 @@ func (s *sparkplugInput) extractMetricValue(metric *sparkplugb.Payload_Metric) [
 	}
 
 	return jsonBytes
+}
+
+// sanitizeForTopic sanitizes strings for use in UMH topic paths
+// Replaces all non-alphanumeric characters (except dots) with underscores
+func (s *sparkplugInput) sanitizeForTopic(input string) string {
+	if input == "" {
+		return ""
+	}
+	
+	var result strings.Builder
+	result.Grow(len(input))
+	
+	for _, char := range input {
+		if (char >= 'a' && char <= 'z') ||
+		   (char >= 'A' && char <= 'Z') ||
+		   (char >= '0' && char <= '9') ||
+		   char == '.' {
+			result.WriteRune(char)
+		} else {
+			result.WriteRune('_')
+		}
+	}
+	
+	return result.String()
 }
 
 // getDataTypeName converts Sparkplug data type ID to human-readable string
