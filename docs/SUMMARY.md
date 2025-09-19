@@ -17,6 +17,8 @@
   - [Tag Processor](processing/tag-processor.md)
   - [Classic to Core Processor](processing/classic-to-core-processor.md)
   - [Downsampler](processing/downsampler.md)
+  - [Topic Browser](processing/topic-browser.md)
+  - [Stream Processor](processing/stream-processor.md)
   - [Node-RED JavaScript Processor](processing/node-red-javascript-processor.md)
   - [More](https://docs.redpanda.com/redpanda-connect/components/processors/about/)
 - [Output](output/README.md)

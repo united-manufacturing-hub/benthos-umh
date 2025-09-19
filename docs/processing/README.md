@@ -12,6 +12,8 @@ This section covers Benthos processors for data transformation and message handl
 
 - **[Topic Browser](topic-browser.md)** - **[Internal]** Transforms UMH messages into structured data for the Topic Browser interface. Extracts hierarchical topic information and event data to enable real-time topic exploration, metadata search, and debugging in the Management Console.
 
+- **[Stream Processor](stream-processor.md)** - Collects timeseries data from multiple UNS sources and generates transformed messages using JavaScript expressions. Implements dependency-based evaluation where static mappings are evaluated on every message while dynamic mappings only evaluate when their dependencies are received.
+
 - **[Node-RED JavaScript Processor](node-red-javascript-processor.md)** - Provides full control over payload and metadata through custom JavaScript code. Use this processor when you need complex transformations, conditional logic, or custom processing beyond standard tag handling.
 
 - **[More Processors](https://docs.redpanda.com/redpanda-connect/components/processors/about/)** - Additional built-in processors available in Benthos/Redpanda Connect for various data processing needs.
@@ -22,5 +24,6 @@ This section covers Benthos processors for data transformation and message handl
 - Use **Classic to Core Processor** when migrating from legacy UMH Historian Data Contract format to modern Core format
 - Use **Downsampler** after tag_processor to reduce data volume while preserving important changes in time-series data
 - Use **Topic Browser** (internal) when implementing systems that need to consume and display UMH topic hierarchies and event streams
+- Use **Stream Processor** when you need to combine data from multiple UNS sources with state management, perform complex JavaScript transformations, and generate new UMH topics based on a model/version data contract
 - Use **Node-RED JavaScript Processor** when you need maximum flexibility and custom processing logic
 - Explore the **additional processors** for specific use cases like JSON manipulation, HTTP requests, caching, and more
