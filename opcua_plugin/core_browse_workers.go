@@ -26,7 +26,7 @@ const (
 	MinWorkers     = 5
 	InitialWorkers = 10
 	SampleSize     = 5 // Number of requsts to measure response time
-	TargetLatency  = 5 * time.Millisecond
+	TargetLatency  = 250 * time.Millisecond
 )
 
 // ServerMetrics is a struct that holds the metrics for the OPCUA server requests

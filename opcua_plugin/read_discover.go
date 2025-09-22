@@ -44,7 +44,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	done := make(chan struct{})
 
 	go func() {
-		ticker := time.NewTicker(1 * time.Second)
+		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
@@ -246,8 +246,8 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 					ClientHandle:     uint32(startIdx + pos),
 					DiscardOldest:    true,
 					Filter:           nil,
-					QueueSize:        10,
-					SamplingInterval: 250.0,
+					QueueSize:        g.QueueSize,
+					SamplingInterval: g.SamplingInterval,
 				},
 			}
 			monitoredRequests = append(monitoredRequests, request)
@@ -276,9 +276,9 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 				g.Log.Errorf("Failed to monitor node %s: %v", failedNode, result.StatusCode)
 				// Depending on requirements, you might choose to continue monitoring other nodes
 				// instead of aborting. Here, we abort on the first failure.
-				g.Log.Debugf("MonitoredItem OK ns=%d;id=%s -> revisedSampling=%.0fms revisedQueue=%d itemID=%d",
-					batch[i].NodeID.Namespace(), batch[i].NodeID.String(),
-					result.RevisedSamplingInterval, result.RevisedQueueSize, result.MonitoredItemID)
+				// g.Log.Debugf("MonitoredItem OK ns=%d;id=%s -> revisedSampling=%.0fms revisedQueue=%d itemID=%d",
+				//	batch[i].NodeID.Namespace(), batch[i].NodeID.String(),
+				//	result.RevisedSamplingInterval, result.RevisedQueueSize, result.MonitoredItemID)
 				if closeErr := g.Close(ctx); closeErr != nil {
 					g.Log.Errorf("Failed to close OPC UA connection: %v", closeErr)
 				}
