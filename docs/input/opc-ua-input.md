@@ -310,7 +310,7 @@ The `queueSize` parameter controls how many subscription notifications are buffe
 
 **Risks of incorrect configuration**:
 - **Too small**: May cause notification loss during high-frequency periods
-- **Too large**: Excessive memory usage that could impact system performance t 
+- **Too large**: Excessive memory usage that could impact system performance
 
 ```yaml
 input:
