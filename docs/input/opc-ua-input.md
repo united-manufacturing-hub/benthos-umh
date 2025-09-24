@@ -118,6 +118,9 @@ input:
     pollRate: 1000 # optional (default: 1000) The rate in milliseconds at which to poll the OPC UA server when not using subscriptions
     autoReconnect: false | true # optional (default: false)
     reconnectIntervalInSeconds: 5 # optional (default: 5) The rate in seconds at which to reconnect to the OPC UA server when the connection is lost
+    # Advanced options - only modify if you understand your OPC UA server's behavior
+    queueSize: 10 # optional (default: 10) Number of subscription notifications to buffer
+    samplingInterval: 0.0 # optional (default: 0.0) Sampling interval in milliseconds for subscriptions
 ```
 
 **Endpoint**
@@ -291,4 +294,45 @@ The interval in seconds at which to reconnect to the OPC UA server when the conn
 input:
   opcua:
     reconnectIntervalInSeconds: 5
+```
+
+**Advanced Configuration Options**
+
+> **WARNING**: The following options are for advanced users only. Modifying these settings without understanding your OPC UA server's behavior and limitations can lead to performance issues, memory problems, or connection failures. Setting those configuration options, does **not** mean that the server will respect that settings. **Leave these at their default values unless you have specific performance requirements and understand the implications.**
+
+**Queue Size**
+
+The `queueSize` parameter controls how many subscription notifications are buffered internally before being processed.
+
+* **Key**: `queueSize`
+* **Default**: `10`
+* **Description**: This parameter determines the internal buffer size for handling subscription notifications from the OPC UA server. A larger queue can handle burst notifications but uses more memory.
+
+**Risks of incorrect configuration**:
+- **Too small**: May cause notification loss during high-frequency periods
+- **Too large**: Excessive memory usage that could impact system performance
+
+```yaml
+input:
+  opcua:
+    queueSize: 20  # Only increase if you experience notification loss
+```
+
+**Sampling Interval**
+
+The `samplingInterval` parameter controls how frequently the OPC UA server samples the underlying data source for subscription notifications.
+
+* **Key**: `samplingInterval`
+* **Default**: `0.0` (fastest possible sampling)
+* **Unit**: Milliseconds
+* **Description**: Defines the rate at which the server samples the data source. A value of `0.0` means "as fast as possible" according to the server's capabilities. Higher values reduce sampling frequency.
+
+**Server behavior dependency**:
+- Some servers ignore this parameter and use their own internal sampling rates
+- The actual sampling rate depends on the server's implementation and capabilities
+
+```yaml
+input:
+  opcua:
+    samplingInterval: 1000.0  # Sample every 1 second instead of as fast as possible
 ```
