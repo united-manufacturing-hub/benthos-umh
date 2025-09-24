@@ -28,8 +28,12 @@ import (
 	"github.com/gopcua/opcua/ua"
 )
 
-const SubscribeTimeoutContext = 3 * time.Second
-const DefaultPollRate = 1000
+const (
+	SubscribeTimeoutContext = 3 * time.Second
+	DefaultPollRate         = 1000
+	DefaultQueueSize        = 10
+	DefaultSamplingInterval = 0.0
+)
 
 var OPCUAConfigSpec = OPCUAConnectionConfigSpec.
 	Summary("OPC UA input plugin").
@@ -44,10 +48,12 @@ var OPCUAConfigSpec = OPCUAConnectionConfigSpec.
 		Default(false)).
 	Field(service.NewIntField("pollRate").
 		Description("The rate in milliseconds at which to poll the OPC UA server when not using subscriptions. Defaults to 1000ms (1 second).").
-		Default(DefaultPollRate))
+		Default(DefaultPollRate)).
+	Field(service.NewIntField("queueSize").
+		Description("The size of the queue, which will get filled from the OPC UA server when requesting its data via subscription").Default(DefaultQueueSize)).
+	Field(service.NewFloatField("samplingInterval").Description("The interval for sampling on the OPC UA server - notice 0.0 will get you updates as fast as possible").Default(DefaultSamplingInterval))
 
 func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
-
 	// Parse all nodeIDs to validate them.
 	// loop through all nodeIDs, parse them and put them into a slice
 	var parsedNodeIDs []*ua.NodeID
@@ -92,6 +98,16 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		return nil, err
 	}
 
+	queueSize, err := conf.FieldInt("queueSize")
+	if err != nil {
+		return nil, err
+	}
+
+	samplingInterval, err := conf.FieldFloat("samplingInterval")
+	if err != nil {
+		return nil, err
+	}
+
 	// fail if no nodeIDs are provided
 	if len(nodeIDs) == 0 {
 		return nil, errors.New("no nodeIDs provided")
@@ -109,6 +125,8 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		HeartbeatManualSubscribed:    false,
 		HeartbeatNodeId:              ua.NewNumericNodeID(0, 2258), // 2258 is the nodeID for CurrentTime, only in tests this is different
 		PollRate:                     pollRate,
+		QueueSize:                    uint32(queueSize),
+		SamplingInterval:             samplingInterval,
 	}
 
 	m.cleanup_func = func(ctx context.Context) {
@@ -119,7 +137,6 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 }
 
 func init() {
-
 	err := service.RegisterBatchInput(
 		"opcua", OPCUAConfigSpec,
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
@@ -147,6 +164,8 @@ type OPCUAInput struct {
 	Subscription                 *opcua.Subscription
 	ServerInfo                   ServerInfo
 	PollRate                     int
+	QueueSize                    uint32
+	SamplingInterval             float64
 }
 
 // unsubscribeAndResetHeartbeat unsubscribes from the OPC UA subscription and resets the heartbeat
@@ -439,7 +458,6 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 // accurately represents the OPC UA node's current value. Additionally, it marks heartbeat messages
 // when applicable, facilitating heartbeat monitoring within the system.
 func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef NodeDef) *service.Message {
-
 	b, tagType := g.getBytesFromValue(dataValue, nodeDef)
 	message := service.NewMessage(b)
 
