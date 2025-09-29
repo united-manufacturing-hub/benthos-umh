@@ -536,6 +536,8 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 			// time.RFC3339Nano is the current opcua-servers time format
 			if parsedTime, err := time.Parse(time.RFC3339Nano, timestampStr); err == nil {
 				timestamp = parsedTime.UnixMilli()
+			} else {
+				p.logger.Warnf("Failed to parse timestamp_ms metadata '%s': not a valid integer or RFC3339Nano format, falling back to current time", timestampStr)
 			}
 		}
 	}
