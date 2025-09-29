@@ -530,8 +530,13 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	// Determine timestamp - use metadata timestamp_ms if available, otherwise current time
 	timestamp := time.Now().UnixMilli()
 	if timestampStr, exists := msg.MetaGet("timestamp_ms"); exists && timestampStr != "" {
-		if customTimestamp, err := strconv.ParseInt(timestampStr, 10, 64); err == nil {
-			timestamp = customTimestamp
+		if parsedMs, err := strconv.ParseInt(timestampStr, 10, 64); err == nil {
+			timestamp = parsedMs
+		} else {
+			// time.RFC3339Nano is the current opcua-servers time format
+			if parsedTime, err := time.Parse(time.RFC3339Nano, timestampStr); err == nil {
+				timestamp = parsedTime.UnixMilli()
+			}
 		}
 	}
 

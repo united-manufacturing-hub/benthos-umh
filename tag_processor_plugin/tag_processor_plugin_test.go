@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -1387,7 +1386,9 @@ tag_processor:
 			// Create test message with custom timestamp in metadata
 			testMsg := service.NewMessage([]byte("25.5"))
 			customTimestamp := int64(1640995200000) // 2022-01-01T00:00:00Z
-			testMsg.MetaSet("timestamp_ms", strconv.FormatInt(customTimestamp, 10))
+			// convert to RFC3339Nano format that matches opc-ua implementation
+			customTime := time.UnixMilli(customTimestamp)
+			testMsg.MetaSet("timestamp_ms", customTime.Format(time.RFC3339Nano))
 
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
@@ -1470,6 +1471,65 @@ tag_processor:
 			// Should fall back to current time when metadata is invalid
 			Expect(timestamp_ms).To(BeNumerically(">=", beforeTime))
 			Expect(timestamp_ms).To(BeNumerically("<=", afterTime))
+		})
+
+		It("should parse raw millisecond timestamp values using ParseInt", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.site.area";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Create test message with raw millisecond timestamp in metadata
+			testMsg := service.NewMessage([]byte("25.5"))
+			rawTimestamp := "1640995200000" // Raw milliseconds as string
+			testMsg.MetaSet("timestamp_ms", rawTimestamp)
+
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			msg := messages[0]
+			structured, err := msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+
+			timestamp_ms, ok := payload["timestamp_ms"]
+			Expect(ok).To(BeTrue())
+			// Should parse the raw millisecond value directly
+			Expect(timestamp_ms).To(Equal(int64(1640995200000)))
 		})
 	})
 })
@@ -1588,14 +1648,14 @@ tag_processor:
     msg.meta.location_path = "enterprise";
     msg.meta.data_contract = "_historian";
     msg.meta.tag_name = "complex_test";
-    
+
     // Complex JavaScript operations to test VM reuse
     let calculations = [];
     for(let i = 0; i < 10; i++) {
       calculations.push(Math.pow(i, 2));
     }
     msg.meta.calculation_sum = calculations.reduce((a, b) => a + b, 0).toString();
-    
+
     return msg;
   conditions:
     - if: parseFloat(msg.payload) > 40

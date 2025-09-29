@@ -274,7 +274,7 @@ func (mp *MessageProcessor) processWithState(msg *service.Message, dataMap map[s
 
 	// Check for same timestamp as last processed message
 	if !state.lastProcessedTime.IsZero() && timestamp.Equal(state.lastProcessedTime) {
-		mp.processor.logger.Warnf("Dropping message with duplicate timestamp %v for series '%s' - subsequent messages with identical timestamps are not allowed",
+		mp.processor.logger.Warnf("Dropping message with duplicate timestamp %v for series '%s' - subsequent messages with identical timestamps are not allowed. To prevent this issue for batched messages you can set the metafield 'timestamp_ms'.",
 			timestamp, seriesID)
 		mp.processor.metrics.IncrementFiltered()
 		return nil, nil // Drop the message
