@@ -1473,7 +1473,7 @@ tag_processor:
 			Expect(timestamp_ms).To(BeNumerically("<=", afterTime))
 		})
 
-		It("should parse raw millisecond timestamp values using ParseInt", func() {
+		It("should parse timestamp_ms as unix milliseconds string", func() {
 			builder := service.NewStreamBuilder()
 
 			var msgHandler service.MessageHandlerFunc
@@ -1486,6 +1486,7 @@ tag_processor:
     msg.meta.location_path = "enterprise.site.area";
     msg.meta.data_contract = "_historian";
     msg.meta.tag_name = "temperature";
+    msg.meta.timestamp_ms = "1640995200000";
     return msg;
 `)
 			Expect(err).NotTo(HaveOccurred())
@@ -1507,11 +1508,7 @@ tag_processor:
 				_ = stream.Run(ctx)
 			}()
 
-			// Create test message with raw millisecond timestamp in metadata
 			testMsg := service.NewMessage([]byte("25.5"))
-			rawTimestamp := "1640995200000" // Raw milliseconds as string
-			testMsg.MetaSet("timestamp_ms", rawTimestamp)
-
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1529,6 +1526,231 @@ tag_processor:
 			timestamp_ms, ok := payload["timestamp_ms"]
 			Expect(ok).To(BeTrue())
 			// Should parse the raw millisecond value directly
+			Expect(timestamp_ms).To(Equal(int64(1640995200000)))
+		})
+
+		It("should parse timestamp_ms as unix milliseconds number", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.site.area";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
+    msg.meta.timestamp_ms = 1640995200000;
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage([]byte("25.5"))
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			msg := messages[0]
+			structured, err := msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+
+			timestamp_ms, ok := payload["timestamp_ms"]
+			Expect(ok).To(BeTrue())
+			// Should parse the numeric value and convert to milliseconds
+			Expect(timestamp_ms).To(Equal(int64(1640995200000)))
+		})
+
+		It("should parse timestamp as RFC3339 string", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.site.area";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
+    msg.meta.timestamp = "2022-01-01T00:00:00.000000000Z";
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage([]byte("25.5"))
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			msg := messages[0]
+			structured, err := msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+
+			timestamp_ms, ok := payload["timestamp_ms"]
+			Expect(ok).To(BeTrue())
+			// Should parse RFC3339Nano and convert to milliseconds
+			Expect(timestamp_ms).To(Equal(int64(1640995200000)))
+		})
+
+		It("should parse timestamp as unix milliseconds string", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.site.area";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
+    msg.meta.timestamp = "1640995200000";
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage([]byte("25.5"))
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			msg := messages[0]
+			structured, err := msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+
+			timestamp_ms, ok := payload["timestamp_ms"]
+			Expect(ok).To(BeTrue())
+			// Should parse the raw millisecond value directly
+			Expect(timestamp_ms).To(Equal(int64(1640995200000)))
+		})
+
+		It("should fallback from timestamp_ms to timestamp when timestamp_ms fails", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.site.area";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "temperature";
+    msg.meta.timestamp_ms = "invalid_timestamp";
+    msg.meta.timestamp = "1640995200000";
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage([]byte("25.5"))
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			msg := messages[0]
+			structured, err := msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+
+			timestamp_ms, ok := payload["timestamp_ms"]
+			Expect(ok).To(BeTrue())
+			// Should fallback to timestamp field and parse successfully
 			Expect(timestamp_ms).To(Equal(int64(1640995200000)))
 		})
 	})

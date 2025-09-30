@@ -529,17 +529,10 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 
 	// Determine timestamp - use metadata timestamp_ms if available, otherwise current time
 	timestamp := time.Now().UnixMilli()
-	if timestampStr, exists := msg.MetaGet("timestamp_ms"); exists && timestampStr != "" {
-		if parsedMs, err := strconv.ParseInt(timestampStr, 10, 64); err == nil {
-			timestamp = parsedMs
-		} else {
-			// time.RFC3339Nano is the current opcua-servers time format
-			if parsedTime, err := time.Parse(time.RFC3339Nano, timestampStr); err == nil {
-				timestamp = parsedTime.UnixMilli()
-			} else {
-				p.logger.Warnf("Failed to parse timestamp_ms metadata '%s': not a valid integer or RFC3339Nano format, falling back to current time", timestampStr)
-			}
-		}
+
+	parsed := p.parseTimestamp(msg)
+	if parsed != 0 {
+		timestamp = parsed
 	}
 
 	// Build the final payload object
@@ -559,6 +552,42 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	newMsg.MetaSet("umh_topic", topic)
 
 	return newMsg, nil
+}
+
+// parseTimestamp attempts to parse timestamp from metadata in specific order
+func (p *TagProcessor) parseTimestamp(msg *service.Message) int64 {
+	timestampMsStr, exists := msg.MetaGet("timestamp_ms")
+	if exists && timestampMsStr != "" {
+		parsed := p.parseTimestampToRFC3339Nano(timestampMsStr)
+		if parsed != 0 {
+			return parsed
+		}
+		p.logger.Warnf("Failed to parse timestamp_ms metadata '%s', trying timestamp field", timestampMsStr)
+	}
+
+	timestampStr, exists := msg.MetaGet("timestamp")
+	if exists && timestampStr != "" {
+		parsed := p.parseTimestampToRFC3339Nano(timestampStr)
+		if parsed != 0 {
+			return parsed
+		}
+		p.logger.Warnf("Failed to parse timestamp metadata '%s', using current time", timestampStr)
+	}
+
+	return 0
+}
+
+// parseTimestampToRFC3339Nano parses a timestamp value to RFC3339Nano
+func (p *TagProcessor) parseTimestampToRFC3339Nano(value string) int64 {
+	if parsedMs, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return parsedMs
+	}
+
+	if parsedTime, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsedTime.UnixMilli()
+	}
+
+	return 0
 }
 
 // convertValue recursively converts values to their appropriate types
@@ -784,9 +813,7 @@ func (p *TagProcessor) processMessageBatchWithProgram(batch service.MessageBatch
 			// Set metadata from the JS message
 			if meta, ok := resultMsg["meta"].(map[string]interface{}); ok {
 				for k, v := range meta {
-					if str, ok := v.(string); ok {
-						newMsg.MetaSet(k, str)
-					}
+					newMsg.MetaSet(k, fmt.Sprintf("%v", v))
 				}
 			}
 			// Set payload
