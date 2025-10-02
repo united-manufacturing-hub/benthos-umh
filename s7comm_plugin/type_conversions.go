@@ -15,6 +15,7 @@
 package s7comm_plugin
 
 import (
+	"bytes"
 	"encoding/binary"
 	"math"
 
@@ -45,10 +46,15 @@ func determineConversion(dtype string) converterFunc {
 			// Get the length of the encoded string
 			length := int(buf[1])
 			// Clip the string if we do not fill the whole buffer
+			var result []byte
 			if length < len(buf)-2 {
-				return string(buf[2 : 2+length])
+				result = buf[2 : 2+length]
+			} else {
+				result = buf[2:]
 			}
-			return string(buf[2:])
+			// trim the null bytes
+			result = bytes.TrimRight(result, "\x00")
+			return string(result)
 		}
 	case "W":
 		return func(buf []byte) interface{} {
