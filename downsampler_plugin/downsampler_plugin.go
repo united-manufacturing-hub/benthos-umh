@@ -98,12 +98,12 @@ func init() {
 		Summary("Downsamples time-series data using configurable algorithms").
 		Description(`The downsampler reduces data volume by filtering out insignificant changes in time-series data using configurable algorithms.
 
-It processes UMH-core time-series data with data_contract "_historian", 
-passing all other messages through unchanged. Each message that passes the downsampling filter is annotated 
+It processes UMH-core time-series data with data_contract "_historian",
+passing all other messages through unchanged. Each message that passes the downsampling filter is annotated
 with metadata indicating the algorithm used.
 
-In typical UMH deployments, the downsampler is enabled by default with conservative settings to automatically 
-compress time-series data. The tag_processor can be used upstream to selectively bypass downsampling for 
+In typical UMH deployments, the downsampler is enabled by default with conservative settings to automatically
+compress time-series data. The tag_processor can be used upstream to selectively bypass downsampling for
 critical data by setting the ds_ignore metadata field.
 
 Supported format:
@@ -117,17 +117,17 @@ to determine whether each data point represents a significant change worth prese
 
 The downsampler handles different data types as follows:
 
-- **Numeric values** (int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64): 
-  Converted to float64 for algorithm processing and output. This ensures consistent precision and compatibility 
+- **Numeric values** (int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64):
+  Converted to float64 for algorithm processing and output. This ensures consistent precision and compatibility
   with all downsampling algorithms.
 
-- **Boolean values** (true, false): 
+- **Boolean values** (true, false):
   Preserved as-is. Uses change-based logic - only emits when the boolean value changes.
 
-- **String values**: 
+- **String values**:
   Preserved as-is. Uses change-based logic - only emits when the string value changes.
 
-- **Other types**: 
+- **Other types**:
   Rejected with an error to ensure data integrity.
 
 ## Selective Bypass with ds_ignore

@@ -15,6 +15,7 @@
 package algorithms
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -263,6 +264,12 @@ func (p *ProcessorWrapper) toFloat64(val interface{}) (float64, error) {
 		return float64(v), nil
 	case uint64:
 		return float64(v), nil
+	case json.Number:
+		f, err := v.Float64()
+		if err != nil {
+			return 0, fmt.Errorf("json.Number cannot be converted to float64: %w", err)
+		}
+		return f, nil
 	default:
 		return 0, fmt.Errorf("unsupported type: %T", val)
 	}
