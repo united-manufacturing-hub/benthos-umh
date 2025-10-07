@@ -72,70 +72,445 @@ All plugins auto-register during `init()`:
 
 ## Integration with UMH Core
 
-benthos-umh is primarily designed to run within UMH Core, which orchestrates benthos instances through Finite State Machines (FSM).
+benthos-umh is **primarily designed to run within UMH Core**, which orchestrates benthos instances through Finite State Machines (FSM) and S6 supervision. **benthos-umh does NOT run standalone** - it requires UMH Core for lifecycle management.
 
-### Bridge Architecture
+### Architecture Overview
 
-**Bridges** are a UMH Core UI/configuration concept that combines:
-- **Connection Monitoring**: `nmap` probe to verify device availability
-- **Read Flow**: Data Flow Component with `input` → `pipeline` → `output`
-- **Write Flow**: (Not yet implemented) Future feature for bidirectional communication
+```
+┌─────────────────────────────────────────────────────┐
+│                    umh-core                         │
+├─────────────────────────────────────────────────────┤
+│  Agent (Go):                                        │
+│  - Reads config.yaml                                │
+│  - Expands template variables                       │
+│  - Generates benthos configs from templates         │
+│                                                      │
+│  FSM Controllers:                                   │
+│  - BenthosFSM: Manages lifecycle per bridge/DFC    │
+│  - Creates S6 service directories                   │
+│  - Monitors process health                          │
+│                                                      │
+│  S6 Supervision:                                    │
+│  - Launches benthos-umh processes                   │
+│  - Restarts on crash                                │
+│  - Manages logs with tai64n timestamps             │
+└─────────────────────────────────────────────────────┘
+                     │ Orchestrates
+                     ↓
+┌─────────────────────────────────────────────────────┐
+│              benthos-umh processes                  │
+│  - Each bridge = separate process                   │
+│  - Each DFC = separate process                      │
+│  - Process name: benthos-{bridge-id}                │
+│  - Config path: /data/services/benthos-{id}/data/  │
+└─────────────────────────────────────────────────────┘
+```
 
-In UMH Core's `config.yaml`:
-```yaml
-protocolConverter:
-  - name: my-plc-bridge
-    desiredState: active
-    protocolConverterServiceConfig:
-      location:
-        2: "production-line"  # Agent location (0,1) + Bridge location (2,3,4)
-        3: "plc-01"
-      config:
-        connection:
-          nmap:
-            target: "{{ .IP }}"    # Template variable injection
-            port: "{{ .PORT }}"
-        dataflowcomponent_read:
-          benthos:               # This is benthos-umh configuration
-            input:
-              s7comm:
-                tcpDevice: "{{ .IP }}"
-                addresses: ["DB1.DW20"]
-            pipeline:
-              processors:
-                - tag_processor:
-                    defaults: |
-                      msg.meta.location_path = "{{ .location_path }}";
-                      msg.meta.data_contract = "_raw";
-                      return msg;
-            output:
-              uns: {}
-      variables:
-        IP: "192.168.1.100"
-        PORT: "102"
+### Lifecycle Management
+
+#### 1. User Action in ManagementConsole
+
+User clicks "Deploy Bridge" → Frontend sends action to backend → Redis queue → umh-core Puller retrieves action
+
+#### 2. umh-core Agent Processes Action
+
+```go
+// umh-core/pkg/agent/agent.go
+func (a *Agent) handleDeployProtocolConverter(payload interface{}) {
+    // 1. Update config.yaml with bridge configuration
+    a.configManager.AddProtocolConverter(bridgeConfig)
+
+    // 2. Trigger FSM reconciliation
+    a.benthosFSM.SetDesiredState(bridgeID, "active")
+}
+```
+
+#### 3. FSM Generates benthos Config
+
+```go
+// umh-core/pkg/fsm/benthos/reconcile.go
+func (b *BenthosFSM) Reconcile(ctx context.Context) {
+    // Read config.yaml
+    config := b.configManager.GetConfig()
+
+    // Find bridge configuration
+    bridge := config.ProtocolConverters[bridgeID]
+
+    // Expand template variables
+    benthosConfig := b.expandTemplate(bridge.TemplateRef, bridge.Variables)
+
+    // Write to /data/services/benthos-{id}/data/config.yaml
+    b.writeConfig(bridgeID, benthosConfig)
+
+    // Trigger S6 to start process
+    b.s6.Enable(fmt.Sprintf("benthos-%s", bridgeID))
+}
+```
+
+#### 4. S6 Launches benthos Process
+
+```bash
+# S6 creates service directory structure:
+/data/services/benthos-bridge-123/
+├── run                          # S6 run script
+│   └── exec benthos run -c data/config.yaml
+├── finish                       # S6 finish script (handles cleanup)
+├── supervise/                   # S6 internal state
+│   ├── status                   # Process state
+│   ├── lock                     # Supervision lock
+│   └── control                  # Control socket
+└── data/
+    └── config.yaml              # Generated benthos config (expanded)
+```
+
+#### 5. benthos Process Runs
+
+```bash
+# Process launched by S6:
+/usr/local/bin/benthos run -c /data/services/benthos-bridge-123/data/config.yaml
+
+# Logs written to:
+/data/logs/benthos-bridge-123/current
 ```
 
 ### Template Variable System
 
-UMH Core injects variables into benthos configurations:
-- `{{ .IP }}` - From `variables.IP` (flattened from nested structure)
-- `{{ .PORT }}` - From `variables.PORT`
-- `{{ .location_path }}` - Computed from agent location + bridge location
-  - Example: Agent location `{0: "enterprise", 1: "site"}` + Bridge location `{2: "area", 3: "line"}` = `"enterprise.site.area.line"`
+**CRITICAL**: ManagementConsole NEVER writes benthos config. It only updates config.yaml, and umh-core generates benthos configs from templates.
 
-**Critical**: Variables are Go template strings, expanded before benthos sees the configuration.
+#### Variable Sources
+
+1. **Connection variables** (from `protocolConverter.connection.variables`):
+   ```yaml
+   connection:
+     variables:
+       IP: "192.168.1.100"
+       PORT: 502
+   ```
+
+2. **Agent location** (from `agent.location`):
+   ```yaml
+   agent:
+     location:
+       - enterprise: "ACME"
+       - site: "Factory-1"
+   ```
+
+3. **Bridge location** (from `protocolConverter.location`):
+   ```yaml
+   protocolConverter:
+     location:
+       - line: "Line-A"
+       - cell: "Cell-5"
+   ```
+
+#### Variable Flattening
+
+**IMPORTANT**: Nested variables become top-level in templates:
+
+```yaml
+# In config.yaml:
+connection:
+  variables:
+    IP: "192.168.1.100"
+    PORT: 502
+
+# In benthos template (FLAT ACCESS):
+{{ .IP }}     # NOT {{ .variables.IP }}
+{{ .PORT }}   # NOT {{ .variables.PORT }}
+```
+
+#### Location Path Computation
+
+Agent location + bridge location = `{{ .location_path }}`:
+
+```yaml
+# Agent: enterprise.site
+# Bridge: line.cell
+# Result: {{ .location_path }} = "enterprise.site.line.cell"
+```
+
+#### Template Expansion Example
+
+```yaml
+# Template in config.yaml:
+templates:
+  - id: "modbus-tcp"
+    config: |
+      input:
+        label: "modbus_{{ .name }}"
+        modbus_tcp:
+          address: "{{ .IP }}:{{ .PORT }}"
+      pipeline:
+        processors:
+          - tag_processor:
+              defaults: |
+                msg.meta.location_path = "{{ .location_path }}";
+                msg.meta.data_contract = "_raw";
+                return msg;
+      output:
+        uns: {}
+
+# Bridge config:
+protocolConverters:
+  - id: "bridge-123"
+    name: "PLC-Bridge"
+    templateRef: "modbus-tcp"
+    connection:
+      variables:
+        IP: "192.168.1.100"
+        PORT: 502
+    location:
+      - line: "Line-A"
+
+# Generated benthos config (/data/services/benthos-bridge-123/data/config.yaml):
+input:
+  label: "modbus_PLC-Bridge"
+  modbus_tcp:
+    address: "192.168.1.100:502"
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |
+          msg.meta.location_path = "ACME.Factory-1.Line-A";
+          msg.meta.data_contract = "_raw";
+          return msg;
+output:
+  uns: {}
+```
 
 ### FSM Orchestration
 
 UMH Core manages benthos instances through state machines:
-- **Bridge States**: `stopped` → `starting_connection` → `starting_redpanda` → `starting_dfc` → `idle`/`active`
-- **DFC States**: State machine tracks benthos process lifecycle
-- **Degraded Handling**: Connection failures, protocol errors trigger state transitions
 
-When debugging benthos-umh in production, always check:
-1. UMH Core FSM state (from agent logs)
-2. benthos process health (S6 supervision)
-3. Configuration after variable substitution
+#### Bridge FSM States
+
+```
+stopped
+  ↓ (User clicks "Deploy")
+starting_connection (verifying device availability)
+  ↓ (nmap probe succeeds)
+starting_redpanda (Kafka broker startup)
+  ↓ (Redpanda ready)
+starting_dfc (launching benthos process)
+  ↓ (benthos process running)
+idle (benthos running, no data flowing)
+  ↓ (Data detected)
+active (benthos running, data flowing)
+```
+
+**Degraded states**:
+- `starting_failed_connection` - Device unreachable
+- `starting_failed_redpanda` - Kafka broker issue
+- `starting_failed_dfc` - benthos config/process error
+
+#### State Transition Triggers
+
+```go
+// FSM checks conditions every reconciliation cycle (default: 1s)
+
+// idle → active:
+if throughput > 0 {
+    fsm.Transition("active")
+}
+
+// active → idle:
+if throughput == 0 && idleFor > 30s {
+    fsm.Transition("idle")
+}
+
+// * → starting_failed_dfc:
+if benthosProcess.Exited() && attempts < maxRetries {
+    fsm.Transition("starting_failed_dfc")
+    scheduleRetry()
+}
+```
+
+### S6 Supervision Details
+
+S6 is the process supervisor for all benthos instances:
+
+#### S6 Service States
+
+**Check service state**:
+```bash
+# List all benthos services
+ls -la /data/services/benthos-*/supervise/status
+
+# Check specific service
+s6-svstat /data/services/benthos-bridge-123/
+
+# Example output:
+# up (pid 1234) 300 seconds
+# down 45 seconds, normally up, want up, ready 0 seconds
+```
+
+**S6 State Meanings**:
+- `up (pid XXXX)` - Process running
+- `down` - Process not running
+- `normally up` - Process should be running (will restart)
+- `want down` - Process should be stopped (won't restart)
+- `ready N seconds` - Process finished starting up N seconds ago
+
+#### S6 Log Management
+
+**Log rotation**:
+```bash
+# Logs are in /data/logs/benthos-{id}/
+current         # Current log (active writing)
+@*.s            # Rotated logs (clean rotation)
+@*.u            # Unfinished logs (container killed mid-write)
+
+# Read with tai64n timestamp decoding
+tai64nlocal < /data/logs/benthos-bridge-123/current | tail -100
+
+# Search across all log files
+grep "error" /data/logs/benthos-bridge-123/@* | tai64nlocal
+```
+
+**Log file naming**:
+- `@400000006572a5b80f1e3c2c.s` - Timestamp in TAI64N format + `.s` (clean)
+- `@400000006572a5b80f1e3c2c.u` - `.u` means unfinished (container killed)
+
+### Debugging benthos in Production
+
+#### 1. Check FSM State
+
+```bash
+# Check umh-core logs for FSM transitions
+grep "bridge-123.*FSM" /data/logs/umh-core/current | tai64nlocal | tail -50
+
+# Look for:
+# - Current state
+# - Desired state
+# - Transition attempts
+# - Error messages
+```
+
+#### 2. Check S6 Process Health
+
+```bash
+# Is process running?
+s6-svstat /data/services/benthos-bridge-123/
+
+# If down, check why:
+# - down file present? (manual stop)
+ls -la /data/services/benthos-bridge-123/down
+
+# - Crashed and not restarting?
+tail -100 /data/logs/benthos-bridge-123/current | tai64nlocal
+```
+
+#### 3. Verify Config After Variable Expansion
+
+```bash
+# Check generated benthos config
+cat /data/services/benthos-bridge-123/data/config.yaml
+
+# Compare with template in config.yaml
+grep -A 50 "templates:" /data/config.yaml | grep -A 30 "modbus-tcp"
+
+# Verify variables were expanded (no {{ }} left)
+grep "{{" /data/services/benthos-bridge-123/data/config.yaml
+# Should return empty if expansion succeeded
+```
+
+#### 4. Check benthos Logs
+
+```bash
+# Recent errors
+tai64nlocal < /data/logs/benthos-bridge-123/current | grep -i "error" | tail -20
+
+# Protocol-specific errors
+tai64nlocal < /data/logs/benthos-bridge-123/current | grep -i "s7comm\|modbus\|opcua"
+
+# Connection issues
+tai64nlocal < /data/logs/benthos-bridge-123/current | grep -i "connection\|timeout\|refused"
+```
+
+### Common Cross-Repository Issues
+
+#### Issue: Bridge shows "starting" but benthos is actually running and processing data
+
+**Root Cause**: umh-core Communicator Pusher channel overflow prevents status updates from reaching ManagementConsole
+
+**Investigation**:
+```bash
+# Check umh-core for channel overflow
+grep "Outbound message channel is full" /data/logs/umh-core/current
+
+# Verify benthos is processing (check Kafka)
+rpk topic consume umh.messages --num 10
+
+# Check benthos logs show normal operation
+tail -50 /data/logs/benthos-bridge-123/current | tai64nlocal | grep "INFO"
+```
+
+**Resolution**: This is a display bug. Data is flowing correctly. umh-core will eventually catch up on status updates.
+
+---
+
+#### Issue: Template variables not expanding, benthos fails with "unexpected '{{'"
+
+**Root Cause**: Template expansion failed or didn't happen
+
+**Investigation**:
+```bash
+# Check for {{ }} in generated config
+grep "{{" /data/services/benthos-bridge-123/data/config.yaml
+
+# Check umh-core logs for template expansion errors
+grep "template.*bridge-123" /data/logs/umh-core/current | tai64nlocal
+
+# Verify variables exist in config.yaml
+grep -A 10 "bridge-123" /data/config.yaml
+```
+
+**Resolution**: Fix variable definitions in config.yaml or template reference.
+
+---
+
+#### Issue: benthos process crashes immediately on start
+
+**Root Cause**: Config validation failure or plugin error
+
+**Investigation**:
+```bash
+# Check benthos startup logs
+tail -100 /data/logs/benthos-bridge-123/current | tai64nlocal
+
+# Look for config validation errors
+grep "failed to parse\|invalid configuration" /data/logs/benthos-bridge-123/current
+
+# Check S6 state
+s6-svstat /data/services/benthos-bridge-123/
+# If "ready 0 seconds" keeps resetting, process is crash-looping
+```
+
+**Resolution**: Fix benthos config syntax or plugin configuration.
+
+### Development Workflow for Cross-Repo Changes
+
+When adding new benthos features that integrate with umh-core:
+
+1. **Develop benthos plugin** in benthos-umh repo
+2. **Test standalone** with example config in `config/` directory
+3. **Create template** in umh-core's `config.yaml`
+4. **Test in umh-core** with `make test-no-copy`
+5. **Add frontend UI** in ManagementConsole (if needed)
+6. **End-to-end test**:
+   - Deploy local umh-core instance
+   - Use ManagementConsole to deploy bridge
+   - Monitor FSM transitions in umh-core logs
+   - Monitor benthos process in S6 logs
+   - Verify data flows to Kafka
+
+**Debugging checklist**:
+- [ ] benthos plugin works standalone (test with `benthos run -c config.yaml`)
+- [ ] Template variables expand correctly in umh-core
+- [ ] S6 launches process successfully
+- [ ] FSM transitions to correct states
+- [ ] Data appears in Kafka (use `rpk topic consume`)
+- [ ] Status updates flow back to ManagementConsole
 
 ## Message Architecture
 
