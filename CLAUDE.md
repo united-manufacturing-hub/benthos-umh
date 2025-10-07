@@ -210,36 +210,6 @@ umh.v1.<location_path>.<data_contract>[.<virtual_path>].<name>
 | `virtual_path` | **CAN** start with `_` | `motor.electrical`, `_hidden` | ✅ Optional organization |
 | `name` | **CAN** start with `_` | `temperature`, `_internal` | ✅ Any valid identifier |
 
-### Go API Usage
-
-```go
-import "github.com/united-manufacturing-hub/benthos-umh/pkg/umhtopic"
-
-// Parse existing topic
-topic, err := umhtopic.NewUnsTopic("umh.v1.enterprise.site._raw.temperature")
-
-// Build new topic (NOT thread-safe, use per-goroutine)
-builder := umhtopic.NewBuilder().
-    SetLocationLevels("enterprise", "site", "area").
-    SetDataContract("_raw").
-    SetVirtualPath("motor", "electrical").
-    SetName("temperature")
-topic, err := builder.Build()
-
-// Access components (immutable, thread-safe)
-path := topic.GetLocationPath()        // "enterprise.site.area"
-contract := topic.GetDataContract()    // "_raw"
-fullTopic := topic.GetTopic()          // Full string
-```
-
-### Performance Characteristics
-
-From benchmarks (`make bench-pkg-umh-topic`):
-- **Parse operation**: ~656-1322ns per topic (depends on complexity)
-- **Build operation**: Similar performance
-- **Memory**: UnsTopic struct is immutable, safe to share
-- **Thread Safety**: UnsTopic = safe, Builder = NOT safe
-
 ## Data Flow Patterns
 
 ### Tag Processor → UNS Output Flow
