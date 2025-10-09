@@ -144,6 +144,7 @@ func (p *StreamProcessor) processMessage(msg *service.Message) ([]*service.Messa
 	// Step 2: Validate timeseries format
 	messageData, err := p.parseTimeseriesMessage(msg)
 	if err != nil {
+		p.metrics.LogInvalidDataTypeError()
 		return nil, fmt.Errorf("invalid timeseries format: %w", err)
 	}
 
