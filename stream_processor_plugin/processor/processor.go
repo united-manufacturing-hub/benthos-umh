@@ -18,12 +18,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
+
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
 	metrics2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/metrics"
 	pools2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/state"
-	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
@@ -143,8 +144,7 @@ func (p *StreamProcessor) processMessage(msg *service.Message) ([]*service.Messa
 	// Step 2: Validate timeseries format
 	messageData, err := p.parseTimeseriesMessage(msg)
 	if err != nil {
-		p.logger.Debugf("Invalid timeseries format: %v", err)
-		return nil, nil
+		return nil, fmt.Errorf("invalid timeseries format: %w", err)
 	}
 
 	// Step 3: Check if topic matches configured sources
