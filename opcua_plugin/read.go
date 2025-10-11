@@ -287,7 +287,7 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, 
 		return nil, nil, nil
 	}
 
-	return
+	return msgs, ackFunc, err
 }
 
 // ReadBatchPull performs a batch read of all OPC UA nodes in the NodeList using a pull method.
@@ -470,6 +470,7 @@ func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef Nod
 	message.MetaSet("opcua_attr_description", nodeDef.Description)
 	message.MetaSet("opcua_attr_accesslevel", nodeDef.AccessLevel.String())
 	message.MetaSet("opcua_attr_datatype", nodeDef.DataType)
+	message.MetaSet("opcua_attr_statuscode", dataValue.Status.Error())
 
 	tagName := sanitize(nodeDef.BrowseName)
 
