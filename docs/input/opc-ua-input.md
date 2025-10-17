@@ -73,6 +73,7 @@ The plugin provides metadata for each message, that can be used to create a topi
 | `opcua_attr_description` | The Description attribute of the Node as a string                                                                                                    |
 | `opcua_attr_accesslevel` | The AccessLevel attribute of the Node as a string                                                                                                    |
 | `opcua_attr_datatype`    | The DataType attribute of the Node as a string                                                                                                       |
+| `opcua_attr_statuscode`  | The OPC UA quality/status code for the data value (e.g., "Good", "BadNodeIdUnknown"). Indicates the reliability of the value.                       |
 
 Taking as example the following OPC-UA structure:
 
