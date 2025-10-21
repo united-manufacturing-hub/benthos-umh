@@ -221,4 +221,4 @@ umh-core-data*.pprof
 umh-core-data/
 
 # Diffs
-*.diff
+*.diffbenthos-schemas.json
