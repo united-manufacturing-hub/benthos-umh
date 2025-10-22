@@ -19,11 +19,33 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 )
 
+// generateVersionedFilename creates a versioned filename by stripping 'v' prefix
+func generateVersionedFilename(version string) string {
+	cleanVersion := strings.TrimPrefix(version, "v")
+	return fmt.Sprintf("benthos-schemas-v%s.json", cleanVersion)
+}
+
 func main() {
-	output := flag.String("output", "benthos-schemas.json", "Output file path")
+	version := flag.String("version", "", "Benthos-UMH version (required)")
 	flag.Parse()
+
+	if *version == "" {
+		fmt.Fprintf(os.Stderr, "Error: -version flag is required\n")
+		fmt.Fprintf(os.Stderr, "Usage: schema-export -version 0.11.6\n")
+		os.Exit(1)
+	}
+
+	// Add path traversal protection
+	if strings.ContainsAny(*version, "/\\") {
+		fmt.Fprintf(os.Stderr, "Error: -version contains invalid path characters\n")
+		fmt.Fprintf(os.Stderr, "Version should be a semantic version like 0.11.6\n")
+		os.Exit(1)
+	}
+
+	outputFile := generateVersionedFilename(*version)
 
 	schemas, err := generateSchemas()
 	if err != nil {
@@ -37,12 +59,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := os.WriteFile(*output, data, 0644); err != nil {
+	if err := os.WriteFile(outputFile, data, 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing output: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("✅ Generated schemas to %s\n", *output)
+	fmt.Printf("✅ Generated schemas to %s\n", outputFile)
 	fmt.Printf("   - %d inputs\n", len(schemas.Inputs))
 	fmt.Printf("   - %d processors\n", len(schemas.Processors))
 	fmt.Printf("   - %d outputs\n", len(schemas.Outputs))
