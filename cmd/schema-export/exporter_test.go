@@ -459,3 +459,17 @@ var _ = Describe("getUMHVersion", func() {
 		})
 	})
 })
+
+var _ = Describe("Version Flag Handling", func() {
+	Context("when generating versioned filename", func() {
+		It("should strip 'v' prefix from version", func() {
+			result := generateVersionedFilename("v0.11.6")
+			Expect(result).To(Equal("benthos-schemas-v0.11.6.json"))
+		})
+
+		It("should handle version without prefix", func() {
+			result := generateVersionedFilename("0.11.6")
+			Expect(result).To(Equal("benthos-schemas-v0.11.6.json"))
+		})
+	})
+})
