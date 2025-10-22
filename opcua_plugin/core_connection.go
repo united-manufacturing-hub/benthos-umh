@@ -31,27 +31,33 @@ const SessionTimeout = 5 * time.Second
 var OPCUAConnectionConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringField("endpoint").
 		Description("The OPC UA server endpoint to connect to.").
-		Example("opc.tcp://localhost:4840")).
+		Example("opc.tcp://localhost:4840").
+		Examples("opc.tcp://192.168.1.100:4840", "opc.tcp://10.0.0.50:4840", "opc.tcp://plc.local:4840")).
 	Field(service.NewStringField("username").
 		Description("The username for authentication.").
 		Default("").
+		Examples("", "admin", "opcuser").
 		Advanced()).
 	Field(service.NewStringField("password").
 		Description("The password for authentication.").
 		Default("").
+		Examples("", "password123").
 		Secret().
 		Advanced()).
 	Field(service.NewIntField("sessionTimeout").
 		Description("The duration in milliseconds that a OPC UA session will last. Is used to ensure that older failed sessions will timeout and that we will not get a TooManySession error.").
 		Default(10000).
+		Examples(10000, 30000, 60000).
 		Advanced()).
 	Field(service.NewStringField("securityMode").
 		Description("The security mode to use. Options: None, Sign, SignAndEncrypt").
 		Default("").
+		Examples("", "None", "Sign", "SignAndEncrypt").
 		Advanced()).
 	Field(service.NewStringField("securityPolicy").
 		Description("The security policy to use. Options: None, Basic128Rsa15, Basic256, Basic256Sha256").
 		Default("").
+		Examples("", "None", "Basic256", "Basic256Sha256").
 		Advanced()).
 	Field(service.NewStringField("clientCertificate").
 		Description("The client certificate to use, base64-encoded.").
@@ -72,18 +78,22 @@ var OPCUAConnectionConfigSpec = service.NewConfigSpec().
 	Field(service.NewBoolField("insecure").
 		Description("Set to true to bypass secure connections, useful in case of SSL or certificate issues. Default is secure (false).").
 		Default(false).
+		Examples(false, true).
 		Advanced()).
 	Field(service.NewBoolField("directConnect").
 		Description("Set this to true to directly connect to an OPC UA endpoint. This can be necessary in cases where the OPC UA server does not allow 'endpoint discovery'. This requires having the full endpoint name in endpoint, and securityMode and securityPolicy set.").
 		Default(false).
+		Examples(false, true).
 		Advanced()).
 	Field(service.NewBoolField("autoReconnect").
 		Description("Set to true to automatically reconnect to the OPC UA server when the connection is lost.").
 		Default(false).
+		Examples(false, true).
 		Advanced()).
 	Field(service.NewIntField("reconnectIntervalInSeconds").
 		Description("The interval in seconds at which to reconnect to the OPC UA server when the connection is lost. This is only used if `autoReconnect` is set to true.").
 		Default(5).
+		Examples(5, 10, 30).
 		Advanced()).
 	Field(service.NewStringField("profile").
 		Description("Manually override the OPC UA server profile for performance tuning. Options: auto, high-performance, ignition, kepware, siemens-s7-1200, siemens-s7-1500, prosys. If not specified or empty, auto-detection will be used.").
