@@ -32,7 +32,7 @@ var OPCUAConnectionConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringField("endpoint").
 		Description("The OPC UA server endpoint to connect to.").
 		Example("opc.tcp://localhost:4840").
-		Examples("opc.tcp://192.168.1.100:4840", "opc.tcp://10.0.0.50:4840", "opc.tcp://plc.local:4840")).
+		Examples("opc.tcp://{{ .IP }}:{{ .PORT }}", "opc.tcp://192.168.1.100:4840", "opc.tcp://10.0.0.50:4840", "opc.tcp://plc.local:4840")).
 	Field(service.NewStringField("username").
 		Description("The username for authentication.").
 		Default("").
