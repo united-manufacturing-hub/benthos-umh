@@ -39,15 +39,15 @@ var OPCUAConfigSpec = OPCUAConnectionConfigSpec.
 	Description("The OPC UA input plugin reads data from an OPC UA server and sends it to Benthos.").
 	Field(service.NewStringListField("nodeIDs").
 		Description("List of OPC-UA node IDs to begin browsing.").
-		Examples([]string{"ns=2;s=Temperature"}, []string{"ns=2;s=Temperature", "ns=2;s=Pressure"}, []string{"ns=3;i=1001"})).
+		Examples([]string{"i=84"}, []string{"ns=2;s=Temperature"}, []string{"ns=2;s=Temperature", "ns=2;s=Pressure"}, []string{"ns=3;i=1001"})).
 	Field(service.NewBoolField("subscribeEnabled").
 		Description("Set to true to subscribe to OPC UA nodes instead of fetching them every seconds. Default is pulling messages every second (false).").
 		Default(false).
-		Examples(false, true)).
+		Examples(true, false)).
 	Field(service.NewBoolField("useHeartbeat").
 		Description("Set to true to provide an extra message with the servers timestamp as a heartbeat").
 		Default(false).
-		Examples(false, true)).
+		Examples(true, false)).
 	Field(service.NewIntField("pollRate").
 		Description("The rate in milliseconds at which to poll the OPC UA server when not using subscriptions. Defaults to 1000ms (1 second).").
 		Default(DefaultPollRate).
