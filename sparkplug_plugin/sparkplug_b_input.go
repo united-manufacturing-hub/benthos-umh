@@ -1118,12 +1118,26 @@ func ValidateSequenceNumber(lastSeq, currentSeq uint8) bool {
 // tryAddUMHMetadata attempts to convert Sparkplug B data to UMH format and add UMH metadata.
 // This is a non-failing operation - if conversion fails, it adds status flags and continues.
 func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
+	// Get message type from metadata (already set by createMessageFromMetric)
+	msgType, _ := msg.MetaGet("spb_message_type")
+
 	// Only attempt conversion if we have necessary data
-	if topicInfo.Device == "" || metric == nil {
+	// For NDATA messages: device ID is optional (node-level data), use edge_node_id as device identifier
+	// For DDATA messages: device ID is required (device-level data)
+	if metric == nil {
 		msg.MetaSet("umh_conversion_status", "skipped_insufficient_data")
-		s.logger.Debugf("Skipping UMH conversion: insufficient data (device=%s, metric=%v)", topicInfo.Device, metric != nil)
+		s.logger.Debugf("Skipping UMH conversion: metric is nil")
 		return
 	}
+
+	// For DDATA messages, device ID is required
+	if msgType == "DDATA" && topicInfo.Device == "" {
+		msg.MetaSet("umh_conversion_status", "skipped_insufficient_data")
+		s.logger.Debugf("Skipping UMH conversion for DDATA: device ID required but missing")
+		return
+	}
+
+	// For NDATA messages, device ID is optional - we'll use edge_node_id as device identifier
 
 	// Try to use the format converter
 	converter := NewFormatConverter()
@@ -1143,11 +1157,17 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	} else {
 		dataType = "unknown"
 	}
-	
+
+	// For NDATA messages (node-level data), use EdgeNode as DeviceID when Device is empty
+	deviceID := topicInfo.Device
+	if deviceID == "" {
+		deviceID = topicInfo.EdgeNode
+	}
+
 	sparkplugMsg := &SparkplugMessage{
 		GroupID:    topicInfo.Group,
 		EdgeNodeID: topicInfo.EdgeNode,
-		DeviceID:   topicInfo.Device,
+		DeviceID:   deviceID,
 		Value:      rawValue,
 		DataType:   dataType,
 		Timestamp:  time.Now(), // Will be overridden below if payload has timestamp
