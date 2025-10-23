@@ -167,7 +167,7 @@ var ModbusConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from Modbus devices. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
 	Description("This input plugin enables Benthos to read data directly from Modbus devices using the Modbus protocol.").
 	Field(service.NewDurationField("timeBetweenReads").Description("The time between two reads of a Modbus device. Useful if you want to read the device every x seconds. Not to be confused with TimeBetweenRequests.").Default("1s").Examples("1s", "5s", "100ms")).
-	Field(service.NewStringField("controller").Description("The Modbus controller address, e.g., 'tcp://localhost:502'").Default("tcp://localhost:502").Examples("tcp://192.168.1.100:502", "tcp://10.0.0.50:502", "tcp://plc.local:502")).
+	Field(service.NewStringField("controller").Description("The Modbus controller address, e.g., 'tcp://localhost:502'").Default("tcp://localhost:502").Examples("tcp://{{ .IP }}:{{ .PORT }}", "tcp://192.168.1.100:502", "tcp://10.0.0.50:502", "tcp://plc.local:502")).
 	Field(service.NewStringField("transmissionMode").Description("Transmission mode: 'TCP', 'RTUOverTCP', or 'ASCIIOverTCP'").Default("TCP").Examples("TCP", "RTUOverTCP", "ASCIIOverTCP")).
 	Field(service.NewIntField("slaveID").Description("Slave ID of the Modbus device").Default(1).Examples(1, 2, 10)).
 	Field(service.NewIntListField("slaveIDs").Description("Slave ID of the Modbus device").Default([]int{1}).Examples([]int{1}, []int{1, 2, 3}, []int{10, 20})).
