@@ -798,12 +798,12 @@ func (s *sparkplugInput) parseSparkplugTopicDetailed(topic string) (string, stri
 func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	var batch service.MessageBatch
 
-	for _, metric := range payload.Metrics {
+	for i, metric := range payload.Metrics {
 		if metric == nil {
 			continue
 		}
 
-		msg := s.createMessageFromMetric(metric, payload, msgType, deviceKey, topicInfo, originalTopic)
+		msg := s.createMessageFromMetric(metric, payload, msgType, deviceKey, topicInfo, originalTopic, i, len(payload.Metrics))
 		if msg != nil {
 			batch = append(batch, msg)
 		}
@@ -812,7 +812,7 @@ func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgTyp
 	return batch
 }
 
-func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) *service.Message {
+func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string, metricIndex, totalMetrics int) *service.Message {
 	// Extract metric value as JSON (always preserve Sparkplug B format)
 	value := s.extractMetricValue(metric)
 	if value == nil {
@@ -830,7 +830,7 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	msg.MetaSet("spb_message_type", msgType)
 	msg.MetaSet("spb_device_key", deviceKey)
 	msg.MetaSet("spb_topic", originalTopic)
-	
+
 	// Add pre-sanitized versions for easier processing
 	msg.MetaSet("spb_group_id_sanitized", s.sanitizeForTopic(topicInfo.Group))
 	msg.MetaSet("spb_edge_node_id_sanitized", s.sanitizeForTopic(topicInfo.EdgeNode))
@@ -850,9 +850,17 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	msg.MetaSet("spb_metric_name_sanitized", s.sanitizeForTopic(metricName))
 
 	// Set sequence and timing metadata
+	// Note: spb_sequence is the MQTT-level sequence number (shared by all metrics in this NDATA message)
+	// See ENG-3720 and CS-13 for context on why we add metric_index for unique identification
 	if payload.Seq != nil {
 		msg.MetaSet("spb_sequence", fmt.Sprintf("%d", *payload.Seq))
 	}
+
+	// Add Dual-Sequence metadata for split message identification (Fix for ENG-3720)
+	// When NDATA messages are split into individual metrics, all metrics share the same spb_sequence.
+	// These fields enable unique identification: composite key = (spb_sequence, spb_metric_index)
+	msg.MetaSet("spb_metric_index", fmt.Sprintf("%d", metricIndex))
+	msg.MetaSet("spb_metrics_in_payload", fmt.Sprintf("%d", totalMetrics))
 
 	if payload.Timestamp != nil {
 		msg.MetaSet("spb_timestamp", fmt.Sprintf("%d", *payload.Timestamp))
