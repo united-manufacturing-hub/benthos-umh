@@ -41,9 +41,7 @@ type EIPInput struct {
 	UseMultiRead bool
 
 	// advanced connection settings
-	ConnectionTimeoutMs int
-	RequestTimeoutMs    int
-	ConnectionPath      string
+	SocketTimeoutMs int
 
 	// addresses for readable data either as an attribute or as a tag
 	Items   []*CIPReadItem
@@ -91,22 +89,10 @@ var EthernetIPConfigSpec = service.NewConfigSpec().
 	Field(service.NewIntField("pollRate").Description("The rate in milliseconds on which we try to read data out of the plc.").Default(1000)).
 	Field(service.NewBoolField("listAllTags").Description("You can use this option to list all available Tags, but only specific controllers support this method.").Default(false)).
 	Field(service.NewBoolField("useMultiRead").Description("You can use this option to increase the reading time, but be aware that only specific controllers support this method.").Default(true)).
-	Field(service.NewIntField("connectionTimeoutMs").
-		Description("The timeout in milliseconds for establishing a connection to the Ethernet/IP device.").
+	Field(service.NewIntField("socketTimeoutMs").
+		Description("The timeout in milliseconds for socket operations (connection establishment, reads, and writes).").
 		Default(10000).
 		Examples(5000, 10000, 30000).
-		Optional().
-		Advanced()).
-	Field(service.NewIntField("requestTimeoutMs").
-		Description("The timeout in milliseconds for individual requests to the Ethernet/IP device.").
-		Default(10000).
-		Examples(5000, 10000, 30000).
-		Optional().
-		Advanced()).
-	Field(service.NewStringField("connectionPath").
-		Description("The connection path to the Ethernet/IP device, specifying the route through backplane and slot.").
-		Default("1,0").
-		Examples("1,0", "2,1", "1,2").
 		Optional().
 		Advanced()).
 	Field(service.NewObjectListField("attributes",
@@ -149,17 +135,7 @@ func NewEthernetIPInput(conf *service.ParsedConfig, mgr *service.Resources) (ser
 		return nil, err
 	}
 
-	connectionTimeoutMs, err := conf.FieldInt("connectionTimeoutMs")
-	if err != nil {
-		return nil, err
-	}
-
-	requestTimeoutMs, err := conf.FieldInt("requestTimeoutMs")
-	if err != nil {
-		return nil, err
-	}
-
-	connectionPath, err := conf.FieldString("connectionPath")
+	socketTimeoutMs, err := conf.FieldInt("socketTimeoutMs")
 	if err != nil {
 		return nil, err
 	}
@@ -215,9 +191,7 @@ func NewEthernetIPInput(conf *service.ParsedConfig, mgr *service.Resources) (ser
 		Log:          mgr.Logger(),
 
 		// advanced connection settings
-		ConnectionTimeoutMs: connectionTimeoutMs,
-		RequestTimeoutMs:    requestTimeoutMs,
-		ConnectionPath:      connectionPath,
+		SocketTimeoutMs: socketTimeoutMs,
 
 		// addresses to read data
 		Items:   allItems,
@@ -250,7 +224,7 @@ func (g *EIPInput) Connect(ctx context.Context) error {
 			KeepAliveProps:     []gologix.CIPAttribute{1, 2, 3, 4, 10},
 			// this is the Request Packet Interval
 			RPI:           g.PollRate,
-			SocketTimeout: socketTimeoutDefault,
+			SocketTimeout: time.Duration(g.SocketTimeoutMs) * time.Millisecond,
 			KnownTags:     make(map[string]gologix.KnownTag),
 			// NOTE:
 			// we only want to use our logs not the gologix-logs here

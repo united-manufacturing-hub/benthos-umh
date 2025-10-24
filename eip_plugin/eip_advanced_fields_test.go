@@ -26,8 +26,7 @@ var _ = Describe("Ethernet/IP Advanced Fields Config", func() {
 	Describe("ConfigSpec advanced fields optionality", func() {
 		Context("when parsing minimal config", func() {
 			It("should parse minimal config with only endpoint", func() {
-				// Test that 3 advanced fields are truly optional:
-				// connectionTimeoutMs, requestTimeoutMs, connectionPath
+				// Test that socketTimeoutMs is optional
 				env := service.NewEnvironment()
 				minimalYAML := `
 endpoint: "192.168.1.100"
@@ -40,28 +39,18 @@ tags:
 				Expect(err).NotTo(HaveOccurred(), "minimal config without advanced fields should parse successfully")
 				Expect(parsedConfig).NotTo(BeNil(), "parsed config should not be nil")
 
-				// Verify defaults are applied for advanced fields
-				connectionTimeoutMs, err := parsedConfig.FieldInt("connectionTimeoutMs")
-				Expect(err).NotTo(HaveOccurred(), "connectionTimeoutMs should have a default value")
-				Expect(connectionTimeoutMs).To(Equal(10000), "connectionTimeoutMs should default to 10000ms")
-
-				requestTimeoutMs, err := parsedConfig.FieldInt("requestTimeoutMs")
-				Expect(err).NotTo(HaveOccurred(), "requestTimeoutMs should have a default value")
-				Expect(requestTimeoutMs).To(Equal(10000), "requestTimeoutMs should default to 10000ms")
-
-				connectionPath, err := parsedConfig.FieldString("connectionPath")
-				Expect(err).NotTo(HaveOccurred(), "connectionPath should have a default value")
-				Expect(connectionPath).To(Equal("1,0"), "connectionPath should default to '1,0'")
+				// Verify default is applied for socketTimeoutMs
+				socketTimeoutMs, err := parsedConfig.FieldInt("socketTimeoutMs")
+				Expect(err).NotTo(HaveOccurred(), "socketTimeoutMs should have a default value")
+				Expect(socketTimeoutMs).To(Equal(10000), "socketTimeoutMs should default to 10000ms")
 			})
 
-			It("should allow overriding advanced fields", func() {
-				// Verify advanced fields can be explicitly set
+			It("should allow overriding socketTimeoutMs", func() {
+				// Verify socketTimeoutMs can be explicitly set
 				env := service.NewEnvironment()
 				configWithAdvanced := `
 endpoint: "192.168.1.100"
-connectionTimeoutMs: 5000
-requestTimeoutMs: 3000
-connectionPath: "2,1"
+socketTimeoutMs: 5000
 tags:
   - name: "TestTag"
     type: "bool"
@@ -71,17 +60,21 @@ tags:
 				Expect(err).NotTo(HaveOccurred())
 				Expect(parsedConfig).NotTo(BeNil())
 
-				connectionTimeoutMs, err := parsedConfig.FieldInt("connectionTimeoutMs")
+				socketTimeoutMs, err := parsedConfig.FieldInt("socketTimeoutMs")
 				Expect(err).NotTo(HaveOccurred())
-				Expect(connectionTimeoutMs).To(Equal(5000))
+				Expect(socketTimeoutMs).To(Equal(5000))
+			})
+		})
+	})
 
-				requestTimeoutMs, err := parsedConfig.FieldInt("requestTimeoutMs")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(requestTimeoutMs).To(Equal(3000))
-
-				connectionPath, err := parsedConfig.FieldString("connectionPath")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(connectionPath).To(Equal("2,1"))
+	Describe("Runtime behavior", func() {
+		Context("when socketTimeoutMs is configured", func() {
+			It("should wire timeout to gologix.Client.SocketTimeout", func() {
+				Skip("Integration test - requires actual gologix.Client instantiation")
+				// TODO: Add integration test that verifies:
+				// 1. EIPInput is created with custom socketTimeoutMs
+				// 2. Connect() is called
+				// 3. gologix.Client.SocketTimeout equals configured value (converted to time.Duration)
 			})
 		})
 	})
