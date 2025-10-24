@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +30,13 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin"
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
+
+// sentinelNoTimestamp is used to indicate that no valid timestamp was found
+// We use math.MinInt64 instead of 0 or -1 because:
+// - 0 is valid (Unix epoch: 1970-01-01T00:00:00Z)
+// - -1 is technically valid (1969-12-31T23:59:59.999Z)
+// - math.MinInt64 represents a date ~292 billion years in the past (impossible)
+const sentinelNoTimestamp = math.MinInt64
 
 type TagProcessorConfig struct {
 	Defaults           string            `json:"defaults" yaml:"defaults"`
@@ -531,7 +539,7 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	timestamp := time.Now().UnixMilli()
 
 	parsed := p.parseTimestamp(msg)
-	if parsed != 0 {
+	if parsed != sentinelNoTimestamp {
 		timestamp = parsed
 	}
 
@@ -554,12 +562,14 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	return newMsg, nil
 }
 
-// parseTimestamp attempts to parse timestamp from metadata in specific order
+// parseTimestamp attempts to parse timestamp from metadata in specific order.
+// Returns: parsed timestamp in Unix milliseconds, or sentinelNoTimestamp if parsing failed.
+// Fallback order: timestamp_ms → timestamp → sentinelNoTimestamp
 func (p *TagProcessor) parseTimestamp(msg *service.Message) int64 {
 	timestampMsStr, exists := msg.MetaGet("timestamp_ms")
 	if exists && timestampMsStr != "" {
 		parsed := p.parseTimestampToRFC3339Nano(timestampMsStr)
-		if parsed != 0 {
+		if parsed != sentinelNoTimestamp {
 			return parsed
 		}
 		p.logger.Warnf("Failed to parse timestamp_ms metadata '%s', trying timestamp field", timestampMsStr)
@@ -568,16 +578,20 @@ func (p *TagProcessor) parseTimestamp(msg *service.Message) int64 {
 	timestampStr, exists := msg.MetaGet("timestamp")
 	if exists && timestampStr != "" {
 		parsed := p.parseTimestampToRFC3339Nano(timestampStr)
-		if parsed != 0 {
+		if parsed != sentinelNoTimestamp {
 			return parsed
 		}
 		p.logger.Warnf("Failed to parse timestamp metadata '%s', using current time", timestampStr)
 	}
 
-	return 0
+	return sentinelNoTimestamp
 }
 
-// parseTimestampToRFC3339Nano parses a timestamp value to RFC3339Nano
+// parseTimestampToRFC3339Nano parses a timestamp value to Unix milliseconds.
+// Supports two formats:
+// 1. Unix milliseconds as string (e.g., "1640995200000")
+// 2. RFC3339Nano format (e.g., "2022-01-01T00:00:00.000Z")
+// Returns: parsed timestamp in milliseconds, or sentinelNoTimestamp on failure.
 func (p *TagProcessor) parseTimestampToRFC3339Nano(value string) int64 {
 	if parsedMs, err := strconv.ParseInt(value, 10, 64); err == nil {
 		return parsedMs
@@ -587,7 +601,7 @@ func (p *TagProcessor) parseTimestampToRFC3339Nano(value string) int64 {
 		return parsedTime.UnixMilli()
 	}
 
-	return 0
+	return sentinelNoTimestamp
 }
 
 // convertValue recursively converts values to their appropriate types
