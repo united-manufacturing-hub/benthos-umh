@@ -48,15 +48,23 @@ var OPCUAConfigSpec = OPCUAConnectionConfigSpec.
 	Field(service.NewBoolField("useHeartbeat").
 		Description("Set to true to provide an extra message with the servers timestamp as a heartbeat").
 		Default(false).
+		Optional().
+		Advanced().
 		Examples(true, false)).
 	Field(service.NewIntField("pollRate").
 		Description("The rate in milliseconds at which to poll the OPC UA server when not using subscriptions. Defaults to 1000ms (1 second).").
 		Default(DefaultPollRate).
+		Optional().
+		Advanced().
 		Examples(1000, 5000, 100)).
 	Field(service.NewIntField("queueSize").
 		Description("The size of the queue, which will get filled from the OPC UA server when requesting its data via subscription").Default(DefaultQueueSize).
+		Optional().
+		Advanced().
 		Examples(10, 50, 100)).
 	Field(service.NewFloatField("samplingInterval").Description("The interval for sampling on the OPC UA server - notice 0.0 will get you updates as fast as possible").Default(DefaultSamplingInterval).
+		Optional().
+		Advanced().
 		Examples(0.0, 100.0, 1000.0))
 
 func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
