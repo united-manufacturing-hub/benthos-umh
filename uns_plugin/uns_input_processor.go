@@ -25,12 +25,13 @@ import (
 
 // MessageProcessor handles the transformation of Kafka records to Benthos messages
 type MessageProcessor struct {
-	topicRegex *regexp.Regexp
-	metrics    *UnsInputMetrics
+	topicRegex     *regexp.Regexp
+	metrics        *UnsInputMetrics
+	metadataFormat string // "string" or "bytes" - controls how Kafka headers are converted
 }
 
-// NewMessageProcessor creates a new MessageProcessor with the specified topic regex patterns
-func NewMessageProcessor(topicPatterns []string, metrics *UnsInputMetrics) (*MessageProcessor, error) {
+// NewMessageProcessor creates a new MessageProcessor with the specified topic regex patterns and metadata format
+func NewMessageProcessor(topicPatterns []string, metrics *UnsInputMetrics, metadataFormat string) (*MessageProcessor, error) {
 	if len(topicPatterns) == 0 {
 		return nil, fmt.Errorf("at least one topic pattern must be provided")
 	}
@@ -52,8 +53,9 @@ func NewMessageProcessor(topicPatterns []string, metrics *UnsInputMetrics) (*Mes
 	}
 
 	return &MessageProcessor{
-		topicRegex: topicRegex,
-		metrics:    metrics,
+		topicRegex:     topicRegex,
+		metrics:        metrics,
+		metadataFormat: metadataFormat,
 	}, nil
 }
 
@@ -71,9 +73,13 @@ func (p *MessageProcessor) ProcessRecord(record *kgo.Record) *service.Message {
 
 	msg := service.NewMessage(record.Value)
 
-	// Add headers to the meta field if present
+	// Add headers to the meta field if present, converting based on metadataFormat
 	for _, h := range record.Headers {
-		msg.MetaSetMut(h.Key, h.Value)
+		if p.metadataFormat == "string" {
+			msg.MetaSetMut(h.Key, string(h.Value))
+		} else {
+			msg.MetaSetMut(h.Key, h.Value)
+		}
 	}
 
 	// Add kafka meta fields

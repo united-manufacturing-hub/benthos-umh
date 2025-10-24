@@ -64,7 +64,7 @@ func NewUnsInput(client MessageConsumer, config UnsInputConfig, logger *service.
 	metrics := NewUnsInputMetrics(metricsProvider)
 
 	// Create a message processor
-	processor, err := NewMessageProcessor(config.umhTopics, metrics)
+	processor, err := NewMessageProcessor(config.umhTopics, metrics, config.metadataFormat)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create message processor: %v", err)
 	}
