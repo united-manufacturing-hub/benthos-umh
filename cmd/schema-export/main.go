@@ -30,11 +30,12 @@ func generateVersionedFilename(version string) string {
 
 func main() {
 	version := flag.String("version", "", "Benthos-UMH version (required)")
+	format := flag.String("format", "benthos", "Output format: benthos or json-schema")
 	flag.Parse()
 
 	if *version == "" {
 		fmt.Fprintf(os.Stderr, "Error: -version flag is required\n")
-		fmt.Fprintf(os.Stderr, "Usage: schema-export -version 0.11.6\n")
+		fmt.Fprintf(os.Stderr, "Usage: schema-export -version 0.11.6 [-format benthos|json-schema]\n")
 		os.Exit(1)
 	}
 
@@ -45,7 +46,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	outputFile := generateVersionedFilename(*version)
+	// Validate format flag
+	if err := validateFormat(*format); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Usage: schema-export -version 0.11.6 [-format benthos|json-schema]\n")
+		os.Exit(1)
+	}
 
 	schemas, err := generateSchemas()
 	if err != nil {
@@ -53,10 +59,26 @@ func main() {
 		os.Exit(1)
 	}
 
-	data, err := json.MarshalIndent(schemas, "", "  ")
+	// Generate schema in requested format
+	output, err := generateSchemaWithFormat(schemas, *format, *version)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error generating schema with format %s: %v\n", *format, err)
+		os.Exit(1)
+	}
+
+	data, err := json.MarshalIndent(output, "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error marshaling JSON: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Generate output filename based on format
+	var outputFile string
+	if *format == "json-schema" {
+		cleanVersion := strings.TrimPrefix(*version, "v")
+		outputFile = fmt.Sprintf("benthos-schemas-v%s-json-schema.json", cleanVersion)
+	} else {
+		outputFile = generateVersionedFilename(*version)
 	}
 
 	if err := os.WriteFile(outputFile, data, 0644); err != nil {
@@ -65,6 +87,7 @@ func main() {
 	}
 
 	fmt.Printf("✅ Generated schemas to %s\n", outputFile)
+	fmt.Printf("   - Format: %s\n", *format)
 	fmt.Printf("   - %d inputs\n", len(schemas.Inputs))
 	fmt.Printf("   - %d processors\n", len(schemas.Processors))
 	fmt.Printf("   - %d outputs\n", len(schemas.Outputs))
