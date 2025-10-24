@@ -1167,6 +1167,10 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	deviceID := topicInfo.Device
 	if deviceID == "" {
 		deviceID = topicInfo.EdgeNode
+		// Set spb_device_id metadata for consistency (used by Topic Browser and other downstream processors)
+		// Even though this is NDATA (node-level), we're treating EdgeNode as the device identifier
+		msg.MetaSet("spb_device_id", deviceID)
+		msg.MetaSet("spb_device_id_sanitized", s.sanitizeForTopic(deviceID))
 	}
 
 	sparkplugMsg := &SparkplugMessage{
