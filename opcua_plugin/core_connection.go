@@ -36,11 +36,13 @@ var OPCUAConnectionConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringField("username").
 		Description("The username for authentication.").
 		Default("").
+		Optional().
 		Examples("", "admin", "opcuser").
 		Advanced()).
 	Field(service.NewStringField("password").
 		Description("The password for authentication.").
 		Default("").
+		Optional().
 		Examples("", "password123").
 		Secret().
 		Advanced()).
