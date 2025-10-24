@@ -41,6 +41,9 @@ type ProcessorMetrics struct {
 	// Resource Utilization
 	ActiveMappings  *service.MetricGauge // Number of active mappings
 	ActiveVariables *service.MetricGauge // Number of active variables
+
+	// Error Type Metrics
+	InvalidDataTypeErrors *service.MetricCounter // Invalid timeseries data type errors
 }
 
 // NewProcessorMetrics creates a new set of essential processor metrics
@@ -65,6 +68,9 @@ func NewProcessorMetrics(metrics *service.Metrics) *ProcessorMetrics {
 		// Resource Utilization
 		ActiveMappings:  metrics.NewGauge("active_mappings"),
 		ActiveVariables: metrics.NewGauge("active_variables"),
+
+		// Error Type Metrics
+		InvalidDataTypeErrors: metrics.NewCounter("invalid_data_type"),
 	}
 }
 
@@ -77,6 +83,11 @@ func (m *ProcessorMetrics) LogMessageProcessed(processingTime time.Duration) {
 // LogMessageErrored logs message processing errors
 func (m *ProcessorMetrics) LogMessageErrored() {
 	m.MessagesErrored.Incr(1)
+}
+
+// LogInvalidDataTypeError logs invalid timeseries data type errors
+func (m *ProcessorMetrics) LogInvalidDataTypeError() {
+	m.InvalidDataTypeErrors.Incr(1)
 }
 
 // LogMessageDropped logs messages that were dropped
@@ -121,5 +132,6 @@ func NewMockMetrics() *ProcessorMetrics {
 		MessageProcessingTime:   &service.MetricTimer{},
 		ActiveMappings:          &service.MetricGauge{},
 		ActiveVariables:         &service.MetricGauge{},
+		InvalidDataTypeErrors:   &service.MetricCounter{},
 	}
 }

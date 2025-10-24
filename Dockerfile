@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM management.umh.app/oci/library/golang:1.24 as build
+FROM management.umh.app/oci/library/golang:1.25.2 as build
 
 RUN useradd -u 10001 benthos
 
