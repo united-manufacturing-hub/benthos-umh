@@ -413,6 +413,114 @@ variables:
   - Maintain existing documentation
   - Tests use `_test.go` and `_suite_test.go` pattern
 
+### Plugin Field Classification
+
+All plugin fields must follow a strict required/optional classification rule to ensure consistent UI generation and proper progressive disclosure in the Management Console.
+
+#### Required vs Optional Fields (UX Principle)
+
+**Rule**:
+- **Basic fields** (no `.Advanced()`) = **Required** (no `.Optional()` or `.Default()`)
+- **Advanced fields** (has `.Advanced()`) = **Optional** (needs `.Optional()` AND `.Default()`)
+
+**Rationale**: This creates a visual hierarchy in the Management Console UI where basic fields require explicit user configuration (no sensible system default exists), while advanced fields have sensible system defaults and can be collapsed/hidden from novice users.
+
+**Fluent API Order**: `.Default().Optional().Advanced()`
+
+The `.Optional()` call **must come before** `.Advanced()` because the plugin registration system processes these methods in order. Calling `.Advanced()` after `.Optional()` causes the optional status to be lost.
+
+#### Correct Examples
+
+```go
+// Basic field - required, no default
+// User MUST configure this (e.g., endpoint URL, device address)
+Field(service.NewStringField("endpoint").
+    Description("OPC UA endpoint URL"))
+
+Field(service.NewStringField("tcpDevice").
+    Description("IP address or hostname of the S7 PLC"))
+
+// Advanced field - optional with default
+// System provides sensible default, user CAN override
+Field(service.NewIntField("sessionTimeout").
+    Description("Session timeout in milliseconds").
+    Default(10000).
+    Optional().   // MUST come before Advanced()
+    Advanced())
+
+Field(service.NewBoolField("securityMode").
+    Description("Enable security for OPC UA connection").
+    Default(false).
+    Optional().
+    Advanced())
+```
+
+#### Incorrect Examples
+
+```go
+// ❌ WRONG: Basic field with default
+// Makes it parse-optional, violates required/optional rule
+Field(service.NewStringField("endpoint").
+    Default("opc.tcp://localhost:4840"))  // Basic fields must not have defaults
+
+// ❌ WRONG: Basic field with Optional()
+// Basic fields must be required
+Field(service.NewStringField("tcpDevice").
+    Optional())  // Basic fields must not be optional
+
+// ❌ WRONG: Advanced field without Optional()
+// All advanced fields must be optional with defaults
+Field(service.NewIntField("sessionTimeout").
+    Default(10000).
+    Advanced())  // Missing .Optional()
+
+// ❌ WRONG: Wrong fluent API order
+// Optional() must come before Advanced()
+Field(service.NewIntField("sessionTimeout").
+    Description("Session timeout in milliseconds").
+    Default(10000).
+    Advanced().
+    Optional())  // Too late! Must come before Advanced()
+
+// ❌ WRONG: Advanced field without default
+// All advanced fields must have defaults
+Field(service.NewIntField("sessionTimeout").
+    Optional().
+    Advanced())  // Missing .Default()
+```
+
+#### When to Use Basic vs Advanced
+
+**Basic field checklist**:
+- Is this required for the plugin to function at all? (endpoint, device address, credentials)
+- Is there NO sensible default that works in most cases?
+- Would leaving this blank cause immediate failure?
+
+If YES to all → Basic field (required, no default, no `.Advanced()`)
+
+**Advanced field checklist**:
+- Is this an optimization parameter? (timeout, buffer size, retry count)
+- Is this a feature toggle for uncommon use cases? (debug mode, legacy compatibility)
+- Does this have a sensible default that works in 90%+ of deployments?
+
+If YES to any → Advanced field (optional with default, has `.Advanced()`)
+
+#### Examples by Plugin Type
+
+**Protocol Input Plugins** (OPC UA, S7, Modbus, etc.):
+- Basic: `endpoint`, `tcpDevice`, `addresses`, `username`, `password`
+- Advanced: `sessionTimeout`, `keepAliveInterval`, `securityMode`, `requestTimeout`
+
+**Processing Plugins** (tag_processor, stream_processor):
+- Basic: `script`, `defaults` (the actual processing logic)
+- Advanced: `maxBufferSize`, `stateTimeout`, `debugMode`
+
+**Output Plugins** (UNS):
+- Basic: (none - UNS output has no required config)
+- Advanced: `batchSize`, `compressionType`, `validateTopic`
+
+This classification ensures that the Management Console UI presents a clean, focused interface for new users (showing only required fields) while providing access to advanced tuning parameters for expert users through progressive disclosure.
+
 ## Build & Test Commands
 
 ### Core Commands
