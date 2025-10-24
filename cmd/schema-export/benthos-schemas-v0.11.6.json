@@ -1,8 +1,8 @@
 {
   "metadata": {
     "benthos_version": "v4.49.0",
-    "generated_at": "2025-10-24T16:24:47.716919+02:00",
-    "benthos_umh_version": "v0.11.6-9-g71fed98-dirty"
+    "generated_at": "2025-10-24T18:08:37.362237+02:00",
+    "benthos_umh_version": "v0.11.6-22-gabff02f-dirty"
   },
   "inputs": {
     "ads": {
@@ -2803,6 +2803,20 @@
           "required": true,
           "default": 1000
         },
+        "socketTimeoutMs": {
+          "name": "socketTimeoutMs",
+          "type": "int",
+          "kind": "scalar",
+          "description": "The timeout in milliseconds for socket operations (connection establishment, reads, and writes).",
+          "required": false,
+          "default": 10000,
+          "examples": [
+            5000,
+            10000,
+            30000
+          ],
+          "advanced": true
+        },
         "tags": {
           "name": "tags",
           "type": "object",
@@ -5579,7 +5593,7 @@
           "name": "slaveID",
           "type": "int",
           "kind": "scalar",
-          "description": "Slave ID of the Modbus device",
+          "description": "Slave ID of the Modbus device (deprecated: use slaveIDs for single or multiple slaves)",
           "required": false,
           "default": 1,
           "examples": [
@@ -5593,7 +5607,7 @@
           "name": "slaveIDs",
           "type": "int",
           "kind": "array",
-          "description": "Slave ID of the Modbus device",
+          "description": "Slave IDs to poll. Benthos polls each slave sequentially in the order specified, reads all configured addresses from each slave, and merges the results into a single message batch. All slaves share the same TCP connection. If a slave encounters an error, Benthos logs the error and continues to the next slave (except for fatal connection errors like broken pipe, which trigger reconnection).",
           "required": true,
           "default": [
             1
@@ -5631,13 +5645,14 @@
           "type": "string",
           "kind": "scalar",
           "description": "Timeout for requests to the Modbus device",
-          "required": true,
+          "required": false,
           "default": "1s",
           "examples": [
             "1s",
             "5s",
             "10s"
-          ]
+          ],
+          "advanced": true
         },
         "transmissionMode": {
           "name": "transmissionMode",
@@ -8176,7 +8191,7 @@
           "type": "bool",
           "kind": "scalar",
           "description": "Set to true to automatically reconnect to the OPC UA server when the connection is lost.",
-          "required": true,
+          "required": false,
           "default": false,
           "examples": [
             false,
@@ -8189,7 +8204,7 @@
           "type": "string",
           "kind": "scalar",
           "description": "The client certificate to use, base64-encoded.",
-          "required": true,
+          "required": false,
           "default": "",
           "advanced": true
         },
@@ -8198,7 +8213,7 @@
           "type": "bool",
           "kind": "scalar",
           "description": "Set this to true to directly connect to an OPC UA endpoint. This can be necessary in cases where the OPC UA server does not allow 'endpoint discovery'. This requires having the full endpoint name in endpoint, and securityMode and securityPolicy set.",
-          "required": true,
+          "required": false,
           "default": false,
           "examples": [
             false,
@@ -8226,7 +8241,7 @@
           "type": "bool",
           "kind": "scalar",
           "description": "Set to true to bypass secure connections, useful in case of SSL or certificate issues. Default is secure (false).",
-          "required": true,
+          "required": false,
           "default": false,
           "examples": [
             false,
@@ -8303,7 +8318,7 @@
           "type": "int",
           "kind": "scalar",
           "description": "The interval in seconds at which to reconnect to the OPC UA server when the connection is lost. This is only used if `autoReconnect` is set to true.",
-          "required": true,
+          "required": false,
           "default": 5,
           "examples": [
             5,
@@ -8361,7 +8376,7 @@
           "type": "string",
           "kind": "scalar",
           "description": "The server certificate fingerprint to verify, SHA3-512 hash.",
-          "required": true,
+          "required": false,
           "default": "",
           "advanced": true
         },
@@ -8370,7 +8385,7 @@
           "type": "int",
           "kind": "scalar",
           "description": "The duration in milliseconds that a OPC UA session will last. Is used to ensure that older failed sessions will timeout and that we will not get a TooManySession error.",
-          "required": true,
+          "required": false,
           "default": 10000,
           "examples": [
             10000,
@@ -8409,7 +8424,7 @@
           "type": "string",
           "kind": "scalar",
           "description": "User certificate in base64 encoded format of either PEM or DER.",
-          "required": true,
+          "required": false,
           "default": "",
           "advanced": true
         },
@@ -8418,7 +8433,7 @@
           "type": "string",
           "kind": "scalar",
           "description": "User private key in base64 format of PEM for user certificate based authentication.",
-          "required": true,
+          "required": false,
           "default": "",
           "advanced": true
         },
@@ -10348,8 +10363,9 @@
           "type": "string",
           "kind": "scalar",
           "description": "URL of the IODD API",
-          "required": true,
-          "default": "https://management.umh.app/iodd"
+          "required": false,
+          "default": "https://management.umh.app/iodd",
+          "advanced": true
         }
       }
     },
@@ -10902,7 +10918,7 @@
               "type": "int",
               "kind": "scalar",
               "description": "QoS level for MQTT operations (0, 1, or 2)",
-              "required": true,
+              "required": false,
               "default": 1,
               "examples": [
                 0,
@@ -10915,7 +10931,7 @@
               "type": "string",
               "kind": "scalar",
               "description": "MQTT keep alive interval",
-              "required": true,
+              "required": false,
               "default": "60s"
             },
             {
@@ -10923,7 +10939,7 @@
               "type": "string",
               "kind": "scalar",
               "description": "MQTT connection timeout",
-              "required": true,
+              "required": false,
               "default": "30s"
             },
             {
@@ -10931,7 +10947,7 @@
               "type": "bool",
               "kind": "scalar",
               "description": "MQTT clean session flag",
-              "required": true,
+              "required": false,
               "default": true
             }
           ]
@@ -10941,7 +10957,7 @@
           "type": "string",
           "kind": "scalar",
           "description": "Sparkplug Host mode: 'secondary_passive' (default), 'secondary_active', or 'primary'",
-          "required": true,
+          "required": false,
           "default": "secondary_passive"
         },
         "subscription": {
@@ -29706,7 +29722,7 @@
           "type": "bool",
           "kind": "scalar",
           "description": "Set to true to automatically reconnect to the OPC UA server when the connection is lost.",
-          "required": true,
+          "required": false,
           "default": false,
           "examples": [
             false,
@@ -29719,7 +29735,7 @@
           "type": "string",
           "kind": "scalar",
           "description": "The client certificate to use, base64-encoded.",
-          "required": true,
+          "required": false,
           "default": "",
           "advanced": true
         },
@@ -29728,7 +29744,7 @@
           "type": "bool",
           "kind": "scalar",
           "description": "Set this to true to directly connect to an OPC UA endpoint. This can be necessary in cases where the OPC UA server does not allow 'endpoint discovery'. This requires having the full endpoint name in endpoint, and securityMode and securityPolicy set.",
-          "required": true,
+          "required": false,
           "default": false,
           "examples": [
             false,
@@ -29803,7 +29819,7 @@
           "type": "bool",
           "kind": "scalar",
           "description": "Set to true to bypass secure connections, useful in case of SSL or certificate issues. Default is secure (false).",
-          "required": true,
+          "required": false,
           "default": false,
           "examples": [
             false,
@@ -29925,7 +29941,7 @@
           "type": "int",
           "kind": "scalar",
           "description": "The interval in seconds at which to reconnect to the OPC UA server when the connection is lost. This is only used if `autoReconnect` is set to true.",
-          "required": true,
+          "required": false,
           "default": 5,
           "examples": [
             5,
@@ -29983,7 +29999,7 @@
           "type": "string",
           "kind": "scalar",
           "description": "The server certificate fingerprint to verify, SHA3-512 hash.",
-          "required": true,
+          "required": false,
           "default": "",
           "advanced": true
         },
@@ -29992,7 +30008,7 @@
           "type": "int",
           "kind": "scalar",
           "description": "The duration in milliseconds that a OPC UA session will last. Is used to ensure that older failed sessions will timeout and that we will not get a TooManySession error.",
-          "required": true,
+          "required": false,
           "default": 10000,
           "examples": [
             10000,
@@ -30031,7 +30047,7 @@
           "type": "string",
           "kind": "scalar",
           "description": "User certificate in base64 encoded format of either PEM or DER.",
-          "required": true,
+          "required": false,
           "default": "",
           "advanced": true
         },
@@ -30040,7 +30056,7 @@
           "type": "string",
           "kind": "scalar",
           "description": "User private key in base64 format of PEM for user certificate based authentication.",
-          "required": true,
+          "required": false,
           "default": "",
           "advanced": true
         },
