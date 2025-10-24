@@ -1,3 +1,17 @@
+# Copyright 2025 UMH Systems GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 frame,timestamp,topic,group_id,msg_type,edge_node_id,device_id,seq,payload_timestamp,metric_count
 2,0.0,spBv1.0/org_A/NDATA/702,org_A,NDATA,702,,21,1761142033904,5
 3,0.0,spBv1.0/org_A/NDATA/node_1/device_2,org_A,NDATA,node_1,device_2,,,0
