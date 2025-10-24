@@ -59,7 +59,7 @@ import (
 	_ "github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin" // Import downsampler for pipeline
 )
 
-var _ = Describe("End-to-End Device Processing Pipeline (ENG-3720)", func() {
+var _ = Describe("End-to-End Device Processing Pipeline (ENG-3720)", Serial, func() {
 
 	Context("Full Pipeline Validation: SparkplugB → tag_processor → downsampler", func() {
 
