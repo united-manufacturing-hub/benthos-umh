@@ -168,22 +168,22 @@ var ModbusConfigSpec = service.NewConfigSpec().
 	Description("This input plugin enables Benthos to read data directly from Modbus devices using the Modbus protocol.").
 	Field(service.NewDurationField("timeBetweenReads").Description("The time between two reads of a Modbus device. Useful if you want to read the device every x seconds. Not to be confused with TimeBetweenRequests.").Default("1s").Examples("1s", "5s", "100ms")).
 	Field(service.NewStringField("controller").Description("The Modbus controller address, e.g., 'tcp://localhost:502'").Default("tcp://localhost:502").Examples("tcp://{{ .IP }}:{{ .PORT }}", "tcp://192.168.1.100:502", "tcp://10.0.0.50:502", "tcp://plc.local:502")).
-	Field(service.NewStringField("transmissionMode").Description("Transmission mode: 'TCP', 'RTUOverTCP', or 'ASCIIOverTCP'").Default("TCP").Examples("TCP", "RTUOverTCP", "ASCIIOverTCP")).
-	Field(service.NewIntField("slaveID").Description("Slave ID of the Modbus device").Default(1).Examples(1, 2, 10)).
+	Field(service.NewStringField("transmissionMode").Description("Transmission mode: 'TCP', 'RTUOverTCP', or 'ASCIIOverTCP'").Default("TCP").Optional().Advanced().Examples("TCP", "RTUOverTCP", "ASCIIOverTCP")).
+	Field(service.NewIntField("slaveID").Description("Slave ID of the Modbus device").Default(1).Optional().Advanced().Examples(1, 2, 10)).
 	Field(service.NewIntListField("slaveIDs").Description("Slave ID of the Modbus device").Default([]int{1}).Examples([]int{1}, []int{1, 2, 3}, []int{10, 20})).
 	Field(service.NewDurationField("timeout").Description("Timeout for requests to the Modbus device").Default("1s").Examples("1s", "5s", "10s")).
-	Field(service.NewIntField("busyRetries").Description("Maximum number of retries when the device is busy").Default(3).Examples(3, 5, 10)).
-	Field(service.NewDurationField("busyRetriesWait").Description("Time to wait between retries when the device is busy").Default("200ms").Examples("200ms", "500ms", "1s")).
-	Field(service.NewStringField("optimization").Description("Request optimization algorithm: 'none' or 'max_insert'").Default("none").Examples("none", "max_insert")).
-	Field(service.NewIntField("optimizationMaxRegisterFill").Description("Maximum number of registers to insert for optimization").Default(50).Examples(10, 50, 100)).
-	Field(service.NewStringField("byteOrder").Description("Byte order: 'ABCD', 'DCBA', 'BADC', or 'CDAB'").Default("ABCD").Examples("ABCD", "DCBA", "BADC", "CDAB")).
+	Field(service.NewIntField("busyRetries").Description("Maximum number of retries when the device is busy").Default(3).Optional().Advanced().Examples(3, 5, 10)).
+	Field(service.NewDurationField("busyRetriesWait").Description("Time to wait between retries when the device is busy").Default("200ms").Optional().Advanced().Examples("200ms", "500ms", "1s")).
+	Field(service.NewStringField("optimization").Description("Request optimization algorithm: 'none' or 'max_insert'").Default("none").Optional().Advanced().Examples("none", "max_insert")).
+	Field(service.NewIntField("optimizationMaxRegisterFill").Description("Maximum number of registers to insert for optimization").Default(50).Optional().Advanced().Examples(10, 50, 100)).
+	Field(service.NewStringField("byteOrder").Description("Byte order: 'ABCD', 'DCBA', 'BADC', or 'CDAB'").Default("ABCD").Optional().Advanced().Examples("ABCD", "DCBA", "BADC", "CDAB")).
 	Field(service.NewObjectField("workarounds",
 		service.NewDurationField("pauseAfterConnect").Description("Pause after connect to delay the first request").Default("0s").Examples("0s", "1s", "5s"),
 		service.NewBoolField("oneRequestPerField").Description("Send each field in a separate request").Default(false).Examples(false, true),
 		service.NewBoolField("readCoilsStartingAtZero").Description("Read coils starting at address 0 instead of 1").Default(false).Examples(false, true),
 		service.NewStringField("stringRegisterLocation").Description("String byte-location in registers: 'lower', 'upper', or empty for both").Default("").Examples("", "lower", "upper"),
 		service.NewDurationField("timeBetweenRequests").Description("timeBetweenRequests is the time between two requests to the same device. Useful to avoid flooding the device. Not to be confused with TimeBetweenReads.").Default("0s").Examples("0s", "100ms", "500ms")).
-		Description("Modbus workarounds. Required by some devices to work correctly. Should be left alone by default and must not be changed unless necessary.")).
+		Description("Modbus workarounds. Required by some devices to work correctly. Should be left alone by default and must not be changed unless necessary.").Optional().Advanced()).
 	Field(service.NewObjectListField("addresses",
 		service.NewStringField("name").Description("Field name").Examples("temperature", "pressure", "motor_speed"),
 		service.NewStringField("register").Description("Register type: 'coil', 'discrete', 'holding', or 'input'").Default("holding").Examples("holding", "input", "coil", "discrete"),
