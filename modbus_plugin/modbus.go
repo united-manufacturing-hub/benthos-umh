@@ -171,7 +171,7 @@ var ModbusConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringField("transmissionMode").Description("Transmission mode: 'TCP', 'RTUOverTCP', or 'ASCIIOverTCP'").Default("TCP").Optional().Advanced().Examples("TCP", "RTUOverTCP", "ASCIIOverTCP")).
 	Field(service.NewIntField("slaveID").Description("Slave ID of the Modbus device").Default(1).Optional().Advanced().Examples(1, 2, 10)).
 	Field(service.NewIntListField("slaveIDs").Description("Slave ID of the Modbus device").Default([]int{1}).Examples([]int{1}, []int{1, 2, 3}, []int{10, 20})).
-	Field(service.NewDurationField("timeout").Description("Timeout for requests to the Modbus device").Default("1s").Examples("1s", "5s", "10s")).
+	Field(service.NewDurationField("timeout").Description("Timeout for requests to the Modbus device").Default("1s").Optional().Advanced().Examples("1s", "5s", "10s")).
 	Field(service.NewIntField("busyRetries").Description("Maximum number of retries when the device is busy").Default(3).Optional().Advanced().Examples(3, 5, 10)).
 	Field(service.NewDurationField("busyRetriesWait").Description("Time to wait between retries when the device is busy").Default("200ms").Optional().Advanced().Examples("200ms", "500ms", "1s")).
 	Field(service.NewStringField("optimization").Description("Request optimization algorithm: 'none' or 'max_insert'").Default("none").Optional().Advanced().Examples("none", "max_insert")).
