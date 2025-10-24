@@ -40,6 +40,11 @@ type EIPInput struct {
 	ListAllTags  bool
 	UseMultiRead bool
 
+	// advanced connection settings
+	ConnectionTimeoutMs int
+	RequestTimeoutMs    int
+	ConnectionPath      string
+
 	// addresses for readable data either as an attribute or as a tag
 	Items   []*CIPReadItem
 	ItemMap map[string]any
@@ -86,6 +91,24 @@ var EthernetIPConfigSpec = service.NewConfigSpec().
 	Field(service.NewIntField("pollRate").Description("The rate in milliseconds on which we try to read data out of the plc.").Default(1000)).
 	Field(service.NewBoolField("listAllTags").Description("You can use this option to list all available Tags, but only specific controllers support this method.").Default(false)).
 	Field(service.NewBoolField("useMultiRead").Description("You can use this option to increase the reading time, but be aware that only specific controllers support this method.").Default(true)).
+	Field(service.NewIntField("connectionTimeoutMs").
+		Description("The timeout in milliseconds for establishing a connection to the Ethernet/IP device.").
+		Default(10000).
+		Examples(5000, 10000, 30000).
+		Optional().
+		Advanced()).
+	Field(service.NewIntField("requestTimeoutMs").
+		Description("The timeout in milliseconds for individual requests to the Ethernet/IP device.").
+		Default(10000).
+		Examples(5000, 10000, 30000).
+		Optional().
+		Advanced()).
+	Field(service.NewStringField("connectionPath").
+		Description("The connection path to the Ethernet/IP device, specifying the route through backplane and slot.").
+		Default("1,0").
+		Examples("1,0", "2,1", "1,2").
+		Optional().
+		Advanced()).
 	Field(service.NewObjectListField("attributes",
 		service.NewStringField("path").Description("The Path consists of the following: CIP-Class - CIP-Instance - CIP-Attribute, e.g. 1-1-1. They might vary based on which controller you're using."),
 		service.NewStringField("type").Description("The type of the attribute you want to read: e.g. 'bool', 'int16', 'byte'."),
@@ -122,6 +145,21 @@ func NewEthernetIPInput(conf *service.ParsedConfig, mgr *service.Resources) (ser
 	}
 
 	useMultiRead, err := conf.FieldBool("useMultiRead")
+	if err != nil {
+		return nil, err
+	}
+
+	connectionTimeoutMs, err := conf.FieldInt("connectionTimeoutMs")
+	if err != nil {
+		return nil, err
+	}
+
+	requestTimeoutMs, err := conf.FieldInt("requestTimeoutMs")
+	if err != nil {
+		return nil, err
+	}
+
+	connectionPath, err := conf.FieldString("connectionPath")
 	if err != nil {
 		return nil, err
 	}
@@ -175,6 +213,11 @@ func NewEthernetIPInput(conf *service.ParsedConfig, mgr *service.Resources) (ser
 		ListAllTags:  listAllTags,
 		UseMultiRead: useMultiRead,
 		Log:          mgr.Logger(),
+
+		// advanced connection settings
+		ConnectionTimeoutMs: connectionTimeoutMs,
+		RequestTimeoutMs:    requestTimeoutMs,
+		ConnectionPath:      connectionPath,
 
 		// addresses to read data
 		Items:   allItems,
