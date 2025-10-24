@@ -651,7 +651,7 @@ UMH Topic: `umh.v1.enterprise.area._workorder.maintenance`
 
 7. **Setting Custom Timestamps**
 
-By default, the tag processor uses the current time. You can set custom timestamps using the `timestamp_ms` metadata field (Unix milliseconds as string):
+By default, the tag processor uses the current time. You can set custom timestamps using the `timestamp_ms` metadata field (Unix milliseconds or RFC3339Nano as string):
 
 ```yaml
 tag_processor:
@@ -659,16 +659,20 @@ tag_processor:
     msg.meta.location_path = "enterprise.site.area";
     msg.meta.data_contract = "_historian";
     msg.meta.tag_name = "temperature";
-    
-    // Use OPC UA timestamp
+
+    // Use OPC UA timestamp either as Unix milliseconds
     if (msg.meta.opcua_source_timestamp) {
       msg.meta.timestamp_ms = new Date(msg.meta.opcua_source_timestamp).getTime().toString();
+    }
+    // or use it directly as RFC3339Nano
+    if (msg.meta.opcua_source_timestamp) {
+      msg.meta.timestamp_ms = msg.meta.opcua_source_timestamp;
     }
     // Or use Sparkplug B timestamp directly
     if (msg.meta.spb_timestamp) {
       msg.meta.timestamp_ms = msg.meta.spb_timestamp;
     }
-    
+
     return msg;
 ```
 
