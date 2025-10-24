@@ -89,16 +89,20 @@ Key features:
 			service.NewIntField("qos").
 				Description("QoS level for MQTT operations (0, 1, or 2)").
 				Default(1).
+				Optional().
 				Examples(0, 1, 2),
 			service.NewDurationField("keep_alive").
 				Description("MQTT keep alive interval").
-				Default("60s"),
+				Default("60s").
+				Optional(),
 			service.NewDurationField("connect_timeout").
 				Description("MQTT connection timeout").
-				Default("30s"),
+				Default("30s").
+				Optional(),
 			service.NewBoolField("clean_session").
 				Description("MQTT clean session flag").
-				Default(true)).
+				Default(true).
+				Optional()).
 			Description("MQTT transport configuration")).
 		// Sparkplug Identity Configuration
 		Field(service.NewObjectField("identity",
@@ -117,7 +121,8 @@ Key features:
 		// Role Configuration
 		Field(service.NewStringField("role").
 			Description("Sparkplug Host mode: 'secondary_passive' (default), 'secondary_active', or 'primary'").
-			Default("secondary_passive")).
+			Default("secondary_passive").
+			Optional()).
 		// Subscription Configuration
 		Field(service.NewObjectField("subscription",
 			service.NewStringListField("groups").
@@ -165,16 +170,16 @@ type sparkplugInput struct {
 	stateMu          sync.RWMutex
 
 	// Metrics
-	messagesReceived  *service.MetricCounter
-	messagesProcessed *service.MetricCounter
-	messagesDropped   *service.MetricCounter
-	messagesErrored   *service.MetricCounter
-	birthsProcessed   *service.MetricCounter
-	deathsProcessed   *service.MetricCounter
-	rebirthsRequested *service.MetricCounter
+	messagesReceived   *service.MetricCounter
+	messagesProcessed  *service.MetricCounter
+	messagesDropped    *service.MetricCounter
+	messagesErrored    *service.MetricCounter
+	birthsProcessed    *service.MetricCounter
+	deathsProcessed    *service.MetricCounter
+	rebirthsRequested  *service.MetricCounter
 	rebirthsSuppressed *service.MetricCounter
-	sequenceErrors    *service.MetricCounter
-	aliasResolutions  *service.MetricCounter
+	sequenceErrors     *service.MetricCounter
+	aliasResolutions   *service.MetricCounter
 }
 
 type mqttMessage struct {
@@ -286,27 +291,27 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 	}
 
 	si := &sparkplugInput{
-		config:            config,
-		logger:            mgr.Logger(),
-		messages:          make(chan mqttMessage, 1000),
-		done:              make(chan struct{}),
-		nodeStates:        make(map[string]*nodeState),
-		legacyAliasCache:  make(map[string]map[uint64]string),
-		aliasCache:        NewAliasCache(),
-		topicParser:       NewTopicParser(),
-		messageProcessor:  NewMessageProcessor(mgr.Logger()),
-		typeConverter:     NewTypeConverter(),
-		mqttClientBuilder: NewMQTTClientBuilder(mgr),
-		messagesReceived:  mgr.Metrics().NewCounter("messages_received"),
-		messagesProcessed: mgr.Metrics().NewCounter("messages_processed"),
-		messagesDropped:   mgr.Metrics().NewCounter("messages_dropped"),
-		messagesErrored:   mgr.Metrics().NewCounter("messages_errored"),
-		birthsProcessed:   mgr.Metrics().NewCounter("births_processed"),
-		deathsProcessed:   mgr.Metrics().NewCounter("deaths_processed"),
-		rebirthsRequested: mgr.Metrics().NewCounter("rebirths_requested"),
+		config:             config,
+		logger:             mgr.Logger(),
+		messages:           make(chan mqttMessage, 1000),
+		done:               make(chan struct{}),
+		nodeStates:         make(map[string]*nodeState),
+		legacyAliasCache:   make(map[string]map[uint64]string),
+		aliasCache:         NewAliasCache(),
+		topicParser:        NewTopicParser(),
+		messageProcessor:   NewMessageProcessor(mgr.Logger()),
+		typeConverter:      NewTypeConverter(),
+		mqttClientBuilder:  NewMQTTClientBuilder(mgr),
+		messagesReceived:   mgr.Metrics().NewCounter("messages_received"),
+		messagesProcessed:  mgr.Metrics().NewCounter("messages_processed"),
+		messagesDropped:    mgr.Metrics().NewCounter("messages_dropped"),
+		messagesErrored:    mgr.Metrics().NewCounter("messages_errored"),
+		birthsProcessed:    mgr.Metrics().NewCounter("births_processed"),
+		deathsProcessed:    mgr.Metrics().NewCounter("deaths_processed"),
+		rebirthsRequested:  mgr.Metrics().NewCounter("rebirths_requested"),
 		rebirthsSuppressed: mgr.Metrics().NewCounter("rebirths_suppressed"),
-		sequenceErrors:    mgr.Metrics().NewCounter("sequence_errors"),
-		aliasResolutions:  mgr.Metrics().NewCounter("alias_resolutions"),
+		sequenceErrors:     mgr.Metrics().NewCounter("sequence_errors"),
+		aliasResolutions:   mgr.Metrics().NewCounter("alias_resolutions"),
 	}
 
 	return si, nil
@@ -695,7 +700,7 @@ func (s *sparkplugInput) processStateMessage(deviceKey, msgType string, topicInf
 	if topicInfo.Device != "" {
 		msg.MetaSet("spb_device_id", topicInfo.Device)
 	}
-	
+
 	// Add pre-sanitized versions for state messages
 	msg.MetaSet("spb_group_id_sanitized", s.sanitizeForTopic(topicInfo.Group))
 	msg.MetaSet("spb_edge_node_id_sanitized", s.sanitizeForTopic(topicInfo.EdgeNode))
@@ -830,7 +835,7 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	msg.MetaSet("spb_message_type", msgType)
 	msg.MetaSet("spb_device_key", deviceKey)
 	msg.MetaSet("spb_topic", originalTopic)
-	
+
 	// Add pre-sanitized versions for easier processing
 	msg.MetaSet("spb_group_id_sanitized", s.sanitizeForTopic(topicInfo.Group))
 	msg.MetaSet("spb_edge_node_id_sanitized", s.sanitizeForTopic(topicInfo.EdgeNode))
@@ -914,7 +919,7 @@ func (s *sparkplugInput) createDeathEventMessage(msgType, deviceKey string, topi
 	if topicInfo.Device != "" {
 		msg.MetaSet("spb_device_id", topicInfo.Device)
 	}
-	
+
 	// Add pre-sanitized versions for death events
 	msg.MetaSet("spb_group_id_sanitized", s.sanitizeForTopic(topicInfo.Group))
 	msg.MetaSet("spb_edge_node_id_sanitized", s.sanitizeForTopic(topicInfo.EdgeNode))
@@ -981,21 +986,21 @@ func (s *sparkplugInput) sanitizeForTopic(input string) string {
 	if input == "" {
 		return ""
 	}
-	
+
 	var result strings.Builder
 	result.Grow(len(input))
-	
+
 	for _, char := range input {
 		if (char >= 'a' && char <= 'z') ||
-		   (char >= 'A' && char <= 'Z') ||
-		   (char >= '0' && char <= '9') ||
-		   char == '.' {
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			char == '.' {
 			result.WriteRune(char)
 		} else {
 			result.WriteRune('_')
 		}
 	}
-	
+
 	return result.String()
 }
 
@@ -1042,7 +1047,7 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 		s.rebirthsSuppressed.Incr(1)
 		return
 	}
-	
+
 	if s.client == nil || !s.client.IsConnected() {
 		return
 	}
@@ -1135,7 +1140,7 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	} else {
 		dataType = "unknown"
 	}
-	
+
 	sparkplugMsg := &SparkplugMessage{
 		GroupID:    topicInfo.Group,
 		EdgeNodeID: topicInfo.EdgeNode,
@@ -1162,14 +1167,14 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	// Store original values before any sanitization
 	originalMetricName := sparkplugMsg.MetricName
 	originalDeviceID := sparkplugMsg.DeviceID
-	
+
 	// Try UMH conversion - the converter will handle any necessary sanitization
 	umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
 	if err != nil {
 		msg.MetaSet("umh_conversion_status", "failed")
 		msg.MetaSet("umh_conversion_error", err.Error())
 		s.logger.Debugf("UMH conversion failed for metric %s: %v", sparkplugMsg.MetricName, err)
-		
+
 		// Provide original values as fallback metadata
 		if sparkplugMsg != nil {
 			msg.MetaSet("spb_device_id", originalDeviceID)
@@ -1180,23 +1185,23 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 
 	// Conversion successful - add UMH metadata
 	msg.MetaSet("umh_conversion_status", "success")
-	
+
 	// Build location path without trailing dots when LocationSublevels is empty
 	locationPath := umhMsg.TopicInfo.Level0
 	if len(umhMsg.TopicInfo.LocationSublevels) > 0 {
 		locationPath = locationPath + "." + strings.Join(umhMsg.TopicInfo.LocationSublevels, ".")
 	}
-	
+
 	// The converter has already sanitized all fields, so we can use them directly
 	msg.MetaSet("umh_location_path", locationPath)
 	msg.MetaSet("umh_tag_name", umhMsg.TopicInfo.Name)
 	msg.MetaSet("umh_data_contract", umhMsg.TopicInfo.DataContract)
-	
+
 	// Add virtual path if present
 	if umhMsg.TopicInfo.VirtualPath != nil {
 		msg.MetaSet("umh_virtual_path", *umhMsg.TopicInfo.VirtualPath)
 	}
-	
+
 	// Add debug metadata for traceability
 	if originalMetricName != sparkplugMsg.MetricName {
 		msg.MetaSet("spb_original_metric_name", originalMetricName)
