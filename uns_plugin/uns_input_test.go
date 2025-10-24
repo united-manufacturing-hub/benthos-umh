@@ -600,6 +600,75 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 	})
 })
 
+var _ = Describe("ParseFromBenthos config parsing", Label("config_parsing"), func() {
+	var (
+		logger *service.Logger
+	)
+
+	BeforeEach(func() {
+		resources := service.MockResources()
+		logger = resources.Logger()
+	})
+
+	Context("when parsing metadata_format field", func() {
+		It("should default to 'string' when field is missing", func() {
+			spec := RegisterConfigSpec()
+			parsedConfig, err := spec.ParseYAML(`
+broker_address: "localhost:9092"
+consumer_group: "test_group"
+`, nil)
+			Expect(err).To(BeNil())
+
+			config, err := ParseFromBenthos(parsedConfig, logger)
+			Expect(err).To(BeNil())
+			Expect(config.metadataFormat).To(Equal("string"))
+		})
+
+		It("should accept 'string' as valid value", func() {
+			spec := RegisterConfigSpec()
+			parsedConfig, err := spec.ParseYAML(`
+broker_address: "localhost:9092"
+consumer_group: "test_group"
+metadata_format: "string"
+`, nil)
+			Expect(err).To(BeNil())
+
+			config, err := ParseFromBenthos(parsedConfig, logger)
+			Expect(err).To(BeNil())
+			Expect(config.metadataFormat).To(Equal("string"))
+		})
+
+		It("should accept 'bytes' as valid value", func() {
+			spec := RegisterConfigSpec()
+			parsedConfig, err := spec.ParseYAML(`
+broker_address: "localhost:9092"
+consumer_group: "test_group"
+metadata_format: "bytes"
+`, nil)
+			Expect(err).To(BeNil())
+
+			config, err := ParseFromBenthos(parsedConfig, logger)
+			Expect(err).To(BeNil())
+			Expect(config.metadataFormat).To(Equal("bytes"))
+		})
+
+		It("should return error for invalid value", func() {
+			spec := RegisterConfigSpec()
+			parsedConfig, err := spec.ParseYAML(`
+broker_address: "localhost:9092"
+consumer_group: "test_group"
+metadata_format: "invalid"
+`, nil)
+			Expect(err).To(BeNil())
+
+			_, err = ParseFromBenthos(parsedConfig, logger)
+			Expect(err).NotTo(BeNil())
+			Expect(err.Error()).To(ContainSubstring("metadata_format"))
+			Expect(err.Error()).To(ContainSubstring("must be 'string' or 'bytes'"))
+		})
+	})
+})
+
 var _ = Describe("MessageProcessor regex filtering", Label("message_processor"), func() {
 	var (
 		processor *MessageProcessor
