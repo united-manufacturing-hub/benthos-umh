@@ -90,16 +90,20 @@ Key features:
 			service.NewIntField("qos").
 				Description("QoS level for MQTT operations (0, 1, or 2)").
 				Default(1).
+				Optional().
 				Examples(0, 1, 2),
 			service.NewDurationField("keep_alive").
 				Description("MQTT keep alive interval").
-				Default("60s"),
+				Default("60s").
+				Optional(),
 			service.NewDurationField("connect_timeout").
 				Description("MQTT connection timeout").
-				Default("30s"),
+				Default("30s").
+				Optional(),
 			service.NewBoolField("clean_session").
 				Description("MQTT clean session flag").
-				Default(true)).
+				Default(true).
+				Optional()).
 			Description("MQTT transport configuration")).
 		// Sparkplug Identity Configuration
 		Field(service.NewObjectField("identity",
@@ -118,7 +122,8 @@ Key features:
 		// Role Configuration
 		Field(service.NewStringField("role").
 			Description("Sparkplug Host mode: 'secondary_passive' (default), 'secondary_active', or 'primary'").
-			Default("secondary_passive")).
+			Default("secondary_passive").
+			Optional()).
 		// Discovery REBIRTH Configuration
 		Field(service.NewBoolField("request_birth_on_connect").
 			Description("Send REBIRTH requests to newly discovered nodes on connection (secondary_active/primary only). Enables complete tag discovery by requesting BIRTH messages when nodes are first seen.").
