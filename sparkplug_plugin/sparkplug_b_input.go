@@ -536,9 +536,7 @@ func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload 
 	if state, exists := s.nodeStates[deviceKey]; exists {
 		state.isOnline = true
 		state.lastSeen = time.Now()
-		if payload.Seq != nil {
-			state.lastSeq = uint8(*payload.Seq)
-		}
+		state.lastSeq = GetSequenceNumber(payload)
 		if payload.Timestamp != nil {
 			// Extract bdSeq from metrics if present
 			for _, metric := range payload.Metrics {
@@ -553,9 +551,7 @@ func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload 
 		state := &nodeState{
 			isOnline: true,
 			lastSeen: time.Now(),
-		}
-		if payload.Seq != nil {
-			state.lastSeq = uint8(*payload.Seq)
+			lastSeq:  GetSequenceNumber(payload),
 		}
 		s.nodeStates[deviceKey] = state
 	}
@@ -571,8 +567,8 @@ func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *
 	defer s.stateMu.Unlock()
 
 	// Check sequence numbers for out-of-order detection (Sparkplug B spec compliance)
-	if state, exists := s.nodeStates[deviceKey]; exists && payload.Seq != nil {
-		currentSeq := uint8(*payload.Seq)
+	if state, exists := s.nodeStates[deviceKey]; exists {
+		currentSeq := GetSequenceNumber(payload)
 		expectedSeq := uint8((int(state.lastSeq) + 1) % 256)
 
 		// Validate sequence according to Sparkplug B specification
@@ -852,9 +848,8 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	// Set sequence and timing metadata
 	// Note: spb_sequence is the MQTT-level sequence number (shared by all metrics in this NDATA message)
 	// See ENG-3720 and CS-13 for context on why we add metric_index for unique identification
-	if payload.Seq != nil {
-		msg.MetaSet("spb_sequence", fmt.Sprintf("%d", *payload.Seq))
-	}
+	seq := GetSequenceNumber(payload)
+	msg.MetaSet("spb_sequence", fmt.Sprintf("%d", seq))
 
 	// Add Dual-Sequence metadata for split message identification (Fix for ENG-3720)
 	// When NDATA messages are split into individual metrics, all metrics share the same spb_sequence.
@@ -1098,6 +1093,16 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 
 	s.rebirthsRequested.Incr(1)
 	s.logger.Infof("Sent rebirth request to %s on topic %s", deviceKey, topic)
+}
+
+// GetSequenceNumber extracts sequence number from payload, treating nil as 0 (implied)
+// According to Sparkplug B spec updates, seq=0 can be omitted in BIRTH messages for backwards compatibility
+// Exported for testing purposes to ensure backwards compatibility with older devices
+func GetSequenceNumber(payload *sparkplugb.Payload) uint8 {
+	if payload.Seq == nil {
+		return 0 // Implied seq=0 for backwards compatibility
+	}
+	return uint8(*payload.Seq)
 }
 
 // ValidateSequenceNumber checks if a received sequence number is valid according to Sparkplug B spec
