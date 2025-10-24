@@ -90,7 +90,7 @@ var S7CommConfigSpec = service.NewConfigSpec().
 		"Configure the plugin by specifying the PLC's IP address, rack and slot numbers, and the data blocks to read.").
 	Field(service.NewStringField("tcpDevice").
 		Description("IP address of the S7 PLC.").
-		Examples("{{ .IP }}", "192.168.1.100:102", "10.0.0.50:102", "plc.local:102")).
+		Examples("{{ .IP }}", "192.168.1.100", "10.0.0.50", "plc.local")).
 	Field(service.NewIntField("rack").
 		Description("Rack number of the PLC. Identifies the physical location of the CPU within the PLC rack.").
 		Default(0).
@@ -120,8 +120,8 @@ var S7CommConfigSpec = service.NewConfigSpec().
 		Advanced().
 		Examples(false, true)).
 	Field(service.NewStringListField("addresses").
-		Description("List of S7 addresses to read in the format '<area>.<type><address>[.extra]', e.g., 'DB5.X3.2', 'DB5.B3', or 'DB5.C3'. " +
-			"Address formats include direct area access (e.g., DB1 for data block one) and data types (e.g., X for bit, B for byte).").
+		Description("Format: '<area>.<type><address>[.extra]'. Examples: 'DB5.X3.2' (bit), 'DB5.B3' (byte), 'DB5.C3' (character). "+
+			"Direct area access (DB1 = data block 1). Data types: X (bit), B (byte), W (word), DW (double word).").
 		Examples([]string{"DB1.DW20", "DB1.S30.10"}, []string{"DB1.DBW0"}, []string{"DB1.DBW0", "DB3.DBX270.5"}, []string{"DB5.DBB3", "DB10.DBD20"}))
 
 // newS7CommInput is the constructor function for S7CommInput. It parses the plugin configuration,
