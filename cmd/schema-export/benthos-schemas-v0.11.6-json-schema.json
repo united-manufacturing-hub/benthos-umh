@@ -69,19 +69,19 @@
         }
       },
       "required": [
-        "targetIP",
-        "targetPort",
-        "runtimePort",
-        "readType",
         "maxDelay",
-        "upperCase",
-        "targetAMS",
-        "hostAMS",
-        "hostPort",
-        "cycleTime",
         "intervalTime",
+        "upperCase",
+        "symbols",
+        "targetAMS",
+        "targetPort",
+        "hostPort",
+        "readType",
+        "cycleTime",
         "logLevel",
-        "symbols"
+        "targetIP",
+        "runtimePort",
+        "hostAMS"
       ],
       "type": "object"
     },
@@ -170,22 +170,22 @@
         }
       },
       "required": [
-        "addValue",
-        "value",
-        "reset",
-        "filterTime",
-        "alarmObject",
         "addToJson",
-        "cleanMsg",
-        "alarmJsonStruct",
-        "addMeta",
-        "resetOperator",
+        "addValue",
         "json",
         "stringValue",
-        "operator",
+        "resetOperator",
         "sendInterval",
+        "value",
+        "sendAlarmOnly",
+        "filterTime",
         "alarmText",
-        "sendAlarmOnly"
+        "alarmObject",
+        "alarmJsonStruct",
+        "cleanMsg",
+        "addMeta",
+        "operator",
+        "reset"
       ],
       "type": "object"
     },
@@ -441,25 +441,25 @@
       },
       "required": [
         "exchange",
-        "correlation_id",
-        "timeout",
-        "tls",
-        "key",
-        "app_id",
-        "mandatory",
-        "immediate",
-        "metadata",
         "type",
-        "reply_to",
-        "expiration",
-        "message_id",
-        "user_id",
-        "priority",
-        "max_in_flight",
-        "urls",
         "content_type",
         "content_encoding",
-        "persistent"
+        "reply_to",
+        "user_id",
+        "persistent",
+        "correlation_id",
+        "expiration",
+        "message_id",
+        "app_id",
+        "metadata",
+        "priority",
+        "mandatory",
+        "timeout",
+        "max_in_flight",
+        "tls",
+        "urls",
+        "key",
+        "immediate"
       ],
       "type": "object"
     },
@@ -634,11 +634,11 @@
         }
       },
       "required": [
-        "tls",
-        "metadata",
         "target_address",
+        "tls",
+        "content_type",
         "max_in_flight",
-        "content_type"
+        "metadata"
       ],
       "type": "object"
     },
@@ -903,18 +903,18 @@
         }
       },
       "required": [
+        "table",
         "ttl_key",
         "max_in_flight",
         "batching",
-        "region",
-        "max_retries",
-        "string_columns",
         "endpoint",
-        "credentials",
         "backoff",
-        "table",
+        "string_columns",
         "json_map_columns",
-        "ttl"
+        "ttl",
+        "region",
+        "credentials",
+        "max_retries"
       ],
       "type": "object"
     },
@@ -1008,12 +1008,12 @@
         }
       },
       "required": [
-        "region",
         "endpoint",
         "credentials",
         "query",
         "unsafe_dynamic_query",
-        "args_mapping"
+        "args_mapping",
+        "region"
       ],
       "type": "object"
     },
@@ -1183,15 +1183,15 @@
         }
       },
       "required": [
+        "backoff",
+        "max_in_flight",
         "batching",
         "region",
-        "credentials",
         "stream",
-        "endpoint",
-        "max_retries",
-        "backoff",
         "partition_key",
-        "max_in_flight"
+        "endpoint",
+        "credentials",
+        "max_retries"
       ],
       "type": "object"
     },
@@ -1352,14 +1352,14 @@
         }
       },
       "required": [
+        "batching",
+        "region",
         "endpoint",
         "credentials",
         "max_retries",
         "backoff",
         "stream",
-        "max_in_flight",
-        "batching",
-        "region"
+        "max_in_flight"
       ],
       "type": "object"
     },
@@ -1465,14 +1465,14 @@
         }
       },
       "required": [
-        "endpoint",
-        "credentials",
-        "timeout",
         "retries",
         "parallel",
         "function",
         "rate_limit",
-        "region"
+        "region",
+        "endpoint",
+        "credentials",
+        "timeout"
       ],
       "type": "object"
     },
@@ -1713,28 +1713,28 @@
         }
       },
       "required": [
-        "kms_key_id",
-        "server_side_encryption",
-        "max_in_flight",
-        "bucket",
         "tags",
-        "content_type",
-        "checksum_algorithm",
-        "timeout",
-        "credentials",
-        "cache_control",
-        "batching",
-        "region",
-        "endpoint",
-        "content_encoding",
         "content_language",
         "content_md5",
-        "website_redirect_location",
+        "endpoint",
+        "credentials",
+        "cache_control",
+        "storage_class",
+        "kms_key_id",
+        "server_side_encryption",
         "force_path_style_urls",
-        "path",
+        "max_in_flight",
+        "region",
+        "checksum_algorithm",
+        "bucket",
+        "content_type",
         "content_disposition",
+        "website_redirect_location",
         "metadata",
-        "storage_class"
+        "timeout",
+        "batching",
+        "path",
+        "content_encoding"
       ],
       "type": "object"
     },
@@ -1850,13 +1850,13 @@
         }
       },
       "required": [
+        "metadata",
+        "credentials",
         "topic_arn",
         "max_in_flight",
-        "metadata",
         "timeout",
-        "endpoint",
         "region",
-        "credentials"
+        "endpoint"
       ],
       "type": "object"
     },
@@ -2049,16 +2049,16 @@
         }
       },
       "required": [
-        "max_in_flight",
-        "metadata",
         "batching",
+        "max_records_per_request",
         "region",
         "endpoint",
         "credentials",
-        "backoff",
         "url",
-        "max_records_per_request",
-        "max_retries"
+        "max_in_flight",
+        "metadata",
+        "max_retries",
+        "backoff"
       ],
       "type": "object"
     },
@@ -2122,15 +2122,15 @@
         }
       },
       "required": [
-        "storage_account",
-        "storage_connection_string",
-        "storage_sas_token",
-        "container",
-        "path",
-        "blob_type",
         "public_access_level",
         "storage_access_key",
-        "max_in_flight"
+        "storage_connection_string",
+        "storage_sas_token",
+        "path",
+        "blob_type",
+        "max_in_flight",
+        "storage_account",
+        "container"
       ],
       "type": "object"
     },
@@ -2253,11 +2253,11 @@
       },
       "required": [
         "database",
+        "container",
+        "max_in_flight",
         "partition_keys_map",
         "operation",
         "auto_id",
-        "max_in_flight",
-        "container",
         "batching"
       ],
       "type": "object"
@@ -2301,13 +2301,13 @@
         }
       },
       "required": [
-        "storage_account",
-        "storage_access_key",
-        "storage_connection_string",
         "storage_sas_token",
         "filesystem",
         "path",
-        "max_in_flight"
+        "max_in_flight",
+        "storage_account",
+        "storage_access_key",
+        "storage_connection_string"
       ],
       "type": "object"
     },
@@ -2388,14 +2388,14 @@
         }
       },
       "required": [
+        "ttl",
         "max_in_flight",
         "batching",
         "storage_account",
         "storage_access_key",
         "storage_connection_string",
         "storage_sas_token",
-        "queue_name",
-        "ttl"
+        "queue_name"
       ],
       "type": "object"
     },
@@ -2516,19 +2516,19 @@
         }
       },
       "required": [
-        "storage_access_key",
-        "storage_sas_token",
-        "table_name",
-        "partition_key",
-        "row_key",
-        "properties",
-        "storage_account",
-        "storage_connection_string",
         "insert_type",
         "transaction_type",
         "max_in_flight",
         "timeout",
-        "batching"
+        "storage_account",
+        "storage_access_key",
+        "partition_key",
+        "properties",
+        "batching",
+        "storage_connection_string",
+        "storage_sas_token",
+        "table_name",
+        "row_key"
       ],
       "type": "object"
     },
@@ -2597,8 +2597,8 @@
         }
       },
       "required": [
-        "max_in_flight",
-        "address"
+        "address",
+        "max_in_flight"
       ],
       "type": "object"
     },
@@ -2617,8 +2617,8 @@
         }
       },
       "required": [
-        "count_bytes",
-        "interval"
+        "interval",
+        "count_bytes"
       ],
       "type": "object"
     },
@@ -2750,10 +2750,10 @@
         }
       },
       "required": [
+        "copies",
         "pattern",
         "outputs",
-        "batching",
-        "copies"
+        "batching"
       ],
       "type": "object"
     },
@@ -2781,9 +2781,9 @@
         }
       },
       "required": [
-        "max_in_flight",
         "target",
-        "key"
+        "key",
+        "max_in_flight"
       ],
       "type": "object"
     },
@@ -2812,9 +2812,9 @@
         }
       },
       "required": [
-        "key",
         "processors",
-        "cache"
+        "cache",
+        "key"
       ],
       "type": "object"
     },
@@ -3060,18 +3060,18 @@
         }
       },
       "required": [
+        "disable_initial_host_lookup",
+        "query",
+        "logged_batch",
+        "max_in_flight",
         "batching",
         "tls",
-        "password_authenticator",
         "max_retries",
-        "timeout",
-        "max_in_flight",
-        "addresses",
-        "disable_initial_host_lookup",
         "backoff",
-        "query",
+        "timeout",
         "consistency",
-        "logged_batch"
+        "addresses",
+        "password_authenticator"
       ],
       "type": "object"
     },
@@ -3200,10 +3200,10 @@
         }
       },
       "required": [
-        "auto_replay_nacks",
-        "dsn",
         "tls",
-        "tables"
+        "tables",
+        "auto_replay_nacks",
+        "dsn"
       ],
       "type": "object"
     },
@@ -3345,14 +3345,14 @@
         }
       },
       "required": [
+        "bucket",
         "timeout",
         "operation",
-        "max_in_flight",
         "batching",
         "url",
-        "bucket",
         "transcoder",
-        "id"
+        "id",
+        "max_in_flight"
       ],
       "type": "object"
     },
@@ -3401,13 +3401,13 @@
         }
       },
       "required": [
+        "delete_on_finish",
+        "batch_count",
         "auto_replay_nacks",
         "paths",
         "parse_header_row",
         "delimiter",
-        "lazy_quotes",
-        "delete_on_finish",
-        "batch_count"
+        "lazy_quotes"
       ],
       "type": "object"
     },
@@ -3591,12 +3591,12 @@
         }
       },
       "required": [
-        "database_name",
         "tls",
         "batching",
         "max_in_flight",
         "uri",
-        "cypher"
+        "cypher",
+        "database_name"
       ],
       "type": "object"
     },
@@ -3663,9 +3663,9 @@
         }
       },
       "required": [
-        "channel_id",
         "bot_token",
-        "rate_limit"
+        "rate_limit",
+        "channel_id"
       ],
       "type": "object"
     },
@@ -4205,24 +4205,24 @@
         }
       },
       "required": [
+        "healthcheck",
+        "max_in_flight",
+        "batching",
         "urls",
         "pipeline",
+        "routing",
         "retry_on_conflict",
-        "timeout",
-        "gzip_compression",
+        "sniff",
+        "backoff",
+        "aws",
         "index",
         "action",
-        "type",
-        "routing",
-        "healthcheck",
-        "id",
-        "sniff",
-        "tls",
-        "max_in_flight",
+        "timeout",
         "max_retries",
-        "backoff",
-        "batching",
-        "aws"
+        "gzip_compression",
+        "id",
+        "type",
+        "tls"
       ],
       "type": "object"
     },
@@ -4427,16 +4427,16 @@
         }
       },
       "required": [
-        "id",
-        "retry_on_conflict",
-        "batching",
         "index",
-        "action",
         "pipeline",
         "routing",
         "tls",
         "max_in_flight",
-        "urls"
+        "urls",
+        "action",
+        "id",
+        "retry_on_conflict",
+        "batching"
       ],
       "type": "object"
     },
@@ -4481,6 +4481,12 @@
           "default": 1000,
           "description": "The rate in milliseconds on which we try to read data out of the plc.",
           "type": "number"
+        },
+        "socketTimeoutMs": {
+          "default": 10000,
+          "description": "The timeout in milliseconds for socket operations (connection establishment, reads, and writes).",
+          "type": "number",
+          "x-advanced": true
         },
         "tags": {
           "properties": {
@@ -4729,21 +4735,21 @@
         }
       },
       "required": [
-        "write_disposition",
-        "create_disposition",
-        "credentials_json",
-        "batching",
-        "job_project",
         "dataset",
-        "table",
+        "write_disposition",
         "auto_detect",
-        "job_labels",
-        "project",
+        "job_project",
         "format",
         "max_in_flight",
+        "create_disposition",
         "ignore_unknown_values",
+        "job_labels",
         "csv",
-        "max_bad_records"
+        "project",
+        "table",
+        "max_bad_records",
+        "credentials_json",
+        "batching"
       ],
       "type": "object"
     },
@@ -4790,11 +4796,11 @@
         }
       },
       "required": [
-        "job_labels",
+        "columns",
         "project",
         "credentials_json",
         "table",
-        "columns"
+        "job_labels"
       ],
       "type": "object"
     },
@@ -4886,16 +4892,16 @@
         }
       },
       "required": [
-        "max_in_flight",
+        "timeout",
         "batching",
         "bucket",
         "content_type",
-        "content_encoding",
-        "path",
-        "collision_mode",
         "chunk_size",
-        "timeout",
-        "credentials_json"
+        "credentials_json",
+        "max_in_flight",
+        "path",
+        "content_encoding",
+        "collision_mode"
       ],
       "type": "object"
     },
@@ -5040,16 +5046,16 @@
       },
       "required": [
         "flow_control",
-        "batching",
         "project",
-        "topic",
+        "credentials_json",
         "endpoint",
+        "max_in_flight",
         "count_threshold",
         "delay_threshold",
+        "batching",
+        "topic",
         "byte_threshold",
-        "publish_timeout",
-        "credentials_json",
-        "max_in_flight"
+        "publish_timeout"
       ],
       "type": "object"
     },
@@ -5082,11 +5088,11 @@
         }
       },
       "required": [
-        "auto_replay_nacks",
         "mapping",
         "interval",
         "count",
-        "batch_size"
+        "batch_size",
+        "auto_replay_nacks"
       ],
       "type": "object"
     },
@@ -5233,12 +5239,12 @@
         }
       },
       "required": [
-        "user",
         "directory",
         "path",
         "max_in_flight",
         "batching",
-        "hosts"
+        "hosts",
+        "user"
       ],
       "type": "object"
     },
@@ -5655,24 +5661,24 @@
         }
       },
       "required": [
-        "follow_redirects",
-        "headers",
+        "verb",
+        "dump_request_log_level",
+        "jwt",
+        "timeout",
+        "retries",
+        "parallel",
+        "url",
+        "tls",
         "extract_headers",
         "retry_period",
-        "url",
-        "timeout",
+        "headers",
         "max_retry_backoff",
-        "drop_on",
-        "successful_on",
-        "batch_as_multipart",
-        "verb",
-        "jwt",
-        "tls",
-        "retries",
         "backoff_on",
         "disable_http2",
-        "parallel",
-        "dump_request_log_level"
+        "batch_as_multipart",
+        "follow_redirects",
+        "drop_on",
+        "successful_on"
       ],
       "type": "object"
     },
@@ -6163,27 +6169,27 @@
         }
       },
       "required": [
-        "url",
-        "extract_headers",
-        "batch_as_multipart",
-        "propagate_response",
-        "max_in_flight",
-        "batching",
-        "headers",
-        "max_retry_backoff",
-        "retries",
-        "follow_redirects",
+        "timeout",
+        "backoff_on",
         "drop_on",
-        "dump_request_log_level",
+        "multipart",
+        "verb",
+        "extract_headers",
+        "max_retry_backoff",
+        "follow_redirects",
+        "batch_as_multipart",
+        "headers",
+        "jwt",
         "retry_period",
         "successful_on",
-        "disable_http2",
-        "multipart",
-        "timeout",
-        "verb",
-        "jwt",
+        "max_in_flight",
         "tls",
-        "backoff_on"
+        "retries",
+        "disable_http2",
+        "propagate_response",
+        "batching",
+        "url",
+        "dump_request_log_level"
       ],
       "type": "object"
     },
@@ -6260,15 +6266,15 @@
         }
       },
       "required": [
+        "key_file",
+        "stream_path",
+        "ws_path",
+        "timeout",
         "cert_file",
         "cors",
         "address",
         "path",
-        "ws_path",
-        "allowed_verbs",
-        "timeout",
-        "key_file",
-        "stream_path"
+        "allowed_verbs"
       ],
       "type": "object"
     },
@@ -6291,8 +6297,8 @@
         }
       },
       "required": [
-        "content",
-        "index"
+        "index",
+        "content"
       ],
       "type": "object"
     },
@@ -6352,9 +6358,9 @@
         }
       },
       "required": [
-        "query",
         "raw",
-        "output_raw"
+        "output_raw",
+        "query"
       ],
       "type": "object"
     },
@@ -6748,25 +6754,25 @@
         }
       },
       "required": [
-        "idempotent_write",
+        "metadata",
         "max_retries",
-        "tls",
-        "compression",
-        "ack_replicas",
-        "batching",
-        "topic",
-        "client_id",
+        "backoff",
+        "addresses",
+        "key",
         "partitioner",
+        "ack_replicas",
+        "timeout",
+        "tls",
         "partition",
         "max_in_flight",
-        "max_msg_bytes",
-        "timeout",
-        "backoff",
-        "rack_id",
-        "key",
+        "idempotent_write",
         "retry_as_batch",
-        "addresses",
-        "metadata"
+        "topic",
+        "max_msg_bytes",
+        "batching",
+        "client_id",
+        "rack_id",
+        "compression"
       ],
       "type": "object"
     },
@@ -7132,18 +7138,18 @@
         }
       },
       "required": [
-        "metadata_max_age",
-        "batching",
-        "timeout",
-        "max_message_bytes",
-        "topic",
-        "idempotent_write",
-        "tls",
         "max_in_flight",
-        "seed_brokers",
+        "batching",
         "client_id",
+        "topic",
+        "timeout",
+        "seed_brokers",
+        "tls",
+        "metadata_max_age",
+        "idempotent_write",
+        "broker_write_max_bytes",
         "rack_id",
-        "broker_write_max_bytes"
+        "max_message_bytes"
       ],
       "type": "object"
     },
@@ -7214,9 +7220,9 @@
         }
       },
       "required": [
-        "value",
         "type",
-        "name"
+        "name",
+        "value"
       ],
       "type": "object"
     },
@@ -7313,7 +7319,7 @@
         },
         "slaveID": {
           "default": 1,
-          "description": "Slave ID of the Modbus device",
+          "description": "Slave ID of the Modbus device (deprecated: use slaveIDs for single or multiple slaves)",
           "type": "number",
           "x-advanced": true
         },
@@ -7321,7 +7327,7 @@
           "default": [
             1
           ],
-          "description": "Slave ID of the Modbus device",
+          "description": "Slave IDs to poll. Benthos polls each slave sequentially in the order specified, reads all configured addresses from each slave, and merges the results into a single message batch. All slaves share the same TCP connection. If a slave encounters an error, Benthos logs the error and continues to the next slave (except for fatal connection errors like broken pipe, which trigger reconnection).",
           "type": "number"
         },
         "timeBetweenReads": {
@@ -7332,7 +7338,8 @@
         "timeout": {
           "default": "1s",
           "description": "Timeout for requests to the Modbus device",
-          "type": "string"
+          "type": "string",
+          "x-advanced": true
         },
         "transmissionMode": {
           "default": "TCP",
@@ -7386,11 +7393,10 @@
         }
       },
       "required": [
-        "controller",
+        "timeBetweenReads",
         "slaveIDs",
         "addresses",
-        "timeout",
-        "timeBetweenReads"
+        "controller"
       ],
       "type": "object"
     },
@@ -7563,22 +7569,22 @@
         }
       },
       "required": [
-        "max_in_flight",
-        "max_retries",
-        "password",
+        "app_name",
         "collection",
-        "filter_map",
-        "hint_map",
         "operation",
+        "filter_map",
         "backoff",
         "url",
-        "app_name",
-        "write_concern",
-        "document_map",
-        "upsert",
-        "batching",
         "database",
-        "username"
+        "username",
+        "password",
+        "write_concern",
+        "upsert",
+        "document_map",
+        "max_in_flight",
+        "batching",
+        "hint_map",
+        "max_retries"
       ],
       "type": "object"
     },
@@ -7787,19 +7793,19 @@
         }
       },
       "required": [
+        "client_id",
+        "password",
         "urls",
+        "connect_timeout",
+        "will",
+        "user",
+        "keepalive",
+        "topic",
+        "retained",
+        "tls",
         "write_timeout",
         "max_in_flight",
-        "client_id",
-        "connect_timeout",
-        "user",
-        "password",
-        "topic",
-        "keepalive",
-        "tls",
-        "qos",
-        "retained",
-        "will"
+        "qos"
       ],
       "type": "object"
     },
@@ -8031,12 +8037,12 @@
         }
       },
       "required": [
+        "max_in_flight",
+        "tls",
         "auth",
         "urls",
         "subject",
-        "headers",
-        "max_in_flight",
-        "tls"
+        "headers"
       ],
       "type": "object"
     },
@@ -8210,12 +8216,12 @@
         }
       },
       "required": [
-        "headers",
-        "max_in_flight",
         "tls",
         "auth",
         "urls",
-        "subject"
+        "subject",
+        "headers",
+        "max_in_flight"
       ],
       "type": "object"
     },
@@ -8363,12 +8369,12 @@
         }
       },
       "required": [
-        "urls",
-        "bucket",
         "key",
         "max_in_flight",
         "tls",
-        "auth"
+        "auth",
+        "urls",
+        "bucket"
       ],
       "type": "object"
     },
@@ -8542,11 +8548,11 @@
         }
       },
       "required": [
+        "subject",
         "headers",
         "tls",
         "auth",
-        "urls",
-        "subject"
+        "urls"
       ],
       "type": "object"
     },
@@ -8704,13 +8710,13 @@
         }
       },
       "required": [
-        "cluster_id",
-        "subject",
         "client_id",
         "max_in_flight",
         "tls",
         "auth",
-        "urls"
+        "urls",
+        "cluster_id",
+        "subject"
       ],
       "type": "object"
     },
@@ -8843,10 +8849,10 @@
         }
       },
       "required": [
+        "nsqd_tcp_address",
         "topic",
         "tls",
-        "max_in_flight",
-        "nsqd_tcp_address"
+        "max_in_flight"
       ],
       "type": "object"
     },
@@ -9120,12 +9126,12 @@
         }
       },
       "required": [
-        "kafka",
         "disable_content_encryption",
+        "kafka",
+        "route_to_kafka_outlet",
         "allow_consumer",
         "route_to_consumer",
-        "encrypted_fields",
-        "route_to_kafka_outlet"
+        "encrypted_fields"
       ],
       "type": "object"
     },
@@ -9310,19 +9316,10 @@
         }
       },
       "required": [
-        "sessionTimeout",
-        "serverCertificateFingerprint",
-        "userPrivateKey",
-        "insecure",
-        "handshake",
-        "clientCertificate",
-        "nodeIDs",
-        "reconnectIntervalInSeconds",
-        "userCertificate",
-        "directConnect",
-        "autoReconnect",
         "nodeMappings",
         "endpoint",
+        "handshake",
+        "nodeIDs",
         "subscribeEnabled"
       ],
       "type": "object"
@@ -9611,16 +9608,16 @@
         }
       },
       "required": [
+        "routing",
+        "max_in_flight",
         "action",
         "id",
-        "pipeline",
+        "tls",
+        "batching",
         "aws",
         "urls",
-        "routing",
-        "tls",
-        "max_in_flight",
-        "batching",
-        "index"
+        "index",
+        "pipeline"
       ],
       "type": "object"
     },
@@ -9672,8 +9669,8 @@
         }
       },
       "required": [
-        "operator",
-        "compression"
+        "compression",
+        "operator"
       ],
       "type": "object"
     },
@@ -9807,12 +9804,12 @@
         }
       },
       "required": [
+        "format",
         "best_effort",
         "allow_rfc3339",
         "default_year",
         "default_timezone",
-        "codec",
-        "format"
+        "codec"
       ],
       "type": "object"
     },
@@ -9899,13 +9896,13 @@
         }
       },
       "required": [
-        "max_in_flight",
-        "batching",
         "api_key",
         "operation",
+        "namespace",
         "id",
-        "host",
-        "namespace"
+        "max_in_flight",
+        "batching",
+        "host"
       ],
       "type": "object"
     },
@@ -10069,12 +10066,12 @@
         }
       },
       "required": [
+        "ordering_key",
+        "max_in_flight",
         "url",
         "topic",
         "tls",
-        "key",
-        "ordering_key",
-        "max_in_flight"
+        "key"
       ],
       "type": "object"
     },
@@ -10154,15 +10151,15 @@
         }
       },
       "required": [
-        "batching",
-        "event",
-        "secret",
-        "cluster",
         "secure",
+        "batching",
         "channel",
         "appId",
+        "max_in_flight",
+        "event",
         "key",
-        "max_in_flight"
+        "secret",
+        "cluster"
       ],
       "type": "object"
     },
@@ -10329,14 +10326,14 @@
         }
       },
       "required": [
-        "vector_mapping",
-        "payload_mapping",
-        "collection_name",
         "max_in_flight",
         "batching",
         "grpc_host",
         "api_token",
         "tls",
+        "vector_mapping",
+        "payload_mapping",
+        "collection_name",
         "id"
       ],
       "type": "object"
@@ -10544,11 +10541,11 @@
         }
       },
       "required": [
-        "max_in_flight",
-        "table",
         "batching",
         "tls",
-        "address"
+        "address",
+        "max_in_flight",
+        "table"
       ],
       "type": "object"
     },
@@ -10587,8 +10584,8 @@
         }
       },
       "required": [
-        "input",
-        "restart_input"
+        "restart_input",
+        "input"
       ],
       "type": "object"
     },
@@ -10736,12 +10733,12 @@
         }
       },
       "required": [
-        "kind",
         "retries",
-        "retry_period",
-        "url",
+        "kind",
         "master",
-        "tls"
+        "tls",
+        "retry_period",
+        "url"
       ],
       "type": "object"
     },
@@ -10885,15 +10882,15 @@
         }
       },
       "required": [
-        "walk_metadata",
-        "walk_json_object",
-        "max_in_flight",
-        "tls",
-        "key",
-        "fields",
         "url",
         "kind",
-        "master"
+        "master",
+        "tls",
+        "key",
+        "walk_json_object",
+        "fields",
+        "walk_metadata",
+        "max_in_flight"
       ],
       "type": "object"
     },
@@ -11069,14 +11066,14 @@
         }
       },
       "required": [
-        "command",
-        "url",
-        "kind",
         "master",
         "tls",
         "key",
         "max_in_flight",
-        "batching"
+        "batching",
+        "command",
+        "url",
+        "kind"
       ],
       "type": "object"
     },
@@ -11242,13 +11239,13 @@
         }
       },
       "required": [
-        "batching",
         "url",
         "kind",
         "master",
         "tls",
         "channel",
-        "max_in_flight"
+        "max_in_flight",
+        "batching"
       ],
       "type": "object"
     },
@@ -11378,12 +11375,12 @@
         }
       },
       "required": [
-        "url",
         "kind",
         "master",
         "tls",
         "auto_replay_nacks",
-        "match"
+        "match",
+        "url"
       ],
       "type": "object"
     },
@@ -11527,15 +11524,15 @@
         }
       },
       "required": [
-        "master",
-        "keys_mapping",
-        "retries",
         "url",
+        "kind",
+        "master",
+        "args_mapping",
         "tls",
         "script",
-        "args_mapping",
-        "retry_period",
-        "kind"
+        "keys_mapping",
+        "retries",
+        "retry_period"
       ],
       "type": "object"
     },
@@ -11725,16 +11722,16 @@
         }
       },
       "required": [
+        "kind",
         "master",
         "tls",
-        "stream",
-        "max_length",
-        "max_in_flight",
+        "body_key",
+        "metadata",
         "batching",
         "url",
-        "kind",
-        "body_key",
-        "metadata"
+        "stream",
+        "max_length",
+        "max_in_flight"
       ],
       "type": "object"
     },
@@ -12060,15 +12057,15 @@
         }
       },
       "required": [
-        "tls",
-        "max_in_flight",
         "timeout",
-        "max_message_bytes",
+        "max_in_flight",
         "client_id",
-        "metadata_max_age",
         "topic",
-        "idempotent_write",
+        "tls",
+        "metadata_max_age",
+        "max_message_bytes",
         "broker_write_max_bytes",
+        "idempotent_write",
         "seed_brokers"
       ],
       "type": "object"
@@ -12501,11 +12498,11 @@
         }
       },
       "required": [
+        "jwt",
         "tls",
         "avro_raw_json",
         "avro",
-        "url",
-        "jwt"
+        "url"
       ],
       "type": "object"
     },
@@ -12734,12 +12731,12 @@
         }
       },
       "required": [
-        "jwt",
-        "tls",
-        "url",
         "subject",
         "refresh_period",
-        "avro_raw_json"
+        "avro_raw_json",
+        "jwt",
+        "tls",
+        "url"
       ],
       "type": "object"
     },
@@ -12790,12 +12787,12 @@
         "iodd_api": {
           "default": "https://management.umh.app/iodd",
           "description": "URL of the IODD API",
-          "type": "string"
+          "type": "string",
+          "x-advanced": true
         }
       },
       "required": [
         "device_address",
-        "iodd_api",
         "devices"
       ],
       "type": "object"
@@ -12863,14 +12860,14 @@
         }
       },
       "required": [
-        "dsn",
-        "message",
         "environment",
-        "release",
         "level",
         "transport_mode",
         "flush_timeout",
-        "sampling_rate"
+        "sampling_rate",
+        "dsn",
+        "message",
+        "release"
       ],
       "type": "object"
     },
@@ -12992,11 +12989,11 @@
         }
       },
       "required": [
+        "address",
+        "path",
         "codec",
         "credentials",
-        "max_in_flight",
-        "address",
-        "path"
+        "max_in_flight"
       ],
       "type": "object"
     },
@@ -13060,15 +13057,15 @@
         }
       },
       "required": [
+        "max_in_flight",
         "serverAddress",
         "serverPort",
-        "senderAddress",
-        "username",
-        "TLS",
         "InsecureSkipVerify",
-        "max_in_flight",
+        "senderAddress",
         "recipients",
-        "password"
+        "username",
+        "password",
+        "TLS"
       ],
       "type": "object"
     },
@@ -13547,11 +13544,11 @@
         }
       },
       "required": [
+        "max_in_flight",
+        "batching",
         "driver",
         "data_source_name",
-        "query",
-        "max_in_flight",
-        "batching"
+        "query"
       ],
       "type": "object"
     },
@@ -13680,13 +13677,13 @@
         }
       },
       "required": [
-        "table",
-        "max_in_flight",
-        "batching",
-        "driver",
-        "columns",
         "dsn",
-        "args_mapping"
+        "columns",
+        "batching",
+        "table",
+        "args_mapping",
+        "driver",
+        "max_in_flight"
       ],
       "type": "object"
     },
@@ -13819,11 +13816,11 @@
         }
       },
       "required": [
-        "driver",
-        "dsn",
-        "batching",
         "unsafe_dynamic_query",
-        "max_in_flight"
+        "max_in_flight",
+        "batching",
+        "driver",
+        "dsn"
       ],
       "type": "object"
     },
@@ -13941,8 +13938,8 @@
         }
       },
       "required": [
-        "auto_replay_nacks",
-        "max_buffer"
+        "max_buffer",
+        "auto_replay_nacks"
       ],
       "type": "object"
     },
@@ -14077,9 +14074,9 @@
         }
       },
       "required": [
-        "cases",
         "retry_until_success",
-        "strict_mode"
+        "strict_mode",
+        "cases"
       ],
       "type": "object"
     },
@@ -14206,10 +14203,10 @@
       },
       "required": [
         "target",
-        "max_in_flight",
-        "batching",
         "url",
-        "stream"
+        "max_in_flight",
+        "stream",
+        "batching"
       ],
       "type": "object"
     },
@@ -14242,10 +14239,10 @@
         }
       },
       "required": [
-        "lru_size",
-        "emit_interval",
         "max_events_per_topic_per_interval",
-        "max_buffer_size"
+        "max_buffer_size",
+        "lru_size",
+        "emit_interval"
       ],
       "type": "object"
     },
@@ -14301,15 +14298,15 @@
         }
       },
       "required": [
-        "poll_period",
-        "cache",
-        "rate_limit",
-        "api_key",
+        "query",
         "backfill_period",
         "cache_key",
         "api_secret",
-        "query",
-        "tweet_fields"
+        "tweet_fields",
+        "poll_period",
+        "cache",
+        "rate_limit",
+        "api_key"
       ],
       "type": "object"
     },
@@ -14597,9 +14594,9 @@
         }
       },
       "required": [
-        "tls",
         "jwt",
-        "url"
+        "url",
+        "tls"
       ],
       "type": "object"
     },
