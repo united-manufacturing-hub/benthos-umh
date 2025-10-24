@@ -669,6 +669,77 @@ metadata_format: "invalid"
 	})
 })
 
+var _ = Describe("MessageProcessor metadata format conversion", Label("message_processor"), func() {
+	var (
+		metrics *UnsInputMetrics
+	)
+
+	BeforeEach(func() {
+		resources := service.MockResources()
+		metrics = NewUnsInputMetrics(resources.Metrics())
+	})
+
+	Context("when metadataFormat is 'string'", func() {
+		It("should convert Kafka headers to string values", func() {
+			processor, err := NewMessageProcessor([]string{".*"}, metrics, "string")
+			Expect(err).To(BeNil())
+
+			record := &kgo.Record{
+				Key:   []byte("umh.v1.enterprise.site.area.line._raw.temperature"),
+				Value: []byte(`{"value": 42}`),
+				Headers: []kgo.RecordHeader{
+					{Key: "location_path", Value: []byte("enterprise.site.area.line")},
+					{Key: "data_contract", Value: []byte("_raw")},
+					{Key: "tag_name", Value: []byte("temperature")},
+				},
+			}
+
+			msg := processor.ProcessRecord(record)
+			Expect(msg).NotTo(BeNil())
+
+			// Verify headers are converted to strings
+			locationPath, exists := msg.MetaGet("location_path")
+			Expect(exists).To(BeTrue())
+			Expect(locationPath).To(BeAssignableToTypeOf(""))
+			Expect(locationPath).To(Equal("enterprise.site.area.line"))
+
+			dataContract, exists := msg.MetaGet("data_contract")
+			Expect(exists).To(BeTrue())
+			Expect(dataContract).To(BeAssignableToTypeOf(""))
+			Expect(dataContract).To(Equal("_raw"))
+
+			tagName, exists := msg.MetaGet("tag_name")
+			Expect(exists).To(BeTrue())
+			Expect(tagName).To(BeAssignableToTypeOf(""))
+			Expect(tagName).To(Equal("temperature"))
+		})
+	})
+
+	Context("when metadataFormat is 'bytes'", func() {
+		It("should keep Kafka headers as byte arrays", func() {
+			processor, err := NewMessageProcessor([]string{".*"}, metrics, "bytes")
+			Expect(err).To(BeNil())
+
+			record := &kgo.Record{
+				Key:   []byte("umh.v1.enterprise.site.area.line._raw.temperature"),
+				Value: []byte(`{"value": 42}`),
+				Headers: []kgo.RecordHeader{
+					{Key: "location_path", Value: []byte("enterprise.site.area.line")},
+				},
+			}
+
+			msg := processor.ProcessRecord(record)
+			Expect(msg).NotTo(BeNil())
+
+			// Verify headers remain as byte arrays (use MetaGetMut for raw value)
+			locationPath, exists := msg.MetaGetMut("location_path")
+			Expect(exists).To(BeTrue())
+			Expect(locationPath).To(BeAssignableToTypeOf([]byte{}))
+			Expect(locationPath).To(Equal([]byte("enterprise.site.area.line")))
+		})
+	})
+})
+
 var _ = Describe("MessageProcessor regex filtering", Label("message_processor"), func() {
 	var (
 		processor *MessageProcessor
@@ -688,6 +759,7 @@ var _ = Describe("MessageProcessor regex filtering", Label("message_processor"),
 			processor, err = NewMessageProcessor(
 				[]string{`^umh\.v1\.umh-ep(?:\.[^._][^.]*)+\._mitarbeiter\.[^._][^.]*$`},
 				metrics,
+				"bytes", // Add default metadata format
 			)
 			Expect(err).To(BeNil())
 		})
