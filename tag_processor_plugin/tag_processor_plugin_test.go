@@ -1048,9 +1048,21 @@ tag_processor:
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Test array (should be converted to string)
+			// Test string array (should be JSON serialized)
 			testMsg = service.NewMessage(nil)
 			testMsg.SetStructured([]interface{}{"a", "b", "c"})
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Test integer array (should be JSON serialized)
+			testMsg = service.NewMessage(nil)
+			testMsg.SetStructured([]interface{}{1, 2, 3})
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Test mixed type array (should be JSON serialized)
+			testMsg = service.NewMessage(nil)
+			testMsg.SetStructured([]interface{}{"text", 42, true})
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1063,10 +1075,10 @@ tag_processor:
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Should get six messages
+			// Should get eight messages
 			Eventually(func() int {
 				return len(messages)
-			}).Should(Equal(6))
+			}).Should(Equal(8))
 
 			// Check boolean value
 			msg := messages[0]
@@ -1120,7 +1132,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 			Expect(floatValue).To(BeNumerically("==", 23.5))
 
-			// Check array value (should be string)
+			// Check string array value (should be JSON serialized)
 			msg = messages[4]
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
@@ -1130,10 +1142,34 @@ tag_processor:
 			Expect(ok).To(BeTrue())
 			strValue, ok = value.(string)
 			Expect(ok).To(BeTrue())
-			Expect(strValue).To(Equal("[a b c]"))
+			Expect(strValue).To(Equal("[\"a\",\"b\",\"c\"]"))
+
+			// Check integer array value (should be JSON serialized)
+			msg = messages[5]
+			structured, err = msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			payload, ok = structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			value, ok = payload["value"]
+			Expect(ok).To(BeTrue())
+			strValue, ok = value.(string)
+			Expect(ok).To(BeTrue())
+			Expect(strValue).To(Equal("[1,2,3]"))
+
+			// Check mixed type array value (should be JSON serialized)
+			msg = messages[6]
+			structured, err = msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			payload, ok = structured.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			value, ok = payload["value"]
+			Expect(ok).To(BeTrue())
+			strValue, ok = value.(string)
+			Expect(ok).To(BeTrue())
+			Expect(strValue).To(Equal("[\"text\",42,true]"))
 
 			// Check object value (should be preserved)
-			msg = messages[5]
+			msg = messages[7]
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]interface{})
