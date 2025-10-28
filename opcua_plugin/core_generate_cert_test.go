@@ -82,4 +82,41 @@ var _ = Describe("GenerateCertWithMode Certificate Generation", func() {
 				"Client certificates should NOT have CertSign bit set")
 		})
 	})
+
+	Describe("Extended Key Usage for OPC UA client certificates", func() {
+
+		It("should only include ClientAuth Extended Key Usage", func() {
+			certPEM, _, _, err := GenerateCertWithMode(
+				365*24*time.Hour,
+				"SignAndEncrypt",
+				"Basic256Sha256",
+			)
+			Expect(err).ToNot(HaveOccurred())
+
+			block, _ := pem.Decode(certPEM)
+			cert, err := x509.ParseCertificate(block.Bytes)
+			Expect(err).ToNot(HaveOccurred())
+
+			Expect(cert.ExtKeyUsage).To(HaveLen(1),
+				"Certificate should have exactly 1 Extended Key Usage")
+			Expect(cert.ExtKeyUsage).To(ContainElement(x509.ExtKeyUsageClientAuth),
+				"Certificate should have ClientAuth Extended Key Usage")
+		})
+
+		It("should NOT include ServerAuth Extended Key Usage", func() {
+			certPEM, _, _, err := GenerateCertWithMode(
+				365*24*time.Hour,
+				"SignAndEncrypt",
+				"Basic256Sha256",
+			)
+			Expect(err).ToNot(HaveOccurred())
+
+			block, _ := pem.Decode(certPEM)
+			cert, err := x509.ParseCertificate(block.Bytes)
+			Expect(err).ToNot(HaveOccurred())
+
+			Expect(cert.ExtKeyUsage).ToNot(ContainElement(x509.ExtKeyUsageServerAuth),
+				"Client certificates should NOT have ServerAuth Extended Key Usage")
+		})
+	})
 })

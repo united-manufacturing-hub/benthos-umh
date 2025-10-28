@@ -120,9 +120,10 @@ func GenerateCertWithMode(
 		SignatureAlgorithm:    signatureAlgorithm,
 		IsCA:                  false,
 
-		// ExtKeyUsage: Both server & client auth for OPC UA usage
+		// Extended Key Usage: Client authentication only.
+		// OPC UA client certificates should only have ClientAuth, not ServerAuth.
+		// This certificate is used to authenticate the client to the server.
 		ExtKeyUsage: []x509.ExtKeyUsage{
-			x509.ExtKeyUsageServerAuth,
 			x509.ExtKeyUsageClientAuth,
 		},
 	}
