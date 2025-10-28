@@ -142,25 +142,21 @@ func GenerateCertWithMode(
 		}
 	}
 
-	// Decide on the key usage bits based on security mode
-	switch securityMode {
-	case "Sign":
-		// For Sign-only, we need DigitalSignature and ContentCommitment("NonRepudiation")
-		// meaning the certificate can be used to sign data or communications that
-		// the signer later cannot deny having signed it.
-		template.KeyUsage = x509.KeyUsageDigitalSignature |
-			x509.KeyUsageContentCommitment
-	case "SignAndEncrypt":
-		// For Sign and Encrypt, we need KeyEncipherment, DigitalSignature,
-		// DataEncipherement, ContentCommitment and CertSign
-		template.KeyUsage = x509.KeyUsageKeyEncipherment |
-			x509.KeyUsageDigitalSignature |
-			x509.KeyUsageDataEncipherment |
-			x509.KeyUsageContentCommitment |
-			x509.KeyUsageCertSign
-	default:
-		template.KeyUsage = x509.KeyUsageDigitalSignature
-	}
+	// Set Key Usage bits according to OPC UA Part 6 specification.
+	// All OPC UA client certificates MUST include these 4 bits:
+	// - DigitalSignature: Used to verify digital signatures on messages
+	// - ContentCommitment (NonRepudiation): Ensures the sender cannot deny sending
+	// - KeyEncipherment: Used to encrypt session keys
+	// - DataEncipherment: Used to encrypt user data
+	//
+	// These bits are REQUIRED regardless of the security mode (None/Sign/SignAndEncrypt)
+	// because the server may reject certificates that don't have all required bits.
+	//
+	// Reference: OPC UA Part 6 - Section 6.2.2 (Application Instance Certificate)
+	template.KeyUsage = x509.KeyUsageDigitalSignature |
+		x509.KeyUsageContentCommitment |
+		x509.KeyUsageKeyEncipherment |
+		x509.KeyUsageDataEncipherment
 
 	// Actually create the certificate
 	derBytes, err := x509.CreateCertificate(
