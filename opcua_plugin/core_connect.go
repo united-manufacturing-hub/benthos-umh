@@ -83,7 +83,6 @@ func (g *OPCUAConnection) GetOPCUAClientOptions(
 	selectedAuthentication ua.UserTokenType,
 	discoveryOnly bool,
 ) (opts []opcua.Option, err error) {
-
 	// Basic security from the endpoint + user token type
 	opts = append(opts, opcua.SecurityFromEndpoint(selectedEndpoint, selectedAuthentication))
 
@@ -238,11 +237,9 @@ func (g *OPCUAConnection) parseUserCertificateOptions() ([]opcua.Option, error) 
 		opcua.AuthCertificate(cert.Raw),
 		opcua.AuthPrivateKey(privateKey),
 	}, nil
-
 }
 
 func parsePrivateKey(b []byte) (*rsa.PrivateKey, error) {
-
 	// Decode privateKey PEM Data. Handle Multiple formats
 	block, _ := pem.Decode(b)
 	if block == nil {
@@ -420,7 +417,6 @@ func (g *OPCUAConnection) FetchAllEndpoints(ctx context.Context) ([]*ua.Endpoint
 //   - To inform the user using a Fingerprint of the Server's certificate would
 //     be more secure
 func (g *OPCUAConnection) checkServerCertificateFingerprint(endpoint *ua.EndpointDescription) error {
-
 	if g.ServerCertificates[endpoint] == "" {
 		return fmt.Errorf("The servers endpoint '%s' doesn't provide any server certificate. "+
 			"This is crucial in order to get a reliable OPC-UA connection, please "+
@@ -445,7 +441,7 @@ func (g *OPCUAConnection) checkServerCertificateFingerprint(endpoint *ua.Endpoin
 		// the 'serverCertificateFingerprint'
 		g.Log.Infof(
 			"No 'serverCertificateFingerprint' was provided. "+
-				"We strongly recommend specifying 'serverCertificateFingerprint=%s' to verify the server's identity "+
+				"We strongly recommend specifying 'serverCertificateFingerprint: %s' to verify the server's identity "+
 				"and avoid potential security risks. Future releases may escalate this to a warning that prevents deployment.", g.ServerCertificates[endpoint],
 		)
 	}
@@ -463,7 +459,6 @@ func (g *OPCUAConnection) checkServerCertificateFingerprint(endpoint *ua.Endpoin
 //   - to store each endpoint of the OPC-UA-Server and it's corresponding fingerprint
 //   - to prevent edge-cases where certificates could differ for its endpoints
 func (g *OPCUAConnection) storeServerCertificateFingerprint(endpoint *ua.EndpointDescription) error {
-
 	pemCert := pem.EncodeToMemory(&pem.Block{
 		Type:  "CERTIFICATE",
 		Bytes: endpoint.ServerCertificate,
@@ -580,7 +575,6 @@ func (g *OPCUAConnection) ReplaceHostInEndpoints(endpoints []*ua.EndpointDescrip
 // the URL while preserving the original path and query parameters. It ensures that the modified URL remains
 // valid and compatible with OPC UA communication protocols.
 func (g *OPCUAConnection) ReplaceHostInEndpointURL(endpointURL, newHost string) (string, error) {
-
 	// Remove the "opc.tcp://" prefix to simplify parsing.
 	newHost = strings.TrimPrefix(newHost, "opc.tcp://")
 
@@ -650,11 +644,9 @@ func (g *OPCUAConnection) connectWithoutSecurity(
 	endpoints []*ua.EndpointDescription,
 	authType ua.UserTokenType,
 ) (*opcua.Client, error) {
-
 	// Order the endpoints based on the expected success of the connection
 	// orderedEndpoints := g.orderEndpoints(endpoints, authType)
 	for _, currentEndpoint := range endpoints {
-
 		// Connect to the "None"-security endpoint if found in endpoints-list.
 		if isNoSecurityEndpoint(currentEndpoint) {
 			c, err := g.openConnection(ctx, currentEndpoint, authType, false)
@@ -685,7 +677,6 @@ func (g *OPCUAConnection) connectWithoutSecurity(
 				g.Log.Infof("Selected endpoint timed out. Selecting next one: %v", currentEndpoint)
 			}
 		}
-
 	}
 	return nil, errors.New("error could not connect successfully to any endpoint")
 }
@@ -750,7 +741,6 @@ func (g *OPCUAConnection) unencryptedConnect(
 	endpoints []*ua.EndpointDescription,
 	authType ua.UserTokenType,
 ) (*opcua.Client, error) {
-
 	g.Log.Infof("Establishing an unencrypted connection...")
 
 	// If there are no endpoints found or the `directConnect`-flag is set try to
@@ -778,7 +768,6 @@ func (g *OPCUAConnection) unencryptedConnect(
 // It takes a context for managing the connection lifecycle and an authentication type for user token.
 // It returns an OPC UA client instance and an error if the connection fails.
 func (g *OPCUAConnection) connectToDirectEndpoint(ctx context.Context, authType ua.UserTokenType) (*opcua.Client, error) {
-
 	g.Log.Infof("Directly connecting to the endpoint %s", g.Endpoint)
 
 	// Create a new endpoint description
@@ -909,7 +898,6 @@ func (g *OPCUAConnection) openConnection(
 	authType ua.UserTokenType,
 	discoveryOnly bool,
 ) (*opcua.Client, error) {
-
 	opts, err := g.GetOPCUAClientOptions(endpoint, authType, discoveryOnly)
 	if err != nil {
 		g.Log.Errorf("Failed to get OPC UA client options: %s", err)
