@@ -41,12 +41,23 @@ import (
 )
 
 // GenerateCertWithMode generates a self-signed X.509 certificate for OPC UA
-// usage, taking into account the security mode (Sign vs SignAndEncrypt) and
-// the desired security policy (Basic128Rsa15, Basic256, Basic256Sha256, etc.).
+// client usage that complies with OPC UA Part 6 requirements.
 //
-//   - validFor:				Certificate validity duration
-//   - securityMode:		The OPC UA message security mode (None, Sign, SignAndEncrypt)
+// Certificate Configuration:
+//   - Key Usage bits: All 4 required bits are ALWAYS set regardless of security mode:
+//     * DigitalSignature, ContentCommitment, KeyEncipherment, DataEncipherment
+//   - Extended Key Usage: ClientAuth only (not ServerAuth)
+//   - Signature Algorithm: Based on securityPolicy (SHA1 or SHA256)
+//   - Key Size: Based on securityPolicy (1024 or 2048 bits RSA)
+//
+// Parameters:
+//   - validFor:        Certificate validity duration
+//   - securityMode:    The OPC UA message security mode (None, Sign, SignAndEncrypt)
+//                      Note: Key Usage bits are set according to OPC UA Part 6 spec,
+//                      NOT based on this parameter
 //   - securityPolicy:  The OPC UA security policy (e.g., "Basic128Rsa15", "Basic256", "Basic256Sha256")
+//
+// Reference: OPC UA Part 6 - Section 6.2.2 (Application Instance Certificate)
 func GenerateCertWithMode(
 	validFor time.Duration,
 	securityMode string,
