@@ -405,6 +405,17 @@ func (s *sparkplugInput) messageHandler(client mqtt.Client, msg mqtt.Message) {
 
 	s.messagesReceived.Incr(1)
 
+	// Check if messages channel is closed before attempting to send
+	// This prevents race condition where Close() closes the channel
+	// after done check but before the send operation
+	// Use RLock since we're only reading the closed flag
+	s.mu.RLock()
+	if s.closed {
+		s.mu.RUnlock()
+		return
+	}
+	s.mu.RUnlock()
+
 	// Non-blocking send to message channel with shutdown check
 	select {
 	case s.messages <- mqttMessage{topic: msg.Topic(), payload: msg.Payload()}:
