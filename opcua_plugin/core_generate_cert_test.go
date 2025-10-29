@@ -160,7 +160,7 @@ var _ = Describe("GenerateCertWithMode Certificate Generation", func() {
 					}
 				}
 				Expect(hasURN).To(BeTrue(),
-					"Certificate URIs should contain at least one URN with 'urn:' scheme")
+					"Certificate URIs should contain at least one URN with 'urn' scheme")
 
 				// Verify DNSNames does NOT contain any URN strings
 				for _, dnsName := range cert.DNSNames {
