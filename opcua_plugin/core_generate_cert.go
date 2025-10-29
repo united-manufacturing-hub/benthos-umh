@@ -41,12 +41,23 @@ import (
 )
 
 // GenerateCertWithMode generates a self-signed X.509 certificate for OPC UA
-// usage, taking into account the security mode (Sign vs SignAndEncrypt) and
-// the desired security policy (Basic128Rsa15, Basic256, Basic256Sha256, etc.).
+// client usage that complies with OPC UA Part 6 requirements.
 //
-//   - validFor:				Certificate validity duration
-//   - securityMode:		The OPC UA message security mode (None, Sign, SignAndEncrypt)
+// Certificate Configuration:
+//   - Key Usage bits: All 4 required bits are ALWAYS set regardless of security mode:
+//     * DigitalSignature, ContentCommitment, KeyEncipherment, DataEncipherment
+//   - Extended Key Usage: ClientAuth only (not ServerAuth)
+//   - Signature Algorithm: Based on securityPolicy (SHA1 or SHA256)
+//   - Key Size: Based on securityPolicy (1024 or 2048 bits RSA)
+//
+// Parameters:
+//   - validFor:        Certificate validity duration
+//   - securityMode:    The OPC UA message security mode (None, Sign, SignAndEncrypt)
+//                      Note: Key Usage bits are set according to OPC UA Part 6 spec,
+//                      NOT based on this parameter
 //   - securityPolicy:  The OPC UA security policy (e.g., "Basic128Rsa15", "Basic256", "Basic256Sha256")
+//
+// Reference: OPC UA Part 6 - Section 6.2.2 (Application Instance Certificate)
 func GenerateCertWithMode(
 	validFor time.Duration,
 	securityMode string,
@@ -120,9 +131,10 @@ func GenerateCertWithMode(
 		SignatureAlgorithm:    signatureAlgorithm,
 		IsCA:                  false,
 
-		// ExtKeyUsage: Both server & client auth for OPC UA usage
+		// Extended Key Usage: Client authentication only.
+		// OPC UA client certificates should only have ClientAuth, not ServerAuth.
+		// This certificate is used to authenticate the client to the server.
 		ExtKeyUsage: []x509.ExtKeyUsage{
-			x509.ExtKeyUsageServerAuth,
 			x509.ExtKeyUsageClientAuth,
 		},
 	}
@@ -130,37 +142,55 @@ func GenerateCertWithMode(
 	clientName = template.Subject.CommonName
 
 	// Fill in IPAddresses, DNSNames, URIs from the ApplicationURI string (comma-separated)
+	// Each host must go into EXACTLY ONE field to comply with OPC UA certificate requirements:
+	// - IP addresses → IPAddresses
+	// - URNs (urn:*) and URLs (http(s)://*) → URIs
+	// - DNS hostnames → DNSNames
 	hosts := strings.Split(host, ",")
 	for _, h := range hosts {
+		// Trim whitespace from each host entry
+		h = strings.TrimSpace(h)
+
+		// Skip empty strings
+		if h == "" {
+			continue
+		}
+
+		// Check if it's an IP address
 		if ip := net.ParseIP(h); ip != nil {
 			template.IPAddresses = append(template.IPAddresses, ip)
-		} else {
-			template.DNSNames = append(template.DNSNames, h)
+			continue  // Prevent fall-through to other fields
 		}
-		if uri, parseErr := url.Parse(h); parseErr == nil && (uri.Scheme == "urn" || uri.Scheme == "http" || uri.Scheme == "https") {
+
+		// Check if it's a URI with a scheme (urn:, http://, https://)
+		if uri, parseErr := url.Parse(h); parseErr == nil && uri.Scheme != "" && (uri.Scheme == "urn" || uri.Scheme == "http" || uri.Scheme == "https") {
 			template.URIs = append(template.URIs, uri)
+			continue  // Prevent fall-through to DNSNames
 		}
+
+		// Fallback: treat as DNS hostname
+		// TODO: validate this is a valid DNS hostname
+		template.DNSNames = append(template.DNSNames, h)
 	}
 
-	// Decide on the key usage bits based on security mode
-	switch securityMode {
-	case "Sign":
-		// For Sign-only, we need DigitalSignature and ContentCommitment("NonRepudiation")
-		// meaning the certificate can be used to sign data or communications that
-		// the signer later cannot deny having signed it.
-		template.KeyUsage = x509.KeyUsageDigitalSignature |
-			x509.KeyUsageContentCommitment
-	case "SignAndEncrypt":
-		// For Sign and Encrypt, we need KeyEncipherment, DigitalSignature,
-		// DataEncipherement, ContentCommitment and CertSign
-		template.KeyUsage = x509.KeyUsageKeyEncipherment |
-			x509.KeyUsageDigitalSignature |
-			x509.KeyUsageDataEncipherment |
-			x509.KeyUsageContentCommitment |
-			x509.KeyUsageCertSign
-	default:
-		template.KeyUsage = x509.KeyUsageDigitalSignature
-	}
+	// Set Key Usage bits according to OPC UA Part 6 specification.
+	// All OPC UA client certificates MUST include these 4 bits:
+	// - DigitalSignature: Used to verify digital signatures on messages
+	// - ContentCommitment (NonRepudiation): Ensures the sender cannot deny sending
+	// - KeyEncipherment: Used to encrypt session keys
+	// - DataEncipherment: Used to encrypt user data
+	//
+	// Additionally, self-signed certificates MUST include KeyUsageCertSign (bit 5)
+	// for Eclipse Milo compatibility. Eclipse Milo enforces this requirement even
+	// though OPC UA Part 6 doesn't explicitly require it for end-entity certificates.
+	//
+	// Reference: OPC UA Part 6 - Section 6.2.2 (Application Instance Certificate)
+	// Reference: Eclipse Milo CertificateValidationUtil.checkEndEntityKeyUsage() line 554-557
+	template.KeyUsage = x509.KeyUsageDigitalSignature |
+		x509.KeyUsageContentCommitment |
+		x509.KeyUsageKeyEncipherment |
+		x509.KeyUsageDataEncipherment |
+		x509.KeyUsageCertSign
 
 	// Actually create the certificate
 	derBytes, err := x509.CreateCertificate(
