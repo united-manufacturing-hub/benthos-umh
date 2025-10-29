@@ -197,21 +197,19 @@ var _ = Describe("GenerateCertWithMode Certificate Generation", func() {
 				// This test validates that IF IPs are present, they're in the correct field
 
 				// If IPAddresses is populated, verify no IPs in DNSNames or URIs
-				if len(cert.IPAddresses) > 0 {
-					for _, ip := range cert.IPAddresses {
-						ipString := ip.String()
+				for _, ip := range cert.IPAddresses {
+					ipString := ip.String()
 
-						// Verify IP is NOT in DNSNames
-						Expect(cert.DNSNames).ToNot(ContainElement(ipString),
-							"IP address %s should NOT be in DNSNames field", ipString)
+					// Verify IP is NOT in DNSNames
+					Expect(cert.DNSNames).ToNot(ContainElement(ipString),
+						"IP address %s should NOT be in DNSNames field", ipString)
 
-						// Verify IP is NOT in URIs
-						for _, uri := range cert.URIs {
-							Expect(uri.String()).ToNot(Equal(ipString),
-								"IP address %s should NOT be in URIs field", ipString)
-							Expect(uri.Host).ToNot(Equal(ipString),
-								"IP address %s should NOT be in URI Host field", ipString)
-						}
+					// Verify IP is NOT in URIs
+					for _, uri := range cert.URIs {
+						Expect(uri.String()).ToNot(Equal(ipString),
+							"IP address %s should NOT be in URIs field", ipString)
+						Expect(uri.Host).ToNot(Equal(ipString),
+							"IP address %s should NOT be in URI Host field", ipString)
 					}
 				}
 			})
