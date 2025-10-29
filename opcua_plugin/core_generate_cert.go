@@ -142,16 +142,34 @@ func GenerateCertWithMode(
 	clientName = template.Subject.CommonName
 
 	// Fill in IPAddresses, DNSNames, URIs from the ApplicationURI string (comma-separated)
+	// Each host must go into EXACTLY ONE field to comply with OPC UA certificate requirements:
+	// - IP addresses → IPAddresses
+	// - URNs (urn:*) and URLs (http(s)://*) → URIs
+	// - DNS hostnames → DNSNames
 	hosts := strings.Split(host, ",")
 	for _, h := range hosts {
+		// Trim whitespace from each host entry
+		h = strings.TrimSpace(h)
+
+		// Skip empty strings
+		if h == "" {
+			continue
+		}
+
+		// Check if it's an IP address
 		if ip := net.ParseIP(h); ip != nil {
 			template.IPAddresses = append(template.IPAddresses, ip)
-		} else {
-			template.DNSNames = append(template.DNSNames, h)
+			continue  // Prevent fall-through to other fields
 		}
-		if uri, parseErr := url.Parse(h); parseErr == nil && (uri.Scheme == "urn" || uri.Scheme == "http" || uri.Scheme == "https") {
+
+		// Check if it's a URI with a scheme (urn:, http://, https://)
+		if uri, parseErr := url.Parse(h); parseErr == nil && uri.Scheme != "" && (uri.Scheme == "urn" || uri.Scheme == "http" || uri.Scheme == "https") {
 			template.URIs = append(template.URIs, uri)
+			continue  // Prevent fall-through to DNSNames
 		}
+
+		// Fallback: treat as DNS hostname
+		template.DNSNames = append(template.DNSNames, h)
 	}
 
 	// Set Key Usage bits according to OPC UA Part 6 specification.
@@ -161,14 +179,17 @@ func GenerateCertWithMode(
 	// - KeyEncipherment: Used to encrypt session keys
 	// - DataEncipherment: Used to encrypt user data
 	//
-	// These bits are REQUIRED regardless of the security mode (None/Sign/SignAndEncrypt)
-	// because the server may reject certificates that don't have all required bits.
+	// Additionally, self-signed certificates MUST include KeyUsageCertSign (bit 5)
+	// for Eclipse Milo compatibility. Eclipse Milo enforces this requirement even
+	// though OPC UA Part 6 doesn't explicitly require it for end-entity certificates.
 	//
 	// Reference: OPC UA Part 6 - Section 6.2.2 (Application Instance Certificate)
+	// Reference: Eclipse Milo CertificateValidationUtil.checkEndEntityKeyUsage() line 554-557
 	template.KeyUsage = x509.KeyUsageDigitalSignature |
 		x509.KeyUsageContentCommitment |
 		x509.KeyUsageKeyEncipherment |
-		x509.KeyUsageDataEncipherment
+		x509.KeyUsageDataEncipherment |
+		x509.KeyUsageCertSign
 
 	// Actually create the certificate
 	derBytes, err := x509.CreateCertificate(
