@@ -67,7 +67,7 @@ var _ = Describe("GenerateCertWithMode Certificate Generation", func() {
 			Entry("SignAndEncrypt with Basic256Sha256", "SignAndEncrypt", "Basic256Sha256"),
 		)
 
-		It("should NOT include CertSign bit for client certificates", func() {
+		It("should include KeyCertSign bit for OPC UA client certificates (OPC UA Part 6 requirement)", func() {
 			certPEM, _, _, err := GenerateCertWithMode(
 				365*24*time.Hour,
 				"SignAndEncrypt",
@@ -79,8 +79,10 @@ var _ = Describe("GenerateCertWithMode Certificate Generation", func() {
 			cert, err := x509.ParseCertificate(block.Bytes)
 			Expect(err).ToNot(HaveOccurred())
 
-			Expect(cert.KeyUsage & x509.KeyUsageCertSign).To(Equal(x509.KeyUsage(0)),
-				"Client certificates should NOT have CertSign bit set")
+			Expect(cert.KeyUsage & x509.KeyUsageCertSign).To(Equal(x509.KeyUsageCertSign),
+				"OPC UA client certificates MUST have KeyCertSign bit (bit 5) set per OPC UA Part 6 specification. "+
+				"This is required for Eclipse Milo and other OPC UA implementations that strictly validate certificates. "+
+				"See: https://reference.opcfoundation.org/Core/Part6/v105/docs/6.2.2")
 		})
 	})
 
