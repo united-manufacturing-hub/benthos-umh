@@ -169,6 +169,7 @@ func GenerateCertWithMode(
 		}
 
 		// Fallback: treat as DNS hostname
+		// TODO: validate this is a valid DNS hostname
 		template.DNSNames = append(template.DNSNames, h)
 	}
 
