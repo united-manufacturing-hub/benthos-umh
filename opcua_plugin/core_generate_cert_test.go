@@ -67,7 +67,7 @@ var _ = Describe("GenerateCertWithMode Certificate Generation", func() {
 			Entry("SignAndEncrypt with Basic256Sha256", "SignAndEncrypt", "Basic256Sha256"),
 		)
 
-		It("should include KeyCertSign bit for OPC UA client certificates (OPC UA Part 6 requirement)", func() {
+		It("should include KeyCertSign bit for Eclipse Milo compatibility (self-signed certificates)", func() {
 			certPEM, _, _, err := GenerateCertWithMode(
 				365*24*time.Hour,
 				"SignAndEncrypt",
@@ -80,9 +80,10 @@ var _ = Describe("GenerateCertWithMode Certificate Generation", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			Expect(cert.KeyUsage & x509.KeyUsageCertSign).To(Equal(x509.KeyUsageCertSign),
-				"OPC UA client certificates MUST have KeyCertSign bit (bit 5) set per OPC UA Part 6 specification. "+
-				"This is required for Eclipse Milo and other OPC UA implementations that strictly validate certificates. "+
-				"See: https://reference.opcfoundation.org/Core/Part6/v105/docs/6.2.2")
+				"Self-signed OPC UA client certificates MUST have KeyCertSign bit (bit 5) for Eclipse Milo compatibility. "+
+				"While OPC UA Part 6 only requires bits 0-3 for end-entity certificates, Eclipse Milo enforces KeyCertSign "+
+				"for self-signed certificates as they must be able to sign themselves. This is validated in "+
+				"CertificateValidationUtil.java lines 554-557. Required for Ignition Gateway and other Milo-based servers.")
 		})
 	})
 
