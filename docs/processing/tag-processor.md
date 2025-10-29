@@ -51,7 +51,7 @@ Output:
 }
 ```
 
-2. **Arrays** (converted to string representation)\
+2. **Arrays** (converted to JSON string representation)\
    Input:
 
 ```json
@@ -62,7 +62,7 @@ Output:
 
 ```json
 {
-  "value": "[a b c]"
+  "value": "[\"a\",\"b\",\"c\"]"
 }
 ```
 
@@ -117,8 +117,10 @@ This consistent formatting ensures that:
 
 - All messages have a "value" field
 - Simple types (numbers, strings, booleans) are preserved as-is
-- Complex types (arrays, objects) are converted to their string representations
+- Complex types (arrays, objects) are converted to JSON string representations
 - Numbers are always preserved as numeric types (integers or floats)
+
+> **Breaking change in v4.0.0**: Arrays now serialize to JSON format `["a","b","c"]` instead of space-separated format `[a b c]`. This preserves type information and enables array parsing in downstream processors.
 
 **Configuration**
 

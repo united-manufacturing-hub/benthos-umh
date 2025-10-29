@@ -617,7 +617,11 @@ func (p *TagProcessor) convertValue(v interface{}) interface{} {
 	case float64, float32, int, int32, int64, uint, uint32, uint64:
 		return json.Number(fmt.Sprintf("%v", val))
 	case []interface{}:
-		return fmt.Sprintf("%v", val)
+		jsonBytes, err := json.Marshal(val)
+		if err != nil {
+			return fmt.Sprintf("%v", val) // fallback for safety
+		}
+		return string(jsonBytes)
 	case map[string]interface{}:
 		jsonBytes, err := json.Marshal(val)
 		if err != nil {
