@@ -57,11 +57,8 @@ var _ = Describe("100k Scale Browse Test", Label("100k_scale"), func() {
 
 			// Setup channels and wait groups
 			nodeChan := make(chan NodeDef, MaxTagsToBrowse) // 100k buffer
-			defer close(nodeChan)
 			errChan := make(chan error, MaxTagsToBrowse)
-			defer close(errChan)
 			opcuaBrowserChan := make(chan BrowseDetails, MaxTagsToBrowse)
-			defer close(opcuaBrowserChan)
 			var wg TrackedWaitGroup
 			var visited sync.Map
 			logger := &MockLogger{}
@@ -69,6 +66,17 @@ var _ = Describe("100k Scale Browse Test", Label("100k_scale"), func() {
 			// ACT: Start browsing
 			wg.Add(1)
 			go Browse(ctx, rootNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, &visited)
+
+			// Start concurrent consumer to drain nodeChan as Browse produces nodes
+			// This prevents deadlock when Browse workers fill the 100k buffer
+			var discoveredNodes []NodeDef
+			consumerDone := make(chan struct{})
+			go func() {
+				for node := range nodeChan {
+					discoveredNodes = append(discoveredNodes, node)
+				}
+				close(consumerDone)
+			}()
 
 			// Wait for browse to complete with timeout detection
 			done := make(chan struct{})
@@ -84,11 +92,13 @@ var _ = Describe("100k Scale Browse Test", Label("100k_scale"), func() {
 				Fail("Browse operation timed out - likely deadlock at 100k buffer limit")
 			}
 
-			// ASSERT: Collect all discovered nodes
-			var discoveredNodes []NodeDef
-			for node := range nodeChan {
-				discoveredNodes = append(discoveredNodes, node)
-			}
+			// Close channels to signal completion
+			close(nodeChan)
+			close(errChan)
+			close(opcuaBrowserChan)
+
+			// Wait for consumer to finish draining
+			<-consumerDone
 
 			// Check for errors
 			var errors []error
