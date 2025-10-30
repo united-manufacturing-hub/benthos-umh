@@ -79,6 +79,40 @@ var _ = Describe("UpdateNodePaths", func() {
 				{Path: "Root.Unique", NodeID: ua.MustParseNodeID("ns=2;i=400")},
 			},
 		),
+		Entry("single-segment paths (root nodes) - Roger's edge case",
+			[]NodeDef{
+				{Path: "RootTag", NodeID: ua.MustParseNodeID("ns=1;s=node1")},
+				{Path: "RootTag", NodeID: ua.MustParseNodeID("ns=1;s=node2")},
+			},
+			[]NodeDef{
+				{Path: "ns_1_s_node1", NodeID: ua.MustParseNodeID("ns=1;s=node1")},
+				{Path: "ns_1_s_node2", NodeID: ua.MustParseNodeID("ns=1;s=node2")},
+			},
+		),
+		Entry("empty paths (defensive)",
+			[]NodeDef{
+				{Path: "", NodeID: ua.MustParseNodeID("ns=1;s=node1")},
+				{Path: "", NodeID: ua.MustParseNodeID("ns=1;s=node2")},
+			},
+			[]NodeDef{
+				{Path: "ns_1_s_node1", NodeID: ua.MustParseNodeID("ns=1;s=node1")},
+				{Path: "ns_1_s_node2", NodeID: ua.MustParseNodeID("ns=1;s=node2")},
+			},
+		),
+		Entry("mixed depth paths",
+			[]NodeDef{
+				{Path: "Root", NodeID: ua.MustParseNodeID("ns=1;s=node1")},
+				{Path: "Root", NodeID: ua.MustParseNodeID("ns=1;s=node2")},
+				{Path: "Root.Folder.Tag", NodeID: ua.MustParseNodeID("ns=1;s=node3")},
+				{Path: "Root.Folder.Tag", NodeID: ua.MustParseNodeID("ns=1;s=node4")},
+			},
+			[]NodeDef{
+				{Path: "ns_1_s_node1", NodeID: ua.MustParseNodeID("ns=1;s=node1")},
+				{Path: "ns_1_s_node2", NodeID: ua.MustParseNodeID("ns=1;s=node2")},
+				{Path: "Root.Folder.ns_1_s_node3", NodeID: ua.MustParseNodeID("ns=1;s=node3")},
+				{Path: "Root.Folder.ns_1_s_node4", NodeID: ua.MustParseNodeID("ns=1;s=node4")},
+			},
+		),
 	)
 })
 

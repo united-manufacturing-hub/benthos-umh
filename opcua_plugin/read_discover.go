@@ -313,8 +313,12 @@ func UpdateNodePaths(nodes []NodeDef) {
 			// This path appears multiple times, update all of them
 			for _, idx := range indices {
 				nodePathSplit := strings.Split(path, ".")
-				nodePath := strings.Join(nodePathSplit[:len(nodePathSplit)-1], ".")
-				nodePath = nodePath + "." + sanitize(nodes[idx].NodeID.String())
+				parentPath := ""
+				if len(nodePathSplit) > 1 {
+					parentPath = strings.Join(nodePathSplit[:len(nodePathSplit)-1], ".")
+				}
+				// Use join() to avoid leading dots for single-segment paths
+				nodePath := join(parentPath, sanitize(nodes[idx].NodeID.String()))
 				nodes[idx].Path = nodePath
 			}
 		}
