@@ -51,7 +51,13 @@ var OPCUAConfigSpec = OPCUAConnectionConfigSpec.
 		Default(DefaultPollRate)).
 	Field(service.NewIntField("queueSize").
 		Description("The size of the queue, which will get filled from the OPC UA server when requesting its data via subscription").Default(DefaultQueueSize)).
-	Field(service.NewFloatField("samplingInterval").Description("The interval for sampling on the OPC UA server - notice 0.0 will get you updates as fast as possible").Default(DefaultSamplingInterval))
+	Field(service.NewFloatField("samplingInterval").Description("The interval for sampling on the OPC UA server - notice 0.0 will get you updates as fast as possible").Default(DefaultSamplingInterval)).
+	Field(service.NewStringField("deadbandType").
+		Description("Deadband filter type: 'none' (disabled, default), 'absolute' (numeric threshold), 'percent' (percentage of EURange). Only applies when subscribeEnabled=true. Server-side filtering reduces message rate by 50-70% for slowly-changing sensors.").
+		Default("none")).
+	Field(service.NewFloatField("deadbandValue").
+		Description("Deadband threshold value. For absolute: numeric change required (e.g., 0.5 means ±0.5 change). For percent: percentage of EURange 0-100 (e.g., 2.0 = 2% of sensor range). Ignored if deadbandType='none'.").
+		Default(0.0))
 
 func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 	// Parse all nodeIDs to validate them.
@@ -108,6 +114,26 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		return nil, err
 	}
 
+	deadbandType, err := conf.FieldString("deadbandType")
+	if err != nil {
+		return nil, err
+	}
+
+	deadbandValue, err := conf.FieldFloat("deadbandValue")
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate deadbandType
+	validTypes := map[string]bool{
+		"none":     true,
+		"absolute": true,
+		"percent":  true,
+	}
+	if !validTypes[deadbandType] {
+		return nil, fmt.Errorf("invalid deadbandType '%s', must be 'none', 'absolute', or 'percent'", deadbandType)
+	}
+
 	// fail if no nodeIDs are provided
 	if len(nodeIDs) == 0 {
 		return nil, errors.New("no nodeIDs provided")
@@ -127,6 +153,8 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		PollRate:                     pollRate,
 		QueueSize:                    uint32(queueSize),
 		SamplingInterval:             samplingInterval,
+		DeadbandType:                 deadbandType,
+		DeadbandValue:                deadbandValue,
 	}
 
 	m.cleanup_func = func(ctx context.Context) {
@@ -166,6 +194,8 @@ type OPCUAInput struct {
 	PollRate                     int
 	QueueSize                    uint32
 	SamplingInterval             float64
+	DeadbandType                 string
+	DeadbandValue                float64
 }
 
 // unsubscribeAndResetHeartbeat unsubscribes from the OPC UA subscription and resets the heartbeat
