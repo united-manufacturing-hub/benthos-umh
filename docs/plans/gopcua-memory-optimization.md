@@ -49,7 +49,7 @@ Total gopcua allocations                    2,239MB      58.6%
 
 ### Source Code Analysis: uacp.Conn.Receive()
 
-**File:** `/Users/jeremytheocharis/umh-git/protocol-libraries/opcua/uacp/conn.go:359-398`
+**File:** `protocol-libraries/opcua/uacp/conn.go:359-398`
 
 ```go
 // Receive reads a full UACP message from the underlying connection.
@@ -91,7 +91,7 @@ func (c *Conn) Receive() ([]byte, error) {
 
 ### Source Code Analysis: uasc.mergeChunks()
 
-**File:** `/Users/jeremytheocharis/umh-git/protocol-libraries/opcua/uasc/secure_channel.go:1213-1231`
+**File:** `protocol-libraries/opcua/uasc/secure_channel.go:1213-1231`
 
 ```go
 func mergeChunks(chunks []*MessageChunk) ([]byte, error) {
@@ -594,8 +594,8 @@ go tool pprof -base=before.prof after.prof
 ### Performance Data
 
 **Heap profile:** `/tmp/pprof-heap-10k.prof`
-**Bottleneck analysis:** `/Users/jeremytheocharis/umh-git/benthos-umh-fix3/docs/plans/bottleneck-analysis-10k.md`
-**Test results:** `/Users/jeremytheocharis/umh-git/benthos-umh-fix3/docs/plans/pr223-test-results.md`
+**Bottleneck analysis:** `docs/plans/bottleneck-analysis-10k.md`
+**Test results:** `docs/plans/pr223-test-results.md`
 
 ### Go Documentation
 
