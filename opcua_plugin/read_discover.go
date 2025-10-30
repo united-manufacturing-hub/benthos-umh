@@ -311,22 +311,27 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 // UpdateNodePaths updates the node paths to use the nodeID instead of the browseName
 // if the browseName is not unique
 func UpdateNodePaths(nodes []NodeDef) {
-	for i, node := range nodes {
-		for j, otherNode := range nodes {
-			if i == j {
-				continue
-			}
-			if node.Path == otherNode.Path {
-				// update only the last element of the path, after the last dot
-				nodePathSplit := strings.Split(node.Path, ".")
-				nodePath := strings.Join(nodePathSplit[:len(nodePathSplit)-1], ".")
-				nodePath = nodePath + "." + sanitize(node.NodeID.String())
-				nodes[i].Path = nodePath
+	// Track which paths have been seen and how many times
+	pathCount := make(map[string][]int)
 
-				otherNodePathSplit := strings.Split(otherNode.Path, ".")
-				otherNodePath := strings.Join(otherNodePathSplit[:len(otherNodePathSplit)-1], ".")
-				otherNodePath = otherNodePath + "." + sanitize(otherNode.NodeID.String())
-				nodes[j].Path = otherNodePath
+	// Count occurrences of each path and track indices
+	for i, node := range nodes {
+		pathCount[node.Path] = append(pathCount[node.Path], i)
+	}
+
+	// Update paths that have duplicates
+	for path, indices := range pathCount {
+		if len(indices) > 1 {
+			// This path appears multiple times, update all of them
+			for _, idx := range indices {
+				nodePathSplit := strings.Split(path, ".")
+				parentPath := ""
+				if len(nodePathSplit) > 1 {
+					parentPath = strings.Join(nodePathSplit[:len(nodePathSplit)-1], ".")
+				}
+				// Use join() to avoid leading dots for single-segment paths
+				nodePath := join(parentPath, sanitize(nodes[idx].NodeID.String()))
+				nodes[idx].Path = nodePath
 			}
 		}
 	}
