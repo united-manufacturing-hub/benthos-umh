@@ -15,7 +15,8 @@
 package opcua_plugin
 
 import (
-	"testing"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/gopcua/opcua/ua"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -23,57 +24,29 @@ import (
 
 // TestSubscriptionFailureMetrics verifies that failed subscriptions
 // are tracked with proper labels
-func TestSubscriptionFailureMetrics(t *testing.T) {
-	// Reset metrics before test
-	ResetMetrics()
+var _ = Describe("Subscription Failure Metrics", func() {
+	BeforeEach(func() {
+		// Reset metrics before each test
+		ResetMetrics()
+	})
 
-	tests := []struct {
-		name           string
-		statusCode     ua.StatusCode
-		nodeID         string
-		expectedReason string
-	}{
-		{
-			name:           "filter not allowed",
-			statusCode:     ua.StatusBadFilterNotAllowed,
-			nodeID:         "ns=3;s=ByteString1",
-			expectedReason: "filter_not_allowed",
-		},
-		{
-			name:           "filter unsupported",
-			statusCode:     ua.StatusBadMonitoredItemFilterUnsupported,
-			nodeID:         "ns=3;s=Temperature",
-			expectedReason: "filter_unsupported",
-		},
-		{
-			name:           "node id unknown",
-			statusCode:     ua.StatusBadNodeIDUnknown,
-			nodeID:         "ns=3;s=Missing",
-			expectedReason: "node_id_unknown",
-		},
-		{
-			name:           "other error",
-			statusCode:     ua.StatusBadInternalError,
-			nodeID:         "ns=3;s=Error",
-			expectedReason: "other",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	DescribeTable("tracking subscription failures with proper labels",
+		func(statusCode ua.StatusCode, nodeID, expectedReason string) {
 			// Record failure
-			RecordSubscriptionFailure(tt.statusCode, tt.nodeID)
+			RecordSubscriptionFailure(statusCode, nodeID)
 
 			// Verify metric incremented
 			metric := opcuaSubscriptionFailuresTotal.WithLabelValues(
-				tt.expectedReason,
-				tt.nodeID,
+				expectedReason,
+				nodeID,
 			)
 
 			count := testutil.ToFloat64(metric)
-			if count != 1 {
-				t.Errorf("Expected metric count 1, got %f", count)
-			}
-		})
-	}
-}
+			Expect(count).To(Equal(float64(1)), "metric count should be incremented")
+		},
+		Entry("filter not allowed", ua.StatusBadFilterNotAllowed, "ns=3;s=ByteString1", "filter_not_allowed"),
+		Entry("filter unsupported", ua.StatusBadMonitoredItemFilterUnsupported, "ns=3;s=Temperature", "filter_unsupported"),
+		Entry("node id unknown", ua.StatusBadNodeIDUnknown, "ns=3;s=Missing", "node_id_unknown"),
+		Entry("other error", ua.StatusBadInternalError, "ns=3;s=Error", "other"),
+	)
+})
