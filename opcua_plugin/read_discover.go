@@ -77,6 +77,9 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	go func() {
 		for node := range nodeChan {
 			nodeList = append(nodeList, node)
+			if node.NodeID != nil {
+				pathIDMap[node.Path] = node.NodeID.String()
+			}
 		}
 		close(consumerDone)
 	}()
