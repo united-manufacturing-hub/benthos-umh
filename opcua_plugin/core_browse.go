@@ -34,6 +34,8 @@ const (
 	StaleTime = 15 * time.Minute
 )
 
+var sanitizeRegex = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+
 type NodeDef struct {
 	NodeID       *ua.NodeID
 	NodeClass    ua.NodeClass
@@ -65,8 +67,7 @@ func join(a, b string) string {
 // invalid character with an underscore. This sanitization helps prevent errors and
 // ensures consistency when using node names in various parts of the application.
 func sanitize(s string) string {
-	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
-	return re.ReplaceAllString(s, "_")
+	return sanitizeRegex.ReplaceAllString(s, "_")
 }
 
 type Logger interface {
