@@ -314,6 +314,10 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		for i, result := range response.Results {
 			if !errors.Is(result.StatusCode, ua.StatusOK) {
 				failedNode := batch[i].NodeID.String()
+
+				// Record metric for subscription failure
+				RecordSubscriptionFailure(result.StatusCode, failedNode)
+
 				g.Log.Errorf("Failed to monitor node %s: %v", failedNode, result.StatusCode)
 				// Depending on requirements, you might choose to continue monitoring other nodes
 				// instead of aborting. Here, we abort on the first failure.
