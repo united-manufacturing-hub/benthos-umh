@@ -15,7 +15,8 @@
 package opcua_plugin
 
 import (
-	"testing"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/gopcua/opcua/ua"
 )
@@ -23,40 +24,14 @@ import (
 // TestCreateMonitoredItemRequestWithFilter verifies that MonitoredItemCreateRequest
 // construction applies deadband filters correctly based on OPCUAInput configuration.
 // This tests the actual code path used in MonitorBatched().
-func TestCreateMonitoredItemRequestWithFilter(t *testing.T) {
-	tests := []struct {
-		name          string
-		deadbandType  string
-		deadbandValue float64
-		expectFilter  bool
-	}{
-		{
-			name:          "disabled deadband - filter should be nil",
-			deadbandType:  "none",
-			deadbandValue: 0.0,
-			expectFilter:  false,
-		},
-		{
-			name:          "absolute deadband - filter should be present",
-			deadbandType:  "absolute",
-			deadbandValue: 0.5,
-			expectFilter:  true,
-		},
-		{
-			name:          "percent deadband - filter should be present",
-			deadbandType:  "percent",
-			deadbandValue: 2.0,
-			expectFilter:  true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+var _ = Describe("MonitoredItemRequest Creation", func() {
+	DescribeTable("creates correct request with filter based on deadband",
+		func(deadbandType string, deadbandValue float64, expectFilter bool) {
 			// Create test OPCUAInput with deadband configuration
 			g := &OPCUAInput{
-				DeadbandType:  tt.deadbandType,
-				DeadbandValue: tt.deadbandValue,
-				QueueSize:     1,
+				DeadbandType:     deadbandType,
+				DeadbandValue:    deadbandValue,
+				QueueSize:        1,
 				SamplingInterval: 1000.0,
 			}
 
@@ -84,72 +59,46 @@ func TestCreateMonitoredItemRequestWithFilter(t *testing.T) {
 			}
 
 			// Verify filter application matches expected behavior
-			if tt.expectFilter {
+			if expectFilter {
 				// Filter should be present when deadband is enabled
-				if request.RequestedParameters.Filter == nil {
-					t.Error("expected Filter to be set based on deadband config, got nil")
-				}
+				Expect(request.RequestedParameters.Filter).NotTo(BeNil(),
+					"expected Filter to be set based on deadband config")
 			} else {
 				// Filter should be nil when deadband is disabled
-				if request.RequestedParameters.Filter != nil {
-					t.Errorf("expected Filter to be nil when deadband disabled, got %+v", request.RequestedParameters.Filter)
-				}
+				Expect(request.RequestedParameters.Filter).To(BeNil(),
+					"expected Filter to be nil when deadband disabled")
 			}
-		})
-	}
-}
+		},
+		Entry("disabled deadband - filter should be nil",
+			"none", 0.0, false),
+		Entry("absolute deadband - filter should be present",
+			"absolute", 0.5, true),
+		Entry("percent deadband - filter should be present",
+			"percent", 2.0, true),
+	)
+})
 
 // TestDeadbandTypeChecking verifies filters only applied to numeric types
-func TestDeadbandTypeChecking(t *testing.T) {
-	tests := []struct {
-		name         string
-		nodeDataType ua.TypeID
-		shouldFilter bool
-	}{
-		{
-			name:         "ByteString node - no filter",
-			nodeDataType: ua.TypeIDByteString,
-			shouldFilter: false,
+var _ = Describe("Deadband Type Checking", func() {
+	DescribeTable("validates numeric data types correctly",
+		func(nodeDataType ua.TypeID, shouldFilter bool) {
+			result := isNumericDataType(nodeDataType)
+			Expect(result).To(Equal(shouldFilter),
+				"isNumericDataType(%v) should return %v", nodeDataType, shouldFilter)
 		},
-		{
-			name:         "String node - no filter",
-			nodeDataType: ua.TypeIDString,
-			shouldFilter: false,
-		},
-		{
-			name:         "DateTime node - no filter",
-			nodeDataType: ua.TypeIDDateTime,
-			shouldFilter: false,
-		},
-		{
-			name:         "Double node - apply filter",
-			nodeDataType: ua.TypeIDDouble,
-			shouldFilter: true,
-		},
-		{
-			name:         "Float node - apply filter",
-			nodeDataType: ua.TypeIDFloat,
-			shouldFilter: true,
-		},
-		{
-			name:         "Int32 node - apply filter",
-			nodeDataType: ua.TypeIDInt32,
-			shouldFilter: true,
-		},
-		{
-			name:         "UInt32 node - apply filter",
-			nodeDataType: ua.TypeIDUint32,
-			shouldFilter: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isNumericDataType(tt.nodeDataType)
-			if result != tt.shouldFilter {
-				t.Errorf("isNumericDataType(%v) = %v, want %v",
-					tt.nodeDataType, result, tt.shouldFilter)
-			}
-		})
-	}
-}
+		Entry("ByteString node - no filter",
+			ua.TypeIDByteString, false),
+		Entry("String node - no filter",
+			ua.TypeIDString, false),
+		Entry("DateTime node - no filter",
+			ua.TypeIDDateTime, false),
+		Entry("Double node - apply filter",
+			ua.TypeIDDouble, true),
+		Entry("Float node - apply filter",
+			ua.TypeIDFloat, true),
+		Entry("Int32 node - apply filter",
+			ua.TypeIDInt32, true),
+		Entry("UInt32 node - apply filter",
+			ua.TypeIDUint32, true),
+	)
+})
