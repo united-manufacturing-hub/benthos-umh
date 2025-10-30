@@ -37,10 +37,12 @@ func TestCreateDataChangeFilter(t *testing.T) {
 			expectNil:     true,
 		},
 		{
-			name:          "disabled deadband - value zero",
+			name:          "duplicate suppression - value zero",
 			deadbandType:  "absolute",
 			deadbandValue: 0.0,
-			expectNil:     true,
+			expectNil:     false,
+			expectType:    uint32(ua.DeadbandTypeAbsolute),
+			expectValue:   0.0,
 		},
 		{
 			name:          "absolute deadband",

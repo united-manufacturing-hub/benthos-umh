@@ -20,17 +20,22 @@ import (
 )
 
 // createDataChangeFilter creates an OPC UA DataChangeFilter for deadband filtering.
-// Returns nil if deadband is disabled (type="none" or value=0).
+// Returns nil if deadband is disabled (type="none").
+//
+// Important: deadbandValue=0.0 is VALID and creates a filter that suppresses exact duplicates.
+// Per OPC UA spec, server only sends notifications when |value - lastValue| > deadbandValue.
+// With deadbandValue=0.0, this becomes |value - lastValue| > 0.0, suppressing exact duplicates.
 //
 // Parameters:
 //   deadbandType: "none", "absolute", or "percent"
 //   deadbandValue: threshold value (absolute units or percentage 0-100)
+//                  Use 0.0 for duplicate suppression only
 //
 // Returns:
-//   *ua.ExtensionObject wrapping ua.DataChangeFilter, or nil if disabled
+//   *ua.ExtensionObject wrapping ua.DataChangeFilter, or nil if type="none"
 func createDataChangeFilter(deadbandType string, deadbandValue float64) *ua.ExtensionObject {
-	// Return nil if deadband is disabled
-	if deadbandType == "none" || deadbandValue == 0.0 {
+	// Return nil only if explicitly disabled
+	if deadbandType == "none" {
 		return nil
 	}
 
