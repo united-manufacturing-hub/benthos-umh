@@ -176,6 +176,13 @@ func init() {
 	}
 }
 
+// ServerCapabilities holds OPC UA server capability flags
+type ServerCapabilities struct {
+	SupportsPercentDeadband  bool
+	SupportsAbsoluteDeadband bool
+	// Future: Add more capability flags as needed
+}
+
 type OPCUAInput struct {
 	*OPCUAConnection // Embed the shared connection configuration
 
@@ -196,6 +203,7 @@ type OPCUAInput struct {
 	SamplingInterval             float64
 	DeadbandType                 string
 	DeadbandValue                float64
+	ServerCapabilities           *ServerCapabilities
 }
 
 // unsubscribeAndResetHeartbeat unsubscribes from the OPC UA subscription and resets the heartbeat
@@ -260,6 +268,27 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	} else {
 		g.Log.Infof("OPC UA Server Information: %v+", serverInfo)
 		g.ServerInfo = serverInfo
+	}
+
+	// Query server capabilities for deadband support (only if subscriptions enabled)
+	if g.SubscribeEnabled {
+		caps, err := g.queryServerCapabilities(ctx)
+		if err != nil {
+			g.Log.Warnf("Failed to query server capabilities: %v, assuming basic support", err)
+			caps = &ServerCapabilities{
+				SupportsAbsoluteDeadband: true,  // Most servers support this
+				SupportsPercentDeadband:  false, // Conservative assumption
+			}
+		}
+		g.ServerCapabilities = caps
+
+		// Adjust deadband type based on server capabilities
+		originalType := g.DeadbandType
+		g.DeadbandType = adjustDeadbandType(g.DeadbandType, caps)
+		if g.DeadbandType != originalType {
+			g.Log.Warnf("Server does not support %s deadband, falling back to %s",
+				originalType, g.DeadbandType)
+		}
 	}
 
 	// Create a subscription channel if needed
@@ -533,4 +562,66 @@ func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef Nod
 	message.MetaSet("opcua_tag_type", tagType)
 
 	return message
+}
+
+// queryServerCapabilities reads server capability information
+// to determine which deadband types are supported.
+func (o *OPCUAInput) queryServerCapabilities(ctx context.Context) (*ServerCapabilities, error) {
+	// Read ServerCapabilities node
+	// NodeID: i=2254 (Server_ServerCapabilities)
+	// For now, use heuristic: Try to read AggregateConfiguration
+	// If it exists, server likely supports advanced features like percent deadband
+	aggConfigNodeID := ua.NewNumericNodeID(0, 2268) // Server_ServerCapabilities_AggregateConfiguration
+
+	req := &ua.ReadRequest{
+		NodesToRead: []*ua.ReadValueID{
+			{NodeID: aggConfigNodeID, AttributeID: ua.AttributeIDValue},
+		},
+	}
+
+	resp, err := o.Client.Read(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// If AggregateConfiguration exists, assume percent deadband supported
+	supportsPercent := false
+	if len(resp.Results) > 0 && resp.Results[0].Status == ua.StatusOK {
+		supportsPercent = true
+	}
+
+	return &ServerCapabilities{
+		SupportsAbsoluteDeadband: true, // All OPC UA servers support absolute
+		SupportsPercentDeadband:  supportsPercent,
+	}, nil
+}
+
+// adjustDeadbandType adjusts requested deadband type based on server capabilities.
+// Implements fallback strategy: percent → absolute → none
+func adjustDeadbandType(requested string, caps *ServerCapabilities) string {
+	switch requested {
+	case "none":
+		return "none"
+
+	case "absolute":
+		if caps.SupportsAbsoluteDeadband {
+			return "absolute"
+		}
+		// Absolute not supported - fallback to none
+		return "none"
+
+	case "percent":
+		if caps.SupportsPercentDeadband {
+			return "percent"
+		}
+		// Percent not supported - fallback to absolute
+		if caps.SupportsAbsoluteDeadband {
+			return "absolute"
+		}
+		// Neither supported - fallback to none
+		return "none"
+
+	default:
+		return "none"
+	}
 }
