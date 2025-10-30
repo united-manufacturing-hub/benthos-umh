@@ -15,107 +15,67 @@
 package opcua_plugin
 
 import (
-	"testing"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/gopcua/opcua/id"
 	"github.com/gopcua/opcua/ua"
 )
 
-func TestCreateDataChangeFilter(t *testing.T) {
-	tests := []struct {
-		name          string
-		deadbandType  string
-		deadbandValue float64
-		expectNil     bool
-		expectType    uint32  // ua.DeadbandTypeAbsolute or ua.DeadbandTypePercent
-		expectValue   float64
-	}{
-		{
-			name:          "disabled deadband - type none",
-			deadbandType:  "none",
-			deadbandValue: 0.5,
-			expectNil:     true,
-		},
-		{
-			name:          "duplicate suppression - value zero",
-			deadbandType:  "absolute",
-			deadbandValue: 0.0,
-			expectNil:     false,
-			expectType:    uint32(ua.DeadbandTypeAbsolute),
-			expectValue:   0.0,
-		},
-		{
-			name:          "absolute deadband",
-			deadbandType:  "absolute",
-			deadbandValue: 0.5,
-			expectNil:     false,
-			expectType:    uint32(ua.DeadbandTypeAbsolute),
-			expectValue:   0.5,
-		},
-		{
-			name:          "percent deadband",
-			deadbandType:  "percent",
-			deadbandValue: 2.0,
-			expectNil:     false,
-			expectType:    uint32(ua.DeadbandTypePercent),
-			expectValue:   2.0,
-		},
-	}
+// TestCreateDataChangeFilter verifies that data change filters are created
+// correctly based on deadband configuration, including the critical edge case
+// of deadbandValue=0.0 for duplicate suppression
+var _ = Describe("DataChangeFilter Creation", func() {
+	DescribeTable("creates correct filter based on deadband configuration",
+		func(deadbandType string, deadbandValue float64, expectNil bool, expectType uint32, expectValue float64) {
+			result := createDataChangeFilter(deadbandType, deadbandValue)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := createDataChangeFilter(tt.deadbandType, tt.deadbandValue)
-
-			if tt.expectNil {
-				if result != nil {
-					t.Errorf("expected nil, got %+v", result)
-				}
+			if expectNil {
+				Expect(result).To(BeNil(), "filter should be nil when deadband is disabled")
 				return
 			}
 
 			// Verify ExtensionObject structure
-			if result == nil {
-				t.Fatal("expected non-nil ExtensionObject, got nil")
-			}
+			Expect(result).NotTo(BeNil(), "filter should not be nil when deadband is enabled")
 
 			// Verify TypeID
 			expectedNodeID := ua.NewNumericNodeID(0, id.DataChangeFilter_Encoding_DefaultBinary)
-			if result.TypeID == nil || result.TypeID.NodeID == nil {
-				t.Fatal("expected TypeID to be set")
-			}
+			Expect(result.TypeID).NotTo(BeNil(), "TypeID should be set")
+			Expect(result.TypeID.NodeID).NotTo(BeNil(), "TypeID.NodeID should be set")
+
 			// Compare NodeID fields directly
-			if result.TypeID.NodeID.Namespace() != expectedNodeID.Namespace() ||
-				result.TypeID.NodeID.IntID() != expectedNodeID.IntID() {
-				t.Errorf("expected TypeID.NodeID ns=%d;i=%d, got ns=%d;i=%d",
-					expectedNodeID.Namespace(), expectedNodeID.IntID(),
-					result.TypeID.NodeID.Namespace(), result.TypeID.NodeID.IntID())
-			}
+			Expect(result.TypeID.NodeID.Namespace()).To(Equal(expectedNodeID.Namespace()),
+				"TypeID.NodeID namespace should match")
+			Expect(result.TypeID.NodeID.IntID()).To(Equal(expectedNodeID.IntID()),
+				"TypeID.NodeID IntID should match")
 
 			// Verify EncodingMask
-			if result.EncodingMask != ua.ExtensionObjectBinary {
-				t.Errorf("expected EncodingMask %v, got %v", ua.ExtensionObjectBinary, result.EncodingMask)
-			}
+			Expect(result.EncodingMask).To(BeEquivalentTo(ua.ExtensionObjectBinary),
+				"EncodingMask should be ExtensionObjectBinary")
 
 			// Unwrap and verify DataChangeFilter fields
 			filter, ok := result.Value.(*ua.DataChangeFilter)
-			if !ok {
-				t.Fatalf("expected *ua.DataChangeFilter, got %T", result.Value)
-			}
+			Expect(ok).To(BeTrue(), "Value should be *ua.DataChangeFilter")
 
 			// Verify Trigger
-			if filter.Trigger != ua.DataChangeTriggerStatusValue {
-				t.Errorf("expected Trigger %v, got %v", ua.DataChangeTriggerStatusValue, filter.Trigger)
-			}
+			Expect(filter.Trigger).To(Equal(ua.DataChangeTriggerStatusValue),
+				"Trigger should be DataChangeTriggerStatusValue")
 
 			// Verify DeadbandType
-			if filter.DeadbandType != tt.expectType {
-				t.Errorf("expected DeadbandType %v, got %v", tt.expectType, filter.DeadbandType)
-			}
+			Expect(filter.DeadbandType).To(Equal(expectType),
+				"DeadbandType should match expected type")
 
 			// Verify DeadbandValue
-			if filter.DeadbandValue != tt.expectValue {
-				t.Errorf("expected DeadbandValue %v, got %v", tt.expectValue, filter.DeadbandValue)
-			}
-		})
-	}
-}
+			Expect(filter.DeadbandValue).To(Equal(expectValue),
+				"DeadbandValue should match expected value")
+		},
+		Entry("disabled deadband - type none",
+			"none", 0.5, true, uint32(0), 0.0),
+		Entry("duplicate suppression - value zero",
+			"absolute", 0.0, false, uint32(ua.DeadbandTypeAbsolute), 0.0),
+		Entry("absolute deadband",
+			"absolute", 0.5, false, uint32(ua.DeadbandTypeAbsolute), 0.5),
+		Entry("percent deadband",
+			"percent", 2.0, false, uint32(ua.DeadbandTypePercent), 2.0),
+	)
+})
