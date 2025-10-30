@@ -1,0 +1,22 @@
+input:
+  opcua:
+    endpoint: "opc.tcp://localhost:50000"
+    nodeIDs: ["ns=3;s=OpcPlc"]
+    subscribeEnabled: true
+    queueSize: 1
+    samplingInterval: 1000
+    securityMode: "None"
+    securityPolicy: "None"
+
+output:
+  drop: {}
+
+logger:
+  level: INFO
+  add_timestamp: true
+
+http:
+  enabled: true
+  address: "0.0.0.0:4195"
+  root_path: /benthos
+  debug_endpoints: true
