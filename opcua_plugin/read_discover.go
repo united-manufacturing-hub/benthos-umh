@@ -208,6 +208,25 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 	return nil
 }
 
+// isNumericDataType checks if OPC UA type supports deadband filtering.
+// Only numeric types (Int, UInt, Float, Double) can use DataChangeFilter.
+// Returns true if deadband filter should be applied.
+func isNumericDataType(typeID ua.TypeID) bool {
+	numericTypes := map[ua.TypeID]bool{
+		ua.TypeIDDouble: true,
+		ua.TypeIDFloat:  true,
+		ua.TypeIDInt16:  true,
+		ua.TypeIDInt32:  true,
+		ua.TypeIDInt64:  true,
+		ua.TypeIDUint16: true,
+		ua.TypeIDUint32: true,
+		ua.TypeIDUint64: true,
+		ua.TypeIDByte:   true,
+		ua.TypeIDSByte:  true,
+	}
+	return numericTypes[typeID]
+}
+
 // MonitorBatched splits the nodes into manageable batches and starts monitoring them.
 // This approach prevents the server from returning BadTcpMessageTooLarge by avoiding oversized monitoring requests.
 //
@@ -243,6 +262,20 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		monitoredRequests := make([]*ua.MonitoredItemCreateRequest, 0, len(batch))
 
 		for pos, nodeDef := range batch {
+			var filter *ua.ExtensionObject
+
+			// Only apply deadband filter to numeric node types
+			if isNumericDataType(nodeDef.DataTypeID) && g.DeadbandType != "none" {
+				filter = createDataChangeFilter(g.DeadbandType, g.DeadbandValue)
+			} else {
+				// Non-numeric nodes: subscribe without filter
+				filter = nil
+				if g.DeadbandType != "none" {
+					g.Log.Debugf("Skipping deadband for non-numeric node %s (type: %v)",
+						nodeDef.NodeID, nodeDef.DataTypeID)
+				}
+			}
+
 			request := &ua.MonitoredItemCreateRequest{
 				ItemToMonitor: &ua.ReadValueID{
 					NodeID:       nodeDef.NodeID,
@@ -253,7 +286,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 				RequestedParameters: &ua.MonitoringParameters{
 					ClientHandle:     uint32(startIdx + pos),
 					DiscardOldest:    true,
-					Filter:           createDataChangeFilter(g.DeadbandType, g.DeadbandValue),
+					Filter:           filter,
 					QueueSize:        g.QueueSize,
 					SamplingInterval: g.SamplingInterval,
 				},

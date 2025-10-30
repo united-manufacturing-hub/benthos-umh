@@ -42,9 +42,10 @@ type NodeDef struct {
 	BrowseName   string
 	Description  string
 	AccessLevel  ua.AccessLevelType
-	DataType     string
-	ParentNodeID string // custom, not an official opcua attribute
-	Path         string // custom, not an official opcua attribute
+	DataType     string      // String representation for metadata
+	DataTypeID   ua.TypeID   // TypeID for filter compatibility checking
+	ParentNodeID string      // custom, not an official opcua attribute
+	Path         string      // custom, not an official opcua attribute
 }
 
 // join concatenates two strings with a dot separator.

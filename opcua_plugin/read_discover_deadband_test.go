@@ -98,3 +98,58 @@ func TestCreateMonitoredItemRequestWithFilter(t *testing.T) {
 		})
 	}
 }
+
+// TestDeadbandTypeChecking verifies filters only applied to numeric types
+func TestDeadbandTypeChecking(t *testing.T) {
+	tests := []struct {
+		name         string
+		nodeDataType ua.TypeID
+		shouldFilter bool
+	}{
+		{
+			name:         "ByteString node - no filter",
+			nodeDataType: ua.TypeIDByteString,
+			shouldFilter: false,
+		},
+		{
+			name:         "String node - no filter",
+			nodeDataType: ua.TypeIDString,
+			shouldFilter: false,
+		},
+		{
+			name:         "DateTime node - no filter",
+			nodeDataType: ua.TypeIDDateTime,
+			shouldFilter: false,
+		},
+		{
+			name:         "Double node - apply filter",
+			nodeDataType: ua.TypeIDDouble,
+			shouldFilter: true,
+		},
+		{
+			name:         "Float node - apply filter",
+			nodeDataType: ua.TypeIDFloat,
+			shouldFilter: true,
+		},
+		{
+			name:         "Int32 node - apply filter",
+			nodeDataType: ua.TypeIDInt32,
+			shouldFilter: true,
+		},
+		{
+			name:         "UInt32 node - apply filter",
+			nodeDataType: ua.TypeIDUint32,
+			shouldFilter: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isNumericDataType(tt.nodeDataType)
+			if result != tt.shouldFilter {
+				t.Errorf("isNumericDataType(%v) = %v, want %v",
+					tt.nodeDataType, result, tt.shouldFilter)
+			}
+		})
+	}
+}

@@ -155,7 +155,9 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 				logger.Debugf("ignoring node: %s as its datatype is nil...\n", path)
 				return fmt.Errorf("datatype is nil for node: %s and attribute: %s", def.NodeID, "DataType")
 			}
-			def.DataType = getDataTypeString(value.NodeID().IntID())
+			intID := value.NodeID().IntID()
+			def.DataType = getDataTypeString(intID)
+			def.DataTypeID = ua.TypeID(intID) // Set TypeID for filter compatibility checking
 			return nil
 		},
 		ignoreInvalidAttr: true, // For some node, DataType is not available and this is not an error and can be ignored
