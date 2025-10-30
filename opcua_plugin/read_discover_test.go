@@ -19,89 +19,76 @@ import (
 	"testing"
 
 	"github.com/gopcua/opcua/ua"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
 	. "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
 )
 
-// TestDeduplicateCorrectness verifies that UpdateNodePaths correctly deduplicates paths
-func TestDeduplicateCorrectness(t *testing.T) {
-	tests := []struct {
-		name     string
-		nodes    []NodeDef
-		expected []NodeDef
-	}{
-		{
-			name: "no duplicates - paths unchanged",
-			nodes: []NodeDef{
-				{Path: "Folder.Tag1", NodeID: ua.MustParseNodeID("ns=1;s=node1")},
-				{Path: "Folder.Tag2", NodeID: ua.MustParseNodeID("ns=1;s=node2")},
-				{Path: "Folder.Tag3", NodeID: ua.MustParseNodeID("ns=1;s=node3")},
-			},
-			expected: []NodeDef{
-				{Path: "Folder.Tag1", NodeID: ua.MustParseNodeID("ns=1;s=node1")},
-				{Path: "Folder.Tag2", NodeID: ua.MustParseNodeID("ns=1;s=node2")},
-				{Path: "Folder.Tag3", NodeID: ua.MustParseNodeID("ns=1;s=node3")},
-			},
+var _ = Describe("UpdateNodePaths", func() {
+	DescribeTable("deduplication correctness",
+		func(nodes, expected []NodeDef) {
+			// Make a copy to avoid test interference
+			nodesCopy := make([]NodeDef, len(nodes))
+			copy(nodesCopy, nodes)
+
+			UpdateNodePaths(nodesCopy)
+
+			// Check each node path matches expected
+			Expect(nodesCopy).To(HaveLen(len(expected)))
+			for i := range nodesCopy {
+				Expect(nodesCopy[i].Path).To(Equal(expected[i].Path),
+					"Node %d: expected path %q, got %q", i, expected[i].Path, nodesCopy[i].Path)
+			}
 		},
-		{
-			name: "duplicate paths - nodeID suffixes added",
-			nodes: []NodeDef{
+		Entry("no duplicates - paths unchanged",
+			[]NodeDef{
+				{Path: "Folder.Tag1", NodeID: ua.MustParseNodeID("ns=1;s=node1")},
+				{Path: "Folder.Tag2", NodeID: ua.MustParseNodeID("ns=1;s=node2")},
+				{Path: "Folder.Tag3", NodeID: ua.MustParseNodeID("ns=1;s=node3")},
+			},
+			[]NodeDef{
+				{Path: "Folder.Tag1", NodeID: ua.MustParseNodeID("ns=1;s=node1")},
+				{Path: "Folder.Tag2", NodeID: ua.MustParseNodeID("ns=1;s=node2")},
+				{Path: "Folder.Tag3", NodeID: ua.MustParseNodeID("ns=1;s=node3")},
+			},
+		),
+		Entry("duplicate paths - nodeID suffixes added",
+			[]NodeDef{
 				{Path: "Folder.Tag1", NodeID: ua.MustParseNodeID("ns=1;s=node1")},
 				{Path: "Folder.Tag1", NodeID: ua.MustParseNodeID("ns=1;s=node2")},
 				{Path: "Folder.Tag2", NodeID: ua.MustParseNodeID("ns=1;s=node3")},
 			},
-			expected: []NodeDef{
+			[]NodeDef{
 				{Path: "Folder.ns_1_s_node1", NodeID: ua.MustParseNodeID("ns=1;s=node1")},
 				{Path: "Folder.ns_1_s_node2", NodeID: ua.MustParseNodeID("ns=1;s=node2")},
 				{Path: "Folder.Tag2", NodeID: ua.MustParseNodeID("ns=1;s=node3")},
 			},
-		},
-		{
-			name: "multiple duplicates",
-			nodes: []NodeDef{
+		),
+		Entry("multiple duplicates",
+			[]NodeDef{
 				{Path: "Root.Dup", NodeID: ua.MustParseNodeID("ns=2;i=100")},
 				{Path: "Root.Dup", NodeID: ua.MustParseNodeID("ns=2;i=200")},
 				{Path: "Root.Dup", NodeID: ua.MustParseNodeID("ns=2;i=300")},
 				{Path: "Root.Unique", NodeID: ua.MustParseNodeID("ns=2;i=400")},
 			},
-			expected: []NodeDef{
+			[]NodeDef{
 				{Path: "Root.ns_2_i_100", NodeID: ua.MustParseNodeID("ns=2;i=100")},
 				{Path: "Root.ns_2_i_200", NodeID: ua.MustParseNodeID("ns=2;i=200")},
 				{Path: "Root.ns_2_i_300", NodeID: ua.MustParseNodeID("ns=2;i=300")},
 				{Path: "Root.Unique", NodeID: ua.MustParseNodeID("ns=2;i=400")},
 			},
-		},
-	}
+		),
+	)
+})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Make a copy to avoid test interference
-			nodesCopy := make([]NodeDef, len(tt.nodes))
-			copy(nodesCopy, tt.nodes)
-
-			UpdateNodePaths(nodesCopy)
-
-			// Check each node path matches expected
-			if len(nodesCopy) != len(tt.expected) {
-				t.Fatalf("Expected %d nodes, got %d", len(tt.expected), len(nodesCopy))
-			}
-
-			for i := range nodesCopy {
-				if nodesCopy[i].Path != tt.expected[i].Path {
-					t.Errorf("Node %d: expected path %q, got %q",
-						i, tt.expected[i].Path, nodesCopy[i].Path)
-				}
-			}
-		})
-	}
-}
-
-// BenchmarkDeduplicate demonstrates O(n²) complexity of the current implementation
-// Expected behavior: Doubling input size should ~4x the time (quadratic scaling)
+// BenchmarkDeduplicate demonstrates O(n) linear time complexity of the current implementation
+// Expected behavior: Doubling input size should ~2x the time (linear scaling)
 func BenchmarkDeduplicate(b *testing.B) {
 	sizes := []int{100, 200, 500, 1000, 2000, 5000}
 
 	for _, size := range sizes {
-		// Create nodes with ALL unique paths (worst case - no early termination)
+		// Create nodes with ALL unique paths (tests first-pass hash map population)
 		nodes := make([]NodeDef, size)
 		for i := 0; i < size; i++ {
 			nodes[i] = NodeDef{
@@ -122,7 +109,7 @@ func BenchmarkDeduplicate(b *testing.B) {
 }
 
 // BenchmarkDeduplicateWorstCase creates nodes with MANY duplicates
-// This stresses the nested loop path where it must compare against all previous nodes
+// This stresses the two-pass hash map algorithm: first pass counts occurrences, second pass updates duplicates
 func BenchmarkDeduplicateWorstCase(b *testing.B) {
 	sizes := []int{100, 200, 500, 1000, 2000}
 
@@ -130,7 +117,7 @@ func BenchmarkDeduplicateWorstCase(b *testing.B) {
 		// Create nodes where every other node has the SAME path (forcing deduplication)
 		nodes := make([]NodeDef, size)
 		for i := 0; i < size; i++ {
-			// Half the nodes share "DuplicatePath", forcing O(n²) comparisons
+			// Half the nodes share "DuplicatePath", triggering the two-pass deduplication
 			if i%2 == 0 {
 				nodes[i] = NodeDef{
 					Path:   "Folder.DuplicatePath",

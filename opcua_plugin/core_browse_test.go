@@ -16,62 +16,28 @@ package opcua_plugin
 
 import (
 	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 // TestSanitizeReplacesInvalidCharacters tests that sanitize() correctly replaces
 // non-alphanumeric characters (except hyphens and underscores) with underscores.
-func TestSanitizeReplacesInvalidCharacters(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "replaces spaces with underscores",
-			input:    "hello world",
-			expected: "hello_world",
+var _ = Describe("sanitize", func() {
+	DescribeTable("replaces invalid characters",
+		func(input, expected string) {
+			result := sanitize(input)
+			Expect(result).To(Equal(expected))
 		},
-		{
-			name:     "replaces dots with underscores",
-			input:    "node.name.path",
-			expected: "node_name_path",
-		},
-		{
-			name:     "preserves alphanumeric, hyphens, and underscores",
-			input:    "Valid_Name-123",
-			expected: "Valid_Name-123",
-		},
-		{
-			name:     "replaces special characters",
-			input:    "name!@#$%^&*()",
-			expected: "name__________",
-		},
-		{
-			name:     "handles mixed valid and invalid",
-			input:    "OPC.UA/Server:Node[0]",
-			expected: "OPC_UA_Server_Node_0_",
-		},
-		{
-			name:     "empty string returns empty",
-			input:    "",
-			expected: "",
-		},
-		{
-			name:     "already clean string unchanged",
-			input:    "CleanName123-test_value",
-			expected: "CleanName123-test_value",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := sanitize(tt.input)
-			if result != tt.expected {
-				t.Errorf("sanitize(%q) = %q, expected %q", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
+		Entry("replaces spaces with underscores", "hello world", "hello_world"),
+		Entry("replaces dots with underscores", "node.name.path", "node_name_path"),
+		Entry("preserves alphanumeric, hyphens, and underscores", "Valid_Name-123", "Valid_Name-123"),
+		Entry("replaces special characters", "name!@#$%^&*()", "name__________"),
+		Entry("handles mixed valid and invalid", "OPC.UA/Server:Node[0]", "OPC_UA_Server_Node_0_"),
+		Entry("empty string returns empty", "", ""),
+		Entry("already clean string unchanged", "CleanName123-test_value", "CleanName123-test_value"),
+	)
+})
 
 // BenchmarkSanitize measures the performance of sanitize() and reveals
 // that regexp.Compile() is called on every invocation, causing repeated
