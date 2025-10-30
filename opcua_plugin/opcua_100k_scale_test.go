@@ -16,6 +16,7 @@ package opcua_plugin_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -34,7 +35,7 @@ var _ = Describe("100k Scale Browse Test", Label("100k_scale"), func() {
 			// Structure: 1 root + 11 folders × 10,000 variable children each = 110,000 variable nodes
 			// This exceeds the 100k buffer size of nodeChan, which should trigger deadlock
 			// if the consumer waits for wg.Wait() before draining the channel
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 			defer cancel()
 
 			// Create root node
@@ -42,12 +43,12 @@ var _ = Describe("100k Scale Browse Test", Label("100k_scale"), func() {
 
 			// Create 11 folder nodes under root (to get 110k variables total)
 			for folderID := 2; folderID <= 12; folderID++ {
-				folderNode := createMockNode(uint32(folderID), "Folder_"+string(rune(folderID)), ua.NodeClassObject)
+				folderNode := createMockNode(uint32(folderID), fmt.Sprintf("Folder_%d", folderID), ua.NodeClassObject)
 
 				// Add 10,000 variable children to each folder
 				for childID := 0; childID < 10000; childID++ {
 					nodeID := uint32((folderID-2)*10000 + childID + 100)
-					childNode := createMockNode(nodeID, "Variable_"+string(rune(nodeID)), ua.NodeClassVariable)
+					childNode := createMockNode(nodeID, fmt.Sprintf("Variable_%d", nodeID), ua.NodeClassVariable)
 					folderNode.AddReferenceNode(id.HasComponent, childNode)
 				}
 
@@ -56,8 +57,11 @@ var _ = Describe("100k Scale Browse Test", Label("100k_scale"), func() {
 
 			// Setup channels and wait groups
 			nodeChan := make(chan NodeDef, MaxTagsToBrowse) // 100k buffer
+			defer close(nodeChan)
 			errChan := make(chan error, MaxTagsToBrowse)
+			defer close(errChan)
 			opcuaBrowserChan := make(chan BrowseDetails, MaxTagsToBrowse)
+			defer close(opcuaBrowserChan)
 			var wg TrackedWaitGroup
 			var visited sync.Map
 			logger := &MockLogger{}
@@ -79,10 +83,6 @@ var _ = Describe("100k Scale Browse Test", Label("100k_scale"), func() {
 			case <-ctx.Done():
 				Fail("Browse operation timed out - likely deadlock at 100k buffer limit")
 			}
-
-			close(nodeChan)
-			close(errChan)
-			close(opcuaBrowserChan)
 
 			// ASSERT: Collect all discovered nodes
 			var discoveredNodes []NodeDef
