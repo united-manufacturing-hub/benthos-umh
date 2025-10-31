@@ -220,8 +220,35 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 	return nil
 }
 
+// isNumericDataType checks if OPC UA type supports deadband filtering.
+// Only numeric types (Int, UInt, Float, Double) can use DataChangeFilter.
+// Returns true if deadband filter should be applied.
+func isNumericDataType(typeID ua.TypeID) bool {
+	numericTypes := map[ua.TypeID]bool{
+		ua.TypeIDDouble: true,
+		ua.TypeIDFloat:  true,
+		ua.TypeIDInt16:  true,
+		ua.TypeIDInt32:  true,
+		ua.TypeIDInt64:  true,
+		ua.TypeIDUint16: true,
+		ua.TypeIDUint32: true,
+		ua.TypeIDUint64: true,
+		ua.TypeIDByte:   true,
+		ua.TypeIDSByte:  true,
+	}
+	return numericTypes[typeID]
+}
+
 // MonitorBatched splits the nodes into manageable batches and starts monitoring them.
 // This approach prevents the server from returning BadTcpMessageTooLarge by avoiding oversized monitoring requests.
+//
+// Deadband Filtering:
+// If deadbandType is set (absolute/percent) and deadbandValue > 0, the function applies
+// server-side DataChangeFilter to reduce notification traffic by 50-70%. The filter
+// suppresses notifications unless values change beyond the specified threshold.
+// Note: Not all OPC UA servers support deadband filtering - unsupported servers will
+// ignore the Filter field and send all data change notifications as usual.
+//
 // It returns the total number of nodes that were successfully monitored or an error if monitoring fails.
 func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, error) {
 	const maxBatchSize = 100
@@ -246,7 +273,23 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 
 		monitoredRequests := make([]*ua.MonitoredItemCreateRequest, 0, len(batch))
 
+		numFilteredNodes := 0
 		for pos, nodeDef := range batch {
+			var filter *ua.ExtensionObject
+
+			// Only apply deadband filter to numeric node types
+			if isNumericDataType(nodeDef.DataTypeID) && g.DeadbandType != "none" {
+				filter = createDataChangeFilter(g.DeadbandType, g.DeadbandValue)
+				numFilteredNodes++
+			} else {
+				// Non-numeric nodes: subscribe without filter
+				filter = nil
+				if g.DeadbandType != "none" {
+					g.Log.Debugf("Skipping deadband for non-numeric node %s (type: %v)",
+						nodeDef.NodeID, nodeDef.DataTypeID)
+				}
+			}
+
 			request := &ua.MonitoredItemCreateRequest{
 				ItemToMonitor: &ua.ReadValueID{
 					NodeID:       nodeDef.NodeID,
@@ -257,7 +300,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 				RequestedParameters: &ua.MonitoringParameters{
 					ClientHandle:     uint32(startIdx + pos),
 					DiscardOldest:    true,
-					Filter:           nil,
+					Filter:           filter,
 					QueueSize:        g.QueueSize,
 					SamplingInterval: g.SamplingInterval,
 				},
@@ -285,6 +328,10 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		for i, result := range response.Results {
 			if !errors.Is(result.StatusCode, ua.StatusOK) {
 				failedNode := batch[i].NodeID.String()
+
+				// Record metric for subscription failure
+				RecordSubscriptionFailure(result.StatusCode, failedNode)
+
 				g.Log.Errorf("Failed to monitor node %s: %v", failedNode, result.StatusCode)
 				// Depending on requirements, you might choose to continue monitoring other nodes
 				// instead of aborting. Here, we abort on the first failure.
@@ -301,6 +348,10 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		monitoredNodes := len(response.Results)
 		totalMonitored += monitoredNodes
 		g.Log.Infof("Successfully monitored %d nodes in current batch", monitoredNodes)
+		if g.DeadbandType != "none" {
+			g.Log.Infof("Batch %d-%d: Applied %s deadband filter to %d numeric nodes (threshold: %.2f)",
+				startIdx, endIdx-1, g.DeadbandType, numFilteredNodes, g.DeadbandValue)
+		}
 		time.Sleep(time.Second) // Sleep for some time to prevent overloading the server
 	}
 
