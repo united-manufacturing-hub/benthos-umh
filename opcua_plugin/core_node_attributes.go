@@ -155,8 +155,15 @@ func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, log
 				logger.Debugf("ignoring node: %s as its datatype is nil...\n", path)
 				return fmt.Errorf("datatype is nil for node: %s and attribute: %s", def.NodeID, "DataType")
 			}
-			intID := value.NodeID().IntID()
-			def.DataType = getDataTypeString(intID)
+			nid := value.NodeID()
+			intID := nid.IntID()
+			// Try to get builtin type name first (only works for namespace 0 numeric types)
+			if dtype := getDataTypeString(intID); dtype != "" && nid.Namespace() == 0 {
+				def.DataType = dtype
+			} else {
+				// Fallback to full NodeID string for custom/vendor-specific types
+				def.DataType = nid.String()
+			}
 			def.DataTypeID = ua.TypeID(intID) // Set TypeID for filter compatibility checking
 			return nil
 		},
