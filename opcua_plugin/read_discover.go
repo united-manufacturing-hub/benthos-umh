@@ -71,6 +71,19 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		go browse(timeoutCtx, wrapperNodeID, "", g.Log, nodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
 	}
 
+	// Start concurrent consumer to drain nodeChan as workers produce nodes
+	// This prevents deadlock when browse workers fill the 100k buffer
+	consumerDone := make(chan struct{})
+	go func() {
+		for node := range nodeChan {
+			nodeList = append(nodeList, node)
+			if node.NodeID != nil {
+				pathIDMap[node.Path] = node.NodeID.String()
+			}
+		}
+		close(consumerDone)
+	}()
+
 	go func() {
 		wg.Wait()
 		close(done)
@@ -87,9 +100,8 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	close(errChan)
 	close(opcuaBrowserChan)
 
-	for node := range nodeChan {
-		nodeList = append(nodeList, node)
-	}
+	// Wait for consumer to finish draining the channel
+	<-consumerDone
 
 	UpdateNodePaths(nodeList)
 
