@@ -44,6 +44,7 @@ type UnsInputConfig struct {
 	inputKafkaTopic string
 	brokerAddress   string
 	consumerGroup   string
+	metadataFormat  string
 }
 
 // NewDefaultUnsInputConfig creates a new input config with default values
@@ -53,6 +54,7 @@ func NewDefaultUnsInputConfig() UnsInputConfig {
 		inputKafkaTopic: defaultInputKafkaTopic,
 		brokerAddress:   defaultBrokerAddress,
 		consumerGroup:   defaultConsumerGroup,
+		metadataFormat:  "string",
 	}
 }
 
@@ -141,6 +143,19 @@ func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsIn
 		config.consumerGroup = cg
 	}
 
+	// Parse metadata_format
+	if conf.Contains("metadata_format") {
+		metadataFormat, err := conf.FieldString("metadata_format")
+		if err != nil {
+			return config, fmt.Errorf("error while parsing the 'metadata_format' from the plugin's config: %v", err)
+		}
+		// Validate the value
+		if metadataFormat != "string" && metadataFormat != "bytes" {
+			return config, fmt.Errorf("metadata_format must be 'string' or 'bytes', got '%s'", metadataFormat)
+		}
+		config.metadataFormat = metadataFormat
+	}
+
 	return config, nil
 }
 
@@ -207,5 +222,13 @@ In most UMH deployments, the default value is sufficient as Kafka runs on the sa
 	The consumer group id to be used by the plugin. The default consumer group id is uns_plugin. This is an optional plugin input and can be used by the users if one wants to read the topic with a different consumer group discarding the previous consumed offsets.
 	`).
 			Example("uns_consumer_group").
-			Default(defaultConsumerGroup))
+			Default(defaultConsumerGroup)).
+		Field(service.NewStringField("metadata_format").
+			Description(`Controls how Kafka headers are stored in Benthos metadata.
+- "string": Convert headers to strings (recommended, fixes byte array issue)
+- "bytes": Keep headers as byte arrays (legacy behavior for backward compatibility)
+
+Default: "string" for new configs.`).
+			Default("string").
+			LintRule(`root = if this == "string" || this == "bytes" { null } else { "must be 'string' or 'bytes'" }`))
 }
