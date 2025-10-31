@@ -348,41 +348,12 @@ Counter tracking OPC UA subscription failures by reason and node ID.
 - `reason`: Failure classification (`filter_not_allowed`, `filter_unsupported`, `node_id_unknown`, `node_id_invalid`, `other`)
 - `node_id`: OPC UA NodeID that failed to subscribe
 
-**Usage:**
-```promql
-# Total subscription failures
-sum(opcua_subscription_failures_total)
-
-# Filter-related failures (deadband rejection)
-sum(opcua_subscription_failures_total{reason=~"filter_.*"})
-
-# Failures for specific node
-opcua_subscription_failures_total{node_id="ns=3;s=Temperature"}
-
-# Alert on subscription failures
-rate(opcua_subscription_failures_total[5m]) > 0
-```
-
 **Common Failure Reasons:**
 
-| Reason | Description | Common Cause |
-|--------|-------------|--------------|
-| `filter_not_allowed` | Server rejected deadband filter | ByteString/String nodes with deadband enabled |
-| `filter_unsupported` | Server doesn't support filters | Older OPC UA servers |
-| `node_id_unknown` | NodeID doesn't exist | Incorrect configuration |
-| `node_id_invalid` | NodeID syntax error | Malformed NodeID string |
-| `other` | Other subscription errors | Various server-side issues |
-
-**Troubleshooting:**
-
-If you see `filter_not_allowed` or `filter_unsupported` errors with deadband filtering enabled:
-
-1. Check the node's data type - only numeric types (Int, UInt, Float, Double) support deadband
-2. Verify server supports DataChangeFilter (some older servers don't)
-3. Consider disabling deadband filtering if the server doesn't support it:
-
-```yaml
-input:
-  opcua:
-    deadbandType: none  # Disable deadband filtering
-```
+| Reason | Description | Resolution |
+|--------|-------------|------------|
+| `filter_not_allowed` | Server rejected deadband filter | Only numeric types (Int, UInt, Float, Double) support deadband |
+| `filter_unsupported` | Server doesn't support filters | Disable deadband: `deadbandType: none` |
+| `node_id_unknown` | NodeID doesn't exist | Verify NodeID configuration |
+| `node_id_invalid` | NodeID syntax error | Fix NodeID string format |
+| `other` | Other subscription errors | Check server logs |
