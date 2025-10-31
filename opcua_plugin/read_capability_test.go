@@ -15,65 +15,30 @@
 package opcua_plugin
 
 import (
-	"testing"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-// TestServerCapabilityDetection verifies graceful fallback when
+// Server Capability Detection verifies graceful fallback when
 // server doesn't support requested deadband type
-func TestServerCapabilityDetection(t *testing.T) {
-	tests := []struct {
-		name                  string
-		requestedType         string
-		serverSupportsPercent bool
-		expectedType          string
-		expectedWarning       bool
-	}{
-		{
-			name:                  "percent requested, server supports it",
-			requestedType:         "percent",
-			serverSupportsPercent: true,
-			expectedType:          "percent",
-			expectedWarning:       false,
-		},
-		{
-			name:                  "percent requested, server doesn't support - fallback to absolute",
-			requestedType:         "percent",
-			serverSupportsPercent: false,
-			expectedType:          "absolute",
-			expectedWarning:       true,
-		},
-		{
-			name:                  "absolute requested - always works",
-			requestedType:         "absolute",
-			serverSupportsPercent: false,
-			expectedType:          "absolute",
-			expectedWarning:       false,
-		},
-		{
-			name:                  "none requested - no capability check needed",
-			requestedType:         "none",
-			serverSupportsPercent: false,
-			expectedType:          "none",
-			expectedWarning:       false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+var _ = Describe("Server Capability Detection", func() {
+	DescribeTable("verifies graceful fallback",
+		func(requestedType string, serverSupportsPercent bool, expectedType string) {
 			// Mock server capabilities
 			// Most servers support absolute deadband (basic OPC UA feature)
 			caps := &ServerCapabilities{
-				SupportsPercentDeadband:  tt.serverSupportsPercent,
+				SupportsPercentDeadband:  serverSupportsPercent,
 				SupportsAbsoluteDeadband: true, // Absolute is widely supported
 			}
 
 			// Adjust deadband type based on capabilities
-			resultType := adjustDeadbandType(tt.requestedType, caps)
+			resultType := adjustDeadbandType(requestedType, caps)
 
-			if resultType != tt.expectedType {
-				t.Errorf("adjustDeadbandType(%s, %+v) = %s, want %s",
-					tt.requestedType, caps, resultType, tt.expectedType)
-			}
-		})
-	}
-}
+			Expect(resultType).To(Equal(expectedType))
+		},
+		Entry("percent requested, server supports it", "percent", true, "percent"),
+		Entry("percent requested, server doesn't support - fallback to absolute", "percent", false, "absolute"),
+		Entry("absolute requested - always works", "absolute", false, "absolute"),
+		Entry("none requested - no capability check needed", "none", false, "none"),
+	)
+})
