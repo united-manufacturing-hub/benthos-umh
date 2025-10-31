@@ -447,6 +447,9 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 				// Edge case: skip to wraparound
 				{"skip_to_wrap", 100, 255, false, "Skip directly to wraparound", "ANY gap triggers rebirth request per spec"},
 				{"skip_from_wrap", 255, 5, false, "Skip after wraparound", "ANY gap triggers rebirth request per spec"},
+
+				// ENG-3720: Device 702 non-conformant behavior - skips sequence 0
+				{"non_conformant_255_to_1", 255, 1, false, "Non-conformant wraparound skipping 0 (255→1)", "Device skips seq 0, triggers rebirth per spec"},
 			}
 			
 			for _, tc := range testCases {

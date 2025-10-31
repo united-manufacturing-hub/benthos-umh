@@ -547,9 +547,7 @@ func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload 
 	if state, exists := s.nodeStates[deviceKey]; exists {
 		state.isOnline = true
 		state.lastSeen = time.Now()
-		if payload.Seq != nil {
-			state.lastSeq = uint8(*payload.Seq)
-		}
+		state.lastSeq = GetSequenceNumber(payload)
 		if payload.Timestamp != nil {
 			// Extract bdSeq from metrics if present
 			for _, metric := range payload.Metrics {
@@ -564,9 +562,7 @@ func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload 
 		state := &nodeState{
 			isOnline: true,
 			lastSeen: time.Now(),
-		}
-		if payload.Seq != nil {
-			state.lastSeq = uint8(*payload.Seq)
+			lastSeq:  GetSequenceNumber(payload),
 		}
 		s.nodeStates[deviceKey] = state
 	}
@@ -582,8 +578,8 @@ func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *
 	defer s.stateMu.Unlock()
 
 	// Check sequence numbers for out-of-order detection (Sparkplug B spec compliance)
-	if state, exists := s.nodeStates[deviceKey]; exists && payload.Seq != nil {
-		currentSeq := uint8(*payload.Seq)
+	if state, exists := s.nodeStates[deviceKey]; exists {
+		currentSeq := GetSequenceNumber(payload)
 		expectedSeq := uint8((int(state.lastSeq) + 1) % 256)
 
 		// Validate sequence according to Sparkplug B specification
@@ -809,12 +805,12 @@ func (s *sparkplugInput) parseSparkplugTopicDetailed(topic string) (string, stri
 func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	var batch service.MessageBatch
 
-	for _, metric := range payload.Metrics {
+	for i, metric := range payload.Metrics {
 		if metric == nil {
 			continue
 		}
 
-		msg := s.createMessageFromMetric(metric, payload, msgType, deviceKey, topicInfo, originalTopic)
+		msg := s.createMessageFromMetric(metric, payload, msgType, deviceKey, topicInfo, originalTopic, i, len(payload.Metrics))
 		if msg != nil {
 			batch = append(batch, msg)
 		}
@@ -823,7 +819,7 @@ func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgTyp
 	return batch
 }
 
-func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) *service.Message {
+func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string, metricIndex, totalMetrics int) *service.Message {
 	// Extract metric value as JSON (always preserve Sparkplug B format)
 	value := s.extractMetricValue(metric)
 	if value == nil {
@@ -841,7 +837,7 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	msg.MetaSet("spb_message_type", msgType)
 	msg.MetaSet("spb_device_key", deviceKey)
 	msg.MetaSet("spb_topic", originalTopic)
-	
+
 	// Add pre-sanitized versions for easier processing
 	msg.MetaSet("spb_group_id_sanitized", s.sanitizeForTopic(topicInfo.Group))
 	msg.MetaSet("spb_edge_node_id_sanitized", s.sanitizeForTopic(topicInfo.EdgeNode))
@@ -861,9 +857,16 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	msg.MetaSet("spb_metric_name_sanitized", s.sanitizeForTopic(metricName))
 
 	// Set sequence and timing metadata
-	if payload.Seq != nil {
-		msg.MetaSet("spb_sequence", fmt.Sprintf("%d", *payload.Seq))
-	}
+	// Note: spb_sequence is the MQTT-level sequence number (shared by all metrics in this NDATA message)
+	// See ENG-3720 and CS-13 for context on why we add metric_index for unique identification
+	seq := GetSequenceNumber(payload)
+	msg.MetaSet("spb_sequence", fmt.Sprintf("%d", seq))
+
+	// Add Dual-Sequence metadata for split message identification (Fix for ENG-3720)
+	// When NDATA messages are split into individual metrics, all metrics share the same spb_sequence.
+	// These fields enable unique identification: composite key = (spb_sequence, spb_metric_index)
+	msg.MetaSet("spb_metric_index", fmt.Sprintf("%d", metricIndex))
+	msg.MetaSet("spb_metrics_in_payload", fmt.Sprintf("%d", totalMetrics))
 
 	if payload.Timestamp != nil {
 		msg.MetaSet("spb_timestamp", fmt.Sprintf("%d", *payload.Timestamp))
@@ -1103,6 +1106,16 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 	s.logger.Infof("Sent rebirth request to %s on topic %s", deviceKey, topic)
 }
 
+// GetSequenceNumber extracts sequence number from payload, treating nil as 0 (implied)
+// According to Sparkplug B spec updates, seq=0 can be omitted in BIRTH messages for backwards compatibility
+// Exported for testing purposes to ensure backwards compatibility with older devices
+func GetSequenceNumber(payload *sparkplugb.Payload) uint8 {
+	if payload.Seq == nil {
+		return 0 // Implied seq=0 for backwards compatibility
+	}
+	return uint8(*payload.Seq)
+}
+
 // ValidateSequenceNumber checks if a received sequence number is valid according to Sparkplug B spec
 // Exported for testing purposes to ensure sequence validation logic is properly tested
 //
@@ -1121,12 +1134,26 @@ func ValidateSequenceNumber(lastSeq, currentSeq uint8) bool {
 // tryAddUMHMetadata attempts to convert Sparkplug B data to UMH format and add UMH metadata.
 // This is a non-failing operation - if conversion fails, it adds status flags and continues.
 func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
+	// Get message type from metadata (already set by createMessageFromMetric)
+	msgType, _ := msg.MetaGet("spb_message_type")
+
 	// Only attempt conversion if we have necessary data
-	if topicInfo.Device == "" || metric == nil {
+	// For NDATA messages: device ID is optional (node-level data), use edge_node_id as device identifier
+	// For DDATA messages: device ID is required (device-level data)
+	if metric == nil {
 		msg.MetaSet("umh_conversion_status", "skipped_insufficient_data")
-		s.logger.Debugf("Skipping UMH conversion: insufficient data (device=%s, metric=%v)", topicInfo.Device, metric != nil)
+		s.logger.Debugf("Skipping UMH conversion: metric is nil")
 		return
 	}
+
+	// For DDATA messages, device ID is required
+	if msgType == "DDATA" && topicInfo.Device == "" {
+		msg.MetaSet("umh_conversion_status", "skipped_insufficient_data")
+		s.logger.Debugf("Skipping UMH conversion for DDATA: device ID required but missing")
+		return
+	}
+
+	// For NDATA messages, device ID is optional - we'll use edge_node_id as device identifier
 
 	// Try to use the format converter
 	converter := NewFormatConverter()
@@ -1146,11 +1173,21 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	} else {
 		dataType = "unknown"
 	}
-	
+
+	// For NDATA messages (node-level data), use EdgeNode as DeviceID when Device is empty
+	deviceID := topicInfo.Device
+	if deviceID == "" {
+		deviceID = topicInfo.EdgeNode
+		// Set spb_device_id metadata for consistency (used by Topic Browser and other downstream processors)
+		// Even though this is NDATA (node-level), we're treating EdgeNode as the device identifier
+		msg.MetaSet("spb_device_id", deviceID)
+		msg.MetaSet("spb_device_id_sanitized", s.sanitizeForTopic(deviceID))
+	}
+
 	sparkplugMsg := &SparkplugMessage{
 		GroupID:    topicInfo.Group,
 		EdgeNodeID: topicInfo.EdgeNode,
-		DeviceID:   topicInfo.Device,
+		DeviceID:   deviceID,
 		Value:      rawValue,
 		DataType:   dataType,
 		Timestamp:  time.Now(), // Will be overridden below if payload has timestamp
