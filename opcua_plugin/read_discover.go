@@ -334,7 +334,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		monitoredNodes := len(response.Results)
 		totalMonitored += monitoredNodes
 		g.Log.Infof("Successfully monitored %d nodes in current batch", monitoredNodes)
-		if g.DeadbandType != "none" && g.DeadbandValue > 0.0 {
+		if g.DeadbandType != "none" {
 			g.Log.Infof("Batch %d-%d: Applied %s deadband filter (threshold: %.2f)",
 				startIdx, endIdx-1, g.DeadbandType, g.DeadbandValue)
 		}
