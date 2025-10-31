@@ -337,3 +337,23 @@ input:
   opcua:
     samplingInterval: 1000.0  # Sample every 1 second instead of as fast as possible
 ```
+
+## Metrics
+
+### opcua_subscription_failures_total
+
+Counter tracking OPC UA subscription failures by reason and node ID.
+
+**Labels:**
+- `reason`: Failure classification (`filter_not_allowed`, `filter_unsupported`, `node_id_unknown`, `node_id_invalid`, `other`)
+- `node_id`: OPC UA NodeID that failed to subscribe
+
+**Common Failure Reasons:**
+
+| Reason | Description | Resolution |
+|--------|-------------|------------|
+| `filter_not_allowed` | Server rejected deadband filter | Only numeric types (Int, UInt, Float, Double) support deadband |
+| `filter_unsupported` | Server doesn't support filters | Disable deadband: `deadbandType: none` |
+| `node_id_unknown` | NodeID doesn't exist | Verify NodeID configuration |
+| `node_id_invalid` | NodeID syntax error | Fix NodeID string format |
+| `other` | Other subscription errors | Check server logs |

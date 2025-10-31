@@ -42,9 +42,10 @@ type NodeDef struct {
 	BrowseName   string
 	Description  string
 	AccessLevel  ua.AccessLevelType
-	DataType     string
-	ParentNodeID string // custom, not an official opcua attribute
-	Path         string // custom, not an official opcua attribute
+	DataType     string      // String representation for metadata
+	DataTypeID   ua.TypeID   // TypeID for filter compatibility checking
+	ParentNodeID string      // custom, not an official opcua attribute
+	Path         string      // custom, not an official opcua attribute
 }
 
 // join concatenates two strings with a dot separator.
@@ -132,6 +133,7 @@ func browse(
 				for i := 0; i < toRemove; i++ {
 					for id := range workerID {
 						metrics.removeWorker(id)
+						delete(workerID, id)
 						// This break make sure that only one worker is removed on each iteration
 						break
 					}
@@ -220,7 +222,7 @@ func worker(
 				}
 				// to skip nodes that are already FullyDiscovered and fresh
 				if vni.FullyDiscovered && time.Since(vni.LastSeen) < StaleTime {
-					logger.Debugf("Worker %s: node %s is fully discovered and fresh, skipping..", id, task.node.ID().String)
+					logger.Debugf("Worker %s: node %s is fully discovered and fresh, skipping..", id, task.node.ID().String())
 					taskWg.Done()
 					continue
 				}
@@ -285,7 +287,7 @@ func worker(
 				continue
 			}
 
-			logger.Debugf("\nWorker %d: level %d: def.Path:%s def.NodeClass:%s TaskWaitGroup count: %d WorkerWaitGroup count: %d\n",
+			logger.Debugf("\nWorker %s: level %d: def.Path:%s def.NodeClass:%s TaskWaitGroup count: %d WorkerWaitGroup count: %d\n",
 				id, task.level, def.Path, def.NodeClass, taskWg.Count(), workerWg.Count())
 
 			visited.Store(task.node.ID(), VisitedNodeInfo{
@@ -305,7 +307,7 @@ func worker(
 			select {
 			case opcuaBrowserChan <- browserDetails:
 			default:
-				logger.Debugf("Worker %d: opcuaBrowserChan blocked, skipping", id)
+				logger.Debugf("Worker %s: opcuaBrowserChan blocked, skipping", id)
 			}
 
 			// Process based on node class
@@ -314,7 +316,7 @@ func worker(
 				select {
 				case nodeChan <- def:
 				case <-ctx.Done():
-					logger.Warnf("Worker %d: Failed to send node due to cancellation", id)
+					logger.Warnf("Worker %s: Failed to send node due to cancellation", id)
 					taskWg.Done()
 					return
 				}
