@@ -261,12 +261,14 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 
 		monitoredRequests := make([]*ua.MonitoredItemCreateRequest, 0, len(batch))
 
+		numFilteredNodes := 0
 		for pos, nodeDef := range batch {
 			var filter *ua.ExtensionObject
 
 			// Only apply deadband filter to numeric node types
 			if isNumericDataType(nodeDef.DataTypeID) && g.DeadbandType != "none" {
 				filter = createDataChangeFilter(g.DeadbandType, g.DeadbandValue)
+				numFilteredNodes++
 			} else {
 				// Non-numeric nodes: subscribe without filter
 				filter = nil
@@ -335,8 +337,8 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		totalMonitored += monitoredNodes
 		g.Log.Infof("Successfully monitored %d nodes in current batch", monitoredNodes)
 		if g.DeadbandType != "none" {
-			g.Log.Infof("Batch %d-%d: Applied %s deadband filter (threshold: %.2f)",
-				startIdx, endIdx-1, g.DeadbandType, g.DeadbandValue)
+			g.Log.Infof("Batch %d-%d: Applied %s deadband filter to %d numeric nodes (threshold: %.2f)",
+				startIdx, endIdx-1, g.DeadbandType, numFilteredNodes, g.DeadbandValue)
 		}
 		time.Sleep(time.Second) // Sleep for some time to prevent overloading the server
 	}
