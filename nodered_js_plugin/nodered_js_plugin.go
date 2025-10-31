@@ -17,9 +17,11 @@ package nodered_js_plugin
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/dop251/goja"
+	"github.com/goccy/go-json"
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
@@ -129,12 +131,42 @@ func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[stri
 		return fmt.Errorf("failed to set message in JS environment: %v", err)
 	}
 
+	stringify := func(data any) string {
+		if str, ok := data.(string); ok {
+			return str
+		}
+
+		if err, ok := data.(error); ok {
+			return err.Error()
+		}
+
+		if stringer, ok := data.(fmt.Stringer); ok {
+			return stringer.String()
+		}
+
+		if d, err := json.Marshal(data); err == nil {
+			return string(d)
+		}
+
+		return fmt.Sprintf("%#v", data)
+	}
+
+	formatLogMsg := func(data []any) string {
+		buf := make([]string, 0, len(data))
+		for _, d := range data {
+			buf = append(buf, stringify(d))
+		}
+		return strings.Join(buf, " ")
+	}
+
 	// Set up console for logging that uses Benthos logger
 	console := map[string]interface{}{
-		"log":   func(msg string) { u.logger.Info(msg) },
-		"warn":  func(msg string) { u.logger.Warn(msg) },
-		"error": func(msg string) { u.logger.Error(msg) },
+		"log":   func(data ...any) { u.logger.Info(formatLogMsg(data)) },
+		"info":  func(data ...any) { u.logger.Info(formatLogMsg(data)) },
+		"warn":  func(data ...any) { u.logger.Warn(formatLogMsg(data)) },
+		"error": func(data ...any) { u.logger.Error(formatLogMsg(data)) },
 	}
+
 	if err := vm.Set("console", console); err != nil {
 		return fmt.Errorf("failed to set console in JS environment: %v", err)
 	}
