@@ -16,6 +16,7 @@ package opcua_plugin
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"sync"
 	"sync/atomic"
@@ -252,7 +253,7 @@ func worker(
 			attrs, err := task.node.Attributes(ctx, ua.AttributeIDNodeClass, ua.AttributeIDBrowseName,
 				ua.AttributeIDDescription, ua.AttributeIDAccessLevel, ua.AttributeIDDataType)
 			if err != nil {
-				sendError(ctx, err, errChan, logger)
+				sendError(ctx, fmt.Errorf("node %s: %w", task.node.ID().String(), err), errChan, logger)
 				taskWg.Done()
 				continue
 			}
