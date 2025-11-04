@@ -376,7 +376,14 @@ func browseChildren(ctx context.Context, task NodeTask, def NodeDef, taskChan ch
 		return errors.Errorf("Children: %s", err)
 	}
 
-	// Queue child tasks with context cancellation support
+	// Queue child tasks with context cancellation support.
+	// Use select to prevent deadlock: if taskChan is full and context is cancelled,
+	// we must exit immediately rather than block forever. The ctx.Done() case provides
+	// an escape path that pure blocking (taskChan <- task) lacks.
+	//
+	// Important: taskWg.Add(1) is called AFTER successful send (not before) to prevent
+	// count leaks. If we return on ctx.Done(), no Add() is called, so no Done() is needed.
+	// This maintains the invariant: Add() called ⟺ task successfully queued.
 	for _, child := range children {
 		select {
 		case taskChan <- NodeTask{
