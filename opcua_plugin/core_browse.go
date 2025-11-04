@@ -106,9 +106,10 @@ func browse(
 	metrics := NewServerMetrics()
 	var taskWg TrackedWaitGroup
 	var workerWg TrackedWaitGroup
-	// Have sufficient buffer (minWorkers* 10_000) for taskChan to avoid blocking and the number of workers might grow dynamically down the line. The minWorkers is a constant of 3
-	// TODO: Introduce backpressure mechanism to avoid blocking the taskChan
-	taskChan := make(chan NodeTask, metrics.currentWorkers*10000)
+	// Buffer = 2× MaxTagsToBrowse to handle branching factor safely.
+	// This prevents deadlock when workers queue children to taskChan.
+	// Backpressure is applied via context cancellation in browseChildren.
+	taskChan := make(chan NodeTask, MaxTagsToBrowse*2)
 
 	workerID := make(map[uuid.UUID]struct{})
 	// Start worker pool manager
@@ -306,8 +307,11 @@ func worker(
 			browserDetails.NodeDef.Path = join(task.path, def.BrowseName)
 			select {
 			case opcuaBrowserChan <- browserDetails:
-			default:
-				logger.Debugf("Worker %s: opcuaBrowserChan blocked, skipping", id)
+				// Successfully sent node details for topic browser
+			case <-ctx.Done():
+				logger.Warnf("Worker %s: Context canceled while sending to opcuaBrowserChan", id)
+				taskWg.Done()
+				return
 			}
 
 			// Process based on node class
@@ -372,14 +376,18 @@ func browseChildren(ctx context.Context, task NodeTask, def NodeDef, taskChan ch
 		return errors.Errorf("Children: %s", err)
 	}
 
-	// Queue child tasks
+	// Queue child tasks with context cancellation support
 	for _, child := range children {
-		taskWg.Add(1)
-		taskChan <- NodeTask{
+		select {
+		case taskChan <- NodeTask{
 			node:         child,
 			path:         def.Path,
 			level:        task.level + 1,
 			parentNodeId: def.NodeID.String(),
+		}:
+			taskWg.Add(1) // Only increment if successfully queued
+		case <-ctx.Done():
+			return ctx.Err() // Respect cancellation
 		}
 	}
 	return nil
