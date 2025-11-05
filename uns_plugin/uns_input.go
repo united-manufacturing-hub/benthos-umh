@@ -63,6 +63,10 @@ func NewUnsInput(client MessageConsumer, config UnsInputConfig, logger *service.
 	// Create metrics
 	metrics := NewUnsInputMetrics(metricsProvider)
 
+	if config.metadataFormat == "" {
+		panic("MetadataFormat is enforced to be one of its enum variants by the config parser. Reaching this case likely means that a testcase is misconfigured.")
+	}
+
 	// Create a message processor
 	processor, err := NewMessageProcessor(config.umhTopics, metrics, config.metadataFormat)
 	if err != nil {

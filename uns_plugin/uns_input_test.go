@@ -150,6 +150,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 		inputKafkaTopic: defaultInputKafkaTopic,
 		brokerAddress:   defaultBrokerAddress,
 		consumerGroup:   defaultConsumerGroup,
+		metadataFormat:  defaultMetadataFormat,
 	}
 
 	BeforeEach(func() {
@@ -338,6 +339,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 						inputKafkaTopic: defaultInputKafkaTopic,
 						brokerAddress:   defaultBrokerAddress,
 						consumerGroup:   defaultConsumerGroup,
+						metadataFormat:  defaultMetadataFormat,
 					}
 					resources = service.MockResources()
 					var err error
@@ -368,6 +370,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 						inputKafkaTopic: defaultInputKafkaTopic,
 						brokerAddress:   defaultBrokerAddress,
 						consumerGroup:   defaultConsumerGroup,
+						metadataFormat:  defaultMetadataFormat,
 					}
 					resources = service.MockResources()
 					var err error
@@ -510,6 +513,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 					inputKafkaTopic: defaultInputKafkaTopic,
 					brokerAddress:   defaultBrokerAddress,
 					consumerGroup:   defaultConsumerGroup,
+					metadataFormat:  defaultMetadataFormat,
 				}
 
 				// We need to re-initialize the input plugin with the new config
@@ -529,6 +533,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 					inputKafkaTopic: defaultInputKafkaTopic,
 					brokerAddress:   defaultBrokerAddress,
 					consumerGroup:   defaultConsumerGroup,
+					metadataFormat:  defaultMetadataFormat,
 				}
 				resources = service.MockResources()
 				var err error
@@ -621,7 +626,7 @@ consumer_group: "test_group"
 
 			config, err := ParseFromBenthos(parsedConfig, logger)
 			Expect(err).To(BeNil())
-			Expect(config.metadataFormat).To(Equal("string"))
+			Expect(config.metadataFormat).To(Equal(MetadataFormatString))
 		})
 
 		It("should accept 'string' as valid value", func() {
@@ -635,7 +640,7 @@ metadata_format: "string"
 
 			config, err := ParseFromBenthos(parsedConfig, logger)
 			Expect(err).To(BeNil())
-			Expect(config.metadataFormat).To(Equal("string"))
+			Expect(config.metadataFormat).To(Equal(MetadataFormatString))
 		})
 
 		It("should accept 'bytes' as valid value", func() {
@@ -649,7 +654,7 @@ metadata_format: "bytes"
 
 			config, err := ParseFromBenthos(parsedConfig, logger)
 			Expect(err).To(BeNil())
-			Expect(config.metadataFormat).To(Equal("bytes"))
+			Expect(config.metadataFormat).To(Equal(MetadataFormatBytes))
 		})
 
 		It("should return error for invalid value", func() {
@@ -681,7 +686,7 @@ var _ = Describe("MessageProcessor metadata format conversion", Label("message_p
 
 	Context("when metadataFormat is 'string'", func() {
 		It("should convert Kafka headers to string values", func() {
-			processor, err := NewMessageProcessor([]string{".*"}, metrics, "string")
+			processor, err := NewMessageProcessor([]string{".*"}, metrics, MetadataFormatString)
 			Expect(err).To(BeNil())
 
 			record := &kgo.Record{
@@ -717,7 +722,7 @@ var _ = Describe("MessageProcessor metadata format conversion", Label("message_p
 
 	Context("when metadataFormat is 'bytes'", func() {
 		It("should keep Kafka headers as byte arrays", func() {
-			processor, err := NewMessageProcessor([]string{".*"}, metrics, "bytes")
+			processor, err := NewMessageProcessor([]string{".*"}, metrics, MetadataFormatBytes)
 			Expect(err).To(BeNil())
 
 			record := &kgo.Record{
@@ -759,7 +764,7 @@ var _ = Describe("MessageProcessor regex filtering", Label("message_processor"),
 			processor, err = NewMessageProcessor(
 				[]string{`^umh\.v1\.umh-ep(?:\.[^._][^.]*)+\._mitarbeiter\.[^._][^.]*$`},
 				metrics,
-				"bytes", // Add default metadata format
+				defaultMetadataFormat,
 			)
 			Expect(err).To(BeNil())
 		})
