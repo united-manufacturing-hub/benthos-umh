@@ -311,7 +311,7 @@ func worker(
 			case <-ctx.Done():
 				logger.Warnf("Worker %s: Context canceled while sending to opcuaBrowserChan", id)
 				taskWg.Done()
-				return
+				continue
 			}
 
 			// Process based on node class
@@ -322,7 +322,7 @@ func worker(
 				case <-ctx.Done():
 					logger.Warnf("Worker %s: Failed to send node due to cancellation", id)
 					taskWg.Done()
-					return
+					continue
 				}
 				if err := browseChildren(ctx, task, def, taskChan, taskWg); err != nil {
 					sendError(ctx, err, errChan, logger)
@@ -397,7 +397,8 @@ func browseChildren(ctx context.Context, task NodeTask, def NodeDef, taskChan ch
 			// Successfully queued
 		case <-ctx.Done():
 			taskWg.Done() // Roll back the Add() since task wasn't queued
-			return ctx.Err() // Respect cancellation
+			// Context cancellation is graceful shutdown, not an error
+			return nil
 		}
 	}
 	return nil

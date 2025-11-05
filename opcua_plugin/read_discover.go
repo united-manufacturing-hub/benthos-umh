@@ -39,10 +39,11 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	errChan := make(chan error, MaxTagsToBrowse)
 	// opcuaBrowserChan is created to just satisfy the browse function signature.
 	// The data inside opcuaBrowserChan is not so useful for this function. It is more useful for the GetNodeTree function
-	opcuaBrowserChan := make(chan BrowseDetails, MaxTagsToBrowse)
+	// Buffer size reduced to 1000 (from 100k) since consumer drains instantly - saves 33 MB memory
+	opcuaBrowserChan := make(chan BrowseDetails, 1000)
 
 	// Start concurrent consumer to drain opcuaBrowserChan as workers produce BrowseDetails
-	// This prevents deadlock when browse workers fill the 100k buffer (discovered in ENG-3835 integration test)
+	// This prevents deadlock by ensuring channel never fills (discovered in ENG-3835 integration test)
 	// Without this consumer, workers block after 100k nodes and hang until timeout
 	opcuaBrowserConsumerDone := make(chan struct{})
 	go func() {
