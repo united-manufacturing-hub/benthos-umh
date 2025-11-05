@@ -68,7 +68,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		g.Log.Debugf("Browsing nodeID: %s", nodeID.String())
 		wg.Add(1)
 		wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(nodeID))
-		go browse(timeoutCtx, wrapperNodeID, "", g.Log, nodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
+		go browse(timeoutCtx, wrapperNodeID, "", g.Log, nodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited, g.ServerProfile)
 	}
 
 	// Start concurrent consumer to drain nodeChan as workers produce nodes
@@ -165,7 +165,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 
 			wgHeartbeat.Add(1)
 			wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(heartbeatNodeID))
-			go browse(ctx, wrapperNodeID, "", g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat, opcuaBrowserChanHeartbeat, &g.visited)
+			go browse(ctx, wrapperNodeID, "", g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat, opcuaBrowserChanHeartbeat, &g.visited, g.ServerProfile)
 
 			wgHeartbeat.Wait()
 			close(nodeHeartbeatChan)
@@ -251,7 +251,11 @@ func isNumericDataType(typeID ua.TypeID) bool {
 //
 // It returns the total number of nodes that were successfully monitored or an error if monitoring fails.
 func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, error) {
-	const maxBatchSize = 100
+	// Use profile-based batch size
+	maxBatchSize := g.ServerProfile.MaxBatchSize
+	if maxBatchSize == 0 {
+		maxBatchSize = 100 // Fallback if profile not initialized
+	}
 	totalMonitored := 0
 	totalNodes := len(nodes)
 
@@ -260,7 +264,9 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		return 0, fmt.Errorf("no valid nodes selected")
 	}
 
-	g.Log.Infof("Starting to monitor %d nodes in batches of %d", totalNodes, maxBatchSize)
+	g.Log.With("batchSize", maxBatchSize).
+		With("profile", g.ServerProfile.Name).
+		Infof("Starting to monitor %d nodes in batches of %d", totalNodes, maxBatchSize)
 
 	for startIdx := 0; startIdx < totalNodes; startIdx += maxBatchSize {
 		endIdx := startIdx + maxBatchSize

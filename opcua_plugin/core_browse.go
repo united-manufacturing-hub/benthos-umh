@@ -79,8 +79,8 @@ type Logger interface {
 
 // Browse is a public wrapper function for the browse function
 // Avoid using this function directly, use it only for testing
-func Browse(ctx context.Context, n NodeBrowser, path string, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map) {
-	browse(ctx, n, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
+func Browse(ctx context.Context, n NodeBrowser, path string, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map, profile ServerProfile) {
+	browse(ctx, n, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited, profile)
 }
 
 // NodeTask represents a task for workers to process
@@ -103,8 +103,9 @@ func browse(
 	wg *TrackedWaitGroup,
 	opcuaBrowserChan chan BrowseDetails,
 	visited *sync.Map,
+	profile ServerProfile,
 ) {
-	metrics := NewServerMetrics()
+	metrics := NewServerMetrics(profile)
 	var taskWg TrackedWaitGroup
 	var workerWg TrackedWaitGroup
 	// Have sufficient buffer (minWorkers* 10_000) for taskChan to avoid blocking and the number of workers might grow dynamically down the line. The minWorkers is a constant of 3

@@ -22,11 +22,11 @@ import (
 )
 
 const (
-	MaxWorkers     = 200
-	MinWorkers     = 5
-	InitialWorkers = 10
-	SampleSize     = 5 // Number of requsts to measure response time
-	TargetLatency  = 250 * time.Millisecond
+	// Default worker pool settings (overridden by ServerProfile)
+	DefaultMaxWorkers  = 200
+	DefaultMinWorkers  = 5
+	InitialWorkers     = 10
+	SampleSize         = 5 // Number of requests to measure response time
 )
 
 // ServerMetrics is a struct that holds the metrics for the OPCUA server requests
@@ -34,16 +34,18 @@ type ServerMetrics struct {
 	mu             sync.Mutex
 	responseTimes  []time.Duration
 	currentWorkers int
-	targetLatency  time.Duration
+	minWorkers     int
+	maxWorkers     int
 	workerControls map[uuid.UUID]chan struct{} // Channel to signal workers to stop
 }
 
-func NewServerMetrics() *ServerMetrics {
+func NewServerMetrics(profile ServerProfile) *ServerMetrics {
 	return &ServerMetrics{
 		responseTimes:  make([]time.Duration, 0),
 		workerControls: make(map[uuid.UUID]chan struct{}),
-		targetLatency:  TargetLatency,
 		currentWorkers: InitialWorkers,
+		minWorkers:     profile.MinWorkers,
+		maxWorkers:     profile.MaxWorkers,
 	}
 }
 
@@ -88,31 +90,15 @@ func (sm *ServerMetrics) adjustWorkers(logger Logger) (toAdd, toRemove int) {
 		return 0, 0
 	}
 
-	var totalTime time.Duration
-	for _, t := range sm.responseTimes {
-		totalTime += t
-	}
-	avgResponse := totalTime / time.Duration(len(sm.responseTimes))
-	oldWorkerCount := sm.currentWorkers
-
-	if avgResponse > sm.targetLatency {
-		// Response time is too high. Reduce workers
-		sm.currentWorkers = max(MinWorkers, sm.currentWorkers-10)
-		logger.Debugf("Response time is high (%v > %v target Latency), reducing workers from %d to %d", avgResponse, sm.targetLatency, oldWorkerCount, sm.currentWorkers)
-	}
-
-	if avgResponse < sm.targetLatency {
-		// Response time is too low. Increase workers
-		sm.currentWorkers = min(MaxWorkers, sm.currentWorkers+10)
-		logger.Debugf("Response time is low (%v < %v target Latency), increasing workers from %d to %d", avgResponse, sm.targetLatency, oldWorkerCount, sm.currentWorkers)
-	}
+	// Latency-based scaling removed (TargetLatency constant removed per Part 5.3)
+	// Static worker pool maintained until queue-based scaling implemented
 
 	sm.responseTimes = sm.responseTimes[:0]
-	if sm.currentWorkers > oldWorkerCount {
-		return sm.currentWorkers - oldWorkerCount, 0
-	}
 
-	return 0, oldWorkerCount - sm.currentWorkers
+	// Worker scaling logic removed - will be replaced with queue-based scaling in future task
+	// For now, maintain static worker pool
+	// TODO: Implement queue-depth based scaling (see IMPLEMENTATION_PLAN_REVISED.md Part 5.3)
+	return 0, 0
 }
 
 // recordResponseTime records the response time of a request
