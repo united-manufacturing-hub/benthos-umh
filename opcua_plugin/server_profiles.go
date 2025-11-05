@@ -43,39 +43,43 @@ type ServerProfile struct {
 // Profile instances
 var (
 	profileAuto = ServerProfile{
-		Name:         ProfileAuto,
-		DisplayName:  "Auto (Defensive Defaults)",
-		Description:  "Safe defaults that work with any OPC UA server, including resource-constrained embedded devices. System will auto-detect known servers and optimize automatically.",
-		MaxBatchSize: 50,
-		MaxWorkers:   5,
-		MinWorkers:   1,
+		Name:              ProfileAuto,
+		DisplayName:       "Auto (Defensive Defaults)",
+		Description:       "Safe defaults that work with any OPC UA server, including resource-constrained embedded devices. System will auto-detect known servers and optimize automatically.",
+		MaxBatchSize:      50,
+		MaxWorkers:        5,
+		MinWorkers:        1,
+		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
 	}
 
 	profileHighPerformance = ServerProfile{
-		Name:         ProfileHighPerformance,
-		DisplayName:  "High-Performance (VM Servers)",
-		Description:  "Aggressive profile for high-performance OPC UA servers running on VM infrastructure. Use when you know your server can handle high concurrency.",
-		MaxBatchSize: 1000,
-		MaxWorkers:   50,
-		MinWorkers:   10,
+		Name:              ProfileHighPerformance,
+		DisplayName:       "High-Performance (VM Servers)",
+		Description:       "Aggressive profile for high-performance OPC UA servers running on VM infrastructure. Use when you know your server can handle high concurrency.",
+		MaxBatchSize:      1000,
+		MaxWorkers:        50,
+		MinWorkers:        10,
+		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
 	}
 
 	profileIgnition = ServerProfile{
-		Name:         ProfileIgnition,
-		DisplayName:  "Ignition Gateway",
-		Description:  "Optimized for Inductive Automation Ignition Gateway (Eclipse Milo). Handles 64 concurrent operations per session.",
-		MaxBatchSize: 1000,
-		MaxWorkers:   20,
-		MinWorkers:   5,
+		Name:              ProfileIgnition,
+		DisplayName:       "Ignition Gateway",
+		Description:       "Optimized for Inductive Automation Ignition Gateway (Eclipse Milo). Handles 64 concurrent operations per session.",
+		MaxBatchSize:      1000,
+		MaxWorkers:        20,
+		MinWorkers:        5,
+		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
 	}
 
 	profileKepware = ServerProfile{
-		Name:         ProfileKepware,
-		DisplayName:  "Kepware KEPServerEX",
-		Description:  "Optimized for PTC Kepware KEPServerEX. Supports up to 128 OPC UA sessions (default, configurable to 4000).",
-		MaxBatchSize: 1000,
-		MaxWorkers:   40,
-		MinWorkers:   5,
+		Name:              ProfileKepware,
+		DisplayName:       "Kepware KEPServerEX",
+		Description:       "Optimized for PTC Kepware KEPServerEX. Supports up to 128 OPC UA sessions (default, configurable to 4000).",
+		MaxBatchSize:      1000,
+		MaxWorkers:        40,
+		MinWorkers:        5,
+		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
 	}
 
 	profileS71200 = ServerProfile{
@@ -99,21 +103,23 @@ var (
 	}
 
 	profileProsys = ServerProfile{
-		Name:         ProfileProsys,
-		DisplayName:  "Prosys Simulation Server",
-		Description:  "Optimized for Prosys OPC UA Simulation Server. Supports 100+ concurrent sessions and high-throughput simulation.",
-		MaxBatchSize: 800,
-		MaxWorkers:   60,
-		MinWorkers:   5,
+		Name:              ProfileProsys,
+		DisplayName:       "Prosys Simulation Server",
+		Description:       "Optimized for Prosys OPC UA Simulation Server. Supports 100+ concurrent sessions and high-throughput simulation.",
+		MaxBatchSize:      800,
+		MaxWorkers:        60,
+		MinWorkers:        5,
+		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
 	}
 
 	profileUnknown = ServerProfile{
-		Name:         "unknown",
-		DisplayName:  "Unknown Server (Fallback)",
-		Description:  "Conservative fallback used when server vendor cannot be detected. Same as Auto profile.",
-		MaxBatchSize: 50,
-		MaxWorkers:   5,
-		MinWorkers:   1,
+		Name:              "unknown",
+		DisplayName:       "Unknown Server (Fallback)",
+		Description:       "Conservative fallback used when server vendor cannot be detected. Same as Auto profile.",
+		MaxBatchSize:      50,
+		MaxWorkers:        5,
+		MinWorkers:        1,
+		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
 	}
 )
 
