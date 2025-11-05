@@ -78,6 +78,18 @@ var _ = Describe("100k Scale Browse Test", Label("100k_scale"), func() {
 				close(consumerDone)
 			}()
 
+			// Start concurrent consumer to drain opcuaBrowserChan (ENG-3835)
+			// Without this consumer, browse workers block when sending node 100,001
+			// since opcuaBrowserChan buffer is only 100k (MaxTagsToBrowse)
+			// Browse details are discarded - only needed for GetNodeTree frontend
+			opcuaBrowserConsumerDone := make(chan struct{})
+			go func() {
+				for range opcuaBrowserChan {
+					// Discard - browse details not needed for this test
+				}
+				close(opcuaBrowserConsumerDone)
+			}()
+
 			// Wait for browse to complete with timeout detection
 			done := make(chan struct{})
 			go func() {
@@ -97,8 +109,9 @@ var _ = Describe("100k Scale Browse Test", Label("100k_scale"), func() {
 			close(errChan)
 			close(opcuaBrowserChan)
 
-			// Wait for consumer to finish draining
+			// Wait for consumers to finish draining
 			<-consumerDone
+			<-opcuaBrowserConsumerDone
 
 			// Check for errors
 			var errors []error
