@@ -178,6 +178,7 @@ type OPCUAInput struct {
 	HeartbeatNodeId              *ua.NodeID
 	Subscription                 *opcua.Subscription
 	ServerInfo                   ServerInfo
+	ServerProfile                ServerProfile
 	PollRate                     int
 	QueueSize                    uint32
 	SamplingInterval             float64
@@ -248,6 +249,13 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 	} else {
 		g.Log.Infof("OPC UA Server Information: %v+", serverInfo)
 		g.ServerInfo = serverInfo
+
+		// Detect and store server profile
+		g.ServerProfile = DetectServerProfile(&g.ServerInfo)
+		g.Log.With("profile", g.ServerProfile.Name).
+			With("manufacturer", g.ServerInfo.ManufacturerName).
+			With("product", g.ServerInfo.ProductName).
+			Info("Detected OPC UA server profile")
 	}
 
 	// Query server capabilities for deadband support (only if subscriptions enabled)
