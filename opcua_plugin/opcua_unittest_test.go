@@ -703,6 +703,113 @@ func createMockNode(id uint32, name string, nodeClass ua.NodeClass) *MockOpcuaNo
 // Ensure that the MockOpcuaNodeWraper implements the NodeBrowser interface
 var _ NodeBrowser = &MockOpcuaNodeWraper{}
 
+// MockOpcuaNodeWithBadNodeID simulates a node that returns StatusBadNodeIDUnknown
+// error when Attributes() is called. This is used to test error handling in browse operations.
+type MockOpcuaNodeWithBadNodeID struct {
+	id         *ua.NodeID
+	browseName *ua.QualifiedName
+}
+
+func (m *MockOpcuaNodeWithBadNodeID) ID() *ua.NodeID {
+	return m.id
+}
+
+func (m *MockOpcuaNodeWithBadNodeID) BrowseName(ctx context.Context) (*ua.QualifiedName, error) {
+	return m.browseName, nil
+}
+
+func (m *MockOpcuaNodeWithBadNodeID) Attributes(ctx context.Context, attrs ...ua.AttributeID) ([]*ua.DataValue, error) {
+	// Return StatusBadNodeIDUnknown error to simulate the real-world scenario
+	return nil, ua.StatusBadNodeIDUnknown
+}
+
+func (m *MockOpcuaNodeWithBadNodeID) Children(ctx context.Context, refType uint32, nodeClassMask ua.NodeClass) ([]NodeBrowser, error) {
+	return nil, nil
+}
+
+func (m *MockOpcuaNodeWithBadNodeID) ReferencedNodes(ctx context.Context, refType uint32, browseDir ua.BrowseDirection, nodeClassMask ua.NodeClass, includeSubtypes bool) ([]NodeBrowser, error) {
+	return nil, nil
+}
+
+// Ensure the mock implements NodeBrowser
+var _ NodeBrowser = &MockOpcuaNodeWithBadNodeID{}
+
+// TestBrowseNodeWithStatusBadNodeIDUnknown verifies that when a node returns
+// StatusBadNodeIDUnknown during Attributes() call:
+// 1. The error message includes the node ID that caused the error
+// 2. Browse continues with other valid nodes (doesn't abort)
+//
+// This test addresses ENG-3828 where node IDs are not logged for
+// StatusBadNodeIDUnknown errors, making debugging impossible.
+//
+// TDD RED PHASE: This test will FAIL because:
+// - Current code: sendError(ctx, err, errChan, logger) at core_browse.go:255
+// - Missing: Node ID not wrapped into error message
+// - Expected: Error should contain "ns=2;i=9999" but won't
+var _ = Describe("Browse with StatusBadNodeIDUnknown", func() {
+	Context("when a node returns StatusBadNodeIDUnknown during browse", func() {
+		It("should include node ID in error message and continue with valid nodes", func() {
+			ctx := context.Background()
+			path := ""
+			logger := &MockLogger{}
+			parentNodeId := ""
+			nodeChan := make(chan NodeDef, 100)
+			errChan := make(chan error, 100)
+			wg := &TrackedWaitGroup{}
+			opcuaBrowserChan := make(chan BrowseDetails, 100)
+			visited := &sync.Map{}
+
+			// Create root folder that organizes two child nodes
+			rootFolder := createMockNode(1000, "RootFolder", ua.NodeClassObject)
+
+			// Child 1: BAD node that will return StatusBadNodeIDUnknown error
+			badNode := &MockOpcuaNodeWithBadNodeID{
+				id:         ua.MustParseNodeID("ns=2;i=9999"),
+				browseName: &ua.QualifiedName{NamespaceIndex: 2, Name: "BadNode"},
+			}
+
+			// Child 2: GOOD node that should still be browsed
+			goodNode := createMockNode(2000, "GoodNode", ua.NodeClassVariable)
+
+			// Add both nodes as children via Organizes reference
+			rootFolder.AddReferenceNode(id.Organizes, badNode)
+			rootFolder.AddReferenceNode(id.Organizes, goodNode)
+
+			// Start browsing
+			wg.Add(1)
+			go func() {
+				Browse(ctx, rootFolder, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
+			}()
+			wg.Wait()
+			close(nodeChan)
+			close(errChan)
+
+			// Collect results
+			var nodes []NodeDef
+			for nodeDef := range nodeChan {
+				nodes = append(nodes, nodeDef)
+			}
+
+			var errs []error
+			for err := range errChan {
+				errs = append(errs, err)
+			}
+
+			// ASSERTION 1: Error should contain the problematic node ID
+			// This will FAIL in RED phase because node ID is not logged
+			Expect(errs).Should(HaveLen(1), "Should have exactly one error for the bad node")
+			Expect(errs[0].Error()).To(ContainSubstring("ns=2;i=9999"),
+				"Error message MUST include the node ID that caused StatusBadNodeIDUnknown")
+
+			// ASSERTION 2: Browse should continue and return the good node
+			// This may also fail if browse aborts on first error
+			Expect(nodes).Should(HaveLen(1), "Should still discover the good node")
+			Expect(nodes[0].NodeID.String()).To(Equal("i=2000"))
+			Expect(nodes[0].BrowseName).To(Equal("GoodNode"))
+		})
+	})
+})
+
 func startBrowsing(ctx context.Context, rootNode NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map) ([]NodeDef, []error) {
 	wg.Add(1)
 	go func() {
