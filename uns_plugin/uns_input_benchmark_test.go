@@ -298,6 +298,7 @@ func BenchmarkUnsInput_ReadBatch(b *testing.B) {
 				inputKafkaTopic: defaultInputKafkaTopic,
 				brokerAddress:   defaultBrokerAddress,
 				consumerGroup:   defaultConsumerGroup,
+				metadataFormat:  defaultMetadataFormat,
 			}
 			resources := service.MockResources()
 			input, _ := NewUnsInput(mockClient, inputConfig, resources.Logger(), resources.Metrics())
@@ -373,6 +374,7 @@ func BenchmarkAckFunction(b *testing.B) {
 				inputKafkaTopic: defaultInputKafkaTopic,
 				brokerAddress:   defaultBrokerAddress,
 				consumerGroup:   defaultConsumerGroup,
+				metadataFormat:  defaultMetadataFormat,
 			}
 			resources := service.MockResources()
 			input, _ := NewUnsInput(mockClient, inputConfig, resources.Logger(), resources.Metrics())

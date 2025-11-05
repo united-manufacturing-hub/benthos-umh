@@ -26,6 +26,7 @@ const (
 	defaultInputKafkaTopic = "umh.messages"
 	defaultTopicKey        = ".*"
 	defaultConsumerGroup   = "uns_plugin"
+	defaultMetadataFormat  = MetadataFormatString
 	defaultConnIdleTimeout = 15 * time.Minute
 	defaultDialTimeout     = 10 * time.Second
 
@@ -38,13 +39,20 @@ const (
 	defaultFetchMaxWaitTime       = 1 * time.Second
 )
 
+type MetadataFormat string
+
+const (
+	MetadataFormatString MetadataFormat = "string"
+	MetadataFormatBytes  MetadataFormat = "bytes"
+)
+
 // UnsInputConfig holds the configuration for the UNS input plugin
 type UnsInputConfig struct {
 	umhTopics       []string
 	inputKafkaTopic string
 	brokerAddress   string
 	consumerGroup   string
-	metadataFormat  string
+	metadataFormat  MetadataFormat
 }
 
 // NewDefaultUnsInputConfig creates a new input config with default values
@@ -54,7 +62,7 @@ func NewDefaultUnsInputConfig() UnsInputConfig {
 		inputKafkaTopic: defaultInputKafkaTopic,
 		brokerAddress:   defaultBrokerAddress,
 		consumerGroup:   defaultConsumerGroup,
-		metadataFormat:  "string",
+		metadataFormat:  defaultMetadataFormat,
 	}
 }
 
@@ -150,10 +158,14 @@ func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsIn
 			return config, fmt.Errorf("error while parsing the 'metadata_format' from the plugin's config: %v", err)
 		}
 		// Validate the value
-		if metadataFormat != "string" && metadataFormat != "bytes" {
+		switch metadataFormat {
+		case string(MetadataFormatString):
+			config.metadataFormat = MetadataFormatString
+		case string(MetadataFormatBytes):
+			config.metadataFormat = MetadataFormatBytes
+		default:
 			return config, fmt.Errorf("metadata_format must be 'string' or 'bytes', got '%s'", metadataFormat)
 		}
-		config.metadataFormat = metadataFormat
 	}
 
 	return config, nil
