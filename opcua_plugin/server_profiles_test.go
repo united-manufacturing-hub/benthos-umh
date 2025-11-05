@@ -381,3 +381,42 @@ var _ = Describe("Profile Value Validation", func() {
 		})
 	})
 })
+
+var _ = Describe("ServerProfile MaxMonitoredItems", func() {
+	Context("Profile Definitions", func() {
+		It("should have MaxMonitoredItems=1000 for S7-1200 profile", func() {
+			profile := GetProfileByName(ProfileS71200)
+			Expect(profile.MaxMonitoredItems).To(Equal(1000))
+		})
+
+		It("should have MaxMonitoredItems=10000 for S7-1500 profile", func() {
+			profile := GetProfileByName(ProfileS71500)
+			Expect(profile.MaxMonitoredItems).To(Equal(10000))
+		})
+
+		It("should have MaxMonitoredItems=0 (unlimited) for Kepware profile", func() {
+			profile := GetProfileByName(ProfileKepware)
+			Expect(profile.MaxMonitoredItems).To(Equal(0))
+		})
+
+		It("should have MaxMonitoredItems=0 (unlimited) for Ignition profile", func() {
+			profile := GetProfileByName(ProfileIgnition)
+			Expect(profile.MaxMonitoredItems).To(Equal(0))
+		})
+
+		It("should have MaxMonitoredItems=0 (unlimited) for Prosys profile", func() {
+			profile := GetProfileByName(ProfileProsys)
+			Expect(profile.MaxMonitoredItems).To(Equal(0))
+		})
+
+		It("should have MaxMonitoredItems=0 (unlimited) for High-Performance profile", func() {
+			profile := GetProfileByName(ProfileHighPerformance)
+			Expect(profile.MaxMonitoredItems).To(Equal(0))
+		})
+
+		It("should have MaxMonitoredItems=0 (unlimited) for Auto profile", func() {
+			profile := GetProfileByName(ProfileAuto)
+			Expect(profile.MaxMonitoredItems).To(Equal(0))
+		})
+	})
+})
