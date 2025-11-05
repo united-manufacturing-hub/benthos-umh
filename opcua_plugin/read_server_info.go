@@ -190,35 +190,25 @@ func (g *OPCUAInput) queryOperationLimits(ctx context.Context) (*ServerCapabilit
 	caps := &ServerCapabilities{}
 
 	// Parse results - many servers return BadNodeIdUnknown if they don't support this
-	for i, result := range resp.Results {
-		if result.Status != ua.StatusOK {
-			// Don't fail - just skip this capability (server may not support it)
-			continue
-		}
+	// Map index to capability field for cleaner assignment
+	setCapability := []func(uint32){
+		func(v uint32) { caps.MaxNodesPerBrowse = v },
+		func(v uint32) { caps.MaxMonitoredItemsPerCall = v },
+		func(v uint32) { caps.MaxNodesPerRead = v },
+		func(v uint32) { caps.MaxNodesPerWrite = v },
+		func(v uint32) { caps.MaxMonitoredItemsPerSub = v },
+		func(v uint32) { caps.MaxBrowseContinuationPoints = v },
+	}
 
-		if result.Value == nil {
+	for i, result := range resp.Results {
+		if result.Status != ua.StatusOK || result.Value == nil {
+			// Skip unsupported capabilities (server may not expose all limits)
 			continue
 		}
 
 		// All OperationLimits values are UInt32
-		value, ok := result.Value.Value().(uint32)
-		if !ok {
-			continue
-		}
-
-		switch i {
-		case 0:
-			caps.MaxNodesPerBrowse = value
-		case 1:
-			caps.MaxMonitoredItemsPerCall = value
-		case 2:
-			caps.MaxNodesPerRead = value
-		case 3:
-			caps.MaxNodesPerWrite = value
-		case 4:
-			caps.MaxMonitoredItemsPerSub = value
-		case 5:
-			caps.MaxBrowseContinuationPoints = value
+		if value, ok := result.Value.Value().(uint32); ok {
+			setCapability[i](value)
 		}
 	}
 
