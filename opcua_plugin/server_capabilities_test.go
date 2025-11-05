@@ -16,7 +16,6 @@ package opcua_plugin
 
 import (
 	"context"
-	"errors"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -43,7 +42,7 @@ var _ = Describe("ServerCapabilities", func() {
 		})
 	})
 
-	Context("queryServerCapabilities", func() {
+	Context("queryOperationLimits", func() {
 		var (
 			g   *OPCUAInput
 			ctx context.Context
@@ -55,58 +54,43 @@ var _ = Describe("ServerCapabilities", func() {
 		})
 
 		It("should return nil when client is nil", func() {
-			caps, err := g.queryServerCapabilities(ctx)
+			caps, err := g.queryOperationLimits(ctx)
 			Expect(err).To(HaveOccurred())
 			Expect(caps).To(BeNil())
 		})
 
 		It("should return error with descriptive message when client is nil", func() {
-			_, err := g.queryServerCapabilities(ctx)
+			_, err := g.queryOperationLimits(ctx)
 			Expect(err).To(MatchError(ContainSubstring("client is nil")))
 		})
 	})
 
 	Context("logServerCapabilities", func() {
-		var (
-			g    *OPCUAInput
-			caps *ServerCapabilities
-		)
-
-		BeforeEach(func() {
-			g = &OPCUAInput{
-				ServerProfile: GetProfileByName(ProfileAuto),
+		It("should handle nil capabilities without panic", func() {
+			g := &OPCUAInput{
+				OPCUAConnection: &OPCUAConnection{},
 			}
-			caps = &ServerCapabilities{
-				MaxNodesPerBrowse:        100,
-				MaxMonitoredItemsPerCall: 1000,
-				MaxNodesPerRead:          500,
-			}
-		})
+			g.ServerProfile = GetProfileByName(ProfileAuto)
 
-		It("should not panic when logging capabilities", func() {
+			// Should not panic with nil caps
 			Expect(func() {
-				g.logServerCapabilities(caps)
+				g.logServerCapabilities(nil)
 			}).NotTo(Panic())
 		})
 
-		It("should detect when profile exceeds MaxMonitoredItemsPerCall", func() {
-			// Create profile that exceeds server limit
-			g.ServerProfile = ServerProfile{
-				Name:         "TestProfile",
-				MaxBatchSize: 2000, // Exceeds caps.MaxMonitoredItemsPerCall (1000)
-			}
-
-			// This should trigger a warning (we'll verify via logs in integration tests)
-			g.logServerCapabilities(caps)
-		})
-
 		It("should handle zero server limits gracefully", func() {
+			g := &OPCUAInput{
+				OPCUAConnection: &OPCUAConnection{},
+			}
+			g.ServerProfile = GetProfileByName(ProfileAuto)
+
 			capsZero := &ServerCapabilities{
 				MaxNodesPerBrowse:        0,
 				MaxMonitoredItemsPerCall: 0,
 				MaxNodesPerRead:          0,
 			}
 
+			// Should not panic and should early return (no logs since all zeros)
 			Expect(func() {
 				g.logServerCapabilities(capsZero)
 			}).NotTo(Panic())

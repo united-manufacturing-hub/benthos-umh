@@ -157,10 +157,21 @@ func init() {
 }
 
 // ServerCapabilities holds OPC UA server capability flags
+// ServerCapabilities represents OPC UA server capabilities including operation limits and feature support.
+// Operation limits come from ns=0;i=11704 (OperationLimits) - many servers (S7-1200/1500) don't expose these.
+// Deadband support is queried separately via AggregateConfiguration node.
 type ServerCapabilities struct {
+	// Operation limits from ServerCapabilities.OperationLimits
+	MaxNodesPerBrowse           uint32
+	MaxMonitoredItemsPerCall    uint32
+	MaxNodesPerRead             uint32
+	MaxNodesPerWrite            uint32
+	MaxMonitoredItemsPerSub     uint32
+	MaxBrowseContinuationPoints uint32
+
+	// Feature support flags
 	SupportsPercentDeadband  bool
 	SupportsAbsoluteDeadband bool
-	// Future: Add more capability flags as needed
 }
 
 type OPCUAInput struct {
@@ -269,6 +280,9 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 			}
 		}
 		g.ServerCapabilities = caps
+
+		// Log operation limits (Phase 1: logging only, no behavior changes)
+		g.logServerCapabilities(caps)
 
 		// Adjust deadband type based on server capabilities
 		originalType := g.DeadbandType
@@ -555,12 +569,12 @@ func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef Nod
 // queryServerCapabilities reads server capability information
 // to determine which deadband types are supported.
 func (o *OPCUAInput) queryServerCapabilities(ctx context.Context) (*ServerCapabilities, error) {
-	// Read ServerCapabilities node
-	// NodeID: i=2254 (Server_ServerCapabilities)
-	// For now, use heuristic: Try to read AggregateConfiguration
-	// If it exists, server likely supports advanced features like percent deadband
-	aggConfigNodeID := ua.NewNumericNodeID(0, 2268) // Server_ServerCapabilities_AggregateConfiguration
+	caps := &ServerCapabilities{
+		SupportsAbsoluteDeadband: true, // All OPC UA servers support absolute
+	}
 
+	// Query deadband support via AggregateConfiguration
+	aggConfigNodeID := ua.NewNumericNodeID(0, 2268) // Server_ServerCapabilities_AggregateConfiguration
 	req := &ua.ReadRequest{
 		NodesToRead: []*ua.ReadValueID{
 			{NodeID: aggConfigNodeID, AttributeID: ua.AttributeIDValue},
@@ -568,20 +582,24 @@ func (o *OPCUAInput) queryServerCapabilities(ctx context.Context) (*ServerCapabi
 	}
 
 	resp, err := o.Client.Read(ctx, req)
-	if err != nil {
-		return nil, err
+	if err == nil && len(resp.Results) > 0 && resp.Results[0].Status == ua.StatusOK {
+		caps.SupportsPercentDeadband = true
 	}
 
-	// If AggregateConfiguration exists, assume percent deadband supported
-	supportsPercent := false
-	if len(resp.Results) > 0 && resp.Results[0].Status == ua.StatusOK {
-		supportsPercent = true
+	// Query operation limits (Phase 1: logging only)
+	if opLimits, err := o.queryOperationLimits(ctx); err != nil {
+		o.Log.Debugf("OperationLimits not available: %s (this is normal for many PLCs)", err)
+	} else if opLimits != nil {
+		// Merge operation limits into capabilities
+		caps.MaxNodesPerBrowse = opLimits.MaxNodesPerBrowse
+		caps.MaxMonitoredItemsPerCall = opLimits.MaxMonitoredItemsPerCall
+		caps.MaxNodesPerRead = opLimits.MaxNodesPerRead
+		caps.MaxNodesPerWrite = opLimits.MaxNodesPerWrite
+		caps.MaxMonitoredItemsPerSub = opLimits.MaxMonitoredItemsPerSub
+		caps.MaxBrowseContinuationPoints = opLimits.MaxBrowseContinuationPoints
 	}
 
-	return &ServerCapabilities{
-		SupportsAbsoluteDeadband: true, // All OPC UA servers support absolute
-		SupportsPercentDeadband:  supportsPercent,
-	}, nil
+	return caps, nil
 }
 
 // adjustDeadbandType adjusts requested deadband type based on server capabilities.
