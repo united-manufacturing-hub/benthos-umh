@@ -381,10 +381,12 @@ func browseChildren(ctx context.Context, task NodeTask, def NodeDef, taskChan ch
 	// we must exit immediately rather than block forever. The ctx.Done() case provides
 	// an escape path that pure blocking (taskChan <- task) lacks.
 	//
-	// Important: taskWg.Add(1) is called AFTER successful send (not before) to prevent
-	// count leaks. If we return on ctx.Done(), no Add() is called, so no Done() is needed.
-	// This maintains the invariant: Add() called ⟺ task successfully queued.
+	// Important: taskWg.Add(1) is called BEFORE sending to channel to prevent race condition.
+	// If Add() is called after send, the worker may call Done() before Add() executes,
+	// causing "sync: negative WaitGroup counter" panic. The ctx.Done() case must call
+	// Done() to roll back the increment if context is cancelled before sending.
 	for _, child := range children {
+		taskWg.Add(1) // Increment BEFORE sending to prevent race
 		select {
 		case taskChan <- NodeTask{
 			node:         child,
@@ -392,8 +394,9 @@ func browseChildren(ctx context.Context, task NodeTask, def NodeDef, taskChan ch
 			level:        task.level + 1,
 			parentNodeId: def.NodeID.String(),
 		}:
-			taskWg.Add(1) // Only increment if successfully queued
+			// Successfully queued
 		case <-ctx.Done():
+			taskWg.Done() // Roll back the Add() since task wasn't queued
 			return ctx.Err() // Respect cancellation
 		}
 	}
