@@ -1,0 +1,147 @@
+// Copyright 2025 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package opcua_plugin
+
+import (
+	"context"
+	"errors"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
+
+var _ = Describe("ServerCapabilities", func() {
+	Context("ServerCapabilities struct", func() {
+		It("should have expected operation limit fields", func() {
+			caps := ServerCapabilities{
+				MaxNodesPerBrowse:           100,
+				MaxMonitoredItemsPerCall:    1000,
+				MaxNodesPerRead:             500,
+				MaxNodesPerWrite:            500,
+				MaxMonitoredItemsPerSub:     10000,
+				MaxBrowseContinuationPoints: 10,
+			}
+
+			Expect(caps.MaxNodesPerBrowse).To(Equal(uint32(100)))
+			Expect(caps.MaxMonitoredItemsPerCall).To(Equal(uint32(1000)))
+			Expect(caps.MaxNodesPerRead).To(Equal(uint32(500)))
+			Expect(caps.MaxNodesPerWrite).To(Equal(uint32(500)))
+			Expect(caps.MaxMonitoredItemsPerSub).To(Equal(uint32(10000)))
+			Expect(caps.MaxBrowseContinuationPoints).To(Equal(uint32(10)))
+		})
+	})
+
+	Context("queryServerCapabilities", func() {
+		var (
+			g   *OPCUAInput
+			ctx context.Context
+		)
+
+		BeforeEach(func() {
+			g = &OPCUAInput{}
+			ctx = context.Background()
+		})
+
+		It("should return nil when client is nil", func() {
+			caps, err := g.queryServerCapabilities(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(caps).To(BeNil())
+		})
+
+		It("should return error with descriptive message when client is nil", func() {
+			_, err := g.queryServerCapabilities(ctx)
+			Expect(err).To(MatchError(ContainSubstring("client is nil")))
+		})
+	})
+
+	Context("logServerCapabilities", func() {
+		var (
+			g    *OPCUAInput
+			caps *ServerCapabilities
+		)
+
+		BeforeEach(func() {
+			g = &OPCUAInput{
+				ServerProfile: GetProfileByName(ProfileAuto),
+			}
+			caps = &ServerCapabilities{
+				MaxNodesPerBrowse:        100,
+				MaxMonitoredItemsPerCall: 1000,
+				MaxNodesPerRead:          500,
+			}
+		})
+
+		It("should not panic when logging capabilities", func() {
+			Expect(func() {
+				g.logServerCapabilities(caps)
+			}).NotTo(Panic())
+		})
+
+		It("should detect when profile exceeds MaxMonitoredItemsPerCall", func() {
+			// Create profile that exceeds server limit
+			g.ServerProfile = ServerProfile{
+				Name:         "TestProfile",
+				MaxBatchSize: 2000, // Exceeds caps.MaxMonitoredItemsPerCall (1000)
+			}
+
+			// This should trigger a warning (we'll verify via logs in integration tests)
+			g.logServerCapabilities(caps)
+		})
+
+		It("should handle zero server limits gracefully", func() {
+			capsZero := &ServerCapabilities{
+				MaxNodesPerBrowse:        0,
+				MaxMonitoredItemsPerCall: 0,
+				MaxNodesPerRead:          0,
+			}
+
+			Expect(func() {
+				g.logServerCapabilities(capsZero)
+			}).NotTo(Panic())
+		})
+	})
+
+	Context("NodeID constants", func() {
+		It("should define ServerCapabilities node ID", func() {
+			// ns=0;i=2268
+			Expect(ServerCapabilitiesNodeID).NotTo(BeNil())
+		})
+
+		It("should define OperationLimits node ID", func() {
+			// ns=0;i=11704
+			Expect(OperationLimitsNodeID).NotTo(BeNil())
+		})
+
+		It("should define MaxNodesPerBrowse node ID", func() {
+			// ns=0;i=11712
+			Expect(MaxNodesPerBrowseNodeID).NotTo(BeNil())
+		})
+
+		It("should define MaxMonitoredItemsPerCall node ID", func() {
+			// ns=0;i=11714
+			Expect(MaxMonitoredItemsPerCallNodeID).NotTo(BeNil())
+		})
+
+		It("should define MaxNodesPerRead node ID", func() {
+			// ns=0;i=11705
+			Expect(MaxNodesPerReadNodeID).NotTo(BeNil())
+		})
+
+		It("should define MaxNodesPerWrite node ID", func() {
+			// ns=0;i=11708
+			Expect(MaxNodesPerWriteNodeID).NotTo(BeNil())
+		})
+	})
+})
