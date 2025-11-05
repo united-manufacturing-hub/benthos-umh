@@ -31,12 +31,13 @@ const (
 
 // ServerProfile defines OPC UA server optimization parameters
 type ServerProfile struct {
-	Name         string
-	DisplayName  string
-	Description  string
-	MaxBatchSize int
-	MaxWorkers   int
-	MinWorkers   int
+	Name              string
+	DisplayName       string
+	Description       string
+	MaxBatchSize      int
+	MaxWorkers        int
+	MinWorkers        int
+	MaxMonitoredItems int // Hardware limit on total monitored items (0 = unlimited)
 }
 
 // Profile instances
@@ -78,21 +79,23 @@ var (
 	}
 
 	profileS71200 = ServerProfile{
-		Name:         ProfileS71200,
-		DisplayName:  "Siemens S7-1200 PLC",
-		Description:  "Optimized for Siemens S7-1200 PLCs (Firmware V4.4+). Limited to 10 concurrent sessions and 1000 total monitored items.",
-		MaxBatchSize: 100,
-		MaxWorkers:   10,
-		MinWorkers:   3,
+		Name:              ProfileS71200,
+		DisplayName:       "Siemens S7-1200 PLC",
+		Description:       "Optimized for Siemens S7-1200 PLCs (Firmware V4.4+). Limited to 10 concurrent sessions and 1000 total monitored items.",
+		MaxBatchSize:      100,
+		MaxWorkers:        10,
+		MinWorkers:        3,
+		MaxMonitoredItems: 1000, // Hardware limit
 	}
 
 	profileS71500 = ServerProfile{
-		Name:         ProfileS71500,
-		DisplayName:  "Siemens S7-1500 PLC",
-		Description:  "Optimized for Siemens S7-1500 PLCs (CPU 1511-1513, Firmware V3.1+). Supports 32 concurrent sessions and 4000 total monitored items.",
-		MaxBatchSize: 500,
-		MaxWorkers:   20,
-		MinWorkers:   5,
+		Name:              ProfileS71500,
+		DisplayName:       "Siemens S7-1500 PLC",
+		Description:       "Optimized for Siemens S7-1500 PLCs (CPU 1511-1513, Firmware V3.1+). Supports 32 concurrent sessions and 10000 total monitored items.",
+		MaxBatchSize:      500,
+		MaxWorkers:        20,
+		MinWorkers:        5,
+		MaxMonitoredItems: 10000, // Hardware limit
 	}
 
 	profileProsys = ServerProfile{
@@ -140,6 +143,8 @@ func DetectServerProfile(serverInfo *ServerInfo) ServerProfile {
 	}
 
 	// Siemens (check for S7-1200 first, then S7-1500)
+	// Note: Only entered if manufacturer contains "siemens", so "1200"/"1500"
+	// patterns won't match non-Siemens products. No additional filtering needed.
 	if strings.Contains(manufacturer, "siemens") {
 		// Prioritize S7-1200 detection
 		if strings.Contains(product, "s7-1200") ||
