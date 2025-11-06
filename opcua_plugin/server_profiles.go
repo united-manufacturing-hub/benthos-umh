@@ -15,6 +15,7 @@
 package opcua_plugin
 
 import (
+	"fmt"
 	"strings"
 )
 
@@ -192,5 +193,35 @@ func GetProfileByName(name string) ServerProfile {
 		return profileProsys
 	default:
 		return profileUnknown
+	}
+}
+
+// validateProfile panics if hardcoded profile violates constraints
+// This is defensive programming - catches programming mistakes in profile definitions
+func validateProfile(p ServerProfile) {
+	if p.MinWorkers > p.MaxWorkers {
+		panic(fmt.Sprintf(
+			"PROGRAMMING ERROR in profile %s: MinWorkers (%d) > MaxWorkers (%d). "+
+				"This is a hardcoded profile constant bug that must be fixed in code.",
+			p.Name, p.MinWorkers, p.MaxWorkers))
+	}
+}
+
+// init validates all hardcoded profiles at package initialization
+// Panics on invalid profiles to catch programming mistakes early
+func init() {
+	profiles := []ServerProfile{
+		profileAuto,
+		profileHighPerformance,
+		profileIgnition,
+		profileKepware,
+		profileS71200,
+		profileS71500,
+		profileProsys,
+		profileUnknown,
+	}
+
+	for _, p := range profiles {
+		validateProfile(p)
 	}
 }

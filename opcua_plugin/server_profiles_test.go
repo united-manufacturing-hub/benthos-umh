@@ -420,3 +420,45 @@ var _ = Describe("ServerProfile MaxMonitoredItems", func() {
 		})
 	})
 })
+
+var _ = Describe("validateProfile", func() {
+	Context("when validating profile constraints", func() {
+		It("should panic if MinWorkers > MaxWorkers", func() {
+			invalidProfile := ServerProfile{
+				Name:       "test-invalid",
+				MaxWorkers: 5,
+				MinWorkers: 10, // Programming mistake!
+			}
+
+			Expect(func() {
+				validateProfile(invalidProfile)
+			}).To(PanicWith(MatchRegexp(
+				"PROGRAMMING ERROR in profile test-invalid: MinWorkers \\(10\\) > MaxWorkers \\(5\\)",
+			)))
+		})
+
+		It("should not panic when MinWorkers < MaxWorkers", func() {
+			validProfile := ServerProfile{
+				Name:       "test-valid",
+				MaxWorkers: 10,
+				MinWorkers: 5,
+			}
+
+			Expect(func() {
+				validateProfile(validProfile)
+			}).NotTo(Panic())
+		})
+
+		It("should not panic when MinWorkers == MaxWorkers", func() {
+			edgeCaseProfile := ServerProfile{
+				Name:       "test-edge",
+				MaxWorkers: 5,
+				MinWorkers: 5,
+			}
+
+			Expect(func() {
+				validateProfile(edgeCaseProfile)
+			}).NotTo(Panic())
+		})
+	})
+})
