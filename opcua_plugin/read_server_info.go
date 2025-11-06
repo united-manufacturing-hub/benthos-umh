@@ -228,7 +228,7 @@ func (g *OPCUAInput) logServerCapabilities(caps *ServerCapabilities) {
 		caps.MaxBrowseContinuationPoints > 0
 
 	if !hasLimits {
-		g.Log.Info("Server does not expose OperationLimits (normal for S7-1200/1500 and many PLCs) - using profile defaults")
+		g.Log.Info("OperationLimits not available (normal for many PLCs) - using profile defaults")
 		return
 	}
 
@@ -261,4 +261,6 @@ func (g *OPCUAInput) logServerCapabilities(caps *ServerCapabilities) {
 	if caps.MaxBrowseContinuationPoints > 0 {
 		g.Log.Infof("  MaxBrowseContinuationPoints: %d", caps.MaxBrowseContinuationPoints)
 	}
+
+	g.Log.Info("Using server-reported limits for subscriptions")
 }
