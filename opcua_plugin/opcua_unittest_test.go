@@ -778,7 +778,7 @@ var _ = Describe("Browse with StatusBadNodeIDUnknown", func() {
 			// Start browsing
 			wg.Add(1)
 			go func() {
-				Browse(ctx, rootFolder, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
+			Browse(ctx, rootFolder, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
 			}()
 			wg.Wait()
 			close(nodeChan)
@@ -831,3 +831,108 @@ func startBrowsing(ctx context.Context, rootNode NodeBrowser, path string, level
 
 	return nodes, errs
 }
+
+// ENG-3835: TDD RED tests for channel blocking fixes
+var _ = Describe("Browse Channel Blocking Behavior (ENG-3835)", func() {
+	Context("when opcuaBrowserChan is full", func() {
+		It("should block worker instead of dropping messages", func(ctx SpecContext) {
+			// Create small opcuaBrowserChan to force blocking
+			opcuaBrowserChan := make(chan BrowseDetails, 2)
+			nodeChan := make(chan NodeDef, 10)
+			errChan := make(chan error, 10)
+			var wg TrackedWaitGroup
+			visited := &sync.Map{}
+			logger := &MockLogger{}
+
+			// Fill opcuaBrowserChan to capacity
+			opcuaBrowserChan <- BrowseDetails{}
+			opcuaBrowserChan <- BrowseDetails{}
+
+			// Create mock node that will trigger opcuaBrowserChan send
+			// Must use createMockNode with all attributes, not createMockVariableNode
+			rootNode := createMockNode(1, "TestNode", ua.NodeClassVariable)
+
+			// Start browse in goroutine
+			done := make(chan bool)
+			go func() {
+				wg.Add(1)
+				Browse(ctx, rootNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited)
+				wg.Wait()
+				close(done)
+			}()
+
+			// Verify worker is blocked (not completed immediately)
+			select {
+			case <-done:
+				Fail("Worker completed instead of blocking - this means it dropped the message (BUG!)")
+			case <-time.After(100 * time.Millisecond):
+				// Expected: worker is still blocked waiting to send to opcuaBrowserChan
+			}
+
+			// Drain opcuaBrowserChan to unblock worker
+			<-opcuaBrowserChan
+
+			// Worker should now complete
+			Eventually(done, 5*time.Second).Should(BeClosed(), "Worker should complete after channel is drained")
+
+			// Clean up
+			close(nodeChan)
+			close(errChan)
+			close(opcuaBrowserChan)
+		}, SpecTimeout(10*time.Second))
+	})
+
+	Context("when taskChan is full and context is canceled", func() {
+		It("should exit gracefully without deadlock", func(ctx SpecContext) {
+			// Create parent with many children to trigger taskChan queueing
+			parentNode := createMockNode(1, "ParentFolder", ua.NodeClassObject)
+
+			// Add 50 children to force multiple queue operations
+			for i := uint32(2); i < 52; i++ {
+				childNode := createMockVariableNode(i, fmt.Sprintf("Child_%d", i))
+				parentNode.AddReferenceNode(id.HierarchicalReferences, childNode)
+			}
+
+			// Create small taskChan that will fill quickly
+			// Note: We can't directly control taskChan from test (it's created in browse()),
+			// but we can test context cancellation behavior
+			nodeChan := make(chan NodeDef, 100)
+			errChan := make(chan error, 100)
+			opcuaBrowserChan := make(chan BrowseDetails, 100)
+			var wg TrackedWaitGroup
+			visited := &sync.Map{}
+			logger := &MockLogger{}
+
+			// Create cancelable context
+			cancelCtx, cancel := context.WithCancel(ctx)
+
+			// Start browse
+			done := make(chan struct{})
+			go func() {
+				wg.Add(1)
+				Browse(cancelCtx, parentNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited)
+				wg.Wait()
+				close(done)
+			}()
+
+			// Let browse start processing
+			time.Sleep(50 * time.Millisecond)
+
+			// Cancel context while browse is running
+			cancel()
+
+			// Browse should exit gracefully within timeout
+			select {
+			case <-done:
+				// Success: browse exited cleanly after cancellation
+			case <-time.After(2 * time.Second):
+				Fail("Browse did not exit after context cancellation - possible deadlock in taskChan or opcuaBrowserChan")
+			}
+
+			// Clean up
+			close(nodeChan)
+			close(errChan)
+			close(opcuaBrowserChan)
+		}, SpecTimeout(5*time.Second))
+	})
+})
