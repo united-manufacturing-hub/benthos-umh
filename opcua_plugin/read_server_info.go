@@ -136,15 +136,15 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 }
 
 // OPC UA ServerCapabilities NodeIDs (Part 5 - Information Model)
+// Verified against OPC Foundation NodeIds.csv v1.04
 var (
-	ServerCapabilitiesNodeID        = ua.NewNumericNodeID(0, 2268)  // ServerCapabilities
-	OperationLimitsNodeID           = ua.NewNumericNodeID(0, 11704) // OperationLimits
-	MaxNodesPerBrowseNodeID         = ua.NewNumericNodeID(0, 11712)
-	MaxMonitoredItemsPerCallNodeID  = ua.NewNumericNodeID(0, 11714)
-	MaxNodesPerReadNodeID           = ua.NewNumericNodeID(0, 11705)
-	MaxNodesPerWriteNodeID          = ua.NewNumericNodeID(0, 11708)
-	MaxMonitoredItemsPerSubNodeID   = ua.NewNumericNodeID(0, 12912)
-	MaxBrowseContinuationPointsNodeID = ua.NewNumericNodeID(0, 12165)
+	ServerCapabilitiesNodeID          = ua.NewNumericNodeID(0, 2268)  // ServerCapabilities
+	OperationLimitsNodeID             = ua.NewNumericNodeID(0, 11704) // OperationLimits
+	MaxNodesPerBrowseNodeID           = ua.NewNumericNodeID(0, 11710) // Fixed: was 11712
+	MaxMonitoredItemsPerCallNodeID    = ua.NewNumericNodeID(0, 11714) // Correct (CodeRabbit was wrong)
+	MaxNodesPerReadNodeID             = ua.NewNumericNodeID(0, 11705) // Correct
+	MaxNodesPerWriteNodeID            = ua.NewNumericNodeID(0, 11707) // Fixed: was 11708
+	MaxBrowseContinuationPointsNodeID = ua.NewNumericNodeID(0, 3089)  // Fixed: was 12165
 )
 
 // queryOperationLimits queries the OPC UA server for its operation limits from OperationLimits node.
@@ -161,7 +161,6 @@ func (g *OPCUAInput) queryOperationLimits(ctx context.Context) (*ServerCapabilit
 		MaxMonitoredItemsPerCallNodeID,
 		MaxNodesPerReadNodeID,
 		MaxNodesPerWriteNodeID,
-		MaxMonitoredItemsPerSubNodeID,
 		MaxBrowseContinuationPointsNodeID,
 	}
 
@@ -196,7 +195,6 @@ func (g *OPCUAInput) queryOperationLimits(ctx context.Context) (*ServerCapabilit
 		func(v uint32) { caps.MaxMonitoredItemsPerCall = v },
 		func(v uint32) { caps.MaxNodesPerRead = v },
 		func(v uint32) { caps.MaxNodesPerWrite = v },
-		func(v uint32) { caps.MaxMonitoredItemsPerSub = v },
 		func(v uint32) { caps.MaxBrowseContinuationPoints = v },
 	}
 
@@ -225,7 +223,7 @@ func (g *OPCUAInput) logServerCapabilities(caps *ServerCapabilities) {
 	// Only log if at least one operation limit is available
 	hasLimits := caps.MaxMonitoredItemsPerCall > 0 || caps.MaxNodesPerBrowse > 0 ||
 		caps.MaxNodesPerRead > 0 || caps.MaxNodesPerWrite > 0 ||
-		caps.MaxMonitoredItemsPerSub > 0 || caps.MaxBrowseContinuationPoints > 0
+		caps.MaxBrowseContinuationPoints > 0
 
 	if !hasLimits {
 		g.Log.Debug("Server does not expose OperationLimits (normal for S7-1200/1500 and many PLCs)")
@@ -256,17 +254,6 @@ func (g *OPCUAInput) logServerCapabilities(caps *ServerCapabilities) {
 
 	if caps.MaxNodesPerWrite > 0 {
 		g.Log.Infof("  MaxNodesPerWrite: %d", caps.MaxNodesPerWrite)
-	}
-
-	if caps.MaxMonitoredItemsPerSub > 0 {
-		g.Log.Infof("  MaxMonitoredItemsPerSub: %d (profile MaxMonitoredItems: %d)",
-			caps.MaxMonitoredItemsPerSub, g.ServerProfile.MaxMonitoredItems)
-
-		if g.ServerProfile.MaxMonitoredItems > 0 &&
-			uint32(g.ServerProfile.MaxMonitoredItems) > caps.MaxMonitoredItemsPerSub {
-			g.Log.Warnf("Profile MaxMonitoredItems (%d) exceeds server limit MaxMonitoredItemsPerSub (%d) - may hit server limits",
-				g.ServerProfile.MaxMonitoredItems, caps.MaxMonitoredItemsPerSub)
-		}
 	}
 
 	if caps.MaxBrowseContinuationPoints > 0 {

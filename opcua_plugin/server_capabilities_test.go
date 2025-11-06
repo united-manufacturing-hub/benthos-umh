@@ -29,7 +29,6 @@ var _ = Describe("ServerCapabilities", func() {
 				MaxMonitoredItemsPerCall:    1000,
 				MaxNodesPerRead:             500,
 				MaxNodesPerWrite:            500,
-				MaxMonitoredItemsPerSub:     10000,
 				MaxBrowseContinuationPoints: 10,
 			}
 
@@ -37,7 +36,6 @@ var _ = Describe("ServerCapabilities", func() {
 			Expect(caps.MaxMonitoredItemsPerCall).To(Equal(uint32(1000)))
 			Expect(caps.MaxNodesPerRead).To(Equal(uint32(500)))
 			Expect(caps.MaxNodesPerWrite).To(Equal(uint32(500)))
-			Expect(caps.MaxMonitoredItemsPerSub).To(Equal(uint32(10000)))
 			Expect(caps.MaxBrowseContinuationPoints).To(Equal(uint32(10)))
 		})
 	})

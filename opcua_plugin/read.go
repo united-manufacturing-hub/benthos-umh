@@ -166,7 +166,6 @@ type ServerCapabilities struct {
 	MaxMonitoredItemsPerCall    uint32
 	MaxNodesPerRead             uint32
 	MaxNodesPerWrite            uint32
-	MaxMonitoredItemsPerSub     uint32
 	MaxBrowseContinuationPoints uint32
 
 	// Feature support flags
@@ -595,7 +594,6 @@ func (o *OPCUAInput) queryServerCapabilities(ctx context.Context) (*ServerCapabi
 		caps.MaxMonitoredItemsPerCall = opLimits.MaxMonitoredItemsPerCall
 		caps.MaxNodesPerRead = opLimits.MaxNodesPerRead
 		caps.MaxNodesPerWrite = opLimits.MaxNodesPerWrite
-		caps.MaxMonitoredItemsPerSub = opLimits.MaxMonitoredItemsPerSub
 		caps.MaxBrowseContinuationPoints = opLimits.MaxBrowseContinuationPoints
 	}
 
