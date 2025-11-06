@@ -573,10 +573,11 @@ func (o *OPCUAInput) queryServerCapabilities(ctx context.Context) (*ServerCapabi
 	}
 
 	// Query deadband support via AggregateConfiguration
-	aggConfigNodeID := ua.NewNumericNodeID(0, 2268) // Server_ServerCapabilities_AggregateConfiguration
+	// NodeID 2340 = Server_ServerCapabilities_AggregateConfiguration (OPC UA Part 5)
+	aggConfigNodeID := ua.NewNumericNodeID(0, 2340)
 	req := &ua.ReadRequest{
 		NodesToRead: []*ua.ReadValueID{
-			{NodeID: aggConfigNodeID, AttributeID: ua.AttributeIDValue},
+			{NodeID: aggConfigNodeID, AttributeID: ua.AttributeIDNodeClass},
 		},
 	}
 
