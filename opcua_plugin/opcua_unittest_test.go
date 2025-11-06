@@ -856,7 +856,7 @@ var _ = Describe("Browse Channel Blocking Behavior (ENG-3835)", func() {
 			done := make(chan bool)
 			go func() {
 				wg.Add(1)
-				Browse(ctx, rootNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited)
+				Browse(ctx, rootNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
 				wg.Wait()
 				close(done)
 			}()
@@ -910,7 +910,7 @@ var _ = Describe("Browse Channel Blocking Behavior (ENG-3835)", func() {
 			done := make(chan struct{})
 			go func() {
 				wg.Add(1)
-				Browse(cancelCtx, parentNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited)
+				Browse(cancelCtx, parentNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
 				wg.Wait()
 				close(done)
 			}()

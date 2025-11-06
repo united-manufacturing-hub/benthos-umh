@@ -40,10 +40,25 @@ type ServerMetrics struct {
 }
 
 func NewServerMetrics(profile ServerProfile) *ServerMetrics {
+	// Clamp initial workers to profile bounds to prevent violations
+	// E.g., Auto profile (MaxWorkers=5) should start with 5, not 10
+	// Priority order: MinWorkers first, then MaxWorkers (hardware limit always wins)
+	initial := InitialWorkers
+
+	// Clamp to MinWorkers if profile specifies a minimum
+	if profile.MinWorkers > 0 && initial < profile.MinWorkers {
+		initial = profile.MinWorkers
+	}
+
+	// Clamp to MaxWorkers if profile specifies a maximum (takes priority over MinWorkers)
+	if profile.MaxWorkers > 0 && initial > profile.MaxWorkers {
+		initial = profile.MaxWorkers
+	}
+
 	return &ServerMetrics{
 		responseTimes:  make([]time.Duration, 0),
 		workerControls: make(map[uuid.UUID]chan struct{}),
-		currentWorkers: InitialWorkers,
+		currentWorkers: initial,
 		minWorkers:     profile.MinWorkers,
 		maxWorkers:     profile.MaxWorkers,
 	}
