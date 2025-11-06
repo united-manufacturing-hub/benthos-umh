@@ -177,7 +177,9 @@ func (g *OPCUAInput) queryOperationLimits(ctx context.Context) (*ServerCapabilit
 		TimestampsToReturn: ua.TimestampsToReturnBoth,
 	}
 
-	resp, err := g.Read(ctx, req)
+	// Mark this as a capability probe - failures are expected for servers without OperationLimits
+	probeCtx := WithCapabilityProbe(ctx)
+	resp, err := g.Read(probeCtx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +228,7 @@ func (g *OPCUAInput) logServerCapabilities(caps *ServerCapabilities) {
 		caps.MaxBrowseContinuationPoints > 0
 
 	if !hasLimits {
-		g.Log.Debug("Server does not expose OperationLimits (normal for S7-1200/1500 and many PLCs)")
+		g.Log.Info("Server does not expose OperationLimits (normal for S7-1200/1500 and many PLCs) - using profile defaults")
 		return
 	}
 
