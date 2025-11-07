@@ -156,7 +156,7 @@ var _ = Describe("adjustWorkers with latency-based scaling", func() {
 	})
 
 	Context("when avgResponse > targetLatency (250ms)", func() {
-		It("should reduce workers by 10, respecting MinWorkers bound", func() {
+		It("should reduce workers by 1, respecting MinWorkers bound", func() {
 			// ARRANGE: Create metrics with high response times (400ms avg)
 			profile := ServerProfile{
 				Name:       "Ignition",
@@ -172,10 +172,10 @@ var _ = Describe("adjustWorkers with latency-based scaling", func() {
 			// ACT: Call adjustWorkers
 			toAdd, toRemove := metrics.adjustWorkers(logger)
 
-			// ASSERT: Should reduce workers by 10 (or down to MinWorkers)
+			// ASSERT: Should reduce workers by 1 (from 10 to 9)
 			Expect(toAdd).To(Equal(0), "toAdd should be 0 when reducing workers")
-			Expect(toRemove).To(Equal(5), "toRemove should be 5 (10 workers - 5 minWorkers)")
-			Expect(metrics.currentWorkers).To(Equal(5), "currentWorkers should be clamped to MinWorkers (5)")
+			Expect(toRemove).To(Equal(1), "toRemove should be 1 (reducing by 1 worker)")
+			Expect(metrics.currentWorkers).To(Equal(9), "currentWorkers should be 9 (10 - 1)")
 		})
 
 		It("should not reduce below MinWorkers", func() {
@@ -204,7 +204,7 @@ var _ = Describe("adjustWorkers with latency-based scaling", func() {
 	})
 
 	Context("when avgResponse < targetLatency (250ms)", func() {
-		It("should increase workers by 10, respecting MaxWorkers bound", func() {
+		It("should increase workers by 1, respecting MaxWorkers bound", func() {
 			// ARRANGE: Create metrics with low response times (100ms avg)
 			profile := ServerProfile{
 				Name:       "Ignition",
@@ -221,10 +221,10 @@ var _ = Describe("adjustWorkers with latency-based scaling", func() {
 			// ACT: Call adjustWorkers
 			toAdd, toRemove := metrics.adjustWorkers(logger)
 
-			// ASSERT: Should increase workers by 10 (or up to MaxWorkers)
-			Expect(toAdd).To(Equal(10), "toAdd should be 10 when increasing workers")
+			// ASSERT: Should increase workers by 1 (from 10 to 11)
+			Expect(toAdd).To(Equal(1), "toAdd should be 1 when increasing workers")
 			Expect(toRemove).To(Equal(0), "toRemove should be 0 when adding workers")
-			Expect(metrics.currentWorkers).To(Equal(20), "currentWorkers should be clamped to MaxWorkers (20)")
+			Expect(metrics.currentWorkers).To(Equal(11), "currentWorkers should be 11 (10 + 1)")
 		})
 
 		It("should not increase above MaxWorkers", func() {

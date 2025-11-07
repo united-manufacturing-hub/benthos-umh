@@ -387,8 +387,8 @@ During the Browse phase, the system automatically adjusts worker concurrency bas
 1. **Measurement**: The system samples response times from 5 consecutive Browse operations
 2. **Target latency**: 250ms per Browse request (default)
 3. **Scaling logic**:
-   - If average response > 250ms → reduce workers by 10 (down to profile's MinWorkers)
-   - If average response < 250ms → increase workers by 10 (up to profile's MaxWorkers)
+   - If average response > 250ms → reduce workers by 1 (down to profile's MinWorkers)
+   - If average response < 250ms → increase workers by 1 (up to profile's MaxWorkers)
    - If average response ≈ 250ms → no adjustment
 
 **Bounds enforcement**: Worker count always respects the ServerProfile's MinWorkers and MaxWorkers limits. The system cannot scale beyond profile-defined hardware constraints.
@@ -397,9 +397,10 @@ During the Browse phase, the system automatically adjusts worker concurrency bas
 
 - **Performance**: Automatically finds optimal worker count for each server's capability
 - **Safety**: Prevents server overload by reducing workers when response times increase
+- **Gradual adaptation**: Fine-grained control with ±1 worker adjustments provides smoother scaling
 - **Adaptability**: Adjusts to changing server conditions during long Browse operations
 
-Example: An S7-1500 profile with MaxWorkers=50 might start with 10 workers. If Browse responses average 100ms (< 250ms target), workers increase to 20, then 30, up to the 50 maximum. If the server becomes loaded and responses slow to 400ms, workers automatically reduce to maintain stability.
+Example: An S7-1500 profile with MaxWorkers=50 might start with 10 workers. If Browse responses average 100ms (< 250ms target), workers gradually increase: 10 → 11 → 12 → 13, continuing up to the 50 maximum. If the server becomes loaded and responses slow to 400ms, workers gradually reduce: 13 → 12 → 11 to maintain stability.
 
 ### Manual Profile Override
 
