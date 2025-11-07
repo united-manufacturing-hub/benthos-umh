@@ -72,7 +72,7 @@ var (
 	profileIgnition = ServerProfile{
 		Name:        ProfileIgnition,
 		DisplayName: "Ignition Gateway",
-		Description: "Optimized for Inductive Automation Ignition Gateway (Eclipse Milo). Handles 64 concurrent operations per session.",
+		Description: "Optimized for Inductive Automation Ignition Gateway (Eclipse Milo). Handles 64 concurrent operations per session. Server reports: MaxMonitoredItemsPerCall=10000, MaxNodesPerBrowse=250, MaxNodesPerRead=10000, MaxNodesPerWrite=10000 (tested 2025-11-07).",
 		// MaxBatchSize: Industry standard safe limit (1,000) validated across OPC UA servers.
 		// No Ignition-specific guidance available; Eclipse Milo implementation follows OPC UA Part 5 defaults.
 		// Server reports MaxMonitoredItemsPerCall=10000 (tested 2025-11-07).
@@ -96,7 +96,7 @@ var (
 	profileS71200 = ServerProfile{
 		Name:        ProfileS71200,
 		DisplayName: "Siemens S7-1200 PLC",
-		Description: "Optimized for Siemens S7-1200 PLCs (Firmware V4.4+). Limited to 10 concurrent sessions and 1000 total monitored items.",
+		Description: "Optimized for Siemens S7-1200 PLCs (Firmware V4.4+). Limited to 10 concurrent sessions and 1000 total monitored items. Server reports: MaxMonitoredItemsPerCall=1000, MaxNodesPerBrowse=2000, MaxNodesPerRead=2000, MaxNodesPerWrite=2000 (tested 2025-11-07).",
 		// MaxBatchSize: Validated at 100 via Siemens Entry-ID 109755846 (02/2024) and production testing.
 		// Embedded PLC with limited resources; values >200 cause 50x performance degradation.
 		// Server reports MaxMonitoredItemsPerCall=1000 (tested 2025-11-07), but real-world limit is 100-200.
@@ -121,7 +121,7 @@ var (
 	profileProsys = ServerProfile{
 		Name:        ProfileProsys,
 		DisplayName: "Prosys Simulation Server",
-		Description: "Optimized for Prosys OPC UA Simulation Server. Supports 100+ concurrent sessions and high-throughput simulation.",
+		Description: "Optimized for Prosys OPC UA Simulation Server. Supports 100+ concurrent sessions and high-throughput simulation. Server reports: MaxMonitoredItemsPerCall=10000, MaxNodesPerBrowse=10000, MaxNodesPerRead=10000, MaxNodesPerWrite=10000 (tested 2025-11-07).",
 		// MaxBatchSize: Conservative limit (800) safe for Simulation Server; production servers handle 1,500-2,500.
 		// Simulation Server becomes unresponsive with 10,000+ points per subscription.
 		// Server reports MaxMonitoredItemsPerCall=10000 (tested 2025-11-07), but 800 provides safe headroom.
