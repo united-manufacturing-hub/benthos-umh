@@ -253,22 +253,30 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 	g.Log.Infof("Connected to %s", g.Endpoint)
 
-	// Get OPC UA server information
-	if serverInfo, err := g.GetOPCUAServerInformation(ctx); err != nil {
-		g.Log.Infof("Failed to get OPC UA server information: %s - using Auto profile", err)
-		// BUG FIX: Always set ServerProfile, even when server info detection fails
-		g.ServerProfile = GetProfileByName(ProfileAuto)
-		g.Log.Infof("Using fallback profile: %s (defensive defaults)", g.ServerProfile.Name)
-	} else {
-		g.Log.Infof("OPC UA Server Information: %v+", serverInfo)
-		g.ServerInfo = serverInfo
-
-		// Detect and store server profile
-		g.ServerProfile = DetectServerProfile(&g.ServerInfo)
+	// Check if profile is manually specified in configuration
+	if g.Profile != "" {
+		// Use manually specified profile
+		g.ServerProfile = GetProfileByName(g.Profile)
 		g.Log.With("profile", g.ServerProfile.Name).
-			With("manufacturer", g.ServerInfo.ManufacturerName).
-			With("product", g.ServerInfo.ProductName).
-			Info("Detected OPC UA server profile")
+			Info("Using manually configured OPC UA server profile")
+	} else {
+		// Get OPC UA server information for auto-detection
+		if serverInfo, err := g.GetOPCUAServerInformation(ctx); err != nil {
+			g.Log.Infof("Failed to get OPC UA server information: %s - using Auto profile", err)
+			// BUG FIX: Always set ServerProfile, even when server info detection fails
+			g.ServerProfile = GetProfileByName(ProfileAuto)
+			g.Log.Infof("Using fallback profile: %s (defensive defaults)", g.ServerProfile.Name)
+		} else {
+			g.Log.Infof("OPC UA Server Information: %v+", serverInfo)
+			g.ServerInfo = serverInfo
+
+			// Detect and store server profile
+			g.ServerProfile = DetectServerProfile(&g.ServerInfo)
+			g.Log.With("profile", g.ServerProfile.Name).
+				With("manufacturer", g.ServerInfo.ManufacturerName).
+				With("product", g.ServerInfo.ProductName).
+				Info("Detected OPC UA server profile")
+		}
 	}
 
 	// Query server capabilities for deadband support (only if subscriptions enabled)

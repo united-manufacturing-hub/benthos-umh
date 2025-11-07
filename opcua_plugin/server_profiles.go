@@ -32,20 +32,20 @@ const (
 
 // ServerProfile defines OPC UA server optimization parameters
 type ServerProfile struct {
-	Name              string
-	DisplayName       string
-	Description       string
+	Name        string
+	DisplayName string
+	Description string
 	// MaxBatchSize controls nodes per CreateMonitoredItems call during Subscribe phase.
 	// Performance impact: S7-1200 needs 100 (>200 = 50× degradation), Ignition/Kepware can use 1000 (10× faster).
 	// See read_discover.go MonitorBatched() for batch creation logic.
-	MaxBatchSize      int
+	MaxBatchSize int
 	// MaxWorkers controls concurrent goroutines during Browse phase that discover OPC UA node tree in parallel.
 	// Performance impact: More workers = faster browsing, but server may throttle or reject connections.
 	// See core_browse_workers.go for dynamic worker pool implementation.
-	MaxWorkers        int
+	MaxWorkers int
 	// MinWorkers sets lower bound for worker pool during Browse phase.
 	// Dynamic scaling (currently disabled) keeps workers between MinWorkers and MaxWorkers.
-	MinWorkers        int
+	MinWorkers int
 	// MaxMonitoredItems is hardware limit on total monitored items server can handle (0 = unlimited).
 	// Example: S7-1200 = 1000 total, S7-1500 = 10000 total. Exceeding this causes subscription failures.
 	MaxMonitoredItems int
@@ -87,7 +87,7 @@ var (
 		// No Ignition-specific guidance available; Eclipse Milo implementation follows OPC UA Part 5 defaults.
 		// Server reports MaxMonitoredItemsPerCall=10000 (tested 2025-11-07).
 		// Source: Eclipse Milo implementation + OPC Foundation best practices
-		MaxBatchSize:      1000,
+		MaxBatchSize:      100,
 		MaxWorkers:        20,
 		MinWorkers:        5,
 		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
