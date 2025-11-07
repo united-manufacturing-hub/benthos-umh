@@ -84,13 +84,13 @@ var _ = Describe("DetectServerProfile", func() {
 
 			profile := DetectServerProfile(serverInfo)
 
-			Expect(profile.Name).To(Equal("unknown"))
+			Expect(profile.Name).To(Equal(ProfileUnknown))
 		})
 
 		It("should handle nil ServerInfo", func() {
 			profile := DetectServerProfile(nil)
 
-			Expect(profile.Name).To(Equal("unknown"))
+			Expect(profile.Name).To(Equal(ProfileUnknown))
 		})
 	})
 
@@ -214,13 +214,13 @@ var _ = Describe("GetProfileByName", func() {
 		It("should return unknown fallback for invalid name", func() {
 			profile := GetProfileByName("invalid-profile-name")
 
-			Expect(profile.Name).To(Equal("unknown"))
+			Expect(profile.Name).To(Equal(ProfileUnknown))
 		})
 
 		It("should return unknown fallback for empty string", func() {
 			profile := GetProfileByName("")
 
-			Expect(profile.Name).To(Equal("unknown"))
+			Expect(profile.Name).To(Equal(ProfileUnknown))
 		})
 	})
 })
@@ -454,6 +454,51 @@ var _ = Describe("validateProfile", func() {
 			Expect(func() {
 				validateProfile(edgeCaseProfile)
 			}).NotTo(Panic())
+		})
+
+		It("should panic if MinWorkers < 1", func() {
+			invalidProfile := ServerProfile{
+				Name:         "test-negative-minworkers",
+				MaxWorkers:   10,
+				MinWorkers:   0, // Invalid!
+				MaxBatchSize: 100,
+			}
+
+			Expect(func() {
+				validateProfile(invalidProfile)
+			}).To(PanicWith(MatchRegexp(
+				"PROGRAMMING ERROR in profile test-negative-minworkers: MinWorkers \\(0\\) must be >= 1",
+			)))
+		})
+
+		It("should panic if MaxWorkers = 0", func() {
+			invalidProfile := ServerProfile{
+				Name:         "test-zero-maxworkers",
+				MaxWorkers:   0, // Invalid!
+				MinWorkers:   1,
+				MaxBatchSize: 100,
+			}
+
+			Expect(func() {
+				validateProfile(invalidProfile)
+			}).To(PanicWith(MatchRegexp(
+				"PROGRAMMING ERROR in profile test-zero-maxworkers: MaxWorkers \\(0\\) must be > 0",
+			)))
+		})
+
+		It("should panic if MaxWorkers < 0", func() {
+			invalidProfile := ServerProfile{
+				Name:         "test-negative-maxworkers",
+				MaxWorkers:   -5, // Invalid!
+				MinWorkers:   1,
+				MaxBatchSize: 100,
+			}
+
+			Expect(func() {
+				validateProfile(invalidProfile)
+			}).To(PanicWith(MatchRegexp(
+				"PROGRAMMING ERROR in profile test-negative-maxworkers: MaxWorkers \\(-5\\) must be > 0",
+			)))
 		})
 	})
 })
