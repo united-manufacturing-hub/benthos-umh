@@ -915,8 +915,8 @@ var _ = Describe("Browse Channel Blocking Behavior (ENG-3835)", func() {
 				close(done)
 			}()
 
-			// Let browse start processing
-			time.Sleep(50 * time.Millisecond)
+			// Let browse start processing (200ms for slow CI runners)
+			time.Sleep(200 * time.Millisecond)
 
 			// Cancel context while browse is running
 			cancel()
