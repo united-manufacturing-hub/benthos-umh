@@ -256,18 +256,22 @@ func isNumericDataType(typeID ua.TypeID) bool {
 // MonitorBatched splits the nodes into manageable batches and starts monitoring them.
 // This approach prevents the server from returning BadTcpMessageTooLarge by avoiding oversized monitoring requests.
 //
-// Batch Size Selection:
-// The batch size of 100 nodes per CreateMonitoredItems call is based on extensive testing
-// across multiple OPC UA server implementations (Ignition, Kepware, industrial PLCs) and
-// represents the optimal balance between:
-// - Server compatibility: All tested servers handle 100-node batches without errors
-// - Request efficiency: Minimizes CreateMonitoredItems API calls while staying well below protocol limits
-// - Memory usage: Keeps request/response size manageable (~40KB typical)
-// - Performance: Subscription rate (82 nodes/sec) is limited by OPC UA Monitor API, not batch size
+// Batch Size Selection (ServerProfile.MaxBatchSize):
+// Batch size controls nodes per CreateMonitoredItems call during Subscribe phase.
+// This is different from workers (Browse phase) - batch size affects subscription setup, not browsing.
 //
-// This value is intentionally not configurable per UMH's Opinionated Simplicity principle:
-// "If 95% of users need the same value, that's the only value." Batch size 100 works
-// universally across all tested OPC UA servers, eliminating the need for user configuration.
+// Why batch size matters:
+// - Too large = server rejects request (BadTcpMessageTooLarge, connection drop)
+// - Too small = slow subscription setup (more API round-trips)
+// - Sweet spot varies by server: S7-1200 = 100, Ignition/Kepware = 1000
+//
+// Performance trade-offs (validated in UMH-ENG-3852):
+// - S7-1200 with batchSize=100: Fast subscription setup
+// - S7-1200 with batchSize=200+: 50× slower (server throttles/times out)
+// - Ignition/Kepware with batchSize=1000: 10× faster than batchSize=100
+//
+// Profile-based values come from ServerProfile.MaxBatchSize (see server_profiles.go).
+// Each profile is tuned for specific server hardware and tested in production.
 //
 // Deadband Filtering:
 // If deadbandType is set (absolute/percent) and deadbandValue > 0, the function applies

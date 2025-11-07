@@ -29,7 +29,16 @@ const (
 	SampleSize         = 5 // Number of requests to measure response time
 )
 
-// ServerMetrics is a struct that holds the metrics for the OPCUA server requests
+// ServerMetrics tracks worker pool performance during Browse phase.
+// Workers are concurrent goroutines that traverse the OPC UA node tree in parallel.
+// Each worker processes NodeTasks from a shared queue (see core_browse.go browse() function).
+//
+// Why worker pool matters:
+// - Sequential browsing = slow (one Browse call at a time)
+// - Parallel browsing = fast (MaxWorkers Browse calls simultaneously)
+// - Example: 10,000 nodes with 5 workers ≈ 2000 Browse calls per worker vs 10,000 sequential
+//
+// ServerProfile.MaxWorkers/MinWorkers control pool size bounds (see server_profiles.go).
 type ServerMetrics struct {
 	mu             sync.Mutex
 	responseTimes  []time.Duration
