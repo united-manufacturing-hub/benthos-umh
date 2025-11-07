@@ -391,6 +391,132 @@ variables:
 
 **Mixing formats**: Don't mix in same topic - use different `data_contract` values.
 
+## Implementation Details
+
+### OPC UA Server Profiles
+
+benthos-umh implements vendor-specific performance tuning through the ServerProfile system, which automatically optimizes Browse and Subscribe phase parameters based on detected server type.
+
+#### Architecture
+
+**Profile Detection Flow:**
+1. Connect to OPC UA server
+2. Query ServerInfo nodes (i=2263 ManufacturerName, i=2261 ProductName)
+3. Match against known vendors in `DetectServerProfile()` (opcua_plugin/server_profiles.go:147)
+4. Apply profile parameters to worker pool and batch operations
+
+**Profile Structure:**
+```go
+type ServerProfile struct {
+    Name              string  // Profile identifier (e.g., "siemens-s7-1200")
+    MaxBatchSize      int     // Subscribe phase: nodes per CreateMonitoredItems call
+    MaxWorkers        int     // Browse phase: max concurrent goroutines
+    MinWorkers        int     // Browse phase: min concurrent goroutines
+    MaxMonitoredItems int     // Hardware limit (0 = unlimited)
+}
+```
+
+#### Two-Phase Performance Model
+
+**Browse Phase (Node Discovery):**
+- Uses worker pool: `core_browse_workers.go`
+- Workers process NodeTasks in parallel from shared queue
+- Dynamic scaling: ServerMetrics adjusts workers based on 250ms latency target
+- Profile controls: `MinWorkers` to `MaxWorkers` range
+- Example: 10k nodes with 5 workers = 2k Browse calls/worker vs 10k sequential
+
+**Subscribe Phase (Monitored Items Setup):**
+- Uses batch operations: `read_discover.go:MonitorBatched()`
+- Groups nodes into batches for single CreateMonitoredItems call
+- Profile controls: `MaxBatchSize` (50-1000 depending on server)
+- Critical bug fixed (commit 178df32): Hardcoded 100 replaced with `ServerProfile.MaxBatchSize`
+
+#### Profile Values: Research-Based, Not Server-Reported
+
+**Key distinction:**
+- **Server-reported limits**: Theoretical maximums from OPC UA Part 5 spec (e.g., `MaxMonitoredItemsPerCall=1000`)
+- **Profile values**: Production-safe limits from vendor docs + real-world testing (e.g., S7-1200 uses 100, not 1000)
+
+**Example (S7-1200):**
+- Server reports: `MaxMonitoredItemsPerCall=1000`
+- Profile uses: `MaxBatchSize=100`
+- Reason: Values >200 cause 50× performance degradation (validated via [Siemens Entry-ID 109755846](https://cache.industry.siemens.com/dl/files/846/109755846/att_1163306/v4/109755846_TIA_Portal_OPC_UA_system_limits.pdf))
+
+Source citations in profile comments link to vendor documentation and production case studies.
+
+#### Adding New Profiles
+
+To add support for a new OPC UA server:
+
+1. **Research optimal values:**
+   - Test batch sizes: 50, 100, 500, 1000
+   - Monitor Browse performance with different worker counts
+   - Check vendor documentation for limits
+   - Validate with production workloads
+
+2. **Add profile constant:**
+```go
+// opcua_plugin/server_profiles.go
+const ProfileMyServer = "my-server"
+
+var profileMyServer = ServerProfile{
+    Name:              ProfileMyServer,
+    DisplayName:       "My Server Product",
+    Description:       "Optimized for ... Server reports: MaxMonitoredItemsPerCall=X (tested YYYY-MM-DD).",
+    MaxBatchSize:      500,  // Based on testing
+    MaxWorkers:        20,
+    MinWorkers:        5,
+    MaxMonitoredItems: 0,
+}
+```
+
+3. **Add detection logic:**
+```go
+// opcua_plugin/server_profiles.go:DetectServerProfile()
+if strings.Contains(manufacturer, "my company") ||
+    strings.Contains(product, "my server") {
+    return profileMyServer
+}
+```
+
+4. **Update `init()` validation:**
+```go
+profiles := []ServerProfile{
+    // ... existing profiles
+    profileMyServer,
+}
+```
+
+5. **Document in profile Description field:**
+   - Include server-reported OperationLimits (query once, document forever)
+   - Add testing date
+   - Cite vendor documentation or case studies
+   - Explain any counter-intuitive values (e.g., using 100 when server reports 1000)
+
+#### Testing Profiles
+
+**Unit tests (read_discover_monitorbatched_test.go):**
+- Verify profile MaxBatchSize values
+- Test batch splitting logic
+- Ensure profile-based logging
+
+**Integration tests:**
+- Test with real OPC UA servers
+- Verify auto-detection matches expected profile
+- Validate OperationLimits logging at INFO level
+
+**Performance validation:**
+- Measure subscription time with different batch sizes
+- Monitor Browse performance with worker counts
+- Compare against vendor-documented limits
+
+#### Common Pitfalls
+
+1. **Trusting server-reported limits:** Many servers report theoretical OPC UA spec maximums, not actual hardware limits
+2. **Over-batching PLCs:** Embedded devices (S7-1200, S7-1500) have strict limits despite reporting high values
+3. **Under-batching VM servers:** Ignition/Kepware can handle 1000+ batch sizes; using 100 wastes 90% potential performance
+4. **Ignoring Browse phase:** Workers significantly speed up node discovery, especially for large address spaces
+
 ## Development Guidelines
 
 ### General Preferences

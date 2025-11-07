@@ -338,6 +338,64 @@ input:
     samplingInterval: 1000.0  # Sample every 1 second instead of as fast as possible
 ```
 
+## Server Profiles and Performance Tuning
+
+Server profiles automatically optimize OPC UA connection parameters based on detected server type. The system queries the server's manufacturer and product information to select the best profile.
+
+### What Are Server Profiles?
+
+Profiles control two key performance parameters:
+
+1. **Workers (Browse Phase)**: Concurrent goroutines that discover the OPC UA node tree in parallel
+   - More workers = faster node discovery
+   - Example: 10,000 nodes with 5 workers ≈ 2,000 Browse calls per worker vs 10,000 sequential calls
+   - Profile range: 1-60 workers depending on server type
+
+2. **Batch Size (Subscribe Phase)**: Number of nodes included in each CreateMonitoredItems call
+   - Larger batches = faster subscription setup
+   - Too large = server rejection, too small = slow setup
+   - Profile range: 50-1000 nodes per batch
+
+### Available Profiles
+
+| Profile | Auto-Detected For | Batch Size | Workers | Hardware Limit |
+|---------|------------------|------------|---------|----------------|
+| Auto | Unknown servers | 50 | 1-5 | None |
+| High-Performance | Manual override | 1000 | 10-50 | None |
+| Ignition | Inductive Automation Ignition Gateway | 1000 | 5-20 | None |
+| Kepware | PTC Kepware KEPServerEX | 1000 | 5-40 | None |
+| S7-1200 | Siemens S7-1200 PLCs | 100 | 3-10 | 1000 items |
+| S7-1500 | Siemens S7-1500 PLCs | 500 | 5-20 | 10000 items |
+| Prosys | Prosys Simulation Server | 800 | 5-60 | None |
+
+**Note**: Batch sizes are based on vendor documentation and production testing. Server-reported `MaxMonitoredItemsPerCall` values are theoretical maximums; profile values are conservative limits validated in real-world deployments.
+
+For detailed profile values, see [`opcua_plugin/server_profiles.go`](../../opcua_plugin/server_profiles.go).
+
+### Performance Impact
+
+Profile selection significantly affects connection time:
+
+- **S7-1200**: Batch size >200 causes 50× performance degradation (validated via [Siemens documentation](https://cache.industry.siemens.com/dl/files/846/109755846/att_1163306/v4/109755846_TIA_Portal_OPC_UA_system_limits.pdf))
+- **Ignition/Kepware**: Batch size of 1000 enables 10× faster subscription setup vs default 100
+- **Prosys**: Conservative 800 batch size prevents simulation server unresponsiveness with large subscriptions
+
+### Manual Profile Override
+
+To override auto-detection, set profile explicitly in config:
+
+```yaml
+input:
+  opcua:
+    endpoint: "opc.tcp://10.0.0.1:4840"
+    profile: "high-performance"  # Override auto-detection
+```
+
+**When to override:**
+- Testing new server types
+- Known high-performance infrastructure
+- Troubleshooting connection issues
+
 ## Metrics
 
 ### opcua_subscription_failures_total
