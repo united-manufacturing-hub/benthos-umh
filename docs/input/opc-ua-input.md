@@ -375,8 +375,31 @@ Profiles are automatically detected based on server manufacturer/product informa
 Examples of profile-specific optimizations:
 
 - **S7-1200**: Batch size limited to 100 (server reports 1000, but >200 causes 50× degradation - [Siemens docs](https://cache.industry.siemens.com/dl/files/846/109755846/att_1163306/v4/109755846_TIA_Portal_OPC_UA_system_limits.pdf))
-- **Ignition/Kepware**: Batch size of 1000 enables 10× faster subscription setup compared to conservative 100
+- **Ignition/Kepware**: Batch size of 1000 enables 10× faster subscription setup compared to conservative 100. But limited browse worker amount as Eclipse Milo, the OPC UA library that Ignition uses, has a limit on concurrent operations per OPC UA session fo by default 64.
 - **Prosys**: Batch size of 800 prevents simulation server unresponsiveness with large node counts
+
+### Dynamic Worker Scaling
+
+During the Browse phase, the system automatically adjusts worker concurrency based on measured server response time. This optimization balances performance (faster browsing with more workers) against server load (preventing overload).
+
+**How it works:**
+
+1. **Measurement**: The system samples response times from 5 consecutive Browse operations
+2. **Target latency**: 250ms per Browse request (default)
+3. **Scaling logic**:
+   - If average response > 250ms → reduce workers by 10 (down to profile's MinWorkers)
+   - If average response < 250ms → increase workers by 10 (up to profile's MaxWorkers)
+   - If average response ≈ 250ms → no adjustment
+
+**Bounds enforcement**: Worker count always respects the ServerProfile's MinWorkers and MaxWorkers limits. The system cannot scale beyond profile-defined hardware constraints.
+
+**Why this matters:**
+
+- **Performance**: Automatically finds optimal worker count for each server's capability
+- **Safety**: Prevents server overload by reducing workers when response times increase
+- **Adaptability**: Adjusts to changing server conditions during long Browse operations
+
+Example: An S7-1500 profile with MaxWorkers=50 might start with 10 workers. If Browse responses average 100ms (< 250ms target), workers increase to 20, then 30, up to the 50 maximum. If the server becomes loaded and responses slow to 400ms, workers automatically reduce to maintain stability.
 
 ### Manual Profile Override
 
