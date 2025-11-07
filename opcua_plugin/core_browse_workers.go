@@ -26,7 +26,8 @@ const (
 	DefaultMaxWorkers  = 200
 	DefaultMinWorkers  = 5
 	InitialWorkers     = 10
-	SampleSize         = 5 // Number of requests to measure response time
+	SampleSize         = 5                       // Number of requests to measure response time
+	TargetLatency      = 250 * time.Millisecond  // Target response time for latency-based scaling
 )
 
 // ServerMetrics tracks worker pool performance during Browse phase.
@@ -45,6 +46,7 @@ type ServerMetrics struct {
 	currentWorkers int
 	minWorkers     int
 	maxWorkers     int
+	targetLatency  time.Duration
 	workerControls map[uuid.UUID]chan struct{} // Channel to signal workers to stop
 }
 
@@ -70,6 +72,7 @@ func NewServerMetrics(profile ServerProfile) *ServerMetrics {
 		currentWorkers: initial,
 		minWorkers:     profile.MinWorkers,
 		maxWorkers:     profile.MaxWorkers,
+		targetLatency:  TargetLatency,
 	}
 }
 
@@ -105,7 +108,8 @@ func (sm *ServerMetrics) AverageResponseTime() time.Duration {
 	return totalTime / time.Duration(len(sm.responseTimes))
 }
 
-// adjustWorkers calculates the number of workers to adjust based on the response time of the last SampleSize requests
+// adjustWorkers calculates the number of workers to adjust based on the response time of the last SampleSize requests.
+// Scaling respects ServerProfile.MinWorkers and ServerProfile.MaxWorkers bounds.
 func (sm *ServerMetrics) adjustWorkers(logger Logger) (toAdd, toRemove int) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -114,14 +118,33 @@ func (sm *ServerMetrics) adjustWorkers(logger Logger) (toAdd, toRemove int) {
 		return 0, 0
 	}
 
-	// Latency-based scaling removed (TargetLatency constant removed per Part 5.3)
-	// Static worker pool maintained until queue-based scaling implemented
+	// Calculate average response time from recent samples
+	var totalTime time.Duration
+	for _, t := range sm.responseTimes {
+		totalTime += t
+	}
+	avgResponse := totalTime / time.Duration(len(sm.responseTimes))
 
+	// Clear samples for next measurement window
 	sm.responseTimes = sm.responseTimes[:0]
 
-	// Worker scaling logic removed - will be replaced with queue-based scaling in future task
-	// For now, maintain static worker pool
-	// TODO: Implement queue-depth based scaling (see IMPLEMENTATION_PLAN_REVISED.md Part 5.3)
+	// Adjust workers based on latency, respecting ServerProfile bounds
+	oldWorkerCount := sm.currentWorkers
+
+	if avgResponse > sm.targetLatency {
+		// Response time is too high. Reduce workers by 10 (or down to MinWorkers)
+		sm.currentWorkers = max(sm.minWorkers, sm.currentWorkers-10)
+	} else if avgResponse < sm.targetLatency {
+		// Response time is good. Increase workers by 10 (or up to MaxWorkers)
+		sm.currentWorkers = min(sm.maxWorkers, sm.currentWorkers+10)
+	}
+
+	// Return delta (how many to add or remove)
+	if sm.currentWorkers > oldWorkerCount {
+		return sm.currentWorkers - oldWorkerCount, 0
+	} else if sm.currentWorkers < oldWorkerCount {
+		return 0, oldWorkerCount - sm.currentWorkers
+	}
 	return 0, 0
 }
 

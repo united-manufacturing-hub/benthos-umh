@@ -15,6 +15,8 @@
 package opcua_plugin
 
 import (
+	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -120,3 +122,189 @@ var _ = Describe("NewServerMetrics", func() {
 		})
 	})
 })
+
+var _ = Describe("adjustWorkers with latency-based scaling", func() {
+	var (
+		metrics *ServerMetrics
+		logger  *testLogger
+	)
+
+	BeforeEach(func() {
+		logger = &testLogger{}
+	})
+
+	Context("when sample size is insufficient (< 5)", func() {
+		It("should return (0, 0) with no scaling", func() {
+			// ARRANGE: Create metrics with only 3 samples
+			profile := ServerProfile{
+				Name:       "Ignition",
+				MinWorkers: 5,
+				MaxWorkers: 20,
+			}
+			metrics = NewServerMetrics(profile)
+			metrics.recordResponseTime(100 * time.Millisecond)
+			metrics.recordResponseTime(150 * time.Millisecond)
+			metrics.recordResponseTime(200 * time.Millisecond)
+
+			// ACT: Call adjustWorkers
+			toAdd, toRemove := metrics.adjustWorkers(logger)
+
+			// ASSERT: Should return (0, 0) due to insufficient sample size
+			Expect(toAdd).To(Equal(0), "toAdd should be 0 when sample size < 5")
+			Expect(toRemove).To(Equal(0), "toRemove should be 0 when sample size < 5")
+		})
+	})
+
+	Context("when avgResponse > targetLatency (250ms)", func() {
+		It("should reduce workers by 10, respecting MinWorkers bound", func() {
+			// ARRANGE: Create metrics with high response times (400ms avg)
+			profile := ServerProfile{
+				Name:       "Ignition",
+				MinWorkers: 5,
+				MaxWorkers: 20,
+			}
+			metrics = NewServerMetrics(profile)
+			// Record 5 high-latency samples (total 2000ms, avg 400ms > 250ms target)
+			for i := 0; i < 5; i++ {
+				metrics.recordResponseTime(400 * time.Millisecond)
+			}
+
+			// ACT: Call adjustWorkers
+			toAdd, toRemove := metrics.adjustWorkers(logger)
+
+			// ASSERT: Should reduce workers by 10 (or down to MinWorkers)
+			Expect(toAdd).To(Equal(0), "toAdd should be 0 when reducing workers")
+			Expect(toRemove).To(Equal(5), "toRemove should be 5 (10 workers - 5 minWorkers)")
+			Expect(metrics.currentWorkers).To(Equal(5), "currentWorkers should be clamped to MinWorkers (5)")
+		})
+
+		It("should not reduce below MinWorkers", func() {
+			// ARRANGE: Create metrics already at MinWorkers
+			profile := ServerProfile{
+				Name:       "Auto",
+				MinWorkers: 2,
+				MaxWorkers: 5,
+			}
+			metrics = NewServerMetrics(profile)
+			// Force currentWorkers to MinWorkers
+			metrics.currentWorkers = 2
+			// Record high-latency samples
+			for i := 0; i < 5; i++ {
+				metrics.recordResponseTime(500 * time.Millisecond)
+			}
+
+			// ACT: Call adjustWorkers
+			toAdd, toRemove := metrics.adjustWorkers(logger)
+
+			// ASSERT: Should not reduce further
+			Expect(toAdd).To(Equal(0))
+			Expect(toRemove).To(Equal(0))
+			Expect(metrics.currentWorkers).To(Equal(2), "currentWorkers should stay at MinWorkers")
+		})
+	})
+
+	Context("when avgResponse < targetLatency (250ms)", func() {
+		It("should increase workers by 10, respecting MaxWorkers bound", func() {
+			// ARRANGE: Create metrics with low response times (100ms avg)
+			profile := ServerProfile{
+				Name:       "Ignition",
+				MinWorkers: 5,
+				MaxWorkers: 20,
+			}
+			metrics = NewServerMetrics(profile)
+			// Start with initial workers (10)
+			// Record 5 low-latency samples (total 500ms, avg 100ms < 250ms target)
+			for i := 0; i < 5; i++ {
+				metrics.recordResponseTime(100 * time.Millisecond)
+			}
+
+			// ACT: Call adjustWorkers
+			toAdd, toRemove := metrics.adjustWorkers(logger)
+
+			// ASSERT: Should increase workers by 10 (or up to MaxWorkers)
+			Expect(toAdd).To(Equal(10), "toAdd should be 10 when increasing workers")
+			Expect(toRemove).To(Equal(0), "toRemove should be 0 when adding workers")
+			Expect(metrics.currentWorkers).To(Equal(20), "currentWorkers should be clamped to MaxWorkers (20)")
+		})
+
+		It("should not increase above MaxWorkers", func() {
+			// ARRANGE: Create metrics already at MaxWorkers
+			profile := ServerProfile{
+				Name:       "Auto",
+				MinWorkers: 2,
+				MaxWorkers: 5,
+			}
+			metrics = NewServerMetrics(profile)
+			// Force currentWorkers to MaxWorkers
+			metrics.currentWorkers = 5
+			// Record low-latency samples
+			for i := 0; i < 5; i++ {
+				metrics.recordResponseTime(100 * time.Millisecond)
+			}
+
+			// ACT: Call adjustWorkers
+			toAdd, toRemove := metrics.adjustWorkers(logger)
+
+			// ASSERT: Should not increase further
+			Expect(toAdd).To(Equal(0))
+			Expect(toRemove).To(Equal(0))
+			Expect(metrics.currentWorkers).To(Equal(5), "currentWorkers should stay at MaxWorkers")
+		})
+	})
+
+	Context("when avgResponse == targetLatency (edge case)", func() {
+		It("should not adjust workers", func() {
+			// ARRANGE: Create metrics with exact target latency (250ms avg)
+			profile := ServerProfile{
+				Name:       "Ignition",
+				MinWorkers: 5,
+				MaxWorkers: 20,
+			}
+			metrics = NewServerMetrics(profile)
+			// Record 5 samples at exactly 250ms
+			for i := 0; i < 5; i++ {
+				metrics.recordResponseTime(250 * time.Millisecond)
+			}
+
+			// ACT: Call adjustWorkers
+			toAdd, toRemove := metrics.adjustWorkers(logger)
+
+			// ASSERT: Should not adjust workers (250ms is NOT > 250ms, NOT < 250ms)
+			Expect(toAdd).To(Equal(0))
+			Expect(toRemove).To(Equal(0))
+			Expect(metrics.currentWorkers).To(Equal(10), "currentWorkers should remain unchanged")
+		})
+	})
+
+	Context("responseTimes buffer clearing", func() {
+		It("should clear responseTimes after adjusting workers", func() {
+			// ARRANGE: Create metrics with samples
+			profile := ServerProfile{
+				Name:       "Ignition",
+				MinWorkers: 5,
+				MaxWorkers: 20,
+			}
+			metrics = NewServerMetrics(profile)
+			for i := 0; i < 5; i++ {
+				metrics.recordResponseTime(300 * time.Millisecond)
+			}
+
+			// ACT: Call adjustWorkers
+			metrics.adjustWorkers(logger)
+
+			// ASSERT: responseTimes should be cleared
+			Expect(len(metrics.responseTimes)).To(Equal(0), "responseTimes should be cleared after adjusting")
+		})
+	})
+})
+
+// testLogger is a simple Logger implementation for testing
+type testLogger struct{}
+
+func (t *testLogger) Errorf(format string, v ...any)   {}
+func (t *testLogger) Warnf(format string, v ...any)    {}
+func (t *testLogger) Infof(format string, v ...any)    {}
+func (t *testLogger) Debugf(format string, v ...any)   {}
+func (t *testLogger) Tracef(format string, v ...any)   {}
+func (t *testLogger) Fatal(v ...any)                   {}
+func (t *testLogger) With(keyValues ...any) Logger { return t }
