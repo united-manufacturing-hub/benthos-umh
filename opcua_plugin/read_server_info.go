@@ -54,10 +54,16 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 	opcuaBrowserChan := make(chan BrowseDetails, 3)
 	var wg TrackedWaitGroup
 
+	// Use profile or fallback to Auto if called before profile detection
+	profile := g.ServerProfile
+	if profile.Name == "" {
+		profile = GetProfileByName(ProfileAuto)
+	}
+
 	wg.Add(3)
-	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(manufacturerNameNodeID)), "", g.Log, manufacturerNameNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
-	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(productNameNodeID)), "", g.Log, productNameNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
-	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(softwareVersionNodeID)), "", g.Log, softwareVersionNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
+	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(manufacturerNameNodeID)), "", g.Log, manufacturerNameNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited, profile)
+	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(productNameNodeID)), "", g.Log, productNameNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited, profile)
+	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(softwareVersionNodeID)), "", g.Log, softwareVersionNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited, profile)
 	wg.Wait()
 
 	close(nodeChan)
@@ -127,4 +133,134 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 		}
 	}
 	return serverInfo, nil
+}
+
+// OPC UA ServerCapabilities NodeIDs (Part 5 - Information Model)
+// Verified against OPC Foundation NodeIds.csv v1.04
+var (
+	ServerCapabilitiesNodeID          = ua.NewNumericNodeID(0, 2268)  // ServerCapabilities
+	OperationLimitsNodeID             = ua.NewNumericNodeID(0, 11704) // OperationLimits
+	MaxNodesPerBrowseNodeID           = ua.NewNumericNodeID(0, 11710) // Fixed: was 11712
+	MaxMonitoredItemsPerCallNodeID    = ua.NewNumericNodeID(0, 11714) // Correct (CodeRabbit was wrong)
+	MaxNodesPerReadNodeID             = ua.NewNumericNodeID(0, 11705) // Correct
+	MaxNodesPerWriteNodeID            = ua.NewNumericNodeID(0, 11707) // Fixed: was 11708
+	MaxBrowseContinuationPointsNodeID = ua.NewNumericNodeID(0, 3089)  // Fixed: was 12165
+)
+
+// queryOperationLimits queries the OPC UA server for its operation limits from OperationLimits node.
+// Returns error if the server doesn't support OperationLimits (common for PLCs like S7-1200/1500).
+// Phase 1: Read-only logging, no behavior changes.
+func (g *OPCUAInput) queryOperationLimits(ctx context.Context) (*ServerCapabilities, error) {
+	if g == nil || g.OPCUAConnection == nil || g.Client == nil {
+		return nil, errors.New("client is nil")
+	}
+
+	// Query all capability nodes
+	nodeIDs := []*ua.NodeID{
+		MaxNodesPerBrowseNodeID,
+		MaxMonitoredItemsPerCallNodeID,
+		MaxNodesPerReadNodeID,
+		MaxNodesPerWriteNodeID,
+		MaxBrowseContinuationPointsNodeID,
+	}
+
+	var nodesToRead []*ua.ReadValueID
+	for _, nodeID := range nodeIDs {
+		nodesToRead = append(nodesToRead, &ua.ReadValueID{
+			NodeID: nodeID,
+		})
+	}
+
+	req := &ua.ReadRequest{
+		MaxAge:             2000,
+		NodesToRead:        nodesToRead,
+		TimestampsToReturn: ua.TimestampsToReturnBoth,
+	}
+
+	// Mark this as a capability probe - failures are expected for servers without OperationLimits
+	probeCtx := WithCapabilityProbe(ctx)
+	resp, err := g.Read(probeCtx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(resp.Results) != len(nodeIDs) {
+		return nil, errors.New("unexpected number of results")
+	}
+
+	caps := &ServerCapabilities{}
+
+	// Parse results - many servers return BadNodeIdUnknown if they don't support this
+	// Map index to capability field for cleaner assignment
+	setCapability := []func(uint32){
+		func(v uint32) { caps.MaxNodesPerBrowse = v },
+		func(v uint32) { caps.MaxMonitoredItemsPerCall = v },
+		func(v uint32) { caps.MaxNodesPerRead = v },
+		func(v uint32) { caps.MaxNodesPerWrite = v },
+		func(v uint32) { caps.MaxBrowseContinuationPoints = v },
+	}
+
+	for i, result := range resp.Results {
+		if result.Status != ua.StatusOK || result.Value == nil {
+			// Skip unsupported capabilities (server may not expose all limits)
+			continue
+		}
+
+		// All OperationLimits values are UInt32
+		if value, ok := result.Value.Value().(uint32); ok {
+			setCapability[i](value)
+		}
+	}
+
+	return caps, nil
+}
+
+// logServerCapabilities logs the discovered server operation limits and compares them
+// with the current profile settings. Warns if the profile exceeds server limits.
+func (g *OPCUAInput) logServerCapabilities(caps *ServerCapabilities) {
+	if caps == nil || g.Log == nil {
+		return
+	}
+
+	// Only log if at least one operation limit is available
+	hasLimits := caps.MaxMonitoredItemsPerCall > 0 || caps.MaxNodesPerBrowse > 0 ||
+		caps.MaxNodesPerRead > 0 || caps.MaxNodesPerWrite > 0 ||
+		caps.MaxBrowseContinuationPoints > 0
+
+	if !hasLimits {
+		g.Log.Info("OperationLimits not available (normal for many PLCs) - using profile defaults")
+		return
+	}
+
+	g.Log.Info("Server OperationLimits discovered:")
+
+	// Log MaxMonitoredItemsPerCall with profile comparison
+	if caps.MaxMonitoredItemsPerCall > 0 {
+		g.Log.Infof("  MaxMonitoredItemsPerCall: %d (profile MaxBatchSize: %d)",
+			caps.MaxMonitoredItemsPerCall, g.ServerProfile.MaxBatchSize)
+
+		if uint32(g.ServerProfile.MaxBatchSize) > caps.MaxMonitoredItemsPerCall {
+			g.Log.Warnf("Profile MaxBatchSize (%d) exceeds server limit MaxMonitoredItemsPerCall (%d) - subscriptions may fail",
+				g.ServerProfile.MaxBatchSize, caps.MaxMonitoredItemsPerCall)
+		}
+	}
+
+	// Log other limits without profile comparison (profile doesn't have these fields yet)
+	if caps.MaxNodesPerBrowse > 0 {
+		g.Log.Infof("  MaxNodesPerBrowse: %d", caps.MaxNodesPerBrowse)
+	}
+
+	if caps.MaxNodesPerRead > 0 {
+		g.Log.Infof("  MaxNodesPerRead: %d", caps.MaxNodesPerRead)
+	}
+
+	if caps.MaxNodesPerWrite > 0 {
+		g.Log.Infof("  MaxNodesPerWrite: %d", caps.MaxNodesPerWrite)
+	}
+
+	if caps.MaxBrowseContinuationPoints > 0 {
+		g.Log.Infof("  MaxBrowseContinuationPoints: %d", caps.MaxBrowseContinuationPoints)
+	}
+
+	g.Log.Info("Using server-reported limits for subscriptions")
 }

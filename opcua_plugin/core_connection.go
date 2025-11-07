@@ -84,6 +84,10 @@ var OPCUAConnectionConfigSpec = service.NewConfigSpec().
 	Field(service.NewIntField("reconnectIntervalInSeconds").
 		Description("The interval in seconds at which to reconnect to the OPC UA server when the connection is lost. This is only used if `autoReconnect` is set to true.").
 		Default(5).
+		Advanced()).
+	Field(service.NewStringField("profile").
+		Description("Manually override the OPC UA server profile for performance tuning. Options: auto, high-performance, ignition, kepware, siemens-s7-1200, siemens-s7-1500, prosys. If not specified or empty, auto-detection will be used.").
+		Default("").
 		Advanced())
 
 // OPCUAConnection represents the common connection configuration for OPC UA plugins
@@ -102,6 +106,7 @@ type OPCUAConnection struct {
 	AutoReconnect                bool
 	ReconnectIntervalInSeconds   int
 	SessionTimeout               int
+	Profile                      string // Manual profile override (optional)
 	Log                          *service.Logger
 	Client                       *opcua.Client
 	CachedTLSCertificate         *tls.Certificate // certificate
@@ -164,6 +169,9 @@ func ParseConnectionConfig(conf *service.ParsedConfig, mgr *service.Resources) (
 		return nil, err
 	}
 	if conn.SessionTimeout, err = conf.FieldInt("sessionTimeout"); err != nil {
+		return nil, err
+	}
+	if conn.Profile, err = conf.FieldString("profile"); err != nil {
 		return nil, err
 	}
 

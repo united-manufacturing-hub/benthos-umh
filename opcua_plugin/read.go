@@ -157,10 +157,20 @@ func init() {
 }
 
 // ServerCapabilities holds OPC UA server capability flags
+// ServerCapabilities represents OPC UA server capabilities including operation limits and feature support.
+// Operation limits come from ns=0;i=11704 (OperationLimits) - many servers (S7-1200/1500) don't expose these.
+// Deadband support is queried separately via AggregateConfiguration node.
 type ServerCapabilities struct {
+	// Operation limits from ServerCapabilities.OperationLimits
+	MaxNodesPerBrowse           uint32
+	MaxMonitoredItemsPerCall    uint32
+	MaxNodesPerRead             uint32
+	MaxNodesPerWrite            uint32
+	MaxBrowseContinuationPoints uint32
+
+	// Feature support flags
 	SupportsPercentDeadband  bool
 	SupportsAbsoluteDeadband bool
-	// Future: Add more capability flags as needed
 }
 
 type OPCUAInput struct {
@@ -178,6 +188,7 @@ type OPCUAInput struct {
 	HeartbeatNodeId              *ua.NodeID
 	Subscription                 *opcua.Subscription
 	ServerInfo                   ServerInfo
+	ServerProfile                ServerProfile
 	PollRate                     int
 	QueueSize                    uint32
 	SamplingInterval             float64
@@ -242,17 +253,35 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 	g.Log.Infof("Connected to %s", g.Endpoint)
 
-	// Get OPC UA server information
-	if serverInfo, err := g.GetOPCUAServerInformation(ctx); err != nil {
-		g.Log.Infof("Failed to get OPC UA server information: %s", err)
+	// Check if profile is manually specified in configuration
+	if g.Profile != "" {
+		// Use manually specified profile
+		g.ServerProfile = GetProfileByName(g.Profile)
+		g.Log.With("profile", g.ServerProfile.Name).
+			Info("Using manually configured OPC UA server profile")
 	} else {
-		g.Log.Infof("OPC UA Server Information: %v+", serverInfo)
-		g.ServerInfo = serverInfo
+		// Get OPC UA server information for auto-detection
+		if serverInfo, err := g.GetOPCUAServerInformation(ctx); err != nil {
+			g.Log.Infof("Failed to get OPC UA server information: %s - using Auto profile", err)
+			// BUG FIX: Always set ServerProfile, even when server info detection fails
+			g.ServerProfile = GetProfileByName(ProfileAuto)
+			g.Log.Infof("Using fallback profile: %s (defensive defaults)", g.ServerProfile.Name)
+		} else {
+			g.Log.Infof("OPC UA Server Information: %v+", serverInfo)
+			g.ServerInfo = serverInfo
+
+			// Detect and store server profile
+			g.ServerProfile = DetectServerProfile(&g.ServerInfo)
+			g.Log.With("profile", g.ServerProfile.Name).
+				With("manufacturer", g.ServerInfo.ManufacturerName).
+				With("product", g.ServerInfo.ProductName).
+				Info("Detected OPC UA server profile")
+		}
 	}
 
 	// Query server capabilities for deadband support (only if subscriptions enabled)
 	if g.SubscribeEnabled {
-		caps, err := g.queryServerCapabilities(ctx)
+		caps, err := g.QueryServerCapabilities(ctx)
 		if err != nil {
 			g.Log.Warnf("Failed to query server capabilities: %v, assuming basic support", err)
 			caps = &ServerCapabilities{
@@ -261,6 +290,9 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 			}
 		}
 		g.ServerCapabilities = caps
+
+		// Log operation limits (Phase 1: logging only, no behavior changes)
+		g.logServerCapabilities(caps)
 
 		// Adjust deadband type based on server capabilities
 		originalType := g.DeadbandType
@@ -544,36 +576,40 @@ func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef Nod
 	return message
 }
 
-// queryServerCapabilities reads server capability information
+// QueryServerCapabilities reads server capability information
 // to determine which deadband types are supported.
-func (o *OPCUAInput) queryServerCapabilities(ctx context.Context) (*ServerCapabilities, error) {
-	// Read ServerCapabilities node
-	// NodeID: i=2254 (Server_ServerCapabilities)
-	// For now, use heuristic: Try to read AggregateConfiguration
-	// If it exists, server likely supports advanced features like percent deadband
-	aggConfigNodeID := ua.NewNumericNodeID(0, 2268) // Server_ServerCapabilities_AggregateConfiguration
+func (o *OPCUAInput) QueryServerCapabilities(ctx context.Context) (*ServerCapabilities, error) {
+	caps := &ServerCapabilities{
+		SupportsAbsoluteDeadband: true, // All OPC UA servers support absolute
+	}
 
+	// Query deadband support via AggregateConfiguration
+	// NodeID 2340 = Server_ServerCapabilities_AggregateConfiguration (OPC UA Part 5)
+	aggConfigNodeID := ua.NewNumericNodeID(0, 2340)
 	req := &ua.ReadRequest{
 		NodesToRead: []*ua.ReadValueID{
-			{NodeID: aggConfigNodeID, AttributeID: ua.AttributeIDValue},
+			{NodeID: aggConfigNodeID, AttributeID: ua.AttributeIDNodeClass},
 		},
 	}
 
 	resp, err := o.Client.Read(ctx, req)
-	if err != nil {
-		return nil, err
+	if err == nil && len(resp.Results) > 0 && resp.Results[0].Status == ua.StatusOK {
+		caps.SupportsPercentDeadband = true
 	}
 
-	// If AggregateConfiguration exists, assume percent deadband supported
-	supportsPercent := false
-	if len(resp.Results) > 0 && resp.Results[0].Status == ua.StatusOK {
-		supportsPercent = true
+	// Query operation limits (Phase 1: logging only)
+	if opLimits, err := o.queryOperationLimits(ctx); err != nil {
+		o.Log.Infof("OperationLimits not available (normal for many PLCs): %v - using profile defaults", err)
+	} else if opLimits != nil {
+		// Merge operation limits into capabilities
+		caps.MaxNodesPerBrowse = opLimits.MaxNodesPerBrowse
+		caps.MaxMonitoredItemsPerCall = opLimits.MaxMonitoredItemsPerCall
+		caps.MaxNodesPerRead = opLimits.MaxNodesPerRead
+		caps.MaxNodesPerWrite = opLimits.MaxNodesPerWrite
+		caps.MaxBrowseContinuationPoints = opLimits.MaxBrowseContinuationPoints
 	}
 
-	return &ServerCapabilities{
-		SupportsAbsoluteDeadband: true, // All OPC UA servers support absolute
-		SupportsPercentDeadband:  supportsPercent,
-	}, nil
+	return caps, nil
 }
 
 // adjustDeadbandType adjusts requested deadband type based on server capabilities.

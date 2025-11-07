@@ -117,7 +117,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNodeWithNilNodeClass
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -144,7 +144,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -182,7 +182,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -222,7 +222,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -262,7 +262,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -305,7 +305,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -381,7 +381,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = abcFolder
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -778,7 +778,7 @@ var _ = Describe("Browse with StatusBadNodeIDUnknown", func() {
 			// Start browsing
 			wg.Add(1)
 			go func() {
-				Browse(ctx, rootFolder, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
+			Browse(ctx, rootFolder, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
 			}()
 			wg.Wait()
 			close(nodeChan)
@@ -813,7 +813,7 @@ var _ = Describe("Browse with StatusBadNodeIDUnknown", func() {
 func startBrowsing(ctx context.Context, rootNode NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map) ([]NodeDef, []error) {
 	wg.Add(1)
 	go func() {
-		Browse(ctx, rootNode, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
+		Browse(ctx, rootNode, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
 	}()
 	wg.Wait()
 	close(nodeChan)
@@ -856,7 +856,7 @@ var _ = Describe("Browse Channel Blocking Behavior (ENG-3835)", func() {
 			done := make(chan bool)
 			go func() {
 				wg.Add(1)
-				Browse(ctx, rootNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited)
+				Browse(ctx, rootNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
 				wg.Wait()
 				close(done)
 			}()
@@ -910,7 +910,7 @@ var _ = Describe("Browse Channel Blocking Behavior (ENG-3835)", func() {
 			done := make(chan struct{})
 			go func() {
 				wg.Add(1)
-				Browse(cancelCtx, parentNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited)
+				Browse(cancelCtx, parentNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
 				wg.Wait()
 				close(done)
 			}()

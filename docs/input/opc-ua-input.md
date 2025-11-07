@@ -338,6 +338,83 @@ input:
     samplingInterval: 1000.0  # Sample every 1 second instead of as fast as possible
 ```
 
+## Server Profiles and Performance Tuning
+
+Server profiles automatically optimize OPC UA connection parameters based on detected server type. The system queries the server's manufacturer and product information to select the best profile.
+
+### What Are Server Profiles?
+
+Profiles auto-optimize OPC UA connection parameters based on detected server type. The system queries the server's manufacturer and product information (ServerInfo nodes) to select appropriate tuning.
+
+**Two performance parameters:**
+
+1. **Workers (Browse Phase)**: Concurrent goroutines discovering the OPC UA node tree
+   - Example: 10,000 nodes with 5 workers ≈ 2,000 Browse calls per worker vs 10,000 sequential calls
+
+2. **Batch Size (Subscribe Phase)**: Nodes per CreateMonitoredItems call
+   - Larger batches = faster subscription setup
+   - Too large = server rejection or performance degradation
+
+### Available Profiles
+
+Profiles are automatically detected based on server manufacturer/product information:
+- **Auto**: Unknown servers (conservative defaults)
+- **High-Performance**: Manual override for known high-capacity infrastructure
+- **Ignition**: Inductive Automation Ignition Gateway
+- **Kepware**: PTC Kepware KEPServerEX
+- **S7-1200**: Siemens S7-1200 PLCs (hardware limit: 1000 monitored items)
+- **S7-1500**: Siemens S7-1500 PLCs (hardware limit: 10000 monitored items)
+- **Prosys**: Prosys Simulation Server
+
+**Profile values** are defined in [`opcua_plugin/server_profiles.go`](../../opcua_plugin/server_profiles.go) with vendor documentation citations.
+
+**Key insight**: Profile values are production-safe limits from vendor docs and real-world testing, NOT server-reported theoretical maximums. Example: S7-1200 reports `MaxMonitoredItemsPerCall=1000` but profile uses 100 (values >200 cause 50× performance degradation per [Siemens docs](https://cache.industry.siemens.com/dl/files/846/109755846/att_1163306/v4/109755846_TIA_Portal_OPC_UA_system_limits.pdf)).
+
+### Performance Impact
+
+Examples of profile-specific optimizations:
+
+- **S7-1200**: Batch size limited to 100 (server reports 1000, but >200 causes 50× degradation - [Siemens docs](https://cache.industry.siemens.com/dl/files/846/109755846/att_1163306/v4/109755846_TIA_Portal_OPC_UA_system_limits.pdf))
+- **Ignition/Kepware**: Batch size of 1000 enables 10× faster subscription setup compared to conservative 100. But limited browse worker amount as Eclipse Milo, the OPC UA library that Ignition uses, has a limit on concurrent operations per OPC UA session fo by default 64.
+- **Prosys**: Batch size of 800 prevents simulation server unresponsiveness with large node counts
+
+### Dynamic Worker Scaling
+
+During the Browse phase, the system automatically adjusts worker concurrency based on measured server response time. This optimization balances performance (faster browsing with more workers) against server load (preventing overload).
+
+**How it works:**
+
+1. **Measurement**: The system samples response times from 5 consecutive Browse operations
+2. **Target latency**: 250ms per Browse request (default)
+3. **Scaling logic**:
+   - If average response > 250ms → reduce workers by 1 (down to profile's MinWorkers)
+   - If average response < 250ms → increase workers by 1 (up to profile's MaxWorkers)
+   - If average response ≈ 250ms → no adjustment
+
+**Bounds enforcement**: Worker count always respects the ServerProfile's MinWorkers and MaxWorkers limits. The system cannot scale beyond profile-defined hardware constraints.
+
+**Why this matters:**
+
+- **Performance**: Automatically finds optimal worker count for each server's capability
+- **Safety**: Prevents server overload by reducing workers when response times increase
+- **Gradual adaptation**: Fine-grained control with ±1 worker adjustments provides smoother scaling
+- **Adaptability**: Adjusts to changing server conditions during long Browse operations
+
+Example: An S7-1500 profile with MaxWorkers=50 might start with 10 workers. If Browse responses average 100ms (< 250ms target), workers gradually increase: 10 → 11 → 12 → 13, continuing up to the 50 maximum. If the server becomes loaded and responses slow to 400ms, workers gradually reduce: 13 → 12 → 11 to maintain stability.
+
+### Manual Profile Override
+
+Override auto-detection by setting profile explicitly:
+
+```yaml
+input:
+  opcua:
+    endpoint: "opc.tcp://10.0.0.1:4840"
+    profile: "high-performance"  # Override auto-detection
+```
+
+Use case: Force high-performance profile when server manufacturer string doesn't match known vendors but infrastructure is validated for aggressive batching.
+
 ## Metrics
 
 ### opcua_subscription_failures_total

@@ -81,7 +81,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		g.Log.Debugf("Browsing nodeID: %s", nodeID.String())
 		wg.Add(1)
 		wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(nodeID))
-		go browse(timeoutCtx, wrapperNodeID, "", g.Log, nodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
+		go browse(timeoutCtx, wrapperNodeID, "", g.Log, nodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited, g.ServerProfile)
 	}
 
 	// Start concurrent consumer to drain nodeChan as workers produce nodes
@@ -179,7 +179,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 
 			wgHeartbeat.Add(1)
 			wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(heartbeatNodeID))
-			go browse(ctx, wrapperNodeID, "", g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat, opcuaBrowserChanHeartbeat, &g.visited)
+			go browse(ctx, wrapperNodeID, "", g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat, opcuaBrowserChanHeartbeat, &g.visited, g.ServerProfile)
 
 			wgHeartbeat.Wait()
 			close(nodeHeartbeatChan)
@@ -253,21 +253,44 @@ func isNumericDataType(typeID ua.TypeID) bool {
 	return numericTypes[typeID]
 }
 
+// BatchRange represents a range of indices for batch processing
+type BatchRange struct {
+	Start int
+	End   int
+}
+
+// CalculateBatches splits totalNodes into batches of maxBatchSize and returns the ranges
+func CalculateBatches(totalNodes, maxBatchSize int) []BatchRange {
+	var batches []BatchRange
+	for startIdx := 0; startIdx < totalNodes; startIdx += maxBatchSize {
+		endIdx := startIdx + maxBatchSize
+		if endIdx > totalNodes {
+			endIdx = totalNodes
+		}
+		batches = append(batches, BatchRange{Start: startIdx, End: endIdx})
+	}
+	return batches
+}
+
 // MonitorBatched splits the nodes into manageable batches and starts monitoring them.
 // This approach prevents the server from returning BadTcpMessageTooLarge by avoiding oversized monitoring requests.
 //
-// Batch Size Selection:
-// The batch size of 100 nodes per CreateMonitoredItems call is based on extensive testing
-// across multiple OPC UA server implementations (Ignition, Kepware, industrial PLCs) and
-// represents the optimal balance between:
-// - Server compatibility: All tested servers handle 100-node batches without errors
-// - Request efficiency: Minimizes CreateMonitoredItems API calls while staying well below protocol limits
-// - Memory usage: Keeps request/response size manageable (~40KB typical)
-// - Performance: Subscription rate (82 nodes/sec) is limited by OPC UA Monitor API, not batch size
+// Batch Size Selection (ServerProfile.MaxBatchSize):
+// Batch size controls nodes per CreateMonitoredItems call during Subscribe phase.
+// This is different from workers (Browse phase) - batch size affects subscription setup, not browsing.
 //
-// This value is intentionally not configurable per UMH's Opinionated Simplicity principle:
-// "If 95% of users need the same value, that's the only value." Batch size 100 works
-// universally across all tested OPC UA servers, eliminating the need for user configuration.
+// Why batch size matters:
+// - Too large = server rejects request (BadTcpMessageTooLarge, connection drop)
+// - Too small = slow subscription setup (more API round-trips)
+// - Sweet spot varies by server: S7-1200 = 100, Ignition/Kepware = 1000
+//
+// Performance trade-offs (validated in UMH-ENG-3852):
+// - S7-1200 with batchSize=100: Fast subscription setup
+// - S7-1200 with batchSize=200+: 50× slower (server throttles/times out)
+// - Ignition/Kepware with batchSize=1000: 10× faster than batchSize=100
+//
+// Profile-based values come from ServerProfile.MaxBatchSize (see server_profiles.go).
+// Each profile is tuned for specific server hardware and tested in production.
 //
 // Deadband Filtering:
 // If deadbandType is set (absolute/percent) and deadbandValue > 0, the function applies
@@ -278,7 +301,15 @@ func isNumericDataType(typeID ua.TypeID) bool {
 //
 // It returns the total number of nodes that were successfully monitored or an error if monitoring fails.
 func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, error) {
-	const maxBatchSize = 100 // Tested across Ignition, Kepware, PLCs - universally compatible
+	// Use profile-based batch size
+	maxBatchSize := g.ServerProfile.MaxBatchSize
+	if maxBatchSize == 0 {
+		panic(fmt.Sprintf(
+			"PROGRAMMING ERROR: ServerProfile.MaxBatchSize is 0. "+
+				"This means ServerProfile was not initialized before MonitorBatched() was called. "+
+				"Profile name: '%s'. This indicates a bug in the Connect() initialization flow.",
+			g.ServerProfile.Name))
+	}
 	totalMonitored := 0
 	totalNodes := len(nodes)
 
@@ -287,16 +318,14 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		return 0, fmt.Errorf("no valid nodes selected")
 	}
 
-	g.Log.Infof("Starting to monitor %d nodes in batches of %d", totalNodes, maxBatchSize)
+	g.Log.With("batchSize", maxBatchSize).
+		With("profile", g.ServerProfile.Name).
+		Infof("Starting to monitor %d nodes in batches of %d", totalNodes, maxBatchSize)
 
-	for startIdx := 0; startIdx < totalNodes; startIdx += maxBatchSize {
-		endIdx := startIdx + maxBatchSize
-		if endIdx > totalNodes {
-			endIdx = totalNodes
-		}
-
-		batch := nodes[startIdx:endIdx]
-		g.Log.Infof("Creating monitor for nodes %d to %d", startIdx, endIdx-1)
+	batches := CalculateBatches(totalNodes, maxBatchSize)
+	for _, batchRange := range batches {
+		batch := nodes[batchRange.Start:batchRange.End]
+		g.Log.Infof("Creating monitor for nodes %d to %d", batchRange.Start, batchRange.End-1)
 
 		monitoredRequests := make([]*ua.MonitoredItemCreateRequest, 0, len(batch))
 
@@ -325,7 +354,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 				},
 				MonitoringMode: ua.MonitoringModeReporting,
 				RequestedParameters: &ua.MonitoringParameters{
-					ClientHandle:     uint32(startIdx + pos),
+					ClientHandle:     uint32(batchRange.Start + pos),
 					DiscardOldest:    true,
 					Filter:           filter,
 					QueueSize:        g.QueueSize,
@@ -337,11 +366,11 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 
 		response, err := g.Subscription.Monitor(ctx, ua.TimestampsToReturnBoth, monitoredRequests...)
 		if err != nil {
-			g.Log.Errorf("Failed to monitor batch %d-%d: %v", startIdx, endIdx-1, err)
+			g.Log.Errorf("Failed to monitor batch %d-%d: %v", batchRange.Start, batchRange.End-1, err)
 			if closeErr := g.Close(ctx); closeErr != nil {
 				g.Log.Errorf("Failed to close OPC UA connection: %v", closeErr)
 			}
-			return totalMonitored, fmt.Errorf("monitoring failed for batch %d-%d: %w", startIdx, endIdx-1, err)
+			return totalMonitored, fmt.Errorf("monitoring failed for batch %d-%d: %w", batchRange.Start, batchRange.End-1, err)
 		}
 
 		if response == nil {
@@ -377,7 +406,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		g.Log.Infof("Successfully monitored %d nodes in current batch", monitoredNodes)
 		if g.DeadbandType != "none" {
 			g.Log.Infof("Batch %d-%d: Applied %s deadband filter to %d numeric nodes (threshold: %.2f)",
-				startIdx, endIdx-1, g.DeadbandType, numFilteredNodes, g.DeadbandValue)
+				batchRange.Start, batchRange.End-1, g.DeadbandType, numFilteredNodes, g.DeadbandValue)
 		}
 		time.Sleep(time.Second) // Sleep for some time to prevent overloading the server
 	}
