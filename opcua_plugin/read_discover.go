@@ -253,6 +253,25 @@ func isNumericDataType(typeID ua.TypeID) bool {
 	return numericTypes[typeID]
 }
 
+// BatchRange represents a range of indices for batch processing
+type BatchRange struct {
+	Start int
+	End   int
+}
+
+// CalculateBatches splits totalNodes into batches of maxBatchSize and returns the ranges
+func CalculateBatches(totalNodes, maxBatchSize int) []BatchRange {
+	var batches []BatchRange
+	for startIdx := 0; startIdx < totalNodes; startIdx += maxBatchSize {
+		endIdx := startIdx + maxBatchSize
+		if endIdx > totalNodes {
+			endIdx = totalNodes
+		}
+		batches = append(batches, BatchRange{Start: startIdx, End: endIdx})
+	}
+	return batches
+}
+
 // MonitorBatched splits the nodes into manageable batches and starts monitoring them.
 // This approach prevents the server from returning BadTcpMessageTooLarge by avoiding oversized monitoring requests.
 //
@@ -303,14 +322,10 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		With("profile", g.ServerProfile.Name).
 		Infof("Starting to monitor %d nodes in batches of %d", totalNodes, maxBatchSize)
 
-	for startIdx := 0; startIdx < totalNodes; startIdx += maxBatchSize {
-		endIdx := startIdx + maxBatchSize
-		if endIdx > totalNodes {
-			endIdx = totalNodes
-		}
-
-		batch := nodes[startIdx:endIdx]
-		g.Log.Infof("Creating monitor for nodes %d to %d", startIdx, endIdx-1)
+	batches := CalculateBatches(totalNodes, maxBatchSize)
+	for _, batchRange := range batches {
+		batch := nodes[batchRange.Start:batchRange.End]
+		g.Log.Infof("Creating monitor for nodes %d to %d", batchRange.Start, batchRange.End-1)
 
 		monitoredRequests := make([]*ua.MonitoredItemCreateRequest, 0, len(batch))
 
@@ -339,7 +354,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 				},
 				MonitoringMode: ua.MonitoringModeReporting,
 				RequestedParameters: &ua.MonitoringParameters{
-					ClientHandle:     uint32(startIdx + pos),
+					ClientHandle:     uint32(batchRange.Start + pos),
 					DiscardOldest:    true,
 					Filter:           filter,
 					QueueSize:        g.QueueSize,
@@ -351,11 +366,11 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 
 		response, err := g.Subscription.Monitor(ctx, ua.TimestampsToReturnBoth, monitoredRequests...)
 		if err != nil {
-			g.Log.Errorf("Failed to monitor batch %d-%d: %v", startIdx, endIdx-1, err)
+			g.Log.Errorf("Failed to monitor batch %d-%d: %v", batchRange.Start, batchRange.End-1, err)
 			if closeErr := g.Close(ctx); closeErr != nil {
 				g.Log.Errorf("Failed to close OPC UA connection: %v", closeErr)
 			}
-			return totalMonitored, fmt.Errorf("monitoring failed for batch %d-%d: %w", startIdx, endIdx-1, err)
+			return totalMonitored, fmt.Errorf("monitoring failed for batch %d-%d: %w", batchRange.Start, batchRange.End-1, err)
 		}
 
 		if response == nil {
@@ -391,7 +406,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		g.Log.Infof("Successfully monitored %d nodes in current batch", monitoredNodes)
 		if g.DeadbandType != "none" {
 			g.Log.Infof("Batch %d-%d: Applied %s deadband filter to %d numeric nodes (threshold: %.2f)",
-				startIdx, endIdx-1, g.DeadbandType, numFilteredNodes, g.DeadbandValue)
+				batchRange.Start, batchRange.End-1, g.DeadbandType, numFilteredNodes, g.DeadbandValue)
 		}
 		time.Sleep(time.Second) // Sleep for some time to prevent overloading the server
 	}
