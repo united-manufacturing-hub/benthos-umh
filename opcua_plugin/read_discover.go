@@ -282,6 +282,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 	maxBatchSize := g.ServerProfile.MaxBatchSize
 	if maxBatchSize == 0 {
 		maxBatchSize = 100 // Fallback if profile not initialized
+		g.Log.Warnf("ServerProfile.MaxBatchSize is 0, using fallback value of 100")
 	}
 	totalMonitored := 0
 	totalNodes := len(nodes)
