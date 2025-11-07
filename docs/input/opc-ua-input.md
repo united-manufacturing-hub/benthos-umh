@@ -344,45 +344,43 @@ Server profiles automatically optimize OPC UA connection parameters based on det
 
 ### What Are Server Profiles?
 
-Profiles control two key performance parameters:
+Profiles auto-optimize OPC UA connection parameters based on detected server type. The system queries the server's manufacturer and product information (ServerInfo nodes) to select appropriate tuning.
 
-1. **Workers (Browse Phase)**: Concurrent goroutines that discover the OPC UA node tree in parallel
-   - More workers = faster node discovery
+**Two performance parameters:**
+
+1. **Workers (Browse Phase)**: Concurrent goroutines discovering the OPC UA node tree
    - Example: 10,000 nodes with 5 workers ≈ 2,000 Browse calls per worker vs 10,000 sequential calls
-   - Profile range: 1-60 workers depending on server type
 
-2. **Batch Size (Subscribe Phase)**: Number of nodes included in each CreateMonitoredItems call
+2. **Batch Size (Subscribe Phase)**: Nodes per CreateMonitoredItems call
    - Larger batches = faster subscription setup
-   - Too large = server rejection, too small = slow setup
-   - Profile range: 50-1000 nodes per batch
+   - Too large = server rejection or performance degradation
 
 ### Available Profiles
 
-| Profile | Auto-Detected For | Batch Size | Workers | Hardware Limit |
-|---------|------------------|------------|---------|----------------|
-| Auto | Unknown servers | 50 | 1-5 | None |
-| High-Performance | Manual override | 1000 | 10-50 | None |
-| Ignition | Inductive Automation Ignition Gateway | 1000 | 5-20 | None |
-| Kepware | PTC Kepware KEPServerEX | 1000 | 5-40 | None |
-| S7-1200 | Siemens S7-1200 PLCs | 100 | 3-10 | 1000 items |
-| S7-1500 | Siemens S7-1500 PLCs | 500 | 5-20 | 10000 items |
-| Prosys | Prosys Simulation Server | 800 | 5-60 | None |
+Profiles are automatically detected based on server manufacturer/product information:
+- **Auto**: Unknown servers (conservative defaults)
+- **High-Performance**: Manual override for known high-capacity infrastructure
+- **Ignition**: Inductive Automation Ignition Gateway
+- **Kepware**: PTC Kepware KEPServerEX
+- **S7-1200**: Siemens S7-1200 PLCs (hardware limit: 1000 monitored items)
+- **S7-1500**: Siemens S7-1500 PLCs (hardware limit: 10000 monitored items)
+- **Prosys**: Prosys Simulation Server
 
-**Note**: Batch sizes are based on vendor documentation and production testing. Server-reported `MaxMonitoredItemsPerCall` values are theoretical maximums; profile values are conservative limits validated in real-world deployments.
+**Profile values** are defined in [`opcua_plugin/server_profiles.go`](../../opcua_plugin/server_profiles.go) with vendor documentation citations.
 
-For detailed profile values, see [`opcua_plugin/server_profiles.go`](../../opcua_plugin/server_profiles.go).
+**Key insight**: Profile values are production-safe limits from vendor docs and real-world testing, NOT server-reported theoretical maximums. Example: S7-1200 reports `MaxMonitoredItemsPerCall=1000` but profile uses 100 (values >200 cause 50× performance degradation per [Siemens docs](https://cache.industry.siemens.com/dl/files/846/109755846/att_1163306/v4/109755846_TIA_Portal_OPC_UA_system_limits.pdf)).
 
 ### Performance Impact
 
-Profile selection significantly affects connection time:
+Examples of profile-specific optimizations:
 
-- **S7-1200**: Batch size >200 causes 50× performance degradation (validated via [Siemens documentation](https://cache.industry.siemens.com/dl/files/846/109755846/att_1163306/v4/109755846_TIA_Portal_OPC_UA_system_limits.pdf))
-- **Ignition/Kepware**: Batch size of 1000 enables 10× faster subscription setup vs default 100
-- **Prosys**: Conservative 800 batch size prevents simulation server unresponsiveness with large subscriptions
+- **S7-1200**: Batch size limited to 100 (server reports 1000, but >200 causes 50× degradation - [Siemens docs](https://cache.industry.siemens.com/dl/files/846/109755846/att_1163306/v4/109755846_TIA_Portal_OPC_UA_system_limits.pdf))
+- **Ignition/Kepware**: Batch size of 1000 enables 10× faster subscription setup compared to conservative 100
+- **Prosys**: Batch size of 800 prevents simulation server unresponsiveness with large node counts
 
 ### Manual Profile Override
 
-To override auto-detection, set profile explicitly in config:
+Override auto-detection by setting profile explicitly:
 
 ```yaml
 input:
@@ -391,10 +389,7 @@ input:
     profile: "high-performance"  # Override auto-detection
 ```
 
-**When to override:**
-- Testing new server types
-- Known high-performance infrastructure
-- Troubleshooting connection issues
+Use case: Force high-performance profile when server manufacturer string doesn't match known vendors but infrastructure is validated for aggressive batching.
 
 ## Metrics
 
