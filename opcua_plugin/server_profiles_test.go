@@ -15,16 +15,9 @@
 package opcua_plugin
 
 import (
-	"testing"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
-
-func TestServerProfiles(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Server Profiles Suite")
-}
 
 var _ = Describe("DetectServerProfile", func() {
 	Context("when detecting known servers", func() {
@@ -439,10 +432,10 @@ var _ = Describe("validateProfile", func() {
 
 		It("should not panic when MinWorkers < MaxWorkers", func() {
 			validProfile := ServerProfile{
-				Name:       "test-valid",
-				MaxWorkers: 10,
-				MinWorkers: 5,
-			MaxBatchSize: 100,
+				Name:         "test-valid",
+				MaxWorkers:   10,
+				MinWorkers:   5,
+				MaxBatchSize: 100,
 			}
 
 			Expect(func() {
@@ -452,10 +445,10 @@ var _ = Describe("validateProfile", func() {
 
 		It("should not panic when MinWorkers == MaxWorkers", func() {
 			edgeCaseProfile := ServerProfile{
-				Name:       "test-edge",
-				MaxWorkers: 5,
-				MinWorkers: 5,
-			MaxBatchSize: 100,
+				Name:         "test-edge",
+				MaxWorkers:   5,
+				MinWorkers:   5,
+				MaxBatchSize: 100,
 			}
 
 			Expect(func() {
