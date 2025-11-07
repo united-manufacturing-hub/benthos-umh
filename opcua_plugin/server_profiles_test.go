@@ -335,7 +335,7 @@ var _ = Describe("Profile Value Validation", func() {
 		It("should have correct values for Ignition profile", func() {
 			profile := GetProfileByName(ProfileIgnition)
 
-			Expect(profile.MaxBatchSize).To(Equal(1000))
+			Expect(profile.MaxBatchSize).To(Equal(100))
 			Expect(profile.MaxWorkers).To(Equal(20))
 			Expect(profile.MinWorkers).To(Equal(5))
 		})
