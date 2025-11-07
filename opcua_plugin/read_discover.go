@@ -285,8 +285,11 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 	// Use profile-based batch size
 	maxBatchSize := g.ServerProfile.MaxBatchSize
 	if maxBatchSize == 0 {
-		maxBatchSize = 100 // Fallback if profile not initialized
-		g.Log.Warnf("ServerProfile.MaxBatchSize is 0, using fallback value of 100")
+		panic(fmt.Sprintf(
+			"PROGRAMMING ERROR: ServerProfile.MaxBatchSize is 0. "+
+				"This means ServerProfile was not initialized before MonitorBatched() was called. "+
+				"Profile name: '%s'. This indicates a bug in the Connect() initialization flow.",
+			g.ServerProfile.Name))
 	}
 	totalMonitored := 0
 	totalNodes := len(nodes)

@@ -255,7 +255,10 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 	// Get OPC UA server information
 	if serverInfo, err := g.GetOPCUAServerInformation(ctx); err != nil {
-		g.Log.Infof("Failed to get OPC UA server information: %s", err)
+		g.Log.Infof("Failed to get OPC UA server information: %s - using Auto profile", err)
+		// BUG FIX: Always set ServerProfile, even when server info detection fails
+		g.ServerProfile = GetProfileByName(ProfileAuto)
+		g.Log.Infof("Using fallback profile: %s (defensive defaults)", g.ServerProfile.Name)
 	} else {
 		g.Log.Infof("OPC UA Server Information: %v+", serverInfo)
 		g.ServerInfo = serverInfo

@@ -234,6 +234,12 @@ func validateProfile(p ServerProfile) {
 				"This is a hardcoded profile constant bug that must be fixed in code.",
 			p.Name, p.MinWorkers, p.MaxWorkers))
 	}
+	if p.MaxBatchSize <= 0 {
+		panic(fmt.Sprintf(
+			"PROGRAMMING ERROR in profile %s: MaxBatchSize (%d) must be > 0. "+
+				"This is a hardcoded profile constant bug that must be fixed in code.",
+			p.Name, p.MaxBatchSize))
+	}
 }
 
 // init validates all hardcoded profiles at package initialization

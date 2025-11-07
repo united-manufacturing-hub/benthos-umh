@@ -442,6 +442,7 @@ var _ = Describe("validateProfile", func() {
 				Name:       "test-valid",
 				MaxWorkers: 10,
 				MinWorkers: 5,
+			MaxBatchSize: 100,
 			}
 
 			Expect(func() {
@@ -454,6 +455,7 @@ var _ = Describe("validateProfile", func() {
 				Name:       "test-edge",
 				MaxWorkers: 5,
 				MinWorkers: 5,
+			MaxBatchSize: 100,
 			}
 
 			Expect(func() {
