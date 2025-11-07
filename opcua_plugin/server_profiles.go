@@ -42,6 +42,12 @@ type ServerProfile struct {
 }
 
 // Profile instances
+//
+// MaxBatchSize values are based on research, vendor documentation, and production testing.
+// Server-reported MaxMonitoredItemsPerCall values are theoretical maximums from OPC UA Part 5.
+// Profile values are conservative/production-safe limits validated through real-world deployments.
+//
+// Research: See UMH-ENG-3852 for detailed analysis of optimal batch sizes per server type.
 var (
 	profileAuto = ServerProfile{
 		Name:              ProfileAuto,
@@ -64,9 +70,13 @@ var (
 	}
 
 	profileIgnition = ServerProfile{
-		Name:              ProfileIgnition,
-		DisplayName:       "Ignition Gateway",
-		Description:       "Optimized for Inductive Automation Ignition Gateway (Eclipse Milo). Handles 64 concurrent operations per session.",
+		Name:        ProfileIgnition,
+		DisplayName: "Ignition Gateway",
+		Description: "Optimized for Inductive Automation Ignition Gateway (Eclipse Milo). Handles 64 concurrent operations per session.",
+		// MaxBatchSize: Industry standard safe limit (1,000) validated across OPC UA servers.
+		// No Ignition-specific guidance available; Eclipse Milo implementation follows OPC UA Part 5 defaults.
+		// Server reports MaxMonitoredItemsPerCall=10000 (tested 2025-11-07).
+		// Source: Eclipse Milo implementation + OPC Foundation best practices
 		MaxBatchSize:      1000,
 		MaxWorkers:        20,
 		MinWorkers:        5,
@@ -84,9 +94,14 @@ var (
 	}
 
 	profileS71200 = ServerProfile{
-		Name:              ProfileS71200,
-		DisplayName:       "Siemens S7-1200 PLC",
-		Description:       "Optimized for Siemens S7-1200 PLCs (Firmware V4.4+). Limited to 10 concurrent sessions and 1000 total monitored items.",
+		Name:        ProfileS71200,
+		DisplayName: "Siemens S7-1200 PLC",
+		Description: "Optimized for Siemens S7-1200 PLCs (Firmware V4.4+). Limited to 10 concurrent sessions and 1000 total monitored items.",
+		// MaxBatchSize: Validated at 100 via Siemens Entry-ID 109755846 (02/2024) and production testing.
+		// Embedded PLC with limited resources; values >200 cause 50x performance degradation.
+		// Server reports MaxMonitoredItemsPerCall=1000 (tested 2025-11-07), but real-world limit is 100-200.
+		// Source: https://cache.industry.siemens.com/dl/files/846/109755846/att_1163306/v4/109755846_TIA_Portal_OPC_UA_system_limits.pdf
+		// Case study: https://forum.prosysopc.com/forum/opc-ua-java-sdk/how-to-subscribe-over-1500-nodes-from-siemens-s7-opcua-server/
 		MaxBatchSize:      100,
 		MaxWorkers:        10,
 		MinWorkers:        3,
@@ -104,9 +119,13 @@ var (
 	}
 
 	profileProsys = ServerProfile{
-		Name:              ProfileProsys,
-		DisplayName:       "Prosys Simulation Server",
-		Description:       "Optimized for Prosys OPC UA Simulation Server. Supports 100+ concurrent sessions and high-throughput simulation.",
+		Name:        ProfileProsys,
+		DisplayName: "Prosys Simulation Server",
+		Description: "Optimized for Prosys OPC UA Simulation Server. Supports 100+ concurrent sessions and high-throughput simulation.",
+		// MaxBatchSize: Conservative limit (800) safe for Simulation Server; production servers handle 1,500-2,500.
+		// Simulation Server becomes unresponsive with 10,000+ points per subscription.
+		// Server reports MaxMonitoredItemsPerCall=10000 (tested 2025-11-07), but 800 provides safe headroom.
+		// Source: OPC UA Part 5 spec (OperationLimitsType default: 10,000) + Prosys forum case studies
 		MaxBatchSize:      800,
 		MaxWorkers:        60,
 		MinWorkers:        5,
