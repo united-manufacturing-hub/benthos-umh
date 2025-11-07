@@ -134,9 +134,13 @@ func (sm *ServerMetrics) adjustWorkers(logger Logger) (toAdd, toRemove int) {
 	if avgResponse > sm.targetLatency {
 		// Response time is too high. Reduce workers by 10 (or down to MinWorkers)
 		sm.currentWorkers = max(sm.minWorkers, sm.currentWorkers-10)
+		logger.Debugf("Response time is high (%v > %v target), reducing workers from %d to %d",
+			avgResponse, sm.targetLatency, oldWorkerCount, sm.currentWorkers)
 	} else if avgResponse < sm.targetLatency {
 		// Response time is good. Increase workers by 10 (or up to MaxWorkers)
 		sm.currentWorkers = min(sm.maxWorkers, sm.currentWorkers+10)
+		logger.Debugf("Response time is low (%v < %v target), increasing workers from %d to %d",
+			avgResponse, sm.targetLatency, oldWorkerCount, sm.currentWorkers)
 	}
 
 	// Return delta (how many to add or remove)
