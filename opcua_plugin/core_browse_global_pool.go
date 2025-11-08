@@ -30,8 +30,16 @@ type GlobalPoolTask struct {
 }
 
 // GlobalWorkerPool manages a shared pool of workers for OPC UA browse operations.
-// Instead of each nodeid spawning its own worker pool (300 nodeids × 5 workers = 1,500),
-// this provides a single global pool that respects server capacity limits.
+//
+// Architecture Note: This is a NEW global worker pool implementation that will
+// replace the per-browse worker pool pattern in Phase 2 (Integration).
+// Unlike the old pattern where each browse() call spawned its own pool,
+// this design uses a single shared pool for all concurrent browse operations.
+//
+// Key differences from old pattern:
+// - Explicit 0-initialization (caller must spawn workers)
+// - Profile limits apply GLOBALLY (not per-browse)
+// - Task queueing via shared channel (not per-browse WaitGroup)
 //
 // For example, Agristo server has 64 concurrent operation capacity. With per-nodeid pools,
 // we get 1,500 concurrent workers (23× overload) causing EOF errors. Global pool caps at
@@ -152,11 +160,11 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 			}
 
 			// Process task (stub implementation)
-			// TODO: Replace with actual Browse RPC in Phase 2
-			// For now, just signal completion with empty result
+			// TODO Phase 2: Replace with actual Browse RPC
+			// - On success: send result to task.ResultChan
+			// - On error: send error to task.ErrChan
+			// For now, only success path is stubbed
 			if task.ResultChan != nil {
-				// Simulate successful browse (empty result)
-				// Using empty struct since we're using any type for stub
 				task.ResultChan <- struct{}{}
 			}
 		}

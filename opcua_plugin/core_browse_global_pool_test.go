@@ -257,24 +257,23 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should not spawn more workers than MaxWorkers", func() {
 				profile := ServerProfile{MaxWorkers: 5, MinWorkers: 0}
 				pool := NewGlobalWorkerPool(profile)
-				// Pool starts with 5 workers (clamped to MaxWorkers)
-				// Reset to 0 for this test
-				pool.currentWorkers = 0
-				pool.workerControls = make(map[uuid.UUID]chan struct{})
+				// Pool starts with 0 workers (explicit initialization)
 
 				spawned := pool.SpawnWorkers(10)
 
-				Expect(spawned).To(Equal(5)) // Only 5 allowed
-				Expect(pool.currentWorkers).To(Equal(5))
-				Expect(len(pool.workerControls)).To(Equal(5))
+				Expect(spawned).To(Equal(5)) // Only 5 allowed due to MaxWorkers limit
+
+				// Verify currentWorkers matches
+				pool.mu.Lock()
+				actualCount := pool.currentWorkers
+				pool.mu.Unlock()
+				Expect(actualCount).To(Equal(5))
 			})
 
 			It("should respect cumulative limit across multiple calls", func() {
 				profile := ServerProfile{MaxWorkers: 10, MinWorkers: 0}
 				pool := NewGlobalWorkerPool(profile)
-				// Reset to 0 for clean test
-				pool.currentWorkers = 0
-				pool.workerControls = make(map[uuid.UUID]chan struct{})
+				// Pool starts with 0 workers (explicit initialization)
 
 				// First spawn: should get 5
 				spawned1 := pool.SpawnWorkers(5)
@@ -297,9 +296,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should spawn all requested workers", func() {
 				profile := ServerProfile{MaxWorkers: 0, MinWorkers: 0}
 				pool := NewGlobalWorkerPool(profile)
-				// Reset to 0 for clean test
-				pool.currentWorkers = 0
-				pool.workerControls = make(map[uuid.UUID]chan struct{})
+				// Pool starts with 0 workers (explicit initialization)
 
 				spawned := pool.SpawnWorkers(20)
 
@@ -313,9 +310,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should register workers with unique UUIDs", func() {
 				profile := ServerProfile{MaxWorkers: 10, MinWorkers: 0}
 				pool := NewGlobalWorkerPool(profile)
-				// Reset to 0 for clean test
-				pool.currentWorkers = 0
-				pool.workerControls = make(map[uuid.UUID]chan struct{})
+				// Pool starts with 0 workers (explicit initialization)
 
 				spawned := pool.SpawnWorkers(3)
 
@@ -336,9 +331,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should handle concurrent spawning without race conditions", func() {
 				profile := ServerProfile{MaxWorkers: 20, MinWorkers: 0}
 				pool := NewGlobalWorkerPool(profile)
-				// Reset to 0 for clean test
-				pool.currentWorkers = 0
-				pool.workerControls = make(map[uuid.UUID]chan struct{})
+				// Pool starts with 0 workers (explicit initialization)
 
 				done := make(chan bool)
 				totalSpawned := 0
@@ -371,9 +364,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should decrement currentWorkers and remove from workerControls", func() {
 				profile := ServerProfile{MaxWorkers: 10}
 				pool := NewGlobalWorkerPool(profile)
-				// Reset to 0 for clean test
-				pool.currentWorkers = 0
-				pool.workerControls = make(map[uuid.UUID]chan struct{})
+				// Pool starts with 0 workers (explicit initialization)
 
 				// Spawn 3 workers
 				spawned := pool.SpawnWorkers(3)
