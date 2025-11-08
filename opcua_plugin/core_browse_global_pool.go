@@ -47,6 +47,7 @@ type GlobalPoolTask struct {
 // we get 1,500 concurrent workers (23× overload) causing EOF errors. Global pool caps at
 // profile.MaxWorkers (e.g., 20 for Ignition, 5 for Auto) preventing overload.
 type GlobalWorkerPool struct {
+	profile        ServerProfile // Which profile this pool was created with
 	maxWorkers     int
 	minWorkers     int
 	currentWorkers int
@@ -72,6 +73,7 @@ type GlobalWorkerPool struct {
 // operation branching factor safely without blocking.
 func NewGlobalWorkerPool(profile ServerProfile) *GlobalWorkerPool {
 	return &GlobalWorkerPool{
+		profile:        profile, // Store which profile this pool uses
 		maxWorkers:     profile.MaxWorkers,
 		minWorkers:     profile.MinWorkers,
 		currentWorkers: 0, // Start with no workers - caller must spawn them
@@ -191,6 +193,12 @@ func (gwp *GlobalWorkerPool) Shutdown(timeout time.Duration) error {
 	case <-time.After(timeout):
 		return errors.New("shutdown timeout: workers still running")
 	}
+}
+
+// Profile returns the ServerProfile this pool was created with.
+// Useful for Phase 2 integration where browse() selects pool based on server profile.
+func (gwp *GlobalWorkerPool) Profile() ServerProfile {
+	return gwp.profile
 }
 
 // workerLoop runs in a goroutine and processes tasks from taskChan until shutdown signal.

@@ -402,6 +402,32 @@ var _ = Describe("GlobalWorkerPool", func() {
 		})
 	})
 
+	Describe("Profile Tracking", func() {
+		Context("when pool is created", func() {
+			It("should store the profile", func() {
+				profile := ServerProfile{MaxWorkers: 10, MinWorkers: 2}
+				pool := NewGlobalWorkerPool(profile)
+
+				storedProfile := pool.Profile()
+				Expect(storedProfile.MaxWorkers).To(Equal(10))
+				Expect(storedProfile.MinWorkers).To(Equal(2))
+			})
+		})
+
+		Context("when multiple pools created with different profiles", func() {
+			It("should track profiles independently", func() {
+				profile1 := ServerProfile{MaxWorkers: 10, MinWorkers: 2}
+				profile2 := ServerProfile{MaxWorkers: 64, MinWorkers: 5}
+
+				pool1 := NewGlobalWorkerPool(profile1)
+				pool2 := NewGlobalWorkerPool(profile2)
+
+				Expect(pool1.Profile().MaxWorkers).To(Equal(10))
+				Expect(pool2.Profile().MaxWorkers).To(Equal(64))
+			})
+		})
+	})
+
 	Describe("Shutdown", func() {
 		Context("when pool has no workers", func() {
 			It("should shutdown immediately", func() {
