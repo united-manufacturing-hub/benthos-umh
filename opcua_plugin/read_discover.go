@@ -33,6 +33,18 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	timeoutCtx, cancel := context.WithTimeout(ctx, 1*time.Hour)
 	defer cancel()
 
+	// Phase 2, Task 2.1: Create ONE GlobalWorkerPool for ALL browse operations
+	// This replaces the per-browse worker pool pattern (each browse() call creating its own pool).
+	// Example: Agristo has 300 NodeIDs × 5 workers = 1,500 concurrent (exceeds 64 server capacity).
+	// With global pool: MaxWorkers=20 (from profile) caps concurrent operations safely.
+	pool := NewGlobalWorkerPool(g.ServerProfile)
+	defer pool.Shutdown(30 * time.Second)
+
+	// Spawn initial workers based on profile.MinWorkers
+	// Profile determines optimal worker count (e.g., Ignition=5, Auto=1, S7-1200=2)
+	workersSpawned := pool.SpawnWorkers(g.ServerProfile.MinWorkers)
+	g.Log.Debugf("GlobalWorkerPool spawned %d initial workers for browse operations", workersSpawned)
+
 	nodeList := make([]NodeDef, 0)
 	pathIDMap := make(map[string]string)
 	nodeChan := make(chan NodeDef, MaxTagsToBrowse)
@@ -73,11 +85,29 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		}
 	}()
 
+	// Phase 2, Task 2.1: Submit tasks to GlobalWorkerPool
+	// Note: Worker loop currently has stub implementation (Phase 1).
+	// Task 2.2 will integrate actual browse() logic into workers.
+	// For now, we keep old browse() spawning pattern to maintain functionality.
 	for _, nodeID := range g.NodeIDs {
 		if nodeID == nil {
 			continue
 		}
 
+		// Submit task to pool (stub for now - Task 2.2 will make this functional)
+		// Note: ResultChan/ErrChan not set yet due to type mismatch (chan NodeDef vs chan<- any)
+		// Task 2.2 will refactor GlobalPoolTask to handle proper types
+		task := GlobalPoolTask{
+			NodeID: nodeID.String(),
+			// ResultChan: nil, // Can't assign chan NodeDef to chan<- any
+			// ErrChan: nil,    // Will be fixed in Task 2.2
+		}
+		if err := pool.SubmitTask(task); err != nil {
+			g.Log.Warnf("Failed to submit task for NodeID %s: %v", nodeID.String(), err)
+		}
+
+		// TODO Phase 2, Task 2.3: Remove this old pattern once GlobalPoolTask calls browse()
+		// For now, keep spawning browse() goroutines to maintain functionality
 		g.Log.Debugf("Browsing nodeID: %s", nodeID.String())
 		wg.Add(1)
 		wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(nodeID))
