@@ -38,7 +38,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	// Example: Agristo has 300 NodeIDs × 5 workers = 1,500 concurrent (exceeds 64 server capacity).
 	// With global pool: MaxWorkers=20 (from profile) caps concurrent operations safely.
 	pool := NewGlobalWorkerPool(g.ServerProfile)
-	defer pool.Shutdown(30 * time.Second)
+	// Note: Shutdown moved to explicit call after wg.Wait() to prevent race condition (see line 150)
 
 	// Spawn initial workers based on profile.MinWorkers
 	// Profile determines optimal worker count (e.g., Ignition=5, Auto=1, S7-1200=2)
@@ -89,6 +89,8 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	// Note: Worker loop currently has stub implementation (Phase 1).
 	// Task 2.2 will integrate actual browse() logic into workers.
 	// For now, we keep old browse() spawning pattern to maintain functionality.
+	g.Log.Debugf("Submitting %d NodeIDs as tasks to GlobalWorkerPool", len(g.NodeIDs))
+	submittedCount := 0
 	for _, nodeID := range g.NodeIDs {
 		if nodeID == nil {
 			continue
@@ -98,12 +100,14 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		// Note: ResultChan/ErrChan not set yet due to type mismatch (chan NodeDef vs chan<- any)
 		// Task 2.2 will refactor GlobalPoolTask to handle proper types
 		task := GlobalPoolTask{
-			NodeID: nodeID.String(),
-			// ResultChan: nil, // Can't assign chan NodeDef to chan<- any
-			// ErrChan: nil,    // Will be fixed in Task 2.2
+			NodeID:     nodeID.String(),
+			ResultChan: nil, // Keep nil (type mismatch - Task 2.2 will fix)
+			ErrChan:    nil,
 		}
 		if err := pool.SubmitTask(task); err != nil {
 			g.Log.Warnf("Failed to submit task for NodeID %s: %v", nodeID.String(), err)
+		} else {
+			submittedCount++
 		}
 
 		// TODO Phase 2, Task 2.3: Remove this old pattern once GlobalPoolTask calls browse()
@@ -113,6 +117,11 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(nodeID))
 		go browse(timeoutCtx, wrapperNodeID, "", g.Log, nodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited, g.ServerProfile)
 	}
+
+	g.Log.Debugf("Successfully submitted %d/%d tasks to GlobalWorkerPool (buffer capacity: %d)",
+		submittedCount, len(g.NodeIDs), cap(pool.taskChan))
+
+	// TODO Phase 2, Task 2.2: Add pool.WaitForCompletion() to verify all tasks processed
 
 	// Start concurrent consumer to drain nodeChan as workers produce nodes
 	// This prevents deadlock when browse workers fill the 100k buffer
@@ -146,6 +155,13 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	// Wait for consumers to finish draining the channels
 	<-consumerDone
 	<-opcuaBrowserConsumerDone
+
+	// Explicit shutdown after all browse() goroutines complete
+	// This ensures wg.Wait() finishes before pool workers are terminated
+	// Critical for Task 2.2 when browse() logic moves into pool workers
+	if err := pool.Shutdown(30 * time.Second); err != nil {
+		g.Log.Warnf("GlobalWorkerPool shutdown timeout: %v", err)
+	}
 
 	UpdateNodePaths(nodeList)
 
