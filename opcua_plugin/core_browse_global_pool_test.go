@@ -33,51 +33,57 @@ var _ = Describe("GlobalWorkerPool", func() {
 	})
 
 	Context("when creating pool with MaxWorkers < InitialWorkers", func() {
-		It("should clamp currentWorkers to MaxWorkers", func() {
+		It("should start with 0 workers (caller must spawn)", func() {
 			profile := ServerProfile{MaxWorkers: 5} // InitialWorkers=10
 			pool := NewGlobalWorkerPool(profile)
-			Expect(pool.currentWorkers).To(Equal(5)) // Clamped
+			Expect(pool.currentWorkers).To(Equal(0)) // Starts at 0
+			Expect(pool.maxWorkers).To(Equal(5))     // Limit stored
 		})
 	})
 
 	Context("with profileAuto (MaxWorkers=5, MinWorkers=1)", func() {
-		It("should clamp to 5 workers", func() {
+		It("should store limits but start with 0 workers", func() {
 			pool := NewGlobalWorkerPool(profileAuto)
-			Expect(pool.currentWorkers).To(Equal(5))
+			Expect(pool.currentWorkers).To(Equal(0))
 			Expect(pool.maxWorkers).To(Equal(5))
+			Expect(pool.minWorkers).To(Equal(1))
 		})
 	})
 
 	Context("with profileIgnition (MaxWorkers=20)", func() {
-		It("should initialize with 10 workers", func() {
+		It("should start with 0 workers", func() {
 			pool := NewGlobalWorkerPool(profileIgnition)
-			Expect(pool.currentWorkers).To(Equal(10)) // Not clamped
+			Expect(pool.currentWorkers).To(Equal(0))
+			Expect(pool.maxWorkers).To(Equal(20))
 		})
 	})
 
 	Context("with zero MaxWorkers (unlimited)", func() {
-		It("should not clamp", func() {
+		It("should start with 0 workers and no limit", func() {
 			profile := ServerProfile{MaxWorkers: 0}
 			pool := NewGlobalWorkerPool(profile)
-			Expect(pool.currentWorkers).To(Equal(InitialWorkers))
+			Expect(pool.currentWorkers).To(Equal(0))
+			Expect(pool.maxWorkers).To(Equal(0)) // Unlimited
 		})
 	})
 
-	Context("when MinWorkers > InitialWorkers", func() {
-		It("should use MinWorkers as initial", func() {
+	Context("when MinWorkers > 0", func() {
+		It("should store MinWorkers but not spawn workers", func() {
 			profile := ServerProfile{MinWorkers: 15, MaxWorkers: 20}
 			pool := NewGlobalWorkerPool(profile)
-			Expect(pool.currentWorkers).To(Equal(15))
+			Expect(pool.currentWorkers).To(Equal(0))
+			Expect(pool.minWorkers).To(Equal(15))
+			Expect(pool.maxWorkers).To(Equal(20))
 		})
 	})
 
-	Context("when both MinWorkers and MaxWorkers constrain InitialWorkers", func() {
-		It("should respect MaxWorkers as hardware limit", func() {
-			// MinWorkers=3, InitialWorkers=10, MaxWorkers=8
-			// Should clamp to MaxWorkers=8 (hardware limit wins)
+	Context("when both MinWorkers and MaxWorkers are set", func() {
+		It("should store both limits", func() {
 			profile := ServerProfile{MinWorkers: 3, MaxWorkers: 8}
 			pool := NewGlobalWorkerPool(profile)
-			Expect(pool.currentWorkers).To(Equal(8))
+			Expect(pool.currentWorkers).To(Equal(0))
+			Expect(pool.minWorkers).To(Equal(3))
+			Expect(pool.maxWorkers).To(Equal(8))
 		})
 	})
 
@@ -99,6 +105,150 @@ var _ = Describe("GlobalWorkerPool", func() {
 			profile := ServerProfile{MinWorkers: 3, MaxWorkers: 10}
 			pool := NewGlobalWorkerPool(profile)
 			Expect(pool.minWorkers).To(Equal(3))
+		})
+	})
+
+	Describe("SubmitTask", func() {
+		Context("when pool is running", func() {
+			It("should queue and process task successfully", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile)
+				pool.SpawnWorkers(3)
+
+				resultChan := make(chan any, 1)
+				errChan := make(chan error, 1)
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: resultChan,
+					ErrChan:    errChan,
+				}
+
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Wait for result (with timeout)
+				Eventually(resultChan).Within(time.Second).Should(Receive())
+			})
+
+			It("should handle multiple tasks concurrently", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile)
+				pool.SpawnWorkers(3)
+
+				numTasks := 10
+				resultChans := make([]chan any, numTasks)
+				errChans := make([]chan error, numTasks)
+
+				// Submit 10 tasks
+				for i := 0; i < numTasks; i++ {
+					resultChans[i] = make(chan any, 1)
+					errChans[i] = make(chan error, 1)
+					task := GlobalPoolTask{
+						NodeID:     "ns=2;i=1000",
+						ResultChan: resultChans[i],
+						ErrChan:    errChans[i],
+					}
+					err := pool.SubmitTask(task)
+					Expect(err).ToNot(HaveOccurred())
+				}
+
+				// Verify all results received
+				for i := 0; i < numTasks; i++ {
+					Eventually(resultChans[i]).Within(time.Second).Should(Receive())
+				}
+			})
+
+			It("should not block when submitting 1000 tasks (buffer test)", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile)
+				pool.SpawnWorkers(5)
+
+				numTasks := 1000
+				resultChans := make([]chan any, numTasks)
+
+				start := time.Now()
+				// Submit 1000 tasks rapidly - should not block
+				for i := 0; i < numTasks; i++ {
+					resultChans[i] = make(chan any, 1)
+					task := GlobalPoolTask{
+						NodeID:     "ns=2;i=1000",
+						ResultChan: resultChans[i],
+					}
+					err := pool.SubmitTask(task)
+					Expect(err).ToNot(HaveOccurred())
+				}
+				duration := time.Since(start)
+
+				// Submission should be instant (buffered channel)
+				Expect(duration).To(BeNumerically("<", 100*time.Millisecond))
+
+				// Verify all tasks eventually processed
+				for i := 0; i < numTasks; i++ {
+					Eventually(resultChans[i]).Within(10 * time.Second).Should(Receive())
+				}
+			})
+
+			It("should send results to correct channels", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile)
+				pool.SpawnWorkers(2)
+
+				resultChan1 := make(chan any, 1)
+				resultChan2 := make(chan any, 1)
+
+				task1 := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: resultChan1,
+				}
+				task2 := GlobalPoolTask{
+					NodeID:     "ns=2;i=2000",
+					ResultChan: resultChan2,
+				}
+
+				err := pool.SubmitTask(task1)
+				Expect(err).ToNot(HaveOccurred())
+				err = pool.SubmitTask(task2)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Both channels should receive results
+				Eventually(resultChan1).Within(time.Second).Should(Receive())
+				Eventually(resultChan2).Within(time.Second).Should(Receive())
+			})
+
+			It("should handle nil result channels gracefully", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile)
+				pool.SpawnWorkers(2)
+
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: nil, // No result channel
+					ErrChan:    nil, // No error channel
+				}
+
+				// Should not panic or error
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Give worker time to process (no way to verify completion without channel)
+				time.Sleep(100 * time.Millisecond)
+			})
+		})
+
+		Context("when pool is shutdown", func() {
+			It("should return error", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile)
+
+				// Simulate shutdown by closing taskChan
+				close(pool.taskChan)
+
+				task := GlobalPoolTask{NodeID: "ns=2;i=1000"}
+				err := pool.SubmitTask(task)
+
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("shutdown"))
+			})
 		})
 	})
 

@@ -15,9 +15,19 @@
 package opcua_plugin
 
 import (
+	"errors"
 	"github.com/google/uuid"
 	"sync"
 )
+
+// GlobalPoolTask represents a browse operation to execute in the global worker pool.
+// This is a simplified task structure focused on queueing and result delivery.
+// It differs from NodeTask in core_browse.go which contains browse execution state.
+type GlobalPoolTask struct {
+	NodeID     string       // Node identifier to browse
+	ResultChan chan<- any   // Where to send result (for now, accepts any type for stub)
+	ErrChan    chan<- error // Where to send errors
+}
 
 // GlobalWorkerPool manages a shared pool of workers for OPC UA browse operations.
 // Instead of each nodeid spawning its own worker pool (300 nodeids × 5 workers = 1,500),
@@ -30,43 +40,30 @@ type GlobalWorkerPool struct {
 	maxWorkers     int
 	minWorkers     int
 	currentWorkers int
-	taskChan       chan NodeTask
+	taskChan       chan GlobalPoolTask
 	workerControls map[uuid.UUID]chan struct{}
 	mu             sync.Mutex
 }
 
 // NewGlobalWorkerPool creates a new global worker pool initialized with profile constraints.
 //
-// The pool starts with InitialWorkers (10) but clamps to profile bounds:
-//   - If MinWorkers > InitialWorkers, uses MinWorkers
-//   - If MaxWorkers < InitialWorkers, uses MaxWorkers (hardware limit takes priority)
+// The pool starts with 0 workers. Use SpawnWorkers() to add workers up to profile limits:
+//   - MaxWorkers: Hard upper limit (hardware capacity)
+//   - MinWorkers: Soft lower limit (for scaling policies, not enforced at creation)
 //   - If MaxWorkers = 0, no upper limit (unlimited mode)
 //
-// Example profile behaviors:
-//   - profileAuto (MaxWorkers=5): Clamps to 5 workers
-//   - profileIgnition (MaxWorkers=20): Starts with 10 workers
-//   - profileS71200 (MaxWorkers=10, MinWorkers=3): Starts with 10 workers
+// Example usage:
+//   pool := NewGlobalWorkerPool(profileAuto)  // MaxWorkers=5
+//   pool.SpawnWorkers(3)                      // Start with 3 workers
 //
 // The taskChan buffer is sized at 2× MaxTagsToBrowse (200k) to handle browse
 // operation branching factor safely without blocking.
 func NewGlobalWorkerPool(profile ServerProfile) *GlobalWorkerPool {
-	initial := InitialWorkers
-
-	// Clamp to MinWorkers if profile specifies a minimum
-	if profile.MinWorkers > 0 && initial < profile.MinWorkers {
-		initial = profile.MinWorkers
-	}
-
-	// Clamp to MaxWorkers if profile specifies a maximum (takes priority over MinWorkers)
-	if profile.MaxWorkers > 0 && initial > profile.MaxWorkers {
-		initial = profile.MaxWorkers
-	}
-
 	return &GlobalWorkerPool{
 		maxWorkers:     profile.MaxWorkers,
 		minWorkers:     profile.MinWorkers,
-		currentWorkers: initial,
-		taskChan:       make(chan NodeTask, MaxTagsToBrowse*2), // 200k buffer
+		currentWorkers: 0, // Start with no workers - caller must spawn them
+		taskChan:       make(chan GlobalPoolTask, MaxTagsToBrowse*2), // 200k buffer
 		workerControls: make(map[uuid.UUID]chan struct{}),
 	}
 }
@@ -108,6 +105,25 @@ func (gwp *GlobalWorkerPool) SpawnWorkers(n int) int {
 	return canSpawn
 }
 
+// SubmitTask queues a GlobalPoolTask for processing by available workers.
+// Blocks if taskChan buffer is full (200k capacity should prevent this in practice).
+// Returns error if pool is shutdown (channel closed).
+//
+// The method is thread-safe (channel operations are atomic) and non-blocking
+// in practice due to large buffer size (200k = 2× MaxTagsToBrowse).
+func (gwp *GlobalWorkerPool) SubmitTask(task GlobalPoolTask) (err error) {
+	defer func() {
+		// Recover from panic if channel is closed (send on closed channel panics)
+		if r := recover(); r != nil {
+			err = errors.New("pool is shutdown")
+		}
+	}()
+
+	// Send task to channel (will panic if closed, recovered by defer)
+	gwp.taskChan <- task
+	return nil
+}
+
 // workerLoop runs in a goroutine and processes tasks from taskChan until shutdown signal.
 func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan struct{}) {
 	defer func() {
@@ -129,11 +145,20 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 		case <-controlChan:
 			// Shutdown signal received
 			return
-		case task := <-gwp.taskChan:
-			// Process task (stub implementation - just log for now)
-			// Actual Browse RPC integration will be added in later tasks
-			_ = task // Prevent unused variable error
-			// TODO: Execute Browse RPC for task.NodeID
+		case task, ok := <-gwp.taskChan:
+			if !ok {
+				// Channel closed, exit
+				return
+			}
+
+			// Process task (stub implementation)
+			// TODO: Replace with actual Browse RPC in Phase 2
+			// For now, just signal completion with empty result
+			if task.ResultChan != nil {
+				// Simulate successful browse (empty result)
+				// Using empty struct since we're using any type for stub
+				task.ResultChan <- struct{}{}
+			}
 		}
 	}
 }
