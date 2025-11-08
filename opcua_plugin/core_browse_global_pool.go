@@ -20,14 +20,19 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/gopcua/opcua/ua"
 )
 
 // GlobalPoolTask represents a browse operation to execute in the global worker pool.
 // This is a simplified task structure focused on queueing and result delivery.
 // It differs from NodeTask in core_browse.go which contains browse execution state.
+//
+// Task 2.2: ResultChan now accepts any channel type via interface{}.
+// Workers use type assertion to send results to the correct typed channel.
+// This enables browse() to provide chan NodeDef while maintaining flexibility.
 type GlobalPoolTask struct {
-	NodeID     string       // Node identifier to browse
-	ResultChan chan<- any   // Where to send result (for now, accepts any type for stub)
+	NodeID     string      // Node identifier to browse
+	ResultChan interface{} // Accepts any channel type (e.g., chan NodeDef, chan<- NodeDef)
 	ErrChan    chan<- error // Where to send errors
 }
 
@@ -230,12 +235,33 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 			}
 
 			// Process task (stub implementation)
-			// TODO Phase 2: Replace with actual Browse RPC
-			// - On success: send result to task.ResultChan
+			// TODO Phase 2, Task 2.3: Replace with actual Browse RPC call
+			// - On success: send NodeDef result to task.ResultChan
 			// - On error: send error to task.ErrChan
-			// For now, only success path is stubbed
+			// For now, stub sends a NodeDef to typed channel
 			if task.ResultChan != nil {
-				task.ResultChan <- struct{}{}
+				// Task 2.2: Type assert to send result to correct channel type
+				// Support both NodeDef channels (new) and any channels (backward compat)
+				if nodeDefChan, ok := task.ResultChan.(chan NodeDef); ok {
+					// Create stub NodeDef for testing
+					// Task 2.3 will replace this with actual browse() results
+					stubNode := NodeDef{
+						NodeID: &ua.NodeID{}, // Empty NodeID for stub
+					}
+					nodeDefChan <- stubNode
+				} else if anyNodeDefChan, ok := task.ResultChan.(chan<- NodeDef); ok {
+					// Handle send-only NodeDef channel variant
+					stubNode := NodeDef{
+						NodeID: &ua.NodeID{}, // Empty NodeID for stub
+					}
+					anyNodeDefChan <- stubNode
+				} else if anyChan, ok := task.ResultChan.(chan any); ok {
+					// Backward compatibility for existing tests using chan any
+					anyChan <- struct{}{}
+				} else if anySendChan, ok := task.ResultChan.(chan<- any); ok {
+					// Backward compatibility for send-only chan<- any
+					anySendChan <- struct{}{}
+				}
 			}
 		case <-controlChan:
 			// Shutdown signal received - drain remaining buffered tasks before exit
@@ -250,7 +276,18 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 					}
 					// Process remaining task (stub implementation)
 					if task.ResultChan != nil {
-						task.ResultChan <- struct{}{}
+						// Task 2.2: Type assert to send result to correct channel type
+						if nodeDefChan, ok := task.ResultChan.(chan NodeDef); ok {
+							stubNode := NodeDef{NodeID: &ua.NodeID{}}
+							nodeDefChan <- stubNode
+						} else if anyNodeDefChan, ok := task.ResultChan.(chan<- NodeDef); ok {
+							stubNode := NodeDef{NodeID: &ua.NodeID{}}
+							anyNodeDefChan <- stubNode
+						} else if anyChan, ok := task.ResultChan.(chan any); ok {
+							anyChan <- struct{}{}
+						} else if anySendChan, ok := task.ResultChan.(chan<- any); ok {
+							anySendChan <- struct{}{}
+						}
 					}
 				default:
 					// No more tasks in buffer, exit

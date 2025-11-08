@@ -627,4 +627,34 @@ var _ = Describe("GlobalWorkerPool", func() {
 			})
 		})
 	})
+
+	// Task 2.2: Type system refactoring tests
+	Describe("Task 2.2: GlobalPoolTask Type System", func() {
+		Context("when ResultChan receives NodeDef", func() {
+			It("should allow sending NodeDef through ResultChan", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile)
+				pool.SpawnWorkers(2)
+
+				// Create typed channel for NodeDef
+				resultChan := make(chan NodeDef, 1)
+
+				// This test verifies the type system allows NodeDef results
+				// Task 2.2 will fix GlobalPoolTask to enable this pattern
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: resultChan,
+					ErrChan:    nil,
+				}
+
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Should receive NodeDef result
+				var result NodeDef
+				Eventually(resultChan).Within(time.Second).Should(Receive(&result))
+				Expect(result.NodeID).ToNot(BeNil())
+			})
+		})
+	})
 })
