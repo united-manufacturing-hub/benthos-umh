@@ -70,3 +70,63 @@ func NewGlobalWorkerPool(profile ServerProfile) *GlobalWorkerPool {
 		workerControls: make(map[uuid.UUID]chan struct{}),
 	}
 }
+
+// SpawnWorkers starts n new workers if under MaxWorkers limit.
+// Returns actual number of workers spawned (may be less than n if hitting limit).
+//
+// Behavior:
+//   - If MaxWorkers=0 (unlimited), spawns all n workers
+//   - If MaxWorkers>0, spawns only up to limit (currentWorkers + spawned <= MaxWorkers)
+//   - Thread-safe (uses mutex)
+func (gwp *GlobalWorkerPool) SpawnWorkers(n int) int {
+	gwp.mu.Lock()
+	defer gwp.mu.Unlock()
+
+	// Calculate how many workers we can actually spawn
+	canSpawn := n
+	if gwp.maxWorkers > 0 {
+		available := gwp.maxWorkers - gwp.currentWorkers
+		if available <= 0 {
+			return 0
+		}
+		if canSpawn > available {
+			canSpawn = available
+		}
+	}
+
+	// Spawn workers
+	for i := 0; i < canSpawn; i++ {
+		workerID := uuid.New()
+		controlChan := make(chan struct{})
+		gwp.workerControls[workerID] = controlChan
+		gwp.currentWorkers++
+
+		// Launch worker goroutine
+		go gwp.workerLoop(workerID, controlChan)
+	}
+
+	return canSpawn
+}
+
+// workerLoop runs in a goroutine and processes tasks from taskChan until shutdown signal.
+func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan struct{}) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Log and exit gracefully on panic (stub for now)
+			// In production, would use proper logger here
+		}
+	}()
+
+	for {
+		select {
+		case <-controlChan:
+			// Shutdown signal received
+			return
+		case task := <-gwp.taskChan:
+			// Process task (stub implementation - just log for now)
+			// Actual Browse RPC integration will be added in later tasks
+			_ = task // Prevent unused variable error
+			// TODO: Execute Browse RPC for task.NodeID
+		}
+	}
+}
