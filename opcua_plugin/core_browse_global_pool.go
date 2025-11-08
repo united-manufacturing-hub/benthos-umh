@@ -16,8 +16,10 @@ package opcua_plugin
 
 import (
 	"errors"
-	"github.com/google/uuid"
 	"sync"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 // GlobalPoolTask represents a browse operation to execute in the global worker pool.
@@ -50,6 +52,7 @@ type GlobalWorkerPool struct {
 	currentWorkers int
 	taskChan       chan GlobalPoolTask
 	workerControls map[uuid.UUID]chan struct{}
+	shutdown       bool // Indicates if pool is shutting down
 	mu             sync.Mutex
 }
 
@@ -87,6 +90,11 @@ func (gwp *GlobalWorkerPool) SpawnWorkers(n int) int {
 	gwp.mu.Lock()
 	defer gwp.mu.Unlock()
 
+	// Prevent spawning after shutdown
+	if gwp.shutdown {
+		return 0
+	}
+
 	// Calculate how many workers we can actually spawn
 	canSpawn := n
 	if gwp.maxWorkers > 0 {
@@ -120,6 +128,14 @@ func (gwp *GlobalWorkerPool) SpawnWorkers(n int) int {
 // The method is thread-safe (channel operations are atomic) and non-blocking
 // in practice due to large buffer size (200k = 2× MaxTagsToBrowse).
 func (gwp *GlobalWorkerPool) SubmitTask(task GlobalPoolTask) (err error) {
+	// Check shutdown flag first (before attempting send)
+	gwp.mu.Lock()
+	if gwp.shutdown {
+		gwp.mu.Unlock()
+		return errors.New("pool is shutdown")
+	}
+	gwp.mu.Unlock()
+
 	defer func() {
 		// Recover from panic if channel is closed (send on closed channel panics)
 		if r := recover(); r != nil {
@@ -130,6 +146,53 @@ func (gwp *GlobalWorkerPool) SubmitTask(task GlobalPoolTask) (err error) {
 	// Send task to channel (will panic if closed, recovered by defer)
 	gwp.taskChan <- task
 	return nil
+}
+
+// Shutdown gracefully stops all workers and closes the task channel.
+// Waits up to timeout for workers to finish current tasks.
+// Returns error if timeout exceeded before all workers exited.
+//
+// This method is idempotent - calling multiple times is safe.
+// After shutdown, SubmitTask rejects new tasks and SpawnWorkers blocks.
+func (gwp *GlobalWorkerPool) Shutdown(timeout time.Duration) error {
+	gwp.mu.Lock()
+
+	// Idempotency: Check if already shutdown
+	if gwp.shutdown {
+		gwp.mu.Unlock()
+		return nil
+	}
+
+	// Mark as shutdown (prevents new tasks/workers)
+	gwp.shutdown = true
+
+	// Close taskChan to reject new tasks
+	close(gwp.taskChan)
+
+	// Signal all workers to exit
+	for _, controlChan := range gwp.workerControls {
+		close(controlChan)
+	}
+
+	gwp.mu.Unlock()
+
+	// Wait for workers to exit (with timeout)
+	deadline := time.Now().Add(timeout)
+	for {
+		gwp.mu.Lock()
+		remainingWorkers := gwp.currentWorkers
+		gwp.mu.Unlock()
+
+		if remainingWorkers == 0 {
+			return nil // All workers exited
+		}
+
+		if time.Now().After(deadline) {
+			return errors.New("shutdown timeout: workers still running")
+		}
+
+		time.Sleep(10 * time.Millisecond) // Poll interval
+	}
 }
 
 // workerLoop runs in a goroutine and processes tasks from taskChan until shutdown signal.

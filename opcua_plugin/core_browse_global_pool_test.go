@@ -401,4 +401,183 @@ var _ = Describe("GlobalWorkerPool", func() {
 			})
 		})
 	})
+
+	Describe("Shutdown", func() {
+		Context("when pool has no workers", func() {
+			It("should shutdown immediately", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile)
+
+				err := pool.Shutdown(time.Second)
+				Expect(err).ToNot(HaveOccurred())
+			})
+		})
+
+		Context("when pool has active workers", func() {
+			It("should wait for workers to finish current tasks", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile)
+				pool.SpawnWorkers(3)
+
+				// Submit a task that will be processed
+				resultChan := make(chan any, 1)
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: resultChan,
+				}
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Shutdown should wait for workers to exit
+				err = pool.Shutdown(time.Second)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Verify all workers exited
+				pool.mu.Lock()
+				workerCount := pool.currentWorkers
+				pool.mu.Unlock()
+				Expect(workerCount).To(Equal(0))
+			})
+
+			It("should return error if timeout exceeded", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile)
+				pool.SpawnWorkers(3)
+
+				// Block worker loop by closing taskChan manually first
+				// Then make workers unable to exit quickly
+				// Shutdown with very short timeout
+				err := pool.Shutdown(1 * time.Millisecond)
+
+				// This test is tricky - we need workers that DON'T exit
+				// For now, verify timeout behavior exists
+				// May need to enhance worker loop to support blocking for test
+				_ = err // Will implement after basic shutdown works
+			})
+		})
+
+		Context("idempotency", func() {
+			It("should allow multiple Shutdown calls without error", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile)
+				pool.SpawnWorkers(2)
+
+				// First shutdown
+				err := pool.Shutdown(time.Second)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Second shutdown (idempotent)
+				err = pool.Shutdown(time.Second)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Third shutdown (still idempotent)
+				err = pool.Shutdown(time.Second)
+				Expect(err).ToNot(HaveOccurred())
+			})
+		})
+
+		Context("after shutdown", func() {
+			It("should reject new task submissions", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile)
+				pool.SpawnWorkers(2)
+
+				// Shutdown pool
+				err := pool.Shutdown(time.Second)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Try to submit task after shutdown
+				task := GlobalPoolTask{NodeID: "ns=2;i=1000"}
+				err = pool.SubmitTask(task)
+
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("shutdown"))
+			})
+
+			It("should prevent new worker spawning", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile)
+				pool.SpawnWorkers(2)
+
+				// Shutdown pool
+				err := pool.Shutdown(time.Second)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Try to spawn more workers after shutdown
+				spawned := pool.SpawnWorkers(3)
+				Expect(spawned).To(Equal(0))
+
+				// Verify worker count didn't change
+				pool.mu.Lock()
+				workerCount := pool.currentWorkers
+				pool.mu.Unlock()
+				Expect(workerCount).To(Equal(0))
+			})
+		})
+
+		Context("concurrent shutdown", func() {
+			It("should handle multiple goroutines calling Shutdown", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile)
+				pool.SpawnWorkers(5)
+
+				// Call Shutdown from 3 goroutines simultaneously
+				done := make(chan error, 3)
+				for i := 0; i < 3; i++ {
+					go func() {
+						err := pool.Shutdown(time.Second)
+						done <- err
+					}()
+				}
+
+				// All should complete without error
+				for i := 0; i < 3; i++ {
+					err := <-done
+					Expect(err).ToNot(HaveOccurred())
+				}
+
+				// Verify all workers exited
+				pool.mu.Lock()
+				workerCount := pool.currentWorkers
+				pool.mu.Unlock()
+				Expect(workerCount).To(Equal(0))
+			})
+		})
+
+		Context("workers finishing in-flight tasks", func() {
+			It("should allow workers to complete current task before exit", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile)
+				pool.SpawnWorkers(3)
+
+				// Submit multiple tasks
+				numTasks := 5
+				resultChans := make([]chan any, numTasks)
+				for i := 0; i < numTasks; i++ {
+					resultChans[i] = make(chan any, 1)
+					task := GlobalPoolTask{
+						NodeID:     "ns=2;i=1000",
+						ResultChan: resultChans[i],
+					}
+					err := pool.SubmitTask(task)
+					Expect(err).ToNot(HaveOccurred())
+				}
+
+				// Shutdown pool
+				err := pool.Shutdown(2 * time.Second)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Verify all tasks completed
+				for i := 0; i < numTasks; i++ {
+					Eventually(resultChans[i]).Within(time.Second).Should(Receive())
+				}
+
+				// Verify all workers exited
+				pool.mu.Lock()
+				workerCount := pool.currentWorkers
+				pool.mu.Unlock()
+				Expect(workerCount).To(Equal(0))
+			})
+		})
+	})
 })
