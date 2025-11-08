@@ -16,6 +16,7 @@ package opcua_plugin
 
 import (
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
@@ -213,6 +214,49 @@ var _ = Describe("GlobalWorkerPool", func() {
 				Expect(totalSpawned).To(Equal(10))
 				Expect(pool.currentWorkers).To(Equal(10))
 				Expect(len(pool.workerControls)).To(Equal(10))
+			})
+		})
+
+		Context("when worker exits via shutdown signal", func() {
+			It("should decrement currentWorkers and remove from workerControls", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile)
+				// Reset to 0 for clean test
+				pool.currentWorkers = 0
+				pool.workerControls = make(map[uuid.UUID]chan struct{})
+
+				// Spawn 3 workers
+				spawned := pool.SpawnWorkers(3)
+				Expect(spawned).To(Equal(3))
+				Expect(pool.currentWorkers).To(Equal(3))
+				Expect(len(pool.workerControls)).To(Equal(3))
+
+				// Get one worker's control channel
+				pool.mu.Lock()
+				var targetWorkerID uuid.UUID
+				var targetControlChan chan struct{}
+				for id, ch := range pool.workerControls {
+					targetWorkerID = id
+					targetControlChan = ch
+					break
+				}
+				pool.mu.Unlock()
+
+				// Signal shutdown to one worker
+				close(targetControlChan)
+
+				// Give worker time to exit and clean up
+				Eventually(func() int {
+					pool.mu.Lock()
+					defer pool.mu.Unlock()
+					return pool.currentWorkers
+				}).Within(1 * time.Second).Should(Equal(2)) // Should drop from 3 to 2
+
+				// Verify worker removed from map
+				pool.mu.Lock()
+				_, exists := pool.workerControls[targetWorkerID]
+				pool.mu.Unlock()
+				Expect(exists).To(BeFalse())
 			})
 		})
 	})

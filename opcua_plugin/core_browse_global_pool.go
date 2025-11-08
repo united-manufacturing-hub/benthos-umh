@@ -111,6 +111,13 @@ func (gwp *GlobalWorkerPool) SpawnWorkers(n int) int {
 // workerLoop runs in a goroutine and processes tasks from taskChan until shutdown signal.
 func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan struct{}) {
 	defer func() {
+		// Clean up worker registration BEFORE panic recovery
+		gwp.mu.Lock()
+		delete(gwp.workerControls, workerID)
+		gwp.currentWorkers--
+		gwp.mu.Unlock()
+
+		// THEN handle panic recovery
 		if r := recover(); r != nil {
 			// Log and exit gracefully on panic (stub for now)
 			// In production, would use proper logger here
