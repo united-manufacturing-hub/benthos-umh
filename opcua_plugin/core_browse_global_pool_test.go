@@ -444,15 +444,36 @@ var _ = Describe("GlobalWorkerPool", func() {
 				pool := NewGlobalWorkerPool(profile)
 				pool.SpawnWorkers(3)
 
-				// Block worker loop by closing taskChan manually first
-				// Then make workers unable to exit quickly
-				// Shutdown with very short timeout
+				// Create tasks with blocking result channels to prevent workers from completing
+				blockingChans := make([]chan any, 3)
+				for i := 0; i < 3; i++ {
+					blockingChans[i] = make(chan any) // Unbuffered - blocks on send
+					task := GlobalPoolTask{
+						NodeID:     "ns=2;i=1000",
+						ResultChan: blockingChans[i],
+					}
+					err := pool.SubmitTask(task)
+					Expect(err).ToNot(HaveOccurred())
+				}
+
+				// Give workers time to pick up tasks and block on send
+				time.Sleep(100 * time.Millisecond)
+
+				// Shutdown with very short timeout - workers will block trying to send results
 				err := pool.Shutdown(1 * time.Millisecond)
 
-				// This test is tricky - we need workers that DON'T exit
-				// For now, verify timeout behavior exists
-				// May need to enhance worker loop to support blocking for test
-				_ = err // Will implement after basic shutdown works
+				// Should timeout because workers are blocked
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("timeout"))
+
+				// Clean up - unblock workers by reading from channels
+				for i := 0; i < 3; i++ {
+					select {
+					case <-blockingChans[i]:
+					case <-time.After(time.Second):
+						// Worker might have already exited
+					}
+				}
 			})
 		})
 

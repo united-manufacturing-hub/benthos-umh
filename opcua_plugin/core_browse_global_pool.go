@@ -53,6 +53,7 @@ type GlobalWorkerPool struct {
 	taskChan       chan GlobalPoolTask
 	workerControls map[uuid.UUID]chan struct{}
 	shutdown       bool // Indicates if pool is shutting down
+	workerWg       sync.WaitGroup
 	mu             sync.Mutex
 }
 
@@ -113,6 +114,7 @@ func (gwp *GlobalWorkerPool) SpawnWorkers(n int) int {
 		controlChan := make(chan struct{})
 		gwp.workerControls[workerID] = controlChan
 		gwp.currentWorkers++
+		gwp.workerWg.Add(1)
 
 		// Launch worker goroutine
 		go gwp.workerLoop(workerID, controlChan)
@@ -177,21 +179,17 @@ func (gwp *GlobalWorkerPool) Shutdown(timeout time.Duration) error {
 	gwp.mu.Unlock()
 
 	// Wait for workers to exit (with timeout)
-	deadline := time.Now().Add(timeout)
-	for {
-		gwp.mu.Lock()
-		remainingWorkers := gwp.currentWorkers
-		gwp.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		gwp.workerWg.Wait()
+		close(done)
+	}()
 
-		if remainingWorkers == 0 {
-			return nil // All workers exited
-		}
-
-		if time.Now().After(deadline) {
-			return errors.New("shutdown timeout: workers still running")
-		}
-
-		time.Sleep(10 * time.Millisecond) // Poll interval
+	select {
+	case <-done:
+		return nil
+	case <-time.After(timeout):
+		return errors.New("shutdown timeout: workers still running")
 	}
 }
 
@@ -204,6 +202,9 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 		gwp.currentWorkers--
 		gwp.mu.Unlock()
 
+		// Signal WaitGroup that this worker is done
+		gwp.workerWg.Done()
+
 		// THEN handle panic recovery
 		if r := recover(); r != nil {
 			// Log and exit gracefully on panic (stub for now)
@@ -211,11 +212,9 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 		}
 	}()
 
+	// Priority: Process tasks before checking shutdown signal
 	for {
 		select {
-		case <-controlChan:
-			// Shutdown signal received
-			return
 		case task, ok := <-gwp.taskChan:
 			if !ok {
 				// Channel closed, exit
@@ -230,6 +229,27 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 			if task.ResultChan != nil {
 				task.ResultChan <- struct{}{}
 			}
+		case <-controlChan:
+			// Shutdown signal received - drain remaining buffered tasks before exit
+			// Use non-blocking drain to avoid hanging if taskChan is still open
+		drainLoop:
+			for {
+				select {
+				case task, ok := <-gwp.taskChan:
+					if !ok {
+						// Channel closed, finished draining
+						return
+					}
+					// Process remaining task (stub implementation)
+					if task.ResultChan != nil {
+						task.ResultChan <- struct{}{}
+					}
+				default:
+					// No more tasks in buffer, exit
+					break drainLoop
+				}
+			}
+			return
 		}
 	}
 }
