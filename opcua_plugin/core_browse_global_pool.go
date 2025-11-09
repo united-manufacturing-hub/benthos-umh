@@ -148,6 +148,11 @@ func (gwp *GlobalWorkerPool) SpawnWorkers(n int) int {
 		gwp.currentWorkers++
 		gwp.workerWg.Add(1)
 
+		// Task 3.3: Debug log worker spawn with total count
+		if gwp.logger != nil {
+			gwp.logger.Debugf("Worker spawned: workerID=%s totalWorkers=%d", workerID, gwp.currentWorkers)
+		}
+
 		// Launch worker goroutine
 		go gwp.workerLoop(workerID, controlChan)
 	}
@@ -188,6 +193,12 @@ func (gwp *GlobalWorkerPool) SubmitTask(task GlobalPoolTask) (err error) {
 	// Task 3.1: Increment tasksSubmitted counter (atomic)
 	atomic.AddUint64(&gwp.metricsTasksSubmitted, 1)
 
+	// Task 3.3: Debug log task submission with metrics
+	if gwp.logger != nil {
+		metrics := gwp.GetMetrics()
+		gwp.logger.Debugf("Task submitted: nodeID=%s queueDepth=%d workers=%d", task.NodeID, metrics.QueueDepth, metrics.ActiveWorkers)
+	}
+
 	// Send task to channel (will panic if closed, recovered by defer)
 	gwp.taskChan <- task
 	return nil
@@ -206,6 +217,12 @@ func (gwp *GlobalWorkerPool) Shutdown(timeout time.Duration) error {
 	if gwp.shutdown {
 		gwp.mu.Unlock()
 		return nil
+	}
+
+	// Task 3.3: Debug log shutdown initiation
+	workerCount := gwp.currentWorkers
+	if gwp.logger != nil {
+		gwp.logger.Debugf("Shutdown initiated: workers=%d timeout=%v", workerCount, timeout)
 	}
 
 	// Mark as shutdown (prevents new tasks/workers)
@@ -230,6 +247,10 @@ func (gwp *GlobalWorkerPool) Shutdown(timeout time.Duration) error {
 
 	select {
 	case <-done:
+		// Task 3.3: Debug log shutdown completion
+		if gwp.logger != nil {
+			gwp.logger.Debugf("Shutdown complete: all workers exited")
+		}
 		return nil
 	case <-time.After(timeout):
 		return errors.New("shutdown timeout: workers still running")
@@ -378,6 +399,11 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 
 			// Task 3.1: Increment tasksCompleted counter on success (atomic)
 			atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
+
+			// Task 3.3: Debug log task completion
+			if gwp.logger != nil {
+				gwp.logger.Debugf("Task completed: nodeID=%s", task.NodeID)
+			}
 		case <-controlChan:
 			// Shutdown signal received - drain remaining buffered tasks before exit
 			// Use non-blocking drain to avoid hanging if taskChan is still open

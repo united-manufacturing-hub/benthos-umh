@@ -15,6 +15,7 @@
 package opcua_plugin
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -23,6 +24,54 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
+
+// recordingLogger records all debug log calls for testing
+type recordingLogger struct {
+	mu          sync.Mutex
+	debugCalls  []string
+	infoCalls   []string
+	warnCalls   []string
+	errorCalls  []string
+}
+
+func (r *recordingLogger) Debugf(format string, args ...interface{}) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.debugCalls = append(r.debugCalls, fmt.Sprintf(format, args...))
+}
+
+func (r *recordingLogger) Infof(format string, args ...interface{}) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.infoCalls = append(r.infoCalls, fmt.Sprintf(format, args...))
+}
+
+func (r *recordingLogger) Warnf(format string, args ...interface{}) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.warnCalls = append(r.warnCalls, fmt.Sprintf(format, args...))
+}
+
+func (r *recordingLogger) Errorf(format string, args ...interface{}) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.errorCalls = append(r.errorCalls, fmt.Sprintf(format, args...))
+}
+
+func (r *recordingLogger) GetDebugCalls() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string{}, r.debugCalls...)
+}
+
+func (r *recordingLogger) Reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.debugCalls = nil
+	r.infoCalls = nil
+	r.warnCalls = nil
+	r.errorCalls = nil
+}
 
 var _ = Describe("GlobalWorkerPool", func() {
 	var logger *mockLogger
@@ -1098,6 +1147,224 @@ var _ = Describe("GlobalWorkerPool", func() {
 				// QueueDepth + TasksCompleted should be <= TasksSubmitted
 				total := uint64(metrics.QueueDepth) + metrics.TasksCompleted
 				Expect(total).To(BeNumerically("<=", metrics.TasksSubmitted))
+			})
+		})
+	})
+
+	// Task 3.3: Debug Logging
+	Describe("Debug Logging", func() {
+		var recLogger *recordingLogger
+
+		BeforeEach(func() {
+			recLogger = &recordingLogger{}
+		})
+
+		Context("worker spawning", func() {
+			It("should log worker spawn events with count", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, recLogger)
+
+				pool.SpawnWorkers(3)
+
+				calls := recLogger.GetDebugCalls()
+				Expect(calls).To(HaveLen(3))
+				// Expect logs to contain worker count information
+				Expect(calls[0]).To(ContainSubstring("Worker spawned"))
+				Expect(calls[0]).To(ContainSubstring("totalWorkers=1"))
+			})
+
+			It("should log cumulative worker counts", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, recLogger)
+
+				pool.SpawnWorkers(2)
+				pool.SpawnWorkers(3)
+
+				calls := recLogger.GetDebugCalls()
+				Expect(calls).To(HaveLen(5))
+				// Last spawn should show totalWorkers=5
+				Expect(calls[4]).To(ContainSubstring("totalWorkers=5"))
+			})
+		})
+
+		Context("task submission", func() {
+			It("should log task submission with queue depth", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, recLogger)
+				pool.SpawnWorkers(1)
+
+				recLogger.Reset()
+				pool.SubmitTask(GlobalPoolTask{NodeID: "ns=2;i=1000"})
+
+				calls := recLogger.GetDebugCalls()
+				Expect(calls).ToNot(BeEmpty())
+				// Should log submission with metrics
+				found := false
+				for _, call := range calls {
+					matched, _ := ContainSubstring("Task submitted").Match(call)
+					if matched {
+						found = true
+						Expect(call).To(ContainSubstring("queueDepth="))
+						break
+					}
+				}
+				Expect(found).To(BeTrue())
+			})
+
+			It("should log worker count on submission", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, recLogger)
+				pool.SpawnWorkers(3)
+
+				recLogger.Reset()
+				pool.SubmitTask(GlobalPoolTask{NodeID: "ns=2;i=1000"})
+
+				calls := recLogger.GetDebugCalls()
+				// Should include worker count in submission log
+				found := false
+				for _, call := range calls {
+					matched1, _ := ContainSubstring("Task submitted").Match(call)
+					matched2, _ := ContainSubstring("workers=3").Match(call)
+					if matched1 && matched2 {
+						found = true
+						break
+					}
+				}
+				Expect(found).To(BeTrue())
+			})
+		})
+
+		Context("task completion", func() {
+			It("should log task completion on success", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, recLogger)
+				pool.SpawnWorkers(1)
+
+				resultChan := make(chan NodeDef, 1)
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: resultChan,
+				}
+
+				recLogger.Reset()
+				pool.SubmitTask(task)
+
+				// Wait for task to complete
+				Eventually(resultChan).Within(time.Second).Should(Receive())
+
+				// Should see completion log
+				Eventually(func() []string {
+					return recLogger.GetDebugCalls()
+				}).Should(ContainElement(ContainSubstring("Task completed")))
+			})
+
+			It("should include NodeID in completion log", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, recLogger)
+				pool.SpawnWorkers(1)
+
+				resultChan := make(chan NodeDef, 1)
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1234",
+					ResultChan: resultChan,
+				}
+
+				recLogger.Reset()
+				pool.SubmitTask(task)
+
+				Eventually(resultChan).Within(time.Second).Should(Receive())
+
+				calls := recLogger.GetDebugCalls()
+				found := false
+				for _, call := range calls {
+					matched1, _ := ContainSubstring("Task completed").Match(call)
+					matched2, _ := ContainSubstring("ns=2;i=1234").Match(call)
+					if matched1 && matched2 {
+						found = true
+						break
+					}
+				}
+				Expect(found).To(BeTrue())
+			})
+		})
+
+		Context("shutdown events", func() {
+			It("should log shutdown initiation", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, recLogger)
+				pool.SpawnWorkers(2)
+
+				recLogger.Reset()
+				pool.Shutdown(time.Second)
+
+				calls := recLogger.GetDebugCalls()
+				// Should log shutdown event
+				Expect(calls).To(ContainElement(ContainSubstring("Shutdown initiated")))
+			})
+
+			It("should log shutdown completion", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, recLogger)
+				pool.SpawnWorkers(2)
+
+				recLogger.Reset()
+				pool.Shutdown(time.Second)
+
+				calls := recLogger.GetDebugCalls()
+				// Should log shutdown completion
+				Expect(calls).To(ContainElement(ContainSubstring("Shutdown complete")))
+			})
+
+			It("should log worker count during shutdown", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, recLogger)
+				pool.SpawnWorkers(3)
+
+				recLogger.Reset()
+				pool.Shutdown(time.Second)
+
+				calls := recLogger.GetDebugCalls()
+				found := false
+				for _, call := range calls {
+					matched1, _ := ContainSubstring("Shutdown initiated").Match(call)
+					matched2, _ := ContainSubstring("workers=3").Match(call)
+					if matched1 && matched2 {
+						found = true
+						break
+					}
+				}
+				Expect(found).To(BeTrue())
+			})
+		})
+
+		Context("nil logger handling", func() {
+			It("should not panic with nil logger on spawn", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, nil)
+
+				Expect(func() {
+					pool.SpawnWorkers(3)
+				}).ToNot(Panic())
+			})
+
+			It("should not panic with nil logger on submit", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, nil)
+				pool.SpawnWorkers(1)
+
+				Expect(func() {
+					pool.SubmitTask(GlobalPoolTask{NodeID: "ns=2;i=1000"})
+				}).ToNot(Panic())
+			})
+
+			It("should not panic with nil logger on shutdown", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, nil)
+				pool.SpawnWorkers(2)
+
+				Expect(func() {
+					pool.Shutdown(time.Second)
+				}).ToNot(Panic())
 			})
 		})
 	})
