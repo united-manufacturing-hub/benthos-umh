@@ -37,7 +37,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	// This replaces the per-browse worker pool pattern (each browse() call creating its own pool).
 	// Example: Agristo has 300 NodeIDs × 5 workers = 1,500 concurrent (exceeds 64 server capacity).
 	// With global pool: MaxWorkers=20 (from profile) caps concurrent operations safely.
-	pool := NewGlobalWorkerPool(g.ServerProfile)
+	pool := NewGlobalWorkerPool(g.ServerProfile, g.Log)
 	// Note: Shutdown moved to explicit call after wg.Wait() to prevent race condition (see line 150)
 
 	// Spawn initial workers based on profile.MinWorkers

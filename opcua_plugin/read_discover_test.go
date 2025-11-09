@@ -26,6 +26,12 @@ import (
 	. "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
 )
 
+// testLogger is a simple mock implementation of Logger for testing
+type testLogger struct{}
+
+func (t *testLogger) Debugf(format string, args ...interface{}) {}
+func (t *testLogger) Warnf(format string, args ...interface{})  {}
+
 var _ = Describe("UpdateNodePaths", func() {
 	DescribeTable("deduplication correctness",
 		func(nodes, expected []NodeDef) {
@@ -206,7 +212,8 @@ var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
 			}
 
 			// Step 1: Create pool
-			pool := NewGlobalWorkerPool(profile)
+			logger := &testLogger{}
+			pool := NewGlobalWorkerPool(profile, logger)
 			Expect(pool).NotTo(BeNil())
 
 			// Step 2: Spawn MinWorkers (as discoverNodes will do)

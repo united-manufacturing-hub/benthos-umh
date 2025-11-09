@@ -16,6 +16,8 @@ package opcua_plugin
 
 import (
 	"errors"
+	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
@@ -61,6 +63,7 @@ type GlobalWorkerPool struct {
 	shutdown       bool // Indicates if pool is shutting down
 	workerWg       sync.WaitGroup
 	mu             sync.Mutex
+	logger         Logger // For debug logging in sendTaskResult
 }
 
 // NewGlobalWorkerPool creates a new global worker pool initialized with profile constraints.
@@ -71,12 +74,12 @@ type GlobalWorkerPool struct {
 //   - If MaxWorkers = 0, no upper limit (unlimited mode)
 //
 // Example usage:
-//   pool := NewGlobalWorkerPool(profileAuto)  // MaxWorkers=5
-//   pool.SpawnWorkers(3)                      // Start with 3 workers
+//   pool := NewGlobalWorkerPool(profileAuto, logger)  // MaxWorkers=5
+//   pool.SpawnWorkers(3)                              // Start with 3 workers
 //
 // The taskChan buffer is sized at 2× MaxTagsToBrowse (200k) to handle browse
 // operation branching factor safely without blocking.
-func NewGlobalWorkerPool(profile ServerProfile) *GlobalWorkerPool {
+func NewGlobalWorkerPool(profile ServerProfile, logger Logger) *GlobalWorkerPool {
 	return &GlobalWorkerPool{
 		profile:        profile, // Store which profile this pool uses
 		maxWorkers:     profile.MaxWorkers,
@@ -84,6 +87,7 @@ func NewGlobalWorkerPool(profile ServerProfile) *GlobalWorkerPool {
 		currentWorkers: 0, // Start with no workers - caller must spawn them
 		taskChan:       make(chan GlobalPoolTask, MaxTagsToBrowse*2), // 200k buffer
 		workerControls: make(map[uuid.UUID]chan struct{}),
+		logger:         logger, // For debug logging in sendTaskResult
 	}
 }
 
@@ -132,11 +136,19 @@ func (gwp *GlobalWorkerPool) SpawnWorkers(n int) int {
 
 // SubmitTask queues a GlobalPoolTask for processing by available workers.
 // Blocks if taskChan buffer is full (200k capacity should prevent this in practice).
-// Returns error if pool is shutdown (channel closed).
+// Returns error if pool is shutdown (channel closed) or if ResultChan is not a channel type.
 //
 // The method is thread-safe (channel operations are atomic) and non-blocking
 // in practice due to large buffer size (200k = 2× MaxTagsToBrowse).
 func (gwp *GlobalWorkerPool) SubmitTask(task GlobalPoolTask) (err error) {
+	// Task 2.3: Runtime validation - verify ResultChan is actually a channel type
+	if task.ResultChan != nil {
+		rv := reflect.ValueOf(task.ResultChan)
+		if rv.Kind() != reflect.Chan {
+			return fmt.Errorf("invalid ResultChan type: expected channel, got %T", task.ResultChan)
+		}
+	}
+
 	// Check shutdown flag first (before attempting send)
 	gwp.mu.Lock()
 	if gwp.shutdown {
@@ -206,6 +218,45 @@ func (gwp *GlobalWorkerPool) Profile() ServerProfile {
 	return gwp.profile
 }
 
+// sendTaskResult sends task result to ResultChan using type assertion.
+// Returns true if result was sent, false if channel type unsupported or nil.
+//
+// Task 2.3: Extracted helper to eliminate 24 lines of duplicated type assertion code
+// in workerLoop (main loop + drain loop). Supports:
+//   - chan NodeDef (new browse() integration)
+//   - chan<- NodeDef (send-only variant)
+//   - chan any (backward compatibility)
+//   - chan<- any (send-only backward compat)
+//
+// Logs debug message when channel type is unsupported (helps diagnose integration issues).
+func (gwp *GlobalWorkerPool) sendTaskResult(task GlobalPoolTask, stubNode NodeDef, logger Logger) bool {
+	if task.ResultChan == nil {
+		return false
+	}
+
+	// Type assert to correct channel variant
+	switch ch := task.ResultChan.(type) {
+	case chan NodeDef:
+		ch <- stubNode
+		return true
+	case chan<- NodeDef:
+		ch <- stubNode
+		return true
+	case chan any:
+		ch <- struct{}{} // Backward compat
+		return true
+	case chan<- any:
+		ch <- struct{}{} // Backward compat
+		return true
+	default:
+		// Log unsupported channel type for debugging
+		if logger != nil {
+			logger.Debugf("GlobalWorkerPool: unsupported ResultChan type: %T (expected chan NodeDef or chan any)", task.ResultChan)
+		}
+		return false
+	}
+}
+
 // workerLoop runs in a goroutine and processes tasks from taskChan until shutdown signal.
 func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan struct{}) {
 	defer func() {
@@ -235,32 +286,16 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 			}
 
 			// Process task (stub implementation)
-			// TODO Phase 2, Task 2.3: Replace with actual Browse RPC call
+			// TODO Phase 2, Task 2.4: Replace with actual Browse RPC call
 			// - On success: send NodeDef result to task.ResultChan
 			// - On error: send error to task.ErrChan
 			// For now, stub sends a NodeDef to typed channel
-			if task.ResultChan != nil {
-				// Task 2.2: Type assert to send result to correct channel type
-				// Support both NodeDef channels (new) and any channels (backward compat)
-				if nodeDefChan, ok := task.ResultChan.(chan NodeDef); ok {
-					// Create stub NodeDef for testing
-					// Task 2.3 will replace this with actual browse() results
-					stubNode := NodeDef{
-						NodeID: &ua.NodeID{}, // Empty NodeID for stub
-					}
-					nodeDefChan <- stubNode
-				} else if anyNodeDefChan, ok := task.ResultChan.(chan<- NodeDef); ok {
-					// Handle send-only NodeDef channel variant
-					stubNode := NodeDef{
-						NodeID: &ua.NodeID{}, // Empty NodeID for stub
-					}
-					anyNodeDefChan <- stubNode
-				} else if anyChan, ok := task.ResultChan.(chan any); ok {
-					// Backward compatibility for existing tests using chan any
-					anyChan <- struct{}{}
-				} else if anySendChan, ok := task.ResultChan.(chan<- any); ok {
-					// Backward compatibility for send-only chan<- any
-					anySendChan <- struct{}{}
+			stubNode := NodeDef{NodeID: &ua.NodeID{}} // Empty NodeID for stub
+			sent := gwp.sendTaskResult(task, stubNode, gwp.logger)
+			if !sent && task.ResultChan != nil {
+				// Debug log if send failed (unsupported channel type)
+				if gwp.logger != nil {
+					gwp.logger.Debugf("Worker %s: failed to send result for NodeID %s (unsupported channel type)", workerID, task.NodeID)
 				}
 			}
 		case <-controlChan:
@@ -275,20 +310,8 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 						return
 					}
 					// Process remaining task (stub implementation)
-					if task.ResultChan != nil {
-						// Task 2.2: Type assert to send result to correct channel type
-						if nodeDefChan, ok := task.ResultChan.(chan NodeDef); ok {
-							stubNode := NodeDef{NodeID: &ua.NodeID{}}
-							nodeDefChan <- stubNode
-						} else if anyNodeDefChan, ok := task.ResultChan.(chan<- NodeDef); ok {
-							stubNode := NodeDef{NodeID: &ua.NodeID{}}
-							anyNodeDefChan <- stubNode
-						} else if anyChan, ok := task.ResultChan.(chan any); ok {
-							anyChan <- struct{}{}
-						} else if anySendChan, ok := task.ResultChan.(chan<- any); ok {
-							anySendChan <- struct{}{}
-						}
-					}
+					stubNode := NodeDef{NodeID: &ua.NodeID{}}
+					gwp.sendTaskResult(task, stubNode, gwp.logger)
 				default:
 					// No more tasks in buffer, exit
 					break drainLoop

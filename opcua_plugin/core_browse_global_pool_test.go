@@ -18,16 +18,23 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gopcua/opcua/ua"
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("GlobalWorkerPool", func() {
+	var logger *mockLogger
+
+	BeforeEach(func() {
+		logger = &mockLogger{}
+	})
+
 	Context("when creating pool with MaxWorkers=20", func() {
 		It("should initialize with maxWorkers=20", func() {
 			profile := ServerProfile{MaxWorkers: 20, MinWorkers: 5}
-			pool := NewGlobalWorkerPool(profile)
+			pool := NewGlobalWorkerPool(profile, logger)
 			Expect(pool.maxWorkers).To(Equal(20))
 		})
 	})
@@ -35,7 +42,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 	Context("when creating pool with MaxWorkers < InitialWorkers", func() {
 		It("should start with 0 workers (caller must spawn)", func() {
 			profile := ServerProfile{MaxWorkers: 5} // InitialWorkers=10
-			pool := NewGlobalWorkerPool(profile)
+			pool := NewGlobalWorkerPool(profile, logger)
 			Expect(pool.currentWorkers).To(Equal(0)) // Starts at 0
 			Expect(pool.maxWorkers).To(Equal(5))     // Limit stored
 		})
@@ -43,7 +50,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 	Context("with profileAuto (MaxWorkers=5, MinWorkers=1)", func() {
 		It("should store limits but start with 0 workers", func() {
-			pool := NewGlobalWorkerPool(profileAuto)
+			pool := NewGlobalWorkerPool(profileAuto, logger)
 			Expect(pool.currentWorkers).To(Equal(0))
 			Expect(pool.maxWorkers).To(Equal(5))
 			Expect(pool.minWorkers).To(Equal(1))
@@ -52,7 +59,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 	Context("with profileIgnition (MaxWorkers=20)", func() {
 		It("should start with 0 workers", func() {
-			pool := NewGlobalWorkerPool(profileIgnition)
+			pool := NewGlobalWorkerPool(profileIgnition, logger)
 			Expect(pool.currentWorkers).To(Equal(0))
 			Expect(pool.maxWorkers).To(Equal(20))
 		})
@@ -61,7 +68,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 	Context("with zero MaxWorkers (unlimited)", func() {
 		It("should start with 0 workers and no limit", func() {
 			profile := ServerProfile{MaxWorkers: 0}
-			pool := NewGlobalWorkerPool(profile)
+			pool := NewGlobalWorkerPool(profile, logger)
 			Expect(pool.currentWorkers).To(Equal(0))
 			Expect(pool.maxWorkers).To(Equal(0)) // Unlimited
 		})
@@ -70,7 +77,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 	Context("when MinWorkers > 0", func() {
 		It("should store MinWorkers but not spawn workers", func() {
 			profile := ServerProfile{MinWorkers: 15, MaxWorkers: 20}
-			pool := NewGlobalWorkerPool(profile)
+			pool := NewGlobalWorkerPool(profile, logger)
 			Expect(pool.currentWorkers).To(Equal(0))
 			Expect(pool.minWorkers).To(Equal(15))
 			Expect(pool.maxWorkers).To(Equal(20))
@@ -80,7 +87,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 	Context("when both MinWorkers and MaxWorkers are set", func() {
 		It("should store both limits", func() {
 			profile := ServerProfile{MinWorkers: 3, MaxWorkers: 8}
-			pool := NewGlobalWorkerPool(profile)
+			pool := NewGlobalWorkerPool(profile, logger)
 			Expect(pool.currentWorkers).To(Equal(0))
 			Expect(pool.minWorkers).To(Equal(3))
 			Expect(pool.maxWorkers).To(Equal(8))
@@ -90,29 +97,74 @@ var _ = Describe("GlobalWorkerPool", func() {
 	Context("checking all struct fields are initialized", func() {
 		It("should initialize taskChan with correct buffer size", func() {
 			profile := ServerProfile{MaxWorkers: 10}
-			pool := NewGlobalWorkerPool(profile)
+			pool := NewGlobalWorkerPool(profile, logger)
 			Expect(pool.taskChan).NotTo(BeNil())
 			Expect(cap(pool.taskChan)).To(Equal(MaxTagsToBrowse * 2)) // 200k buffer
 		})
 
 		It("should initialize workerControls map", func() {
 			profile := ServerProfile{MaxWorkers: 10}
-			pool := NewGlobalWorkerPool(profile)
+			pool := NewGlobalWorkerPool(profile, logger)
 			Expect(pool.workerControls).NotTo(BeNil())
 		})
 
 		It("should store minWorkers from profile", func() {
 			profile := ServerProfile{MinWorkers: 3, MaxWorkers: 10}
-			pool := NewGlobalWorkerPool(profile)
+			pool := NewGlobalWorkerPool(profile, logger)
 			Expect(pool.minWorkers).To(Equal(3))
 		})
 	})
 
 	Describe("SubmitTask", func() {
+		Context("runtime validation", func() {
+			It("should reject non-channel ResultChan types", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+
+				// Try to submit with int instead of channel (invalid)
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: 42, // Invalid: int not channel
+				}
+
+				err := pool.SubmitTask(task)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("expected channel"))
+			})
+
+			It("should accept valid chan NodeDef", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(1)
+
+				validChan := make(chan NodeDef, 1)
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: validChan,
+				}
+
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+			})
+
+			It("should accept nil ResultChan", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: nil, // Nil is valid (fire-and-forget)
+				}
+
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+			})
+		})
+
 		Context("when pool is running", func() {
 			It("should queue and process task successfully", func() {
 				profile := ServerProfile{MaxWorkers: 5}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				pool.SpawnWorkers(3)
 
 				resultChan := make(chan any, 1)
@@ -132,7 +184,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 			It("should handle multiple tasks concurrently", func() {
 				profile := ServerProfile{MaxWorkers: 10}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				pool.SpawnWorkers(3)
 
 				numTasks := 10
@@ -160,7 +212,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 			It("should not block when submitting 1000 tasks (buffer test)", func() {
 				profile := ServerProfile{MaxWorkers: 10}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				pool.SpawnWorkers(5)
 
 				numTasks := 1000
@@ -190,7 +242,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 			It("should send results to correct channels", func() {
 				profile := ServerProfile{MaxWorkers: 5}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				pool.SpawnWorkers(2)
 
 				resultChan1 := make(chan any, 1)
@@ -217,7 +269,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 			It("should handle nil result channels gracefully", func() {
 				profile := ServerProfile{MaxWorkers: 5}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				pool.SpawnWorkers(2)
 
 				task := GlobalPoolTask{
@@ -238,7 +290,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 		Context("when pool is shutdown", func() {
 			It("should return error", func() {
 				profile := ServerProfile{MaxWorkers: 5}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 
 				// Simulate shutdown by closing taskChan
 				close(pool.taskChan)
@@ -256,7 +308,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 		Context("when MaxWorkers limit is set", func() {
 			It("should not spawn more workers than MaxWorkers", func() {
 				profile := ServerProfile{MaxWorkers: 5, MinWorkers: 0}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				// Pool starts with 0 workers (explicit initialization)
 
 				spawned := pool.SpawnWorkers(10)
@@ -272,7 +324,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 			It("should respect cumulative limit across multiple calls", func() {
 				profile := ServerProfile{MaxWorkers: 10, MinWorkers: 0}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				// Pool starts with 0 workers (explicit initialization)
 
 				// First spawn: should get 5
@@ -295,7 +347,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 		Context("when MaxWorkers is unlimited (0)", func() {
 			It("should spawn all requested workers", func() {
 				profile := ServerProfile{MaxWorkers: 0, MinWorkers: 0}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				// Pool starts with 0 workers (explicit initialization)
 
 				spawned := pool.SpawnWorkers(20)
@@ -309,7 +361,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 		Context("worker registration in workerControls", func() {
 			It("should register workers with unique UUIDs", func() {
 				profile := ServerProfile{MaxWorkers: 10, MinWorkers: 0}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				// Pool starts with 0 workers (explicit initialization)
 
 				spawned := pool.SpawnWorkers(3)
@@ -330,7 +382,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 		Context("thread safety", func() {
 			It("should handle concurrent spawning without race conditions", func() {
 				profile := ServerProfile{MaxWorkers: 20, MinWorkers: 0}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				// Pool starts with 0 workers (explicit initialization)
 
 				done := make(chan bool)
@@ -363,7 +415,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 		Context("when worker exits via shutdown signal", func() {
 			It("should decrement currentWorkers and remove from workerControls", func() {
 				profile := ServerProfile{MaxWorkers: 10}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				// Pool starts with 0 workers (explicit initialization)
 
 				// Spawn 3 workers
@@ -406,7 +458,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 		Context("when pool is created", func() {
 			It("should store the profile", func() {
 				profile := ServerProfile{MaxWorkers: 10, MinWorkers: 2}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 
 				storedProfile := pool.Profile()
 				Expect(storedProfile.MaxWorkers).To(Equal(10))
@@ -419,8 +471,8 @@ var _ = Describe("GlobalWorkerPool", func() {
 				profile1 := ServerProfile{MaxWorkers: 10, MinWorkers: 2}
 				profile2 := ServerProfile{MaxWorkers: 64, MinWorkers: 5}
 
-				pool1 := NewGlobalWorkerPool(profile1)
-				pool2 := NewGlobalWorkerPool(profile2)
+				pool1 := NewGlobalWorkerPool(profile1, logger)
+				pool2 := NewGlobalWorkerPool(profile2, logger)
 
 				Expect(pool1.Profile().MaxWorkers).To(Equal(10))
 				Expect(pool2.Profile().MaxWorkers).To(Equal(64))
@@ -432,7 +484,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 		Context("when pool has no workers", func() {
 			It("should shutdown immediately", func() {
 				profile := ServerProfile{MaxWorkers: 10}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 
 				err := pool.Shutdown(time.Second)
 				Expect(err).ToNot(HaveOccurred())
@@ -442,7 +494,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 		Context("when pool has active workers", func() {
 			It("should wait for workers to finish current tasks", func() {
 				profile := ServerProfile{MaxWorkers: 10}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				pool.SpawnWorkers(3)
 
 				// Submit a task that will be processed
@@ -467,7 +519,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 			It("should return error if timeout exceeded", func() {
 				profile := ServerProfile{MaxWorkers: 10}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				pool.SpawnWorkers(3)
 
 				// Create tasks with blocking result channels to prevent workers from completing
@@ -506,7 +558,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 		Context("idempotency", func() {
 			It("should allow multiple Shutdown calls without error", func() {
 				profile := ServerProfile{MaxWorkers: 10}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				pool.SpawnWorkers(2)
 
 				// First shutdown
@@ -526,7 +578,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 		Context("after shutdown", func() {
 			It("should reject new task submissions", func() {
 				profile := ServerProfile{MaxWorkers: 10}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				pool.SpawnWorkers(2)
 
 				// Shutdown pool
@@ -543,7 +595,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 			It("should prevent new worker spawning", func() {
 				profile := ServerProfile{MaxWorkers: 10}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				pool.SpawnWorkers(2)
 
 				// Shutdown pool
@@ -565,7 +617,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 		Context("concurrent shutdown", func() {
 			It("should handle multiple goroutines calling Shutdown", func() {
 				profile := ServerProfile{MaxWorkers: 10}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				pool.SpawnWorkers(5)
 
 				// Call Shutdown from 3 goroutines simultaneously
@@ -594,7 +646,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 		Context("workers finishing in-flight tasks", func() {
 			It("should allow workers to complete current task before exit", func() {
 				profile := ServerProfile{MaxWorkers: 10}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				pool.SpawnWorkers(3)
 
 				// Submit multiple tasks
@@ -628,12 +680,85 @@ var _ = Describe("GlobalWorkerPool", func() {
 		})
 	})
 
+	// Task 2.3: sendTaskResult() helper tests
+	Describe("sendTaskResult helper", func() {
+		It("should send NodeDef to chan NodeDef", func() {
+			profile := ServerProfile{MaxWorkers: 5}
+			pool := NewGlobalWorkerPool(profile, logger)
+
+			resultChan := make(chan NodeDef, 1)
+			task := GlobalPoolTask{ResultChan: resultChan}
+			stubNode := NodeDef{NodeID: &ua.NodeID{}}
+
+			sent := pool.sendTaskResult(task, stubNode, logger)
+			Expect(sent).To(BeTrue())
+
+			var result NodeDef
+			Eventually(resultChan).Should(Receive(&result))
+			Expect(result.NodeID).NotTo(BeNil())
+		})
+
+		It("should send NodeDef to chan<- NodeDef (send-only)", func() {
+			profile := ServerProfile{MaxWorkers: 5}
+			pool := NewGlobalWorkerPool(profile, logger)
+
+			resultChan := make(chan NodeDef, 1)
+			var sendOnly chan<- NodeDef = resultChan
+			task := GlobalPoolTask{ResultChan: sendOnly}
+			stubNode := NodeDef{NodeID: &ua.NodeID{}}
+
+			sent := pool.sendTaskResult(task, stubNode, logger)
+			Expect(sent).To(BeTrue())
+
+			var result NodeDef
+			Eventually(resultChan).Should(Receive(&result))
+		})
+
+		It("should handle backward compat chan any", func() {
+			profile := ServerProfile{MaxWorkers: 5}
+			pool := NewGlobalWorkerPool(profile, logger)
+
+			resultChan := make(chan any, 1)
+			task := GlobalPoolTask{ResultChan: resultChan}
+			stubNode := NodeDef{NodeID: &ua.NodeID{}}
+
+			sent := pool.sendTaskResult(task, stubNode, logger)
+			Expect(sent).To(BeTrue())
+
+			Eventually(resultChan).Should(Receive())
+		})
+
+		It("should return false for unsupported channel type", func() {
+			profile := ServerProfile{MaxWorkers: 5}
+			pool := NewGlobalWorkerPool(profile, logger)
+
+			unsupportedChan := make(chan string, 1)
+			task := GlobalPoolTask{ResultChan: unsupportedChan}
+			stubNode := NodeDef{NodeID: &ua.NodeID{}}
+
+			sent := pool.sendTaskResult(task, stubNode, logger)
+			Expect(sent).To(BeFalse())
+			// Note: Debug logging is tested implicitly - method should not panic
+		})
+
+		It("should return false when ResultChan is nil", func() {
+			profile := ServerProfile{MaxWorkers: 5}
+			pool := NewGlobalWorkerPool(profile, logger)
+
+			task := GlobalPoolTask{ResultChan: nil}
+			stubNode := NodeDef{NodeID: &ua.NodeID{}}
+
+			sent := pool.sendTaskResult(task, stubNode, logger)
+			Expect(sent).To(BeFalse())
+		})
+	})
+
 	// Task 2.2: Type system refactoring tests
 	Describe("Task 2.2: GlobalPoolTask Type System", func() {
 		Context("when ResultChan receives NodeDef", func() {
 			It("should allow sending NodeDef through ResultChan", func() {
 				profile := ServerProfile{MaxWorkers: 5}
-				pool := NewGlobalWorkerPool(profile)
+				pool := NewGlobalWorkerPool(profile, logger)
 				pool.SpawnWorkers(2)
 
 				// Create typed channel for NodeDef
