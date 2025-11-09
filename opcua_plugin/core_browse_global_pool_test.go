@@ -782,4 +782,225 @@ var _ = Describe("GlobalWorkerPool", func() {
 			})
 		})
 	})
+
+	// Task 3.1: Global Metrics Aggregation
+	Describe("GetMetrics", func() {
+		Context("when tracking tasks submitted", func() {
+			It("should increment tasksSubmitted counter", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+
+				// Submit 3 tasks
+				pool.SubmitTask(GlobalPoolTask{NodeID: "ns=2;i=1000"})
+				pool.SubmitTask(GlobalPoolTask{NodeID: "ns=2;i=1001"})
+				pool.SubmitTask(GlobalPoolTask{NodeID: "ns=2;i=1002"})
+
+				metrics := pool.GetMetrics()
+				Expect(metrics.TasksSubmitted).To(Equal(uint64(3)))
+			})
+		})
+
+		Context("when tracking tasks completed", func() {
+			It("should increment tasksCompleted counter on success", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(1)
+
+				resultChan := make(chan NodeDef, 1)
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: resultChan,
+				}
+
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Wait for task to complete
+				Eventually(resultChan).Within(time.Second).Should(Receive())
+
+				// Check metrics
+				metrics := pool.GetMetrics()
+				Expect(metrics.TasksCompleted).To(Equal(uint64(1)))
+			})
+
+			It("should track multiple completed tasks", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				numTasks := 5
+				resultChans := make([]chan NodeDef, numTasks)
+
+				// Submit 5 tasks
+				for i := 0; i < numTasks; i++ {
+					resultChans[i] = make(chan NodeDef, 1)
+					task := GlobalPoolTask{
+						NodeID:     "ns=2;i=1000",
+						ResultChan: resultChans[i],
+					}
+					err := pool.SubmitTask(task)
+					Expect(err).ToNot(HaveOccurred())
+				}
+
+				// Wait for all tasks to complete
+				for i := 0; i < numTasks; i++ {
+					Eventually(resultChans[i]).Within(time.Second).Should(Receive())
+				}
+
+				metrics := pool.GetMetrics()
+				Expect(metrics.TasksCompleted).To(Equal(uint64(5)))
+			})
+		})
+
+		Context("when tracking active workers", func() {
+			It("should reflect current worker count", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+
+				// Initially 0 workers
+				metrics := pool.GetMetrics()
+				Expect(metrics.ActiveWorkers).To(Equal(0))
+
+				// Spawn 3 workers
+				spawned := pool.SpawnWorkers(3)
+				Expect(spawned).To(Equal(3))
+
+				metrics = pool.GetMetrics()
+				Expect(metrics.ActiveWorkers).To(Equal(3))
+
+				// Spawn 2 more
+				spawned = pool.SpawnWorkers(2)
+				Expect(spawned).To(Equal(2))
+
+				metrics = pool.GetMetrics()
+				Expect(metrics.ActiveWorkers).To(Equal(5))
+			})
+		})
+
+		Context("when tracking queue depth", func() {
+			It("should reflect pending tasks in queue", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				// Don't spawn workers - tasks will queue up
+
+				// Submit 5 tasks without workers to process them
+				for i := 0; i < 5; i++ {
+					pool.SubmitTask(GlobalPoolTask{NodeID: "ns=2;i=1000"})
+				}
+
+				metrics := pool.GetMetrics()
+				Expect(metrics.QueueDepth).To(BeNumerically(">=", 5))
+			})
+
+			It("should decrease as workers process tasks", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+
+				// Submit 10 tasks without workers
+				for i := 0; i < 10; i++ {
+					pool.SubmitTask(GlobalPoolTask{NodeID: "ns=2;i=1000"})
+				}
+
+				initialMetrics := pool.GetMetrics()
+				initialDepth := initialMetrics.QueueDepth
+				Expect(initialDepth).To(BeNumerically(">=", 10))
+
+				// Spawn workers to drain queue
+				pool.SpawnWorkers(3)
+
+				// Queue should eventually drain
+				Eventually(func() int {
+					metrics := pool.GetMetrics()
+					return metrics.QueueDepth
+				}).Within(2 * time.Second).Should(BeNumerically("<", initialDepth))
+			})
+		})
+
+		Context("concurrent access", func() {
+			It("should handle concurrent GetMetrics calls without race", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(3)
+
+				// Spawn 10 goroutines reading metrics concurrently
+				done := make(chan bool, 10)
+				for i := 0; i < 10; i++ {
+					go func() {
+						for j := 0; j < 100; j++ {
+							_ = pool.GetMetrics()
+						}
+						done <- true
+					}()
+				}
+
+				// Wait for all goroutines
+				for i := 0; i < 10; i++ {
+					<-done
+				}
+			})
+
+			It("should handle concurrent task submission and metrics reads", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(5)
+
+				done := make(chan bool, 20)
+
+				// 10 goroutines submitting tasks
+				for i := 0; i < 10; i++ {
+					go func() {
+						for j := 0; j < 50; j++ {
+							pool.SubmitTask(GlobalPoolTask{NodeID: "ns=2;i=1000"})
+						}
+						done <- true
+					}()
+				}
+
+				// 10 goroutines reading metrics
+				for i := 0; i < 10; i++ {
+					go func() {
+						for j := 0; j < 50; j++ {
+							_ = pool.GetMetrics()
+						}
+						done <- true
+					}()
+				}
+
+				// Wait for all goroutines
+				for i := 0; i < 20; i++ {
+					<-done
+				}
+
+				// Final metrics should be consistent
+				metrics := pool.GetMetrics()
+				Expect(metrics.TasksSubmitted).To(Equal(uint64(500)))
+			})
+		})
+
+		Context("metrics consistency", func() {
+			It("should maintain consistent snapshot across fields", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				// Submit some tasks
+				for i := 0; i < 10; i++ {
+					pool.SubmitTask(GlobalPoolTask{NodeID: "ns=2;i=1000"})
+				}
+
+				// Get metrics - should be consistent snapshot
+				metrics := pool.GetMetrics()
+
+				// TasksSubmitted should be >= TasksCompleted (logical invariant)
+				Expect(metrics.TasksSubmitted).To(BeNumerically(">=", metrics.TasksCompleted))
+
+				// ActiveWorkers should match what we spawned
+				Expect(metrics.ActiveWorkers).To(Equal(2))
+
+				// QueueDepth + TasksCompleted should be <= TasksSubmitted
+				total := uint64(metrics.QueueDepth) + metrics.TasksCompleted
+				Expect(total).To(BeNumerically("<=", metrics.TasksSubmitted))
+			})
+		})
+	})
 })

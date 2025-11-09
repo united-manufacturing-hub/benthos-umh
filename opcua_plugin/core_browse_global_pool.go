@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -64,6 +65,21 @@ type GlobalWorkerPool struct {
 	workerWg       sync.WaitGroup
 	mu             sync.Mutex
 	logger         Logger // For debug logging in sendTaskResult
+
+	// Task 3.1: Metrics tracking (using atomic operations for lock-free access)
+	metricsTasksSubmitted uint64 // Total tasks submitted (atomic)
+	metricsTasksCompleted uint64 // Successfully completed tasks (atomic)
+	metricsTasksFailed    uint64 // Failed tasks (errors) (atomic)
+}
+
+// PoolMetrics contains current pool metrics snapshot.
+// Task 3.1: Metrics aggregation for visibility into pool operations.
+type PoolMetrics struct {
+	ActiveWorkers  int    // Current worker count
+	TasksSubmitted uint64 // Total submitted
+	TasksCompleted uint64 // Successfully completed
+	TasksFailed    uint64 // Failed with errors
+	QueueDepth     int    // Pending tasks in queue
 }
 
 // NewGlobalWorkerPool creates a new global worker pool initialized with profile constraints.
@@ -164,6 +180,9 @@ func (gwp *GlobalWorkerPool) SubmitTask(task GlobalPoolTask) (err error) {
 		}
 	}()
 
+	// Task 3.1: Increment tasksSubmitted counter (atomic)
+	atomic.AddUint64(&gwp.metricsTasksSubmitted, 1)
+
 	// Send task to channel (will panic if closed, recovered by defer)
 	gwp.taskChan <- task
 	return nil
@@ -216,6 +235,30 @@ func (gwp *GlobalWorkerPool) Shutdown(timeout time.Duration) error {
 // Useful for Phase 2 integration where browse() selects pool based on server profile.
 func (gwp *GlobalWorkerPool) Profile() ServerProfile {
 	return gwp.profile
+}
+
+// GetMetrics returns current pool metrics snapshot.
+// Task 3.1: Thread-safe metrics access for visibility into pool operations.
+// Uses atomic loads for lock-free metric reads with single mutex for pool state.
+func (gwp *GlobalWorkerPool) GetMetrics() PoolMetrics {
+	// Atomic loads for metrics (lock-free)
+	tasksSubmitted := atomic.LoadUint64(&gwp.metricsTasksSubmitted)
+	tasksCompleted := atomic.LoadUint64(&gwp.metricsTasksCompleted)
+	tasksFailed := atomic.LoadUint64(&gwp.metricsTasksFailed)
+
+	// Single mutex for pool state snapshot
+	gwp.mu.Lock()
+	activeWorkers := gwp.currentWorkers
+	queueDepth := len(gwp.taskChan)
+	gwp.mu.Unlock()
+
+	return PoolMetrics{
+		ActiveWorkers:  activeWorkers,
+		TasksSubmitted: tasksSubmitted,
+		TasksCompleted: tasksCompleted,
+		TasksFailed:    tasksFailed,
+		QueueDepth:     queueDepth,
+	}
 }
 
 // sendTaskResult sends task result to ResultChan using type assertion.
@@ -298,6 +341,9 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 					gwp.logger.Debugf("Worker %s: failed to send result for NodeID %s (unsupported channel type)", workerID, task.NodeID)
 				}
 			}
+
+			// Task 3.1: Increment tasksCompleted counter on success (atomic)
+			atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
 		case <-controlChan:
 			// Shutdown signal received - drain remaining buffered tasks before exit
 			// Use non-blocking drain to avoid hanging if taskChan is still open
@@ -312,6 +358,9 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 					// Process remaining task (stub implementation)
 					stubNode := NodeDef{NodeID: &ua.NodeID{}}
 					gwp.sendTaskResult(task, stubNode, gwp.logger)
+
+					// Task 3.1: Increment tasksCompleted counter (atomic)
+					atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
 				default:
 					// No more tasks in buffer, exit
 					break drainLoop
