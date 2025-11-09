@@ -313,10 +313,14 @@ func (gwp *GlobalWorkerPool) sendTaskProgress(task GlobalPoolTask, stubNode Node
 		return
 	}
 
+	gwp.mu.Lock()
+	workerCount := gwp.currentWorkers
+	gwp.mu.Unlock()
+
 	progress := BrowseDetails{
 		NodeDef:     stubNode,
 		TaskCount:   1, // Stub value
-		WorkerCount: int64(gwp.currentWorkers),
+		WorkerCount: int64(workerCount),
 	}
 
 	select {
