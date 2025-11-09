@@ -783,6 +783,104 @@ var _ = Describe("GlobalWorkerPool", func() {
 		})
 	})
 
+	// Task 3.2: BrowseDetails Progress Reporting
+	Describe("BrowseDetails Progress Reporting", func() {
+		Context("when pool accepts progress channel", func() {
+			It("should send progress updates during task processing", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				progressChan := make(chan BrowseDetails, 10)
+				resultChan := make(chan NodeDef, 1)
+
+				task := GlobalPoolTask{
+					NodeID:       "ns=2;i=1000",
+					ResultChan:   resultChan,
+					ProgressChan: progressChan,
+				}
+
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Should receive progress update
+				Eventually(progressChan).Within(time.Second).Should(Receive())
+			})
+
+			It("should work when progress channel is nil", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				resultChan := make(chan NodeDef, 1)
+				task := GlobalPoolTask{
+					NodeID:       "ns=2;i=1000",
+					ResultChan:   resultChan,
+					ProgressChan: nil, // No progress reporting
+				}
+
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Task should complete normally
+				Eventually(resultChan).Within(time.Second).Should(Receive())
+			})
+
+			It("should not block task processing if progress channel is full", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(3)
+
+				// Create unbuffered progress channel (will block)
+				progressChan := make(chan BrowseDetails)
+				resultChan := make(chan NodeDef, 1)
+
+				task := GlobalPoolTask{
+					NodeID:       "ns=2;i=1000",
+					ResultChan:   resultChan,
+					ProgressChan: progressChan,
+				}
+
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Result should still be delivered (non-blocking progress send)
+				Eventually(resultChan).Within(time.Second).Should(Receive())
+			})
+		})
+
+		Context("when multiple concurrent tasks send progress", func() {
+			It("should send independent progress updates for each task", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(5)
+
+				numTasks := 5
+				progressChans := make([]chan BrowseDetails, numTasks)
+				resultChans := make([]chan NodeDef, numTasks)
+
+				// Submit 5 tasks with independent progress channels
+				for i := 0; i < numTasks; i++ {
+					progressChans[i] = make(chan BrowseDetails, 5)
+					resultChans[i] = make(chan NodeDef, 1)
+
+					task := GlobalPoolTask{
+						NodeID:       "ns=2;i=1000",
+						ResultChan:   resultChans[i],
+						ProgressChan: progressChans[i],
+					}
+					err := pool.SubmitTask(task)
+					Expect(err).ToNot(HaveOccurred())
+				}
+
+				// Each progress channel should receive at least one update
+				for i := 0; i < numTasks; i++ {
+					Eventually(progressChans[i]).Within(time.Second).Should(Receive())
+				}
+			})
+		})
+	})
+
 	// Task 3.1: Global Metrics Aggregation
 	Describe("GetMetrics", func() {
 		Context("when tracking tasks submitted", func() {

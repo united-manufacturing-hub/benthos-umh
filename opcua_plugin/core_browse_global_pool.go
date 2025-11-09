@@ -33,10 +33,15 @@ import (
 // Task 2.2: ResultChan now accepts any channel type via interface{}.
 // Workers use type assertion to send results to the correct typed channel.
 // This enables browse() to provide chan NodeDef while maintaining flexibility.
+//
+// Task 3.2: ProgressChan added for optional BrowseDetails progress reporting.
+// When nil, no progress updates are sent. When set, workers send non-blocking
+// progress updates during task processing.
 type GlobalPoolTask struct {
-	NodeID     string      // Node identifier to browse
-	ResultChan interface{} // Accepts any channel type (e.g., chan NodeDef, chan<- NodeDef)
-	ErrChan    chan<- error // Where to send errors
+	NodeID       string             // Node identifier to browse
+	ResultChan   interface{}        // Accepts any channel type (e.g., chan NodeDef, chan<- NodeDef)
+	ErrChan      chan<- error       // Where to send errors
+	ProgressChan chan<- BrowseDetails // Optional progress updates (nil = no reporting)
 }
 
 // GlobalWorkerPool manages a shared pool of workers for OPC UA browse operations.
@@ -300,6 +305,28 @@ func (gwp *GlobalWorkerPool) sendTaskResult(task GlobalPoolTask, stubNode NodeDe
 	}
 }
 
+// sendTaskProgress sends progress update to ProgressChan if set (non-blocking).
+// Task 3.2: Extracted helper to eliminate code duplication in workerLoop.
+// Uses select with default to avoid blocking on full/closed channels.
+func (gwp *GlobalWorkerPool) sendTaskProgress(task GlobalPoolTask, stubNode NodeDef) {
+	if task.ProgressChan == nil {
+		return
+	}
+
+	progress := BrowseDetails{
+		NodeDef:     stubNode,
+		TaskCount:   1, // Stub value
+		WorkerCount: int64(gwp.currentWorkers),
+	}
+
+	select {
+	case task.ProgressChan <- progress:
+		// Progress sent successfully
+	default:
+		// Channel full or closed, don't block task processing
+	}
+}
+
 // workerLoop runs in a goroutine and processes tasks from taskChan until shutdown signal.
 func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan struct{}) {
 	defer func() {
@@ -342,6 +369,9 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 				}
 			}
 
+			// Task 3.2: Send progress update (non-blocking)
+			gwp.sendTaskProgress(task, stubNode)
+
 			// Task 3.1: Increment tasksCompleted counter on success (atomic)
 			atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
 		case <-controlChan:
@@ -358,6 +388,9 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 					// Process remaining task (stub implementation)
 					stubNode := NodeDef{NodeID: &ua.NodeID{}}
 					gwp.sendTaskResult(task, stubNode, gwp.logger)
+
+					// Task 3.2: Send progress update (non-blocking)
+					gwp.sendTaskProgress(task, stubNode)
 
 					// Task 3.1: Increment tasksCompleted counter (atomic)
 					atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
