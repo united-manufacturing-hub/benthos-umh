@@ -69,6 +69,11 @@ func (g *OPCUAConnection) GetNodeTree(ctx context.Context, msgChan chan<- string
 	// OPCUAConnection doesn't have ServerProfile - use Auto profile
 	profile := GetProfileByName(ProfileAuto)
 	pool := NewGlobalWorkerPool(profile, g.Log)
+	defer func() {
+		if err := pool.Shutdown(30 * time.Second); err != nil {
+			g.Log.Warnf("GlobalWorkerPool shutdown timeout: %v", err)
+		}
+	}()
 	Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", pool, rootNode.NodeId.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
 	go logErrors(ctx, errChan, g.Log)
 	go collectNodes(ctx, opcuaBrowserChan, nodeIDMap, &nodes, msgChan)

@@ -226,6 +226,11 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 			wgHeartbeat.Add(1)
 			wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(heartbeatNodeID))
 			heartbeatPool := NewGlobalWorkerPool(g.ServerProfile, g.Log)
+			defer func() {
+				if err := heartbeatPool.Shutdown(30 * time.Second); err != nil {
+					g.Log.Warnf("GlobalWorkerPool shutdown timeout: %v", err)
+				}
+			}()
 			go browse(ctx, wrapperNodeID, "", heartbeatPool, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat, opcuaBrowserChanHeartbeat, &g.visited)
 
 			wgHeartbeat.Wait()

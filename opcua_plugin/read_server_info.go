@@ -17,6 +17,7 @@ package opcua_plugin
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/gopcua/opcua/ua"
 )
@@ -61,6 +62,11 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 	}
 
 	pool := NewGlobalWorkerPool(profile, g.Log)
+	defer func() {
+		if err := pool.Shutdown(30 * time.Second); err != nil {
+			g.Log.Warnf("GlobalWorkerPool shutdown timeout: %v", err)
+		}
+	}()
 	wg.Add(3)
 	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(manufacturerNameNodeID)), "", pool, manufacturerNameNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
 	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(productNameNodeID)), "", pool, productNameNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
