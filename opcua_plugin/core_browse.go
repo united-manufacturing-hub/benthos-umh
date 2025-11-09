@@ -79,8 +79,8 @@ type Logger interface {
 
 // Browse is a public wrapper function for the browse function
 // Avoid using this function directly, use it only for testing
-func Browse(ctx context.Context, n NodeBrowser, path string, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map, profile ServerProfile) {
-	browse(ctx, n, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited, profile)
+func Browse(ctx context.Context, n NodeBrowser, path string, pool *GlobalWorkerPool, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map) {
+	browse(ctx, n, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
 }
 
 // NodeTask represents a task for workers to process
@@ -96,16 +96,20 @@ func browse(
 	ctx context.Context,
 	startNode NodeBrowser,
 	startPath string,
-	logger Logger,
+	pool *GlobalWorkerPool,
 	parentNodeId string,
 	nodeChan chan NodeDef,
 	errChan chan error,
 	wg *TrackedWaitGroup,
 	opcuaBrowserChan chan BrowseDetails,
 	visited *sync.Map,
-	profile ServerProfile,
 ) {
+	// Access logger and profile from pool
+	logger := pool.logger
+	profile := pool.Profile()
+
 	metrics := NewServerMetrics(profile)
+	// TODO Phase 3: Migrate from per-browse WaitGroup to pool.workerWg for global tracking
 	var taskWg TrackedWaitGroup
 	var workerWg TrackedWaitGroup
 	// Buffer = 2× MaxTagsToBrowse to handle branching factor safely.

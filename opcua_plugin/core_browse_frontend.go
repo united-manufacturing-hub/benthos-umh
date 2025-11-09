@@ -68,7 +68,8 @@ func (g *OPCUAConnection) GetNodeTree(ctx context.Context, msgChan chan<- string
 	wg.Add(1)
 	// OPCUAConnection doesn't have ServerProfile - use Auto profile
 	profile := GetProfileByName(ProfileAuto)
-	Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", g.Log, rootNode.NodeId.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited, profile)
+	pool := NewGlobalWorkerPool(profile, g.Log)
+	Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", pool, rootNode.NodeId.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
 	go logErrors(ctx, errChan, g.Log)
 	go collectNodes(ctx, opcuaBrowserChan, nodeIDMap, &nodes, msgChan)
 

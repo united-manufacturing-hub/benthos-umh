@@ -60,10 +60,11 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 		profile = GetProfileByName(ProfileAuto)
 	}
 
+	pool := NewGlobalWorkerPool(profile, g.Log)
 	wg.Add(3)
-	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(manufacturerNameNodeID)), "", g.Log, manufacturerNameNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited, profile)
-	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(productNameNodeID)), "", g.Log, productNameNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited, profile)
-	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(softwareVersionNodeID)), "", g.Log, softwareVersionNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited, profile)
+	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(manufacturerNameNodeID)), "", pool, manufacturerNameNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
+	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(productNameNodeID)), "", pool, productNameNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
+	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(softwareVersionNodeID)), "", pool, softwareVersionNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
 	wg.Wait()
 
 	close(nodeChan)

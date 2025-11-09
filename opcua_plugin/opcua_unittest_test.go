@@ -115,9 +115,10 @@ var _ = Describe("Unit Tests", func() {
 					referenceNodes: make(map[uint32][]NodeBrowser),
 				}
 				nodeBrowser = rootNodeWithNilNodeClass
+				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
+					Browse(ctx, nodeBrowser, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -142,9 +143,10 @@ var _ = Describe("Unit Tests", func() {
 				rootNode.attributes = append(rootNode.attributes, getDataValueForDataType(ua.TypeIDInt32, ua.StatusOK))
 
 				nodeBrowser = rootNode
+				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
+					Browse(ctx, nodeBrowser, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -180,9 +182,10 @@ var _ = Describe("Unit Tests", func() {
 				rootNode.AddReferenceNode(id.HasComponent, childNode)
 
 				nodeBrowser = rootNode
+				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
+					Browse(ctx, nodeBrowser, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -220,9 +223,10 @@ var _ = Describe("Unit Tests", func() {
 				rootNode.AddReferenceNode(id.HasChild, childNode)
 
 				nodeBrowser = rootNode
+				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
+					Browse(ctx, nodeBrowser, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -260,9 +264,10 @@ var _ = Describe("Unit Tests", func() {
 				rootNode.AddReferenceNode(id.Organizes, childNode)
 
 				nodeBrowser = rootNode
+				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
+					Browse(ctx, nodeBrowser, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -303,9 +308,10 @@ var _ = Describe("Unit Tests", func() {
 				rootNode.AddReferenceNode(id.HasChild, childNode)
 
 				nodeBrowser = rootNode
+				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
+					Browse(ctx, nodeBrowser, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -379,9 +385,10 @@ var _ = Describe("Unit Tests", func() {
 				objectNode.AddReferenceNode(id.HasChild, processValueNode)
 
 				nodeBrowser = abcFolder
+				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
+					Browse(ctx, nodeBrowser, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -776,9 +783,10 @@ var _ = Describe("Browse with StatusBadNodeIDUnknown", func() {
 			rootFolder.AddReferenceNode(id.Organizes, goodNode)
 
 			// Start browsing
+			pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
 			wg.Add(1)
 			go func() {
-			Browse(ctx, rootFolder, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
+			Browse(ctx, rootFolder, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
 			}()
 			wg.Wait()
 			close(nodeChan)
@@ -811,9 +819,10 @@ var _ = Describe("Browse with StatusBadNodeIDUnknown", func() {
 })
 
 func startBrowsing(ctx context.Context, rootNode NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map) ([]NodeDef, []error) {
+	pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
 	wg.Add(1)
 	go func() {
-		Browse(ctx, rootNode, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
+		Browse(ctx, rootNode, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
 	}()
 	wg.Wait()
 	close(nodeChan)
@@ -853,10 +862,11 @@ var _ = Describe("Browse Channel Blocking Behavior (ENG-3835)", func() {
 			rootNode := createMockNode(1, "TestNode", ua.NodeClassVariable)
 
 			// Start browse in goroutine
+			pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
 			done := make(chan bool)
 			go func() {
 				wg.Add(1)
-				Browse(ctx, rootNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
+				Browse(ctx, rootNode, "", pool, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited)
 				wg.Wait()
 				close(done)
 			}()
@@ -907,10 +917,11 @@ var _ = Describe("Browse Channel Blocking Behavior (ENG-3835)", func() {
 			cancelCtx, cancel := context.WithCancel(ctx)
 
 			// Start browse
+			pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
 			done := make(chan struct{})
 			go func() {
 				wg.Add(1)
-				Browse(cancelCtx, parentNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
+				Browse(cancelCtx, parentNode, "", pool, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited)
 				wg.Wait()
 				close(done)
 			}()

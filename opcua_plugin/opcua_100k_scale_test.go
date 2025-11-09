@@ -66,7 +66,8 @@ var _ = Describe("100k Scale Browse Test", Label("100k_scale"), func() {
 			// ACT: Start browsing
 			wg.Add(1)
 			testProfile := GetProfileByName(ProfileAuto)
-			go Browse(ctx, rootNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, &visited, testProfile)
+			pool := NewGlobalWorkerPool(testProfile, logger)
+			go Browse(ctx, rootNode, "", pool, "", nodeChan, errChan, &wg, opcuaBrowserChan, &visited)
 
 			// Start concurrent consumer to drain nodeChan as Browse produces nodes
 			// This prevents deadlock when Browse workers fill the 100k buffer
