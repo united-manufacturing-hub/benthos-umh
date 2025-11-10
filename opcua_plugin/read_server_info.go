@@ -139,6 +139,7 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 // Verified against OPC Foundation NodeIds.csv v1.04
 var (
 	ServerCapabilitiesNodeID          = ua.NewNumericNodeID(0, 2268)  // ServerCapabilities
+	ServerProfileArrayNodeID          = ua.NewNumericNodeID(0, 2269)  // ServerProfileArray
 	OperationLimitsNodeID             = ua.NewNumericNodeID(0, 11704) // OperationLimits
 	MaxNodesPerBrowseNodeID           = ua.NewNumericNodeID(0, 11710) // Fixed: was 11712
 	MaxMonitoredItemsPerCallNodeID    = ua.NewNumericNodeID(0, 11714) // Correct (CodeRabbit was wrong)
@@ -147,15 +148,85 @@ var (
 	MaxBrowseContinuationPointsNodeID = ua.NewNumericNodeID(0, 3089)  // Fixed: was 12165
 )
 
-// queryOperationLimits queries the OPC UA server for its operation limits from OperationLimits node.
+// Standard DataChange Subscription Server Facet URI (OPC UA Part 7, Section 6.4.3)
+// Presence of this profile indicates the server supports DataChangeFilter in MonitoredItem creation.
+const StandardDataChangeSubscriptionFacetURI = "http://opcfoundation.org/UA-Profile/Server/StandardDataChangeSubscription"
+
+// detectDataChangeFilterSupport checks if the server profile array contains the Standard DataChange Subscription facet.
+//
+// OPC UA Part 7, Section 6.4.3 defines profile-based capability detection:
+// - Servers declare conformance to specification facets via ServerProfileArray (NodeID 2269)
+// - Standard DataChange Subscription Server Facet indicates full MonitoredItem filter support
+// - Embedded DataChange Subscription Server Facet MAY omit filter support (resource-constrained devices)
+//
+// Why this matters:
+// - S7-1200 implements "Micro Embedded Device Server Profile" which uses Embedded facet WITHOUT filters
+// - Attempting to use DataChangeFilter on S7-1200 returns StatusBadFilterNotAllowed
+// - This detection allows dynamic behavior based on actual server capabilities
+//
+// Returns true if the Standard DataChange Subscription Server Facet is present in the profile array,
+// indicating the server supports DataChangeFilter (OPC UA Part 4, Section 7.17).
+//
+// Returns false if:
+// - Profile array is nil (server doesn't expose ServerProfileArray)
+// - Profile array is empty (no conformance profiles declared)
+// - Standard facet URI is not present (e.g., Micro Embedded Device profile)
+func detectDataChangeFilterSupport(profileArray []string) bool {
+	// Safe default for nil or empty array
+	if profileArray == nil || len(profileArray) == 0 {
+		return false
+	}
+
+	// Check for exact URI match (case-sensitive per OPC UA spec)
+	for _, profile := range profileArray {
+		if profile == StandardDataChangeSubscriptionFacetURI {
+			return true
+		}
+	}
+
+	return false
+}
+
+// queryOperationLimits queries the OPC UA server for its operation limits from OperationLimits node
+// and detects DataChangeFilter support via ServerProfileArray.
+//
+// Returns ServerCapabilities with:
+// - SupportsDataChangeFilter: Populated from ServerProfileArray (OPC UA Part 7, Section 6.4.3)
+// - Operation limits: Populated from OperationLimits node (MaxNodesPerBrowse, etc.)
+//
 // Returns error if the server doesn't support OperationLimits (common for PLCs like S7-1200/1500).
-// Phase 1: Read-only logging, no behavior changes.
 func (g *OPCUAInput) queryOperationLimits(ctx context.Context) (*ServerCapabilities, error) {
 	if g == nil || g.OPCUAConnection == nil || g.Client == nil {
 		return nil, errors.New("client is nil")
 	}
 
-	// Query all capability nodes
+	caps := &ServerCapabilities{}
+
+	// Step 1: Query ServerProfileArray for profile-based capability detection
+	// OPC UA Part 7, Section 6.4.3: Standard DataChange Subscription facet indicates filter support
+	profileReq := &ua.ReadRequest{
+		MaxAge: 2000,
+		NodesToRead: []*ua.ReadValueID{
+			{NodeID: ServerProfileArrayNodeID},
+		},
+		TimestampsToReturn: ua.TimestampsToReturnBoth,
+	}
+
+	// Mark as capability probe - server may not expose profile array
+	probeCtx := WithCapabilityProbe(ctx)
+	profileResp, err := g.Read(probeCtx, profileReq)
+	if err == nil && len(profileResp.Results) > 0 {
+		result := profileResp.Results[0]
+		if result.Status == ua.StatusOK && result.Value != nil {
+			// ServerProfileArray is Array of String
+			if profileArray, ok := result.Value.Value().([]string); ok {
+				caps.SupportsDataChangeFilter = detectDataChangeFilterSupport(profileArray)
+			}
+		}
+	}
+	// If profile query fails or returns non-OK status, SupportsDataChangeFilter remains false (safe default)
+
+	// Step 2: Query OperationLimits nodes (existing behavior)
 	nodeIDs := []*ua.NodeID{
 		MaxNodesPerBrowseNodeID,
 		MaxMonitoredItemsPerCallNodeID,
@@ -178,7 +249,6 @@ func (g *OPCUAInput) queryOperationLimits(ctx context.Context) (*ServerCapabilit
 	}
 
 	// Mark this as a capability probe - failures are expected for servers without OperationLimits
-	probeCtx := WithCapabilityProbe(ctx)
 	resp, err := g.Read(probeCtx, req)
 	if err != nil {
 		return nil, err
@@ -187,8 +257,6 @@ func (g *OPCUAInput) queryOperationLimits(ctx context.Context) (*ServerCapabilit
 	if len(resp.Results) != len(nodeIDs) {
 		return nil, errors.New("unexpected number of results")
 	}
-
-	caps := &ServerCapabilities{}
 
 	// Parse results - many servers return BadNodeIdUnknown if they don't support this
 	// Map index to capability field for cleaner assignment
