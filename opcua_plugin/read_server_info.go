@@ -152,6 +152,27 @@ var (
 // Presence of this profile indicates the server supports DataChangeFilter in MonitoredItem creation.
 const StandardDataChangeSubscriptionFacetURI = "http://opcfoundation.org/UA-Profile/Server/StandardDataChangeSubscription"
 
+// IMPORTANT: Why We Don't Use ServerProfileArray for DataChangeFilter Detection
+//
+// The OPC UA specification (Part 7, Section 6.4.3) defines ServerProfileArray (NodeID 2269)
+// as the standard mechanism for profile-based capability detection. In theory, servers
+// should declare conformance to specification facets via this array.
+//
+// In practice, major OPC UA servers do NOT reliably populate ServerProfileArray:
+//
+// 1. Kepware KEPServerEX: ServerProfileArray is empty or not exposed
+// 2. Ignition Gateway (Eclipse Milo): ServerProfileArray is not populated
+// 3. Siemens S7 PLCs: ServerProfileArray exists but is inconsistently populated
+//    - S7-1200: May not declare Micro Embedded Device profile
+//    - S7-1500: May not declare Standard facet despite supporting filters
+//
+// This widespread non-compliance makes ServerProfileArray unusable for reliable detection.
+// Instead, we use a hybrid approach:
+// 1. Profile defaults (production-validated, prevent wasted attempts for S7-1200)
+// 2. Trial-based learning (try with filter, catch StatusBadFilterNotAllowed, retry without)
+//
+// This approach is self-correcting and handles firmware upgrades that add filter support.
+
 // detectDataChangeFilterSupport checks if the server profile array contains the Standard DataChange Subscription facet.
 //
 // OPC UA Part 7, Section 6.4.3 defines profile-based capability detection:
