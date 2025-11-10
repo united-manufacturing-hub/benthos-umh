@@ -205,7 +205,9 @@ func (gwp *GlobalWorkerPool) SubmitTask(task GlobalPoolTask) (err error) {
 
 	defer func() {
 		// Recover from panic if channel is closed (send on closed channel panics)
+		// Counter was already incremented below, so we must decrement to maintain invariant
 		if r := recover(); r != nil {
+			atomic.AddInt64(&gwp.pendingTasks, -1)
 			err = errors.New("pool is shutdown")
 		}
 	}()
@@ -213,14 +215,15 @@ func (gwp *GlobalWorkerPool) SubmitTask(task GlobalPoolTask) (err error) {
 	// Increment tasksSubmitted counter (atomic)
 	atomic.AddUint64(&gwp.metricsTasksSubmitted, 1)
 
-	// Increment pendingTasks counter (atomic)
-	atomic.AddInt64(&gwp.pendingTasks, 1)
-
 	// Debug log task submission with metrics
 	if gwp.logger != nil {
 		metrics := gwp.GetMetrics()
 		gwp.logger.Debugf("Task submitted: nodeID=%s queueDepth=%d workers=%d", task.NodeID, metrics.QueueDepth, metrics.ActiveWorkers)
 	}
+
+	// Increment pendingTasks counter RIGHT before channel send (atomic)
+	// This ensures counter is only incremented if we actually send the task
+	atomic.AddInt64(&gwp.pendingTasks, 1)
 
 	// Send task to channel (will panic if closed, recovered by defer)
 	gwp.taskChan <- task
@@ -555,8 +558,9 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 						ErrChan:      task.ErrChan,
 					}
 					if err := gwp.SubmitTask(childTask); err != nil {
-						// SubmitTask already incremented counter - must decrement to maintain invariant
-						gwp.decrementPendingTasks()
+						// SubmitTask counter increment only happens if task is successfully queued
+						// If error occurred (shutdown check or panic), counter was never incremented
+						// Therefore, do NOT decrement here - counter is already correct
 
 						// Log error for debugging
 						if gwp.logger != nil {
