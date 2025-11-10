@@ -803,7 +803,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 			task := GlobalPoolTask{ResultChan: resultChan}
 			stubNode := NodeDef{NodeID: &ua.NodeID{}}
 
-			sent := pool.sendTaskResult(task, stubNode, logger)
+			sent := pool.sendTaskResult(task, stubNode, logger, false)
 			Expect(sent).To(BeTrue())
 
 			var result NodeDef
@@ -820,7 +820,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 			task := GlobalPoolTask{ResultChan: sendOnly}
 			stubNode := NodeDef{NodeID: &ua.NodeID{}}
 
-			sent := pool.sendTaskResult(task, stubNode, logger)
+			sent := pool.sendTaskResult(task, stubNode, logger, false)
 			Expect(sent).To(BeTrue())
 
 			var result NodeDef
@@ -835,7 +835,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 			task := GlobalPoolTask{ResultChan: resultChan}
 			stubNode := NodeDef{NodeID: &ua.NodeID{}}
 
-			sent := pool.sendTaskResult(task, stubNode, logger)
+			sent := pool.sendTaskResult(task, stubNode, logger, false)
 			Expect(sent).To(BeTrue())
 
 			Eventually(resultChan).Should(Receive())
@@ -849,7 +849,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 			task := GlobalPoolTask{ResultChan: unsupportedChan}
 			stubNode := NodeDef{NodeID: &ua.NodeID{}}
 
-			sent := pool.sendTaskResult(task, stubNode, logger)
+			sent := pool.sendTaskResult(task, stubNode, logger, false)
 			Expect(sent).To(BeFalse())
 			// Note: Debug logging is tested implicitly - method should not panic
 		})
@@ -861,7 +861,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 			task := GlobalPoolTask{ResultChan: nil}
 			stubNode := NodeDef{NodeID: &ua.NodeID{}}
 
-			sent := pool.sendTaskResult(task, stubNode, logger)
+			sent := pool.sendTaskResult(task, stubNode, logger, false)
 			Expect(sent).To(BeFalse())
 		})
 	})
