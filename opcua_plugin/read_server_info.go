@@ -167,9 +167,12 @@ const StandardDataChangeSubscriptionFacetURI = "http://opcfoundation.org/UA-Prof
 //    - S7-1500: May not declare Standard facet despite supporting filters
 //
 // This widespread non-compliance makes ServerProfileArray unusable for reliable detection.
-// Instead, we use a hybrid approach:
+// Instead, we will implement a hybrid approach:
 // 1. Profile defaults (production-validated, prevent wasted attempts for S7-1200)
 // 2. Trial-based learning (try with filter, catch StatusBadFilterNotAllowed, retry without)
+//
+// Note: Trial-based learning will be implemented in the MonitorBatched function (read_discover.go).
+// The current implementation uses preventative checking based on profile defaults.
 //
 // This approach is self-correcting and handles firmware upgrades that add filter support.
 
