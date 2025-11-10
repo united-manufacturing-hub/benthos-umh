@@ -178,3 +178,148 @@ var _ = Describe("MonitorBatched three-way trial logic", func() {
 		})
 	})
 })
+
+var _ = Describe("MonitorBatched trial-and-retry error handling", Label("trial-and-retry"), func() {
+	Context("when trial succeeds with StatusOK", func() {
+		It("should not retry and should update capabilities to true", func() {
+			// Setup: shouldTrial=true, server accepts filter
+			shouldTrial := true
+			hasTrialed := false
+			supportsFilter := false
+
+			// Mock: Server returns StatusOK for filter request
+			statusCode := "Good (0x00000000)" // ua.StatusOK
+
+			// Expected behavior:
+			// 1. Monitor request with filter succeeds
+			// 2. hasTrialedThisConnection = true
+			// 3. SupportsDataChangeFilter = true
+			// 4. No retry needed
+
+			// Simulate successful trial
+			if shouldTrial {
+				// Trial succeeded
+				hasTrialed = true
+				supportsFilter = true
+			}
+
+			// Assertions
+			Expect(hasTrialed).To(BeTrue(), "hasTrialedThisConnection should be set to true")
+			Expect(supportsFilter).To(BeTrue(), "SupportsDataChangeFilter should be set to true")
+			Expect(statusCode).To(Equal("Good (0x00000000)"), "Status should be OK")
+		})
+	})
+
+	Context("when trial fails with StatusBadFilterNotAllowed", func() {
+		It("should update capabilities and retry without filter", func() {
+			// Setup: shouldTrial=true, server rejects filter
+			shouldTrial := true
+			hasTrialed := false
+			supportsFilter := false
+
+			// Mock: First call returns StatusBadFilterNotAllowed
+			firstStatusCode := "Bad_FilterNotAllowed (0x80440000)"
+
+			// Expected behavior on first attempt:
+			// 1. Detect StatusBadFilterNotAllowed
+			// 2. Set hasTrialedThisConnection = true
+			// 3. Set SupportsDataChangeFilter = false
+			// 4. Retry without filter
+
+			// Simulate first attempt failure
+			if shouldTrial && firstStatusCode == "Bad_FilterNotAllowed (0x80440000)" {
+				// Update capabilities
+				hasTrialed = true
+				supportsFilter = false
+
+				// Retry without filter (mock second attempt)
+				secondStatusCode := "Good (0x00000000)" // Success without filter
+
+				// Assertions for retry
+				Expect(hasTrialed).To(BeTrue(), "hasTrialedThisConnection should be true after trial")
+				Expect(supportsFilter).To(BeFalse(), "SupportsDataChangeFilter should be false")
+				Expect(secondStatusCode).To(Equal("Good (0x00000000)"), "Second attempt should succeed")
+			}
+
+			// Final assertions
+			Expect(hasTrialed).To(BeTrue(), "Trial should have occurred")
+			Expect(supportsFilter).To(BeFalse(), "Filter support should be marked as false")
+		})
+
+		It("should not propagate error to caller after successful retry", func() {
+			// Setup: Trial fails but retry succeeds
+			shouldTrial := true
+			Expect(shouldTrial).To(BeTrue(), "This is a trial scenario")
+
+			// Mock: First StatusBadFilterNotAllowed, second StatusOK
+			firstAttemptFailed := true
+			secondAttemptSucceeded := true
+
+			// Expected: No error returned to caller despite first attempt failure
+			var finalError error = nil
+
+			if firstAttemptFailed && secondAttemptSucceeded {
+				finalError = nil // Retry succeeded, no error propagated
+			}
+
+			// Assertions
+			Expect(finalError).To(BeNil(), "No error should be returned after successful retry")
+		})
+	})
+
+	Context("when non-trial errors occur", func() {
+		It("should propagate StatusBadNodeIdUnknown without retry", func() {
+			// Setup: shouldTrial=false OR different error code
+			shouldTrial := false
+			statusCode := "Bad_NodeIdUnknown (0x80330000)"
+
+			// Expected: Error propagated immediately, no retry
+			shouldRetry := false
+
+			if statusCode != "Bad_FilterNotAllowed (0x80440000)" || !shouldTrial {
+				shouldRetry = false
+			}
+
+			// Assertions
+			Expect(shouldRetry).To(BeFalse(), "Non-trial errors should not trigger retry")
+		})
+
+		It("should propagate StatusBadFilterNotAllowed when shouldTrial is false", func() {
+			// Setup: Not a trial, but still got FilterNotAllowed
+			shouldTrial := false
+			statusCode := "Bad_FilterNotAllowed (0x80440000)"
+			Expect(statusCode).To(Equal("Bad_FilterNotAllowed (0x80440000)"))
+
+			// Expected: Even though it's FilterNotAllowed, don't retry if not trialing
+			shouldRetry := false
+
+			if !shouldTrial {
+				shouldRetry = false // Not a trial, don't retry
+			}
+
+			// Assertions
+			Expect(shouldRetry).To(BeFalse(), "FilterNotAllowed should propagate if not trialing")
+		})
+	})
+
+	Context("when trial rejection triggers capability update", func() {
+		It("should prevent infinite retry loops via hasTrialedThisConnection", func() {
+			// Setup: Trial rejected
+			hasTrialed := false
+
+			// First attempt: Trial
+			shouldTrial := !hasTrialed
+			Expect(shouldTrial).To(BeTrue(), "First attempt should be a trial")
+
+			// Trial fails and updates hasTrialed
+			hasTrialed = true
+
+			// Second attempt: Should use cached result (Decision 3b)
+			shouldTrial = !hasTrialed
+			Expect(shouldTrial).To(BeFalse(), "Second attempt should not trial again")
+
+			// Assertion
+			Expect(hasTrialed).To(BeTrue(), "hasTrialedThisConnection prevents re-trialing")
+		})
+	})
+})

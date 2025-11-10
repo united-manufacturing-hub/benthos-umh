@@ -440,7 +440,28 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 			if !errors.Is(result.StatusCode, ua.StatusOK) {
 				failedNode := batch[i].NodeID.String()
 
-				// Record metric for subscription failure
+				// Trial-and-retry logic: If this was a trial and got filter rejection, retry without filter
+				if shouldTrial && errors.Is(result.StatusCode, ua.StatusBadFilterNotAllowed) {
+					// Trial failed - server doesn't support DataChangeFilter
+					g.Log.Infof("DataChangeFilter trial failed for node %s: %v. Updating capabilities and retrying without filter.",
+						failedNode, result.StatusCode)
+
+					// Update ServerCapabilities with learned result
+					if g.ServerCapabilities != nil {
+						g.ServerCapabilities.hasTrialedThisConnection = true
+						g.ServerCapabilities.SupportsDataChangeFilter = false
+					}
+
+					// Retry this batch recursively - the three-way logic will now hit Decision 3b (cached false)
+					// This prevents infinite loops since hasTrialedThisConnection=true now
+					g.Log.Debugf("Retrying all nodes without DataChangeFilter (recursive call with cached result)...")
+
+					// Recursive call: MonitorBatched will see hasTrialedThisConnection=true and use cached false
+					// Pass all original nodes to restart batching from scratch with updated capability
+					return g.MonitorBatched(ctx, nodes)
+				}
+
+				// Non-trial error or different error code - propagate normally
 				RecordSubscriptionFailure(result.StatusCode, failedNode)
 
 				g.Log.Errorf("Failed to monitor node %s: %v", failedNode, result.StatusCode)
@@ -454,6 +475,13 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 				}
 				return totalMonitored, fmt.Errorf("monitoring failed for node %s: %v", failedNode, result.StatusCode)
 			}
+		}
+
+		// After successful batch processing, mark trial success if this was a trial
+		if shouldTrial && g.ServerCapabilities != nil {
+			g.ServerCapabilities.hasTrialedThisConnection = true
+			g.ServerCapabilities.SupportsDataChangeFilter = true
+			g.Log.Infof("DataChangeFilter trial succeeded. Capability confirmed and cached.")
 		}
 
 		monitoredNodes := len(response.Results)
