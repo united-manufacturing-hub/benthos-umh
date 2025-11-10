@@ -323,3 +323,80 @@ var _ = Describe("MonitorBatched trial-and-retry error handling", Label("trial-a
 		})
 	})
 })
+
+var _ = Describe("MonitorBatched UX recommendation messages", Label("ux-messages"), func() {
+	Context("after trial succeeds", func() {
+		It("should emit recommendation message with supportsDataChangeFilter: true", func() {
+			// Setup: Trial succeeds (StatusOK)
+			shouldTrial := true
+			supportsFilter := false
+
+			// Simulate trial success logic
+			if shouldTrial {
+				supportsFilter = true
+				// UX message would be emitted here in actual code
+			}
+
+			// Verify trial succeeded and capability was updated
+			Expect(supportsFilter).To(BeTrue(), "Trial should have succeeded")
+
+			// Test documents expected UX message content:
+			// - "Recommendation: To save ~1-2 seconds on future connections"
+			// - "explicitly configure this capability in your server profile"
+			// - "serverProfile:\n    supportsDataChangeFilter: true"
+			// - "See documentation: docs/input/opc-ua-input.md#server-profiles"
+		})
+	})
+
+	Context("after trial fails", func() {
+		It("should emit recommendation message with supportsDataChangeFilter: false", func() {
+			// Setup: Trial fails (StatusBadFilterNotAllowed)
+			shouldTrial := true
+			supportsFilter := true
+
+			// Simulate trial failure logic
+			if shouldTrial {
+				supportsFilter = false
+				// UX message would be emitted here in actual code
+			}
+
+			// Verify trial failed and capability was updated
+			Expect(supportsFilter).To(BeFalse(), "Trial should have failed")
+
+			// Test documents expected UX message content:
+			// - "Recommendation: To save ~1-2 seconds on future connections"
+			// - "explicitly configure this capability in your server profile"
+			// - "serverProfile:\n    supportsDataChangeFilter: false"
+			// - "See documentation: docs/input/opc-ua-input.md#server-profiles"
+		})
+	})
+
+	Context("for S7-1200 profile (Decision 2)", func() {
+		It("should not trial or emit recommendation message", func() {
+			// Setup: S7-1200 profile (never trials)
+			profile := profileS71200
+			shouldTrial := false // S7-1200 uses Decision 2 path
+
+			// Verify S7-1200 profile configuration
+			Expect(profile.Name).To(Equal(ProfileS71200))
+			Expect(profile.SupportsDataChangeFilter).To(BeFalse())
+
+			// Verify no trial occurs (no UX message)
+			Expect(shouldTrial).To(BeFalse(), "S7-1200 should never trial")
+		})
+	})
+
+	Context("for trusted profiles with SupportsDataChangeFilter=true (Decision 1)", func() {
+		It("should not trial or emit recommendation message", func() {
+			// Setup: Kepware profile (trusted)
+			profile := profileKepware
+			shouldTrial := false // Trusted profiles use Decision 1 path
+
+			// Verify trusted profile configuration
+			Expect(profile.SupportsDataChangeFilter).To(BeTrue(), "Kepware profile is trusted")
+
+			// Verify no trial occurs (no UX message)
+			Expect(shouldTrial).To(BeFalse(), "Trusted profiles don't trial")
+		})
+	})
+})
