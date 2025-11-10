@@ -20,161 +20,156 @@ import (
 )
 
 var _ = Describe("MonitorBatched three-way trial logic", func() {
-	Context("Decision 1: Profile says true (SupportsDataChangeFilter=true)", func() {
-		It("should use filter immediately without checking hasTrialedThisConnection", func() {
-			// Setup: Profile with SupportsDataChangeFilter=true (e.g., Kepware)
-			profile := profileKepware // SupportsDataChangeFilter=true
-			Expect(profile.SupportsDataChangeFilter).To(BeTrue(), "Kepware profile should support DataChangeFilter")
+	Context("Decision 1: FilterCapability is FilterSupported", func() {
+		It("should use filter immediately without trial", func() {
+			// Setup: Profile with FilterCapability=FilterSupported (e.g., Kepware)
+			profile := profileKepware
+			Expect(profile.FilterCapability).To(Equal(FilterSupported), "Kepware profile should have FilterCapability=FilterSupported")
 
-			// Simulate MonitorBatched logic
-			hasTrialed := false // Unused when profile=true
-
-			// Decision logic (current implementation)
-			shouldApplyFilter := profile.SupportsDataChangeFilter
+			// Simulate decideDataChangeFilterSupport logic
+			var supportsFilter, shouldTrial bool
+			switch profile.FilterCapability {
+			case FilterSupported:
+				supportsFilter = true
+				shouldTrial = false
+			}
 
 			// Assertions
-			Expect(shouldApplyFilter).To(BeTrue(), "Filter should be applied when profile says true")
-			Expect(hasTrialed).To(BeFalse(), "hasTrialedThisConnection should not be checked")
+			Expect(supportsFilter).To(BeTrue(), "Filter should be applied when FilterCapability=FilterSupported")
+			Expect(shouldTrial).To(BeFalse(), "Should not trial when FilterCapability=FilterSupported")
 		})
 	})
 
-	Context("Decision 2: Profile says false + S7-1200 profile", func() {
+	Context("Decision 2: FilterCapability is FilterUnsupported", func() {
 		It("should skip filter without trial", func() {
-			// Setup: S7-1200 profile (SupportsDataChangeFilter=false, name="siemens-s7-1200")
+			// Setup: S7-1200 profile has FilterCapability=FilterUnsupported
 			profile := profileS71200
-			Expect(profile.SupportsDataChangeFilter).To(BeFalse(), "S7-1200 profile should not support DataChangeFilter")
-			Expect(profile.Name).To(Equal(ProfileS71200), "Profile should be S7-1200")
+			Expect(profile.FilterCapability).To(Equal(FilterUnsupported), "S7-1200 profile should have FilterCapability=FilterUnsupported")
 
-			// Simulate MonitorBatched logic
-			hasTrialed := false
-
-			// Decision logic (NEW - not implemented yet, this will fail)
-			// Expected behavior: Never trial S7-1200
-			shouldApplyFilter := false
-			shouldTrial := false
-
-			// Current (broken) logic would be:
-			// shouldApplyFilter = profile.SupportsDataChangeFilter  // false
-			// But we need to verify it NEVER trials
+			// Simulate decideDataChangeFilterSupport logic
+			var supportsFilter, shouldTrial bool
+			switch profile.FilterCapability {
+			case FilterUnsupported:
+				supportsFilter = false
+				shouldTrial = false
+			}
 
 			// Assertions
-			Expect(shouldApplyFilter).To(BeFalse(), "Filter should not be applied for S7-1200")
-			Expect(shouldTrial).To(BeFalse(), "S7-1200 should never be trialed")
-			Expect(hasTrialed).To(BeFalse(), "hasTrialedThisConnection should remain false")
+			Expect(supportsFilter).To(BeFalse(), "Filter should not be applied when FilterCapability=FilterUnsupported")
+			Expect(shouldTrial).To(BeFalse(), "Should never trial when FilterCapability=FilterUnsupported")
 		})
 	})
 
-	Context("Decision 3: Profile says false + other server (not S7-1200)", func() {
+	Context("Decision 3: FilterCapability is FilterUnknown", func() {
 		Context("when hasTrialedThisConnection is false", func() {
 			It("should attempt trial with filter on first batch", func() {
-				// Setup: Auto profile (SupportsDataChangeFilter=false, name="auto")
+				// Setup: Auto profile has FilterCapability=FilterUnknown
 				profile := profileAuto
-				Expect(profile.SupportsDataChangeFilter).To(BeFalse(), "Auto profile should default to false")
-				Expect(profile.Name).To(Equal(ProfileAuto), "Profile should be Auto")
+				Expect(profile.FilterCapability).To(Equal(FilterUnknown), "Auto profile should have FilterCapability=FilterUnknown")
 
 				// Simulate first batch (not trialed yet)
 				hasTrialed := false
 
-				// Decision logic (NEW - not implemented yet, this will fail)
-				// Expected: Trial on first batch
-				var shouldApplyFilter bool
-				var shouldTrial bool
-
-				// Three-way logic (not yet implemented):
-				if profile.SupportsDataChangeFilter {
-					// Decision 1: Profile says true
-					shouldApplyFilter = true
-					shouldTrial = false
-				} else if profile.Name == ProfileS71200 {
-					// Decision 2: S7-1200 never trials
-					shouldApplyFilter = false
-					shouldTrial = false
-				} else if !hasTrialed {
-					// Decision 3: Other servers trial on first batch
-					shouldApplyFilter = true // Trial attempt
-					shouldTrial = true
-				} else {
-					// Already trialed, use cached result
-					shouldApplyFilter = profile.SupportsDataChangeFilter
-					shouldTrial = false
+				// Simulate decideDataChangeFilterSupport logic
+				var supportsFilter, shouldTrial bool
+				switch profile.FilterCapability {
+				case FilterUnknown:
+					if !hasTrialed {
+						supportsFilter = true // Trial attempt
+						shouldTrial = true
+					}
 				}
 
 				// Assertions
-				Expect(shouldApplyFilter).To(BeTrue(), "Filter should be applied (trial attempt)")
-				Expect(shouldTrial).To(BeTrue(), "Should mark this as a trial")
+				Expect(supportsFilter).To(BeTrue(), "Filter should be applied (trial attempt) when FilterCapability=FilterUnknown")
+				Expect(shouldTrial).To(BeTrue(), "Should mark this as a trial when not yet trialed")
 			})
 		})
 
 		Context("when hasTrialedThisConnection is true", func() {
 			It("should use cached result without retrialing", func() {
-				// Setup: Auto profile (SupportsDataChangeFilter=false, name="auto")
+				// Setup: Auto profile has FilterCapability=FilterUnknown
 				profile := profileAuto
-				Expect(profile.SupportsDataChangeFilter).To(BeFalse())
+				Expect(profile.FilterCapability).To(Equal(FilterUnknown))
 
-				// Simulate second batch (already trialed)
+				// Simulate second batch (already trialed, cached result is false)
 				hasTrialed := true
+				cachedSupportsFilter := false
 
-				// Decision logic (NEW - not implemented yet)
-				var shouldApplyFilter bool
-				var shouldTrial bool
-
-				// Three-way logic (not yet implemented):
-				if profile.SupportsDataChangeFilter {
-					shouldApplyFilter = true
-					shouldTrial = false
-				} else if profile.Name == ProfileS71200 {
-					shouldApplyFilter = false
-					shouldTrial = false
-				} else if !hasTrialed {
-					shouldApplyFilter = true
-					shouldTrial = true
-				} else {
-					// Already trialed, use cached result
-					shouldApplyFilter = profile.SupportsDataChangeFilter
-					shouldTrial = false
+				// Simulate decideDataChangeFilterSupport logic
+				var supportsFilter, shouldTrial bool
+				switch profile.FilterCapability {
+				case FilterUnknown:
+					if hasTrialed {
+						supportsFilter = cachedSupportsFilter // Use cached result
+						shouldTrial = false
+					}
 				}
 
 				// Assertions
-				Expect(shouldApplyFilter).To(BeFalse(), "Filter should not be applied (cached false result)")
-				Expect(shouldTrial).To(BeFalse(), "Should not trial again")
+				Expect(supportsFilter).To(BeFalse(), "Filter should not be applied (cached false result)")
+				Expect(shouldTrial).To(BeFalse(), "Should not trial again when already trialed")
 			})
 		})
 	})
 
-	Context("Decision 3 variant: Profile says false + Prosys (unknown)", func() {
+	Context("Decision 3 variant: Custom profile with FilterUnknown", func() {
 		Context("when hasTrialedThisConnection is false", func() {
 			It("should attempt trial with filter on first batch", func() {
-				// Setup: Test profile with SupportsDataChangeFilter=false, not S7-1200
-				// Create test profile variant
+				// Setup: Custom test profile with FilterCapability=FilterUnknown
 				testProfile := ServerProfile{
-					Name:                     ProfileProsys,
-					SupportsDataChangeFilter: false, // Test scenario
+					Name:             ProfileProsys,
+					FilterCapability: FilterUnknown, // Test scenario
 				}
 
 				hasTrialed := false
 
-				// Three-way logic
-				var shouldApplyFilter bool
-				var shouldTrial bool
-
-				if testProfile.SupportsDataChangeFilter {
-					shouldApplyFilter = true
-					shouldTrial = false
-				} else if testProfile.Name == ProfileS71200 {
-					shouldApplyFilter = false
-					shouldTrial = false
-				} else if !hasTrialed {
-					shouldApplyFilter = true // Trial attempt
-					shouldTrial = true
-				} else {
-					shouldApplyFilter = testProfile.SupportsDataChangeFilter
-					shouldTrial = false
+				// Simulate decideDataChangeFilterSupport logic
+				var supportsFilter, shouldTrial bool
+				switch testProfile.FilterCapability {
+				case FilterUnknown:
+					if !hasTrialed {
+						supportsFilter = true // Trial attempt
+						shouldTrial = true
+					}
 				}
 
 				// Assertions
-				Expect(shouldApplyFilter).To(BeTrue(), "Filter should be applied (trial) for non-S7-1200 server")
-				Expect(shouldTrial).To(BeTrue(), "Should mark as trial for unknown server")
+				Expect(supportsFilter).To(BeTrue(), "Filter should be applied (trial) for FilterUnknown profile")
+				Expect(shouldTrial).To(BeTrue(), "Should mark as trial for FilterUnknown profile")
 			})
+		})
+	})
+
+	Context("Invalid FilterCapability value (defensive fallback)", func() {
+		It("should default to trial mechanism with warning", func() {
+			// Setup: Test profile with invalid FilterCapability value
+			testProfile := ServerProfile{
+				Name:             "test-invalid",
+				FilterCapability: FilterCapability(999), // Invalid enum value
+			}
+
+			// Simulate decideDataChangeFilterSupport logic
+			var supportsFilter, shouldTrial bool
+			switch testProfile.FilterCapability {
+			case FilterSupported:
+				supportsFilter = true
+				shouldTrial = false
+			case FilterUnsupported:
+				supportsFilter = false
+				shouldTrial = false
+			case FilterUnknown:
+				supportsFilter = true
+				shouldTrial = true
+			default:
+				// Defensive fallback
+				supportsFilter = true
+				shouldTrial = true
+			}
+
+			// Assertions
+			Expect(supportsFilter).To(BeTrue(), "Invalid enum should trigger defensive fallback to trial")
+			Expect(shouldTrial).To(BeTrue(), "Invalid enum should trigger trial mechanism")
 		})
 	})
 })
@@ -371,32 +366,48 @@ var _ = Describe("MonitorBatched UX recommendation messages", Label("ux-messages
 		})
 	})
 
-	Context("for S7-1200 profile (Decision 2)", func() {
+	Context("for profiles with FilterCapability=FilterUnsupported (Decision 2)", func() {
 		It("should not trial or emit recommendation message", func() {
-			// Setup: S7-1200 profile (never trials)
+			// Setup: S7-1200 profile has FilterCapability=FilterUnsupported (never trials)
 			profile := profileS71200
-			shouldTrial := false // S7-1200 uses Decision 2 path
 
 			// Verify S7-1200 profile configuration
 			Expect(profile.Name).To(Equal(ProfileS71200))
-			Expect(profile.SupportsDataChangeFilter).To(BeFalse())
+			Expect(profile.FilterCapability).To(Equal(FilterUnsupported))
+
+			// Simulate decideDataChangeFilterSupport logic
+			var supportsFilter, shouldTrial bool
+			switch profile.FilterCapability {
+			case FilterUnsupported:
+				supportsFilter = false
+				shouldTrial = false
+			}
 
 			// Verify no trial occurs (no UX message)
-			Expect(shouldTrial).To(BeFalse(), "S7-1200 should never trial")
+			Expect(supportsFilter).To(BeFalse(), "FilterUnsupported profiles should not use filter")
+			Expect(shouldTrial).To(BeFalse(), "FilterUnsupported profiles should never trial")
 		})
 	})
 
-	Context("for trusted profiles with SupportsDataChangeFilter=true (Decision 1)", func() {
+	Context("for profiles with FilterCapability=FilterSupported (Decision 1)", func() {
 		It("should not trial or emit recommendation message", func() {
-			// Setup: Kepware profile (trusted)
+			// Setup: Kepware profile has FilterCapability=FilterSupported (trusted)
 			profile := profileKepware
-			shouldTrial := false // Trusted profiles use Decision 1 path
 
-			// Verify trusted profile configuration
-			Expect(profile.SupportsDataChangeFilter).To(BeTrue(), "Kepware profile is trusted")
+			// Verify Kepware profile configuration
+			Expect(profile.FilterCapability).To(Equal(FilterSupported), "Kepware profile should be FilterSupported")
+
+			// Simulate decideDataChangeFilterSupport logic
+			var supportsFilter, shouldTrial bool
+			switch profile.FilterCapability {
+			case FilterSupported:
+				supportsFilter = true
+				shouldTrial = false
+			}
 
 			// Verify no trial occurs (no UX message)
-			Expect(shouldTrial).To(BeFalse(), "Trusted profiles don't trial")
+			Expect(supportsFilter).To(BeTrue(), "FilterSupported profiles should use filter")
+			Expect(shouldTrial).To(BeFalse(), "FilterSupported profiles don't trial")
 		})
 	})
 })

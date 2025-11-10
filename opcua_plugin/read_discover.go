@@ -272,6 +272,44 @@ func CalculateBatches(totalNodes, maxBatchSize int) []BatchRange {
 	return batches
 }
 
+// decideDataChangeFilterSupport determines whether to use DataChangeFilter based on profile capability.
+// Returns (supportsFilter bool, shouldTrial bool).
+//
+// The function implements three-way decision logic using FilterCapability enum:
+//   - FilterSupported: Use filter immediately without trial (Decision 1)
+//   - FilterUnsupported: Never use filter, skip trial (Decision 2)
+//   - FilterUnknown: Trial on first batch, cache result for subsequent batches (Decision 3)
+//
+// This replaces hardcoded vendor checks (e.g., if g.ServerProfile.Name == ProfileS71200)
+// with declarative profile configuration, enabling zero-code support for new vendors.
+func (g *OPCUAInput) decideDataChangeFilterSupport() (bool, bool) {
+	switch g.ServerProfile.FilterCapability {
+	case FilterSupported:
+		// Decision 1: Profile declares support → trust immediately
+		return true, false
+	case FilterUnsupported:
+		// Decision 2: Profile declares no support → never trial
+		return false, false
+	case FilterUnknown:
+		// Decision 3: Unknown support → trial-based discovery
+		if g.ServerCapabilities != nil && !g.ServerCapabilities.hasTrialedThisConnection {
+			// Decision 3a: First batch → attempt trial
+			return true, true
+		}
+		if g.ServerCapabilities != nil && g.ServerCapabilities.hasTrialedThisConnection {
+			// Decision 3b: Already trialed → use cached result
+			return g.ServerCapabilities.SupportsDataChangeFilter, false
+		}
+		// Fallback: No ServerCapabilities yet (shouldn't happen)
+		g.Log.Warnf("DataChangeFilter: ServerCapabilities not initialized, using profile default=%v", g.ServerProfile.SupportsDataChangeFilter)
+		return g.ServerProfile.SupportsDataChangeFilter, false
+	default:
+		// Invalid enum value - defensive fallback to trial mechanism
+		g.Log.Warnf("Invalid FilterCapability value - defaulting to trial mechanism (filterCapability=%d)", g.ServerProfile.FilterCapability)
+		return true, true
+	}
+}
+
 // MonitorBatched splits the nodes into manageable batches and starts monitoring them.
 // This approach prevents the server from returning BadTcpMessageTooLarge by avoiding oversized monitoring requests.
 //
@@ -356,34 +394,22 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 	// - Breaking existing working servers (Decision 1 - trusted profiles use filter immediately)
 	//
 	// See ENG-3880 Linear ticket for complete hardware test logs, screenshots, and validation evidence.
-	var supportsFilter bool
-	var shouldTrial bool // Set to true for Decision 3 trial path, used in line 443 error handling
 
-	if g.ServerProfile.SupportsDataChangeFilter {
-		// Decision 1: Profile says true → trust immediately
-		supportsFilter = true
-		shouldTrial = false
-		g.Log.Debugf("DataChangeFilter enabled by profile (profile=%s supports filter)", g.ServerProfile.Name)
-	} else if g.ServerProfile.Name == ProfileS71200 {
-		// Decision 2: S7-1200 → never trial (known Micro Embedded Device profile)
-		supportsFilter = false
-		shouldTrial = false
-		g.Log.Debugf("DataChangeFilter disabled for S7-1200 (Micro Embedded Device profile, filter not supported)")
-	} else if g.ServerCapabilities != nil && !g.ServerCapabilities.hasTrialedThisConnection {
-		// Decision 3a: Other servers + not trialed yet → attempt trial
-		supportsFilter = true // Trial attempt on first batch
-		shouldTrial = true
-		g.Log.Infof("DataChangeFilter: Attempting trial for profile=%s (unknown support, first batch)", g.ServerProfile.Name)
-	} else if g.ServerCapabilities != nil && g.ServerCapabilities.hasTrialedThisConnection {
-		// Decision 3b: Already trialed → use cached result
-		supportsFilter = g.ServerCapabilities.SupportsDataChangeFilter
-		shouldTrial = false
-		g.Log.Debugf("DataChangeFilter: Using cached trial result=%v (profile=%s, already trialed)", supportsFilter, g.ServerProfile.Name)
-	} else {
-		// Fallback: No ServerCapabilities yet (shouldn't happen in practice)
-		supportsFilter = g.ServerProfile.SupportsDataChangeFilter
-		shouldTrial = false
-		g.Log.Warnf("DataChangeFilter: ServerCapabilities not initialized, using profile default=%v", supportsFilter)
+	// Use FilterCapability enum to decide filter support (replaces hardcoded vendor checks)
+	supportsFilter, shouldTrial := g.decideDataChangeFilterSupport()
+
+	// Log decision for debugging
+	switch g.ServerProfile.FilterCapability {
+	case FilterSupported:
+		g.Log.Debugf("DataChangeFilter enabled by profile (profile=%s, FilterCapability=FilterSupported)", g.ServerProfile.Name)
+	case FilterUnsupported:
+		g.Log.Debugf("DataChangeFilter disabled by profile (profile=%s, FilterCapability=FilterUnsupported)", g.ServerProfile.Name)
+	case FilterUnknown:
+		if shouldTrial {
+			g.Log.Infof("DataChangeFilter: Attempting trial for profile=%s (FilterCapability=FilterUnknown, first batch)", g.ServerProfile.Name)
+		} else {
+			g.Log.Debugf("DataChangeFilter: Using cached trial result=%v (profile=%s, FilterCapability=FilterUnknown)", supportsFilter, g.ServerProfile.Name)
+		}
 	}
 
 	g.Log.With("batchSize", maxBatchSize).

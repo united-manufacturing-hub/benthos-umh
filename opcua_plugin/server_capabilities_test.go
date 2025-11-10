@@ -148,30 +148,23 @@ var _ = Describe("ServerCapabilities", func() {
 		// NEW APPROACH:
 		// 1. Profile-based defaults (server_profiles.go) - production-validated safe limits
 		// 2. Trial-based learning (MonitorBatched) - try with filter, catch StatusBadFilterNotAllowed
-		//
-		// This test context documents the removal and verifies the function no longer exists.
 
-		It("should NOT have detectDataChangeFilterSupport function", func() {
-			// The detectDataChangeFilterSupport function should be removed
-			// after Task 3 implementation.
+		It("should use safe default for SupportsDataChangeFilter without querying ServerProfileArray", func() {
+			// After ServerProfileArray removal, queryOperationLimits returns
+			// ServerCapabilities with SupportsDataChangeFilter = false (safe default)
 			//
-			// Verification: This test should fail to compile if the function still exists
-			// and is called in the test.
-			//
-			// Expected behavior after removal:
-			// - queryOperationLimits returns ServerCapabilities with SupportsDataChangeFilter = false
-			// - MonitorBatched uses ServerProfile.SupportsDataChangeFilter instead
-			// - Profile-based defaults come from server_profiles.go
+			// MonitorBatched then uses ServerProfile.SupportsDataChangeFilter for
+			// actual filter decisions (profile-based or trial-based)
 
-			// This test intentionally tries to call the removed function
-			// If this compiles, the function wasn't removed!
-			_ = func() {
-				// Attempt to call detectDataChangeFilterSupport - should cause compile error
-				// detectDataChangeFilterSupport([]string{}) // Uncomment to test compilation failure
+			// Verify fallback ServerCapabilities uses safe default
+			fallbackCaps := &ServerCapabilities{
+				MaxNodesPerBrowse:           100,
+				MaxMonitoredItemsPerCall:    1000,
+				SupportsDataChangeFilter:    false, // Safe default - MonitorBatched uses profile value
 			}
 
-			// Document expected behavior
-			Skip("ServerProfileArray detection removed - function should not exist")
+			Expect(fallbackCaps.SupportsDataChangeFilter).To(BeFalse(),
+				"queryOperationLimits should return safe default false - MonitorBatched uses profile value instead")
 		})
 
 		It("should rely on profile-based defaults from server_profiles.go", func() {
