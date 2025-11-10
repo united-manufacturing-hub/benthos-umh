@@ -290,14 +290,29 @@ var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
 				"ns=1;i=3000",
 			}
 
-			resultChan := make(chan any, len(nodeIDs))
+			resultChan := make(chan NodeDef, len(nodeIDs))
 			errChan := make(chan error, len(nodeIDs))
+			visited := &sync.Map{}
 
-			for _, nodeID := range nodeIDs {
+			ctx := context.Background()
+
+			for _, nodeIDStr := range nodeIDs {
+				// Create mock NodeBrowser (no children, simulates leaf node)
+				mockNode := &mockNodeBrowser{
+					id:       &ua.NodeID{},
+					children: nil, // No children = leaf node
+				}
+
 				task := GlobalPoolTask{
-					NodeID:     nodeID,
-					ResultChan: resultChan,
-					ErrChan:    errChan,
+					NodeID:       nodeIDStr,
+					Ctx:          ctx,
+					Node:         mockNode,
+					Path:         "",
+					Level:        0,
+					ParentNodeID: nodeIDStr,
+					Visited:      visited,
+					ResultChan:   resultChan,
+					ErrChan:      errChan,
 				}
 				err := pool.SubmitTask(task)
 				Expect(err).ToNot(HaveOccurred())

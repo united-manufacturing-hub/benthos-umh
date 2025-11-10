@@ -65,17 +65,18 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		close(opcuaBrowserConsumerDone)
 	}()
 
-	var wg TrackedWaitGroup
 	done := make(chan struct{})
 
+	// Progress reporting goroutine - tracks pool metrics instead of WaitGroup count
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				g.Log.Infof("Amount of found opcua tags currently in channel: %d, (%d active browse goroutines)",
-					len(nodeChan), wg.Count())
+				metrics := pool.GetMetrics()
+				g.Log.Infof("Amount of found opcua tags currently in channel: %d, (pool: %d active workers, %d pending tasks)",
+					len(nodeChan), metrics.ActiveWorkers, metrics.QueueDepth)
 			case <-done:
 				return
 			case <-timeoutCtx.Done():
@@ -85,10 +86,10 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		}
 	}()
 
-	// Submit browse tasks to GlobalWorkerPool for metrics tracking
-	// The pool tracks task submission/completion metrics but delegates actual browse execution
-	// to browse() goroutines below. This hybrid approach maintains browse() functionality
-	// while adding global worker pool coordination for observability.
+	// Submit browse tasks to GlobalWorkerPool for actual browse execution
+	// Each task represents a root NodeID to browse. The pool's workers will execute
+	// the browse operation and submit results to nodeChan/errChan/opcuaBrowserChan.
+	// This replaces the previous pattern of spawning independent browse() goroutines.
 	g.Log.Debugf("Submitting %d NodeIDs as tasks to GlobalWorkerPool", len(g.NodeIDs))
 	submittedCount := 0
 	for _, nodeID := range g.NodeIDs {
@@ -96,23 +97,31 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 			continue
 		}
 
-		// Submit task to pool for metrics tracking
-		// ResultChan/ErrChan are nil because browse() goroutine handles actual work
+		g.Log.Debugf("Submitting browse task for nodeID: %s", nodeID.String())
+
+		wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(nodeID))
+
+		// Submit fully-populated task to pool for browse execution
+		// Pool workers will call Node.Children() and recursively browse the tree
 		task := GlobalPoolTask{
-			NodeID:     nodeID.String(),
-			ResultChan: nil, // browse() goroutine produces results
-			ErrChan:    nil, // browse() goroutine handles errors
+			NodeID:       nodeID.String(),
+			Ctx:          timeoutCtx,
+			Node:         wrapperNodeID,
+			Path:         "", // Root path (empty for top-level nodes)
+			Level:        0,  // Start at recursion level 0
+			ParentNodeID: nodeID.String(),
+			Visited:      &g.visited,
+			ResultChan:   nodeChan,         // Workers send NodeDef results here
+			ErrChan:      errChan,          // Workers send errors here
+			ProgressChan: opcuaBrowserChan, // Workers send BrowseDetails progress here
 		}
+
 		if err := pool.SubmitTask(task); err != nil {
 			g.Log.Warnf("Failed to submit task for NodeID %s: %v", nodeID.String(), err)
+			// Task wasn't queued - don't count it
 		} else {
 			submittedCount++
 		}
-
-		g.Log.Debugf("Browsing nodeID: %s", nodeID.String())
-		wg.Add(1)
-		wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(nodeID))
-		go browse(timeoutCtx, wrapperNodeID, "", pool, nodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
 	}
 
 	g.Log.Debugf("Successfully submitted %d/%d tasks to GlobalWorkerPool (buffer capacity: %d)",
@@ -131,8 +140,11 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		close(consumerDone)
 	}()
 
+	// Wait for all pool tasks to complete using WaitForCompletion instead of WaitGroup
 	go func() {
-		wg.Wait()
+		if err := pool.WaitForCompletion(1 * time.Hour); err != nil {
+			g.Log.Warnf("Pool completion wait error: %v", err)
+		}
 		close(done)
 	}()
 
@@ -211,23 +223,47 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 		if !g.HeartbeatManualSubscribed {
 			heartbeatNodeID := g.HeartbeatNodeId
 
-			// Copied and pasted from above, just for one node
+			// Use separate pool for heartbeat node browse
 			nodeHeartbeatChan := make(chan NodeDef, 1)
 			errChanHeartbeat := make(chan error, 1)
 			opcuaBrowserChanHeartbeat := make(chan BrowseDetails, 1)
-			var wgHeartbeat TrackedWaitGroup
 
-			wgHeartbeat.Add(1)
-			wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(heartbeatNodeID))
 			heartbeatPool := NewGlobalWorkerPool(g.ServerProfile, g.Log)
 			defer func() {
 				if err := heartbeatPool.Shutdown(30 * time.Second); err != nil {
-					g.Log.Warnf("GlobalWorkerPool shutdown timeout: %v", err)
+					g.Log.Warnf("Heartbeat pool shutdown timeout: %v", err)
 				}
 			}()
-			go browse(ctx, wrapperNodeID, "", heartbeatPool, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat, opcuaBrowserChanHeartbeat, &g.visited)
 
-			wgHeartbeat.Wait()
+			// Spawn workers for heartbeat pool
+			workersSpawned := heartbeatPool.SpawnWorkers(g.ServerProfile.MinWorkers)
+			g.Log.Debugf("Heartbeat pool spawned %d workers", workersSpawned)
+
+			wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(heartbeatNodeID))
+
+			// Submit heartbeat browse task to pool
+			task := GlobalPoolTask{
+				NodeID:       heartbeatNodeID.String(),
+				Ctx:          ctx,
+				Node:         wrapperNodeID,
+				Path:         "",
+				Level:        0,
+				ParentNodeID: heartbeatNodeID.String(),
+				Visited:      &g.visited,
+				ResultChan:   nodeHeartbeatChan,
+				ErrChan:      errChanHeartbeat,
+				ProgressChan: opcuaBrowserChanHeartbeat,
+			}
+
+			if err := heartbeatPool.SubmitTask(task); err != nil {
+				g.Log.Warnf("Failed to submit heartbeat task: %v", err)
+			} else {
+				// Wait for heartbeat task to complete
+				if err := heartbeatPool.WaitForCompletion(30 * time.Second); err != nil {
+					g.Log.Warnf("Heartbeat pool completion wait error: %v", err)
+				}
+			}
+
 			close(nodeHeartbeatChan)
 			close(errChanHeartbeat)
 			close(opcuaBrowserChanHeartbeat)
