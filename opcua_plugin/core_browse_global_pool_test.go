@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gopcua/opcua/ua"
@@ -1389,6 +1390,510 @@ var _ = Describe("GlobalWorkerPool", func() {
 				Expect(func() {
 					pool.Shutdown(time.Second)
 				}).ToNot(Panic())
+			})
+		})
+	})
+
+	// Task Completion Tracking Tests (TDD RED Phase - ENG-3876 Task 5)
+	Describe("Task Completion Tracking", func() {
+		Context("pendingTasks counter initialization", func() {
+			It("should start at 0 when pool is created", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+
+				// Read atomic counter
+				pending := atomic.LoadInt64(&pool.pendingTasks)
+				Expect(pending).To(Equal(int64(0)))
+			})
+		})
+
+		Context("pendingTasks counter increments on task submission", func() {
+			It("should increment counter when task is submitted", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				// Submit task
+				resultChan := make(chan NodeDef, 1)
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: resultChan,
+				}
+
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Counter should be incremented
+				pending := atomic.LoadInt64(&pool.pendingTasks)
+				Expect(pending).To(Equal(int64(1)))
+			})
+
+			It("should increment counter for each task submitted", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(3)
+
+				// Submit 5 tasks
+				for i := 0; i < 5; i++ {
+					task := GlobalPoolTask{
+						NodeID:     fmt.Sprintf("ns=2;i=%d", 1000+i),
+						ResultChan: make(chan NodeDef, 1),
+					}
+					err := pool.SubmitTask(task)
+					Expect(err).ToNot(HaveOccurred())
+				}
+
+				// Counter should reflect all submitted tasks
+				pending := atomic.LoadInt64(&pool.pendingTasks)
+				Expect(pending).To(BeNumerically(">=", int64(3))) // At least 3 still pending
+			})
+
+			It("should increment atomically during concurrent submissions", func() {
+				profile := ServerProfile{MaxWorkers: 20}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(10)
+
+				numGoroutines := 10
+				tasksPerGoroutine := 10
+				done := make(chan bool, numGoroutines)
+
+				// Submit tasks concurrently
+				for i := 0; i < numGoroutines; i++ {
+					go func(offset int) {
+						for j := 0; j < tasksPerGoroutine; j++ {
+							task := GlobalPoolTask{
+								NodeID:     fmt.Sprintf("ns=2;i=%d", offset*1000+j),
+								ResultChan: make(chan NodeDef, 1),
+							}
+							pool.SubmitTask(task)
+						}
+						done <- true
+					}(i)
+				}
+
+				// Wait for all submissions
+				for i := 0; i < numGoroutines; i++ {
+					<-done
+				}
+
+				// Counter should eventually reach total submitted (may have some processed already)
+				Eventually(func() int64 {
+					submitted := atomic.LoadUint64(&pool.metricsTasksSubmitted)
+					return int64(submitted)
+				}).Should(Equal(int64(100)))
+			})
+		})
+
+		Context("pendingTasks counter decrements on task completion", func() {
+			It("should decrement counter when task completes", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				resultChan := make(chan NodeDef, 1)
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: resultChan,
+				}
+
+				// Submit task
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Wait for task to complete
+				Eventually(resultChan).Within(time.Second).Should(Receive())
+
+				// Counter should be back to 0
+				Eventually(func() int64 {
+					return atomic.LoadInt64(&pool.pendingTasks)
+				}).Within(time.Second).Should(Equal(int64(0)))
+			})
+
+			It("should decrement counter for all completed tasks", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(5)
+
+				numTasks := 10
+				resultChans := make([]chan NodeDef, numTasks)
+
+				// Submit multiple tasks
+				for i := 0; i < numTasks; i++ {
+					resultChans[i] = make(chan NodeDef, 1)
+					task := GlobalPoolTask{
+						NodeID:     fmt.Sprintf("ns=2;i=%d", 1000+i),
+						ResultChan: resultChans[i],
+					}
+					err := pool.SubmitTask(task)
+					Expect(err).ToNot(HaveOccurred())
+				}
+
+				// Wait for all tasks to complete
+				for i := 0; i < numTasks; i++ {
+					Eventually(resultChans[i]).Within(time.Second).Should(Receive())
+				}
+
+				// Counter should be back to 0
+				Eventually(func() int64 {
+					return atomic.LoadInt64(&pool.pendingTasks)
+				}).Within(2 * time.Second).Should(Equal(int64(0)))
+			})
+		})
+
+		Context("allTasksDone channel behavior", func() {
+			It("should be buffered channel", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+
+				// Verify channel exists and is buffered
+				Expect(pool.allTasksDone).NotTo(BeNil())
+				Expect(cap(pool.allTasksDone)).To(Equal(1))
+			})
+
+			It("should close when pendingTasks reaches 0", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				resultChan := make(chan NodeDef, 1)
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: resultChan,
+				}
+
+				// Submit single task
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Wait for task to complete
+				Eventually(resultChan).Within(time.Second).Should(Receive())
+
+				// allTasksDone should receive signal
+				Eventually(pool.allTasksDone).Within(time.Second).Should(Receive())
+			})
+
+			It("should not signal while tasks are still pending", func() {
+				profile := ServerProfile{MaxWorkers: 1}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(1)
+
+				// Create blocking task (unbuffered result channel)
+				blockingChan := make(chan NodeDef)
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: blockingChan,
+				}
+
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Give worker time to pick up task
+				time.Sleep(100 * time.Millisecond)
+
+				// allTasksDone should not signal yet
+				select {
+				case <-pool.allTasksDone:
+					Fail("allTasksDone should not signal while task is pending")
+				case <-time.After(100 * time.Millisecond):
+					// Expected - no signal
+				}
+
+				// Unblock task
+				go func() { <-blockingChan }()
+
+				// Now should signal
+				Eventually(pool.allTasksDone).Within(time.Second).Should(Receive())
+			})
+
+			It("should handle multiple tasks completing", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(5)
+
+				numTasks := 20
+				resultChans := make([]chan NodeDef, numTasks)
+
+				// Submit multiple tasks
+				for i := 0; i < numTasks; i++ {
+					resultChans[i] = make(chan NodeDef, 1)
+					task := GlobalPoolTask{
+						NodeID:     fmt.Sprintf("ns=2;i=%d", 1000+i),
+						ResultChan: resultChans[i],
+					}
+					err := pool.SubmitTask(task)
+					Expect(err).ToNot(HaveOccurred())
+				}
+
+				// Wait for all tasks
+				for i := 0; i < numTasks; i++ {
+					Eventually(resultChans[i]).Within(time.Second).Should(Receive())
+				}
+
+				// Channel should signal completion
+				Eventually(pool.allTasksDone).Within(time.Second).Should(Receive())
+			})
+		})
+
+		Context("WaitForCompletion method", func() {
+			It("should exist and be callable", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+
+				// Method should exist
+				err := pool.WaitForCompletion(1 * time.Second)
+				Expect(err).ToNot(HaveOccurred()) // No tasks, should complete immediately
+			})
+
+			It("should return nil when no tasks are pending", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+
+				err := pool.WaitForCompletion(100 * time.Millisecond)
+				Expect(err).ToNot(HaveOccurred())
+			})
+
+			It("should block until all tasks complete", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(3)
+
+				numTasks := 5
+				resultChans := make([]chan NodeDef, numTasks)
+
+				// Submit tasks
+				for i := 0; i < numTasks; i++ {
+					resultChans[i] = make(chan NodeDef, 1)
+					task := GlobalPoolTask{
+						NodeID:     fmt.Sprintf("ns=2;i=%d", 1000+i),
+						ResultChan: resultChans[i],
+					}
+					err := pool.SubmitTask(task)
+					Expect(err).ToNot(HaveOccurred())
+				}
+
+				// WaitForCompletion should block until done
+				start := time.Now()
+				err := pool.WaitForCompletion(5 * time.Second)
+				duration := time.Since(start)
+
+				Expect(err).ToNot(HaveOccurred())
+				Expect(duration).To(BeNumerically(">", 0)) // Took some time
+
+				// All tasks should be complete
+				pending := atomic.LoadInt64(&pool.pendingTasks)
+				Expect(pending).To(Equal(int64(0)))
+			})
+
+			It("should return error on timeout", func() {
+				profile := ServerProfile{MaxWorkers: 1}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(1)
+
+				// Create blocking task
+				blockingChan := make(chan NodeDef) // Unbuffered - will block
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: blockingChan,
+				}
+
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// WaitForCompletion should timeout
+				err = pool.WaitForCompletion(100 * time.Millisecond)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("timeout"))
+
+				// Error should include pending task count
+				Expect(err.Error()).To(ContainSubstring("pending"))
+
+				// Cleanup - unblock worker
+				go func() { <-blockingChan }()
+			})
+
+			It("should return immediately when called after completion", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				resultChan := make(chan NodeDef, 1)
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: resultChan,
+				}
+
+				// Submit and wait for completion
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				Eventually(resultChan).Within(time.Second).Should(Receive())
+
+				// First WaitForCompletion
+				err = pool.WaitForCompletion(time.Second)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Second WaitForCompletion should also return immediately
+				start := time.Now()
+				err = pool.WaitForCompletion(time.Second)
+				duration := time.Since(start)
+
+				Expect(err).ToNot(HaveOccurred())
+				Expect(duration).To(BeNumerically("<", 100*time.Millisecond))
+			})
+
+			It("should handle concurrent WaitForCompletion calls", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(3)
+
+				numTasks := 10
+				resultChans := make([]chan NodeDef, numTasks)
+
+				// Submit tasks
+				for i := 0; i < numTasks; i++ {
+					resultChans[i] = make(chan NodeDef, 1)
+					task := GlobalPoolTask{
+						NodeID:     fmt.Sprintf("ns=2;i=%d", 1000+i),
+						ResultChan: resultChans[i],
+					}
+					err := pool.SubmitTask(task)
+					Expect(err).ToNot(HaveOccurred())
+				}
+
+				// Multiple goroutines calling WaitForCompletion
+				done := make(chan error, 3)
+				for i := 0; i < 3; i++ {
+					go func() {
+						err := pool.WaitForCompletion(5 * time.Second)
+						done <- err
+					}()
+				}
+
+				// All should complete without error
+				for i := 0; i < 3; i++ {
+					err := <-done
+					Expect(err).ToNot(HaveOccurred())
+				}
+			})
+		})
+
+		Context("counter and channel coordination", func() {
+			It("should maintain invariant: counter=0 implies channel signaled", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(3)
+
+				numRounds := 5
+				for round := 0; round < numRounds; round++ {
+					// Submit tasks
+					numTasks := 3
+					resultChans := make([]chan NodeDef, numTasks)
+					for i := 0; i < numTasks; i++ {
+						resultChans[i] = make(chan NodeDef, 1)
+						task := GlobalPoolTask{
+							NodeID:     fmt.Sprintf("ns=2;i=%d", round*1000+i),
+							ResultChan: resultChans[i],
+						}
+						pool.SubmitTask(task)
+					}
+
+					// Wait for completion
+					err := pool.WaitForCompletion(2 * time.Second)
+					Expect(err).ToNot(HaveOccurred())
+
+					// Verify counter is 0
+					pending := atomic.LoadInt64(&pool.pendingTasks)
+					Expect(pending).To(Equal(int64(0)))
+				}
+			})
+
+			It("should handle rapid submit/complete cycles", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(5)
+
+				// Rapid submission and completion
+				for i := 0; i < 50; i++ {
+					resultChan := make(chan NodeDef, 1)
+					task := GlobalPoolTask{
+						NodeID:     fmt.Sprintf("ns=2;i=%d", i),
+						ResultChan: resultChan,
+					}
+
+					err := pool.SubmitTask(task)
+					Expect(err).ToNot(HaveOccurred())
+
+					// Immediately wait
+					Eventually(resultChan).Within(time.Second).Should(Receive())
+				}
+
+				// Final counter should be 0
+				Eventually(func() int64 {
+					return atomic.LoadInt64(&pool.pendingTasks)
+				}).Within(time.Second).Should(Equal(int64(0)))
+			})
+		})
+
+		Context("edge cases", func() {
+			It("should handle counter reaching 0 multiple times", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(3)
+
+				// First batch
+				task1 := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: make(chan NodeDef, 1),
+				}
+				pool.SubmitTask(task1)
+				err := pool.WaitForCompletion(time.Second)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Second batch
+				task2 := GlobalPoolTask{
+					NodeID:     "ns=2;i=2000",
+					ResultChan: make(chan NodeDef, 1),
+				}
+				pool.SubmitTask(task2)
+				err = pool.WaitForCompletion(time.Second)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Both times should work
+				pending := atomic.LoadInt64(&pool.pendingTasks)
+				Expect(pending).To(Equal(int64(0)))
+			})
+
+			It("should not deadlock when channel buffer is full", func() {
+				profile := ServerProfile{MaxWorkers: 10}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				// Fill the allTasksDone channel (capacity 1)
+				// This shouldn't happen in normal operation but tests robustness
+				select {
+				case pool.allTasksDone <- struct{}{}:
+					// Filled buffer
+				default:
+					// Already had signal
+				}
+
+				// Submit and complete task
+				resultChan := make(chan NodeDef, 1)
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: resultChan,
+				}
+
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Should not deadlock even with full channel
+				Eventually(resultChan).Within(time.Second).Should(Receive())
+
+				// Counter should still be 0
+				Eventually(func() int64 {
+					return atomic.LoadInt64(&pool.pendingTasks)
+				}).Within(time.Second).Should(Equal(int64(0)))
 			})
 		})
 	})
