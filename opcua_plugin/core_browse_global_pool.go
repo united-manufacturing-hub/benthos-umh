@@ -15,6 +15,7 @@
 package opcua_plugin
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -38,7 +39,21 @@ import (
 // When nil, no progress updates are sent. When set, workers send non-blocking
 // progress updates during task processing.
 type GlobalPoolTask struct {
-	NodeID       string             // Node identifier to browse
+	// Task identification
+	NodeID string // Node identifier to browse
+
+	// Browse execution context (NEW - required for actual browse work)
+	Ctx          context.Context // Cancellation context
+	Node         NodeBrowser     // OPC UA node to browse
+	Path         string          // Current path in browse tree
+	Level        int             // Recursion depth (limit: 25)
+	ParentNodeID string          // Parent node identifier
+
+	// Shared state (NEW - passed from read_discover.go)
+	Visited *sync.Map      // Prevents duplicate visits
+	Metrics *ServerMetrics // Per-browse metrics tracking
+
+	// Result delivery (existing)
 	ResultChan   interface{}        // Accepts any channel type (e.g., chan NodeDef, chan<- NodeDef)
 	ErrChan      chan<- error       // Where to send errors
 	ProgressChan chan<- BrowseDetails // Optional progress updates (nil = no reporting)
@@ -74,6 +89,10 @@ type GlobalWorkerPool struct {
 	metricsTasksSubmitted uint64 // Total tasks submitted (atomic)
 	metricsTasksCompleted uint64 // Successfully completed tasks (atomic)
 	metricsTasksFailed    uint64 // Failed tasks (errors) (atomic)
+
+	// Task completion tracking (NEW - for WaitForCompletion functionality)
+	pendingTasks int64         // Atomic counter for tasks in flight (includes recursive children)
+	allTasksDone chan struct{} // Closed when pendingTasks reaches 0
 }
 
 // PoolMetrics contains current pool metrics snapshot for visibility into pool operations.
@@ -107,6 +126,8 @@ func NewGlobalWorkerPool(profile ServerProfile, logger Logger) *GlobalWorkerPool
 		taskChan:       make(chan GlobalPoolTask, MaxTagsToBrowse*2), // 200k buffer
 		workerControls: make(map[uuid.UUID]chan struct{}),
 		logger:         logger, // For debug logging in sendTaskResult
+		pendingTasks:   0,      // NEW: Start with 0 pending tasks
+		allTasksDone:   make(chan struct{}, 1), // NEW: Buffered to prevent blocking
 	}
 }
 
