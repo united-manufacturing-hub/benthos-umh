@@ -306,14 +306,16 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		}
 	}
 
-	// Query server capabilities for deadband support (only if subscriptions enabled)
+	// Query server capabilities and profiles (only if subscriptions enabled)
+	// Detects DataChangeFilter support via ServerProfileArray (NodeID 2269) and OperationLimits
 	if g.SubscribeEnabled {
-		caps, err := g.QueryServerCapabilities(ctx)
+		caps, err := g.queryOperationLimits(ctx)
 		if err != nil {
 			g.Log.Warnf("Failed to query server capabilities: %v, assuming basic support", err)
 			caps = &ServerCapabilities{
 				SupportsAbsoluteDeadband: true,  // Most servers support this
 				SupportsPercentDeadband:  false, // Conservative assumption
+				SupportsDataChangeFilter: false, // Safe default - MonitorBatched will use profile default
 			}
 		}
 		g.ServerCapabilities = caps
