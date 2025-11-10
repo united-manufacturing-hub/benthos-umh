@@ -450,15 +450,6 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 					if g.ServerCapabilities != nil {
 						g.ServerCapabilities.hasTrialedThisConnection = true
 						g.ServerCapabilities.SupportsDataChangeFilter = false
-
-						// UX Recommendation: Suggest explicit configuration to save ~1-2 seconds on future connections
-						g.Log.Infof(
-							"Recommendation: To save ~1-2 seconds on future connections, " +
-								"explicitly configure this capability in your server profile:\n" +
-								"  serverProfile:\n" +
-								"    supportsDataChangeFilter: false\n" +
-								"See documentation: docs/input/opc-ua-input.md#server-profiles",
-						)
 					}
 
 					// Retry this batch recursively - the three-way logic will now hit Decision 3b (cached false)
@@ -490,16 +481,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		if shouldTrial && g.ServerCapabilities != nil {
 			g.ServerCapabilities.hasTrialedThisConnection = true
 			g.ServerCapabilities.SupportsDataChangeFilter = true
-			g.Log.Infof("DataChangeFilter trial succeeded. Capability confirmed and cached.")
-
-			// UX Recommendation: Suggest explicit configuration to save ~1-2 seconds on future connections
-			g.Log.Infof(
-				"Recommendation: To save ~1-2 seconds on future connections, " +
-					"explicitly configure this capability in your server profile:\n" +
-					"  serverProfile:\n" +
-					"    supportsDataChangeFilter: true\n" +
-					"See documentation: docs/input/opc-ua-input.md#server-profiles",
-			)
+			g.Log.Infof("DataChangeFilter trial succeeded. Server supports filter - capability confirmed and cached for this connection.")
 		}
 
 		monitoredNodes := len(response.Results)
