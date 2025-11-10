@@ -293,11 +293,17 @@ func CalculateBatches(totalNodes, maxBatchSize int) []BatchRange {
 // Each profile is tuned for specific server hardware and tested in production.
 //
 // Deadband Filtering:
-// If deadbandType is set (absolute/percent) and deadbandValue > 0, the function applies
-// server-side DataChangeFilter to reduce notification traffic by 50-70%. The filter
-// suppresses notifications unless values change beyond the specified threshold.
-// Note: Not all OPC UA servers support deadband filtering - unsupported servers will
-// ignore the Filter field and send all data change notifications as usual.
+// If deadbandType is set (absolute/percent), deadbandValue > 0, AND server supports
+// DataChangeFilter (detected via ServerProfileArray or profile defaults), the function
+// applies server-side filtering to reduce notification traffic by 50-70%.
+//
+// Server capability detection uses two-tier strategy:
+// 1. Runtime detection (queryOperationLimits checks ServerProfileArray - NodeID 2269)
+// 2. Profile-based defaults (ServerProfile.SupportsDataChangeFilter)
+//
+// If server doesn't support DataChangeFilter (e.g., S7-1200 with Micro Embedded Device
+// profile), filters are omitted to prevent StatusBadFilterNotAllowed errors.
+// All data change notifications will be sent without server-side filtering.
 //
 // It returns the total number of nodes that were successfully monitored or an error if monitoring fails.
 func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, error) {
@@ -318,8 +324,17 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		return 0, fmt.Errorf("no valid nodes selected")
 	}
 
+	// Check if server supports DataChangeFilter
+	// Priority: Runtime detection (ServerCapabilities) > Profile default (ServerProfile)
+	supportsFilter := g.ServerProfile.SupportsDataChangeFilter
+	if g.ServerCapabilities != nil {
+		// Runtime detection overrides profile default
+		supportsFilter = g.ServerCapabilities.SupportsDataChangeFilter
+	}
+
 	g.Log.With("batchSize", maxBatchSize).
 		With("profile", g.ServerProfile.Name).
+		With("supportsFilter", supportsFilter).
 		Infof("Starting to monitor %d nodes in batches of %d", totalNodes, maxBatchSize)
 
 	batches := CalculateBatches(totalNodes, maxBatchSize)
@@ -333,16 +348,25 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		for pos, nodeDef := range batch {
 			var filter *ua.ExtensionObject
 
-			// Only apply deadband filter to numeric node types
-			if isNumericDataType(nodeDef.DataTypeID) && g.DeadbandType != "none" {
+			// Only apply deadband filter if:
+			// 1. Server supports DataChangeFilter (capability check)
+			// 2. Node is numeric data type (existing check)
+			// 3. User configured deadband (g.DeadbandType != "none")
+			if supportsFilter && isNumericDataType(nodeDef.DataTypeID) && g.DeadbandType != "none" {
 				filter = createDataChangeFilter(g.DeadbandType, g.DeadbandValue)
 				numFilteredNodes++
 			} else {
-				// Non-numeric nodes: subscribe without filter
 				filter = nil
+
+				// Log why filter was skipped (expanded debug messaging)
 				if g.DeadbandType != "none" {
-					g.Log.Debugf("Skipping deadband for non-numeric node %s (type: %v)",
-						nodeDef.NodeID, nodeDef.DataTypeID)
+					if !supportsFilter {
+						g.Log.Debugf("Skipping deadband for node %s: server does not support DataChangeFilter (profile=%s, runtime=%v)",
+							nodeDef.NodeID, g.ServerProfile.Name, g.ServerCapabilities != nil)
+					} else if !isNumericDataType(nodeDef.DataTypeID) {
+						g.Log.Debugf("Skipping deadband for non-numeric node %s (type: %v)",
+							nodeDef.NodeID, nodeDef.DataTypeID)
+					}
 				}
 			}
 
