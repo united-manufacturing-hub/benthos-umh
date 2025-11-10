@@ -319,8 +319,8 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		}
 	}
 
-	// Query server capabilities and profiles (only if subscriptions enabled)
-	// Detects DataChangeFilter support via ServerProfileArray (NodeID 2269) and OperationLimits
+	// Query server operation limits (only if subscriptions enabled)
+	// Note: Does not query ServerProfileArray - uses profile-based defaults instead
 	if g.SubscribeEnabled {
 		caps, err := g.queryOperationLimits(ctx)
 		if err != nil {

@@ -294,12 +294,11 @@ func CalculateBatches(totalNodes, maxBatchSize int) []BatchRange {
 //
 // Deadband Filtering:
 // If deadbandType is set (absolute/percent), deadbandValue > 0, AND server supports
-// DataChangeFilter (detected via ServerProfileArray or profile defaults), the function
+// DataChangeFilter (detected via profile defaults), the function
 // applies server-side filtering to reduce notification traffic by 50-70%.
 //
-// Server capability detection uses two-tier strategy:
-// 1. Runtime detection (queryOperationLimits checks ServerProfileArray - NodeID 2269)
-// 2. Profile-based defaults (ServerProfile.SupportsDataChangeFilter)
+// Server capability detection uses profile-based defaults:
+// 1. Profile-based defaults (ServerProfile.SupportsDataChangeFilter)
 //
 // If server doesn't support DataChangeFilter (e.g., S7-1200 with Micro Embedded Device
 // profile), filters are omitted to prevent StatusBadFilterNotAllowed errors.

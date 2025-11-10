@@ -55,8 +55,7 @@ type ServerProfile struct {
 	// When false, MonitorBatched will omit deadband filters to prevent
 	// StatusBadFilterNotAllowed errors (fallback to server-side default).
 	//
-	// Profile-based default, can be overridden by runtime detection via
-	// queryOperationLimits (ServerProfileArray query).
+	// Profile-based default, not overridden by queryOperationLimits.
 	SupportsDataChangeFilter bool
 }
 
