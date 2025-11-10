@@ -2798,4 +2798,80 @@ var _ = Describe("GlobalWorkerPool", func() {
 			})
 		})
 	})
+
+	// TDD RED Phase - ENG-3876 Task 12.1
+	// This test exposes bug where SubmitTask errors are ignored during child task submission,
+	// causing pendingTasks counter corruption and WaitForCompletion hangs.
+	Context("error handling in child task submission", func() {
+		It("should handle pool shutdown during child task submission without hanging", func() {
+			profile := ServerProfile{MaxWorkers: 5}
+			pool := NewGlobalWorkerPool(profile, logger)
+			pool.SpawnWorkers(1) // Single worker to ensure sequential processing
+
+			// Create parent with MANY children (1000+) to ensure long submission loop
+			// This guarantees shutdown will occur during child task submission
+			children := make([]NodeBrowser, 1000)
+			for i := 0; i < 1000; i++ {
+				children[i] = &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, uint32(2000+i)),
+					browseName: fmt.Sprintf("Child%d", i),
+					children:   []NodeBrowser{}, // Leaf nodes
+				}
+			}
+
+			parentNode := &mockNodeBrowser{
+				id:         ua.NewNumericNodeID(2, 1000),
+				browseName: "ParentWith1000Children",
+				children:   children,
+			}
+
+			ctx := context.Background()
+			visited := &sync.Map{}
+			metrics := NewServerMetrics(profile)
+			resultChan := make(chan NodeDef, 2000)
+
+			task := GlobalPoolTask{
+				NodeID:     "ns=2;i=1000",
+				Ctx:        ctx,
+				Node:       parentNode,
+				Path:       "enterprise.site",
+				Level:      1,
+				Visited:    visited,
+				Metrics:    metrics,
+				ResultChan: resultChan,
+			}
+
+			// Submit parent task
+			err := pool.SubmitTask(task)
+			Expect(err).ToNot(HaveOccurred())
+
+			// Shutdown pool IMMEDIATELY while children are being submitted in worker
+			// With 1000 children, the submission loop will still be running
+			time.Sleep(1 * time.Millisecond) // Minimal delay - just let worker start browse
+			shutdownErr := pool.Shutdown(100 * time.Millisecond) // Short timeout to force early shutdown
+
+			// The shutdown may timeout if worker is still processing, which is expected
+			// What matters is that new task submissions will fail after shutdown begins
+			_ = shutdownErr // Ignore shutdown timeout - not the focus of this test
+
+			// CRITICAL TEST: WaitForCompletion should NOT hang
+			// With bug: Hangs forever because failed SubmitTask calls leave counter inflated
+			//   - Worker browses parent, gets 1000 children
+			//   - Worker starts submitting children in loop (line 535-558)
+			//   - Some submissions succeed, incrementing counter
+			//   - Shutdown closes taskChan
+			//   - Remaining submissions fail (panic recovered)
+			//   - BUT error is ignored! Counter was incremented but task never queued!
+			//   - Worker completes, decrements parent task
+			//   - Counter stuck at (failed submission count) > 0
+			//   - WaitForCompletion waits forever
+			// After fix: Worker checks SubmitTask errors and decrements counter on failure
+			err = pool.WaitForCompletion(2 * time.Second)
+			Expect(err).ToNot(HaveOccurred(), "WaitForCompletion should complete without hanging despite pool shutdown")
+
+			// Verify counter integrity - must reach zero
+			finalCounter := atomic.LoadInt64(&pool.pendingTasks)
+			Expect(finalCounter).To(Equal(int64(0)), "pendingTasks counter should reach zero (no corruption)")
+		})
+	})
 })
