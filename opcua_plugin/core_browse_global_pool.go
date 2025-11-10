@@ -554,7 +554,15 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 						ResultChan:   task.ResultChan,
 						ErrChan:      task.ErrChan,
 					}
-					gwp.SubmitTask(childTask)
+					if err := gwp.SubmitTask(childTask); err != nil {
+						// SubmitTask already incremented counter - must decrement to maintain invariant
+						gwp.decrementPendingTasks()
+
+						// Log error for debugging
+						if gwp.logger != nil {
+							gwp.logger.Debugf("Failed to submit child task: nodeID=%s err=%v", childNodeID, err)
+						}
+					}
 				}
 			}
 
