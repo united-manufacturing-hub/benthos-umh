@@ -292,17 +292,19 @@ func (g *OPCUAInput) decideDataChangeFilterSupport() (bool, bool) {
 		return false, false
 	case FilterUnknown:
 		// Decision 3: Unknown support → trial-based discovery
-		if g.ServerCapabilities != nil && !g.ServerCapabilities.hasTrialedThisConnection {
-			// Decision 3a: First batch → attempt trial
-			return true, true
+		// Early return for nil capabilities - use profile fallback
+		if g.ServerCapabilities == nil {
+			g.Log.Warnf("DataChangeFilter: ServerCapabilities not initialized, using profile default=%v", g.ServerProfile.SupportsDataChangeFilter)
+			return g.ServerProfile.SupportsDataChangeFilter, false
 		}
-		if g.ServerCapabilities != nil && g.ServerCapabilities.hasTrialedThisConnection {
-			// Decision 3b: Already trialed → use cached result
-			return g.ServerCapabilities.SupportsDataChangeFilter, false
+
+		// Trial if not yet attempted this connection
+		if !g.ServerCapabilities.hasTrialedThisConnection {
+			return true, true  // Trial attempt
 		}
-		// Fallback: No ServerCapabilities yet (shouldn't happen)
-		g.Log.Warnf("DataChangeFilter: ServerCapabilities not initialized, using profile default=%v", g.ServerProfile.SupportsDataChangeFilter)
-		return g.ServerProfile.SupportsDataChangeFilter, false
+
+		// Use cached trial result
+		return g.ServerCapabilities.SupportsDataChangeFilter, false
 	default:
 		// Invalid enum value - defensive fallback to trial mechanism
 		g.Log.Warnf("Invalid FilterCapability value - defaulting to trial mechanism (filterCapability=%d)", g.ServerProfile.FilterCapability)
@@ -510,7 +512,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 				// their DataChangeFilter limitations through ServerProfileArray (which most vendors don't populate).
 				if shouldTrial && errors.Is(result.StatusCode, ua.StatusBadFilterNotAllowed) {
 					// Trial failed - server doesn't support DataChangeFilter
-					g.Log.Infof("DataChangeFilter trial failed for node %s: %v. Updating capabilities and retrying without filter.",
+					g.Log.Infof("DataChangeFilter trial failed for node %s: %v. This is expected for servers using Micro Embedded Device profile (e.g., S7-1200 PLCs). Updating capabilities cache and retrying without filter. Future subscriptions will skip filter automatically.",
 						failedNode, result.StatusCode)
 
 					// Update ServerCapabilities with learned result

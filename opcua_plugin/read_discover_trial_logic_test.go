@@ -146,7 +146,7 @@ var _ = Describe("MonitorBatched three-way trial logic", func() {
 			// Setup: Test profile with invalid FilterCapability value
 			testProfile := ServerProfile{
 				Name:             "test-invalid",
-				FilterCapability: FilterCapability(999), // Invalid enum value
+				FilterCapability: FilterInvalid, // Test constant for invalid enum
 			}
 
 			// Simulate decideDataChangeFilterSupport logic

@@ -60,6 +60,10 @@ const (
 	// MonitorBatched will permanently skip filters without attempting trial.
 	// Examples: S7-1200 (OPC UA Part 7, Section 6.4.3 - Micro Embedded Device 2017)
 	FilterUnsupported FilterCapability = -1
+
+	// FilterInvalid is used in tests to verify defensive handling of invalid enum values.
+	// Not used in production code.
+	FilterInvalid FilterCapability = 999
 )
 
 // String returns human-readable FilterCapability name for debugging
