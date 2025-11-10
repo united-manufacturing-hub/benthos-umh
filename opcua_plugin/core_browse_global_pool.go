@@ -212,6 +212,9 @@ func (gwp *GlobalWorkerPool) SubmitTask(task GlobalPoolTask) (err error) {
 	// Increment tasksSubmitted counter (atomic)
 	atomic.AddUint64(&gwp.metricsTasksSubmitted, 1)
 
+	// Increment pendingTasks counter (atomic)
+	atomic.AddInt64(&gwp.pendingTasks, 1)
+
 	// Debug log task submission with metrics
 	if gwp.logger != nil {
 		metrics := gwp.GetMetrics()
@@ -371,6 +374,39 @@ func (gwp *GlobalWorkerPool) sendTaskProgress(task GlobalPoolTask, stubNode Node
 	}
 }
 
+// decrementPendingTasks decrements the pending task counter and signals allTasksDone when it reaches 0.
+// Uses non-blocking channel send to avoid deadlock if channel buffer is already full.
+func (gwp *GlobalWorkerPool) decrementPendingTasks() {
+	remaining := atomic.AddInt64(&gwp.pendingTasks, -1)
+	if remaining == 0 {
+		select {
+		case gwp.allTasksDone <- struct{}{}:
+			// Successfully signaled completion
+		default:
+			// Channel already signaled, ignore
+		}
+	}
+}
+
+// WaitForCompletion blocks until all pending tasks complete or timeout expires.
+// Returns nil when all tasks are done, or error if timeout is exceeded.
+// Safe to call multiple times - returns immediately if no tasks are pending.
+func (gwp *GlobalWorkerPool) WaitForCompletion(timeout time.Duration) error {
+	// Check if already complete (fast path)
+	if atomic.LoadInt64(&gwp.pendingTasks) == 0 {
+		return nil
+	}
+
+	// Wait with timeout
+	select {
+	case <-gwp.allTasksDone:
+		return nil
+	case <-time.After(timeout):
+		pending := atomic.LoadInt64(&gwp.pendingTasks)
+		return fmt.Errorf("timeout waiting for completion: %d tasks still pending", pending)
+	}
+}
+
 // workerLoop runs in a goroutine and processes tasks from taskChan until shutdown signal.
 func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan struct{}) {
 	defer func() {
@@ -417,6 +453,9 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 			// Increment tasksCompleted counter on success (atomic)
 			atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
 
+			// Decrement pendingTasks counter and signal completion if needed
+			gwp.decrementPendingTasks()
+
 			// Debug log task completion
 			if gwp.logger != nil {
 				gwp.logger.Debugf("Task completed: nodeID=%s", task.NodeID)
@@ -441,6 +480,9 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 
 					// Increment tasksCompleted counter (atomic)
 					atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
+
+					// Decrement pendingTasks counter and signal completion if needed
+					gwp.decrementPendingTasks()
 				default:
 					// No more tasks in buffer, exit
 					break drainLoop
