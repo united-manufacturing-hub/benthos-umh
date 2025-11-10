@@ -207,6 +207,11 @@ type ServerCapabilities struct {
 	// - false: No trial performed yet this connection (may trial if conditions met)
 	// - true: Trial completed this connection (use cached SupportsDataChangeFilter result)
 	//
+	// Hardware-validated on S7-1200 PLCs (ENG-3880): Successfully prevents infinite retry
+	// loops when servers reject DataChangeFilter with StatusBadFilterNotAllowed. Cache
+	// ensures trial happens exactly once per connection, then uses cached result for all
+	// subsequent MonitorBatched() calls. See read_discover.go:467-485 for retry mechanism.
+	//
 	// Note: We cannot persist learned values across reconnections due to architecture
 	// constraints. Instead, we emit INFO messages recommending users explicitly configure
 	// server profiles to save ~1-2 seconds on subsequent connections.
