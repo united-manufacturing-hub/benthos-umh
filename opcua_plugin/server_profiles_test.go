@@ -482,7 +482,7 @@ var _ = Describe("validateProfile", func() {
 			Expect(func() {
 				validateProfile(invalidProfile)
 			}).To(PanicWith(MatchRegexp(
-				"PROGRAMMING ERROR in profile test-zero-maxworkers: MaxWorkers \\(0\\) must be > 0",
+				"PROGRAMMING ERROR in profile test-zero-maxworkers: MaxWorkers \\(0\\) must be >= 1",
 			)))
 		})
 
@@ -497,7 +497,7 @@ var _ = Describe("validateProfile", func() {
 			Expect(func() {
 				validateProfile(invalidProfile)
 			}).To(PanicWith(MatchRegexp(
-				"PROGRAMMING ERROR in profile test-negative-maxworkers: MaxWorkers \\(-5\\) must be > 0",
+				"PROGRAMMING ERROR in profile test-negative-maxworkers: MaxWorkers \\(-5\\) must be >= 1",
 			)))
 		})
 	})

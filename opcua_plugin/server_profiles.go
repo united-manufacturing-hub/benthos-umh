@@ -247,9 +247,9 @@ func validateProfile(p ServerProfile) {
 				"This is a hardcoded profile constant bug that must be fixed in code.",
 			p.Name, p.MinWorkers))
 	}
-	if p.MaxWorkers <= 0 {
+	if p.MaxWorkers < 1 {
 		panic(fmt.Sprintf(
-			"PROGRAMMING ERROR in profile %s: MaxWorkers (%d) must be > 0. "+
+			"PROGRAMMING ERROR in profile %s: MaxWorkers (%d) must be >= 1. "+
 				"This is a hardcoded profile constant bug that must be fixed in code.",
 			p.Name, p.MaxWorkers))
 	}
