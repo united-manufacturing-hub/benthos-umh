@@ -56,7 +56,7 @@ type GlobalPoolTask struct {
 // - Profile limits apply GLOBALLY (not per-browse)
 // - Task queueing via shared channel (not per-browse WaitGroup)
 //
-// For example, Agristo server has 64 concurrent operation capacity. With per-nodeid pools,
+// For example, a production server has 64 concurrent operation capacity. With per-nodeid pools,
 // we get 1,500 concurrent workers (23× overload) causing EOF errors. Global pool caps at
 // profile.MaxWorkers (e.g., 20 for Ignition, 5 for Auto) preventing overload.
 type GlobalWorkerPool struct {
