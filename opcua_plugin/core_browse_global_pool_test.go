@@ -16,6 +16,7 @@ package opcua_plugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -76,9 +77,19 @@ func (r *recordingLogger) Reset() {
 }
 
 // mockNodeBrowser implements NodeBrowser interface for testing
-type mockNodeBrowser struct{}
+type mockNodeBrowser struct {
+	id           *ua.NodeID
+	browseName   string
+	children     []NodeBrowser
+	browseErr    error
+	browseCalled bool
+	mu           sync.Mutex
+}
 
 func (m *mockNodeBrowser) ID() *ua.NodeID {
+	if m.id != nil {
+		return m.id
+	}
 	return &ua.NodeID{}
 }
 
@@ -87,15 +98,43 @@ func (m *mockNodeBrowser) Attributes(ctx context.Context, attrs ...ua.AttributeI
 }
 
 func (m *mockNodeBrowser) BrowseName(ctx context.Context) (*ua.QualifiedName, error) {
-	return &ua.QualifiedName{Name: "MockNode"}, nil
+	name := m.browseName
+	if name == "" {
+		name = "MockNode"
+	}
+	return &ua.QualifiedName{Name: name}, nil
 }
 
 func (m *mockNodeBrowser) ReferencedNodes(ctx context.Context, refType uint32, browseDir ua.BrowseDirection, nodeClassMask ua.NodeClass, includeSubtypes bool) ([]NodeBrowser, error) {
-	return nil, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.browseCalled = true
+	if m.browseErr != nil {
+		return nil, m.browseErr
+	}
+	return m.children, nil
 }
 
 func (m *mockNodeBrowser) Children(ctx context.Context, refs uint32, mask ua.NodeClass) ([]NodeBrowser, error) {
-	return nil, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.browseCalled = true
+	if m.browseErr != nil {
+		return nil, m.browseErr
+	}
+	return m.children, nil
+}
+
+func (m *mockNodeBrowser) WasBrowseCalled() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.browseCalled
+}
+
+func (m *mockNodeBrowser) ResetBrowseCalled() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.browseCalled = false
 }
 
 var _ = Describe("GlobalWorkerPool", func() {
@@ -2143,6 +2182,619 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should have Metrics as *ServerMetrics type", func() {
 				task := GlobalPoolTask{}
 				var _ *ServerMetrics = task.Metrics
+			})
+		})
+	})
+
+	// Browse Logic in Workers Tests (TDD RED Phase - ENG-3876 Task 9)
+	// These tests verify that workers execute actual browse operations instead of
+	// processing stub nodes. They should FAIL until implementation is complete.
+	Describe("Browse Logic in Workers", func() {
+		Context("executeBrowse operation in worker", func() {
+			It("should execute actual browse operation using task's browse context", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				// Setup mock node with trackable browse calls
+				mockNode := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 1000),
+					browseName: "ParentNode",
+					children:   []NodeBrowser{}, // No children for simplicity
+				}
+
+				ctx := context.Background()
+				visited := &sync.Map{}
+				metrics := NewServerMetrics(profile)
+				resultChan := make(chan NodeDef, 1)
+
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					Ctx:        ctx,
+					Node:       mockNode,
+					Path:       "enterprise.site",
+					Level:      1,
+					Visited:    visited,
+					Metrics:    metrics,
+					ResultChan: resultChan,
+				}
+
+				// Submit task
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Wait for result
+				Eventually(resultChan).Within(time.Second).Should(Receive())
+
+				// CRITICAL ASSERTION: Worker should have called Browse() on the node
+				// This will FAIL in current implementation because workers process stub nodes
+				Eventually(func() bool {
+					return mockNode.WasBrowseCalled()
+				}).Within(time.Second).Should(BeTrue(), "Worker should execute Browse() operation")
+			})
+
+			It("should use task's Context for browse cancellation", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				// Setup mock node
+				mockNode := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 1000),
+					browseName: "TestNode",
+				}
+
+				// Create cancellable context
+				ctx, cancel := context.WithCancel(context.Background())
+				visited := &sync.Map{}
+				metrics := NewServerMetrics(profile)
+				resultChan := make(chan NodeDef, 1)
+				errChan := make(chan error, 1)
+
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					Ctx:        ctx,
+					Node:       mockNode,
+					Path:       "enterprise.site",
+					Level:      1,
+					Visited:    visited,
+					Metrics:    metrics,
+					ResultChan: resultChan,
+					ErrChan:    errChan,
+				}
+
+				// Cancel context before processing
+				cancel()
+
+				// Submit task
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Should receive error due to cancelled context
+				// This will FAIL until workers check context before browse
+				Eventually(errChan).Within(time.Second).Should(Receive(MatchError(ContainSubstring("context canceled"))))
+			})
+		})
+
+		Context("children submission back to pool", func() {
+			It("should submit browse children back to pool as new tasks", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(3)
+
+				// Setup parent node with 3 children
+				child1 := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 2001),
+					browseName: "Child1",
+				}
+				child2 := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 2002),
+					browseName: "Child2",
+				}
+				child3 := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 2003),
+					browseName: "Child3",
+				}
+
+				parentNode := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 1000),
+					browseName: "ParentNode",
+					children:   []NodeBrowser{child1, child2, child3},
+				}
+
+				ctx := context.Background()
+				visited := &sync.Map{}
+				metrics := NewServerMetrics(profile)
+				resultChan := make(chan NodeDef, 10) // Buffer for parent + children
+
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					Ctx:        ctx,
+					Node:       parentNode,
+					Path:       "enterprise.site",
+					Level:      1,
+					Visited:    visited,
+					Metrics:    metrics,
+					ResultChan: resultChan,
+				}
+
+				// Submit parent task
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Should receive parent result
+				Eventually(resultChan).Within(time.Second).Should(Receive())
+
+				// CRITICAL ASSERTION: Should submit 3 child tasks back to pool
+				// This will FAIL until workers submit children
+				Eventually(func() uint64 {
+					metrics := pool.GetMetrics()
+					return metrics.TasksSubmitted
+				}).Within(2 * time.Second).Should(BeNumerically(">=", 4), "Should submit parent + 3 children")
+
+				// Should receive child results
+				Eventually(func() int {
+					count := 0
+					for {
+						select {
+						case <-resultChan:
+							count++
+						default:
+							return count
+						}
+					}
+				}).Within(3 * time.Second).Should(BeNumerically(">=", 3), "Should receive results for 3 children")
+			})
+
+			It("should pass correct browse context to child tasks", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				// Setup parent with one child
+				child := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 2001),
+					browseName: "ChildNode",
+				}
+
+				parentNode := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 1000),
+					browseName: "ParentNode",
+					children:   []NodeBrowser{child},
+				}
+
+				ctx := context.Background()
+				visited := &sync.Map{}
+				metrics := NewServerMetrics(profile)
+				resultChan := make(chan NodeDef, 10)
+
+				task := GlobalPoolTask{
+					NodeID:       "ns=2;i=1000",
+					Ctx:          ctx,
+					Node:         parentNode,
+					Path:         "enterprise.site",
+					Level:        1,
+					ParentNodeID: "ns=2;i=999",
+					Visited:      visited,
+					Metrics:      metrics,
+					ResultChan:   resultChan,
+				}
+
+				// Submit parent task
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Wait for parent result
+				Eventually(resultChan).Within(time.Second).Should(Receive())
+
+				// CRITICAL ASSERTION: Child task should have Level incremented
+				// This will FAIL until workers properly construct child tasks
+				// We verify this indirectly by checking that browse was called on child
+				Eventually(func() bool {
+					return child.WasBrowseCalled()
+				}).Within(2 * time.Second).Should(BeTrue(), "Child node should be browsed (Level=2)")
+			})
+		})
+
+		Context("error handling during browse", func() {
+			It("should handle browse errors and send to ErrChan", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				// Setup node that returns error on browse
+				mockNode := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 1000),
+					browseName: "ErrorNode",
+					browseErr:  errors.New("browse failed: connection timeout"),
+				}
+
+				ctx := context.Background()
+				visited := &sync.Map{}
+				metrics := NewServerMetrics(profile)
+				resultChan := make(chan NodeDef, 1)
+				errChan := make(chan error, 1)
+
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					Ctx:        ctx,
+					Node:       mockNode,
+					Path:       "enterprise.site",
+					Level:      1,
+					Visited:    visited,
+					Metrics:    metrics,
+					ResultChan: resultChan,
+					ErrChan:    errChan,
+				}
+
+				// Submit task
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// CRITICAL ASSERTION: Error should be sent to ErrChan
+				// This will FAIL until workers handle browse errors
+				Eventually(errChan).Within(time.Second).Should(Receive(MatchError(ContainSubstring("browse failed"))))
+
+				// Task should still be marked complete
+				Eventually(func() int64 {
+					return atomic.LoadInt64(&pool.pendingTasks)
+				}).Within(time.Second).Should(Equal(int64(0)))
+			})
+
+			It("should continue processing other tasks after browse error", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				// First task will error
+				errorNode := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 1000),
+					browseName: "ErrorNode",
+					browseErr:  errors.New("browse error"),
+				}
+
+				// Second task will succeed
+				successNode := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 2000),
+					browseName: "SuccessNode",
+				}
+
+				ctx := context.Background()
+				visited := &sync.Map{}
+				metrics := NewServerMetrics(profile)
+				errChan := make(chan error, 2)
+				resultChan1 := make(chan NodeDef, 1)
+				resultChan2 := make(chan NodeDef, 1)
+
+				task1 := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					Ctx:        ctx,
+					Node:       errorNode,
+					Path:       "enterprise.site",
+					Level:      1,
+					Visited:    visited,
+					Metrics:    metrics,
+					ResultChan: resultChan1,
+					ErrChan:    errChan,
+				}
+
+				task2 := GlobalPoolTask{
+					NodeID:     "ns=2;i=2000",
+					Ctx:        ctx,
+					Node:       successNode,
+					Path:       "enterprise.site",
+					Level:      1,
+					Visited:    visited,
+					Metrics:    metrics,
+					ResultChan: resultChan2,
+					ErrChan:    errChan,
+				}
+
+				// Submit both tasks
+				pool.SubmitTask(task1)
+				pool.SubmitTask(task2)
+
+				// Should receive error for first task
+				Eventually(errChan).Within(time.Second).Should(Receive())
+
+				// Should still receive result for second task
+				Eventually(resultChan2).Within(time.Second).Should(Receive())
+			})
+		})
+
+		Context("recursion depth limit", func() {
+			It("should stop browsing at maximum recursion depth", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				// Setup node with children at max depth
+				child := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 2001),
+					browseName: "ChildAtMaxDepth",
+				}
+
+				deepNode := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 1000),
+					browseName: "NodeAtLevel25",
+					children:   []NodeBrowser{child},
+				}
+
+				ctx := context.Background()
+				visited := &sync.Map{}
+				metrics := NewServerMetrics(profile)
+				resultChan := make(chan NodeDef, 10)
+
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					Ctx:        ctx,
+					Node:       deepNode,
+					Path:       "enterprise.site.area.line.machine",
+					Level:      25, // Maximum recursion depth
+					Visited:    visited,
+					Metrics:    metrics,
+					ResultChan: resultChan,
+				}
+
+				// Submit task at max depth
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Should receive result for current node
+				Eventually(resultChan).Within(time.Second).Should(Receive())
+
+				// CRITICAL ASSERTION: Child should NOT be browsed (depth limit)
+				// This will FAIL until workers check recursion depth
+				time.Sleep(500 * time.Millisecond) // Give time for any potential child processing
+				Expect(child.WasBrowseCalled()).To(BeFalse(), "Child should not be browsed at max depth")
+
+				// Should not submit additional tasks for children
+				poolMetrics := pool.GetMetrics()
+				Expect(poolMetrics.TasksSubmitted).To(Equal(uint64(1)), "Should only submit parent task, not children")
+			})
+
+			It("should increment Level for each recursion", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				// Setup 3-level hierarchy: Parent -> Child -> Grandchild
+				grandchild := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 3001),
+					browseName: "Grandchild",
+				}
+
+				child := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 2001),
+					browseName: "Child",
+					children:   []NodeBrowser{grandchild},
+				}
+
+				parent := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 1000),
+					browseName: "Parent",
+					children:   []NodeBrowser{child},
+				}
+
+				ctx := context.Background()
+				visited := &sync.Map{}
+				metrics := NewServerMetrics(profile)
+				resultChan := make(chan NodeDef, 10)
+
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					Ctx:        ctx,
+					Node:       parent,
+					Path:       "enterprise",
+					Level:      1, // Start at level 1
+					Visited:    visited,
+					Metrics:    metrics,
+					ResultChan: resultChan,
+				}
+
+				// Submit parent task
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Should browse all 3 levels
+				Eventually(func() bool {
+					return parent.WasBrowseCalled() &&
+						child.WasBrowseCalled() &&
+						grandchild.WasBrowseCalled()
+				}).Within(3 * time.Second).Should(BeTrue(), "Should browse all levels")
+
+				// Should submit 3 tasks total (parent + child + grandchild)
+				Eventually(func() uint64 {
+					m := pool.GetMetrics()
+					return m.TasksSubmitted
+				}).Within(3 * time.Second).Should(BeNumerically(">=", 3))
+			})
+		})
+
+		Context("duplicate node detection", func() {
+			It("should not browse already-visited nodes", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				// Setup node that's already in Visited map
+				mockNode := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 1000),
+					browseName: "AlreadyVisited",
+				}
+
+				ctx := context.Background()
+				visited := &sync.Map{}
+				// Mark node as already visited
+				visited.Store("ns=2;i=1000", VisitedNodeInfo{
+					Def: NodeDef{
+						Path: "enterprise.site",
+					},
+				})
+				metrics := NewServerMetrics(profile)
+				resultChan := make(chan NodeDef, 1)
+
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					Ctx:        ctx,
+					Node:       mockNode,
+					Path:       "enterprise.site",
+					Level:      1,
+					Visited:    visited,
+					Metrics:    metrics,
+					ResultChan: resultChan,
+				}
+
+				// Submit task
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// CRITICAL ASSERTION: Browse() should NOT be called on visited node
+				// This will FAIL until workers check Visited map
+				time.Sleep(500 * time.Millisecond) // Give time for processing
+				Expect(mockNode.WasBrowseCalled()).To(BeFalse(), "Should not browse already-visited node")
+
+				// Task should still complete (just skip browse)
+				Eventually(func() int64 {
+					return atomic.LoadInt64(&pool.pendingTasks)
+				}).Within(time.Second).Should(Equal(int64(0)))
+			})
+
+			It("should add newly browsed nodes to Visited map", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				// Setup node not yet visited
+				mockNode := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 1000),
+					browseName: "NewNode",
+				}
+
+				ctx := context.Background()
+				visited := &sync.Map{}
+				metrics := NewServerMetrics(profile)
+				resultChan := make(chan NodeDef, 1)
+
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					Ctx:        ctx,
+					Node:       mockNode,
+					Path:       "enterprise.site",
+					Level:      1,
+					Visited:    visited,
+					Metrics:    metrics,
+					ResultChan: resultChan,
+				}
+
+				// Submit task
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Wait for processing
+				Eventually(resultChan).Within(time.Second).Should(Receive())
+
+				// CRITICAL ASSERTION: Node should be added to Visited map
+				// This will FAIL until workers update Visited map
+				Eventually(func() bool {
+					_, exists := visited.Load("ns=2;i=1000")
+					return exists
+				}).Within(time.Second).Should(BeTrue(), "Should add node to Visited map after browsing")
+			})
+		})
+
+		Context("metrics tracking during browse", func() {
+			It("should pass Metrics object through browse operations", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				// Setup node with children
+				child1 := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 2001),
+					browseName: "Child1",
+				}
+				child2 := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 2002),
+					browseName: "Child2",
+				}
+
+				parentNode := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 1000),
+					browseName: "Parent",
+					children:   []NodeBrowser{child1, child2},
+				}
+
+				ctx := context.Background()
+				visited := &sync.Map{}
+				metrics := NewServerMetrics(profile)
+				resultChan := make(chan NodeDef, 10)
+
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					Ctx:        ctx,
+					Node:       parentNode,
+					Path:       "enterprise.site",
+					Level:      1,
+					Visited:    visited,
+					Metrics:    metrics,
+					ResultChan: resultChan,
+				}
+
+				// Submit task
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// CRITICAL ASSERTION: All nodes should be browsed (parent + 2 children)
+				// This will FAIL until workers execute browse and submit children
+				Eventually(func() bool {
+					return parentNode.WasBrowseCalled() &&
+						child1.WasBrowseCalled() &&
+						child2.WasBrowseCalled()
+				}).Within(3 * time.Second).Should(BeTrue(), "Should browse all nodes including children")
+			})
+		})
+
+		Context("result delivery from browse", func() {
+			It("should send actual browsed NodeDef to ResultChan", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				mockNode := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 1000),
+					browseName: "ActualNode",
+				}
+
+				ctx := context.Background()
+				visited := &sync.Map{}
+				metrics := NewServerMetrics(profile)
+				resultChan := make(chan NodeDef, 1)
+
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					Ctx:        ctx,
+					Node:       mockNode,
+					Path:       "enterprise.site.area",
+					Level:      3,
+					Visited:    visited,
+					Metrics:    metrics,
+					ResultChan: resultChan,
+				}
+
+				// Submit task
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Receive result
+				var result NodeDef
+				Eventually(resultChan).Within(time.Second).Should(Receive(&result))
+
+				// CRITICAL ASSERTION: Result should contain actual browse data
+				// This will FAIL until workers create real NodeDef from browse
+				Expect(result.NodeID).NotTo(BeNil(), "Result should have NodeID")
+				Expect(result.Path).To(Equal("enterprise.site.area"), "Result should preserve Path")
+				// Note: NodeDef doesn't have Level field, but Path is sufficient to verify browse data
 			})
 		})
 	})
