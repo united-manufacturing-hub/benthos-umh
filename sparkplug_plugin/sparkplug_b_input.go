@@ -118,6 +118,15 @@ Key features:
 		Field(service.NewStringField("role").
 			Description("Sparkplug Host mode: 'secondary_passive' (default), 'secondary_active', or 'primary'").
 			Default("secondary_passive")).
+		// Discovery REBIRTH Configuration
+		Field(service.NewBoolField("request_birth_on_connect").
+			Description("Send REBIRTH requests to newly discovered nodes on connection (secondary_active/primary only). Enables complete tag discovery by requesting BIRTH messages when nodes are first seen.").
+			Default(false).
+			Optional()).
+		Field(service.NewDurationField("birth_request_throttle").
+			Description("Minimum time between REBIRTH requests to prevent command storms. Applied per-node to rate-limit discovery.").
+			Default("1s").
+			Optional()).
 		// Subscription Configuration
 		Field(service.NewObjectField("subscription",
 			service.NewStringListField("groups").
@@ -164,17 +173,22 @@ type sparkplugInput struct {
 	legacyAliasCache map[string]map[uint64]string // deviceKey -> (alias -> metric name)
 	stateMu          sync.RWMutex
 
+	// Discovery REBIRTH tracking
+	birthRequested map[string]time.Time // deviceKey -> last REBIRTH request time
+	birthRequestMu sync.RWMutex         // Protects birthRequested map
+
 	// Metrics
-	messagesReceived  *service.MetricCounter
-	messagesProcessed *service.MetricCounter
-	messagesDropped   *service.MetricCounter
-	messagesErrored   *service.MetricCounter
-	birthsProcessed   *service.MetricCounter
-	deathsProcessed   *service.MetricCounter
-	rebirthsRequested *service.MetricCounter
+	messagesReceived   *service.MetricCounter
+	messagesProcessed  *service.MetricCounter
+	messagesDropped    *service.MetricCounter
+	messagesErrored    *service.MetricCounter
+	birthsProcessed    *service.MetricCounter
+	deathsProcessed    *service.MetricCounter
+	rebirthsRequested  *service.MetricCounter
 	rebirthsSuppressed *service.MetricCounter
-	sequenceErrors    *service.MetricCounter
-	aliasResolutions  *service.MetricCounter
+	sequenceErrors     *service.MetricCounter
+	aliasResolutions   *service.MetricCounter
+	discoveryRebirths  *service.MetricCounter // REBIRTH requests sent for discovery
 }
 
 type mqttMessage struct {
@@ -265,6 +279,13 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 		return nil, fmt.Errorf("invalid role '%s': must be 'secondary_passive' (default), 'secondary_active', or 'primary'", roleStr)
 	}
 
+	// Parse discovery REBIRTH configuration
+	config.RequestBirthOnConnect, _ = conf.FieldBool("request_birth_on_connect")
+	config.BirthRequestThrottle, _ = conf.FieldDuration("birth_request_throttle")
+	if config.BirthRequestThrottle == 0 {
+		config.BirthRequestThrottle = 1 * time.Second // Ensure minimum throttle
+	}
+
 	// Parse subscription section using namespace (optional)
 	if conf.Contains("subscription") {
 		subscriptionConf := conf.Namespace("subscription")
@@ -286,27 +307,29 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 	}
 
 	si := &sparkplugInput{
-		config:            config,
-		logger:            mgr.Logger(),
-		messages:          make(chan mqttMessage, 1000),
-		done:              make(chan struct{}),
-		nodeStates:        make(map[string]*nodeState),
-		legacyAliasCache:  make(map[string]map[uint64]string),
-		aliasCache:        NewAliasCache(),
-		topicParser:       NewTopicParser(),
-		messageProcessor:  NewMessageProcessor(mgr.Logger()),
-		typeConverter:     NewTypeConverter(),
-		mqttClientBuilder: NewMQTTClientBuilder(mgr),
-		messagesReceived:  mgr.Metrics().NewCounter("messages_received"),
-		messagesProcessed: mgr.Metrics().NewCounter("messages_processed"),
-		messagesDropped:   mgr.Metrics().NewCounter("messages_dropped"),
-		messagesErrored:   mgr.Metrics().NewCounter("messages_errored"),
-		birthsProcessed:   mgr.Metrics().NewCounter("births_processed"),
-		deathsProcessed:   mgr.Metrics().NewCounter("deaths_processed"),
-		rebirthsRequested: mgr.Metrics().NewCounter("rebirths_requested"),
+		config:             config,
+		logger:             mgr.Logger(),
+		messages:           make(chan mqttMessage, 1000),
+		done:               make(chan struct{}),
+		nodeStates:         make(map[string]*nodeState),
+		legacyAliasCache:   make(map[string]map[uint64]string),
+		birthRequested:     make(map[string]time.Time), // Discovery REBIRTH tracking
+		aliasCache:         NewAliasCache(),
+		topicParser:        NewTopicParser(),
+		messageProcessor:   NewMessageProcessor(mgr.Logger()),
+		typeConverter:      NewTypeConverter(),
+		mqttClientBuilder:  NewMQTTClientBuilder(mgr),
+		messagesReceived:   mgr.Metrics().NewCounter("messages_received"),
+		messagesProcessed:  mgr.Metrics().NewCounter("messages_processed"),
+		messagesDropped:    mgr.Metrics().NewCounter("messages_dropped"),
+		messagesErrored:    mgr.Metrics().NewCounter("messages_errored"),
+		birthsProcessed:    mgr.Metrics().NewCounter("births_processed"),
+		deathsProcessed:    mgr.Metrics().NewCounter("deaths_processed"),
+		rebirthsRequested:  mgr.Metrics().NewCounter("rebirths_requested"),
 		rebirthsSuppressed: mgr.Metrics().NewCounter("rebirths_suppressed"),
-		sequenceErrors:    mgr.Metrics().NewCounter("sequence_errors"),
-		aliasResolutions:  mgr.Metrics().NewCounter("alias_resolutions"),
+		sequenceErrors:     mgr.Metrics().NewCounter("sequence_errors"),
+		aliasResolutions:   mgr.Metrics().NewCounter("alias_resolutions"),
+		discoveryRebirths:  mgr.Metrics().NewCounter("discovery_rebirths"), // Discovery REBIRTH metric
 	}
 
 	return si, nil
@@ -564,10 +587,31 @@ func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload 
 
 func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
 	s.stateMu.Lock()
-	defer s.stateMu.Unlock()
 
-	// Check sequence numbers for out-of-order detection (Sparkplug B spec compliance)
-	if state, exists := s.nodeStates[deviceKey]; exists {
+	// Check if this is a newly discovered node
+	state, exists := s.nodeStates[deviceKey]
+	if !exists {
+		// NEW NODE DISCOVERED - request BIRTH to get full tag inventory
+		s.logger.Infof("Discovered new node from %s message: %s", msgType, deviceKey)
+
+		// Create initial state
+		state = &nodeState{
+			isOnline: true,
+			lastSeen: time.Now(),
+			lastSeq:  GetSequenceNumber(payload),
+		}
+		s.nodeStates[deviceKey] = state
+
+		// Release stateMu lock before calling requestBirthIfNeeded (it has its own lock)
+		s.stateMu.Unlock()
+
+		// Request BIRTH for complete tag discovery (if configured)
+		s.requestBirthIfNeeded(deviceKey)
+
+		// Re-acquire lock for alias resolution
+		s.stateMu.Lock()
+	} else {
+		// EXISTING NODE - check sequence numbers for out-of-order detection
 		currentSeq := GetSequenceNumber(payload)
 		expectedSeq := uint8((int(state.lastSeq) + 1) % 256)
 
@@ -582,13 +626,22 @@ func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *
 			// Mark node as stale until rebirth (Sparkplug spec requirement)
 			state.isOnline = false
 
+			// Release stateMu lock before calling sendRebirthRequest (it does MQTT I/O)
+			s.stateMu.Unlock()
+
 			// Always send rebirth requests (required for Sparkplug B compliance)
 			s.sendRebirthRequest(deviceKey)
+
+			// Re-acquire lock for sequence/timestamp updates
+			s.stateMu.Lock()
 		}
 
 		state.lastSeq = currentSeq
 		state.lastSeen = time.Now()
 	}
+
+	// Ensure we still hold the lock for alias resolution
+	defer s.stateMu.Unlock()
 
 	// Resolve aliases in data message
 	s.resolveAliases(deviceKey, payload.Metrics)
@@ -1057,17 +1110,20 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 	}
 
 	var topic string
+	var controlMetricName string
 	if len(parts) == 2 {
 		// Node level rebirth
 		topic = fmt.Sprintf("spBv1.0/%s/NCMD/%s", parts[0], parts[1])
+		controlMetricName = "Node Control/Rebirth"
 	} else {
 		// Device level rebirth
 		topic = fmt.Sprintf("spBv1.0/%s/DCMD/%s/%s", parts[0], parts[1], parts[2])
+		controlMetricName = "Device Control/Rebirth"
 	}
 
 	// Create rebirth command payload
 	rebirthMetric := &sparkplugb.Payload_Metric{
-		Name: func() *string { s := "Node Control/Rebirth"; return &s }(),
+		Name: func() *string { s := controlMetricName; return &s }(),
 		Value: &sparkplugb.Payload_Metric_BooleanValue{
 			BooleanValue: true,
 		},
@@ -1093,6 +1149,47 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 
 	s.rebirthsRequested.Incr(1)
 	s.logger.Infof("Sent rebirth request to %s on topic %s", deviceKey, topic)
+}
+
+// requestBirthIfNeeded sends REBIRTH request to newly discovered node (if configured and not recently requested)
+// This enables complete tag discovery by requesting BIRTH messages when nodes are first seen publishing DATA.
+func (s *sparkplugInput) requestBirthIfNeeded(deviceKey string) {
+	// Check if feature is enabled
+	if !s.config.RequestBirthOnConnect {
+		return
+	}
+
+	// Check if role allows REBIRTH requests
+	if s.config.Role == RoleSecondaryPassive {
+		return
+	}
+
+	// Check if already requested recently (with throttling)
+	s.birthRequestMu.Lock()
+	defer s.birthRequestMu.Unlock()
+
+	lastRequested, exists := s.birthRequested[deviceKey]
+	now := time.Now()
+
+	if exists {
+		// Check throttle window
+		timeSinceLastRequest := now.Sub(lastRequested)
+		if timeSinceLastRequest < s.config.BirthRequestThrottle {
+			s.logger.Debugf("Skipping discovery REBIRTH for %s (throttled, last request %v ago)",
+				deviceKey, timeSinceLastRequest)
+			return
+		}
+	}
+
+	// Mark as requested BEFORE sending (prevent concurrent requests)
+	s.birthRequested[deviceKey] = now
+
+	// Send REBIRTH request (reuse existing function)
+	s.logger.Infof("Sending discovery REBIRTH request to newly seen node: %s", deviceKey)
+	s.sendRebirthRequest(deviceKey)
+
+	// Increment discovery-specific metric
+	s.discoveryRebirths.Incr(1)
 }
 
 // GetSequenceNumber extracts sequence number from payload, treating nil as 0 (implied)
@@ -1230,6 +1327,8 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	msg.MetaSet("umh_data_contract", umhMsg.TopicInfo.DataContract)
 	
 	// Add virtual path if present
+	// Note: Benthos metadata cannot store empty strings (they become unset)
+	// YAML configs must use .or("") to handle missing virtual_path metadata
 	if umhMsg.TopicInfo.VirtualPath != nil {
 		msg.MetaSet("umh_virtual_path", *umhMsg.TopicInfo.VirtualPath)
 	}
