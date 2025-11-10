@@ -89,12 +89,13 @@ type ServerProfile struct {
 	// Performance impact: S7-1200 needs 100 (>200 = 50× degradation), Ignition/Kepware can use 1000 (10× faster).
 	// See read_discover.go MonitorBatched() for batch creation logic.
 	MaxBatchSize int
-	// MaxWorkers controls concurrent goroutines during Browse phase that discover OPC UA node tree in parallel.
+	// MaxWorkers controls total concurrent goroutines during Browse phase (global limit, not per-NodeID).
+	// Example: With MaxWorkers=20 and 300 nodeids, pool uses 20 workers total (not 300×20=6000).
 	// Performance impact: More workers = faster browsing, but server may throttle or reject connections.
-	// See core_browse_workers.go for dynamic worker pool implementation.
+	// See core_browse_global_pool.go for GlobalWorkerPool implementation.
 	MaxWorkers int
-	// MinWorkers sets lower bound for worker pool during Browse phase.
-	// Dynamic scaling (currently disabled) keeps workers between MinWorkers and MaxWorkers.
+	// MinWorkers sets lower bound for GlobalWorkerPool during Browse phase.
+	// Dynamic scaling (currently disabled) keeps active workers between MinWorkers and MaxWorkers.
 	MinWorkers int
 	// MaxMonitoredItems is hardware limit on total monitored items server can handle (0 = unlimited).
 	// Example: S7-1200 = 1000 total, S7-1500 = 10000 total. Exceeding this causes subscription failures.

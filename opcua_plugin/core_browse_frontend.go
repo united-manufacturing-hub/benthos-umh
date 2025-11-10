@@ -84,9 +84,9 @@ func (g *OPCUAConnection) GetNodeTree(ctx context.Context, msgChan chan<- string
 	close(errChan)
 	close(opcuaBrowserChan)
 
-	// TODO: Temporary workaround - Adding a timeout ensures all child nodes are properly
-	// collected in the nodes[] array. Without this timeout, the last children nodes
-	// may be missing from the results.
+	// FIXME: Workaround for race condition - Channel consumers may not finish processing
+	// all nodes before hierarchy construction begins. This sleep ensures the nodes[]
+	// array is fully populated. Proper fix would use synchronization primitives.
 	time.Sleep(3 * time.Second)
 
 	// By this time, nodeIDMap and nodes are populated with the nodes and nodeIDs

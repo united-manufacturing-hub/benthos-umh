@@ -109,7 +109,6 @@ func browse(
 	profile := pool.Profile()
 
 	metrics := NewServerMetrics(profile)
-	// TODO Phase 3: Migrate from per-browse WaitGroup to pool.workerWg for global tracking
 	var taskWg TrackedWaitGroup
 	var workerWg TrackedWaitGroup
 	// Buffer = 2× MaxTagsToBrowse to handle branching factor safely.

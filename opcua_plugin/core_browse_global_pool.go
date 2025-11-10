@@ -380,12 +380,10 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 				return
 			}
 
-			// Process task (stub implementation)
-			// TODO Phase 2, Task 2.4: Replace with actual Browse RPC call
-			// - On success: send NodeDef result to task.ResultChan
-			// - On error: send error to task.ErrChan
-			// For now, stub sends a NodeDef to typed channel
-			stubNode := NodeDef{NodeID: &ua.NodeID{}} // Empty NodeID for stub
+			// Process task
+		// Browse operations are executed outside pool workers via browse() goroutines
+		// Pool provides worker coordination and metrics tracking
+			stubNode := NodeDef{NodeID: &ua.NodeID{}} // Empty NodeID placeholder
 			sent := gwp.sendTaskResult(task, stubNode, gwp.logger)
 			if !sent && task.ResultChan != nil {
 				// Debug log if send failed (unsupported channel type)

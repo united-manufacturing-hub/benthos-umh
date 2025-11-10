@@ -256,25 +256,4 @@ var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
 			Expect(err).ToNot(HaveOccurred())
 		})
 	})
-
-	// RED Test: This will guide the implementation
-	Describe("discoverNodes refactoring checklist", func() {
-		It("documents what needs to be added to discoverNodes()", func() {
-			// This test documents the refactoring steps (will be removed after implementation)
-			checklist := []string{
-				"Create pool := NewGlobalWorkerPool(g.ServerProfile)",
-				"Add defer pool.Shutdown(30 * time.Second)",
-				"Call pool.SpawnWorkers(g.ServerProfile.MinWorkers)",
-				"Replace browse() goroutine spawning with pool.SubmitTask() loop",
-				"Pass existing nodeChan/errChan to GlobalPoolTask",
-			}
-
-			// This test always passes - it's documentation, not verification
-			Expect(len(checklist)).To(Equal(5))
-
-			// The REAL verification is:
-			// 1. Code review sees these lines in discoverNodes()
-			// 2. Existing tests still pass (no regressions)
-		})
-	})
 })

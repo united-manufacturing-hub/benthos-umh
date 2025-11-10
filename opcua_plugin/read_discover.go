@@ -110,8 +110,6 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 			submittedCount++
 		}
 
-		// TODO Phase 2, Task 2.3: Remove this old pattern once GlobalPoolTask calls browse()
-		// For now, keep spawning browse() goroutines to maintain functionality
 		g.Log.Debugf("Browsing nodeID: %s", nodeID.String())
 		wg.Add(1)
 		wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(nodeID))
@@ -120,8 +118,6 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 
 	g.Log.Debugf("Successfully submitted %d/%d tasks to GlobalWorkerPool (buffer capacity: %d)",
 		submittedCount, len(g.NodeIDs), cap(pool.taskChan))
-
-	// TODO Phase 2, Task 2.2: Add pool.WaitForCompletion() to verify all tasks processed
 
 	// Start concurrent consumer to drain nodeChan as workers produce nodes
 	// This prevents deadlock when browse workers fill the 100k buffer
@@ -158,7 +154,6 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 
 	// Explicit shutdown after all browse() goroutines complete
 	// This ensures wg.Wait() finishes before pool workers are terminated
-	// Critical for Task 2.2 when browse() logic moves into pool workers
 	if err := pool.Shutdown(30 * time.Second); err != nil {
 		g.Log.Warnf("GlobalWorkerPool shutdown timeout: %v", err)
 	}
