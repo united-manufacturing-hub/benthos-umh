@@ -529,6 +529,11 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 				gwp.sendTaskProgress(task, stubNode)
 				atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
 				gwp.decrementPendingTasks()
+
+				// Debug log for test compatibility (tests expect completion log)
+				if gwp.logger != nil {
+					gwp.logger.Debugf("Task completed (stub mode): nodeID=%s", task.NodeID)
+				}
 				continue
 			}
 
