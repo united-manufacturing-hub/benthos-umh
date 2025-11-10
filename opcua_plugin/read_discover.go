@@ -521,13 +521,17 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 						g.ServerCapabilities.SupportsDataChangeFilter = false
 					}
 
-					// Retry this batch recursively - the three-way logic will now hit Decision 3b (cached false)
+					// Retry from failed node onwards - the three-way logic will now hit Decision 3b (cached false)
 					// This prevents infinite loops since hasTrialedThisConnection=true now
-					g.Log.Debugf("Retrying all nodes without DataChangeFilter (recursive call with cached result)...")
+					// This prevents duplicate subscriptions for already-successful nodes
+					g.Log.Debugf("Retrying from failed node onwards without DataChangeFilter (recursive call with cached result)...")
 
-					// Recursive call: MonitorBatched will see hasTrialedThisConnection=true and use cached false
-					// Pass all original nodes to restart batching from scratch with updated capability
-					return g.MonitorBatched(ctx, nodes)
+					// Calculate starting index: batchRange.Start (batch offset) + i (position within batch)
+					failedNodeIndex := batchRange.Start + i
+
+					// Recursive call: Only pass nodes from failed point onwards
+					// This prevents re-monitoring nodes 0 to (failedNodeIndex-1) which already succeeded
+					return g.MonitorBatched(ctx, nodes[failedNodeIndex:])
 				}
 
 				// Non-trial error or different error code - propagate normally
