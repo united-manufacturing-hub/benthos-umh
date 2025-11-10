@@ -49,6 +49,15 @@ type ServerProfile struct {
 	// MaxMonitoredItems is hardware limit on total monitored items server can handle (0 = unlimited).
 	// Example: S7-1200 = 1000 total, S7-1500 = 10000 total. Exceeding this causes subscription failures.
 	MaxMonitoredItems int
+	// SupportsDataChangeFilter indicates if servers matching this profile
+	// support DataChangeFilter in MonitoredItems (OPC UA Part 4, Section 7.17).
+	//
+	// When false, MonitorBatched will omit deadband filters to prevent
+	// StatusBadFilterNotAllowed errors (fallback to server-side default).
+	//
+	// Profile-based default, can be overridden by runtime detection via
+	// queryOperationLimits (ServerProfileArray query).
+	SupportsDataChangeFilter bool
 }
 
 // Profile instances
@@ -60,23 +69,25 @@ type ServerProfile struct {
 // Research: See UMH-ENG-3852 for detailed analysis of optimal batch sizes per server type.
 var (
 	profileAuto = ServerProfile{
-		Name:              ProfileAuto,
-		DisplayName:       "Auto (Defensive Defaults)",
-		Description:       "Safe defaults that work with any OPC UA server, including resource-constrained embedded devices. System will auto-detect known servers and optimize automatically.",
-		MaxBatchSize:      50,
-		MaxWorkers:        5,
-		MinWorkers:        1,
-		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
+		Name:                     ProfileAuto,
+		DisplayName:              "Auto (Defensive Defaults)",
+		Description:              "Safe defaults that work with any OPC UA server, including resource-constrained embedded devices. System will auto-detect known servers and optimize automatically.",
+		MaxBatchSize:             50,
+		MaxWorkers:               5,
+		MinWorkers:               1,
+		MaxMonitoredItems:        0,     // No limit (unlimited subscription capacity)
+		SupportsDataChangeFilter: false, // Defensive default for unknown servers
 	}
 
 	profileHighPerformance = ServerProfile{
-		Name:              ProfileHighPerformance,
-		DisplayName:       "High-Performance (VM Servers)",
-		Description:       "Aggressive profile for high-performance OPC UA servers running on VM infrastructure. Use when you know your server can handle high concurrency.",
-		MaxBatchSize:      1000,
-		MaxWorkers:        50,
-		MinWorkers:        10,
-		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
+		Name:                     ProfileHighPerformance,
+		DisplayName:              "High-Performance (VM Servers)",
+		Description:              "Aggressive profile for high-performance OPC UA servers running on VM infrastructure. Use when you know your server can handle high concurrency.",
+		MaxBatchSize:             1000,
+		MaxWorkers:               50,
+		MinWorkers:               10,
+		MaxMonitoredItems:        0,    // No limit (unlimited subscription capacity)
+		SupportsDataChangeFilter: true, // VM servers typically support Standard facet
 	}
 
 	profileIgnition = ServerProfile{
@@ -87,45 +98,49 @@ var (
 		// No Ignition-specific guidance available; Eclipse Milo implementation follows OPC UA Part 5 defaults.
 		// Server reports MaxMonitoredItemsPerCall=10000 (tested 2025-11-07).
 		// Source: Eclipse Milo implementation + OPC Foundation best practices
-		MaxBatchSize:      100,
-		MaxWorkers:        20,
-		MinWorkers:        5,
-		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
+		MaxBatchSize:             100,
+		MaxWorkers:               20,
+		MinWorkers:               5,
+		MaxMonitoredItems:        0,    // No limit (unlimited subscription capacity)
+		SupportsDataChangeFilter: true, // Eclipse Milo implements Standard facet
 	}
 
 	profileKepware = ServerProfile{
-		Name:              ProfileKepware,
-		DisplayName:       "Kepware KEPServerEX",
-		Description:       "Optimized for PTC Kepware KEPServerEX. Supports up to 128 OPC UA sessions (default, configurable to 4000).",
-		MaxBatchSize:      1000,
-		MaxWorkers:        40,
-		MinWorkers:        5,
-		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
+		Name:                     ProfileKepware,
+		DisplayName:              "Kepware KEPServerEX",
+		Description:              "Optimized for PTC Kepware KEPServerEX. Supports up to 128 OPC UA sessions (default, configurable to 4000).",
+		MaxBatchSize:             1000,
+		MaxWorkers:               40,
+		MinWorkers:               5,
+		MaxMonitoredItems:        0,    // No limit (unlimited subscription capacity)
+		SupportsDataChangeFilter: true, // Standard OPC UA server with full support
 	}
 
 	profileS71200 = ServerProfile{
 		Name:        ProfileS71200,
 		DisplayName: "Siemens S7-1200 PLC",
-		Description: "Optimized for Siemens S7-1200 PLCs (Firmware V4.4+). Limited to 10 concurrent sessions and 1000 total monitored items. Server reports: MaxMonitoredItemsPerCall=1000, MaxNodesPerBrowse=2000, MaxNodesPerRead=2000, MaxNodesPerWrite=2000 (tested 2025-11-07).",
+		Description: "Optimized for Siemens S7-1200 PLCs (Firmware V4.4+). Limited to 10 concurrent sessions and 1000 total monitored items. Does NOT support DataChangeFilter (Micro Embedded Device 2017 profile). Server reports: MaxMonitoredItemsPerCall=1000, MaxNodesPerBrowse=2000, MaxNodesPerRead=2000, MaxNodesPerWrite=2000 (tested 2025-11-07).",
 		// MaxBatchSize: Validated at 100 via Siemens Entry-ID 109755846 (02/2024) and production testing.
 		// Embedded PLC with limited resources; values >200 cause 50x performance degradation.
 		// Server reports MaxMonitoredItemsPerCall=1000 (tested 2025-11-07), but real-world limit is 100-200.
 		// Source: https://cache.industry.siemens.com/dl/files/846/109755846/att_1163306/v4/109755846_TIA_Portal_OPC_UA_system_limits.pdf
 		// Case study: https://forum.prosysopc.com/forum/opc-ua-java-sdk/how-to-subscribe-over-1500-nodes-from-siemens-s7-opcua-server/
-		MaxBatchSize:      100,
-		MaxWorkers:        10,
-		MinWorkers:        3,
-		MaxMonitoredItems: 1000, // Hardware limit
+		MaxBatchSize:             100,
+		MaxWorkers:               10,
+		MinWorkers:               3,
+		MaxMonitoredItems:        1000,  // Hardware limit
+		SupportsDataChangeFilter: false, // Micro Embedded Device 2017 profile lacks Standard DataChange Subscription Server Facet
 	}
 
 	profileS71500 = ServerProfile{
-		Name:              ProfileS71500,
-		DisplayName:       "Siemens S7-1500 PLC",
-		Description:       "Optimized for Siemens S7-1500 PLCs (CPU 1511-1513, Firmware V3.1+). Supports 32 concurrent sessions and 10000 total monitored items.",
-		MaxBatchSize:      500,
-		MaxWorkers:        20,
-		MinWorkers:        5,
-		MaxMonitoredItems: 10000, // Hardware limit
+		Name:                     ProfileS71500,
+		DisplayName:              "Siemens S7-1500 PLC",
+		Description:              "Optimized for Siemens S7-1500 PLCs (CPU 1511-1513, Firmware V3.1+). Supports 32 concurrent sessions and 10000 total monitored items.",
+		MaxBatchSize:             500,
+		MaxWorkers:               20,
+		MinWorkers:               5,
+		MaxMonitoredItems:        10000, // Hardware limit
+		SupportsDataChangeFilter: true,  // Standard facet with DataChangeFilter support
 	}
 
 	profileProsys = ServerProfile{
@@ -136,20 +151,22 @@ var (
 		// Simulation Server becomes unresponsive with 10,000+ points per subscription.
 		// Server reports MaxMonitoredItemsPerCall=10000 (tested 2025-11-07), but 800 provides safe headroom.
 		// Source: OPC UA Part 5 spec (OperationLimitsType default: 10,000) + Prosys forum case studies
-		MaxBatchSize:      800,
-		MaxWorkers:        60,
-		MinWorkers:        5,
-		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
+		MaxBatchSize:             800,
+		MaxWorkers:               60,
+		MinWorkers:               5,
+		MaxMonitoredItems:        0,    // No limit (unlimited subscription capacity)
+		SupportsDataChangeFilter: true, // Full Standard DataChangeFilter support
 	}
 
 	profileUnknown = ServerProfile{
-		Name:              "unknown",
-		DisplayName:       "Unknown Server (Fallback)",
-		Description:       "Conservative fallback used when server vendor cannot be detected. Same as Auto profile.",
-		MaxBatchSize:      50,
-		MaxWorkers:        5,
-		MinWorkers:        1,
-		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
+		Name:                     "unknown",
+		DisplayName:              "Unknown Server (Fallback)",
+		Description:              "Conservative fallback used when server vendor cannot be detected. Same as Auto profile.",
+		MaxBatchSize:             50,
+		MaxWorkers:               5,
+		MinWorkers:               1,
+		MaxMonitoredItems:        0,     // No limit (unlimited subscription capacity)
+		SupportsDataChangeFilter: false, // Conservative fallback for unknown servers
 	}
 )
 
