@@ -95,6 +95,49 @@ func TestRebirthCommandGeneration(t *testing.T) {
 			expectedMetricName:  "",  // Should return early - validation rejects
 			expectedTopicPrefix: "",
 		},
+		// Negative test cases - malformed inputs
+		{
+			name:                "Empty part in middle (group//device)",
+			deviceKey:           "TestFactory//Device1",
+			expectedTopic:       "",  // Empty part creates 3-part key with empty string
+			expectedMetricName:  "",  // Should be rejected - empty part invalid
+			expectedTopicPrefix: "",
+		},
+		{
+			name:                "Leading slash",
+			deviceKey:           "/TestFactory/Line1",
+			expectedTopic:       "",  // Creates empty first part
+			expectedMetricName:  "",  // Should be rejected - empty part invalid
+			expectedTopicPrefix: "",
+		},
+		{
+			name:                "Trailing slash",
+			deviceKey:           "TestFactory/Line1/",
+			expectedTopic:       "",  // Creates empty third part
+			expectedMetricName:  "",  // Should be rejected - empty part invalid
+			expectedTopicPrefix: "",
+		},
+		{
+			name:                "Leading whitespace in key",
+			deviceKey:           " TestFactory/Line1",
+			expectedTopic:       "",  // Whitespace should be trimmed or rejected
+			expectedMetricName:  "",  // TODO: verify behavior - trim or reject?
+			expectedTopicPrefix: "",
+		},
+		{
+			name:                "Trailing whitespace in key",
+			deviceKey:           "TestFactory/Line1 ",
+			expectedTopic:       "",  // Whitespace should be trimmed or rejected
+			expectedMetricName:  "",  // TODO: verify behavior - trim or reject?
+			expectedTopicPrefix: "",
+		},
+		{
+			name:                "Whitespace in part",
+			deviceKey:           "Test Factory/Line 1",
+			expectedTopic:       "",  // Embedded spaces - verify SparkplugB spec
+			expectedMetricName:  "",  // TODO: verify if spaces allowed in identifiers
+			expectedTopicPrefix: "",
+		},
 	}
 
 	for _, tt := range tests {
