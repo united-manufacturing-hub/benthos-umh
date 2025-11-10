@@ -2797,6 +2797,115 @@ var _ = Describe("GlobalWorkerPool", func() {
 				// Note: NodeDef doesn't have Level field, but Path is sufficient to verify browse data
 			})
 		})
+
+		// TDD RED Phase - ENG-3876 Task 12.5
+		// Test exposes shutdown flag check counter bug where SubmitTask error path
+		// at line 202 returns error WITHOUT incrementing counter, but child submission
+		// code at line 559 ALWAYS decrements, causing negative counter.
+		Context("shutdown flag check counter bug", func() {
+			It("should not corrupt counter when shutdown flag check fails", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(1)
+
+				// Create parent with children to trigger child submission
+				child1 := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 2001),
+					browseName: "Child1",
+				}
+
+				parentNode := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 1000),
+					browseName: "Parent",
+					children:   []NodeBrowser{child1},
+				}
+
+				resultChan := make(chan NodeDef, 10)
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					Ctx:        context.Background(),
+					Node:       parentNode,
+					Path:       "/root",
+					Level:      0,
+					Visited:    &sync.Map{},
+					ResultChan: resultChan,
+				}
+
+				// Submit parent task
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Shutdown pool IMMEDIATELY to hit shutdown flag check for child submissions
+				// This will cause SubmitTask to return error at line 202 (before incrementing counter)
+				pool.Shutdown(50 * time.Millisecond)
+
+				// Wait for shutdown to complete
+				time.Sleep(200 * time.Millisecond)
+
+				// CRITICAL TEST: Counter should NOT go negative
+				// Bug scenario:
+				//   1. Parent task submitted and incremented counter (counter = 1)
+				//   2. Worker starts processing parent
+				//   3. Pool shuts down (shutdown flag set)
+				//   4. Worker tries to submit child task
+				//   5. SubmitTask hits shutdown flag check (line 202) - returns error WITHOUT incrementing
+				//   6. Child submission code (line 559) decrements counter anyway
+				//   7. Counter goes negative: 1 -> 0 (parent done) -> -1 (bug!)
+				finalCounter := atomic.LoadInt64(&pool.pendingTasks)
+				Expect(finalCounter).To(BeNumerically(">=", 0), "Counter should NEVER go negative")
+
+				// Additional verification: Counter should reach zero eventually
+				// (This may fail if counter is stuck at -1)
+				Expect(finalCounter).To(Equal(int64(0)), "Counter should reach zero, not stay negative")
+			})
+
+			It("should handle shutdown during child processing without negative counter", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				// Create parent with multiple children to extend browse time
+				children := make([]NodeBrowser, 5)
+				for i := 0; i < 5; i++ {
+					children[i] = &mockNodeBrowser{
+						id:         ua.NewNumericNodeID(2, uint32(2000+i)),
+						browseName: "Child" + string(rune('A'+i)),
+					}
+				}
+
+				parentNode := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 1000),
+					browseName: "Parent",
+					children:   children,
+				}
+
+				resultChan := make(chan NodeDef, 20)
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					Ctx:        context.Background(),
+					Node:       parentNode,
+					Path:       "/root",
+					Level:      0,
+					Visited:    &sync.Map{},
+					ResultChan: resultChan,
+				}
+
+				// Submit parent task
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Shutdown very quickly to catch children submission in progress
+				time.Sleep(10 * time.Millisecond)
+				pool.Shutdown(100 * time.Millisecond)
+
+				// Wait for shutdown
+				time.Sleep(200 * time.Millisecond)
+
+				// Counter should never go negative during shutdown
+				finalCounter := atomic.LoadInt64(&pool.pendingTasks)
+				Expect(finalCounter).To(BeNumerically(">=", 0), "Counter should not go negative even during shutdown")
+			})
+		})
 	})
 
 	// TDD RED Phase - ENG-3876 Task 12.1
