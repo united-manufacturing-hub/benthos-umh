@@ -398,10 +398,20 @@ func (gwp *GlobalWorkerPool) WaitForCompletion(timeout time.Duration) error {
 	}
 
 	// Wait with timeout
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	select {
 	case <-gwp.allTasksDone:
+		// Drain signal and verify counter is actually zero (handle stale signals)
+		// Must re-check after draining to handle race between completion and wait
+		if atomic.LoadInt64(&gwp.pendingTasks) != 0 {
+			// Tasks were submitted after signal or still processing
+			// Continue waiting with fresh timeout to allow current tasks to complete
+			return gwp.WaitForCompletion(timeout)
+		}
 		return nil
-	case <-time.After(timeout):
+	case <-timer.C:
 		pending := atomic.LoadInt64(&gwp.pendingTasks)
 		return fmt.Errorf("timeout waiting for completion: %d tasks still pending", pending)
 	}
