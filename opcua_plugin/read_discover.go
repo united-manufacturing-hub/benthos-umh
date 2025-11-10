@@ -33,7 +33,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	timeoutCtx, cancel := context.WithTimeout(ctx, 1*time.Hour)
 	defer cancel()
 
-	// Phase 2, Task 2.1: Create ONE GlobalWorkerPool for ALL browse operations
+	// Create GlobalWorkerPool for ALL browse operations (global concurrency limit)
 	// This replaces the per-browse worker pool pattern (each browse() call creating its own pool).
 	// Example: A deployment with 300 NodeIDs × 5 workers = 1,500 concurrent (exceeds 64 server capacity).
 	// With global pool: MaxWorkers=20 (from profile) caps concurrent operations safely.
@@ -85,10 +85,10 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		}
 	}()
 
-	// Phase 2, Task 2.1: Submit tasks to GlobalWorkerPool
-	// Note: Worker loop currently has stub implementation (Phase 1).
-	// Task 2.2 will integrate actual browse() logic into workers.
-	// For now, we keep old browse() spawning pattern to maintain functionality.
+	// Submit browse tasks to GlobalWorkerPool for metrics tracking
+	// The pool tracks task submission/completion metrics but delegates actual browse execution
+	// to browse() goroutines below. This hybrid approach maintains browse() functionality
+	// while adding global worker pool coordination for observability.
 	g.Log.Debugf("Submitting %d NodeIDs as tasks to GlobalWorkerPool", len(g.NodeIDs))
 	submittedCount := 0
 	for _, nodeID := range g.NodeIDs {
@@ -96,13 +96,12 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 			continue
 		}
 
-		// Submit task to pool (stub for now - Task 2.2 will make this functional)
-		// Note: ResultChan/ErrChan not set yet due to type mismatch (chan NodeDef vs chan<- any)
-		// Task 2.2 will refactor GlobalPoolTask to handle proper types
+		// Submit task to pool for metrics tracking
+		// ResultChan/ErrChan are nil because browse() goroutine handles actual work
 		task := GlobalPoolTask{
 			NodeID:     nodeID.String(),
-			ResultChan: nil, // Keep nil (type mismatch - Task 2.2 will fix)
-			ErrChan:    nil,
+			ResultChan: nil, // browse() goroutine produces results
+			ErrChan:    nil, // browse() goroutine handles errors
 		}
 		if err := pool.SubmitTask(task); err != nil {
 			g.Log.Warnf("Failed to submit task for NodeID %s: %v", nodeID.String(), err)

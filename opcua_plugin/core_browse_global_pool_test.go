@@ -729,7 +729,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 		})
 	})
 
-	// Task 2.3: sendTaskResult() helper tests
+	// sendTaskResult() helper tests
 	Describe("sendTaskResult helper", func() {
 		It("should send NodeDef to chan NodeDef", func() {
 			profile := ServerProfile{MaxWorkers: 5}
@@ -802,8 +802,8 @@ var _ = Describe("GlobalWorkerPool", func() {
 		})
 	})
 
-	// Task 2.2: Type system refactoring tests
-	Describe("Task 2.2: GlobalPoolTask Type System", func() {
+	// Type system refactoring tests
+	Describe("GlobalPoolTask Type System", func() {
 		Context("when ResultChan receives NodeDef", func() {
 			It("should allow sending NodeDef through ResultChan", func() {
 				profile := ServerProfile{MaxWorkers: 5}
@@ -814,7 +814,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				resultChan := make(chan NodeDef, 1)
 
 				// This test verifies the type system allows NodeDef results
-				// Task 2.2 will fix GlobalPoolTask to enable this pattern
+				// GlobalPoolTask uses interface{} for ResultChan to enable this pattern
 				task := GlobalPoolTask{
 					NodeID:     "ns=2;i=1000",
 					ResultChan: resultChan,
@@ -832,7 +832,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 		})
 	})
 
-	// Task 3.2: BrowseDetails Progress Reporting
+	// BrowseDetails Progress Reporting
 	Describe("BrowseDetails Progress Reporting", func() {
 		Context("when pool accepts progress channel", func() {
 			It("should send progress updates during task processing", func() {
@@ -930,7 +930,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 		})
 	})
 
-	// Task 3.1: Global Metrics Aggregation
+	// Global Metrics Aggregation
 	Describe("GetMetrics", func() {
 		Context("when tracking tasks submitted", func() {
 			It("should increment tasksSubmitted counter", func() {
@@ -1151,7 +1151,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 		})
 	})
 
-	// Task 3.3: Debug Logging
+	// Debug Logging
 	Describe("Debug Logging", func() {
 		var recLogger *recordingLogger
 

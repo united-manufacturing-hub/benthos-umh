@@ -30,11 +30,11 @@ import (
 // This is a simplified task structure focused on queueing and result delivery.
 // It differs from NodeTask in core_browse.go which contains browse execution state.
 //
-// Task 2.2: ResultChan now accepts any channel type via interface{}.
+// ResultChan accepts any channel type via interface{} to enable flexible integration.
 // Workers use type assertion to send results to the correct typed channel.
-// This enables browse() to provide chan NodeDef while maintaining flexibility.
+// This enables browse() to provide chan NodeDef while maintaining backward compatibility.
 //
-// Task 3.2: ProgressChan added for optional BrowseDetails progress reporting.
+// ProgressChan provides optional BrowseDetails progress reporting for UI updates.
 // When nil, no progress updates are sent. When set, workers send non-blocking
 // progress updates during task processing.
 type GlobalPoolTask struct {
@@ -46,12 +46,11 @@ type GlobalPoolTask struct {
 
 // GlobalWorkerPool manages a shared pool of workers for OPC UA browse operations.
 //
-// Architecture Note: This is a NEW global worker pool implementation that will
-// replace the per-browse worker pool pattern in Phase 2 (Integration).
-// Unlike the old pattern where each browse() call spawned its own pool,
+// Architecture: Global worker pool implementation using shared concurrency limits.
+// Unlike per-browse pools (each browse() call spawning its own workers),
 // this design uses a single shared pool for all concurrent browse operations.
 //
-// Key differences from old pattern:
+// Key design principles:
 // - Explicit 0-initialization (caller must spawn workers)
 // - Profile limits apply GLOBALLY (not per-browse)
 // - Task queueing via shared channel (not per-browse WaitGroup)
@@ -71,14 +70,13 @@ type GlobalWorkerPool struct {
 	mu             sync.Mutex
 	logger         Logger // For debug logging in sendTaskResult
 
-	// Task 3.1: Metrics tracking (using atomic operations for lock-free access)
+	// Metrics tracking (using atomic operations for lock-free access)
 	metricsTasksSubmitted uint64 // Total tasks submitted (atomic)
 	metricsTasksCompleted uint64 // Successfully completed tasks (atomic)
 	metricsTasksFailed    uint64 // Failed tasks (errors) (atomic)
 }
 
-// PoolMetrics contains current pool metrics snapshot.
-// Task 3.1: Metrics aggregation for visibility into pool operations.
+// PoolMetrics contains current pool metrics snapshot for visibility into pool operations.
 type PoolMetrics struct {
 	ActiveWorkers  int    // Current worker count
 	TasksSubmitted uint64 // Total submitted
@@ -148,7 +146,7 @@ func (gwp *GlobalWorkerPool) SpawnWorkers(n int) int {
 		gwp.currentWorkers++
 		gwp.workerWg.Add(1)
 
-		// Task 3.3: Debug log worker spawn with total count
+		// Debug log worker spawn with total count
 		if gwp.logger != nil {
 			gwp.logger.Debugf("Worker spawned: workerID=%s totalWorkers=%d", workerID, gwp.currentWorkers)
 		}
@@ -167,7 +165,7 @@ func (gwp *GlobalWorkerPool) SpawnWorkers(n int) int {
 // The method is thread-safe (channel operations are atomic) and non-blocking
 // in practice due to large buffer size (200k = 2× MaxTagsToBrowse).
 func (gwp *GlobalWorkerPool) SubmitTask(task GlobalPoolTask) (err error) {
-	// Task 2.3: Runtime validation - verify ResultChan is actually a channel type
+	// Runtime validation: verify ResultChan is actually a channel type
 	if task.ResultChan != nil {
 		rv := reflect.ValueOf(task.ResultChan)
 		if rv.Kind() != reflect.Chan {
@@ -190,10 +188,10 @@ func (gwp *GlobalWorkerPool) SubmitTask(task GlobalPoolTask) (err error) {
 		}
 	}()
 
-	// Task 3.1: Increment tasksSubmitted counter (atomic)
+	// Increment tasksSubmitted counter (atomic)
 	atomic.AddUint64(&gwp.metricsTasksSubmitted, 1)
 
-	// Task 3.3: Debug log task submission with metrics
+	// Debug log task submission with metrics
 	if gwp.logger != nil {
 		metrics := gwp.GetMetrics()
 		gwp.logger.Debugf("Task submitted: nodeID=%s queueDepth=%d workers=%d", task.NodeID, metrics.QueueDepth, metrics.ActiveWorkers)
@@ -219,7 +217,7 @@ func (gwp *GlobalWorkerPool) Shutdown(timeout time.Duration) error {
 		return nil
 	}
 
-	// Task 3.3: Debug log shutdown initiation
+	// Debug log shutdown initiation
 	workerCount := gwp.currentWorkers
 	if gwp.logger != nil {
 		gwp.logger.Debugf("Shutdown initiated: workers=%d timeout=%v", workerCount, timeout)
@@ -247,7 +245,7 @@ func (gwp *GlobalWorkerPool) Shutdown(timeout time.Duration) error {
 
 	select {
 	case <-done:
-		// Task 3.3: Debug log shutdown completion
+		// Debug log shutdown completion
 		if gwp.logger != nil {
 			gwp.logger.Debugf("Shutdown complete: all workers exited")
 		}
@@ -258,13 +256,13 @@ func (gwp *GlobalWorkerPool) Shutdown(timeout time.Duration) error {
 }
 
 // Profile returns the ServerProfile this pool was created with.
-// Useful for Phase 2 integration where browse() selects pool based on server profile.
+// Enables callers to verify pool configuration and select appropriate pool based on server profile.
 func (gwp *GlobalWorkerPool) Profile() ServerProfile {
 	return gwp.profile
 }
 
 // GetMetrics returns current pool metrics snapshot.
-// Task 3.1: Thread-safe metrics access for visibility into pool operations.
+// Thread-safe metrics access for visibility into pool operations.
 // Uses atomic loads for lock-free metric reads with single mutex for pool state.
 func (gwp *GlobalWorkerPool) GetMetrics() PoolMetrics {
 	// Atomic loads for metrics (lock-free)
@@ -290,7 +288,7 @@ func (gwp *GlobalWorkerPool) GetMetrics() PoolMetrics {
 // sendTaskResult sends task result to ResultChan using type assertion.
 // Returns true if result was sent, false if channel type unsupported or nil.
 //
-// Task 2.3: Extracted helper to eliminate 24 lines of duplicated type assertion code
+// Extracted helper to eliminate 24 lines of duplicated type assertion code
 // in workerLoop (main loop + drain loop). Supports:
 //   - chan NodeDef (new browse() integration)
 //   - chan<- NodeDef (send-only variant)
@@ -327,7 +325,7 @@ func (gwp *GlobalWorkerPool) sendTaskResult(task GlobalPoolTask, stubNode NodeDe
 }
 
 // sendTaskProgress sends progress update to ProgressChan if set (non-blocking).
-// Task 3.2: Extracted helper to eliminate code duplication in workerLoop.
+// Extracted helper to eliminate code duplication in workerLoop.
 // Uses select with default to avoid blocking on full/closed channels.
 func (gwp *GlobalWorkerPool) sendTaskProgress(task GlobalPoolTask, stubNode NodeDef) {
 	if task.ProgressChan == nil {
@@ -392,13 +390,13 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 				}
 			}
 
-			// Task 3.2: Send progress update (non-blocking)
+			// Send progress update (non-blocking)
 			gwp.sendTaskProgress(task, stubNode)
 
-			// Task 3.1: Increment tasksCompleted counter on success (atomic)
+			// Increment tasksCompleted counter on success (atomic)
 			atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
 
-			// Task 3.3: Debug log task completion
+			// Debug log task completion
 			if gwp.logger != nil {
 				gwp.logger.Debugf("Task completed: nodeID=%s", task.NodeID)
 			}
@@ -417,10 +415,10 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 					stubNode := NodeDef{NodeID: &ua.NodeID{}}
 					gwp.sendTaskResult(task, stubNode, gwp.logger)
 
-					// Task 3.2: Send progress update (non-blocking)
+					// Send progress update (non-blocking)
 					gwp.sendTaskProgress(task, stubNode)
 
-					// Task 3.1: Increment tasksCompleted counter (atomic)
+					// Increment tasksCompleted counter (atomic)
 					atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
 				default:
 					// No more tasks in buffer, exit

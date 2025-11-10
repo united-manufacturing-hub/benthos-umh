@@ -187,6 +187,7 @@ var (
 // DataChangeFilter support comes from profile-based defaults in ServerProfile struct instead.
 //
 // Returns error if the server doesn't support OperationLimits (common for PLCs like S7-1200/1500).
+// Read-only logging for diagnostics.
 func (g *OPCUAInput) queryOperationLimits(ctx context.Context) (*ServerCapabilities, error) {
 	if g == nil || g.OPCUAConnection == nil || g.Client == nil {
 		return nil, errors.New("client is nil")

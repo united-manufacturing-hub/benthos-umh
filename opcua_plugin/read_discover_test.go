@@ -183,7 +183,7 @@ func BenchmarkDeduplicateWorstCase(b *testing.B) {
 }
 
 var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
-	// Phase 2, Task 2.1: Refactor discoverNodes() to use GlobalWorkerPool
+	// GlobalWorkerPool integration tests for discoverNodes()
 	//
 	// TDD Challenge: discoverNodes() is a private method with complex OPC UA dependencies.
 	// We can't easily mock the entire OPC UA stack just to test pool creation.
