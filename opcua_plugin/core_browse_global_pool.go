@@ -391,14 +391,42 @@ func (gwp *GlobalWorkerPool) decrementPendingTasks() {
 // WaitForCompletion blocks until all pending tasks complete or timeout expires.
 // Returns nil when all tasks are done, or error if timeout is exceeded.
 // Safe to call multiple times - returns immediately if no tasks are pending.
+//
+// This is the public API that converts timeout to deadline and delegates to
+// the private helper that tracks deadline across recursive calls.
 func (gwp *GlobalWorkerPool) WaitForCompletion(timeout time.Duration) error {
-	// Check if already complete (fast path)
+	// Fast path: check if already complete
 	if atomic.LoadInt64(&gwp.pendingTasks) == 0 {
 		return nil
 	}
 
-	// Wait with timeout
-	timer := time.NewTimer(timeout)
+	// Convert timeout to deadline and delegate to private helper
+	deadline := time.Now().Add(timeout)
+	return gwp.waitForCompletionWithDeadline(deadline)
+}
+
+// waitForCompletionWithDeadline is the private helper that tracks deadline across recursive calls.
+// This ensures total wait time never exceeds the original timeout, even with multiple recursive
+// calls to handle stale completion signals.
+func (gwp *GlobalWorkerPool) waitForCompletionWithDeadline(deadline time.Time) error {
+	// Fast path: check if already complete
+	if atomic.LoadInt64(&gwp.pendingTasks) == 0 {
+		return nil
+	}
+
+	// Calculate REMAINING time until deadline
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		// Re-check counter before returning timeout error (tasks might have completed)
+		if atomic.LoadInt64(&gwp.pendingTasks) == 0 {
+			return nil
+		}
+		pending := atomic.LoadInt64(&gwp.pendingTasks)
+		return fmt.Errorf("timeout waiting for completion: %d tasks still pending", pending)
+	}
+
+	// Create timer with REMAINING time (not original timeout)
+	timer := time.NewTimer(remaining)
 	defer timer.Stop()
 
 	select {
@@ -407,8 +435,8 @@ func (gwp *GlobalWorkerPool) WaitForCompletion(timeout time.Duration) error {
 		// Must re-check after draining to handle race between completion and wait
 		if atomic.LoadInt64(&gwp.pendingTasks) != 0 {
 			// Tasks were submitted after signal or still processing
-			// Continue waiting with fresh timeout to allow current tasks to complete
-			return gwp.WaitForCompletion(timeout)
+			// Recursive call with SAME deadline (not new timeout)
+			return gwp.waitForCompletionWithDeadline(deadline)
 		}
 		return nil
 	case <-timer.C:
