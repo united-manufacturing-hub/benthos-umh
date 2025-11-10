@@ -20,6 +20,8 @@
 package sparkplug_plugin
 
 import (
+	"sync"
+
 	"github.com/redpanda-data/benthos/v4/public/service"
 	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
@@ -50,6 +52,32 @@ func NewSparkplugInputForTesting() *SparkplugInputTestWrapper {
 	}
 
 	return &SparkplugInputTestWrapper{input: input}
+}
+
+// NewSparkplugInputForTestingWithRole creates a sparkplugInput with specified role
+// Used for testing role-specific behavior like rebirth requests
+func NewSparkplugInputForTestingWithRole(role Role) *SparkplugInputTestWrapper {
+	logger := service.MockResources().Logger()
+
+	input := &sparkplugInput{
+		config: Config{
+			Role: role,
+		},
+		logger:           logger,
+		nodeStates:       make(map[string]*nodeState),
+		legacyAliasCache: make(map[string]map[uint64]string),
+		aliasCache:       NewAliasCache(),
+		topicParser:      NewTopicParser(),
+		typeConverter:    NewTypeConverter(),
+		messageProcessor: NewMessageProcessor(logger),
+	}
+
+	return &SparkplugInputTestWrapper{input: input}
+}
+
+// GetStateMu returns a pointer to the stateMu lock for lock testing
+func (w *SparkplugInputTestWrapper) GetStateMu() *sync.RWMutex {
+	return &w.input.stateMu
 }
 
 // CreateSplitMessages is an exported wrapper for testing the private createSplitMessages method
