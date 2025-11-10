@@ -1107,24 +1107,22 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 
 	// Parse device key to get topic components
 	parts := strings.Split(deviceKey, "/")
-	if len(parts) < 2 {
-		return
-	}
 
 	// Validate deviceKey format (SparkplugB spec: group/node or group/node/device)
-	if len(parts) > 3 {
-		s.logger.Warnf("Invalid deviceKey: too many parts (%d): %s", len(parts), deviceKey)
+	if len(parts) < 2 || len(parts) > 3 {
+		s.logger.Warnf("Invalid deviceKey format: expected 2-3 parts (group/node or group/node/device), got %d: %s",
+			len(parts), deviceKey)
 		return
 	}
 
 	var topic string
 	var controlMetricName string
 	if len(parts) == 2 {
-		// Node level rebirth
+		// Node level rebirth - send NCMD with "Node Control/Rebirth" metric
 		topic = fmt.Sprintf("spBv1.0/%s/NCMD/%s", parts[0], parts[1])
 		controlMetricName = "Node Control/Rebirth"
-	} else { // len(parts) == 3 - explicit condition for clarity
-		// Device level rebirth
+	} else { // len(parts) == 3
+		// Device level rebirth - send DCMD with "Device Control/Rebirth" metric
 		topic = fmt.Sprintf("spBv1.0/%s/DCMD/%s/%s", parts[0], parts[1], parts[2])
 		controlMetricName = "Device Control/Rebirth"
 	}
