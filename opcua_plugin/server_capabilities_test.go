@@ -38,6 +38,20 @@ var _ = Describe("ServerCapabilities", func() {
 			Expect(caps.MaxNodesPerWrite).To(Equal(uint32(500)))
 			Expect(caps.MaxBrowseContinuationPoints).To(Equal(uint32(10)))
 		})
+
+		It("should have SupportsDataChangeFilter field for profile-based capability detection", func() {
+			// Test for new field that tracks DataChangeFilter support
+			// Per OPC UA Part 7, Section 6.4.3: Profile-based capability detection
+			caps := ServerCapabilities{
+				SupportsDataChangeFilter: true,
+			}
+
+			Expect(caps.SupportsDataChangeFilter).To(BeTrue())
+
+			// Test default false value
+			capsDefault := ServerCapabilities{}
+			Expect(capsDefault.SupportsDataChangeFilter).To(BeFalse())
+		})
 	})
 
 	Context("queryOperationLimits", func() {
