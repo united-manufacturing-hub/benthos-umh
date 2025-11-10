@@ -149,13 +149,39 @@ func TestRebirthCommandGeneration(t *testing.T) {
 			var topic string
 			var controlMetricName string
 
-			// Replicate the early return logic from sendRebirthRequest
-			if len(parts) < 2 {
-				// Function would return early here
-				topic = ""
-				controlMetricName = ""
-			} else if len(parts) > 3 {
-				// Validation rejects keys with more than 3 parts
+		// Replicate the validation logic from sendRebirthRequest (lines 1112-1132)
+		if len(parts) < 2 {
+			// Function would return early here
+			topic = ""
+			controlMetricName = ""
+		} else if len(parts) > 3 {
+			// Validation rejects keys with more than 3 parts
+			topic = ""
+			controlMetricName = ""
+		} else {
+			// Validate no empty parts (handles "group//device", "/group/node", "group/node/")
+			hasEmptyPart := false
+			hasWhitespacePart := false
+			hasEmbeddedWhitespace := false
+			for _, part := range parts {
+				trimmed := strings.TrimSpace(part)
+				if trimmed == "" {
+					hasEmptyPart = true
+					break
+				}
+				if trimmed != part {
+					hasWhitespacePart = true
+					break
+				}
+				// Check for embedded whitespace (SparkplugB identifiers should not contain spaces)
+				if strings.Contains(part, " ") {
+					hasEmbeddedWhitespace = true
+					break
+				}
+			}
+
+			if hasEmptyPart || hasWhitespacePart || hasEmbeddedWhitespace {
+				// Validation rejects keys with empty, whitespace, or embedded whitespace in parts
 				topic = ""
 				controlMetricName = ""
 			} else if len(parts) == 2 {
@@ -167,6 +193,7 @@ func TestRebirthCommandGeneration(t *testing.T) {
 				topic = fmt.Sprintf("spBv1.0/%s/DCMD/%s/%s", parts[0], parts[1], parts[2])
 				controlMetricName = "Device Control/Rebirth"
 			}
+		}
 
 			// Verify topic
 			if topic != tt.expectedTopic {

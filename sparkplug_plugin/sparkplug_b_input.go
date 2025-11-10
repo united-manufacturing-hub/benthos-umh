@@ -1115,6 +1115,28 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 		return
 	}
 
+	// Validate no empty parts (handles "group//device", "/group/node", "group/node/")
+	for i, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			s.logger.Warnf("Invalid deviceKey: empty or whitespace-only part at index %d: %s - rebirth command will not be sent",
+				i, deviceKey)
+			return
+		}
+		// Reject keys with leading/trailing whitespace (indicates malformed input)
+		if trimmed != part {
+			s.logger.Warnf("Invalid deviceKey: leading/trailing whitespace in part %d: %s - rebirth command will not be sent",
+				i, deviceKey)
+			return
+		}
+		// Reject keys with embedded whitespace (SparkplugB identifiers should not contain spaces)
+		if strings.Contains(part, " ") {
+			s.logger.Warnf("Invalid deviceKey: embedded whitespace in part %d: %s - rebirth command will not be sent",
+				i, deviceKey)
+			return
+		}
+	}
+
 	var topic string
 	var controlMetricName string
 	if len(parts) == 2 {
