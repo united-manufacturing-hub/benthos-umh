@@ -16,7 +16,6 @@ package opcua_plugin
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
 	"sync"
@@ -24,6 +23,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/gopcua/opcua/errors"
+	"github.com/gopcua/opcua/id"
 	"github.com/gopcua/opcua/ua"
 )
 
@@ -473,11 +474,92 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 				return
 			}
 
-			// Process task
-		// Browse operations are executed outside pool workers via browse() goroutines
-		// Pool provides worker coordination and metrics tracking
-			stubNode := NodeDef{NodeID: &ua.NodeID{}} // Empty NodeID placeholder
-			sent := gwp.sendTaskResult(task, stubNode, gwp.logger)
+			// Check context before browse (handle cancellation)
+			select {
+			case <-task.Ctx.Done():
+				// Context cancelled - send error and decrement
+				if task.ErrChan != nil {
+					select {
+					case task.ErrChan <- task.Ctx.Err():
+					default:
+					}
+				}
+				gwp.decrementPendingTasks()
+				continue
+			default:
+			}
+
+			// Check if already visited (skip browse if so)
+			if task.Visited != nil {
+				if _, visited := task.Visited.Load(task.NodeID); visited {
+					// Node already visited - skip browse and decrement
+					gwp.decrementPendingTasks()
+					continue
+				}
+			}
+
+			// Execute browse operation on task's node
+			children, err := task.Node.Children(task.Ctx, id.HierarchicalReferences,
+				ua.NodeClassVariable|ua.NodeClassObject)
+
+			// Handle browse errors
+			if err != nil {
+				if task.ErrChan != nil {
+					select {
+					case task.ErrChan <- errors.Errorf("browse failed for %s: %s", task.NodeID, err):
+					default:
+					}
+				}
+				gwp.decrementPendingTasks()
+				continue
+			}
+
+			// Create NodeDef from browsed node
+			nodeDef := NodeDef{
+				NodeID:       task.Node.ID(),
+				Path:         task.Path,
+				ParentNodeID: task.ParentNodeID,
+			}
+
+			// Mark node as visited
+			if task.Visited != nil {
+				task.Visited.Store(task.NodeID, VisitedNodeInfo{
+					Def:             nodeDef,
+					LastSeen:        time.Now(),
+					FullyDiscovered: false,
+				})
+			}
+
+			// Submit children as new tasks (if within recursion depth)
+			if task.Level < 25 {
+				for _, child := range children {
+					childNodeID := child.ID().String()
+
+					// Check if already visited (duplicate detection)
+					if task.Visited != nil {
+						if _, visited := task.Visited.Load(childNodeID); visited {
+							continue // Skip already-visited nodes
+						}
+					}
+
+					childTask := GlobalPoolTask{
+						NodeID:       childNodeID,
+						Ctx:          task.Ctx,
+						Node:         child,
+						Path:         task.Path,
+						Level:        task.Level + 1,
+						ParentNodeID: task.NodeID,
+						Visited:      task.Visited,
+						Metrics:      task.Metrics,
+						ResultChan:   task.ResultChan,
+						ErrChan:      task.ErrChan,
+					}
+					gwp.SubmitTask(childTask)
+				}
+			}
+
+			// Send result to ResultChan
+			sent := gwp.sendTaskResult(task, nodeDef, gwp.logger)
 			if !sent && task.ResultChan != nil {
 				// Debug log if send failed (unsupported channel type)
 				if gwp.logger != nil {
@@ -486,7 +568,7 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 			}
 
 			// Send progress update (non-blocking)
-			gwp.sendTaskProgress(task, stubNode)
+			gwp.sendTaskProgress(task, nodeDef)
 
 			// Increment tasksCompleted counter on success (atomic)
 			atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
