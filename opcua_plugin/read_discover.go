@@ -433,23 +433,20 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 
 			// Only apply deadband filter if:
 			// 1. Server supports DataChangeFilter (capability check)
-			// 2. Node is numeric data type (existing check)
-			// 3. User configured deadband (g.DeadbandType != "none")
-			if supportsFilter && isNumericDataType(nodeDef.DataTypeID) && g.DeadbandType != "none" {
+			// 2. Node is numeric data type (required for deadband)
+			if supportsFilter && isNumericDataType(nodeDef.DataTypeID) {
 				filter = createDataChangeFilter(g.DeadbandType, g.DeadbandValue)
 				numFilteredNodes++
 			} else {
 				filter = nil
 
 				// Log why filter was skipped (expanded debug messaging)
-				if g.DeadbandType != "none" {
-					if !supportsFilter {
-						g.Log.Debugf("Skipping deadband for node %s: server does not support DataChangeFilter (profile=%s, runtime=%v)",
-							nodeDef.NodeID, g.ServerProfile.Name, g.ServerCapabilities != nil)
-					} else if !isNumericDataType(nodeDef.DataTypeID) {
-						g.Log.Debugf("Skipping deadband for non-numeric node %s (type: %v)",
-							nodeDef.NodeID, nodeDef.DataTypeID)
-					}
+				if !supportsFilter {
+					g.Log.Debugf("Skipping deadband for node %s: server does not support DataChangeFilter (profile=%s, runtime=%v)",
+						nodeDef.NodeID, g.ServerProfile.Name, g.ServerCapabilities != nil)
+				} else if !isNumericDataType(nodeDef.DataTypeID) {
+					g.Log.Debugf("Skipping deadband for non-numeric node %s (type: %v)",
+						nodeDef.NodeID, nodeDef.DataTypeID)
 				}
 			}
 
