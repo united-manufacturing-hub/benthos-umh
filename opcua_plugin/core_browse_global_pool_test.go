@@ -1895,6 +1895,78 @@ var _ = Describe("GlobalWorkerPool", func() {
 					return atomic.LoadInt64(&pool.pendingTasks)
 				}).Within(time.Second).Should(Equal(int64(0)))
 			})
+
+			// TDD RED Phase - Task 8.1: Race condition test
+			// This test exposes the race condition where a stale completion signal
+			// causes WaitForCompletion to return prematurely when a new task is
+			// submitted after a previous task completes but before WaitForCompletion
+			// is called.
+			//
+			// Timeline:
+			// T1: Task A submitted (pendingTasks = 1)
+			// T2: Task A completes (pendingTasks = 0, signal sent to allTasksDone)
+			// T3: Task B submitted (pendingTasks = 1, but signal still buffered)
+			// T4: WaitForCompletion called
+			// T5: Receives stale signal from T2
+			// T6: Returns nil immediately (BUG - should wait for Task B)
+			//
+			// Expected behavior (after fix):
+			// - WaitForCompletion re-checks pendingTasks after receiving signal
+			// - Realizes counter is still 1 (Task B pending)
+			// - Waits for Task B to complete
+			It("should handle stale completion signal when new task submitted after previous completion", func() {
+				// Setup pool with 2 workers
+				profile := ServerProfile{MaxWorkers: 10, MinWorkers: 2}
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(2)
+
+				// Submit and complete first task
+				resultChan1 := make(chan NodeDef, 1)
+				task1 := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					ResultChan: resultChan1,
+				}
+				err := pool.SubmitTask(task1)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Wait for first task to complete (triggers signal)
+				Eventually(resultChan1).Within(time.Second).Should(Receive())
+				Eventually(func() int64 {
+					return atomic.LoadInt64(&pool.pendingTasks)
+				}).Within(time.Second).Should(Equal(int64(0)))
+
+				// Allow time for completion signal to be sent to channel
+				// This ensures the signal is buffered in allTasksDone channel
+				time.Sleep(50 * time.Millisecond)
+
+				// Submit new task AFTER signal sent (race condition window)
+				resultChan2 := make(chan NodeDef, 1)
+				task2 := GlobalPoolTask{
+					NodeID:     "ns=2;i=2000",
+					ResultChan: resultChan2,
+				}
+				err = pool.SubmitTask(task2)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Verify task2 is pending
+				pending := atomic.LoadInt64(&pool.pendingTasks)
+				Expect(pending).To(Equal(int64(1)))
+
+				// WaitForCompletion should handle stale signal correctly
+				// BUG: With stale signal, might return while tasks still pending
+				// FIXED: Re-checks counter after receiving signal
+				err = pool.WaitForCompletion(2 * time.Second)
+
+				// Test expectations
+				Expect(err).ToNot(HaveOccurred(), "WaitForCompletion should succeed")
+
+				// Verify all tasks completed (this is what matters)
+				finalPending := atomic.LoadInt64(&pool.pendingTasks)
+				Expect(finalPending).To(Equal(int64(0)), "All tasks should complete")
+
+				// Verify task2 completed (task1 already verified at line 1933)
+				Eventually(resultChan2).Within(time.Second).Should(Receive())
+			})
 		})
 	})
 
