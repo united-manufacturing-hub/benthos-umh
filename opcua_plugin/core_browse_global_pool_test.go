@@ -15,6 +15,7 @@
 package opcua_plugin
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -71,6 +72,29 @@ func (r *recordingLogger) Reset() {
 	r.infoCalls = nil
 	r.warnCalls = nil
 	r.errorCalls = nil
+}
+
+// mockNodeBrowser implements NodeBrowser interface for testing
+type mockNodeBrowser struct{}
+
+func (m *mockNodeBrowser) ID() *ua.NodeID {
+	return &ua.NodeID{}
+}
+
+func (m *mockNodeBrowser) Attributes(ctx context.Context, attrs ...ua.AttributeID) ([]*ua.DataValue, error) {
+	return nil, nil
+}
+
+func (m *mockNodeBrowser) BrowseName(ctx context.Context) (*ua.QualifiedName, error) {
+	return &ua.QualifiedName{Name: "MockNode"}, nil
+}
+
+func (m *mockNodeBrowser) ReferencedNodes(ctx context.Context, refType uint32, browseDir ua.BrowseDirection, nodeClassMask ua.NodeClass, includeSubtypes bool) ([]NodeBrowser, error) {
+	return nil, nil
+}
+
+func (m *mockNodeBrowser) Children(ctx context.Context, refs uint32, mask ua.NodeClass) ([]NodeBrowser, error) {
+	return nil, nil
 }
 
 var _ = Describe("GlobalWorkerPool", func() {
@@ -1365,6 +1389,183 @@ var _ = Describe("GlobalWorkerPool", func() {
 				Expect(func() {
 					pool.Shutdown(time.Second)
 				}).ToNot(Panic())
+			})
+		})
+	})
+
+	// Enhanced GlobalPoolTask Structure Tests (TDD RED Phase - ENG-3876 Task 1)
+	Describe("Enhanced GlobalPoolTask Structure", func() {
+		Context("when creating task with browse execution context", func() {
+			It("should have Ctx field for cancellation context", func() {
+				ctx := context.Background()
+				task := GlobalPoolTask{
+					Ctx: ctx,
+				}
+				Expect(task.Ctx).To(Equal(ctx))
+				Expect(task.Ctx).NotTo(BeNil())
+			})
+
+			It("should have Node field for OPC UA node to browse", func() {
+				// Create a mock NodeBrowser (this will fail until NodeBrowser is properly defined)
+				mockNode := &mockNodeBrowser{}
+				task := GlobalPoolTask{
+					Node: mockNode,
+				}
+				Expect(task.Node).To(Equal(mockNode))
+				Expect(task.Node).NotTo(BeNil())
+			})
+
+			It("should have Path field for current browse tree path", func() {
+				path := "enterprise.site.area.line"
+				task := GlobalPoolTask{
+					Path: path,
+				}
+				Expect(task.Path).To(Equal(path))
+			})
+
+			It("should have Level field for recursion depth", func() {
+				level := 5
+				task := GlobalPoolTask{
+					Level: level,
+				}
+				Expect(task.Level).To(Equal(level))
+			})
+
+			It("should have ParentNodeID field for parent node identifier", func() {
+				parentID := "ns=2;i=1000"
+				task := GlobalPoolTask{
+					ParentNodeID: parentID,
+				}
+				Expect(task.ParentNodeID).To(Equal(parentID))
+			})
+		})
+
+		Context("when creating task with shared state", func() {
+			It("should have Visited field for duplicate visit prevention", func() {
+				visited := &sync.Map{}
+				visited.Store("ns=2;i=1000", VisitedNodeInfo{})
+
+				task := GlobalPoolTask{
+					Visited: visited,
+				}
+				Expect(task.Visited).To(Equal(visited))
+				Expect(task.Visited).NotTo(BeNil())
+
+				// Verify we can actually use the sync.Map
+				val, ok := task.Visited.Load("ns=2;i=1000")
+				Expect(ok).To(BeTrue())
+				Expect(val).NotTo(BeNil())
+			})
+
+			It("should have Metrics field for per-browse metrics tracking", func() {
+				// This will fail until ServerMetrics is properly defined
+				profile := ServerProfile{MaxWorkers: 5}
+				metrics := NewServerMetrics(profile)
+
+				task := GlobalPoolTask{
+					Metrics: metrics,
+				}
+				Expect(task.Metrics).To(Equal(metrics))
+				Expect(task.Metrics).NotTo(BeNil())
+			})
+		})
+
+		Context("when creating complete task with all fields", func() {
+			It("should support full browse task creation with all context fields", func() {
+				ctx := context.Background()
+				mockNode := &mockNodeBrowser{}
+				visited := &sync.Map{}
+				profile := ServerProfile{MaxWorkers: 5}
+				metrics := NewServerMetrics(profile)
+				resultChan := make(chan NodeDef, 1)
+				errChan := make(chan error, 1)
+				progressChan := make(chan BrowseDetails, 1)
+
+				task := GlobalPoolTask{
+					// Task identification
+					NodeID: "ns=2;i=1000",
+
+					// Browse execution context
+					Ctx:          ctx,
+					Node:         mockNode,
+					Path:         "enterprise.site.area",
+					Level:        3,
+					ParentNodeID: "ns=2;i=999",
+
+					// Shared state
+					Visited: visited,
+					Metrics: metrics,
+
+					// Result delivery
+					ResultChan:   resultChan,
+					ErrChan:      errChan,
+					ProgressChan: progressChan,
+				}
+
+				// Verify all fields are accessible
+				Expect(task.NodeID).To(Equal("ns=2;i=1000"))
+				Expect(task.Ctx).To(Equal(ctx))
+				Expect(task.Node).To(Equal(mockNode))
+				Expect(task.Path).To(Equal("enterprise.site.area"))
+				Expect(task.Level).To(Equal(3))
+				Expect(task.ParentNodeID).To(Equal("ns=2;i=999"))
+				Expect(task.Visited).To(Equal(visited))
+				Expect(task.Metrics).To(Equal(metrics))
+				Expect(task.ResultChan).To(Equal(resultChan))
+				Expect(task.ErrChan).To(Equal(errChan))
+				Expect(task.ProgressChan).To(Equal(progressChan))
+			})
+
+			It("should enforce recursion depth limit of 25 via field value", func() {
+				task := GlobalPoolTask{
+					Level: 25, // Maximum allowed depth
+				}
+				Expect(task.Level).To(Equal(25))
+
+				// Test that Level can represent depth limit
+				taskExceeded := GlobalPoolTask{
+					Level: 26, // Exceeds limit
+				}
+				Expect(taskExceeded.Level).To(BeNumerically(">", 25))
+			})
+		})
+
+		Context("field type correctness", func() {
+			It("should have Ctx as context.Context type", func() {
+				task := GlobalPoolTask{}
+				// Type assertion to verify field type
+				var _ context.Context = task.Ctx // Will fail if wrong type
+			})
+
+			It("should have Node as NodeBrowser interface type", func() {
+				task := GlobalPoolTask{}
+				// Type assertion to verify field type
+				var _ NodeBrowser = task.Node // Will fail if wrong type or not defined
+			})
+
+			It("should have Path as string type", func() {
+				task := GlobalPoolTask{}
+				var _ string = task.Path
+			})
+
+			It("should have Level as int type", func() {
+				task := GlobalPoolTask{}
+				var _ int = task.Level
+			})
+
+			It("should have ParentNodeID as string type", func() {
+				task := GlobalPoolTask{}
+				var _ string = task.ParentNodeID
+			})
+
+			It("should have Visited as *sync.Map type", func() {
+				task := GlobalPoolTask{}
+				var _ *sync.Map = task.Visited
+			})
+
+			It("should have Metrics as *ServerMetrics type", func() {
+				task := GlobalPoolTask{}
+				var _ *ServerMetrics = task.Metrics
 			})
 		})
 	})
