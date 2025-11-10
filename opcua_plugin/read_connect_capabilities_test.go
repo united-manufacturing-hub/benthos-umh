@@ -84,19 +84,21 @@ var _ = Describe("Connect Method ServerCapabilities", func() {
 	})
 
 	Context("comment accuracy", func() {
-		It("should document profile detection in addition to deadband support", func() {
-			// The comment at read.go:309 should reflect that queryOperationLimits
-			// does MORE than just query deadband support:
-			// - Detects server profiles via ServerProfileArray (NodeID 2269)
-			// - Queries OperationLimits (NodeID 11704)
-			// - Sets SupportsDataChangeFilter based on profile detection
+		It("should document that ServerProfileArray detection was removed", func() {
+			// After Task 3, queryOperationLimits NO LONGER queries ServerProfileArray.
+			// It only queries OperationLimits (NodeID 11704).
+			//
+			// Expected comment at read.go should reflect:
+			// - Queries OperationLimits only (MaxNodesPerBrowse, etc.)
+			// - Does NOT query ServerProfileArray (unreliable in practice)
+			// - DataChangeFilter support comes from ServerProfile defaults
 			//
 			// Expected comment (lines 309-310):
-			// // Query server capabilities and profiles (only if subscriptions enabled)
-			// // Detects DataChangeFilter support via ServerProfileArray (NodeID 2269) and OperationLimits
+			// // Query server operation limits (only if subscriptions enabled)
+			// // Note: Does not query ServerProfileArray - uses profile-based defaults instead
 
 			// This is a documentation test - manual verification required
-			Skip("Manual verification required - check read.go:309-310 comment accuracy")
+			Skip("Manual verification required - check read.go:309-310 comment reflects ServerProfileArray removal")
 		})
 	})
 })

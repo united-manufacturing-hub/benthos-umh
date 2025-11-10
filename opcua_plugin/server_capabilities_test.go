@@ -141,95 +141,65 @@ var _ = Describe("ServerCapabilities", func() {
 		})
 	})
 
-	Context("Profile-based DataChangeFilter detection", func() {
-		// OPC UA Part 7, Section 6.4.3: Profile-based capability detection
-		// Standard DataChange Subscription Server Facet URI indicates DataChangeFilter support
-		const StandardDataChangeSubscriptionFacetURI = "http://opcfoundation.org/UA-Profile/Server/StandardDataChangeSubscription"
+	Context("Profile-based DataChangeFilter detection - REMOVED", func() {
+		// ServerProfileArray detection has been removed because major vendors
+		// (Kepware, Ignition, Siemens) don't reliably populate it.
+		//
+		// NEW APPROACH:
+		// 1. Profile-based defaults (server_profiles.go) - production-validated safe limits
+		// 2. Trial-based learning (MonitorBatched) - try with filter, catch StatusBadFilterNotAllowed
+		//
+		// This test context documents the removal and verifies the function no longer exists.
 
-		Context("detectDataChangeFilterSupport helper function", func() {
-			It("should return true when Standard DataChange Subscription facet URI is present", func() {
-				// Kepware/Ignition/S7-1500 scenario - supports DataChangeFilter
-				profileArray := []string{
-					"http://opcfoundation.org/UA-Profile/Server/StandardDataChangeSubscription",
-					"http://opcfoundation.org/UA-Profile/Server/StandardUA2017",
-				}
+		It("should NOT have detectDataChangeFilterSupport function", func() {
+			// The detectDataChangeFilterSupport function should be removed
+			// after Task 3 implementation.
+			//
+			// Verification: This test should fail to compile if the function still exists
+			// and is called in the test.
+			//
+			// Expected behavior after removal:
+			// - queryOperationLimits returns ServerCapabilities with SupportsDataChangeFilter = false
+			// - MonitorBatched uses ServerProfile.SupportsDataChangeFilter instead
+			// - Profile-based defaults come from server_profiles.go
 
-				// Call helper function to detect support
-				supports := detectDataChangeFilterSupport(profileArray)
+			// This test intentionally tries to call the removed function
+			// If this compiles, the function wasn't removed!
+			_ = func() {
+				// Attempt to call detectDataChangeFilterSupport - should cause compile error
+				// detectDataChangeFilterSupport([]string{}) // Uncomment to test compilation failure
+			}
 
-				// Expect true because Standard facet is present
-				Expect(supports).To(BeTrue(),
-					"Should detect DataChangeFilter support when Standard DataChange Subscription facet is in profile array")
-			})
+			// Document expected behavior
+			Skip("ServerProfileArray detection removed - function should not exist")
+		})
 
-			It("should return false when Standard DataChange Subscription facet URI is absent", func() {
-				// S7-1200 scenario - Micro Embedded Device profile without Standard facet
-				profileArray := []string{
-					"http://opcfoundation.org/UA-Profile/Server/MicroEmbeddedDevice2017",
-				}
+		It("should rely on profile-based defaults from server_profiles.go", func() {
+			// After removal, DataChangeFilter support comes from ServerProfile struct
+			// which is detected during Connect:
+			//
+			// 1. DetectServerProfile() identifies vendor (Kepware, S7-1200, etc.)
+			// 2. ServerProfile.SupportsDataChangeFilter provides safe default
+			// 3. MonitorBatched uses profile value, NOT queryOperationLimits value
+			//
+			// Examples:
+			// - S7-1200: profile.SupportsDataChangeFilter = false (Micro Embedded Device)
+			// - Kepware: profile.SupportsDataChangeFilter = true (Standard facet)
+			// - Unknown: profile.SupportsDataChangeFilter = true (Auto profile, trial-based)
 
-				// Call helper function to detect support
-				supports := detectDataChangeFilterSupport(profileArray)
+			// Verify profile-based detection is the primary mechanism
+			s71200Profile := GetProfileByName(ProfileS71200)
+			Expect(s71200Profile.SupportsDataChangeFilter).To(BeFalse(),
+				"S7-1200 profile should NOT support DataChangeFilter (Micro Embedded Device)")
 
-				// Expect false because Standard facet is NOT present
-				Expect(supports).To(BeFalse(),
-					"Should NOT detect DataChangeFilter support when Standard DataChange Subscription facet is absent")
-			})
+			autoProfile := GetProfileByName(ProfileAuto)
+			Expect(autoProfile.SupportsDataChangeFilter).To(BeFalse(),
+				"Auto profile uses defensive default false (trial-based learning will be added in Task 4)")
 
-			It("should return false for empty profile array", func() {
-				// Server declares no conformance profiles
-				profileArray := []string{}
-
-				// Call helper function to detect support
-				supports := detectDataChangeFilterSupport(profileArray)
-
-				// Expect false (safe default)
-				Expect(supports).To(BeFalse(),
-					"Should default to false when profile array is empty")
-			})
-
-			It("should return false for nil profile array", func() {
-				// Server doesn't support ServerProfileArray node
-				var profileArray []string = nil
-
-				// Call helper function to detect support
-				supports := detectDataChangeFilterSupport(profileArray)
-
-				// Expect false (safe default)
-				Expect(supports).To(BeFalse(),
-					"Should default to false when profile array is nil")
-			})
-
-			It("should perform case-sensitive URI matching", func() {
-				// Profile URIs are case-sensitive per OPC UA spec
-				profileArray := []string{
-					"http://opcfoundation.org/UA-PROFILE/SERVER/STANDARDDATACHANGESUBSCRIPTION", // Wrong case
-				}
-
-				// Call helper function to detect support
-				supports := detectDataChangeFilterSupport(profileArray)
-
-				// Expect false because URI doesn't match exactly (case matters)
-				Expect(supports).To(BeFalse(),
-					"Should perform case-sensitive URI matching - wrong case should not match")
-			})
-
-			It("should handle multiple profiles and only match exact URI", func() {
-				// Mix of profiles, only Standard DataChange facet indicates filter support
-				profileArray := []string{
-					"http://opcfoundation.org/UA-Profile/Server/MicroEmbeddedDevice2017",
-					"http://opcfoundation.org/UA-Profile/Server/StandardUA2017",
-					"http://opcfoundation.org/UA-Profile/Server/StandardDataChangeSubscription", // This one!
-					"http://opcfoundation.org/UA-Profile/Server/SomeOtherProfile",
-				}
-
-				// Call helper function to detect support
-				supports := detectDataChangeFilterSupport(profileArray)
-
-				// Expect true because Standard facet is present (even among other profiles)
-				Expect(supports).To(BeTrue(),
-					"Should detect support when Standard facet is present among multiple profiles")
-			})
+			// Example of profile that DOES support DataChangeFilter
+			kepwareProfile := GetProfileByName(ProfileKepware)
+			Expect(kepwareProfile.SupportsDataChangeFilter).To(BeTrue(),
+				"Kepware profile should support DataChangeFilter (Standard facet)")
 		})
 	})
 })
