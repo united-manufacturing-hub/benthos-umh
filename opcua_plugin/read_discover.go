@@ -323,17 +323,49 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		return 0, fmt.Errorf("no valid nodes selected")
 	}
 
-	// Check if server supports DataChangeFilter
-	// Priority: Runtime detection (ServerCapabilities) > Profile default (ServerProfile)
-	supportsFilter := g.ServerProfile.SupportsDataChangeFilter
-	if g.ServerCapabilities != nil {
-		// Runtime detection overrides profile default
+	// Three-way DataChangeFilter decision logic:
+	// 1. Profile says true → Use filter immediately (trusted profiles like Kepware, S7-1500)
+	// 2. Profile says false + S7-1200 → Skip filter immediately (known unsupported, never trial)
+	// 3. Profile says false + other → Trial on first batch (discovery mode)
+	//
+	// This logic prevents:
+	// - Unnecessary trials on known-unsupported servers (S7-1200)
+	// - Missing filter support on unknown servers (trial-based discovery)
+	// - Repeated trials within same connection (hasTrialedThisConnection cache)
+	var supportsFilter bool
+	var shouldTrial bool // Used in Task 5 for error handling (StatusBadFilterNotAllowed retry)
+
+	if g.ServerProfile.SupportsDataChangeFilter {
+		// Decision 1: Profile says true → trust immediately
+		supportsFilter = true
+		shouldTrial = false
+		g.Log.Debugf("DataChangeFilter enabled by profile (profile=%s supports filter)", g.ServerProfile.Name)
+	} else if g.ServerProfile.Name == ProfileS71200 {
+		// Decision 2: S7-1200 → never trial (known Micro Embedded Device profile)
+		supportsFilter = false
+		shouldTrial = false
+		g.Log.Debugf("DataChangeFilter disabled for S7-1200 (Micro Embedded Device profile, filter not supported)")
+	} else if g.ServerCapabilities != nil && !g.ServerCapabilities.hasTrialedThisConnection {
+		// Decision 3a: Other servers + not trialed yet → attempt trial
+		supportsFilter = true // Trial attempt on first batch
+		shouldTrial = true
+		g.Log.Infof("DataChangeFilter: Attempting trial for profile=%s (unknown support, first batch)", g.ServerProfile.Name)
+	} else if g.ServerCapabilities != nil && g.ServerCapabilities.hasTrialedThisConnection {
+		// Decision 3b: Already trialed → use cached result
 		supportsFilter = g.ServerCapabilities.SupportsDataChangeFilter
+		shouldTrial = false
+		g.Log.Debugf("DataChangeFilter: Using cached trial result=%v (profile=%s, already trialed)", supportsFilter, g.ServerProfile.Name)
+	} else {
+		// Fallback: No ServerCapabilities yet (shouldn't happen in practice)
+		supportsFilter = g.ServerProfile.SupportsDataChangeFilter
+		shouldTrial = false
+		g.Log.Warnf("DataChangeFilter: ServerCapabilities not initialized, using profile default=%v", supportsFilter)
 	}
 
 	g.Log.With("batchSize", maxBatchSize).
 		With("profile", g.ServerProfile.Name).
 		With("supportsFilter", supportsFilter).
+		With("shouldTrial", shouldTrial).
 		Infof("Starting to monitor %d nodes in batches of %d", totalNodes, maxBatchSize)
 
 	batches := CalculateBatches(totalNodes, maxBatchSize)
