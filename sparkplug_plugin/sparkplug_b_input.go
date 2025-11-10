@@ -640,7 +640,9 @@ func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *
 		state.lastSeen = time.Now()
 	}
 
-	// Ensure we still hold the lock for alias resolution
+	// At this point, lock is guaranteed to be held (re-acquired after MQTT I/O if released)
+	// Defer ensures unlock happens after alias resolution completes
+	// Defer placed here (not at top) because lock was temporarily released for MQTT I/O
 	defer s.stateMu.Unlock()
 
 	// Resolve aliases in data message
