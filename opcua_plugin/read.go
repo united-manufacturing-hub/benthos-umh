@@ -198,6 +198,19 @@ type ServerCapabilities struct {
 	// SupportsPercentDeadband indicates whether the server supports Percent deadband filtering.
 	// Requires both DataChangeFilter support AND EURange property on nodes (OPC UA Part 8, Section 5.6.3).
 	SupportsPercentDeadband bool
+
+	// hasTrialedThisConnection indicates whether DataChangeFilter support has been
+	// confirmed via trial during this connection. This field is connection-scoped
+	// and resets to false on reconnect.
+	//
+	// Used to prevent repeated trials within the same connection:
+	// - false: No trial performed yet this connection (may trial if conditions met)
+	// - true: Trial completed this connection (use cached SupportsDataChangeFilter result)
+	//
+	// Note: We cannot persist learned values across reconnections due to architecture
+	// constraints. Instead, we emit INFO messages recommending users explicitly configure
+	// server profiles to save ~1-2 seconds on subsequent connections.
+	hasTrialedThisConnection bool
 }
 
 type OPCUAInput struct {
