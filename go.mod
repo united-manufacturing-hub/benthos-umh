@@ -21,8 +21,8 @@ godebug x509negativeserial=1
 
 require (
 	github.com/goccy/go-json v0.10.5
-	github.com/onsi/ginkgo/v2 v2.23.3
-	github.com/onsi/gomega v1.37.0
+	github.com/onsi/ginkgo/v2 v2.22.1
+	github.com/onsi/gomega v1.36.2
 	github.com/x448/float16 v0.8.4
 )
 
@@ -40,7 +40,7 @@ require (
 	github.com/hashicorp/golang-lru v0.5.4
 	github.com/kaptinlin/jsonschema v0.4.6
 	github.com/redpanda-data/benthos/v4 v4.57.1
-	github.com/redpanda-data/connect/public/bundle/free/v4 v4.67.5
+	github.com/redpanda-data/connect/public/bundle/free/v4 v4.62.0
 	github.com/robinson/gos7 v0.0.0-20241205073040-7ea1d6fb9d20
 	github.com/testcontainers/testcontainers-go v0.39.0
 	github.com/testcontainers/testcontainers-go/modules/redpanda v0.37.0
@@ -191,7 +191,6 @@ require (
 	github.com/couchbaselabs/gocbconnstr/v2 v2.0.0 // indirect
 	github.com/cpuguy83/dockercfg v0.3.2 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
-	github.com/cyborginc/cyborgdb-go v0.12.0 // indirect
 	github.com/cyphar/filepath-securejoin v0.5.0 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
@@ -376,7 +375,7 @@ require (
 	github.com/rabbitmq/amqp091-go v1.10.0 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
 	github.com/redis/go-redis/v9 v9.14.0 // indirect
-	github.com/redpanda-data/connect/v4 v4.67.5 // indirect
+	github.com/redpanda-data/connect/v4 v4.64.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rickb777/period v1.0.16 // indirect
 	github.com/rickb777/plural v1.4.4 // indirect
