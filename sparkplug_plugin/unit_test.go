@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -34,11 +33,6 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
 )
-
-func TestSparkplugUnit(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Sparkplug B Complete Test Suite")
-}
 
 // Helper functions for unit testing
 func stringPtr(s string) *string {

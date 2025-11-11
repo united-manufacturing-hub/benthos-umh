@@ -75,11 +75,6 @@ import (
 	_ "github.com/united-manufacturing-hub/benthos-umh/tag_processor_plugin" // Import tag processor for full pipeline tests
 )
 
-func TestSparkplugIntegration(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Sparkplug B Integration Test Suite")
-}
-
 // Package-level variables for test infrastructure
 // Simple test-specific MessageCapture - set by each test
 var currentTestCapture *MessageCapture

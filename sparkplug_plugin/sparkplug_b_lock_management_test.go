@@ -45,7 +45,6 @@
 package sparkplug_plugin_test
 
 import (
-	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -53,11 +52,6 @@ import (
 	sparkplugplugin "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
 	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
-
-func TestLockManagement(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Sparkplug Lock Management Suite")
-}
 
 var _ = Describe("Lock Management in processDataMessage", func() {
 	Context("when sequence gap detected and rebirth requested", func() {
