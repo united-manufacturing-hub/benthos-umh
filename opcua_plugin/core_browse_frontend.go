@@ -12,6 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║                    LEGACY UI CODE PATH - DEPRECATED                       ║
+// ╠══════════════════════════════════════════════════════════════════════════╣
+// ║  This file implements the LEGACY browse workflow for ManagementConsole v1║
+// ║  Used by: united-manufacturing-hub/ManagementConsole (React UI only)     ║
+// ║  Entry point: GetNodeTree() → Browse() wrapper → browse()               ║
+// ║                                                                          ║
+// ║  ⚠️  DEPRECATION WARNING:                                                ║
+// ║  • ONLY used by ManagementConsole v1 BrowseOPCUA UI (legacy React app)  ║
+// ║  • Do NOT use in new code - use read_discover.go::discoverNodes()       ║
+// ║  • Maintained for backwards compatibility with existing deployments     ║
+// ║  • Will be removed when ManagementConsole v2 fully deployed             ║
+// ║                                                                          ║
+// ║  Key Differences from Production:                                        ║
+// ║  • Builds hierarchical tree structure (parent-child relationships)      ║
+// ║  • Uses defensive Auto profile (5 workers max, safe defaults)           ║
+// ║  • One-time browse operation (no subscription to nodes)                 ║
+// ║  • Tree construction overhead not suitable for production streaming     ║
+// ║                                                                          ║
+// ║  For production use: See read_discover.go (PRODUCTION CODE PATH)        ║
+// ║  See: ARCHITECTURE.md for detailed comparison of code paths             ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+
 package opcua_plugin
 
 import (
@@ -19,6 +43,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gopcua/opcua/ua"
@@ -37,6 +62,22 @@ type BrowseDetails struct {
 }
 
 // GetNodeTree returns the tree structure of the OPC UA server nodes for UI display.
+//
+// ⚠️ LEGACY CODE PATH - ManagementConsole v1 Only
+//
+// DEPRECATION STATUS:
+// - This function is ONLY used by ManagementConsole v1 BrowseOPCUA UI (legacy React app)
+// - Do NOT use in new code - production code uses read_discover.go::discoverNodes() instead
+// - Maintained for backwards compatibility with existing UI installations
+// - Will be removed when ManagementConsole v2 is fully deployed
+//
+// Why separate from production:
+// - UI needs hierarchical tree structure (parent-child relationships)
+// - Production needs flat node list for subscription (no tree building overhead)
+// - UI uses defensive Auto profile (5 workers max)
+// - Production uses auto-detected/tuned profiles (10-60 workers)
+// - UI doesn't subscribe to nodes (one-time browse operation)
+// - Production subscribes for continuous data streaming
 //
 // LEGACY UI CODE PATH:
 // This function is ONLY used by united-manufacturing-hub/ManagementConsole v1 BrowseOPCUA UI.
@@ -81,6 +122,7 @@ func (g *OPCUAConnection) GetNodeTree(ctx context.Context, msgChan chan<- string
 	nodes := make([]NodeDef, 0, MaxTagsToBrowse)
 
 	var wg TrackedWaitGroup
+	var consumerWg sync.WaitGroup
 	wg.Add(1)
 	// OPCUAConnection doesn't have ServerProfile - use Auto profile
 	profile := GetProfileByName(ProfileAuto)
@@ -91,8 +133,17 @@ func (g *OPCUAConnection) GetNodeTree(ctx context.Context, msgChan chan<- string
 		}
 	}()
 	Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", pool, rootNode.NodeId.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
-	go logErrors(ctx, errChan, g.Log)
-	go collectNodes(ctx, opcuaBrowserChan, nodeIDMap, &nodes, msgChan)
+
+	// Track consumer goroutines to ensure they finish processing before hierarchy construction
+	consumerWg.Add(2)
+	go func() {
+		defer consumerWg.Done()
+		logErrors(ctx, errChan, g.Log)
+	}()
+	go func() {
+		defer consumerWg.Done()
+		collectNodes(ctx, opcuaBrowserChan, nodeIDMap, &nodes, msgChan)
+	}()
 
 	wg.Wait()
 
@@ -100,10 +151,13 @@ func (g *OPCUAConnection) GetNodeTree(ctx context.Context, msgChan chan<- string
 	close(errChan)
 	close(opcuaBrowserChan)
 
-	// FIXME: Workaround for race condition - Channel consumers may not finish processing
-	// all nodes before hierarchy construction begins. This sleep ensures the nodes[]
-	// array is fully populated. Proper fix would use synchronization primitives.
-	time.Sleep(3 * time.Second)
+	// Wait for consumer goroutines to finish processing all channel data.
+	// This ensures nodeIDMap and nodes[] are fully populated before hierarchy construction.
+	// Synchronization guarantees:
+	// 1. wg.Wait() ensures all Browse() operations completed and channels closed
+	// 2. consumerWg.Wait() ensures logErrors() and collectNodes() drained all channels
+	// 3. Safe to read nodes[] and nodeIDMap after this point
+	consumerWg.Wait()
 
 	// By this time, nodeIDMap and nodes are populated with the nodes and nodeIDs
 	for _, node := range nodes {

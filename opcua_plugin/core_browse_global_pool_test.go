@@ -2194,6 +2194,11 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should execute actual browse operation using task's browse context", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
+				defer func() {
+					if err := pool.Shutdown(5 * time.Second); err != nil {
+						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
+					}
+				}()
 				pool.SpawnWorkers(2)
 
 				// Setup mock node with trackable browse calls
@@ -2236,6 +2241,11 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should use task's Context for browse cancellation", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
+				defer func() {
+					if err := pool.Shutdown(5 * time.Second); err != nil {
+						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
+					}
+				}()
 				pool.SpawnWorkers(2)
 
 				// Setup mock node
@@ -2280,6 +2290,11 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should submit browse children back to pool as new tasks", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
+				defer func() {
+					if err := pool.Shutdown(5 * time.Second); err != nil {
+						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
+					}
+				}()
 				pool.SpawnWorkers(3)
 
 				// Setup parent node with 3 children
@@ -2349,6 +2364,11 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should pass correct browse context to child tasks", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
+				defer func() {
+					if err := pool.Shutdown(5 * time.Second); err != nil {
+						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
+					}
+				}()
 				pool.SpawnWorkers(2)
 
 				// Setup parent with one child
@@ -2400,6 +2420,11 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should handle browse errors and send to ErrChan", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
+				defer func() {
+					if err := pool.Shutdown(5 * time.Second); err != nil {
+						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
+					}
+				}()
 				pool.SpawnWorkers(2)
 
 				// Setup node that returns error on browse
@@ -2444,6 +2469,11 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should continue processing other tasks after browse error", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
+				defer func() {
+					if err := pool.Shutdown(5 * time.Second); err != nil {
+						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
+					}
+				}()
 				pool.SpawnWorkers(2)
 
 				// First task will error
@@ -2506,6 +2536,11 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should stop browsing at maximum recursion depth", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
+				defer func() {
+					if err := pool.Shutdown(5 * time.Second); err != nil {
+						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
+					}
+				}()
 				pool.SpawnWorkers(2)
 
 				// Setup node with children at max depth
@@ -2556,6 +2591,11 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should increment Level for each recursion", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
+				defer func() {
+					if err := pool.Shutdown(5 * time.Second); err != nil {
+						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
+					}
+				}()
 				pool.SpawnWorkers(2)
 
 				// Setup 3-level hierarchy: Parent -> Child -> Grandchild
@@ -2615,6 +2655,11 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should not browse already-visited nodes", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
+				defer func() {
+					if err := pool.Shutdown(5 * time.Second); err != nil {
+						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
+					}
+				}()
 				pool.SpawnWorkers(2)
 
 				// Setup node that's already in Visited map
@@ -2663,6 +2708,11 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should add newly browsed nodes to Visited map", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
+				defer func() {
+					if err := pool.Shutdown(5 * time.Second); err != nil {
+						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
+					}
+				}()
 				pool.SpawnWorkers(2)
 
 				// Setup node not yet visited
@@ -2707,6 +2757,11 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should pass Metrics object through browse operations", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
+				defer func() {
+					if err := pool.Shutdown(5 * time.Second); err != nil {
+						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
+					}
+				}()
 				pool.SpawnWorkers(2)
 
 				// Setup node with children
@@ -2759,6 +2814,11 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should send actual browsed NodeDef to ResultChan", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
+				defer func() {
+					if err := pool.Shutdown(5 * time.Second); err != nil {
+						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
+					}
+				}()
 				pool.SpawnWorkers(2)
 
 				mockNode := &mockNodeBrowser{

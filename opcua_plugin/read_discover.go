@@ -12,6 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║                     PRODUCTION CODE PATH - CURRENT                        ║
+// ╠══════════════════════════════════════════════════════════════════════════╣
+// ║  This file implements the PRODUCTION browse and subscribe workflow.      ║
+// ║  Used by: benthos-umh OPC UA input plugin during normal operation       ║
+// ║  Entry point: discoverNodes() → browse() → MonitorBatched()             ║
+// ║                                                                          ║
+// ║  Key Features:                                                           ║
+// ║  • Auto-detects OPC UA server vendor and applies tuned ServerProfile    ║
+// ║  • Optimizes Browse workers (5-60) and Subscribe batching (100-1000)    ║
+// ║  • Subscribes to discovered nodes for continuous data streaming         ║
+// ║  • Production-grade error handling and performance monitoring           ║
+// ║                                                                          ║
+// ║  Do NOT use GetNodeTree() (legacy UI) for production - use this!        ║
+// ║  See: ARCHITECTURE.md for detailed comparison of code paths             ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+
 package opcua_plugin
 
 import (

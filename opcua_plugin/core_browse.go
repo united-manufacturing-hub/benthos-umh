@@ -32,6 +32,27 @@
 //
 // See ARCHITECTURE.md for detailed explanation of two code paths (production vs. legacy UI).
 
+//
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║                 INTERNAL WORKER POOL IMPLEMENTATION                       ║
+// ╠══════════════════════════════════════════════════════════════════════════╣
+// ║  This file implements the browse() internal function with worker pool.   ║
+// ║  Used by: Both production (read_discover.go) and legacy UI paths        ║
+// ║  Entry points:                                                           ║
+// ║  • PRODUCTION: discoverNodes() → browse() [auto-tuned ServerProfile]    ║
+// ║  • LEGACY UI: GetNodeTree() → Browse() wrapper → browse() [Auto profile]║
+// ║  • TESTING: Browse() wrapper → browse() [test-injected config]          ║
+// ║                                                                          ║
+// ║  Architecture:                                                           ║
+// ║  • Creates isolated worker pool per browse() invocation (NOT shared)    ║
+// ║  • Workers pull NodeTasks from taskChan and queue children              ║
+// ║  • ServerMetrics dynamically adjusts worker count (5-60 workers)        ║
+// ║  • ServerProfile.MaxWorkers/MinWorkers control pool size bounds         ║
+// ║                                                                          ║
+// ║  ⚠️  Do NOT call browse() directly - use entry points above!            ║
+// ║  See: Decision flowchart below for complete usage guidance              ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+
 package opcua_plugin
 
 import (
@@ -97,8 +118,70 @@ type Logger interface {
 	Warnf(format string, args ...interface{})
 }
 
-// Browse is a public wrapper function for the browse function
-// Avoid using this function directly, use it only for testing
+// DECISION FLOWCHART: Which Browse Function Should I Use?
+//
+// ┌─────────────────────────────────────────────────────────────────────┐
+// │ QUESTION: What am I trying to do?                                   │
+// └─────────────────────────────────────────────────────────────────────┘
+//                                  │
+//         ┌────────────────────────┼────────────────────────┐
+//         │                        │                        │
+//         ▼                        ▼                        ▼
+// ┌──────────────┐        ┌──────────────┐        ┌──────────────┐
+// │ Production:  │        │ Legacy UI:   │        │ Testing:     │
+// │ Subscribe to │        │ Build tree   │        │ Unit tests   │
+// │ OPC UA nodes │        │ for UI       │        │ for browse() │
+// └──────────────┘        └──────────────┘        └──────────────┘
+//         │                        │                        │
+//         ▼                        ▼                        ▼
+// ┌──────────────┐        ┌──────────────┐        ┌──────────────┐
+// │ USE:         │        │ USE:         │        │ USE:         │
+// │ read_discov- │        │ core_browse_ │        │ Browse()     │
+// │ er.go        │        │ frontend.go  │        │ wrapper      │
+// │              │        │              │        │              │
+// │ discoverNo-  │        │ GetNodeTree()│        │ (this func)  │
+// │ des()        │        │              │        │              │
+// └──────────────┘        └──────────────┘        └──────────────┘
+//         │                        │                        │
+//         ▼                        ▼                        ▼
+// ┌──────────────┐        ┌──────────────┐        ┌──────────────┐
+// │ Calls:       │        │ Calls:       │        │ Calls:       │
+// │ browse()     │        │ Browse()     │        │ browse()     │
+// │ (internal)   │        │ wrapper      │        │ (internal)   │
+// └──────────────┘        └──────────────┘        └──────────────┘
+//                                  │
+//                                  ▼
+//                         ┌──────────────┐
+//                         │ Which calls: │
+//                         │ browse()     │
+//                         │ (internal)   │
+//                         └──────────────┘
+//
+// KEY INSIGHT:
+// - Production code NEVER calls Browse() or GetNodeTree() directly
+// - Only GetNodeTree() (legacy UI) and tests call the Browse() wrapper
+// - All paths eventually use browse() internal implementation
+//
+// See ARCHITECTURE.md for detailed explanation of two code paths.
+//
+// Browse is a public wrapper function for the browse() internal implementation.
+//
+// ⚠️ DEPRECATION WARNING: Do NOT use this function directly in production code!
+//
+// ONLY use Browse() for:
+// - Unit tests that need to test browse() behavior in isolation
+// - Test fixtures that mock OPC UA browsing operations
+//
+// For production use cases:
+// - Subscribe to OPC UA nodes → Use read_discover.go::discoverNodes()
+// - Build UI node tree → Use core_browse_frontend.go::GetNodeTree()
+//
+// Why this exists:
+// - Exposes browse() internal function for testing purposes
+// - Allows test cases to inject mock NodeBrowser implementations
+// - Not intended for production usage (lacks proper error handling/logging setup)
+//
+// See decision flowchart above for complete usage guidance.
 func Browse(ctx context.Context, n NodeBrowser, path string, pool *GlobalWorkerPool, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map) {
 	browse(ctx, n, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
 }
