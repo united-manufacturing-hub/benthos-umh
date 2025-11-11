@@ -150,6 +150,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 		inputKafkaTopic: defaultInputKafkaTopic,
 		brokerAddress:   defaultBrokerAddress,
 		consumerGroup:   defaultConsumerGroup,
+		metadataFormat:  defaultMetadataFormat,
 	}
 
 	BeforeEach(func() {
@@ -338,6 +339,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 						inputKafkaTopic: defaultInputKafkaTopic,
 						brokerAddress:   defaultBrokerAddress,
 						consumerGroup:   defaultConsumerGroup,
+						metadataFormat:  defaultMetadataFormat,
 					}
 					resources = service.MockResources()
 					var err error
@@ -368,6 +370,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 						inputKafkaTopic: defaultInputKafkaTopic,
 						brokerAddress:   defaultBrokerAddress,
 						consumerGroup:   defaultConsumerGroup,
+						metadataFormat:  defaultMetadataFormat,
 					}
 					resources = service.MockResources()
 					var err error
@@ -510,6 +513,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 					inputKafkaTopic: defaultInputKafkaTopic,
 					brokerAddress:   defaultBrokerAddress,
 					consumerGroup:   defaultConsumerGroup,
+					metadataFormat:  defaultMetadataFormat,
 				}
 
 				// We need to re-initialize the input plugin with the new config
@@ -529,6 +533,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 					inputKafkaTopic: defaultInputKafkaTopic,
 					brokerAddress:   defaultBrokerAddress,
 					consumerGroup:   defaultConsumerGroup,
+					metadataFormat:  defaultMetadataFormat,
 				}
 				resources = service.MockResources()
 				var err error
@@ -600,6 +605,146 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 	})
 })
 
+var _ = Describe("ParseFromBenthos config parsing", Label("config_parsing"), func() {
+	var (
+		logger *service.Logger
+	)
+
+	BeforeEach(func() {
+		resources := service.MockResources()
+		logger = resources.Logger()
+	})
+
+	Context("when parsing metadata_format field", func() {
+		It("should default to 'string' when field is missing", func() {
+			spec := RegisterConfigSpec()
+			parsedConfig, err := spec.ParseYAML(`
+broker_address: "localhost:9092"
+consumer_group: "test_group"
+`, nil)
+			Expect(err).To(BeNil())
+
+			config, err := ParseFromBenthos(parsedConfig, logger)
+			Expect(err).To(BeNil())
+			Expect(config.metadataFormat).To(Equal(MetadataFormatString))
+		})
+
+		It("should accept 'string' as valid value", func() {
+			spec := RegisterConfigSpec()
+			parsedConfig, err := spec.ParseYAML(`
+broker_address: "localhost:9092"
+consumer_group: "test_group"
+metadata_format: "string"
+`, nil)
+			Expect(err).To(BeNil())
+
+			config, err := ParseFromBenthos(parsedConfig, logger)
+			Expect(err).To(BeNil())
+			Expect(config.metadataFormat).To(Equal(MetadataFormatString))
+		})
+
+		It("should accept 'bytes' as valid value", func() {
+			spec := RegisterConfigSpec()
+			parsedConfig, err := spec.ParseYAML(`
+broker_address: "localhost:9092"
+consumer_group: "test_group"
+metadata_format: "bytes"
+`, nil)
+			Expect(err).To(BeNil())
+
+			config, err := ParseFromBenthos(parsedConfig, logger)
+			Expect(err).To(BeNil())
+			Expect(config.metadataFormat).To(Equal(MetadataFormatBytes))
+		})
+
+		It("should return error for invalid value", func() {
+			spec := RegisterConfigSpec()
+			parsedConfig, err := spec.ParseYAML(`
+broker_address: "localhost:9092"
+consumer_group: "test_group"
+metadata_format: "invalid"
+`, nil)
+			Expect(err).To(BeNil())
+
+			_, err = ParseFromBenthos(parsedConfig, logger)
+			Expect(err).NotTo(BeNil())
+			Expect(err.Error()).To(ContainSubstring("metadata_format"))
+			Expect(err.Error()).To(ContainSubstring("must be 'string' or 'bytes'"))
+		})
+	})
+})
+
+var _ = Describe("MessageProcessor metadata format conversion", Label("message_processor"), func() {
+	var (
+		metrics *UnsInputMetrics
+	)
+
+	BeforeEach(func() {
+		resources := service.MockResources()
+		metrics = NewUnsInputMetrics(resources.Metrics())
+	})
+
+	Context("when metadataFormat is 'string'", func() {
+		It("should convert Kafka headers to string values", func() {
+			processor, err := NewMessageProcessor([]string{".*"}, metrics, MetadataFormatString)
+			Expect(err).To(BeNil())
+
+			record := &kgo.Record{
+				Key:   []byte("umh.v1.enterprise.site.area.line._raw.temperature"),
+				Value: []byte(`{"value": 42}`),
+				Headers: []kgo.RecordHeader{
+					{Key: "location_path", Value: []byte("enterprise.site.area.line")},
+					{Key: "data_contract", Value: []byte("_raw")},
+					{Key: "tag_name", Value: []byte("temperature")},
+				},
+			}
+
+			msg := processor.ProcessRecord(record)
+			Expect(msg).NotTo(BeNil())
+
+			// Verify headers are converted to strings
+			locationPath, exists := msg.MetaGet("location_path")
+			Expect(exists).To(BeTrue())
+			Expect(locationPath).To(BeAssignableToTypeOf(""))
+			Expect(locationPath).To(Equal("enterprise.site.area.line"))
+
+			dataContract, exists := msg.MetaGet("data_contract")
+			Expect(exists).To(BeTrue())
+			Expect(dataContract).To(BeAssignableToTypeOf(""))
+			Expect(dataContract).To(Equal("_raw"))
+
+			tagName, exists := msg.MetaGet("tag_name")
+			Expect(exists).To(BeTrue())
+			Expect(tagName).To(BeAssignableToTypeOf(""))
+			Expect(tagName).To(Equal("temperature"))
+		})
+	})
+
+	Context("when metadataFormat is 'bytes'", func() {
+		It("should keep Kafka headers as byte arrays", func() {
+			processor, err := NewMessageProcessor([]string{".*"}, metrics, MetadataFormatBytes)
+			Expect(err).To(BeNil())
+
+			record := &kgo.Record{
+				Key:   []byte("umh.v1.enterprise.site.area.line._raw.temperature"),
+				Value: []byte(`{"value": 42}`),
+				Headers: []kgo.RecordHeader{
+					{Key: "location_path", Value: []byte("enterprise.site.area.line")},
+				},
+			}
+
+			msg := processor.ProcessRecord(record)
+			Expect(msg).NotTo(BeNil())
+
+			// Verify headers remain as byte arrays (use MetaGetMut for raw value)
+			locationPath, exists := msg.MetaGetMut("location_path")
+			Expect(exists).To(BeTrue())
+			Expect(locationPath).To(BeAssignableToTypeOf([]byte{}))
+			Expect(locationPath).To(Equal([]byte("enterprise.site.area.line")))
+		})
+	})
+})
+
 var _ = Describe("MessageProcessor regex filtering", Label("message_processor"), func() {
 	var (
 		processor *MessageProcessor
@@ -619,6 +764,7 @@ var _ = Describe("MessageProcessor regex filtering", Label("message_processor"),
 			processor, err = NewMessageProcessor(
 				[]string{`^umh\.v1\.umh-ep(?:\.[^._][^.]*)+\._mitarbeiter\.[^._][^.]*$`},
 				metrics,
+				defaultMetadataFormat,
 			)
 			Expect(err).To(BeNil())
 		})
