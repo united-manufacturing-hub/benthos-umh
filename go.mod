@@ -21,8 +21,8 @@ godebug x509negativeserial=1
 
 require (
 	github.com/goccy/go-json v0.10.5
-	github.com/onsi/ginkgo/v2 v2.22.1
-	github.com/onsi/gomega v1.36.2
+	github.com/onsi/ginkgo/v2 v2.23.3
+	github.com/onsi/gomega v1.37.0
 	github.com/x448/float16 v0.8.4
 )
 
@@ -39,14 +39,14 @@ require (
 	github.com/grid-x/modbus v0.0.0-20250312115347-d1d8b421f52b
 	github.com/hashicorp/golang-lru v0.5.4
 	github.com/kaptinlin/jsonschema v0.4.6
-	github.com/redpanda-data/benthos/v4 v4.57.1
-	github.com/redpanda-data/connect/public/bundle/free/v4 v4.62.0
+	github.com/redpanda-data/benthos/v4 v4.60.0
+	github.com/redpanda-data/connect/public/bundle/free/v4 v4.66.1
 	github.com/robinson/gos7 v0.0.0-20241205073040-7ea1d6fb9d20
 	github.com/testcontainers/testcontainers-go v0.39.0
 	github.com/testcontainers/testcontainers-go/modules/redpanda v0.37.0
-	github.com/twmb/franz-go v1.19.6-0.20251010052650-46982310c50d
+	github.com/twmb/franz-go v1.20.3
 	github.com/twmb/franz-go/pkg/kadm v1.16.1
-	golang.org/x/crypto v0.43.0
+	golang.org/x/crypto v0.43.1-0.20251009181029-0b7aa0cfb07b
 	golang.org/x/exp v0.0.0-20251009144603-d2f985daa21b
 	golang.org/x/sys v0.37.0
 	golang.org/x/time v0.14.0
@@ -57,9 +57,10 @@ require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.10-20250912141014-52f32327d4b0.1 // indirect
 	buf.build/gen/go/bufbuild/reflect/connectrpc/go v1.19.1-20240117202343-bf8f65e8876c.2 // indirect
 	buf.build/gen/go/bufbuild/reflect/protocolbuffers/go v1.36.10-20240117202343-bf8f65e8876c.1 // indirect
+	buf.build/go/hyperpb v0.1.3 // indirect
 	cel.dev/expr v0.24.0 // indirect
 	cloud.google.com/go v0.123.0 // indirect
-	cloud.google.com/go/aiplatform v1.107.0 // indirect
+	cloud.google.com/go/aiplatform v1.105.0 // indirect
 	cloud.google.com/go/auth v0.17.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/bigquery v1.71.0 // indirect
@@ -191,6 +192,7 @@ require (
 	github.com/couchbaselabs/gocbconnstr/v2 v2.0.0 // indirect
 	github.com/cpuguy83/dockercfg v0.3.2 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
+	github.com/cyborginc/cyborgdb-go v0.12.0 // indirect
 	github.com/cyphar/filepath-securejoin v0.5.0 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
@@ -342,7 +344,6 @@ require (
 	github.com/oapi-codegen/runtime v1.1.2 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
-	github.com/ollama/ollama v0.12.5 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/opensearch-project/opensearch-go/v3 v3.1.0 // indirect
@@ -375,7 +376,7 @@ require (
 	github.com/rabbitmq/amqp091-go v1.10.0 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
 	github.com/redis/go-redis/v9 v9.14.0 // indirect
-	github.com/redpanda-data/connect/v4 v4.64.0 // indirect
+	github.com/redpanda-data/connect/v4 v4.69.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rickb777/period v1.0.16 // indirect
 	github.com/rickb777/plural v1.4.4 // indirect
@@ -383,7 +384,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/rs/zerolog v1.34.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
-	github.com/samber/lo v1.52.0 // indirect
+	github.com/samber/lo v1.51.0 // indirect
 	github.com/sashabaranov/go-openai v1.41.2 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/segmentio/encoding v0.5.3 // indirect
@@ -393,7 +394,7 @@ require (
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sijms/go-ora/v2 v2.9.0 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
-	github.com/skeema/knownhosts v1.3.2 // indirect
+	github.com/skeema/knownhosts v1.3.1 // indirect
 	github.com/smira/go-statsd v1.3.4 // indirect
 	github.com/snowflakedb/gosnowflake v1.17.0 // indirect
 	github.com/sourcegraph/conc v0.3.0 // indirect
@@ -403,6 +404,7 @@ require (
 	github.com/tetratelabs/wazero v1.9.0 // indirect
 	github.com/theparanoids/crypki v1.20.9 // indirect
 	github.com/tilinna/z85 v1.0.0 // indirect
+	github.com/timandy/routine v1.1.5 // indirect
 	github.com/timeplus-io/proton-go-driver/v2 v2.1.2 // indirect
 	github.com/tklauser/go-sysconf v0.3.15 // indirect
 	github.com/tklauser/numcpus v0.10.0 // indirect
@@ -464,7 +466,7 @@ require (
 	golang.org/x/tools v0.38.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/api v0.252.0 // indirect
-	google.golang.org/genai v1.31.0 // indirect
+	google.golang.org/genai v1.30.0 // indirect
 	google.golang.org/genproto v0.0.0-20251014184007-4626949a642f // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20251014184007-4626949a642f // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251014184007-4626949a642f // indirect
