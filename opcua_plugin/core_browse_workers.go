@@ -34,12 +34,28 @@ const (
 // Workers are concurrent goroutines that traverse the OPC UA node tree in parallel.
 // Each worker processes NodeTasks from a shared queue (see core_browse.go browse() function).
 //
+// IMPORTANT: This worker pool is INTERNAL to browse() calls, NOT a global shared pool.
+// Each browse() invocation creates its own isolated worker pool with these metrics.
+//
+// ServerProfile controls:
+// - ServerProfile.MaxWorkers/MinWorkers control pool size bounds (see server_profiles.go)
+// - MaxBatchSize controls Subscribe phase batching (see read_discover.go MonitorBatched())
+//   MaxBatchSize does NOT affect Browse phase workers
+//
 // Why worker pool matters:
 // - Sequential browsing = slow (one Browse call at a time)
 // - Parallel browsing = fast (MaxWorkers Browse calls simultaneously)
 // - Example: 10,000 nodes with 5 workers ≈ 2000 Browse calls per worker vs 10,000 sequential
 //
-// ServerProfile.MaxWorkers/MinWorkers control pool size bounds (see server_profiles.go).
+// Performance tuning:
+// - S7-1200: MaxWorkers=10 (embedded PLC, limited resources)
+// - Prosys: MaxWorkers=60 (high-performance simulation server)
+// - See server_profiles.go for vendor-specific tuning
+//
+// Dynamic scaling (currently disabled):
+// - Monitors avg response time every 5 seconds
+// - Increases workers if latency < 250ms target (up to MaxWorkers)
+// - Decreases workers if latency > 250ms target (down to MinWorkers)
 type ServerMetrics struct {
 	mu             sync.Mutex
 	responseTimes  []time.Duration

@@ -12,6 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Core OPC UA Browse Implementation (Internal Worker Pool)
+//
+// This file implements the browse() function, which recursively discovers OPC UA nodes
+// using an internal worker pool. This is the ONLY worker system used in production.
+//
+// Architecture:
+// - browse() creates isolated worker pool per invocation (not shared between calls)
+// - Workers pull NodeTasks from taskChan and queue child tasks
+// - ServerMetrics (core_browse_workers.go) dynamically adjusts worker count
+// - ServerProfile.MaxWorkers/MinWorkers control pool size bounds
+//
+// Used by:
+// - Production: read_discover.go::discoverNodes() → browse() (with ServerProfile tuning)
+// - Legacy UI: core_browse_frontend.go::GetNodeTree() → browse() (with Auto profile)
+//
+// NOT used by:
+// - GlobalWorkerPool (legacy unused pattern - DO NOT conflate with this system)
+//
+// See ARCHITECTURE.md for detailed explanation of two code paths (production vs. legacy UI).
+
 package opcua_plugin
 
 import (

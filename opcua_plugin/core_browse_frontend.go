@@ -36,8 +36,24 @@ type BrowseDetails struct {
 	AvgServerResponseTime time.Duration
 }
 
-// GetNodeTree returns the tree structure of the OPC UA server nodes
-// GetNodeTree is currently used by united-manufacturing-hub/ManagementConsole repo for the BrowseOPCUA tags functionality
+// GetNodeTree returns the tree structure of the OPC UA server nodes for UI display.
+//
+// LEGACY UI CODE PATH:
+// This function is ONLY used by united-manufacturing-hub/ManagementConsole v1 BrowseOPCUA UI.
+// Production code uses read_discover.go::discoverNodes() instead.
+//
+// Architecture:
+// - Uses same browse() implementation as production (core_browse.go)
+// - Always uses Auto profile (defensive defaults: 5 workers max)
+// - Builds hierarchical tree structure (parent-child relationships)
+// - No subscription (one-time browse operation)
+//
+// Why separate from production:
+// - UI needs tree structure, production needs flat node list for subscription
+// - UI uses defensive profile, production uses auto-detected/tuned profile
+// - UI doesn't subscribe to nodes, production subscribes for streaming
+//
+// See ARCHITECTURE.md for detailed comparison of production vs. legacy UI paths.
 func (g *OPCUAConnection) GetNodeTree(ctx context.Context, msgChan chan<- string, rootNode *Node) (*Node, error) {
 	if g.Client == nil {
 		err := g.connect(ctx)

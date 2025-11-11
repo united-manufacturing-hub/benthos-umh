@@ -26,7 +26,32 @@ import (
 	"github.com/gopcua/opcua/ua"
 )
 
-// Then modify the discoverNodes function to use TrackedWaitGroup
+// discoverNodes discovers OPC UA nodes for subscription in production flows.
+//
+// PRODUCTION CODE PATH:
+// This is the entry point for ALL production DFC configurations.
+// Uses browse() internal worker pool (core_browse.go) with ServerProfile tuning.
+//
+// Architecture:
+// - Calls browse() for each NodeID in g.NodeIDs
+// - browse() creates isolated worker pool per invocation
+// - Workers discover node tree in parallel (controlled by ServerProfile.MaxWorkers)
+// - Returns flat node list for MonitorBatched() subscription setup
+//
+// Why separate from GetNodeTree:
+// - Production needs flat node list for subscription, UI needs tree structure
+// - Production uses auto-detected/tuned profile, UI uses Auto profile (defensive)
+// - Production subscribes to nodes for streaming, UI is one-time browse
+//
+// Flow:
+// 1. BrowseAndSubscribeIfNeeded() calls discoverNodes()
+// 2. discoverNodes() calls browse() with ServerProfile
+// 3. browse() spawns workers (5-60 depending on server)
+// 4. Workers discover nodes → nodeChan consumer builds nodeList
+// 5. MonitorBatched() subscribes to discovered nodes in batches
+// 6. Read() streams changes to Kafka
+//
+// See ARCHITECTURE.md for detailed explanation of production vs. legacy UI paths.
 func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]string, error) {
 	// This was previously 5 minutes, but we need to increase it to 1 hour to avoid context cancellation
 	// when browsing a large number of nodes.
