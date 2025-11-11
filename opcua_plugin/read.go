@@ -341,13 +341,6 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		// Log operation limits (Phase 1: logging only, no behavior changes)
 		g.logServerCapabilities(caps)
 
-		// Adjust deadband type based on server capabilities
-		originalType := g.DeadbandType
-		g.DeadbandType = adjustDeadbandType(g.DeadbandType, caps)
-		if g.DeadbandType != originalType {
-			g.Log.Warnf("Server does not support %s deadband, falling back to %s",
-				originalType, g.DeadbandType)
-		}
 	}
 
 	// Create a subscription channel if needed
