@@ -781,9 +781,9 @@ func (s *sparkplugInput) Close(ctx context.Context) error {
 		s.client.Disconnect(1000)
 	}
 
-	// Close the messages channel after MQTT is disconnected
-	// The done channel ensures no more sends will occur
-	close(s.messages)
+	// Do not close s.messages; s.done gates producers and ReadBatch.
+	// Closing the channel could cause a panic if messageHandler attempts to send
+	// after the done check but before the channel send completes.
 
 	s.logger.Info("Sparkplug input closed")
 	return nil
