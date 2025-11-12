@@ -39,7 +39,20 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	errChan := make(chan error, MaxTagsToBrowse)
 	// opcuaBrowserChan is created to just satisfy the browse function signature.
 	// The data inside opcuaBrowserChan is not so useful for this function. It is more useful for the GetNodeTree function
-	opcuaBrowserChan := make(chan BrowseDetails, MaxTagsToBrowse)
+	// Buffer size reduced to 1000 (from 100k) since consumer drains instantly - saves 33 MB memory
+	opcuaBrowserChan := make(chan BrowseDetails, 1000)
+
+	// Start concurrent consumer to drain opcuaBrowserChan as workers produce BrowseDetails
+	// This prevents deadlock by ensuring channel never fills (discovered in ENG-3835 integration test)
+	// Without this consumer, workers block after 100k nodes and hang until timeout
+	opcuaBrowserConsumerDone := make(chan struct{})
+	go func() {
+		for range opcuaBrowserChan {
+			// Discard - browse details not needed for subscription path (only for GetNodeTree)
+		}
+		close(opcuaBrowserConsumerDone)
+	}()
+
 	var wg TrackedWaitGroup
 	done := make(chan struct{})
 
@@ -68,8 +81,21 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		g.Log.Debugf("Browsing nodeID: %s", nodeID.String())
 		wg.Add(1)
 		wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(nodeID))
-		go browse(timeoutCtx, wrapperNodeID, "", g.Log, nodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
+		go browse(timeoutCtx, wrapperNodeID, "", g.Log, nodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited, g.ServerProfile)
 	}
+
+	// Start concurrent consumer to drain nodeChan as workers produce nodes
+	// This prevents deadlock when browse workers fill the 100k buffer
+	consumerDone := make(chan struct{})
+	go func() {
+		for node := range nodeChan {
+			nodeList = append(nodeList, node)
+			if node.NodeID != nil {
+				pathIDMap[node.Path] = node.NodeID.String()
+			}
+		}
+		close(consumerDone)
+	}()
 
 	go func() {
 		wg.Wait()
@@ -87,9 +113,9 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	close(errChan)
 	close(opcuaBrowserChan)
 
-	for node := range nodeChan {
-		nodeList = append(nodeList, node)
-	}
+	// Wait for consumers to finish draining the channels
+	<-consumerDone
+	<-opcuaBrowserConsumerDone
 
 	UpdateNodePaths(nodeList)
 
@@ -153,7 +179,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 
 			wgHeartbeat.Add(1)
 			wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(heartbeatNodeID))
-			go browse(ctx, wrapperNodeID, "", g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat, opcuaBrowserChanHeartbeat, &g.visited)
+			go browse(ctx, wrapperNodeID, "", g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat, opcuaBrowserChanHeartbeat, &g.visited, g.ServerProfile)
 
 			wgHeartbeat.Wait()
 			close(nodeHeartbeatChan)
@@ -208,11 +234,127 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 	return nil
 }
 
+// isNumericDataType checks if OPC UA type supports deadband filtering.
+// Only numeric types (Int, UInt, Float, Double) can use DataChangeFilter.
+// Returns true if deadband filter should be applied.
+func isNumericDataType(typeID ua.TypeID) bool {
+	numericTypes := map[ua.TypeID]bool{
+		ua.TypeIDDouble: true,
+		ua.TypeIDFloat:  true,
+		ua.TypeIDInt16:  true,
+		ua.TypeIDInt32:  true,
+		ua.TypeIDInt64:  true,
+		ua.TypeIDUint16: true,
+		ua.TypeIDUint32: true,
+		ua.TypeIDUint64: true,
+		ua.TypeIDByte:   true,
+		ua.TypeIDSByte:  true,
+	}
+	return numericTypes[typeID]
+}
+
+// BatchRange represents a range of indices for batch processing
+type BatchRange struct {
+	Start int
+	End   int
+}
+
+// CalculateBatches splits totalNodes into batches of maxBatchSize and returns the ranges
+func CalculateBatches(totalNodes, maxBatchSize int) []BatchRange {
+	var batches []BatchRange
+	for startIdx := 0; startIdx < totalNodes; startIdx += maxBatchSize {
+		endIdx := startIdx + maxBatchSize
+		if endIdx > totalNodes {
+			endIdx = totalNodes
+		}
+		batches = append(batches, BatchRange{Start: startIdx, End: endIdx})
+	}
+	return batches
+}
+
+// decideDataChangeFilterSupport determines whether to use DataChangeFilter based on profile capability.
+// Returns (supportsFilter bool, shouldTrial bool).
+//
+// The function implements three-way decision logic using FilterCapability enum:
+//   - FilterSupported: Use filter immediately without trial (Decision 1)
+//   - FilterUnsupported: Never use filter, skip trial (Decision 2)
+//   - FilterUnknown: Trial on first batch, cache result for subsequent batches (Decision 3)
+//
+// This replaces hardcoded vendor checks (e.g., if g.ServerProfile.Name == ProfileS71200)
+// with declarative profile configuration, enabling zero-code support for new vendors.
+func (g *OPCUAInput) decideDataChangeFilterSupport() (bool, bool) {
+	switch g.ServerProfile.FilterCapability {
+	case FilterSupported:
+		// Decision 1: Profile declares support → trust immediately
+		return true, false
+	case FilterUnsupported:
+		// Decision 2: Profile declares no support → never trial
+		return false, false
+	case FilterUnknown:
+		// Decision 3: Unknown support → trial-based discovery
+		// Early return for nil capabilities - use profile fallback
+		if g.ServerCapabilities == nil {
+			g.Log.Warnf("DataChangeFilter: ServerCapabilities not initialized, using profile default=%v", g.ServerProfile.SupportsDataChangeFilter)
+			return g.ServerProfile.SupportsDataChangeFilter, false
+		}
+
+		// Trial if not yet attempted this connection
+		if !g.ServerCapabilities.hasTrialedThisConnection {
+			return true, true  // Trial attempt
+		}
+
+		// Use cached trial result
+		return g.ServerCapabilities.SupportsDataChangeFilter, false
+	default:
+		// Invalid enum value - defensive fallback to trial mechanism
+		g.Log.Warnf("Invalid FilterCapability value - defaulting to trial mechanism (filterCapability=%d)", g.ServerProfile.FilterCapability)
+		return true, true
+	}
+}
+
 // MonitorBatched splits the nodes into manageable batches and starts monitoring them.
 // This approach prevents the server from returning BadTcpMessageTooLarge by avoiding oversized monitoring requests.
+//
+// Batch Size Selection (ServerProfile.MaxBatchSize):
+// Batch size controls nodes per CreateMonitoredItems call during Subscribe phase.
+// This is different from workers (Browse phase) - batch size affects subscription setup, not browsing.
+//
+// Why batch size matters:
+// - Too large = server rejects request (BadTcpMessageTooLarge, connection drop)
+// - Too small = slow subscription setup (more API round-trips)
+// - Sweet spot varies by server: S7-1200 = 100, Ignition/Kepware = 1000
+//
+// Performance trade-offs (validated in UMH-ENG-3852):
+// - S7-1200 with batchSize=100: Fast subscription setup
+// - S7-1200 with batchSize=200+: 50× slower (server throttles/times out)
+// - Ignition/Kepware with batchSize=1000: 10× faster than batchSize=100
+//
+// Profile-based values come from ServerProfile.MaxBatchSize (see server_profiles.go).
+// Each profile is tuned for specific server hardware and tested in production.
+//
+// Deadband Filtering:
+// If deadbandType is set (absolute/percent), deadbandValue > 0, AND server supports
+// DataChangeFilter (detected via profile defaults), the function
+// applies server-side filtering to reduce notification traffic by 50-70%.
+//
+// Server capability detection uses profile-based defaults:
+// 1. Profile-based defaults (ServerProfile.SupportsDataChangeFilter)
+//
+// If server doesn't support DataChangeFilter (e.g., S7-1200 with Micro Embedded Device
+// profile), filters are omitted to prevent StatusBadFilterNotAllowed errors.
+// All data change notifications will be sent without server-side filtering.
+//
 // It returns the total number of nodes that were successfully monitored or an error if monitoring fails.
 func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, error) {
-	const maxBatchSize = 100
+	// Use profile-based batch size
+	maxBatchSize := g.ServerProfile.MaxBatchSize
+	if maxBatchSize == 0 {
+		panic(fmt.Sprintf(
+			"PROGRAMMING ERROR: ServerProfile.MaxBatchSize is 0. "+
+				"This means ServerProfile was not initialized before MonitorBatched() was called. "+
+				"Profile name: '%s'. This indicates a bug in the Connect() initialization flow.",
+			g.ServerProfile.Name))
+	}
 	totalMonitored := 0
 	totalNodes := len(nodes)
 
@@ -221,20 +363,93 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		return 0, fmt.Errorf("no valid nodes selected")
 	}
 
-	g.Log.Infof("Starting to monitor %d nodes in batches of %d", totalNodes, maxBatchSize)
+	// Three-way DataChangeFilter Decision Logic (Hardware-Validated on S7-1200 PLCs)
+	//
+	// This logic was validated through hardware tests on production S7-1200 PLCs (ENG-3880).
+	// All three decision paths were tested on real PLCs at 10.13.37.180 and 10.13.37.183.
+	//
+	// **Decision 1**: Profile explicitly supports filter → Use immediately
+	//   - Example: Kepware, S7-1500, Ignition, Prosys
+	//   - No trial needed, filter always works
+	//   - Hardware test: Validated via unit tests (no Kepware PLC available)
+	//
+	// **Decision 2**: S7-1200 profile → Never trial, skip filter
+	//   - Critical: S7-1200 uses Micro Embedded Device Server profile (OPC UA Part 7, no DataChangeFilter)
+	//   - Trial would always fail with StatusBadFilterNotAllowed (0x80450000)
+	//   - This check prevents infinite retry loops on known-unsupported servers
+	//   - Hardware test: PLC 180 at 19:25:46 - autodetected profile="siemens-s7-1200" from ProductURI
+	//     → shouldTrial=false, supportsFilter=false → subscription succeeded
+	//   - Hardware test: PLC 180 at 19:20:07 on master branch (hardcoded filter) → StatusBadFilterNotAllowed
+	//
+	// **Decision 3**: Unknown profile + not trialed → Trial on first batch
+	//   - Attempt filter on first batch to discover runtime capability
+	//   - If StatusBadFilterNotAllowed → cache failure, recursive retry without filter (see line 443)
+	//   - If successful → cache success, use filter on subsequent batches
+	//   - Hardware test: PLC 180 at 19:28:23 with profile="unknown" → trial succeeded
+	//     → shouldTrial=true, supportsFilter=true → DataChangeFilter worked (PLC reconfigured between tests)
+	//   - Cached result in hasTrialedThisConnection prevents repeated trials on same connection
+	//
+	// This prevents:
+	// - Unnecessary trials on known-unsupported servers (Decision 2 - S7-1200 special case)
+	// - Missing filter support on unknown servers (Decision 3 - trial-based discovery)
+	// - Repeated trial failures (hasTrialedThisConnection cache prevents loops)
+	// - Breaking existing working servers (Decision 1 - trusted profiles use filter immediately)
+	//
+	// See ENG-3880 Linear ticket for complete hardware test logs, screenshots, and validation evidence.
 
-	for startIdx := 0; startIdx < totalNodes; startIdx += maxBatchSize {
-		endIdx := startIdx + maxBatchSize
-		if endIdx > totalNodes {
-			endIdx = totalNodes
+	// Use FilterCapability enum to decide filter support (replaces hardcoded vendor checks)
+	supportsFilter, shouldTrial := g.decideDataChangeFilterSupport()
+
+	// Log decision for debugging
+	switch g.ServerProfile.FilterCapability {
+	case FilterSupported:
+		g.Log.Debugf("DataChangeFilter enabled by profile (profile=%s, FilterCapability=FilterSupported)", g.ServerProfile.Name)
+	case FilterUnsupported:
+		g.Log.Debugf("DataChangeFilter disabled by profile (profile=%s, FilterCapability=FilterUnsupported)", g.ServerProfile.Name)
+	case FilterUnknown:
+		if shouldTrial {
+			g.Log.Infof("DataChangeFilter: Attempting trial for profile=%s (FilterCapability=FilterUnknown, first batch)", g.ServerProfile.Name)
+		} else {
+			g.Log.Debugf("DataChangeFilter: Using cached trial result=%v (profile=%s, FilterCapability=FilterUnknown)", supportsFilter, g.ServerProfile.Name)
 		}
+	}
 
-		batch := nodes[startIdx:endIdx]
-		g.Log.Infof("Creating monitor for nodes %d to %d", startIdx, endIdx-1)
+	g.Log.With("batchSize", maxBatchSize).
+		With("profile", g.ServerProfile.Name).
+		With("supportsFilter", supportsFilter).
+		With("shouldTrial", shouldTrial).
+		Infof("Starting to monitor %d nodes in batches of %d", totalNodes, maxBatchSize)
+
+	batches := CalculateBatches(totalNodes, maxBatchSize)
+	for _, batchRange := range batches {
+		batch := nodes[batchRange.Start:batchRange.End]
+		g.Log.Infof("Creating monitor for nodes %d to %d", batchRange.Start, batchRange.End-1)
 
 		monitoredRequests := make([]*ua.MonitoredItemCreateRequest, 0, len(batch))
 
+		numFilteredNodes := 0
 		for pos, nodeDef := range batch {
+			var filter *ua.ExtensionObject
+
+			// Only apply deadband filter if:
+			// 1. Server supports DataChangeFilter (capability check)
+			// 2. Node is numeric data type (required for deadband)
+			if supportsFilter && isNumericDataType(nodeDef.DataTypeID) {
+				filter = createDataChangeFilter(g.DeadbandType, g.DeadbandValue)
+				numFilteredNodes++
+			} else {
+				filter = nil
+
+				// Log why filter was skipped (expanded debug messaging)
+				if !supportsFilter {
+					g.Log.Debugf("Skipping deadband for node %s: server does not support DataChangeFilter (profile=%s, runtime=%v)",
+						nodeDef.NodeID, g.ServerProfile.Name, g.ServerCapabilities != nil)
+				} else if !isNumericDataType(nodeDef.DataTypeID) {
+					g.Log.Debugf("Skipping deadband for non-numeric node %s (type: %v)",
+						nodeDef.NodeID, nodeDef.DataTypeID)
+				}
+			}
+
 			request := &ua.MonitoredItemCreateRequest{
 				ItemToMonitor: &ua.ReadValueID{
 					NodeID:       nodeDef.NodeID,
@@ -243,9 +458,9 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 				},
 				MonitoringMode: ua.MonitoringModeReporting,
 				RequestedParameters: &ua.MonitoringParameters{
-					ClientHandle:     uint32(startIdx + pos),
+					ClientHandle:     uint32(batchRange.Start + pos),
 					DiscardOldest:    true,
-					Filter:           nil,
+					Filter:           filter,
 					QueueSize:        g.QueueSize,
 					SamplingInterval: g.SamplingInterval,
 				},
@@ -255,11 +470,11 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 
 		response, err := g.Subscription.Monitor(ctx, ua.TimestampsToReturnBoth, monitoredRequests...)
 		if err != nil {
-			g.Log.Errorf("Failed to monitor batch %d-%d: %v", startIdx, endIdx-1, err)
+			g.Log.Errorf("Failed to monitor batch %d-%d: %v", batchRange.Start, batchRange.End-1, err)
 			if closeErr := g.Close(ctx); closeErr != nil {
 				g.Log.Errorf("Failed to close OPC UA connection: %v", closeErr)
 			}
-			return totalMonitored, fmt.Errorf("monitoring failed for batch %d-%d: %w", startIdx, endIdx-1, err)
+			return totalMonitored, fmt.Errorf("monitoring failed for batch %d-%d: %w", batchRange.Start, batchRange.End-1, err)
 		}
 
 		if response == nil {
@@ -273,6 +488,52 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		for i, result := range response.Results {
 			if !errors.Is(result.StatusCode, ua.StatusOK) {
 				failedNode := batch[i].NodeID.String()
+
+				// Trial-and-retry logic (Hardware-Validated on S7-1200 PLCs)
+				//
+				// When shouldTrial=true and server rejects filter with StatusBadFilterNotAllowed:
+				// 1. Update ServerCapabilities cache (hasTrialedThisConnection=true, SupportsDataChangeFilter=false)
+				// 2. Recursive retry: MonitorBatched() called again with same nodes
+				// 3. Second iteration hits Decision 3b (line 353-357, cached result) → omits filters
+				// 4. Prevents infinite loops via hasTrialedThisConnection gate
+				//
+				// Hardware test validation (ENG-3880):
+				// - PLC 180 (10.13.37.180:4840) initially rejected filter on master branch at 19:20:07
+				// - After implementing this fix, PLC 180 with profile="unknown" automatically retried at 19:28:23
+				//   (note: PLC was reconfigured between tests, so trial succeeded instead of triggering this path)
+				// - This mechanism allows graceful degradation from deadband filtering to no filtering
+				//   without requiring user intervention or config changes
+				// - Second attempt uses cached false result, no repeated trials on subsequent subscriptions
+				//
+				// This mechanism is critical for S7-1200 PLCs and other servers that don't advertise
+				// their DataChangeFilter limitations through ServerProfileArray (which most vendors don't populate).
+				if shouldTrial && errors.Is(result.StatusCode, ua.StatusBadFilterNotAllowed) {
+					// Trial failed - server doesn't support DataChangeFilter
+					g.Log.Infof("DataChangeFilter trial failed for node %s: %v. This is expected for servers using Micro Embedded Device profile (e.g., S7-1200 PLCs). Updating capabilities cache and retrying without filter. Future subscriptions will skip filter automatically.",
+						failedNode, result.StatusCode)
+
+					// Update ServerCapabilities with learned result
+					if g.ServerCapabilities != nil {
+						g.ServerCapabilities.hasTrialedThisConnection = true
+						g.ServerCapabilities.SupportsDataChangeFilter = false
+					}
+
+					// Retry from failed node onwards - the three-way logic will now hit Decision 3b (cached false)
+					// This prevents infinite loops since hasTrialedThisConnection=true now
+					// This prevents duplicate subscriptions for already-successful nodes
+					g.Log.Debugf("Retrying from failed node onwards without DataChangeFilter (recursive call with cached result)...")
+
+					// Calculate starting index: batchRange.Start (batch offset) + i (position within batch)
+					failedNodeIndex := batchRange.Start + i
+
+					// Recursive call: Only pass nodes from failed point onwards
+					// This prevents re-monitoring nodes 0 to (failedNodeIndex-1) which already succeeded
+					return g.MonitorBatched(ctx, nodes[failedNodeIndex:])
+				}
+
+				// Non-trial error or different error code - propagate normally
+				RecordSubscriptionFailure(result.StatusCode, failedNode)
+
 				g.Log.Errorf("Failed to monitor node %s: %v", failedNode, result.StatusCode)
 				// Depending on requirements, you might choose to continue monitoring other nodes
 				// instead of aborting. Here, we abort on the first failure.
@@ -286,9 +547,20 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 			}
 		}
 
+		// After successful batch processing, mark trial success if this was a trial
+		if shouldTrial && g.ServerCapabilities != nil {
+			g.ServerCapabilities.hasTrialedThisConnection = true
+			g.ServerCapabilities.SupportsDataChangeFilter = true
+			g.Log.Infof("DataChangeFilter trial succeeded. Server supports filter - capability confirmed and cached for this connection.")
+		}
+
 		monitoredNodes := len(response.Results)
 		totalMonitored += monitoredNodes
 		g.Log.Infof("Successfully monitored %d nodes in current batch", monitoredNodes)
+		if g.DeadbandType != "none" {
+			g.Log.Infof("Batch %d-%d: Applied %s deadband filter to %d numeric nodes (threshold: %.2f)",
+				batchRange.Start, batchRange.End-1, g.DeadbandType, numFilteredNodes, g.DeadbandValue)
+		}
 		time.Sleep(time.Second) // Sleep for some time to prevent overloading the server
 	}
 
@@ -299,22 +571,27 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 // UpdateNodePaths updates the node paths to use the nodeID instead of the browseName
 // if the browseName is not unique
 func UpdateNodePaths(nodes []NodeDef) {
-	for i, node := range nodes {
-		for j, otherNode := range nodes {
-			if i == j {
-				continue
-			}
-			if node.Path == otherNode.Path {
-				// update only the last element of the path, after the last dot
-				nodePathSplit := strings.Split(node.Path, ".")
-				nodePath := strings.Join(nodePathSplit[:len(nodePathSplit)-1], ".")
-				nodePath = nodePath + "." + sanitize(node.NodeID.String())
-				nodes[i].Path = nodePath
+	// Track which paths have been seen and how many times
+	pathCount := make(map[string][]int)
 
-				otherNodePathSplit := strings.Split(otherNode.Path, ".")
-				otherNodePath := strings.Join(otherNodePathSplit[:len(otherNodePathSplit)-1], ".")
-				otherNodePath = otherNodePath + "." + sanitize(otherNode.NodeID.String())
-				nodes[j].Path = otherNodePath
+	// Count occurrences of each path and track indices
+	for i, node := range nodes {
+		pathCount[node.Path] = append(pathCount[node.Path], i)
+	}
+
+	// Update paths that have duplicates
+	for path, indices := range pathCount {
+		if len(indices) > 1 {
+			// This path appears multiple times, update all of them
+			for _, idx := range indices {
+				nodePathSplit := strings.Split(path, ".")
+				parentPath := ""
+				if len(nodePathSplit) > 1 {
+					parentPath = strings.Join(nodePathSplit[:len(nodePathSplit)-1], ".")
+				}
+				// Use join() to avoid leading dots for single-segment paths
+				nodePath := join(parentPath, sanitize(nodes[idx].NodeID.String()))
+				nodes[idx].Path = nodePath
 			}
 		}
 	}

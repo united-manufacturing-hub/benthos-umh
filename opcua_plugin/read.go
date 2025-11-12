@@ -108,6 +108,12 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		return nil, err
 	}
 
+	// Deadband configuration: Hardcoded for duplicate suppression
+	// Product decision: Users configure thresholds in UMH downsampler, not OPC UA layer
+	// threshold=0 suppresses only exact duplicate values (e.g., 123.0 → 123.0)
+	const deadbandType = "absolute"
+	const deadbandValue = 0.0
+
 	// fail if no nodeIDs are provided
 	if len(nodeIDs) == 0 {
 		return nil, errors.New("no nodeIDs provided")
@@ -127,6 +133,8 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		PollRate:                     pollRate,
 		QueueSize:                    uint32(queueSize),
 		SamplingInterval:             samplingInterval,
+		DeadbandType:                 deadbandType,
+		DeadbandValue:                deadbandValue,
 	}
 
 	m.cleanup_func = func(ctx context.Context) {
@@ -148,6 +156,68 @@ func init() {
 	}
 }
 
+// ServerCapabilities holds OPC UA server capability flags
+// ServerCapabilities represents OPC UA server capabilities including operation limits and feature support.
+// Operation limits come from ns=0;i=11704 (OperationLimits) - many servers (S7-1200/1500) don't expose these.
+// Deadband support is queried separately via AggregateConfiguration node.
+type ServerCapabilities struct {
+	// SupportsDataChangeFilter indicates whether the server supports DataChangeFilter in MonitoredItem creation.
+	//
+	// Profile-based capability detection (OPC UA Part 7, Section 6.4.3):
+	// - Standard DataChange Subscription facet: Includes DataChangeFilter support (OPC UA Part 4, Section 7.17)
+	// - Embedded DataChange Subscription facet: MAY omit DataChangeFilter (OPC UA Part 7, Section 6.4.3.2)
+	//
+	// The Micro Embedded Device Server Profile (Part 7, Annex A) uses the Embedded facet, allowing servers
+	// to implement subscriptions without filter support. This is common in resource-constrained devices.
+	//
+	// Known server behaviors:
+	// - Kepware/Ignition: Support DataChangeFilter (Standard facet)
+	// - S7-1200: Implements Embedded facet WITHOUT DataChangeFilter support
+	// - S7-1500: Supports DataChangeFilter (Standard facet)
+	//
+	// When false, subscription requests must omit the filter parameter to avoid BadMonitoredItemFilterUnsupported.
+	//
+	// Note on PercentDeadband: Even if SupportsDataChangeFilter is true, PercentDeadband requires EURange
+	// property (OPC UA Part 8, Section 5.6.3) which may not be present on all nodes.
+	SupportsDataChangeFilter bool
+
+	// Operation limits from ServerCapabilities.OperationLimits
+	MaxNodesPerBrowse           uint32
+	MaxMonitoredItemsPerCall    uint32
+	MaxNodesPerRead             uint32
+	MaxNodesPerWrite            uint32
+	MaxBrowseContinuationPoints uint32
+
+	// Deprecated: Use SupportsDataChangeFilter instead.
+	// This field remains for backward compatibility but will be removed in a future version.
+	// SupportsAbsoluteDeadband specifically checks for AbsoluteDeadband support, which is a
+	// subset of DataChangeFilter functionality. The new SupportsDataChangeFilter field provides
+	// more comprehensive filter support detection aligned with OPC UA profile conformance.
+	SupportsAbsoluteDeadband bool
+
+	// SupportsPercentDeadband indicates whether the server supports Percent deadband filtering.
+	// Requires both DataChangeFilter support AND EURange property on nodes (OPC UA Part 8, Section 5.6.3).
+	SupportsPercentDeadband bool
+
+	// hasTrialedThisConnection indicates whether DataChangeFilter support has been
+	// confirmed via trial during this connection. This field is connection-scoped
+	// and resets to false on reconnect.
+	//
+	// Used to prevent repeated trials within the same connection:
+	// - false: No trial performed yet this connection (may trial if conditions met)
+	// - true: Trial completed this connection (use cached SupportsDataChangeFilter result)
+	//
+	// Hardware-validated on S7-1200 PLCs (ENG-3880): Successfully prevents infinite retry
+	// loops when servers reject DataChangeFilter with StatusBadFilterNotAllowed. Cache
+	// ensures trial happens exactly once per connection, then uses cached result for all
+	// subsequent MonitorBatched() calls. See read_discover.go:467-485 for retry mechanism.
+	//
+	// Note: We cannot persist learned values across reconnections due to architecture
+	// constraints. Instead, we emit INFO messages recommending users explicitly configure
+	// server profiles to save ~1-2 seconds on subsequent connections.
+	hasTrialedThisConnection bool
+}
+
 type OPCUAInput struct {
 	*OPCUAConnection // Embed the shared connection configuration
 
@@ -163,9 +233,13 @@ type OPCUAInput struct {
 	HeartbeatNodeId              *ua.NodeID
 	Subscription                 *opcua.Subscription
 	ServerInfo                   ServerInfo
+	ServerProfile                ServerProfile
 	PollRate                     int
 	QueueSize                    uint32
 	SamplingInterval             float64
+	DeadbandType                 string
+	DeadbandValue                float64
+	ServerCapabilities           *ServerCapabilities
 }
 
 // unsubscribeAndResetHeartbeat unsubscribes from the OPC UA subscription and resets the heartbeat
@@ -224,12 +298,49 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 	g.Log.Infof("Connected to %s", g.Endpoint)
 
-	// Get OPC UA server information
-	if serverInfo, err := g.GetOPCUAServerInformation(ctx); err != nil {
-		g.Log.Infof("Failed to get OPC UA server information: %s", err)
+	// Check if profile is manually specified in configuration
+	if g.Profile != "" {
+		// Use manually specified profile
+		g.ServerProfile = GetProfileByName(g.Profile)
+		g.Log.With("profile", g.ServerProfile.Name).
+			Info("Using manually configured OPC UA server profile")
 	} else {
-		g.Log.Infof("OPC UA Server Information: %v+", serverInfo)
-		g.ServerInfo = serverInfo
+		// Get OPC UA server information for auto-detection
+		if serverInfo, err := g.GetOPCUAServerInformation(ctx); err != nil {
+			g.Log.Infof("Failed to get OPC UA server information: %s - using Auto profile", err)
+			// BUG FIX: Always set ServerProfile, even when server info detection fails
+			g.ServerProfile = GetProfileByName(ProfileAuto)
+			g.Log.Infof("Using fallback profile: %s (defensive defaults)", g.ServerProfile.Name)
+		} else {
+			g.Log.Infof("OPC UA Server Information: %v+", serverInfo)
+			g.ServerInfo = serverInfo
+
+			// Detect and store server profile
+			g.ServerProfile = DetectServerProfile(&g.ServerInfo)
+			g.Log.With("profile", g.ServerProfile.Name).
+				With("manufacturer", g.ServerInfo.ManufacturerName).
+				With("product", g.ServerInfo.ProductName).
+				Info("Detected OPC UA server profile")
+		}
+	}
+
+	// Query server operation limits (only if subscriptions enabled)
+	// Note: Does not query ServerProfileArray - uses profile-based defaults instead
+	if g.SubscribeEnabled {
+		caps, err := g.queryOperationLimits(ctx)
+		if err != nil {
+			g.Log.Warnf("Failed to query server capabilities: %v, assuming basic support", err)
+			caps = &ServerCapabilities{
+				SupportsAbsoluteDeadband: true,  // Most servers support this
+				SupportsPercentDeadband:  false, // Conservative assumption
+				SupportsDataChangeFilter: false, // Safe default - MonitorBatched will use profile default
+			}
+		}
+		g.ServerCapabilities = caps
+
+		// Log operation limits (Phase 1: logging only, no behavior changes)
+		g.logServerCapabilities(caps)
+
 	}
 
 	// Create a subscription channel if needed
@@ -503,4 +614,70 @@ func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef Nod
 	message.MetaSet("opcua_tag_type", tagType)
 
 	return message
+}
+
+// QueryServerCapabilities reads server capability information
+// to determine which deadband types are supported.
+func (o *OPCUAInput) QueryServerCapabilities(ctx context.Context) (*ServerCapabilities, error) {
+	caps := &ServerCapabilities{
+		SupportsAbsoluteDeadband: true, // All OPC UA servers support absolute
+	}
+
+	// Query deadband support via AggregateConfiguration
+	// NodeID 2340 = Server_ServerCapabilities_AggregateConfiguration (OPC UA Part 5)
+	aggConfigNodeID := ua.NewNumericNodeID(0, 2340)
+	req := &ua.ReadRequest{
+		NodesToRead: []*ua.ReadValueID{
+			{NodeID: aggConfigNodeID, AttributeID: ua.AttributeIDNodeClass},
+		},
+	}
+
+	resp, err := o.Client.Read(ctx, req)
+	if err == nil && len(resp.Results) > 0 && resp.Results[0].Status == ua.StatusOK {
+		caps.SupportsPercentDeadband = true
+	}
+
+	// Query operation limits (Phase 1: logging only)
+	if opLimits, err := o.queryOperationLimits(ctx); err != nil {
+		o.Log.Infof("OperationLimits not available (normal for many PLCs): %v - using profile defaults", err)
+	} else if opLimits != nil {
+		// Merge operation limits into capabilities
+		caps.MaxNodesPerBrowse = opLimits.MaxNodesPerBrowse
+		caps.MaxMonitoredItemsPerCall = opLimits.MaxMonitoredItemsPerCall
+		caps.MaxNodesPerRead = opLimits.MaxNodesPerRead
+		caps.MaxNodesPerWrite = opLimits.MaxNodesPerWrite
+		caps.MaxBrowseContinuationPoints = opLimits.MaxBrowseContinuationPoints
+	}
+
+	return caps, nil
+}
+
+// adjustDeadbandType adjusts requested deadband type based on server capabilities.
+// Implements fallback strategy: percent → absolute → none
+func adjustDeadbandType(requested string, caps *ServerCapabilities) string {
+	switch requested {
+	case "none":
+		return "none"
+
+	case "absolute":
+		if caps.SupportsAbsoluteDeadband {
+			return "absolute"
+		}
+		// Absolute not supported - fallback to none
+		return "none"
+
+	case "percent":
+		if caps.SupportsPercentDeadband {
+			return "percent"
+		}
+		// Percent not supported - fallback to absolute
+		if caps.SupportsAbsoluteDeadband {
+			return "absolute"
+		}
+		// Neither supported - fallback to none
+		return "none"
+
+	default:
+		return "none"
+	}
 }

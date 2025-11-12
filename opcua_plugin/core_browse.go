@@ -16,6 +16,7 @@ package opcua_plugin
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"sync"
 	"sync/atomic"
@@ -34,15 +35,18 @@ const (
 	StaleTime = 15 * time.Minute
 )
 
+var sanitizeRegex = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+
 type NodeDef struct {
 	NodeID       *ua.NodeID
 	NodeClass    ua.NodeClass
 	BrowseName   string
 	Description  string
 	AccessLevel  ua.AccessLevelType
-	DataType     string
-	ParentNodeID string // custom, not an official opcua attribute
-	Path         string // custom, not an official opcua attribute
+	DataType     string      // String representation for metadata
+	DataTypeID   ua.TypeID   // TypeID for filter compatibility checking
+	ParentNodeID string      // custom, not an official opcua attribute
+	Path         string      // custom, not an official opcua attribute
 }
 
 // join concatenates two strings with a dot separator.
@@ -65,8 +69,7 @@ func join(a, b string) string {
 // invalid character with an underscore. This sanitization helps prevent errors and
 // ensures consistency when using node names in various parts of the application.
 func sanitize(s string) string {
-	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
-	return re.ReplaceAllString(s, "_")
+	return sanitizeRegex.ReplaceAllString(s, "_")
 }
 
 type Logger interface {
@@ -76,8 +79,8 @@ type Logger interface {
 
 // Browse is a public wrapper function for the browse function
 // Avoid using this function directly, use it only for testing
-func Browse(ctx context.Context, n NodeBrowser, path string, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map) {
-	browse(ctx, n, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
+func Browse(ctx context.Context, n NodeBrowser, path string, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map, profile ServerProfile) {
+	browse(ctx, n, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited, profile)
 }
 
 // NodeTask represents a task for workers to process
@@ -100,13 +103,15 @@ func browse(
 	wg *TrackedWaitGroup,
 	opcuaBrowserChan chan BrowseDetails,
 	visited *sync.Map,
+	profile ServerProfile,
 ) {
-	metrics := NewServerMetrics()
+	metrics := NewServerMetrics(profile)
 	var taskWg TrackedWaitGroup
 	var workerWg TrackedWaitGroup
-	// Have sufficient buffer (minWorkers* 10_000) for taskChan to avoid blocking and the number of workers might grow dynamically down the line. The minWorkers is a constant of 3
-	// TODO: Introduce backpressure mechanism to avoid blocking the taskChan
-	taskChan := make(chan NodeTask, metrics.currentWorkers*10000)
+	// Buffer = 2× MaxTagsToBrowse to handle branching factor safely.
+	// This prevents deadlock when workers queue children to taskChan.
+	// Backpressure is applied via context cancellation in browseChildren.
+	taskChan := make(chan NodeTask, MaxTagsToBrowse*2)
 
 	workerID := make(map[uuid.UUID]struct{})
 	// Start worker pool manager
@@ -131,6 +136,7 @@ func browse(
 				for i := 0; i < toRemove; i++ {
 					for id := range workerID {
 						metrics.removeWorker(id)
+						delete(workerID, id)
 						// This break make sure that only one worker is removed on each iteration
 						break
 					}
@@ -219,7 +225,7 @@ func worker(
 				}
 				// to skip nodes that are already FullyDiscovered and fresh
 				if vni.FullyDiscovered && time.Since(vni.LastSeen) < StaleTime {
-					logger.Debugf("Worker %s: node %s is fully discovered and fresh, skipping..", id, task.node.ID().String)
+					logger.Debugf("Worker %s: node %s is fully discovered and fresh, skipping..", id, task.node.ID().String())
 					taskWg.Done()
 					continue
 				}
@@ -249,7 +255,7 @@ func worker(
 			attrs, err := task.node.Attributes(ctx, ua.AttributeIDNodeClass, ua.AttributeIDBrowseName,
 				ua.AttributeIDDescription, ua.AttributeIDAccessLevel, ua.AttributeIDDataType)
 			if err != nil {
-				sendError(ctx, err, errChan, logger)
+				sendError(ctx, fmt.Errorf("node %s: %w", task.node.ID().String(), err), errChan, logger)
 				taskWg.Done()
 				continue
 			}
@@ -284,7 +290,7 @@ func worker(
 				continue
 			}
 
-			logger.Debugf("\nWorker %d: level %d: def.Path:%s def.NodeClass:%s TaskWaitGroup count: %d WorkerWaitGroup count: %d\n",
+			logger.Debugf("\nWorker %s: level %d: def.Path:%s def.NodeClass:%s TaskWaitGroup count: %d WorkerWaitGroup count: %d\n",
 				id, task.level, def.Path, def.NodeClass, taskWg.Count(), workerWg.Count())
 
 			visited.Store(task.node.ID(), VisitedNodeInfo{
@@ -303,8 +309,11 @@ func worker(
 			browserDetails.NodeDef.Path = join(task.path, def.BrowseName)
 			select {
 			case opcuaBrowserChan <- browserDetails:
-			default:
-				logger.Debugf("Worker %d: opcuaBrowserChan blocked, skipping", id)
+				// Successfully sent node details for topic browser
+			case <-ctx.Done():
+				logger.Warnf("Worker %s: Context canceled while sending to opcuaBrowserChan", id)
+				taskWg.Done()
+				continue
 			}
 
 			// Process based on node class
@@ -313,9 +322,9 @@ func worker(
 				select {
 				case nodeChan <- def:
 				case <-ctx.Done():
-					logger.Warnf("Worker %d: Failed to send node due to cancellation", id)
+					logger.Warnf("Worker %s: Failed to send node due to cancellation", id)
 					taskWg.Done()
-					return
+					continue
 				}
 				if err := browseChildren(ctx, task, def, taskChan, taskWg); err != nil {
 					sendError(ctx, err, errChan, logger)
@@ -369,14 +378,29 @@ func browseChildren(ctx context.Context, task NodeTask, def NodeDef, taskChan ch
 		return errors.Errorf("Children: %s", err)
 	}
 
-	// Queue child tasks
+	// Queue child tasks with context cancellation support.
+	// Use select to prevent deadlock: if taskChan is full and context is cancelled,
+	// we must exit immediately rather than block forever. The ctx.Done() case provides
+	// an escape path that pure blocking (taskChan <- task) lacks.
+	//
+	// Important: taskWg.Add(1) is called BEFORE sending to channel to prevent race condition.
+	// If Add() is called after send, the worker may call Done() before Add() executes,
+	// causing "sync: negative WaitGroup counter" panic. The ctx.Done() case must call
+	// Done() to roll back the increment if context is cancelled before sending.
 	for _, child := range children {
-		taskWg.Add(1)
-		taskChan <- NodeTask{
+		taskWg.Add(1) // Increment BEFORE sending to prevent race
+		select {
+		case taskChan <- NodeTask{
 			node:         child,
 			path:         def.Path,
 			level:        task.level + 1,
 			parentNodeId: def.NodeID.String(),
+		}:
+			// Successfully queued
+		case <-ctx.Done():
+			taskWg.Done() // Roll back the Add() since task wasn't queued
+			// Context cancellation is graceful shutdown, not an error
+			return nil
 		}
 	}
 	return nil

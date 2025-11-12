@@ -117,7 +117,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNodeWithNilNodeClass
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -144,7 +144,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -182,7 +182,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -222,7 +222,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -262,7 +262,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -305,7 +305,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = rootNode
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -381,7 +381,7 @@ var _ = Describe("Unit Tests", func() {
 				nodeBrowser = abcFolder
 				wg.Add(1)
 				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
 				}()
 				wg.Wait()
 				close(nodeChan)
@@ -703,10 +703,117 @@ func createMockNode(id uint32, name string, nodeClass ua.NodeClass) *MockOpcuaNo
 // Ensure that the MockOpcuaNodeWraper implements the NodeBrowser interface
 var _ NodeBrowser = &MockOpcuaNodeWraper{}
 
+// MockOpcuaNodeWithBadNodeID simulates a node that returns StatusBadNodeIDUnknown
+// error when Attributes() is called. This is used to test error handling in browse operations.
+type MockOpcuaNodeWithBadNodeID struct {
+	id         *ua.NodeID
+	browseName *ua.QualifiedName
+}
+
+func (m *MockOpcuaNodeWithBadNodeID) ID() *ua.NodeID {
+	return m.id
+}
+
+func (m *MockOpcuaNodeWithBadNodeID) BrowseName(ctx context.Context) (*ua.QualifiedName, error) {
+	return m.browseName, nil
+}
+
+func (m *MockOpcuaNodeWithBadNodeID) Attributes(ctx context.Context, attrs ...ua.AttributeID) ([]*ua.DataValue, error) {
+	// Return StatusBadNodeIDUnknown error to simulate the real-world scenario
+	return nil, ua.StatusBadNodeIDUnknown
+}
+
+func (m *MockOpcuaNodeWithBadNodeID) Children(ctx context.Context, refType uint32, nodeClassMask ua.NodeClass) ([]NodeBrowser, error) {
+	return nil, nil
+}
+
+func (m *MockOpcuaNodeWithBadNodeID) ReferencedNodes(ctx context.Context, refType uint32, browseDir ua.BrowseDirection, nodeClassMask ua.NodeClass, includeSubtypes bool) ([]NodeBrowser, error) {
+	return nil, nil
+}
+
+// Ensure the mock implements NodeBrowser
+var _ NodeBrowser = &MockOpcuaNodeWithBadNodeID{}
+
+// TestBrowseNodeWithStatusBadNodeIDUnknown verifies that when a node returns
+// StatusBadNodeIDUnknown during Attributes() call:
+// 1. The error message includes the node ID that caused the error
+// 2. Browse continues with other valid nodes (doesn't abort)
+//
+// This test addresses ENG-3828 where node IDs are not logged for
+// StatusBadNodeIDUnknown errors, making debugging impossible.
+//
+// TDD RED PHASE: This test will FAIL because:
+// - Current code: sendError(ctx, err, errChan, logger) at core_browse.go:255
+// - Missing: Node ID not wrapped into error message
+// - Expected: Error should contain "ns=2;i=9999" but won't
+var _ = Describe("Browse with StatusBadNodeIDUnknown", func() {
+	Context("when a node returns StatusBadNodeIDUnknown during browse", func() {
+		It("should include node ID in error message and continue with valid nodes", func() {
+			ctx := context.Background()
+			path := ""
+			logger := &MockLogger{}
+			parentNodeId := ""
+			nodeChan := make(chan NodeDef, 100)
+			errChan := make(chan error, 100)
+			wg := &TrackedWaitGroup{}
+			opcuaBrowserChan := make(chan BrowseDetails, 100)
+			visited := &sync.Map{}
+
+			// Create root folder that organizes two child nodes
+			rootFolder := createMockNode(1000, "RootFolder", ua.NodeClassObject)
+
+			// Child 1: BAD node that will return StatusBadNodeIDUnknown error
+			badNode := &MockOpcuaNodeWithBadNodeID{
+				id:         ua.MustParseNodeID("ns=2;i=9999"),
+				browseName: &ua.QualifiedName{NamespaceIndex: 2, Name: "BadNode"},
+			}
+
+			// Child 2: GOOD node that should still be browsed
+			goodNode := createMockNode(2000, "GoodNode", ua.NodeClassVariable)
+
+			// Add both nodes as children via Organizes reference
+			rootFolder.AddReferenceNode(id.Organizes, badNode)
+			rootFolder.AddReferenceNode(id.Organizes, goodNode)
+
+			// Start browsing
+			wg.Add(1)
+			go func() {
+			Browse(ctx, rootFolder, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
+			}()
+			wg.Wait()
+			close(nodeChan)
+			close(errChan)
+
+			// Collect results
+			var nodes []NodeDef
+			for nodeDef := range nodeChan {
+				nodes = append(nodes, nodeDef)
+			}
+
+			var errs []error
+			for err := range errChan {
+				errs = append(errs, err)
+			}
+
+			// ASSERTION 1: Error should contain the problematic node ID
+			// This will FAIL in RED phase because node ID is not logged
+			Expect(errs).Should(HaveLen(1), "Should have exactly one error for the bad node")
+			Expect(errs[0].Error()).To(ContainSubstring("ns=2;i=9999"),
+				"Error message MUST include the node ID that caused StatusBadNodeIDUnknown")
+
+			// ASSERTION 2: Browse should continue and return the good node
+			// This may also fail if browse aborts on first error
+			Expect(nodes).Should(HaveLen(1), "Should still discover the good node")
+			Expect(nodes[0].NodeID.String()).To(Equal("i=2000"))
+			Expect(nodes[0].BrowseName).To(Equal("GoodNode"))
+		})
+	})
+})
+
 func startBrowsing(ctx context.Context, rootNode NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map) ([]NodeDef, []error) {
 	wg.Add(1)
 	go func() {
-		Browse(ctx, rootNode, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
+		Browse(ctx, rootNode, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
 	}()
 	wg.Wait()
 	close(nodeChan)
@@ -724,3 +831,108 @@ func startBrowsing(ctx context.Context, rootNode NodeBrowser, path string, level
 
 	return nodes, errs
 }
+
+// ENG-3835: TDD RED tests for channel blocking fixes
+var _ = Describe("Browse Channel Blocking Behavior (ENG-3835)", func() {
+	Context("when opcuaBrowserChan is full", func() {
+		It("should block worker instead of dropping messages", func(ctx SpecContext) {
+			// Create small opcuaBrowserChan to force blocking
+			opcuaBrowserChan := make(chan BrowseDetails, 2)
+			nodeChan := make(chan NodeDef, 10)
+			errChan := make(chan error, 10)
+			var wg TrackedWaitGroup
+			visited := &sync.Map{}
+			logger := &MockLogger{}
+
+			// Fill opcuaBrowserChan to capacity
+			opcuaBrowserChan <- BrowseDetails{}
+			opcuaBrowserChan <- BrowseDetails{}
+
+			// Create mock node that will trigger opcuaBrowserChan send
+			// Must use createMockNode with all attributes, not createMockVariableNode
+			rootNode := createMockNode(1, "TestNode", ua.NodeClassVariable)
+
+			// Start browse in goroutine
+			done := make(chan bool)
+			go func() {
+				wg.Add(1)
+				Browse(ctx, rootNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
+				wg.Wait()
+				close(done)
+			}()
+
+			// Verify worker is blocked (not completed immediately)
+			select {
+			case <-done:
+				Fail("Worker completed instead of blocking - this means it dropped the message (BUG!)")
+			case <-time.After(100 * time.Millisecond):
+				// Expected: worker is still blocked waiting to send to opcuaBrowserChan
+			}
+
+			// Drain opcuaBrowserChan to unblock worker
+			<-opcuaBrowserChan
+
+			// Worker should now complete
+			Eventually(done, 5*time.Second).Should(BeClosed(), "Worker should complete after channel is drained")
+
+			// Clean up
+			close(nodeChan)
+			close(errChan)
+			close(opcuaBrowserChan)
+		}, SpecTimeout(10*time.Second))
+	})
+
+	Context("when taskChan is full and context is canceled", func() {
+		It("should exit gracefully without deadlock", func(ctx SpecContext) {
+			// Create parent with many children to trigger taskChan queueing
+			parentNode := createMockNode(1, "ParentFolder", ua.NodeClassObject)
+
+			// Add 50 children to force multiple queue operations
+			for i := uint32(2); i < 52; i++ {
+				childNode := createMockVariableNode(i, fmt.Sprintf("Child_%d", i))
+				parentNode.AddReferenceNode(id.HierarchicalReferences, childNode)
+			}
+
+			// Create small taskChan that will fill quickly
+			// Note: We can't directly control taskChan from test (it's created in browse()),
+			// but we can test context cancellation behavior
+			nodeChan := make(chan NodeDef, 100)
+			errChan := make(chan error, 100)
+			opcuaBrowserChan := make(chan BrowseDetails, 100)
+			var wg TrackedWaitGroup
+			visited := &sync.Map{}
+			logger := &MockLogger{}
+
+			// Create cancelable context
+			cancelCtx, cancel := context.WithCancel(ctx)
+
+			// Start browse
+			done := make(chan struct{})
+			go func() {
+				wg.Add(1)
+				Browse(cancelCtx, parentNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
+				wg.Wait()
+				close(done)
+			}()
+
+			// Let browse start processing (200ms for slow CI runners)
+			time.Sleep(200 * time.Millisecond)
+
+			// Cancel context while browse is running
+			cancel()
+
+			// Browse should exit gracefully within timeout
+			select {
+			case <-done:
+				// Success: browse exited cleanly after cancellation
+			case <-time.After(2 * time.Second):
+				Fail("Browse did not exit after context cancellation - possible deadlock in taskChan or opcuaBrowserChan")
+			}
+
+			// Clean up
+			close(nodeChan)
+			close(errChan)
+			close(opcuaBrowserChan)
+		}, SpecTimeout(5*time.Second))
+	})
+})

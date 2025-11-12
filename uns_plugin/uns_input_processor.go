@@ -25,12 +25,13 @@ import (
 
 // MessageProcessor handles the transformation of Kafka records to Benthos messages
 type MessageProcessor struct {
-	topicRegex *regexp.Regexp
-	metrics    *UnsInputMetrics
+	topicRegex     *regexp.Regexp
+	metrics        *UnsInputMetrics
+	metadataFormat MetadataFormat // controls how Kafka headers are converted
 }
 
-// NewMessageProcessor creates a new MessageProcessor with the specified topic regex patterns
-func NewMessageProcessor(topicPatterns []string, metrics *UnsInputMetrics) (*MessageProcessor, error) {
+// NewMessageProcessor creates a new MessageProcessor with the specified topic regex patterns and metadata format
+func NewMessageProcessor(topicPatterns []string, metrics *UnsInputMetrics, metadataFormat MetadataFormat) (*MessageProcessor, error) {
 	if len(topicPatterns) == 0 {
 		return nil, fmt.Errorf("at least one topic pattern must be provided")
 	}
@@ -52,8 +53,9 @@ func NewMessageProcessor(topicPatterns []string, metrics *UnsInputMetrics) (*Mes
 	}
 
 	return &MessageProcessor{
-		topicRegex: topicRegex,
-		metrics:    metrics,
+		topicRegex:     topicRegex,
+		metrics:        metrics,
+		metadataFormat: metadataFormat,
 	}, nil
 }
 
@@ -71,9 +73,20 @@ func (p *MessageProcessor) ProcessRecord(record *kgo.Record) *service.Message {
 
 	msg := service.NewMessage(record.Value)
 
-	// Add headers to the meta field if present
+	// Add headers to the meta field if present, converting based on metadataFormat
 	for _, h := range record.Headers {
-		msg.MetaSetMut(h.Key, h.Value)
+		switch p.metadataFormat {
+		case MetadataFormatString:
+			msg.MetaSetMut(h.Key, string(h.Value))
+		case MetadataFormatBytes:
+			msg.MetaSetMut(h.Key, h.Value)
+		default:
+			// Unreachable: The configuration parser should only accept valid
+			// values for the MetadataFormat enum. This ensures that if a
+			// new MetadataFormat variant gets added we also update this
+			// part of the code.
+			panic(fmt.Sprintf("Unknown MetadataFormat: %#v", p.metadataFormat))
+		}
 	}
 
 	// Add kafka meta fields

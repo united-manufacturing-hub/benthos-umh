@@ -22,28 +22,57 @@ import (
 )
 
 const (
-	MaxWorkers     = 200
-	MinWorkers     = 5
-	InitialWorkers = 10
-	SampleSize     = 5 // Number of requsts to measure response time
-	TargetLatency  = 250 * time.Millisecond
+	// Default worker pool settings (overridden by ServerProfile)
+	DefaultMaxWorkers  = 200
+	DefaultMinWorkers  = 5
+	InitialWorkers     = 10
+	SampleSize         = 5                       // Number of requests to measure response time
+	TargetLatency      = 250 * time.Millisecond  // Target response time for latency-based scaling
 )
 
-// ServerMetrics is a struct that holds the metrics for the OPCUA server requests
+// ServerMetrics tracks worker pool performance during Browse phase.
+// Workers are concurrent goroutines that traverse the OPC UA node tree in parallel.
+// Each worker processes NodeTasks from a shared queue (see core_browse.go browse() function).
+//
+// Why worker pool matters:
+// - Sequential browsing = slow (one Browse call at a time)
+// - Parallel browsing = fast (MaxWorkers Browse calls simultaneously)
+// - Example: 10,000 nodes with 5 workers ≈ 2000 Browse calls per worker vs 10,000 sequential
+//
+// ServerProfile.MaxWorkers/MinWorkers control pool size bounds (see server_profiles.go).
 type ServerMetrics struct {
 	mu             sync.Mutex
 	responseTimes  []time.Duration
 	currentWorkers int
+	minWorkers     int
+	maxWorkers     int
 	targetLatency  time.Duration
 	workerControls map[uuid.UUID]chan struct{} // Channel to signal workers to stop
 }
 
-func NewServerMetrics() *ServerMetrics {
+func NewServerMetrics(profile ServerProfile) *ServerMetrics {
+	// Clamp initial workers to profile bounds to prevent violations
+	// E.g., Auto profile (MaxWorkers=5) should start with 5, not 10
+	// Priority order: MinWorkers first, then MaxWorkers (hardware limit always wins)
+	initial := InitialWorkers
+
+	// Clamp to MinWorkers if profile specifies a minimum
+	if profile.MinWorkers > 0 && initial < profile.MinWorkers {
+		initial = profile.MinWorkers
+	}
+
+	// Clamp to MaxWorkers if profile specifies a maximum (takes priority over MinWorkers)
+	if profile.MaxWorkers > 0 && initial > profile.MaxWorkers {
+		initial = profile.MaxWorkers
+	}
+
 	return &ServerMetrics{
 		responseTimes:  make([]time.Duration, 0),
 		workerControls: make(map[uuid.UUID]chan struct{}),
+		currentWorkers: initial,
+		minWorkers:     profile.MinWorkers,
+		maxWorkers:     profile.MaxWorkers,
 		targetLatency:  TargetLatency,
-		currentWorkers: InitialWorkers,
 	}
 }
 
@@ -79,7 +108,8 @@ func (sm *ServerMetrics) AverageResponseTime() time.Duration {
 	return totalTime / time.Duration(len(sm.responseTimes))
 }
 
-// adjustWorkers calculates the number of workers to adjust based on the response time of the last SampleSize requests
+// adjustWorkers calculates the number of workers to adjust based on the response time of the last SampleSize requests.
+// Scaling respects ServerProfile.MinWorkers and ServerProfile.MaxWorkers bounds.
 func (sm *ServerMetrics) adjustWorkers(logger Logger) (toAdd, toRemove int) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -88,31 +118,38 @@ func (sm *ServerMetrics) adjustWorkers(logger Logger) (toAdd, toRemove int) {
 		return 0, 0
 	}
 
+	// Calculate average response time from recent samples
 	var totalTime time.Duration
 	for _, t := range sm.responseTimes {
 		totalTime += t
 	}
 	avgResponse := totalTime / time.Duration(len(sm.responseTimes))
+
+	// Clear samples for next measurement window
+	sm.responseTimes = sm.responseTimes[:0]
+
+	// Adjust workers based on latency, respecting ServerProfile bounds
 	oldWorkerCount := sm.currentWorkers
 
 	if avgResponse > sm.targetLatency {
-		// Response time is too high. Reduce workers
-		sm.currentWorkers = max(MinWorkers, sm.currentWorkers-10)
-		logger.Debugf("Response time is high (%v > %v target Latency), reducing workers from %d to %d", avgResponse, sm.targetLatency, oldWorkerCount, sm.currentWorkers)
+		// Response time is too high. Reduce workers by 1 (or down to MinWorkers)
+		sm.currentWorkers = max(sm.minWorkers, sm.currentWorkers-1)
+		logger.Debugf("Response time is high (%v > %v target), reducing workers by 1 from %d to %d",
+			avgResponse, sm.targetLatency, oldWorkerCount, sm.currentWorkers)
+	} else if avgResponse < sm.targetLatency {
+		// Response time is good. Increase workers by 1 (or up to MaxWorkers)
+		sm.currentWorkers = min(sm.maxWorkers, sm.currentWorkers+1)
+		logger.Debugf("Response time is low (%v < %v target), increasing workers by 1 from %d to %d",
+			avgResponse, sm.targetLatency, oldWorkerCount, sm.currentWorkers)
 	}
 
-	if avgResponse < sm.targetLatency {
-		// Response time is too low. Increase workers
-		sm.currentWorkers = min(MaxWorkers, sm.currentWorkers+10)
-		logger.Debugf("Response time is low (%v < %v target Latency), increasing workers from %d to %d", avgResponse, sm.targetLatency, oldWorkerCount, sm.currentWorkers)
-	}
-
-	sm.responseTimes = sm.responseTimes[:0]
+	// Return delta (how many to add or remove)
 	if sm.currentWorkers > oldWorkerCount {
 		return sm.currentWorkers - oldWorkerCount, 0
+	} else if sm.currentWorkers < oldWorkerCount {
+		return 0, oldWorkerCount - sm.currentWorkers
 	}
-
-	return 0, oldWorkerCount - sm.currentWorkers
+	return 0, 0
 }
 
 // recordResponseTime records the response time of a request

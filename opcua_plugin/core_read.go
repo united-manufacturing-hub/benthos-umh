@@ -25,6 +25,27 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
+// Context key for capability probe flag
+type contextKey string
+
+const capabilityProbeKey contextKey = "capability_probe"
+
+// WithCapabilityProbe returns a context marked for capability probe operations.
+// Capability probe reads are expected to fail on servers that don't support optional features.
+func WithCapabilityProbe(ctx context.Context) context.Context {
+	return context.WithValue(ctx, capabilityProbeKey, true)
+}
+
+// isCapabilityProbe checks if context is marked for capability probe operations.
+func isCapabilityProbe(ctx context.Context) bool {
+	if val := ctx.Value(capabilityProbeKey); val != nil {
+		if b, ok := val.(bool); ok {
+			return b
+		}
+	}
+	return false
+}
+
 // getBytesFromValue returns the bytes and the tag type for a given OPC UA DataValue and NodeDef.
 func (g *OPCUAConnection) getBytesFromValue(dataValue *ua.DataValue, nodeDef NodeDef) ([]byte, string) {
 	variant := dataValue.Value
@@ -140,7 +161,12 @@ func (g *OPCUAConnection) Read(ctx context.Context, req *ua.ReadRequest) (*ua.Re
 	}
 
 	if !errors.Is(resp.Results[0].Status, ua.StatusOK) {
-		g.Log.Errorf("Status not OK: %v", resp.Results[0].Status)
+		// Capability probes are expected to fail on servers without optional features
+		if isCapabilityProbe(ctx) {
+			g.Log.Debugf("Capability probe returned status: %v (expected for servers without this feature)", resp.Results[0].Status)
+		} else {
+			g.Log.Errorf("Status not OK: %v", resp.Results[0].Status)
+		}
 		return nil, fmt.Errorf("status not OK: %v", resp.Results[0].Status)
 	}
 

@@ -66,7 +66,9 @@ func (g *OPCUAConnection) GetNodeTree(ctx context.Context, msgChan chan<- string
 
 	var wg TrackedWaitGroup
 	wg.Add(1)
-	Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", g.Log, rootNode.NodeId.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
+	// OPCUAConnection doesn't have ServerProfile - use Auto profile
+	profile := GetProfileByName(ProfileAuto)
+	Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(rootNode.NodeId)), "", g.Log, rootNode.NodeId.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited, profile)
 	go logErrors(ctx, errChan, g.Log)
 	go collectNodes(ctx, opcuaBrowserChan, nodeIDMap, &nodes, msgChan)
 

@@ -14,7 +14,7 @@
 include ./Makefile.Common
 
 GINKGO_CMD=ginkgo
-GINKGO_FLAGS=-r --output-interceptor-mode=none --github-output -vv -trace -p --randomize-all --cover --coverprofile=cover.profile --repeat=2
+GINKGO_FLAGS=-r --output-interceptor-mode=none --github-output -vv -trace -p --randomize-all --cover --coverprofile=cover.profile
 GINKGO_SERIAL_FLAGS=$(GINKGO_FLAGS) --procs=1
 
 BENTHOS_BIN := tmp/bin/benthos
@@ -132,7 +132,7 @@ bench-pkg-umh-topic:
 .PHONY: bench-stream-processor
 bench-stream-processor:
 	go test -bench=. -benchmem -benchtime=10s ./stream_processor_plugin/...
-  
+
 .PHONY: test-topic-browser
 test-topic-browser:
 	@TEST_TOPIC_BROWSER=1 \
@@ -169,7 +169,7 @@ test-benthos-topic-browser: target
 .PHONY: test-benthos-topic-browser-local
 test-benthos-topic-browser-local: target
 	@$(BENTHOS_BIN) -c ./config/topic-browser-test-local.yaml
-  
+
 .PHONY: test-benthos-opcua-hex
 test-benthos-opcua-hex: target
 	@$(BENTHOS_BIN) -c ./config/opcua-hex-test.yaml

@@ -391,6 +391,23 @@ variables:
 
 **Mixing formats**: Don't mix in same topic - use different `data_contract` values.
 
+## Implementation Details
+
+### OPC UA Server Profiles
+
+Auto-optimizes Browse workers and Subscribe batch size based on detected server vendor.
+
+**User docs**: See [docs/input/opc-ua-input.md](docs/input/opc-ua-input.md#server-profiles-and-performance-tuning)
+
+**Implementation files**:
+- `opcua_plugin/server_profiles.go` - Profile definitions and auto-detection logic
+- `opcua_plugin/core_browse_workers.go` - Worker pool (Browse phase)
+- `opcua_plugin/read_discover.go` - Batch operations (Subscribe phase)
+
+**Key insight**: Profile values are production-safe limits from vendor docs, not server-reported theoretical maximums (e.g., S7-1200 uses 100 not 1000).
+
+**Adding new profiles**: Define in `server_profiles.go`, add detection logic in `DetectServerProfile()`, validate in `init()`.
+
 ## Development Guidelines
 
 ### General Preferences
