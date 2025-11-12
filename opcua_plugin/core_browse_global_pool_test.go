@@ -211,6 +211,7 @@ func newTestTask(nodeID string, resultChan any) GlobalPoolTask {
 		Ctx:        ctx,
 		Node:       mockNode,
 		ResultChan: resultChan,
+		ErrChan:    make(chan error, 10), // Buffered to prevent blocking
 	}
 }
 
@@ -708,10 +709,10 @@ var _ = Describe("GlobalWorkerPool", func() {
 				pool := NewGlobalWorkerPool(profile, logger)
 				pool.SpawnWorkers(3)
 
-				// Create tasks with blocking result channels to prevent workers from completing
+				// Create tasks with unbuffered channels - workers will block immediately on send
 				blockingChans := make([]chan any, 3)
 				for i := 0; i < 3; i++ {
-					blockingChans[i] = make(chan any) // Unbuffered - blocks on send
+					blockingChans[i] = make(chan any) // Unbuffered - blocks immediately
 					task := newTestTask("ns=2;i=1000", blockingChans[i])
 					err := pool.SubmitTask(task)
 					Expect(err).ToNot(HaveOccurred())
@@ -835,9 +836,17 @@ var _ = Describe("GlobalWorkerPool", func() {
 				// Submit multiple tasks
 				numTasks := 5
 				resultChans := make([]chan any, numTasks)
+				errChans := make([]chan error, numTasks)
 				for i := 0; i < numTasks; i++ {
 					resultChans[i] = make(chan any, 1)
-					task := newTestTask("ns=2;i=1000", resultChans[i])
+					errChans[i] = make(chan error, 10)
+					task := GlobalPoolTask{
+						NodeID:     "ns=2;i=1000",
+						Ctx:        context.Background(),
+						Node:       &mockNodeBrowser{id: ua.MustParseNodeID("ns=2;i=1000")},
+						ResultChan: resultChans[i],
+						ErrChan:    errChans[i],
+					}
 					err := pool.SubmitTask(task)
 					Expect(err).ToNot(HaveOccurred())
 				}
@@ -846,9 +855,16 @@ var _ = Describe("GlobalWorkerPool", func() {
 				err := pool.Shutdown(2 * time.Second)
 				Expect(err).ToNot(HaveOccurred())
 
-				// Verify all tasks completed
+				// Verify all tasks completed (either with results or errors)
 				for i := 0; i < numTasks; i++ {
-					Eventually(resultChans[i]).Within(time.Second).Should(Receive())
+					select {
+					case <-resultChans[i]:
+						// Task completed successfully
+					case <-errChans[i]:
+						// Task cancelled during shutdown
+					case <-time.After(time.Second):
+						Fail(fmt.Sprintf("Task %d did not complete", i))
+					}
 				}
 
 				// Verify all workers exited
@@ -867,10 +883,13 @@ var _ = Describe("GlobalWorkerPool", func() {
 			pool := NewGlobalWorkerPool(profile, logger)
 
 			resultChan := make(chan NodeDef, 1)
-			task := GlobalPoolTask{ResultChan: resultChan}
+			task := GlobalPoolTask{
+				Ctx:        context.Background(),
+				ResultChan: resultChan,
+			}
 			stubNode := NodeDef{NodeID: &ua.NodeID{}}
 
-			sent := pool.sendTaskResult(task, stubNode, logger, false)
+			sent := pool.sendTaskResult(task, stubNode, logger)
 			Expect(sent).To(BeTrue())
 
 			var result NodeDef
@@ -884,10 +903,13 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 			resultChan := make(chan NodeDef, 1)
 			var sendOnly chan<- NodeDef = resultChan
-			task := GlobalPoolTask{ResultChan: sendOnly}
+			task := GlobalPoolTask{
+				Ctx:        context.Background(),
+				ResultChan: sendOnly,
+			}
 			stubNode := NodeDef{NodeID: &ua.NodeID{}}
 
-			sent := pool.sendTaskResult(task, stubNode, logger, false)
+			sent := pool.sendTaskResult(task, stubNode, logger)
 			Expect(sent).To(BeTrue())
 
 			var result NodeDef
@@ -899,10 +921,13 @@ var _ = Describe("GlobalWorkerPool", func() {
 			pool := NewGlobalWorkerPool(profile, logger)
 
 			resultChan := make(chan any, 1)
-			task := GlobalPoolTask{ResultChan: resultChan}
+			task := GlobalPoolTask{
+				Ctx:        context.Background(),
+				ResultChan: resultChan,
+			}
 			stubNode := NodeDef{NodeID: &ua.NodeID{}}
 
-			sent := pool.sendTaskResult(task, stubNode, logger, false)
+			sent := pool.sendTaskResult(task, stubNode, logger)
 			Expect(sent).To(BeTrue())
 
 			Eventually(resultChan).Should(Receive())
@@ -913,10 +938,13 @@ var _ = Describe("GlobalWorkerPool", func() {
 			pool := NewGlobalWorkerPool(profile, logger)
 
 			unsupportedChan := make(chan string, 1)
-			task := GlobalPoolTask{ResultChan: unsupportedChan}
+			task := GlobalPoolTask{
+				Ctx:        context.Background(),
+				ResultChan: unsupportedChan,
+			}
 			stubNode := NodeDef{NodeID: &ua.NodeID{}}
 
-			sent := pool.sendTaskResult(task, stubNode, logger, false)
+			sent := pool.sendTaskResult(task, stubNode, logger)
 			Expect(sent).To(BeFalse())
 			// Note: Debug logging is tested implicitly - method should not panic
 		})
@@ -928,7 +956,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 			task := GlobalPoolTask{ResultChan: nil}
 			stubNode := NodeDef{NodeID: &ua.NodeID{}}
 
-			sent := pool.sendTaskResult(task, stubNode, logger, false)
+			sent := pool.sendTaskResult(task, stubNode, logger)
 			Expect(sent).To(BeFalse())
 		})
 	})
@@ -1607,87 +1635,23 @@ var _ = Describe("GlobalWorkerPool", func() {
 		})
 
 		Context("allTasksDone channel behavior", func() {
-			It("should be buffered channel", func() {
-				profile := ServerProfile{MaxWorkers: 10}
-				pool := NewGlobalWorkerPool(profile, logger)
-
-				// Verify channel exists and is buffered
-				Expect(pool.allTasksDone).NotTo(BeNil())
-				Expect(cap(pool.allTasksDone)).To(Equal(1))
+			// SKIPPED: These tests accessed internal allTasksDone channel field.
+			// Implementation changed to use sync.Cond instead (supports multiple concurrent waiters).
+			// Functionality is tested via WaitForCompletion method tests.
+			PIt("should be buffered channel", func() {
+				// Test body removed - implementation changed from channel to sync.Cond
 			})
 
-			It("should close when pendingTasks reaches 0", func() {
-				profile := ServerProfile{MaxWorkers: 10}
-				pool := NewGlobalWorkerPool(profile, logger)
-				pool.SpawnWorkers(2)
-
-				resultChan := make(chan NodeDef, 1)
-				task := newTestTask("ns=2;i=1000", resultChan)
-
-				// Submit single task
-				err := pool.SubmitTask(task)
-				Expect(err).ToNot(HaveOccurred())
-
-				// Wait for task to complete
-				Eventually(resultChan).Within(time.Second).Should(Receive())
-
-				// allTasksDone should receive signal
-				Eventually(pool.allTasksDone).Within(time.Second).Should(Receive())
+			PIt("should close when pendingTasks reaches 0", func() {
+				// Test body removed - implementation changed from channel to sync.Cond
 			})
 
-			It("should not signal while tasks are still pending", func() {
-				profile := ServerProfile{MaxWorkers: 1}
-				pool := NewGlobalWorkerPool(profile, logger)
-				pool.SpawnWorkers(1)
-
-				// Create blocking task (unbuffered result channel)
-				blockingChan := make(chan NodeDef)
-				task := newTestTask("ns=2;i=1000", blockingChan)
-
-				err := pool.SubmitTask(task)
-				Expect(err).ToNot(HaveOccurred())
-
-				// Give worker time to pick up task
-				time.Sleep(100 * time.Millisecond)
-
-				// allTasksDone should not signal yet
-				select {
-				case <-pool.allTasksDone:
-					Fail("allTasksDone should not signal while task is pending")
-				case <-time.After(100 * time.Millisecond):
-					// Expected - no signal
-				}
-
-				// Unblock task
-				go func() { <-blockingChan }()
-
-				// Now should signal
-				Eventually(pool.allTasksDone).Within(time.Second).Should(Receive())
+			PIt("should not signal while tasks are still pending", func() {
+				// Test body removed - implementation changed from channel to sync.Cond
 			})
 
-			It("should handle multiple tasks completing", func() {
-				profile := ServerProfile{MaxWorkers: 10}
-				pool := NewGlobalWorkerPool(profile, logger)
-				pool.SpawnWorkers(5)
-
-				numTasks := 20
-				resultChans := make([]chan NodeDef, numTasks)
-
-				// Submit multiple tasks
-				for i := 0; i < numTasks; i++ {
-					resultChans[i] = make(chan NodeDef, 1)
-					task := newTestTask(fmt.Sprintf("ns=2;i=%d", 1000+i), resultChans[i])
-					err := pool.SubmitTask(task)
-					Expect(err).ToNot(HaveOccurred())
-				}
-
-				// Wait for all tasks
-				for i := 0; i < numTasks; i++ {
-					Eventually(resultChans[i]).Within(time.Second).Should(Receive())
-				}
-
-				// Channel should signal completion
-				Eventually(pool.allTasksDone).Within(time.Second).Should(Receive())
+			PIt("should handle multiple tasks completing", func() {
+				// Test body removed - implementation changed from channel to sync.Cond
 			})
 		})
 
@@ -1898,34 +1862,8 @@ var _ = Describe("GlobalWorkerPool", func() {
 				Expect(pending).To(Equal(int64(0)))
 			})
 
-			It("should not deadlock when channel buffer is full", func() {
-				profile := ServerProfile{MaxWorkers: 10}
-				pool := NewGlobalWorkerPool(profile, logger)
-				pool.SpawnWorkers(2)
-
-				// Fill the allTasksDone channel (capacity 1)
-				// This shouldn't happen in normal operation but tests robustness
-				select {
-				case pool.allTasksDone <- struct{}{}:
-					// Filled buffer
-				default:
-					// Already had signal
-				}
-
-				// Submit and complete task
-				resultChan := make(chan NodeDef, 1)
-				task := newTestTask("ns=2;i=1000", resultChan)
-
-				err := pool.SubmitTask(task)
-				Expect(err).ToNot(HaveOccurred())
-
-				// Should not deadlock even with full channel
-				Eventually(resultChan).Within(time.Second).Should(Receive())
-
-				// Counter should still be 0
-				Eventually(func() int64 {
-					return atomic.LoadInt64(&pool.pendingTasks)
-				}).Within(time.Second).Should(Equal(int64(0)))
+			PIt("should not deadlock when channel buffer is full", func() {
+				// Test body removed - implementation changed from channel to sync.Cond
 			})
 
 			// TDD RED Phase - Task 8.1: Race condition test
@@ -1954,10 +1892,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				// Submit and complete first task
 				resultChan1 := make(chan NodeDef, 1)
-				task1 := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: resultChan1,
-				}
+				task1 := newTestTask("ns=2;i=1000", resultChan1)
 				err := pool.SubmitTask(task1)
 				Expect(err).ToNot(HaveOccurred())
 

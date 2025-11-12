@@ -172,20 +172,20 @@ type Logger interface {
 //
 // Browse is a public wrapper function for the browse() internal implementation.
 //
-// ⚠️ DEPRECATION WARNING: Do NOT use this function directly in production code!
+// ⚠️ USAGE WARNING: This is a low-level wrapper - use high-level entry points instead!
 //
-// ONLY use Browse() for:
-// - Unit tests that need to test browse() behavior in isolation
-// - Test fixtures that mock OPC UA browsing operations
+// Valid use cases for Browse():
+// - Server metadata detection: read_server_info.go::GetOPCUAServerInformation() uses this
+// - Unit tests: Testing browse() behavior in isolation
+// - Test fixtures: Mocking OPC UA browsing operations
 //
-// For production use cases:
+// For production data browsing:
 // - Subscribe to OPC UA nodes → Use read_discover.go::discoverNodes() with GlobalWorkerPool
-// - Read server metadata → Use read_server_info.go::GetOPCUAServerInformation() (already uses Browse)
 //
 // Why this exists:
-// - Exposes browse() internal function for testing purposes
+// - Exposes browse() internal function for testing and metadata detection
 // - Allows test cases to inject mock NodeBrowser implementations
-// - Not intended for production usage (lacks proper error handling/logging setup)
+// - Used by server profile auto-detection (not deprecated, but specialized)
 //
 // See decision flowchart above for complete usage guidance.
 func Browse(ctx context.Context, n NodeBrowser, path string, pool *GlobalWorkerPool, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map) {

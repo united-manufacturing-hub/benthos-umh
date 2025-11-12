@@ -54,9 +54,9 @@ const (
 // Workers use type assertion to send results to the correct typed channel.
 // This enables browse() to provide chan NodeDef while maintaining backward compatibility.
 //
-// ProgressChan prevents worker deadlock - workers send BrowseDetails but consumer discards data.
-// When nil, no channel is provided. When set, workers send non-blocking updates that are drained.
-// Data is not used for any progress tracking or UI updates (legacy UI code removed).
+// ProgressChan provides optional progress reporting for browse operations.
+// When nil (production), no progress updates are sent. When provided (tests/debugging),
+// workers send non-blocking updates. Tests use this for verification.
 type GlobalPoolTask struct {
 	// Task identification
 	NodeID string // Node identifier to browse
@@ -109,8 +109,9 @@ type GlobalWorkerPool struct {
 	metricsTasksFailed    uint64 // Failed tasks (errors) (atomic)
 
 	// Task completion tracking (NEW - for WaitForCompletion functionality)
-	pendingTasks int64         // Atomic counter for tasks in flight (includes recursive children)
-	allTasksDone chan struct{} // Closed when pendingTasks reaches 0
+	pendingTasks int64      // Atomic counter for tasks in flight (includes recursive children)
+	completionMu sync.Mutex // Protects completionCond
+	completionCond *sync.Cond // Signals when pendingTasks reaches 0 (supports multiple waiters)
 }
 
 // PoolMetrics contains current pool metrics snapshot for visibility into pool operations.
@@ -136,7 +137,7 @@ type PoolMetrics struct {
 // The taskChan buffer is sized at 2× MaxTagsToBrowse (200k) to handle browse
 // operation branching factor safely without blocking.
 func NewGlobalWorkerPool(profile ServerProfile, logger Logger) *GlobalWorkerPool {
-	return &GlobalWorkerPool{
+	gwp := &GlobalWorkerPool{
 		profile:        profile, // Store which profile this pool uses
 		maxWorkers:     profile.MaxWorkers,
 		minWorkers:     profile.MinWorkers,
@@ -145,8 +146,9 @@ func NewGlobalWorkerPool(profile ServerProfile, logger Logger) *GlobalWorkerPool
 		workerControls: make(map[uuid.UUID]chan struct{}),
 		logger:         logger, // For debug logging in sendTaskResult
 		pendingTasks:   0,      // NEW: Start with 0 pending tasks
-		allTasksDone:   make(chan struct{}, 1), // NEW: Buffered to prevent blocking
 	}
+	gwp.completionCond = sync.NewCond(&gwp.completionMu)
+	return gwp
 }
 
 // SpawnWorkers starts n new workers if under MaxWorkers limit.
@@ -333,7 +335,7 @@ func (gwp *GlobalWorkerPool) GetMetrics() PoolMetrics {
 // sendTaskResult sends task result to ResultChan using type assertion.
 // Returns true if result was sent, false if channel type unsupported or nil.
 //
-// Extracted helper to eliminate 24 lines of duplicated type assertion code
+// Extracted helper to eliminate duplicated type assertion code
 // in workerLoop (main loop + drain loop). Supports:
 //   - chan NodeDef (new browse() integration)
 //   - chan<- NodeDef (send-only variant)
@@ -341,74 +343,51 @@ func (gwp *GlobalWorkerPool) GetMetrics() PoolMetrics {
 //   - chan<- any (send-only backward compat)
 //
 // Behavior:
-//   - nonBlocking=true: Uses context-aware blocking send (prevents data loss)
-//   - nonBlocking=false: Uses direct send for test stub mode (supports unbuffered channels)
+//   - Uses context-aware blocking send (prevents data loss)
+//   - Blocks until consumer receives result or context cancelled
 //
 // Logs debug message when channel type is unsupported (helps diagnose integration issues).
-func (gwp *GlobalWorkerPool) sendTaskResult(task GlobalPoolTask, stubNode NodeDef, logger Logger, nonBlocking bool) bool {
+func (gwp *GlobalWorkerPool) sendTaskResult(task GlobalPoolTask, stubNode NodeDef, logger Logger) bool {
 	if task.ResultChan == nil {
 		return false
 	}
 
-	if nonBlocking {
-		// Production mode: context-aware blocking send (prevents data loss)
-		// Blocks until consumer receives result or context cancelled
-		switch ch := task.ResultChan.(type) {
-		case chan NodeDef:
-			select {
-			case ch <- stubNode:
-				return true
-			case <-task.Ctx.Done():
-				return false
-			}
-		case chan<- NodeDef:
-			select {
-			case ch <- stubNode:
-				return true
-			case <-task.Ctx.Done():
-				return false
-			}
-		case chan any:
-			select {
-			case ch <- struct{}{}: // Backward compat
-				return true
-			case <-task.Ctx.Done():
-				return false
-			}
-		case chan<- any:
-			select {
-			case ch <- struct{}{}: // Backward compat
-				return true
-			case <-task.Ctx.Done():
-				return false
-			}
-		default:
-			if logger != nil {
-				logger.Debugf("GlobalWorkerPool: unsupported ResultChan type: %T", task.ResultChan)
-			}
+	// Context-aware blocking send (prevents data loss)
+	// Blocks until consumer receives result or context cancelled
+	switch ch := task.ResultChan.(type) {
+	case chan NodeDef:
+		select {
+		case ch <- stubNode:
+			return true
+		case <-task.Ctx.Done():
 			return false
 		}
-	} else {
-		// Test stub mode: blocking send (supports unbuffered channels in tests)
-		switch ch := task.ResultChan.(type) {
-		case chan NodeDef:
-			ch <- stubNode
+	case chan<- NodeDef:
+		select {
+		case ch <- stubNode:
 			return true
-		case chan<- NodeDef:
-			ch <- stubNode
-			return true
-		case chan any:
-			ch <- struct{}{} // Backward compat
-			return true
-		case chan<- any:
-			ch <- struct{}{} // Backward compat
-			return true
-		default:
-			if logger != nil {
-				logger.Debugf("GlobalWorkerPool: unsupported ResultChan type: %T", task.ResultChan)
-			}
+		case <-task.Ctx.Done():
 			return false
 		}
+	case chan any:
+		select {
+		case ch <- struct{}{}: // Backward compat
+			return true
+		case <-task.Ctx.Done():
+			return false
+		}
+	case chan<- any:
+		select {
+		case ch <- struct{}{}: // Backward compat
+			return true
+		case <-task.Ctx.Done():
+			return false
+		}
+	default:
+		if logger != nil {
+			logger.Debugf("GlobalWorkerPool: unsupported ResultChan type: %T", task.ResultChan)
+		}
+		return false
 	}
 }
 
@@ -438,17 +417,14 @@ func (gwp *GlobalWorkerPool) sendTaskProgress(task GlobalPoolTask, nodeDef NodeD
 	}
 }
 
-// decrementPendingTasks decrements the pending task counter and signals allTasksDone when it reaches 0.
-// Uses non-blocking channel send to avoid deadlock if channel buffer is already full.
+// decrementPendingTasks decrements the pending task counter and broadcasts completion when it reaches 0.
+// Uses sync.Cond.Broadcast to wake ALL waiting goroutines (supports concurrent WaitForCompletion calls).
 func (gwp *GlobalWorkerPool) decrementPendingTasks() {
 	remaining := atomic.AddInt64(&gwp.pendingTasks, -1)
 	if remaining == 0 {
-		select {
-		case gwp.allTasksDone <- struct{}{}:
-			// Successfully signaled completion
-		default:
-			// Channel already signaled, ignore
-		}
+		gwp.completionMu.Lock()
+		gwp.completionCond.Broadcast() // Wake ALL waiters
+		gwp.completionMu.Unlock()
 	}
 }
 
@@ -470,42 +446,60 @@ func (gwp *GlobalWorkerPool) WaitForCompletion(timeout time.Duration) error {
 }
 
 // waitForCompletionWithDeadline is the private helper that tracks deadline across recursive calls.
-// This ensures total wait time never exceeds the original timeout, even with multiple recursive
-// calls to handle stale completion signals.
+// Uses sync.Cond for waiting, which supports multiple concurrent waiters (unlike channels).
 func (gwp *GlobalWorkerPool) waitForCompletionWithDeadline(deadline time.Time) error {
-	// Fast path: check if already complete
-	if atomic.LoadInt64(&gwp.pendingTasks) == 0 {
-		return nil
-	}
-
-	// Calculate REMAINING time until deadline
-	remaining := time.Until(deadline)
-	if remaining <= 0 {
-		// Re-check counter before returning timeout error (tasks might have completed)
+	for {
+		// Check if tasks are complete (no lock needed for atomic read)
 		if atomic.LoadInt64(&gwp.pendingTasks) == 0 {
 			return nil
 		}
-		pending := atomic.LoadInt64(&gwp.pendingTasks)
-		return fmt.Errorf("timeout waiting for completion: %d tasks still pending", pending)
-	}
 
-	// Create timer with REMAINING time (not original timeout)
-	timer := time.NewTimer(remaining)
-	defer timer.Stop()
-
-	select {
-	case <-gwp.allTasksDone:
-		// Drain signal and verify counter is actually zero (handle stale signals)
-		// Must re-check after draining to handle race between completion and wait
-		if atomic.LoadInt64(&gwp.pendingTasks) != 0 {
-			// Tasks were submitted after signal or still processing
-			// Recursive call with SAME deadline (not new timeout)
-			return gwp.waitForCompletionWithDeadline(deadline)
+		// Calculate remaining time until deadline
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			// Timeout - re-check one last time (tasks might have just completed)
+			if atomic.LoadInt64(&gwp.pendingTasks) == 0 {
+				return nil
+			}
+			pending := atomic.LoadInt64(&gwp.pendingTasks)
+			return fmt.Errorf("timeout waiting for completion: %d tasks still pending", pending)
 		}
-		return nil
-	case <-timer.C:
-		pending := atomic.LoadInt64(&gwp.pendingTasks)
-		return fmt.Errorf("timeout waiting for completion: %d tasks still pending", pending)
+
+		// Wait with timeout using goroutine + channel + mutex pattern
+		// We can't hold the lock while waiting because:
+		// 1. Cond.Wait() needs to acquire the lock
+		// 2. We need to support timeout (Cond doesn't have native timeout)
+		done := make(chan struct{})
+		go func() {
+			gwp.completionMu.Lock()
+			gwp.completionCond.Wait()
+			gwp.completionMu.Unlock()
+			close(done)
+		}()
+
+		// Wait for either signal or timeout (without holding lock)
+		timer := time.NewTimer(remaining)
+		defer timer.Stop()
+
+		select {
+		case <-done:
+			// Signal received - loop will re-check pendingTasks
+			continue
+		case <-timer.C:
+			// Timeout - Broadcast to wake the waiting goroutine, then wait for it
+			gwp.completionMu.Lock()
+			gwp.completionCond.Broadcast()
+			gwp.completionMu.Unlock()
+
+			<-done // Wait for goroutine to exit
+
+			// Final check after timeout
+			if atomic.LoadInt64(&gwp.pendingTasks) == 0 {
+				return nil
+			}
+			pending := atomic.LoadInt64(&gwp.pendingTasks)
+			return fmt.Errorf("timeout waiting for completion: %d tasks still pending", pending)
+		}
 	}
 }
 
@@ -681,7 +675,7 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 						nodeDef.NodeID.String(), nodeDef.Path, nodeDef.BrowseName)
 				}
 
-				sent := gwp.sendTaskResult(task, nodeDef, gwp.logger, true)
+				sent := gwp.sendTaskResult(task, nodeDef, gwp.logger)
 				if !sent && task.ResultChan != nil {
 					if gwp.logger != nil {
 						gwp.logger.Debugf("Failed to send Variable to ResultChan (channel full or closed): nodeID=%s",
@@ -738,17 +732,20 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 						// Channel closed, finished draining
 						return
 					}
-					// Process remaining task (stub implementation during shutdown)
-					stubNode := NodeDef{NodeID: &ua.NodeID{}}
-					gwp.sendTaskResult(task, stubNode, gwp.logger, false) // Blocking send for drain compatibility
+					// Task cancelled due to shutdown - send error instead of fake data
+					if task.ErrChan != nil {
+						select {
+						case task.ErrChan <- fmt.Errorf("task cancelled: worker pool shutting down"):
+						case <-time.After(100 * time.Millisecond):
+							// Don't block shutdown on error delivery
+							if gwp.logger != nil {
+								gwp.logger.Debugf("Failed to send shutdown error for task %s (channel full or closed)", task.NodeID)
+							}
+						}
+					}
 
-					// Send progress update (non-blocking)
-					gwp.sendTaskProgress(task, stubNode)
-
-					// Increment tasksCompleted counter (atomic)
+					// Maintain counter integrity for graceful shutdown
 					atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
-
-					// Decrement pendingTasks counter and signal completion if needed
 					gwp.decrementPendingTasks()
 				default:
 					// No more tasks in buffer, exit
