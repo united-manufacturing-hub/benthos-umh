@@ -36,9 +36,9 @@ import (
 // Workers use type assertion to send results to the correct typed channel.
 // This enables browse() to provide chan NodeDef while maintaining backward compatibility.
 //
-// ProgressChan provides optional BrowseDetails progress reporting for UI updates.
-// When nil, no progress updates are sent. When set, workers send non-blocking
-// progress updates during task processing.
+// ProgressChan prevents worker deadlock - workers send BrowseDetails but consumer discards data.
+// When nil, no channel is provided. When set, workers send non-blocking updates that are drained.
+// Data is not used for any progress tracking or UI updates (legacy UI code removed).
 type GlobalPoolTask struct {
 	// Task identification
 	NodeID string // Node identifier to browse
