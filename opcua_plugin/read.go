@@ -338,7 +338,7 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		}
 		g.ServerCapabilities = caps
 
-		// Log operation limits (Phase 1: logging only, no behavior changes)
+		// Log operation limits
 		g.logServerCapabilities(caps)
 
 	}
@@ -637,7 +637,7 @@ func (o *OPCUAInput) QueryServerCapabilities(ctx context.Context) (*ServerCapabi
 		caps.SupportsPercentDeadband = true
 	}
 
-	// Query operation limits (Phase 1: logging only)
+	// Query operation limits
 	if opLimits, err := o.queryOperationLimits(ctx); err != nil {
 		o.Log.Infof("OperationLimits not available (normal for many PLCs): %v - using profile defaults", err)
 	} else if opLimits != nil {

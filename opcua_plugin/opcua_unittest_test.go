@@ -79,7 +79,6 @@ var _ = Describe("Unit Tests", func() {
 			parentNodeId     string
 			nodeChan         chan NodeDef
 			errChan          chan error
-			wg               *TrackedWaitGroup
 			opcuaBrowserChan chan BrowseDetails
 			visited          sync.Map
 		)
@@ -91,7 +90,6 @@ var _ = Describe("Unit Tests", func() {
 			parentNodeId = ""
 			nodeChan = make(chan NodeDef, 100)
 			errChan = make(chan error, 100)
-			wg = &TrackedWaitGroup{}
 			opcuaBrowserChan = make(chan BrowseDetails, 100)
 		})
 		AfterEach(func() {
@@ -115,11 +113,26 @@ var _ = Describe("Unit Tests", func() {
 					referenceNodes: make(map[uint32][]NodeBrowser),
 				}
 				nodeBrowser = rootNodeWithNilNodeClass
-				wg.Add(1)
-				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
+				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+				pool.SpawnWorkers(1)
+				defer func() {
+					_ = pool.Shutdown(TestPoolShutdownTimeout)
 				}()
-				wg.Wait()
+
+				task := GlobalPoolTask{
+					NodeID:       nodeBrowser.ID().String(),
+					Ctx:          ctx,
+					Node:         nodeBrowser,
+					Path:         path,
+					Level:        0,
+					ParentNodeID: parentNodeId,
+					Visited:      &visited,
+					ResultChan:   nodeChan,
+					ErrChan:      errChan,
+					ProgressChan: opcuaBrowserChan,
+				}
+				_ = pool.SubmitTask(task)
+				_ = pool.WaitForCompletion(30 * time.Second)
 				close(nodeChan)
 				close(errChan)
 
@@ -142,11 +155,26 @@ var _ = Describe("Unit Tests", func() {
 				rootNode.attributes = append(rootNode.attributes, getDataValueForDataType(ua.TypeIDInt32, ua.StatusOK))
 
 				nodeBrowser = rootNode
-				wg.Add(1)
-				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
+				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+				pool.SpawnWorkers(1)
+				defer func() {
+					_ = pool.Shutdown(TestPoolShutdownTimeout)
 				}()
-				wg.Wait()
+
+				task := GlobalPoolTask{
+					NodeID:       nodeBrowser.ID().String(),
+					Ctx:          ctx,
+					Node:         nodeBrowser,
+					Path:         path,
+					Level:        0,
+					ParentNodeID: parentNodeId,
+					Visited:      &visited,
+					ResultChan:   nodeChan,
+					ErrChan:      errChan,
+					ProgressChan: opcuaBrowserChan,
+				}
+				_ = pool.SubmitTask(task)
+				_ = pool.WaitForCompletion(30 * time.Second)
 				close(nodeChan)
 				close(errChan)
 
@@ -180,11 +208,26 @@ var _ = Describe("Unit Tests", func() {
 				rootNode.AddReferenceNode(id.HasComponent, childNode)
 
 				nodeBrowser = rootNode
-				wg.Add(1)
-				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
+				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+				pool.SpawnWorkers(1)
+				defer func() {
+					_ = pool.Shutdown(TestPoolShutdownTimeout)
 				}()
-				wg.Wait()
+
+				task := GlobalPoolTask{
+					NodeID:       nodeBrowser.ID().String(),
+					Ctx:          ctx,
+					Node:         nodeBrowser,
+					Path:         path,
+					Level:        0,
+					ParentNodeID: parentNodeId,
+					Visited:      &visited,
+					ResultChan:   nodeChan,
+					ErrChan:      errChan,
+					ProgressChan: opcuaBrowserChan,
+				}
+				_ = pool.SubmitTask(task)
+				_ = pool.WaitForCompletion(30 * time.Second)
 				close(nodeChan)
 				close(errChan)
 
@@ -220,11 +263,26 @@ var _ = Describe("Unit Tests", func() {
 				rootNode.AddReferenceNode(id.HasChild, childNode)
 
 				nodeBrowser = rootNode
-				wg.Add(1)
-				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
+				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+				pool.SpawnWorkers(1)
+				defer func() {
+					_ = pool.Shutdown(TestPoolShutdownTimeout)
 				}()
-				wg.Wait()
+
+				task := GlobalPoolTask{
+					NodeID:       nodeBrowser.ID().String(),
+					Ctx:          ctx,
+					Node:         nodeBrowser,
+					Path:         path,
+					Level:        0,
+					ParentNodeID: parentNodeId,
+					Visited:      &visited,
+					ResultChan:   nodeChan,
+					ErrChan:      errChan,
+					ProgressChan: opcuaBrowserChan,
+				}
+				_ = pool.SubmitTask(task)
+				_ = pool.WaitForCompletion(30 * time.Second)
 				close(nodeChan)
 				close(errChan)
 
@@ -260,11 +318,26 @@ var _ = Describe("Unit Tests", func() {
 				rootNode.AddReferenceNode(id.Organizes, childNode)
 
 				nodeBrowser = rootNode
-				wg.Add(1)
-				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
+				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+				pool.SpawnWorkers(1)
+				defer func() {
+					_ = pool.Shutdown(TestPoolShutdownTimeout)
 				}()
-				wg.Wait()
+
+				task := GlobalPoolTask{
+					NodeID:       nodeBrowser.ID().String(),
+					Ctx:          ctx,
+					Node:         nodeBrowser,
+					Path:         path,
+					Level:        0,
+					ParentNodeID: parentNodeId,
+					Visited:      &visited,
+					ResultChan:   nodeChan,
+					ErrChan:      errChan,
+					ProgressChan: opcuaBrowserChan,
+				}
+				_ = pool.SubmitTask(task)
+				_ = pool.WaitForCompletion(30 * time.Second)
 				close(nodeChan)
 				close(errChan)
 
@@ -303,11 +376,26 @@ var _ = Describe("Unit Tests", func() {
 				rootNode.AddReferenceNode(id.HasChild, childNode)
 
 				nodeBrowser = rootNode
-				wg.Add(1)
-				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
+				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+				pool.SpawnWorkers(1)
+				defer func() {
+					_ = pool.Shutdown(TestPoolShutdownTimeout)
 				}()
-				wg.Wait()
+
+				task := GlobalPoolTask{
+					NodeID:       nodeBrowser.ID().String(),
+					Ctx:          ctx,
+					Node:         nodeBrowser,
+					Path:         path,
+					Level:        0,
+					ParentNodeID: parentNodeId,
+					Visited:      &visited,
+					ResultChan:   nodeChan,
+					ErrChan:      errChan,
+					ProgressChan: opcuaBrowserChan,
+				}
+				_ = pool.SubmitTask(task)
+				_ = pool.WaitForCompletion(30 * time.Second)
 				close(nodeChan)
 				close(errChan)
 
@@ -379,11 +467,26 @@ var _ = Describe("Unit Tests", func() {
 				objectNode.AddReferenceNode(id.HasChild, processValueNode)
 
 				nodeBrowser = abcFolder
-				wg.Add(1)
-				go func() {
-					Browse(ctx, nodeBrowser, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited, GetProfileByName(ProfileAuto))
+				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+				pool.SpawnWorkers(1)
+				defer func() {
+					_ = pool.Shutdown(TestPoolShutdownTimeout)
 				}()
-				wg.Wait()
+
+				task := GlobalPoolTask{
+					NodeID:       nodeBrowser.ID().String(),
+					Ctx:          ctx,
+					Node:         nodeBrowser,
+					Path:         path,
+					Level:        0,
+					ParentNodeID: parentNodeId,
+					Visited:      &visited,
+					ResultChan:   nodeChan,
+					ErrChan:      errChan,
+					ProgressChan: opcuaBrowserChan,
+				}
+				_ = pool.SubmitTask(task)
+				_ = pool.WaitForCompletion(30 * time.Second)
 				close(nodeChan)
 				close(errChan)
 
@@ -410,7 +513,7 @@ var _ = Describe("Unit Tests", func() {
 				childNode := createMockNode(85, "child", ua.NodeClassVariable)
 				rootNode.AddReferenceNode(id.HasChild, childNode)
 
-				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, opcuaBrowserChan, &visited)
 
 				Expect(errs).Should(BeEmpty())
 				Expect(nodes).Should(HaveLen(1))
@@ -423,7 +526,7 @@ var _ = Describe("Unit Tests", func() {
 				childNode := createMockNode(85, "child", ua.NodeClassVariable)
 				rootNode.AddReferenceNode(id.HasComponent, childNode)
 
-				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, opcuaBrowserChan, &visited)
 				Expect(errs).Should(BeEmpty())
 				Expect(nodes).Should(HaveLen(1))
 				Expect(nodes[0].NodeID.String()).To(Equal("i=85"))
@@ -435,7 +538,7 @@ var _ = Describe("Unit Tests", func() {
 				childNode := createMockNode(85, "child", ua.NodeClassVariable)
 				rootNode.AddReferenceNode(id.Organizes, childNode)
 
-				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, opcuaBrowserChan, &visited)
 				Expect(errs).Should(BeEmpty())
 				Expect(nodes).Should(HaveLen(1))
 				Expect(nodes[0].NodeID.String()).To(Equal("i=85"))
@@ -447,7 +550,7 @@ var _ = Describe("Unit Tests", func() {
 				childNode := createMockNode(85, "child", ua.NodeClassVariable)
 				rootNode.AddReferenceNode(id.FolderType, childNode)
 
-				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, opcuaBrowserChan, &visited)
 				Expect(errs).Should(BeEmpty())
 				Expect(nodes).Should(HaveLen(1))
 				Expect(nodes[0].NodeID.String()).To(Equal("i=85"))
@@ -459,7 +562,7 @@ var _ = Describe("Unit Tests", func() {
 				childNode := createMockNode(85, "child", ua.NodeClassVariable)
 				rootNode.AddReferenceNode(id.HasNotifier, childNode)
 
-				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
+				nodes, errs := startBrowsing(ctx, rootNode, path, level, logger, parentNodeId, nodeChan, errChan, opcuaBrowserChan, &visited)
 				Expect(errs).Should(BeEmpty())
 				Expect(nodes).Should(HaveLen(1))
 				Expect(nodes[0].NodeID.String()).To(Equal("i=85"))
@@ -755,7 +858,6 @@ var _ = Describe("Browse with StatusBadNodeIDUnknown", func() {
 			parentNodeId := ""
 			nodeChan := make(chan NodeDef, 100)
 			errChan := make(chan error, 100)
-			wg := &TrackedWaitGroup{}
 			opcuaBrowserChan := make(chan BrowseDetails, 100)
 			visited := &sync.Map{}
 
@@ -776,11 +878,26 @@ var _ = Describe("Browse with StatusBadNodeIDUnknown", func() {
 			rootFolder.AddReferenceNode(id.Organizes, goodNode)
 
 			// Start browsing
-			wg.Add(1)
-			go func() {
-			Browse(ctx, rootFolder, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
+			pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+			pool.SpawnWorkers(1)
+			defer func() {
+				_ = pool.Shutdown(TestPoolShutdownTimeout)
 			}()
-			wg.Wait()
+
+			task := GlobalPoolTask{
+				NodeID:       rootFolder.ID().String(),
+				Ctx:          ctx,
+				Node:         rootFolder,
+				Path:         path,
+				Level:        0,
+				ParentNodeID: parentNodeId,
+				Visited:      visited,
+				ResultChan:   nodeChan,
+				ErrChan:      errChan,
+				ProgressChan: opcuaBrowserChan,
+			}
+			_ = pool.SubmitTask(task)
+			_ = pool.WaitForCompletion(30 * time.Second)
 			close(nodeChan)
 			close(errChan)
 
@@ -810,12 +927,28 @@ var _ = Describe("Browse with StatusBadNodeIDUnknown", func() {
 	})
 })
 
-func startBrowsing(ctx context.Context, rootNode NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map) ([]NodeDef, []error) {
-	wg.Add(1)
-	go func() {
-		Browse(ctx, rootNode, path, logger, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
+func startBrowsing(ctx context.Context, rootNode NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, opcuaBrowserChan chan BrowseDetails, visited *sync.Map) ([]NodeDef, []error) {
+	pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+	pool.SpawnWorkers(1)
+	defer func() {
+		_ = pool.Shutdown(TestPoolShutdownTimeout)
 	}()
-	wg.Wait()
+
+	task := GlobalPoolTask{
+		NodeID:       rootNode.ID().String(),
+		Ctx:          ctx,
+		Node:         rootNode,
+		Path:         path,
+		Level:        0,
+		ParentNodeID: parentNodeId,
+		Visited:      visited,
+		ResultChan:   nodeChan,
+		ErrChan:      errChan,
+		ProgressChan: opcuaBrowserChan,
+	}
+	_ = pool.SubmitTask(task)
+	_ = pool.WaitForCompletion(30 * time.Second)
+
 	close(nodeChan)
 	close(errChan)
 
@@ -840,7 +973,6 @@ var _ = Describe("Browse Channel Blocking Behavior (ENG-3835)", func() {
 			opcuaBrowserChan := make(chan BrowseDetails, 2)
 			nodeChan := make(chan NodeDef, 10)
 			errChan := make(chan error, 10)
-			var wg TrackedWaitGroup
 			visited := &sync.Map{}
 			logger := &MockLogger{}
 
@@ -853,11 +985,27 @@ var _ = Describe("Browse Channel Blocking Behavior (ENG-3835)", func() {
 			rootNode := createMockNode(1, "TestNode", ua.NodeClassVariable)
 
 			// Start browse in goroutine
+			pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+			pool.SpawnWorkers(1)
+			defer func() {
+				_ = pool.Shutdown(TestPoolShutdownTimeout)
+			}()
 			done := make(chan bool)
 			go func() {
-				wg.Add(1)
-				Browse(ctx, rootNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
-				wg.Wait()
+				task := GlobalPoolTask{
+					NodeID:       rootNode.ID().String(),
+					Ctx:          ctx,
+					Node:         rootNode,
+					Path:         "",
+					Level:        0,
+					ParentNodeID: "",
+					Visited:      visited,
+					ResultChan:   nodeChan,
+					ErrChan:      errChan,
+					ProgressChan: opcuaBrowserChan,
+				}
+				_ = pool.SubmitTask(task)
+				_ = pool.WaitForCompletion(30 * time.Second)
 				close(done)
 			}()
 
@@ -899,7 +1047,6 @@ var _ = Describe("Browse Channel Blocking Behavior (ENG-3835)", func() {
 			nodeChan := make(chan NodeDef, 100)
 			errChan := make(chan error, 100)
 			opcuaBrowserChan := make(chan BrowseDetails, 100)
-			var wg TrackedWaitGroup
 			visited := &sync.Map{}
 			logger := &MockLogger{}
 
@@ -907,12 +1054,29 @@ var _ = Describe("Browse Channel Blocking Behavior (ENG-3835)", func() {
 			cancelCtx, cancel := context.WithCancel(ctx)
 
 			// Start browse
+			pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+			defer func() {
+				_ = pool.Shutdown(TestPoolShutdownTimeout)
+			}()
 			done := make(chan struct{})
 			go func() {
-				wg.Add(1)
-				Browse(cancelCtx, parentNode, "", logger, "", nodeChan, errChan, &wg, opcuaBrowserChan, visited, GetProfileByName(ProfileAuto))
-				wg.Wait()
+				pool.SpawnWorkers(1)
+				task := GlobalPoolTask{
+				NodeID:       parentNode.ID().String(),
+				Ctx:          cancelCtx,
+				Node:         parentNode,
+				Path:         "",
+				Level:        0,
+				ParentNodeID: "",
+				Visited:      visited,
+				ResultChan:   nodeChan,
+				ErrChan:      errChan,
+				ProgressChan: opcuaBrowserChan,
+				}
+				_ = pool.SubmitTask(task)
+				_ = pool.WaitForCompletion(DefaultBrowseCompletionTimeout)
 				close(done)
+
 			}()
 
 			// Let browse start processing (200ms for slow CI runners)
