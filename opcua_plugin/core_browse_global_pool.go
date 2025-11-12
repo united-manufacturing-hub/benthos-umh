@@ -391,9 +391,10 @@ func (gwp *GlobalWorkerPool) sendTaskResult(task GlobalPoolTask, stubNode NodeDe
 	}
 }
 
-// sendTaskProgress sends progress update to ProgressChan if set (non-blocking).
+// sendTaskProgress sends progress update to ProgressChan if set (blocking).
 // Extracted helper to eliminate code duplication in workerLoop.
-// Uses select with default to avoid blocking on full/closed channels.
+// Blocks on full channels to ensure messages are not dropped (ENG-3835).
+// Respects context cancellation to avoid deadlocks.
 func (gwp *GlobalWorkerPool) sendTaskProgress(task GlobalPoolTask, nodeDef NodeDef) {
 	if task.ProgressChan == nil {
 		return
@@ -412,8 +413,8 @@ func (gwp *GlobalWorkerPool) sendTaskProgress(task GlobalPoolTask, nodeDef NodeD
 	select {
 	case task.ProgressChan <- progress:
 		// Progress sent successfully
-	default:
-		// Channel full or closed, don't block task processing
+	case <-task.Ctx.Done():
+		// Context cancelled, don't block indefinitely
 	}
 }
 
@@ -613,6 +614,14 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 					gwp.logger.Warnf("Failed to fetch node attributes: nodeID=%s path=%s err=%v",
 						task.NodeID, task.Path, err)
 				}
+				// Send error to error channel with node ID context
+				if task.ErrChan != nil {
+					wrappedErr := fmt.Errorf("node %s: %w", task.NodeID, err)
+					select {
+					case task.ErrChan <- wrappedErr:
+					case <-task.Ctx.Done():
+					}
+				}
 				atomic.AddUint64(&gwp.metricsTasksFailed, 1)
 				// Task failed to fetch attributes - decrement counter (task is "done" even if errored)
 				gwp.decrementPendingTasks()
@@ -631,6 +640,13 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 				if gwp.logger != nil {
 					gwp.logger.Warnf("Failed to process node attributes: nodeID=%s path=%s err=%v",
 						task.NodeID, task.Path, err)
+				}
+				// Send error to error channel
+				if task.ErrChan != nil {
+					select {
+					case task.ErrChan <- err:
+					case <-task.Ctx.Done():
+					}
 				}
 				atomic.AddUint64(&gwp.metricsTasksFailed, 1)
 				// Task failed to process attributes - decrement counter (task is "done" even if errored)
