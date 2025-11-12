@@ -412,6 +412,32 @@ func (gwp *GlobalWorkerPool) sendTaskResult(task GlobalPoolTask, stubNode NodeDe
 	}
 }
 
+// sendTaskProgress sends progress update to ProgressChan if set (non-blocking).
+// Extracted helper to eliminate code duplication in workerLoop.
+// Uses select with default to avoid blocking on full/closed channels.
+func (gwp *GlobalWorkerPool) sendTaskProgress(task GlobalPoolTask, nodeDef NodeDef) {
+	if task.ProgressChan == nil {
+		return
+	}
+
+	gwp.mu.Lock()
+	workerCount := gwp.currentWorkers
+	gwp.mu.Unlock()
+
+	progress := BrowseDetails{
+		NodeDef:     nodeDef,
+		TaskCount:   atomic.LoadInt64(&gwp.pendingTasks),
+		WorkerCount: int64(workerCount),
+	}
+
+	select {
+	case task.ProgressChan <- progress:
+		// Progress sent successfully
+	default:
+		// Channel full or closed, don't block task processing
+	}
+}
+
 // decrementPendingTasks decrements the pending task counter and signals allTasksDone when it reaches 0.
 // Uses non-blocking channel send to avoid deadlock if channel buffer is already full.
 func (gwp *GlobalWorkerPool) decrementPendingTasks() {
@@ -512,23 +538,6 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 			if !ok {
 				// Channel closed, exit
 				return
-			}
-
-			// Handle tasks without Node/Ctx FIRST (test compatibility - stub mode)
-			// Tests may submit minimal tasks just to test channel/counter behavior
-			// MUST check before accessing task.Ctx.Done() to avoid nil panic
-			if task.Node == nil || task.Ctx == nil {
-				// Create stub NodeDef and send result immediately
-				stubNode := NodeDef{NodeID: &ua.NodeID{}}
-				gwp.sendTaskResult(task, stubNode, gwp.logger, false) // Blocking send for test compatibility
-				atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
-				gwp.decrementPendingTasks()
-
-				// Debug log for test compatibility (tests expect completion log)
-				if gwp.logger != nil {
-					gwp.logger.Debugf("Task completed (stub mode): nodeID=%s", task.NodeID)
-				}
-				continue
 			}
 
 			// Check context before browse (handle cancellation)
@@ -705,6 +714,9 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 				})
 			}
 
+			// Send progress update (non-blocking)
+			gwp.sendTaskProgress(task, nodeDef)
+
 			// Increment tasksCompleted counter on success (atomic)
 			atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
 
@@ -729,6 +741,9 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 					// Process remaining task (stub implementation during shutdown)
 					stubNode := NodeDef{NodeID: &ua.NodeID{}}
 					gwp.sendTaskResult(task, stubNode, gwp.logger, false) // Blocking send for drain compatibility
+
+					// Send progress update (non-blocking)
+					gwp.sendTaskProgress(task, stubNode)
 
 					// Increment tasksCompleted counter (atomic)
 					atomic.AddUint64(&gwp.metricsTasksCompleted, 1)

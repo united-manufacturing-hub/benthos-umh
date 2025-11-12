@@ -194,6 +194,46 @@ func (m *mockNodeBrowser) ResetBrowseCalled() {
 	m.browseCalled = false
 }
 
+// Test helper functions for creating proper GlobalPoolTask structs
+
+// newTestTask creates a GlobalPoolTask with mock Node and context for testing.
+// This ensures tests use proper mocks instead of relying on stub mode in production code.
+func newTestTask(nodeID string, resultChan any) GlobalPoolTask {
+	ctx := context.Background()
+	mockNode := &mockNodeBrowser{
+		id: ua.MustParseNodeID(nodeID),
+	}
+	return GlobalPoolTask{
+		NodeID:     nodeID,
+		Ctx:        ctx,
+		Node:       mockNode,
+		ResultChan: resultChan,
+	}
+}
+
+// newTestTaskWithContext creates a GlobalPoolTask with custom context (for cancellation tests)
+func newTestTaskWithContext(ctx context.Context, nodeID string, resultChan any) GlobalPoolTask {
+	mockNode := &mockNodeBrowser{
+		id: ua.MustParseNodeID(nodeID),
+	}
+	return GlobalPoolTask{
+		NodeID:     nodeID,
+		Ctx:        ctx,
+		Node:       mockNode,
+		ResultChan: resultChan,
+	}
+}
+
+// newTestTaskWithNode creates a GlobalPoolTask with specific mock node (for browse behavior tests)
+func newTestTaskWithNode(ctx context.Context, nodeID string, node NodeBrowser, resultChan any) GlobalPoolTask {
+	return GlobalPoolTask{
+		NodeID:     nodeID,
+		Ctx:        ctx,
+		Node:       node,
+		ResultChan: resultChan,
+	}
+}
+
 var _ = Describe("GlobalWorkerPool", func() {
 	var logger *mockLogger
 
@@ -308,10 +348,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				pool.SpawnWorkers(1)
 
 				validChan := make(chan NodeDef, 1)
-				task := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: validChan,
-				}
+				task := newTestTask("ns=2;i=1000", validChan)
 
 				err := pool.SubmitTask(task)
 				Expect(err).ToNot(HaveOccurred())
@@ -321,10 +358,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
 
-				task := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: nil, // Nil is valid (fire-and-forget)
-				}
+				task := newTestTask("ns=2;i=1000", nil)
 
 				err := pool.SubmitTask(task)
 				Expect(err).ToNot(HaveOccurred())
@@ -339,11 +373,8 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				resultChan := make(chan any, 1)
 				errChan := make(chan error, 1)
-				task := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: resultChan,
-					ErrChan:    errChan,
-				}
+				task := newTestTask("ns=2;i=1000", resultChan)
+				task.ErrChan = errChan
 
 				err := pool.SubmitTask(task)
 				Expect(err).ToNot(HaveOccurred())
@@ -365,11 +396,8 @@ var _ = Describe("GlobalWorkerPool", func() {
 				for i := 0; i < numTasks; i++ {
 					resultChans[i] = make(chan any, 1)
 					errChans[i] = make(chan error, 1)
-					task := GlobalPoolTask{
-						NodeID:     "ns=2;i=1000",
-						ResultChan: resultChans[i],
-						ErrChan:    errChans[i],
-					}
+					task := newTestTask("ns=2;i=1000", resultChans[i])
+					task.ErrChan = errChans[i]
 					err := pool.SubmitTask(task)
 					Expect(err).ToNot(HaveOccurred())
 				}
@@ -392,10 +420,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				// Submit 1000 tasks rapidly - should not block
 				for i := 0; i < numTasks; i++ {
 					resultChans[i] = make(chan any, 1)
-					task := GlobalPoolTask{
-						NodeID:     "ns=2;i=1000",
-						ResultChan: resultChans[i],
-					}
+					task := newTestTask("ns=2;i=1000", resultChans[i])
 					err := pool.SubmitTask(task)
 					Expect(err).ToNot(HaveOccurred())
 				}
@@ -418,14 +443,8 @@ var _ = Describe("GlobalWorkerPool", func() {
 				resultChan1 := make(chan any, 1)
 				resultChan2 := make(chan any, 1)
 
-				task1 := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: resultChan1,
-				}
-				task2 := GlobalPoolTask{
-					NodeID:     "ns=2;i=2000",
-					ResultChan: resultChan2,
-				}
+				task1 := newTestTask("ns=2;i=1000", resultChan1)
+				task2 := newTestTask("ns=2;i=2000", resultChan2)
 
 				err := pool.SubmitTask(task1)
 				Expect(err).ToNot(HaveOccurred())
@@ -442,11 +461,8 @@ var _ = Describe("GlobalWorkerPool", func() {
 				pool := NewGlobalWorkerPool(profile, logger)
 				pool.SpawnWorkers(2)
 
-				task := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: nil, // No result channel
-					ErrChan:    nil, // No error channel
-				}
+				task := newTestTask("ns=2;i=1000", nil)
+				task.ErrChan = nil
 
 				// Should not panic or error
 				err := pool.SubmitTask(task)
@@ -465,7 +481,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				// Simulate shutdown by closing taskChan
 				close(pool.taskChan)
 
-				task := GlobalPoolTask{NodeID: "ns=2;i=1000"}
+				task := newTestTask("ns=2;i=1000", nil)
 				err := pool.SubmitTask(task)
 
 				Expect(err).To(HaveOccurred())
@@ -669,10 +685,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				// Submit a task that will be processed
 				resultChan := make(chan any, 1)
-				task := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: resultChan,
-				}
+				task := newTestTask("ns=2;i=1000", resultChan)
 				err := pool.SubmitTask(task)
 				Expect(err).ToNot(HaveOccurred())
 
@@ -696,10 +709,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				blockingChans := make([]chan any, 3)
 				for i := 0; i < 3; i++ {
 					blockingChans[i] = make(chan any) // Unbuffered - blocks on send
-					task := GlobalPoolTask{
-						NodeID:     "ns=2;i=1000",
-						ResultChan: blockingChans[i],
-					}
+					task := newTestTask("ns=2;i=1000", blockingChans[i])
 					err := pool.SubmitTask(task)
 					Expect(err).ToNot(HaveOccurred())
 				}
@@ -756,7 +766,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				Expect(err).ToNot(HaveOccurred())
 
 				// Try to submit task after shutdown
-				task := GlobalPoolTask{NodeID: "ns=2;i=1000"}
+				task := newTestTask("ns=2;i=1000", nil)
 				err = pool.SubmitTask(task)
 
 				Expect(err).To(HaveOccurred())
@@ -824,10 +834,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				resultChans := make([]chan any, numTasks)
 				for i := 0; i < numTasks; i++ {
 					resultChans[i] = make(chan any, 1)
-					task := GlobalPoolTask{
-						NodeID:     "ns=2;i=1000",
-						ResultChan: resultChans[i],
-					}
+					task := newTestTask("ns=2;i=1000", resultChans[i])
 					err := pool.SubmitTask(task)
 					Expect(err).ToNot(HaveOccurred())
 				}
@@ -936,11 +943,8 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				// This test verifies the type system allows NodeDef results
 				// GlobalPoolTask uses interface{} for ResultChan to enable this pattern
-				task := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: resultChan,
-					ErrChan:    nil,
-				}
+				task := newTestTask("ns=2;i=1000", resultChan)
+				task.ErrChan = nil
 
 				err := pool.SubmitTask(task)
 				Expect(err).ToNot(HaveOccurred())
@@ -964,11 +968,8 @@ var _ = Describe("GlobalWorkerPool", func() {
 				progressChan := make(chan BrowseDetails, 10)
 				resultChan := make(chan NodeDef, 1)
 
-				task := GlobalPoolTask{
-					NodeID:       "ns=2;i=1000",
-					ResultChan:   resultChan,
-					ProgressChan: progressChan,
-				}
+				task := newTestTask("ns=2;i=1000", resultChan)
+				task.ProgressChan = progressChan
 
 				err := pool.SubmitTask(task)
 				Expect(err).ToNot(HaveOccurred())
@@ -983,11 +984,8 @@ var _ = Describe("GlobalWorkerPool", func() {
 				pool.SpawnWorkers(2)
 
 				resultChan := make(chan NodeDef, 1)
-				task := GlobalPoolTask{
-					NodeID:       "ns=2;i=1000",
-					ResultChan:   resultChan,
-					ProgressChan: nil, // No progress reporting
-				}
+				task := newTestTask("ns=2;i=1000", resultChan)
+				task.ProgressChan = nil // No progress reporting
 
 				err := pool.SubmitTask(task)
 				Expect(err).ToNot(HaveOccurred())
@@ -1005,11 +1003,8 @@ var _ = Describe("GlobalWorkerPool", func() {
 				progressChan := make(chan BrowseDetails)
 				resultChan := make(chan NodeDef, 1)
 
-				task := GlobalPoolTask{
-					NodeID:       "ns=2;i=1000",
-					ResultChan:   resultChan,
-					ProgressChan: progressChan,
-				}
+				task := newTestTask("ns=2;i=1000", resultChan)
+				task.ProgressChan = progressChan
 
 				err := pool.SubmitTask(task)
 				Expect(err).ToNot(HaveOccurred())
@@ -1034,11 +1029,8 @@ var _ = Describe("GlobalWorkerPool", func() {
 					progressChans[i] = make(chan BrowseDetails, 5)
 					resultChans[i] = make(chan NodeDef, 1)
 
-					task := GlobalPoolTask{
-						NodeID:       "ns=2;i=1000",
-						ResultChan:   resultChans[i],
-						ProgressChan: progressChans[i],
-					}
+					task := newTestTask("ns=2;i=1000", resultChans[i])
+					task.ProgressChan = progressChans[i]
 					err := pool.SubmitTask(task)
 					Expect(err).ToNot(HaveOccurred())
 				}
@@ -1075,10 +1067,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				pool.SpawnWorkers(1)
 
 				resultChan := make(chan NodeDef, 1)
-				task := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: resultChan,
-				}
+				task := newTestTask("ns=2;i=1000", resultChan)
 
 				err := pool.SubmitTask(task)
 				Expect(err).ToNot(HaveOccurred())
@@ -1102,10 +1091,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				// Submit 5 tasks
 				for i := 0; i < numTasks; i++ {
 					resultChans[i] = make(chan NodeDef, 1)
-					task := GlobalPoolTask{
-						NodeID:     "ns=2;i=1000",
-						ResultChan: resultChans[i],
-					}
+					task := newTestTask("ns=2;i=1000", resultChans[i])
 					err := pool.SubmitTask(task)
 					Expect(err).ToNot(HaveOccurred())
 				}
@@ -1153,7 +1139,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				// Submit 5 tasks without workers to process them
 				for i := 0; i < 5; i++ {
-					pool.SubmitTask(GlobalPoolTask{NodeID: "ns=2;i=1000"})
+					pool.SubmitTask(newTestTask("ns=2;i=1000", nil))
 				}
 
 				metrics := pool.GetMetrics()
@@ -1166,7 +1152,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				// Submit 10 tasks without workers
 				for i := 0; i < 10; i++ {
-					pool.SubmitTask(GlobalPoolTask{NodeID: "ns=2;i=1000"})
+					pool.SubmitTask(newTestTask("ns=2;i=1000", nil))
 				}
 
 				initialMetrics := pool.GetMetrics()
@@ -1218,7 +1204,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				for i := 0; i < 10; i++ {
 					go func() {
 						for j := 0; j < 50; j++ {
-							pool.SubmitTask(GlobalPoolTask{NodeID: "ns=2;i=1000"})
+							pool.SubmitTask(newTestTask("ns=2;i=1000", nil))
 						}
 						done <- true
 					}()
@@ -1362,10 +1348,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				pool.SpawnWorkers(1)
 
 				resultChan := make(chan NodeDef, 1)
-				task := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: resultChan,
-				}
+				task := newTestTask("ns=2;i=1000", resultChan)
 
 				recLogger.Reset()
 				pool.SubmitTask(task)
@@ -1385,10 +1368,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				pool.SpawnWorkers(1)
 
 				resultChan := make(chan NodeDef, 1)
-				task := GlobalPoolTask{
-					NodeID:     "ns=2;i=1234",
-					ResultChan: resultChan,
-				}
+				task := newTestTask("ns=2;i=1234", resultChan)
 
 				recLogger.Reset()
 				pool.SubmitTask(task)
@@ -1511,10 +1491,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				// Submit task
 				resultChan := make(chan NodeDef, 1)
-				task := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: resultChan,
-				}
+				task := newTestTask("ns=2;i=1000", resultChan)
 
 				err := pool.SubmitTask(task)
 				Expect(err).ToNot(HaveOccurred())
@@ -1531,10 +1508,8 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				// Submit 5 tasks
 				for i := 0; i < 5; i++ {
-					task := GlobalPoolTask{
-						NodeID:     fmt.Sprintf("ns=2;i=%d", 1000+i),
-						ResultChan: make(chan NodeDef, 1),
-					}
+					resultChan := make(chan NodeDef, 1)
+					task := newTestTask(fmt.Sprintf("ns=2;i=%d", 1000+i), resultChan)
 					err := pool.SubmitTask(task)
 					Expect(err).ToNot(HaveOccurred())
 				}
@@ -1557,10 +1532,8 @@ var _ = Describe("GlobalWorkerPool", func() {
 				for i := 0; i < numGoroutines; i++ {
 					go func(offset int) {
 						for j := 0; j < tasksPerGoroutine; j++ {
-							task := GlobalPoolTask{
-								NodeID:     fmt.Sprintf("ns=2;i=%d", offset*1000+j),
-								ResultChan: make(chan NodeDef, 1),
-							}
+							resultChan := make(chan NodeDef, 1)
+							task := newTestTask(fmt.Sprintf("ns=2;i=%d", offset*1000+j), resultChan)
 							pool.SubmitTask(task)
 						}
 						done <- true
@@ -1587,10 +1560,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				pool.SpawnWorkers(2)
 
 				resultChan := make(chan NodeDef, 1)
-				task := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: resultChan,
-				}
+				task := newTestTask("ns=2;i=1000", resultChan)
 
 				// Submit task
 				err := pool.SubmitTask(task)
@@ -1616,10 +1586,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				// Submit multiple tasks
 				for i := 0; i < numTasks; i++ {
 					resultChans[i] = make(chan NodeDef, 1)
-					task := GlobalPoolTask{
-						NodeID:     fmt.Sprintf("ns=2;i=%d", 1000+i),
-						ResultChan: resultChans[i],
-					}
+					task := newTestTask(fmt.Sprintf("ns=2;i=%d", 1000+i), resultChans[i])
 					err := pool.SubmitTask(task)
 					Expect(err).ToNot(HaveOccurred())
 				}
@@ -1652,10 +1619,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				pool.SpawnWorkers(2)
 
 				resultChan := make(chan NodeDef, 1)
-				task := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: resultChan,
-				}
+				task := newTestTask("ns=2;i=1000", resultChan)
 
 				// Submit single task
 				err := pool.SubmitTask(task)
@@ -1675,10 +1639,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				// Create blocking task (unbuffered result channel)
 				blockingChan := make(chan NodeDef)
-				task := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: blockingChan,
-				}
+				task := newTestTask("ns=2;i=1000", blockingChan)
 
 				err := pool.SubmitTask(task)
 				Expect(err).ToNot(HaveOccurred())
@@ -1712,10 +1673,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				// Submit multiple tasks
 				for i := 0; i < numTasks; i++ {
 					resultChans[i] = make(chan NodeDef, 1)
-					task := GlobalPoolTask{
-						NodeID:     fmt.Sprintf("ns=2;i=%d", 1000+i),
-						ResultChan: resultChans[i],
-					}
+					task := newTestTask(fmt.Sprintf("ns=2;i=%d", 1000+i), resultChans[i])
 					err := pool.SubmitTask(task)
 					Expect(err).ToNot(HaveOccurred())
 				}
@@ -1759,10 +1717,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				// Submit tasks
 				for i := 0; i < numTasks; i++ {
 					resultChans[i] = make(chan NodeDef, 1)
-					task := GlobalPoolTask{
-						NodeID:     fmt.Sprintf("ns=2;i=%d", 1000+i),
-						ResultChan: resultChans[i],
-					}
+					task := newTestTask(fmt.Sprintf("ns=2;i=%d", 1000+i), resultChans[i])
 					err := pool.SubmitTask(task)
 					Expect(err).ToNot(HaveOccurred())
 				}
@@ -1787,10 +1742,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				// Create blocking task
 				blockingChan := make(chan NodeDef) // Unbuffered - will block
-				task := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: blockingChan,
-				}
+				task := newTestTask("ns=2;i=1000", blockingChan)
 
 				err := pool.SubmitTask(task)
 				Expect(err).ToNot(HaveOccurred())
@@ -1813,10 +1765,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				pool.SpawnWorkers(2)
 
 				resultChan := make(chan NodeDef, 1)
-				task := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: resultChan,
-				}
+				task := newTestTask("ns=2;i=1000", resultChan)
 
 				// Submit and wait for completion
 				err := pool.SubmitTask(task)
@@ -1848,10 +1797,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				// Submit tasks
 				for i := 0; i < numTasks; i++ {
 					resultChans[i] = make(chan NodeDef, 1)
-					task := GlobalPoolTask{
-						NodeID:     fmt.Sprintf("ns=2;i=%d", 1000+i),
-						ResultChan: resultChans[i],
-					}
+					task := newTestTask(fmt.Sprintf("ns=2;i=%d", 1000+i), resultChans[i])
 					err := pool.SubmitTask(task)
 					Expect(err).ToNot(HaveOccurred())
 				}
@@ -1886,10 +1832,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 					resultChans := make([]chan NodeDef, numTasks)
 					for i := 0; i < numTasks; i++ {
 						resultChans[i] = make(chan NodeDef, 1)
-						task := GlobalPoolTask{
-							NodeID:     fmt.Sprintf("ns=2;i=%d", round*1000+i),
-							ResultChan: resultChans[i],
-						}
+						task := newTestTask(fmt.Sprintf("ns=2;i=%d", 1000+i), resultChans[i])
 						pool.SubmitTask(task)
 					}
 
@@ -1911,10 +1854,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				// Rapid submission and completion
 				for i := 0; i < 50; i++ {
 					resultChan := make(chan NodeDef, 1)
-					task := GlobalPoolTask{
-						NodeID:     fmt.Sprintf("ns=2;i=%d", i),
-						ResultChan: resultChan,
-					}
+					task := newTestTask(fmt.Sprintf("ns=2;i=%d", i), resultChan)
 
 					err := pool.SubmitTask(task)
 					Expect(err).ToNot(HaveOccurred())
@@ -1937,19 +1877,15 @@ var _ = Describe("GlobalWorkerPool", func() {
 				pool.SpawnWorkers(3)
 
 				// First batch
-				task1 := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: make(chan NodeDef, 1),
-				}
+				resultChan1 := make(chan NodeDef, 1)
+				task1 := newTestTask("ns=2;i=1000", resultChan1)
 				pool.SubmitTask(task1)
 				err := pool.WaitForCompletion(time.Second)
 				Expect(err).ToNot(HaveOccurred())
 
 				// Second batch
-				task2 := GlobalPoolTask{
-					NodeID:     "ns=2;i=2000",
-					ResultChan: make(chan NodeDef, 1),
-				}
+				resultChan2 := make(chan NodeDef, 1)
+				task2 := newTestTask("ns=2;i=2000", resultChan2)
 				pool.SubmitTask(task2)
 				err = pool.WaitForCompletion(time.Second)
 				Expect(err).ToNot(HaveOccurred())
@@ -1975,10 +1911,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				// Submit and complete task
 				resultChan := make(chan NodeDef, 1)
-				task := GlobalPoolTask{
-					NodeID:     "ns=2;i=1000",
-					ResultChan: resultChan,
-				}
+				task := newTestTask("ns=2;i=1000", resultChan)
 
 				err := pool.SubmitTask(task)
 				Expect(err).ToNot(HaveOccurred())
@@ -2037,10 +1970,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				// Submit new task AFTER signal sent (race condition window)
 				resultChan2 := make(chan NodeDef, 1)
-				task2 := GlobalPoolTask{
-					NodeID:     "ns=2;i=2000",
-					ResultChan: resultChan2,
-				}
+				task2 := newTestTask("ns=2;i=2000", resultChan2)
 				err = pool.SubmitTask(task2)
 				Expect(err).ToNot(HaveOccurred())
 
