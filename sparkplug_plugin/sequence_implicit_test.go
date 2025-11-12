@@ -120,7 +120,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 				Seq:       nil, // Older devices omit seq field
 				Timestamp: uint64Ptr(1730986400000),
 				Metrics: []*sparkplugb.Payload_Metric{
-					{Name: stringPtr("temperature"), Datatype: uint32Ptr(SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 23.5}},
+					{Name: stringPtr("temperature"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 23.5}},
 				},
 			}
 
@@ -146,7 +146,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 				Seq:       nil, // Older devices omit seq field
 				Timestamp: uint64Ptr(1730986400000),
 				Metrics: []*sparkplugb.Payload_Metric{
-					{Name: stringPtr("pressure"), Datatype: uint32Ptr(SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 101.3}},
+					{Name: stringPtr("pressure"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 101.3}},
 				},
 			}
 
@@ -172,7 +172,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 				Seq:       nil,
 				Timestamp: uint64Ptr(1730986400000),
 				Metrics: []*sparkplugb.Payload_Metric{
-					{Name: stringPtr("temperature"), Datatype: uint32Ptr(SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 23.5}},
+					{Name: stringPtr("temperature"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 23.5}},
 				},
 			}
 			input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload)
@@ -183,7 +183,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 				Seq:       &seq1,
 				Timestamp: uint64Ptr(1730986401000),
 				Metrics: []*sparkplugb.Payload_Metric{
-					{Name: stringPtr("temperature"), Datatype: uint32Ptr(SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 24.1}},
+					{Name: stringPtr("temperature"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 24.1}},
 				},
 			}
 			input.ProcessDataMessage(deviceKey, "NDATA", dataPayload)
@@ -204,7 +204,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 				Seq:       nil,
 				Timestamp: uint64Ptr(1730986400000),
 				Metrics: []*sparkplugb.Payload_Metric{
-					{Name: stringPtr("temperature"), Datatype: uint32Ptr(SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 23.5}},
+					{Name: stringPtr("temperature"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 23.5}},
 				},
 			}
 			input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload)
@@ -215,7 +215,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 				Seq:       &seq2,
 				Timestamp: uint64Ptr(1730986401000),
 				Metrics: []*sparkplugb.Payload_Metric{
-					{Name: stringPtr("temperature"), Datatype: uint32Ptr(SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 24.1}},
+					{Name: stringPtr("temperature"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 24.1}},
 				},
 			}
 			input.ProcessDataMessage(deviceKey, "NDATA", dataPayload)
@@ -239,7 +239,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 				Seq:       nil,
 				Timestamp: uint64Ptr(1730986400000),
 				Metrics: []*sparkplugb.Payload_Metric{
-					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
+					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
 				},
 			}
 			input.ProcessBirthMessage(deviceKey, "DBIRTH", birth1)
@@ -253,7 +253,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 				Seq:       &seq1,
 				Timestamp: uint64Ptr(1730986401000),
 				Metrics: []*sparkplugb.Payload_Metric{
-					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 101}},
+					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 101}},
 				},
 			}
 			input.ProcessDataMessage(deviceKey, "DDATA", data1)
@@ -268,7 +268,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 				Seq:       &seq2,
 				Timestamp: uint64Ptr(1730986402000),
 				Metrics: []*sparkplugb.Payload_Metric{
-					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 102}},
+					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 102}},
 				},
 			}
 			input.ProcessDataMessage(deviceKey, "DDATA", data2)
@@ -281,7 +281,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 				Seq:       nil,
 				Timestamp: uint64Ptr(1730986403000),
 				Metrics: []*sparkplugb.Payload_Metric{
-					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
+					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
 				},
 			}
 			input.ProcessBirthMessage(deviceKey, "DBIRTH", birth2)
@@ -296,7 +296,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 				Seq:       &seq1AfterRebirth,
 				Timestamp: uint64Ptr(1730986404000),
 				Metrics: []*sparkplugb.Payload_Metric{
-					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 103}},
+					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 103}},
 				},
 			}
 			input.ProcessDataMessage(deviceKey, "DDATA", data3)

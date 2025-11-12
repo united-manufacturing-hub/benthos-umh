@@ -84,12 +84,12 @@ var _ = Describe("Sequence Gap Validator - Message Drop Investigation (ENG-3720)
 				Metrics: []*sparkplugb.Payload_Metric{
 					{
 						Name:     stringPtr("temperature"),
-						Datatype: uint32Ptr(SparkplugDataTypeDouble),
+						Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble),
 						Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 42.5},
 					},
 					{
 						Name:     stringPtr("pressure"),
-						Datatype: uint32Ptr(SparkplugDataTypeDouble),
+						Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble),
 						Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 100.2},
 					},
 				},
@@ -141,7 +141,7 @@ var _ = Describe("Sequence Gap Validator - Message Drop Investigation (ENG-3720)
 				Metrics: []*sparkplugb.Payload_Metric{
 					{
 						Name:     stringPtr("test_metric"),
-						Datatype: uint32Ptr(SparkplugDataTypeInt64),
+						Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64),
 						Value:    &sparkplugb.Payload_Metric_LongValue{LongValue: 123},
 					},
 				},
@@ -177,7 +177,7 @@ var _ = Describe("Sequence Gap Validator - Message Drop Investigation (ENG-3720)
 				Metrics: []*sparkplugb.Payload_Metric{
 					{
 						Name:     stringPtr("wrap_test"),
-						Datatype: uint32Ptr(SparkplugDataTypeInt64),
+						Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64),
 						Value:    &sparkplugb.Payload_Metric_LongValue{LongValue: 999},
 					},
 				},
