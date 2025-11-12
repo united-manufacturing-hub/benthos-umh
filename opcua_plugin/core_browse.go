@@ -88,8 +88,17 @@ type NodeDef struct {
 	Path         string      // custom, not an official opcua attribute
 }
 
-// BrowseDetails represents browse operation details sent to prevent worker deadlock.
-// Data is sent by workers but drained and not used (legacy UI code removed).
+// BrowseDetails represents browse operation progress sent to prevent worker deadlock.
+//
+// USAGE:
+// - When browsing 100k+ nodes, workers send updates to opcuaBrowserChan
+// - If channel is nil (server metadata detection) or no consumer, updates are skipped
+// - Tests and large-scale browses must provide channel + consumer to prevent deadlock
+//
+// DEADLOCK PREVENTION:
+// - Buffer capacity: 100k items (see browse() function)
+// - Without consumer: Workers block when buffer fills → deadlock
+// - With nil channel: Workers skip sending → no deadlock risk for small browses
 type BrowseDetails struct {
 	NodeDef               NodeDef
 	TaskCount             int64
@@ -411,21 +420,25 @@ func worker(
 				FullyDiscovered: false,
 			})
 
-			// Handle browser channel
-			browserDetails := BrowseDetails{
-				NodeDef:               def,
-				TaskCount:             taskWg.Count(),
-				WorkerCount:           workerWg.Count(),
-				AvgServerResponseTime: metrics.AverageResponseTime(),
-			}
-			browserDetails.NodeDef.Path = join(task.path, def.BrowseName)
-			select {
-			case opcuaBrowserChan <- browserDetails:
-				// Successfully sent node details for topic browser
-			case <-ctx.Done():
-				logger.Warnf("Worker %s: Context canceled while sending to opcuaBrowserChan", id)
-				taskWg.Done()
-				continue
+			// Send progress update to prevent deadlock (skip if nil)
+			// When browsing 100k+ nodes, channel must be consumed to prevent buffer overflow.
+			// Server metadata detection passes nil (only 3 nodes, no overflow risk).
+			if opcuaBrowserChan != nil {
+				browserDetails := BrowseDetails{
+					NodeDef:               def,
+					TaskCount:             taskWg.Count(),
+					WorkerCount:           workerWg.Count(),
+					AvgServerResponseTime: metrics.AverageResponseTime(),
+				}
+				browserDetails.NodeDef.Path = join(task.path, def.BrowseName)
+				select {
+				case opcuaBrowserChan <- browserDetails:
+					// Successfully sent progress update
+				case <-ctx.Done():
+					logger.Warnf("Worker %s: Context canceled while sending to opcuaBrowserChan", id)
+					taskWg.Done()
+					continue
+				}
 			}
 
 			// Process based on node class
