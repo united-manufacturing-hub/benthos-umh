@@ -198,8 +198,11 @@ func (m *mockNodeBrowser) ResetBrowseCalled() {
 
 // newTestTask creates a GlobalPoolTask with mock Node and context for testing.
 // This ensures tests use proper mocks instead of relying on stub mode in production code.
+// Uses timeout context for test isolation - prevents context pollution between tests.
 func newTestTask(nodeID string, resultChan any) GlobalPoolTask {
-	ctx := context.Background()
+	// Use timeout context to prevent context pollution between tests
+	// 10 second timeout is much longer than test timeouts, ensures context doesn't fire early
+	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 	mockNode := &mockNodeBrowser{
 		id: ua.MustParseNodeID(nodeID),
 	}
