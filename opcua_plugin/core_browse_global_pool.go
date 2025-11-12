@@ -562,7 +562,51 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 				}
 			}
 
-			// Execute browse operation on task's node
+			// Fetch node attributes to determine NodeClass (BEFORE browsing children)
+			attrs, err := task.Node.Attributes(task.Ctx,
+				ua.AttributeIDNodeClass,
+				ua.AttributeIDBrowseName,
+				ua.AttributeIDDescription,
+				ua.AttributeIDAccessLevel,
+				ua.AttributeIDDataType)
+			if err != nil {
+				if gwp.logger != nil {
+					gwp.logger.Warnf("Failed to fetch node attributes: nodeID=%s path=%s err=%v",
+						task.NodeID, task.Path, err)
+				}
+				atomic.AddUint64(&gwp.metricsTasksFailed, 1)
+				gwp.decrementPendingTasks()
+				continue
+			}
+
+			// Create NodeDef with initial values
+			nodeDef := NodeDef{
+				NodeID:       task.Node.ID(),
+				Path:         task.Path,
+				ParentNodeID: task.ParentNodeID,
+			}
+
+			// Process attributes to populate all fields
+			if err := processNodeAttributes(attrs, &nodeDef, task.Path, gwp.logger); err != nil {
+				if gwp.logger != nil {
+					gwp.logger.Warnf("Failed to process node attributes: nodeID=%s path=%s err=%v",
+						task.NodeID, task.Path, err)
+				}
+				atomic.AddUint64(&gwp.metricsTasksFailed, 1)
+				gwp.decrementPendingTasks()
+				continue
+			}
+
+			// Mark node as visited
+			if task.Visited != nil {
+				task.Visited.Store(task.NodeID, VisitedNodeInfo{
+					Def:             nodeDef,
+					LastSeen:        time.Now(),
+					FullyDiscovered: false,
+				})
+			}
+
+			// Execute browse operation on task's node (AFTER attributes fetched)
 			children, err := task.Node.Children(task.Ctx, id.HierarchicalReferences,
 				ua.NodeClassVariable|ua.NodeClassObject)
 
@@ -574,24 +618,9 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 					default:
 					}
 				}
+				atomic.AddUint64(&gwp.metricsTasksFailed, 1)
 				gwp.decrementPendingTasks()
 				continue
-			}
-
-			// Create NodeDef from browsed node
-			nodeDef := NodeDef{
-				NodeID:       task.Node.ID(),
-				Path:         task.Path,
-				ParentNodeID: task.ParentNodeID,
-			}
-
-			// Mark node as visited
-			if task.Visited != nil {
-				task.Visited.Store(task.NodeID, VisitedNodeInfo{
-					Def:             nodeDef,
-					LastSeen:        time.Now(),
-					FullyDiscovered: false,
-				})
 			}
 
 			// Submit children as new tasks (if within recursion depth)
@@ -631,13 +660,46 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 				}
 			}
 
-			// Send result to ResultChan (non-blocking for production browse)
-			sent := gwp.sendTaskResult(task, nodeDef, gwp.logger, true)
-			if !sent && task.ResultChan != nil {
-				// Debug log if send failed (channel full or unsupported type)
+			// Filter by NodeClass - only send Variables to ResultChan
+			switch nodeDef.NodeClass {
+			case ua.NodeClassVariable:
+				// Variables: send to ResultChan (subscription list)
 				if gwp.logger != nil {
-					gwp.logger.Debugf("Worker %s: failed to send result for NodeID %s", workerID, task.NodeID)
+					gwp.logger.Debugf("Adding Variable to subscription list: nodeID=%s path=%s browseName=%s",
+						nodeDef.NodeID.String(), nodeDef.Path, nodeDef.BrowseName)
 				}
+
+				sent := gwp.sendTaskResult(task, nodeDef, gwp.logger, true)
+				if !sent && task.ResultChan != nil {
+					if gwp.logger != nil {
+						gwp.logger.Debugf("Failed to send Variable to ResultChan (channel full or closed): nodeID=%s",
+							nodeDef.NodeID.String())
+					}
+				}
+
+			case ua.NodeClassObject:
+				// Objects (folders): skip subscription, only browse children
+				if gwp.logger != nil {
+					gwp.logger.Debugf("Skipping Object node (folder) - not subscribing: nodeID=%s path=%s browseName=%s",
+						nodeDef.NodeID.String(), nodeDef.Path, nodeDef.BrowseName)
+				}
+				// Children already submitted above - no further action needed
+
+			default:
+				// Other NodeClasses: log and skip
+				if gwp.logger != nil {
+					gwp.logger.Debugf("Skipping non-Variable/Object node: nodeID=%s nodeClass=%s path=%s",
+						nodeDef.NodeID.String(), nodeDef.NodeClass.String(), nodeDef.Path)
+				}
+			}
+
+			// Mark node as fully discovered (after browsing children)
+			if task.Visited != nil {
+				task.Visited.Store(task.NodeID, VisitedNodeInfo{
+					Def:             nodeDef,
+					LastSeen:        time.Now(),
+					FullyDiscovered: true,
+				})
 			}
 
 			// Send progress update (non-blocking)

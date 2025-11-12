@@ -38,6 +38,7 @@ func (t *testLogger) Warnf(format string, args ...interface{})  {}
 type mockNodeBrowser struct {
 	id           *ua.NodeID
 	browseName   string
+	nodeClass    ua.NodeClass // Support NodeClass for filtering tests
 	children     []NodeBrowser
 	browseErr    error
 	browseCalled bool
@@ -52,7 +53,63 @@ func (m *mockNodeBrowser) ID() *ua.NodeID {
 }
 
 func (m *mockNodeBrowser) Attributes(ctx context.Context, attrs ...ua.AttributeID) ([]*ua.DataValue, error) {
-	return nil, nil
+	// Return NodeClass if requested (for filtering tests)
+	// Default to Variable if not set
+	nodeClass := m.nodeClass
+	if nodeClass == 0 {
+		nodeClass = ua.NodeClassVariable
+	}
+
+	result := make([]*ua.DataValue, len(attrs))
+	for i, attr := range attrs {
+		switch attr {
+		case ua.AttributeIDNodeClass:
+			result[i] = &ua.DataValue{
+				EncodingMask: ua.DataValueValue,
+				Value:        ua.MustVariant(int64(nodeClass)),
+				Status:       ua.StatusOK,
+			}
+		case ua.AttributeIDBrowseName:
+			result[i] = &ua.DataValue{
+				EncodingMask: ua.DataValueValue,
+				Value:        ua.MustVariant(&ua.QualifiedName{Name: m.browseName}),
+				Status:       ua.StatusOK,
+			}
+		case ua.AttributeIDDataType:
+			// Return a valid NodeID for DataType (use Int32 for all nodes - Objects don't use DataType anyway)
+			dataTypeID := ua.NewNumericNodeID(0, uint32(ua.TypeIDInt32))
+			result[i] = &ua.DataValue{
+				EncodingMask: ua.DataValueValue,
+				Value:        ua.MustVariant(dataTypeID),
+				Status:       ua.StatusOK,
+			}
+		case ua.AttributeIDDescription:
+			// Return empty string for description (ignoreInvalidAttr = true)
+			result[i] = &ua.DataValue{
+				EncodingMask: ua.DataValueValue,
+				Value:        ua.MustVariant(""),
+				Status:       ua.StatusOK,
+			}
+		case ua.AttributeIDAccessLevel:
+			// Return default AccessLevel for Variables, 0 for Objects
+			accessLevel := uint8(ua.AccessLevelTypeCurrentRead)
+			if nodeClass == ua.NodeClassObject {
+				accessLevel = 0
+			}
+			result[i] = &ua.DataValue{
+				EncodingMask: ua.DataValueValue,
+				Value:        ua.MustVariant(int64(accessLevel)),
+				Status:       ua.StatusOK,
+			}
+		default:
+			result[i] = &ua.DataValue{
+				EncodingMask: ua.DataValueValue,
+				Value:        ua.MustVariant(""),
+				Status:       ua.StatusOK,
+			}
+		}
+	}
+	return result, nil
 }
 
 func (m *mockNodeBrowser) BrowseName(ctx context.Context) (*ua.QualifiedName, error) {
