@@ -17,6 +17,8 @@ package opcua_plugin
 import (
 	"context"
 	"errors"
+	"fmt"
+	"time"
 
 	"github.com/gopcua/opcua/ua"
 )
@@ -41,14 +43,10 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 	if g.Client == nil {
 		return ServerInfo{}, errors.New("client is nil")
 	}
-	// Fetch ManufacturerName node from i=2263
-	manufacturerNameNodeID := ua.NewNumericNodeID(0, 2263)
-	productNameNodeID := ua.NewNumericNodeID(0, 2261)
-	softwareVersionNodeID := ua.NewNumericNodeID(0, 2264)
 
+	// Setup channels for node discovery
 	nodeChan := make(chan NodeDef, 3)
 	errChan := make(chan error, 3)
-	var wg TrackedWaitGroup
 
 	// Use profile or fallback to Auto if called before profile detection
 	profile := g.ServerProfile
@@ -56,25 +54,61 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 		profile = GetProfileByName(ProfileAuto)
 	}
 
+	// Create GlobalWorkerPool for browsing 3 server metadata nodes
 	pool := NewGlobalWorkerPool(profile, g.Log)
+	workersSpawned := pool.SpawnWorkers(profile.MinWorkers)
+	g.Log.Debugf("Server info detection: spawned %d workers", workersSpawned)
+
 	defer func() {
 		if err := pool.Shutdown(DefaultPoolShutdownTimeout); err != nil {
 			g.Log.Warnf("GlobalWorkerPool shutdown timeout: %v", err)
 		}
 	}()
-	wg.Add(3)
-	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(manufacturerNameNodeID)), "", pool, manufacturerNameNodeID.String(), nodeChan, errChan, &wg, nil, &g.visited)
-	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(productNameNodeID)), "", pool, productNameNodeID.String(), nodeChan, errChan, &wg, nil, &g.visited)
-	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(softwareVersionNodeID)), "", pool, softwareVersionNodeID.String(), nodeChan, errChan, &wg, nil, &g.visited)
-	wg.Wait()
+
+	// Define 3 server info nodes to browse
+	serverInfoNodes := []struct {
+		nodeID *ua.NodeID
+		name   string
+	}{
+		{ua.NewNumericNodeID(0, 2263), "ManufacturerName"},
+		{ua.NewNumericNodeID(0, 2261), "ProductName"},
+		{ua.NewNumericNodeID(0, 2264), "SoftwareVersion"},
+	}
+
+	// Submit browse tasks to GlobalWorkerPool
+	for _, node := range serverInfoNodes {
+		task := GlobalPoolTask{
+			NodeID:       node.nodeID.String(),
+			Ctx:          ctx,
+			Node:         NewOpcuaNodeWrapper(g.Client.Node(node.nodeID)),
+			Path:         "",
+			Level:        0,
+			ParentNodeID: node.nodeID.String(),
+			Visited:      &g.visited,
+			ResultChan:   nodeChan,
+			ErrChan:      errChan,
+			ProgressChan: nil, // No progress reporting for 3-node browse
+		}
+
+		if err := pool.SubmitTask(task); err != nil {
+			return ServerInfo{}, fmt.Errorf("failed to submit %s task: %w", node.name, err)
+		}
+	}
+
+	// Wait for all 3 tasks to complete
+	if err := pool.WaitForCompletion(30 * time.Second); err != nil {
+		return ServerInfo{}, fmt.Errorf("browse completion timeout: %w", err)
+	}
 
 	close(nodeChan)
 	close(errChan)
 
+	// Check for errors
 	if len(errChan) > 0 {
 		return ServerInfo{}, <-errChan
 	}
 
+	// Collect discovered nodes
 	var nodeList []NodeDef
 	for node := range nodeChan {
 		nodeList = append(nodeList, node)

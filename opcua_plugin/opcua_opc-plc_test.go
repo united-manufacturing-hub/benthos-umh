@@ -1533,20 +1533,32 @@ opcua:
 			nodeChan := make(chan NodeDef, 100)
 			errChan := make(chan error, 100)
 			opcuaBrowserChan := make(chan BrowseDetails, 100)
-			var wg TrackedWaitGroup
 			var visited sync.Map
 
 			// Browse the node
-			wg.Add(1)
 			wrapperNodeID := NewOpcuaNodeWrapper(input.Client.Node(parsedNodeIDs[0]))
 			testProfile := GetProfileByName(ProfileAuto)
 			pool := NewGlobalWorkerPool(testProfile, input.Log)
+			pool.SpawnWorkers(testProfile.MinWorkers)
 			defer func() {
 				_ = pool.Shutdown(TestPoolShutdownTimeout)
 			}()
-			go Browse(ctx, wrapperNodeID, "", pool, parsedNodeIDs[0].String(), nodeChan, errChan, &wg, opcuaBrowserChan, &visited)
 
-			wg.Wait()
+			task := GlobalPoolTask{
+				NodeID:       parsedNodeIDs[0].String(),
+				Ctx:          ctx,
+				Node:         wrapperNodeID,
+				Path:         "",
+				Level:        0,
+				ParentNodeID: parsedNodeIDs[0].String(),
+				Visited:      &visited,
+				ResultChan:   nodeChan,
+				ErrChan:      errChan,
+				ProgressChan: opcuaBrowserChan,
+			}
+			_ = pool.SubmitTask(task)
+			_ = pool.WaitForCompletion(DefaultBrowseCompletionTimeout)
+
 			close(nodeChan)
 			close(errChan)
 			close(opcuaBrowserChan)

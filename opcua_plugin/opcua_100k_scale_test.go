@@ -55,22 +55,34 @@ var _ = Describe("100k Scale Browse Test", Label("100k_scale"), func() {
 				rootNode.AddReferenceNode(id.Organizes, folderNode)
 			}
 
-			// Setup channels and wait groups
+			// Setup channels
 			nodeChan := make(chan NodeDef, MaxTagsToBrowse) // 100k buffer
 			errChan := make(chan error, MaxTagsToBrowse)
 			opcuaBrowserChan := make(chan BrowseDetails, MaxTagsToBrowse)
-			var wg TrackedWaitGroup
 			var visited sync.Map
 			logger := &MockLogger{}
 
 			// ACT: Start browsing
-			wg.Add(1)
 			testProfile := GetProfileByName(ProfileAuto)
 			pool := NewGlobalWorkerPool(testProfile, logger)
+			pool.SpawnWorkers(testProfile.MinWorkers)
 			defer func() {
 				_ = pool.Shutdown(TestPoolShutdownTimeout)
 			}()
-			go Browse(ctx, rootNode, "", pool, "", nodeChan, errChan, &wg, opcuaBrowserChan, &visited)
+
+			task := GlobalPoolTask{
+				NodeID:       rootNode.ID().String(),
+				Ctx:          ctx,
+				Node:         rootNode,
+				Path:         "",
+				Level:        0,
+				ParentNodeID: "",
+				Visited:      &visited,
+				ResultChan:   nodeChan,
+				ErrChan:      errChan,
+				ProgressChan: opcuaBrowserChan,
+			}
+			_ = pool.SubmitTask(task)
 
 			// Start concurrent consumer to drain nodeChan as Browse produces nodes
 			// This prevents deadlock when Browse workers fill the 100k buffer
@@ -98,7 +110,7 @@ var _ = Describe("100k Scale Browse Test", Label("100k_scale"), func() {
 			// Wait for browse to complete with timeout detection
 			done := make(chan struct{})
 			go func() {
-				wg.Wait()
+				_ = pool.WaitForCompletion(DefaultBrowseCompletionTimeout)
 				close(done)
 			}()
 
