@@ -417,8 +417,39 @@ func (gwp *GlobalWorkerPool) sendTaskProgress(task GlobalPoolTask, nodeDef NodeD
 	}
 }
 
-// decrementPendingTasks decrements the pending task counter and broadcasts completion when it reaches 0.
-// Uses sync.Cond.Broadcast to wake ALL waiting goroutines (supports concurrent WaitForCompletion calls).
+// decrementPendingTasks atomically decrements the pending task counter and signals
+// completion when the counter reaches zero.
+//
+// PURPOSE:
+// This function is the ONLY way to decrement pendingTasks counter. It ensures that
+// decrement and completion signal always happen together atomically, preventing
+// race conditions where counter reaches 0 but waiters aren't notified.
+//
+// WHEN CALLED:
+// 1. Task completion (normal path): Worker successfully processes task (line 718)
+// 2. Task failure: Worker encounters error fetching/processing node attributes (lines 585, 603, 629)
+// 3. Task cancellation: Context cancelled before task completes (line 547)
+// 4. Task skip: Node already visited, browse skipped (line 556)
+// 5. Shutdown drain: Remaining buffered tasks are drained during shutdown (line 749)
+//
+// WHY SEPARATE FUNCTION:
+// - DRY principle: Counter decrement + broadcast logic in one place
+// - Atomic guarantee: Lock ensures counter and signal are consistent
+// - Prevents bugs: Impossible to forget broadcast after decrementing
+//
+// RELATIONSHIP TO SHUTDOWN:
+// This is NOT a shutdown function - it's a task lifecycle function. It's called
+// whenever a task transitions from "pending" to "done" (success, error, cancelled, or skipped).
+// Shutdown uses this (via drain loop), but so does normal operation (via WaitForCompletion).
+//
+// CRITICAL INVARIANT:
+// Every SubmitTask() call that succeeds MUST eventually have a matching
+// decrementPendingTasks() call, or WaitForCompletion() will deadlock.
+//
+// See also:
+// - SubmitTask(): Increments pendingTasks when task is queued (line 245)
+// - WaitForCompletion(): Waits on completionCond until pendingTasks reaches 0 (line 437)
+// - Shutdown(): Calls worker drain which decrements counter for buffered tasks (line 258)
 func (gwp *GlobalWorkerPool) decrementPendingTasks() {
 	remaining := atomic.AddInt64(&gwp.pendingTasks, -1)
 	if remaining == 0 {
@@ -544,6 +575,7 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 					default:
 					}
 				}
+				// Task cancelled before starting - decrement counter (task is "done" even if cancelled)
 				gwp.decrementPendingTasks()
 				continue
 			default:
@@ -552,7 +584,7 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 			// Check if already visited (skip browse if so)
 			if task.Visited != nil {
 				if _, visited := task.Visited.Load(task.NodeID); visited {
-					// Node already visited - skip browse and decrement
+					// Node already visited - skip browse and decrement counter (task is "done" without work)
 					gwp.decrementPendingTasks()
 					continue
 				}
@@ -582,6 +614,7 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 						task.NodeID, task.Path, err)
 				}
 				atomic.AddUint64(&gwp.metricsTasksFailed, 1)
+				// Task failed to fetch attributes - decrement counter (task is "done" even if errored)
 				gwp.decrementPendingTasks()
 				continue
 			}
@@ -600,6 +633,7 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 						task.NodeID, task.Path, err)
 				}
 				atomic.AddUint64(&gwp.metricsTasksFailed, 1)
+				// Task failed to process attributes - decrement counter (task is "done" even if errored)
 				gwp.decrementPendingTasks()
 				continue
 			}
@@ -626,6 +660,7 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 					}
 				}
 				atomic.AddUint64(&gwp.metricsTasksFailed, 1)
+				// Browse operation failed - decrement counter (task is "done" even if errored)
 				gwp.decrementPendingTasks()
 				continue
 			}
@@ -714,7 +749,7 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 			// Increment tasksCompleted counter on success (atomic)
 			atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
 
-			// Decrement pendingTasks counter and signal completion if needed
+			// Task completed successfully - decrement counter and signal waiters
 			gwp.decrementPendingTasks()
 
 			// Debug log task completion
@@ -746,6 +781,7 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 
 					// Maintain counter integrity for graceful shutdown
 					atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
+					// Drained task during shutdown - decrement counter to allow clean termination
 					gwp.decrementPendingTasks()
 				default:
 					// No more tasks in buffer, exit
