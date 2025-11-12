@@ -147,15 +147,47 @@ var (
 	MaxBrowseContinuationPointsNodeID = ua.NewNumericNodeID(0, 3089)  // Fixed: was 12165
 )
 
+// IMPORTANT: Why We Don't Use ServerProfileArray for DataChangeFilter Detection
+//
+// The OPC UA specification (Part 7, Section 6.4.3) defines ServerProfileArray (NodeID 2269)
+// as the standard mechanism for profile-based capability detection. In theory, servers
+// should declare conformance to specification facets via this array.
+//
+// In practice, major OPC UA servers do NOT reliably populate ServerProfileArray:
+//
+// 1. Kepware KEPServerEX: ServerProfileArray is empty or not exposed
+// 2. Ignition Gateway (Eclipse Milo): ServerProfileArray is not populated
+// 3. Siemens S7 PLCs: ServerProfileArray exists but is inconsistently populated
+//    - S7-1200: May not declare Micro Embedded Device profile
+//    - S7-1500: May not declare Standard facet despite supporting filters
+//
+// This widespread non-compliance makes ServerProfileArray unusable for reliable detection.
+// Instead, we implement a hybrid approach:
+// 1. Profile defaults (production-validated, prevent wasted attempts for S7-1200)
+// 2. Trial-based learning (try with filter, catch StatusBadFilterNotAllowed, retry without)
+//
+// Note: Trial-based learning will be implemented in the MonitorBatched function (read_discover.go).
+// The current implementation uses preventative checking based on profile defaults.
+//
+// This approach is self-correcting and handles firmware upgrades that add filter support.
+
 // queryOperationLimits queries the OPC UA server for its operation limits from OperationLimits node.
+//
+// Returns ServerCapabilities with operation limits populated from OperationLimits node:
+// - MaxNodesPerBrowse, MaxMonitoredItemsPerCall, MaxNodesPerRead, MaxNodesPerWrite, MaxBrowseContinuationPoints
+//
+// Note: Does NOT query ServerProfileArray - major vendors (Kepware, Ignition, Siemens) don't reliably populate it.
+// DataChangeFilter support comes from profile-based defaults in ServerProfile struct instead.
+//
 // Returns error if the server doesn't support OperationLimits (common for PLCs like S7-1200/1500).
-// Phase 1: Read-only logging, no behavior changes.
 func (g *OPCUAInput) queryOperationLimits(ctx context.Context) (*ServerCapabilities, error) {
 	if g == nil || g.OPCUAConnection == nil || g.Client == nil {
 		return nil, errors.New("client is nil")
 	}
 
-	// Query all capability nodes
+	caps := &ServerCapabilities{}
+
+	// Query OperationLimits nodes
 	nodeIDs := []*ua.NodeID{
 		MaxNodesPerBrowseNodeID,
 		MaxMonitoredItemsPerCallNodeID,
@@ -187,8 +219,6 @@ func (g *OPCUAInput) queryOperationLimits(ctx context.Context) (*ServerCapabilit
 	if len(resp.Results) != len(nodeIDs) {
 		return nil, errors.New("unexpected number of results")
 	}
-
-	caps := &ServerCapabilities{}
 
 	// Parse results - many servers return BadNodeIdUnknown if they don't support this
 	// Map index to capability field for cleaner assignment

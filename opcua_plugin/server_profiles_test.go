@@ -414,6 +414,96 @@ var _ = Describe("ServerProfile MaxMonitoredItems", func() {
 	})
 })
 
+var _ = Describe("ServerProfile DataChangeFilter Support", func() {
+	Context("when checking profile filter support", func() {
+		It("should have SupportsDataChangeFilter field in ServerProfile struct", func() {
+			profile := ServerProfile{
+				Name:                     "test",
+				DisplayName:              "Test Profile",
+				Description:              "Test description",
+				MaxBatchSize:             100,
+				MaxWorkers:               10,
+				MinWorkers:               1,
+				MaxMonitoredItems:        0,
+				SupportsDataChangeFilter: true,
+			}
+			Expect(profile.SupportsDataChangeFilter).To(BeTrue())
+		})
+
+		It("should set S7-1200 profile to NOT support DataChangeFilter", func() {
+			profile := GetProfileByName(ProfileS71200)
+			Expect(profile.SupportsDataChangeFilter).To(BeFalse(),
+				"S7-1200 implements Micro Embedded Device 2017 profile without Standard DataChange Subscription Server Facet")
+		})
+
+		It("should set S7-1500 profile to support DataChangeFilter", func() {
+			profile := GetProfileByName(ProfileS71500)
+			Expect(profile.SupportsDataChangeFilter).To(BeTrue(),
+				"S7-1500 implements Standard facet with DataChangeFilter support")
+		})
+
+		It("should set Kepware profile to support DataChangeFilter", func() {
+			profile := GetProfileByName(ProfileKepware)
+			Expect(profile.SupportsDataChangeFilter).To(BeTrue(),
+				"Kepware is a standard OPC UA server with full DataChangeFilter support")
+		})
+
+		It("should set Ignition profile to support DataChangeFilter", func() {
+			profile := GetProfileByName(ProfileIgnition)
+			Expect(profile.SupportsDataChangeFilter).To(BeTrue(),
+				"Ignition (Eclipse Milo) implements Standard facet with DataChangeFilter support")
+		})
+
+		It("should set Prosys profile to support DataChangeFilter", func() {
+			profile := GetProfileByName(ProfileProsys)
+			Expect(profile.SupportsDataChangeFilter).To(BeTrue(),
+				"Prosys Simulation Server has full Standard DataChangeFilter support")
+		})
+
+		It("should set High-Performance profile to support DataChangeFilter", func() {
+			profile := GetProfileByName(ProfileHighPerformance)
+			Expect(profile.SupportsDataChangeFilter).To(BeTrue(),
+				"High-performance VM servers typically support Standard facet")
+		})
+
+		It("should set Auto profile to NOT support DataChangeFilter by default", func() {
+			profile := GetProfileByName(ProfileAuto)
+			Expect(profile.SupportsDataChangeFilter).To(BeFalse(),
+				"Auto profile uses defensive default (false) for unknown servers")
+		})
+
+		It("should set Unknown profile to NOT support DataChangeFilter", func() {
+			profile := GetProfileByName("invalid-profile-name")
+			Expect(profile.SupportsDataChangeFilter).To(BeFalse(),
+				"Unknown profile uses conservative fallback (false)")
+		})
+	})
+
+	Context("when validating all profiles have filter support setting", func() {
+		It("should have SupportsDataChangeFilter set for all profiles", func() {
+			profiles := []struct {
+				name     string
+				expected bool
+			}{
+				{ProfileAuto, false},
+				{ProfileHighPerformance, true},
+				{ProfileIgnition, true},
+				{ProfileKepware, true},
+				{ProfileS71200, false}, // Critical fix - Micro Embedded Device profile
+				{ProfileS71500, true},
+				{ProfileProsys, true},
+				{"unknown", false},
+			}
+
+			for _, tc := range profiles {
+				profile := GetProfileByName(tc.name)
+				Expect(profile.SupportsDataChangeFilter).To(Equal(tc.expected),
+					"Profile %s should have SupportsDataChangeFilter=%v", tc.name, tc.expected)
+			}
+		})
+	})
+})
+
 var _ = Describe("validateProfile", func() {
 	Context("when validating profile constraints", func() {
 		It("should panic if MinWorkers > MaxWorkers", func() {

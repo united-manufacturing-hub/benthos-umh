@@ -42,3 +42,40 @@ var _ = Describe("Server Capability Detection", func() {
 		Entry("none requested - no capability check needed", "none", false, "none"),
 	)
 })
+
+var _ = Describe("ServerCapabilities hasTrialedThisConnection", func() {
+	Context("when creating new ServerCapabilities", func() {
+		It("should default to false", func() {
+			caps := &ServerCapabilities{}
+			Expect(caps.hasTrialedThisConnection).To(BeFalse())
+		})
+	})
+
+	Context("when setting and reading field", func() {
+		It("can be set to true and read back", func() {
+			caps := &ServerCapabilities{}
+			caps.hasTrialedThisConnection = true
+			Expect(caps.hasTrialedThisConnection).To(BeTrue())
+		})
+	})
+
+	Context("independence from other fields", func() {
+		It("should not be affected by SupportsDataChangeFilter", func() {
+			caps := &ServerCapabilities{
+				SupportsDataChangeFilter: true,
+			}
+			Expect(caps.hasTrialedThisConnection).To(BeFalse(), "hasTrialedThisConnection should remain false even when SupportsDataChangeFilter is true")
+		})
+
+		It("should not affect other capability fields", func() {
+			caps := &ServerCapabilities{
+				SupportsDataChangeFilter: true,
+				SupportsPercentDeadband:  true,
+			}
+			caps.hasTrialedThisConnection = true
+
+			Expect(caps.SupportsDataChangeFilter).To(BeTrue(), "SupportsDataChangeFilter should remain true")
+			Expect(caps.SupportsPercentDeadband).To(BeTrue(), "SupportsPercentDeadband should remain true")
+		})
+	})
+})

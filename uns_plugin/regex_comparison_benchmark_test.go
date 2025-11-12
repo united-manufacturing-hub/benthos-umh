@@ -467,7 +467,7 @@ func BenchmarkCombinedSortedRegex_ManyPatterns(b *testing.B) {
 
 // Benchmark the current MessageProcessor implementation for comparison
 func BenchmarkCurrentMessageProcessor(b *testing.B) {
-	processor, err := NewMessageProcessor(testPatterns, &UnsInputMetrics{})
+	processor, err := NewMessageProcessor(testPatterns, &UnsInputMetrics{}, "bytes")
 	if err != nil {
 		b.Fatal(err)
 	}

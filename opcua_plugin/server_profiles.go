@@ -31,6 +31,56 @@ const (
 	ProfileUnknown         = "unknown"
 )
 
+// FilterCapability indicates known DataChangeFilter support status for OPC UA servers.
+//
+// This enum replaces hardcoded vendor checks with declarative profile configuration.
+// Zero value (FilterUnknown) enables trial-based discovery as sane default.
+//
+// Design philosophy (per UX Standards):
+// - Opinionated Simplicity: FilterUnknown=0 default enables automatic trial mechanism
+// - Immediate Trust: System works intelligently without requiring user configuration
+// - Progressive Power: Explicit FilterSupported/FilterUnsupported values optimize known servers
+type FilterCapability int
+
+const (
+	// FilterUnknown indicates DataChangeFilter support is unknown - trial on first batch.
+	// This is the sane default (zero value) that enables automatic capability discovery.
+	// When set, MonitorBatched will attempt filter on first subscription batch:
+	//   - If StatusBadFilterNotAllowed → cache failure, recursive retry without filter
+	//   - If success → cache success, use filter on subsequent batches
+	FilterUnknown FilterCapability = 0
+
+	// FilterSupported indicates DataChangeFilter is known to be supported - use immediately.
+	// Profile declares server supports Standard DataChange Subscription Server Facet (OPC UA Part 7).
+	// MonitorBatched will use filters without trial phase (optimization for known servers).
+	// Examples: Kepware, S7-1500, Ignition (Eclipse Milo), Prosys
+	FilterSupported FilterCapability = 1
+
+	// FilterUnsupported indicates DataChangeFilter is known to be unsupported - never trial.
+	// Profile declares server lacks Standard facet (e.g., Micro Embedded Device profile).
+	// MonitorBatched will permanently skip filters without attempting trial.
+	// Examples: S7-1200 (OPC UA Part 7, Section 6.4.3 - Micro Embedded Device 2017)
+	FilterUnsupported FilterCapability = -1
+
+	// FilterInvalid is used in tests to verify defensive handling of invalid enum values.
+	// Not used in production code.
+	FilterInvalid FilterCapability = 999
+)
+
+// String returns human-readable FilterCapability name for debugging
+func (f FilterCapability) String() string {
+	switch f {
+	case FilterUnknown:
+		return "FilterUnknown"
+	case FilterSupported:
+		return "FilterSupported"
+	case FilterUnsupported:
+		return "FilterUnsupported"
+	default:
+		return fmt.Sprintf("FilterCapability(%d)", int(f))
+	}
+}
+
 // ServerProfile defines OPC UA server optimization parameters
 type ServerProfile struct {
 	Name        string
@@ -50,6 +100,26 @@ type ServerProfile struct {
 	// MaxMonitoredItems is hardware limit on total monitored items server can handle (0 = unlimited).
 	// Example: S7-1200 = 1000 total, S7-1500 = 10000 total. Exceeding this causes subscription failures.
 	MaxMonitoredItems int
+
+	// FilterCapability indicates known DataChangeFilter support status (replaces SupportsDataChangeFilter).
+	// This is the PRIMARY field for filter capability configuration.
+	//
+	// Decision logic uses this enum to determine filter behavior:
+	//   FilterSupported   → Use filter immediately (no trial)
+	//   FilterUnsupported → Skip filter permanently (never trial)
+	//   FilterUnknown     → Trial on first batch, cache result
+	//
+	// Zero value (FilterUnknown) provides sane default with automatic discovery.
+	FilterCapability FilterCapability
+
+	// SupportsDataChangeFilter indicates if servers matching this profile
+	// support DataChangeFilter in MonitoredItems (OPC UA Part 4, Section 7.17).
+	//
+	// DEPRECATED: Use FilterCapability instead. This field is maintained for
+	// backward compatibility only and will be removed in a future version.
+	//
+	// Migration: true → FilterSupported, false → FilterUnsupported
+	SupportsDataChangeFilter bool
 }
 
 // Profile instances
@@ -61,23 +131,27 @@ type ServerProfile struct {
 // Research: See UMH-ENG-3852 for detailed analysis of optimal batch sizes per server type.
 var (
 	profileAuto = ServerProfile{
-		Name:              ProfileAuto,
-		DisplayName:       "Auto (Defensive Defaults)",
-		Description:       "Safe defaults that work with any OPC UA server, including resource-constrained embedded devices. System will auto-detect known servers and optimize automatically.",
-		MaxBatchSize:      50,
-		MaxWorkers:        5,
-		MinWorkers:        1,
-		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
+		Name:                     ProfileAuto,
+		DisplayName:              "Auto (Defensive Defaults)",
+		Description:              "Safe defaults that work with any OPC UA server, including resource-constrained embedded devices. System will auto-detect known servers and optimize automatically.",
+		MaxBatchSize:             50,
+		MaxWorkers:               5,
+		MinWorkers:               1,
+		MaxMonitoredItems:        0,              // No limit (unlimited subscription capacity)
+		FilterCapability:         FilterUnknown,  // Sane default: trial-based discovery for unknown servers
+		SupportsDataChangeFilter: false,          // DEPRECATED: Use FilterCapability instead
 	}
 
 	profileHighPerformance = ServerProfile{
-		Name:              ProfileHighPerformance,
-		DisplayName:       "High-Performance (VM Servers)",
-		Description:       "Aggressive profile for high-performance OPC UA servers running on VM infrastructure. Use when you know your server can handle high concurrency.",
-		MaxBatchSize:      1000,
-		MaxWorkers:        50,
-		MinWorkers:        10,
-		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
+		Name:                     ProfileHighPerformance,
+		DisplayName:              "High-Performance (VM Servers)",
+		Description:              "Aggressive profile for high-performance OPC UA servers running on VM infrastructure. Use when you know your server can handle high concurrency.",
+		MaxBatchSize:             1000,
+		MaxWorkers:               50,
+		MinWorkers:               10,
+		MaxMonitoredItems:        0,                 // No limit (unlimited subscription capacity)
+		FilterCapability:         FilterSupported,   // VM servers typically support Standard facet
+		SupportsDataChangeFilter: true,              // DEPRECATED: Use FilterCapability instead
 	}
 
 	profileIgnition = ServerProfile{
@@ -88,45 +162,53 @@ var (
 		// No Ignition-specific guidance available; Eclipse Milo implementation follows OPC UA Part 5 defaults.
 		// Server reports MaxMonitoredItemsPerCall=10000 (tested 2025-11-07).
 		// Source: Eclipse Milo implementation + OPC Foundation best practices
-		MaxBatchSize:      100,
-		MaxWorkers:        20,
-		MinWorkers:        5,
-		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
+		MaxBatchSize:             100,
+		MaxWorkers:               20,
+		MinWorkers:               5,
+		MaxMonitoredItems:        0,                 // No limit (unlimited subscription capacity)
+		FilterCapability:         FilterSupported,   // Eclipse Milo implements Standard facet
+		SupportsDataChangeFilter: true,              // DEPRECATED: Use FilterCapability instead
 	}
 
 	profileKepware = ServerProfile{
-		Name:              ProfileKepware,
-		DisplayName:       "Kepware KEPServerEX",
-		Description:       "Optimized for PTC Kepware KEPServerEX. Supports up to 128 OPC UA sessions (default, configurable to 4000).",
-		MaxBatchSize:      1000,
-		MaxWorkers:        40,
-		MinWorkers:        5,
-		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
+		Name:                     ProfileKepware,
+		DisplayName:              "Kepware KEPServerEX",
+		Description:              "Optimized for PTC Kepware KEPServerEX. Supports up to 128 OPC UA sessions (default, configurable to 4000).",
+		MaxBatchSize:             1000,
+		MaxWorkers:               40,
+		MinWorkers:               5,
+		MaxMonitoredItems:        0,                 // No limit (unlimited subscription capacity)
+		FilterCapability:         FilterSupported,   // Standard OPC UA server with full support
+		SupportsDataChangeFilter: true,              // DEPRECATED: Use FilterCapability instead
 	}
 
 	profileS71200 = ServerProfile{
 		Name:        ProfileS71200,
 		DisplayName: "Siemens S7-1200 PLC",
-		Description: "Optimized for Siemens S7-1200 PLCs (Firmware V4.4+). Limited to 10 concurrent sessions and 1000 total monitored items. Server reports: MaxMonitoredItemsPerCall=1000, MaxNodesPerBrowse=2000, MaxNodesPerRead=2000, MaxNodesPerWrite=2000 (tested 2025-11-07).",
+		Description: "Optimized for Siemens S7-1200 PLCs (Firmware V4.4+). Limited to 10 concurrent sessions and 1000 total monitored items. Does NOT support DataChangeFilter (Micro Embedded Device 2017 profile). Server reports: MaxMonitoredItemsPerCall=1000, MaxNodesPerBrowse=2000, MaxNodesPerRead=2000, MaxNodesPerWrite=2000 (tested 2025-11-07).",
 		// MaxBatchSize: Validated at 100 via Siemens Entry-ID 109755846 (02/2024) and production testing.
 		// Embedded PLC with limited resources; values >200 cause 50x performance degradation.
 		// Server reports MaxMonitoredItemsPerCall=1000 (tested 2025-11-07), but real-world limit is 100-200.
 		// Source: https://cache.industry.siemens.com/dl/files/846/109755846/att_1163306/v4/109755846_TIA_Portal_OPC_UA_system_limits.pdf
 		// Case study: https://forum.prosysopc.com/forum/opc-ua-java-sdk/how-to-subscribe-over-1500-nodes-from-siemens-s7-opcua-server/
-		MaxBatchSize:      100,
-		MaxWorkers:        10,
-		MinWorkers:        3,
-		MaxMonitoredItems: 1000, // Hardware limit
+		MaxBatchSize:             100,
+		MaxWorkers:               10,
+		MinWorkers:               3,
+		MaxMonitoredItems:        1000,                // Hardware limit
+		FilterCapability:         FilterUnsupported,   // Micro Embedded Device 2017 profile lacks Standard facet
+		SupportsDataChangeFilter: false,               // DEPRECATED: Use FilterCapability instead
 	}
 
 	profileS71500 = ServerProfile{
-		Name:              ProfileS71500,
-		DisplayName:       "Siemens S7-1500 PLC",
-		Description:       "Optimized for Siemens S7-1500 PLCs (CPU 1511-1513, Firmware V3.1+). Supports 32 concurrent sessions and 10000 total monitored items.",
-		MaxBatchSize:      500,
-		MaxWorkers:        20,
-		MinWorkers:        5,
-		MaxMonitoredItems: 10000, // Hardware limit
+		Name:                     ProfileS71500,
+		DisplayName:              "Siemens S7-1500 PLC",
+		Description:              "Optimized for Siemens S7-1500 PLCs (CPU 1511-1513, Firmware V3.1+). Supports 32 concurrent sessions and 10000 total monitored items.",
+		MaxBatchSize:             500,
+		MaxWorkers:               20,
+		MinWorkers:               5,
+		MaxMonitoredItems:        10000,             // Hardware limit
+		FilterCapability:         FilterSupported,   // Standard facet with DataChangeFilter support
+		SupportsDataChangeFilter: true,              // DEPRECATED: Use FilterCapability instead
 	}
 
 	profileProsys = ServerProfile{
@@ -137,20 +219,24 @@ var (
 		// Simulation Server becomes unresponsive with 10,000+ points per subscription.
 		// Server reports MaxMonitoredItemsPerCall=10000 (tested 2025-11-07), but 800 provides safe headroom.
 		// Source: OPC UA Part 5 spec (OperationLimitsType default: 10,000) + Prosys forum case studies
-		MaxBatchSize:      800,
-		MaxWorkers:        60,
-		MinWorkers:        5,
-		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
+		MaxBatchSize:             800,
+		MaxWorkers:               60,
+		MinWorkers:               5,
+		MaxMonitoredItems:        0,                 // No limit (unlimited subscription capacity)
+		FilterCapability:         FilterSupported,   // Full Standard DataChangeFilter support
+		SupportsDataChangeFilter: true,              // DEPRECATED: Use FilterCapability instead
 	}
 
 	profileUnknown = ServerProfile{
-		Name:              ProfileUnknown,
-		DisplayName:       "Unknown Server (Fallback)",
-		Description:       "Conservative fallback used when server vendor cannot be detected. Same as Auto profile.",
-		MaxBatchSize:      50,
-		MaxWorkers:        5,
-		MinWorkers:        1,
-		MaxMonitoredItems: 0, // No limit (unlimited subscription capacity)
+		Name:                     ProfileUnknown,
+		DisplayName:              "Unknown Server (Fallback)",
+		Description:              "Conservative fallback used when server vendor cannot be detected. Same as Auto profile.",
+		MaxBatchSize:             50,
+		MaxWorkers:               5,
+		MinWorkers:               1,
+		MaxMonitoredItems:        0,              // No limit (unlimited subscription capacity)
+		FilterCapability:         FilterUnknown,  // Sane default: trial-based discovery for unknown servers
+		SupportsDataChangeFilter: false,          // DEPRECATED: Use FilterCapability instead
 	}
 )
 

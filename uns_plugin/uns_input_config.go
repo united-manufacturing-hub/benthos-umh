@@ -26,6 +26,7 @@ const (
 	defaultInputKafkaTopic = "umh.messages"
 	defaultTopicKey        = ".*"
 	defaultConsumerGroup   = "uns_plugin"
+	defaultMetadataFormat  = MetadataFormatString
 	defaultConnIdleTimeout = 15 * time.Minute
 	defaultDialTimeout     = 10 * time.Second
 
@@ -38,12 +39,20 @@ const (
 	defaultFetchMaxWaitTime       = 1 * time.Second
 )
 
+type MetadataFormat string
+
+const (
+	MetadataFormatString MetadataFormat = "string"
+	MetadataFormatBytes  MetadataFormat = "bytes"
+)
+
 // UnsInputConfig holds the configuration for the UNS input plugin
 type UnsInputConfig struct {
 	umhTopics       []string
 	inputKafkaTopic string
 	brokerAddress   string
 	consumerGroup   string
+	metadataFormat  MetadataFormat
 }
 
 // NewDefaultUnsInputConfig creates a new input config with default values
@@ -53,6 +62,7 @@ func NewDefaultUnsInputConfig() UnsInputConfig {
 		inputKafkaTopic: defaultInputKafkaTopic,
 		brokerAddress:   defaultBrokerAddress,
 		consumerGroup:   defaultConsumerGroup,
+		metadataFormat:  defaultMetadataFormat,
 	}
 }
 
@@ -141,6 +151,23 @@ func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsIn
 		config.consumerGroup = cg
 	}
 
+	// Parse metadata_format
+	if conf.Contains("metadata_format") {
+		metadataFormat, err := conf.FieldString("metadata_format")
+		if err != nil {
+			return config, fmt.Errorf("error while parsing the 'metadata_format' from the plugin's config: %v", err)
+		}
+		// Validate the value
+		switch metadataFormat {
+		case string(MetadataFormatString):
+			config.metadataFormat = MetadataFormatString
+		case string(MetadataFormatBytes):
+			config.metadataFormat = MetadataFormatBytes
+		default:
+			return config, fmt.Errorf("metadata_format must be 'string' or 'bytes', got '%s'", metadataFormat)
+		}
+	}
+
 	return config, nil
 }
 
@@ -207,5 +234,13 @@ In most UMH deployments, the default value is sufficient as Kafka runs on the sa
 	The consumer group id to be used by the plugin. The default consumer group id is uns_plugin. This is an optional plugin input and can be used by the users if one wants to read the topic with a different consumer group discarding the previous consumed offsets.
 	`).
 			Example("uns_consumer_group").
-			Default(defaultConsumerGroup))
+			Default(defaultConsumerGroup)).
+		Field(service.NewStringField("metadata_format").
+			Description(`Controls how Kafka headers are stored in Benthos metadata.
+- "string": Convert headers to strings (recommended, fixes byte array issue)
+- "bytes": Keep headers as byte arrays (legacy behavior for backward compatibility)
+
+Default: "string" for new configs.`).
+			Default("string").
+			LintRule(`root = if this == "string" || this == "bytes" { null } else { "must be 'string' or 'bytes'" }`))
 }
