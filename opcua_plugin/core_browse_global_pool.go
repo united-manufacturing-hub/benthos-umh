@@ -62,8 +62,7 @@ type GlobalPoolTask struct {
 	ParentNodeID string          // Parent node identifier
 
 	// Shared state (NEW - passed from read_discover.go)
-	Visited *sync.Map      // Prevents duplicate visits
-	Metrics *ServerMetrics // Per-browse metrics tracking
+	Visited *sync.Map // Prevents duplicate visits
 
 	// Result delivery (existing)
 	ResultChan   interface{}        // Accepts any channel type (e.g., chan NodeDef, chan<- NodeDef)
@@ -654,7 +653,6 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 						Level:        task.Level + 1,
 						ParentNodeID: task.NodeID,
 						Visited:      task.Visited,
-						Metrics:      task.Metrics,
 						ResultChan:   task.ResultChan,
 						ErrChan:      task.ErrChan,
 					}

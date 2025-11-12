@@ -67,7 +67,7 @@ import (
 // 4. Workers discover nodes → nodeChan consumer builds nodeList
 // 5. MonitorBatched() subscribes to discovered nodes in batches
 // 6. ReadBatch() streams changes to subsequent Benthos pipeline processors/outputs
-func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]string, error) {
+func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 	// This was previously 5 minutes, but we need to increase it to 1 hour to avoid context cancellation
 	// when browsing a large number of nodes.
 	timeoutCtx, cancel := context.WithTimeout(ctx, 1*time.Hour)
@@ -86,7 +86,6 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	g.Log.Debugf("GlobalWorkerPool spawned %d initial workers for browse operations", workersSpawned)
 
 	nodeList := make([]NodeDef, 0)
-	pathIDMap := make(map[string]string)
 	nodeChan := make(chan NodeDef, MaxTagsToBrowse)
 	errChan := make(chan error, MaxTagsToBrowse)
 	// opcuaBrowserChan exists to prevent worker deadlock - workers send BrowseDetails but data is not used.
@@ -115,8 +114,8 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 			select {
 			case <-ticker.C:
 				metrics := pool.GetMetrics()
-				g.Log.Infof("Amount of found opcua tags currently in channel: %d, (pool: %d active workers, %d pending tasks)",
-					len(nodeChan), metrics.ActiveWorkers, metrics.QueueDepth)
+				g.Log.Infof("Amount of found opcua tags: %d (pool: %d active workers, %d pending tasks)",
+					len(nodeList), metrics.ActiveWorkers, metrics.QueueDepth)
 			case <-done:
 				return
 			case <-timeoutCtx.Done():
@@ -173,9 +172,6 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	go func() {
 		for node := range nodeChan {
 			nodeList = append(nodeList, node)
-			if node.NodeID != nil {
-				pathIDMap[node.Path] = node.NodeID.String()
-			}
 		}
 		close(consumerDone)
 	}()
@@ -191,7 +187,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	select {
 	case <-timeoutCtx.Done():
 		g.Log.Warn("browse function received timeout signal after 1 hour. Please select less nodes.")
-		return nil, nil, timeoutCtx.Err()
+		return nil, timeoutCtx.Err()
 	case <-done:
 	}
 
@@ -217,10 +213,10 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		for err := range errChan {
 			combinedErr.WriteString(err.Error() + "; ")
 		}
-		return nil, nil, errors.New(combinedErr.String())
+		return nil, errors.New(combinedErr.String())
 	}
 
-	return nodeList, pathIDMap, nil
+	return nodeList, nil
 }
 
 // BrowseAndSubscribeIfNeeded browses the specified OPC UA nodes, adds a heartbeat node if required,
@@ -239,7 +235,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 		g.Log.Infof("All requested nodes are fresh, skipping rebrowse. Using chaced nodelist")
 		nodeList = g.buildNodeListFromCache()
 	} else {
-		nodeList, _, err = g.discoverNodes(ctx)
+		nodeList, err = g.discoverNodes(ctx)
 		if err != nil {
 			g.Log.Infof("error while getting the node list: %v", err)
 			return err

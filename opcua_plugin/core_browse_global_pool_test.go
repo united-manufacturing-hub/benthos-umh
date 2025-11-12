@@ -2130,17 +2130,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 				Expect(val).NotTo(BeNil())
 			})
 
-			It("should have Metrics field for per-browse metrics tracking", func() {
-				// This will fail until ServerMetrics is properly defined
-				profile := ServerProfile{MaxWorkers: 5}
-				metrics := NewServerMetrics(profile)
-
-				task := GlobalPoolTask{
-					Metrics: metrics,
-				}
-				Expect(task.Metrics).To(Equal(metrics))
-				Expect(task.Metrics).NotTo(BeNil())
-			})
 		})
 
 		Context("when creating complete task with all fields", func() {
@@ -2148,8 +2137,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 				ctx := context.Background()
 				mockNode := &mockNodeBrowser{}
 				visited := &sync.Map{}
-				profile := ServerProfile{MaxWorkers: 5}
-				metrics := NewServerMetrics(profile)
 				resultChan := make(chan NodeDef, 1)
 				errChan := make(chan error, 1)
 				progressChan := make(chan BrowseDetails, 1)
@@ -2167,7 +2154,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 					// Shared state
 					Visited: visited,
-					Metrics: metrics,
 
 					// Result delivery
 					ResultChan:   resultChan,
@@ -2183,7 +2169,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 				Expect(task.Level).To(Equal(3))
 				Expect(task.ParentNodeID).To(Equal("ns=2;i=999"))
 				Expect(task.Visited).To(Equal(visited))
-				Expect(task.Metrics).To(Equal(metrics))
 				Expect(task.ResultChan).To(Equal(resultChan))
 				// Note: ErrChan and ProgressChan use send-only channel types (chan<- T)
 				// When assigned from bidirectional channels, Go converts them at compile time
@@ -2240,10 +2225,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 				var _ *sync.Map = task.Visited
 			})
 
-			It("should have Metrics as *ServerMetrics type", func() {
-				task := GlobalPoolTask{}
-				var _ *ServerMetrics = task.Metrics
-			})
 		})
 	})
 
@@ -2271,7 +2252,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				ctx := context.Background()
 				visited := &sync.Map{}
-				metrics := NewServerMetrics(profile)
 				resultChan := make(chan NodeDef, 1)
 
 				task := GlobalPoolTask{
@@ -2281,7 +2261,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 					Path:       "enterprise.site",
 					Level:      1,
 					Visited:    visited,
-					Metrics:    metrics,
 					ResultChan: resultChan,
 				}
 
@@ -2318,7 +2297,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 				// Create cancellable context
 				ctx, cancel := context.WithCancel(context.Background())
 				visited := &sync.Map{}
-				metrics := NewServerMetrics(profile)
 				resultChan := make(chan NodeDef, 1)
 				errChan := make(chan error, 1)
 
@@ -2329,7 +2307,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 					Path:       "enterprise.site",
 					Level:      1,
 					Visited:    visited,
-					Metrics:    metrics,
 					ResultChan: resultChan,
 					ErrChan:    errChan,
 				}
@@ -2380,7 +2357,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				ctx := context.Background()
 				visited := &sync.Map{}
-				metrics := NewServerMetrics(profile)
 				resultChan := make(chan NodeDef, 10) // Buffer for parent + children
 
 				task := GlobalPoolTask{
@@ -2390,7 +2366,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 					Path:       "enterprise.site",
 					Level:      1,
 					Visited:    visited,
-					Metrics:    metrics,
 					ResultChan: resultChan,
 				}
 
@@ -2446,7 +2421,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				ctx := context.Background()
 				visited := &sync.Map{}
-				metrics := NewServerMetrics(profile)
 				resultChan := make(chan NodeDef, 10)
 
 				task := GlobalPoolTask{
@@ -2457,7 +2431,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 					Level:        1,
 					ParentNodeID: "ns=2;i=999",
 					Visited:      visited,
-					Metrics:      metrics,
 					ResultChan:   resultChan,
 				}
 
@@ -2497,7 +2470,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				ctx := context.Background()
 				visited := &sync.Map{}
-				metrics := NewServerMetrics(profile)
 				resultChan := make(chan NodeDef, 1)
 				errChan := make(chan error, 1)
 
@@ -2508,7 +2480,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 					Path:       "enterprise.site",
 					Level:      1,
 					Visited:    visited,
-					Metrics:    metrics,
 					ResultChan: resultChan,
 					ErrChan:    errChan,
 				}
@@ -2552,7 +2523,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				ctx := context.Background()
 				visited := &sync.Map{}
-				metrics := NewServerMetrics(profile)
 				errChan := make(chan error, 2)
 				resultChan1 := make(chan NodeDef, 1)
 				resultChan2 := make(chan NodeDef, 1)
@@ -2564,7 +2534,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 					Path:       "enterprise.site",
 					Level:      1,
 					Visited:    visited,
-					Metrics:    metrics,
 					ResultChan: resultChan1,
 					ErrChan:    errChan,
 				}
@@ -2576,7 +2545,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 					Path:       "enterprise.site",
 					Level:      1,
 					Visited:    visited,
-					Metrics:    metrics,
 					ResultChan: resultChan2,
 					ErrChan:    errChan,
 				}
@@ -2618,7 +2586,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				ctx := context.Background()
 				visited := &sync.Map{}
-				metrics := NewServerMetrics(profile)
 				resultChan := make(chan NodeDef, 10)
 
 				task := GlobalPoolTask{
@@ -2628,7 +2595,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 					Path:       "enterprise.site.area.line.machine",
 					Level:      25, // Maximum recursion depth
 					Visited:    visited,
-					Metrics:    metrics,
 					ResultChan: resultChan,
 				}
 
@@ -2679,7 +2645,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				ctx := context.Background()
 				visited := &sync.Map{}
-				metrics := NewServerMetrics(profile)
 				resultChan := make(chan NodeDef, 10)
 
 				task := GlobalPoolTask{
@@ -2689,7 +2654,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 					Path:       "enterprise",
 					Level:      1, // Start at level 1
 					Visited:    visited,
-					Metrics:    metrics,
 					ResultChan: resultChan,
 				}
 
@@ -2737,7 +2701,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 						Path: "enterprise.site",
 					},
 				})
-				metrics := NewServerMetrics(profile)
 				resultChan := make(chan NodeDef, 1)
 
 				task := GlobalPoolTask{
@@ -2747,7 +2710,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 					Path:       "enterprise.site",
 					Level:      1,
 					Visited:    visited,
-					Metrics:    metrics,
 					ResultChan: resultChan,
 				}
 
@@ -2784,7 +2746,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				ctx := context.Background()
 				visited := &sync.Map{}
-				metrics := NewServerMetrics(profile)
 				resultChan := make(chan NodeDef, 1)
 
 				task := GlobalPoolTask{
@@ -2794,7 +2755,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 					Path:       "enterprise.site",
 					Level:      1,
 					Visited:    visited,
-					Metrics:    metrics,
 					ResultChan: resultChan,
 				}
 
@@ -2843,7 +2803,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				ctx := context.Background()
 				visited := &sync.Map{}
-				metrics := NewServerMetrics(profile)
 				resultChan := make(chan NodeDef, 10)
 
 				task := GlobalPoolTask{
@@ -2853,7 +2812,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 					Path:       "enterprise.site",
 					Level:      1,
 					Visited:    visited,
-					Metrics:    metrics,
 					ResultChan: resultChan,
 				}
 
@@ -2889,7 +2847,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				ctx := context.Background()
 				visited := &sync.Map{}
-				metrics := NewServerMetrics(profile)
 				resultChan := make(chan NodeDef, 1)
 
 				task := GlobalPoolTask{
@@ -2899,7 +2856,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 					Path:       "enterprise.site.area",
 					Level:      3,
 					Visited:    visited,
-					Metrics:    metrics,
 					ResultChan: resultChan,
 				}
 
@@ -3057,7 +3013,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 			ctx := context.Background()
 			visited := &sync.Map{}
-			metrics := NewServerMetrics(profile)
 			resultChan := make(chan NodeDef, 2000)
 
 			task := GlobalPoolTask{
@@ -3067,7 +3022,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 				Path:       "enterprise.site",
 				Level:      1,
 				Visited:    visited,
-				Metrics:    metrics,
 				ResultChan: resultChan,
 			}
 
