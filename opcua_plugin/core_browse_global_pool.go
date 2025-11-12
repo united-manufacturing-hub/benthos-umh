@@ -324,7 +324,7 @@ func (gwp *GlobalWorkerPool) GetMetrics() PoolMetrics {
 //   - chan<- any (send-only backward compat)
 //
 // Behavior:
-//   - nonBlocking=true: Uses select/default for production browse (prevents deadlock)
+//   - nonBlocking=true: Uses context-aware blocking send (prevents data loss)
 //   - nonBlocking=false: Uses direct send for test stub mode (supports unbuffered channels)
 //
 // Logs debug message when channel type is unsupported (helps diagnose integration issues).
@@ -334,34 +334,35 @@ func (gwp *GlobalWorkerPool) sendTaskResult(task GlobalPoolTask, stubNode NodeDe
 	}
 
 	if nonBlocking {
-		// Production mode: non-blocking send to prevent deadlock
+		// Production mode: context-aware blocking send (prevents data loss)
+		// Blocks until consumer receives result or context cancelled
 		switch ch := task.ResultChan.(type) {
 		case chan NodeDef:
 			select {
 			case ch <- stubNode:
 				return true
-			default:
+			case <-task.Ctx.Done():
 				return false
 			}
 		case chan<- NodeDef:
 			select {
 			case ch <- stubNode:
 				return true
-			default:
+			case <-task.Ctx.Done():
 				return false
 			}
 		case chan any:
 			select {
 			case ch <- struct{}{}: // Backward compat
 				return true
-			default:
+			case <-task.Ctx.Done():
 				return false
 			}
 		case chan<- any:
 			select {
 			case ch <- struct{}{}: // Backward compat
 				return true
-			default:
+			case <-task.Ctx.Done():
 				return false
 			}
 		default:
