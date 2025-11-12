@@ -88,21 +88,6 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 	nodeList := make([]NodeDef, 0)
 	nodeChan := make(chan NodeDef, MaxTagsToBrowse)
 	errChan := make(chan error, MaxTagsToBrowse)
-	// opcuaBrowserChan exists to prevent worker deadlock - workers send BrowseDetails but data is not used.
-	// Channel is drained but not consumed for any progress tracking or UI updates (legacy UI code removed).
-	// Buffer size reduced to 1000 (from 100k) since consumer drains instantly - saves 33 MB memory
-	opcuaBrowserChan := make(chan BrowseDetails, 1000)
-
-	// Start concurrent consumer to drain opcuaBrowserChan as workers produce BrowseDetails
-	// This prevents deadlock by ensuring channel never fills (discovered in ENG-3835 integration test)
-	// Without this consumer, workers block after 100k nodes and hang until timeout
-	opcuaBrowserConsumerDone := make(chan struct{})
-	go func() {
-		for range opcuaBrowserChan {
-			// Discard - channel exists to prevent worker deadlock, data is not used for any purpose
-		}
-		close(opcuaBrowserConsumerDone)
-	}()
 
 	done := make(chan struct{})
 
@@ -150,17 +135,15 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 			Level:        0,  // Start at recursion level 0
 			ParentNodeID: nodeID.String(),
 			Visited:      &g.visited,
-			ResultChan:   nodeChan,         // Workers send NodeDef results here
-			ErrChan:      errChan,          // Workers send errors here
-			ProgressChan: opcuaBrowserChan, // Workers send BrowseDetails progress here
+			ResultChan:   nodeChan,      // Workers send NodeDef results here
+			ErrChan:      errChan,       // Workers send errors here
+			ProgressChan: nil,           // No progress reporting in production
 		}
 
 		if err := pool.SubmitTask(task); err != nil {
-			g.Log.Warnf("Failed to submit task for NodeID %s: %v", nodeID.String(), err)
-			// Task wasn't queued - don't count it
-		} else {
-			submittedCount++
+			return nil, fmt.Errorf("failed to submit task for NodeID %s: %w", nodeID.String(), err)
 		}
+		submittedCount++
 	}
 
 	g.Log.Debugf("Successfully submitted %d/%d tasks to GlobalWorkerPool (buffer capacity: %d)",
@@ -193,11 +176,9 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 
 	close(nodeChan)
 	close(errChan)
-	close(opcuaBrowserChan)
 
-	// Wait for consumers to finish draining the channels
+	// Wait for consumer to finish draining the channel
 	<-consumerDone
-	<-opcuaBrowserConsumerDone
 
 	// Explicit shutdown after all browse() goroutines complete
 	// This ensures wg.Wait() finishes before pool workers are terminated
@@ -263,7 +244,6 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 			// Use separate pool for heartbeat node browse
 			nodeHeartbeatChan := make(chan NodeDef, 1)
 			errChanHeartbeat := make(chan error, 1)
-			opcuaBrowserChanHeartbeat := make(chan BrowseDetails, 1)
 
 			heartbeatPool := NewGlobalWorkerPool(g.ServerProfile, g.Log)
 			defer func() {
@@ -289,7 +269,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 				Visited:      &g.visited,
 				ResultChan:   nodeHeartbeatChan,
 				ErrChan:      errChanHeartbeat,
-				ProgressChan: opcuaBrowserChanHeartbeat,
+				ProgressChan: nil, // No progress reporting in production
 			}
 
 			if err := heartbeatPool.SubmitTask(task); err != nil {
@@ -303,7 +283,6 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 
 			close(nodeHeartbeatChan)
 			close(errChanHeartbeat)
-			close(opcuaBrowserChanHeartbeat)
 
 			for node := range nodeHeartbeatChan {
 				nodeList = append(nodeList, node)
