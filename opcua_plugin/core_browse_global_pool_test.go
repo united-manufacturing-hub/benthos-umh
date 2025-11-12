@@ -1535,7 +1535,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should increment counter for each task submitted", func() {
 				profile := ServerProfile{MaxWorkers: 10}
 				pool := NewGlobalWorkerPool(profile, logger)
-				pool.SpawnWorkers(3)
+				// Don't spawn workers - prevents race where workers process tasks before assertion
 
 				// Submit 5 tasks
 				for i := 0; i < 5; i++ {
@@ -1545,9 +1545,9 @@ var _ = Describe("GlobalWorkerPool", func() {
 					Expect(err).ToNot(HaveOccurred())
 				}
 
-				// Counter should reflect all submitted tasks
+				// Counter should reflect all submitted tasks (none processed yet)
 				pending := atomic.LoadInt64(&pool.pendingTasks)
-				Expect(pending).To(BeNumerically(">=", int64(3))) // At least 3 still pending
+				Expect(pending).To(Equal(int64(5))) // Exactly 5 pending (no workers running)
 			})
 
 			It("should increment atomically during concurrent submissions", func() {
