@@ -611,6 +611,53 @@ var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
 		})
 
 		Context("error handling and resource cleanup", func() {
+			It("should propagate pool completion errors to caller", func() {
+				// TDD RED Phase: Test for ENG-3876 fix
+				// EXPECTATION: If pool.WaitForCompletion times out, error should reach errChan
+				// CURRENT BUG: Error logged but not propagated (lines 163-168 read_discover.go)
+				// This test will FAIL until fix is implemented
+
+				pool := NewGlobalWorkerPool(profile, logger)
+				pool.SpawnWorkers(1)
+
+				ctx := context.Background()
+				errChan := make(chan error, 1) // Buffered to prevent blocking
+
+				// Create blocking task that never completes (simulates slow server)
+				blockingNode := &mockNodeBrowser{
+					id:         ua.MustParseNodeID("ns=1;i=1000"),
+					browseName: "NeverCompletesNode",
+					children:   []NodeBrowser{},
+				}
+
+				// Submit task and immediately shutdown pool to force WaitForCompletion timeout
+				task := GlobalPoolTask{
+					NodeID:     "ns=1;i=1000",
+					Ctx:        ctx,
+					Node:       blockingNode,
+					ResultChan: make(chan NodeDef), // Unbuffered = blocks worker
+					ErrChan:    errChan,
+				}
+				pool.SubmitTask(task)
+
+				// Force WaitForCompletion to timeout by shutting down with short timeout
+				// This simulates the scenario in discoverNodes where pool completion hangs
+				go func() {
+					time.Sleep(50 * time.Millisecond)
+					_ = pool.Shutdown(10 * time.Millisecond) // Will timeout
+				}()
+
+				// VERIFICATION: Error should be sent to errChan
+				// Current bug: errChan receives nothing (error only logged)
+				select {
+				case err := <-errChan:
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(ContainSubstring("browse pool completion failed"))
+				case <-time.After(500 * time.Millisecond):
+					Fail("Expected pool completion error to be propagated to errChan, but timeout occurred")
+				}
+			})
+
 			It("should handle pool shutdown errors gracefully", func() {
 				// TEST EXPECTATION: discoverNodes logs warning if shutdown fails
 				// CURRENT IMPLEMENTATION: Shutdown called but no error propagation needed
