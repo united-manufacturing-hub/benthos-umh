@@ -29,8 +29,6 @@
 //
 // NOT used by:
 // - GlobalWorkerPool (legacy unused pattern - DO NOT conflate with this system)
-//
-// See ARCHITECTURE.md for detailed explanation of two code paths (production vs. legacy UI).
 
 //
 // ╔══════════════════════════════════════════════════════════════════════════╗
@@ -161,8 +159,6 @@ type Logger interface {
 // - Production code NEVER calls Browse() or GetNodeTree() directly
 // - Only GetNodeTree() (legacy UI) and tests call the Browse() wrapper
 // - All paths eventually use browse() internal implementation
-//
-// See ARCHITECTURE.md for detailed explanation of two code paths.
 //
 // Browse is a public wrapper function for the browse() internal implementation.
 //

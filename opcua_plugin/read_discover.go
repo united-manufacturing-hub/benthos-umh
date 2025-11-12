@@ -27,7 +27,6 @@
 // ║  • Production-grade error handling and performance monitoring           ║
 // ║                                                                          ║
 // ║  Do NOT use GetNodeTree() (legacy UI) for production - use this!        ║
-// ║  See: ARCHITECTURE.md for detailed comparison of code paths             ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
 package opcua_plugin
@@ -68,8 +67,6 @@ import (
 // 4. Workers discover nodes → nodeChan consumer builds nodeList
 // 5. MonitorBatched() subscribes to discovered nodes in batches
 // 6. Read() streams changes to Kafka
-//
-// See ARCHITECTURE.md for detailed explanation of production vs. legacy UI paths.
 func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]string, error) {
 	// This was previously 5 minutes, but we need to increase it to 1 hour to avoid context cancellation
 	// when browsing a large number of nodes.

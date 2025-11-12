@@ -33,7 +33,6 @@
 // ║  • Tree construction overhead not suitable for production streaming     ║
 // ║                                                                          ║
 // ║  For production use: See read_discover.go (PRODUCTION CODE PATH)        ║
-// ║  See: ARCHITECTURE.md for detailed comparison of code paths             ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
 package opcua_plugin
@@ -93,8 +92,6 @@ type BrowseDetails struct {
 // - UI needs tree structure, production needs flat node list for subscription
 // - UI uses defensive profile, production uses auto-detected/tuned profile
 // - UI doesn't subscribe to nodes, production subscribes for streaming
-//
-// See ARCHITECTURE.md for detailed comparison of production vs. legacy UI paths.
 func (g *OPCUAConnection) GetNodeTree(ctx context.Context, msgChan chan<- string, rootNode *Node) (*Node, error) {
 	if g.Client == nil {
 		err := g.connect(ctx)
