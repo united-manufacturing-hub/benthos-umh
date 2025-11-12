@@ -28,6 +28,7 @@ const (
 	ProfileS71200          = "siemens-s7-1200"
 	ProfileS71500          = "siemens-s7-1500"
 	ProfileProsys          = "prosys"
+	ProfileUnknown         = "unknown"
 )
 
 // FilterCapability indicates known DataChangeFilter support status for OPC UA servers.
@@ -227,7 +228,7 @@ var (
 	}
 
 	profileUnknown = ServerProfile{
-		Name:                     "unknown",
+		Name:                     ProfileUnknown,
 		DisplayName:              "Unknown Server (Fallback)",
 		Description:              "Conservative fallback used when server vendor cannot be detected. Same as Auto profile.",
 		MaxBatchSize:             50,
@@ -311,9 +312,33 @@ func GetProfileByName(name string) ServerProfile {
 	}
 }
 
+// Validation Architecture Design Decision
+//
+// Profile values are COMPILE-TIME constants (hardcoded in this file).
+// Profile selection is RUNTIME choice (user config or auto-detection).
+//
+// Therefore, validation strategy is:
+// 1. COMPILE-TIME validation: init() panics on invalid profile constants (fail-fast)
+// 2. RUNTIME defense-in-depth: NewServerMetrics() clamps user input at usage points
+//
+// This validateProfile() function enforces compile-time constraints on hardcoded profiles.
+// Any panic here indicates a programming error in profile definitions, not user error.
+
 // validateProfile panics if hardcoded profile violates constraints
 // This is defensive programming - catches programming mistakes in profile definitions
 func validateProfile(p ServerProfile) {
+	if p.MinWorkers < 1 {
+		panic(fmt.Sprintf(
+			"PROGRAMMING ERROR in profile %s: MinWorkers (%d) must be >= 1. "+
+				"This is a hardcoded profile constant bug that must be fixed in code.",
+			p.Name, p.MinWorkers))
+	}
+	if p.MaxWorkers < 1 {
+		panic(fmt.Sprintf(
+			"PROGRAMMING ERROR in profile %s: MaxWorkers (%d) must be >= 1. "+
+				"This is a hardcoded profile constant bug that must be fixed in code.",
+			p.Name, p.MaxWorkers))
+	}
 	if p.MinWorkers > p.MaxWorkers {
 		panic(fmt.Sprintf(
 			"PROGRAMMING ERROR in profile %s: MinWorkers (%d) > MaxWorkers (%d). "+
