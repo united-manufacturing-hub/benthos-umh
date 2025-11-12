@@ -163,6 +163,12 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 	go func() {
 		if err := pool.WaitForCompletion(DefaultBrowseCompletionTimeout); err != nil {
 			g.Log.Warnf("Pool completion wait error: %v", err)
+			// Propagate error to caller so discoverNodes can handle timeout
+			select {
+			case errChan <- fmt.Errorf("browse pool completion failed: %w", err):
+			default:
+				g.Log.Errorf("Failed to propagate pool completion error (channel full or closed): %v", err)
+			}
 		}
 		close(done)
 	}()
