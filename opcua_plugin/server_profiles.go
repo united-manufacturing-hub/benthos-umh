@@ -113,13 +113,13 @@ type ServerProfile struct {
 	// - More workers = faster node discovery (parallel Browse calls)
 	// - Too many workers = server throttles or rejects connections
 	//
-	// See core_browse_workers.go for dynamic worker pool implementation.
+	// See core_browse_global_pool.go for dynamic worker pool implementation.
 	MaxWorkers int
 
 	// MinWorkers sets lower bound for worker pool during Browse phase (ONLY).
 	// Dynamic scaling (currently disabled) keeps workers between MinWorkers and MaxWorkers.
 	//
-	// See core_browse_workers.go ServerMetrics.adjustWorkers() for scaling logic.
+	// See core_browse_global_pool.go ServerMetrics.adjustWorkers() for scaling logic.
 	MinWorkers int
 
 	// MaxMonitoredItems is hardware limit on total monitored items server can handle (0 = unlimited).
