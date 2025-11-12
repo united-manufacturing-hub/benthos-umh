@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -516,8 +517,11 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 
 		// THEN handle panic recovery
 		if r := recover(); r != nil {
-			// Log and exit gracefully on panic (stub for now)
-			// In production, would use proper logger here
+			// Log panic with stack trace for production debugging
+			if gwp.logger != nil {
+				gwp.logger.Warnf("Worker panic recovered: %v\nStack trace:\n%s",
+					r, debug.Stack())
+			}
 		}
 	}()
 
