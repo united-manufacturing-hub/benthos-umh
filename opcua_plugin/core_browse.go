@@ -88,8 +88,8 @@ type NodeDef struct {
 	Path         string      // custom, not an official opcua attribute
 }
 
-// BrowseDetails represents the details of a browse operation for progress tracking.
-// Used to report browse progress to UI or logging systems.
+// BrowseDetails represents browse operation details sent to prevent worker deadlock.
+// Data is sent by workers but drained and not used (legacy UI code removed).
 type BrowseDetails struct {
 	NodeDef               NodeDef
 	TaskCount             int64

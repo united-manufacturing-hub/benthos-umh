@@ -83,7 +83,7 @@ var _ = Describe("100k Scale Browse Test", Label("100k_scale"), func() {
 			// Start concurrent consumer to drain opcuaBrowserChan (ENG-3835)
 			// Without this consumer, browse workers block when sending node 100,001
 			// since opcuaBrowserChan buffer is only 100k (MaxTagsToBrowse)
-			// Browse details are discarded - only used for UI progress updates (not needed in tests)
+			// Browse details are discarded - channel exists to prevent worker deadlock (legacy UI code removed)
 			opcuaBrowserConsumerDone := make(chan struct{})
 			go func() {
 				for range opcuaBrowserChan {
