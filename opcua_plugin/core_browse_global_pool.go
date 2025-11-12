@@ -38,6 +38,12 @@ const (
 
 	// DefaultBrowseCompletionTimeout is the maximum time to wait for browse completion
 	DefaultBrowseCompletionTimeout = 1 * time.Hour
+
+	// MaxBrowseDepth is the maximum recursion depth for OPC UA browse operations.
+	// This prevents infinite recursion in circular reference scenarios and limits
+	// memory usage for deeply nested address spaces.
+	// Typical OPC UA servers have 5-15 levels; 25 provides safety margin.
+	MaxBrowseDepth = 25
 )
 
 // GlobalPoolTask represents a browse operation to execute in the global worker pool.
@@ -59,7 +65,7 @@ type GlobalPoolTask struct {
 	Ctx          context.Context // Cancellation context
 	Node         NodeBrowser     // OPC UA node to browse
 	Path         string          // Current path in browse tree
-	Level        int             // Recursion depth (limit: 25)
+	Level        int             // Recursion depth (limit: MaxBrowseDepth)
 	ParentNodeID string          // Parent node identifier
 
 	// Shared state (NEW - passed from read_discover.go)
@@ -406,32 +412,6 @@ func (gwp *GlobalWorkerPool) sendTaskResult(task GlobalPoolTask, stubNode NodeDe
 	}
 }
 
-// sendTaskProgress sends progress update to ProgressChan if set (non-blocking).
-// Extracted helper to eliminate code duplication in workerLoop.
-// Uses select with default to avoid blocking on full/closed channels.
-func (gwp *GlobalWorkerPool) sendTaskProgress(task GlobalPoolTask, stubNode NodeDef) {
-	if task.ProgressChan == nil {
-		return
-	}
-
-	gwp.mu.Lock()
-	workerCount := gwp.currentWorkers
-	gwp.mu.Unlock()
-
-	progress := BrowseDetails{
-		NodeDef:     stubNode,
-		TaskCount:   1, // Stub value
-		WorkerCount: int64(workerCount),
-	}
-
-	select {
-	case task.ProgressChan <- progress:
-		// Progress sent successfully
-	default:
-		// Channel full or closed, don't block task processing
-	}
-}
-
 // decrementPendingTasks decrements the pending task counter and signals allTasksDone when it reaches 0.
 // Uses non-blocking channel send to avoid deadlock if channel buffer is already full.
 func (gwp *GlobalWorkerPool) decrementPendingTasks() {
@@ -541,7 +521,6 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 				// Create stub NodeDef and send result immediately
 				stubNode := NodeDef{NodeID: &ua.NodeID{}}
 				gwp.sendTaskResult(task, stubNode, gwp.logger, false) // Blocking send for test compatibility
-				gwp.sendTaskProgress(task, stubNode)
 				atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
 				gwp.decrementPendingTasks()
 
@@ -576,7 +555,18 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 				}
 			}
 
-			// Fetch node attributes to determine NodeClass (BEFORE browsing children)
+			// Fetch node attributes to determine NodeClass BEFORE browsing children.
+			//
+			// WHY: NodeClass determines subscription behavior:
+			//   - Variables: Add to subscription list (these contain data we want to monitor)
+			//   - Objects: Skip subscription (these are folders/organizational nodes)
+			//   - Other: Skip (Methods, DataTypes, etc. are not subscribable)
+			//
+			// We browse children regardless of NodeClass (both Variables and Objects may have children),
+			// but only send Variables to ResultChan for subscription.
+			//
+			// Performance: Fetching attributes here (1 OPC UA call per node) is optimal.
+			// The alternative (browse everything first, then filter) would be much slower.
 			attrs, err := task.Node.Attributes(task.Ctx,
 				ua.AttributeIDNodeClass,
 				ua.AttributeIDBrowseName,
@@ -638,7 +628,7 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 			}
 
 			// Submit children as new tasks (if within recursion depth)
-			if task.Level < 25 {
+			if task.Level < MaxBrowseDepth {
 				for _, child := range children {
 					childNodeID := child.ID().String()
 
@@ -715,9 +705,6 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 				})
 			}
 
-			// Send progress update (non-blocking)
-			gwp.sendTaskProgress(task, nodeDef)
-
 			// Increment tasksCompleted counter on success (atomic)
 			atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
 
@@ -742,9 +729,6 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 					// Process remaining task (stub implementation during shutdown)
 					stubNode := NodeDef{NodeID: &ua.NodeID{}}
 					gwp.sendTaskResult(task, stubNode, gwp.logger, false) // Blocking send for drain compatibility
-
-					// Send progress update (non-blocking)
-					gwp.sendTaskProgress(task, stubNode)
 
 					// Increment tasksCompleted counter (atomic)
 					atomic.AddUint64(&gwp.metricsTasksCompleted, 1)
