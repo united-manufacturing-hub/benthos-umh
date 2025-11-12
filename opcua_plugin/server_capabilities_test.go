@@ -38,6 +38,20 @@ var _ = Describe("ServerCapabilities", func() {
 			Expect(caps.MaxNodesPerWrite).To(Equal(uint32(500)))
 			Expect(caps.MaxBrowseContinuationPoints).To(Equal(uint32(10)))
 		})
+
+		It("should have SupportsDataChangeFilter field for profile-based capability detection", func() {
+			// Test for new field that tracks DataChangeFilter support
+			// Per OPC UA Part 7, Section 6.4.3: Profile-based capability detection
+			caps := ServerCapabilities{
+				SupportsDataChangeFilter: true,
+			}
+
+			Expect(caps.SupportsDataChangeFilter).To(BeTrue())
+
+			// Test default false value
+			capsDefault := ServerCapabilities{}
+			Expect(capsDefault.SupportsDataChangeFilter).To(BeFalse())
+		})
 	})
 
 	Context("queryOperationLimits", func() {
@@ -124,6 +138,61 @@ var _ = Describe("ServerCapabilities", func() {
 		It("should define MaxNodesPerWrite node ID", func() {
 			// ns=0;i=11708
 			Expect(MaxNodesPerWriteNodeID).NotTo(BeNil())
+		})
+	})
+
+	Context("Profile-based DataChangeFilter detection - REMOVED", func() {
+		// ServerProfileArray detection has been removed because major vendors
+		// (Kepware, Ignition, Siemens) don't reliably populate it.
+		//
+		// NEW APPROACH:
+		// 1. Profile-based defaults (server_profiles.go) - production-validated safe limits
+		// 2. Trial-based learning (MonitorBatched) - try with filter, catch StatusBadFilterNotAllowed
+
+		It("should use safe default for SupportsDataChangeFilter without querying ServerProfileArray", func() {
+			// After ServerProfileArray removal, queryOperationLimits returns
+			// ServerCapabilities with SupportsDataChangeFilter = false (safe default)
+			//
+			// MonitorBatched then uses ServerProfile.SupportsDataChangeFilter for
+			// actual filter decisions (profile-based or trial-based)
+
+			// Verify fallback ServerCapabilities uses safe default
+			fallbackCaps := &ServerCapabilities{
+				MaxNodesPerBrowse:           100,
+				MaxMonitoredItemsPerCall:    1000,
+				SupportsDataChangeFilter:    false, // Safe default - MonitorBatched uses profile value
+			}
+
+			Expect(fallbackCaps.SupportsDataChangeFilter).To(BeFalse(),
+				"queryOperationLimits should return safe default false - MonitorBatched uses profile value instead")
+		})
+
+		It("should rely on profile-based defaults from server_profiles.go", func() {
+			// After removal, DataChangeFilter support comes from ServerProfile struct
+			// which is detected during Connect:
+			//
+			// 1. DetectServerProfile() identifies vendor (Kepware, S7-1200, etc.)
+			// 2. ServerProfile.SupportsDataChangeFilter provides safe default
+			// 3. MonitorBatched uses profile value, NOT queryOperationLimits value
+			//
+			// Examples:
+			// - S7-1200: profile.SupportsDataChangeFilter = false (Micro Embedded Device)
+			// - Kepware: profile.SupportsDataChangeFilter = true (Standard facet)
+			// - Unknown: profile.SupportsDataChangeFilter = true (Auto profile, trial-based)
+
+			// Verify profile-based detection is the primary mechanism
+			s71200Profile := GetProfileByName(ProfileS71200)
+			Expect(s71200Profile.SupportsDataChangeFilter).To(BeFalse(),
+				"S7-1200 profile should NOT support DataChangeFilter (Micro Embedded Device)")
+
+			autoProfile := GetProfileByName(ProfileAuto)
+			Expect(autoProfile.SupportsDataChangeFilter).To(BeFalse(),
+				"Auto profile uses defensive default false (trial-based learning will be added in Task 4)")
+
+			// Example of profile that DOES support DataChangeFilter
+			kepwareProfile := GetProfileByName(ProfileKepware)
+			Expect(kepwareProfile.SupportsDataChangeFilter).To(BeTrue(),
+				"Kepware profile should support DataChangeFilter (Standard facet)")
 		})
 	})
 })

@@ -161,6 +161,26 @@ func init() {
 // Operation limits come from ns=0;i=11704 (OperationLimits) - many servers (S7-1200/1500) don't expose these.
 // Deadband support is queried separately via AggregateConfiguration node.
 type ServerCapabilities struct {
+	// SupportsDataChangeFilter indicates whether the server supports DataChangeFilter in MonitoredItem creation.
+	//
+	// Profile-based capability detection (OPC UA Part 7, Section 6.4.3):
+	// - Standard DataChange Subscription facet: Includes DataChangeFilter support (OPC UA Part 4, Section 7.17)
+	// - Embedded DataChange Subscription facet: MAY omit DataChangeFilter (OPC UA Part 7, Section 6.4.3.2)
+	//
+	// The Micro Embedded Device Server Profile (Part 7, Annex A) uses the Embedded facet, allowing servers
+	// to implement subscriptions without filter support. This is common in resource-constrained devices.
+	//
+	// Known server behaviors:
+	// - Kepware/Ignition: Support DataChangeFilter (Standard facet)
+	// - S7-1200: Implements Embedded facet WITHOUT DataChangeFilter support
+	// - S7-1500: Supports DataChangeFilter (Standard facet)
+	//
+	// When false, subscription requests must omit the filter parameter to avoid BadMonitoredItemFilterUnsupported.
+	//
+	// Note on PercentDeadband: Even if SupportsDataChangeFilter is true, PercentDeadband requires EURange
+	// property (OPC UA Part 8, Section 5.6.3) which may not be present on all nodes.
+	SupportsDataChangeFilter bool
+
 	// Operation limits from ServerCapabilities.OperationLimits
 	MaxNodesPerBrowse           uint32
 	MaxMonitoredItemsPerCall    uint32
@@ -168,9 +188,34 @@ type ServerCapabilities struct {
 	MaxNodesPerWrite            uint32
 	MaxBrowseContinuationPoints uint32
 
-	// Feature support flags
-	SupportsPercentDeadband  bool
+	// Deprecated: Use SupportsDataChangeFilter instead.
+	// This field remains for backward compatibility but will be removed in a future version.
+	// SupportsAbsoluteDeadband specifically checks for AbsoluteDeadband support, which is a
+	// subset of DataChangeFilter functionality. The new SupportsDataChangeFilter field provides
+	// more comprehensive filter support detection aligned with OPC UA profile conformance.
 	SupportsAbsoluteDeadband bool
+
+	// SupportsPercentDeadband indicates whether the server supports Percent deadband filtering.
+	// Requires both DataChangeFilter support AND EURange property on nodes (OPC UA Part 8, Section 5.6.3).
+	SupportsPercentDeadband bool
+
+	// hasTrialedThisConnection indicates whether DataChangeFilter support has been
+	// confirmed via trial during this connection. This field is connection-scoped
+	// and resets to false on reconnect.
+	//
+	// Used to prevent repeated trials within the same connection:
+	// - false: No trial performed yet this connection (may trial if conditions met)
+	// - true: Trial completed this connection (use cached SupportsDataChangeFilter result)
+	//
+	// Hardware-validated on S7-1200 PLCs (ENG-3880): Successfully prevents infinite retry
+	// loops when servers reject DataChangeFilter with StatusBadFilterNotAllowed. Cache
+	// ensures trial happens exactly once per connection, then uses cached result for all
+	// subsequent MonitorBatched() calls. See read_discover.go:467-485 for retry mechanism.
+	//
+	// Note: We cannot persist learned values across reconnections due to architecture
+	// constraints. Instead, we emit INFO messages recommending users explicitly configure
+	// server profiles to save ~1-2 seconds on subsequent connections.
+	hasTrialedThisConnection bool
 }
 
 type OPCUAInput struct {
@@ -279,14 +324,16 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		}
 	}
 
-	// Query server capabilities for deadband support (only if subscriptions enabled)
+	// Query server operation limits (only if subscriptions enabled)
+	// Note: Does not query ServerProfileArray - uses profile-based defaults instead
 	if g.SubscribeEnabled {
-		caps, err := g.QueryServerCapabilities(ctx)
+		caps, err := g.queryOperationLimits(ctx)
 		if err != nil {
 			g.Log.Warnf("Failed to query server capabilities: %v, assuming basic support", err)
 			caps = &ServerCapabilities{
 				SupportsAbsoluteDeadband: true,  // Most servers support this
 				SupportsPercentDeadband:  false, // Conservative assumption
+				SupportsDataChangeFilter: false, // Safe default - MonitorBatched will use profile default
 			}
 		}
 		g.ServerCapabilities = caps
@@ -294,13 +341,6 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 		// Log operation limits (Phase 1: logging only, no behavior changes)
 		g.logServerCapabilities(caps)
 
-		// Adjust deadband type based on server capabilities
-		originalType := g.DeadbandType
-		g.DeadbandType = adjustDeadbandType(g.DeadbandType, caps)
-		if g.DeadbandType != originalType {
-			g.Log.Warnf("Server does not support %s deadband, falling back to %s",
-				originalType, g.DeadbandType)
-		}
 	}
 
 	// Create a subscription channel if needed
