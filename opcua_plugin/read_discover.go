@@ -89,8 +89,8 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	pathIDMap := make(map[string]string)
 	nodeChan := make(chan NodeDef, MaxTagsToBrowse)
 	errChan := make(chan error, MaxTagsToBrowse)
-	// opcuaBrowserChan is created to just satisfy the browse function signature.
-	// The data inside opcuaBrowserChan is not used for production - only for progress tracking
+	// opcuaBrowserChan exists to prevent worker deadlock - workers send BrowseDetails but data is not used.
+	// Channel is drained but not consumed for any progress tracking or UI updates (legacy UI code removed).
 	// Buffer size reduced to 1000 (from 100k) since consumer drains instantly - saves 33 MB memory
 	opcuaBrowserChan := make(chan BrowseDetails, 1000)
 
@@ -100,7 +100,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	opcuaBrowserConsumerDone := make(chan struct{})
 	go func() {
 		for range opcuaBrowserChan {
-			// Discard - browse details not needed for subscription path (only for UI progress updates)
+			// Discard - channel exists to prevent worker deadlock, data is not used for any purpose
 		}
 		close(opcuaBrowserConsumerDone)
 	}()
