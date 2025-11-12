@@ -45,14 +45,16 @@ type NodeDef struct {
 // BrowseDetails represents browse operation progress sent to prevent worker deadlock.
 //
 // USAGE:
-// - When browsing 100k+ nodes, workers send updates to opcuaBrowserChan
+// - GlobalWorkerPool sends updates to ProgressChan during 100k+ node browses
 // - If channel is nil (server metadata detection) or no consumer, updates are skipped
 // - Tests and large-scale browses must provide channel + consumer to prevent deadlock
 //
 // DEADLOCK PREVENTION:
-// - Buffer capacity: 100k items (see browse() function)
+// - Buffer capacity: 100k items (see GlobalWorkerPool implementation)
 // - Without consumer: Workers block when buffer fills → deadlock
 // - With nil channel: Workers skip sending → no deadlock risk for small browses
+//
+// See core_browse_global_pool.go for GlobalWorkerPool-based browsing architecture.
 type BrowseDetails struct {
 	NodeDef               NodeDef
 	TaskCount             int64
