@@ -116,6 +116,9 @@ var _ = Describe("Unit Tests", func() {
 				}
 				nodeBrowser = rootNodeWithNilNodeClass
 				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+				defer func() {
+					_ = pool.Shutdown(5 * time.Second)
+				}()
 				wg.Add(1)
 				go func() {
 					Browse(ctx, nodeBrowser, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
@@ -144,6 +147,9 @@ var _ = Describe("Unit Tests", func() {
 
 				nodeBrowser = rootNode
 				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+				defer func() {
+					_ = pool.Shutdown(5 * time.Second)
+				}()
 				wg.Add(1)
 				go func() {
 					Browse(ctx, nodeBrowser, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
@@ -183,6 +189,9 @@ var _ = Describe("Unit Tests", func() {
 
 				nodeBrowser = rootNode
 				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+				defer func() {
+					_ = pool.Shutdown(5 * time.Second)
+				}()
 				wg.Add(1)
 				go func() {
 					Browse(ctx, nodeBrowser, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
@@ -224,6 +233,9 @@ var _ = Describe("Unit Tests", func() {
 
 				nodeBrowser = rootNode
 				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+				defer func() {
+					_ = pool.Shutdown(5 * time.Second)
+				}()
 				wg.Add(1)
 				go func() {
 					Browse(ctx, nodeBrowser, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
@@ -265,6 +277,9 @@ var _ = Describe("Unit Tests", func() {
 
 				nodeBrowser = rootNode
 				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+				defer func() {
+					_ = pool.Shutdown(5 * time.Second)
+				}()
 				wg.Add(1)
 				go func() {
 					Browse(ctx, nodeBrowser, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
@@ -309,6 +324,9 @@ var _ = Describe("Unit Tests", func() {
 
 				nodeBrowser = rootNode
 				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+				defer func() {
+					_ = pool.Shutdown(5 * time.Second)
+				}()
 				wg.Add(1)
 				go func() {
 					Browse(ctx, nodeBrowser, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
@@ -386,6 +404,9 @@ var _ = Describe("Unit Tests", func() {
 
 				nodeBrowser = abcFolder
 				pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+				defer func() {
+					_ = pool.Shutdown(5 * time.Second)
+				}()
 				wg.Add(1)
 				go func() {
 					Browse(ctx, nodeBrowser, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, &visited)
@@ -784,6 +805,9 @@ var _ = Describe("Browse with StatusBadNodeIDUnknown", func() {
 
 			// Start browsing
 			pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+			defer func() {
+				_ = pool.Shutdown(5 * time.Second)
+			}()
 			wg.Add(1)
 			go func() {
 			Browse(ctx, rootFolder, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
@@ -820,6 +844,9 @@ var _ = Describe("Browse with StatusBadNodeIDUnknown", func() {
 
 func startBrowsing(ctx context.Context, rootNode NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, wg *TrackedWaitGroup, opcuaBrowserChan chan BrowseDetails, visited *sync.Map) ([]NodeDef, []error) {
 	pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+	defer func() {
+		_ = pool.Shutdown(5 * time.Second)
+	}()
 	wg.Add(1)
 	go func() {
 		Browse(ctx, rootNode, path, pool, parentNodeId, nodeChan, errChan, wg, opcuaBrowserChan, visited)
@@ -863,6 +890,9 @@ var _ = Describe("Browse Channel Blocking Behavior (ENG-3835)", func() {
 
 			// Start browse in goroutine
 			pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+			defer func() {
+				_ = pool.Shutdown(5 * time.Second)
+			}()
 			done := make(chan bool)
 			go func() {
 				wg.Add(1)
@@ -918,6 +948,9 @@ var _ = Describe("Browse Channel Blocking Behavior (ENG-3835)", func() {
 
 			// Start browse
 			pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
+			defer func() {
+				_ = pool.Shutdown(5 * time.Second)
+			}()
 			done := make(chan struct{})
 			go func() {
 				wg.Add(1)
