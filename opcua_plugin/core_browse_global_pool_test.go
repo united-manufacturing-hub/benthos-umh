@@ -2542,6 +2542,87 @@ var _ = Describe("GlobalWorkerPool", func() {
 					return m.TasksSubmitted
 				}).Within(3 * time.Second).Should(BeNumerically(">=", 3))
 			})
+
+			// TDD RED Phase - ENG-3876 Browse() Migration Cleanup
+			// Test exposes path propagation bug where child tasks receive parent's path
+			// instead of parent.child path, causing all nodes in hierarchy to have same path.
+			It("should build correct paths for multi-level hierarchy", func() {
+				profile := ServerProfile{MaxWorkers: 5}
+				pool := NewGlobalWorkerPool(profile, logger)
+				defer func() {
+					if err := pool.Shutdown(TestPoolShutdownTimeout); err != nil {
+						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
+					}
+				}()
+				pool.SpawnWorkers(2)
+
+				// Setup 3-level hierarchy: Parent -> Child -> Grandchild
+				grandchild := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 3001),
+					browseName: "Grandchild",
+				}
+
+				child := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 2001),
+					browseName: "Child",
+					children:   []NodeBrowser{grandchild},
+				}
+
+				parent := &mockNodeBrowser{
+					id:         ua.NewNumericNodeID(2, 1000),
+					browseName: "Parent",
+					children:   []NodeBrowser{child},
+				}
+
+				ctx := context.Background()
+				visited := &sync.Map{}
+				resultChan := make(chan NodeDef, 10)
+
+				task := GlobalPoolTask{
+					NodeID:     "ns=2;i=1000",
+					Ctx:        ctx,
+					Node:       parent,
+					Path:       "enterprise",
+					Level:      1,
+					Visited:    visited,
+					ResultChan: resultChan,
+				}
+
+				// Submit parent task
+				err := pool.SubmitTask(task)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Collect all results
+				var results []NodeDef
+				Eventually(func() int {
+					for {
+						select {
+						case result := <-resultChan:
+							results = append(results, result)
+						default:
+							return len(results)
+						}
+					}
+				}).Within(3 * time.Second).Should(BeNumerically(">=", 3),
+					"Should receive at least 3 NodeDef results")
+
+				// Verify paths are built correctly
+				// Parent: enterprise.Parent
+				// Child: enterprise.Parent.Child
+				// Grandchild: enterprise.Parent.Child.Grandchild
+
+				pathsFound := make(map[string]bool)
+				for _, result := range results {
+					pathsFound[result.Path] = true
+				}
+
+				Expect(pathsFound).To(HaveKey("enterprise.Parent"),
+					"Parent should have path: enterprise.Parent")
+				Expect(pathsFound).To(HaveKey("enterprise.Parent.Child"),
+					"Child should have path: enterprise.Parent.Child")
+				Expect(pathsFound).To(HaveKey("enterprise.Parent.Child.Grandchild"),
+					"Grandchild should have path: enterprise.Parent.Child.Grandchild")
+			})
 		})
 
 		Context("duplicate node detection", func() {
@@ -2738,7 +2819,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				// CRITICAL ASSERTION: Result should contain actual browse data
 				// This will FAIL until workers create real NodeDef from browse
 				Expect(result.NodeID).NotTo(BeNil(), "Result should have NodeID")
-				Expect(result.Path).To(Equal("enterprise.site.area"), "Result should preserve Path")
+				Expect(result.Path).To(Equal("enterprise.site.area.ActualNode"), "Result should build path with BrowseName")
 				// Note: NodeDef doesn't have Level field, but Path is sufficient to verify browse data
 			})
 		})

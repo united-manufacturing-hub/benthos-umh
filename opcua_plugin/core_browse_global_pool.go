@@ -654,6 +654,10 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 				continue
 			}
 
+			// Build full path after processNodeAttributes populates BrowseName
+			// This ensures child tasks receive correct hierarchical path
+			nodeDef.Path = join(task.Path, sanitize(nodeDef.BrowseName))
+
 			// Mark node as visited
 			if task.Visited != nil {
 				task.Visited.Store(task.NodeID, VisitedNodeInfo{
@@ -697,7 +701,7 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 						NodeID:       childNodeID,
 						Ctx:          task.Ctx,
 						Node:         child,
-						Path:         task.Path,
+						Path:         nodeDef.Path,
 						Level:        task.Level + 1,
 						ParentNodeID: task.NodeID,
 						Visited:      task.Visited,
