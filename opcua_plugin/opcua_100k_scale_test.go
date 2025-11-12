@@ -67,6 +67,9 @@ var _ = Describe("100k Scale Browse Test", Label("100k_scale"), func() {
 			wg.Add(1)
 			testProfile := GetProfileByName(ProfileAuto)
 			pool := NewGlobalWorkerPool(testProfile, logger)
+			defer func() {
+				_ = pool.Shutdown(5 * time.Second)
+			}()
 			go Browse(ctx, rootNode, "", pool, "", nodeChan, errChan, &wg, opcuaBrowserChan, &visited)
 
 			// Start concurrent consumer to drain nodeChan as Browse produces nodes

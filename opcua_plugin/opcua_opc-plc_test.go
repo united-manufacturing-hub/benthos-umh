@@ -1541,6 +1541,9 @@ opcua:
 			wrapperNodeID := NewOpcuaNodeWrapper(input.Client.Node(parsedNodeIDs[0]))
 			testProfile := GetProfileByName(ProfileAuto)
 			pool := NewGlobalWorkerPool(testProfile, input.Log)
+			defer func() {
+				_ = pool.Shutdown(5 * time.Second)
+			}()
 			go Browse(ctx, wrapperNodeID, "", pool, parsedNodeIDs[0].String(), nodeChan, errChan, &wg, opcuaBrowserChan, &visited)
 
 			wg.Wait()
