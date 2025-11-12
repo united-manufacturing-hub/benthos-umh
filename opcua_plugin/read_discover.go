@@ -66,7 +66,7 @@ import (
 // 3. browse() spawns workers (5-60 depending on server)
 // 4. Workers discover nodes → nodeChan consumer builds nodeList
 // 5. MonitorBatched() subscribes to discovered nodes in batches
-// 6. Read() streams changes to Kafka
+// 6. ReadBatch() streams changes to subsequent Benthos pipeline processors/outputs
 func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]string, error) {
 	// This was previously 5 minutes, but we need to increase it to 1 hour to avoid context cancellation
 	// when browsing a large number of nodes.
@@ -182,7 +182,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 
 	// Wait for all pool tasks to complete using WaitForCompletion instead of WaitGroup
 	go func() {
-		if err := pool.WaitForCompletion(1 * time.Hour); err != nil {
+		if err := pool.WaitForCompletion(DefaultBrowseCompletionTimeout); err != nil {
 			g.Log.Warnf("Pool completion wait error: %v", err)
 		}
 		close(done)
@@ -205,7 +205,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 
 	// Explicit shutdown after all browse() goroutines complete
 	// This ensures wg.Wait() finishes before pool workers are terminated
-	if err := pool.Shutdown(30 * time.Second); err != nil {
+	if err := pool.Shutdown(DefaultPoolShutdownTimeout); err != nil {
 		g.Log.Warnf("GlobalWorkerPool shutdown timeout: %v", err)
 	}
 
@@ -270,7 +270,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 
 			heartbeatPool := NewGlobalWorkerPool(g.ServerProfile, g.Log)
 			defer func() {
-				if err := heartbeatPool.Shutdown(30 * time.Second); err != nil {
+				if err := heartbeatPool.Shutdown(DefaultPoolShutdownTimeout); err != nil {
 					g.Log.Warnf("Heartbeat pool shutdown timeout: %v", err)
 				}
 			}()
@@ -299,7 +299,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 				g.Log.Warnf("Failed to submit heartbeat task: %v", err)
 			} else {
 				// Wait for heartbeat task to complete
-				if err := heartbeatPool.WaitForCompletion(30 * time.Second); err != nil {
+				if err := heartbeatPool.WaitForCompletion(DefaultPoolShutdownTimeout); err != nil {
 					g.Log.Warnf("Heartbeat pool completion wait error: %v", err)
 				}
 			}

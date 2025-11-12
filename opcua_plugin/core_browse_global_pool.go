@@ -28,6 +28,17 @@ import (
 	"github.com/gopcua/opcua/ua"
 )
 
+const (
+	// DefaultPoolShutdownTimeout is the default timeout for graceful pool shutdown in production code
+	DefaultPoolShutdownTimeout = 30 * time.Second
+
+	// TestPoolShutdownTimeout is the timeout for pool shutdown in tests
+	TestPoolShutdownTimeout = 5 * time.Second
+
+	// DefaultBrowseCompletionTimeout is the maximum time to wait for browse completion
+	DefaultBrowseCompletionTimeout = 1 * time.Hour
+)
+
 // GlobalPoolTask represents a browse operation to execute in the global worker pool.
 // This is a simplified task structure focused on queueing and result delivery.
 // It differs from NodeTask in core_browse.go which contains browse execution state.

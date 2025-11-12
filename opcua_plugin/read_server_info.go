@@ -17,7 +17,6 @@ package opcua_plugin
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/gopcua/opcua/ua"
 )
@@ -63,7 +62,7 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 
 	pool := NewGlobalWorkerPool(profile, g.Log)
 	defer func() {
-		if err := pool.Shutdown(30 * time.Second); err != nil {
+		if err := pool.Shutdown(DefaultPoolShutdownTimeout); err != nil {
 			g.Log.Warnf("GlobalWorkerPool shutdown timeout: %v", err)
 		}
 	}()

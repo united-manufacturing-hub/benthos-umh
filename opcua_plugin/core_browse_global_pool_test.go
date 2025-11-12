@@ -2256,7 +2256,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
 				defer func() {
-					if err := pool.Shutdown(5 * time.Second); err != nil {
+					if err := pool.Shutdown(TestPoolShutdownTimeout); err != nil {
 						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
 					}
 				}()
@@ -2303,7 +2303,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
 				defer func() {
-					if err := pool.Shutdown(5 * time.Second); err != nil {
+					if err := pool.Shutdown(TestPoolShutdownTimeout); err != nil {
 						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
 					}
 				}()
@@ -2352,7 +2352,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
 				defer func() {
-					if err := pool.Shutdown(5 * time.Second); err != nil {
+					if err := pool.Shutdown(TestPoolShutdownTimeout); err != nil {
 						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
 					}
 				}()
@@ -2426,7 +2426,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
 				defer func() {
-					if err := pool.Shutdown(5 * time.Second); err != nil {
+					if err := pool.Shutdown(TestPoolShutdownTimeout); err != nil {
 						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
 					}
 				}()
@@ -2482,7 +2482,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
 				defer func() {
-					if err := pool.Shutdown(5 * time.Second); err != nil {
+					if err := pool.Shutdown(TestPoolShutdownTimeout); err != nil {
 						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
 					}
 				}()
@@ -2531,7 +2531,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
 				defer func() {
-					if err := pool.Shutdown(5 * time.Second); err != nil {
+					if err := pool.Shutdown(TestPoolShutdownTimeout); err != nil {
 						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
 					}
 				}()
@@ -2598,7 +2598,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
 				defer func() {
-					if err := pool.Shutdown(5 * time.Second); err != nil {
+					if err := pool.Shutdown(TestPoolShutdownTimeout); err != nil {
 						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
 					}
 				}()
@@ -2653,7 +2653,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
 				defer func() {
-					if err := pool.Shutdown(5 * time.Second); err != nil {
+					if err := pool.Shutdown(TestPoolShutdownTimeout); err != nil {
 						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
 					}
 				}()
@@ -2717,7 +2717,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
 				defer func() {
-					if err := pool.Shutdown(5 * time.Second); err != nil {
+					if err := pool.Shutdown(TestPoolShutdownTimeout); err != nil {
 						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
 					}
 				}()
@@ -2770,7 +2770,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
 				defer func() {
-					if err := pool.Shutdown(5 * time.Second); err != nil {
+					if err := pool.Shutdown(TestPoolShutdownTimeout); err != nil {
 						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
 					}
 				}()
@@ -2819,7 +2819,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
 				defer func() {
-					if err := pool.Shutdown(5 * time.Second); err != nil {
+					if err := pool.Shutdown(TestPoolShutdownTimeout); err != nil {
 						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
 					}
 				}()
@@ -2876,7 +2876,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				profile := ServerProfile{MaxWorkers: 5}
 				pool := NewGlobalWorkerPool(profile, logger)
 				defer func() {
-					if err := pool.Shutdown(5 * time.Second); err != nil {
+					if err := pool.Shutdown(TestPoolShutdownTimeout); err != nil {
 						logger.Warnf("Test cleanup: pool shutdown timeout: %v", err)
 					}
 				}()
@@ -3122,7 +3122,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 			profile := ServerProfile{MaxWorkers: 5}
 			pool := NewGlobalWorkerPool(profile, logger)
 			pool.SpawnWorkers(2)
-			defer pool.Shutdown(5 * time.Second)
+			defer pool.Shutdown(TestPoolShutdownTimeout)
 
 			// Create root node (Object - folder)
 			rootNode := &mockNodeBrowser{

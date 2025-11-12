@@ -1542,7 +1542,7 @@ opcua:
 			testProfile := GetProfileByName(ProfileAuto)
 			pool := NewGlobalWorkerPool(testProfile, input.Log)
 			defer func() {
-				_ = pool.Shutdown(5 * time.Second)
+				_ = pool.Shutdown(TestPoolShutdownTimeout)
 			}()
 			go Browse(ctx, wrapperNodeID, "", pool, parsedNodeIDs[0].String(), nodeChan, errChan, &wg, opcuaBrowserChan, &visited)
 

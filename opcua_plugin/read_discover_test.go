@@ -387,7 +387,7 @@ var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
 			}).Within(2 * time.Second).Should(Equal(len(nodeIDs)))
 
 			// Step 4: Shutdown (with defer in real code)
-			err := pool.Shutdown(30 * time.Second)
+			err := pool.Shutdown(DefaultPoolShutdownTimeout)
 			Expect(err).ToNot(HaveOccurred())
 		})
 	})
@@ -441,7 +441,7 @@ var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
 				pool.SpawnWorkers(1)
 
 				// Simulate browse completion
-				err := pool.Shutdown(30 * time.Second)
+				err := pool.Shutdown(DefaultPoolShutdownTimeout)
 				Expect(err).ToNot(HaveOccurred())
 
 				// Verify pool rejects new tasks after shutdown
@@ -501,7 +501,7 @@ var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
 					return pool.GetMetrics().TasksCompleted
 				}).Within(2 * time.Second).Should(Equal(uint64(3)))
 
-				pool.Shutdown(30 * time.Second)
+				pool.Shutdown(DefaultPoolShutdownTimeout)
 			})
 
 			It("should NOT create unlimited goroutines for concurrent browse operations", func() {
@@ -552,7 +552,7 @@ var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
 					return pool.GetMetrics().TasksCompleted
 				}).Within(5 * time.Second).Should(Equal(uint64(numNodes)))
 
-				pool.Shutdown(30 * time.Second)
+				pool.Shutdown(DefaultPoolShutdownTimeout)
 			})
 
 			It("should share same pool instance across multiple browse calls", func() {
@@ -606,7 +606,7 @@ var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
 					return pool.GetMetrics().TasksCompleted
 				}).Within(2 * time.Second).Should(Equal(uint64(4)))
 
-				pool.Shutdown(30 * time.Second)
+				pool.Shutdown(DefaultPoolShutdownTimeout)
 			})
 		})
 
@@ -672,7 +672,7 @@ var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
 				Expect(metrics.ActiveWorkers).To(Equal(3))
 
 				// Shutdown pool
-				err := pool.Shutdown(30 * time.Second)
+				err := pool.Shutdown(DefaultPoolShutdownTimeout)
 				Expect(err).ToNot(HaveOccurred())
 
 				// Verify workers cleaned up
@@ -718,7 +718,7 @@ var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
 				// Verify error sent to errChan
 				Eventually(errChan).Within(time.Second).Should(Receive())
 
-				pool.Shutdown(30 * time.Second)
+				pool.Shutdown(DefaultPoolShutdownTimeout)
 			})
 
 			It("should handle WaitForCompletion timeout correctly", func() {
@@ -758,7 +758,7 @@ var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
 				err := pool.WaitForCompletion(2 * time.Second)
 				Expect(err).ToNot(HaveOccurred()) // Should complete normally
 
-				pool.Shutdown(30 * time.Second)
+				pool.Shutdown(DefaultPoolShutdownTimeout)
 			})
 		})
 
@@ -820,7 +820,7 @@ var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
 				Expect(metrics.ActiveWorkers).To(BeNumerically("<=", 20))
 				Expect(metrics.TasksSubmitted).To(Equal(uint64(numNodeIDs)))
 
-				pool.Shutdown(30 * time.Second)
+				pool.Shutdown(DefaultPoolShutdownTimeout)
 			})
 
 			It("should process tasks sequentially if MaxWorkers=1", func() {
@@ -873,7 +873,7 @@ var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
 					return pool.GetMetrics().TasksCompleted
 				}).Within(2 * time.Second).Should(Equal(uint64(3)))
 
-				pool.Shutdown(30 * time.Second)
+				pool.Shutdown(DefaultPoolShutdownTimeout)
 			})
 		})
 
@@ -921,7 +921,7 @@ var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
 
 				Eventually(resultChan).Within(time.Second).Should(Receive())
 
-				pool.Shutdown(30 * time.Second)
+				pool.Shutdown(DefaultPoolShutdownTimeout)
 			})
 		})
 	})
