@@ -209,6 +209,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		g.Log.Warnf("GlobalWorkerPool shutdown timeout: %v", err)
 	}
 
+	// Convert duplicate browse paths to NodeID-based paths to ensure unique subscription paths
 	UpdateNodePaths(nodeList)
 
 	if len(errChan) > 0 {
@@ -311,6 +312,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 			for node := range nodeHeartbeatChan {
 				nodeList = append(nodeList, node)
 			}
+			// Convert duplicate browse paths to NodeID-based paths to ensure unique subscription paths
 			UpdateNodePaths(nodeList)
 			if len(errChanHeartbeat) > 0 {
 				return <-errChanHeartbeat
