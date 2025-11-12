@@ -18,15 +18,15 @@
 // ╠══════════════════════════════════════════════════════════════════════════╣
 // ║  This file implements the PRODUCTION browse and subscribe workflow.      ║
 // ║  Used by: benthos-umh OPC UA input plugin during normal operation       ║
-// ║  Entry point: discoverNodes() → browse() → MonitorBatched()             ║
+// ║  Entry point: discoverNodes() → GlobalWorkerPool → MonitorBatched()     ║
 // ║                                                                          ║
 // ║  Key Features:                                                           ║
 // ║  • Auto-detects OPC UA server vendor and applies tuned ServerProfile    ║
-// ║  • Optimizes Browse workers (5-60) and Subscribe batching (100-1000)    ║
+// ║  • Uses GlobalWorkerPool for shared concurrency control (5-60 workers)  ║
 // ║  • Subscribes to discovered nodes for continuous data streaming         ║
 // ║  • Production-grade error handling and performance monitoring           ║
 // ║                                                                          ║
-// ║  Do NOT use GetNodeTree() (legacy UI) for production - use this!        ║
+// ║  This is the ONLY production path (legacy UI code removed)              ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
 package opcua_plugin
@@ -55,7 +55,7 @@ import (
 // - Workers discover node tree in parallel (controlled by ServerProfile.MaxWorkers)
 // - Returns flat node list for MonitorBatched() subscription setup
 //
-// Why separate from GetNodeTree:
+// Why GlobalWorkerPool pattern:
 // - Production needs flat node list for subscription, UI needs tree structure
 // - Production uses auto-detected/tuned profile, UI uses Auto profile (defensive)
 // - Production subscribes to nodes for streaming, UI is one-time browse
@@ -90,7 +90,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	nodeChan := make(chan NodeDef, MaxTagsToBrowse)
 	errChan := make(chan error, MaxTagsToBrowse)
 	// opcuaBrowserChan is created to just satisfy the browse function signature.
-	// The data inside opcuaBrowserChan is not so useful for this function. It is more useful for the GetNodeTree function
+	// The data inside opcuaBrowserChan is not used for production - only for progress tracking
 	// Buffer size reduced to 1000 (from 100k) since consumer drains instantly - saves 33 MB memory
 	opcuaBrowserChan := make(chan BrowseDetails, 1000)
 
@@ -100,7 +100,7 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	opcuaBrowserConsumerDone := make(chan struct{})
 	go func() {
 		for range opcuaBrowserChan {
-			// Discard - browse details not needed for subscription path (only for GetNodeTree)
+			// Discard - browse details not needed for subscription path (only for UI progress updates)
 		}
 		close(opcuaBrowserConsumerDone)
 	}()

@@ -51,7 +51,7 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 	errChan := make(chan error, 3)
 	// opcuaBrowserChan is declared to satisfy the browse function signature.
 	// The data inside opcuaBrowserChan is not used for this function.
-	// It is more useful for the GetNodeTree function.
+	// It is not used for server info retrieval.
 	opcuaBrowserChan := make(chan BrowseDetails, 3)
 	var wg TrackedWaitGroup
 

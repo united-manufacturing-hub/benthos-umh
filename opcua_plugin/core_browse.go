@@ -24,21 +24,21 @@
 // - ServerProfile.MaxWorkers/MinWorkers control pool size bounds
 //
 // Used by:
-// - Production: read_discover.go::discoverNodes() → browse() (with ServerProfile tuning)
-// - Legacy UI: core_browse_frontend.go::GetNodeTree() → browse() (with Auto profile)
+// - Production: read_discover.go::discoverNodes() → GlobalWorkerPool (with ServerProfile tuning)
+// - Server metadata: read_server_info.go::GetOPCUAServerInformation() → Browse() wrapper (with Auto profile)
 //
 // NOT used by:
-// - GlobalWorkerPool (legacy unused pattern - DO NOT conflate with this system)
+// - Frontend (ManagementConsole v1 deprecated - code removed)
 
 //
 // ╔══════════════════════════════════════════════════════════════════════════╗
 // ║                 INTERNAL WORKER POOL IMPLEMENTATION                       ║
 // ╠══════════════════════════════════════════════════════════════════════════╣
 // ║  This file implements the browse() internal function with worker pool.   ║
-// ║  Used by: Both production (read_discover.go) and legacy UI paths        ║
+// ║  Used by: Server metadata detection and tests                           ║
 // ║  Entry points:                                                           ║
-// ║  • PRODUCTION: discoverNodes() → browse() [auto-tuned ServerProfile]    ║
-// ║  • LEGACY UI: GetNodeTree() → Browse() wrapper → browse() [Auto profile]║
+// ║  • PRODUCTION: read_discover.go uses GlobalWorkerPool (NOT browse())    ║
+// ║  • SERVER INFO: read_server_info.go → Browse() wrapper → browse()       ║
 // ║  • TESTING: Browse() wrapper → browse() [test-injected config]          ║
 // ║                                                                          ║
 // ║  Architecture:                                                           ║
@@ -88,6 +88,15 @@ type NodeDef struct {
 	Path         string      // custom, not an official opcua attribute
 }
 
+// BrowseDetails represents the details of a browse operation for progress tracking.
+// Used to report browse progress to UI or logging systems.
+type BrowseDetails struct {
+	NodeDef               NodeDef
+	TaskCount             int64
+	WorkerCount           int64
+	AvgServerResponseTime time.Duration
+}
+
 // join concatenates two strings with a dot separator.
 //
 // This function is used to construct hierarchical paths by joining parent and child
@@ -126,26 +135,27 @@ type Logger interface {
 //         │                        │                        │
 //         ▼                        ▼                        ▼
 // ┌──────────────┐        ┌──────────────┐        ┌──────────────┐
-// │ Production:  │        │ Legacy UI:   │        │ Testing:     │
-// │ Subscribe to │        │ Build tree   │        │ Unit tests   │
-// │ OPC UA nodes │        │ for UI       │        │ for browse() │
+// │ Production:  │        │ Server Info: │        │ Testing:     │
+// │ Subscribe to │        │ Read server  │        │ Unit tests   │
+// │ OPC UA nodes │        │ metadata     │        │ for browse() │
 // └──────────────┘        └──────────────┘        └──────────────┘
 //         │                        │                        │
 //         ▼                        ▼                        ▼
 // ┌──────────────┐        ┌──────────────┐        ┌──────────────┐
 // │ USE:         │        │ USE:         │        │ USE:         │
-// │ read_discov- │        │ core_browse_ │        │ Browse()     │
-// │ er.go        │        │ frontend.go  │        │ wrapper      │
+// │ read_discov- │        │ read_server_ │        │ Browse()     │
+// │ er.go        │        │ info.go      │        │ wrapper      │
 // │              │        │              │        │              │
-// │ discoverNo-  │        │ GetNodeTree()│        │ (this func)  │
-// │ des()        │        │              │        │              │
+// │ discoverNo-  │        │ GetOPCUASer- │        │ (this func)  │
+// │ des()        │        │ verInfo()    │        │              │
 // └──────────────┘        └──────────────┘        └──────────────┘
 //         │                        │                        │
 //         ▼                        ▼                        ▼
 // ┌──────────────┐        ┌──────────────┐        ┌──────────────┐
 // │ Calls:       │        │ Calls:       │        │ Calls:       │
-// │ browse()     │        │ Browse()     │        │ browse()     │
-// │ (internal)   │        │ wrapper      │        │ (internal)   │
+// │ GlobalWorker-│        │ Browse()     │        │ browse()     │
+// │ Pool.Submit- │        │ wrapper      │        │ (internal)   │
+// │ Task()       │        │              │        │              │
 // └──────────────┘        └──────────────┘        └──────────────┘
 //                                  │
 //                                  ▼
@@ -156,9 +166,9 @@ type Logger interface {
 //                         └──────────────┘
 //
 // KEY INSIGHT:
-// - Production code NEVER calls Browse() or GetNodeTree() directly
-// - Only GetNodeTree() (legacy UI) and tests call the Browse() wrapper
-// - All paths eventually use browse() internal implementation
+// - Production (read_discover.go) uses GlobalWorkerPool, NOT browse()
+// - Server metadata (read_server_info.go) and tests use Browse() → browse()
+// - browse() creates its own per-invocation worker pool
 //
 // Browse is a public wrapper function for the browse() internal implementation.
 //
@@ -169,8 +179,8 @@ type Logger interface {
 // - Test fixtures that mock OPC UA browsing operations
 //
 // For production use cases:
-// - Subscribe to OPC UA nodes → Use read_discover.go::discoverNodes()
-// - Build UI node tree → Use core_browse_frontend.go::GetNodeTree()
+// - Subscribe to OPC UA nodes → Use read_discover.go::discoverNodes() with GlobalWorkerPool
+// - Read server metadata → Use read_server_info.go::GetOPCUAServerInformation() (already uses Browse)
 //
 // Why this exists:
 // - Exposes browse() internal function for testing purposes
