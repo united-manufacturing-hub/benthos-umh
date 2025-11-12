@@ -48,10 +48,6 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 
 	nodeChan := make(chan NodeDef, 3)
 	errChan := make(chan error, 3)
-	// opcuaBrowserChan is declared to satisfy the browse function signature.
-	// The data inside opcuaBrowserChan is not used for this function.
-	// It is not used for server info retrieval.
-	opcuaBrowserChan := make(chan BrowseDetails, 3)
 	var wg TrackedWaitGroup
 
 	// Use profile or fallback to Auto if called before profile detection
@@ -67,14 +63,13 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 		}
 	}()
 	wg.Add(3)
-	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(manufacturerNameNodeID)), "", pool, manufacturerNameNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
-	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(productNameNodeID)), "", pool, productNameNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
-	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(softwareVersionNodeID)), "", pool, softwareVersionNodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited)
+	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(manufacturerNameNodeID)), "", pool, manufacturerNameNodeID.String(), nodeChan, errChan, &wg, nil, &g.visited)
+	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(productNameNodeID)), "", pool, productNameNodeID.String(), nodeChan, errChan, &wg, nil, &g.visited)
+	go Browse(ctx, NewOpcuaNodeWrapper(g.Client.Node(softwareVersionNodeID)), "", pool, softwareVersionNodeID.String(), nodeChan, errChan, &wg, nil, &g.visited)
 	wg.Wait()
 
 	close(nodeChan)
 	close(errChan)
-	close(opcuaBrowserChan)
 
 	if len(errChan) > 0 {
 		return ServerInfo{}, <-errChan
