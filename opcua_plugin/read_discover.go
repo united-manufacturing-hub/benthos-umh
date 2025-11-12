@@ -160,15 +160,14 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 	}()
 
 	// Wait for all pool tasks to complete using WaitForCompletion instead of WaitGroup
+	// Use error variable instead of channel send to guarantee error propagation (ENG-3876)
+	var poolCompletionErr error
 	go func() {
 		if err := pool.WaitForCompletion(DefaultBrowseCompletionTimeout); err != nil {
 			g.Log.Warnf("Pool completion wait error: %v", err)
-			// Propagate error to caller so discoverNodes can handle timeout
-			select {
-			case errChan <- fmt.Errorf("browse pool completion failed: %w", err):
-			default:
-				g.Log.Errorf("Failed to propagate pool completion error (channel full or closed): %v", err)
-			}
+			// Store error in variable instead of non-blocking channel send
+			// This guarantees error is never lost even if errChan is full
+			poolCompletionErr = fmt.Errorf("browse pool completion failed: %w", err)
 		}
 		close(done)
 	}()
@@ -178,6 +177,10 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 		g.Log.Warn("browse function received timeout signal after 1 hour. Please select less nodes.")
 		return nil, timeoutCtx.Err()
 	case <-done:
+		// Check for pool completion error after goroutine finishes
+		if poolCompletionErr != nil {
+			return nil, poolCompletionErr
+		}
 	}
 
 	close(nodeChan)
