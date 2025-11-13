@@ -40,6 +40,9 @@ type EIPInput struct {
 	ListAllTags  bool
 	UseMultiRead bool
 
+	// advanced connection settings
+	SocketTimeoutMs int
+
 	// addresses for readable data either as an attribute or as a tag
 	Items   []*CIPReadItem
 	ItemMap map[string]any
@@ -86,6 +89,12 @@ var EthernetIPConfigSpec = service.NewConfigSpec().
 	Field(service.NewIntField("pollRate").Description("The rate in milliseconds on which we try to read data out of the plc.").Default(1000)).
 	Field(service.NewBoolField("listAllTags").Description("You can use this option to list all available Tags, but only specific controllers support this method.").Default(false)).
 	Field(service.NewBoolField("useMultiRead").Description("You can use this option to increase the reading time, but be aware that only specific controllers support this method.").Default(true)).
+	Field(service.NewIntField("socketTimeoutMs").
+		Description("The timeout in milliseconds for socket operations (connection establishment, reads, and writes).").
+		Default(10000).
+		Examples(5000, 10000, 30000).
+		Optional().
+		Advanced()).
 	Field(service.NewObjectListField("attributes",
 		service.NewStringField("path").Description("The Path consists of the following: CIP-Class - CIP-Instance - CIP-Attribute, e.g. 1-1-1. They might vary based on which controller you're using."),
 		service.NewStringField("type").Description("The type of the attribute you want to read: e.g. 'bool', 'int16', 'byte'."),
@@ -122,6 +131,11 @@ func NewEthernetIPInput(conf *service.ParsedConfig, mgr *service.Resources) (ser
 	}
 
 	useMultiRead, err := conf.FieldBool("useMultiRead")
+	if err != nil {
+		return nil, err
+	}
+
+	socketTimeoutMs, err := conf.FieldInt("socketTimeoutMs")
 	if err != nil {
 		return nil, err
 	}
@@ -176,6 +190,9 @@ func NewEthernetIPInput(conf *service.ParsedConfig, mgr *service.Resources) (ser
 		UseMultiRead: useMultiRead,
 		Log:          mgr.Logger(),
 
+		// advanced connection settings
+		SocketTimeoutMs: socketTimeoutMs,
+
 		// addresses to read data
 		Items:   allItems,
 		ItemMap: itemMap,
@@ -207,7 +224,7 @@ func (g *EIPInput) Connect(ctx context.Context) error {
 			KeepAliveProps:     []gologix.CIPAttribute{1, 2, 3, 4, 10},
 			// this is the Request Packet Interval
 			RPI:           g.PollRate,
-			SocketTimeout: socketTimeoutDefault,
+			SocketTimeout: time.Duration(g.SocketTimeoutMs) * time.Millisecond,
 			KnownTags:     make(map[string]gologix.KnownTag),
 			// NOTE:
 			// we only want to use our logs not the gologix-logs here
