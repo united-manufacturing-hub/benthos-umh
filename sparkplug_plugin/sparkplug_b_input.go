@@ -118,6 +118,15 @@ Key features:
 		Field(service.NewStringField("role").
 			Description("Sparkplug Host mode: 'secondary_passive' (default), 'secondary_active', or 'primary'").
 			Default("secondary_passive")).
+		// Discovery REBIRTH Configuration
+		Field(service.NewBoolField("request_birth_on_connect").
+			Description("Send REBIRTH requests to newly discovered nodes on connection (secondary_active/primary only). Enables complete tag discovery by requesting BIRTH messages when nodes are first seen.").
+			Default(false).
+			Optional()).
+		Field(service.NewDurationField("birth_request_throttle").
+			Description("Minimum time between REBIRTH requests to prevent command storms. Applied per-node to rate-limit discovery.").
+			Default("1s").
+			Optional()).
 		// Subscription Configuration
 		Field(service.NewObjectField("subscription",
 			service.NewStringListField("groups").
@@ -164,17 +173,22 @@ type sparkplugInput struct {
 	legacyAliasCache map[string]map[uint64]string // deviceKey -> (alias -> metric name)
 	stateMu          sync.RWMutex
 
+	// Discovery REBIRTH tracking
+	birthRequested map[string]time.Time // deviceKey -> last REBIRTH request time
+	birthRequestMu sync.RWMutex         // Protects birthRequested map
+
 	// Metrics
-	messagesReceived  *service.MetricCounter
-	messagesProcessed *service.MetricCounter
-	messagesDropped   *service.MetricCounter
-	messagesErrored   *service.MetricCounter
-	birthsProcessed   *service.MetricCounter
-	deathsProcessed   *service.MetricCounter
-	rebirthsRequested *service.MetricCounter
+	messagesReceived   *service.MetricCounter
+	messagesProcessed  *service.MetricCounter
+	messagesDropped    *service.MetricCounter
+	messagesErrored    *service.MetricCounter
+	birthsProcessed    *service.MetricCounter
+	deathsProcessed    *service.MetricCounter
+	rebirthsRequested  *service.MetricCounter
 	rebirthsSuppressed *service.MetricCounter
-	sequenceErrors    *service.MetricCounter
-	aliasResolutions  *service.MetricCounter
+	sequenceErrors     *service.MetricCounter
+	aliasResolutions   *service.MetricCounter
+	discoveryRebirths  *service.MetricCounter // REBIRTH requests sent for discovery
 }
 
 type mqttMessage struct {
@@ -265,6 +279,13 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 		return nil, fmt.Errorf("invalid role '%s': must be 'secondary_passive' (default), 'secondary_active', or 'primary'", roleStr)
 	}
 
+	// Parse discovery REBIRTH configuration
+	config.RequestBirthOnConnect, _ = conf.FieldBool("request_birth_on_connect")
+	config.BirthRequestThrottle, _ = conf.FieldDuration("birth_request_throttle")
+	if config.BirthRequestThrottle == 0 {
+		config.BirthRequestThrottle = 1 * time.Second // Ensure minimum throttle
+	}
+
 	// Parse subscription section using namespace (optional)
 	if conf.Contains("subscription") {
 		subscriptionConf := conf.Namespace("subscription")
@@ -286,27 +307,29 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 	}
 
 	si := &sparkplugInput{
-		config:            config,
-		logger:            mgr.Logger(),
-		messages:          make(chan mqttMessage, 1000),
-		done:              make(chan struct{}),
-		nodeStates:        make(map[string]*nodeState),
-		legacyAliasCache:  make(map[string]map[uint64]string),
-		aliasCache:        NewAliasCache(),
-		topicParser:       NewTopicParser(),
-		messageProcessor:  NewMessageProcessor(mgr.Logger()),
-		typeConverter:     NewTypeConverter(),
-		mqttClientBuilder: NewMQTTClientBuilder(mgr),
-		messagesReceived:  mgr.Metrics().NewCounter("messages_received"),
-		messagesProcessed: mgr.Metrics().NewCounter("messages_processed"),
-		messagesDropped:   mgr.Metrics().NewCounter("messages_dropped"),
-		messagesErrored:   mgr.Metrics().NewCounter("messages_errored"),
-		birthsProcessed:   mgr.Metrics().NewCounter("births_processed"),
-		deathsProcessed:   mgr.Metrics().NewCounter("deaths_processed"),
-		rebirthsRequested: mgr.Metrics().NewCounter("rebirths_requested"),
+		config:             config,
+		logger:             mgr.Logger(),
+		messages:           make(chan mqttMessage, 1000),
+		done:               make(chan struct{}),
+		nodeStates:         make(map[string]*nodeState),
+		legacyAliasCache:   make(map[string]map[uint64]string),
+		birthRequested:     make(map[string]time.Time), // Discovery REBIRTH tracking
+		aliasCache:         NewAliasCache(),
+		topicParser:        NewTopicParser(),
+		messageProcessor:   NewMessageProcessor(mgr.Logger()),
+		typeConverter:      NewTypeConverter(),
+		mqttClientBuilder:  NewMQTTClientBuilder(mgr),
+		messagesReceived:   mgr.Metrics().NewCounter("messages_received"),
+		messagesProcessed:  mgr.Metrics().NewCounter("messages_processed"),
+		messagesDropped:    mgr.Metrics().NewCounter("messages_dropped"),
+		messagesErrored:    mgr.Metrics().NewCounter("messages_errored"),
+		birthsProcessed:    mgr.Metrics().NewCounter("births_processed"),
+		deathsProcessed:    mgr.Metrics().NewCounter("deaths_processed"),
+		rebirthsRequested:  mgr.Metrics().NewCounter("rebirths_requested"),
 		rebirthsSuppressed: mgr.Metrics().NewCounter("rebirths_suppressed"),
-		sequenceErrors:    mgr.Metrics().NewCounter("sequence_errors"),
-		aliasResolutions:  mgr.Metrics().NewCounter("alias_resolutions"),
+		sequenceErrors:     mgr.Metrics().NewCounter("sequence_errors"),
+		aliasResolutions:   mgr.Metrics().NewCounter("alias_resolutions"),
+		discoveryRebirths:  mgr.Metrics().NewCounter("discovery_rebirths"), // Discovery REBIRTH metric
 	}
 
 	return si, nil
@@ -547,9 +570,7 @@ func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload 
 	if state, exists := s.nodeStates[deviceKey]; exists {
 		state.isOnline = true
 		state.lastSeen = time.Now()
-		if payload.Seq != nil {
-			state.lastSeq = uint8(*payload.Seq)
-		}
+		state.lastSeq = GetSequenceNumber(payload)
 		if payload.Timestamp != nil {
 			// Extract bdSeq from metrics if present
 			for _, metric := range payload.Metrics {
@@ -564,9 +585,7 @@ func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload 
 		state := &nodeState{
 			isOnline: true,
 			lastSeen: time.Now(),
-		}
-		if payload.Seq != nil {
-			state.lastSeq = uint8(*payload.Seq)
+			lastSeq:  GetSequenceNumber(payload),
 		}
 		s.nodeStates[deviceKey] = state
 	}
@@ -579,11 +598,32 @@ func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload 
 
 func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
 	s.stateMu.Lock()
-	defer s.stateMu.Unlock()
 
-	// Check sequence numbers for out-of-order detection (Sparkplug B spec compliance)
-	if state, exists := s.nodeStates[deviceKey]; exists && payload.Seq != nil {
-		currentSeq := uint8(*payload.Seq)
+	// Check if this is a newly discovered node
+	state, exists := s.nodeStates[deviceKey]
+	if !exists {
+		// NEW NODE DISCOVERED - request BIRTH to get full tag inventory
+		s.logger.Infof("Discovered new node from %s message: %s", msgType, deviceKey)
+
+		// Create initial state
+		state = &nodeState{
+			isOnline: true,
+			lastSeen: time.Now(),
+			lastSeq:  GetSequenceNumber(payload),
+		}
+		s.nodeStates[deviceKey] = state
+
+		// Release stateMu lock before calling requestBirthIfNeeded (it has its own lock)
+		s.stateMu.Unlock()
+
+		// Request BIRTH for complete tag discovery (if configured)
+		s.requestBirthIfNeeded(deviceKey)
+
+		// Re-acquire lock for alias resolution
+		s.stateMu.Lock()
+	} else {
+		// EXISTING NODE - check sequence numbers for out-of-order detection
+		currentSeq := GetSequenceNumber(payload)
 		expectedSeq := uint8((int(state.lastSeq) + 1) % 256)
 
 		// Validate sequence according to Sparkplug B specification
@@ -597,13 +637,24 @@ func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *
 			// Mark node as stale until rebirth (Sparkplug spec requirement)
 			state.isOnline = false
 
+			// Release stateMu lock before calling sendRebirthRequest (it does MQTT I/O)
+			s.stateMu.Unlock()
+
 			// Always send rebirth requests (required for Sparkplug B compliance)
 			s.sendRebirthRequest(deviceKey)
+
+			// Re-acquire lock for sequence/timestamp updates
+			s.stateMu.Lock()
 		}
 
 		state.lastSeq = currentSeq
 		state.lastSeen = time.Now()
 	}
+
+	// At this point, lock is guaranteed to be held (re-acquired after MQTT I/O if released)
+	// Defer ensures unlock happens after alias resolution completes
+	// Defer placed here (not at top) because lock was temporarily released for MQTT I/O
+	defer s.stateMu.Unlock()
 
 	// Resolve aliases in data message
 	s.resolveAliases(deviceKey, payload.Metrics)
@@ -741,9 +792,9 @@ func (s *sparkplugInput) Close(ctx context.Context) error {
 		s.client.Disconnect(1000)
 	}
 
-	// Close the messages channel after MQTT is disconnected
-	// The done channel ensures no more sends will occur
-	close(s.messages)
+	// Do not close s.messages; s.done gates producers and ReadBatch.
+	// Closing the channel could cause a panic if messageHandler attempts to send
+	// after the done check but before the channel send completes.
 
 	s.logger.Info("Sparkplug input closed")
 	return nil
@@ -809,12 +860,12 @@ func (s *sparkplugInput) parseSparkplugTopicDetailed(topic string) (string, stri
 func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	var batch service.MessageBatch
 
-	for _, metric := range payload.Metrics {
+	for i, metric := range payload.Metrics {
 		if metric == nil {
 			continue
 		}
 
-		msg := s.createMessageFromMetric(metric, payload, msgType, deviceKey, topicInfo, originalTopic)
+		msg := s.createMessageFromMetric(metric, payload, msgType, deviceKey, topicInfo, originalTopic, i, len(payload.Metrics))
 		if msg != nil {
 			batch = append(batch, msg)
 		}
@@ -823,7 +874,7 @@ func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgTyp
 	return batch
 }
 
-func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) *service.Message {
+func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string, metricIndex, totalMetrics int) *service.Message {
 	// Extract metric value as JSON (always preserve Sparkplug B format)
 	value := s.extractMetricValue(metric)
 	if value == nil {
@@ -841,7 +892,7 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	msg.MetaSet("spb_message_type", msgType)
 	msg.MetaSet("spb_device_key", deviceKey)
 	msg.MetaSet("spb_topic", originalTopic)
-	
+
 	// Add pre-sanitized versions for easier processing
 	msg.MetaSet("spb_group_id_sanitized", s.sanitizeForTopic(topicInfo.Group))
 	msg.MetaSet("spb_edge_node_id_sanitized", s.sanitizeForTopic(topicInfo.EdgeNode))
@@ -861,9 +912,16 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	msg.MetaSet("spb_metric_name_sanitized", s.sanitizeForTopic(metricName))
 
 	// Set sequence and timing metadata
-	if payload.Seq != nil {
-		msg.MetaSet("spb_sequence", fmt.Sprintf("%d", *payload.Seq))
-	}
+	// Note: spb_sequence is the MQTT-level sequence number (shared by all metrics in this NDATA message)
+	// See ENG-3720 and CS-13 for context on why we add metric_index for unique identification
+	seq := GetSequenceNumber(payload)
+	msg.MetaSet("spb_sequence", fmt.Sprintf("%d", seq))
+
+	// Add Dual-Sequence metadata for split message identification (Fix for ENG-3720)
+	// When NDATA messages are split into individual metrics, all metrics share the same spb_sequence.
+	// These fields enable unique identification: composite key = (spb_sequence, spb_metric_index)
+	msg.MetaSet("spb_metric_index", fmt.Sprintf("%d", metricIndex))
+	msg.MetaSet("spb_metrics_in_payload", fmt.Sprintf("%d", totalMetrics))
 
 	if payload.Timestamp != nil {
 		msg.MetaSet("spb_timestamp", fmt.Sprintf("%d", *payload.Timestamp))
@@ -1060,22 +1118,51 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 
 	// Parse device key to get topic components
 	parts := strings.Split(deviceKey, "/")
-	if len(parts) < 2 {
+
+	// Validate deviceKey format (SparkplugB spec: group/node or group/node/device)
+	if len(parts) < 2 || len(parts) > 3 {
+		s.logger.Warnf("Invalid deviceKey format: expected 2-3 parts (group/node or group/node/device), got %d: %s",
+			len(parts), deviceKey)
 		return
 	}
 
+	// Validate no empty parts (handles "group//device", "/group/node", "group/node/")
+	for i, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			s.logger.Warnf("Invalid deviceKey: empty or whitespace-only part at index %d: %s - rebirth command will not be sent",
+				i, deviceKey)
+			return
+		}
+		// Reject keys with leading/trailing whitespace (indicates malformed input)
+		if trimmed != part {
+			s.logger.Warnf("Invalid deviceKey: leading/trailing whitespace in part %d: %s - rebirth command will not be sent",
+				i, deviceKey)
+			return
+		}
+		// Reject keys with embedded whitespace (SparkplugB identifiers should not contain spaces)
+		if strings.Contains(part, " ") {
+			s.logger.Warnf("Invalid deviceKey: embedded whitespace in part %d: %s - rebirth command will not be sent",
+				i, deviceKey)
+			return
+		}
+	}
+
 	var topic string
+	var controlMetricName string
 	if len(parts) == 2 {
-		// Node level rebirth
+		// Node level rebirth - send NCMD with "Node Control/Rebirth" metric
 		topic = fmt.Sprintf("spBv1.0/%s/NCMD/%s", parts[0], parts[1])
-	} else {
-		// Device level rebirth
+		controlMetricName = "Node Control/Rebirth"
+	} else { // len(parts) == 3
+		// Device level rebirth - send DCMD with "Device Control/Rebirth" metric
 		topic = fmt.Sprintf("spBv1.0/%s/DCMD/%s/%s", parts[0], parts[1], parts[2])
+		controlMetricName = "Device Control/Rebirth"
 	}
 
 	// Create rebirth command payload
 	rebirthMetric := &sparkplugb.Payload_Metric{
-		Name: func() *string { s := "Node Control/Rebirth"; return &s }(),
+		Name: func() *string { s := controlMetricName; return &s }(),
 		Value: &sparkplugb.Payload_Metric_BooleanValue{
 			BooleanValue: true,
 		},
@@ -1103,6 +1190,57 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 	s.logger.Infof("Sent rebirth request to %s on topic %s", deviceKey, topic)
 }
 
+// requestBirthIfNeeded sends REBIRTH request to newly discovered node (if configured and not recently requested)
+// This enables complete tag discovery by requesting BIRTH messages when nodes are first seen publishing DATA.
+func (s *sparkplugInput) requestBirthIfNeeded(deviceKey string) {
+	// Check if feature is enabled
+	if !s.config.RequestBirthOnConnect {
+		return
+	}
+
+	// Check if role allows REBIRTH requests
+	if s.config.Role == RoleSecondaryPassive {
+		return
+	}
+
+	// Check if already requested recently (with throttling)
+	s.birthRequestMu.Lock()
+	defer s.birthRequestMu.Unlock()
+
+	lastRequested, exists := s.birthRequested[deviceKey]
+	now := time.Now()
+
+	if exists {
+		// Check throttle window
+		timeSinceLastRequest := now.Sub(lastRequested)
+		if timeSinceLastRequest < s.config.BirthRequestThrottle {
+			s.logger.Debugf("Skipping discovery REBIRTH for %s (throttled, last request %v ago)",
+				deviceKey, timeSinceLastRequest)
+			return
+		}
+	}
+
+	// Mark as requested BEFORE sending (prevent concurrent requests)
+	s.birthRequested[deviceKey] = now
+
+	// Send REBIRTH request (reuse existing function)
+	s.logger.Infof("Sending discovery REBIRTH request to newly seen node: %s", deviceKey)
+	s.sendRebirthRequest(deviceKey)
+
+	// Increment discovery-specific metric
+	s.discoveryRebirths.Incr(1)
+}
+
+// GetSequenceNumber extracts sequence number from payload, treating nil as 0 (implied)
+// According to Sparkplug B spec updates, seq=0 can be omitted in BIRTH messages for backwards compatibility
+// Exported for testing purposes to ensure backwards compatibility with older devices
+func GetSequenceNumber(payload *sparkplugb.Payload) uint8 {
+	if payload.Seq == nil {
+		return 0 // Implied seq=0 for backwards compatibility
+	}
+	return uint8(*payload.Seq)
+}
+
 // ValidateSequenceNumber checks if a received sequence number is valid according to Sparkplug B spec
 // Exported for testing purposes to ensure sequence validation logic is properly tested
 //
@@ -1121,12 +1259,26 @@ func ValidateSequenceNumber(lastSeq, currentSeq uint8) bool {
 // tryAddUMHMetadata attempts to convert Sparkplug B data to UMH format and add UMH metadata.
 // This is a non-failing operation - if conversion fails, it adds status flags and continues.
 func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
+	// Get message type from metadata (already set by createMessageFromMetric)
+	msgType, _ := msg.MetaGet("spb_message_type")
+
 	// Only attempt conversion if we have necessary data
-	if topicInfo.Device == "" || metric == nil {
+	// For NDATA messages: device ID is optional (node-level data), use edge_node_id as device identifier
+	// For DDATA messages: device ID is required (device-level data)
+	if metric == nil {
 		msg.MetaSet("umh_conversion_status", "skipped_insufficient_data")
-		s.logger.Debugf("Skipping UMH conversion: insufficient data (device=%s, metric=%v)", topicInfo.Device, metric != nil)
+		s.logger.Debugf("Skipping UMH conversion: metric is nil")
 		return
 	}
+
+	// For DDATA messages, device ID is required
+	if msgType == "DDATA" && topicInfo.Device == "" {
+		msg.MetaSet("umh_conversion_status", "skipped_insufficient_data")
+		s.logger.Debugf("Skipping UMH conversion for DDATA: device ID required but missing")
+		return
+	}
+
+	// For NDATA messages, device ID is optional - we'll use edge_node_id as device identifier
 
 	// Try to use the format converter
 	converter := NewFormatConverter()
@@ -1146,11 +1298,21 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	} else {
 		dataType = "unknown"
 	}
-	
+
+	// For NDATA messages (node-level data), use EdgeNode as DeviceID when Device is empty
+	deviceID := topicInfo.Device
+	if deviceID == "" {
+		deviceID = topicInfo.EdgeNode
+		// Set spb_device_id metadata for consistency (used by Topic Browser and other downstream processors)
+		// Even though this is NDATA (node-level), we're treating EdgeNode as the device identifier
+		msg.MetaSet("spb_device_id", deviceID)
+		msg.MetaSet("spb_device_id_sanitized", s.sanitizeForTopic(deviceID))
+	}
+
 	sparkplugMsg := &SparkplugMessage{
 		GroupID:    topicInfo.Group,
 		EdgeNodeID: topicInfo.EdgeNode,
-		DeviceID:   topicInfo.Device,
+		DeviceID:   deviceID,
 		Value:      rawValue,
 		DataType:   dataType,
 		Timestamp:  time.Now(), // Will be overridden below if payload has timestamp
@@ -1204,6 +1366,8 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	msg.MetaSet("umh_data_contract", umhMsg.TopicInfo.DataContract)
 	
 	// Add virtual path if present
+	// Note: Benthos metadata cannot store empty strings (they become unset)
+	// YAML configs must use .or("") to handle missing virtual_path metadata
 	if umhMsg.TopicInfo.VirtualPath != nil {
 		msg.MetaSet("umh_virtual_path", *umhMsg.TopicInfo.VirtualPath)
 	}
