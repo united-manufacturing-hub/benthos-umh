@@ -33,61 +33,74 @@ var OPCUAConnectionConfigSpec = service.NewConfigSpec().
 		Description("The OPC UA server endpoint to connect to.").
 		Example("opc.tcp://localhost:4840")).
 	Field(service.NewStringField("username").
-		Description("The username for authentication.").
+		Description("The username for authentication. Leave empty for anonymous login.").
 		Default("").
+		Optional().
 		Advanced()).
 	Field(service.NewStringField("password").
-		Description("The password for authentication.").
+		Description("The password for authentication. Leave empty for anonymous login.").
 		Default("").
+		Optional().
 		Secret().
 		Advanced()).
 	Field(service.NewIntField("sessionTimeout").
-		Description("The duration in milliseconds that a OPC UA session will last. Is used to ensure that older failed sessions will timeout and that we will not get a TooManySession error.").
+		Description("Duration in milliseconds that an OPC UA session remains active. Prevents 'TooManySessions' errors by ensuring old sessions timeout. Default: 10000ms (10 seconds).").
 		Default(10000).
+		Optional().
 		Advanced()).
 	Field(service.NewStringField("securityMode").
-		Description("The security mode to use. Options: None, Sign, SignAndEncrypt").
+		Description("The security mode to use. Options: None, Sign, SignAndEncrypt. Leave empty for auto-negotiation.").
 		Default("").
+		Optional().
 		Advanced()).
 	Field(service.NewStringField("securityPolicy").
-		Description("The security policy to use. Options: None, Basic128Rsa15, Basic256, Basic256Sha256").
+		Description("The security policy to use. Options: None, Basic128Rsa15, Basic256, Basic256Sha256. Leave empty for auto-negotiation.").
 		Default("").
+		Optional().
 		Advanced()).
 	Field(service.NewStringField("clientCertificate").
-		Description("The client certificate to use, base64-encoded.").
+		Description("Client certificate for encrypted OPC UA connections (base64-encoded DER+PEM bundle). Leave empty to auto-generate a certificate on first run (benthos will log it for future use). Required for SecurityMode: Sign or SignAndEncrypt.").
 		Default("").
+		Optional().
 		Advanced()).
 	Field(service.NewStringField("serverCertificateFingerprint").
-		Description("The server certificate fingerprint to verify, SHA3-512 hash.").
+		Description("Server certificate fingerprint for verification (SHA3-512 hash). Leave empty to skip fingerprint verification.").
 		Default("").
+		Optional().
 		Advanced()).
 	Field(service.NewStringField("userCertificate").
-		Description("User certificate in base64 encoded format of either PEM or DER.").
+		Description("User certificate in base64 encoded format of either PEM or DER. Leave empty if not using certificate-based user authentication.").
 		Default("").
+		Optional().
 		Advanced()).
 	Field(service.NewStringField("userPrivateKey").
-		Description("User private key in base64 format of PEM for user certificate based authentication.").
+		Description("User private key in base64 format of PEM for user certificate based authentication. Leave empty if not using certificate-based user authentication.").
 		Default("").
+		Optional().
 		Advanced()).
 	Field(service.NewBoolField("insecure").
 		Description("Set to true to bypass secure connections, useful in case of SSL or certificate issues. Default is secure (false).").
 		Default(false).
+		Optional().
 		Advanced()).
 	Field(service.NewBoolField("directConnect").
 		Description("Set this to true to directly connect to an OPC UA endpoint. This can be necessary in cases where the OPC UA server does not allow 'endpoint discovery'. This requires having the full endpoint name in endpoint, and securityMode and securityPolicy set.").
 		Default(false).
+		Optional().
 		Advanced()).
 	Field(service.NewBoolField("autoReconnect").
 		Description("Set to true to automatically reconnect to the OPC UA server when the connection is lost.").
 		Default(false).
+		Optional().
 		Advanced()).
 	Field(service.NewIntField("reconnectIntervalInSeconds").
 		Description("The interval in seconds at which to reconnect to the OPC UA server when the connection is lost. This is only used if `autoReconnect` is set to true.").
 		Default(5).
 		Advanced()).
 	Field(service.NewStringField("profile").
-		Description("Manually override the OPC UA server profile for performance tuning. Options: auto, high-performance, ignition, kepware, siemens-s7-1200, siemens-s7-1500, prosys. If not specified or empty, auto-detection will be used.").
+		Description("OPC UA server profile for performance tuning. Options: auto, high-performance, ignition, kepware, siemens-s7-1200, siemens-s7-1500, prosys. Leave empty for auto-detection.").
 		Default("").
+		Optional().
 		Advanced())
 
 // OPCUAConnection represents the common connection configuration for OPC UA plugins

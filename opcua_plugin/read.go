@@ -41,11 +41,13 @@ var OPCUAConfigSpec = OPCUAConnectionConfigSpec.
 	Field(service.NewStringListField("nodeIDs").
 		Description("List of OPC-UA node IDs to begin browsing.")).
 	Field(service.NewBoolField("subscribeEnabled").
-		Description("Set to true to subscribe to OPC UA nodes instead of fetching them every seconds. Default is pulling messages every second (false).").
+		Description("Enable OPC UA subscriptions for real-time data updates. When disabled, uses polling mode (slower, higher server load). Subscriptions are recommended for production use.").
 		Default(false)).
 	Field(service.NewBoolField("useHeartbeat").
-		Description("Set to true to provide an extra message with the servers timestamp as a heartbeat").
-		Default(false)).
+		Description("Monitor connection health by subscribing to server's CurrentTime node (ns=0;i=2258). If no heartbeat received for 10+ seconds, connection is reset. Recommended for critical production connections. Note: Some servers (e.g., Prosys) may not update CurrentTime regularly - this is normal.").
+		Default(false).
+		Optional().
+		Advanced()).
 	Field(service.NewIntField("pollRate").
 		Description("The rate in milliseconds at which to poll the OPC UA server when not using subscriptions. Defaults to 1000ms (1 second).").
 		Default(DefaultPollRate)).

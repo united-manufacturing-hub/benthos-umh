@@ -86,9 +86,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("✅ Generated schemas to %s\n", outputFile)
-	fmt.Printf("   - Format: %s\n", *format)
-	fmt.Printf("   - %d inputs\n", len(schemas.Inputs))
-	fmt.Printf("   - %d processors\n", len(schemas.Processors))
-	fmt.Printf("   - %d outputs\n", len(schemas.Outputs))
+	fmt.Fprintf(os.Stderr, "✅ Generated schemas to %s\n", outputFile)
+	fmt.Fprintf(os.Stderr, "   - Format: %s\n", *format)
+	fmt.Fprintf(os.Stderr, "   - %d inputs\n", len(schemas.Inputs))
+	fmt.Fprintf(os.Stderr, "   - %d processors\n", len(schemas.Processors))
+	fmt.Fprintf(os.Stderr, "   - %d outputs\n", len(schemas.Outputs))
 }
