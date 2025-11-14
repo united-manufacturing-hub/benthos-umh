@@ -30,8 +30,8 @@ const SessionTimeout = 5 * time.Second
 
 var OPCUAConnectionConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringField("endpoint").
-		Description("The OPC UA server endpoint to connect to.").
-		Example("opc.tcp://localhost:4840")).
+		Description("URL of the OPC UA server. Must start with 'opc.tcp://' followed by hostname and port.").
+		Example("opc.tcp://10.0.1.100:4840")).
 	Field(service.NewStringField("username").
 		Description("The username for authentication. Leave empty for anonymous login.").
 		Default("").

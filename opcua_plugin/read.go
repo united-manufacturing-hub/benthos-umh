@@ -39,7 +39,7 @@ var OPCUAConfigSpec = OPCUAConnectionConfigSpec.
 	Summary("OPC UA input plugin").
 	Description("The OPC UA input plugin reads data from an OPC UA server and sends it to Benthos.").
 	Field(service.NewStringListField("nodeIDs").
-		Description("List of OPC-UA node IDs to begin browsing.")).
+		Description("Starting points for discovering data on the OPC UA server. Specify folder nodes to subscribe to all children, or individual variable nodes for specific data points.\n\nCommon formats:\n- String: ns=2;s=MyVariable or ns=3;s=Plant.Line1.Temperature\n- Numeric: ns=2;i=1234\n\nUse your OPC UA browser tool (e.g., UAExpert) to find node IDs.")).
 	Field(service.NewBoolField("subscribeEnabled").
 		Description("Enable OPC UA subscriptions for real-time data updates. When disabled, uses polling mode (slower, higher server load). Subscriptions are recommended for production use.").
 		Default(false)).
