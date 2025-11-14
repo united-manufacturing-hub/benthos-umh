@@ -160,7 +160,8 @@ func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[stri
 	}
 
 	// Set up console for logging that uses Benthos logger
-	console := map[string]interface{}{
+	console := map[string]any{
+		"debug": func(data ...any) { u.logger.Debug(formatLogMsg(data)) },
 		"log":   func(data ...any) { u.logger.Info(formatLogMsg(data)) },
 		"info":  func(data ...any) { u.logger.Info(formatLogMsg(data)) },
 		"warn":  func(data ...any) { u.logger.Warn(formatLogMsg(data)) },
