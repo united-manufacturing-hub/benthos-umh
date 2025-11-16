@@ -222,3 +222,7 @@ umh-core-data/
 
 # Diffs
 *.diff
+# Schema generation output (versioned files)
+benthos-schemas*.json
+cmd/schema-export/benthos-schemas*.json
+cmd/schema-export/schema-export
