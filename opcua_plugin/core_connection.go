@@ -109,8 +109,9 @@ var OPCUAConnectionConfigSpec = service.NewConfigSpec().
 		Optional().
 		Advanced()).
 	Field(service.NewStringField("profile").
-		Description("Manually override the OPC UA server profile for performance tuning. Options: auto, high-performance, ignition, kepware, siemens-s7-1200, siemens-s7-1500, prosys. If not specified or empty, auto-detection will be used.").
+		Description("Server profile for performance tuning. Leave empty for automatic detection (recommended). Manual options: auto, high-performance, ignition, kepware, siemens-s7-1200, siemens-s7-1500, prosys.").
 		Default("").
+		Optional().
 		Advanced())
 
 // OPCUAConnection represents the common connection configuration for OPC UA plugins
