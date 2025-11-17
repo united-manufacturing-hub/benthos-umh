@@ -88,7 +88,7 @@ Key features:
 				Description("MQTT authentication credentials").
 				Optional(),
 			service.NewIntField("qos").
-				Description("QoS level for MQTT operations (0, 1, or 2)").
+				Description("MQTT Quality of Service level:\n\n- 0: At most once (fastest, may lose messages)\n- 1: At least once (recommended, guaranteed delivery)\n- 2: Exactly once (slowest, prevents duplicates)\n\nSparkplug B specification recommends QoS 1.").
 				Default(1).
 				Optional().
 				Examples(0, 1, 2),
@@ -118,10 +118,10 @@ Key features:
 				Description("Device ID under the edge node (optional, if not specified acts as node-level)").
 				Default("").
 				Optional()).
-			Description("Sparkplug identity configuration")).
+			Description("Sparkplug B namespace identity. Defines where this host/consumer appears in the Sparkplug topic hierarchy (spBv1.0/<group_id>/<edge_node_id>/<device_id>).\n\nFor Sparkplug namespace reference, see: https://docs.umh.app/benthos-umh/input/sparkplug_b")).
 		// Role Configuration
 		Field(service.NewStringField("role").
-			Description("Sparkplug Host mode: 'secondary_passive' (default), 'secondary_active', or 'primary'").
+			Description("Sparkplug Host operating mode:\n\n- secondary_passive (default): Read-only consumer, no rebirth commands. Safe for brownfield deployments.\n- secondary_active: Active consumer, sends rebirth commands to edge nodes. No STATE publishing.\n- primary: Full Primary Host with STATE publishing and session management. Only ONE per group!\n\nFor mode comparison, see: https://docs.umh.app/benthos-umh/input/sparkplug_b").
 			Default("secondary_passive").
 			Optional()).
 		// Discovery REBIRTH Configuration

@@ -166,7 +166,7 @@ var ModbusConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from Modbus devices. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
 	Description("This input plugin enables Benthos to read data directly from Modbus devices using the Modbus protocol.").
 	Field(service.NewDurationField("timeBetweenReads").Description("The time between two reads of a Modbus device. Useful if you want to read the device every x seconds. Not to be confused with TimeBetweenRequests.").Default("1s").Examples("1s", "5s", "100ms")).
-	Field(service.NewStringField("controller").Description("The Modbus controller address, e.g., 'tcp://localhost:502'").Default("tcp://localhost:502").Examples("tcp://{{ .IP }}:{{ .PORT }}", "tcp://192.168.1.100:502", "tcp://10.0.0.50:502", "tcp://plc.local:502")).
+	Field(service.NewStringField("controller").Description("The Modbus controller address in format 'tcp://host:port'. For detailed connection examples, see: https://docs.umh.app/benthos-umh/input/modbus").Default("tcp://localhost:502").Examples("tcp://{{ .IP }}:{{ .PORT }}", "tcp://192.168.1.100:502", "tcp://10.0.0.50:502", "tcp://plc.local:502")).
 	Field(service.NewStringField("transmissionMode").Description("Transmission mode: 'TCP', 'RTUOverTCP', or 'ASCIIOverTCP'").Default("TCP").Optional().Advanced().Examples("TCP", "RTUOverTCP", "ASCIIOverTCP")).
 	Field(service.NewIntField("slaveID").Description("Slave ID of the Modbus device (deprecated: use slaveIDs for single or multiple slaves)").Default(1).Optional().Advanced().Examples(1, 2, 10)).
 	Field(service.NewIntListField("slaveIDs").Description("Slave IDs to poll. Benthos polls each slave sequentially in the order specified, reads all configured addresses from each slave, and merges the results into a single message batch. All slaves share the same TCP connection. If a slave encounters an error, Benthos logs the error and continues to the next slave (except for fatal connection errors like broken pipe, which trigger reconnection).").Default([]int{1}).Examples([]int{1}, []int{1, 2, 3}, []int{10, 20})).
@@ -192,7 +192,7 @@ var ModbusConfigSpec = service.NewConfigSpec().
 		service.NewIntField("bit").Description("Bit of the register, only valid for BIT type").Default(0).Examples(0, 1, 7),
 		service.NewFloatField("scale").Description("Factor to scale the variable with").Default(0.0).Examples(0.0, 0.1, 10.0),
 		service.NewStringField("output").Description("Type of resulting field: 'INT64', 'UINT64', 'FLOAT64', or 'native'").Default("").Examples("", "FLOAT64", "INT64", "UINT64")).
-		Description("List of Modbus addresses to read"))
+		Description("Register addresses to read from the Modbus device. Each address specifies register type (coil/discrete/input/holding) and address.\n\nFor detailed register type descriptions and address format, see: https://docs.umh.app/benthos-umh/input/modbus"))
 
 // newModbusInput is the constructor function for ModbusInput. It parses the plugin configuration,
 // establishes a connection with the Modbus device, and initializes the input plugin instance.
