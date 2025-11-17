@@ -166,17 +166,17 @@ var errAddressOverflow = errors.New("address overflow")
 var ModbusConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from Modbus devices. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
 	Description("This input plugin enables Benthos to read data directly from Modbus devices using the Modbus protocol.").
-	Field(service.NewDurationField("timeBetweenReads").Description("The time between two reads of a Modbus device. Useful if you want to read the device every x seconds. Not to be confused with TimeBetweenRequests.").Default("1s").Examples("1s", "5s", "100ms")).
-	Field(service.NewStringField("controller").Description("The Modbus controller address, e.g., 'tcp://localhost:502'").Default("tcp://localhost:502").Examples("tcp://{{ .IP }}:{{ .PORT }}", "tcp://192.168.1.100:502", "tcp://10.0.0.50:502", "tcp://plc.local:502")).
+	Field(service.NewDurationField("timeBetweenReads").Description("How often to read data from the device (default: 1s). Faster polling may impact PLC performance.").Default("1s").Examples("1s", "5s", "10s")).
+	Field(service.NewStringField("controller").Description("IP address and port of your Modbus device. Must start with 'tcp://' followed by hostname and port.").Default("tcp://localhost:502").Examples("tcp://{{ .IP }}:{{ .PORT }}", "tcp://192.168.1.100:502", "tcp://10.0.0.50:502", "tcp://plc.local:502")).
 	Field(service.NewStringField("transmissionMode").Description("Transmission mode: 'TCP', 'RTUOverTCP', or 'ASCIIOverTCP'").Default("TCP").Optional().Advanced().Examples("TCP", "RTUOverTCP", "ASCIIOverTCP")).
 	Field(service.NewIntField("slaveID").Description("Slave ID of the Modbus device (deprecated: use slaveIDs for single or multiple slaves)").Default(1).Optional().Advanced().Examples(1, 2, 10)).
-	Field(service.NewIntListField("slaveIDs").Description("Slave IDs to poll. Benthos polls each slave sequentially in the order specified, reads all configured addresses from each slave, and merges the results into a single message batch. All slaves share the same TCP connection. If a slave encounters an error, Benthos logs the error and continues to the next slave (except for fatal connection errors like broken pipe, which trigger reconnection).").Default([]int{1}).Examples([]int{1}, []int{1, 2, 3}, []int{10, 20})).
+	Field(service.NewIntListField("slaveIDs").Description("Modbus device ID numbers (1-247). Use multiple IDs to poll several devices on the same network.").Default([]int{1}).Examples([]int{1}, []int{1, 2, 3}, []int{10, 20})).
 	Field(service.NewDurationField("timeout").Description("Timeout for requests to the Modbus device").Default("1s").Optional().Advanced().Examples("1s", "5s", "10s")).
 	Field(service.NewIntField("busyRetries").Description("Maximum number of retries when the device is busy").Default(3).Optional().Advanced().Examples(3, 5, 10)).
 	Field(service.NewDurationField("busyRetriesWait").Description("Time to wait between retries when the device is busy").Default("200ms").Optional().Advanced().Examples("200ms", "500ms", "1s")).
 	Field(service.NewStringField("optimization").Description("Request optimization algorithm: 'none' or 'max_insert'").Default("none").Optional().Advanced().Examples("none", "max_insert")).
 	Field(service.NewIntField("optimizationMaxRegisterFill").Description("Maximum number of registers to insert for optimization").Default(50).Optional().Advanced().Examples(10, 50, 100)).
-	Field(service.NewStringField("byteOrder").Description("Byte order: 'ABCD', 'DCBA', 'BADC', or 'CDAB'").Default("ABCD").Optional().Advanced().Examples("ABCD", "DCBA", "BADC", "CDAB")).
+	Field(service.NewStringField("byteOrder").Description("Data byte order. Change only if device values appear incorrect.\n\nOptions:\n- Big-endian (ABCD) - Modbus standard, most devices\n- Little-endian (DCBA) - Intel-based PLCs (Beckhoff, some Siemens)\n- Mid-endian variants (BADC, CDAB) - Rare device-specific formats\n\nDefault: Big-endian (ABCD)\n\nIf values seem wildly wrong (e.g., temperature reads 16,000°C instead of 25°C), try changing this setting.").Default("ABCD").Optional().Advanced().Examples("ABCD", "DCBA", "BADC", "CDAB")).
 	Field(service.NewObjectField("workarounds",
 		service.NewDurationField("pauseAfterConnect").Description("Pause after connect to delay the first request").Default("0s").Examples("0s", "1s", "5s"),
 		service.NewBoolField("oneRequestPerField").Description("Send each field in a separate request").Default(false).Examples(false, true),
@@ -193,7 +193,7 @@ var ModbusConfigSpec = service.NewConfigSpec().
 		service.NewIntField("bit").Description("Bit of the register, only valid for BIT type").Default(0).Examples(0, 1, 7),
 		service.NewFloatField("scale").Description("Factor to scale the variable with").Default(0.0).Examples(0.0, 0.1, 10.0),
 		service.NewStringField("output").Description("Type of resulting field: 'INT64', 'UINT64', 'FLOAT64', or 'native'").Default("").Examples("", "FLOAT64", "INT64", "UINT64")).
-		Description("List of Modbus addresses to read"))
+		Description("Register addresses to read from the Modbus device. Specify the register type (coil, discrete input, input register, or holding register) and the address of each data point.\n\nRegister types:\n- coil: Read/write discrete outputs (on/off switches, valves)\n- discrete: Read-only discrete inputs (sensors, limit switches)\n- input: Read-only analog inputs (temperature, pressure sensors)\n- holding: Read/write analog values (setpoints, configuration data)\n\nAddress format: Use direct addresses (0-65535), not Modbus reference notation.\nExample: Address 100 for holding register (not 40101).\n\nFind register addresses in your device's Modbus register map or documentation."))
 
 // newModbusInput is the constructor function for ModbusInput. It parses the plugin configuration,
 // establishes a connection with the Modbus device, and initializes the input plugin instance.
