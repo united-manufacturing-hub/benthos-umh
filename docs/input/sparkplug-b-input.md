@@ -59,19 +59,19 @@ input:
       group_id: "DeviceLevelTest"
     # mode: "secondary_passive" is default - safest for brownfield deployments
 
-processing:
+pipeline:
   processors:
     - tag_processor:
         defaults: |
-          # msg.meta.location_path = "..."; # automatic from the device_id (see also output plugin)
-          # msg.meta.virtual_path = "..."; # automatic from the metric name (see also output plugin)
-          # msg.meta.tag_name = "..."; # automatic from the metric name (see also output plugin)
+          // msg.meta.location_path = "..."; // automatic from the device_id (see also output plugin)
+          // msg.meta.virtual_path = "..."; // automatic from the metric name (see also output plugin)
+          // msg.meta.tag_name = "..."; // automatic from the metric name (see also output plugin)
 
-          # For Sparkplug B input data, use _raw data contract
+          // For Sparkplug B input data, use _raw data contract
           msg.meta.data_contract = "_raw";
 
-          # Note: UMH conversion will use this data contract
-          # Common options: "_raw", "_historian", "_sparkplug"
+          // Note: UMH conversion will use this data contract
+          // Common options: "_raw", "_historian", "_sparkplug"
 
 output:
   uns: {}
