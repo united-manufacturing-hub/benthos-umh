@@ -599,6 +599,10 @@ func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload 
 func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
 	s.stateMu.Lock()
 
+	currentSeq := GetSequenceNumber(payload)
+	var needsRebirth bool
+	var isNewNode bool
+
 	// Check if this is a newly discovered node
 	state, exists := s.nodeStates[deviceKey]
 	if !exists {
@@ -609,65 +613,91 @@ func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *
 		state = &nodeState{
 			isOnline: true,
 			lastSeen: time.Now(),
-			lastSeq:  GetSequenceNumber(payload),
+			lastSeq:  currentSeq,
 		}
 		s.nodeStates[deviceKey] = state
-
-		// Release stateMu lock before calling requestBirthIfNeeded (it has its own lock)
-		s.stateMu.Unlock()
-
-		// Request BIRTH for complete tag discovery (if configured)
-		s.requestBirthIfNeeded(deviceKey)
-
-		// Re-acquire lock for alias resolution
-		s.stateMu.Lock()
+		isNewNode = true
 	} else {
 		// EXISTING NODE - check sequence numbers for out-of-order detection
-		currentSeq := GetSequenceNumber(payload)
-		expectedSeq := uint8((int(state.lastSeq) + 1) % 256)
-
-		// Validate sequence according to Sparkplug B specification
 		isValidSequence := ValidateSequenceNumber(state.lastSeq, currentSeq)
 
 		if !isValidSequence {
+			expectedSeq := uint8((int(state.lastSeq) + 1) % 256)
 			s.logger.Warnf("Sequence gap detected for device %s: expected %d, got %d",
 				deviceKey, expectedSeq, currentSeq)
 			s.sequenceErrors.Incr(1)
-
-			// Mark node as stale until rebirth (Sparkplug spec requirement)
-			state.isOnline = false
-
-			// Release stateMu lock before calling sendRebirthRequest (it does MQTT I/O)
-			s.stateMu.Unlock()
-
-			// Always send rebirth requests (required for Sparkplug B compliance)
-			s.sendRebirthRequest(deviceKey)
-
-			// Re-acquire lock for sequence/timestamp updates
-			s.stateMu.Lock()
+			needsRebirth = true
 		}
 
+		// Update all state before releasing lock
 		state.lastSeq = currentSeq
 		state.lastSeen = time.Now()
+		state.isOnline = isValidSequence // Elegant one-liner: mark offline if invalid sequence
 	}
 
-	// At this point, lock is guaranteed to be held (re-acquired after MQTT I/O if released)
-	// Defer ensures unlock happens after alias resolution completes
-	// Defer placed here (not at top) because lock was temporarily released for MQTT I/O
-	defer s.stateMu.Unlock()
-
-	// Resolve aliases in data message
+	// Resolve aliases while holding lock (safe operation)
 	s.resolveAliases(deviceKey, payload.Metrics)
+
+	// Release lock before MQTT I/O operations
+	s.stateMu.Unlock()
+
+	// Perform MQTT I/O operations after lock release
+	if isNewNode {
+		// Request BIRTH for complete tag discovery (if configured)
+		s.requestBirthIfNeeded(deviceKey)
+	} else if needsRebirth {
+		// Send rebirth request for sequence gap
+		s.sendRebirthRequest(deviceKey)
+	}
 }
 
 func (s *sparkplugInput) processDeathMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
-	if state, exists := s.nodeStates[deviceKey]; exists {
-		state.isOnline = false
-		state.lastSeen = time.Now()
+	state, exists := s.nodeStates[deviceKey]
+	if !exists {
+		// No state for this device - create minimal state
+		s.nodeStates[deviceKey] = &nodeState{
+			isOnline: false,
+			lastSeen: time.Now(),
+		}
+		s.logger.Debugf("Processed %s for unknown device %s (created state)", msgType, deviceKey)
+		return
 	}
+
+	// For NDEATH messages, validate bdSeq from payload
+	if msgType == "NDEATH" {
+		// Extract bdSeq from payload metrics
+		var payloadBdSeq uint64
+		var foundBdSeq bool
+		for _, metric := range payload.Metrics {
+			if metric.Name != nil && *metric.Name == "bdSeq" {
+				payloadBdSeq = metric.GetLongValue()
+				foundBdSeq = true
+				break
+			}
+		}
+
+		if foundBdSeq {
+			// Validate bdSeq matches the stored value from NBIRTH
+			if payloadBdSeq != state.bdSeq {
+				// Stale NDEATH from old session - ignore it
+				s.logger.Warnf("Ignoring stale NDEATH for device %s: bdSeq mismatch (payload=%d, stored=%d)",
+					deviceKey, payloadBdSeq, state.bdSeq)
+				return
+			}
+			s.logger.Debugf("NDEATH bdSeq validated for device %s (bdSeq=%d)", deviceKey, payloadBdSeq)
+		} else {
+			// No bdSeq in payload - log warning but still process
+			// Some older edge nodes might not include bdSeq
+			s.logger.Warnf("NDEATH for device %s missing bdSeq metric - processing anyway", deviceKey)
+		}
+	}
+
+	// Update state
+	state.isOnline = false
+	state.lastSeen = time.Now()
 
 	s.logger.Debugf("Processed %s for device %s", msgType, deviceKey)
 }

@@ -21,6 +21,7 @@ package sparkplug_plugin
 
 import (
 	"sync"
+	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
@@ -115,4 +116,37 @@ func (w *SparkplugInputTestWrapper) GetNodeState(deviceKey string) *NodeStateInf
 		LastSeq:  state.lastSeq,
 		IsOnline: state.isOnline,
 	}
+}
+
+// ProcessDeathMessage is an exported wrapper for testing the private processDeathMessage method
+func (w *SparkplugInputTestWrapper) ProcessDeathMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
+	w.input.processDeathMessage(deviceKey, msgType, payload)
+}
+
+// SetNodeBdSeq allows tests to set the bdSeq for a device (simulating NBIRTH)
+func (w *SparkplugInputTestWrapper) SetNodeBdSeq(deviceKey string, bdSeq uint64) {
+	w.input.stateMu.Lock()
+	defer w.input.stateMu.Unlock()
+
+	if state, exists := w.input.nodeStates[deviceKey]; exists {
+		state.bdSeq = bdSeq
+	} else {
+		w.input.nodeStates[deviceKey] = &nodeState{
+			bdSeq:    bdSeq,
+			isOnline: true,
+			lastSeen: time.Now(),
+		}
+	}
+}
+
+// GetNodeBdSeq returns the bdSeq for a device
+func (w *SparkplugInputTestWrapper) GetNodeBdSeq(deviceKey string) (uint64, bool) {
+	w.input.stateMu.RLock()
+	defer w.input.stateMu.RUnlock()
+
+	state, exists := w.input.nodeStates[deviceKey]
+	if !exists {
+		return 0, false
+	}
+	return state.bdSeq, true
 }
