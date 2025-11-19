@@ -18,6 +18,7 @@ GINKGO_FLAGS=-r --output-interceptor-mode=none --github-output -vv -trace -p --r
 GINKGO_SERIAL_FLAGS=$(GINKGO_FLAGS) --procs=1
 
 BENTHOS_BIN := tmp/bin/benthos
+LOG_LEVEL ?= INFO
 
 .PHONY: all
 all: clean target
@@ -25,6 +26,14 @@ all: clean target
 .PHONY: clean
 clean:
 	@rm -rf target tmp/bin tmp/benthos-*.zip
+
+.PHONY: run
+run:
+	@go run cmd/benthos/main.go run --log.level $(LOG_LEVEL) $(CONFIG)
+
+.PHONY: run-debug
+run-debug:
+	@$(MAKE) run LOG_LEVEL=DEBUG
 
 .PHONY: target
 target: build-protobuf
