@@ -244,9 +244,15 @@ func (gwp *GlobalWorkerPool) SubmitTask(task GlobalPoolTask) (err error) {
 	// This ensures counter is only incremented if we actually send the task
 	atomic.AddInt64(&gwp.pendingTasks, 1)
 
-	// Send task to channel (will panic if closed, recovered by defer)
-	gwp.taskChan <- task
-	return nil
+	// Send task to channel with context awareness (prevents deadlock on cancellation)
+	select {
+	case gwp.taskChan <- task:
+		return nil
+	case <-task.Ctx.Done():
+		// Context cancelled - decrement counter since task won't be processed
+		atomic.AddInt64(&gwp.pendingTasks, -1)
+		return task.Ctx.Err()
+	}
 }
 
 // Shutdown gracefully stops all workers and closes the task channel.
