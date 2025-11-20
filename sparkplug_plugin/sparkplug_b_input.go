@@ -208,7 +208,7 @@ type StateAction struct {
 
 // Counter interface for metric counters (for testing)
 type Counter interface {
-	Incr(delta int64)
+	Incr(delta int64, labelValues ...string)
 }
 
 // UpdateNodeState is a pure function that updates node state and determines required actions.
@@ -674,53 +674,34 @@ func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *
 	s.stateMu.Lock()
 
 	currentSeq := GetSequenceNumber(payload)
-	var needsRebirth bool
-	var isNewNode bool
 
-	// Check if this is a newly discovered node
-	state, exists := s.nodeStates[deviceKey]
-	if !exists {
-		// NEW NODE DISCOVERED - request BIRTH to get full tag inventory
+	// Capture previous sequence before UpdateNodeState modifies it
+	var prevSeq uint8
+	if state, exists := s.nodeStates[deviceKey]; exists {
+		prevSeq = state.LastSeq
+	}
+
+	action := UpdateNodeState(s.nodeStates, deviceKey, currentSeq)
+
+	// Log new node discovery while holding lock
+	if action.IsNewNode {
 		s.logger.Infof("Discovered new node from %s message: %s", msgType, deviceKey)
+	}
 
-		// Create initial state
-		state = &nodeState{
-			IsOnline: true,
-			LastSeen: time.Now(),
-			LastSeq:  currentSeq,
-		}
-		s.nodeStates[deviceKey] = state
-		isNewNode = true
-	} else {
-		// EXISTING NODE - check sequence numbers for out-of-order detection
-		isValidSequence := ValidateSequenceNumber(state.LastSeq, currentSeq)
-
-		if !isValidSequence {
-			expectedSeq := uint8((int(state.LastSeq) + 1) % 256)
-			s.logger.Warnf("Sequence gap detected for device %s: expected %d, got %d",
-				deviceKey, expectedSeq, currentSeq)
-			s.sequenceErrors.Incr(1)
-			needsRebirth = true
-		}
-
-		// Update all state before releasing lock
-		state.LastSeq = currentSeq
-		state.LastSeen = time.Now()
-		state.IsOnline = isValidSequence // Elegant one-liner: mark offline if invalid sequence
+	// Log errors while holding lock for consistency
+	if action.NeedsRebirth {
+		LogSequenceError(s.logger, s.sequenceErrors, deviceKey, prevSeq, currentSeq)
 	}
 
 	// Resolve aliases while holding lock (safe operation)
 	s.resolveAliases(deviceKey, payload.Metrics)
 
-	// Release lock before MQTT I/O operations
 	s.stateMu.Unlock()
 
-	// Perform MQTT I/O operations after lock release
-	if isNewNode {
-		// Request BIRTH for complete tag discovery (if configured)
+	// I/O operations after lock release
+	if action.IsNewNode {
 		s.requestBirthIfNeeded(deviceKey)
-	} else if needsRebirth {
-		// Send rebirth request for sequence gap
+	} else if action.NeedsRebirth {
 		s.sendRebirthRequest(deviceKey)
 	}
 }

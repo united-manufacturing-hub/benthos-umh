@@ -3319,6 +3319,6 @@ type MockCounter struct {
 	count int64
 }
 
-func (m *MockCounter) Incr(delta int64) {
+func (m *MockCounter) Incr(delta int64, labelValues ...string) {
 	m.count += delta
 }
