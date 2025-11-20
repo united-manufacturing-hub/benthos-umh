@@ -113,8 +113,8 @@ func (w *SparkplugInputTestWrapper) GetNodeState(deviceKey string) *NodeStateInf
 	}
 
 	return &NodeStateInfo{
-		LastSeq:  state.lastSeq,
-		IsOnline: state.isOnline,
+		LastSeq:  state.LastSeq,
+		IsOnline: state.IsOnline,
 	}
 }
 
@@ -129,12 +129,12 @@ func (w *SparkplugInputTestWrapper) SetNodeBdSeq(deviceKey string, bdSeq uint64)
 	defer w.input.stateMu.Unlock()
 
 	if state, exists := w.input.nodeStates[deviceKey]; exists {
-		state.bdSeq = bdSeq
+		state.BdSeq = bdSeq
 	} else {
 		w.input.nodeStates[deviceKey] = &nodeState{
-			bdSeq:    bdSeq,
-			isOnline: true,
-			lastSeen: time.Now(),
+			BdSeq:    bdSeq,
+			IsOnline: true,
+			LastSeen: time.Now(),
 		}
 	}
 }
@@ -148,5 +148,5 @@ func (w *SparkplugInputTestWrapper) GetNodeBdSeq(deviceKey string) (uint64, bool
 	if !exists {
 		return 0, false
 	}
-	return state.bdSeq, true
+	return state.BdSeq, true
 }

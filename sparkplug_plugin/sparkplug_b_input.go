@@ -196,12 +196,7 @@ type mqttMessage struct {
 	payload []byte
 }
 
-type nodeState struct {
-	lastSeen time.Time
-	lastSeq  uint8
-	bdSeq    uint64
-	isOnline bool
-}
+type nodeState = NodeState // Type alias for backward compatibility
 
 // StateAction represents the required actions after processing a state update.
 // This struct enables clean separation between state mutation and I/O operations.
@@ -209,6 +204,47 @@ type nodeState struct {
 type StateAction struct {
 	IsNewNode    bool // True if node was newly discovered (requires BIRTH request)
 	NeedsRebirth bool // True if sequence gap detected (requires rebirth command)
+}
+
+// UpdateNodeState is a pure function that updates node state and determines required actions.
+// This function encapsulates all state transition logic for DATA message processing,
+// enabling deterministic testing without I/O operations.
+//
+// Behavior:
+// - New nodes: Creates initial state, returns IsNewNode=true
+// - Valid sequence: Updates state, returns no action
+// - Sequence gap: Marks offline, returns NeedsRebirth=true
+// - Wraparound (255→0): Treated as valid sequence
+//
+// Exported for testing to verify state transition logic in isolation.
+func UpdateNodeState(nodeStates map[string]*NodeState, deviceKey string, currentSeq uint8) StateAction {
+	state, exists := nodeStates[deviceKey]
+
+	if !exists {
+		// NEW NODE DISCOVERED - create initial state
+		nodeStates[deviceKey] = &NodeState{
+			IsOnline: true,
+			LastSeen: time.Now(),
+			LastSeq:  currentSeq,
+		}
+		return StateAction{
+			IsNewNode:    true,
+			NeedsRebirth: false,
+		}
+	}
+
+	// EXISTING NODE - validate sequence number
+	isValidSequence := ValidateSequenceNumber(state.LastSeq, currentSeq)
+
+	// Update all state regardless of sequence validity
+	state.LastSeq = currentSeq
+	state.LastSeen = time.Now()
+	state.IsOnline = isValidSequence // Mark offline if sequence gap detected
+
+	return StateAction{
+		IsNewNode:    false,
+		NeedsRebirth: !isValidSequence, // Request rebirth if sequence gap detected
+	}
 }
 
 func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*sparkplugInput, error) {
@@ -576,24 +612,24 @@ func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload 
 
 	// Update node state
 	if state, exists := s.nodeStates[deviceKey]; exists {
-		state.isOnline = true
-		state.lastSeen = time.Now()
-		state.lastSeq = GetSequenceNumber(payload)
+		state.IsOnline = true
+		state.LastSeen = time.Now()
+		state.LastSeq = GetSequenceNumber(payload)
 		if payload.Timestamp != nil {
 			// Extract bdSeq from metrics if present
 			for _, metric := range payload.Metrics {
 				if metric.Name != nil && *metric.Name == "bdSeq" {
 					if metric.GetLongValue() != 0 {
-						state.bdSeq = metric.GetLongValue()
+						state.BdSeq = metric.GetLongValue()
 					}
 				}
 			}
 		}
 	} else {
 		state := &nodeState{
-			isOnline: true,
-			lastSeen: time.Now(),
-			lastSeq:  GetSequenceNumber(payload),
+			IsOnline: true,
+			LastSeen: time.Now(),
+			LastSeq:  GetSequenceNumber(payload),
 		}
 		s.nodeStates[deviceKey] = state
 	}
@@ -619,18 +655,18 @@ func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *
 
 		// Create initial state
 		state = &nodeState{
-			isOnline: true,
-			lastSeen: time.Now(),
-			lastSeq:  currentSeq,
+			IsOnline: true,
+			LastSeen: time.Now(),
+			LastSeq:  currentSeq,
 		}
 		s.nodeStates[deviceKey] = state
 		isNewNode = true
 	} else {
 		// EXISTING NODE - check sequence numbers for out-of-order detection
-		isValidSequence := ValidateSequenceNumber(state.lastSeq, currentSeq)
+		isValidSequence := ValidateSequenceNumber(state.LastSeq, currentSeq)
 
 		if !isValidSequence {
-			expectedSeq := uint8((int(state.lastSeq) + 1) % 256)
+			expectedSeq := uint8((int(state.LastSeq) + 1) % 256)
 			s.logger.Warnf("Sequence gap detected for device %s: expected %d, got %d",
 				deviceKey, expectedSeq, currentSeq)
 			s.sequenceErrors.Incr(1)
@@ -638,9 +674,9 @@ func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *
 		}
 
 		// Update all state before releasing lock
-		state.lastSeq = currentSeq
-		state.lastSeen = time.Now()
-		state.isOnline = isValidSequence // Elegant one-liner: mark offline if invalid sequence
+		state.LastSeq = currentSeq
+		state.LastSeen = time.Now()
+		state.IsOnline = isValidSequence // Elegant one-liner: mark offline if invalid sequence
 	}
 
 	// Resolve aliases while holding lock (safe operation)
@@ -667,8 +703,8 @@ func (s *sparkplugInput) processDeathMessage(deviceKey, msgType string, payload 
 	if !exists {
 		// No state for this device - create minimal state
 		s.nodeStates[deviceKey] = &nodeState{
-			isOnline: false,
-			lastSeen: time.Now(),
+			IsOnline: false,
+			LastSeen: time.Now(),
 		}
 		s.logger.Debugf("Processed %s for unknown device %s (created state)", msgType, deviceKey)
 		return
@@ -689,10 +725,10 @@ func (s *sparkplugInput) processDeathMessage(deviceKey, msgType string, payload 
 
 		if foundBdSeq {
 			// Validate bdSeq matches the stored value from NBIRTH
-			if payloadBdSeq != state.bdSeq {
+			if payloadBdSeq != state.BdSeq {
 				// Stale NDEATH from old session - ignore it
 				s.logger.Warnf("Ignoring stale NDEATH for device %s: bdSeq mismatch (payload=%d, stored=%d)",
-					deviceKey, payloadBdSeq, state.bdSeq)
+					deviceKey, payloadBdSeq, state.BdSeq)
 				return
 			}
 			s.logger.Debugf("NDEATH bdSeq validated for device %s (bdSeq=%d)", deviceKey, payloadBdSeq)
@@ -704,8 +740,8 @@ func (s *sparkplugInput) processDeathMessage(deviceKey, msgType string, payload 
 	}
 
 	// Update state
-	state.isOnline = false
-	state.lastSeen = time.Now()
+	state.IsOnline = false
+	state.LastSeen = time.Now()
 
 	s.logger.Debugf("Processed %s for device %s", msgType, deviceKey)
 }
@@ -716,11 +752,11 @@ func (s *sparkplugInput) processCommandMessage(deviceKey, msgType string, payloa
 	// Update node state timestamp for activity tracking
 	s.stateMu.Lock()
 	if state, exists := s.nodeStates[deviceKey]; exists {
-		state.lastSeen = time.Now()
+		state.LastSeen = time.Now()
 	} else {
 		s.nodeStates[deviceKey] = &nodeState{
-			lastSeen: time.Now(),
-			isOnline: true, // Assume online if receiving commands
+			LastSeen: time.Now(),
+			IsOnline: true, // Assume online if receiving commands
 		}
 	}
 	s.stateMu.Unlock()
@@ -755,12 +791,12 @@ func (s *sparkplugInput) processStateMessage(deviceKey, msgType string, topicInf
 	// Update node state based on STATE message content
 	isOnline := statePayload == "ONLINE"
 	if state, exists := s.nodeStates[deviceKey]; exists {
-		state.isOnline = isOnline
-		state.lastSeen = time.Now()
+		state.IsOnline = isOnline
+		state.LastSeen = time.Now()
 	} else {
 		s.nodeStates[deviceKey] = &nodeState{
-			isOnline: isOnline,
-			lastSeen: time.Now(),
+			IsOnline: isOnline,
+			LastSeen: time.Now(),
 		}
 	}
 
@@ -981,7 +1017,7 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	// Add birth-death sequence if available from node state
 	s.stateMu.RLock()
 	if state, exists := s.nodeStates[deviceKey]; exists {
-		msg.MetaSet("spb_bdseq", fmt.Sprintf("%d", state.bdSeq))
+		msg.MetaSet("spb_bdseq", fmt.Sprintf("%d", state.BdSeq))
 	}
 	s.stateMu.RUnlock()
 

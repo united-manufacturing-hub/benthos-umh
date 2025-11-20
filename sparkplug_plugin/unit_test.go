@@ -3163,3 +3163,104 @@ var _ = Describe("stateAction struct", func() {
 		})
 	})
 })
+
+var _ = Describe("updateNodeState pure function", func() {
+	var nodeStates map[string]*sparkplugplugin.NodeState
+
+	BeforeEach(func() {
+		nodeStates = make(map[string]*sparkplugplugin.NodeState)
+	})
+
+	Context("when processing new node (first DATA message)", func() {
+		It("should create initial state and return isNewNode=true", func() {
+			deviceKey := "TestFactory/Line1"
+			currentSeq := uint8(5)
+
+			action := sparkplugplugin.UpdateNodeState(nodeStates, deviceKey, currentSeq)
+
+			Expect(action.IsNewNode).To(BeTrue())
+			Expect(action.NeedsRebirth).To(BeFalse())
+
+			// Verify state was created
+			Expect(nodeStates).To(HaveKey(deviceKey))
+			state := nodeStates[deviceKey]
+			Expect(state.LastSeq).To(Equal(currentSeq))
+			Expect(state.IsOnline).To(BeTrue())
+		})
+	})
+
+	Context("when processing valid sequence number", func() {
+		It("should update state and return no action needed", func() {
+			deviceKey := "TestFactory/Line1"
+
+			// Create existing state
+			nodeStates[deviceKey] = &sparkplugplugin.NodeState{
+				LastSeen: time.Now(),
+				LastSeq:  uint8(10),
+				IsOnline: true,
+			}
+
+			currentSeq := uint8(11) // Valid next sequence
+
+			action := sparkplugplugin.UpdateNodeState(nodeStates, deviceKey, currentSeq)
+
+			Expect(action.IsNewNode).To(BeFalse())
+			Expect(action.NeedsRebirth).To(BeFalse())
+
+			// Verify state was updated
+			state := nodeStates[deviceKey]
+			Expect(state.LastSeq).To(Equal(currentSeq))
+			Expect(state.IsOnline).To(BeTrue())
+		})
+	})
+
+	Context("when detecting sequence gap", func() {
+		It("should mark offline and return needsRebirth=true", func() {
+			deviceKey := "TestFactory/Line1"
+
+			// Create existing state
+			nodeStates[deviceKey] = &sparkplugplugin.NodeState{
+				LastSeen: time.Now(),
+				LastSeq:  uint8(10),
+				IsOnline: true,
+			}
+
+			currentSeq := uint8(15) // Gap detected (expected 11)
+
+			action := sparkplugplugin.UpdateNodeState(nodeStates, deviceKey, currentSeq)
+
+			Expect(action.IsNewNode).To(BeFalse())
+			Expect(action.NeedsRebirth).To(BeTrue())
+
+			// Verify state was updated
+			state := nodeStates[deviceKey]
+			Expect(state.LastSeq).To(Equal(currentSeq))
+			Expect(state.IsOnline).To(BeFalse()) // Marked offline due to gap
+		})
+	})
+
+	Context("when handling wraparound (255 → 0)", func() {
+		It("should treat 255→0 as valid sequence", func() {
+			deviceKey := "TestFactory/Line1"
+
+			// Create existing state at 255
+			nodeStates[deviceKey] = &sparkplugplugin.NodeState{
+				LastSeen: time.Now(),
+				LastSeq:  uint8(255),
+				IsOnline: true,
+			}
+
+			currentSeq := uint8(0) // Valid wraparound
+
+			action := sparkplugplugin.UpdateNodeState(nodeStates, deviceKey, currentSeq)
+
+			Expect(action.IsNewNode).To(BeFalse())
+			Expect(action.NeedsRebirth).To(BeFalse()) // No gap, valid wraparound
+
+			// Verify state was updated
+			state := nodeStates[deviceKey]
+			Expect(state.LastSeq).To(Equal(currentSeq))
+			Expect(state.IsOnline).To(BeTrue())
+		})
+	})
+})
