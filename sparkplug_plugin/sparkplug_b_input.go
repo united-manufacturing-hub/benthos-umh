@@ -670,6 +670,29 @@ func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload 
 	s.logger.Debugf("Processed %s for device %s", msgType, deviceKey)
 }
 
+// processDataMessage handles DATA messages (NDATA/DDATA) with sequence validation.
+//
+// Architecture:
+// 1. Updates node state and validates sequences (under lock, delegated to UpdateNodeState)
+// 2. Resolves metric aliases (under lock)
+// 3. Logs sequence errors and new node discovery (after lock release)
+// 4. Triggers MQTT I/O operations (after lock release)
+//
+// Lock Strategy:
+// - Acquires stateMu lock once at the beginning
+// - Delegates state mutation to pure UpdateNodeState function
+// - Releases lock before any I/O operations (logging, MQTT)
+// - Minimizes lock hold time to reduce contention
+//
+// State Updates:
+// - New nodes: Creates initial state and requests BIRTH via MQTT
+// - Valid sequence: Updates LastSeq and LastSeen, no action needed
+// - Sequence gap: Marks node offline, requests rebirth via MQTT
+//
+// Thread Safety:
+// - All state access protected by stateMu lock
+// - No I/O operations performed while holding lock
+// - Deterministic behavior ensured by UpdateNodeState pure function
 func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
 	s.stateMu.Lock()
 
