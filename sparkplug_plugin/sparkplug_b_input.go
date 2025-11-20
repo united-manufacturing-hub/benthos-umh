@@ -683,22 +683,21 @@ func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *
 
 	action := UpdateNodeState(s.nodeStates, deviceKey, currentSeq)
 
-	// Log new node discovery while holding lock
-	if action.IsNewNode {
-		s.logger.Infof("Discovered new node from %s message: %s", msgType, deviceKey)
-	}
-
-	// Log errors while holding lock for consistency
-	if action.NeedsRebirth {
-		LogSequenceError(s.logger, s.sequenceErrors, deviceKey, prevSeq, currentSeq)
-	}
-
 	// Resolve aliases while holding lock (safe operation)
 	s.resolveAliases(deviceKey, payload.Metrics)
 
 	s.stateMu.Unlock()
 
-	// I/O operations after lock release
+	// Logging after lock release to minimize lock hold time
+	if action.IsNewNode {
+		s.logger.Infof("Discovered new node from %s message: %s", msgType, deviceKey)
+	}
+
+	if action.NeedsRebirth {
+		LogSequenceError(s.logger, s.sequenceErrors, deviceKey, prevSeq, currentSeq)
+	}
+
+	// I/O operations
 	if action.IsNewNode {
 		s.requestBirthIfNeeded(deviceKey)
 	} else if action.NeedsRebirth {
