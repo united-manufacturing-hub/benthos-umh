@@ -203,6 +203,14 @@ type nodeState struct {
 	isOnline bool
 }
 
+// StateAction represents the required actions after processing a state update.
+// This struct enables clean separation between state mutation and I/O operations.
+// Exported for testing to verify state transition logic in isolation.
+type StateAction struct {
+	IsNewNode    bool // True if node was newly discovered (requires BIRTH request)
+	NeedsRebirth bool // True if sequence gap detected (requires rebirth command)
+}
+
 func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*sparkplugInput, error) {
 	// Parse the idiomatic configuration structure using namespace approach
 	var config Config

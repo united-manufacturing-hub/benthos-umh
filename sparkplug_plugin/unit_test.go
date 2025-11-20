@@ -3126,3 +3126,40 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 	})
 
 })
+
+// Phase 1: TDD Tests for processDataMessage Refactoring
+// These tests support the complexity reduction effort (Target: 8→4 complexity)
+
+var _ = Describe("stateAction struct", func() {
+	Context("when determining required actions after state update", func() {
+		It("should indicate no action needed for valid sequence", func() {
+			action := sparkplugplugin.StateAction{
+				IsNewNode:    false,
+				NeedsRebirth: false,
+			}
+
+			Expect(action.IsNewNode).To(BeFalse())
+			Expect(action.NeedsRebirth).To(BeFalse())
+		})
+
+		It("should indicate new node action when node is newly discovered", func() {
+			action := sparkplugplugin.StateAction{
+				IsNewNode:    true,
+				NeedsRebirth: false,
+			}
+
+			Expect(action.IsNewNode).To(BeTrue())
+			Expect(action.NeedsRebirth).To(BeFalse())
+		})
+
+		It("should indicate rebirth action when sequence gap detected", func() {
+			action := sparkplugplugin.StateAction{
+				IsNewNode:    false,
+				NeedsRebirth: true,
+			}
+
+			Expect(action.IsNewNode).To(BeFalse())
+			Expect(action.NeedsRebirth).To(BeTrue())
+		})
+	})
+})
