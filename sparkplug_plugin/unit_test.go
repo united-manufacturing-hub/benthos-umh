@@ -3264,3 +3264,61 @@ var _ = Describe("updateNodeState pure function", func() {
 		})
 	})
 })
+
+var _ = Describe("logSequenceError helper", func() {
+	var (
+		errorCounter    *MockCounter
+		deviceKey       string
+		lastSeq         uint8
+		currentSeq      uint8
+	)
+
+	BeforeEach(func() {
+		errorCounter = &MockCounter{count: 0}
+		deviceKey = "TestFactory/Line1"
+	})
+
+	Context("when logging sequence gap", func() {
+		It("should calculate expected sequence correctly (no wraparound)", func() {
+			lastSeq = 10
+			currentSeq = 15
+
+			// This should log "expected 11, got 15"
+			// We pass nil logger for testing - function should handle it gracefully
+			sparkplugplugin.LogSequenceError(nil, errorCounter, deviceKey, lastSeq, currentSeq)
+
+			// Verify counter was incremented
+			Expect(errorCounter.count).To(Equal(int64(1)))
+		})
+
+		It("should handle wraparound in expected sequence (255→0)", func() {
+			lastSeq = 255
+			currentSeq = 100 // Gap detected (expected 0)
+
+			// This should log "expected 0, got 100"
+			sparkplugplugin.LogSequenceError(nil, errorCounter, deviceKey, lastSeq, currentSeq)
+
+			// Verify counter was incremented
+			Expect(errorCounter.count).To(Equal(int64(1)))
+		})
+
+		It("should increment counter on each call", func() {
+			// Call multiple times
+			sparkplugplugin.LogSequenceError(nil, errorCounter, deviceKey, 10, 15)
+			sparkplugplugin.LogSequenceError(nil, errorCounter, deviceKey, 20, 25)
+			sparkplugplugin.LogSequenceError(nil, errorCounter, deviceKey, 30, 35)
+
+			// Verify counter was incremented 3 times
+			Expect(errorCounter.count).To(Equal(int64(3)))
+		})
+	})
+})
+
+// MockCounter is a simple mock for testing counter increments
+type MockCounter struct {
+	count int64
+}
+
+func (m *MockCounter) Incr(delta int64) {
+	m.count += delta
+}

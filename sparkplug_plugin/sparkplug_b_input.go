@@ -206,6 +206,11 @@ type StateAction struct {
 	NeedsRebirth bool // True if sequence gap detected (requires rebirth command)
 }
 
+// Counter interface for metric counters (for testing)
+type Counter interface {
+	Incr(delta int64)
+}
+
 // UpdateNodeState is a pure function that updates node state and determines required actions.
 // This function encapsulates all state transition logic for DATA message processing,
 // enabling deterministic testing without I/O operations.
@@ -244,6 +249,31 @@ func UpdateNodeState(nodeStates map[string]*NodeState, deviceKey string, current
 	return StateAction{
 		IsNewNode:    false,
 		NeedsRebirth: !isValidSequence, // Request rebirth if sequence gap detected
+	}
+}
+
+// LogSequenceError logs a sequence gap error with consistent formatting and increments the error counter.
+// This function centralizes sequence error logging to ensure uniform error messages across the codebase.
+//
+// Behavior:
+// - Calculates expected sequence with wraparound (255→0)
+// - Logs warning with expected/actual sequence numbers
+// - Increments the provided error counter
+//
+// Exported for testing to verify error logging behavior.
+func LogSequenceError(logger *service.Logger, counter Counter, deviceKey string, lastSeq, currentSeq uint8) {
+	// Calculate expected sequence with wraparound
+	expectedSeq := uint8((int(lastSeq) + 1) % 256)
+
+	// Log warning if logger is provided (may be nil in tests)
+	if logger != nil {
+		logger.Warnf("Sequence gap detected for device %s: expected %d, got %d",
+			deviceKey, expectedSeq, currentSeq)
+	}
+
+	// Increment error counter
+	if counter != nil {
+		counter.Incr(1)
 	}
 }
 
