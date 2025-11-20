@@ -59,19 +59,31 @@ input:
       group_id: "DeviceLevelTest"
     # mode: "secondary_passive" is default - safest for brownfield deployments
 
-processing:
+pipeline:
   processors:
     - tag_processor:
         defaults: |
-          # msg.meta.location_path = "..."; # automatic from the device_id (see also output plugin)
-          # msg.meta.virtual_path = "..."; # automatic from the metric name (see also output plugin)
-          # msg.meta.tag_name = "..."; # automatic from the metric name (see also output plugin)
+          // ============================================================
+          // AUTOMATIC CONVERSION (works for 95% of cases)
+          // ============================================================
+          // SparkplugB fields are auto-converted to UMH format:
+          // • Separators: colons/slashes → dots (priority: colon > slash > dot)
+          // • Device identifiers → location_path: "Plant:Area" → "Plant.Area"
+          // • Metric name → tag_name: "sensors/temp/value" → "value"
+          // • Metric path → virtual_path: "sensors/temp/value" → "sensors.temp"
 
-          # For Sparkplug B input data, use _raw data contract
-          msg.meta.data_contract = "_raw";
+          msg.meta.location_path = msg.meta.umh_location_path;  // Auto-converted location
+          msg.meta.data_contract = "_historian";                 // Time-series storage
+          msg.meta.tag_name = msg.meta.umh_tag_name;            // Extracted tag name
+          msg.payload = msg.payload.value;                      // SparkplugB metric value
+          msg.meta.timestamp_ms = msg.meta.spb_timestamp;       // Native SparkplugB timestamp
 
-          # Note: UMH conversion will use this data contract
-          # Common options: "_raw", "_historian", "_sparkplug"
+          // Only set virtual_path if present (Benthos cannot store empty strings)
+          if (msg.meta.umh_virtual_path) {
+            msg.meta.virtual_path = msg.meta.umh_virtual_path;
+          }
+
+          return msg;
 
 output:
   uns: {}
