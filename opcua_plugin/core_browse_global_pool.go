@@ -244,9 +244,29 @@ func (gwp *GlobalWorkerPool) SubmitTask(task GlobalPoolTask) (err error) {
 	// This ensures counter is only incremented if we actually send the task
 	atomic.AddInt64(&gwp.pendingTasks, 1)
 
-	// Send task to channel (will panic if closed, recovered by defer)
-	gwp.taskChan <- task
-	return nil
+	// Send task to channel with context awareness (prevents deadlock on cancellation)
+	// Use non-blocking send first (fast path), then blocking with context check
+	//
+	// WHY TWO-PHASE: We want tasks with cancelled contexts to still be queued
+	// (worker detects cancellation), but we need to avoid deadlock if buffer is full.
+	// - Phase 1: Non-blocking send (succeeds if buffer has space, regardless of context)
+	// - Phase 2: Blocking send with context check (only if buffer was full)
+	select {
+	case gwp.taskChan <- task:
+		return nil
+	default:
+		// Buffer full - fall through to blocking send with context awareness
+	}
+
+	// Blocking send with context awareness (prevents deadlock if buffer full AND context cancelled)
+	select {
+	case gwp.taskChan <- task:
+		return nil
+	case <-task.Ctx.Done():
+		// Context cancelled while waiting for buffer space - decrement counter
+		atomic.AddInt64(&gwp.pendingTasks, -1)
+		return task.Ctx.Err()
+	}
 }
 
 // Shutdown gracefully stops all workers and closes the task channel.
