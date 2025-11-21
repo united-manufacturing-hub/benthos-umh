@@ -78,6 +78,10 @@ help:
 	@echo "  To test against real PLCs, set environment variables first"
 	@echo "  See: make env"
 	@echo ""
+	@echo "Profiling:"
+	@echo "  make serve-pprof   Start pprof web server on :8080"
+	@echo "                     (requires http.debug_endpoints: true in config)"
+	@echo ""
 
 .PHONY: env
 env:

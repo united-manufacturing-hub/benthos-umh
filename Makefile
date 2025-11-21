@@ -151,7 +151,7 @@ test-topic-browser:
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./topic_browser_plugin/...
 
 ## Generate go files from protobuf for topic browser
-.PHONY:
+.PHONY: build-protobuf
 build-protobuf:
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 	rm pkg/umh/topic/proto/topic_browser_data.pb.go || true
@@ -160,10 +160,6 @@ build-protobuf:
 		--go_out=pkg/umh/topic/proto \
 		pkg/umh/topic/proto/topic_browser_data.proto
 
-# PPROF
-# in config we need to set:
-# http:
-#   debug_endpoints: true
 .PHONY: serve-pprof
 serve-pprof:
 	go tool pprof -http=:8080 "localhost:4195/debug/pprof/profile?seconds=20"
