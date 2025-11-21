@@ -160,7 +160,10 @@ build-protobuf:
 		--go_out=pkg/umh/topic/proto \
 		pkg/umh/topic/proto/topic_browser_data.proto
 
-# TODO: add some information about potential endpoints etc
+# PPROF
+# in config we need to set:
+# http:
+#   debug_endpoints: true
 .PHONY: serve-pprof
 serve-pprof:
 	go tool pprof -http=:8080 "localhost:4195/debug/pprof/profile?seconds=20"
