@@ -22,70 +22,25 @@ LOG_LEVEL ?= INFO
 CONFIG ?= ./config/opcua-hex-test.yaml
 
 .PHONY: all
-all: clean target
+all: clean build
+
+.PHONY: install
+install: install-tools
+	@command -v protoc > /dev/null 2>&1 || \
+		(echo "ERROR: 'protoc' not found. Please install protobuf." && exit 1)
+	@command -v dot > /dev/null 2>&1 || \
+		(echo "ERROR: 'dot' not found. Please install graphviz." && exit 1)
 
 .PHONY: clean
 clean:
-	@rm -rf target tmp/bin tmp/benthos-*.zip
+	@rm -rf tmp/bin tmp/benthos-*.zip
 
 .PHONY: run
 run:
 	@go run cmd/benthos/main.go run --log.level $(LOG_LEVEL) $(CONFIG)
 
-.PHONY: help
-help:
-	@echo "Quick Start:"
-	@echo "  make run CONFIG=config/stdout.yaml"
-	@echo ""
-	@echo "Common Commands:"
-	@echo "  make all      Clean build from scratch"
-	@echo "  make target   Build binary (faster for repeated builds)"
-	@echo "  make test     Run all unit tests"
-	@echo ""
-	@echo "When to use what:"
-	@echo "  make run      Quick iteration with different configs"
-	@echo "  make target   Build once, then test multiple configs manually"
-	@echo ""
-	@echo "Testing:"
-	@echo "  Most tests run without hardware (unit tests only)"
-	@echo "  To test against real PLCs, set environment variables first"
-	@echo "  See: make env"
-	@echo ""
-
-.PHONY: env
-env:
-	@echo "OPC UA Tests (make test-opc):"
-	@echo "  TEST_S7_ENDPOINT_URI=opc.tcp://<ip>:<port>"
-	@echo "  TEST_WAGO_ENDPOINT_URI=opc.tcp://<ip>:<port>"
-	@echo "  TEST_WAGO_USERNAME=myuser"
-	@echo "  TEST_WAGO_PASSWORD=mypassword"
-	@echo "  TEST_KEPWARE_ENDPOINT=opc.tcp://<ip>:<port>"
-	@echo "  TEST_KEPWARE_USERNAME=myuser"
-	@echo "  TEST_KEPWARE_PASSWORD=mypassword"
-	@echo ""
-	@echo "S7 PLC Tests (make test-s7comm):"
-	@echo "  TEST_S7COMM_UNITTEST=true"
-	@echo "  TEST_S7_TCPDEVICE=<ip:port>"
-	@echo "  TEST_S7_RACK=<rack_number>"
-	@echo "  TEST_S7_SLOT=<slot_number>"
-	@echo ""
-	@echo "Modbus Tests (make test-modbus):"
-	@echo "  TEST_MODBUS_SIMULATOR=true"
-	@echo "  TEST_WAGO_MODBUS_ENDPOINT=<ip:port>  (for WAGO tests)"
-	@echo ""
-	@echo "Sensorconnect Tests (make test-sensorconnect):"
-	@echo "  TEST_DEBUG_IFM_ENDPOINT=<ip_address>"
-	@echo ""
-	@echo "Other plugin tests:"
-	@echo "  TEST_NODERED_JS=true           (make test-noderedjs)"
-	@echo "  TEST_TAG_PROCESSOR=true        (make test-tag-processor)"
-	@echo "  TEST_CLASSIC_TO_CORE=1         (make test-classic-to-core)"
-	@echo "  TEST_TOPIC_BROWSER=1           (make test-topic-browser)"
-	@echo "  TEST_DOWNSAMPLER=1             (make test-downsampler)"
-	@echo ""
-
-.PHONY: target
-target: build-protobuf
+.PHONY: build
+build:
 	@mkdir -p $(dir $(BENTHOS_BIN))
 	@go build \
        -ldflags "-s -w \
@@ -160,7 +115,6 @@ fuzz-stream-processor:
 	@echo "Running fuzz tests for stream processor (press Ctrl+C to stop)..."
 	@cd stream_processor_plugin && go test -tags=fuzz -fuzz=FuzzStreamProcessor
 
-
 .PHONY: test-tag-processor
 test-tag-processor:
 	@TEST_TAG_PROCESSOR=true \
@@ -196,43 +150,8 @@ test-topic-browser:
 	@TEST_TOPIC_BROWSER=1 \
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./topic_browser_plugin/...
 
-###### TESTS WITH RUNNING BENTHOS-UMH #####
-# Test the tag processor with a local OPC UA server
-.PHONY: test-benthos-tag-processor
-test-benthos-tag-processor: target
-	@$(BENTHOS_BIN) -c ./config/tag-processor-test.yaml
-
-# USAGE:
-# make test-benthos-sensorconnect TEST_DEBUG_IFM_ENDPOINT=(IP of sensor interface)
-.PHONY: test-benthos-sensorconnect
-test-benthos-sensorconnect: target
-	@$(BENTHOS_BIN) -c ./config/sensorconnect-test.yaml
-
-.PHONY: test-benthos-downsampler
-test-benthos-downsampler: target
-	@$(BENTHOS_BIN) -c ./config/downsampler_example.yaml
-
-.PHONY: test-benthos-downsampler-example-one
-test-benthos-downsampler-example-one: target
-	@$(BENTHOS_BIN) -c ./config/downsampler_example_one.yaml
-
-.PHONY: test-benthos-downsampler-example-one-timeout
-test-benthos-downsampler-example-one-timeout: target
-	@$(BENTHOS_BIN) -c ./config/downsampler_example_one_timeout.yaml
-
-.PHONY: test-benthos-topic-browser
-test-benthos-topic-browser: target
-	@$(BENTHOS_BIN) -c ./config/topic-browser-test.yaml
-
-.PHONY: test-benthos-topic-browser-local
-test-benthos-topic-browser-local: target
-	@$(BENTHOS_BIN) -c ./config/topic-browser-test-local.yaml
-
-.PHONY: test-benthos-opcua-hex
-test-benthos-opcua-hex: target
-	@$(BENTHOS_BIN) -c ./config/opcua-hex-test.yaml
-
 ## Generate go files from protobuf for topic browser
+.PHONY:
 build-protobuf:
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 	rm pkg/umh/topic/proto/topic_browser_data.pb.go || true
@@ -240,18 +159,8 @@ build-protobuf:
 		-I=pkg/umh/topic/proto \
 		--go_out=pkg/umh/topic/proto \
 		pkg/umh/topic/proto/topic_browser_data.proto
-	@echo '// Copyright 2025 UMH Systems GmbH\n//\n// Licensed under the Apache License, Version 2.0 (the "License");\n// you may not use this file except in compliance with the License.\n// You may obtain a copy of the License at\n//\n//     http://www.apache.org/licenses/LICENSE-2.0\n//\n// Unless required by applicable law or agreed to in writing, software\n// distributed under the License is distributed on an "AS IS" BASIS,\n// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n// See the License for the specific language governing permissions and\n// limitations under the License.\n\n' | cat - pkg/umh/topic/proto/topic_browser_data.pb.go > temp && mv temp pkg/umh/topic/proto/topic_browser_data.pb.go
 
-
-## PROFILING
-
+# TODO: add some information about potential endpoints etc
 .PHONY: serve-pprof
 serve-pprof:
-	go tool pprof -http=:8080 localhost:4195/debug/pprof/profile
-
-## Correctness
-validate-stream-processor:
-	golangci-lint run ./stream_processor_plugin
-	nilaway ./stream_processor_plugin
-	deadcode -test ./stream_processor_plugin
-	staticcheck ./stream_processor_plugin
+	go tool pprof -http=:8080 "localhost:4195/debug/pprof/profile?seconds=20"

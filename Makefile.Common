@@ -14,11 +14,20 @@
 
 SRC_ROOT := $(shell git rev-parse --show-toplevel)
 
+
+LICENSE_EYE_VERSION = v0.7.0
+GOLANGCI_LINT_VERSION = v2.5.0
+NILAWAY_VERSION = latest
+STATICCHECK_VERSION = v0.6.1
+
 # ---------------------------------------------------
 # Pinned URLs for go install
 # ---------------------------------------------------
 #  we might add some additional tools later e.g. golangci-lint/gofmt
-LICENSE_EYE_URL := github.com/apache/skywalking-eyes/cmd/license-eye@v0.7.0
+LICENSE_EYE_URL := github.com/apache/skywalking-eyes/cmd/license-eye@$(LICENSE_EYE_VERSION)
+GOLANGCI_LINT_URL := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+NILAWAY_URL := go.uber.org/nilaway/cmd/nilaway@$(NILAWAY_VERSION)
+STATICCHECK_URL := honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)
 
 
 TOOLS_BIN_DIR    := $(SRC_ROOT)/.tools
@@ -28,6 +37,9 @@ TOOLS_BIN_DIR    := $(SRC_ROOT)/.tools
 # Tools references
 # ---------------------------------------------------
 LICENSE_EYE := $(TOOLS_BIN_DIR)/license-eye
+GOLANGCI_LINT := $(TOOLS_BIN_DIR)/golangci-lint
+NILAWAY := $(TOOLS_BIN_DIR)/nilaway
+STATICCHECK := $(TOOLS_BIN_DIR)/staticcheck
 
 $(TOOLS_BIN_DIR):
 	@mkdir -p $@
@@ -35,5 +47,66 @@ $(TOOLS_BIN_DIR):
 $(LICENSE_EYE): $(TOOLS_BIN_DIR)
 	@GOBIN=$(TOOLS_BIN_DIR) go install $(LICENSE_EYE_URL)
 
+$(GOLANGCI_LINT): $(TOOLS_BIN_DIR)
+	@GOBIN=$(TOOLS_BIN_DIR) go install $(GOLANGCI_LINT_URL)
+
+$(NILAWAY): $(TOOLS_BIN_DIR)
+	@GOBIN=$(TOOLS_BIN_DIR) go install $(NILAWAY_URL)
+
+$(STATICCHECK): $(TOOLS_BIN_DIR)
+	@GOBIN=$(TOOLS_BIN_DIR) go install $(STATICCHECK_URL)
+
 .PHONY: install-tools
-install-tools: $(LICENSE_EYE)
+install-tools: $(LICENSE_EYE) $(GOLANGCI_LINT) $(NILAWAY) $(STATICCHECK)
+
+.PHONY: help
+help:
+	@echo "Quick Start:"
+	@echo "  make run CONFIG=config/stdout.yaml"
+	@echo ""
+	@echo "Common Commands:"
+	@echo "  make all      Clean build from scratch"
+	@echo "  make build   Build binary (faster for repeated builds)"
+	@echo "  make test     Run all unit tests"
+	@echo ""
+	@echo "When to use what:"
+	@echo "  make run      Quick iteration with different configs"
+	@echo "  make build   Build once, then test multiple configs manually"
+	@echo ""
+	@echo "Testing:"
+	@echo "  Most tests run without hardware (unit tests only)"
+	@echo "  To test against real PLCs, set environment variables first"
+	@echo "  See: make env"
+	@echo ""
+
+.PHONY: env
+env:
+	@echo "OPC UA Tests (make test-opc):"
+	@echo "  TEST_S7_ENDPOINT_URI=opc.tcp://<ip>:<port>"
+	@echo "  TEST_WAGO_ENDPOINT_URI=opc.tcp://<ip>:<port>"
+	@echo "  TEST_WAGO_USERNAME=myuser"
+	@echo "  TEST_WAGO_PASSWORD=mypassword"
+	@echo "  TEST_KEPWARE_ENDPOINT=opc.tcp://<ip>:<port>"
+	@echo "  TEST_KEPWARE_USERNAME=myuser"
+	@echo "  TEST_KEPWARE_PASSWORD=mypassword"
+	@echo ""
+	@echo "S7 PLC Tests (make test-s7comm):"
+	@echo "  TEST_S7COMM_UNITTEST=true"
+	@echo "  TEST_S7_TCPDEVICE=<ip:port>"
+	@echo "  TEST_S7_RACK=<rack_number>"
+	@echo "  TEST_S7_SLOT=<slot_number>"
+	@echo ""
+	@echo "Modbus Tests (make test-modbus):"
+	@echo "  TEST_MODBUS_SIMULATOR=true"
+	@echo "  TEST_WAGO_MODBUS_ENDPOINT=<ip:port>  (for WAGO tests)"
+	@echo ""
+	@echo "Sensorconnect Tests (make test-sensorconnect):"
+	@echo "  TEST_DEBUG_IFM_ENDPOINT=<ip_address>"
+	@echo ""
+	@echo "Other plugin tests:"
+	@echo "  TEST_NODERED_JS=true           (make test-noderedjs)"
+	@echo "  TEST_TAG_PROCESSOR=true        (make test-tag-processor)"
+	@echo "  TEST_CLASSIC_TO_CORE=1         (make test-classic-to-core)"
+	@echo "  TEST_TOPIC_BROWSER=1           (make test-topic-browser)"
+	@echo "  TEST_DOWNSAMPLER=1             (make test-downsampler)"
+	@echo ""
