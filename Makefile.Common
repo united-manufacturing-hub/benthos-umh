@@ -62,7 +62,7 @@ install-tools: $(LICENSE_EYE) $(GOLANGCI_LINT) $(NILAWAY) $(STATICCHECK)
 .PHONY: help
 help:
 	@echo "Quick Start:"
-	@echo "  make run CONFIG=config/stdout.yaml"
+	@echo "  make run CONFIG=./config/stdout.yaml"
 	@echo ""
 	@echo "Common Commands:"
 	@echo "  make all      Clean build from scratch"
@@ -70,7 +70,7 @@ help:
 	@echo "  make test     Run all unit tests"
 	@echo ""
 	@echo "When to use what:"
-	@echo "  make run      Quick iteration with different configs"
+	@echo "  make run     Quick iteration with different configs, needs CONFIG var."
 	@echo "  make build   Build once, then test multiple configs manually"
 	@echo ""
 	@echo "Testing:"
