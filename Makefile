@@ -19,6 +19,7 @@ GINKGO_SERIAL_FLAGS=$(GINKGO_FLAGS) --procs=1
 
 BENTHOS_BIN := tmp/bin/benthos
 LOG_LEVEL ?= INFO
+CONFIG ?= ./config/opcua-hex-test.yaml
 
 .PHONY: all
 all: clean target
@@ -31,9 +32,57 @@ clean:
 run:
 	@go run cmd/benthos/main.go run --log.level $(LOG_LEVEL) $(CONFIG)
 
-.PHONY: run-debug
-run-debug:
-	@$(MAKE) run LOG_LEVEL=DEBUG
+.PHONY: help
+help:
+	@echo "Quick Start:"
+	@echo "  make run CONFIG=config/stdout.yaml"
+	@echo ""
+	@echo "Common Commands:"
+	@echo "  make all      Clean build from scratch"
+	@echo "  make target   Build binary (faster for repeated builds)"
+	@echo "  make test     Run all unit tests"
+	@echo ""
+	@echo "When to use what:"
+	@echo "  make run      Quick iteration with different configs"
+	@echo "  make target   Build once, then test multiple configs manually"
+	@echo ""
+	@echo "Testing:"
+	@echo "  Most tests run without hardware (unit tests only)"
+	@echo "  To test against real PLCs, set environment variables first"
+	@echo "  See: make env"
+	@echo ""
+
+.PHONY: env
+env:
+	@echo "OPC UA Tests (make test-opc):"
+	@echo "  TEST_S7_ENDPOINT_URI=opc.tcp://<ip>:<port>"
+	@echo "  TEST_WAGO_ENDPOINT_URI=opc.tcp://<ip>:<port>"
+	@echo "  TEST_WAGO_USERNAME=myuser"
+	@echo "  TEST_WAGO_PASSWORD=mypassword"
+	@echo "  TEST_KEPWARE_ENDPOINT=opc.tcp://<ip>:<port>"
+	@echo "  TEST_KEPWARE_USERNAME=myuser"
+	@echo "  TEST_KEPWARE_PASSWORD=mypassword"
+	@echo ""
+	@echo "S7 PLC Tests (make test-s7comm):"
+	@echo "  TEST_S7COMM_UNITTEST=true"
+	@echo "  TEST_S7_TCPDEVICE=<ip:port>"
+	@echo "  TEST_S7_RACK=<rack_number>"
+	@echo "  TEST_S7_SLOT=<slot_number>"
+	@echo ""
+	@echo "Modbus Tests (make test-modbus):"
+	@echo "  TEST_MODBUS_SIMULATOR=true"
+	@echo "  TEST_WAGO_MODBUS_ENDPOINT=<ip:port>  (for WAGO tests)"
+	@echo ""
+	@echo "Sensorconnect Tests (make test-sensorconnect):"
+	@echo "  TEST_DEBUG_IFM_ENDPOINT=<ip_address>"
+	@echo ""
+	@echo "Other plugin tests:"
+	@echo "  TEST_NODERED_JS=true           (make test-noderedjs)"
+	@echo "  TEST_TAG_PROCESSOR=true        (make test-tag-processor)"
+	@echo "  TEST_CLASSIC_TO_CORE=1         (make test-classic-to-core)"
+	@echo "  TEST_TOPIC_BROWSER=1           (make test-topic-browser)"
+	@echo "  TEST_DOWNSAMPLER=1             (make test-downsampler)"
+	@echo ""
 
 .PHONY: target
 target: build-protobuf
