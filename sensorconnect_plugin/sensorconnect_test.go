@@ -31,6 +31,22 @@ import (
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 )
 
+var _ = Describe("Sensorconnect Configuration", func() {
+	When("parsing configuration", func() {
+		It("should parse minimal config without iodd_api field", func() {
+			// Test that iodd_api field is optional
+			// Config should parse successfully with only device_address
+			builder := service.NewStreamBuilder()
+
+			err := builder.AddInputYAML(`
+sensorconnect:
+  device_address: "192.168.1.1"
+`)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+})
+
 var _ = Describe("Sensorconnect", func() {
 
 	var endpoint string
