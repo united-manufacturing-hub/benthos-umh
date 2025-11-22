@@ -26,10 +26,10 @@ all: clean build
 
 .PHONY: install
 install: install-tools
-	@command -v protoc > /dev/null 2>&1 || \
-		(echo "ERROR: 'protoc' not found. Please install protobuf." && exit 1)
-	@command -v dot > /dev/null 2>&1 || \
-		(echo "ERROR: 'dot' not found. Please install graphviz." && exit 1)
+	@ if ! which dot > /dev/null; then \
+		echo "error: dot not installed (install graphviz)" >&2; \
+		exit 1; \
+	fi
 
 .PHONY: clean
 clean:
@@ -37,7 +37,7 @@ clean:
 
 .PHONY: run
 run:
-	@go run cmd/benthos/main.go run --log.level $(LOG_LEVEL) $(CONFIG)
+	go run cmd/benthos/main.go run --log.level $(LOG_LEVEL) $(CONFIG)
 
 .PHONY: build
 build:
@@ -150,16 +150,20 @@ test-topic-browser:
 	@TEST_TOPIC_BROWSER=1 \
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./topic_browser_plugin/...
 
-## Generate go files from protobuf for topic browser
-.PHONY: build-protobuf
-build-protobuf:
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	rm pkg/umh/topic/proto/topic_browser_data.pb.go || true
-	protoc \
+# Generate Go files from protobuf for topic browser
+.PHONY: proto
+proto:
+	rm pkg/umh/topic/proto/topic_browser_data.pb.go 2>/dev/null || true
+	$(PROTOC) \
 		-I=pkg/umh/topic/proto \
 		--go_out=pkg/umh/topic/proto \
 		pkg/umh/topic/proto/topic_browser_data.proto
+	@echo "Successfully generated topic_browser_data.pb.go"
 
 .PHONY: serve-pprof
 serve-pprof:
+	@ if ! which dot > /dev/null; then \
+		echo "error: dot not installed (install graphviz)" >&2; \
+		exit 1; \
+	fi
 	go tool pprof -http=:8080 "localhost:4195/debug/pprof/profile?seconds=20"
