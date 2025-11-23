@@ -20,6 +20,7 @@ GOLANGCI_LINT_VERSION = v2.5.0
 NILAWAY_VERSION = latest
 STATICCHECK_VERSION = v0.6.1
 PROTOC_GEN_GO_VERSION = v1.36.10
+GRAPHVIZ_VERSION = latest
 
 # ---------------------------------------------------
 # Pinned URLs for go install
@@ -43,6 +44,7 @@ GOLANGCI_LINT := $(TOOLS_BIN_DIR)/golangci-lint
 NILAWAY := $(TOOLS_BIN_DIR)/nilaway
 STATICCHECK := $(TOOLS_BIN_DIR)/staticcheck
 PROTOC := docker run --rm -v $(PWD):$(PWD) -w $(PWD) rvolosatovs/protoc:latest
+DOT := $(TOOLS_BIN_DIR)/graphviz/dot
 
 $(TOOLS_BIN_DIR):
 	@mkdir -p $@
@@ -59,8 +61,14 @@ $(NILAWAY): $(TOOLS_BIN_DIR)
 $(STATICCHECK): $(TOOLS_BIN_DIR)
 	@GOBIN=$(TOOLS_BIN_DIR) go install $(STATICCHECK_URL)
 
+$(DOT): $(TOOLS_BIN_DIR)
+	@mkdir -p $(dir $(DOT))
+	@printf '#!/bin/sh\n' > $(DOT)
+	@printf 'exec docker run --rm -i minidocks/graphviz:$(GRAPHVIZ_VERSION) dot "$$@"\n' >> $(DOT)
+	@chmod +x $(DOT)
+
 .PHONY: install-tools
-install-tools: $(LICENSE_EYE) $(GOLANGCI_LINT) $(NILAWAY) $(STATICCHECK)
+install-tools: $(LICENSE_EYE) $(GOLANGCI_LINT) $(NILAWAY) $(STATICCHECK) $(DOT)
 
 .PHONY: help
 help:

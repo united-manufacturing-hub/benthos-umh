@@ -26,10 +26,6 @@ all: clean build
 
 .PHONY: install
 install: install-tools
-	@ if ! which dot > /dev/null; then \
-		echo "error: dot not installed (install graphviz)" >&2; \
-		exit 1; \
-	fi
 
 .PHONY: clean
 clean:
@@ -162,8 +158,9 @@ proto:
 
 .PHONY: serve-pprof
 serve-pprof:
-	@ if ! which dot > /dev/null; then \
-		echo "error: dot not installed (install graphviz)" >&2; \
-		exit 1; \
-	fi
-	go tool pprof -http=:8080 "localhost:4195/debug/pprof/profile?seconds=20"
+	@export PATH="$(TOOLS_BIN_DIR)/graphviz:$$PATH" && \
+		if ! which dot > /dev/null; then \
+			echo "error: dot not installed (run make install)" >&2; \
+			exit 1; \
+		fi && \
+		go tool pprof -http=:8080 "localhost:4195/debug/pprof/profile?seconds=20"
