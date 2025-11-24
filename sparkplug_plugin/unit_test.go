@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -34,11 +33,6 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
 )
-
-func TestSparkplugUnit(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Sparkplug B Complete Test Suite")
-}
 
 // Helper functions for unit testing
 func stringPtr(s string) *string {
@@ -3132,3 +3126,199 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 	})
 
 })
+
+// Phase 1: TDD Tests for processDataMessage Refactoring
+// These tests support the complexity reduction effort (Target: 8→4 complexity)
+
+var _ = Describe("stateAction struct", func() {
+	Context("when determining required actions after state update", func() {
+		It("should indicate no action needed for valid sequence", func() {
+			action := sparkplugplugin.StateAction{
+				IsNewNode:    false,
+				NeedsRebirth: false,
+			}
+
+			Expect(action.IsNewNode).To(BeFalse())
+			Expect(action.NeedsRebirth).To(BeFalse())
+		})
+
+		It("should indicate new node action when node is newly discovered", func() {
+			action := sparkplugplugin.StateAction{
+				IsNewNode:    true,
+				NeedsRebirth: false,
+			}
+
+			Expect(action.IsNewNode).To(BeTrue())
+			Expect(action.NeedsRebirth).To(BeFalse())
+		})
+
+		It("should indicate rebirth action when sequence gap detected", func() {
+			action := sparkplugplugin.StateAction{
+				IsNewNode:    false,
+				NeedsRebirth: true,
+			}
+
+			Expect(action.IsNewNode).To(BeFalse())
+			Expect(action.NeedsRebirth).To(BeTrue())
+		})
+	})
+})
+
+var _ = Describe("updateNodeState pure function", func() {
+	var nodeStates map[string]*sparkplugplugin.NodeState
+
+	BeforeEach(func() {
+		nodeStates = make(map[string]*sparkplugplugin.NodeState)
+	})
+
+	Context("when processing new node (first DATA message)", func() {
+		It("should create initial state and return isNewNode=true", func() {
+			deviceKey := "TestFactory/Line1"
+			currentSeq := uint8(5)
+
+			action := sparkplugplugin.UpdateNodeState(nodeStates, deviceKey, currentSeq)
+
+			Expect(action.IsNewNode).To(BeTrue())
+			Expect(action.NeedsRebirth).To(BeFalse())
+
+			// Verify state was created
+			Expect(nodeStates).To(HaveKey(deviceKey))
+			state := nodeStates[deviceKey]
+			Expect(state.LastSeq).To(Equal(currentSeq))
+			Expect(state.IsOnline).To(BeTrue())
+		})
+	})
+
+	Context("when processing valid sequence number", func() {
+		It("should update state and return no action needed", func() {
+			deviceKey := "TestFactory/Line1"
+
+			// Create existing state
+			nodeStates[deviceKey] = &sparkplugplugin.NodeState{
+				LastSeen: time.Now(),
+				LastSeq:  uint8(10),
+				IsOnline: true,
+			}
+
+			currentSeq := uint8(11) // Valid next sequence
+
+			action := sparkplugplugin.UpdateNodeState(nodeStates, deviceKey, currentSeq)
+
+			Expect(action.IsNewNode).To(BeFalse())
+			Expect(action.NeedsRebirth).To(BeFalse())
+
+			// Verify state was updated
+			state := nodeStates[deviceKey]
+			Expect(state.LastSeq).To(Equal(currentSeq))
+			Expect(state.IsOnline).To(BeTrue())
+		})
+	})
+
+	Context("when detecting sequence gap", func() {
+		It("should mark offline and return needsRebirth=true", func() {
+			deviceKey := "TestFactory/Line1"
+
+			// Create existing state
+			nodeStates[deviceKey] = &sparkplugplugin.NodeState{
+				LastSeen: time.Now(),
+				LastSeq:  uint8(10),
+				IsOnline: true,
+			}
+
+			currentSeq := uint8(15) // Gap detected (expected 11)
+
+			action := sparkplugplugin.UpdateNodeState(nodeStates, deviceKey, currentSeq)
+
+			Expect(action.IsNewNode).To(BeFalse())
+			Expect(action.NeedsRebirth).To(BeTrue())
+
+			// Verify state was updated
+			state := nodeStates[deviceKey]
+			Expect(state.LastSeq).To(Equal(currentSeq))
+			Expect(state.IsOnline).To(BeFalse()) // Marked offline due to gap
+		})
+	})
+
+	Context("when handling wraparound (255 → 0)", func() {
+		It("should treat 255→0 as valid sequence", func() {
+			deviceKey := "TestFactory/Line1"
+
+			// Create existing state at 255
+			nodeStates[deviceKey] = &sparkplugplugin.NodeState{
+				LastSeen: time.Now(),
+				LastSeq:  uint8(255),
+				IsOnline: true,
+			}
+
+			currentSeq := uint8(0) // Valid wraparound
+
+			action := sparkplugplugin.UpdateNodeState(nodeStates, deviceKey, currentSeq)
+
+			Expect(action.IsNewNode).To(BeFalse())
+			Expect(action.NeedsRebirth).To(BeFalse()) // No gap, valid wraparound
+
+			// Verify state was updated
+			state := nodeStates[deviceKey]
+			Expect(state.LastSeq).To(Equal(currentSeq))
+			Expect(state.IsOnline).To(BeTrue())
+		})
+	})
+})
+
+var _ = Describe("logSequenceError helper", func() {
+	var (
+		errorCounter    *MockCounter
+		deviceKey       string
+		lastSeq         uint8
+		currentSeq      uint8
+	)
+
+	BeforeEach(func() {
+		errorCounter = &MockCounter{count: 0}
+		deviceKey = "TestFactory/Line1"
+	})
+
+	Context("when logging sequence gap", func() {
+		It("should calculate expected sequence correctly (no wraparound)", func() {
+			lastSeq = 10
+			currentSeq = 15
+
+			// This should log "expected 11, got 15"
+			// We pass nil logger for testing - function should handle it gracefully
+			sparkplugplugin.LogSequenceError(nil, errorCounter, deviceKey, lastSeq, currentSeq)
+
+			// Verify counter was incremented
+			Expect(errorCounter.count).To(Equal(int64(1)))
+		})
+
+		It("should handle wraparound in expected sequence (255→0)", func() {
+			lastSeq = 255
+			currentSeq = 100 // Gap detected (expected 0)
+
+			// This should log "expected 0, got 100"
+			sparkplugplugin.LogSequenceError(nil, errorCounter, deviceKey, lastSeq, currentSeq)
+
+			// Verify counter was incremented
+			Expect(errorCounter.count).To(Equal(int64(1)))
+		})
+
+		It("should increment counter on each call", func() {
+			// Call multiple times
+			sparkplugplugin.LogSequenceError(nil, errorCounter, deviceKey, 10, 15)
+			sparkplugplugin.LogSequenceError(nil, errorCounter, deviceKey, 20, 25)
+			sparkplugplugin.LogSequenceError(nil, errorCounter, deviceKey, 30, 35)
+
+			// Verify counter was incremented 3 times
+			Expect(errorCounter.count).To(Equal(int64(3)))
+		})
+	})
+})
+
+// MockCounter is a simple mock for testing counter increments
+type MockCounter struct {
+	count int64
+}
+
+func (m *MockCounter) Incr(delta int64, labelValues ...string) {
+	m.count += delta
+}
