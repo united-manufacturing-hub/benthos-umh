@@ -391,7 +391,7 @@ During the Browse phase, the system automatically adjusts worker concurrency bas
    - If average response < 250ms → increase workers by 1 (up to profile's MaxWorkers)
    - If average response ≈ 250ms → no adjustment
 
-**Bounds enforcement**: Worker count always respects the ServerProfile's MinWorkers and MaxWorkers limits. The system cannot scale beyond profile-defined hardware constraints.
+**Bounds enforcement**: Worker count always respects the ServerProfile's MinWorkers and MaxWorkers limits. These limits are **global across ALL NodeIDs** being browsed - if you configure 3 NodeIDs with MaxWorkers=20, all 3 NodeIDs share a single pool of 20 workers (not 20 workers per NodeID = 60 total). The system cannot scale beyond profile-defined hardware constraints.
 
 **Why this matters:**
 
@@ -399,8 +399,9 @@ During the Browse phase, the system automatically adjusts worker concurrency bas
 - **Safety**: Prevents server overload by reducing workers when response times increase
 - **Gradual adaptation**: Fine-grained control with ±1 worker adjustments provides smoother scaling
 - **Adaptability**: Adjusts to changing server conditions during long Browse operations
+- **Global resource management**: MaxWorkers controls total system concurrency regardless of NodeID count, preventing server overload when browsing multiple large folders simultaneously
 
-Example: An S7-1500 profile with MaxWorkers=50 might start with 10 workers. If Browse responses average 100ms (< 250ms target), workers gradually increase: 10 → 11 → 12 → 13, continuing up to the 50 maximum. If the server becomes loaded and responses slow to 400ms, workers gradually reduce: 13 → 12 → 11 to maintain stability.
+Example: An S7-1500 profile with MaxWorkers=50 and **2 NodeIDs** might start with 10 workers **shared across both browse operations**. If Browse responses average 100ms (< 250ms target), the shared worker pool gradually increases to 50 maximum **for all browse operations combined**: 10 → 11 → 12 → 13. If responses slow to 400ms, workers reduce **across all active browse operations**: 13 → 12 → 11 to maintain stability.
 
 ### Manual Profile Override
 

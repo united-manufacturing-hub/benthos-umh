@@ -86,19 +86,52 @@ type ServerProfile struct {
 	Name        string
 	DisplayName string
 	Description string
-	// MaxBatchSize controls nodes per CreateMonitoredItems call during Subscribe phase.
-	// Performance impact: S7-1200 needs 100 (>200 = 50× degradation), Ignition/Kepware can use 1000 (10× faster).
+	// MaxBatchSize controls nodes per CreateMonitoredItems call during Subscribe phase (ONLY).
+	// This setting does NOT affect Browse phase workers.
+	//
+	// Subscribe phase (read_discover.go::MonitorBatched()):
+	// - Batches discovered nodes into MaxBatchSize chunks
+	// - Sends CreateMonitoredItems requests for each batch
+	// - Too large = server rejects (BadTcpMessageTooLarge)
+	// - Too small = slow subscription setup (more API round-trips)
+	//
+	// Performance impact:
+	// - S7-1200: MaxBatchSize=100 (>200 causes 50× degradation)
+	// - Ignition/Kepware: MaxBatchSize=1000 (10× faster than 100)
+	//
 	// See read_discover.go MonitorBatched() for batch creation logic.
 	MaxBatchSize int
-	// MaxWorkers controls concurrent goroutines during Browse phase that discover OPC UA node tree in parallel.
-	// Performance impact: More workers = faster browsing, but server may throttle or reject connections.
-	// See core_browse_workers.go for dynamic worker pool implementation.
+
+	// MaxWorkers controls concurrent goroutines during Browse phase (ONLY).
+	// This setting does NOT affect Subscribe phase batching.
+	//
+	// Browse phase (core_browse.go::browse()):
+	// - Workers discover OPC UA node tree in parallel
+	// - Each worker processes NodeTasks from shared queue
+	// - More workers = faster browsing (up to server throttle limit)
+	//
+	// Performance impact:
+	// - More workers = faster node discovery (parallel Browse calls)
+	// - Too many workers = server throttles or rejects connections
+	//
+	// See core_browse_global_pool.go for dynamic worker pool implementation.
 	MaxWorkers int
-	// MinWorkers sets lower bound for worker pool during Browse phase.
+
+	// MinWorkers sets lower bound for worker pool during Browse phase (ONLY).
 	// Dynamic scaling (currently disabled) keeps workers between MinWorkers and MaxWorkers.
+	//
+	// See core_browse_global_pool.go GlobalWorkerPool.adjustWorkers() for scaling logic.
 	MinWorkers int
+
 	// MaxMonitoredItems is hardware limit on total monitored items server can handle (0 = unlimited).
-	// Example: S7-1200 = 1000 total, S7-1500 = 10000 total. Exceeding this causes subscription failures.
+	// This is a server capability constraint, NOT a benthos configuration limit.
+	//
+	// Examples:
+	// - S7-1200: 1000 total monitored items (hardware limit)
+	// - S7-1500: 10000 total monitored items (hardware limit)
+	// - Prosys/Kepware/Ignition: unlimited (0)
+	//
+	// Exceeding this limit causes subscription failures during Subscribe phase.
 	MaxMonitoredItems int
 
 	// FilterCapability indicates known DataChangeFilter support status (replaces SupportsDataChangeFilter).

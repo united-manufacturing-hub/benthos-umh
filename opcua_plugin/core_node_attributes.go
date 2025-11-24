@@ -93,6 +93,11 @@ func handleNotReadable(def *NodeDef, handler AttributeHandler, path string, logg
 // This function is used to process the attributes of a node and set the NodeDef struct
 // def.NodeClass, def.BrowseName, def.Description, def.AccessLevel, def.DataType are set in the processNodeAttributes function
 func processNodeAttributes(attrs []*ua.DataValue, def *NodeDef, path string, logger Logger) error {
+	// Validate attrs array has expected length (5 attributes: NodeClass, BrowseName, Description, AccessLevel, DataType)
+	if len(attrs) < 5 {
+		return fmt.Errorf("insufficient attributes for node: %s, expected 5, got %d", def.NodeID, len(attrs))
+	}
+
 	// NodeClass (attrs[0])
 	nodeClassHandler := AttributeHandler{
 		handleOK: func(value *ua.Variant) error {

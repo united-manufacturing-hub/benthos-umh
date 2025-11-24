@@ -12,6 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║                     PRODUCTION CODE PATH - CURRENT                        ║
+// ╠══════════════════════════════════════════════════════════════════════════╣
+// ║  This file implements the PRODUCTION browse and subscribe workflow.      ║
+// ║  Used by: benthos-umh OPC UA input plugin during normal operation       ║
+// ║  Entry point: discoverNodes() → GlobalWorkerPool → MonitorBatched()     ║
+// ║                                                                          ║
+// ║  Key Features:                                                           ║
+// ║  • Auto-detects OPC UA server vendor and applies tuned ServerProfile    ║
+// ║  • Uses GlobalWorkerPool for shared concurrency control (5-60 workers)  ║
+// ║  • Subscribes to discovered nodes for continuous data streaming         ║
+// ║  • Production-grade error handling and performance monitoring           ║
+// ║                                                                          ║
+// ║  This is the ONLY production path (legacy UI code removed)              ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+
 package opcua_plugin
 
 import (
@@ -26,44 +43,64 @@ import (
 	"github.com/gopcua/opcua/ua"
 )
 
-// Then modify the discoverNodes function to use TrackedWaitGroup
-func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]string, error) {
+// discoverNodes discovers OPC UA nodes for subscription in production flows.
+//
+// PRODUCTION CODE PATH:
+// This is the entry point for ALL production DFC configurations.
+// Uses browse() internal worker pool (core_browse.go) with ServerProfile tuning.
+//
+// Architecture:
+// - Calls browse() for each NodeID in g.NodeIDs
+// - browse() creates isolated worker pool per invocation
+// - Workers discover node tree in parallel (controlled by ServerProfile.MaxWorkers)
+// - Returns flat node list for MonitorBatched() subscription setup
+//
+// Why GlobalWorkerPool pattern:
+// - Production needs flat node list for subscription, UI needs tree structure
+// - Production uses auto-detected/tuned profile, UI uses Auto profile (defensive)
+// - Production subscribes to nodes for streaming, UI is one-time browse
+//
+// Flow:
+// 1. BrowseAndSubscribeIfNeeded() calls discoverNodes()
+// 2. discoverNodes() calls browse() with ServerProfile
+// 3. browse() spawns workers (5-60 depending on server)
+// 4. Workers discover nodes → nodeChan consumer builds nodeList
+// 5. MonitorBatched() subscribes to discovered nodes in batches
+// 6. ReadBatch() streams changes to subsequent Benthos pipeline processors/outputs
+func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 	// This was previously 5 minutes, but we need to increase it to 1 hour to avoid context cancellation
 	// when browsing a large number of nodes.
 	timeoutCtx, cancel := context.WithTimeout(ctx, 1*time.Hour)
 	defer cancel()
 
+	// Create GlobalWorkerPool for ALL browse operations (global concurrency limit)
+	// This replaces the per-browse worker pool pattern (each browse() call creating its own pool).
+	// Example: A deployment with 300 NodeIDs × 5 workers = 1,500 concurrent (exceeds 64 server capacity).
+	// With global pool: MaxWorkers=20 (from profile) caps concurrent operations safely.
+	pool := NewGlobalWorkerPool(g.ServerProfile, g.Log)
+	// Note: Shutdown moved to explicit call after wg.Wait() to prevent race condition (see line 150)
+
+	// Spawn initial workers based on profile.MinWorkers
+	// Profile determines optimal worker count (e.g., Ignition=5, Auto=1, S7-1200=2)
+	workersSpawned := pool.SpawnWorkers(g.ServerProfile.MinWorkers)
+	g.Log.Debugf("GlobalWorkerPool spawned %d initial workers for browse operations", workersSpawned)
+
 	nodeList := make([]NodeDef, 0)
-	pathIDMap := make(map[string]string)
 	nodeChan := make(chan NodeDef, MaxTagsToBrowse)
 	errChan := make(chan error, MaxTagsToBrowse)
-	// opcuaBrowserChan is created to just satisfy the browse function signature.
-	// The data inside opcuaBrowserChan is not so useful for this function. It is more useful for the GetNodeTree function
-	// Buffer size reduced to 1000 (from 100k) since consumer drains instantly - saves 33 MB memory
-	opcuaBrowserChan := make(chan BrowseDetails, 1000)
 
-	// Start concurrent consumer to drain opcuaBrowserChan as workers produce BrowseDetails
-	// This prevents deadlock by ensuring channel never fills (discovered in ENG-3835 integration test)
-	// Without this consumer, workers block after 100k nodes and hang until timeout
-	opcuaBrowserConsumerDone := make(chan struct{})
-	go func() {
-		for range opcuaBrowserChan {
-			// Discard - browse details not needed for subscription path (only for GetNodeTree)
-		}
-		close(opcuaBrowserConsumerDone)
-	}()
-
-	var wg TrackedWaitGroup
 	done := make(chan struct{})
 
+	// Progress reporting goroutine - tracks pool metrics instead of WaitGroup count
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				g.Log.Infof("Amount of found opcua tags currently in channel: %d, (%d active browse goroutines)",
-					len(nodeChan), wg.Count())
+				metrics := pool.GetMetrics()
+				g.Log.Infof("Amount of found opcua tags: %d (pool: %d active workers, %d pending tasks)",
+					len(nodeList), metrics.ActiveWorkers, metrics.QueueDepth)
 			case <-done:
 				return
 			case <-timeoutCtx.Done():
@@ -73,16 +110,44 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		}
 	}()
 
+	// Submit browse tasks to GlobalWorkerPool for actual browse execution
+	// Each task represents a root NodeID to browse. The pool's workers will execute
+	// the browse operation and submit results to nodeChan/errChan/opcuaBrowserChan.
+	// This replaces the previous pattern of spawning independent browse() goroutines.
+	g.Log.Debugf("Submitting %d NodeIDs as tasks to GlobalWorkerPool", len(g.NodeIDs))
+	submittedCount := 0
 	for _, nodeID := range g.NodeIDs {
 		if nodeID == nil {
 			continue
 		}
 
-		g.Log.Debugf("Browsing nodeID: %s", nodeID.String())
-		wg.Add(1)
+		g.Log.Debugf("Submitting browse task for nodeID: %s", nodeID.String())
+
 		wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(nodeID))
-		go browse(timeoutCtx, wrapperNodeID, "", g.Log, nodeID.String(), nodeChan, errChan, &wg, opcuaBrowserChan, &g.visited, g.ServerProfile)
+
+		// Submit fully-populated task to pool for browse execution
+		// Pool workers will call Node.Children() and recursively browse the tree
+		task := GlobalPoolTask{
+			NodeID:       nodeID.String(),
+			Ctx:          timeoutCtx,
+			Node:         wrapperNodeID,
+			Path:         "", // Root path (empty for top-level nodes)
+			Level:        0,  // Start at recursion level 0
+			ParentNodeID: nodeID.String(),
+			Visited:      &g.visited,
+			ResultChan:   nodeChan,      // Workers send NodeDef results here
+			ErrChan:      errChan,       // Workers send errors here
+			ProgressChan: nil,           // No progress reporting in production
+		}
+
+		if err := pool.SubmitTask(task); err != nil {
+			return nil, fmt.Errorf("failed to submit task for NodeID %s: %w", nodeID.String(), err)
+		}
+		submittedCount++
 	}
+
+	g.Log.Debugf("Successfully submitted %d/%d tasks to GlobalWorkerPool (buffer capacity: %d)",
+		submittedCount, len(g.NodeIDs), cap(pool.taskChan))
 
 	// Start concurrent consumer to drain nodeChan as workers produce nodes
 	// This prevents deadlock when browse workers fill the 100k buffer
@@ -90,33 +155,47 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 	go func() {
 		for node := range nodeChan {
 			nodeList = append(nodeList, node)
-			if node.NodeID != nil {
-				pathIDMap[node.Path] = node.NodeID.String()
-			}
 		}
 		close(consumerDone)
 	}()
 
+	// Wait for all pool tasks to complete using WaitForCompletion instead of WaitGroup
+	// Use error variable instead of channel send to guarantee error propagation (ENG-3876)
+	var poolCompletionErr error
 	go func() {
-		wg.Wait()
+		if err := pool.WaitForCompletion(DefaultBrowseCompletionTimeout); err != nil {
+			g.Log.Warnf("Pool completion wait error: %v", err)
+			// Store error in variable instead of non-blocking channel send
+			// This guarantees error is never lost even if errChan is full
+			poolCompletionErr = fmt.Errorf("browse pool completion failed: %w", err)
+		}
 		close(done)
 	}()
 
 	select {
 	case <-timeoutCtx.Done():
 		g.Log.Warn("browse function received timeout signal after 1 hour. Please select less nodes.")
-		return nil, nil, timeoutCtx.Err()
+		return nil, timeoutCtx.Err()
 	case <-done:
+		// Check for pool completion error after goroutine finishes
+		if poolCompletionErr != nil {
+			return nil, poolCompletionErr
+		}
 	}
 
 	close(nodeChan)
 	close(errChan)
-	close(opcuaBrowserChan)
 
-	// Wait for consumers to finish draining the channels
+	// Wait for consumer to finish draining the channel
 	<-consumerDone
-	<-opcuaBrowserConsumerDone
 
+	// Explicit shutdown after all browse() goroutines complete
+	// This ensures wg.Wait() finishes before pool workers are terminated
+	if err := pool.Shutdown(DefaultPoolShutdownTimeout); err != nil {
+		g.Log.Warnf("GlobalWorkerPool shutdown timeout: %v", err)
+	}
+
+	// Convert duplicate browse paths to NodeID-based paths to ensure unique subscription paths
 	UpdateNodePaths(nodeList)
 
 	if len(errChan) > 0 {
@@ -124,10 +203,10 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, map[string]s
 		for err := range errChan {
 			combinedErr.WriteString(err.Error() + "; ")
 		}
-		return nil, nil, errors.New(combinedErr.String())
+		return nil, errors.New(combinedErr.String())
 	}
 
-	return nodeList, pathIDMap, nil
+	return nodeList, nil
 }
 
 // BrowseAndSubscribeIfNeeded browses the specified OPC UA nodes, adds a heartbeat node if required,
@@ -146,7 +225,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 		g.Log.Infof("All requested nodes are fresh, skipping rebrowse. Using chaced nodelist")
 		nodeList = g.buildNodeListFromCache()
 	} else {
-		nodeList, _, err = g.discoverNodes(ctx)
+		nodeList, err = g.discoverNodes(ctx)
 		if err != nil {
 			g.Log.Infof("error while getting the node list: %v", err)
 			return err
@@ -171,24 +250,53 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 		if !g.HeartbeatManualSubscribed {
 			heartbeatNodeID := g.HeartbeatNodeId
 
-			// Copied and pasted from above, just for one node
+			// Use separate pool for heartbeat node browse
 			nodeHeartbeatChan := make(chan NodeDef, 1)
 			errChanHeartbeat := make(chan error, 1)
-			opcuaBrowserChanHeartbeat := make(chan BrowseDetails, 1)
-			var wgHeartbeat TrackedWaitGroup
 
-			wgHeartbeat.Add(1)
+			heartbeatPool := NewGlobalWorkerPool(g.ServerProfile, g.Log)
+			defer func() {
+				if err := heartbeatPool.Shutdown(DefaultPoolShutdownTimeout); err != nil {
+					g.Log.Warnf("Heartbeat pool shutdown timeout: %v", err)
+				}
+			}()
+
+			// Spawn workers for heartbeat pool
+			workersSpawned := heartbeatPool.SpawnWorkers(g.ServerProfile.MinWorkers)
+			g.Log.Debugf("Heartbeat pool spawned %d workers", workersSpawned)
+
 			wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(heartbeatNodeID))
-			go browse(ctx, wrapperNodeID, "", g.Log, heartbeatNodeID.String(), nodeHeartbeatChan, errChanHeartbeat, &wgHeartbeat, opcuaBrowserChanHeartbeat, &g.visited, g.ServerProfile)
 
-			wgHeartbeat.Wait()
+			// Submit heartbeat browse task to pool
+			task := GlobalPoolTask{
+				NodeID:       heartbeatNodeID.String(),
+				Ctx:          ctx,
+				Node:         wrapperNodeID,
+				Path:         "",
+				Level:        0,
+				ParentNodeID: heartbeatNodeID.String(),
+				Visited:      &g.visited,
+				ResultChan:   nodeHeartbeatChan,
+				ErrChan:      errChanHeartbeat,
+				ProgressChan: nil, // No progress reporting in production
+			}
+
+			if err := heartbeatPool.SubmitTask(task); err != nil {
+				g.Log.Warnf("Failed to submit heartbeat task: %v", err)
+			} else {
+				// Wait for heartbeat task to complete
+				if err := heartbeatPool.WaitForCompletion(DefaultPoolShutdownTimeout); err != nil {
+					g.Log.Warnf("Heartbeat pool completion wait error: %v", err)
+				}
+			}
+
 			close(nodeHeartbeatChan)
 			close(errChanHeartbeat)
-			close(opcuaBrowserChanHeartbeat)
 
 			for node := range nodeHeartbeatChan {
 				nodeList = append(nodeList, node)
 			}
+			// Convert duplicate browse paths to NodeID-based paths to ensure unique subscription paths
 			UpdateNodePaths(nodeList)
 			if len(errChanHeartbeat) > 0 {
 				return <-errChanHeartbeat
