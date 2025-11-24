@@ -15,6 +15,7 @@
 package opcua_plugin
 
 import (
+	"os"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -24,6 +25,12 @@ import (
 // TestSanitizeReplacesInvalidCharacters tests that sanitize() correctly replaces
 // non-alphanumeric characters (except hyphens and underscores) with underscores.
 var _ = Describe("sanitize", func() {
+	BeforeEach(func() {
+		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
+			Skip("Skipping unit tests in integration-only mode")
+		}
+	})
+
 	DescribeTable("replaces invalid characters",
 		func(input, expected string) {
 			result := sanitize(input)

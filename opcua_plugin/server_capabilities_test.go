@@ -15,6 +15,7 @@
 package opcua_plugin
 
 import (
+	"os"
 	"context"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -22,6 +23,12 @@ import (
 )
 
 var _ = Describe("ServerCapabilities", func() {
+	BeforeEach(func() {
+		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
+			Skip("Skipping unit tests in integration-only mode")
+		}
+	})
+
 	Context("ServerCapabilities struct", func() {
 		It("should have expected operation limit fields", func() {
 			caps := ServerCapabilities{

@@ -15,11 +15,18 @@
 package opcua_plugin
 
 import (
+	"os"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("Connect Method ServerCapabilities", func() {
+	BeforeEach(func() {
+		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
+			Skip("Skipping unit tests in integration-only mode")
+		}
+	})
+
 	Context("fallback ServerCapabilities", func() {
 		It("should include all three capability fields when queryOperationLimits fails", func() {
 			// This test verifies that the fallback ServerCapabilities struct

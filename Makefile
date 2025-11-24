@@ -86,6 +86,11 @@ test-noderedjs:
 test-opc:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./opcua_plugin/...
 
+.PHONY: test-opc-integration
+test-opc-integration:
+	@INTEGRATION_TESTS_ONLY=true \
+		$(GINKGO_CMD) $(GINKGO_FLAGS) ./opcua_plugin/...
+
 .PHONY: test-uns
 test-uns:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!redpanda' ./uns_plugin/...

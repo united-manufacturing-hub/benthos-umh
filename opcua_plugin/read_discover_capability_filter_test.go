@@ -15,6 +15,7 @@
 package opcua_plugin
 
 import (
+	"os"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -28,6 +29,12 @@ import (
 // whether to create a DataChangeFilter. It checks that the production code properly
 // implements two-tier capability detection (ServerCapabilities > ServerProfile).
 var _ = Describe("MonitorBatched Filter Creation Logic", func() {
+	BeforeEach(func() {
+		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
+			Skip("Skipping unit tests in integration-only mode")
+		}
+	})
+
 	// This test validates the actual production code in read_discover.go:336-347
 	// by simulating what the loop does for a single node
 

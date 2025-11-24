@@ -15,6 +15,7 @@
 package opcua_plugin
 
 import (
+	"os"
 	"context"
 	"errors"
 	"fmt"
@@ -239,6 +240,12 @@ func newTestTaskWithNode(ctx context.Context, nodeID string, node NodeBrowser, r
 }
 
 var _ = Describe("GlobalWorkerPool", func() {
+	BeforeEach(func() {
+		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
+			Skip("Skipping unit tests in integration-only mode")
+		}
+	})
+
 	var logger *mockLogger
 
 	BeforeEach(func() {

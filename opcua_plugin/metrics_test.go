@@ -15,6 +15,7 @@
 package opcua_plugin
 
 import (
+	"os"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -25,6 +26,12 @@ import (
 // TestSubscriptionFailureMetrics verifies that failed subscriptions
 // are tracked with proper labels
 var _ = Describe("Subscription Failure Metrics", func() {
+	BeforeEach(func() {
+		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
+			Skip("Skipping unit tests in integration-only mode")
+		}
+	})
+
 	BeforeEach(func() {
 		// Reset metrics before each test
 		ResetMetrics()
