@@ -18,16 +18,25 @@ GINKGO_FLAGS=-r --output-interceptor-mode=none --github-output -vv -trace -p --r
 GINKGO_SERIAL_FLAGS=$(GINKGO_FLAGS) --procs=1
 
 BENTHOS_BIN := tmp/bin/benthos
+LOG_LEVEL ?= INFO
+CONFIG ?= ./config/opcua-hex-test.yaml
 
 .PHONY: all
-all: clean target
+all: clean build
+
+.PHONY: install
+install: install-tools
 
 .PHONY: clean
 clean:
-	@rm -rf target tmp/bin tmp/benthos-*.zip
+	@rm -rf tmp/bin tmp/benthos-*.zip
 
-.PHONY: target
-target: build-protobuf
+.PHONY: run
+run:
+	go run cmd/benthos/main.go run --log.level $(LOG_LEVEL) $(CONFIG)
+
+.PHONY: build
+build:
 	@mkdir -p $(dir $(BENTHOS_BIN))
 	@go build \
        -ldflags "-s -w \
@@ -102,7 +111,6 @@ fuzz-stream-processor:
 	@echo "Running fuzz tests for stream processor (press Ctrl+C to stop)..."
 	@cd stream_processor_plugin && go test -tags=fuzz -fuzz=FuzzStreamProcessor
 
-
 .PHONY: test-tag-processor
 test-tag-processor:
 	@TEST_TAG_PROCESSOR=true \
@@ -138,62 +146,21 @@ test-topic-browser:
 	@TEST_TOPIC_BROWSER=1 \
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./topic_browser_plugin/...
 
-###### TESTS WITH RUNNING BENTHOS-UMH #####
-# Test the tag processor with a local OPC UA server
-.PHONY: test-benthos-tag-processor
-test-benthos-tag-processor: target
-	@$(BENTHOS_BIN) -c ./config/tag-processor-test.yaml
-
-# USAGE:
-# make test-benthos-sensorconnect TEST_DEBUG_IFM_ENDPOINT=(IP of sensor interface)
-.PHONY: test-benthos-sensorconnect
-test-benthos-sensorconnect: target
-	@$(BENTHOS_BIN) -c ./config/sensorconnect-test.yaml
-
-.PHONY: test-benthos-downsampler
-test-benthos-downsampler: target
-	@$(BENTHOS_BIN) -c ./config/downsampler_example.yaml
-
-.PHONY: test-benthos-downsampler-example-one
-test-benthos-downsampler-example-one: target
-	@$(BENTHOS_BIN) -c ./config/downsampler_example_one.yaml
-
-.PHONY: test-benthos-downsampler-example-one-timeout
-test-benthos-downsampler-example-one-timeout: target
-	@$(BENTHOS_BIN) -c ./config/downsampler_example_one_timeout.yaml
-
-.PHONY: test-benthos-topic-browser
-test-benthos-topic-browser: target
-	@$(BENTHOS_BIN) -c ./config/topic-browser-test.yaml
-
-.PHONY: test-benthos-topic-browser-local
-test-benthos-topic-browser-local: target
-	@$(BENTHOS_BIN) -c ./config/topic-browser-test-local.yaml
-
-.PHONY: test-benthos-opcua-hex
-test-benthos-opcua-hex: target
-	@$(BENTHOS_BIN) -c ./config/opcua-hex-test.yaml
-
-## Generate go files from protobuf for topic browser
-build-protobuf:
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	rm pkg/umh/topic/proto/topic_browser_data.pb.go || true
-	protoc \
+# Generate Go files from protobuf for topic browser
+.PHONY: proto
+proto:
+	rm pkg/umh/topic/proto/topic_browser_data.pb.go 2>/dev/null || true
+	$(PROTOC) \
 		-I=pkg/umh/topic/proto \
 		--go_out=pkg/umh/topic/proto \
 		pkg/umh/topic/proto/topic_browser_data.proto
-	@echo '// Copyright 2025 UMH Systems GmbH\n//\n// Licensed under the Apache License, Version 2.0 (the "License");\n// you may not use this file except in compliance with the License.\n// You may obtain a copy of the License at\n//\n//     http://www.apache.org/licenses/LICENSE-2.0\n//\n// Unless required by applicable law or agreed to in writing, software\n// distributed under the License is distributed on an "AS IS" BASIS,\n// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n// See the License for the specific language governing permissions and\n// limitations under the License.\n\n' | cat - pkg/umh/topic/proto/topic_browser_data.pb.go > temp && mv temp pkg/umh/topic/proto/topic_browser_data.pb.go
-
-
-## PROFILING
+	@echo "Successfully generated topic_browser_data.pb.go"
 
 .PHONY: serve-pprof
 serve-pprof:
-	go tool pprof -http=:8080 localhost:4195/debug/pprof/profile
-
-## Correctness
-validate-stream-processor:
-	golangci-lint run ./stream_processor_plugin
-	nilaway ./stream_processor_plugin
-	deadcode -test ./stream_processor_plugin
-	staticcheck ./stream_processor_plugin
+	@export PATH="$(TOOLS_BIN_DIR)/graphviz:$$PATH" && \
+		if ! which dot > /dev/null; then \
+			echo "error: dot not installed (run make install)" >&2; \
+			exit 1; \
+		fi && \
+		go tool pprof -http=:8080 "localhost:4195/debug/pprof/profile?seconds=20"
