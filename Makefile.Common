@@ -17,10 +17,11 @@ SRC_ROOT := $(shell git rev-parse --show-toplevel)
 
 LICENSE_EYE_VERSION = v0.7.0
 GOLANGCI_LINT_VERSION = v2.5.0
-NILAWAY_VERSION = latest
+NILAWAY_VERSION = v0.0.0-20251119034912-44f92224c998
 STATICCHECK_VERSION = v0.6.1
 PROTOC_GEN_GO_VERSION = v1.36.10
-GRAPHVIZ_VERSION = latest
+PROTOC_VERSION = cbbe65675855d0db6d94a43f565952c69ef7fc58081569837d44af3f044aa73d
+GRAPHVIZ_VERSION = 939f896cd783daeed8ab08c446f3e2b79213f5e5d87d73bada58667f3bcd8906
 
 # ---------------------------------------------------
 # Pinned URLs for go install
@@ -43,7 +44,7 @@ LICENSE_EYE := $(TOOLS_BIN_DIR)/license-eye
 GOLANGCI_LINT := $(TOOLS_BIN_DIR)/golangci-lint
 NILAWAY := $(TOOLS_BIN_DIR)/nilaway
 STATICCHECK := $(TOOLS_BIN_DIR)/staticcheck
-PROTOC := docker run --rm -v $(PWD):$(PWD) -w $(PWD) rvolosatovs/protoc:latest
+PROTOC := docker run --rm -v $(PWD):$(PWD) -w $(PWD) rvolosatovs/protoc@sha256:$(PROTOC_VERSION)
 DOT := $(TOOLS_BIN_DIR)/graphviz/dot
 
 $(TOOLS_BIN_DIR):
@@ -64,7 +65,7 @@ $(STATICCHECK): $(TOOLS_BIN_DIR)
 $(DOT): $(TOOLS_BIN_DIR)
 	@mkdir -p $(dir $(DOT))
 	@printf '#!/bin/sh\n' > $(DOT)
-	@printf 'exec docker run --rm -i minidocks/graphviz:$(GRAPHVIZ_VERSION) dot "$$@"\n' >> $(DOT)
+	@printf 'exec docker run --rm -i minidocks/graphviz@sha256:$(GRAPHVIZ_VERSION) dot "$$@"\n' >> $(DOT)
 	@chmod +x $(DOT)
 
 .PHONY: install-tools
