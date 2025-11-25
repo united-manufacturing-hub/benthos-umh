@@ -155,8 +155,8 @@ func (m *mockNodeBrowser) ResetBrowseCalled() {
 
 var _ = Describe("UpdateNodePaths", func() {
 	BeforeEach(func() {
-		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
-			Skip("Skipping unit tests in integration-only mode")
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 
@@ -311,8 +311,8 @@ func BenchmarkDeduplicateWorstCase(b *testing.B) {
 
 var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
 	BeforeEach(func() {
-		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
-			Skip("Skipping unit tests in integration-only mode")
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 

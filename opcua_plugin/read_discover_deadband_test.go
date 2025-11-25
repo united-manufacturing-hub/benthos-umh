@@ -27,8 +27,8 @@ import (
 // This tests the actual code path used in MonitorBatched().
 var _ = Describe("MonitoredItemRequest Creation", func() {
 	BeforeEach(func() {
-		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
-			Skip("Skipping unit tests in integration-only mode")
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 
@@ -88,8 +88,8 @@ var _ = Describe("MonitoredItemRequest Creation", func() {
 // TestDeadbandTypeChecking verifies filters only applied to numeric types
 var _ = Describe("Deadband Type Checking", func() {
 	BeforeEach(func() {
-		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
-			Skip("Skipping unit tests in integration-only mode")
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 

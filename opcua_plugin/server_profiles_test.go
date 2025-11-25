@@ -22,8 +22,8 @@ import (
 
 var _ = Describe("DetectServerProfile", func() {
 	BeforeEach(func() {
-		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
-			Skip("Skipping unit tests in integration-only mode")
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 
@@ -174,8 +174,8 @@ var _ = Describe("DetectServerProfile", func() {
 
 var _ = Describe("GetProfileByName", func() {
 	BeforeEach(func() {
-		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
-			Skip("Skipping unit tests in integration-only mode")
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 
@@ -240,8 +240,8 @@ var _ = Describe("GetProfileByName", func() {
 
 var _ = Describe("Profile Value Validation", func() {
 	BeforeEach(func() {
-		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
-			Skip("Skipping unit tests in integration-only mode")
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 
@@ -396,8 +396,8 @@ var _ = Describe("Profile Value Validation", func() {
 
 var _ = Describe("ServerProfile MaxMonitoredItems", func() {
 	BeforeEach(func() {
-		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
-			Skip("Skipping unit tests in integration-only mode")
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 
@@ -441,8 +441,8 @@ var _ = Describe("ServerProfile MaxMonitoredItems", func() {
 
 var _ = Describe("ServerProfile DataChangeFilter Support", func() {
 	BeforeEach(func() {
-		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
-			Skip("Skipping unit tests in integration-only mode")
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 
@@ -537,8 +537,8 @@ var _ = Describe("ServerProfile DataChangeFilter Support", func() {
 
 var _ = Describe("validateProfile", func() {
 	BeforeEach(func() {
-		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
-			Skip("Skipping unit tests in integration-only mode")
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 

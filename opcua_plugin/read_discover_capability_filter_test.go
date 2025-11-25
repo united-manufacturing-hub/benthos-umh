@@ -30,8 +30,8 @@ import (
 // implements two-tier capability detection (ServerCapabilities > ServerProfile).
 var _ = Describe("MonitorBatched Filter Creation Logic", func() {
 	BeforeEach(func() {
-		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
-			Skip("Skipping unit tests in integration-only mode")
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 

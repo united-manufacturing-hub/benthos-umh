@@ -24,8 +24,8 @@ import (
 // server doesn't support requested deadband type
 var _ = Describe("Server Capability Detection", func() {
 	BeforeEach(func() {
-		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
-			Skip("Skipping unit tests in integration-only mode")
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 
@@ -52,8 +52,8 @@ var _ = Describe("Server Capability Detection", func() {
 
 var _ = Describe("ServerCapabilities hasTrialedThisConnection", func() {
 	BeforeEach(func() {
-		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
-			Skip("Skipping unit tests in integration-only mode")
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 

@@ -157,7 +157,7 @@ jobs:
             echo "no wago-endpoint available for testing"
             exit 1
           fi
-          make test-opc
+          make test-opc-simulator
 
       - name: Cleanup docker containers
         if: always()
@@ -216,4 +216,4 @@ jobs:
             echo "no kepware-endpoint available for testing"
             exit 1
           fi
-          make test-opc-integration
+          make test-opc-kepware

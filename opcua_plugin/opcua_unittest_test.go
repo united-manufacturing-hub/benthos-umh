@@ -32,8 +32,8 @@ import (
 
 var _ = Describe("Unit Tests", func() {
 	BeforeEach(func() {
-		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
-			Skip("Skipping unit tests in integration-only mode")
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 
@@ -857,8 +857,8 @@ var _ NodeBrowser = &MockOpcuaNodeWithBadNodeID{}
 // - Expected: Error should contain "ns=2;i=9999" but won't
 var _ = Describe("Browse with StatusBadNodeIDUnknown", func() {
 	BeforeEach(func() {
-		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
-			Skip("Skipping unit tests in integration-only mode")
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 
@@ -980,8 +980,8 @@ func startBrowsing(ctx context.Context, rootNode NodeBrowser, path string, level
 // ENG-3835: TDD RED tests for channel blocking fixes
 var _ = Describe("Browse Channel Blocking Behavior (ENG-3835)", func() {
 	BeforeEach(func() {
-		if os.Getenv("INTEGRATION_TESTS_ONLY") == "true" {
-			Skip("Skipping unit tests in integration-only mode")
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 
