@@ -60,3 +60,6 @@ jobs:
           labels: |
             automation
             dependencies
+          team-reviewers: |
+            developers
+          draft: false
