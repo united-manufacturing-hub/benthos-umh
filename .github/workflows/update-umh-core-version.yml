@@ -1,0 +1,62 @@
+# Copyright 2023 UMH Systems GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+name: Update benthos-umh in umh-core
+
+on:
+  repository_dispatch:
+    types: [release-completed]
+
+jobs:
+  update-version:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ github.event.client_payload.tag }}
+    steps:
+      - name: Generate GitHub App Token
+        id: generate-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.PR_APP_ID }}
+          private-key: ${{ secrets.PR_APP_PK }}
+          repositories: united-manufacturing-hub
+
+      - name: Checkout united-manufacturing-hub Repository
+        uses: actions/checkout@v4
+        with:
+          repository: united-manufacturing-hub/united-manufacturing-hub
+          ref: staging
+          token: ${{ steps.generate-token.outputs.token }}
+          path: united-manufacturing-hub
+
+      - name: Update BENTHOS_UMH_VERSION in Makefile
+        working-directory: united-manufacturing-hub/umh-core
+        run: |
+          VERSION_WITHOUT_PREFIX="${VERSION#v}"
+          sed -i "s/^BENTHOS_UMH_VERSION = .*/BENTHOS_UMH_VERSION = ${VERSION_WITHOUT_PREFIX}/" Makefile
+          grep -q "^BENTHOS_UMH_VERSION = ${VERSION_WITHOUT_PREFIX}$" Makefile || exit 1
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          path: united-manufacturing-hub
+          token: ${{ steps.generate-token.outputs.token }}
+          commit-message: "chore: bump benthos-umh to ${{ env.VERSION }}"
+          branch: chore/benthos-umh-${{ env.VERSION }}
+          delete-branch: true
+          title: "chore: bump benthos-umh to ${{ env.VERSION }}"
+          labels: |
+            automation
+            dependencies
