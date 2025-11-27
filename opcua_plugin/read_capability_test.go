@@ -15,6 +15,7 @@
 package opcua_plugin
 
 import (
+	"os"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -22,6 +23,12 @@ import (
 // Server Capability Detection verifies graceful fallback when
 // server doesn't support requested deadband type
 var _ = Describe("Server Capability Detection", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	DescribeTable("verifies graceful fallback",
 		func(requestedType string, serverSupportsPercent bool, expectedType string) {
 			// Mock server capabilities
@@ -44,6 +51,12 @@ var _ = Describe("Server Capability Detection", func() {
 })
 
 var _ = Describe("ServerCapabilities hasTrialedThisConnection", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	Context("when creating new ServerCapabilities", func() {
 		It("should default to false", func() {
 			caps := &ServerCapabilities{}

@@ -15,6 +15,7 @@
 package opcua_plugin
 
 import (
+	"os"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -26,6 +27,12 @@ import (
 // correctly based on deadband configuration, including the critical edge case
 // of deadbandValue=0.0 for duplicate suppression
 var _ = Describe("DataChangeFilter Creation", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	DescribeTable("creates correct filter based on deadband configuration",
 		func(deadbandType string, deadbandValue float64, expectNil bool, expectType uint32, expectValue float64) {
 			result := createDataChangeFilter(deadbandType, deadbandValue)

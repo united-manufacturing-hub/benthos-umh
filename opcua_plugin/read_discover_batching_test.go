@@ -15,6 +15,7 @@
 package opcua_plugin_test
 
 import (
+	"os"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -22,6 +23,12 @@ import (
 )
 
 var _ = Describe("calculateBatches", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	Context("with Prosys profile MaxBatchSize=800", func() {
 		It("should split 1500 nodes into 2 batches [800, 700]", func() {
 			batches := CalculateBatches(1500, 800)

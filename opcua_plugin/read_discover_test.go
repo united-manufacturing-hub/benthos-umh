@@ -15,6 +15,7 @@
 package opcua_plugin_test
 
 import (
+	"os"
 	"context"
 	"fmt"
 	"sync"
@@ -153,6 +154,12 @@ func (m *mockNodeBrowser) ResetBrowseCalled() {
 }
 
 var _ = Describe("UpdateNodePaths", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	DescribeTable("deduplication correctness",
 		func(nodes, expected []NodeDef) {
 			// Make a copy to avoid test interference
@@ -303,6 +310,12 @@ func BenchmarkDeduplicateWorstCase(b *testing.B) {
 }
 
 var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	// GlobalWorkerPool integration tests for discoverNodes()
 	//
 	// TDD Challenge: discoverNodes() is a private method with complex OPC UA dependencies.

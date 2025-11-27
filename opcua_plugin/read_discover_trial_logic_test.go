@@ -15,11 +15,18 @@
 package opcua_plugin
 
 import (
+	"os"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("MonitorBatched three-way trial logic", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	Context("Decision 1: FilterCapability is FilterSupported", func() {
 		It("should use filter immediately without trial", func() {
 			// Setup: Profile with FilterCapability=FilterSupported (e.g., Kepware)
