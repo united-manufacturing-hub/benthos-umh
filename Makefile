@@ -83,26 +83,16 @@ test-noderedjs:
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./nodered_js_plugin/...
 
 # ============================================================================
-# OPC UA Plugin Tests
+# OPC UA Plugin Tests (see: make env)
 # ============================================================================
 
-# Run OPC UA unit tests only (fast, no external dependencies)
-.PHONY: test-opc-unit
-test-opc-unit:
+.PHONY: test-unit-opc
+test-unit-opc:
 	@TEST_OPCUA_UNIT=true \
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./opcua_plugin/...
 
-# Run OPC UA simulator tests (requires Docker with Microsoft OPC-PLC)
-.PHONY: test-opc-simulator
-test-opc-simulator:
-	@TEST_OPCUA_SIMULATOR=true TEST_OPCUA_WRITE_SIMULATOR=true \
-		$(GINKGO_CMD) $(GINKGO_FLAGS) ./opcua_plugin/...
-
-# Run OPC UA Kepware tests (requires Kepware KEPServerEX hardware)
-# Unit/simulator tests auto-skip since their env vars aren't set
-# Kepware tests run when TEST_KEPWARE_* env vars are set by CI
-.PHONY: test-opc-kepware
-test-opc-kepware:
+.PHONY: test-integration-opc
+test-integration-opc:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./opcua_plugin/...
 
 .PHONY: test-uns

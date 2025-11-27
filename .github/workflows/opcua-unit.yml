@@ -17,16 +17,8 @@ name: OPC UA Unit Tests
 
 on:
   push:
-    branches: [master, staging]
-    paths:
-      - 'opcua_plugin/**'
-      - 'go.mod'
-      - 'go.sum'
-  pull_request:
-    paths:
-      - 'opcua_plugin/**'
-      - 'go.mod'
-      - 'go.sum'
+    branches:
+      - '**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -48,4 +40,4 @@ jobs:
         run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.22.1
 
       - name: Run OPC UA Unit Tests
-        run: make test-opc-unit
+        run: make test-unit-opc
