@@ -244,7 +244,7 @@ jobs:
           - goos: darwin
             goarch: arm64
     runs-on:
-      group: ${{ matrix.goarch == 'arm64' && 'arc-runners-small' || 'arc-runners-build' }}
+      group: arc-runners-build
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -272,7 +272,7 @@ jobs:
       - name: Build Binary
         run: |
           mkdir -p ./dist
-          GOOS=${{ env.GOOS }} GOARCH=${{ env.GOARCH }} GOARM=${{ env.GOARM }} \
+          GOOS=${{ env.GOOS }} GOARCH=${{ env.GOARCH }} \
             CGO_ENABLED=0 GOPROXY=https://golangproxy.umh.app,https://proxy.golang.org,direct \
             go build \
             -ldflags "-s -w \
