@@ -20,13 +20,13 @@ inputs:
   go_version:
     description: The Go version.
     required: false
-    default: '1.24.x'
+    default: "1.25.x"
 
 runs:
   using: composite
   steps:
     - name: Setup Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ inputs.go_version }}
         cache: true
@@ -34,4 +34,4 @@ runs:
       uses: goreleaser/goreleaser-action@v6
       with:
         install-only: true
-        version: '~> v2'
+        version: "~> v2"
