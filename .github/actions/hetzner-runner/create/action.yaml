@@ -39,7 +39,7 @@ runs:
   steps:
     - name: Generate GitHub App Token
       id: generate-token
-      uses: actions/create-github-app-token@v1
+      uses: actions/create-github-app-token@v2
       with:
         app-id: ${{ inputs.hetzner-runner-app-id }}
         private-key: ${{ inputs.hetzner-runner-private-key }}

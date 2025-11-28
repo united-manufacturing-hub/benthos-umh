@@ -18,7 +18,7 @@ name: main
 on:
   push:
     branches:
-      - "**"
+      - '**'
     tags:
       - v*
 env:
@@ -39,10 +39,10 @@ jobs:
         id: create-runner
         uses: ./.github/actions/hetzner-runner/create
         with:
-          hetzner-runner-type: cax31
+          hetzner-runner-type: cpx51
           hetzner-runner-app-id: ${{ secrets.HETZNER_RUNNER_APP_ID }}
           hetzner-runner-private-key: ${{ secrets.HETZNER_RUNNER_PRIVATE_KEY }}
-          hetzner-api-token: ${{ secrets.HETZNER_API_TOKEN }}
+          hetzner-api-token: ${{ secrets.HETZNER_API_TEST_RUNNERS_PROJECT }}
           hetzner-ssh-key-id: ${{ secrets.HETZNER_SSH_KEY_ID }}
 
   build-docker:
@@ -53,7 +53,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       matrix:
-        architecture: ["amd64", "arm64"]
+        architecture: ['amd64', 'arm64']
     runs-on: ${{ needs.create-runner.outputs.label }}
     outputs:
       tags: ${{ steps.meta.outputs.tags }}
@@ -303,14 +303,14 @@ jobs:
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: "artifact-*-${{ github.run_id }}-${{ github.run_attempt }}"
+          pattern: 'artifact-*-${{ github.run_id }}-${{ github.run_attempt }}'
           path: ./artifacts
 
       - name: Create or Update Release
         uses: ncipollo/release-action@b7eabc95ff50cbeeedec83973935c8f306dfcd0b # v1.20.0
         with:
           tag: ${{ github.ref_name }}
-          artifacts: "./artifacts/artifact-*-${{ github.run_id }}-${{ github.run_attempt }}/*"
+          artifacts: './artifacts/artifact-*-${{ github.run_id }}-${{ github.run_attempt }}/*'
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
           prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
