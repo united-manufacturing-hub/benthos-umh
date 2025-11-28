@@ -32,29 +32,29 @@ header:
       limitations under the License.
 
   paths-ignore:
-    - '**/*.md'
-    - '**/*.json'
-    - '**/*.dockerignore'
-    - '**/go.sum'
-    - '**/go.mod'
-    - '.cursor'
-    - '.devcontainer'
-    - '.gitpod'
-    - '.idea'
-    - '.gitpod.yml'
-    - 'tests/*'
-    - 'proto/*'
-    - '**/LICENSE'
-    - '**/NOTICE'
-    - '**/NOTICES'
-    - 'CODEOWNERS'
-    - 'AUTHORS'
-    - 'Makefile'
-    - 'README.md'
-    - 'cover.profile'
-    - 'topic_browser_plugin/testing/sample_output.txt'
-    - 'topic_browser_plugin/testing/sample_output_small.txt'
-    - 'stream_processor_plugin/docs/diagrams/processing_flow.*'
-    - 'sparkplug_plugin/sparkplugb/sparkplug_b_official.pb.go'
+    - "**/*.md"
+    - "**/*.json"
+    - "**/*.dockerignore"
+    - "**/go.sum"
+    - "**/go.mod"
+    - ".cursor"
+    - ".devcontainer"
+    - ".gitpod"
+    - ".idea"
+    - ".gitpod.yml"
+    - "tests/*"
+    - "proto/*"
+    - "**/LICENSE"
+    - "**/NOTICE"
+    - "**/NOTICES"
+    - "CODEOWNERS"
+    - "AUTHORS"
+    - "Makefile"
+    - "README.md"
+    - "cover.profile"
+    - "topic_browser_plugin/testing/sample_output.txt"
+    - "topic_browser_plugin/testing/sample_output_small.txt"
+    - "stream_processor_plugin/docs/diagrams/processing_flow.*"
+    - "sparkplug_plugin/sparkplugb/sparkplug_b_official.pb.go"
 
   comment: never
