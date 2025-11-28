@@ -98,7 +98,7 @@ jobs:
 
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
@@ -140,7 +140,7 @@ jobs:
           echo "NEW_TAGS=$NEW_TAGS" >> $GITHUB_OUTPUT
 
       - name: Build and Push Docker Image
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v6
         with:
           push: true
           platforms: linux/${{ matrix.architecture }}
@@ -150,6 +150,8 @@ jobs:
             APP_VERSION=${{ steps.meta.outputs.version }}
           provenance: false
           file: ./Dockerfile
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Set Output Tags
         id: output-tags
@@ -313,15 +315,17 @@ jobs:
           allowUpdates: true
           prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
 
-      - name: Trigger version bump workflow
-        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3
-        with:
-          event-type: release-completed
-          client-payload: '{"tag": "${{ github.ref_name }}"}'
+  update-umh-core:
+    needs: [create-runner, release]
+    if: needs.release.result == 'success'
+    uses: ./.github/workflows/update-umh-core-version.yml
+    with:
+      tag: ${{ github.ref_name }}
+      runner-label: ${{ needs.create-runner.outputs.label }}
+    secrets: inherit
 
   delete-runner:
-    needs:
-      [create-runner, build-docker, create-manifests, build-binaries, release]
+    needs: [create-runner, create-manifests, update-umh-core]
     if: always()
     runs-on: ubuntu-latest
     steps:
