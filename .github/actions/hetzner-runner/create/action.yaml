@@ -46,7 +46,7 @@ runs:
 
     - name: Create self-hosted runner
       id: create-runner
-      uses: Cyclenerd/hcloud-github-runner@v1
+      uses: Cyclenerd/hcloud-github-runner@bb1089d8b718a06493cb37c51dfe596e44baefc2 # v1
       with:
         mode: create
         github_token: ${{ steps.generate-token.outputs.token }}
