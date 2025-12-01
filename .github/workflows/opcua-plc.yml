@@ -224,4 +224,4 @@ jobs:
             echo "no kepware-endpoint available for testing"
             exit 1
           fi
-          make test-opc-kepware
+          make test-integration-opc

@@ -1525,7 +1525,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should increment counter when task is submitted", func() {
 				profile := ServerProfile{MaxWorkers: 10}
 				pool := NewGlobalWorkerPool(profile, logger)
-				// Don't spawn workers - prevents race where workers process tasks before assertion
 
 				// Submit task
 				resultChan := make(chan NodeDef, 1)

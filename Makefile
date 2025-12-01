@@ -82,10 +82,6 @@ test-noderedjs:
 	@TEST_NODERED_JS=true \
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./nodered_js_plugin/...
 
-# ============================================================================
-# OPC UA Plugin Tests (see: make env)
-# ============================================================================
-
 .PHONY: test-unit-opc
 test-unit-opc:
 	@TEST_OPCUA_UNIT=true \
