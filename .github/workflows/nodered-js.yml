@@ -41,6 +41,6 @@ jobs:
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.22.1
+        run: go install github.com/onsi/ginkgo/v2/ginkgo
       - name: Test
         run: make test-noderedjs

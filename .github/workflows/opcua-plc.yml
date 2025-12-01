@@ -41,7 +41,7 @@ jobs:
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.22.1
+        run: go install github.com/onsi/ginkgo/v2/ginkgo
       - name: Install Tcping
         run: go install github.com/cloverstd/tcping@v0.1.1
       - name: Check S7 port availability
@@ -187,7 +187,7 @@ jobs:
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.22.1
+        run: go install github.com/onsi/ginkgo/v2/ginkgo
       - name: Install Tcping
         run: go install github.com/cloverstd/tcping@v0.1.1
 
