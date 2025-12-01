@@ -14,7 +14,7 @@
 include ./Makefile.Common
 
 GINKGO_CMD=ginkgo
-GINKGO_FLAGS=-r --output-interceptor-mode=none --github-output -vv -trace -p --randomize-all --cover --coverprofile=cover.profile
+GINKGO_FLAGS=-r --output-interceptor-mode=none --succinct -trace -p --randomize-all --cover --coverprofile=cover.profile
 GINKGO_SERIAL_FLAGS=$(GINKGO_FLAGS) --procs=1
 
 BENTHOS_BIN := tmp/bin/benthos
