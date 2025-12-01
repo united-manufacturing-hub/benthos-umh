@@ -13,8 +13,8 @@
 # limitations under the License.
 include ./Makefile.Common
 
-GINKGO_CMD=ginkgo
-GINKGO_FLAGS=-r --output-interceptor-mode=none --succinct -trace -p --randomize-all --cover --coverprofile=cover.profile
+GINKGO_CMD=go run github.com/onsi/ginkgo/v2/ginkgo
+GINKGO_FLAGS=-r --output-interceptor-mode=none -trace -p --randomize-all --cover --coverprofile=cover.profile
 GINKGO_SERIAL_FLAGS=$(GINKGO_FLAGS) --procs=1
 
 BENTHOS_BIN := tmp/bin/benthos
