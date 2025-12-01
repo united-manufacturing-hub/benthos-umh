@@ -286,7 +286,7 @@ Messages in the Tag Processor follow the Node-RED style format:
 {
   payload: {
     // The message content - can be a simple value or complex object
-    "temperature": 23.5,
+    "value": 23.5,
     "timestamp_ms": 1733903611000
   },
   meta: {
@@ -342,7 +342,7 @@ Output:
 
 ```json
 {
-  "actual": 23.5,
+  "value": 23.5,
   "timestamp_ms": 1733903611000
 }
 ```
@@ -375,7 +375,7 @@ Output:
 
 ```json
 {
-  "actual": 23.5,
+  "value": 23.5,
   "timestamp_ms": 1733903611000
 }
 ```
@@ -461,9 +461,8 @@ Output:
 
 ```json
 {
-  "work_order_id": "WO123",
-  "work_order_start_time": "2024-03-12T10:00:00Z",
-  "work_order_end_time": "2024-03-12T18:00:00Z"
+  "value": "{\"work_order_id\":\"WO123\",\"work_order_start_time\":\"2024-03-12T10:00:00Z\",\"work_order_end_time\":\"2024-03-12T18:00:00Z\"}",
+  "timestamp_ms": 1733903611000
 }
 ```
 
@@ -504,7 +503,7 @@ Output:
 
 ```json
 {
-  "temperature": 10,
+  "value": 10,
   "timestamp_ms": 1733903611000
 }
 ```
@@ -554,7 +553,7 @@ Output 1 (Historian):
 
 ```json
 {
-  "temperature": 23.5,
+  "value": 23.5,
   "timestamp_ms": 1733903611000
 }
 ```
@@ -565,7 +564,7 @@ Output 2 (custom):
 
 ```json
 {
-  "temperature_doubled": 47,
+  "value": 47,
   "timestamp_ms": 1733903611000
 }
 ```
@@ -619,32 +618,7 @@ Output:
 
 ```json
 {
-  "maintenance": {
-    "maintenanceSchedule": {
-      "eventType": "ScheduledMaintenance",
-      "eventId": "SM-20240717-025",
-      "timestamp": "2024-07-17T13:00:00Z",
-      "equipmentId": "InjectionMoldingMachine5",
-      "equipmentName": "Engel Victory 120",
-      "scheduledDate": "2024-07-22",
-      "maintenanceType": "Preventive",
-      "description": "Inspection and cleaning of injection unit and mold.",
-      "maintenanceDuration": "6 hours",
-      "assignedTo": {
-        "employeeId": "EMP-5005",
-        "name": "Hans Becker"
-      },
-      "status": "Scheduled",
-      "partsRequired": [
-        {
-          "partId": "NOZZLE-015",
-          "description": "Injection Nozzle",
-          "quantity": 1
-        }
-      ],
-      "notes": "Replace worn nozzle to prevent defects."
-    }
-  },
+  "value": "{\"maintenanceSchedule\":{\"eventType\":\"ScheduledMaintenance\",\"eventId\":\"SM-20240717-025\",\"timestamp\":\"2024-07-17T13:00:00Z\",\"equipmentId\":\"InjectionMoldingMachine5\",\"equipmentName\":\"Engel Victory 120\",\"scheduledDate\":\"2024-07-22\",\"maintenanceType\":\"Preventive\",\"description\":\"Inspection and cleaning of injection unit and mold.\",\"maintenanceDuration\":\"6 hours\",\"assignedTo\":{\"employeeId\":\"EMP-5005\",\"name\":\"Hans Becker\"},\"status\":\"Scheduled\",\"partsRequired\":[{\"partId\":\"NOZZLE-015\",\"description\":\"Injection Nozzle\",\"quantity\":1}],\"notes\":\"Replace worn nozzle to prevent defects.\"}}",
   "timestamp_ms": 1733903611000
 }
 ```
