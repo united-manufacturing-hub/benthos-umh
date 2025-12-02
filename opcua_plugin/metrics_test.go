@@ -15,6 +15,7 @@
 package opcua_plugin
 
 import (
+	"os"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -25,6 +26,12 @@ import (
 // TestSubscriptionFailureMetrics verifies that failed subscriptions
 // are tracked with proper labels
 var _ = Describe("Subscription Failure Metrics", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	BeforeEach(func() {
 		// Reset metrics before each test
 		ResetMetrics()

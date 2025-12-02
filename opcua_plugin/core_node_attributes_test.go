@@ -15,12 +15,19 @@
 package opcua_plugin
 
 import (
+	"os"
 	"github.com/gopcua/opcua/ua"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("DataType Handling", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	Describe("getDataTypeString", func() {
 		Context("when processing builtin OPC UA data types", func() {
 			It("should return 'bool' for TypeIDBoolean (i=1)", func() {

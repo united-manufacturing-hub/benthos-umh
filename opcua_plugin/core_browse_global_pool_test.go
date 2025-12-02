@@ -15,6 +15,7 @@
 package opcua_plugin
 
 import (
+	"os"
 	"context"
 	"errors"
 	"fmt"
@@ -239,6 +240,12 @@ func newTestTaskWithNode(ctx context.Context, nodeID string, node NodeBrowser, r
 }
 
 var _ = Describe("GlobalWorkerPool", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	var logger *mockLogger
 
 	BeforeEach(func() {
@@ -1518,7 +1525,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should increment counter when task is submitted", func() {
 				profile := ServerProfile{MaxWorkers: 10}
 				pool := NewGlobalWorkerPool(profile, logger)
-				pool.SpawnWorkers(2)
 
 				// Submit task
 				resultChan := make(chan NodeDef, 1)

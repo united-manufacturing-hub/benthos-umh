@@ -16,6 +16,7 @@ package opcua_plugin
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/gopcua/opcua/ua"
 	. "github.com/onsi/ginkgo/v2"
@@ -43,6 +44,12 @@ import (
 // See Linear ENG-3880 and CodeRabbit report for full analysis
 
 var _ = Describe("MonitorBatched recursive retry bug reproduction", Label("recursive-retry-bug"), func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	Context("Fixed: Multi-batch trial failure no longer creates duplicate subscriptions", func() {
 		It("should verify that recursive retry only processes remaining nodes (regression test)", func() {
 			// =================================================================

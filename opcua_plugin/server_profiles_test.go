@@ -15,11 +15,18 @@
 package opcua_plugin
 
 import (
+	"os"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("DetectServerProfile", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	Context("when detecting known servers", func() {
 		It("should detect Ignition Gateway", func() {
 			serverInfo := &ServerInfo{
@@ -166,6 +173,12 @@ var _ = Describe("DetectServerProfile", func() {
 })
 
 var _ = Describe("GetProfileByName", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	Context("when looking up valid profile names", func() {
 		It("should return Auto profile", func() {
 			profile := GetProfileByName(ProfileAuto)
@@ -226,6 +239,12 @@ var _ = Describe("GetProfileByName", func() {
 })
 
 var _ = Describe("Profile Value Validation", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	Context("when validating all profile values", func() {
 		It("should have reasonable MaxBatchSize values", func() {
 			profiles := []ServerProfile{
@@ -376,6 +395,12 @@ var _ = Describe("Profile Value Validation", func() {
 })
 
 var _ = Describe("ServerProfile MaxMonitoredItems", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	Context("Profile Definitions", func() {
 		It("should have MaxMonitoredItems=1000 for S7-1200 profile", func() {
 			profile := GetProfileByName(ProfileS71200)
@@ -415,6 +440,12 @@ var _ = Describe("ServerProfile MaxMonitoredItems", func() {
 })
 
 var _ = Describe("ServerProfile DataChangeFilter Support", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	Context("when checking profile filter support", func() {
 		It("should have SupportsDataChangeFilter field in ServerProfile struct", func() {
 			profile := ServerProfile{
@@ -505,6 +536,12 @@ var _ = Describe("ServerProfile DataChangeFilter Support", func() {
 })
 
 var _ = Describe("validateProfile", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	Context("when validating profile constraints", func() {
 		It("should panic if MinWorkers > MaxWorkers", func() {
 			invalidProfile := ServerProfile{

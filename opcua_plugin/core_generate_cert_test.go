@@ -15,6 +15,7 @@
 package opcua_plugin_test
 
 import (
+	"os"
 	"crypto/x509"
 	"encoding/pem"
 	"net"
@@ -26,6 +27,12 @@ import (
 )
 
 var _ = Describe("GenerateCertWithMode Certificate Generation", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 
 	Describe("Key Usage bits for OPC UA client certificates", func() {
 

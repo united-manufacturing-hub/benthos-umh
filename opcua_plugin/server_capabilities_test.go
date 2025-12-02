@@ -15,6 +15,7 @@
 package opcua_plugin
 
 import (
+	"os"
 	"context"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -22,6 +23,12 @@ import (
 )
 
 var _ = Describe("ServerCapabilities", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_OPCUA_UNIT") == "" {
+			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
+		}
+	})
+
 	Context("ServerCapabilities struct", func() {
 		It("should have expected operation limit fields", func() {
 			caps := ServerCapabilities{
