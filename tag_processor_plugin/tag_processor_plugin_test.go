@@ -1379,6 +1379,62 @@ tag_processor:
 			Expect(topic).To(Equal(expectedTopic))
 		})
 
+		It("should ignore virtual_path when explicitly set to null", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.site";
+    msg.meta.data_contract = "_analytics";
+    msg.meta.tag_name = "temperature";
+    msg.meta.virtual_path = null;
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage([]byte("25.3"))
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			msg := messages[0]
+
+			// virtual_path should be treated as unset
+			_, exists := msg.MetaGet("virtual_path")
+			Expect(exists).To(BeFalse())
+
+			umh_topic, exists := msg.MetaGet("umh_topic")
+			Expect(exists).To(BeTrue())
+			expectedTopic := "umh.v1.enterprise.site._analytics.temperature"
+			Expect(umh_topic).To(Equal(expectedTopic))
+			Expect(strings.Contains(umh_topic, "..")).To(BeFalse())
+		})
+
 		It("should handle consecutive dots in location_path correctly", func() {
 			builder := service.NewStreamBuilder()
 

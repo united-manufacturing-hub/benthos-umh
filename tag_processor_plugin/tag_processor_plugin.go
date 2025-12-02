@@ -504,6 +504,9 @@ To fix: Set required fields (msg.meta.location_path, msg.meta.data_contract, msg
 func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Message, error) {
 	newMsg := service.NewMessage(nil)
 
+	// Clean up metadata values that might stringify to invalid values (e.g., virtual_path = null)
+	p.normalizeVirtualPathMetadata(msg)
+
 	// Retrieve the original incoming metadata stored in _initialMetadata.
 	originalMetaRaw, _ := msg.MetaGet("_initialMetadata")
 	originalMeta := map[string]string{}
@@ -657,8 +660,8 @@ func (p *TagProcessor) constructUMHTopic(msg *service.Message) (string, error) {
 
 	// Set virtual path
 	var virtualPath string
-	if value, exists := msg.MetaGet("virtual_path"); exists && value != "" {
-		virtualPath = value
+	if sanitized, ok := p.normalizeVirtualPathMetadata(msg); ok {
+		virtualPath = sanitized
 		builder.SetVirtualPath(virtualPath)
 	}
 
@@ -677,6 +680,31 @@ func (p *TagProcessor) constructUMHTopic(msg *service.Message) (string, error) {
 	}
 
 	return topicStr, nil
+}
+
+// normalizeVirtualPathMetadata ensures virtual_path metadata is either a trimmed, meaningful value,
+// or removed entirely when it's empty/nil-like. Returns the sanitized value when present.
+func (p *TagProcessor) normalizeVirtualPathMetadata(msg *service.Message) (string, bool) {
+	value, exists := msg.MetaGet("virtual_path")
+	if !exists {
+		return "", false
+	}
+
+	sanitized := strings.TrimSpace(value)
+	if sanitized == "" {
+		msg.MetaDelete("virtual_path")
+		return "", false
+	}
+
+	switch strings.ToLower(sanitized) {
+	case "null", "nil", "<nil>", "undefined":
+		msg.MetaDelete("virtual_path")
+		return "", false
+	}
+
+	// Store the trimmed value for downstream consumers
+	msg.MetaSet("virtual_path", sanitized)
+	return sanitized, true
 }
 
 func (p *TagProcessor) Close(ctx context.Context) error {

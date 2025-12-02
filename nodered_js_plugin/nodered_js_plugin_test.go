@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"math/big"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -29,6 +31,7 @@ import (
 	_ "github.com/redpanda-data/benthos/v4/public/components/io"
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin"
 )
 
 var _ = Describe("NodeREDJS Processor", func() {
@@ -412,10 +415,10 @@ nodered_js:
     // Add new metadata
     msg.meta.processed = "true";
     msg.meta.count = "1";
-    
+
     // Modify existing metadata
     msg.meta.source = "modified-" + msg.meta.source;
-    
+
     return msg;
 `)
 			Expect(err).NotTo(HaveOccurred())
@@ -648,7 +651,7 @@ nodered_js:
       msg.leftover = "should_be_cleaned";
       msg.payload = "CLEAN: " + msg.payload;
     }
-    
+
     return msg;
 `)
 			Expect(err).NotTo(HaveOccurred())
@@ -841,4 +844,63 @@ nodered_js:
 			Expect(len(processedPayloads)).To(Equal(numMessages))
 		})
 	})
+})
+
+var _ = Describe("js logmessage", func() {
+	DescribeTable("format",
+		func(input []any, expected string) {
+			result := nodered_js_plugin.FormatConsoleLogMsg(input)
+			Expect(result).To(Equal(expected))
+		},
+		Entry(`handles empty input`, []any{}, ``),
+		Entry(`escapes standard string`, []any{`hello world`}, `'hello world'`),
+		Entry(`escapes empty string`, []any{""}, `''`),
+		Entry(`escapes strings with single quote`, []any{`hello ' world`}, `'hello \' world'`),
+		Entry(`escapes strings with surrounding single quote`, []any{`'hello world'`}, `'\'hello world\''`),
+		Entry(`escapes strings with double quote`, []any{`hello " world`}, `'hello " world'`),
+		Entry(`escapes strings with backtick`, []any{"hello ` world"}, "'hello ` world'"),
+		Entry(`escapes strings with backslash`, []any{"hello\\world"}, `'hello\\world'`),
+		Entry(`escapes strings with newline`, []any{"hello\nworld"}, `'hello\nworld'`),
+		Entry(`escapes strings with carriage return`, []any{"hello\rworld"}, `'hello\rworld'`),
+		Entry(`escapes strings with horizontal tab`, []any{"hello\tworld"}, `'hello\tworld'`),
+		Entry(`escapes strings with backspace`, []any{"hello\bworld"}, `'hello\bworld'`),
+		Entry(`escapes strings with formfeed`, []any{"hello\fworld"}, `'hello\fworld'`),
+		Entry(`handles nil values`, []any{nil}, `null`),
+		Entry(`handles boolean true`, []any{true}, `true`),
+		Entry(`handles boolean false`, []any{false}, `false`),
+		Entry(`handles zero int64`, []any{int64(0)}, `0`),
+		Entry(`handles positive int64`, []any{int64(42)}, `42`),
+		Entry(`handles negative int64`, []any{int64(-42)}, `-42`),
+		Entry(`handles max int64`, []any{math.MaxInt64}, `9223372036854775807`),
+		Entry(`handles min int64`, []any{math.MinInt64}, `-9223372036854775808`),
+		Entry(`handles zero float64`, []any{float64(0)}, `0`),
+		Entry(`handles float64 values without fractional part`, []any{float64(42)}, `42`),
+		Entry(`handles float64 values with precision of 2`, []any{float64(42.42)}, `42.42`),
+		Entry(`handles float64 values with precision of 4`, []any{float64(42.4242)}, `42.4242`),
+		Entry(`handles float64 values with precision of 6`, []any{float64(42.424242)}, `42.424242`),
+		Entry(`handles float64 values with precision of 8`, []any{float64(42.42424242)}, `42.42424242`),
+		Entry(`handles float64 Infinity`, []any{math.Inf(1)}, `Infinity`),
+		Entry(`handles float64 -Infinity`, []any{math.Inf(-1)}, `-Infinity`),
+		Entry(`handles float64 NaN`, []any{math.NaN()}, `NaN`),
+		Entry(`handles negative zero float64`, []any{math.Copysign(0, -1)}, `-0`),
+		Entry(`handles BigInt values`, []any{big.NewInt(42)}, `42`),
+		Entry(`handles BigFloat values`, []any{big.NewFloat(42)}, `42`),
+		Entry(`handles empty slices`, []any{[]any{}}, `[]`),
+		Entry(`handles slice with single element`, []any{[]any{1}}, `[ 1 ]`),
+		Entry(`handles slices of numbers`, []any{[]any{1, 2, 3}}, `[ 1, 2, 3 ]`),
+		Entry(`handles mixed slices`, []any{[]any{1, "2", 3}}, `[ 1, '2', 3 ]`),
+		Entry(`handles slices within slices`, []any{[]any{[]any{}}}, `[ [] ]`),
+		Entry(`handles empty maps`, []any{map[string]any{}}, `{}`),
+		Entry(`handles maps with single value`, []any{map[string]any{"foo": "bar"}}, `{ foo: 'bar' }`),
+		Entry(`handles maps with multiple values`, []any{map[string]any{"foo": 1, "bar": 2, "baz": []any{1, 2, 3}}}, `{ bar: 2, baz: [ 1, 2, 3 ], foo: 1 }`),
+		Entry(`handles map keys with spaces`, []any{map[string]any{"foo bar": 1}}, `{ 'foo bar': 1 }`),
+		Entry(`handles map keys with single quotes`, []any{map[string]any{"foo'bar": 1}}, `{ 'foo\'bar': 1 }`),
+		Entry(`handles map keys with double quotes`, []any{map[string]any{`foo"bar`: 1}}, `{ 'foo"bar': 1 }`),
+		Entry(`handles map keys with backticks`, []any{map[string]any{"foo`bar": 1}}, "{ 'foo`bar': 1 }"),
+		Entry(`handles map keys with surrounding quotes`, []any{map[string]any{"'foo bar'": 1}}, `{ '\'foo bar\'': 1 }`),
+		Entry(`handles maps within maps`, []any{map[string]any{"foo": map[string]any{}}}, `{ foo: {} }`),
+		Entry(`handles slices within maps`, []any{map[string]any{"foo": []any{}}}, `{ foo: [] }`),
+		Entry(`handles maps within slices`, []any{[]any{map[string]any{}}}, `[ {} ]`),
+		Entry(`handles multiple arguments`, []any{1, "foo", map[string]any{"foo": "bar"}}, `1 'foo' { foo: 'bar' }`),
+	)
 })
