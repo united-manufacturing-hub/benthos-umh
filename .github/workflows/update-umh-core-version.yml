@@ -21,13 +21,10 @@ on:
       tag:
         required: true
         type: string
-      runner-label:
-        required: true
-        type: string
 
 jobs:
   update-version:
-    runs-on: ${{ inputs.runner-label }}
+    runs-on: depot-ubuntu-24.04
     env:
       VERSION: ${{ inputs.tag }}
     steps:
