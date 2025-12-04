@@ -83,8 +83,6 @@ jobs:
           labels: |
             auto-generated
             dependencies
-          team-reviewers: |
-            developers
           draft: false
 
   update-management-console:
@@ -161,6 +159,4 @@ jobs:
           labels: |
             auto-generated
             schemas
-          team-reviewers: |
-            developers
           draft: false
