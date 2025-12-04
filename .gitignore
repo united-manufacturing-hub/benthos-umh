@@ -221,6 +221,13 @@ umh-core-data*.pprof
 umh-core-data/
 
 # Diffs
-*.diffbenthos-schemas.json
+*.diff
+
+# Generated schema files (output of schema-export tool)
+benthos-schemas*.json
+
+# Schema export binary
 cmd/schema-export/schema-export
+
+# macOS
 .DS_Store
