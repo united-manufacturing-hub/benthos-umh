@@ -78,18 +78,30 @@ jobs:
             sudo apt-get update && sudo apt-get install -y jq
           fi
 
-      - name: Generate versioned schema file
+      - name: Generate versioned schema files
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-          ./schema-exporter -version "${VERSION}"
 
-          # Verify schema file was created
+          # Generate Benthos format (for UI dynamic forms)
+          ./schema-exporter -version "${VERSION}" -format benthos
+
+          # Generate JSON Schema format (for Monaco editor)
+          ./schema-exporter -version "${VERSION}" -format json-schema
+
+          # Verify both schema files were created
           if [ ! -f "benthos-schemas-v${VERSION}.json" ]; then
-            echo "ERROR: Schema file benthos-schemas-v${VERSION}.json was not generated"
+            echo "ERROR: Benthos schema file benthos-schemas-v${VERSION}.json was not generated"
             exit 1
           fi
 
-          echo "Schema file generated: benthos-schemas-v${VERSION}.json"
+          if [ ! -f "benthos-schemas-v${VERSION}-json-schema.json" ]; then
+            echo "ERROR: JSON Schema file benthos-schemas-v${VERSION}-json-schema.json was not generated"
+            exit 1
+          fi
+
+          echo "Schema files generated:"
+          echo "  - benthos-schemas-v${VERSION}.json (UI format)"
+          echo "  - benthos-schemas-v${VERSION}-json-schema.json (Monaco format)"
 
           # Display basic stats
           INPUT_COUNT=$(jq '.inputs | length' "benthos-schemas-v${VERSION}.json")
@@ -110,18 +122,25 @@ jobs:
           path: ManagementConsole
           ref: main
 
-      - name: Copy schema to ManagementConsole schemas folder
+      - name: Copy schemas to ManagementConsole versioned directory
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
 
-          # Create schemas directory if it doesn't exist
-          mkdir -p ManagementConsole/frontend/src/generated/schemas/
+          # Create versioned schema directory matching ManagementConsole import structure
+          # ManagementConsole imports from: $lib/schemas/benthos/v{VERSION}/ui.json
+          mkdir -p "ManagementConsole/frontend/src/lib/schemas/benthos/v${VERSION}/"
 
-          # Copy versioned schema file
+          # Copy Benthos format as ui.json (for dynamic protocol forms)
           cp "benthos-schemas-v${VERSION}.json" \
-             "ManagementConsole/frontend/src/generated/schemas/benthos-schemas-v${VERSION}.json"
+             "ManagementConsole/frontend/src/lib/schemas/benthos/v${VERSION}/ui.json"
 
-          echo "Schema copied to ManagementConsole/frontend/src/generated/schemas/benthos-schemas-v${VERSION}.json"
+          # Copy JSON Schema format as monaco.json (for Monaco editor validation)
+          cp "benthos-schemas-v${VERSION}-json-schema.json" \
+             "ManagementConsole/frontend/src/lib/schemas/benthos/v${VERSION}/monaco.json"
+
+          echo "Schemas copied to ManagementConsole/frontend/src/lib/schemas/benthos/v${VERSION}/"
+          echo "  - ui.json (for dynamic protocol forms)"
+          echo "  - monaco.json (for Monaco editor)"
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v7
@@ -162,7 +181,7 @@ jobs:
 
             ### Checklist
 
-            - [ ] Verify schema file exists at `frontend/src/generated/schemas/benthos-schemas-v${{ steps.version.outputs.VERSION }}.json`
+            - [ ] Verify schema files exist at `frontend/src/lib/schemas/benthos/v${{ steps.version.outputs.VERSION }}/ui.json` and `monaco.json`
             - [ ] Confirm no manual edits needed (schemas are auto-generated)
             - [ ] Coordinate with umh-core team before merging
             - [ ] Deploy to production before umh-core upgrade
