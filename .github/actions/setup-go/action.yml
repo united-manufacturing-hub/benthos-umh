@@ -16,20 +16,13 @@
 name: Setup Go.
 description: Setup Go.
 
-inputs:
-  go_version:
-    description: The Go version.
-    required: false
-    default: "1.25.x"
-
 runs:
   using: composite
   steps:
     - name: Setup Go
       uses: actions/setup-go@v6
       with:
-        go-version: ${{ inputs.go_version }}
-        cache: true
+        go-version-file: go.mod
     - name: Setup GoReleaser
       uses: goreleaser/goreleaser-action@v6
       with:

@@ -31,39 +31,22 @@ jobs:
       packages: write
       contents: read
     timeout-minutes: 60
-    strategy:
-      matrix:
-        include:
-          - architecture: amd64
-            runner: depot-ubuntu-24.04
-          - architecture: arm64
-            runner: depot-ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
-    outputs:
-      tags: ${{ steps.meta.outputs.tags }}
-      BASE_TAGS: ${{ steps.output-tags.outputs.BASE_TAGS }}
-    env:
-      PR_ID: ${{ github.event.pull_request.number }}
+    runs-on: depot-ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request && github.head_ref || github.ref_name }}
 
-      - name: Setup Docker
-        uses: ./.github/actions/setup-docker
-        with:
-          registry_domain: ghcr.io
-          registry_username: ${{ github.actor }}
-          registry_password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Setup Depot
+        uses: depot/setup-action@v1
 
-      - name: Set PLATFORM_SHORT
-        id: platform_short
-        shell: bash
-        run: |
-          PLATFORM_SHORT="${{ matrix.architecture }}"
-          PLATFORM_SHORT="${PLATFORM_SHORT//\//-}"
-          echo "PLATFORM_SHORT=${PLATFORM_SHORT}" >> $GITHUB_OUTPUT
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker meta
         id: meta
@@ -79,130 +62,23 @@ jobs:
             type=ref,event=pr
             type=sha
 
-      - name: Prepare tags with platform suffix
-        id: prepare_tags
-        run: |
-          TAGS="${{ steps.meta.outputs.tags }}"
-          PLATFORM_SUFFIX="-${{ steps.platform_short.outputs.PLATFORM_SHORT }}"
-          echo "Original Tags: $TAGS"
-          echo "Platform Suffix: $PLATFORM_SUFFIX"
-
-          # Replace newlines with commas
-          TAGS_CLEAN=$(echo "$TAGS" | tr '\n' ',' | sed 's/,$//')
-          echo "Cleaned Tags: $TAGS_CLEAN"
-
-          # Split tags into an array
-          IFS=',' read -ra TAG_ARRAY <<< "$TAGS_CLEAN"
-
-          # Append platform suffix to each tag
-          for TAG in "${TAG_ARRAY[@]}"; do
-            TAG_WITH_SUFFIX="${TAG}${PLATFORM_SUFFIX}"
-            NEW_TAGS_ARRAY+=("$TAG_WITH_SUFFIX")
-          done
-
-          # Join the new tags into a comma-separated string
-          NEW_TAGS=$(IFS=','; echo "${NEW_TAGS_ARRAY[*]}")
-
-          echo "Tags with Platform Suffix: $NEW_TAGS"
-
-          # Set the output variable
-          echo "NEW_TAGS=$NEW_TAGS" >> $GITHUB_OUTPUT
-
       - name: Build and Push Docker Image
-        uses: docker/build-push-action@v6
+        uses: depot/build-push-action@v1
         with:
+          project: ${{ secrets.DEPOT_PROJECT_ID }}
+          token: ${{ secrets.DEPOT_TOKEN }}
           push: true
-          platforms: linux/${{ matrix.architecture }}
-          tags: ${{ steps.prepare_tags.outputs.NEW_TAGS }}
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             APP_VERSION=${{ steps.meta.outputs.version }}
           provenance: false
           file: ./Dockerfile
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Set Output Tags
-        id: output-tags
-        run: |
-          echo "BASE_TAGS<<EOF" >> $GITHUB_OUTPUT
-          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-  create-manifests:
-    needs: build-docker
-    if: needs.build-docker.outputs.tags != ''
-    permissions:
-      contents: read
-      packages: write
-    runs-on: depot-ubuntu-24.04
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Docker
-        uses: ./.github/actions/setup-docker
-        with:
-          registry_domain: ghcr.io
-          registry_username: ${{ github.actor }}
-          registry_password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create multiarch manifests
-        run: |
-          # Enable debug mode and error handling
-          set -euxo pipefail
-
-          # Get the list of base tags
-          TAGS="${{ needs.build-docker.outputs.BASE_TAGS }}"
-          echo "TAGS: $TAGS"
-
-          # Split tags into an array using newlines as the delimiter
-          IFS=$'\n' readarray -t TAG_ARRAY <<< "$TAGS"
-
-          echo "Number of tags: ${#TAG_ARRAY[@]}"
-          for i in "${!TAG_ARRAY[@]}"; do
-            echo "TAG_ARRAY[$i]: ${TAG_ARRAY[$i]}"
-          done
-
-          # Define architectures
-          ARCHITECTURES=("amd64" "arm64")
-          # Create manifests for each base tag
-          for TAG in "${TAG_ARRAY[@]}"; do
-            echo "Processing tag $TAG"
-            # Construct platform-specific tags
-            PLATFORM_TAGS=""
-            for ARCH in "${ARCHITECTURES[@]}"; do
-              PLATFORM_SHORT="${ARCH//\//-}"
-              PLATFORM_TAG="${TAG}-${PLATFORM_SHORT}"
-              PLATFORM_TAGS="${PLATFORM_TAGS} ${PLATFORM_TAG}"
-            done
-
-            echo "Checking availability of images for $TAG"
-            MISSING_IMAGES=0
-            for IMAGE in ${PLATFORM_TAGS}; do
-              echo "Checking image: $IMAGE"
-              if ! docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
-                echo "Image not found: $IMAGE"
-                MISSING_IMAGES=1
-              else
-                echo "Image exists: $IMAGE"
-              fi
-            done
-
-            if [ $MISSING_IMAGES -ne 0 ]; then
-              echo "One or more images are missing for $TAG. Skipping manifest creation."
-              continue
-            fi
-
-            echo "Creating manifest for $TAG from $PLATFORM_TAGS"
-            docker buildx imagetools create -t "${TAG}" ${PLATFORM_TAGS}
-          done
 
   build-binaries:
     if: startsWith(github.ref, 'refs/tags/')
+    timeout-minutes: 20
     strategy:
       matrix:
         include:
@@ -230,8 +106,10 @@ jobs:
 
       - name: Set up Build Environment
         run: |
+          VERSION="${{ github.ref_name }}"
           echo "GOOS=${{ matrix.goos }}" >> $GITHUB_ENV
           echo "GOARCH=${{ matrix.goarch }}" >> $GITHUB_ENV
+          echo "APP_VERSION=${VERSION#v}" >> $GITHUB_ENV
 
           if [ "${{ matrix.goos }}" == "windows" ]; then
             FILE_EXTENSION=".exe"
@@ -239,12 +117,7 @@ jobs:
             FILE_EXTENSION=""
           fi
 
-          echo "OUTPUT_NAME=benthos-${{ matrix.goos }}-${{ matrix.goarch }}${FILE_EXTENSION}"
           echo "OUTPUT_NAME=benthos-${{ matrix.goos }}-${{ matrix.goarch }}${FILE_EXTENSION}" >> $GITHUB_ENV
-      - name: Print working directory
-        run: pwd
-      - name: List files in working directory
-        run: ls -la
 
       - name: Build Binary
         run: |
@@ -253,7 +126,7 @@ jobs:
             CGO_ENABLED=0 GOPROXY=https://golangproxy.umh.app,https://proxy.golang.org,direct \
             go build \
             -ldflags "-s -w \
-            -X github.com/redpanda-data/benthos/v4/internal/cli.Version=${APP_VERSION} \
+            -X github.com/redpanda-data/benthos/v4/internal/cli.Version=${{ env.APP_VERSION }} \
             -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -o ./dist/${{ env.OUTPUT_NAME }} \
             cmd/benthos/main.go
