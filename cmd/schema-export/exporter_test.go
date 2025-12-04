@@ -317,72 +317,31 @@ var _ = Describe("extractFieldsArray", func() {
 	})
 })
 
-var _ = Describe("extractPluginSpec", func() {
-	Context("when given a plugin configuration", func() {
-		It("should convert to PluginSpec", func() {
-			// Mock ConfigView data structure
-			rawSpec := map[string]interface{}{
-				"config": map[string]interface{}{
-					"children": []interface{}{
-						map[string]interface{}{
-							"name":        "controller",
-							"type":        "string",
-							"kind":        "scalar",
-							"description": "Controller address",
-							"is_optional": false,
-							"is_advanced": false,
-							"default":     "tcp://localhost:502",
-						},
-					},
-				},
-			}
-
-			// This test is a placeholder - we'll need to mock ConfigView
-			// For now, test the structure
-			Expect(rawSpec).NotTo(BeNil())
-		})
-	})
-
-	Context("when handling errors", func() {
-		It("should return error when FormatJSON fails", func() {
-			// Create a ConfigView that returns error on FormatJSON
-			// This is difficult to test without mocking, so we document the expected behavior
-			// The real test is that extractPluginSpec has the correct signature
-			// We'll verify this compiles and the signature is correct
-		})
-
-		It("should return error when JSON unmarshal fails", func() {
-			// This tests that invalid JSON returns an error
-			// Again, difficult to test without mocking ConfigView
-			// The signature change is what we're verifying
-		})
-	})
-})
-
 var _ = Describe("generateSchemas", func() {
 	Context("when generating schemas", func() {
-		It("should return SchemaOutput with metadata", func() {
+		It("should return SchemaOutput with populated maps", func() {
 			result, err := generateSchemas()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 			Expect(result.Metadata.BenthosVersion).NotTo(BeEmpty())
-			Expect(result.Inputs).NotTo(BeNil())
-			Expect(result.Processors).NotTo(BeNil())
-			Expect(result.Outputs).NotTo(BeNil())
+			// Verify maps are populated with actual plugins, not just initialized
+			Expect(len(result.Inputs)).To(BeNumerically(">", 0), "Should have at least one input plugin")
+			Expect(len(result.Processors)).To(BeNumerically(">", 0), "Should have at least one processor plugin")
+			Expect(len(result.Outputs)).To(BeNumerically(">", 0), "Should have at least one output plugin")
 		})
 
 		It("should include UMH plugins in inputs", func() {
 			result, err := generateSchemas()
 			Expect(err).NotTo(HaveOccurred())
 
-			// Check for some known UMH input plugins (note: sparkplug_b, not sparkplug)
+			// These UMH input plugins MUST exist - fail if missing
 			umhInputs := []string{"opcua", "modbus", "s7comm", "sparkplug_b", "sensorconnect"}
 			for _, pluginName := range umhInputs {
-				if plugin, exists := result.Inputs[pluginName]; exists {
-					Expect(plugin.Source).To(Equal("benthos-umh"), "Plugin %s should be from benthos-umh", pluginName)
-					Expect(plugin.Name).To(Equal(pluginName))
-					Expect(plugin.Type).To(Equal("input"))
-				}
+				Expect(result.Inputs).To(HaveKey(pluginName), "Missing required UMH input plugin: %s", pluginName)
+				plugin := result.Inputs[pluginName]
+				Expect(plugin.Source).To(Equal("benthos-umh"), "Plugin %s should be from benthos-umh", pluginName)
+				Expect(plugin.Name).To(Equal(pluginName))
+				Expect(plugin.Type).To(Equal("input"))
 			}
 		})
 
@@ -390,14 +349,14 @@ var _ = Describe("generateSchemas", func() {
 			result, err := generateSchemas()
 			Expect(err).NotTo(HaveOccurred())
 
-			// Check for some known UMH processor plugins
+			// These UMH processor plugins MUST exist - fail if missing
 			umhProcessors := []string{"tag_processor", "stream_processor", "downsampler", "topic_browser"}
 			for _, pluginName := range umhProcessors {
-				if plugin, exists := result.Processors[pluginName]; exists {
-					Expect(plugin.Source).To(Equal("benthos-umh"), "Plugin %s should be from benthos-umh", pluginName)
-					Expect(plugin.Name).To(Equal(pluginName))
-					Expect(plugin.Type).To(Equal("processor"))
-				}
+				Expect(result.Processors).To(HaveKey(pluginName), "Missing required UMH processor plugin: %s", pluginName)
+				plugin := result.Processors[pluginName]
+				Expect(plugin.Source).To(Equal("benthos-umh"), "Plugin %s should be from benthos-umh", pluginName)
+				Expect(plugin.Name).To(Equal(pluginName))
+				Expect(plugin.Type).To(Equal("processor"))
 			}
 		})
 
@@ -405,12 +364,12 @@ var _ = Describe("generateSchemas", func() {
 			result, err := generateSchemas()
 			Expect(err).NotTo(HaveOccurred())
 
-			// Check for UNS output plugin
-			if plugin, exists := result.Outputs["uns"]; exists {
-				Expect(plugin.Source).To(Equal("benthos-umh"))
-				Expect(plugin.Name).To(Equal("uns"))
-				Expect(plugin.Type).To(Equal("output"))
-			}
+			// UNS output plugin MUST exist - fail if missing
+			Expect(result.Outputs).To(HaveKey("uns"), "Missing required UMH output plugin: uns")
+			plugin := result.Outputs["uns"]
+			Expect(plugin.Source).To(Equal("benthos-umh"))
+			Expect(plugin.Name).To(Equal("uns"))
+			Expect(plugin.Type).To(Equal("output"))
 		})
 
 		It("should include upstream Benthos plugins", func() {
