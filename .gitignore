@@ -223,3 +223,4 @@ umh-core-data/
 # Diffs
 *.diffbenthos-schemas.json
 cmd/schema-export/schema-export
+.DS_Store
