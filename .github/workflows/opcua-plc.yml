@@ -28,16 +28,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: depot-ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      plugin: ${{ steps.filter.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Check for relevant changes
+        id: filter
+        uses: ./.github/actions/path-filter
+        with:
+          plugin_path: 'opcua_plugin/**'
+
   go-test-opcua-plc:
-    runs-on:
-      group: eos
+    needs: changes
+    if: ${{ needs.changes.outputs.plugin == 'true' }}
+    runs-on: depot-ubuntu-24.04
     permissions:
       packages: write
       contents: read
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Install Ginkgo
@@ -172,18 +189,17 @@ jobs:
         run: |
           docker stop $OPCSIM_CONTAINER || true
           docker ps
-
   go-test-kepware-plc:
-    needs: go-test-opcua-plc
-    runs-on:
-      group: arc-runners-tests
+    needs: [changes, go-test-opcua-plc]
+    if: ${{ needs.changes.outputs.plugin == 'true' }}
+    runs-on: depot-ubuntu-24.04
     permissions:
       packages: write
       contents: read
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Install Ginkgo
@@ -225,3 +241,20 @@ jobs:
             exit 1
           fi
           make test-integration-opc
+
+  result:
+    needs: [changes, go-test-opcua-plc, go-test-kepware-plc]
+    if: always()
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - name: Check result
+        run: |
+          if [[ "${{ needs.changes.outputs.plugin }}" != "true" ]]; then
+            echo "No relevant changes, tests were skipped"
+            exit 0
+          fi
+          if [[ "${{ needs.go-test-opcua-plc.result }}" == "failure" || "${{ needs.go-test-kepware-plc.result }}" == "failure" ]]; then
+            echo "Tests failed"
+            exit 1
+          fi
+          echo "Tests passed"
