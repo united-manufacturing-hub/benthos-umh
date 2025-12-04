@@ -13,19 +13,16 @@
 # limitations under the License.
 
 ---
-name: opcua-plc
+name: OPCUA
 
 on:
   push:
     branches:
       - '**'
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 concurrency:
-  group: opcua-plc-test
-  cancel-in-progress: true
+  group: opcua
+  cancel-in-progress: false
 
 jobs:
   changes:
@@ -43,6 +40,20 @@ jobs:
         uses: ./.github/actions/path-filter
         with:
           plugin_path: 'opcua_plugin/**'
+
+  go-test-opcua-unit:
+    needs: changes
+    if: ${{ needs.changes.outputs.plugin == 'true' }}
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+      - name: Install Ginkgo
+        run: go install github.com/onsi/ginkgo/v2/ginkgo
+      - name: Run OPC UA Unit Tests
+        run: make test-unit-opc
 
   go-test-opcua-plc:
     needs: changes
@@ -243,7 +254,7 @@ jobs:
           make test-integration-opc
 
   result:
-    needs: [changes, go-test-opcua-plc, go-test-kepware-plc]
+    needs: [changes, go-test-opcua-unit, go-test-opcua-plc, go-test-kepware-plc]
     if: always()
     runs-on: depot-ubuntu-24.04
     steps:
@@ -253,7 +264,7 @@ jobs:
             echo "No relevant changes, tests were skipped"
             exit 0
           fi
-          if [[ "${{ needs.go-test-opcua-plc.result }}" == "failure" || "${{ needs.go-test-kepware-plc.result }}" == "failure" ]]; then
+          if [[ "${{ needs.go-test-opcua-unit.result }}" == "failure" || "${{ needs.go-test-opcua-plc.result }}" == "failure" || "${{ needs.go-test-kepware-plc.result }}" == "failure" ]]; then
             echo "Tests failed"
             exit 1
           fi
