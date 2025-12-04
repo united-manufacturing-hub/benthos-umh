@@ -26,35 +26,19 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  create-runner:
-    runs-on: ubuntu-latest
-    outputs:
-      label: ${{ steps.create-runner.outputs.label }}
-      server_id: ${{ steps.create-runner.outputs.server_id }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Create Hetzner Runner
-        id: create-runner
-        uses: ./.github/actions/hetzner-runner/create
-        with:
-          hetzner-runner-type: cpx51
-          hetzner-runner-app-id: ${{ secrets.HETZNER_RUNNER_APP_ID }}
-          hetzner-runner-private-key: ${{ secrets.HETZNER_RUNNER_PRIVATE_KEY }}
-          hetzner-api-token: ${{ secrets.HETZNER_API_TEST_RUNNERS_PROJECT }}
-          hetzner-ssh-key-id: ${{ secrets.HETZNER_SSH_KEY_ID }}
-
   build-docker:
-    needs: create-runner
     permissions:
       packages: write
       contents: read
     timeout-minutes: 60
     strategy:
       matrix:
-        architecture: ['amd64', 'arm64']
-    runs-on: ${{ needs.create-runner.outputs.label }}
+        include:
+          - architecture: amd64
+            runner: depot-ubuntu-24.04
+          - architecture: arm64
+            runner: depot-ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     outputs:
       tags: ${{ steps.meta.outputs.tags }}
       BASE_TAGS: ${{ steps.output-tags.outputs.BASE_TAGS }}
@@ -72,21 +56,6 @@ jobs:
           registry_domain: ghcr.io
           registry_username: ${{ github.actor }}
           registry_password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Check if Docker daemon is running
-        run: |
-          SECONDS=0
-          TIMEOUT=120
-          while ! docker info >/dev/null 2>&1; do
-            if [ $SECONDS -ge $TIMEOUT ]; then
-              echo "Docker daemon is not running after ${TIMEOUT} seconds, exiting..."
-              docker info
-              exit 1
-            fi
-            echo "Waiting for Docker daemon to start..."
-            sleep 1
-          done
-          echo "Docker daemon is running."
 
       - name: Set PLATFORM_SHORT
         id: platform_short
@@ -161,29 +130,25 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
   create-manifests:
-    needs: [create-runner, build-docker]
+    needs: build-docker
     if: needs.build-docker.outputs.tags != ''
     permissions:
       contents: read
       packages: write
-    runs-on: ${{ needs.create-runner.outputs.label }}
+    runs-on: depot-ubuntu-24.04
     defaults:
       run:
         shell: bash
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Setup Docker
         uses: ./.github/actions/setup-docker
         with:
           registry_domain: ghcr.io
           registry_username: ${{ github.actor }}
           registry_password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Login to GitHub Container registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create multiarch manifests
         run: |
@@ -237,7 +202,6 @@ jobs:
           done
 
   build-binaries:
-    needs: create-runner
     if: startsWith(github.ref, 'refs/tags/')
     strategy:
       matrix:
@@ -254,7 +218,7 @@ jobs:
             goarch: amd64
           - goos: darwin
             goarch: arm64
-    runs-on: ${{ needs.create-runner.outputs.label }}
+    runs-on: depot-ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -302,10 +266,10 @@ jobs:
 
   release:
     if: needs.build-binaries.result == 'success'
-    needs: [create-runner, build-binaries]
+    needs: build-binaries
     permissions:
       contents: write
-    runs-on: ${{ needs.create-runner.outputs.label }}
+    runs-on: depot-ubuntu-24.04
     steps:
       - name: Download Artifacts
         uses: actions/download-artifact@v4
@@ -323,26 +287,9 @@ jobs:
           prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
 
   update-umh-core:
-    needs: [create-runner, release]
+    needs: release
     if: needs.release.result == 'success'
     uses: ./.github/workflows/update-umh-core-version.yml
     with:
       tag: ${{ github.ref_name }}
-      runner-label: ${{ needs.create-runner.outputs.label }}
     secrets: inherit
-
-  delete-runner:
-    needs: [create-runner, create-manifests, update-umh-core]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Delete Hetzner Runner
-        uses: ./.github/actions/hetzner-runner/delete
-        with:
-          hetzner-runner-app-id: ${{ secrets.HETZNER_RUNNER_APP_ID }}
-          hetzner-runner-private-key: ${{ secrets.HETZNER_RUNNER_PRIVATE_KEY }}
-          hetzner-api-token: ${{ secrets.HETZNER_API_TOKEN }}
-          server-id: ${{ needs.create-runner.outputs.server_id }}
