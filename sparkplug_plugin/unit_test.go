@@ -3304,34 +3304,3 @@ type MockCounter struct {
 func (m *MockCounter) Incr(delta int64, _ ...string) {
 	m.count += delta
 }
-
-var _ = Describe("Sparkplug B Input Configuration Spec", func() {
-	Context("when validating field optionality", func() {
-		It("should allow MQTT and role fields to be omitted and use default values", func() {
-			// This test verifies that mqtt.qos, mqtt.keep_alive, mqtt.connect_timeout,
-			// mqtt.clean_session, and role are truly optional by omitting them from config
-			// Per UX standards: fields with defaults should be .Optional().Advanced()
-			minimalConfig := `
-mqtt:
-  urls: ["tcp://localhost:1883"]
-  client_id: "test-client"
-identity:
-  group_id: "TestGroup"
-`
-			// Create a test environment to parse the config
-			// We cannot directly access the inputSpec from init(), so we test
-			// by ensuring the config parses without errors when these fields are omitted
-			
-			// Note: This is a documentation test - it verifies the expected behavior
-			// The actual parsing happens in the Benthos framework during plugin initialization
-			// This test documents that minimal configs SHOULD work once .Optional() is added
-			
-			// For now, we just verify the YAML structure is valid
-			Expect(minimalConfig).NotTo(BeEmpty())
-			Expect(minimalConfig).To(ContainSubstring("group_id"))
-			
-			// The test passes if the config structure is minimal and valid
-			// After adding .Optional() to the fields, benthos will accept this config
-		})
-	})
-})

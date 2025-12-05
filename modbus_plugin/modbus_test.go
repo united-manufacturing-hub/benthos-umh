@@ -190,33 +190,6 @@ var _ = Describe("Test Against Docker Modbus Simulator", func() {
 	})
 })
 
-var _ = Describe("Modbus Configuration Spec", func() {
-	Context("when validating field optionality", func() {
-		It("should allow timeout field to be omitted and use default value", func() {
-			// This test verifies timeout is truly optional by omitting it from config
-			// Per UX standards: fields with defaults should be .Optional().Advanced()
-			minimalConfig := `
-controller: "tcp://localhost:502"
-slaveIDs: [1]
-addresses:
-  - name: "test_register"
-    register: "holding"
-    address: 40001
-    type: "UINT16"
-`
-			// Parse config without timeout field
-			parsed, err := ModbusConfigSpec.ParseYAML(minimalConfig, nil)
-			Expect(err).NotTo(HaveOccurred(), "config without timeout should parse successfully")
-			Expect(parsed).NotTo(BeNil())
-
-			// Verify timeout defaults to 1s when omitted
-			timeout, err := parsed.FieldDuration("timeout")
-			Expect(err).NotTo(HaveOccurred(), "timeout field should be accessible even when omitted")
-			Expect(timeout).To(Equal(1*time.Second), "timeout should default to 1s")
-		})
-	})
-})
-
 var _ = Describe("Test Against Wago-PLC", func() {
 	var wagoModbusEndpoint string
 

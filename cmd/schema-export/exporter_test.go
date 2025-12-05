@@ -404,12 +404,10 @@ var _ = Describe("Version Flag Handling", func() {
 	})
 })
 
-// Integration test: Verifies JSON contract on real output
-// Replaces synthetic marshaling tests - tests actual schema structure
+// Verifies JSON output structure required by Management Console
 var _ = Describe("JSON Output Contract", func() {
 	Context("when marshaling real schema to JSON", func() {
 		It("should produce valid JSON with expected structure for downstream consumers", func() {
-			// Generate REAL schema (not synthetic test data)
 			schema, err := generateSchemas()
 			Expect(err).NotTo(HaveOccurred())
 
