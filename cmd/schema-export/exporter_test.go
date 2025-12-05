@@ -15,59 +15,30 @@
 package main
 
 import (
+	"encoding/json"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("detectSource", func() {
-	Context("when given a UMH plugin name", func() {
-		It("should return benthos-umh for opcua", func() {
-			result := detectSource("opcua")
-			Expect(result).To(Equal("benthos-umh"))
-		})
-
-		It("should return benthos-umh for modbus", func() {
-			result := detectSource("modbus")
-			Expect(result).To(Equal("benthos-umh"))
-		})
-
-		It("should return benthos-umh for s7comm", func() {
-			result := detectSource("s7comm")
-			Expect(result).To(Equal("benthos-umh"))
-		})
-
-		It("should return benthos-umh for sparkplug_b", func() {
-			result := detectSource("sparkplug_b")
-			Expect(result).To(Equal("benthos-umh"))
-		})
-
-		It("should return benthos-umh for tag_processor", func() {
-			result := detectSource("tag_processor")
-			Expect(result).To(Equal("benthos-umh"))
-		})
-
-		It("should return benthos-umh for uns", func() {
-			result := detectSource("uns")
-			Expect(result).To(Equal("benthos-umh"))
-		})
-	})
-
-	Context("when given an upstream Benthos plugin name", func() {
-		It("should return upstream for kafka", func() {
-			result := detectSource("kafka")
-			Expect(result).To(Equal("upstream"))
-		})
-
-		It("should return upstream for http_client", func() {
-			result := detectSource("http_client")
-			Expect(result).To(Equal("upstream"))
-		})
-
-		It("should return upstream for unknown plugin", func() {
-			result := detectSource("unknown_plugin")
-			Expect(result).To(Equal("upstream"))
-		})
-	})
+	DescribeTable("should correctly identify plugin sources",
+		func(pluginName, expectedSource string) {
+			result := detectSource(pluginName)
+			Expect(result).To(Equal(expectedSource))
+		},
+		// UMH plugins (auto-detected from *_plugin directories)
+		Entry("opcua", "opcua", "benthos-umh"),
+		Entry("modbus", "modbus", "benthos-umh"),
+		Entry("s7comm", "s7comm", "benthos-umh"),
+		Entry("sparkplug_b", "sparkplug_b", "benthos-umh"),
+		Entry("tag_processor", "tag_processor", "benthos-umh"),
+		Entry("uns", "uns", "benthos-umh"),
+		// Upstream Benthos plugins
+		Entry("kafka", "kafka", "upstream"),
+		Entry("http_client", "http_client", "upstream"),
+		Entry("unknown_plugin", "unknown_plugin", "upstream"),
+	)
 })
 
 var _ = Describe("extractFields", func() {
@@ -429,6 +400,53 @@ var _ = Describe("Version Flag Handling", func() {
 		It("should handle version without prefix", func() {
 			result := generateVersionedFilename("0.11.6")
 			Expect(result).To(Equal("benthos-schemas-v0.11.6.json"))
+		})
+	})
+})
+
+// Integration test: Verifies JSON contract on real output
+// Replaces synthetic marshaling tests - tests actual schema structure
+var _ = Describe("JSON Output Contract", func() {
+	Context("when marshaling real schema to JSON", func() {
+		It("should produce valid JSON with expected structure for downstream consumers", func() {
+			// Generate REAL schema (not synthetic test data)
+			schema, err := generateSchemas()
+			Expect(err).NotTo(HaveOccurred())
+
+			// Marshal to JSON
+			jsonBytes, err := json.Marshal(schema)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Parse and verify structure
+			var result map[string]interface{}
+			err = json.Unmarshal(jsonBytes, &result)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify metadata structure (required by Management Console)
+			Expect(result).To(HaveKey("metadata"))
+			metadata := result["metadata"].(map[string]interface{})
+			Expect(metadata).To(HaveKey("benthos_version"))
+			Expect(metadata).To(HaveKey("benthos_umh_version"))
+			Expect(metadata).To(HaveKey("generated_at"))
+
+			// Verify plugin collections exist
+			Expect(result).To(HaveKey("inputs"))
+			Expect(result).To(HaveKey("processors"))
+			Expect(result).To(HaveKey("outputs"))
+
+			// Verify at least one UMH plugin has expected field structure
+			inputs := result["inputs"].(map[string]interface{})
+			Expect(inputs).To(HaveKey("modbus"))
+			modbus := inputs["modbus"].(map[string]interface{})
+			Expect(modbus).To(HaveKey("name"))
+			Expect(modbus).To(HaveKey("type"))
+			Expect(modbus).To(HaveKey("source"))
+			Expect(modbus).To(HaveKey("config"))
+			Expect(modbus["source"]).To(Equal("benthos-umh"))
+
+			// Verify nested config fields work correctly
+			config := modbus["config"].(map[string]interface{})
+			Expect(len(config)).To(BeNumerically(">", 0), "Plugin should have config fields")
 		})
 	})
 })
