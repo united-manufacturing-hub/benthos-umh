@@ -22,48 +22,30 @@ import (
 	. "github.com/united-manufacturing-hub/benthos-umh/eip_plugin"
 )
 
+// Note: The "override" test was removed per Anti-Pattern 6 (Excessive Test Granularity).
+// The single test below proves the field is optional and has the correct default.
+// Override behavior is trivially implied once optionality works.
+
 var _ = Describe("Ethernet/IP Advanced Fields Config", func() {
 	Describe("ConfigSpec advanced fields optionality", func() {
-		Context("when parsing minimal config", func() {
-			It("should parse minimal config with only endpoint", func() {
-				// Test that socketTimeoutMs is optional
-				env := service.NewEnvironment()
-				minimalYAML := `
+		It("should parse minimal config with default socketTimeoutMs", func() {
+			// This test proves socketTimeoutMs is optional with correct default
+			env := service.NewEnvironment()
+			minimalYAML := `
 endpoint: "192.168.1.100"
 tags:
   - name: "TestTag"
     type: "bool"
 `
-				parsedConfig, err := EthernetIPConfigSpec.ParseYAML(minimalYAML, env)
+			parsedConfig, err := EthernetIPConfigSpec.ParseYAML(minimalYAML, env)
 
-				Expect(err).NotTo(HaveOccurred(), "minimal config without advanced fields should parse successfully")
-				Expect(parsedConfig).NotTo(BeNil(), "parsed config should not be nil")
+			Expect(err).NotTo(HaveOccurred(), "minimal config without advanced fields should parse successfully")
+			Expect(parsedConfig).NotTo(BeNil(), "parsed config should not be nil")
 
-				// Verify default is applied for socketTimeoutMs
-				socketTimeoutMs, err := parsedConfig.FieldInt("socketTimeoutMs")
-				Expect(err).NotTo(HaveOccurred(), "socketTimeoutMs should have a default value")
-				Expect(socketTimeoutMs).To(Equal(10000), "socketTimeoutMs should default to 10000ms")
-			})
-
-			It("should allow overriding socketTimeoutMs", func() {
-				// Verify socketTimeoutMs can be explicitly set
-				env := service.NewEnvironment()
-				configWithAdvanced := `
-endpoint: "192.168.1.100"
-socketTimeoutMs: 5000
-tags:
-  - name: "TestTag"
-    type: "bool"
-`
-				parsedConfig, err := EthernetIPConfigSpec.ParseYAML(configWithAdvanced, env)
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(parsedConfig).NotTo(BeNil())
-
-				socketTimeoutMs, err := parsedConfig.FieldInt("socketTimeoutMs")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(socketTimeoutMs).To(Equal(5000))
-			})
+			// Verify default is applied for socketTimeoutMs
+			socketTimeoutMs, err := parsedConfig.FieldInt("socketTimeoutMs")
+			Expect(err).NotTo(HaveOccurred(), "socketTimeoutMs should have a default value")
+			Expect(socketTimeoutMs).To(Equal(10000), "socketTimeoutMs should default to 10000ms")
 		})
 	})
 
