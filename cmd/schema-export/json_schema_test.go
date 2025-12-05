@@ -19,11 +19,6 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// Note: Most JSON Schema conversion tests were removed per Anti-Pattern 6
-// (Excessive Test Granularity). The integration test "JSON Output Contract"
-// in exporter_test.go validates JSON Schema generation on real output.
-// Only boundary tests for error handling are kept here.
-
 var _ = Describe("JSON Schema Generator", func() {
 	Context("when validating format flag", func() {
 		It("should accept 'benthos' format", func() {
