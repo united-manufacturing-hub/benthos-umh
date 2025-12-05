@@ -43,48 +43,20 @@ var _ = Describe("JSON Schema Generator", func() {
 		})
 	})
 
-	Context("when converting Benthos types to JSON Schema types", func() {
-		It("should convert string to string type", func() {
-			result := benthosTypeToJSONSchemaType("string", "scalar")
-			Expect(result).To(HaveKeyWithValue("type", "string"))
-		})
-
-		It("should convert int to number type", func() {
-			result := benthosTypeToJSONSchemaType("int", "scalar")
-			Expect(result).To(HaveKeyWithValue("type", "number"))
-		})
-
-		It("should convert float to number type", func() {
-			result := benthosTypeToJSONSchemaType("float", "scalar")
-			Expect(result).To(HaveKeyWithValue("type", "number"))
-		})
-
-		It("should convert number to number type", func() {
-			result := benthosTypeToJSONSchemaType("number", "scalar")
-			Expect(result).To(HaveKeyWithValue("type", "number"))
-		})
-
-		It("should convert bool to boolean type", func() {
-			result := benthosTypeToJSONSchemaType("bool", "scalar")
-			Expect(result).To(HaveKeyWithValue("type", "boolean"))
-		})
-
-		It("should convert object to object type", func() {
-			result := benthosTypeToJSONSchemaType("object", "object")
-			Expect(result).To(HaveKeyWithValue("type", "object"))
-		})
-
-		It("should convert array to array type", func() {
-			result := benthosTypeToJSONSchemaType("array", "array")
-			Expect(result).To(HaveKeyWithValue("type", "array"))
-		})
-
-		It("should convert duration to string type", func() {
-			result := benthosTypeToJSONSchemaType("string", "scalar")
-			// Duration fields in Benthos use string type
-			Expect(result).To(HaveKeyWithValue("type", "string"))
-		})
-	})
+	DescribeTable("when converting Benthos types to JSON Schema types",
+		func(benthosType, kind, expectedJSONType string) {
+			result := benthosTypeToJSONSchemaType(benthosType, kind)
+			Expect(result).To(HaveKeyWithValue("type", expectedJSONType))
+		},
+		Entry("string → string", "string", "scalar", "string"),
+		Entry("int → number", "int", "scalar", "number"),
+		Entry("float → number", "float", "scalar", "number"),
+		Entry("number → number", "number", "scalar", "number"),
+		Entry("bool → boolean", "bool", "scalar", "boolean"),
+		Entry("object → object", "object", "object", "object"),
+		Entry("array → array", "array", "array", "array"),
+		Entry("duration (string) → string", "string", "scalar", "string"),
+	)
 
 	Context("when converting FieldSpec to JSON Schema property", func() {
 		It("should convert simple string field", func() {

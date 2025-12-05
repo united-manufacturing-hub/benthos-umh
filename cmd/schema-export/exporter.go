@@ -214,18 +214,11 @@ func extractFieldsArray(childFields []interface{}) []FieldSpec {
 	return fields
 }
 
-// detectSource determines if a plugin is from benthos-umh or upstream Benthos
+// detectSource determines if a plugin is from benthos-umh or upstream Benthos.
+// Uses umhPluginNames map from umh_plugins_gen.go (auto-generated from *_plugin dirs).
 func detectSource(pluginName string) string {
-	umhPlugins := []string{
-		"opcua", "modbus", "s7comm", "sparkplug_b", "eip", "sensorconnect",
-		"tag_processor", "stream_processor", "downsampler", "topic_browser",
-		"classic_to_core", "nodered_js", "uns",
-	}
-
-	for _, umh := range umhPlugins {
-		if pluginName == umh {
-			return "benthos-umh"
-		}
+	if umhPluginNames[pluginName] {
+		return "benthos-umh"
 	}
 	return "upstream"
 }

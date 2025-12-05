@@ -116,7 +116,10 @@ func buildRequiredArray(fields map[string]FieldSpec) []string {
 	return required
 }
 
-// generateJSONSchema generates a JSON Schema Draft-07 from plugin specs
+// generateJSONSchema converts plugin specs to JSON Schema Draft-07 format.
+// This output is designed for Monaco JSON editor validation/autocomplete.
+// Unlike "benthos" format which preserves UMH-specific fields (source, summary),
+// JSON Schema uses standardized properties ($schema, definitions, properties).
 func generateJSONSchema(plugins *SchemaOutput, version string) (map[string]interface{}, error) {
 	schema := map[string]interface{}{
 		"$schema":     "http://json-schema.org/draft-07/schema#",
@@ -179,7 +182,9 @@ func convertPluginToJSONSchema(plugin PluginSpec) map[string]interface{} {
 	return schema
 }
 
-// generateSchemaWithFormat generates schema in the specified format
+// generateSchemaWithFormat routes to the appropriate formatter:
+// - format="benthos": Returns raw SchemaOutput (UI format) for Management Console
+// - format="json-schema": Returns JSON Schema Draft-07 (Monaco format) for editors
 func generateSchemaWithFormat(plugins *SchemaOutput, format, version string) (interface{}, error) {
 	if err := validateFormat(format); err != nil {
 		return nil, err

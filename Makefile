@@ -174,6 +174,12 @@ proto:
 		pkg/umh/topic/proto/topic_browser_data.proto
 	@echo "Successfully generated topic_browser_data.pb.go"
 
+# Generate UMH plugin list for schema-export tool
+# Scans *_plugin/ directories and extracts plugin names from service.Register* calls
+.PHONY: generate
+generate:
+	@go run ./cmd/tools/generate_plugins .
+
 .PHONY: serve-pprof
 serve-pprof:
 	@export PATH="$(TOOLS_BIN_DIR)/graphviz:$$PATH" && \

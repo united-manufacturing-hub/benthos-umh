@@ -16,7 +16,10 @@ package main
 
 import "time"
 
-// SchemaOutput represents the complete exported schema for all Benthos plugins
+// SchemaOutput represents the complete schema in "benthos" format (UI format).
+// Used by Management Console UI for rendering plugin configuration forms.
+// Contains UMH-specific fields (source, summary) not present in JSON Schema format.
+// For JSON Schema Draft-07 format (Monaco editor), use generateJSONSchema().
 type SchemaOutput struct {
 	Metadata   Metadata              `json:"metadata"`
 	Inputs     map[string]PluginSpec `json:"inputs"`

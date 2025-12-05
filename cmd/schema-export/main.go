@@ -30,6 +30,11 @@ func generateVersionedFilename(version string) string {
 
 func main() {
 	version := flag.String("version", "", "Benthos-UMH version (required)")
+	// format flag accepts two output schema formats:
+	// - "benthos": Raw Benthos plugin specification format (default)
+	//   Used by: Management Console UI for displaying plugin configuration forms
+	// - "json-schema": JSON Schema Draft-07 format for Monaco editor
+	//   Used by: Web-based config editors for syntax validation/autocomplete
 	format := flag.String("format", "benthos", "Output format: benthos or json-schema")
 	flag.Parse()
 
