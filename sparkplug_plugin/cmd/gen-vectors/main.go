@@ -218,7 +218,7 @@ func createNDeath(metrics []Metric) []byte {
 }
 
 func createProtoMetric(metric Metric, includeName bool) *sparkplugb.Payload_Metric {
-	datatype := uint32(metric.DataType)
+	datatype := metric.DataType
 	protoMetric := &sparkplugb.Payload_Metric{
 		Datatype: &datatype,
 	}

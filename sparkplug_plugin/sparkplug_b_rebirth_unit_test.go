@@ -222,7 +222,7 @@ func TestRebirthCommandGeneration(t *testing.T) {
 					Value: &sparkplugb.Payload_Metric_BooleanValue{
 						BooleanValue: true,
 					},
-					Datatype: func() *uint32 { d := uint32(SparkplugDataTypeBoolean); return &d }(),
+					Datatype: func() *uint32 { d := SparkplugDataTypeBoolean; return &d }(),
 				}
 
 				cmdPayload := &sparkplugb.Payload{
@@ -268,7 +268,7 @@ func TestRebirthMetricStructure(t *testing.T) {
 		Value: &sparkplugb.Payload_Metric_BooleanValue{
 			BooleanValue: true,
 		},
-		Datatype: func() *uint32 { d := uint32(SparkplugDataTypeBoolean); return &d }(),
+		Datatype: func() *uint32 { d := SparkplugDataTypeBoolean; return &d }(),
 	}
 
 	// Verify name
@@ -282,7 +282,7 @@ func TestRebirthMetricStructure(t *testing.T) {
 	}
 
 	// Verify datatype
-	if metric.Datatype == nil || *metric.Datatype != uint32(SparkplugDataTypeBoolean) {
+	if metric.Datatype == nil || *metric.Datatype != SparkplugDataTypeBoolean {
 		t.Error("Metric datatype should be Boolean")
 	}
 }

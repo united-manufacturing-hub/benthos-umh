@@ -1274,7 +1274,7 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 		Value: &sparkplugb.Payload_Metric_BooleanValue{
 			BooleanValue: true,
 		},
-		Datatype: func() *uint32 { d := uint32(SparkplugDataTypeBoolean); return &d }(),
+		Datatype: func() *uint32 { d := SparkplugDataTypeBoolean; return &d }(),
 	}
 
 	cmdPayload := &sparkplugb.Payload{

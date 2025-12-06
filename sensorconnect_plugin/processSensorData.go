@@ -161,8 +161,7 @@ func (s *SensorConnectInput) GetProcessedSensorDataFromRawSensorOutput(rawSensor
 	rawSensorOutputLength := len(rawSensorOutput)
 
 	outputBitLength := rawSensorOutputLength * 4
-	rawSensorOutputString := string(rawSensorOutput)
-	rawSensorOutputBinary, err := s.HexToBin(rawSensorOutputString)
+	rawSensorOutputBinary, err := s.HexToBin(rawSensorOutput)
 	if err != nil {
 		return nil, err
 	}

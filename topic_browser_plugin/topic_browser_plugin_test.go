@@ -1431,7 +1431,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				msg := service.NewMessage(nil)
 				msg.MetaSet("umh_topic", fmt.Sprintf("umh.v1.test._historian.multi_%d", i))
 				msg.SetStructured(map[string]interface{}{
-					"timestamp_ms": int64(1647753600000 + int64(i)),
+					"timestamp_ms": 1647753600000 + int64(i),
 					"value":        fmt.Sprintf("ORIGINAL_VALUE_%d", i),
 				})
 				msgs[i] = msg
