@@ -157,7 +157,7 @@ var _ = Describe("Sensorconnect", func() {
 			}
 
 			// Close the connection
-			err = input.Close(ctx)
+			input.Close(ctx)
 		})
 
 		It("should receive raw data from the AL1350 ", func() {
@@ -239,7 +239,7 @@ var _ = Describe("Sensorconnect", func() {
 			}
 
 			// Close the connection
-			err = input.Close(ctx)
+			input.Close(ctx)
 		})
 	})
 

@@ -146,7 +146,7 @@ var _ = Describe("ProcessorWrapper", func() {
 				Expect(points).To(HaveLen(1))
 
 				// Out-of-order point should be passed through to algorithm
-				points, err = processor.Ingest(11.0, baseTime.Add(1*time.Second))
+				_, err = processor.Ingest(11.0, baseTime.Add(1*time.Second))
 				Expect(err).NotTo(HaveOccurred())
 				// Result depends on algorithm logic, just verify no error
 			})
