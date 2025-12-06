@@ -101,8 +101,7 @@ var _ = Describe("100k Scale Browse Test", Label("100k_scale"), func() {
 			// Browse details are discarded - channel exists to prevent worker deadlock (legacy UI code removed)
 			opcuaBrowserConsumerDone := make(chan struct{})
 			go func() {
-				for range opcuaBrowserChan {
-					// Discard - browse details not needed for this test
+				for range opcuaBrowserChan { //nolint:revive
 				}
 				close(opcuaBrowserConsumerDone)
 			}()

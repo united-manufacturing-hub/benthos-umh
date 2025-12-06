@@ -824,7 +824,7 @@ var _ = Describe("discoverNodes GlobalWorkerPool integration", func() {
 
 				// Unblock by draining channel to allow worker cleanup
 				go func() {
-					for range blockingChan {
+					for range blockingChan { //nolint:revive
 					}
 				}()
 			})

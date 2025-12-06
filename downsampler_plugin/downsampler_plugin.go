@@ -559,11 +559,11 @@ func copyConfig(original map[string]interface{}) map[string]interface{} {
 		return nil
 	}
 
-	copy := make(map[string]interface{})
+	result := make(map[string]interface{})
 	for k, v := range original {
-		copy[k] = v
+		result[k] = v
 	}
-	return copy
+	return result
 }
 
 // getOrCreateSeriesState returns the state for a series, creating it if needed

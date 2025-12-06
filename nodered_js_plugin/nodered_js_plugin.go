@@ -177,7 +177,7 @@ func escapeString(data string) string {
 // implementation formats objects. This format is optimized to have as few escaped
 // characters as possible when it is embedded within a JSON payload.
 func stringify(data any, depth uint8) (string, error) {
-	depth += 1
+	depth++
 	if depth == math.MaxUint8 {
 		return "", fmt.Errorf("maximum depth reached")
 	}

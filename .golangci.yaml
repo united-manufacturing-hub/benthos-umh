@@ -104,6 +104,7 @@ linters:
       confidence: 0.8
       rules:
         - name: blank-imports
+          disabled: true
         - name: context-as-argument
         - name: context-keys-type
         - name: dot-imports

@@ -165,7 +165,7 @@ func (s *SensorConnectInput) GetUrlWithRetry(ctx context.Context, url string) ([
 	maxBackoff := 60 * time.Second
 
 	for i := 0; i < maxRetries; i++ {
-		body, err, status = s.GetUrl(ctx, url)
+		body, status, err = s.GetUrl(ctx, url)
 		if err != nil {
 			s.logger.Errorf("Error fetching URL %s: %v", url, err)
 			return nil, err
@@ -189,33 +189,33 @@ func (s *SensorConnectInput) GetUrlWithRetry(ctx context.Context, url string) ([
 }
 
 // GetUrl executes a GET request to the specified URL and returns the response body and status code.
-func (s *SensorConnectInput) GetUrl(ctx context.Context, url string) ([]byte, error, int) {
+func (s *SensorConnectInput) GetUrl(ctx context.Context, url string) ([]byte, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		s.logger.Warnf("Failed to create GET request for URL %s: %v", url, err)
-		return nil, err, 0
+		return nil, 0, err
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		s.logger.Debugf("No response from URL %s: %v", url, err)
-		return nil, err, 0
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
 	status := resp.StatusCode
 	if status != http.StatusOK {
 		s.logger.Debugf("Received non-200 status code %d for URL %s", status, url)
-		return nil, nil, status
+		return nil, status, nil
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		s.logger.Errorf("Failed to read response body from URL %s: %v", url, err)
-		return nil, err, status
+		return nil, status, err
 	}
 
-	return body, nil, status
+	return body, status, nil
 }
 
 func UnmarshalIoddfinder(data []byte) (Ioddfinder, error) {
@@ -231,11 +231,11 @@ func (r *Ioddfinder) Marshal() ([]byte, error) {
 
 // GetBackoffTime calculates the backoff duration based on the attempt number.
 // It uses exponential backoff with jitter, bounded by min and max durations.
-func GetBackoffTime(attempt int64, min, max time.Duration) time.Duration {
+func GetBackoffTime(attempt int64, minDuration, maxDuration time.Duration) time.Duration {
 	exponent := float64(attempt)
-	backoff := time.Duration(float64(min) * math.Pow(2, exponent))
-	if backoff > max {
-		backoff = max
+	backoff := time.Duration(float64(minDuration) * math.Pow(2, exponent))
+	if backoff > maxDuration {
+		backoff = maxDuration
 	}
 	// Add jitter: random duration between 0 and backoff
 	jitter := time.Duration(rand.Int63n(int64(backoff)))
