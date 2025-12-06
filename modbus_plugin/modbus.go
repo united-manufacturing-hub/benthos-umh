@@ -197,13 +197,17 @@ var ModbusConfigSpec = service.NewConfigSpec().
 // newModbusInput is the constructor function for ModbusInput. It parses the plugin configuration,
 // establishes a connection with the Modbus device, and initializes the input plugin instance.
 func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
+	var (
+		err           error
+		slaveIDs, ids []int
+		id            int
+	)
+
 	m := &ModbusInput{
 		Log:                          mgr.Logger(),
 		LastHeartbeatMessageReceived: atomic.Uint32{},
 		LastMessageReceived:          atomic.Uint32{},
 	}
-
-	var err error
 
 	if m.TimeBetweenReads, err = conf.FieldDuration("timeBetweenReads"); err != nil {
 		return nil, err
@@ -216,11 +220,10 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	// slaveID only exist for backwards compatibility
-	var slaveIDs []int
-	if ids, err := conf.FieldIntList("slaveIDs"); err == nil {
+	if ids, err = conf.FieldIntList("slaveIDs"); err == nil {
 		// slaveIDs exists, use it
 		slaveIDs = ids
-	} else if id, err := conf.FieldInt("slaveID"); err == nil {
+	} else if id, err = conf.FieldInt("slaveID"); err == nil {
 		// Fallback to slaveID if slaveIDs doesn't exist
 		slaveIDs = []int{id}
 	} else {
@@ -342,7 +345,12 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		}
 
 		// Address
-		if addr, err := addrConf.FieldInt("address"); err != nil {
+		var (
+			addr   int
+			length int
+			bit    int
+		)
+		if addr, err = addrConf.FieldInt("address"); err != nil {
 			return nil, err
 		} else if addr < 0 || addr > 65535 { // Check if the value is within the range of uint16
 			return nil, fmt.Errorf("value out of range for uint16: %d", addr)
@@ -354,7 +362,7 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 			return nil, err
 		}
 
-		if length, err := addrConf.FieldInt("length"); err != nil {
+		if length, err = addrConf.FieldInt("length"); err != nil {
 			return nil, err
 		} else if length < 0 || length > 65535 { // Check if the value is within the range of uint16
 			return nil, fmt.Errorf("value out of range for uint16: %d", length)
@@ -362,7 +370,7 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 			item.Length = uint16(length) // Convert int to uint16
 		}
 
-		if bit, err := addrConf.FieldInt("bit"); err != nil {
+		if bit, err = addrConf.FieldInt("bit"); err != nil {
 			return nil, err
 		} else if bit < 0 || bit > 65535 { // Check if the value is within the range of uint16
 			return nil, fmt.Errorf("value out of range for uint16: %d", bit)
@@ -719,7 +727,7 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 					slaveID,
 				)
 
-				err := m.Close(ctx)
+				err = m.Close(ctx)
 				if err != nil {
 					m.Log.Errorf("Failed to close Modbus connection: %v", err)
 				}

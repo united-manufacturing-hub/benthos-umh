@@ -159,14 +159,14 @@ func ParseAddresses(addresses []string, batchMaxSize int) ([][]S7DataItemWithAdd
 	parsedAddresses := make([]S7DataItemWithAddressAndConverter, 0, len(addresses))
 
 	for _, address := range addresses {
-		item, converterFunc, err := handleFieldAddress(address)
+		item, converter, err := handleFieldAddress(address)
 		if err != nil {
 			return nil, fmt.Errorf("address %q: %w", address, err)
 		}
 
 		newS7DataItemWithAddressAndConverter := S7DataItemWithAddressAndConverter{
 			Address:       address,
-			ConverterFunc: converterFunc,
+			ConverterFunc: converter,
 			Item:          *item,
 		}
 

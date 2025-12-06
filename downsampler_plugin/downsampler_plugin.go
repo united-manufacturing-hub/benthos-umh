@@ -663,7 +663,7 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string, msg *serv
 	defer p.stateMutex.Unlock()
 
 	// Check again in case another goroutine created it
-	if state, exists := p.seriesState[seriesID]; exists {
+	if state, exists = p.seriesState[seriesID]; exists {
 		return state, nil
 	}
 
@@ -675,8 +675,9 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string, msg *serv
 	}
 
 	// Apply metadata overrides if enabled
+	var hints map[string]any
 	if p.config.AllowMeta {
-		if hints, err := extractMetaHints(msg); err != nil {
+		if hints, err = extractMetaHints(msg); err != nil {
 			p.logger.Warnf("Meta overrides ignored for series %s: %v", seriesID, err)
 			p.metrics.IncrementMetaOverrideRejected()
 		} else if hints != nil {

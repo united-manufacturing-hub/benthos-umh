@@ -433,6 +433,7 @@ func (p *TagProcessor) executeJSCode(vm *goja.Runtime, code string, jsMsg map[st
 
 // validateMessage checks if a message has all required metadata fields
 func (p *TagProcessor) validateMessage(msg *service.Message) error {
+	var payloadJSON []byte
 	requiredFields := []string{"location_path", "data_contract", "tag_name"}
 	missingFields := []string{}
 
@@ -462,7 +463,7 @@ func (p *TagProcessor) validateMessage(msg *service.Message) error {
 			payloadStr = "unable to parse message payload"
 		} else {
 			// Try to format as JSON first
-			payloadJSON, err := json.MarshalIndent(payload, "", "  ")
+			payloadJSON, err = json.MarshalIndent(payload, "", "  ")
 			if err != nil {
 				// If JSON formatting fails, use string representation
 				payloadStr = fmt.Sprintf("%v", payload)
@@ -836,7 +837,7 @@ func (p *TagProcessor) processMessageBatchWithProgram(batch service.MessageBatch
 		}
 
 		// Setup VM environment
-		if err := p.setupMessageForVM(vm, msg, jsMsg); err != nil {
+		if err = p.setupMessageForVM(vm, msg, jsMsg); err != nil {
 			p.logError(err, "JS environment setup", jsMsg)
 			p.putVM(vm)
 			return nil, fmt.Errorf("failed to setup JavaScript environment: %w", err)
@@ -894,7 +895,7 @@ func (p *TagProcessor) processConditionForMessageWithProgram(conditionIndex int,
 	}
 
 	// Setup VM environment using optimized helper method
-	if err := p.setupMessageForVM(vm, msg, jsMsg); err != nil {
+	if err = p.setupMessageForVM(vm, msg, jsMsg); err != nil {
 		return nil, fmt.Errorf("JS environment setup failed: %w", err)
 	}
 

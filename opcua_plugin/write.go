@@ -90,6 +90,10 @@ func opcuaOutputConfig() *service.ConfigSpec {
 
 // newOPCUAOutput creates a new OPC UA output based on the provided configuration
 func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.Output, error) {
+	var (
+		nodeIDInterp, dataTypeInterp *service.InterpolatedString
+		valueFrom                    string
+	)
 	// Parse the shared connection configuration
 	conn, err := ParseConnectionConfig(conf, mgr)
 	if err != nil {
@@ -115,7 +119,7 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		mapConf := nodeMappingsConf[i]
 
 		// Get nodeId as InterpolatedString
-		nodeIDInterp, err := mapConf.FieldInterpolatedString("nodeId")
+		nodeIDInterp, err = mapConf.FieldInterpolatedString("nodeId")
 		if err != nil {
 			return nil, fmt.Errorf("nodeId is required in node mapping %d: %w", i, err)
 		}
@@ -125,13 +129,13 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		staticNodeID, exists := nodeIDInterp.Static()
 		if exists && staticNodeID != "" {
 			// Validate static nodeId format
-			if _, err := ua.ParseNodeID(staticNodeID); err != nil {
+			if _, err = ua.ParseNodeID(staticNodeID); err != nil {
 				return nil, fmt.Errorf("invalid nodeId format in node mapping %d: %s. Expected format examples: 'ns=2;s=MyVariable', 'i=85', 'ns=3;i=1000'. Error: %w", i, staticNodeID, err)
 			}
 		}
 
 		// Get valueFrom and validate it
-		valueFrom, err := mapConf.FieldString("valueFrom")
+		valueFrom, err = mapConf.FieldString("valueFrom")
 		if err != nil {
 			return nil, fmt.Errorf("valueFrom is required in node mapping %d: %w", i, err)
 		}
@@ -140,7 +144,7 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		}
 
 		// Get dataType as InterpolatedString
-		dataTypeInterp, err := mapConf.FieldInterpolatedString("dataType")
+		dataTypeInterp, err = mapConf.FieldInterpolatedString("dataType")
 		if err != nil {
 			return nil, fmt.Errorf("dataType is required in node mapping %d: %w", i, err)
 		}

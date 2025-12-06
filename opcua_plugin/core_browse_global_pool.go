@@ -657,7 +657,7 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 			}
 
 			// Process attributes to populate all fields
-			if err := processNodeAttributes(attrs, &nodeDef, task.Path, gwp.logger); err != nil {
+			if err = processNodeAttributes(attrs, &nodeDef, task.Path, gwp.logger); err != nil {
 				if gwp.logger != nil {
 					gwp.logger.Warnf("Failed to process node attributes: nodeID=%s path=%s err=%v",
 						task.NodeID, task.Path, err)

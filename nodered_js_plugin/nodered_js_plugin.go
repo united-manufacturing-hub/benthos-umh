@@ -403,7 +403,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(msg *service.Message) (*servic
 
 	// Add metadata to the message wrapper
 	meta := make(map[string]interface{})
-	if err := msg.MetaWalkMut(func(key string, value any) error {
+	if err = msg.MetaWalkMut(func(key string, value any) error {
 		meta[key] = value
 		return nil
 	}); err != nil {
@@ -414,7 +414,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(msg *service.Message) (*servic
 	jsMsg["meta"] = meta
 
 	// Setup JS environment
-	if err := u.SetupJSEnvironment(vm, jsMsg); err != nil {
+	if err = u.SetupJSEnvironment(vm, jsMsg); err != nil {
 		u.messagesErrored.Incr(1)
 		u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
 		return nil, false, nil

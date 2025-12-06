@@ -55,8 +55,8 @@ func init() {
 	outputSpec := service.NewConfigSpec().
 		Version("1.0.0").
 		Summary("Sparkplug B MQTT output acting as Edge Node").
-		Description(`The Sparkplug B output acts as an Edge Node, publishing data to Sparkplug MQTT topics 
-with complete session lifecycle management. It handles BIRTH/DEATH certificates, maintains sequence 
+		Description(`The Sparkplug B output acts as an Edge Node, publishing data to Sparkplug MQTT topics
+with complete session lifecycle management. It handles BIRTH/DEATH certificates, maintains sequence
 numbers, manages alias mappings, and ensures full Sparkplug B compliance.
 
 Key features:
@@ -232,7 +232,10 @@ type sparkplugOutput struct {
 
 func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sparkplugOutput, error) {
 	// Parse the idiomatic configuration structure using namespace approach
-	var config Config
+	var (
+		config             Config
+		username, password string
+	)
 
 	// Parse MQTT section using namespace
 	mqttConf := conf.Namespace("mqtt")
@@ -250,11 +253,11 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 	// Parse credentials section if present
 	if mqttConf.Contains("credentials") {
 		credsConf := mqttConf.Namespace("credentials")
-		username, err := credsConf.FieldString("username")
+		username, err = credsConf.FieldString("username")
 		if err == nil {
 			config.MQTT.Credentials.Username = username
 		}
-		password, err := credsConf.FieldString("password")
+		password, err = credsConf.FieldString("password")
 		if err == nil {
 			config.MQTT.Credentials.Password = password
 		}

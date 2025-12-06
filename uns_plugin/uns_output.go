@@ -413,7 +413,7 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 		}
 
 		// Validate and enrich the message
-		if err := o.validateAndEnrichMessage(msg, unsTopic, msgAsBytes, i); err != nil {
+		if err = o.validateAndEnrichMessage(msg, unsTopic, msgAsBytes, i); err != nil {
 			return err
 		}
 

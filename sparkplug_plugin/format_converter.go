@@ -323,6 +323,11 @@ func (fc *FormatConverter) parseUMHMessage(msg *service.Message) (*UMHMessage, e
 
 // constructUMHTopicFromMetadata builds a UMH topic from Benthos message metadata.
 func (fc *FormatConverter) constructUMHTopicFromMetadata(metadata map[string]string) (*topic.UnsTopic, error) {
+	var (
+		dc, vp      string
+		virtualPath *string
+	)
+
 	// Extract required components from metadata
 	locationPath, exists := metadata["location_path"]
 	if !exists || locationPath == "" {
@@ -331,13 +336,12 @@ func (fc *FormatConverter) constructUMHTopicFromMetadata(metadata map[string]str
 
 	// Use _historian as default data contract if not specified
 	dataContract := "_historian"
-	if dc, exists := metadata["data_contract"]; exists && dc != "" {
+	if dc, exists = metadata["data_contract"]; exists && dc != "" {
 		dataContract = dc
 	}
 
 	// Extract optional virtual path
-	var virtualPath *string
-	if vp, exists := metadata["virtual_path"]; exists && vp != "" {
+	if vp, exists = metadata["virtual_path"]; exists && vp != "" {
 		virtualPath = &vp
 	}
 

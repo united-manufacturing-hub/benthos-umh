@@ -254,7 +254,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 
 			heartbeatPool := NewGlobalWorkerPool(g.ServerProfile, g.Log)
 			defer func() {
-				if err := heartbeatPool.Shutdown(DefaultPoolShutdownTimeout); err != nil {
+				if err = heartbeatPool.Shutdown(DefaultPoolShutdownTimeout); err != nil {
 					g.Log.Warnf("Heartbeat pool shutdown timeout: %v", err)
 				}
 			}()
@@ -279,11 +279,11 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 				ProgressChan: nil, // No progress reporting in production
 			}
 
-			if err := heartbeatPool.SubmitTask(task); err != nil {
+			if err = heartbeatPool.SubmitTask(task); err != nil {
 				g.Log.Warnf("Failed to submit heartbeat task: %v", err)
 			} else {
 				// Wait for heartbeat task to complete
-				if err := heartbeatPool.WaitForCompletion(DefaultPoolShutdownTimeout); err != nil {
+				if err = heartbeatPool.WaitForCompletion(DefaultPoolShutdownTimeout); err != nil {
 					g.Log.Warnf("Heartbeat pool completion wait error: %v", err)
 				}
 			}

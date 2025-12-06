@@ -128,7 +128,7 @@ linters:
         - name: unreachable-code
         - name: unused-parameter
         - name: unused-receiver
-        - name: use-any
+        # - name: use-any
         - name: use-errors-new
         - name: var-declaration
     staticcheck:
