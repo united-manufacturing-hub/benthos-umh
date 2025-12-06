@@ -898,21 +898,19 @@ func (s *sparkplugOutput) getAllDeviceMetrics(deviceID string, currentData map[s
 	}
 
 	// Add cached metrics with their last known values (preserves state for DBIRTH)
-	if deviceCache != nil {
-		for metricName := range deviceCache {
-			if _, exists := allMetrics[metricName]; !exists {
-				// Use last known value for this device if available
-				if deviceLastValues != nil {
-					if lastValue, hasLastValue := deviceLastValues[metricName]; hasLastValue {
-						allMetrics[metricName] = lastValue
-					} else {
-						// No last value known, use null (DBIRTH spec compliance)
-						allMetrics[metricName] = nil
-					}
+	for metricName := range deviceCache {
+		if _, exists := allMetrics[metricName]; !exists {
+			// Use last known value for this device if available
+			if deviceLastValues != nil {
+				if lastValue, hasLastValue := deviceLastValues[metricName]; hasLastValue {
+					allMetrics[metricName] = lastValue
 				} else {
-					// No last values stored for this device, use null
+					// No last value known, use null (DBIRTH spec compliance)
 					allMetrics[metricName] = nil
 				}
+			} else {
+				// No last values stored for this device, use null
+				allMetrics[metricName] = nil
 			}
 		}
 	}

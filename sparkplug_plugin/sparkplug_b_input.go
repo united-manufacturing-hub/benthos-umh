@@ -541,7 +541,7 @@ func (s *sparkplugInput) ReadBatch(ctx context.Context) (service.MessageBatch, s
 			s.messagesErrored.Incr(1)
 			return nil, nil, err
 		}
-		if batch == nil || len(batch) == 0 {
+		if len(batch) == 0 {
 			s.logger.Debugf("⚠️ ReadBatch: no batch produced for message")
 			return nil, func(ctx context.Context, err error) error { return nil }, nil
 		}
@@ -621,7 +621,7 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 	}
 
 	// DEBUG: Log when pushing to Benthos pipeline as recommended in the plan
-	if batch != nil && len(batch) > 0 {
+	if len(batch) > 0 {
 		s.logger.Debugf("🚀 processSparkplugMessage: created batch with %d messages for Benthos pipeline", len(batch))
 	} else {
 		s.logger.Debugf("⚠️ processSparkplugMessage: no batch created - this might be the issue!")

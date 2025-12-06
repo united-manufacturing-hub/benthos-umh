@@ -87,7 +87,7 @@ func main() {
 			fmt.Printf("    Virtual Path: %s\n", topic.GetVirtualPath())
 			fmt.Printf("    Name: %s\n", topic.Name)
 			fmt.Printf("    Data Contract: %s\n", topic.DataContract)
-			if topic.Metadata != nil && len(topic.Metadata) > 0 {
+			if len(topic.Metadata) > 0 {
 				fmt.Printf("    Metadata: %v\n", topic.Metadata)
 			}
 			fmt.Println()

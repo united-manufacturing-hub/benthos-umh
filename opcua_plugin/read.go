@@ -616,7 +616,7 @@ func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef Nod
 
 // QueryServerCapabilities reads server capability information
 // to determine which deadband types are supported.
-func (o *OPCUAInput) QueryServerCapabilities(ctx context.Context) (*ServerCapabilities, error) {
+func (g *OPCUAInput) QueryServerCapabilities(ctx context.Context) (*ServerCapabilities, error) {
 	caps := &ServerCapabilities{
 		SupportsAbsoluteDeadband: true, // All OPC UA servers support absolute
 	}
@@ -630,14 +630,14 @@ func (o *OPCUAInput) QueryServerCapabilities(ctx context.Context) (*ServerCapabi
 		},
 	}
 
-	resp, err := o.Client.Read(ctx, req)
+	resp, err := g.Client.Read(ctx, req)
 	if err == nil && len(resp.Results) > 0 && resp.Results[0].Status == ua.StatusOK {
 		caps.SupportsPercentDeadband = true
 	}
 
 	// Query operation limits
-	if opLimits, err := o.queryOperationLimits(ctx); err != nil {
-		o.Log.Infof("OperationLimits not available (normal for many PLCs): %v - using profile defaults", err)
+	if opLimits, err := g.queryOperationLimits(ctx); err != nil {
+		g.Log.Infof("OperationLimits not available (normal for many PLCs): %v - using profile defaults", err)
 	} else if opLimits != nil {
 		// Merge operation limits into capabilities
 		caps.MaxNodesPerBrowse = opLimits.MaxNodesPerBrowse
