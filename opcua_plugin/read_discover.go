@@ -517,6 +517,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		} else {
 			g.Log.Debugf("DataChangeFilter: Using cached trial result=%v (profile=%s, FilterCapability=FilterUnknown)", supportsFilter, g.ServerProfile.Name)
 		}
+	default:
 	}
 
 	g.Log.With("batchSize", maxBatchSize).

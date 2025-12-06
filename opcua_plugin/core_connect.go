@@ -99,6 +99,8 @@ func (g *OPCUAConnection) GetOPCUAClientOptions(
 			return nil, fmt.Errorf("error while parsing user certificate options: %w", err)
 		}
 		opts = append(opts, userCertificateOpts...)
+	default:
+		return nil, fmt.Errorf("unsupported authentication type: %v", selectedAuthentication)
 	}
 
 	// If the endpoint's security policy is not None, we must attach a certificate

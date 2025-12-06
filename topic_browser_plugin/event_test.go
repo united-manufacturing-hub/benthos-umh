@@ -117,6 +117,7 @@ var _ = Describe("Event Processing", func() {
 					case proto.ScalarType_BOOLEAN:
 						Expect(event.GetTs().GetBooleanValue()).NotTo(BeNil())
 						Expect(event.GetTs().GetBooleanValue().GetValue()).To(Equal(true))
+					default:
 					}
 				}
 			})
