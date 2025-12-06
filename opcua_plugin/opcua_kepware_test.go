@@ -328,10 +328,11 @@ func validateStaticAndChangingData(ctx context.Context, input *OPCUAInput, expec
 		messageBatch2    service.MessageBatch
 		storedMessage    any
 		assignableNumber json.Number = "10.0"
+		err              error
 	)
 	// read the first message batch
 	Eventually(func() (int, error) {
-		messageBatch, _, err := input.ReadBatch(ctx)
+		messageBatch, _, err = input.ReadBatch(ctx)
 		return len(messageBatch), err
 	}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(len(input.NodeIDs)))
 
@@ -354,7 +355,7 @@ func validateStaticAndChangingData(ctx context.Context, input *OPCUAInput, expec
 	// read a second message batch if we want to check on data changes
 	if isChangingValue {
 		Eventually(func() (int, error) {
-			messageBatch2, _, err := input.ReadBatch(ctx)
+			messageBatch2, _, err = input.ReadBatch(ctx)
 			return len(messageBatch2), err
 		}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(len(input.NodeIDs)))
 
