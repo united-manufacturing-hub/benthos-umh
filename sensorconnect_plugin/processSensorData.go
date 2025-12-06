@@ -85,10 +85,6 @@ func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, connectedDev
 				continue
 			}
 
-			// create IoddFilemapKey
-			var ioddFilemapKey IoddFilemapKey
-			ioddFilemapKey.DeviceId = int(device.DeviceID)
-			ioddFilemapKey.VendorId = int64(device.VendorID)
 			var payload map[string]interface{}
 
 			if !device.UseRawData {

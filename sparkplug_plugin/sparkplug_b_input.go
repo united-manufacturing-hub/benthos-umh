@@ -1452,10 +1452,8 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 		s.logger.Debugf("UMH conversion failed for metric %s: %v", sparkplugMsg.MetricName, err)
 
 		// Provide original values as fallback metadata
-		if sparkplugMsg != nil {
-			msg.MetaSet("spb_device_id", originalDeviceID)
-			msg.MetaSet("spb_metric_name", originalMetricName)
-		}
+		msg.MetaSet("spb_device_id", originalDeviceID)
+		msg.MetaSet("spb_metric_name", originalMetricName)
 		return
 	}
 

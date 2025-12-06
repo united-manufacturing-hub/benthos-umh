@@ -143,8 +143,8 @@ func (s *SensorConnectInput) AddNewDeviceToIoddFilesAndMap(ctx context.Context,
 
 	_, ok := s.IoDeviceMap.Load(ioddFilemapKey)
 	if !ok {
-		s.logger.Errorf("Error in AddNewDeviceToIoddFilesAndMap: %s", err.Error())
-		return err
+		s.logger.Errorf("Error in AddNewDeviceToIoddFilesAndMap: device %v not found in IoDeviceMap", ioddFilemapKey)
+		return fmt.Errorf("device %v not found in IoDeviceMap after saving IODD file", ioddFilemapKey)
 	}
 
 	return nil
