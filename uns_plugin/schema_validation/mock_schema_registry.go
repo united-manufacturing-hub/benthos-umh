@@ -111,7 +111,7 @@ func (m *MockSchemaRegistry) handleSubjects(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(subjects)
+	_ = json.NewEncoder(w).Encode(subjects)
 }
 
 // handleSubjectVersions handles requests to /subjects/{subject}/versions/{version}
@@ -162,7 +162,7 @@ func (m *MockSchemaRegistry) handleSubjectVersions(w http.ResponseWriter, r *htt
 
 	// Return the schema version (Redpanda format)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(schema)
+	_ = json.NewEncoder(w).Encode(schema)
 }
 
 // handleLatestVersion handles requests for the latest version of a subject
@@ -189,7 +189,7 @@ func (m *MockSchemaRegistry) handleLatestVersion(w http.ResponseWriter, subject 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(latestSchema)
+	_ = json.NewEncoder(w).Encode(latestSchema)
 }
 
 // SetupTestSchemas adds common test schemas to the mock registry

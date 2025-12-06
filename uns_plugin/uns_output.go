@@ -32,7 +32,10 @@ import (
 
 // init registers the "uns" batch output plugin with Benthos using its configuration and constructor.
 func init() {
-	service.RegisterBatchOutput("uns", outputConfig(), newUnsOutput)
+	err := service.RegisterBatchOutput("uns", outputConfig(), newUnsOutput)
+	if err != nil {
+		panic(err)
+	}
 }
 
 const (
