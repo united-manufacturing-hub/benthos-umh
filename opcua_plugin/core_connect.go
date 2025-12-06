@@ -467,13 +467,13 @@ func (g *OPCUAConnection) storeServerCertificateFingerprint(endpoint *ua.Endpoin
 	// decode the certificate from base64 to DER format
 	block, _ := pem.Decode(pemCert)
 	if block == nil {
-		return fmt.Errorf("Could not decode server certificate.")
+		return fmt.Errorf("could not decode server certificate")
 	}
 
 	// parse the DER-format certificate
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return fmt.Errorf("Error while parsing server certificate.")
+		return fmt.Errorf("error while parsing server certificate")
 	}
 
 	// calculating the checksum of the certificate (sha3 is needed here)

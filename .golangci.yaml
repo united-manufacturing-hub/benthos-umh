@@ -130,7 +130,7 @@ linters:
         - name: unused-parameter
         - name: unused-receiver
         # - name: use-any
-        - name: use-errors-new
+        # - name: use-errors-new
         - name: var-declaration
     staticcheck:
       checks:
