@@ -769,11 +769,11 @@ func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Pr
 			if msg == nil {
 				continue
 			}
-			if msgMap, ok := msg.(map[string]interface{}); ok {
-				messages = append(messages, msgMap)
-			} else {
+			msgMap, ok := msg.(map[string]interface{})
+			if !ok {
 				return nil, fmt.Errorf("array elements must be message objects")
 			}
+			messages = append(messages, msgMap)
 		}
 		return messages, nil
 	case map[string]interface{}:

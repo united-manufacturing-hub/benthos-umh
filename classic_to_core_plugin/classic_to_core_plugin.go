@@ -42,7 +42,7 @@ func init() {
 	spec := service.NewConfigSpec().
 		Version("1.0.0").
 		Summary("Convert UMH Historian Data Contract format to Core format").
-		Description(`The classic_to_core processor converts Historian Data Contract messages containing multiple values 
+		Description(`The classic_to_core processor converts Historian Data Contract messages containing multiple values
 and tag groups into individual Core format messages, following the "one tag, one message, one topic" principle.
 
 Input format (Historian Data Contract):
@@ -63,7 +63,7 @@ Output format (Core):
 
 The processor will:
 1. Extract the timestamp field from the payload
-2. Extract meta and metadata fields for applying to all output messages  
+2. Extract meta and metadata fields for applying to all output messages
 3. Flatten any nested tag groups using dot separator for intuitive paths
 4. Convert arrays to string representation to ensure UMH-Core scalar-only compliance
 5. Create one output message per tag
@@ -308,11 +308,11 @@ func (p *ClassicToCoreProcessor) validateAndParseTopic(msg *service.Message) (*T
 	originalTopic, exists := msg.MetaGet("topic")
 	if !exists {
 		// Try to get it from umh_topic as fallback
-		if umhTopic, exists := msg.MetaGet("umh_topic"); exists {
-			originalTopic = umhTopic
-		} else {
+		umhTopic, exists := msg.MetaGet("umh_topic")
+		if !exists {
 			return nil, fmt.Errorf("no topic found in message metadata")
 		}
+		originalTopic = umhTopic
 	}
 
 	topicComponents, err := p.parseClassicTopic(originalTopic)

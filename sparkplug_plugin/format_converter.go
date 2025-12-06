@@ -498,11 +498,10 @@ func (fc *FormatConverter) buildUMHTopic(locationPath, dataContract string, virt
 	builder := topic.NewBuilder()
 
 	// Set location path
-	if locationPath != "" {
-		builder.SetLocationPath(locationPath)
-	} else {
+	if locationPath == "" {
 		return nil, fmt.Errorf("location_path is required for UMH topic")
 	}
+	builder.SetLocationPath(locationPath)
 
 	// Set data contract
 	if dataContract != "" {
@@ -517,11 +516,10 @@ func (fc *FormatConverter) buildUMHTopic(locationPath, dataContract string, virt
 	}
 
 	// Set tag name
-	if tagName != "" {
-		builder.SetName(tagName)
-	} else {
+	if tagName == "" {
 		return nil, fmt.Errorf("tag_name is required for UMH topic")
 	}
+	builder.SetName(tagName)
 
 	return builder.Build()
 }

@@ -267,19 +267,19 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 		}
 
 		// Try to get the value from the structured content
-		if contentMap, ok := content.(map[string]interface{}); ok {
-			if val, exists := contentMap[mapping.ValueFrom]; exists {
-				writes = append(writes, nodeWrite{
-					nodeID:   nodeID,
-					value:    val,
-					dataType: dataType,
-				})
-			} else {
-				return fmt.Errorf("field %s not found in message", mapping.ValueFrom)
-			}
-		} else {
+		contentMap, ok := content.(map[string]interface{})
+		if !ok {
 			return fmt.Errorf("message content is not a map")
 		}
+		val, exists := contentMap[mapping.ValueFrom]
+		if !exists {
+			return fmt.Errorf("field %s not found in message", mapping.ValueFrom)
+		}
+		writes = append(writes, nodeWrite{
+			nodeID:   nodeID,
+			value:    val,
+			dataType: dataType,
+		})
 	}
 
 	// Write values to OPC UA nodes

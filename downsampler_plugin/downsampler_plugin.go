@@ -900,11 +900,10 @@ func extractMetaHints(msg *service.Message) (map[string]interface{}, error) {
 
 	// 1. algorithm
 	if algo, ok := msg.MetaGet("ds_algorithm"); ok {
-		if algo == "deadband" || algo == "swinging_door" {
-			hints["algorithm"] = algo
-		} else {
+		if algo != "deadband" && algo != "swinging_door" {
 			return nil, fmt.Errorf("invalid ds_algorithm %q", algo)
 		}
+		hints["algorithm"] = algo
 	}
 
 	// 2. numeric threshold
@@ -929,11 +928,10 @@ func extractMetaHints(msg *service.Message) (map[string]interface{}, error) {
 
 	// 5. late policy
 	if pol, ok := msg.MetaGet("ds_late_policy"); ok {
-		if pol == "passthrough" || pol == "drop" {
-			hints["late_policy"] = pol
-		} else {
+		if pol != "passthrough" && pol != "drop" {
 			return nil, fmt.Errorf("invalid ds_late_policy: %v", pol)
 		}
+		hints["late_policy"] = pol
 	}
 
 	if len(hints) == 0 {
