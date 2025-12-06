@@ -67,6 +67,13 @@ linters:
           - revive
         path: _test\.go$
         text: "dot-imports"
+      - linters:
+          - decorder
+        path: _test\.go$
+      - linters:
+          - govet
+        path: _test\.go$
+        text: "shadow"
     warn-unused: true
 
   settings:

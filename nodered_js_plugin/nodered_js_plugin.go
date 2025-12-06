@@ -16,6 +16,7 @@ package nodered_js_plugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"math"
