@@ -516,9 +516,8 @@ func (g *OPCUAConnection) handleSingleEndpointDiscovery(ctx context.Context, end
 			updatedEndpoints = append(updatedEndpoints, endpoint)
 
 			return updatedEndpoints, nil
-		} else {
-			g.Log.Errorf("Invalid endpoint configuration")
 		}
+		g.Log.Errorf("Invalid endpoint configuration")
 		return nil, errors.New("invalid endpoint configuration")
 	}
 

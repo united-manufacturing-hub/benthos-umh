@@ -1335,10 +1335,9 @@ func (s *sparkplugOutput) publishDataMessage(data map[string]interface{}, msg *s
 			// Next DATA messages will include the new metrics normally
 			s.logger.Debug("Skipping DATA message during rebirth sequence")
 			return nil
-		} else {
-			s.logger.Debug("Rebirth debounced or already pending, skipping new metrics for now")
-			// Continue with existing metrics only
 		}
+		s.logger.Debug("Rebirth debounced or already pending, skipping new metrics for now")
+		// Continue with existing metrics only
 	}
 
 	// Check if rebirth is pending - if so, skip DATA messages

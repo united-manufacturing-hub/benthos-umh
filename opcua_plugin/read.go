@@ -381,12 +381,11 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, 
 			g.Log.Error("No messages received (including heartbeat) for over 10 seconds. Closing connection.")
 			_ = g.Close(ctx)
 			return nil, nil, service.ErrNotConnected
+		}
+		if g.ServerInfo.ManufacturerName == "Prosys OPC Ltd." {
+			g.Log.Info("No heartbeat message (ServerTime) received for over 10 seconds. This is normal for your Prosys OPC UA server. Other messages are being received; continuing operations. ")
 		} else {
-			if g.ServerInfo.ManufacturerName == "Prosys OPC Ltd." {
-				g.Log.Info("No heartbeat message (ServerTime) received for over 10 seconds. This is normal for your Prosys OPC UA server. Other messages are being received; continuing operations. ")
-			} else {
-				g.Log.Warn("No heartbeat message (ServerTime) received for over 10 seconds. Other messages are being received; continuing operations.")
-			}
+			g.Log.Warn("No heartbeat message (ServerTime) received for over 10 seconds. Other messages are being received; continuing operations.")
 		}
 	}
 

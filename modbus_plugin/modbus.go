@@ -352,11 +352,11 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		)
 		if addr, err = addrConf.FieldInt("address"); err != nil {
 			return nil, err
-		} else if addr < 0 || addr > 65535 { // Check if the value is within the range of uint16
-			return nil, fmt.Errorf("value out of range for uint16: %d", addr)
-		} else {
-			item.Address = uint16(addr) // Convert int to uint16
 		}
+		if addr < 0 || addr > 65535 { // Check if the value is within the range of uint16
+			return nil, fmt.Errorf("value out of range for uint16: %d", addr)
+		}
+		item.Address = uint16(addr) // Convert int to uint16
 
 		if item.Type, err = addrConf.FieldString("type"); err != nil {
 			return nil, err
@@ -364,19 +364,19 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 
 		if length, err = addrConf.FieldInt("length"); err != nil {
 			return nil, err
-		} else if length < 0 || length > 65535 { // Check if the value is within the range of uint16
-			return nil, fmt.Errorf("value out of range for uint16: %d", length)
-		} else {
-			item.Length = uint16(length) // Convert int to uint16
 		}
+		if length < 0 || length > 65535 { // Check if the value is within the range of uint16
+			return nil, fmt.Errorf("value out of range for uint16: %d", length)
+		}
+		item.Length = uint16(length) // Convert int to uint16
 
 		if bit, err = addrConf.FieldInt("bit"); err != nil {
 			return nil, err
-		} else if bit < 0 || bit > 65535 { // Check if the value is within the range of uint16
-			return nil, fmt.Errorf("value out of range for uint16: %d", bit)
-		} else {
-			item.Bit = uint16(bit) // Convert int to uint16
 		}
+		if bit < 0 || bit > 65535 { // Check if the value is within the range of uint16
+			return nil, fmt.Errorf("value out of range for uint16: %d", bit)
+		}
+		item.Bit = uint16(bit) // Convert int to uint16
 
 		if item.Scale, err = addrConf.FieldFloat("scale"); err != nil {
 			return nil, err

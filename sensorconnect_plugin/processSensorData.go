@@ -418,10 +418,9 @@ func (s *SensorConnectInput) processData(
 			return nil, err
 		}
 		return payload, nil
-	} else {
-		s.logger.Errorf("Missing input, neither SimpleDatatype, Datatype, nor DatatypeRef provided.")
-		return nil, fmt.Errorf("missing input, neither SimpleDatatype, Datatype, nor DatatypeRef provided")
 	}
+	s.logger.Errorf("Missing input, neither SimpleDatatype, Datatype, nor DatatypeRef provided.")
+	return nil, fmt.Errorf("missing input, neither SimpleDatatype, Datatype, nor DatatypeRef provided")
 }
 
 // getDatatypeFromDatatypeRef finds the actual Datatype description in the datatypeReferenceArray using the given DatatypeRef.
@@ -501,23 +500,22 @@ func (s *SensorConnectInput) processDatatype(
 			return nil, err
 		}
 		return payload, nil
-	} else {
-		binaryValue := s.extractBinaryValueFromRawSensorOutput(
-			rawSensorOutputBinaryPadded,
-			datatype.Type,
-			datatype.BitLength,
-			datatype.FixedLength,
-			outputBitLength,
-			bitOffset)
-		valueString, err := s.ConvertBinaryValue(binaryValue, datatype.Type)
-		if err != nil {
-			return nil, err
-		}
-		valueName := s.getNameFromExternalTextCollection(nameTextId, primLangExternalTextCollection)
-		payload := make(map[string]interface{})
-		payload[valueName] = valueString
-		return payload, nil
 	}
+	binaryValue := s.extractBinaryValueFromRawSensorOutput(
+		rawSensorOutputBinaryPadded,
+		datatype.Type,
+		datatype.BitLength,
+		datatype.FixedLength,
+		outputBitLength,
+		bitOffset)
+	valueString, err := s.ConvertBinaryValue(binaryValue, datatype.Type)
+	if err != nil {
+		return nil, err
+	}
+	valueName := s.getNameFromExternalTextCollection(nameTextId, primLangExternalTextCollection)
+	payload := make(map[string]interface{})
+	payload[valueName] = valueString
+	return payload, nil
 }
 
 // processRecordType iterates through the given RecordItemArray and processes each RecordItem.

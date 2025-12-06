@@ -698,12 +698,11 @@ func getDataValueForDescription(description string, statusCode ua.StatusCode) *u
 			Value:        ua.MustVariant(description),
 			Status:       ua.StatusOK,
 		}
-	} else {
-		return &ua.DataValue{
-			EncodingMask: ua.DataValueValue,
-			Value:        nil,
-			Status:       ua.StatusBadNotReadable,
-		}
+	}
+	return &ua.DataValue{
+		EncodingMask: ua.DataValueValue,
+		Value:        nil,
+		Status:       ua.StatusBadNotReadable,
 	}
 }
 
@@ -722,12 +721,11 @@ func getDataValueForDataType(id ua.TypeID, statusCode ua.StatusCode) *ua.DataVal
 			Value:        ua.MustVariant(ua.NewNumericNodeID(0, uint32(id))),
 			Status:       ua.StatusOK,
 		}
-	} else {
-		return &ua.DataValue{
-			EncodingMask: ua.DataValueValue,
-			Value:        nil,
-			Status:       ua.StatusBadNotReadable,
-		}
+	}
+	return &ua.DataValue{
+		EncodingMask: ua.DataValueValue,
+		Value:        nil,
+		Status:       ua.StatusBadNotReadable,
 	}
 }
 
