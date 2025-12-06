@@ -199,5 +199,4 @@ var _ = Describe("ProcessorWrapper", func() {
 			Expect(points).To(HaveLen(0))
 		})
 	})
-
 })

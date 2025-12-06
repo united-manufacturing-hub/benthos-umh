@@ -17,13 +17,13 @@ package schemavalidation
 import (
 	"fmt"
 	"strings"
-	"time"
-
 	"sync"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
@@ -317,7 +317,7 @@ var _ = Describe("Validator", func() {
 			Expect(err.Error()).To(ContainSubstring("schemas cannot be empty"))
 
 			err = validator.LoadSchemas("_test_contract", 1, map[string][]byte{
-				"_test_contract_v1_timeseries-number": []byte{},
+				"_test_contract_v1_timeseries-number": {},
 			})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("schema cannot be empty for subject"))

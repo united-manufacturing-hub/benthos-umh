@@ -47,7 +47,7 @@ func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 	// Compile the JavaScript code once
 	program, err := goja.Compile("nodered-fn.js", code, false)
 	if err != nil {
-		return nil, fmt.Errorf("failed to compile JavaScript code: %v", err)
+		return nil, fmt.Errorf("failed to compile JavaScript code: %w", err)
 	}
 
 	processor := &NodeREDJSProcessor{
@@ -115,7 +115,7 @@ func ConvertMessageToJSObject(msg *service.Message) (map[string]interface{}, err
 		// If message can't be converted to structured format, wrap raw bytes in a payload field
 		bytes, err := msg.AsBytes()
 		if err != nil {
-			return nil, fmt.Errorf("failed to convert message to bytes: %v", err)
+			return nil, fmt.Errorf("failed to convert message to bytes: %w", err)
 		}
 		return map[string]interface{}{
 			"payload": string(bytes),
@@ -299,7 +299,7 @@ func stringify(data any, depth uint8) (string, error) {
 func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[string]interface{}) error {
 	// Set up the msg variable in the JS environment
 	if err := vm.Set("msg", jsMsg); err != nil {
-		return fmt.Errorf("failed to set message in JS environment: %v", err)
+		return fmt.Errorf("failed to set message in JS environment: %w", err)
 	}
 
 	// Set up console for logging that uses Benthos logger
@@ -312,7 +312,7 @@ func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[stri
 	}
 
 	if err := vm.Set("console", console); err != nil {
-		return fmt.Errorf("failed to set console in JS environment: %v", err)
+		return fmt.Errorf("failed to set console in JS environment: %w", err)
 	}
 
 	return nil
@@ -440,7 +440,8 @@ func (u *NodeREDJSProcessor) processSingleMessage(msg *service.Message) (*servic
 
 // Helper function to log JavaScript errors
 func (u *NodeREDJSProcessor) logJSError(err error, jsMsg interface{}) {
-	if jsErr, ok := err.(*goja.Exception); ok {
+	jsErr := &goja.Exception{}
+	if errors.As(err, &jsErr) {
 		stack := jsErr.String()
 		u.logger.Errorf(`JavaScript execution failed:
 Error: %v

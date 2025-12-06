@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/twmb/franz-go/pkg/kgo"
+
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 	schemavalidation "github.com/united-manufacturing-hub/benthos-umh/uns_plugin/schema_validation"
 )
@@ -40,14 +41,16 @@ type TestMessagePublisher interface {
 	MessagePublisher
 }
 
-type ConnectFunc func(...kgo.Opt) error
-type CloseFunc func() error
-type ProduceFunc func(context.Context, []Record) error
-type TopicExistsFunc func(context.Context, string) (bool, int, error)
-type CreateTopicFunc func(context.Context, string, int32) error
+type (
+	ConnectFunc     func(...kgo.Opt) error
+	CloseFunc       func() error
+	ProduceFunc     func(context.Context, []Record) error
+	TopicExistsFunc func(context.Context, string) (bool, int, error)
+	CreateTopicFunc func(context.Context, string, int32) error
+)
 
 type MockKafkaClient struct {
-	// Mock behaviours
+	// Mock behaviors
 	connectFunc     ConnectFunc
 	closeFunc       CloseFunc
 	produceFunc     ProduceFunc
@@ -125,7 +128,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 	)
 
 	BeforeEach(func() {
-		// Default mock behaviours for the happy path
+		// Default mock behaviors for the happy path
 		// These functions can be overridden in the following tests
 		mockClient = &MockKafkaClient{
 			connectFunc: func(...kgo.Opt) error {
@@ -209,7 +212,6 @@ var _ = Describe("Initializing uns output plugin", func() {
 				client, ok := unsClient.client.(TestMessagePublisher)
 				Expect(ok).To(BeTrue())
 				Expect(client.IsCreateTopicCalled()).To(BeTrue())
-
 			})
 		})
 
@@ -237,7 +239,6 @@ var _ = Describe("Initializing uns output plugin", func() {
 			Expect(err).To(BeNil())
 			Expect(unsClient.client).To(BeNil())
 		})
-
 	})
 
 	Context("calling WriteBatch function", func() {

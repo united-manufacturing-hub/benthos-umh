@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
@@ -72,7 +73,7 @@ func messageToRawKafkaMsg(message *service.Message) (*proto.EventKafka, error) {
 	defer putPooledHeaderMap(tempHeaders)
 
 	// Extract all metadata into the temporary pooled map
-	err := message.MetaWalk(func(key string, value string) error {
+	err := message.MetaWalk(func(key, value string) error {
 		tempHeaders[key] = value
 		return nil
 	})

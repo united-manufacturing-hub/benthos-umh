@@ -77,7 +77,7 @@ func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsIn
 	if conf.Contains("umh_topics") {
 		topics, err := conf.FieldStringList("umh_topics")
 		if err != nil {
-			return config, fmt.Errorf("error while parsing the 'umh_topics' field from the plugin's config: %v", err)
+			return config, fmt.Errorf("error while parsing the 'umh_topics' field from the plugin's config: %w", err)
 		}
 		allTopics = append(allTopics, topics...)
 	}
@@ -86,7 +86,7 @@ func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsIn
 	if conf.Contains("umh_topic") {
 		topic, err := conf.FieldString("umh_topic")
 		if err != nil {
-			return config, fmt.Errorf("error while parsing the 'umh_topic' field from the plugin's config: %v", err)
+			return config, fmt.Errorf("error while parsing the 'umh_topic' field from the plugin's config: %w", err)
 		}
 		allTopics = append(allTopics, topic)
 	}
@@ -95,7 +95,7 @@ func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsIn
 	if conf.Contains("topic") {
 		topic, err := conf.FieldString("topic")
 		if err != nil {
-			return config, fmt.Errorf("error while parsing the 'topic' field from the plugin's config: %v", err)
+			return config, fmt.Errorf("error while parsing the 'topic' field from the plugin's config: %w", err)
 		}
 		allTopics = append(allTopics, topic)
 		if logger != nil {
@@ -128,7 +128,7 @@ func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsIn
 	if conf.Contains("kafka_topic") {
 		inputKafkaTopic, err := conf.FieldString("kafka_topic")
 		if err != nil {
-			return config, fmt.Errorf("error while parsing the 'kafka_topic' field from the plugin's config: %v", err)
+			return config, fmt.Errorf("error while parsing the 'kafka_topic' field from the plugin's config: %w", err)
 		}
 		config.inputKafkaTopic = inputKafkaTopic
 	}
@@ -137,7 +137,7 @@ func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsIn
 	if conf.Contains("broker_address") {
 		brokerAddr, err := conf.FieldString("broker_address")
 		if err != nil {
-			return config, fmt.Errorf("error while parsing the 'broker_address' from the plugin's config: %v", err)
+			return config, fmt.Errorf("error while parsing the 'broker_address' from the plugin's config: %w", err)
 		}
 		config.brokerAddress = brokerAddr
 	}
@@ -146,7 +146,7 @@ func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsIn
 	if conf.Contains("consumer_group") {
 		cg, err := conf.FieldString("consumer_group")
 		if err != nil {
-			return config, fmt.Errorf("error while parsing the 'consumer_group' from the plugin's config: %v", err)
+			return config, fmt.Errorf("error while parsing the 'consumer_group' from the plugin's config: %w", err)
 		}
 		config.consumerGroup = cg
 	}
@@ -155,7 +155,7 @@ func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsIn
 	if conf.Contains("metadata_format") {
 		metadataFormat, err := conf.FieldString("metadata_format")
 		if err != nil {
-			return config, fmt.Errorf("error while parsing the 'metadata_format' from the plugin's config: %v", err)
+			return config, fmt.Errorf("error while parsing the 'metadata_format' from the plugin's config: %w", err)
 		}
 		// Validate the value
 		switch metadataFormat {

@@ -42,11 +42,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
 var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
-
 	Context("Burst arrival after idle period (PCAP pattern)", func() {
 		// Test validates behavior under production timing pattern from customer PCAP:
 		// - Normal operation: 1 message every ~96 seconds (low rate)
@@ -295,7 +295,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 				Seq:       &ddataSeq,
 				Timestamp: &ddataTs,
 				Metrics: []*sparkplugb.Payload_Metric{
-					{Alias: uint64Ptr(100), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 24.8}}, // temperature
+					{Alias: uint64Ptr(100), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 24.8}},  // temperature
 					{Alias: uint64Ptr(101), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 102.1}}, // pressure
 					{Alias: uint64Ptr(102), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 66.5}},  // humidity
 				},

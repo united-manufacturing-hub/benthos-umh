@@ -16,12 +16,13 @@ package js_engine
 
 import (
 	"fmt"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/mapping"
 	"slices"
 
 	"github.com/dop251/goja/ast"
 	"github.com/dop251/goja/parser"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/mapping"
 )
 
 // StaticDetector analyzes JavaScript expressions to identify static vs dynamic mappings

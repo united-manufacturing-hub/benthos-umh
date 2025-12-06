@@ -47,14 +47,13 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	sparkplugplugin "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
 var _ = Describe("NDATA Message Splitting - Sequence Number Handling", func() {
-
 	Context("when processing multi-metric NDATA message", func() {
-
 		It("should add metric_index to split messages from NDATA with multiple metrics", func() {
 			// Given: NDATA message with seq=42 and 5 metrics
 			seq := uint64(42)
@@ -585,7 +584,6 @@ var _ = Describe("NDATA Message Splitting - Sequence Number Handling", func() {
 			// - All metadata fields present
 			// - No message drops detected
 		})
-
 	})
 })
 

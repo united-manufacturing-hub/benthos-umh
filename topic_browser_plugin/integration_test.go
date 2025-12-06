@@ -25,9 +25,7 @@ import (
 )
 
 var _ = Describe("Topic Browser Integration Tests", func() {
-
 	Describe("Pipeline Configuration", func() {
-
 		It("should emit UNS bundles at regular intervals when implemented", func() {
 			Skip("FIXME: Current implementation emits on every batch, but should buffer and emit once per second")
 

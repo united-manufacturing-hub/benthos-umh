@@ -21,11 +21,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/redpanda-data/benthos/v4/public/service"
-
 	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/errors"
 	"github.com/gopcua/opcua/ua"
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 const (
@@ -340,7 +339,6 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 		// Log operation limits
 		g.logServerCapabilities(caps)
-
 	}
 
 	// Create a subscription channel if needed

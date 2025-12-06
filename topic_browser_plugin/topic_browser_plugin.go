@@ -167,8 +167,8 @@ import (
 	"time"
 
 	lru "github.com/hashicorp/golang-lru"
-
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
@@ -253,7 +253,7 @@ func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Me
 	if len(messageBatch) == 0 {
 		// Return empty batch instead of nil to indicate successful filtering
 		// This prevents Benthos from counting this as a processor error
-		// 
+		//
 		// In Benthos, returning (nil, nil) from a processor can be interpreted as an error
 		// condition by the monitoring layer, while returning an empty MessageBatch is
 		// the correct way to indicate that a message was successfully processed but filtered out.
@@ -263,9 +263,9 @@ func (t *TopicBrowserProcessor) Process(ctx context.Context, message *service.Me
 		// However, the service layer's handling of nil vs empty batch differs in how it's counted in metrics.
 		return service.MessageBatch{}, nil
 	}
-	
+
 	// Note: ProcessBatch only returns 0 or 1 batch in this implementation:
-	//   - Empty slice when buffering messages (no emission yet)  
+	//   - Empty slice when buffering messages (no emission yet)
 	//   - Single batch containing the protobuf bundle when emitting
 	// We can safely return messageBatch[0] as there's never more than one batch
 	return messageBatch[0], nil
@@ -555,7 +555,6 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 		// Adaptive emission: CPU-aware controller determined it's time to flush
 		flushStartTime := time.Now()
 		intervalResult, err := t.flushBufferLocked()
-
 		if err != nil {
 			return nil, err
 		}
@@ -591,7 +590,6 @@ func (t *TopicBrowserProcessor) ProcessBatch(_ context.Context, batch service.Me
 		// Fallback to fixed interval if adaptive controller is not available
 		flushStartTime := time.Now()
 		intervalResult, err := t.flushBufferLocked()
-
 		if err != nil {
 			return nil, err
 		}
@@ -675,7 +673,7 @@ func (t *TopicBrowserProcessor) Close(_ context.Context) error {
 	return nil
 }
 
-func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, lruSize int, emitInterval time.Duration, maxEventsPerTopic int, maxBufferSize int) *TopicBrowserProcessor {
+func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, lruSize int, emitInterval time.Duration, maxEventsPerTopic, maxBufferSize int) *TopicBrowserProcessor {
 	// Validate LRU size - must be at least 1 for the processor to function properly
 	if lruSize < 1 {
 		panic("lru_size must be greater than 0 - the processor requires a cache to accumulate topic metadata")
@@ -808,7 +806,6 @@ The processor requires that the following metadata fields are set:
 
 		return NewTopicBrowserProcessor(mgr.Logger(), mgr.Metrics(), lruSize, emitInterval, maxEventsPerTopic, maxBufferSize), nil
 	})
-
 	if err != nil {
 		panic(err)
 	}
@@ -816,7 +813,7 @@ The processor requires that the following metadata fields are set:
 
 const (
 	hmapHdr  = 6 * uintptr(8) // runtime.hmap words (≈48 B)
-	bucketOv = uintptr(8)     // amortised overflow ptr / entry
+	bucketOv = uintptr(8)     // amortized overflow ptr / entry
 	strHdr   = uintptr(16)    // string header (len, data)
 	ifaceHdr = uintptr(16)    // empty-interface header (type, data)
 )

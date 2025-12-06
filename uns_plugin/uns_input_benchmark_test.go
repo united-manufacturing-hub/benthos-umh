@@ -250,7 +250,6 @@ func BenchmarkMessageProcessor_Creation(b *testing.B) {
 			}
 		})
 	}
-
 }
 
 // BenchmarkUnsInput_ReadBatch measures the performance of reading batches

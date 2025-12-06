@@ -24,8 +24,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
 // TestRebirthCommandGeneration tests the logic for generating REBIRTH commands
@@ -70,72 +71,72 @@ func TestRebirthCommandGeneration(t *testing.T) {
 		{
 			name:                "1-part key (should be invalid)",
 			deviceKey:           "Factory",
-			expectedTopic:       "",  // Should return early - no topic generated
-			expectedMetricName:  "",  // Should return early - no metric name
+			expectedTopic:       "", // Should return early - no topic generated
+			expectedMetricName:  "", // Should return early - no metric name
 			expectedTopicPrefix: "",
 		},
 		{
 			name:                "Empty key (should be invalid)",
 			deviceKey:           "",
-			expectedTopic:       "",  // Should return early - no topic generated
-			expectedMetricName:  "",  // Should return early - no metric name
+			expectedTopic:       "", // Should return early - no topic generated
+			expectedMetricName:  "", // Should return early - no metric name
 			expectedTopicPrefix: "",
 		},
 		{
 			name:                "4-part key (should be invalid)",
 			deviceKey:           "Factory/Edge/Device/Extra",
-			expectedTopic:       "",  // Should return early - validation rejects
-			expectedMetricName:  "",  // Should return early - validation rejects
+			expectedTopic:       "", // Should return early - validation rejects
+			expectedMetricName:  "", // Should return early - validation rejects
 			expectedTopicPrefix: "",
 		},
 		{
 			name:                "5-part key (should be invalid)",
 			deviceKey:           "A/B/C/D/E",
-			expectedTopic:       "",  // Should return early - validation rejects
-			expectedMetricName:  "",  // Should return early - validation rejects
+			expectedTopic:       "", // Should return early - validation rejects
+			expectedMetricName:  "", // Should return early - validation rejects
 			expectedTopicPrefix: "",
 		},
 		// Negative test cases - malformed inputs
 		{
 			name:                "Empty part in middle (group//device)",
 			deviceKey:           "TestFactory//Device1",
-			expectedTopic:       "",  // Empty part creates 3-part key with empty string
-			expectedMetricName:  "",  // Should be rejected - empty part invalid
+			expectedTopic:       "", // Empty part creates 3-part key with empty string
+			expectedMetricName:  "", // Should be rejected - empty part invalid
 			expectedTopicPrefix: "",
 		},
 		{
 			name:                "Leading slash",
 			deviceKey:           "/TestFactory/Line1",
-			expectedTopic:       "",  // Creates empty first part
-			expectedMetricName:  "",  // Should be rejected - empty part invalid
+			expectedTopic:       "", // Creates empty first part
+			expectedMetricName:  "", // Should be rejected - empty part invalid
 			expectedTopicPrefix: "",
 		},
 		{
 			name:                "Trailing slash",
 			deviceKey:           "TestFactory/Line1/",
-			expectedTopic:       "",  // Creates empty third part
-			expectedMetricName:  "",  // Should be rejected - empty part invalid
+			expectedTopic:       "", // Creates empty third part
+			expectedMetricName:  "", // Should be rejected - empty part invalid
 			expectedTopicPrefix: "",
 		},
 		{
 			name:                "Leading whitespace in key",
 			deviceKey:           " TestFactory/Line1",
-			expectedTopic:       "",  // Whitespace should be trimmed or rejected
-			expectedMetricName:  "",  // TODO: verify behavior - trim or reject?
+			expectedTopic:       "", // Whitespace should be trimmed or rejected
+			expectedMetricName:  "", // TODO: verify behavior - trim or reject?
 			expectedTopicPrefix: "",
 		},
 		{
 			name:                "Trailing whitespace in key",
 			deviceKey:           "TestFactory/Line1 ",
-			expectedTopic:       "",  // Whitespace should be trimmed or rejected
-			expectedMetricName:  "",  // TODO: verify behavior - trim or reject?
+			expectedTopic:       "", // Whitespace should be trimmed or rejected
+			expectedMetricName:  "", // TODO: verify behavior - trim or reject?
 			expectedTopicPrefix: "",
 		},
 		{
 			name:                "Whitespace in part",
 			deviceKey:           "Test Factory/Line 1",
-			expectedTopic:       "",  // Embedded spaces - verify SparkplugB spec
-			expectedMetricName:  "",  // TODO: verify if spaces allowed in identifiers
+			expectedTopic:       "", // Embedded spaces - verify SparkplugB spec
+			expectedMetricName:  "", // TODO: verify if spaces allowed in identifiers
 			expectedTopicPrefix: "",
 		},
 	}
@@ -149,51 +150,51 @@ func TestRebirthCommandGeneration(t *testing.T) {
 			var topic string
 			var controlMetricName string
 
-		// Replicate the validation logic from sendRebirthRequest (lines 1112-1132)
-		if len(parts) < 2 {
-			// Function would return early here
-			topic = ""
-			controlMetricName = ""
-		} else if len(parts) > 3 {
-			// Validation rejects keys with more than 3 parts
-			topic = ""
-			controlMetricName = ""
-		} else {
-			// Validate no empty parts (handles "group//device", "/group/node", "group/node/")
-			hasEmptyPart := false
-			hasWhitespacePart := false
-			hasEmbeddedWhitespace := false
-			for _, part := range parts {
-				trimmed := strings.TrimSpace(part)
-				if trimmed == "" {
-					hasEmptyPart = true
-					break
-				}
-				if trimmed != part {
-					hasWhitespacePart = true
-					break
-				}
-				// Check for embedded whitespace (SparkplugB identifiers should not contain spaces)
-				if strings.Contains(part, " ") {
-					hasEmbeddedWhitespace = true
-					break
-				}
-			}
-
-			if hasEmptyPart || hasWhitespacePart || hasEmbeddedWhitespace {
-				// Validation rejects keys with empty, whitespace, or embedded whitespace in parts
+			// Replicate the validation logic from sendRebirthRequest (lines 1112-1132)
+			if len(parts) < 2 {
+				// Function would return early here
 				topic = ""
 				controlMetricName = ""
-			} else if len(parts) == 2 {
-				// Node level rebirth
-				topic = fmt.Sprintf("spBv1.0/%s/NCMD/%s", parts[0], parts[1])
-				controlMetricName = "Node Control/Rebirth"
-			} else { // len(parts) == 3
-				// Device level rebirth
-				topic = fmt.Sprintf("spBv1.0/%s/DCMD/%s/%s", parts[0], parts[1], parts[2])
-				controlMetricName = "Device Control/Rebirth"
+			} else if len(parts) > 3 {
+				// Validation rejects keys with more than 3 parts
+				topic = ""
+				controlMetricName = ""
+			} else {
+				// Validate no empty parts (handles "group//device", "/group/node", "group/node/")
+				hasEmptyPart := false
+				hasWhitespacePart := false
+				hasEmbeddedWhitespace := false
+				for _, part := range parts {
+					trimmed := strings.TrimSpace(part)
+					if trimmed == "" {
+						hasEmptyPart = true
+						break
+					}
+					if trimmed != part {
+						hasWhitespacePart = true
+						break
+					}
+					// Check for embedded whitespace (SparkplugB identifiers should not contain spaces)
+					if strings.Contains(part, " ") {
+						hasEmbeddedWhitespace = true
+						break
+					}
+				}
+
+				if hasEmptyPart || hasWhitespacePart || hasEmbeddedWhitespace {
+					// Validation rejects keys with empty, whitespace, or embedded whitespace in parts
+					topic = ""
+					controlMetricName = ""
+				} else if len(parts) == 2 {
+					// Node level rebirth
+					topic = fmt.Sprintf("spBv1.0/%s/NCMD/%s", parts[0], parts[1])
+					controlMetricName = "Node Control/Rebirth"
+				} else { // len(parts) == 3
+					// Device level rebirth
+					topic = fmt.Sprintf("spBv1.0/%s/DCMD/%s/%s", parts[0], parts[1], parts[2])
+					controlMetricName = "Device Control/Rebirth"
+				}
 			}
-		}
 
 			// Verify topic
 			if topic != tt.expectedTopic {

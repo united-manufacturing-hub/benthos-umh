@@ -23,16 +23,14 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
-
-	"github.com/redpanda-data/benthos/v4/public/service"
-
 	_ "github.com/redpanda-data/benthos/v4/public/components/io"
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
+	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
 )
 
 var _ = Describe("Sensorconnect", func() {
-
 	var endpoint string
 
 	BeforeEach(func() {
@@ -43,7 +41,6 @@ var _ = Describe("Sensorconnect", func() {
 			Skip("Skipping test: environment variables not set")
 			return
 		}
-
 	})
 
 	When("CID is set to an invalid CID", func() {
@@ -76,7 +73,6 @@ var _ = Describe("Sensorconnect", func() {
 
 	When("ReadBatch", func() {
 		It("should receive data from the AL1350", func() {
-
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
 
@@ -152,7 +148,7 @@ var _ = Describe("Sensorconnect", func() {
 				}
 
 				// Iterate over each expected field and assert its presence and value
-				for key, _ := range expectedFields {
+				for key := range expectedFields {
 					_, exists := payload[key]
 					Expect(exists).To(BeTrue(), fmt.Sprintf("Field '%s' should exist in the messageStruct", key))
 				}
@@ -165,7 +161,6 @@ var _ = Describe("Sensorconnect", func() {
 		})
 
 		It("should receive raw data from the AL1350 ", func() {
-
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
 
@@ -235,7 +230,7 @@ var _ = Describe("Sensorconnect", func() {
 				}
 
 				// Iterate over each expected field and assert its presence and value
-				for key, _ := range expectedFields {
+				for key := range expectedFields {
 					_, exists := payload[key]
 					Expect(exists).To(BeTrue(), fmt.Sprintf("Field '%s' should exist in the messageStruct", key))
 				}
@@ -249,9 +244,7 @@ var _ = Describe("Sensorconnect", func() {
 	})
 
 	When("using a yaml and stream builder", func() {
-
 		It("should receive data", func() {
-
 			// Create a new stream builder
 			builder := service.NewStreamBuilder()
 
@@ -294,7 +287,6 @@ sensorconnect:
 				}, timeout).Should(BeNumerically(">", int64(0)))
 
 			cncl()
-
 		})
 	})
 })

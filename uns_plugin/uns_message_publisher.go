@@ -127,7 +127,6 @@ func (k *Client) IsTopicExists(ctx context.Context, topic string) (bool, int, er
 				return false, 0, nil
 			}
 			return true, len(td.Partitions.Numbers()), nil
-
 		}
 	}
 
@@ -143,7 +142,7 @@ func (k *Client) CreateTopic(ctx context.Context, topic string, partition int32)
 		return errors.New("empty topic name specified for topic creation")
 	}
 
-	//Since the plugin is going to communicate with the local broker, replication factor of 1 is a good default value
+	// Since the plugin is going to communicate with the local broker, replication factor of 1 is a good default value
 	replicationFactor := 1
 	cleanupPolicy := "compact,delete"
 	configs := map[string]*string{

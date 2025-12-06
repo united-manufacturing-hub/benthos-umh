@@ -27,10 +27,9 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/sha3"
-
 	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/ua"
+	"golang.org/x/crypto/sha3"
 )
 
 // parseBase64PEMBundle takes a base64-encoded string of a PEM bundle (containing both
@@ -97,7 +96,7 @@ func (g *OPCUAConnection) GetOPCUAClientOptions(
 		g.Log.Info("Using User Certificate based authentication")
 		userCertificateOpts, err := g.parseUserCertificateOptions()
 		if err != nil {
-			return nil, fmt.Errorf("error while parsing user certificate options: %v", err)
+			return nil, fmt.Errorf("error while parsing user certificate options: %w", err)
 		}
 		opts = append(opts, userCertificateOpts...)
 	}
@@ -116,7 +115,6 @@ func (g *OPCUAConnection) GetOPCUAClientOptions(
 					return nil, err
 				}
 				g.CachedTLSCertificate = cert
-
 			} else {
 				g.Log.Infof("No base64-encoded certificate provided, generating a new one...")
 
@@ -516,7 +514,6 @@ func (g *OPCUAConnection) handleSingleEndpointDiscovery(ctx context.Context, end
 			updatedEndpoints = append(updatedEndpoints, endpoint)
 
 			return updatedEndpoints, nil
-
 		} else {
 			g.Log.Errorf("Invalid endpoint configuration")
 		}
@@ -654,7 +651,7 @@ func (g *OPCUAConnection) connectWithoutSecurity(
 				return c, nil
 			}
 
-			// case where an error occured
+			// case where an error occurred
 			g.CloseExpected(ctx)
 			g.Log.Infof("Failed to connect, but continue anyway: %v", err)
 

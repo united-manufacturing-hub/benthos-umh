@@ -18,6 +18,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
@@ -262,6 +263,5 @@ var _ = Describe("Uns", func() {
 				}),
 			)
 		})
-
 	})
 })

@@ -131,8 +131,8 @@ type IoddFilemapKey struct {
 
 // AddNewDeviceToIoddFilesAndMap uses ioddFilemapKey to download new IODD file (if key not already in IoDevice map).
 func (s *SensorConnectInput) AddNewDeviceToIoddFilesAndMap(ctx context.Context,
-	ioddFilemapKey IoddFilemapKey) error {
-
+	ioddFilemapKey IoddFilemapKey,
+) error {
 	s.logger.Debugf("Requesting IODD file %v -> %s", ioddFilemapKey)
 	err := s.RequestSaveIoddFile(ctx, ioddFilemapKey)
 	if err != nil {

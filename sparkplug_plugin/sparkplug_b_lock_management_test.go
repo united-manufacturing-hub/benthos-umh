@@ -49,6 +49,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	sparkplugplugin "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
 	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )

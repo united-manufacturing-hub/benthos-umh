@@ -16,11 +16,12 @@ package js_security_test
 
 import (
 	"fmt"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 	"testing"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 )
 
 func TestSecurityBlockerDebug(t *testing.T) {

@@ -17,15 +17,15 @@ package sensorconnect_plugin_test
 import (
 	"context"
 	"fmt"
+	"os"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"os"
 
 	"github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
 )
 
 var _ = Describe("DownloadPortModeData Integration Tests", func() {
-
 	var endpoint string
 
 	BeforeEach(func() {
@@ -36,7 +36,6 @@ var _ = Describe("DownloadPortModeData Integration Tests", func() {
 			Skip("Skipping test: environment variables not set")
 			return
 		}
-
 	})
 
 	AfterEach(func() {

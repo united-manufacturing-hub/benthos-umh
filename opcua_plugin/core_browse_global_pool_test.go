@@ -15,27 +15,27 @@
 package opcua_plugin
 
 import (
-	"os"
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/gopcua/opcua/ua"
 	"github.com/google/uuid"
+	"github.com/gopcua/opcua/ua"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
 // recordingLogger records all debug log calls for testing
 type recordingLogger struct {
-	mu          sync.Mutex
-	debugCalls  []string
-	infoCalls   []string
-	warnCalls   []string
-	errorCalls  []string
+	mu         sync.Mutex
+	debugCalls []string
+	infoCalls  []string
+	warnCalls  []string
+	errorCalls []string
 }
 
 func (r *recordingLogger) Debugf(format string, args ...interface{}) {
@@ -2003,7 +2003,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 				Expect(ok).To(BeTrue())
 				Expect(val).NotTo(BeNil())
 			})
-
 		})
 
 		Context("when creating complete task with all fields", func() {
@@ -2070,35 +2069,34 @@ var _ = Describe("GlobalWorkerPool", func() {
 			It("should have Ctx as context.Context type", func() {
 				task := GlobalPoolTask{}
 				// Type assertion to verify field type
-				var _ context.Context = task.Ctx // Will fail if wrong type
+				_ = task.Ctx // Will fail if wrong type
 			})
 
 			It("should have Node as NodeBrowser interface type", func() {
 				task := GlobalPoolTask{}
 				// Type assertion to verify field type
-				var _ NodeBrowser = task.Node // Will fail if wrong type or not defined
+				_ = task.Node // Will fail if wrong type or not defined
 			})
 
 			It("should have Path as string type", func() {
 				task := GlobalPoolTask{}
-				var _ string = task.Path
+				_ = task.Path
 			})
 
 			It("should have Level as int type", func() {
 				task := GlobalPoolTask{}
-				var _ int = task.Level
+				_ = task.Level
 			})
 
 			It("should have ParentNodeID as string type", func() {
 				task := GlobalPoolTask{}
-				var _ string = task.ParentNodeID
+				_ = task.ParentNodeID
 			})
 
 			It("should have Visited as *sync.Map type", func() {
 				task := GlobalPoolTask{}
-				var _ *sync.Map = task.Visited
+				_ = task.Visited
 			})
-
 		})
 	})
 
@@ -2255,7 +2253,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				Eventually(func() uint64 {
 					metrics := pool.GetMetrics()
 					return metrics.TasksSubmitted
-				}).Within(2 * time.Second).Should(BeNumerically(">=", 4), "Should submit parent + 3 children")
+				}).Within(2*time.Second).Should(BeNumerically(">=", 4), "Should submit parent + 3 children")
 
 				// Should receive child results
 				Eventually(func() int {
@@ -2268,7 +2266,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 							return count
 						}
 					}
-				}).Within(3 * time.Second).Should(BeNumerically(">=", 3), "Should receive results for 3 children")
+				}).Within(3*time.Second).Should(BeNumerically(">=", 3), "Should receive results for 3 children")
 			})
 
 			It("should pass correct browse context to child tasks", func() {
@@ -2320,7 +2318,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				// We verify this indirectly by checking that browse was called on child
 				Eventually(func() bool {
 					return child.WasBrowseCalled()
-				}).Within(2 * time.Second).Should(BeTrue(), "Child node should be browsed (Level=2)")
+				}).Within(2*time.Second).Should(BeTrue(), "Child node should be browsed (Level=2)")
 			})
 		})
 
@@ -2540,7 +2538,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 					return parent.WasBrowseCalled() &&
 						child.WasBrowseCalled() &&
 						grandchild.WasBrowseCalled()
-				}).Within(3 * time.Second).Should(BeTrue(), "Should browse all levels")
+				}).Within(3*time.Second).Should(BeTrue(), "Should browse all levels")
 
 				// Should submit 3 tasks total (parent + child + grandchild)
 				Eventually(func() uint64 {
@@ -2609,7 +2607,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 							return len(results)
 						}
 					}
-				}).Within(3 * time.Second).Should(BeNumerically(">=", 3),
+				}).Within(3*time.Second).Should(BeNumerically(">=", 3),
 					"Should receive at least 3 NodeDef results")
 
 				// Verify paths are built correctly
@@ -2780,7 +2778,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 					return parentNode.WasBrowseCalled() &&
 						child1.WasBrowseCalled() &&
 						child2.WasBrowseCalled()
-				}).Within(3 * time.Second).Should(BeTrue(), "Should browse all nodes including children")
+				}).Within(3*time.Second).Should(BeTrue(), "Should browse all nodes including children")
 			})
 		})
 
@@ -2986,7 +2984,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 			// Shutdown pool IMMEDIATELY while children are being submitted in worker
 			// With 1000 children, the submission loop will still be running
-			time.Sleep(1 * time.Millisecond) // Minimal delay - just let worker start browse
+			time.Sleep(1 * time.Millisecond)                     // Minimal delay - just let worker start browse
 			shutdownErr := pool.Shutdown(100 * time.Millisecond) // Short timeout to force early shutdown
 
 			// The shutdown may timeout if worker is still processing, which is expected

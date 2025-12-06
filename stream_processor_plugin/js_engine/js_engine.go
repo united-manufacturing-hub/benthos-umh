@@ -16,14 +16,15 @@ package js_engine
 
 import (
 	"fmt"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_security"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 	"sync"
 	"time"
 
 	"github.com/dop251/goja"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_security"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 )
 
 // JSEngine handles JavaScript expression evaluation with caching and pooling

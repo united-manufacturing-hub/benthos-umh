@@ -135,9 +135,9 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 			Level:        0,  // Start at recursion level 0
 			ParentNodeID: nodeID.String(),
 			Visited:      &g.visited,
-			ResultChan:   nodeChan,      // Workers send NodeDef results here
-			ErrChan:      errChan,       // Workers send errors here
-			ProgressChan: nil,           // No progress reporting in production
+			ResultChan:   nodeChan, // Workers send NodeDef results here
+			ErrChan:      errChan,  // Workers send errors here
+			ProgressChan: nil,      // No progress reporting in production
 		}
 
 		if err := pool.SubmitTask(task); err != nil {
@@ -230,14 +230,12 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 			g.Log.Infof("error while getting the node list: %v", err)
 			return err
 		}
-
 	}
 
 	// Now add i=2258 to the nodeList, which is the CurrentTime node, which is used for heartbeats
 	// This is only added if the heartbeat is enabled
 	// instead of i=2258 the g.HeartbeatNodeId is used, which can be different in tests
 	if g.UseHeartbeat {
-
 		// Check if the node is already in the list
 		for _, node := range nodeList {
 			if node.NodeID.Namespace() == g.HeartbeatNodeId.Namespace() && node.NodeID.IntID() == g.HeartbeatNodeId.IntID() {
@@ -336,7 +334,6 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 		}
 
 		g.Log.Infof("Subscribed to %d nodes!", monitoredNodes)
-
 	}
 
 	return nil
@@ -408,7 +405,7 @@ func (g *OPCUAInput) decideDataChangeFilterSupport() (bool, bool) {
 
 		// Trial if not yet attempted this connection
 		if !g.ServerCapabilities.hasTrialedThisConnection {
-			return true, true  // Trial attempt
+			return true, true // Trial attempt
 		}
 
 		// Use cached trial result
@@ -651,7 +648,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 				if closeErr := g.Close(ctx); closeErr != nil {
 					g.Log.Errorf("Failed to close OPC UA connection: %v", closeErr)
 				}
-				return totalMonitored, fmt.Errorf("monitoring failed for node %s: %v", failedNode, result.StatusCode)
+				return totalMonitored, fmt.Errorf("monitoring failed for node %s: %w", failedNode, result.StatusCode)
 			}
 		}
 

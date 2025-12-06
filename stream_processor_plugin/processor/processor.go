@@ -20,13 +20,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
 	metrics2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/metrics"
 	pools2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/state"
-
-	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 // StreamProcessor is the main processor implementation

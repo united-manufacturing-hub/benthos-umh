@@ -2429,7 +2429,7 @@ tag_processor:
 			for i, msg := range messages {
 				GinkgoWriter.Printf("Verifying complex message %d\n", i+1)
 
-				msg.MetaWalk(func(key string, value string) error {
+				msg.MetaWalk(func(key, value string) error {
 					GinkgoWriter.Printf("Key: %s, Value: %s\n", key, value)
 					return nil
 				})

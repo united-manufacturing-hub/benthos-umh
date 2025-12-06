@@ -150,7 +150,6 @@ func (s *SensorConnectInput) GetConnectedDevices(ctx context.Context) ([]Connect
 
 		// Process other keys based on port mode
 		if deviceInfo.Mode == 3 { // IO-Link mode
-
 			// Process device ID
 			deviceIDKey := uri + "/iolinkdevice/deviceid"
 			deviceIDValue, exists := data[deviceIDKey]
@@ -238,7 +237,6 @@ func (s *SensorConnectInput) GetConnectedDevices(ctx context.Context) ([]Connect
 			} else {
 				s.logger.Warnf("Unexpected code for serial number on %s: %d", uri, serialValue.Code)
 			}
-
 		} else {
 			// For non-IO-Link modes, no product information is expected
 			s.logger.Debugf("%s is in mode %d, skipping product info", uri, deviceInfo.Mode)

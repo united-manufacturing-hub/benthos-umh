@@ -16,6 +16,7 @@ package opcua_plugin
 
 import (
 	"os"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -331,13 +332,9 @@ var _ = Describe("MonitorBatched UX recommendation messages", Label("ux-messages
 		It("should emit recommendation message with supportsDataChangeFilter: true", func() {
 			// Setup: Trial succeeds (StatusOK)
 			shouldTrial := true
-			supportsFilter := false
+			supportsFilter := shouldTrial
 
 			// Simulate trial success logic
-			if shouldTrial {
-				supportsFilter = true
-				// UX message would be emitted here in actual code
-			}
 
 			// Verify trial succeeded and capability was updated
 			Expect(supportsFilter).To(BeTrue(), "Trial should have succeeded")
@@ -354,13 +351,9 @@ var _ = Describe("MonitorBatched UX recommendation messages", Label("ux-messages
 		It("should emit recommendation message with supportsDataChangeFilter: false", func() {
 			// Setup: Trial fails (StatusBadFilterNotAllowed)
 			shouldTrial := true
-			supportsFilter := true
+			supportsFilter := !shouldTrial
 
 			// Simulate trial failure logic
-			if shouldTrial {
-				supportsFilter = false
-				// UX message would be emitted here in actual code
-			}
 
 			// Verify trial failed and capability was updated
 			Expect(supportsFilter).To(BeFalse(), "Trial should have failed")

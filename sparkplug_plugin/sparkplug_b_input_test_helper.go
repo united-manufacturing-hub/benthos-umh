@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 

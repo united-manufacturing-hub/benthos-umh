@@ -57,6 +57,7 @@ import (
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
@@ -90,37 +91,37 @@ func (fc *FormatConverter) sanitizeForUMH(input string) string {
 	if input == "" {
 		return ""
 	}
-	
+
 	// First pass: convert hierarchy separators to dots
 	result := strings.ReplaceAll(input, "/", ".")
 	result = strings.ReplaceAll(result, ":", ".")
-	
+
 	// Second pass: replace all other invalid characters with underscores
 	// Valid UMH topic characters: a-z, A-Z, 0-9, dot, underscore, hyphen
 	var sanitized strings.Builder
 	sanitized.Grow(len(result)) // Pre-allocate for performance
 	for _, char := range result {
-		if (char >= 'a' && char <= 'z') || 
-		   (char >= 'A' && char <= 'Z') || 
-		   (char >= '0' && char <= '9') || 
-		   char == '.' || char == '_' || char == '-' {
+		if (char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			char == '.' || char == '_' || char == '-' {
 			sanitized.WriteRune(char)
 		} else {
 			sanitized.WriteRune('_')
 		}
 	}
-	
+
 	// Third pass: collapse multiple consecutive dots
 	// Prevents "//" or "::" → ".." which would create invalid UMH topic segments
 	finalResult := sanitized.String()
 	for strings.Contains(finalResult, "..") {
 		finalResult = strings.ReplaceAll(finalResult, "..", ".")
 	}
-	
+
 	// Fourth pass: trim leading and trailing dots
 	// Prevents topic structure issues in UMH
 	finalResult = strings.Trim(finalResult, ".")
-	
+
 	return finalResult
 }
 
@@ -212,7 +213,7 @@ func (fc *FormatConverter) EncodeUMHToSparkplug(msg *service.Message, groupID, e
 func (fc *FormatConverter) DecodeSparkplugToUMH(sparkplugMsg *SparkplugMessage, dataContract string) (*UMHMessage, error) {
 	// Convert device ID back to location path
 	locationPath := fc.convertDeviceIDToLocationPath(sparkplugMsg.DeviceID)
-	
+
 	// Sanitize location path for UMH compatibility
 	locationPath = fc.sanitizeForUMH(locationPath)
 
@@ -221,7 +222,7 @@ func (fc *FormatConverter) DecodeSparkplugToUMH(sparkplugMsg *SparkplugMessage, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse Sparkplug metric name: %w", err)
 	}
-	
+
 	// Sanitize virtual path and tag name for UMH compatibility
 	if virtualPath != nil && *virtualPath != "" {
 		sanitizedVP := fc.sanitizeForUMH(*virtualPath)
@@ -424,10 +425,10 @@ func (fc *FormatConverter) constructSparkplugMetricName(topicInfo *proto.TopicIn
 // parseSparkplugMetricName parses a Sparkplug metric name back to virtual_path and tag_name.
 //
 // Priority order for separators:
-//   1. Colons (:) - traditional Sparkplug separator, split on LAST colon
-//   2. Forward slashes (/) - hierarchical paths, split on LAST slash  
-//   3. Dots (.) - fallback for already converted data, split on LAST dot
-//   4. No separators - entire string is tag_name
+//  1. Colons (:) - traditional Sparkplug separator, split on LAST colon
+//  2. Forward slashes (/) - hierarchical paths, split on LAST slash
+//  3. Dots (.) - fallback for already converted data, split on LAST dot
+//  4. No separators - entire string is tag_name
 //
 // Examples:
 //   - "motor:diagnostics:temperature" → virtual_path="motor.diagnostics", tag_name="temperature"
@@ -451,39 +452,39 @@ func (fc *FormatConverter) parseSparkplugMetricName(metricName string) (virtualP
 		// Split on last colon
 		virtualPathStr := metricName[:colonIndex]
 		tagName = metricName[colonIndex+1:]
-		
+
 		// Convert colons in virtual path to dots for UMH compatibility
 		virtualPathStr = strings.ReplaceAll(virtualPathStr, ":", ".")
-		
+
 		virtualPath = &virtualPathStr
 		return virtualPath, tagName, nil
 	}
-	
+
 	// Priority 2: Check for forward slashes (hierarchical paths like "Refrigeration/Motor 1/Amps")
 	slashIndex := strings.LastIndex(metricName, "/")
 	if slashIndex != -1 {
 		// Split on last slash
 		virtualPathStr := metricName[:slashIndex]
 		tagName = metricName[slashIndex+1:]
-		
+
 		// Convert slashes in virtual path to dots for UMH compatibility
 		virtualPathStr = strings.ReplaceAll(virtualPathStr, "/", ".")
-		
+
 		virtualPath = &virtualPathStr
 		return virtualPath, tagName, nil
 	}
-	
+
 	// Priority 3: Check for dots (fallback for already converted data)
 	lastDotIndex := strings.LastIndex(metricName, ".")
 	if lastDotIndex != -1 {
 		// Split at the last dot
 		virtualPathStr := metricName[:lastDotIndex]
 		tagName = metricName[lastDotIndex+1:]
-		
+
 		virtualPath = &virtualPathStr
 		return virtualPath, tagName, nil
 	}
-	
+
 	// No separators, entire string is tag name
 	return nil, metricName, nil
 }

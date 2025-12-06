@@ -47,7 +47,7 @@ var _ = Describe("Unit Tests", func() {
 	})
 
 	DescribeTable("should correctly update node paths",
-		func(nodes []NodeDef, expected []NodeDef) {
+		func(nodes, expected []NodeDef) {
 			UpdateNodePaths(nodes)
 			Expect(nodes).To(Equal(expected))
 		},
@@ -73,8 +73,7 @@ var _ = Describe("Unit Tests", func() {
 		}),
 	)
 
-	var _ = Describe("Unit Tests for browse function", Label("browse_test"), func() {
-
+	_ = Describe("Unit Tests for browse function", Label("browse_test"), func() {
 		var (
 			ctx              context.Context
 			cncl             context.CancelFunc
@@ -152,7 +151,6 @@ var _ = Describe("Unit Tests", func() {
 			})
 
 			It("should browse the root node with no children with right attributes", func() {
-
 				rootNode := createMockVariableNode(1234, "TestNode")
 				rootNode.attributes = append(rootNode.attributes, getDataValueForNodeClass(ua.NodeClassVariable))
 				rootNode.attributes = append(rootNode.attributes, getDataValueForBrowseName("TestNode"))
@@ -198,7 +196,6 @@ var _ = Describe("Unit Tests", func() {
 				Expect(nodes).Should(HaveLen(1))
 			})
 			It("root node with id.HasComponent should return 1 child", func() {
-
 				rootNode := createMockVariableNode(1234, "TestNode")
 				rootNode.attributes = append(rootNode.attributes, getDataValueForNodeClass(ua.NodeClassObject))
 				rootNode.attributes = append(rootNode.attributes, getDataValueForBrowseName("TestNode"))
@@ -253,7 +250,6 @@ var _ = Describe("Unit Tests", func() {
 				Expect(nodes[0].BrowseName).To(Equal("TestChildNode"))
 			})
 			It("root node with id.HasChild should return 1 child", func() {
-
 				rootNode := createMockVariableNode(1234, "TestNode")
 				rootNode.attributes = append(rootNode.attributes, getDataValueForNodeClass(ua.NodeClassObject))
 				rootNode.attributes = append(rootNode.attributes, getDataValueForBrowseName("TestNode"))
@@ -308,7 +304,6 @@ var _ = Describe("Unit Tests", func() {
 				Expect(nodes[0].BrowseName).To(Equal("TestChildNode"))
 			})
 			It("root node with id.Organizes should return 1 child", func() {
-
 				rootNode := createMockVariableNode(1234, "TestNode")
 				rootNode.attributes = append(rootNode.attributes, getDataValueForNodeClass(ua.NodeClassObject))
 				rootNode.attributes = append(rootNode.attributes, getDataValueForBrowseName("TestNode"))
@@ -424,7 +419,7 @@ var _ = Describe("Unit Tests", func() {
 
 		Context("When browsing a folder structure with HasTypeDefinition and HasChild references", func() {
 			It("should browse through ABC folder and return the ProcessValue variable", func() {
-				Skip("fake opc ua node browser cannot handle this, as children wiull always return all referencednodes independent of the nodeclass")
+				Skip("fake opc ua node browser cannot handle this, as children will always return all referencednodes independent of the nodeclass")
 				// Create ABC folder node
 				abcFolder := createMockVariableNode(1234, "ABC")
 				abcFolder.attributes = append(abcFolder.attributes, getDataValueForNodeClass(ua.NodeClassObject))
@@ -735,6 +730,7 @@ func getDataValueForDataType(id ua.TypeID, statusCode ua.StatusCode) *ua.DataVal
 		}
 	}
 }
+
 func (m *MockOpcuaNodeWraper) Attributes(ctx context.Context, attrs ...ua.AttributeID) ([]*ua.DataValue, error) {
 	return m.attributes, nil
 }
@@ -768,8 +764,7 @@ func (m *MockOpcuaNodeWraper) ReferencedNodes(ctx context.Context, refType uint3
 	return nil, nil
 }
 
-type MockLogger struct {
-}
+type MockLogger struct{}
 
 func (m *MockOpcuaNodeWraper) AddReferenceNode(refType uint32, node NodeBrowser) {
 	m.referenceNodes[refType] = append(m.referenceNodes[refType], node)
@@ -1080,21 +1075,20 @@ var _ = Describe("Browse Channel Blocking Behavior (ENG-3835)", func() {
 			go func() {
 				pool.SpawnWorkers(1)
 				task := GlobalPoolTask{
-				NodeID:       parentNode.ID().String(),
-				Ctx:          cancelCtx,
-				Node:         parentNode,
-				Path:         "",
-				Level:        0,
-				ParentNodeID: "",
-				Visited:      visited,
-				ResultChan:   nodeChan,
-				ErrChan:      errChan,
-				ProgressChan: opcuaBrowserChan,
+					NodeID:       parentNode.ID().String(),
+					Ctx:          cancelCtx,
+					Node:         parentNode,
+					Path:         "",
+					Level:        0,
+					ParentNodeID: "",
+					Visited:      visited,
+					ResultChan:   nodeChan,
+					ErrChan:      errChan,
+					ProgressChan: opcuaBrowserChan,
 				}
 				_ = pool.SubmitTask(task)
 				_ = pool.WaitForCompletion(DefaultBrowseCompletionTimeout)
 				close(done)
-
 			}()
 
 			// Let browse start processing (200ms for slow CI runners)

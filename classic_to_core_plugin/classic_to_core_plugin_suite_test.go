@@ -19,6 +19,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	_ "github.com/united-manufacturing-hub/benthos-umh/classic_to_core_plugin"
 )
 

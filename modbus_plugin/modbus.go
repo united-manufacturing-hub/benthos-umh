@@ -39,7 +39,7 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-//The plugin supports connections to PLCs via MODBUS/TCP, RTU over TCP, ASCII over TCP
+// The plugin supports connections to PLCs via MODBUS/TCP, RTU over TCP, ASCII over TCP
 
 // ModbusDataItemWithAddress struct defines the structure for the data items to be read from the Modbus device.
 type ModbusDataItemWithAddress struct {
@@ -75,7 +75,6 @@ type ModbusDataItemWithAddress struct {
 // ModbusInput struct defines the structure for our custom Benthos input plugin.
 // It holds the configuration necessary to establish a connection with a Modbus PLC,
 type ModbusInput struct {
-
 	// Benthos
 	TimeBetweenReads time.Duration // The time between two reads of a Modbus device. Useful if you want to read the device every x seconds. Defaults to 1s. Not to be confused with TimeBetweenRequests.
 
@@ -521,7 +520,6 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 }
 
 func (m *ModbusInput) CreateBatchesFromAddresses(addresses []ModbusDataItemWithAddress) (RequestSet, error) {
-
 	// Create a map of requests for each register type
 	collection := make(map[string][]modbusTag)
 
@@ -529,7 +527,6 @@ func (m *ModbusInput) CreateBatchesFromAddresses(addresses []ModbusDataItemWithA
 	// requests. This will produce one request per slave and register-type
 
 	for _, item := range addresses {
-
 		// Create a new tag
 		tag, err := m.newTag(item)
 		if err != nil {
@@ -794,7 +791,6 @@ func (m *ModbusInput) readSlaveData(slaveID byte, requests RequestSet) (msgBatch
 }
 
 func (m *ModbusInput) createMessageFromValue(item modbusTag, rawValue []byte, registerName string) *service.Message {
-
 	value := item.converter(rawValue)
 
 	b := make([]byte, 0)
@@ -917,7 +913,7 @@ func (m *ModbusInput) gatherRequestsCoil(requests []request) (service.MessageBat
 			bit := offset % 8
 
 			v := (bytes[idx] >> bit) & 0x01
-			//request.fields[i].value = field.converter([]byte{v})
+			// request.fields[i].value = field.converter([]byte{v})
 			m.Log.Debugf("  field %s with bit %d @ byte %d: %v --> %v", field.name, bit, idx, v, request.fields[i].value)
 
 			message := m.createMessageFromValue(field, []byte{v}, "coil")
@@ -953,7 +949,7 @@ func (m *ModbusInput) gatherRequestsDiscrete(requests []request) (service.Messag
 			bit := offset % 8
 
 			v := (bytes[idx] >> bit) & 0x01
-			//request.fields[i].value = field.converter([]byte{v})
+			// request.fields[i].value = field.converter([]byte{v})
 			m.Log.Debugf("  field %s with bit %d @ byte %d: %v --> %v", field.name, bit, idx, v, request.fields[i].value)
 
 			message := m.createMessageFromValue(field, []byte{v}, "discrete")
@@ -989,7 +985,7 @@ func (m *ModbusInput) gatherRequestsHolding(requests []request) (service.Message
 			length := 2 * uint32(field.length)                  // field length is in registers a 16bit
 
 			// Convert the actual value
-			//request.fields[i].value = field.converter(bytes[offset : offset+length])
+			// request.fields[i].value = field.converter(bytes[offset : offset+length])
 			m.Log.Debugf("  field %s with offset %d with len %d: %v --> %v", field.name, offset, length, bytes[offset:offset+length], request.fields[i].value)
 
 			message := m.createMessageFromValue(field, bytes[offset:offset+length], "holding")
@@ -1025,7 +1021,7 @@ func (m *ModbusInput) gatherRequestsInput(requests []request) (service.MessageBa
 			length := 2 * uint32(field.length)                  // field length is in registers a 16bit
 
 			// Convert the actual value
-			//request.fields[i].value = field.converter(bytes[offset : offset+length])
+			// request.fields[i].value = field.converter(bytes[offset : offset+length])
 			m.Log.Debugf("  field %s with offset %d with len %d: %v --> %v", field.name, offset, length, bytes[offset:offset+length], request.fields[i].value)
 
 			message := m.createMessageFromValue(field, bytes[offset:offset+length], "input")

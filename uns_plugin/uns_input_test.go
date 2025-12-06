@@ -37,11 +37,13 @@ type TestMessageConsumer interface {
 	MessageConsumer
 }
 
-type PollFetchesFunc func(context.Context) Fetches
-type CommitRecordsFunc func(context.Context) error
+type (
+	PollFetchesFunc   func(context.Context) Fetches
+	CommitRecordsFunc func(context.Context) error
+)
 
 type MockKafkaConsumerClient struct {
-	// Mock behaviours
+	// Mock behaviors
 	connectFunc       ConnectFunc
 	closeFunc         CloseFunc
 	pollFetchesFunc   PollFetchesFunc
@@ -154,7 +156,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 	}
 
 	BeforeEach(func() {
-		// Default mock behaviours for the happy path
+		// Default mock behaviors for the happy path
 		mockClient = &MockKafkaConsumerClient{
 			connectFunc: func(...kgo.Opt) error {
 				return nil
@@ -521,7 +523,6 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 				inputPlugin, err = NewUnsInput(mockClient, invalidInputConfig, resources.Logger(), resources.Metrics())
 				Expect(err).NotTo(BeNil())
 				Expect(err.Error()).To(ContainSubstring("error parsing regex"))
-
 			})
 		})
 
@@ -606,9 +607,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 })
 
 var _ = Describe("ParseFromBenthos config parsing", Label("config_parsing"), func() {
-	var (
-		logger *service.Logger
-	)
+	var logger *service.Logger
 
 	BeforeEach(func() {
 		resources := service.MockResources()
@@ -675,9 +674,7 @@ metadata_format: "invalid"
 })
 
 var _ = Describe("MessageProcessor metadata format conversion", Label("message_processor"), func() {
-	var (
-		metrics *UnsInputMetrics
-	)
+	var metrics *UnsInputMetrics
 
 	BeforeEach(func() {
 		resources := service.MockResources()
@@ -869,5 +866,4 @@ var _ = Describe("MessageProcessor regex filtering", Label("message_processor"),
 			}
 		})
 	})
-
 })

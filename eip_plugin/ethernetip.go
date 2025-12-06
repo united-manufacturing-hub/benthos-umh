@@ -28,7 +28,7 @@ const (
 	vendorIdDefault      = 0x9999
 	connSizeLargeDefault = 4000
 	keepAliveFreq        = time.Second * 30
-	//rpiDefault           = time.Millisecond * 2500
+	// rpiDefault           = time.Millisecond * 2500
 	socketTimeoutDefault = time.Second * 10
 )
 
@@ -223,7 +223,7 @@ func (g *EIPInput) Connect(ctx context.Context) error {
 		return err
 	}
 
-	// just an example which works for WAGO maybe reproducable for other devices
+	// just an example which works for WAGO maybe reproducible for other devices
 	err = g.logDeviceProperties()
 	if err != nil {
 		g.Log.Warnf("Unable to get device properties: %v", err)
@@ -235,7 +235,6 @@ func (g *EIPInput) Connect(ctx context.Context) error {
 }
 
 func (g *EIPInput) logDeviceProperties() error {
-
 	vendorIDAttr, err := g.CIP.GetAttrSingle(1, 1, 1)
 	if err != nil {
 		return err
@@ -291,16 +290,13 @@ func (g *EIPInput) logDeviceProperties() error {
 }
 
 func (g *EIPInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
-	var (
-		msgs service.MessageBatch
-	)
+	var msgs service.MessageBatch
 
 	for _, item := range g.Items {
-
 		// read either tags or attributes
 		dataAsString, err := g.readTagsOrAttributes(item)
 		if err != nil {
-			//service.ErrNotconnected
+			// service.ErrNotconnected
 			return nil, nil, err
 		}
 
@@ -309,7 +305,7 @@ func (g *EIPInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 
 		msg, err := CreateMessageFromValue(dataAsBytes, item)
 		if err != nil {
-			//service.ErrNotconnected
+			// service.ErrNotconnected
 			return nil, nil, err
 		}
 

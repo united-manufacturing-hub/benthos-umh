@@ -350,7 +350,7 @@ func (p *ClassicToCoreProcessor) parseClassicTopic(topic string) (*TopicComponen
 	}
 
 	// Find the schema (starts with underscore)
-	var schemaIndex = -1
+	schemaIndex := -1
 	for i := 2; i < len(parts); i++ { // Start from index 2 (after umh.v1)
 		if strings.HasPrefix(parts[i], "_") {
 			schemaIndex = i
@@ -398,7 +398,7 @@ func (p *ClassicToCoreProcessor) createCoreMessage(originalMsg *service.Message,
 	// Marshal payload
 	payloadBytes, err := json.Marshal(corePayload)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal Core payload: %v", err)
+		return nil, fmt.Errorf("failed to marshal Core payload: %w", err)
 	}
 
 	// Create new message
@@ -449,7 +449,7 @@ func (p *ClassicToCoreProcessor) createCoreMessage(originalMsg *service.Message,
 // It maintains the UMH hierarchical structure while adapting it for Core format by using the
 // target data contract and appending the field name. The resulting topic follows the pattern:
 // umh.v1.<location>.<target_contract>.<context>.<field_name>
-func (p *ClassicToCoreProcessor) constructCoreTopic(components *TopicComponents, fieldName string, targetSchema string) string {
+func (p *ClassicToCoreProcessor) constructCoreTopic(components *TopicComponents, fieldName, targetSchema string) string {
 	parts := []string{
 		components.Prefix,
 		components.Location,

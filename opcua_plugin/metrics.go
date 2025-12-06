@@ -20,15 +20,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-var (
-	// opcuaSubscriptionFailuresTotal tracks subscription failures by reason
-	opcuaSubscriptionFailuresTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "opcua_subscription_failures_total",
-			Help: "Total number of OPC UA subscription failures by reason",
-		},
-		[]string{"reason", "node_id"},
-	)
+// opcuaSubscriptionFailuresTotal tracks subscription failures by reason
+var opcuaSubscriptionFailuresTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "opcua_subscription_failures_total",
+		Help: "Total number of OPC UA subscription failures by reason",
+	},
+	[]string{"reason", "node_id"},
 )
 
 // RecordSubscriptionFailure increments failure counter with proper labels

@@ -30,7 +30,7 @@ import (
 // into a *gologix.Controller struct, which is needed for connection
 // - `endpoint` consists of the ip-address and if provided the port
 // otherwise it will just use the default-port 44818
-func parseController(endpoint string, pathStr string) (*gologix.Controller, error) {
+func parseController(endpoint, pathStr string) (*gologix.Controller, error) {
 	host, portStr, err := net.SplitHostPort(endpoint)
 	if err != nil {
 		host = endpoint
@@ -104,15 +104,15 @@ func parseAttributes(attributesConf []*service.ParsedConfig) ([]*CIPReadItem, er
 
 		parsedClass, err := strconv.ParseUint(parts[0], 0, 16)
 		if err != nil {
-			return nil, fmt.Errorf("parsing CIPClass from %s: %v", parts[0], err)
+			return nil, fmt.Errorf("parsing CIPClass from %s: %w", parts[0], err)
 		}
 		parsedInst, err := strconv.ParseUint(parts[1], 0, 32)
 		if err != nil {
-			return nil, fmt.Errorf("parsing CIPInstance from %s: %v", parts[1], err)
+			return nil, fmt.Errorf("parsing CIPInstance from %s: %w", parts[1], err)
 		}
 		parsedAttr, err := strconv.ParseUint(parts[2], 0, 16)
 		if err != nil {
-			return nil, fmt.Errorf("parsing CIPAttribute from %s: %v", parts[2], err)
+			return nil, fmt.Errorf("parsing CIPAttribute from %s: %w", parts[2], err)
 		}
 
 		// convert user string "bool", "real", etc. to CIPType
@@ -144,9 +144,7 @@ func parseAttributes(attributesConf []*service.ParsedConfig) ([]*CIPReadItem, er
 
 // parseTags parses the tagsConf into a list of CIPReadItems
 func parseTags(tagsConf []*service.ParsedConfig) ([]*CIPReadItem, error) {
-	var (
-		items []*CIPReadItem
-	)
+	var items []*CIPReadItem
 
 	for _, tag := range tagsConf {
 		isArray := false
@@ -190,7 +188,7 @@ func parseTags(tagsConf []*service.ParsedConfig) ([]*CIPReadItem, error) {
 			ArrayLength: arrayLen,
 			CIPDatatype: cipDatatype,
 			Alias:       alias,
-			//ConverterFunc: converterFn,
+			// ConverterFunc: converterFn,
 		}
 		items = append(items, item)
 	}

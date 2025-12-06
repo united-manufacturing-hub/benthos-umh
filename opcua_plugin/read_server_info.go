@@ -39,7 +39,6 @@ type ServerInfo struct {
 // the manufacturer name, product name, and software version. It queries specific nodes
 // identified by their NodeIDs to gather this data and constructs a ServerInfo struct with the results.
 func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo, error) {
-
 	if g.Client == nil {
 		return ServerInfo{}, errors.New("client is nil")
 	}

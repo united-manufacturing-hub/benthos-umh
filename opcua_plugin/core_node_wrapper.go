@@ -51,12 +51,12 @@ func (n *OpcuaNodeWrapper) Attributes(ctx context.Context, attrs ...ua.Attribute
 }
 
 func (n *OpcuaNodeWrapper) ReferencedNodes(ctx context.Context, refType uint32, browseDir ua.BrowseDirection, nodeClassMask ua.NodeClass, includeSubtypes bool) ([]NodeBrowser, error) {
-	refrences, err := n.n.ReferencedNodes(ctx, refType, browseDir, nodeClassMask, includeSubtypes)
+	references, err := n.n.ReferencedNodes(ctx, refType, browseDir, nodeClassMask, includeSubtypes)
 	if err != nil {
 		return nil, err
 	}
 	var result []NodeBrowser
-	for _, ref := range refrences {
+	for _, ref := range references {
 		result = append(result, NewOpcuaNodeWrapper(ref))
 	}
 	return result, nil

@@ -72,8 +72,8 @@ type GlobalPoolTask struct {
 	Visited *sync.Map // Prevents duplicate visits
 
 	// Result delivery (existing)
-	ResultChan   interface{}        // Accepts any channel type (e.g., chan NodeDef, chan<- NodeDef)
-	ErrChan      chan<- error       // Where to send errors
+	ResultChan   interface{}          // Accepts any channel type (e.g., chan NodeDef, chan<- NodeDef)
+	ErrChan      chan<- error         // Where to send errors
 	ProgressChan chan<- BrowseDetails // Optional progress updates (nil = no reporting)
 }
 
@@ -109,8 +109,8 @@ type GlobalWorkerPool struct {
 	metricsTasksFailed    uint64 // Failed tasks (errors) (atomic)
 
 	// Task completion tracking (NEW - for WaitForCompletion functionality)
-	pendingTasks int64      // Atomic counter for tasks in flight (includes recursive children)
-	completionMu sync.Mutex // Protects completionCond
+	pendingTasks   int64      // Atomic counter for tasks in flight (includes recursive children)
+	completionMu   sync.Mutex // Protects completionCond
 	completionCond *sync.Cond // Signals when pendingTasks reaches 0 (supports multiple waiters)
 }
 
@@ -131,8 +131,9 @@ type PoolMetrics struct {
 //   - If MaxWorkers = 0, no upper limit (unlimited mode)
 //
 // Example usage:
-//   pool := NewGlobalWorkerPool(profileAuto, logger)  // MaxWorkers=5
-//   pool.SpawnWorkers(3)                              // Start with 3 workers
+//
+//	pool := NewGlobalWorkerPool(profileAuto, logger)  // MaxWorkers=5
+//	pool.SpawnWorkers(3)                              // Start with 3 workers
 //
 // The taskChan buffer is sized at 2× MaxTagsToBrowse (200k) to handle browse
 // operation branching factor safely without blocking.
@@ -141,7 +142,7 @@ func NewGlobalWorkerPool(profile ServerProfile, logger Logger) *GlobalWorkerPool
 		profile:        profile, // Store which profile this pool uses
 		maxWorkers:     profile.MaxWorkers,
 		minWorkers:     profile.MinWorkers,
-		currentWorkers: 0, // Start with no workers - caller must spawn them
+		currentWorkers: 0,                                            // Start with no workers - caller must spawn them
 		taskChan:       make(chan GlobalPoolTask, MaxTagsToBrowse*2), // 200k buffer
 		workerControls: make(map[uuid.UUID]chan struct{}),
 		logger:         logger, // For debug logging in sendTaskResult
@@ -690,7 +691,6 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 			// Execute browse operation on task's node (AFTER attributes fetched)
 			children, err := task.Node.Children(task.Ctx, id.HierarchicalReferences,
 				ua.NodeClassVariable|ua.NodeClassObject)
-
 			// Handle browse errors
 			if err != nil {
 				if task.ErrChan != nil {

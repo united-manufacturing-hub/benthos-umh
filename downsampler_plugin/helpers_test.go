@@ -387,7 +387,7 @@ downsampler:
 }
 
 // BooleanBehaviorEntry creates a DescribeTable Entry for boolean equality testing
-func BooleanBehaviorEntry(description string, values []bool, expectedKept []bool) TableEntry {
+func BooleanBehaviorEntry(description string, values, expectedKept []bool) TableEntry {
 	var inputMessages []TestMessage
 	var expectedValues []interface{}
 

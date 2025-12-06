@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin/algorithms"
 )
 

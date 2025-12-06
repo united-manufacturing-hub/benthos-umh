@@ -24,8 +24,9 @@ import (
 	"log"
 	"time"
 
-	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
+
+	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
 // TestVector represents a test payload with metadata

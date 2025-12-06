@@ -16,11 +16,12 @@ package js_security
 
 import (
 	"fmt"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/constants"
 	"time"
 
 	"github.com/dop251/goja"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/constants"
 )
 
 // ConfigureJSRuntime sets up a Goja runtime with security constraints.

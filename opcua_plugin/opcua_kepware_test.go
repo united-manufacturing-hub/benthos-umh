@@ -21,11 +21,11 @@ import (
 	"time"
 
 	"github.com/gopcua/opcua/ua"
-	"github.com/redpanda-data/benthos/v4/public/service"
-	. "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/redpanda-data/benthos/v4/public/service"
+
+	. "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
 )
 
 // These are tests which only use the KepServer itself and none of the underlying

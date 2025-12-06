@@ -246,7 +246,6 @@ func (g *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 
 	msgs := make(service.MessageBatch, 0)
 	for i, b := range g.Batches {
-
 		// Create a new batch to read
 		batchToRead := make([]gos7.S7DataItem, len(b))
 		for i, item := range b {

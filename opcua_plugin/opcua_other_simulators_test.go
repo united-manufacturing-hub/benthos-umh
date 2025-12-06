@@ -22,14 +22,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	. "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
 	_ "github.com/redpanda-data/benthos/v4/public/components/io"
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	. "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
 )
 
 // other simulators are not running when starting up the devcontainer and are a rather manual process to start
@@ -124,7 +123,6 @@ var _ = Describe("Test Against Softing OPC DataFeed", Serial, func() {
 })
 
 var _ = Describe("Debugging test", func() {
-
 	var endpoint string
 
 	BeforeEach(func() {
@@ -135,13 +133,10 @@ var _ = Describe("Debugging test", func() {
 			Skip("Skipping test: environment variables not set")
 			return
 		}
-
 	})
 
 	When("using a yaml and stream builder", func() {
-
 		It("should subscribe to all nodes and receive data", func() {
-
 			// Create a new stream builder
 			builder := service.NewStreamBuilder()
 
@@ -190,13 +185,11 @@ opcua:
 				}, timeout).Should(BeNumerically(">", int64(0)))
 
 			cncl()
-
 		})
 	})
 })
 
 var _ = Describe("Test Against Prosys Simulator", func() {
-
 	var endpoint string
 
 	BeforeEach(func() {
@@ -207,16 +200,14 @@ var _ = Describe("Test Against Prosys Simulator", func() {
 			Skip("Skipping test: environment variables not set")
 			return
 		}
-
 	})
 
 	Describe("OPC UA Server Information", func() {
-
 		It("should connect to the server and retrieve server information", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 
-			var nodeIDStrings = []string{"ns=3;i=1003"}
+			nodeIDStrings := []string{"ns=3;i=1003"}
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
@@ -251,11 +242,8 @@ var _ = Describe("Test Against Prosys Simulator", func() {
 	})
 
 	Describe("YAML Configuration", func() {
-
 		When("using a yaml and stream builder", func() {
-
 			It("should subscribe to all nodes and receive data", func() {
-
 				// Create a new stream builder
 				builder := service.NewStreamBuilder()
 
@@ -304,21 +292,18 @@ opcua:
 					}, timeout).Should(BeNumerically(">", int64(0)))
 
 				cncl()
-
 			})
 		})
-
 	})
 
 	Describe("Insecure (None/None) Connect", func() {
-
 		var endpoint string
 
 		It("should read data correctly", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			var nodeIDStrings = []string{"ns=3;i=1003"}
+			nodeIDStrings := []string{"ns=3;i=1003"}
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
@@ -359,12 +344,11 @@ opcua:
 	})
 
 	Describe("Secure (SignAndEncrypt/Basic256Sha256) Connect", func() {
-
 		It("should read data correctly", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			var nodeIDStrings = []string{"ns=3;i=1003"}
+			nodeIDStrings := []string{"ns=3;i=1003"}
 			parsedNodeIDs := ParseNodeIDs(nodeIDStrings)
 
 			input := &OPCUAInput{
@@ -403,5 +387,4 @@ opcua:
 			}
 		})
 	})
-
 })

@@ -19,8 +19,9 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
 var _ = Describe("Protobuf Bundle Operations", func() {
@@ -269,5 +270,4 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 			Expect(err.Error()).To(ContainSubstring("failed to parse protobuf data"))
 		})
 	})
-
 })

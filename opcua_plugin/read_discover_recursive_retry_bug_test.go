@@ -74,8 +74,8 @@ var _ = Describe("MonitorBatched recursive retry bug reproduction", Label("recur
 			// Verify batch calculation
 			batches := CalculateBatches(totalNodes, maxBatchSize)
 			Expect(batches).To(HaveLen(2), "Should split 2000 nodes into 2 batches")
-			Expect(batches[0].End - batches[0].Start).To(Equal(1000), "Batch 1 should be 1000 nodes")
-			Expect(batches[1].End - batches[1].Start).To(Equal(1000), "Batch 2 should be 1000 nodes")
+			Expect(batches[0].End-batches[0].Start).To(Equal(1000), "Batch 1 should be 1000 nodes")
+			Expect(batches[1].End-batches[1].Start).To(Equal(1000), "Batch 2 should be 1000 nodes")
 
 			// =================================================================
 			// TRACK MONITOR CALLS
@@ -372,4 +372,3 @@ var _ = Describe("MonitorBatched recursive retry bug reproduction", Label("recur
 		})
 	})
 })
-

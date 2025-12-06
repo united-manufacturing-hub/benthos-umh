@@ -16,6 +16,7 @@ package opcua_plugin
 
 import (
 	"os"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -70,5 +71,4 @@ var _ = Describe("Connect Method ServerCapabilities", func() {
 				"Safe default should be false to trigger profile fallback in MonitorBatched")
 		})
 	})
-
 })

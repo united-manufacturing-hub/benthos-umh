@@ -37,7 +37,7 @@ func init() {
 }
 
 // newSwingingDoor validates the user-supplied config and returns
-// a fully-initialised compressor instance.
+// a fully-initialized compressor instance.
 func newSwingingDoor(cfg map[string]interface{}) (StreamCompressor, error) {
 	const name = "swinging_door"
 
@@ -90,7 +90,7 @@ func newSwingingDoor(cfg map[string]interface{}) (StreamCompressor, error) {
 		maxTime:   maxT,
 		minTime:   minT,
 	}
-	c.openDoor() // initialise slopes
+	c.openDoor() // initialize slopes
 	debugLog("Created SDT algorithm: threshold=%.3f, maxTime=%v, minTime=%v", thr, maxT, minT)
 	return c, nil
 }

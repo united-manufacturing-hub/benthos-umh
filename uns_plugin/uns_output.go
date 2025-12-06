@@ -25,6 +25,7 @@ import (
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/twmb/franz-go/pkg/kgo"
+
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 	schemavalidation "github.com/united-manufacturing-hub/benthos-umh/uns_plugin/schema_validation"
 )
@@ -190,7 +191,7 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 	maxInFlight := 100
 
 	batchPolicy := service.BatchPolicy{
-		Count:  100,     //max number of messages per batch
+		Count:  100,     // max number of messages per batch
 		Period: "100ms", // timeout to ensure timely delivery even if the count aren't met
 	}
 
@@ -201,7 +202,7 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 	if conf.Contains("umh_topic") {
 		messageKey, err := conf.FieldInterpolatedString("umh_topic")
 		if err != nil {
-			return nil, batchPolicy, 0, fmt.Errorf("error while parsing umh_topic field from the config: %v", err)
+			return nil, batchPolicy, 0, fmt.Errorf("error while parsing umh_topic field from the config: %w", err)
 		}
 		config.umh_topic = messageKey
 	}
@@ -211,7 +212,7 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 	if conf.Contains("broker_address") {
 		brokerAddress, err := conf.FieldString("broker_address")
 		if err != nil {
-			return nil, batchPolicy, 0, fmt.Errorf("error while parsing broker_address field from the config: %v", err)
+			return nil, batchPolicy, 0, fmt.Errorf("error while parsing broker_address field from the config: %w", err)
 		}
 		if brokerAddress != "" {
 			config.brokerAddress = brokerAddress
@@ -222,7 +223,7 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 	if conf.Contains("bridged_by") {
 		bridgedBy, err := conf.FieldString("bridged_by")
 		if err != nil {
-			return nil, batchPolicy, 0, fmt.Errorf("error while parsing bridged_by field from the config: %v", err)
+			return nil, batchPolicy, 0, fmt.Errorf("error while parsing bridged_by field from the config: %w", err)
 		}
 		if bridgedBy != "" {
 			config.bridgedBy = bridgedBy
@@ -233,7 +234,7 @@ func newUnsOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.B
 	if conf.Contains("schema_registry_url") {
 		schemaRegistryURL, err := conf.FieldString("schema_registry_url")
 		if err != nil {
-			return nil, batchPolicy, 0, fmt.Errorf("error while parsing schema_registry_url field from the config: %v", err)
+			return nil, batchPolicy, 0, fmt.Errorf("error while parsing schema_registry_url field from the config: %w", err)
 		}
 		config.schemaRegistryURL = schemaRegistryURL
 	} else {
@@ -299,7 +300,7 @@ func (o *unsOutput) Connect(ctx context.Context) error {
 		kgo.DisableIdempotentWrite(),                // Idempotent write is disabled since the  plugin is going to communicate with a local kafka broker where one could assume less network failures
 	)
 	if err != nil {
-		return fmt.Errorf("error while creating a kafka client with broker %s: %v", o.config.brokerAddress, err)
+		return fmt.Errorf("error while creating a kafka client with broker %s: %w", o.config.brokerAddress, err)
 	}
 
 	// Verify topic existence and partition count
@@ -316,7 +317,7 @@ func (o *unsOutput) Connect(ctx context.Context) error {
 func (o *unsOutput) verifyOutputTopic(ctx context.Context) error {
 	topicExists, partition, err := o.client.IsTopicExists(ctx, defaultOutputTopic)
 	if err != nil {
-		return fmt.Errorf("error while checking if the default output topic exists: %v", err)
+		return fmt.Errorf("error while checking if the default output topic exists: %w", err)
 	}
 
 	if topicExists && (partition != defaultOutputTopicPartitionCount) {
@@ -329,7 +330,7 @@ func (o *unsOutput) verifyOutputTopic(ctx context.Context) error {
 		// Default output topic doesn't exists. Create it
 		err = o.client.CreateTopic(ctx, defaultOutputTopic, defaultOutputTopicPartitionCount)
 		if err != nil {
-			return fmt.Errorf("error while creating the missing default output topic '%s': %v", defaultOutputTopic, err)
+			return fmt.Errorf("error while creating the missing default output topic '%s': %w", defaultOutputTopic, err)
 		}
 		o.log.Infof("Created output topic '%s' with %d partition(s)", defaultOutputTopic, defaultOutputTopicPartitionCount)
 	}
@@ -350,9 +351,8 @@ func (o *unsOutput) extractHeaders(msg *service.Message) (map[string][]byte, err
 		}
 		return nil
 	})
-
 	if err != nil {
-		return nil, fmt.Errorf("error extracting message metadata: %v", err)
+		return nil, fmt.Errorf("error extracting message metadata: %w", err)
 	}
 
 	// Set bridged_by config to the headers
@@ -366,7 +366,7 @@ func (o *unsOutput) validateAndEnrichMessage(msg *service.Message, unsTopic *top
 	// Validate the payload against the schema
 	validationResult := o.validator.Validate(unsTopic, msgAsBytes)
 	if !validationResult.SchemaCheckPassed && !validationResult.SchemaCheckBypassed {
-		return fmt.Errorf("schema validation failed for message %d with topic '%s': %v. Please check your payload format and ensure it matches the registered schema",
+		return fmt.Errorf("schema validation failed for message %d with topic '%s': %w. Please check your payload format and ensure it matches the registered schema",
 			messageIndex, unsTopic.String(), validationResult.Error)
 	}
 
@@ -393,7 +393,7 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 	for i, msg := range msgs {
 		key, err := o.config.umh_topic.TryString(msg)
 		if err != nil {
-			return fmt.Errorf("failed to resolve umh_topic field in message %d: %v", i, err)
+			return fmt.Errorf("failed to resolve umh_topic field in message %d: %w", i, err)
 		}
 
 		// TryString sets the key to "null" when the key is not set in the message
@@ -404,12 +404,12 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 		// Validate the UMH topic using the centralized topic library
 		unsTopic, err := topic.NewUnsTopic(key)
 		if err != nil {
-			return fmt.Errorf("error validating message key in message %d: invalid UMH topic '%s': %v", i, key, err)
+			return fmt.Errorf("error validating message key in message %d: invalid UMH topic '%s': %w", i, key, err)
 		}
 
 		msgAsBytes, err := msg.AsBytes()
 		if err != nil {
-			return fmt.Errorf("error getting content of message %d: %v", i, err)
+			return fmt.Errorf("error getting content of message %d: %w", i, err)
 		}
 
 		// Validate and enrich the message
@@ -419,7 +419,7 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 
 		headers, err := o.extractHeaders(msg)
 		if err != nil {
-			return fmt.Errorf("error processing message %d: %v", i, err)
+			return fmt.Errorf("error processing message %d: %w", i, err)
 		}
 
 		record := Record{
@@ -434,7 +434,7 @@ func (o *unsOutput) WriteBatch(ctx context.Context, msgs service.MessageBatch) e
 	}
 
 	if err := o.client.ProduceSync(ctx, records); err != nil {
-		return fmt.Errorf("error writing batch output to kafka: %v", err)
+		return fmt.Errorf("error writing batch output to kafka: %w", err)
 	}
 
 	o.log.Debugf("Successfully sent %d messages to topic '%s'", len(records), defaultOutputTopic)

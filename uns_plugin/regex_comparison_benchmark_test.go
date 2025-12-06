@@ -34,7 +34,7 @@ func NewMultiRegexProcessor(patterns []string) (*MultiRegexProcessor, error) {
 	for i, pattern := range patterns {
 		regex, err := regexp.Compile(pattern)
 		if err != nil {
-			return nil, fmt.Errorf("failed to compile regex pattern '%s': %v", pattern, err)
+			return nil, fmt.Errorf("failed to compile regex pattern '%s': %w", pattern, err)
 		}
 		regexes[i] = regex
 	}
@@ -65,7 +65,7 @@ func NewCombinedRegexProcessor(patterns []string) (*CombinedRegexProcessor, erro
 
 	regex, err := regexp.Compile(combinedPattern)
 	if err != nil {
-		return nil, fmt.Errorf("failed to compile combined regex pattern: %v", err)
+		return nil, fmt.Errorf("failed to compile combined regex pattern: %w", err)
 	}
 
 	return &CombinedRegexProcessor{regex: regex}, nil
@@ -84,7 +84,7 @@ func NewCombinedSortedRegexProcessor(patterns []string) (*CombinedSortedRegexPro
 	// Sort patterns by complexity
 	regexes, err := SortRegexesByComplexity(patterns)
 	if err != nil {
-		return nil, fmt.Errorf("failed to sort regexes: %v", err)
+		return nil, fmt.Errorf("failed to sort regexes: %w", err)
 	}
 
 	// Combine all patterns into one: (?:pattern1)|(?:pattern2)|(?:pattern3)
@@ -96,7 +96,7 @@ func NewCombinedSortedRegexProcessor(patterns []string) (*CombinedSortedRegexPro
 
 	regex, err := regexp.Compile(combinedPattern)
 	if err != nil {
-		return nil, fmt.Errorf("failed to compile combined regex pattern: %v", err)
+		return nil, fmt.Errorf("failed to compile combined regex pattern: %w", err)
 	}
 
 	return &CombinedSortedRegexProcessor{regex: regex}, nil

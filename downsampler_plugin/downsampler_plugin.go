@@ -56,6 +56,7 @@ import (
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin/algorithms"
 )
 
@@ -204,7 +205,7 @@ Use with tag_processor for UMH deployments to selectively bypass downsampling ba
 			Description("Topic-specific parameter overrides using pattern matching. Supports exact topic names and shell-style wildcards (* matches any sequence, ? matches any character).").
 			Optional()).
 		Field(service.NewBoolField("allow_meta_overrides").
-			Description("Honour per-message ds_* metadata.").
+			Description("Honor per-message ds_* metadata.").
 			Default(true))
 
 	err := service.RegisterBatchProcessor(
@@ -494,7 +495,7 @@ func (p *DownsamplerProcessor) ProcessBatch(ctx context.Context, batch service.M
 
 // flushAndRecreateProcessor handles parameter-only changes by flushing current data and recreating the processor.
 // This is the "ghetto" solution for meta-override parameter changes that ensures new parameters take effect immediately.
-func (p *DownsamplerProcessor) flushAndRecreateProcessor(state *SeriesState, seriesID string, algorithmType string, newConfig map[string]interface{}) error {
+func (p *DownsamplerProcessor) flushAndRecreateProcessor(state *SeriesState, seriesID, algorithmType string, newConfig map[string]interface{}) error {
 	// Log parameter change details for debugging
 	if oldThreshold, exists := state.lastConfig["threshold"]; exists {
 		if newThreshold, exists := newConfig["threshold"]; exists && oldThreshold != newThreshold {
@@ -1008,11 +1009,11 @@ func isNumeric(v interface{}) bool {
 
 // isDuration checks if a value is a duration type or string
 func isDuration(v interface{}) bool {
-	switch v.(type) {
+	switch v := v.(type) {
 	case time.Duration:
 		return true
 	case string:
-		_, err := time.ParseDuration(v.(string))
+		_, err := time.ParseDuration(v)
 		return err == nil
 	default:
 		return false

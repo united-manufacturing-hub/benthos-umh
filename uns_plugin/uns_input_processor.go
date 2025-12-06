@@ -41,7 +41,7 @@ func NewMessageProcessor(topicPatterns []string, metrics *UnsInputMetrics, metad
 	for i, pattern := range topicPatterns {
 		// Validate individual pattern first
 		if _, err := regexp.Compile(pattern); err != nil {
-			return nil, fmt.Errorf("invalid regex pattern at index %d: %s - %v", i, pattern, err)
+			return nil, fmt.Errorf("invalid regex pattern at index %d: %s - %w", i, pattern, err)
 		}
 		wrappedPatterns[i] = fmt.Sprintf("(?:%s)", pattern)
 	}
@@ -49,7 +49,7 @@ func NewMessageProcessor(topicPatterns []string, metrics *UnsInputMetrics, metad
 
 	topicRegex, err := regexp.Compile(combinedPattern)
 	if err != nil {
-		return nil, fmt.Errorf("failed to compile combined regex pattern: %v", err)
+		return nil, fmt.Errorf("failed to compile combined regex pattern: %w", err)
 	}
 
 	return &MessageProcessor{

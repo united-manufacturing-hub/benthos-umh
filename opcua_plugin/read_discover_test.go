@@ -15,9 +15,9 @@
 package opcua_plugin_test
 
 import (
-	"os"
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"

@@ -15,10 +15,10 @@
 package opcua_plugin
 
 import (
-	"golang.org/x/exp/slices"
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"golang.org/x/exp/slices"
 )
 
 // updateHeartbeatInMessageBatch processes the heartbeat message in a batch of messages.

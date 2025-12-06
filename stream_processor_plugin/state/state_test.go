@@ -19,11 +19,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/state"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/state"
 )
 
 var _ = Describe("StateManager", func() {

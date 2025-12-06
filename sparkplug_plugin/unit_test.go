@@ -28,10 +28,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 	sparkplugplugin "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
-	"google.golang.org/protobuf/proto"
 )
 
 // Helper functions for unit testing
@@ -51,9 +52,7 @@ func boolPtr(b bool) *bool {
 	return &b
 }
 
-
 var _ = Describe("AliasCache Unit Tests", func() {
-
 	var cache *sparkplugplugin.AliasCache
 
 	BeforeEach(func() {
@@ -251,7 +250,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 				},
 			}
 			cache.CacheAliases("TestFactory/Line1", validMetrics)
-			
+
 			// Try to resolve with non-existent aliases
 			dataMetrics := []*sparkplugb.Payload_Metric{
 				{
@@ -263,9 +262,9 @@ var _ = Describe("AliasCache Unit Tests", func() {
 					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 30.5},
 				},
 			}
-			
+
 			count := cache.ResolveAliases("TestFactory/Line1", dataMetrics)
-			Expect(count).To(Equal(0)) // No aliases should be resolved
+			Expect(count).To(Equal(0))              // No aliases should be resolved
 			Expect(dataMetrics[0].Name).To(BeNil()) // Name should remain nil
 			Expect(dataMetrics[1].Name).To(BeNil()) // Name should remain nil
 		})
@@ -279,7 +278,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 				},
 			}
 			cache.CacheAliases("TestFactory/Line1", metrics1)
-			
+
 			// Session 2 (simulated): Try to cache alias 100 for different metric
 			// This simulates a rebirth where aliases might be reassigned
 			metrics2 := []*sparkplugb.Payload_Metric{
@@ -289,7 +288,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 				},
 			}
 			cache.CacheAliases("TestFactory/Line1", metrics2)
-			
+
 			// Resolve should use the latest assignment
 			dataMetrics := []*sparkplugb.Payload_Metric{
 				{
@@ -318,10 +317,10 @@ var _ = Describe("AliasCache Unit Tests", func() {
 					Alias: uint64Ptr(0), // Min value - will be skipped as 0 is invalid
 				},
 			}
-			
+
 			count := cache.CacheAliases("TestFactory/Line1", largeAliasMetrics)
 			Expect(count).To(Equal(2)) // Only 2 should be cached, alias 0 is invalid
-			
+
 			// Verify resolution works with extreme values
 			dataMetrics := []*sparkplugb.Payload_Metric{
 				{
@@ -333,7 +332,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 200.0},
 				},
 			}
-			
+
 			resolved := cache.ResolveAliases("TestFactory/Line1", dataMetrics)
 			Expect(resolved).To(Equal(1)) // Only 1 resolved, alias 0 was not cached
 			Expect(*dataMetrics[0].Name).To(Equal("MaxAlias"))
@@ -344,7 +343,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 			// This test ensures thread safety in alias cache operations
 			done := make(chan bool)
 			errors := make(chan error, 10)
-			
+
 			// Concurrent writers
 			for i := 0; i < 5; i++ {
 				go func(idx int) {
@@ -359,7 +358,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 					done <- true
 				}(i)
 			}
-			
+
 			// Concurrent readers
 			for i := 0; i < 5; i++ {
 				go func(idx int) {
@@ -374,12 +373,12 @@ var _ = Describe("AliasCache Unit Tests", func() {
 					done <- true
 				}(i)
 			}
-			
+
 			// Wait for all goroutines
 			for i := 0; i < 10; i++ {
 				<-done
 			}
-			
+
 			// Verify no errors occurred
 			select {
 			case err := <-errors:
@@ -403,7 +402,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 				{"Test\nFactory/Line1", "newline in key"},
 				{"Test\x00Factory/Line1", "null byte in key"},
 			}
-			
+
 			for _, tc := range testCases {
 				metrics := []*sparkplugb.Payload_Metric{
 					{
@@ -411,7 +410,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 						Alias: uint64Ptr(100),
 					},
 				}
-				
+
 				count := cache.CacheAliases(tc.deviceKey, metrics)
 				// Most implementations should handle empty key specially
 				if tc.deviceKey == "" {
@@ -432,7 +431,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 				},
 			}
 			cache.CacheAliases("TestFactory/Line1", validMetrics)
-			
+
 			// Try to resolve with various invalid metrics
 			invalidDataMetrics := []*sparkplugb.Payload_Metric{
 				{
@@ -452,11 +451,11 @@ var _ = Describe("AliasCache Unit Tests", func() {
 					Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 30.5},
 				},
 			}
-			
+
 			count := cache.ResolveAliases("TestFactory/Line1", invalidDataMetrics)
 			// Implementation should handle these gracefully
 			Expect(count).To(BeNumerically(">=", 0))
-			
+
 			// Check that existing name wasn't overwritten
 			if invalidDataMetrics[2].Name != nil {
 				Expect(*invalidDataMetrics[2].Name).To(Equal("ExistingName"))
@@ -468,7 +467,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 			for session := 0; session < 3; session++ {
 				// Clear cache to simulate new session
 				cache.Clear()
-				
+
 				// Each session uses different aliases for same metrics
 				metrics := []*sparkplugb.Payload_Metric{
 					{
@@ -480,10 +479,10 @@ var _ = Describe("AliasCache Unit Tests", func() {
 						Alias: uint64Ptr(uint64(101 + session*10)),
 					},
 				}
-				
+
 				count := cache.CacheAliases("TestFactory/Line1", metrics)
 				Expect(count).To(Equal(2))
-				
+
 				// Verify old aliases don't work
 				if session > 0 {
 					oldDataMetrics := []*sparkplugb.Payload_Metric{
@@ -495,7 +494,7 @@ var _ = Describe("AliasCache Unit Tests", func() {
 					resolved := cache.ResolveAliases("TestFactory/Line1", oldDataMetrics)
 					Expect(resolved).To(Equal(0)) // Old aliases should not resolve
 				}
-				
+
 				// Verify new aliases work
 				newDataMetrics := []*sparkplugb.Payload_Metric{
 					{
@@ -511,11 +510,8 @@ var _ = Describe("AliasCache Unit Tests", func() {
 	})
 })
 
-
 var _ = Describe("TypeConverter Unit Tests", func() {
-
 	Context("Data Type Conversions", func() {
-		
 		It("should convert Sparkplug types to UMH format", func() {
 			// Test various Sparkplug data type conversions
 			testCases := []struct {
@@ -714,14 +710,12 @@ var _ = Describe("MQTTClientBuilder Unit Tests", func() {
 	})
 })
 
-
 var _ = Describe("Configuration Unit Tests", func() {
-
 	Context("Three-Mode System Validation", func() {
 		It("should validate role values", func() {
 			// Test valid roles
 			validRoles := []string{"secondary_passive", "secondary_active", "primary"}
-			
+
 			for _, role := range validRoles {
 				By(fmt.Sprintf("validating role: %s", role), func() {
 					config := &sparkplugplugin.Config{
@@ -734,20 +728,20 @@ var _ = Describe("Configuration Unit Tests", func() {
 							GroupID: "TestGroup",
 						},
 					}
-					
+
 					// For primary role, edge_node_id is required
 					if role == "primary" {
 						config.Identity.EdgeNodeID = "PrimaryHost"
 					}
-					
+
 					err := config.Validate()
 					Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Role %s should be valid", role))
 				})
 			}
-			
+
 			// Test invalid roles
 			invalidRoles := []string{"host", "invalid", "secondary"}
-			
+
 			for _, role := range invalidRoles {
 				By(fmt.Sprintf("rejecting invalid role: %s", role), func() {
 					config := &sparkplugplugin.Config{
@@ -760,20 +754,20 @@ var _ = Describe("Configuration Unit Tests", func() {
 							GroupID: "TestGroup",
 						},
 					}
-					
+
 					err := config.Validate()
 					Expect(err).To(HaveOccurred())
 					Expect(err.Error()).To(ContainSubstring("invalid role"))
 				})
 			}
 		})
-		
+
 		It("should default to secondary_passive role", func() {
 			config := &sparkplugplugin.Config{}
 			config.AutoDetectRole()
 			Expect(config.Role).To(Equal(sparkplugplugin.RoleSecondaryPassive))
 		})
-		
+
 		It("should require edge_node_id for primary role", func() {
 			config := &sparkplugplugin.Config{
 				Role: sparkplugplugin.RolePrimaryHost,
@@ -786,18 +780,18 @@ var _ = Describe("Configuration Unit Tests", func() {
 					// EdgeNodeID is missing
 				},
 			}
-			
+
 			err := config.Validate()
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("edge_node_id is required for Primary Host"))
 		})
-		
+
 		It("should not require edge_node_id for secondary modes", func() {
 			secondaryModes := []sparkplugplugin.Role{
 				sparkplugplugin.RoleSecondaryPassive,
 				sparkplugplugin.RoleSecondaryActive,
 			}
-			
+
 			for _, role := range secondaryModes {
 				By(fmt.Sprintf("testing %s without edge_node_id", role), func() {
 					config := &sparkplugplugin.Config{
@@ -811,7 +805,7 @@ var _ = Describe("Configuration Unit Tests", func() {
 							// EdgeNodeID is not required
 						},
 					}
-					
+
 					err := config.Validate()
 					Expect(err).NotTo(HaveOccurred())
 				})
@@ -1031,8 +1025,6 @@ var _ = Describe("MessageProcessor Unit Tests", func() {
 		})
 	})
 })
-
-
 
 // P8 Sparkplug B Spec Compliance Audit Tests
 var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
@@ -1263,9 +1255,9 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 		It("should support metric-level timestamps with official protobuf", func() {
 			// Test metric-level timestamp functionality using the official Eclipse Tahu protobuf
 			// This functionality was added to ensure Sparkplug B specification compliance
-			
+
 			timestampValue := uint64(time.Now().UnixMilli()) // Current timestamp
-			
+
 			// Create a metric with timestamp using the official protobuf
 			metric := &sparkplugb.Payload_Metric{
 				Name:      func() *string { s := "test_metric"; return &s }(),
@@ -1275,27 +1267,27 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 				},
 				Datatype: func() *uint32 { d := uint32(10); return &d }(), // Double type
 			}
-			
+
 			// Verify timestamp is properly set
 			Expect(metric.Timestamp).NotTo(BeNil(), "Metric should have timestamp field")
 			Expect(*metric.Timestamp).To(Equal(timestampValue), "Metric timestamp should match set value")
-			
+
 			// Verify the metric can be marshaled and unmarshaled with timestamp intact
 			payload := &sparkplugb.Payload{
 				Timestamp: &timestampValue,
 				Seq:       func() *uint64 { s := uint64(1); return &s }(),
 				Metrics:   []*sparkplugb.Payload_Metric{metric},
 			}
-			
+
 			// Marshal to protobuf bytes
 			payloadBytes, err := proto.Marshal(payload)
 			Expect(err).NotTo(HaveOccurred(), "Should marshal payload with metric timestamps")
-			
+
 			// Unmarshal and verify timestamp is preserved
 			var reconstructedPayload sparkplugb.Payload
 			err = proto.Unmarshal(payloadBytes, &reconstructedPayload)
 			Expect(err).NotTo(HaveOccurred(), "Should unmarshal payload with metric timestamps")
-			
+
 			// Verify metric timestamp is preserved
 			Expect(len(reconstructedPayload.Metrics)).To(Equal(1), "Should have one metric")
 			reconstructedMetric := reconstructedPayload.Metrics[0]
@@ -1358,9 +1350,6 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 // P9 Edge Case Validation Tests
 var _ = Describe("P9 Edge Case Validation", func() {
 	Context("Dynamic Behavior Testing", func() {
-
-
-
 		It("should handle sequence number wraparound (255 → 0)", func() {
 			// Test sequence number wraparound edge case
 			sequenceManager := sparkplugplugin.NewSequenceManager()
@@ -1418,8 +1407,6 @@ var _ = Describe("P9 Edge Case Validation", func() {
 			newCount := cache.CacheAliases("Factory/Line1", newMetrics)
 			Expect(newCount).To(Equal(3), "Should handle new metrics after reconnect")
 		})
-
-
 	})
 
 	Context("Large Payload Handling", func() {
@@ -1868,11 +1855,11 @@ var _ = Describe("EON Node ID Resolution (Parris Method) Unit Tests", func() {
 var _ = Describe("UMH Metadata Generation Unit Tests", func() {
 	Context("Full Conversion Flow with Slashes and Colons", func() {
 		var converter *sparkplugplugin.FormatConverter
-		
+
 		BeforeEach(func() {
 			converter = sparkplugplugin.NewFormatConverter()
 		})
-		
+
 		It("should handle Refrigeration/receiverLevel through complete conversion flow", func() {
 			// Test the actual issue: metric with slash like "Refrigeration/receiverLevel"
 			// Step 1: Create a Sparkplug message with slash in metric name
@@ -1885,16 +1872,16 @@ var _ = Describe("UMH Metadata Generation Unit Tests", func() {
 				DataType:   "Double",
 				Timestamp:  time.Now(),
 			}
-			
+
 			// Step 2: Pre-process as the input does - replace slash with dot
 			processedMetricName := strings.ReplaceAll(sparkplugMsg.MetricName, "/", ".")
 			sparkplugMsg.MetricName = processedMetricName // "Refrigeration.receiverLevel"
-			
+
 			// Step 3: Convert to UMH
 			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
 			Expect(err).ToNot(HaveOccurred())
 			Expect(umhMsg).ToNot(BeNil())
-			
+
 			// Step 4: Verify the parsing - splits on last dot
 			// "Refrigeration.receiverLevel" splits into:
 			// - virtual path: "Refrigeration"
@@ -1902,34 +1889,34 @@ var _ = Describe("UMH Metadata Generation Unit Tests", func() {
 			Expect(umhMsg.TopicInfo.VirtualPath).ToNot(BeNil())
 			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Refrigeration"))
 			Expect(umhMsg.TopicInfo.Name).To(Equal("receiverLevel"))
-			
+
 			// Step 5: Verify sanitization happened in the conversion
 			// The sanitization is now done internally during conversion
 			// Check that the final topic contains the sanitized values
 			Expect(umhMsg.Topic).To(ContainSubstring("Refrigeration"))
 			Expect(umhMsg.Topic).To(ContainSubstring("receiverLevel"))
 		})
-		
+
 		It("should handle virtual paths with colons correctly", func() {
 			// Test metric with colons for virtual path: "vpath:segment:temperature"
 			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
 				GroupID:    "TestGroup",
-				EdgeNodeID: "TestNode", 
+				EdgeNodeID: "TestNode",
 				DeviceID:   "TestDevice",
 				MetricName: "vpath:segment:temperature", // Colons for virtual path
 				Value:      25.3,
 				DataType:   "Double",
 				Timestamp:  time.Now(),
 			}
-			
+
 			// Pre-process - replace colons with dots
 			processedMetricName := strings.ReplaceAll(sparkplugMsg.MetricName, ":", ".")
 			sparkplugMsg.MetricName = processedMetricName // "vpath.segment.temperature"
-			
+
 			// Convert to UMH
 			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
 			Expect(err).ToNot(HaveOccurred())
-			
+
 			// Verify parsing - splits on last dot
 			// "vpath.segment.temperature" splits into:
 			// - virtual path: "vpath.segment"
@@ -1937,13 +1924,13 @@ var _ = Describe("UMH Metadata Generation Unit Tests", func() {
 			Expect(umhMsg.TopicInfo.VirtualPath).ToNot(BeNil())
 			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("vpath.segment"))
 			Expect(umhMsg.TopicInfo.Name).To(Equal("temperature"))
-			
+
 			// Verify sanitization happened in the conversion
 			// The sanitization is now done internally during conversion
 			Expect(umhMsg.Topic).To(ContainSubstring("vpath.segment"))
 			Expect(umhMsg.Topic).To(ContainSubstring("temperature"))
 		})
-		
+
 		It("should handle mixed colons and slashes correctly", func() {
 			// Test complex case: "motor:diagnostics/Refrigeration/temperature"
 			// Colons separate virtual path, slashes are hierarchical within names
@@ -1956,16 +1943,16 @@ var _ = Describe("UMH Metadata Generation Unit Tests", func() {
 				DataType:   "Double",
 				Timestamp:  time.Now(),
 			}
-			
+
 			// Step 1: Pre-process - replace both slashes and colons with dots
 			processedMetricName := strings.ReplaceAll(sparkplugMsg.MetricName, "/", ".")
 			processedMetricName = strings.ReplaceAll(processedMetricName, ":", ".")
 			sparkplugMsg.MetricName = processedMetricName // "motor.diagnostics.Refrigeration.temperature"
-			
+
 			// Step 2: Convert to UMH
 			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
 			Expect(err).ToNot(HaveOccurred())
-			
+
 			// Step 3: Verify parsing - splits on last dot
 			// "motor.diagnostics.Refrigeration.temperature" splits into:
 			// - virtual path: "motor.diagnostics.Refrigeration"
@@ -1973,13 +1960,13 @@ var _ = Describe("UMH Metadata Generation Unit Tests", func() {
 			Expect(umhMsg.TopicInfo.VirtualPath).ToNot(BeNil())
 			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("motor.diagnostics.Refrigeration"))
 			Expect(umhMsg.TopicInfo.Name).To(Equal("temperature"))
-			
+
 			// Step 4: Verify sanitization happened in the conversion
 			// The sanitization is now done internally during conversion
 			Expect(umhMsg.Topic).To(ContainSubstring("motor.diagnostics.Refrigeration"))
 			Expect(umhMsg.Topic).To(ContainSubstring("temperature"))
 		})
-		
+
 		It("should provide fallback when conversion fails due to invalid characters", func() {
 			// Test with characters that would fail UMH validation even after slash replacement
 			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
@@ -1991,30 +1978,30 @@ var _ = Describe("UMH Metadata Generation Unit Tests", func() {
 				DataType:   "Double",
 				Timestamp:  time.Now(),
 			}
-			
+
 			// Attempt conversion (with sanitization now integrated, this should succeed)
 			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
-			
+
 			// With sanitization now integrated in the converter,
 			// the conversion should succeed even with invalid characters
 			Expect(err).To(BeNil())
 			Expect(umhMsg).ToNot(BeNil())
-			
+
 			// Verify sanitized values in topic
 			// Note: Only DeviceID is used for location path, not GroupID/EdgeNodeID
 			Expect(umhMsg.Topic).To(ContainSubstring("Test_Device"))
 			Expect(umhMsg.Topic).To(ContainSubstring("metric_name"))
 		})
 	})
-	
+
 	Context("Location Path Generation without trailing dots (ENG-3428)", func() {
 		It("should build location path correctly when LocationSublevels is empty", func() {
 			// This test verifies the fix for ENG-3428
 			// Previously, empty LocationSublevels would create "RealisticDevice." with trailing dot
-			
+
 			level0 := "RealisticDevice"
 			locationSublevels := []string{}
-			
+
 			// Build location path as the fixed implementation does
 			var locationPath string
 			if len(locationSublevels) > 0 {
@@ -2022,7 +2009,7 @@ var _ = Describe("UMH Metadata Generation Unit Tests", func() {
 			} else {
 				locationPath = level0
 			}
-			
+
 			// Should not have trailing dot
 			Expect(locationPath).To(Equal("RealisticDevice"))
 			Expect(locationPath).NotTo(HaveSuffix("."))
@@ -2031,7 +2018,7 @@ var _ = Describe("UMH Metadata Generation Unit Tests", func() {
 		It("should build location path correctly when LocationSublevels has values", func() {
 			level0 := "enterprise"
 			locationSublevels := []string{"site", "area", "line"}
-			
+
 			// Build location path
 			var locationPath string
 			if len(locationSublevels) > 0 {
@@ -2039,7 +2026,7 @@ var _ = Describe("UMH Metadata Generation Unit Tests", func() {
 			} else {
 				locationPath = level0
 			}
-			
+
 			// Should be properly joined
 			Expect(locationPath).To(Equal("enterprise.site.area.line"))
 		})
@@ -2047,7 +2034,7 @@ var _ = Describe("UMH Metadata Generation Unit Tests", func() {
 		It("should handle single sublevel correctly", func() {
 			level0 := "factory"
 			locationSublevels := []string{"line1"}
-			
+
 			// Build location path
 			var locationPath string
 			if len(locationSublevels) > 0 {
@@ -2055,7 +2042,7 @@ var _ = Describe("UMH Metadata Generation Unit Tests", func() {
 			} else {
 				locationPath = level0
 			}
-			
+
 			Expect(locationPath).To(Equal("factory.line1"))
 		})
 	})
@@ -2497,56 +2484,56 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 		type testLogger struct {
 			messages []string
 		}
-		
+
 		type testMetrics struct {
 			counters map[string]int64
 		}
-		
+
 		It("should suppress rebirth commands in secondary_passive mode", func() {
 			// Create a mock metrics to verify behavior
 			mockMetrics := &testMetrics{
 				counters: make(map[string]int64),
 			}
-			
+
 			// Test inputs for different roles
 			testCases := []struct {
-				role                   sparkplugplugin.Role
-				expectRebirthSent      bool
+				role                    sparkplugplugin.Role
+				expectRebirthSent       bool
 				expectRebirthSuppressed bool
 			}{
 				{
-					role:                   sparkplugplugin.RoleSecondaryPassive,
-					expectRebirthSent:      false,
+					role:                    sparkplugplugin.RoleSecondaryPassive,
+					expectRebirthSent:       false,
 					expectRebirthSuppressed: true,
 				},
 				{
-					role:                   sparkplugplugin.RoleSecondaryActive,
-					expectRebirthSent:      true,
+					role:                    sparkplugplugin.RoleSecondaryActive,
+					expectRebirthSent:       true,
 					expectRebirthSuppressed: false,
 				},
 				{
-					role:                   sparkplugplugin.RolePrimaryHost,
-					expectRebirthSent:      true,
+					role:                    sparkplugplugin.RolePrimaryHost,
+					expectRebirthSent:       true,
 					expectRebirthSuppressed: false,
 				},
 			}
-			
+
 			for _, tc := range testCases {
 				By(fmt.Sprintf("testing rebirth behavior for role: %s", tc.role), func() {
 					// Reset metrics
 					mockMetrics.counters = make(map[string]int64)
-					
+
 					// Simulate rebirth request logic
 					shouldSendRebirth := tc.role != sparkplugplugin.RoleSecondaryPassive
-					
+
 					if !shouldSendRebirth {
 						// Simulate metric increment
 						mockMetrics.counters["rebirths_suppressed"]++
 					}
-					
+
 					// Verify behavior
 					Expect(shouldSendRebirth).To(Equal(tc.expectRebirthSent))
-					
+
 					if tc.expectRebirthSuppressed {
 						Expect(mockMetrics.counters["rebirths_suppressed"]).To(Equal(int64(1)))
 					} else {
@@ -2555,11 +2542,11 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 				})
 			}
 		})
-		
+
 		It("should handle subscription topics correctly for each mode", func() {
 			testCases := []struct {
-				role             sparkplugplugin.Role
-				expectSubscribe  bool
+				role            sparkplugplugin.Role
+				expectSubscribe bool
 			}{
 				{
 					role:            sparkplugplugin.RoleSecondaryPassive,
@@ -2574,7 +2561,7 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 					expectSubscribe: true,
 				},
 			}
-			
+
 			for _, tc := range testCases {
 				By(fmt.Sprintf("testing subscription for role: %s", tc.role), func() {
 					config := &sparkplugplugin.Config{
@@ -2583,9 +2570,9 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 							GroupID: "TestGroup",
 						},
 					}
-					
+
 					topics := config.GetSubscriptionTopics()
-					
+
 					// All host modes should subscribe to topics
 					if tc.expectSubscribe {
 						Expect(len(topics)).To(BeNumerically(">", 0))
@@ -2600,11 +2587,11 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 		It("should correctly identify rebirth commands in NCMD payloads", func() {
 			// This test verifies the rebirth command detection logic
 			// which is the core functionality needed for handling rebirths
-			
+
 			testCases := []struct {
-				name           string
-				payload        *sparkplugb.Payload
-				expectRebirth  bool
+				name          string
+				payload       *sparkplugb.Payload
+				expectRebirth bool
 			}{
 				{
 					name: "Valid rebirth command with name",
@@ -2666,12 +2653,12 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 
 			for _, tc := range testCases {
 				By(fmt.Sprintf("Testing: %s", tc.name))
-				
+
 				// This simulates the actual rebirth detection logic from handleRebirthCommand
 				rebirthRequested := false
 				for _, metric := range tc.payload.Metrics {
 					isRebirthMetric := false
-					
+
 					// Check named metric first (spec compliant approach)
 					if metric.Name != nil && *metric.Name == "Node Control/Rebirth" {
 						isRebirthMetric = true
@@ -2680,15 +2667,15 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 						// Alias 1 is reserved for "Node Control/Rebirth" in NBIRTH
 						isRebirthMetric = true
 					}
-					
+
 					// If this is a rebirth metric with boolean true value
 					if isRebirthMetric && metric.GetBooleanValue() {
 						rebirthRequested = true
 						break
 					}
 				}
-				
-				Expect(rebirthRequested).To(Equal(tc.expectRebirth), 
+
+				Expect(rebirthRequested).To(Equal(tc.expectRebirth),
 					fmt.Sprintf("Test case '%s' failed", tc.name))
 			}
 		})
@@ -2696,9 +2683,9 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 		It("should marshal and unmarshal rebirth command payloads correctly", func() {
 			// Test that rebirth command payloads can be correctly marshaled/unmarshaled
 			// This is critical for MQTT message handling
-			
+
 			rebirthMetric := &sparkplugb.Payload_Metric{
-				Name: func() *string { s := "Node Control/Rebirth"; return &s }(),
+				Name:  func() *string { s := "Node Control/Rebirth"; return &s }(),
 				Alias: func() *uint64 { a := uint64(1); return &a }(),
 				Value: &sparkplugb.Payload_Metric_BooleanValue{
 					BooleanValue: true,
@@ -2855,7 +2842,7 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 		It("should handle spaces in metric names", func() {
 			// Test case from actual error log: "Overview/Motor 1/Amps"
 			converter := sparkplugplugin.NewFormatConverter()
-			
+
 			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
 				GroupID:    "TestGroup",
 				EdgeNodeID: "TestNode",
@@ -2865,10 +2852,10 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 				DataType:   "double",
 				Timestamp:  time.Now(),
 			}
-			
+
 			// This should succeed after proper sanitization
 			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
-			
+
 			Expect(err).NotTo(HaveOccurred())
 			Expect(umhMsg).NotTo(BeNil())
 			Expect(umhMsg.TopicInfo.Level0).To(Equal("SimDeviceDevice"))
@@ -2879,7 +2866,7 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 
 		It("should handle multiple special characters", func() {
 			converter := sparkplugplugin.NewFormatConverter()
-			
+
 			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
 				GroupID:    "TestGroup",
 				EdgeNodeID: "TestNode",
@@ -2889,9 +2876,9 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 				DataType:   "double",
 				Timestamp:  time.Now(),
 			}
-			
+
 			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
-			
+
 			Expect(err).NotTo(HaveOccurred())
 			Expect(umhMsg).NotTo(BeNil())
 			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device_123"))
@@ -2902,7 +2889,7 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 
 		It("should handle parentheses, brackets, and braces", func() {
 			converter := sparkplugplugin.NewFormatConverter()
-			
+
 			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
 				GroupID:    "TestGroup",
 				EdgeNodeID: "TestNode",
@@ -2912,9 +2899,9 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 				DataType:   "int32",
 				Timestamp:  time.Now(),
 			}
-			
+
 			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
-			
+
 			Expect(err).NotTo(HaveOccurred())
 			Expect(umhMsg).NotTo(BeNil())
 			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device-01"))
@@ -2925,7 +2912,7 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 
 		It("should handle ampersands and other symbols", func() {
 			converter := sparkplugplugin.NewFormatConverter()
-			
+
 			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
 				GroupID:    "TestGroup",
 				EdgeNodeID: "TestNode",
@@ -2935,9 +2922,9 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 				DataType:   "int64",
 				Timestamp:  time.Now(),
 			}
-			
+
 			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
-			
+
 			Expect(err).NotTo(HaveOccurred())
 			Expect(umhMsg).NotTo(BeNil())
 			Expect(umhMsg.TopicInfo.Level0).To(Equal("PLC_01"))
@@ -2948,7 +2935,7 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 
 		It("should handle quotes and apostrophes", func() {
 			converter := sparkplugplugin.NewFormatConverter()
-			
+
 			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
 				GroupID:    "TestGroup",
 				EdgeNodeID: "TestNode",
@@ -2958,9 +2945,9 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 				DataType:   "float",
 				Timestamp:  time.Now(),
 			}
-			
+
 			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
-			
+
 			Expect(err).NotTo(HaveOccurred())
 			Expect(umhMsg).NotTo(BeNil())
 			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device01"))
@@ -2971,7 +2958,7 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 
 		It("should handle currency and math symbols", func() {
 			converter := sparkplugplugin.NewFormatConverter()
-			
+
 			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
 				GroupID:    "TestGroup",
 				EdgeNodeID: "TestNode",
@@ -2981,9 +2968,9 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 				DataType:   "double",
 				Timestamp:  time.Now(),
 			}
-			
+
 			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
-			
+
 			Expect(err).NotTo(HaveOccurred())
 			Expect(umhMsg).NotTo(BeNil())
 			Expect(umhMsg.TopicInfo.Level0).To(Equal("Accounting"))
@@ -2994,7 +2981,7 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 
 		It("should handle tabs and newlines", func() {
 			converter := sparkplugplugin.NewFormatConverter()
-			
+
 			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
 				GroupID:    "TestGroup",
 				EdgeNodeID: "TestNode",
@@ -3004,9 +2991,9 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 				DataType:   "int32",
 				Timestamp:  time.Now(),
 			}
-			
+
 			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
-			
+
 			Expect(err).NotTo(HaveOccurred())
 			Expect(umhMsg).NotTo(BeNil())
 			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device01"))
@@ -3017,7 +3004,7 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 
 		It("should preserve valid characters (letters, numbers, dash, underscore)", func() {
 			converter := sparkplugplugin.NewFormatConverter()
-			
+
 			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
 				GroupID:    "TestGroup",
 				EdgeNodeID: "TestNode",
@@ -3027,9 +3014,9 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 				DataType:   "int32",
 				Timestamp:  time.Now(),
 			}
-			
+
 			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
-			
+
 			Expect(err).NotTo(HaveOccurred())
 			Expect(umhMsg).NotTo(BeNil())
 			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device-123_ABC"))
@@ -3040,7 +3027,7 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 
 		It("should handle consecutive special characters", func() {
 			converter := sparkplugplugin.NewFormatConverter()
-			
+
 			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
 				GroupID:    "TestGroup",
 				EdgeNodeID: "TestNode",
@@ -3050,9 +3037,9 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 				DataType:   "int32",
 				Timestamp:  time.Now(),
 			}
-			
+
 			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
-			
+
 			Expect(err).NotTo(HaveOccurred())
 			Expect(umhMsg).NotTo(BeNil())
 			Expect(umhMsg.TopicInfo.Level0).To(Equal("Device__01"))
@@ -3064,7 +3051,7 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 
 		It("should handle Unicode/international characters", func() {
 			converter := sparkplugplugin.NewFormatConverter()
-			
+
 			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
 				GroupID:    "TestGroup",
 				EdgeNodeID: "TestNode",
@@ -3074,9 +3061,9 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 				DataType:   "double",
 				Timestamp:  time.Now(),
 			}
-			
+
 			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
-			
+
 			Expect(err).NotTo(HaveOccurred())
 			Expect(umhMsg).NotTo(BeNil())
 			Expect(umhMsg.TopicInfo.Level0).To(Equal("Ger_t01"))
@@ -3088,7 +3075,7 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 		It("should handle the real-world error case from logs", func() {
 			// This is the exact case from the error logs
 			converter := sparkplugplugin.NewFormatConverter()
-			
+
 			sparkplugMsg := &sparkplugplugin.SparkplugMessage{
 				GroupID:    "SimDeviceGroup",
 				EdgeNodeID: "SimDeviceEdgeNode",
@@ -3098,9 +3085,9 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 				DataType:   "double",
 				Timestamp:  time.Unix(0, 1757438863902*int64(time.Millisecond)),
 			}
-			
+
 			umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
-			
+
 			// With proper sanitization, this should succeed
 			Expect(err).NotTo(HaveOccurred())
 			Expect(umhMsg).NotTo(BeNil())
@@ -3109,7 +3096,7 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 			Expect(umhMsg.TopicInfo.VirtualPath).NotTo(BeNil())
 			Expect(*umhMsg.TopicInfo.VirtualPath).To(Equal("Overview.Motor_1"))
 			Expect(umhMsg.TopicInfo.Name).To(Equal("Amps"))
-			
+
 			// The resulting UMH topic should be valid
 			builder := topic.NewBuilder()
 			builder.SetLevel0(umhMsg.TopicInfo.Level0)
@@ -3118,13 +3105,12 @@ var _ = Describe("Comprehensive Special Character Sanitization", func() {
 				builder.SetVirtualPath(*umhMsg.TopicInfo.VirtualPath)
 			}
 			builder.SetName(umhMsg.TopicInfo.Name)
-			
+
 			topicStr, err := builder.BuildString()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(topicStr).To(Equal("umh.v1.SimDeviceDevice._raw.Overview.Motor_1.Amps"))
 		})
 	})
-
 })
 
 // Phase 1: TDD Tests for processDataMessage Refactoring
@@ -3267,10 +3253,10 @@ var _ = Describe("updateNodeState pure function", func() {
 
 var _ = Describe("logSequenceError helper", func() {
 	var (
-		errorCounter    *MockCounter
-		deviceKey       string
-		lastSeq         uint8
-		currentSeq      uint8
+		errorCounter *MockCounter
+		deviceKey    string
+		lastSeq      uint8
+		currentSeq   uint8
 	)
 
 	BeforeEach(func() {

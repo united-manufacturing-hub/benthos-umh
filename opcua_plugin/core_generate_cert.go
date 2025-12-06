@@ -45,7 +45,7 @@ import (
 //
 // Certificate Configuration:
 //   - Key Usage bits: All 4 required bits are ALWAYS set regardless of security mode:
-//     * DigitalSignature, ContentCommitment, KeyEncipherment, DataEncipherment
+//   - DigitalSignature, ContentCommitment, KeyEncipherment, DataEncipherment
 //   - Extended Key Usage: ClientAuth only (not ServerAuth)
 //   - Signature Algorithm: Based on securityPolicy (SHA1 or SHA256)
 //   - Key Size: Based on securityPolicy (1024 or 2048 bits RSA)
@@ -53,8 +53,8 @@ import (
 // Parameters:
 //   - validFor:        Certificate validity duration
 //   - securityMode:    The OPC UA message security mode (None, Sign, SignAndEncrypt)
-//                      Note: Key Usage bits are set according to OPC UA Part 6 spec,
-//                      NOT based on this parameter
+//     Note: Key Usage bits are set according to OPC UA Part 6 spec,
+//     NOT based on this parameter
 //   - securityPolicy:  The OPC UA security policy (e.g., "Basic128Rsa15", "Basic256", "Basic256Sha256")
 //
 // Reference: OPC UA Part 6 - Section 6.2.2 (Application Instance Certificate)
@@ -113,7 +113,7 @@ func GenerateCertWithMode(
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 127)
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("failed togenerate serial number: %s", err)
+		return nil, nil, "", fmt.Errorf("failed togenerate serial number: %w", err)
 	}
 
 	// Prepare the certificate template
@@ -159,13 +159,13 @@ func GenerateCertWithMode(
 		// Check if it's an IP address
 		if ip := net.ParseIP(h); ip != nil {
 			template.IPAddresses = append(template.IPAddresses, ip)
-			continue  // Prevent fall-through to other fields
+			continue // Prevent fall-through to other fields
 		}
 
 		// Check if it's a URI with a scheme (urn:, http://, https://)
 		if uri, parseErr := url.Parse(h); parseErr == nil && uri.Scheme != "" && (uri.Scheme == "urn" || uri.Scheme == "http" || uri.Scheme == "https") {
 			template.URIs = append(template.URIs, uri)
-			continue  // Prevent fall-through to DNSNames
+			continue // Prevent fall-through to DNSNames
 		}
 
 		// Fallback: treat as DNS hostname

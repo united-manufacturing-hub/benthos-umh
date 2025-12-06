@@ -26,7 +26,6 @@ import (
 )
 
 var _ = Describe("DownloadSensorData Integration Tests", func() {
-
 	var endpoint string
 
 	BeforeEach(func() {
@@ -37,7 +36,6 @@ var _ = Describe("DownloadSensorData Integration Tests", func() {
 			Skip("Skipping test: environment variables not set")
 			return
 		}
-
 	})
 
 	AfterEach(func() {

@@ -16,10 +16,11 @@ package stream_processor_plugin
 
 import (
 	"fmt"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 )
 
 func init() {

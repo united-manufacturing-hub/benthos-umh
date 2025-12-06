@@ -79,10 +79,8 @@ tags:
 			Expect(eipInput).NotTo(BeNil())
 
 			Expect(len(eipInput.Items)).To(Equal(14))
-
 		})
 	})
-
 })
 
 var _ = Describe("EIP plugin with mock CIP", func() {
@@ -126,7 +124,6 @@ var _ = Describe("EIP plugin with mock CIP", func() {
 			raw, err := msg.AsBytes()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(raw)).To(Equal(tc.expectedString))
-
 		},
 		Entry("bool = true", testCase{
 			name:           "bool",
@@ -287,7 +284,6 @@ var _ = Describe("EIP plugin with mock CIP", func() {
 			arrayLength:    3,
 		}),
 	)
-
 })
 
 // GetUnderlyingEIPInputForTest extracts the underlying *EIPInput from a wrapped BatchInput.

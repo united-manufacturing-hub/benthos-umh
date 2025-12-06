@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
@@ -332,7 +333,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 		SchemaCheckBypassed: false,
 		ContractName:        contractName,
 		ContractVersion:     version,
-		Error:               fmt.Errorf("schema validation failed for contract '%s' version %d against all available schemas. Last error: %v", contractName, version, lastError),
+		Error:               fmt.Errorf("schema validation failed for contract '%s' version %d against all available schemas. Last error: %w", contractName, version, lastError),
 	}
 }
 

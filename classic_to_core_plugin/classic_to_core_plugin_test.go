@@ -42,7 +42,7 @@ var _ = Describe("ClassicToCoreProcessor", func() {
 
 	When("using a stream builder", func() {
 		DescribeTable("should convert Classic format to Core format",
-			func(config string, inputTopic string, inputPayload map[string]interface{}, expectedResults []map[string]interface{}) {
+			func(config, inputTopic string, inputPayload map[string]interface{}, expectedResults []map[string]interface{}) {
 				builder := service.NewStreamBuilder()
 
 				var msgHandler service.MessageHandlerFunc
@@ -1750,7 +1750,6 @@ classic_to_core:
 				// Close method coverage is achieved through stream shutdown
 				Expect(true).To(BeTrue()) // Test passes if we get here
 			})
-
 		})
 
 		It("should handle edge cases for meta/metadata fields", func() {

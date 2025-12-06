@@ -20,14 +20,14 @@ import (
 	"fmt"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
 	pools2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
-
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 var _ = Describe("Integration Tests - Message Processing", func() {

@@ -27,6 +27,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/redpanda"
+
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
@@ -200,7 +201,7 @@ func (c *RedpandaSchemaRegistryClient) RegisterSchema(subject string, version in
 
 	// Register the schema with a specific version
 	url := fmt.Sprintf("%s/subjects/%s/versions", c.baseURL, subject)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payloadBytes))
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -213,7 +214,7 @@ func (c *RedpandaSchemaRegistryClient) RegisterSchema(subject string, version in
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		// Read response body for debugging
 		bodyBytes := make([]byte, 1024)
 		resp.Body.Read(bodyBytes)
@@ -227,7 +228,7 @@ func (c *RedpandaSchemaRegistryClient) WaitForReady() error {
 	ready := false
 	Eventually(func() bool {
 		resp, err := c.httpClient.Get(c.baseURL + "/subjects")
-		if err == nil && resp.StatusCode == 200 {
+		if err == nil && resp.StatusCode == http.StatusOK {
 			resp.Body.Close()
 			ready = true
 			return true
@@ -252,7 +253,7 @@ func (c *RedpandaSchemaRegistryClient) DeleteAllSubjects() error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to get subjects, status: %d", resp.StatusCode)
 	}
 
@@ -264,7 +265,7 @@ func (c *RedpandaSchemaRegistryClient) DeleteAllSubjects() error {
 	// Delete each subject (hard delete)
 	for _, subject := range subjects {
 		// First do a soft delete
-		req, err := http.NewRequest("DELETE", c.baseURL+"/subjects/"+subject, nil)
+		req, err := http.NewRequest(http.MethodDelete, c.baseURL+"/subjects/"+subject, nil)
 		if err != nil {
 			continue
 		}
@@ -275,7 +276,7 @@ func (c *RedpandaSchemaRegistryClient) DeleteAllSubjects() error {
 		resp.Body.Close()
 
 		// Then do a hard delete to permanently remove
-		req, err = http.NewRequest("DELETE", c.baseURL+"/subjects/"+subject+"?permanent=true", nil)
+		req, err = http.NewRequest(http.MethodDelete, c.baseURL+"/subjects/"+subject+"?permanent=true", nil)
 		if err != nil {
 			continue
 		}
@@ -351,7 +352,7 @@ func setupRedpandaSchemas() error {
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != 200 {
+		if resp.StatusCode != http.StatusOK {
 			return false
 		}
 

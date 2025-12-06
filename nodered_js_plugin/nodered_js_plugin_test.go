@@ -31,6 +31,7 @@ import (
 	_ "github.com/redpanda-data/benthos/v4/public/components/io"
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin"
 )
 

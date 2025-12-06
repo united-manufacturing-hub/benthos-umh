@@ -16,6 +16,7 @@ package opcua_plugin
 
 import (
 	"os"
+
 	"github.com/gopcua/opcua/ua"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"

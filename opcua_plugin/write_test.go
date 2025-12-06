@@ -120,7 +120,7 @@ opcua:
 
 				nodeID, _ := service.NewInterpolatedString("ns=4;i=6210")
 				dataType, _ := service.NewInterpolatedString("Float")
-				
+
 				output := &OPCUAOutput{
 					OPCUAConnection: &OPCUAConnection{
 						Endpoint: fmt.Sprintf("opc.tcp://%s:%s", opcsimIp, opcsimPort),
@@ -198,7 +198,7 @@ generate:
 		})
 
 		DescribeTable("data type conversions",
-			func(dataType string, input interface{}, expectedType interface{}, shouldSucceed bool) {
+			func(dataType string, input, expectedType interface{}, shouldSucceed bool) {
 				variant, err := output.convertToVariant(input, dataType)
 				if shouldSucceed {
 					Expect(err).NotTo(HaveOccurred())

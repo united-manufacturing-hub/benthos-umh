@@ -126,7 +126,7 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		if exists && staticNodeID != "" {
 			// Validate static nodeId format
 			if _, err := ua.ParseNodeID(staticNodeID); err != nil {
-				return nil, fmt.Errorf("invalid nodeId format in node mapping %d: %s. Expected format examples: 'ns=2;s=MyVariable', 'i=85', 'ns=3;i=1000'. Error: %v", i, staticNodeID, err)
+				return nil, fmt.Errorf("invalid nodeId format in node mapping %d: %s. Expected format examples: 'ns=2;s=MyVariable', 'i=85', 'ns=3;i=1000'. Error: %w", i, staticNodeID, err)
 			}
 		}
 
@@ -342,7 +342,7 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 			}
 
 			if resp.Results[0] != ua.StatusOK {
-				writeErr = fmt.Errorf("write failed for node %s with status %v (attempt %d/%d)",
+				writeErr = fmt.Errorf("write failed for node %s with status %w (attempt %d/%d)",
 					write.nodeID, resp.Results[0], attempt, o.MaxWriteAttempts)
 				o.Log.Warnf("%v", writeErr)
 				if attempt < o.MaxWriteAttempts {
@@ -803,7 +803,7 @@ func (o *OPCUAOutput) verifyWrite(ctx context.Context, nodeID *ua.NodeID, expect
 	}
 
 	if resp.Results[0].Status != ua.StatusOK {
-		return fmt.Errorf("read-back failed with status %v", resp.Results[0].Status)
+		return fmt.Errorf("read-back failed with status %w", resp.Results[0].Status)
 	}
 
 	// Compare the values

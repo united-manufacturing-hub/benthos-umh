@@ -167,7 +167,7 @@ func (g *OPCUAConnection) Read(ctx context.Context, req *ua.ReadRequest) (*ua.Re
 		} else {
 			g.Log.Errorf("Status not OK: %v", resp.Results[0].Status)
 		}
-		return nil, fmt.Errorf("status not OK: %v", resp.Results[0].Status)
+		return nil, fmt.Errorf("status not OK: %w", resp.Results[0].Status)
 	}
 
 	return resp, nil

@@ -24,8 +24,9 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
+
+	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
 // Sparkplug B Data Type Constants
@@ -815,7 +816,7 @@ func (s *sparkplugInput) processCommandMessage(deviceKey, msgType string, payloa
 	return batch
 }
 
-func (s *sparkplugInput) processStateMessage(deviceKey, msgType string, topicInfo *TopicInfo, originalTopic string, statePayload string) (service.MessageBatch, error) {
+func (s *sparkplugInput) processStateMessage(deviceKey, msgType string, topicInfo *TopicInfo, originalTopic, statePayload string) (service.MessageBatch, error) {
 	s.logger.Debugf("🏛️ processStateMessage: processing STATE message for device %s, state: %s", deviceKey, statePayload)
 
 	s.stateMu.Lock()
@@ -864,7 +865,7 @@ func (s *sparkplugInput) processStateMessage(deviceKey, msgType string, topicInf
 	if topicInfo.Device != "" {
 		msg.MetaSet("spb_device_id", topicInfo.Device)
 	}
-	
+
 	// Add pre-sanitized versions for state messages
 	msg.MetaSet("spb_group_id_sanitized", s.sanitizeForTopic(topicInfo.Group))
 	msg.MetaSet("spb_edge_node_id_sanitized", s.sanitizeForTopic(topicInfo.EdgeNode))
@@ -1090,7 +1091,7 @@ func (s *sparkplugInput) createDeathEventMessage(msgType, deviceKey string, topi
 	if topicInfo.Device != "" {
 		msg.MetaSet("spb_device_id", topicInfo.Device)
 	}
-	
+
 	// Add pre-sanitized versions for death events
 	msg.MetaSet("spb_group_id_sanitized", s.sanitizeForTopic(topicInfo.Group))
 	msg.MetaSet("spb_edge_node_id_sanitized", s.sanitizeForTopic(topicInfo.EdgeNode))
@@ -1157,21 +1158,21 @@ func (s *sparkplugInput) sanitizeForTopic(input string) string {
 	if input == "" {
 		return ""
 	}
-	
+
 	var result strings.Builder
 	result.Grow(len(input))
-	
+
 	for _, char := range input {
 		if (char >= 'a' && char <= 'z') ||
-		   (char >= 'A' && char <= 'Z') ||
-		   (char >= '0' && char <= '9') ||
-		   char == '.' {
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			char == '.' {
 			result.WriteRune(char)
 		} else {
 			result.WriteRune('_')
 		}
 	}
-	
+
 	return result.String()
 }
 
@@ -1218,7 +1219,7 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 		s.rebirthsSuppressed.Incr(1)
 		return
 	}
-	
+
 	if s.client == nil || !s.client.IsConnected() {
 		return
 	}
@@ -1442,14 +1443,14 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	// Store original values before any sanitization
 	originalMetricName := sparkplugMsg.MetricName
 	originalDeviceID := sparkplugMsg.DeviceID
-	
+
 	// Try UMH conversion - the converter will handle any necessary sanitization
 	umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
 	if err != nil {
 		msg.MetaSet("umh_conversion_status", "failed")
 		msg.MetaSet("umh_conversion_error", err.Error())
 		s.logger.Debugf("UMH conversion failed for metric %s: %v", sparkplugMsg.MetricName, err)
-		
+
 		// Provide original values as fallback metadata
 		if sparkplugMsg != nil {
 			msg.MetaSet("spb_device_id", originalDeviceID)
@@ -1460,25 +1461,25 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 
 	// Conversion successful - add UMH metadata
 	msg.MetaSet("umh_conversion_status", "success")
-	
+
 	// Build location path without trailing dots when LocationSublevels is empty
 	locationPath := umhMsg.TopicInfo.Level0
 	if len(umhMsg.TopicInfo.LocationSublevels) > 0 {
 		locationPath = locationPath + "." + strings.Join(umhMsg.TopicInfo.LocationSublevels, ".")
 	}
-	
+
 	// The converter has already sanitized all fields, so we can use them directly
 	msg.MetaSet("umh_location_path", locationPath)
 	msg.MetaSet("umh_tag_name", umhMsg.TopicInfo.Name)
 	msg.MetaSet("umh_data_contract", umhMsg.TopicInfo.DataContract)
-	
+
 	// Add virtual path if present
 	// Note: Benthos metadata cannot store empty strings (they become unset)
 	// YAML configs must use .or("") to handle missing virtual_path metadata
 	if umhMsg.TopicInfo.VirtualPath != nil {
 		msg.MetaSet("umh_virtual_path", *umhMsg.TopicInfo.VirtualPath)
 	}
-	
+
 	// Add debug metadata for traceability
 	if originalMetricName != sparkplugMsg.MetricName {
 		msg.MetaSet("spb_original_metric_name", originalMetricName)

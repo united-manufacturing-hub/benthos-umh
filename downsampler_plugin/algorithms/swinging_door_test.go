@@ -92,7 +92,6 @@ func runSwingingDoorTestCase(testCase SwingingDoorTestCase) {
 }
 
 var _ = Describe("Swinging Door Algorithm", func() {
-
 	Describe("Reference Implementation Test Cases", func() {
 		// These test cases are derived from gfoidl DataCompression library
 		// All expected results are verified against the reference implementation
@@ -541,7 +540,6 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(points).To(HaveLen(1), "Should force emit due to max_time constraint")
 			})
-
 		})
 
 		Context("State integrity validation", func() {

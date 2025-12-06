@@ -17,13 +17,14 @@ package pools
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/constants"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_security"
 	"strings"
 	"sync"
 
 	"github.com/dop251/goja"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/constants"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_security"
 )
 
 // ObjectPools provides pooled objects to reduce memory allocations

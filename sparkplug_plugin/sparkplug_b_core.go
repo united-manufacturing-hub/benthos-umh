@@ -24,8 +24,9 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/encoding/protojson"
+
+	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
 // TopicInfo contains parsed Sparkplug topic information extracted from MQTT topics.
@@ -113,7 +114,7 @@ func (ac *AliasCache) ResolveAliases(deviceKey string, metrics []*sparkplugb.Pay
 		ac.mu.RUnlock()
 		return 0
 	}
-	
+
 	// Create a copy of the alias map to avoid holding the lock during metric updates
 	aliasMapCopy := make(map[uint64]string, len(aliasMap))
 	for k, v := range aliasMap {

@@ -33,10 +33,12 @@ func (m *MockCIPReader) Connect() error {
 	m.Connected = true
 	return nil
 }
+
 func (m *MockCIPReader) Disconnect() error {
 	m.Connected = false
 	return nil
 }
+
 func (m *MockCIPReader) Read(tag string, data any) error {
 	val, ok := m.Tags[tag]
 	if !ok {

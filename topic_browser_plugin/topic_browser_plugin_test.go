@@ -29,6 +29,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
@@ -194,7 +195,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(event2.RawKafkaMsg).NotTo(BeNil())
 		})
 
-		It("caches UNS map entries accross multiple invocations", func() {
+		It("caches UNS map entries across multiple invocations", func() {
 			// Create two messages with the same UNS tree ID
 			msg1 := service.NewMessage(nil)
 			msg1.MetaSet("umh_topic", "umh.v1.test-topic._historian.some_value")
@@ -1043,7 +1044,6 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			By("Processing oversized time-series payload")
 			batch := service.MessageBatch{msg}
 			_, err := edgeProcessor.ProcessBatch(context.Background(), batch)
-
 			// The processor might handle this differently than expected
 			// Check if it processes successfully or returns an error
 			if err != nil {
@@ -1634,7 +1634,6 @@ var _ = Describe("TopicBrowserProcessor", func() {
 	// This addresses the confusing mix of fast/slow intervals throughout tests
 	// by providing clear, separate test suites for different timing behaviors
 	Describe("E2E Organized Timing Scenarios", func() {
-
 		Describe("Fast Timing Scenarios (≤10ms intervals) - Immediate Emission", func() {
 			var fastProcessor *TopicBrowserProcessor
 

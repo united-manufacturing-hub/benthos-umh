@@ -24,6 +24,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	"github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
 )
 
@@ -127,6 +128,5 @@ var _ = Describe("FetchAndStoreCustomIODD", func() {
 				Expect(err.Error()).To(ContainSubstring("failed to unmarshal IODD XML"))
 			})
 		})
-
 	})
 })

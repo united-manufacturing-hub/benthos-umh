@@ -18,11 +18,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/redpanda-data/benthos/v4/public/service"
 	"math"
 	"math/big"
 	"reflect"
 	"strconv"
+
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 // ProcessSensorData processes the downloaded information from one IO-Link master
@@ -195,7 +196,7 @@ func (s *SensorConnectInput) GetProcessedSensorDataFromRawSensorOutput(rawSensor
 	return payload, nil
 }
 
-func (s *SensorConnectInput) extractByteArrayFromSensorDataMap(key string, tag string, sensorDataMap map[string]interface{}) ([]byte, error) {
+func (s *SensorConnectInput) extractByteArrayFromSensorDataMap(key, tag string, sensorDataMap map[string]interface{}) ([]byte, error) {
 	element, ok := sensorDataMap[key]
 	if !ok {
 		return nil, fmt.Errorf("key %s not in sensorDataMap", key)
@@ -212,7 +213,7 @@ func (s *SensorConnectInput) extractByteArrayFromSensorDataMap(key string, tag s
 	return []byte(returnValue), nil
 }
 
-func (s *SensorConnectInput) extractIntFromSensorDataMap(key string, tag string, sensorDataMap map[string]interface{}) (int, error) {
+func (s *SensorConnectInput) extractIntFromSensorDataMap(key, tag string, sensorDataMap map[string]interface{}) (int, error) {
 	element, ok := sensorDataMap[key]
 	if !ok {
 		return 0, fmt.Errorf("key %s not in sensorDataMap", key)
@@ -230,8 +231,7 @@ func (s *SensorConnectInput) extractIntFromSensorDataMap(key string, tag string,
 
 // ConvertBinaryValue converts a binary string to its corresponding value based on the datatype.
 // It handles both string and numeric data types and logs errors using the Benthos logger.
-func (s *SensorConnectInput) ConvertBinaryValue(binaryValue string, datatype string) (interface{}, error) {
-
+func (s *SensorConnectInput) ConvertBinaryValue(binaryValue, datatype string) (interface{}, error) {
 	if binaryValue == "" {
 		s.logger.Errorf("binaryValue is empty for datatype %s", datatype)
 		return nil, fmt.Errorf("binaryValue is empty")
@@ -372,8 +372,8 @@ func (s *SensorConnectInput) processData(
 	rawSensorOutputBinaryPadded string,
 	datatypeReferenceArray []Datatype,
 	nameTextId string,
-	primLangExternalTextCollection []Text) (map[string]interface{}, error) {
-
+	primLangExternalTextCollection []Text,
+) (map[string]interface{}, error) {
 	var payload map[string]interface{}
 	var err error
 
@@ -447,8 +447,8 @@ func (s *SensorConnectInput) ProcessSimpleDatatype(
 	rawSensorOutputBinaryPadded string,
 	bitOffset int,
 	nameTextId string,
-	primLangExternalTextCollection []Text) (map[string]interface{}, error) {
-
+	primLangExternalTextCollection []Text,
+) (map[string]interface{}, error) {
 	payload := make(map[string]interface{})
 
 	binaryValue := s.extractBinaryValueFromRawSensorOutput(
@@ -474,8 +474,8 @@ func (s *SensorConnectInput) extractBinaryValueFromRawSensorOutput(
 	bitLength uint,
 	fixedLength uint,
 	outputBitLength int,
-	bitOffset int) string {
-
+	bitOffset int,
+) string {
 	valueBitLength := s.DetermineValueBitLength(typeString, bitLength, fixedLength)
 
 	leftIndex := outputBitLength - int(valueBitLength) - bitOffset
@@ -492,8 +492,8 @@ func (s *SensorConnectInput) processDatatype(
 	bitOffset int,
 	datatypeReferenceArray []Datatype,
 	nameTextId string,
-	primLangExternalTextCollection []Text) (map[string]interface{}, error) {
-
+	primLangExternalTextCollection []Text,
+) (map[string]interface{}, error) {
 	if datatype.Type == "RecordT" {
 		payload, err := s.processRecordType(
 			datatype.RecordItemArray,
@@ -531,8 +531,8 @@ func (s *SensorConnectInput) processRecordType(
 	outputBitLength int,
 	rawSensorOutputBinaryPadded string,
 	datatypeReferenceArray []Datatype,
-	primLangExternalTextCollection []Text) (map[string]interface{}, error) {
-
+	primLangExternalTextCollection []Text,
+) (map[string]interface{}, error) {
 	payload := make(map[string]interface{})
 
 	for _, element := range recordItemArray {
@@ -574,7 +574,7 @@ func (s *SensorConnectInput) isEmpty(object interface{}) bool {
 }
 
 // DetermineValueBitLength returns the bit length of a value based on its datatype.
-func (s *SensorConnectInput) DetermineValueBitLength(datatype string, bitLength uint, fixedLength uint) uint {
+func (s *SensorConnectInput) DetermineValueBitLength(datatype string, bitLength, fixedLength uint) uint {
 	switch datatype {
 	case "BooleanT":
 		return 1
