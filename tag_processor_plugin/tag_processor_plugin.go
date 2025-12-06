@@ -398,39 +398,6 @@ Message content: %v`,
 		msg)
 }
 
-func (p *TagProcessor) executeJSCode(vm *goja.Runtime, code string, jsMsg map[string]interface{}) ([]map[string]interface{}, error) {
-	wrappedCode := fmt.Sprintf(`(function(){'use strict';%s})()`, code)
-	result, err := vm.RunString(wrappedCode)
-	if err != nil {
-		p.logJSError(err, code, jsMsg)
-		return nil, fmt.Errorf("JavaScript error in code: %w", err)
-	}
-
-	if result == nil || goja.IsNull(result) || goja.IsUndefined(result) {
-		return nil, nil
-	}
-
-	switch v := result.Export().(type) {
-	case []interface{}:
-		messages := make([]map[string]interface{}, 0, len(v))
-		for _, msg := range v {
-			if msg == nil {
-				continue
-			}
-			if msgMap, ok := msg.(map[string]interface{}); ok {
-				messages = append(messages, msgMap)
-			} else {
-				return nil, fmt.Errorf("array elements must be message objects")
-			}
-		}
-		return messages, nil
-	case map[string]interface{}:
-		return []map[string]interface{}{v}, nil
-	default:
-		return nil, fmt.Errorf("code must return a message object or array of message objects")
-	}
-}
-
 // validateMessage checks if a message has all required metadata fields
 func (p *TagProcessor) validateMessage(msg *service.Message) error {
 	var payloadJSON []byte

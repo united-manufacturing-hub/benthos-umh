@@ -412,13 +412,6 @@ func strPtr(s string) *string {
 	return &s
 }
 
-func ptrStr(s *string) string {
-	if s == nil {
-		return "<nil>"
-	}
-	return *s
-}
-
 func sliceEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

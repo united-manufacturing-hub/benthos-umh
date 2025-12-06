@@ -2481,10 +2481,6 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 
 	Context("Rebirth Suppression in Three-Mode System", func() {
 		// Mock structures for testing
-		type testLogger struct {
-			messages []string
-		}
-
 		type testMetrics struct {
 			counters map[string]int64
 		}

@@ -216,29 +216,6 @@ func newTestTask(nodeID string, resultChan any) GlobalPoolTask {
 	}
 }
 
-// newTestTaskWithContext creates a GlobalPoolTask with custom context (for cancellation tests)
-func newTestTaskWithContext(ctx context.Context, nodeID string, resultChan any) GlobalPoolTask {
-	mockNode := &mockNodeBrowser{
-		id: ua.MustParseNodeID(nodeID),
-	}
-	return GlobalPoolTask{
-		NodeID:     nodeID,
-		Ctx:        ctx,
-		Node:       mockNode,
-		ResultChan: resultChan,
-	}
-}
-
-// newTestTaskWithNode creates a GlobalPoolTask with specific mock node (for browse behavior tests)
-func newTestTaskWithNode(ctx context.Context, nodeID string, node NodeBrowser, resultChan any) GlobalPoolTask {
-	return GlobalPoolTask{
-		NodeID:     nodeID,
-		Ctx:        ctx,
-		Node:       node,
-		ResultChan: resultChan,
-	}
-}
-
 var _ = Describe("GlobalWorkerPool", func() {
 	BeforeEach(func() {
 		if os.Getenv("TEST_OPCUA_UNIT") == "" {

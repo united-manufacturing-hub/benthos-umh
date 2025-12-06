@@ -16,7 +16,6 @@ package js_engine
 
 import (
 	"fmt"
-	"slices"
 
 	"github.com/dop251/goja/ast"
 	"github.com/dop251/goja/parser"
@@ -308,9 +307,4 @@ func AnalyzeMappingsWithDetection(cfg *config.StreamProcessorConfig) error {
 func (sd *StaticDetector) walkASTGeneric(node ast.Node, variables *[]string) {
 	// For unknown node types, we'll be conservative and not extract variables
 	// This avoids false positives while still catching the common cases above
-}
-
-// containsVariable checks if a variable is in the dependencies list
-func containsVariable(dependencies []string, variable string) bool {
-	return slices.Contains(dependencies, variable)
 }
