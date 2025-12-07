@@ -61,7 +61,7 @@ func ConfigureJSRuntime(runtime *goja.Runtime, logger *service.Logger) {
 // globals with functions that log security violations and throw errors when called.
 func CreateSecurityBlocker(runtime *goja.Runtime, logger *service.Logger) func(string) func(goja.FunctionCall) goja.Value {
 	return func(apiName string) func(goja.FunctionCall) goja.Value {
-		return func(call goja.FunctionCall) goja.Value {
+		return func(_ goja.FunctionCall) goja.Value {
 			// Log the security violation
 			if logger != nil {
 				logger.Warnf("Security violation: attempted to call disabled function '%s'", apiName)

@@ -109,7 +109,7 @@ var _ = Describe("SensorConnect Plugin Unittests", func() {
 
 		Context("when the device returns an error", func() {
 			BeforeEach(func() {
-				testServer.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				testServer.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusInternalServerError)
 					fmt.Fprintln(w, "Internal Server Error")
 				})

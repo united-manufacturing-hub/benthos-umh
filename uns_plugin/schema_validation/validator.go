@@ -744,7 +744,7 @@ func extractValidVirtualPaths(schemaBytes []byte) []string {
 }
 
 // enhanceVirtualPathError enhances the error message if it's about virtual_path validation
-func (v *Validator) enhanceVirtualPathError(originalError error, subjectName string, schemas map[string]*Schema, version uint64, userVirtualPath string) error {
+func (v *Validator) enhanceVirtualPathError(originalError error, _ string, schemas map[string]*Schema, version uint64, userVirtualPath string) error {
 	if originalError == nil {
 		return originalError
 	}

@@ -156,7 +156,7 @@ var _ = Describe("UnsTopic", func() {
 			done := make(chan bool, numGoroutines)
 
 			for i := 0; i < numGoroutines; i++ {
-				go func(id int) {
+				go func() {
 					defer func() { done <- true }()
 
 					for j := 0; j < numOperations; j++ {
@@ -172,7 +172,7 @@ var _ = Describe("UnsTopic", func() {
 						Expect(info.DataContract).To(Equal("_historian"))
 						Expect(info.Name).To(Equal("temperature"))
 					}
-				}(i)
+				}()
 			}
 
 			for i := 0; i < numGoroutines; i++ {

@@ -2829,7 +2829,7 @@ func (m *mockMessage) GetMeta(key string) string {
 
 type mockLogger struct{}
 
-func (m mockLogger) Warn(msg string) {
+func (m mockLogger) Warn(_ string) {
 	// In a real test, we might capture this for verification
 }
 
@@ -3301,6 +3301,6 @@ type MockCounter struct {
 	count int64
 }
 
-func (m *MockCounter) Incr(delta int64, labelValues ...string) {
+func (m *MockCounter) Incr(delta int64, _ ...string) {
 	m.count += delta
 }

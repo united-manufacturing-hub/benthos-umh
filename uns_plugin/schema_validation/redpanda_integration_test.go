@@ -186,7 +186,7 @@ func (c *RedpandaSchemaRegistryClient) Close() {
 	}
 }
 
-func (c *RedpandaSchemaRegistryClient) RegisterSchema(subject string, version int, schema string) error {
+func (c *RedpandaSchemaRegistryClient) RegisterSchema(subject string, _ int, schema string) error {
 	// Schema must be properly escaped as a JSON string
 	// Create the schema registration payload with properly escaped JSON
 	payload := map[string]interface{}{

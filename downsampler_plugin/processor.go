@@ -47,7 +47,7 @@ func NewMessageProcessor(processor *DownsamplerProcessor) *MessageProcessor {
 //   - Integration with downsampling algorithms via ACK buffering
 //
 // Returns MessageProcessingResult containing either processed messages, error, or filter status.
-func (mp *MessageProcessor) ProcessMessage(msg *service.Message, index int) MessageProcessingResult {
+func (mp *MessageProcessor) ProcessMessage(msg *service.Message, _ int) MessageProcessingResult {
 	result := MessageProcessingResult{
 		OriginalMessage: msg,
 	}

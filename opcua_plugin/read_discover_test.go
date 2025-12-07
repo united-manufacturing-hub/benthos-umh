@@ -32,8 +32,8 @@ import (
 // testLogger is a simple mock implementation of Logger for testing
 type testLogger struct{}
 
-func (t *testLogger) Debugf(format string, args ...interface{}) {}
-func (t *testLogger) Warnf(format string, args ...interface{})  {}
+func (t *testLogger) Debugf(_ string, _ ...interface{}) {}
+func (t *testLogger) Warnf(_ string, _ ...interface{})  {}
 
 // mockNodeBrowser implements NodeBrowser interface for testing
 type mockNodeBrowser struct {

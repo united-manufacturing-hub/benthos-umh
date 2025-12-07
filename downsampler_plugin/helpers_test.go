@@ -327,7 +327,7 @@ func RunStreamTestCase(testCase StreamTestCase) {
 		for _, shouldContain := range expectedMsg.ShouldContain {
 			found := false
 			// Check all metadata keys for the substring
-			(*messages)[i].MetaWalk(func(key, value string) error {
+			(*messages)[i].MetaWalk(func(_, value string) error {
 				if strings.Contains(value, shouldContain) {
 					found = true
 				}

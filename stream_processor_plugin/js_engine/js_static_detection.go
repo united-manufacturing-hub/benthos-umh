@@ -165,9 +165,8 @@ func (sd *StaticDetector) walkAST(node ast.Node, variables *[]string) {
 	case *ast.StringLiteral, *ast.NumberLiteral, *ast.BooleanLiteral, *ast.NullLiteral:
 		// No variables to extract
 	default:
-		// For any other node types, use reflection to walk child nodes safely
-		// This ensures we don't miss any variable references in complex expressions
-		sd.walkASTGeneric(n, variables)
+		// For any other node types, we'll be conservative and not extract variables
+		// This avoids false positives while still catching the common cases above
 	}
 }
 
@@ -301,10 +300,4 @@ func AnalyzeMappingsWithDetection(cfg *config.StreamProcessorConfig) error {
 	}
 
 	return nil
-}
-
-// walkASTGeneric handles unknown AST nodes by skipping them
-func (sd *StaticDetector) walkASTGeneric(node ast.Node, variables *[]string) {
-	// For unknown node types, we'll be conservative and not extract variables
-	// This avoids false positives while still catching the common cases above
 }

@@ -252,7 +252,7 @@ func (p *ObjectPools) GetTopic(outputTopic, dataContract, virtualPath string) st
 
 // ClearTopicCache clears the topic cache (useful for config changes)
 func (p *ObjectPools) ClearTopicCache() {
-	p.topicCache.Range(func(key, value interface{}) bool {
+	p.topicCache.Range(func(key, _ interface{}) bool {
 		p.topicCache.Delete(key)
 		return true
 	})

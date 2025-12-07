@@ -144,7 +144,7 @@ var _ = Describe("DataType Handling", func() {
 // mockLogger is a simple mock implementation of Logger for testing
 type mockLogger struct{}
 
-func (m *mockLogger) Debugf(format string, args ...interface{}) {}
-func (m *mockLogger) Infof(format string, args ...interface{})  {}
-func (m *mockLogger) Warnf(format string, args ...interface{})  {}
-func (m *mockLogger) Errorf(format string, args ...interface{}) {}
+func (*mockLogger) Debugf(_ string, _ ...interface{}) {}
+func (*mockLogger) Infof(_ string, _ ...interface{})  {}
+func (*mockLogger) Warnf(_ string, _ ...interface{})  {}
+func (*mockLogger) Errorf(_ string, _ ...interface{}) {}

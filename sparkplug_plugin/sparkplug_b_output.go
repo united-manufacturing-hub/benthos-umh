@@ -509,7 +509,7 @@ func (s *sparkplugOutput) onConnect(client mqtt.Client) {
 	}
 }
 
-func (s *sparkplugOutput) onConnectionLost(client mqtt.Client, err error) {
+func (s *sparkplugOutput) onConnectionLost(_ mqtt.Client, err error) {
 	s.logger.Errorf("MQTT connection lost: %v", err)
 
 	// Reset NBIRTH flag so it will be republished on reconnection
@@ -519,7 +519,7 @@ func (s *sparkplugOutput) onConnectionLost(client mqtt.Client, err error) {
 }
 
 // handleRebirthCommand processes incoming NCMD messages with rebirth requests
-func (s *sparkplugOutput) handleRebirthCommand(client mqtt.Client, msg mqtt.Message) {
+func (s *sparkplugOutput) handleRebirthCommand(_ mqtt.Client, msg mqtt.Message) {
 	s.logger.Infof("Received rebirth command on topic: %s", msg.Topic())
 
 	// Debug: Log raw payload bytes for troubleshooting
@@ -974,7 +974,7 @@ func (s *sparkplugOutput) getStaticEdgeNodeID() string {
 // Returns:
 
 // Private methods for the rest of the implementation...
-func (s *sparkplugOutput) createDeathMessage(msg *service.Message) (string, []byte) {
+func (s *sparkplugOutput) createDeathMessage(_ *service.Message) (string, []byte) {
 	// Phase 3: Always use static Edge Node ID for Sparkplug B compliance
 	// This ensures DEATH messages use the same Edge Node ID as BIRTH/DATA messages
 	eonNodeID := s.getStaticEdgeNodeID()

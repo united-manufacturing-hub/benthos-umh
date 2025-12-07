@@ -431,7 +431,7 @@ func (s *sparkplugInput) Connect(ctx context.Context) error {
 		WillRetain:       true,
 		OnConnect:        s.onConnect,
 		OnConnectionLost: s.onConnectionLost,
-		MessageHandler: func(client mqtt.Client, msg mqtt.Message) {
+		MessageHandler: func(_ mqtt.Client, msg mqtt.Message) {
 			s.logger.Warnf("Received message on unhandled topic: %s", msg.Topic())
 		},
 	}
@@ -483,11 +483,11 @@ func (s *sparkplugInput) onConnect(client mqtt.Client) {
 	}
 }
 
-func (s *sparkplugInput) onConnectionLost(client mqtt.Client, err error) {
+func (s *sparkplugInput) onConnectionLost(_ mqtt.Client, err error) {
 	s.logger.Errorf("MQTT connection lost: %v", err)
 }
 
-func (s *sparkplugInput) messageHandler(client mqtt.Client, msg mqtt.Message) {
+func (s *sparkplugInput) messageHandler(_ mqtt.Client, msg mqtt.Message) {
 	// Check if we're shutting down
 	select {
 	case <-s.done:

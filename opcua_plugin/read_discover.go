@@ -707,7 +707,7 @@ func UpdateNodePaths(nodes []NodeDef) {
 // and returns a slice of NodeDef from all cached nodes.
 func (g *OPCUAInput) buildNodeListFromCache() []NodeDef {
 	var nodeList []NodeDef
-	g.visited.Range(func(k, v any) bool {
+	g.visited.Range(func(_, v any) bool {
 		vni, ok := v.(VisitedNodeInfo)
 		if !ok {
 			return true

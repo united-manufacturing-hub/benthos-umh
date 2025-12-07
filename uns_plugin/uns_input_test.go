@@ -201,7 +201,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 		When("the internal kafka client throws error", func() {
 			JustBeforeEach(func() {
-				mockClient.WithConnectFunc(func(o ...kgo.Opt) error {
+				mockClient.WithConnectFunc(func(_ ...kgo.Opt) error {
 					return errors.New("mock kafka client error: no valid seedbrokers")
 				})
 			})

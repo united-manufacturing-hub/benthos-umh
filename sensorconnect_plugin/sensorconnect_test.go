@@ -264,7 +264,7 @@ sensorconnect:
 
 			// Add a total message count consumer
 			var count int64
-			err = builder.AddConsumerFunc(func(c context.Context, m *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
 				atomic.AddInt64(&count, 1)
 				return err
 			})

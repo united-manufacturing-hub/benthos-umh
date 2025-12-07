@@ -128,7 +128,7 @@ linters:
         - name: unexported-return
         - name: unreachable-code
         - name: unused-parameter
-        - name: unused-receiver
+        # - name: unused-receiver
         # - name: use-any
         # - name: use-errors-new
         - name: var-declaration

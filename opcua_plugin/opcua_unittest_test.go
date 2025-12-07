@@ -932,7 +932,7 @@ var _ = Describe("Browse with StatusBadNodeIDUnknown", func() {
 	})
 })
 
-func startBrowsing(ctx context.Context, rootNode NodeBrowser, path string, level int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, opcuaBrowserChan chan BrowseDetails, visited *sync.Map) ([]NodeDef, []error) {
+func startBrowsing(ctx context.Context, rootNode NodeBrowser, path string, _ int, logger Logger, parentNodeId string, nodeChan chan NodeDef, errChan chan error, opcuaBrowserChan chan BrowseDetails, visited *sync.Map) ([]NodeDef, []error) {
 	pool := NewGlobalWorkerPool(GetProfileByName(ProfileAuto), logger)
 	pool.SpawnWorkers(1)
 	defer func() {

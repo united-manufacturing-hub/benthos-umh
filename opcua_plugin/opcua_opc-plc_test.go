@@ -1464,7 +1464,7 @@ opcua:
 			var timestamps []time.Time
 			var timestampsMutex sync.Mutex
 
-			err = builder.AddConsumerFunc(func(c context.Context, m *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
 				timestampsMutex.Lock()
 				timestamps = append(timestamps, time.Now())
 				timestampsMutex.Unlock()

@@ -367,7 +367,7 @@ func (m *MockSchemaRegistry) SimulateNetworkError(enable bool) {
 	if enable {
 		// Replace handlers with error handlers
 		mux := http.NewServeMux()
-		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		})
 		m.server.Config.Handler = mux
