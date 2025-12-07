@@ -34,7 +34,6 @@ issues:
 
 linters:
   enable:
-    - decorder
     - errcheck
     - errorlint
     - exhaustive
@@ -92,8 +91,6 @@ linters:
     exhaustive:
       default-signifies-exhaustive: true
     govet:
-      disable:
-        - fieldalignment
       enable-all: true
     misspell:
       ignore-rules:
