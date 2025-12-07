@@ -71,7 +71,7 @@ func SetupDownsamplerStream(config string) (service.MessageHandlerFunc, *[]*serv
 	Expect(err).NotTo(HaveOccurred())
 
 	var messages []*service.Message
-	err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+	err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 		messages = append(messages, msg)
 		return nil
 	})

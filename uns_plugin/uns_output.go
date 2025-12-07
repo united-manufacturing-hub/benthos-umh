@@ -266,7 +266,7 @@ func newUnsOutputWithClient(client MessagePublisher, config unsOutputConfig, log
 }
 
 // Close closes the underlying kafka client
-func (o *unsOutput) Close(ctx context.Context) error {
+func (o *unsOutput) Close(_ context.Context) error {
 	o.log.Infof("Attempting to close the uns kafka client")
 	if o.client != nil {
 		o.client.Close()

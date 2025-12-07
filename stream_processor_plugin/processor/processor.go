@@ -92,7 +92,7 @@ func NewStreamProcessor(cfg config.StreamProcessorConfig, logger *service.Logger
 }
 
 // ProcessBatch processes a batch of messages according to the stream processing workflow
-func (p *StreamProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+func (p *StreamProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	batchStart := time.Now()
 	p.logger.Debugf("Processing batch of %d messages", len(batch))
 
@@ -402,7 +402,7 @@ func (p *StreamProcessor) createOutputMessage(metadata map[string]string, virtua
 }
 
 // Close closes the processor
-func (p *StreamProcessor) Close(ctx context.Context) error {
+func (p *StreamProcessor) Close(_ context.Context) error {
 	p.logger.Debug("Closing stream processor")
 
 	// Clean up JavaScript engine resources

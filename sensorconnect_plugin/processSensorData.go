@@ -28,7 +28,7 @@ import (
 
 // ProcessSensorData processes the downloaded information from one IO-Link master
 // and returns a message batch with one message per sensor (active port).
-func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, connectedDevices []ConnectedDeviceInfo, sensorDataMap map[string]interface{}) (service.MessageBatch, error) {
+func (s *SensorConnectInput) ProcessSensorData(_ context.Context, connectedDevices []ConnectedDeviceInfo, sensorDataMap map[string]interface{}) (service.MessageBatch, error) {
 	// Initialize an empty MessageBatch to collect results from all ports
 	var batch service.MessageBatch
 

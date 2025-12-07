@@ -53,7 +53,7 @@ func (m *mockNodeBrowser) ID() *ua.NodeID {
 	return &ua.NodeID{}
 }
 
-func (m *mockNodeBrowser) Attributes(ctx context.Context, attrs ...ua.AttributeID) ([]*ua.DataValue, error) {
+func (m *mockNodeBrowser) Attributes(_ context.Context, attrs ...ua.AttributeID) ([]*ua.DataValue, error) {
 	// Return NodeClass if requested (for filtering tests)
 	// Default to Variable if not set
 	nodeClass := m.nodeClass
@@ -113,7 +113,7 @@ func (m *mockNodeBrowser) Attributes(ctx context.Context, attrs ...ua.AttributeI
 	return result, nil
 }
 
-func (m *mockNodeBrowser) BrowseName(ctx context.Context) (*ua.QualifiedName, error) {
+func (m *mockNodeBrowser) BrowseName(_ context.Context) (*ua.QualifiedName, error) {
 	name := m.browseName
 	if name == "" {
 		name = "MockNode"
@@ -121,7 +121,7 @@ func (m *mockNodeBrowser) BrowseName(ctx context.Context) (*ua.QualifiedName, er
 	return &ua.QualifiedName{Name: name}, nil
 }
 
-func (m *mockNodeBrowser) ReferencedNodes(ctx context.Context, refType uint32, browseDir ua.BrowseDirection, nodeClassMask ua.NodeClass, includeSubtypes bool) ([]NodeBrowser, error) {
+func (m *mockNodeBrowser) ReferencedNodes(_ context.Context, _ uint32, _ ua.BrowseDirection, _ ua.NodeClass, _ bool) ([]NodeBrowser, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.browseCalled = true
@@ -131,7 +131,7 @@ func (m *mockNodeBrowser) ReferencedNodes(ctx context.Context, refType uint32, b
 	return m.children, nil
 }
 
-func (m *mockNodeBrowser) Children(ctx context.Context, refs uint32, mask ua.NodeClass) ([]NodeBrowser, error) {
+func (m *mockNodeBrowser) Children(_ context.Context, _ uint32, _ ua.NodeClass) ([]NodeBrowser, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.browseCalled = true

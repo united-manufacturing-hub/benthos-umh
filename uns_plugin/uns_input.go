@@ -92,7 +92,7 @@ func NewUnsInput(client MessageConsumer, config UnsInputConfig, logger *service.
 }
 
 // Connect establishes a connection to the Kafka broker
-func (u *UnsInput) Connect(ctx context.Context) error {
+func (u *UnsInput) Connect(_ context.Context) error {
 	u.log.Infof("Connecting to uns plugin kafka broker: %v", u.config.brokerAddress)
 
 	if u.client == nil {
@@ -130,7 +130,7 @@ func (u *UnsInput) Connect(ctx context.Context) error {
 }
 
 // Close closes the connection to the Kafka broker
-func (u *UnsInput) Close(ctx context.Context) error {
+func (u *UnsInput) Close(_ context.Context) error {
 	if u.client != nil {
 		u.client.Close()
 	}

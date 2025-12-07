@@ -483,7 +483,7 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 	// Wait for the configured poll rate before returning a message.
 	time.Sleep(time.Duration(g.PollRate) * time.Millisecond)
 
-	return msgs, func(ctx context.Context, err error) error {
+	return msgs, func(_ context.Context, _ error) error {
 		// Nacks are retried automatically when we use service.AutoRetryNacks
 		return nil
 	}, nil
@@ -540,7 +540,7 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 			g.Log.Errorf("Unknown publish result %T", res.Value)
 		}
 
-		return msgs, func(ctx context.Context, err error) error {
+		return msgs, func(_ context.Context, _ error) error {
 			// Nacks are retried automatically when we use service.AutoRetryNacks
 			return nil
 		}, nil

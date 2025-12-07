@@ -38,6 +38,7 @@ linters:
     - errcheck
     - errorlint
     - exhaustive
+    - ginkgolinter
     - govet
     - ineffassign
     - misspell

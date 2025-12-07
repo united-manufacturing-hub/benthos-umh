@@ -54,7 +54,7 @@ topic_browser:
 			var outputTimestamps []time.Time
 			var outputMutex sync.Mutex
 
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				outputMutex.Lock()
 				outputMessages = append(outputMessages, msg)
 				outputTimestamps = append(outputTimestamps, time.Now())

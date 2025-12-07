@@ -410,7 +410,7 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 	return si, nil
 }
 
-func (s *sparkplugInput) Connect(ctx context.Context) error {
+func (s *sparkplugInput) Connect(_ context.Context) error {
 	s.logger.Infof("Connecting Sparkplug B input (role: %s)", s.config.Role)
 
 	// Prepare MQTT client configuration
@@ -543,10 +543,10 @@ func (s *sparkplugInput) ReadBatch(ctx context.Context) (service.MessageBatch, s
 		}
 		if len(batch) == 0 {
 			s.logger.Debugf("⚠️ ReadBatch: no batch produced for message")
-			return nil, func(ctx context.Context, err error) error { return nil }, nil
+			return nil, func(_ context.Context, _ error) error { return nil }, nil
 		}
 		s.logger.Debugf("✅ ReadBatch: produced batch with %d messages", len(batch))
-		return batch, func(ctx context.Context, err error) error { return nil }, err
+		return batch, func(_ context.Context, _ error) error { return nil }, err
 	}
 }
 
@@ -881,7 +881,7 @@ func (s *sparkplugInput) processStateMessage(deviceKey, msgType string, topicInf
 	return service.MessageBatch{msg}, nil
 }
 
-func (s *sparkplugInput) Close(ctx context.Context) error {
+func (s *sparkplugInput) Close(_ context.Context) error {
 	// Signal shutdown to all goroutines first
 	close(s.done)
 

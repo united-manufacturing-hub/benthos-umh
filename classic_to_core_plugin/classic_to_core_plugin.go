@@ -138,7 +138,7 @@ func newClassicToCoreProcessor(config ClassicToCoreConfig, logger *service.Logge
 // message into multiple Core format messages. It applies tag limits, handles errors gracefully,
 // and tracks comprehensive metrics. Each input message can produce multiple output messages
 // (one per data field), following the "one tag, one message, one topic" principle.
-func (p *ClassicToCoreProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+func (p *ClassicToCoreProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var outputBatch service.MessageBatch
 
 	for _, msg := range batch {
@@ -555,6 +555,6 @@ func (p *ClassicToCoreProcessor) extractTimestamp(value interface{}) (int64, err
 // Currently, the processor doesn't maintain any persistent resources that require cleanup,
 // but this method satisfies the BatchProcessor interface and provides a clean shutdown hook
 // for future resource management needs.
-func (p *ClassicToCoreProcessor) Close(ctx context.Context) error {
+func (p *ClassicToCoreProcessor) Close(_ context.Context) error {
 	return nil
 }

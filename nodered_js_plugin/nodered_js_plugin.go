@@ -365,7 +365,7 @@ func FormatConsoleLogMsg(data []any) string {
 }
 
 // ProcessBatch applies the JavaScript code to each message in the batch.
-func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+func (u *NodeREDJSProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var resultBatch service.MessageBatch
 
 	for _, msg := range batch {
@@ -467,7 +467,7 @@ Message content: %v`,
 }
 
 // Close gracefully shuts down the processor.
-func (u *NodeREDJSProcessor) Close(ctx context.Context) error {
+func (u *NodeREDJSProcessor) Close(_ context.Context) error {
 	return nil
 }
 

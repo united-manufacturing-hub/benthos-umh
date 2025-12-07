@@ -252,14 +252,14 @@ func (s *SensorConnectInput) ReadBatch(ctx context.Context) (service.MessageBatc
 		time.Sleep(1000 * time.Millisecond) // Sleep for 1000ms as a workaround for the Crash Bug bug in the firmware
 	}
 
-	return msgBatch, func(ctx context.Context, err error) error {
+	return msgBatch, func(_ context.Context, _ error) error {
 		// Nacks are retried automatically when we use service.AutoRetryNacks
 		return nil
 	}, nil
 }
 
 // Close cleans up resources
-func (s *SensorConnectInput) Close(ctx context.Context) error {
+func (s *SensorConnectInput) Close(_ context.Context) error {
 	return nil
 }
 

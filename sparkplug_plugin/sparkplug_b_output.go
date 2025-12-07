@@ -422,7 +422,7 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 	}, nil
 }
 
-func (s *sparkplugOutput) Connect(ctx context.Context) error {
+func (s *sparkplugOutput) Connect(_ context.Context) error {
 	s.logger.Info("Connecting Sparkplug B output as Edge Node")
 
 	// Set up DEATH Last Will Testament
@@ -656,7 +656,7 @@ func (s *sparkplugOutput) handleRebirthCommand(_ mqtt.Client, msg mqtt.Message) 
 	s.logger.Infof("Completed rebirth - published DBIRTH for %d devices", len(knownDevices))
 }
 
-func (s *sparkplugOutput) Write(ctx context.Context, msg *service.Message) error {
+func (s *sparkplugOutput) Write(_ context.Context, msg *service.Message) error {
 	// Wait for NBIRTH to be published before allowing any device messages
 	// This prevents DBIRTH from being published before NBIRTH (Sparkplug B violation)
 	s.nbirthMu.Lock()
@@ -755,7 +755,7 @@ nbirthReady:
 	return nil
 }
 
-func (s *sparkplugOutput) Close(ctx context.Context) error {
+func (s *sparkplugOutput) Close(_ context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

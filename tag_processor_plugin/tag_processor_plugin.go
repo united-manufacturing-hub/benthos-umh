@@ -264,7 +264,7 @@ func (p *TagProcessor) setupMessageForVM(vm *goja.Runtime, msg *service.Message,
 }
 
 // TODO: Each time there is any execution error, output the code where the error happened as well as the message that caused it (see nodered_js_plugin). Double-check that it is not being outputted twice.
-func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+func (p *TagProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	// ───────────────── Store incoming metadata ────────────────────────────────
 	// For each message, capture its current meta fields and store them as JSON
 	// in msg.meta._initialMetadata. Also, record the original keys in _incomingKeys.
@@ -677,7 +677,7 @@ func (p *TagProcessor) normalizeVirtualPathMetadata(msg *service.Message) (strin
 	return sanitized, true
 }
 
-func (p *TagProcessor) Close(ctx context.Context) error {
+func (p *TagProcessor) Close(_ context.Context) error {
 	return nil
 }
 

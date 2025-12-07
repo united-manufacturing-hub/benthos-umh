@@ -764,7 +764,7 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 		mergedBatch = append(mergedBatch, heartbeatMessage)
 	}
 
-	return mergedBatch, func(ctx context.Context, err error) error {
+	return mergedBatch, func(_ context.Context, _ error) error {
 		return nil
 	}, nil
 }

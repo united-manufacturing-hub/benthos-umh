@@ -729,12 +729,12 @@ func getDataValueForDataType(id ua.TypeID, statusCode ua.StatusCode) *ua.DataVal
 	}
 }
 
-func (m *MockOpcuaNodeWraper) Attributes(ctx context.Context, attrs ...ua.AttributeID) ([]*ua.DataValue, error) {
+func (m *MockOpcuaNodeWraper) Attributes(_ context.Context, _ ...ua.AttributeID) ([]*ua.DataValue, error) {
 	return m.attributes, nil
 }
 
 // BrowseName implements NodeBrowser.
-func (m *MockOpcuaNodeWraper) BrowseName(ctx context.Context) (*ua.QualifiedName, error) {
+func (m *MockOpcuaNodeWraper) BrowseName(_ context.Context) (*ua.QualifiedName, error) {
 	return m.browseName, nil
 }
 
@@ -745,7 +745,7 @@ func (m *MockOpcuaNodeWraper) ID() *ua.NodeID {
 
 // Children returns all reference nodes of all refType. In real implementation, it will use id.HierarchicalReferences reference type
 // If you want to browse children of a particular refType, use ReferencedNodes
-func (m *MockOpcuaNodeWraper) Children(ctx context.Context, refType uint32, nodeClassMask ua.NodeClass) ([]NodeBrowser, error) {
+func (m *MockOpcuaNodeWraper) Children(_ context.Context, _ uint32, _ ua.NodeClass) ([]NodeBrowser, error) {
 	var result []NodeBrowser
 	// return all reference nodes of all refType
 	for _, nodes := range m.referenceNodes {
@@ -755,7 +755,7 @@ func (m *MockOpcuaNodeWraper) Children(ctx context.Context, refType uint32, node
 }
 
 // ReferencedNodes returns all reference nodes of a particular refType
-func (m *MockOpcuaNodeWraper) ReferencedNodes(ctx context.Context, refType uint32, browseDir ua.BrowseDirection, nodeClassMask ua.NodeClass, includeSubtypes bool) ([]NodeBrowser, error) {
+func (m *MockOpcuaNodeWraper) ReferencedNodes(_ context.Context, refType uint32, _ ua.BrowseDirection, _ ua.NodeClass, _ bool) ([]NodeBrowser, error) {
 	if nodes, ok := m.referenceNodes[refType]; ok {
 		return nodes, nil
 	}
@@ -816,20 +816,20 @@ func (m *MockOpcuaNodeWithBadNodeID) ID() *ua.NodeID {
 	return m.id
 }
 
-func (m *MockOpcuaNodeWithBadNodeID) BrowseName(ctx context.Context) (*ua.QualifiedName, error) {
+func (m *MockOpcuaNodeWithBadNodeID) BrowseName(_ context.Context) (*ua.QualifiedName, error) {
 	return m.browseName, nil
 }
 
-func (m *MockOpcuaNodeWithBadNodeID) Attributes(ctx context.Context, attrs ...ua.AttributeID) ([]*ua.DataValue, error) {
+func (m *MockOpcuaNodeWithBadNodeID) Attributes(_ context.Context, _ ...ua.AttributeID) ([]*ua.DataValue, error) {
 	// Return StatusBadNodeIDUnknown error to simulate the real-world scenario
 	return nil, ua.StatusBadNodeIDUnknown
 }
 
-func (m *MockOpcuaNodeWithBadNodeID) Children(ctx context.Context, refType uint32, nodeClassMask ua.NodeClass) ([]NodeBrowser, error) {
+func (m *MockOpcuaNodeWithBadNodeID) Children(_ context.Context, _ uint32, _ ua.NodeClass) ([]NodeBrowser, error) {
 	return nil, nil
 }
 
-func (m *MockOpcuaNodeWithBadNodeID) ReferencedNodes(ctx context.Context, refType uint32, browseDir ua.BrowseDirection, nodeClassMask ua.NodeClass, includeSubtypes bool) ([]NodeBrowser, error) {
+func (m *MockOpcuaNodeWithBadNodeID) ReferencedNodes(_ context.Context, _ uint32, _ ua.BrowseDirection, _ ua.NodeClass, _ bool) ([]NodeBrowser, error) {
 	return nil, nil
 }
 

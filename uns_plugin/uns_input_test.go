@@ -164,13 +164,13 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 			closeFunc: func() error {
 				return nil
 			},
-			pollFetchesFunc: func(ctx context.Context) Fetches {
+			pollFetchesFunc: func(_ context.Context) Fetches {
 				// Return an empty fetches object by default
 				return &MockFetches{
 					empty: true,
 				}
 			},
-			commitRecordsFunc: func(ctx context.Context) error {
+			commitRecordsFunc: func(_ context.Context) error {
 				return nil
 			},
 		}
@@ -237,7 +237,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 		When("poll fetches returns empty", func() {
 			BeforeEach(func() {
-				mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
+				mockClient.WithPollFetchesFunc(func(_ context.Context) Fetches {
 					return &MockFetches{
 						empty: true,
 					}
@@ -254,7 +254,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 		When("poll fetches returns error", func() {
 			BeforeEach(func() {
-				mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
+				mockClient.WithPollFetchesFunc(func(_ context.Context) Fetches {
 					return &MockFetches{
 						empty: false,
 						err:   errors.New("mock fetch error"),
@@ -273,7 +273,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 		When("poll fetches returns records", func() {
 			BeforeEach(func() {
-				mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
+				mockClient.WithPollFetchesFunc(func(_ context.Context) Fetches {
 					records := []*kgo.Record{
 						{
 							Key:   []byte("umh.v1.acme.berlin.assembly.temperature"),
@@ -381,7 +381,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 					unsClient = inputPlugin.(*UnsInput)
 
 					// Set up mock with multiple records - some matching, some not
-					mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
+					mockClient.WithPollFetchesFunc(func(_ context.Context) Fetches {
 						records := []*kgo.Record{
 							{
 								Key:   []byte("umh.v1.acme.berlin.assembly.temperature"), // Matches first pattern
@@ -450,7 +450,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 		When("ack function is called with error", func() {
 			BeforeEach(func() {
 				// Return records so ack function is created
-				mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
+				mockClient.WithPollFetchesFunc(func(_ context.Context) Fetches {
 					records := []*kgo.Record{
 						{
 							Key:   []byte("umh.v1.test"),
@@ -481,7 +481,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 		When("commit records fails", func() {
 			BeforeEach(func() {
 				// Return records so ack function is created
-				mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
+				mockClient.WithPollFetchesFunc(func(_ context.Context) Fetches {
 					records := []*kgo.Record{
 						{
 							Key:   []byte("umh.v1.test"),
@@ -495,7 +495,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 					}
 				})
 
-				mockClient.WithCommitRecordsFunc(func(ctx context.Context) error {
+				mockClient.WithCommitRecordsFunc(func(_ context.Context) error {
 					return errors.New("commit error")
 				})
 			})
@@ -543,7 +543,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 				unsClient = inputPlugin.(*UnsInput)
 
 				// Set up mock with both _mitarbeiter and _maschine topics
-				mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
+				mockClient.WithPollFetchesFunc(func(_ context.Context) Fetches {
 					records := []*kgo.Record{
 						{
 							Key:   []byte("umh.v1.umh-ep.1000.000902._mitarbeiter.setzeStatus"), // Should match

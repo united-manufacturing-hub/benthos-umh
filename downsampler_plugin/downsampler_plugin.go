@@ -437,7 +437,7 @@ func (p *DownsamplerProcessor) flushIdleCandidates() {
 //   - Temporal ordering: previous flush before current batch.
 //   - ACK correctness  : Benthos sees zero‑error path; we record metrics.
 //   - Performance      : minimal locking, single pass.
-func (p *DownsamplerProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+func (p *DownsamplerProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var outBatches []service.MessageBatch
 	var outBatch service.MessageBatch
 	var processingErrors []error
@@ -761,7 +761,7 @@ func (p *DownsamplerProcessor) updateProcessedTime(state *SeriesState, timestamp
 //
 // WHY still fail‑open here?
 //   - Better to risk duplicate data than to drop final points.
-func (p *DownsamplerProcessor) Close(ctx context.Context) error {
+func (p *DownsamplerProcessor) Close(_ context.Context) error {
 	// Use sync.Once to ensure closeChan is only closed once
 	p.closeOnce.Do(func() {
 		if p.closeChan != nil {

@@ -269,7 +269,7 @@ func BenchmarkUnsInput_ReadBatch(b *testing.B) {
 				closeFunc: func() error {
 					return nil
 				},
-				pollFetchesFunc: func(ctx context.Context) Fetches {
+				pollFetchesFunc: func(_ context.Context) Fetches {
 					records := make([]*kgo.Record, size)
 					for i := 0; i < size; i++ {
 						records[i] = &kgo.Record{
@@ -286,7 +286,7 @@ func BenchmarkUnsInput_ReadBatch(b *testing.B) {
 						records: records,
 					}
 				},
-				commitRecordsFunc: func(ctx context.Context) error {
+				commitRecordsFunc: func(_ context.Context) error {
 					return nil
 				},
 			}
@@ -333,7 +333,7 @@ func BenchmarkAckFunction(b *testing.B) {
 			closeFunc: func() error {
 				return nil
 			},
-			pollFetchesFunc: func(ctx context.Context) Fetches {
+			pollFetchesFunc: func(_ context.Context) Fetches {
 				records := []*kgo.Record{
 					{
 						Key:   []byte("umh.v1.acme.berlin.assembly.temperature"),
@@ -346,7 +346,7 @@ func BenchmarkAckFunction(b *testing.B) {
 					records: records,
 				}
 			},
-			commitRecordsFunc: func(ctx context.Context) error {
+			commitRecordsFunc: func(_ context.Context) error {
 				if commitDelay > 0 {
 					time.Sleep(commitDelay)
 				}

@@ -66,7 +66,7 @@ downsampler:
 				messages []*service.Message
 				mtx      sync.Mutex
 			)
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				mtx.Lock()
 				messages = append(messages, msg)
 				mtx.Unlock()
@@ -194,7 +194,7 @@ downsampler:
 				messages []*service.Message
 				mtx      sync.Mutex
 			)
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				mtx.Lock()
 				messages = append(messages, msg)
 				mtx.Unlock()
@@ -271,7 +271,7 @@ downsampler:
 				messages []*service.Message
 				mtx      sync.Mutex
 			)
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				mtx.Lock()
 				messages = append(messages, msg)
 				mtx.Unlock()
@@ -361,7 +361,7 @@ downsampler:
 				messages []*service.Message
 				mtx      sync.Mutex
 			)
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				mtx.Lock()
 				messages = append(messages, msg)
 				mtx.Unlock()
@@ -432,7 +432,7 @@ downsampler:
 				messages []*service.Message
 				mtx      sync.Mutex
 			)
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				mtx.Lock()
 				messages = append(messages, msg)
 				mtx.Unlock()
@@ -506,7 +506,7 @@ downsampler:
 				messages []*service.Message
 				mtx      sync.Mutex
 			)
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				mtx.Lock()
 				messages = append(messages, msg)
 				mtx.Unlock()
@@ -638,7 +638,7 @@ downsampler:
 				messages []*service.Message
 				mtx      sync.Mutex
 			)
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				mtx.Lock()
 				messages = append(messages, msg)
 				mtx.Unlock()

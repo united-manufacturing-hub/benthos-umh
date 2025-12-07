@@ -137,16 +137,16 @@ var _ = Describe("Initializing uns output plugin", func() {
 			closeFunc: func() error {
 				return nil
 			},
-			produceFunc: func(ctx context.Context, r []Record) error {
+			produceFunc: func(_ context.Context, r []Record) error {
 				if len(r) == 0 {
 					return errors.New("produceSync is called with empty messages list")
 				}
 				return nil
 			},
-			topicExistsFunc: func(ctx context.Context, s string) (bool, int, error) {
+			topicExistsFunc: func(_ context.Context, _ string) (bool, int, error) {
 				return true, 1, nil
 			},
-			createTopicFunc: func(ctx context.Context, s string, i int32) error {
+			createTopicFunc: func(_ context.Context, _ string, _ int32) error {
 				return nil
 			},
 		}
@@ -197,10 +197,10 @@ var _ = Describe("Initializing uns output plugin", func() {
 
 		When("the default output topic does not exists", func() {
 			JustBeforeEach(func() {
-				mockClient.WithTopicExistsFunc(func(ctx context.Context, s string) (bool, int, error) {
+				mockClient.WithTopicExistsFunc(func(_ context.Context, _ string) (bool, int, error) {
 					return false, 0, nil
 				})
-				mockClient.WithCreateTopicFunc(func(ctx context.Context, s string, i int32) error {
+				mockClient.WithCreateTopicFunc(func(_ context.Context, _ string, _ int32) error {
 					return nil
 				})
 			})
@@ -218,7 +218,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 		When("the default topic exists but with an unexpected partition count", func() {
 			JustBeforeEach(func() {
 				partitionCount := 15 // a number different from the expected defaultOutputTopicPartitionCount
-				mockClient.WithTopicExistsFunc(func(ctx context.Context, s string) (bool, int, error) {
+				mockClient.WithTopicExistsFunc(func(_ context.Context, _ string) (bool, int, error) {
 					return true, partitionCount, nil
 				})
 			})
@@ -289,7 +289,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 		When("the internal kafka client throws a produce error", func() {
 			// Mock the Producefunc with an error
 			JustBeforeEach(func() {
-				mockClient.WithProduceFunc(func(ctx context.Context, r []Record) error {
+				mockClient.WithProduceFunc(func(_ context.Context, _ []Record) error {
 					return errors.New("leader partition not found")
 				})
 			})

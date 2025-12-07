@@ -212,7 +212,7 @@ func init() {
 	}
 }
 
-func (g *S7CommInput) Connect(ctx context.Context) error {
+func (g *S7CommInput) Connect(_ context.Context) error {
 	g.Handler = gos7.NewTCPClientHandler(g.TcpDevice, g.Rack, g.Slot)
 	g.Handler.Timeout = g.Timeout
 	g.Handler.IdleTimeout = g.Timeout
@@ -239,7 +239,7 @@ func (g *S7CommInput) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (g *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+func (g *S7CommInput) ReadBatch(_ context.Context) (service.MessageBatch, service.AckFunc, error) {
 	if g.Client == nil {
 		return nil, nil, fmt.Errorf("S7Comm client is not initialized")
 	}
@@ -286,12 +286,12 @@ func (g *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 
 	time.Sleep(time.Second)
 
-	return msgs, func(ctx context.Context, err error) error {
+	return msgs, func(_ context.Context, _ error) error {
 		return nil // Acknowledgment handling here if needed
 	}, nil
 }
 
-func (g *S7CommInput) Close(ctx context.Context) error {
+func (g *S7CommInput) Close(_ context.Context) error {
 	if g.Handler != nil {
 		g.Handler.Close()
 		g.Handler = nil

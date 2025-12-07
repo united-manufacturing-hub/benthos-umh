@@ -195,7 +195,7 @@ func init() {
 	}
 }
 
-func (g *EIPInput) Connect(ctx context.Context) error {
+func (g *EIPInput) Connect(_ context.Context) error {
 	if g.CIP == nil {
 		g.CIP = &gologix.Client{
 			Controller:         *g.Controller,
@@ -289,7 +289,7 @@ func (g *EIPInput) logDeviceProperties() error {
 	return nil
 }
 
-func (g *EIPInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+func (g *EIPInput) ReadBatch(_ context.Context) (service.MessageBatch, service.AckFunc, error) {
 	var msgs service.MessageBatch
 
 	for _, item := range g.Items {
@@ -316,13 +316,13 @@ func (g *EIPInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 	// not sure if we could just set a global "pollRate" for the plc
 	time.Sleep(g.PollRate)
 
-	return msgs, func(ctx context.Context, err error) error {
+	return msgs, func(_ context.Context, _ error) error {
 		// for now
 		return nil
 	}, nil
 }
 
-func (g *EIPInput) Close(ctx context.Context) error {
+func (g *EIPInput) Close(_ context.Context) error {
 	err := g.CIP.Disconnect()
 	if err != nil {
 		return err
