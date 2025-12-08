@@ -1122,7 +1122,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 				}
 			}
 			// All aliases should be unique
-			Expect(len(aliasMap)).To(BeNumerically(">", 0), "BIRTH should contain metrics with aliases")
+			Expect(aliasMap).ToNot(BeEmpty(), "BIRTH should contain metrics with aliases")
 		})
 	})
 
@@ -1289,7 +1289,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 			Expect(err).NotTo(HaveOccurred(), "Should unmarshal payload with metric timestamps")
 
 			// Verify metric timestamp is preserved
-			Expect(len(reconstructedPayload.Metrics)).To(Equal(1), "Should have one metric")
+			Expect(reconstructedPayload.Metrics).To(HaveLen(1), "Should have one metric")
 			reconstructedMetric := reconstructedPayload.Metrics[0]
 			Expect(reconstructedMetric.Timestamp).NotTo(BeNil(), "Reconstructed metric should have timestamp")
 			Expect(*reconstructedMetric.Timestamp).To(Equal(timestampValue), "Reconstructed timestamp should match original")
@@ -1984,7 +1984,7 @@ var _ = Describe("UMH Metadata Generation Unit Tests", func() {
 
 			// With sanitization now integrated in the converter,
 			// the conversion should succeed even with invalid characters
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(umhMsg).ToNot(BeNil())
 
 			// Verify sanitized values in topic
@@ -2571,7 +2571,7 @@ var _ = Describe("Edge Node ID Consistency Fix Unit Tests", func() {
 
 					// All host modes should subscribe to topics
 					if tc.expectSubscribe {
-						Expect(len(topics)).To(BeNumerically(">", 0))
+						Expect(topics).ToNot(BeEmpty())
 						Expect(topics[0]).To(ContainSubstring("spBv1.0/"))
 					}
 				})

@@ -35,7 +35,7 @@ var _ = Describe("Event Processing", func() {
 				})
 
 				event, err := messageToEvent(msg)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 				Expect(event.GetTs()).NotTo(BeNil())
 				Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1234567890)))
 				Expect(event.GetTs().GetScalarType()).To(Equal(proto.ScalarType_NUMERIC))
@@ -50,7 +50,7 @@ var _ = Describe("Event Processing", func() {
 				})
 
 				event, err := messageToEvent(msg)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 				Expect(event.GetRel()).NotTo(BeNil())
 				Expect(event.GetTs()).To(BeNil())
 			})
@@ -63,7 +63,7 @@ var _ = Describe("Event Processing", func() {
 				})
 
 				event, err := messageToEvent(msg)
-				Expect(err).To(BeNil())               // Should not error, processed as relational
+				Expect(err).ToNot(HaveOccurred())     // Should not error, processed as relational
 				Expect(event.GetRel()).NotTo(BeNil()) // Should be processed as relational
 				Expect(event.GetTs()).To(BeNil())     // Should not be timeseries
 			})
@@ -77,7 +77,7 @@ var _ = Describe("Event Processing", func() {
 				})
 
 				event, err := messageToEvent(msg)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 				Expect(event.GetRel()).NotTo(BeNil())
 				Expect(event.GetTs()).To(BeNil())
 			})
@@ -102,7 +102,7 @@ var _ = Describe("Event Processing", func() {
 					})
 
 					event, err := messageToEvent(msg)
-					Expect(err).To(BeNil())
+					Expect(err).ToNot(HaveOccurred())
 					Expect(event.GetTs()).NotTo(BeNil())
 					Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1234567890)))
 					Expect(event.GetTs().GetScalarType()).To(Equal(tc.scalarType))
@@ -116,7 +116,7 @@ var _ = Describe("Event Processing", func() {
 						Expect(event.GetTs().GetStringValue().GetValue()).To(Equal("test"))
 					case proto.ScalarType_BOOLEAN:
 						Expect(event.GetTs().GetBooleanValue()).NotTo(BeNil())
-						Expect(event.GetTs().GetBooleanValue().GetValue()).To(Equal(true))
+						Expect(event.GetTs().GetBooleanValue().GetValue()).To(BeTrue())
 					default:
 					}
 				}
@@ -126,7 +126,7 @@ var _ = Describe("Event Processing", func() {
 				msg := service.NewMessage([]byte("invalid json {"))
 
 				event, err := messageToEvent(msg)
-				Expect(err).NotTo(BeNil())
+				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("invalid JSON format"))
 				Expect(event).To(BeNil())
 			})
@@ -136,7 +136,7 @@ var _ = Describe("Event Processing", func() {
 				msg.SetStructured([]interface{}{"not", "a", "map"})
 
 				event, err := messageToEvent(msg)
-				Expect(err).NotTo(BeNil())
+				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("payload is not a JSON object"))
 				Expect(event).To(BeNil())
 			})
@@ -149,7 +149,7 @@ var _ = Describe("Event Processing", func() {
 				})
 
 				event, err := messageToEvent(msg)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 				Expect(event.GetTs()).NotTo(BeNil())
 				Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1234567890)))
 			})
@@ -162,7 +162,7 @@ var _ = Describe("Event Processing", func() {
 				})
 
 				event, err := messageToEvent(msg)
-				Expect(err).NotTo(BeNil())
+				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("cannot be nil"))
 				Expect(event).To(BeNil())
 			})
@@ -175,7 +175,7 @@ var _ = Describe("Event Processing", func() {
 				})
 
 				event, err := messageToEvent(msg)
-				Expect(err).NotTo(BeNil())
+				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("cannot be nil"))
 				Expect(event).To(BeNil())
 			})
@@ -187,7 +187,7 @@ var _ = Describe("Event Processing", func() {
 				msg := service.NewMessage(rawData)
 
 				event, err := messageToEvent(msg)
-				Expect(err).NotTo(BeNil())
+				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("invalid JSON format"))
 				Expect(event).To(BeNil())
 			})
@@ -200,7 +200,7 @@ var _ = Describe("Event Processing", func() {
 				})
 
 				event, err := messageToEvent(msg)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 				Expect(event.GetRel()).NotTo(BeNil())
 				Expect(event.GetTs()).To(BeNil())
 			})
@@ -221,7 +221,7 @@ var _ = Describe("Event Processing", func() {
 				})
 
 				event, err := messageToEvent(msg)
-				Expect(err).To(BeNil())               // Should NOT fail due to size
+				Expect(err).ToNot(HaveOccurred())     // Should NOT fail due to size
 				Expect(event.GetRel()).NotTo(BeNil()) // Should be processed as relational
 				Expect(event.GetTs()).To(BeNil())     // Should not be time-series
 			})
@@ -236,7 +236,7 @@ var _ = Describe("Event Processing", func() {
 			}
 
 			event, err := processTimeSeriesData(data)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(event.GetTs()).NotTo(BeNil())
 			Expect(event.GetTs().GetTimestampMs()).To(Equal(int64(1234567890)))
 			Expect(event.GetTs().GetScalarType()).To(Equal(proto.ScalarType_NUMERIC))
@@ -251,7 +251,7 @@ var _ = Describe("Event Processing", func() {
 			}
 
 			event, err := processTimeSeriesData(data)
-			Expect(err).NotTo(BeNil())
+			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("time-series payload must have exactly"))
 			Expect(event).To(BeNil())
 		})
@@ -263,7 +263,7 @@ var _ = Describe("Event Processing", func() {
 			}
 
 			event, err := processTimeSeriesData(data)
-			Expect(err).NotTo(BeNil())
+			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("time-series payload must have exactly"))
 			Expect(event).To(BeNil())
 		})
@@ -279,7 +279,7 @@ var _ = Describe("Event Processing", func() {
 			}
 
 			event, err := processTimeSeriesData(data)
-			Expect(err).NotTo(BeNil())
+			Expect(err).To(HaveOccurred())
 			Expect(event).To(BeNil())
 		})
 
@@ -293,7 +293,7 @@ var _ = Describe("Event Processing", func() {
 
 			// This should be processed as relational data, not timeseries
 			event, err := messageToEvent(msg)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(event.GetRel()).NotTo(BeNil()) // Should be relational data
 			Expect(event.GetTs()).To(BeNil())     // Should not be timeseries
 		})
@@ -306,7 +306,7 @@ var _ = Describe("Event Processing", func() {
 			})
 
 			event, err := messageToEvent(msg)
-			Expect(err).NotTo(BeNil())
+			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("NaN"))
 			Expect(event).To(BeNil())
 		})
@@ -319,7 +319,7 @@ var _ = Describe("Event Processing", func() {
 			})
 
 			event, err := messageToEvent(msg)
-			Expect(err).NotTo(BeNil())
+			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("Inf"))
 			Expect(event).To(BeNil())
 		})
@@ -332,7 +332,7 @@ var _ = Describe("Event Processing", func() {
 			})
 
 			event, err := messageToEvent(msg)
-			Expect(err).NotTo(BeNil())
+			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("Inf"))
 			Expect(event).To(BeNil())
 		})
@@ -351,7 +351,7 @@ var _ = Describe("Event Processing", func() {
 			})
 
 			event, err := messageToEvent(msg)
-			Expect(err).NotTo(BeNil())
+			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("time-series payload"))
 			Expect(event).To(BeNil())
 		})
@@ -364,7 +364,7 @@ var _ = Describe("Event Processing", func() {
 			})
 
 			event, err := messageToEvent(msg)
-			Expect(err).NotTo(BeNil())
+			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("precision loss"))
 			Expect(event).To(BeNil())
 		})
@@ -378,7 +378,7 @@ var _ = Describe("Event Processing", func() {
 			}
 
 			event, err := processRelationalStructured(structuredData)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(event.GetRel()).NotTo(BeNil())
 			Expect(event.GetTs()).To(BeNil())
 		})

@@ -260,7 +260,7 @@ var _ = Describe("Test underlying OPC-clients", FlakeAttempts(3), func() {
 		Expect(resp.Results[0].Status).To(Equal(ua.StatusOK))
 
 		namespaces, ok := resp.Results[0].Value.Value().([]string)
-		Expect(ok).To(Equal(true))
+		Expect(ok).To(BeTrue())
 
 		if !isNamespaceAvailable {
 			Expect(namespaces).NotTo(ContainElement(namespace))

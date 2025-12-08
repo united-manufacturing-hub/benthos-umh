@@ -140,7 +140,7 @@ var _ = Describe("100k Scale Browse Test", Label("100k_scale"), func() {
 			// Expected: 110,000 variable nodes (11 folders × 10,000 children)
 			// The folders themselves (ua.NodeClassObject) are NOT sent to nodeChan
 			// Only ua.NodeClassVariable nodes are sent (see line 312-319 in core_browse.go)
-			Expect(len(discoveredNodes)).To(Equal(110000), "Should discover exactly 110,000 variable nodes without deadlock")
+			Expect(discoveredNodes).To(HaveLen(110000), "Should discover exactly 110,000 variable nodes without deadlock")
 		})
 	})
 })

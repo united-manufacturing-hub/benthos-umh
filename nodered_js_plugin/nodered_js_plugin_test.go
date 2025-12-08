@@ -759,7 +759,7 @@ nodered_js:
 			time.Sleep(100 * time.Millisecond)
 
 			// Verify no messages were processed due to the strict mode error
-			Expect(len(messages)).To(Equal(0))
+			Expect(messages).To(BeEmpty())
 		})
 
 		It("should handle concurrent processing safely", func() {
@@ -842,7 +842,7 @@ nodered_js:
 			messagesMutex.Unlock()
 
 			// Verify we have the expected number of unique processed messages
-			Expect(len(processedPayloads)).To(Equal(numMessages))
+			Expect(processedPayloads).To(HaveLen(numMessages))
 		})
 	})
 })

@@ -116,7 +116,7 @@ var _ = Describe("StateManager", func() {
 
 			// Get all variables
 			variables := stateManager.GetState().GetAllVariables()
-			Expect(len(variables)).To(Equal(2))
+			Expect(variables).To(HaveLen(2))
 			Expect(variables).To(HaveKey("pressure"))
 			Expect(variables).To(HaveKey("temperature"))
 		})
@@ -145,7 +145,7 @@ var _ = Describe("StateManager", func() {
 
 			// Get variable context
 			context := stateManager.GetState().GetVariableContext()
-			Expect(len(context)).To(Equal(2))
+			Expect(context).To(HaveLen(2))
 			Expect(context["pressure"]).To(Equal(1000.0))
 			Expect(context["temperature"]).To(Equal(25.0))
 		})
@@ -211,7 +211,7 @@ var _ = Describe("StateManager", func() {
 
 		It("should get all source topics", func() {
 			topics := stateManager.GetSourceTopics()
-			Expect(len(topics)).To(Equal(3))
+			Expect(topics).To(HaveLen(3))
 			Expect(topics).To(ContainElements(
 				"ia/raw/opcua/default/press",
 				"ia/raw/opcua/default/tF",
@@ -233,7 +233,7 @@ var _ = Describe("StateManager", func() {
 	Context("Mapping Analysis", func() {
 		It("should identify static mappings", func() {
 			staticMappings := stateManager.GetStaticMappings()
-			Expect(len(staticMappings)).To(Equal(1))
+			Expect(staticMappings).To(HaveLen(1))
 			Expect(staticMappings[0].VirtualPath).To(Equal("location"))
 			Expect(staticMappings[0].Expression).To(Equal("\"Factory-A\""))
 			Expect(staticMappings[0].Type).To(Equal(config.StaticMapping))
@@ -241,7 +241,7 @@ var _ = Describe("StateManager", func() {
 
 		It("should identify dependent mappings", func() {
 			dependentMappings := stateManager.GetDependentMappings("pressure")
-			Expect(len(dependentMappings)).To(Equal(1))
+			Expect(dependentMappings).To(HaveLen(1))
 			Expect(dependentMappings[0].VirtualPath).To(Equal("pressure"))
 			Expect(dependentMappings[0].Expression).To(Equal("pressure * 0.001"))
 			Expect(dependentMappings[0].Dependencies).To(ContainElement("pressure"))
@@ -253,7 +253,7 @@ var _ = Describe("StateManager", func() {
 
 			// Get executable mappings
 			executableMappings := stateManager.GetExecutableMappings("pressure")
-			Expect(len(executableMappings)).To(BeNumerically(">=", 1))
+			Expect(executableMappings).ToNot(BeEmpty())
 
 			// Should include the pressure mapping
 			found := false
@@ -296,7 +296,7 @@ var _ = Describe("StateManager", func() {
 
 			// Verify all variables are present
 			allVars := stateManager.GetState().GetAllVariables()
-			Expect(len(allVars)).To(Equal(numGoroutines * numOperations))
+			Expect(allVars).To(HaveLen(numGoroutines * numOperations))
 		})
 	})
 
@@ -320,12 +320,12 @@ var _ = Describe("StateManager", func() {
 			staticMappings := stateManager.GetStaticMappings()
 
 			// Static mappings should only contain location
-			Expect(len(staticMappings)).To(Equal(1))
+			Expect(staticMappings).To(HaveLen(1))
 			Expect(staticMappings[0].VirtualPath).To(Equal("location"))
 
 			// Dynamic mappings should contain the rest
 			dependentMappings := stateManager.GetDependentMappings("pressure")
-			Expect(len(dependentMappings)).To(Equal(1))
+			Expect(dependentMappings).To(HaveLen(1))
 			Expect(dependentMappings[0].VirtualPath).To(Equal("pressure"))
 		})
 	})

@@ -179,7 +179,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 	Context("calling Connect function", func() {
 		It("should initialize the kafka client", func() {
 			err := outputPlugin.Connect(ctx)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(unsClient.client).NotTo(BeNil())
 		})
 
@@ -207,7 +207,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 
 			It("should create the default output topic", func() {
 				err := outputPlugin.Connect(ctx)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 
 				client, ok := unsClient.client.(TestMessagePublisher)
 				Expect(ok).To(BeTrue())
@@ -233,10 +233,10 @@ var _ = Describe("Initializing uns output plugin", func() {
 	Context("calling Close function", func() {
 		It("should close the underlying kafka client", func() {
 			err := outputPlugin.Connect(ctx)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			err = outputPlugin.Close(ctx)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(unsClient.client).To(BeNil())
 		})
 	})
@@ -249,7 +249,7 @@ var _ = Describe("Initializing uns output plugin", func() {
 		When("with empty list of message", func() {
 			It("should throw error about empty message list", func() {
 				err := outputPlugin.WriteBatch(ctx, nil)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 			})
 		})
 		When("with list of messages", func() {
@@ -261,14 +261,14 @@ var _ = Describe("Initializing uns output plugin", func() {
 					msgs = append(msgs, msg)
 				}
 				err := outputPlugin.WriteBatch(ctx, msgs)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 
 				client, ok := unsClient.client.(TestMessagePublisher)
 				Expect(ok).To(BeTrue())
 				produceFuncCalled := client.IsProduceSyncCalled()
 				Expect(produceFuncCalled).To(BeTrue())
 				messages := client.GetRequestedProduceMessages()
-				Expect(len(messages)).To(BeNumerically("==", 10))
+				Expect(messages).To(HaveLen(10))
 				for _, m := range messages {
 					Expect(m.Topic).To(BeEquivalentTo(defaultOutputTopic))
 					Expect(m.Value).To(BeEquivalentTo([]byte(`{"data": "test"}`)))
@@ -374,14 +374,14 @@ var _ = Describe("Initializing uns output plugin", func() {
 				msgs := service.MessageBatch{msg}
 
 				err := outputPlugin.WriteBatch(ctx, msgs)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 
 				client, ok := unsClient.client.(TestMessagePublisher)
 				Expect(ok).To(BeTrue())
 				Expect(client.IsProduceSyncCalled()).To(BeTrue())
 
 				messages := client.GetRequestedProduceMessages()
-				Expect(len(messages)).To(Equal(1))
+				Expect(messages).To(HaveLen(1))
 				Expect(string(messages[0].Key)).To(Equal("umh.v1.enterprise.site.area._historian.tag"))
 			})
 		})
@@ -414,7 +414,7 @@ var _ = Describe("topic validation", func() {
 		It("should accept valid message keys with single dots", func() {
 			input := "umh.v1.enterprise.site.area._historian.tag"
 			_, err := topic.NewUnsTopic(input)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 		})
 
 		It("should reject invalid characters", func() {
@@ -454,7 +454,7 @@ var _ = Describe("topic validation", func() {
 
 			for _, topicStr := range validTopics {
 				_, err := topic.NewUnsTopic(topicStr)
-				Expect(err).To(BeNil(), "Expected topic '%s' to be valid", topicStr)
+				Expect(err).ToNot(HaveOccurred(), "Expected topic '%s' to be valid", topicStr)
 			}
 		})
 	})

@@ -78,7 +78,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 	AfterEach(func() {
 		if processor != nil {
 			err := processor.Close(ctx)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 		}
 		cancel()
 	})
@@ -327,7 +327,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 				Expect(err).ToNot(HaveOccurred())
 				defer func() {
 					err := complexProcessor.Close(ctx)
-					Expect(err).To(BeNil())
+					Expect(err).ToNot(HaveOccurred())
 				}()
 
 				inputPayload := processor2.TimeseriesMessage{
@@ -415,7 +415,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 				Expect(err).ToNot(HaveOccurred())
 				defer func() {
 					err := dependentProcessor.Close(ctx)
-					Expect(err).To(BeNil())
+					Expect(err).ToNot(HaveOccurred())
 				}()
 
 				// Send only press, not tF
@@ -563,7 +563,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 			Expect(err).ToNot(HaveOccurred())
 			defer func() {
 				err := errorProcessor.Close(ctx)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 			}()
 
 			inputPayload := processor2.TimeseriesMessage{
@@ -621,7 +621,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 
 			// Should have outputs from the valid message
 			Expect(batches).ToNot(BeEmpty())
-			Expect(len(batches[0])).To(BeNumerically(">", 0))
+			Expect(batches[0]).ToNot(BeEmpty())
 		})
 	})
 
@@ -744,7 +744,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 
 				// Clean up
 				err = dangerousProcessor.Close(ctx)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 			}
 		})
 
@@ -763,7 +763,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 			Expect(err).ToNot(HaveOccurred())
 			defer func() {
 				err := safeProcessor.Close(ctx)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 			}()
 
 			inputPayload := processor2.TimeseriesMessage{

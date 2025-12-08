@@ -54,7 +54,7 @@ var _ = Describe("ProcessorWrapper", func() {
 			// Integer conversion
 			points, err = processor.Ingest(10, baseTime.Add(time.Second))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(points).To(HaveLen(0), "Small change should be dropped")
+			Expect(points).To(BeEmpty(), "Small change should be dropped")
 
 			// Float32 conversion
 			points, err = processor.Ingest(float32(11.0), baseTime.Add(2*time.Second))
@@ -71,7 +71,7 @@ var _ = Describe("ProcessorWrapper", func() {
 			// Same boolean value should be dropped
 			points, err = processor.Ingest(true, baseTime.Add(time.Second))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(points).To(HaveLen(0))
+			Expect(points).To(BeEmpty())
 
 			// Changed boolean value should be kept
 			points, err = processor.Ingest(false, baseTime.Add(2*time.Second))
@@ -88,7 +88,7 @@ var _ = Describe("ProcessorWrapper", func() {
 			// Same string value should be dropped
 			points, err = processor.Ingest("running", baseTime.Add(time.Second))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(points).To(HaveLen(0))
+			Expect(points).To(BeEmpty())
 
 			// Changed string value should be kept
 			points, err = processor.Ingest("stopped", baseTime.Add(2*time.Second))
@@ -121,7 +121,7 @@ var _ = Describe("ProcessorWrapper", func() {
 				// Out-of-order point should be dropped
 				points, err = processor.Ingest(11.0, baseTime.Add(1*time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(points).To(HaveLen(0))
+				Expect(points).To(BeEmpty())
 			})
 		})
 
@@ -196,7 +196,7 @@ var _ = Describe("ProcessorWrapper", func() {
 			// Test complex number (not supported)
 			points, err := processor.Ingest(complex(1, 2), baseTime)
 			Expect(err).To(HaveOccurred())
-			Expect(points).To(HaveLen(0))
+			Expect(points).To(BeEmpty())
 		})
 	})
 })

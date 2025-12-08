@@ -98,11 +98,11 @@ var _ = Describe("Test Against Docker Modbus Simulator", func() {
 			Expect(messageStruct).To(BeAssignableToTypeOf(true))
 			switch tagName {
 			case "firstFlagOfDiscreteInput":
-				Expect(messageStruct).To(Equal(true))
+				Expect(messageStruct).To(BeTrue())
 			case "secondFlagOfDiscreteInput":
-				Expect(messageStruct).To(Equal(false))
+				Expect(messageStruct).To(BeFalse())
 			case "fourthFlagOfDiscreteInput":
-				Expect(messageStruct).To(Equal(false))
+				Expect(messageStruct).To(BeFalse())
 			}
 
 			GinkgoWriter.Printf("Received message: %+v\n", messageStruct)

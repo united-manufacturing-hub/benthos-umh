@@ -58,6 +58,7 @@ import (
 //   - securityPolicy:  The OPC UA security policy (e.g., "Basic128Rsa15", "Basic256", "Basic256Sha256")
 //
 // Reference: OPC UA Part 6 - Section 6.2.2 (Application Instance Certificate)
+//
 //nolint:revive // securityMode will be used in future
 func GenerateCertWithMode(
 	validFor time.Duration,

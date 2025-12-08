@@ -60,7 +60,7 @@ var _ = Describe("Metadata Preservation", func() {
 	AfterEach(func() {
 		if processor != nil {
 			err := processor.Close(context.TODO())
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 		}
 	})
 
@@ -90,7 +90,7 @@ var _ = Describe("Metadata Preservation", func() {
 
 			// Verify output messages preserve metadata
 			outputBatch := batches[0]
-			Expect(len(outputBatch)).To(BeNumerically(">=", 1))
+			Expect(outputBatch).ToNot(BeEmpty())
 
 			for _, outputMsg := range outputBatch {
 				// Verify umh_topic is set correctly (will be different from original)

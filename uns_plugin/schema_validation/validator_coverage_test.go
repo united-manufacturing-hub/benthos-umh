@@ -57,7 +57,7 @@ var _ = Describe("Validator Coverage Tests", func() {
 					fmt.Sprintf("_test_contract_%d_v1-timeseries-number", i): []byte(`{"type": "object"}`),
 				}
 				err := testValidator.LoadSchemas(fmt.Sprintf("_test_contract_%d", i), 1, schemas)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 			}
 
 			// Verify cache size is limited
@@ -84,7 +84,7 @@ var _ = Describe("Validator Coverage Tests", func() {
 			defer testValidator.Close()
 
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -104,7 +104,7 @@ var _ = Describe("Validator Coverage Tests", func() {
 			defer testValidator.Close()
 
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -119,7 +119,7 @@ var _ = Describe("Validator Coverage Tests", func() {
 			defer testValidator.Close()
 
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -141,7 +141,7 @@ var _ = Describe("Validator Coverage Tests", func() {
 		It("should handle contract version parsing edge cases", func() {
 			// Test various invalid contract formats
 			_, _, err := validator.ExtractSchemaVersionFromDataContract("_sensor_data_v0") // Version 0
-			Expect(err).To(BeNil())                                                        // Version 0 should be valid
+			Expect(err).ToNot(HaveOccurred())                                              // Version 0 should be valid
 
 			_, _, err = validator.ExtractSchemaVersionFromDataContract("_sensor_data_v999999999999999999999")
 			Expect(err).To(HaveOccurred())
@@ -162,7 +162,7 @@ var _ = Describe("Validator Coverage Tests", func() {
 
 			// Add a version
 			err := schema.AddVersion(1, []byte(`{"type": "object"}`))
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Now should have version 1
 			Expect(schema.HasVersion(1)).To(BeTrue())
@@ -177,7 +177,7 @@ var _ = Describe("Validator Coverage Tests", func() {
 
 			// Add a version
 			err := schema.AddVersion(1, []byte(`{"type": "object"}`))
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Now should return the schema
 			jsonSchema := schema.GetVersion(1)
@@ -188,13 +188,13 @@ var _ = Describe("Validator Coverage Tests", func() {
 	Context("mock registry method tests", func() {
 		It("should test mock registry GetRegisteredSubjects", func() {
 			subjects := mockRegistry.GetRegisteredSubjects()
-			Expect(len(subjects)).To(BeNumerically(">", 0))
+			Expect(subjects).ToNot(BeEmpty())
 			Expect(subjects).To(ContainElement("_sensor_data_v1-timeseries-number"))
 		})
 
 		It("should test mock registry GetVersionsForSubject", func() {
 			versions := mockRegistry.GetVersionsForSubject("_sensor_data_v1-timeseries-number")
-			Expect(len(versions)).To(Equal(1))
+			Expect(versions).To(HaveLen(1))
 			Expect(versions[0]).To(Equal(1))
 		})
 

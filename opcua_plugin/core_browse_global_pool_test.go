@@ -298,7 +298,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 			profile := ServerProfile{MaxWorkers: 10}
 			pool := NewGlobalWorkerPool(profile, logger)
 			Expect(pool.taskChan).NotTo(BeNil())
-			Expect(cap(pool.taskChan)).To(Equal(MaxTagsToBrowse * 2)) // 200k buffer
+			Expect(pool.taskChan).To(HaveCap(MaxTagsToBrowse * 2)) // 200k buffer
 		})
 
 		It("should initialize workerControls map", func() {
@@ -529,7 +529,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				Expect(spawned).To(Equal(20))
 				Expect(pool.currentWorkers).To(Equal(20))
-				Expect(len(pool.workerControls)).To(Equal(20))
+				Expect(pool.workerControls).To(HaveLen(20))
 			})
 		})
 
@@ -542,7 +542,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				spawned := pool.SpawnWorkers(3)
 
 				Expect(spawned).To(Equal(3))
-				Expect(len(pool.workerControls)).To(Equal(3))
+				Expect(pool.workerControls).To(HaveLen(3))
 
 				// Verify each UUID is unique
 				seenUUIDs := make(map[string]bool)
@@ -583,7 +583,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				// Verify total spawned matches what was possible
 				Expect(totalSpawned).To(Equal(10))
 				Expect(pool.currentWorkers).To(Equal(10))
-				Expect(len(pool.workerControls)).To(Equal(10))
+				Expect(pool.workerControls).To(HaveLen(10))
 			})
 		})
 
@@ -597,7 +597,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				spawned := pool.SpawnWorkers(3)
 				Expect(spawned).To(Equal(3))
 				Expect(pool.currentWorkers).To(Equal(3))
-				Expect(len(pool.workerControls)).To(Equal(3))
+				Expect(pool.workerControls).To(HaveLen(3))
 
 				// Get one worker's control channel
 				pool.mu.Lock()
@@ -3094,7 +3094,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 			// Expected: Only Sensor1, Sensor2, Sensor3 (Variables) = 3 nodes
 			//
 			// After fix: This assertion will PASS
-			Expect(len(results)).To(Equal(3), "Should receive exactly 3 Variable nodes (Sensor1, Sensor2, Sensor3)")
+			Expect(results).To(HaveLen(3), "Should receive exactly 3 Variable nodes (Sensor1, Sensor2, Sensor3)")
 
 			// ASSERT: Verify NO Object nodes were sent
 			for _, result := range results {

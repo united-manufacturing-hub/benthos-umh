@@ -78,7 +78,7 @@ tags:
 			eipInput := GetUnderlyingEIPInputForTest(input)
 			Expect(eipInput).NotTo(BeNil())
 
-			Expect(len(eipInput.Items)).To(Equal(14))
+			Expect(eipInput.Items).To(HaveLen(14))
 		})
 	})
 })

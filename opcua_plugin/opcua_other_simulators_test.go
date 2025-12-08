@@ -60,7 +60,7 @@ var _ = Describe("Test Against Softing OPC DataFeed", Serial, func() {
 			messageBatch, _, err := input.ReadBatch(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(len(messageBatch)).To(Equal(1))
+			Expect(messageBatch).To(HaveLen(1))
 
 			// Close connection
 			if input.Client != nil {
@@ -95,21 +95,21 @@ var _ = Describe("Test Against Softing OPC DataFeed", Serial, func() {
 
 			messageBatch, _, err := input.ReadBatch(ctx1)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(len(messageBatch)).To(Equal(1))
+			Expect(messageBatch).To(HaveLen(1))
 
 			ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel2()
 
 			messageBatch, _, err = input.ReadBatch(ctx2)
 			Expect(err).To(Equal(context.DeadlineExceeded)) // there should be no data change
-			Expect(len(messageBatch)).To(Equal(0))
+			Expect(messageBatch).To(BeEmpty())
 
 			ctx3, cancel3 := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel3()
 
 			messageBatch, _, err = input.ReadBatch(ctx3)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(len(messageBatch)).To(Equal(1))
+			Expect(messageBatch).To(HaveLen(1))
 
 			// Close connection
 			if input.Client != nil {

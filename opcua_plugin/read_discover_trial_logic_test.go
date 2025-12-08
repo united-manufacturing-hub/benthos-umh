@@ -145,7 +145,7 @@ var _ = Describe("MonitorBatched trial-and-retry error handling", Label("trial-a
 			}
 
 			// Assertions
-			Expect(finalError).To(BeNil(), "No error should be returned after successful retry")
+			Expect(finalError).ToNot(HaveOccurred(), "No error should be returned after successful retry")
 		})
 	})
 

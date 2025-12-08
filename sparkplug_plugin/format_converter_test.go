@@ -85,7 +85,7 @@ var _ = Describe("FormatConverter", func() {
 						Expect(result.EdgeNodeID).To(Equal("Line1"))
 						Expect(result.DeviceID).To(Equal("factory:line1:station2"))
 						Expect(result.MetricName).To(Equal("motor:diagnostics:running"))
-						Expect(result.Value).To(Equal(true))
+						Expect(result.Value).To(BeTrue())
 						Expect(result.DataType).To(Equal("boolean"))
 					},
 				),
@@ -212,7 +212,7 @@ var _ = Describe("FormatConverter", func() {
 						Expect(result.TopicInfo.VirtualPath).NotTo(BeNil())
 						Expect(*result.TopicInfo.VirtualPath).To(Equal("motor.diagnostics"))
 						Expect(result.TopicInfo.Name).To(Equal("running"))
-						Expect(result.Value).To(Equal(true))
+						Expect(result.Value).To(BeTrue())
 					},
 				),
 				Entry("Sparkplug message with complex virtual path",

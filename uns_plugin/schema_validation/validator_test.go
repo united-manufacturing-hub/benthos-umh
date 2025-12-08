@@ -67,35 +67,35 @@ var _ = Describe("Validator", func() {
 	Context("when validating with versioned contracts", func() {
 		It("should successfully validate sensor data v1", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			result := validator.Validate(unsTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeTrue())
 			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(BeNil())
+			Expect(result.Error).ToNot(HaveOccurred())
 			Expect(result.ContractName).To(Equal("_sensor_data"))
 			Expect(result.ContractVersion).To(Equal(uint64(1)))
 		})
 
 		It("should successfully validate sensor data v2", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v2.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			result := validator.Validate(unsTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeTrue())
 			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(BeNil())
+			Expect(result.Error).ToNot(HaveOccurred())
 			Expect(result.ContractName).To(Equal("_sensor_data"))
 			Expect(result.ContractVersion).To(Equal(uint64(2)))
 		})
 
 		It("should reject invalid virtual path", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.invalid_path")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -108,7 +108,7 @@ var _ = Describe("Validator", func() {
 
 		It("should reject invalid payload structure", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": "invalid", "value": 25.5}`)
 
@@ -123,7 +123,7 @@ var _ = Describe("Validator", func() {
 	Context("when handling non-existent schemas", func() {
 		It("should bypass validation for non-existent contract", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -137,7 +137,7 @@ var _ = Describe("Validator", func() {
 
 		It("should bypass validation for non-existent version", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v999.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -153,7 +153,7 @@ var _ = Describe("Validator", func() {
 	Context("when handling unversioned contracts", func() {
 		It("should bypass validation for unversioned contracts", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -168,7 +168,7 @@ var _ = Describe("Validator", func() {
 	Context("when testing cache behavior", func() {
 		It("should cache successful schema fetches", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -188,7 +188,7 @@ var _ = Describe("Validator", func() {
 
 		It("should cache negative results (schema not found)", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -205,7 +205,7 @@ var _ = Describe("Validator", func() {
 
 		It("should cache successful schema fetches forever", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -220,14 +220,14 @@ var _ = Describe("Validator", func() {
 
 			Expect(exists).To(BeTrue())
 			Expect(entry.SchemaExists).To(BeTrue())
-			Expect(len(entry.Schemas)).To(BeNumerically(">", 0))
+			Expect(entry.Schemas).ToNot(BeEmpty())
 			Expect(entry.IsExpired()).To(BeFalse())
 			Expect(entry.ExpiresAt.IsZero()).To(BeTrue()) // Zero time means never expires
 		})
 
 		It("should cache schema misses for 10 minutes", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -242,7 +242,7 @@ var _ = Describe("Validator", func() {
 
 			Expect(exists).To(BeTrue())
 			Expect(entry.SchemaExists).To(BeFalse())
-			Expect(len(entry.Schemas)).To(Equal(0))
+			Expect(entry.Schemas).To(BeEmpty())
 			Expect(entry.IsExpired()).To(BeFalse())
 			Expect(entry.ExpiresAt.IsZero()).To(BeFalse()) // Should have an expiration time
 			Expect(entry.ExpiresAt).To(BeTemporally("~", time.Now().Add(10*time.Minute), time.Second))
@@ -252,12 +252,12 @@ var _ = Describe("Validator", func() {
 	Context("when handling contract parsing", func() {
 		It("should parse versioned contracts correctly", func() {
 			contractName, version, err := validator.ExtractSchemaVersionFromDataContract("_sensor_data_v1")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(contractName).To(Equal("_sensor_data"))
 			Expect(version).To(Equal(uint64(1)))
 
 			contractName, version, err = validator.ExtractSchemaVersionFromDataContract("_pump_data_v123")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(contractName).To(Equal("_pump_data"))
 			Expect(version).To(Equal(uint64(123)))
 		})
@@ -283,7 +283,7 @@ var _ = Describe("Validator", func() {
 			}
 
 			err := validator.LoadSchemas("_test_contract", 1, schemas)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Check if schemas were cached
 			Expect(validator.HasSchema("_test_contract", 1)).To(BeTrue())
@@ -296,7 +296,7 @@ var _ = Describe("Validator", func() {
 			Expect(exists).To(BeTrue())
 			Expect(entry.SchemaExists).To(BeTrue())
 			Expect(entry.Schemas).NotTo(BeNil())
-			Expect(len(entry.Schemas)).To(Equal(2))
+			Expect(entry.Schemas).To(HaveLen(2))
 		})
 
 		It("should validate contract name requirements", func() {
@@ -329,7 +329,7 @@ var _ = Describe("Validator", func() {
 			validator := NewValidatorWithRegistry("http://localhost:9999") // Invalid URL
 
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -361,7 +361,7 @@ var _ = Describe("Validator", func() {
 	Context("when closing validator", func() {
 		It("should clear cache on close", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -398,7 +398,7 @@ var _ = Describe("Validator", func() {
 					fmt.Sprintf("_test_contract_%d_v1-timeseries-number", i): []byte(`{"type": "object"}`),
 				}
 				err := validator.LoadSchemas(fmt.Sprintf("_test_contract_%d", i), 1, schemas)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 			}
 
 			// Verify cache size is limited
@@ -443,7 +443,7 @@ var _ = Describe("Validator", func() {
 			defer validator.Close()
 
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -463,7 +463,7 @@ var _ = Describe("Validator", func() {
 			defer validator.Close()
 
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -478,7 +478,7 @@ var _ = Describe("Validator", func() {
 			defer validator.Close()
 
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -494,7 +494,7 @@ var _ = Describe("Validator", func() {
 			defer validator.Close()
 
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -509,7 +509,7 @@ var _ = Describe("Validator", func() {
 				"_test_contract_v1-timeseries-number": []byte(`{"type": "object"}`),
 			}
 			err := validator.LoadSchemas("_test_contract", 1, schemas)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Now manually corrupt the cache to have nil schema
 			validator.cacheMutex.Lock()
@@ -518,7 +518,7 @@ var _ = Describe("Validator", func() {
 			validator.cacheMutex.Unlock()
 
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._test_contract_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -540,7 +540,7 @@ var _ = Describe("Validator", func() {
 		It("should handle contract version parsing edge cases", func() {
 			// Test various invalid contract formats
 			_, _, err := validator.ExtractSchemaVersionFromDataContract("_sensor_data_v0") // Version 0
-			Expect(err).To(BeNil())                                                        // Version 0 should be valid
+			Expect(err).ToNot(HaveOccurred())                                              // Version 0 should be valid
 
 			_, _, err = validator.ExtractSchemaVersionFromDataContract("_sensor_data_v999999999999999999999")
 			Expect(err).To(HaveOccurred())
@@ -594,7 +594,7 @@ var _ = Describe("Validator", func() {
 
 			// Test v2 contract (which should look for _sensor_data_v2_* schemas)
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v2.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -606,7 +606,7 @@ var _ = Describe("Validator", func() {
 			// After fix: should now work correctly by fetching the latest version
 			Expect(result.SchemaCheckPassed).To(BeTrue(), "Schema validation should pass by fetching latest version")
 			Expect(result.SchemaCheckBypassed).To(BeFalse(), "Schema validation should not bypass")
-			Expect(result.Error).To(BeNil(), "No validation error should occur")
+			Expect(result.Error).ToNot(HaveOccurred(), "No validation error should occur")
 			Expect(result.ContractName).To(Equal("_sensor_data"))
 			Expect(result.ContractVersion).To(Equal(uint64(2)))
 		})
@@ -659,35 +659,35 @@ var _ = Describe("Validator", func() {
 			}
 
 			err := validator.LoadSchemas("_pump_data", 1, schemas)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Test numeric value validation (should match number schema)
 			numberTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data_v1.vibration.x-axis")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			numberPayload := []byte(`{"timestamp_ms": 1719859200000, "value": 0.5}`)
 
 			result := validator.Validate(numberTopic, numberPayload)
 			Expect(result.SchemaCheckPassed).To(BeTrue())
 			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(BeNil())
+			Expect(result.Error).ToNot(HaveOccurred())
 			Expect(result.ContractName).To(Equal("_pump_data"))
 			Expect(result.ContractVersion).To(Equal(uint64(1)))
 
 			// Test string value validation (should match string schema)
 			stringTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data_v1.serialNumber")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			stringPayload := []byte(`{"timestamp_ms": 1719859200000, "value": "SN123456789"}`)
 
 			result = validator.Validate(stringTopic, stringPayload)
 			Expect(result.SchemaCheckPassed).To(BeTrue())
 			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(BeNil())
+			Expect(result.Error).ToNot(HaveOccurred())
 			Expect(result.ContractName).To(Equal("_pump_data"))
 			Expect(result.ContractVersion).To(Equal(uint64(1)))
 
 			// Test invalid virtual path (should fail against all schemas)
 			invalidTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data_v1.invalid_path")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			result = validator.Validate(invalidTopic, numberPayload)
 			Expect(result.SchemaCheckPassed).To(BeFalse())
@@ -752,11 +752,11 @@ var _ = Describe("Validator", func() {
 			}
 
 			err := validator.LoadSchemas("_sensor_data", 1, schemas)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Test with invalid virtual_path that doesn't match any schema
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.invalid_sensor_path")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -812,11 +812,11 @@ var _ = Describe("Validator", func() {
 			}
 
 			err := validator.LoadSchemas("_test_contract", 1, schemas)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Test with invalid virtual_path
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._test_contract_v1.invalid_path")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -862,11 +862,11 @@ var _ = Describe("Validator", func() {
 			}
 
 			err := validator.LoadSchemas("_test_contract", 1, schemas)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Test with invalid virtual_path
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._test_contract_v1.invalid_path")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": "test_value"}`)
 
@@ -912,11 +912,11 @@ var _ = Describe("Validator", func() {
 			}
 
 			err := validator.LoadSchemas("_test_contract", 1, schemas)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Test with valid virtual_path but invalid payload structure (wrong data type)
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._test_contract_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": "invalid_type", "value": 25.5}`)
 
@@ -957,11 +957,11 @@ var _ = Describe("Validator", func() {
 			}
 
 			err := validator.LoadSchemas("_test_contract", 1, schemas)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Test with invalid virtual_path
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._test_contract_v1.invalid_path")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
@@ -1018,7 +1018,7 @@ var _ = Describe("Validator Logger Integration", func() {
 
 			// Add a version
 			err := schema.AddVersion(1, []byte(`{"type": "object"}`))
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Now should have version 1
 			Expect(schema.HasVersion(1)).To(BeTrue())
@@ -1033,7 +1033,7 @@ var _ = Describe("Validator Logger Integration", func() {
 
 			// Add a version
 			err := schema.AddVersion(1, []byte(`{"type": "object"}`))
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Now should return the schema
 			jsonSchema := schema.GetVersion(1)

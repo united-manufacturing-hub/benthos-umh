@@ -73,12 +73,12 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 
 			// Serialize to protobuf bytes
 			protoBytes, err := BundleToProtobufBytes(bundle)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(protoBytes).NotTo(BeNil())
 
 			// Deserialize back to bundle
 			decodedBundle, err := ProtobufBytesToBundle(protoBytes)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(decodedBundle).NotTo(BeNil())
 
 			// Verify the decoded bundle matches the original
@@ -119,11 +119,11 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 
 			// Serialize to uncompressed protobuf bytes
 			protoBytes, err := BundleToProtobufBytes(bundle)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Use the backward compatibility function
 			decodedBundle, err := ProtobufBytesToBundleWithCompression(protoBytes)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(decodedBundle).NotTo(BeNil())
 			Expect(decodedBundle.UnsMap.Entries).To(HaveLen(1))
 			Expect(decodedBundle.Events.Entries).To(HaveLen(1))
@@ -166,11 +166,11 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 
 			// Get uncompressed protobuf size
 			uncompressedProto, err := BundleToProtobufBytes(bundle)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Get output from BundleToProtobufBytes (now returns uncompressed)
 			protoBytes, err := BundleToProtobufBytes(bundle)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			uncompressedSize := len(uncompressedProto)
 			outputSize := len(protoBytes)
@@ -184,7 +184,7 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 
 			// Verify the data can be parsed back to the same bundle
 			parsedBundle, err := ProtobufBytesToBundleWithCompression(protoBytes)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(parsedBundle.UnsMap.Entries).To(HaveLen(len(bundle.UnsMap.Entries)))
 			Expect(parsedBundle.Events.Entries).To(HaveLen(len(bundle.Events.Entries)))
 		})
@@ -219,11 +219,11 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 
 			// Compress
 			compressedBytes, err := BundleToProtobufBytes(originalBundle)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Decompress
 			decodedBundle, err := ProtobufBytesToBundleWithCompression(compressedBytes)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Verify data integrity
 			Expect(decodedBundle.UnsMap.Entries).To(HaveLen(1))
@@ -255,7 +255,7 @@ var _ = Describe("Protobuf Bundle Operations", func() {
 			}
 
 			validProtobuf, err := BundleToProtobufBytes(validBundle)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Corrupt the protobuf data by flipping bits
 			corruptedData := make([]byte, len(validProtobuf))

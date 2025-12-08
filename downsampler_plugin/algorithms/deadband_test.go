@@ -65,7 +65,7 @@ var _ = Describe("Deadband Algorithm", func() {
 			// Small change (0.3 < 0.5) - should be filtered
 			points, err = algo.Ingest(10.3, baseTime.Add(time.Second))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(points).To(HaveLen(0), "Small change (0.3 < 0.5) should be filtered")
+			Expect(points).To(BeEmpty(), "Small change (0.3 < 0.5) should be filtered")
 
 			// Large change (1.6 >= 0.5) - should be kept
 			points, err = algo.Ingest(11.6, baseTime.Add(2*time.Second))
@@ -91,7 +91,7 @@ var _ = Describe("Deadband Algorithm", func() {
 				// Small change (< threshold) should be dropped
 				points, err = algo.Ingest(10.3, baseTime.Add(time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(points).To(HaveLen(0), "Small change should be dropped")
+				Expect(points).To(BeEmpty(), "Small change should be dropped")
 
 				// Large change (>= threshold) should be kept
 				points, err = algo.Ingest(10.6, baseTime.Add(2*time.Second))
@@ -102,7 +102,7 @@ var _ = Describe("Deadband Algorithm", func() {
 				// Another small change should be dropped
 				points, err = algo.Ingest(10.5, baseTime.Add(3*time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(points).To(HaveLen(0), "Small change should be dropped")
+				Expect(points).To(BeEmpty(), "Small change should be dropped")
 			})
 		})
 	})
@@ -127,7 +127,7 @@ var _ = Describe("Deadband Algorithm", func() {
 			// Small change within time limit - should be filtered
 			points, err = algo.Ingest(10.3, baseTime.Add(30*time.Second))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(points).To(HaveLen(0), "Small change within time limit should be filtered")
+			Expect(points).To(BeEmpty(), "Small change within time limit should be filtered")
 
 			// Small change after max interval - should be kept
 			points, err = algo.Ingest(10.3, baseTime.Add(70*time.Second))
@@ -156,7 +156,7 @@ var _ = Describe("Deadband Algorithm", func() {
 				// Within max_interval, small change should be dropped
 				points, err = algo.Ingest(10.3, baseTime.Add(30*time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(points).To(HaveLen(0))
+				Expect(points).To(BeEmpty())
 
 				// After max_interval, even small change should be kept
 				points, err = algo.Ingest(10.3, baseTime.Add(70*time.Second))
@@ -204,7 +204,7 @@ var _ = Describe("Deadband Algorithm", func() {
 				_, _ = algo.Ingest(10.0, baseTime)
 				points, err := algo.Ingest(10.0, baseTime.Add(time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(points).To(HaveLen(0), "Identical value should be dropped")
+				Expect(points).To(BeEmpty(), "Identical value should be dropped")
 			})
 		})
 
@@ -258,7 +258,7 @@ var _ = Describe("Deadband Algorithm", func() {
 				// Exact repeat should be dropped even with zero threshold
 				points, err = algo.Ingest(10.001, baseTime.Add(2*time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(points).To(HaveLen(0))
+				Expect(points).To(BeEmpty())
 			})
 		})
 
@@ -278,7 +278,7 @@ var _ = Describe("Deadband Algorithm", func() {
 				// Even huge change should be dropped with MaxFloat64 threshold
 				points, err = algo.Ingest(1e100, baseTime.Add(time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(points).To(HaveLen(0))
+				Expect(points).To(BeEmpty())
 			})
 		})
 
@@ -315,7 +315,10 @@ var _ = Describe("Deadband Algorithm", func() {
 					pointsNoMax, errNoMax := algoWithoutMax.Ingest(test.value, timestamp)
 
 					if errZero == nil && errNoMax == nil {
-						Expect(len(pointsZero) > 0).To(Equal(len(pointsNoMax) > 0), "Algorithms should behave identically for value %.1f", test.value)
+						// Both algorithms should either emit or not emit - compare behavior
+						zeroEmitted := len(pointsZero) > 0
+						noMaxEmitted := len(pointsNoMax) > 0
+						Expect(zeroEmitted).To(Equal(noMaxEmitted), "Algorithms should behave identically for value %.1f", test.value)
 					} else {
 						Expect(errZero).To(Equal(errNoMax))
 					}
@@ -428,10 +431,10 @@ var _ = Describe("Deadband Algorithm", func() {
 				Expect(points).To(HaveLen(1), "First reading: 10.0 → KEEP (always keep first)")
 
 				points, _ = algo.Ingest(10.3, baseTime.Add(1*time.Second))
-				Expect(points).To(HaveLen(0), "Reading: 10.3 → DROP (change = 0.3 < threshold 1.0)")
+				Expect(points).To(BeEmpty(), "Reading: 10.3 → DROP (change = 0.3 < threshold 1.0)")
 
 				points, _ = algo.Ingest(9.7, baseTime.Add(2*time.Second))
-				Expect(points).To(HaveLen(0), "Reading: 9.7 → DROP (change from last kept = 0.3 < threshold 1.0)")
+				Expect(points).To(BeEmpty(), "Reading: 9.7 → DROP (change from last kept = 0.3 < threshold 1.0)")
 
 				points, _ = algo.Ingest(11.5, baseTime.Add(3*time.Second))
 				Expect(points).To(HaveLen(1), "Reading: 11.5 → KEEP (change from last kept = 1.5 ≥ threshold 1.0)")
@@ -446,13 +449,13 @@ var _ = Describe("Deadband Algorithm", func() {
 				Expect(points).To(HaveLen(1), "Initial temp: 22.0°C → KEEP")
 
 				points, _ = algo.Ingest(22.3, baseTime.Add(1*time.Minute))
-				Expect(points).To(HaveLen(0), "Small rise: 22.3°C → DROP (0.3°C < 0.5°C threshold)")
+				Expect(points).To(BeEmpty(), "Small rise: 22.3°C → DROP (0.3°C < 0.5°C threshold)")
 
 				points, _ = algo.Ingest(22.8, baseTime.Add(2*time.Minute))
 				Expect(points).To(HaveLen(1), "Significant rise: 22.8°C → KEEP (0.8°C ≥ 0.5°C threshold)")
 
 				points, _ = algo.Ingest(22.9, baseTime.Add(3*time.Minute))
-				Expect(points).To(HaveLen(0), "Small rise: 22.9°C → DROP (0.1°C < 0.5°C threshold)")
+				Expect(points).To(BeEmpty(), "Small rise: 22.9°C → DROP (0.1°C < 0.5°C threshold)")
 			})
 		})
 
@@ -473,10 +476,10 @@ var _ = Describe("Deadband Algorithm", func() {
 
 				// Small changes that would normally be filtered
 				points, _ = algo.Ingest(100.5, baseTime.Add(10*time.Second))
-				Expect(points).To(HaveLen(0), "Small change: 100.5 → DROP (0.5 < 2.0 threshold)")
+				Expect(points).To(BeEmpty(), "Small change: 100.5 → DROP (0.5 < 2.0 threshold)")
 
 				points, _ = algo.Ingest(101.0, baseTime.Add(20*time.Second))
-				Expect(points).To(HaveLen(0), "Small change: 101.0 → DROP (1.0 < 2.0 threshold)")
+				Expect(points).To(BeEmpty(), "Small change: 101.0 → DROP (1.0 < 2.0 threshold)")
 
 				// After 35 seconds, max_time forces emission even with small change
 				points, _ = algo.Ingest(101.2, baseTime.Add(35*time.Second))
@@ -500,7 +503,7 @@ var _ = Describe("Deadband Algorithm", func() {
 				Expect(points).To(HaveLen(1), "Exact threshold: 11.0 → KEEP (change = 1.0 = threshold)")
 
 				points, _ = algo.Ingest(11.99, baseTime.Add(2*time.Second))
-				Expect(points).To(HaveLen(0), "Just under threshold: 11.99 → DROP (change = 0.99 < 1.0)")
+				Expect(points).To(BeEmpty(), "Just under threshold: 11.99 → DROP (change = 0.99 < 1.0)")
 
 				points, _ = algo.Ingest(12.01, baseTime.Add(3*time.Second))
 				Expect(points).To(HaveLen(1), "Just over threshold: 12.01 → KEEP (change = 1.01 > 1.0)")
@@ -518,7 +521,7 @@ var _ = Describe("Deadband Algorithm", func() {
 				Expect(points).To(HaveLen(1), "Decrease: -6.0 → KEEP (change = 2.0 > threshold)")
 
 				points, _ = algo.Ingest(-5.5, baseTime.Add(3*time.Second))
-				Expect(points).To(HaveLen(0), "Small change: -5.5 → DROP (change = 0.5 < threshold)")
+				Expect(points).To(BeEmpty(), "Small change: -5.5 → DROP (change = 0.5 < threshold)")
 			})
 		})
 	})
@@ -538,13 +541,13 @@ var _ = Describe("Deadband Algorithm", func() {
 				Expect(points).To(HaveLen(1), "First value: 10.0 → KEEP (always keep first)")
 
 				points, _ = algo.Ingest(10.0, baseTime.Add(1*time.Second))
-				Expect(points).To(HaveLen(0), "Exact repeat: 10.0 → DROP (no change with threshold=0)")
+				Expect(points).To(BeEmpty(), "Exact repeat: 10.0 → DROP (no change with threshold=0)")
 
 				points, _ = algo.Ingest(10.0001, baseTime.Add(2*time.Second))
 				Expect(points).To(HaveLen(1), "Tiny change: 10.0001 → KEEP (any change with threshold=0)")
 
 				points, _ = algo.Ingest(10.0001, baseTime.Add(3*time.Second))
-				Expect(points).To(HaveLen(0), "Exact repeat: 10.0001 → DROP (no change with threshold=0)")
+				Expect(points).To(BeEmpty(), "Exact repeat: 10.0001 → DROP (no change with threshold=0)")
 
 				// Verify config string shows threshold=0.000
 				configStr := algo.Config()
@@ -575,9 +578,9 @@ var _ = Describe("Deadband Algorithm", func() {
 					pointsExplicit, err := algoExplicit.Ingest(value, timestamp)
 					Expect(err).NotTo(HaveOccurred())
 
-					Expect(len(pointsEmpty)).To(Equal(len(pointsExplicit)),
+					Expect(pointsEmpty).To(HaveLen(len(pointsExplicit)),
 						"Empty config and explicit threshold=0 should behave identically for value %v", value)
-					Expect(len(pointsEmpty)).To(Equal(expectedLengths[i]),
+					Expect(pointsEmpty).To(HaveLen(expectedLengths[i]),
 						"Value %v should produce %d points", value, expectedLengths[i])
 				}
 
@@ -690,7 +693,7 @@ var _ = Describe("Deadband Algorithm", func() {
 					if expectedKept[i] {
 						Expect(points).To(HaveLen(1), "Point %d (x=%.1f, y=%.1f) should be kept", i, point.x, point.y)
 					} else {
-						Expect(points).To(HaveLen(0), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
+						Expect(points).To(BeEmpty(), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
 					}
 				}
 
@@ -739,7 +742,7 @@ var _ = Describe("Deadband Algorithm", func() {
 					if expectedKept[i] {
 						Expect(points).To(HaveLen(1), "Point %d (x=%.1f, y=%.1f) should be kept", i, point.x, point.y)
 					} else {
-						Expect(points).To(HaveLen(0), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
+						Expect(points).To(BeEmpty(), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
 					}
 				}
 			})
@@ -778,7 +781,7 @@ var _ = Describe("Deadband Algorithm", func() {
 					if expectedKept[i] {
 						Expect(points).To(HaveLen(1), "Point %d (x=%.1f, y=%.1f) should be kept", i, point.x, point.y)
 					} else {
-						Expect(points).To(HaveLen(0), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
+						Expect(points).To(BeEmpty(), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
 					}
 				}
 			})
@@ -817,7 +820,7 @@ var _ = Describe("Deadband Algorithm", func() {
 					if expectedKept[i] {
 						Expect(points).To(HaveLen(1), "Point %d (x=%.1f, y=%.1f) should be kept", i, point.x, point.y)
 					} else {
-						Expect(points).To(HaveLen(0), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
+						Expect(points).To(BeEmpty(), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
 					}
 				}
 			})
@@ -855,7 +858,7 @@ var _ = Describe("Deadband Algorithm", func() {
 					if expectedKept[i] {
 						Expect(points).To(HaveLen(1), "Point %d (x=%.1f, y=%.1f) should be kept", i, point.x, point.y)
 					} else {
-						Expect(points).To(HaveLen(0), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
+						Expect(points).To(BeEmpty(), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
 					}
 				}
 			})
@@ -893,7 +896,7 @@ var _ = Describe("Deadband Algorithm", func() {
 					if expectedKept[i] {
 						Expect(points).To(HaveLen(1), "Point %d (x=%.1f, y=%.1f) should be kept", i, point.x, point.y)
 					} else {
-						Expect(points).To(HaveLen(0), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
+						Expect(points).To(BeEmpty(), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
 					}
 				}
 
@@ -940,7 +943,7 @@ var _ = Describe("Deadband Algorithm", func() {
 					if expectedKept[i] {
 						Expect(points).To(HaveLen(1), "Point %d (x=%.1f, y=%.1f) should be kept", i, point.x, point.y)
 					} else {
-						Expect(points).To(HaveLen(0), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
+						Expect(points).To(BeEmpty(), "Point %d (x=%.1f, y=%.1f) should be dropped", i, point.x, point.y)
 					}
 				}
 			})

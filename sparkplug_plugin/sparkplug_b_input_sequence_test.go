@@ -534,7 +534,7 @@ var _ = Describe("NDATA Message Splitting - Sequence Number Handling", func() {
 
 			// Count metrics in output (using payload structure to identify metrics)
 			// Note: This is a simplified check - real implementation would extract metric names from messages
-			Expect(len(expectedMetrics)).To(Equal(15), "Should have 15 unique metrics across all NDATA")
+			Expect(expectedMetrics).To(HaveLen(15), "Should have 15 unique metrics across all NDATA")
 
 			// 4. Sequence metadata present on ALL outputs
 			for i, msg := range allMessages {

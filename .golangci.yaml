@@ -92,6 +92,8 @@ linters:
       default-signifies-exhaustive: true
     govet:
       enable-all: true
+      disable:
+        - fieldalignment
     misspell:
       ignore-rules:
         - cancelled

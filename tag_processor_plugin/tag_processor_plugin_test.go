@@ -2511,7 +2511,7 @@ tag_processor:
 			}).Should(Equal(int64(numMessages)))
 
 			// Verify all messages were processed correctly
-			Expect(len(messages)).To(Equal(numMessages))
+			Expect(messages).To(HaveLen(numMessages))
 
 			for i, msg := range messages {
 				GinkgoWriter.Printf("Verifying concurrent message %d\n", i+1)

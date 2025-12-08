@@ -88,7 +88,7 @@ var _ = Describe("Sensorconnect", func() {
 			msgs, _, err := input.ReadBatch(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			fmt.Printf("Received %d messages\n", len(msgs))
-			Expect(len(msgs)).To(BeNumerically(">", 0))
+			Expect(msgs).ToNot(BeEmpty())
 
 			for _, message := range msgs {
 				messageStruct, err := message.AsStructuredMut()
@@ -177,7 +177,7 @@ var _ = Describe("Sensorconnect", func() {
 			msgs, _, err := input.ReadBatch(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			fmt.Printf("Received %d messages\n", len(msgs))
-			Expect(len(msgs)).To(BeNumerically(">", 0))
+			Expect(msgs).ToNot(BeEmpty())
 
 			for _, message := range msgs {
 				messageStruct, err := message.AsStructuredMut()
