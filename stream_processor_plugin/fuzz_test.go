@@ -21,12 +21,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/constants"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 	"math"
 	"testing"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/constants"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 )
 
 // FuzzTestCase represents a single test case for fuzzing
@@ -223,7 +224,6 @@ func testMessageProcessing(t *testing.T, processor *processor.StreamProcessor, c
 		msg := createTestMessage(topic, payload)
 		batch := service.MessageBatch{msg}
 		results, err := processor.ProcessBatch(ctx, batch)
-
 		// Verify results
 		if err != nil {
 			// Processing errors are expected for invalid inputs

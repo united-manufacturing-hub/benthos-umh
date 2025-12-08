@@ -41,10 +41,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
 
 	_ "github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin"
+	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	_ "github.com/united-manufacturing-hub/benthos-umh/tag_processor_plugin"
 )
 
@@ -64,8 +64,8 @@ type PCAPMessage struct {
 
 // PCAPAnalysis represents the pattern analysis from PCAP
 type PCAPAnalysis struct {
-	TotalMessages int                `json:"total_messages"`
-	UniqueNodes   int                `json:"unique_nodes"`
+	TotalMessages int                  `json:"total_messages"`
+	UniqueNodes   int                  `json:"unique_nodes"`
 	Nodes         map[string]NodeStats `json:"nodes"`
 }
 
@@ -150,7 +150,6 @@ func loadPCAPAnalysis() (*PCAPAnalysis, error) {
 }
 
 var _ = Describe("PCAP-Based Production Pattern Tests (ENG-3720)", func() {
-
 	Context("Real customer data with duplicate sequence numbers", func() {
 		var (
 			pcapMessages []PCAPMessage
@@ -351,7 +350,7 @@ logger:
 
 			publisherClient = mqtt.NewClient(opts)
 			token := publisherClient.Connect()
-			Expect(token.WaitTimeout(30 * time.Second)).To(BeTrue(), "Publisher should connect")
+			Expect(token.WaitTimeout(30*time.Second)).To(BeTrue(), "Publisher should connect")
 			Expect(token.Error()).NotTo(HaveOccurred(), "Publisher connection should succeed")
 
 			// Publish NDATA messages from PCAP
@@ -367,7 +366,7 @@ logger:
 				topic := fmt.Sprintf("spBv1.0/%s/NDATA/%s", uniqueGroupID, pcapMsg.EdgeNodeID)
 
 				token := publisherClient.Publish(topic, 1, false, payloadBytes)
-				Expect(token.WaitTimeout(5 * time.Second)).To(BeTrue(), fmt.Sprintf("Publish %d should complete", i))
+				Expect(token.WaitTimeout(5*time.Second)).To(BeTrue(), fmt.Sprintf("Publish %d should complete", i))
 				Expect(token.Error()).NotTo(HaveOccurred(), fmt.Sprintf("Publish %d should succeed", i))
 
 				GinkgoWriter.Printf("Published NDATA %d: topic=%s, seq=%d, metrics=%d\n",

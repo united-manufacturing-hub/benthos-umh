@@ -53,6 +53,11 @@ lint: $(LINT)
 lint-fix: $(LINT)
 	$(LINT) run --fix
 
+.PHONY: fmt
+fmt: $(GOFUMPT) $(GCI)
+	@$(GOFUMPT) -w .
+	@$(GCI) write --skip-generated -s standard -s default -s 'prefix(github.com/united-manufacturing-hub/benthos-umh)' .
+
 .PHONY: license-fix
 license-fix:
 	@$(LICENSE_EYE) header fix

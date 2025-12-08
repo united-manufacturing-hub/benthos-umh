@@ -16,11 +16,13 @@ SRC_ROOT := $(shell git rev-parse --show-toplevel)
 
 
 LICENSE_EYE_VERSION = v0.7.0
-LINT_VERSION = v2.7.1
+LINT_VERSION = v2.7.2
 NILAWAY_VERSION = v0.0.0-20251119034912-44f92224c998
 PROTOC_GEN_GO_VERSION = v1.36.10
 PROTOC_VERSION = cbbe65675855d0db6d94a43f565952c69ef7fc58081569837d44af3f044aa73d
 GRAPHVIZ_VERSION = 939f896cd783daeed8ab08c446f3e2b79213f5e5d87d73bada58667f3bcd8906
+GOFUMPT_VERSION = v0.7.0
+GCI_VERSION = v0.13.5
 
 # ---------------------------------------------------
 # Pinned URLs for go install
@@ -30,6 +32,8 @@ LICENSE_EYE_URL := github.com/apache/skywalking-eyes/cmd/license-eye@$(LICENSE_E
 LINT_URL := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(LINT_VERSION)
 NILAWAY_URL := go.uber.org/nilaway/cmd/nilaway@$(NILAWAY_VERSION)
 PROTOC_GEN_GO_URL := google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
+GOFUMPT_URL := mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
+GCI_URL := github.com/daixiang0/gci@$(GCI_VERSION)
 
 
 TOOLS_BIN_DIR    := $(SRC_ROOT)/.tools
@@ -43,6 +47,8 @@ LINT := $(TOOLS_BIN_DIR)/golangci-lint
 NILAWAY := $(TOOLS_BIN_DIR)/nilaway
 PROTOC := docker run --rm -v $(PWD):$(PWD) -w $(PWD) rvolosatovs/protoc@sha256:$(PROTOC_VERSION)
 DOT := $(TOOLS_BIN_DIR)/graphviz/dot
+GOFUMPT := $(TOOLS_BIN_DIR)/gofumpt
+GCI := $(TOOLS_BIN_DIR)/gci
 
 $(TOOLS_BIN_DIR):
 	@mkdir -p $@
@@ -62,8 +68,14 @@ $(DOT): $(TOOLS_BIN_DIR)
 	@printf 'exec docker run --rm -i minidocks/graphviz@sha256:$(GRAPHVIZ_VERSION) dot "$$@"\n' >> $(DOT)
 	@chmod +x $(DOT)
 
+$(GOFUMPT): $(TOOLS_BIN_DIR)
+	@GOBIN=$(TOOLS_BIN_DIR) go install $(GOFUMPT_URL)
+
+$(GCI): $(TOOLS_BIN_DIR)
+	@GOBIN=$(TOOLS_BIN_DIR) go install $(GCI_URL)
+
 .PHONY: install-tools
-install-tools: $(LICENSE_EYE) $(LINT) $(NILAWAY) $(DOT)
+install-tools: $(LICENSE_EYE) $(LINT) $(NILAWAY) $(DOT) $(GOFUMPT) $(GCI)
 
 .PHONY: help
 help:
