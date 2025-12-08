@@ -53,10 +53,6 @@ lint: $(LINT)
 lint-fix: $(LINT)
 	$(LINT) run --fix
 
-.PHONY: staticcheck
-staticcheck: $(STATICCHECK)
-	$(STATICCHECK) ./...
-
 .PHONY: license-fix
 license-fix:
 	@$(LICENSE_EYE) header fix

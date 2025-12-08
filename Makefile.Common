@@ -18,7 +18,6 @@ SRC_ROOT := $(shell git rev-parse --show-toplevel)
 LICENSE_EYE_VERSION = v0.7.0
 LINT_VERSION = v2.7.1
 NILAWAY_VERSION = v0.0.0-20251119034912-44f92224c998
-STATICCHECK_VERSION = v0.6.1
 PROTOC_GEN_GO_VERSION = v1.36.10
 PROTOC_VERSION = cbbe65675855d0db6d94a43f565952c69ef7fc58081569837d44af3f044aa73d
 GRAPHVIZ_VERSION = 939f896cd783daeed8ab08c446f3e2b79213f5e5d87d73bada58667f3bcd8906
@@ -30,7 +29,6 @@ GRAPHVIZ_VERSION = 939f896cd783daeed8ab08c446f3e2b79213f5e5d87d73bada58667f3bcd8
 LICENSE_EYE_URL := github.com/apache/skywalking-eyes/cmd/license-eye@$(LICENSE_EYE_VERSION)
 LINT_URL := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(LINT_VERSION)
 NILAWAY_URL := go.uber.org/nilaway/cmd/nilaway@$(NILAWAY_VERSION)
-STATICCHECK_URL := honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)
 PROTOC_GEN_GO_URL := google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
 
 
@@ -43,7 +41,6 @@ TOOLS_BIN_DIR    := $(SRC_ROOT)/.tools
 LICENSE_EYE := $(TOOLS_BIN_DIR)/license-eye
 LINT := $(TOOLS_BIN_DIR)/golangci-lint
 NILAWAY := $(TOOLS_BIN_DIR)/nilaway
-STATICCHECK := $(TOOLS_BIN_DIR)/staticcheck
 PROTOC := docker run --rm -v $(PWD):$(PWD) -w $(PWD) rvolosatovs/protoc@sha256:$(PROTOC_VERSION)
 DOT := $(TOOLS_BIN_DIR)/graphviz/dot
 
@@ -59,9 +56,6 @@ $(LINT): $(TOOLS_BIN_DIR)
 $(NILAWAY): $(TOOLS_BIN_DIR)
 	@GOBIN=$(TOOLS_BIN_DIR) go install $(NILAWAY_URL)
 
-$(STATICCHECK): $(TOOLS_BIN_DIR)
-	@GOBIN=$(TOOLS_BIN_DIR) go install $(STATICCHECK_URL)
-
 $(DOT): $(TOOLS_BIN_DIR)
 	@mkdir -p $(dir $(DOT))
 	@printf '#!/bin/sh\n' > $(DOT)
@@ -69,7 +63,7 @@ $(DOT): $(TOOLS_BIN_DIR)
 	@chmod +x $(DOT)
 
 .PHONY: install-tools
-install-tools: $(LICENSE_EYE) $(LINT) $(NILAWAY) $(STATICCHECK) $(DOT)
+install-tools: $(LICENSE_EYE) $(LINT) $(NILAWAY) $(DOT)
 
 .PHONY: help
 help:
