@@ -16,25 +16,28 @@
 name: Update benthos-umh in umh-core
 
 on:
-  repository_dispatch:
-    types: [release-completed]
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
 
 jobs:
   update-version:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     env:
-      VERSION: ${{ github.event.client_payload.tag }}
+      VERSION: ${{ inputs.tag }}
     steps:
       - name: Generate GitHub App Token
         id: generate-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.PR_APP_ID }}
           private-key: ${{ secrets.PR_APP_PK }}
           repositories: united-manufacturing-hub
 
       - name: Checkout united-manufacturing-hub Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: united-manufacturing-hub/united-manufacturing-hub
           ref: staging
