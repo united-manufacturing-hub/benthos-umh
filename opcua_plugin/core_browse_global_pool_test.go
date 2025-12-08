@@ -203,8 +203,7 @@ func (m *mockNodeBrowser) ResetBrowseCalled() {
 func newTestTask(nodeID string, resultChan any) GlobalPoolTask {
 	// Use timeout context to prevent context pollution between tests
 	// 10 second timeout is much longer than test timeouts, ensures context doesn't fire early
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second) //nolint:govet // intentional: context must stay valid for task lifecycle
 	mockNode := &mockNodeBrowser{
 		id: ua.MustParseNodeID(nodeID),
 	}
