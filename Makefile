@@ -29,7 +29,7 @@ install: install-tools
 
 .PHONY: clean
 clean:
-	@rm -rf tmp/bin tmp/benthos-*.zip
+	rm -rf tmp/bin tmp/benthos-*.zip .tools/*
 
 .PHONY: run
 run:
