@@ -769,7 +769,7 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 	}, nil
 }
 
-func (m *ModbusInput) readSlaveData(slaveID byte, requests RequestSet) (msgBatch service.MessageBatch, err error) {
+func (m *ModbusInput) readSlaveData(slaveID byte, requests RequestSet) (service.MessageBatch, error) {
 	m.SlaveMutex.Lock()
 	defer m.SlaveMutex.Unlock()
 
@@ -777,7 +777,7 @@ func (m *ModbusInput) readSlaveData(slaveID byte, requests RequestSet) (msgBatch
 	m.CurrentSlaveID = slaveID
 
 	for retry := 0; retry < m.BusyRetries; retry++ {
-		msgBatch, err = m.gatherTags(requests)
+		msgBatch, err := m.gatherTags(requests)
 		if err == nil {
 			// Reading was successful
 			return msgBatch, nil
@@ -794,8 +794,7 @@ func (m *ModbusInput) readSlaveData(slaveID byte, requests RequestSet) (msgBatch
 		time.Sleep(m.BusyRetriesWait)
 	}
 
-	msgBatch, err = m.gatherTags(requests)
-	return msgBatch, err
+	return m.gatherTags(requests)
 }
 
 func (m *ModbusInput) createMessageFromValue(item modbusTag, rawValue []byte, registerName string) *service.Message {

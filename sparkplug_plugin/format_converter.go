@@ -439,7 +439,7 @@ func (fc *FormatConverter) constructSparkplugMetricName(topicInfo *proto.TopicIn
 //   - "Refrigeration/Motor 1/Amps" → virtual_path="Refrigeration.Motor 1", tag_name="Amps"
 //   - "motor.diagnostics.temperature" → virtual_path="motor.diagnostics", tag_name="temperature"
 //   - "pressure" → virtual_path=nil, tag_name="pressure"
-func (fc *FormatConverter) parseSparkplugMetricName(metricName string) (virtualPath *string, tagName string, err error) {
+func (fc *FormatConverter) parseSparkplugMetricName(metricName string) (*string, string, error) {
 	if metricName == "" {
 		return nil, "", fmt.Errorf("metric name cannot be empty")
 	}
@@ -455,13 +455,12 @@ func (fc *FormatConverter) parseSparkplugMetricName(metricName string) (virtualP
 	if colonIndex != -1 {
 		// Split on last colon
 		virtualPathStr := metricName[:colonIndex]
-		tagName = metricName[colonIndex+1:]
+		tagName := metricName[colonIndex+1:]
 
 		// Convert colons in virtual path to dots for UMH compatibility
 		virtualPathStr = strings.ReplaceAll(virtualPathStr, ":", ".")
 
-		virtualPath = &virtualPathStr
-		return virtualPath, tagName, nil
+		return &virtualPathStr, tagName, nil
 	}
 
 	// Priority 2: Check for forward slashes (hierarchical paths like "Refrigeration/Motor 1/Amps")
@@ -469,13 +468,12 @@ func (fc *FormatConverter) parseSparkplugMetricName(metricName string) (virtualP
 	if slashIndex != -1 {
 		// Split on last slash
 		virtualPathStr := metricName[:slashIndex]
-		tagName = metricName[slashIndex+1:]
+		tagName := metricName[slashIndex+1:]
 
 		// Convert slashes in virtual path to dots for UMH compatibility
 		virtualPathStr = strings.ReplaceAll(virtualPathStr, "/", ".")
 
-		virtualPath = &virtualPathStr
-		return virtualPath, tagName, nil
+		return &virtualPathStr, tagName, nil
 	}
 
 	// Priority 3: Check for dots (fallback for already converted data)
@@ -483,10 +481,9 @@ func (fc *FormatConverter) parseSparkplugMetricName(metricName string) (virtualP
 	if lastDotIndex != -1 {
 		// Split at the last dot
 		virtualPathStr := metricName[:lastDotIndex]
-		tagName = metricName[lastDotIndex+1:]
+		tagName := metricName[lastDotIndex+1:]
 
-		virtualPath = &virtualPathStr
-		return virtualPath, tagName, nil
+		return &virtualPathStr, tagName, nil
 	}
 
 	// No separators, entire string is tag name

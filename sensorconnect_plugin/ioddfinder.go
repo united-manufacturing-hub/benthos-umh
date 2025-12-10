@@ -31,7 +31,7 @@ import (
 	"github.com/goccy/go-json"
 )
 
-func (s *SensorConnectInput) FetchAndStoreIoDDFile(ctx context.Context, vendorId int64, deviceId int) (err error) {
+func (s *SensorConnectInput) FetchAndStoreIoDDFile(ctx context.Context, vendorId int64, deviceId int) error {
 	// download iodd file
 	s.logger.Infof("Downloading iodd file for vendorId: %v, deviceId: %v", vendorId, deviceId)
 	fileMap, err := s.GetIoddFile(ctx, vendorId, deviceId)
@@ -61,25 +61,23 @@ func (s *SensorConnectInput) FetchAndStoreIoDDFile(ctx context.Context, vendorId
 	}
 
 	s.IoDeviceMap.Store(fileMapKey, payload)
-	return err
+	return nil
 }
 
 // GetIoddFile downloads a ioddfiles from ioddfinder and returns a list of valid files for the request (This can be multiple, if the vendor has multiple languages or versions published)
-func (s *SensorConnectInput) GetIoddFile(ctx context.Context, vendorId int64, deviceId int) (files []IoDDFile, err error) {
-	var body []byte
-	body, err = s.GetUrlWithRetry(ctx,
+func (s *SensorConnectInput) GetIoddFile(ctx context.Context, vendorId int64, deviceId int) ([]IoDDFile, error) {
+	body, err := s.GetUrlWithRetry(ctx,
 		fmt.Sprintf(
 			// "https://ioddfinder.io-link.com/api/drivers?page=0&size=2000&status=APPROVED&status=UPLOADED&deviceIdString=%d",
 			"%s/drivers?page=0&size=2000&status=APPROVED&status=UPLOADED&deviceIdString=%d",
 			s.IODDAPI,
 			deviceId))
 	if err != nil {
-		return files, err
+		return nil, err
 	}
-	var ioddfinder Ioddfinder
-	ioddfinder, err = UnmarshalIoddfinder(body)
+	ioddfinder, err := UnmarshalIoddfinder(body)
 	if err != nil {
-		return files, err
+		return nil, err
 	}
 
 	validIds := make([]int, 0)
@@ -91,16 +89,14 @@ func (s *SensorConnectInput) GetIoddFile(ctx context.Context, vendorId int64, de
 	}
 
 	if len(validIds) == 0 {
-		err = fmt.Errorf("No IODD file for vendorID [%d] and deviceID [%d]", vendorId, deviceId)
-		return files, err
+		return nil, fmt.Errorf("No IODD file for vendorID [%d] and deviceID [%d]", vendorId, deviceId)
 	}
 
-	files = make([]IoDDFile, 0)
+	files := make([]IoDDFile, 0)
 
 	for _, id := range validIds {
 		ioddId := ioddfinder.Content[id].IoddID
-		var ioddzip []byte
-		ioddzip, err = s.GetUrlWithRetry(ctx,
+		ioddzip, err := s.GetUrlWithRetry(ctx,
 			fmt.Sprintf(
 				//"https://ioddfinder.io-link.com/api/vendors/%d/iodds/%d/files/zip/rated",
 				"%s/vendors/%d/iodds/%d/files/zip/rated",
@@ -108,20 +104,18 @@ func (s *SensorConnectInput) GetIoddFile(ctx context.Context, vendorId int64, de
 				vendorId,
 				ioddId))
 		if err != nil {
-			return files, err
+			return nil, err
 		}
-		var zipReader *zip.Reader
-		zipReader, err = zip.NewReader(bytes.NewReader(ioddzip), int64(len(ioddzip)))
+		zipReader, err := zip.NewReader(bytes.NewReader(ioddzip), int64(len(ioddzip)))
 		if err != nil {
-			return files, err
+			return nil, err
 		}
 
 		for _, zipFile := range zipReader.File {
 			if strings.HasSuffix(zipFile.Name, "xml") {
-				var file []byte
-				file, err = readZipFile(zipFile)
+				file, err := readZipFile(zipFile)
 				if err != nil {
-					return files, err
+					return nil, err
 				}
 				files = append(
 					files, IoDDFile{
@@ -133,7 +127,7 @@ func (s *SensorConnectInput) GetIoddFile(ctx context.Context, vendorId int64, de
 		}
 	}
 
-	return files, err
+	return files, nil
 }
 
 // IoDDFile is a helper structure with the name, file and additional context of the iodd file

@@ -81,9 +81,9 @@ func (g *OPCUAConnection) GetOPCUAClientOptions(
 	selectedEndpoint *ua.EndpointDescription,
 	selectedAuthentication ua.UserTokenType,
 	discoveryOnly bool,
-) (opts []opcua.Option, err error) {
+) ([]opcua.Option, error) {
 	// Basic security from the endpoint + user token type
-	opts = append(opts, opcua.SecurityFromEndpoint(selectedEndpoint, selectedAuthentication))
+	opts := []opcua.Option{opcua.SecurityFromEndpoint(selectedEndpoint, selectedAuthentication)}
 
 	// Set additional options based on the authentication method
 	switch selectedAuthentication {

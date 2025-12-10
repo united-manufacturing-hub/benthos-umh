@@ -571,7 +571,7 @@ func (v *Validator) fetchLatestSchemaFromRegistry(subject string) ([]byte, bool,
 // ExtractSchemaVersionFromDataContract parses a data contract string to extract
 // the base contract name and version number.
 // Expected format: "contractname_v123" -> ("contractname", 123, nil)
-func (v *Validator) ExtractSchemaVersionFromDataContract(contract string) (contractName string, version uint64, err error) {
+func (v *Validator) ExtractSchemaVersionFromDataContract(contract string) (string, uint64, error) {
 	if contract == "" {
 		return "", 0, fmt.Errorf("contract string is empty")
 	}
@@ -581,8 +581,8 @@ func (v *Validator) ExtractSchemaVersionFromDataContract(contract string) (contr
 		return "", 0, fmt.Errorf("invalid data contract format '%s', expected format: 'name_v123'", contract)
 	}
 
-	contractName = matches[1]
-	version, err = strconv.ParseUint(matches[2], 10, 64)
+	contractName := matches[1]
+	version, err := strconv.ParseUint(matches[2], 10, 64)
 	if err != nil {
 		return "", 0, fmt.Errorf("invalid version number '%s' in contract '%s': %w", matches[2], contract, err)
 	}

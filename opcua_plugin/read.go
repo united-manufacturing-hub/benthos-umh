@@ -354,7 +354,13 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 // It either subscribes to node updates or performs a pull-based read based on the configuration.
 // The function updates heartbeat information and monitors the connection's health.
 // If no messages or heartbeats are received within the expected timeframe, it closes the connection.
-func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, ackFunc service.AckFunc, err error) {
+func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+	var (
+		msgs    service.MessageBatch
+		ackFunc service.AckFunc
+		err     error
+	)
+
 	if len(g.NodeList) == 0 {
 		g.Log.Debug("ReadBatch is called with empty nodelists. returning early from ReadBatch")
 		return nil, nil, nil

@@ -64,7 +64,7 @@ func GenerateCertWithMode(
 	validFor time.Duration,
 	securityMode string,
 	securityPolicy string,
-) (certPEM, keyPEM []byte, clientName string, err error) {
+) ([]byte, []byte, string, error) {
 	var (
 		rsaBits            int
 		signatureAlgorithm x509.SignatureAlgorithm
@@ -141,7 +141,7 @@ func GenerateCertWithMode(
 		},
 	}
 
-	clientName = template.Subject.CommonName
+	clientName := template.Subject.CommonName
 
 	// Fill in IPAddresses, DNSNames, URIs from the ApplicationURI string (comma-separated)
 	// Each host must go into EXACTLY ONE field to comply with OPC UA certificate requirements:

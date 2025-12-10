@@ -97,7 +97,7 @@ var _ = Describe("MonitorBatched recursive retry bug reproduction", Label("recur
 			//   - Nodes 0-1999: All StatusOK (no filter applied this time)
 
 			// Simulated Monitor call behavior
-			simulateMonitorCall := func(nodeList []NodeDef, _ bool) (monitoredCount int, duplicateNodeIDs []string) {
+			simulateMonitorCall := func(nodeList []NodeDef, _ bool) (int, []string) {
 				monitorCallCount++
 				monitored := 0
 				var duplicates []string

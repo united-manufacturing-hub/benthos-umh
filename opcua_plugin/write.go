@@ -838,7 +838,7 @@ func init() {
 	err := service.RegisterOutput(
 		"opcua",
 		opcuaOutputConfig(),
-		func(conf *service.ParsedConfig, mgr *service.Resources) (out service.Output, maxInFlight int, err error) {
+		func(conf *service.ParsedConfig, mgr *service.Resources) (service.Output, int, error) {
 			output, err := newOPCUAOutput(conf, mgr)
 			if err != nil {
 				return nil, 0, err
