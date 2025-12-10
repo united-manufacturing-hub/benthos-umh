@@ -164,7 +164,7 @@ type SparkplugMessage struct {
 // Returns:
 //   - *SparkplugMessage: Converted Sparkplug B message
 //   - error: Conversion error if any
-func (fc *FormatConverter) EncodeUMHToSparkplug(msg *service.Message, groupID, edgeNodeID string) (*SparkplugMessage, error) {
+func (fc *FormatConverter) EncodeUMHToSparkplug(msg *service.Message, groupID string, edgeNodeID string) (*SparkplugMessage, error) {
 	// Parse UMH message first
 	umhMsg, err := fc.parseUMHMessage(msg)
 	if err != nil {
@@ -494,7 +494,7 @@ func (fc *FormatConverter) parseSparkplugMetricName(metricName string) (virtualP
 }
 
 // buildUMHTopic constructs a valid UMH topic using the UNS topic builder.
-func (fc *FormatConverter) buildUMHTopic(locationPath, dataContract string, virtualPath *string, tagName string) (*topic.UnsTopic, error) {
+func (fc *FormatConverter) buildUMHTopic(locationPath string, dataContract string, virtualPath *string, tagName string) (*topic.UnsTopic, error) {
 	builder := topic.NewBuilder()
 
 	// Set location path

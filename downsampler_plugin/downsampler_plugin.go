@@ -495,7 +495,7 @@ func (p *DownsamplerProcessor) ProcessBatch(_ context.Context, batch service.Mes
 
 // flushAndRecreateProcessor handles parameter-only changes by flushing current data and recreating the processor.
 // This is the "ghetto" solution for meta-override parameter changes that ensures new parameters take effect immediately.
-func (p *DownsamplerProcessor) flushAndRecreateProcessor(state *SeriesState, seriesID, algorithmType string, newConfig map[string]interface{}) error {
+func (p *DownsamplerProcessor) flushAndRecreateProcessor(state *SeriesState, seriesID string, algorithmType string, newConfig map[string]interface{}) error {
 	// Log parameter change details for debugging
 	if oldThreshold, exists := state.lastConfig["threshold"]; exists {
 		if newThreshold, exists := newConfig["threshold"]; exists && oldThreshold != newThreshold {
@@ -943,7 +943,7 @@ func extractMetaHints(msg *service.Message) (map[string]interface{}, error) {
 // configsEqual compares two algorithm configurations to detect parameter changes.
 // Returns true if configurations are equivalent, false if they differ.
 // Handles type conversions between different numeric types and duration representations.
-func configsEqual(config1, config2 map[string]interface{}) bool {
+func configsEqual(config1 map[string]interface{}, config2 map[string]interface{}) bool {
 	if config1 == nil && config2 == nil {
 		return true
 	}
@@ -964,7 +964,7 @@ func configsEqual(config1, config2 map[string]interface{}) bool {
 
 // valuesEqual compares two configuration values with type conversion support.
 // Handles float64 vs int comparisons and duration vs string comparisons.
-func valuesEqual(v1, v2 interface{}) bool {
+func valuesEqual(v1 interface{}, v2 interface{}) bool {
 	if v1 == nil && v2 == nil {
 		return true
 	}

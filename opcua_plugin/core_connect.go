@@ -572,7 +572,7 @@ func (g *OPCUAConnection) ReplaceHostInEndpoints(endpoints []*ua.EndpointDescrip
 // This function parses the provided endpoint URL, substitutes the host component with a new host, and reconstructs
 // the URL while preserving the original path and query parameters. It ensures that the modified URL remains
 // valid and compatible with OPC UA communication protocols.
-func (g *OPCUAConnection) ReplaceHostInEndpointURL(endpointURL, newHost string) (string, error) {
+func (g *OPCUAConnection) ReplaceHostInEndpointURL(endpointURL string, newHost string) (string, error) {
 	// Remove the "opc.tcp://" prefix to simplify parsing.
 	newHost = strings.TrimPrefix(newHost, "opc.tcp://")
 

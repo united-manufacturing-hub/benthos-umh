@@ -449,7 +449,7 @@ func (p *ClassicToCoreProcessor) createCoreMessage(originalMsg *service.Message,
 // It maintains the UMH hierarchical structure while adapting it for Core format by using the
 // target data contract and appending the field name. The resulting topic follows the pattern:
 // umh.v1.<location>.<target_contract>.<context>.<field_name>
-func (p *ClassicToCoreProcessor) constructCoreTopic(components *TopicComponents, fieldName, targetSchema string) string {
+func (p *ClassicToCoreProcessor) constructCoreTopic(components *TopicComponents, fieldName string, targetSchema string) string {
 	parts := []string{
 		components.Prefix,
 		components.Location,

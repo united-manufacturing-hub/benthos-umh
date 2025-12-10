@@ -325,7 +325,7 @@ func (e *JSEngine) ClearStaticCache() {
 
 // PrecompileExpressions pre-compiles all static and dynamic mapping expressions for optimal performance
 // This is a major optimization that eliminates JavaScript parsing/compilation overhead during runtime
-func (e *JSEngine) PrecompileExpressions(staticMappings, dynamicMappings map[string]config.MappingInfo) error {
+func (e *JSEngine) PrecompileExpressions(staticMappings map[string]config.MappingInfo, dynamicMappings map[string]config.MappingInfo) error {
 	e.precompiledMutex.Lock()
 	defer e.precompiledMutex.Unlock()
 

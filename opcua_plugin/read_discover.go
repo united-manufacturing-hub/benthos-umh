@@ -365,7 +365,7 @@ type BatchRange struct {
 }
 
 // CalculateBatches splits totalNodes into batches of maxBatchSize and returns the ranges
-func CalculateBatches(totalNodes, maxBatchSize int) []BatchRange {
+func CalculateBatches(totalNodes int, maxBatchSize int) []BatchRange {
 	var batches []BatchRange
 	for startIdx := 0; startIdx < totalNodes; startIdx += maxBatchSize {
 		endIdx := startIdx + maxBatchSize

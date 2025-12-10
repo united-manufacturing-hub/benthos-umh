@@ -228,7 +228,7 @@ func (p *ObjectPools) UnmarshalFromJSON(data []byte, v interface{}) error {
 }
 
 // GetTopic gets a cached topic or constructs a new one
-func (p *ObjectPools) GetTopic(outputTopic, dataContract, virtualPath string) string {
+func (p *ObjectPools) GetTopic(outputTopic string, dataContract string, virtualPath string) string {
 	// Create cache key efficiently
 	sb := p.GetStringBuilder()
 	sb.WriteString(outputTopic)

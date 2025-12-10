@@ -819,7 +819,7 @@ func (o *OPCUAOutput) verifyWrite(ctx context.Context, nodeID *ua.NodeID, expect
 }
 
 // variantEqual compares two OPC UA variants for equality
-func variantEqual(v1, v2 *ua.Variant) bool {
+func variantEqual(v1 *ua.Variant, v2 *ua.Variant) bool {
 	// Check if either variant is nil
 	if v1 == nil || v2 == nil {
 		return v1 == v2

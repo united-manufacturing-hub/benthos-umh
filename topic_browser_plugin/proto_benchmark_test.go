@@ -53,7 +53,7 @@ func createTestBundle() *proto.UnsBundle {
 	}
 }
 
-func createLargeBundle(numTopics, numEvents int) *proto.UnsBundle {
+func createLargeBundle(numTopics int, numEvents int) *proto.UnsBundle {
 	bundle := &proto.UnsBundle{
 		UnsMap: &proto.TopicMap{
 			Entries: make(map[string]*proto.TopicInfo),

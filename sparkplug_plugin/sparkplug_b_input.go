@@ -262,7 +262,7 @@ func UpdateNodeState(nodeStates map[string]*NodeState, deviceKey string, current
 // - Increments the provided error counter
 //
 // Exported for testing to verify error logging behavior.
-func LogSequenceError(logger *service.Logger, counter Counter, deviceKey string, lastSeq, currentSeq uint8) {
+func LogSequenceError(logger *service.Logger, counter Counter, deviceKey string, lastSeq uint8, currentSeq uint8) {
 	// Calculate expected sequence with wraparound
 	expectedSeq := uint8((int(lastSeq) + 1) % 256)
 
@@ -637,7 +637,7 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 //
 // Key behavior: Caches alias → metric name mappings from BIRTH certificates
 // for use in subsequent DATA message resolution.
-func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
+func (s *sparkplugInput) processBirthMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
@@ -694,7 +694,7 @@ func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload 
 // - All state access protected by stateMu lock
 // - No I/O operations performed while holding lock
 // - Deterministic behavior ensured by UpdateNodeState pure function
-func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
+func (s *sparkplugInput) processDataMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
 	s.stateMu.Lock()
 
 	currentSeq := GetSequenceNumber(payload)
@@ -729,7 +729,7 @@ func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *
 	}
 }
 
-func (s *sparkplugInput) processDeathMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
+func (s *sparkplugInput) processDeathMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
@@ -780,7 +780,7 @@ func (s *sparkplugInput) processDeathMessage(deviceKey, msgType string, payload 
 	s.logger.Debugf("Processed %s for device %s", msgType, deviceKey)
 }
 
-func (s *sparkplugInput) processCommandMessage(deviceKey, msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (s *sparkplugInput) processCommandMessage(deviceKey string, msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	s.logger.Debugf("⚡ processCommandMessage: processing %s for device %s with %d metrics", msgType, deviceKey, len(payload.Metrics))
 
 	// Update node state timestamp for activity tracking
@@ -816,7 +816,7 @@ func (s *sparkplugInput) processCommandMessage(deviceKey, msgType string, payloa
 	return batch
 }
 
-func (s *sparkplugInput) processStateMessage(deviceKey, msgType string, topicInfo *TopicInfo, originalTopic, statePayload string) (service.MessageBatch, error) {
+func (s *sparkplugInput) processStateMessage(deviceKey string, msgType string, topicInfo *TopicInfo, originalTopic string, statePayload string) (service.MessageBatch, error) {
 	s.logger.Debugf("🏛️ processStateMessage: processing STATE message for device %s, state: %s", deviceKey, statePayload)
 
 	s.stateMu.Lock()
@@ -965,7 +965,7 @@ func (s *sparkplugInput) parseSparkplugTopicDetailed(topic string) (string, stri
 }
 
 // Message creation methods
-func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgType string, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	var batch service.MessageBatch
 
 	for i, metric := range payload.Metrics {
@@ -982,7 +982,7 @@ func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgTyp
 	return batch
 }
 
-func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string, metricIndex, totalMetrics int) *service.Message {
+func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, msgType string, deviceKey string, topicInfo *TopicInfo, originalTopic string, metricIndex int, totalMetrics int) *service.Message {
 	// Extract metric value as JSON (always preserve Sparkplug B format)
 	value := s.extractMetricValue(metric)
 	if value == nil {
@@ -1061,7 +1061,7 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	return msg
 }
 
-func (s *sparkplugInput) createDeathEventMessage(msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (s *sparkplugInput) createDeathEventMessage(msgType string, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	event := map[string]interface{}{
 		"event":        "DeviceOffline",
 		"device_key":   deviceKey,
@@ -1356,7 +1356,7 @@ func GetSequenceNumber(payload *sparkplugb.Payload) uint8 {
 // - Sequence numbers must arrive in sequential order (0, 1, 2, ... 255, 0, 1, ...)
 // - ANY gap in sequence numbers should trigger a rebirth request after a configurable timeout
 // - This function only validates strict sequential order; timeout-based reordering is handled elsewhere
-func ValidateSequenceNumber(lastSeq, currentSeq uint8) bool {
+func ValidateSequenceNumber(lastSeq uint8, currentSeq uint8) bool {
 	// Calculate expected next sequence with wraparound (0-255)
 	expectedNext := uint8((int(lastSeq) + 1) % 256)
 

@@ -195,7 +195,7 @@ func (c *AdaptiveController) calculateBaseInterval() time.Duration {
 
 // applyGradualChange prevents sudden interval changes that could cause system instability.
 // Limits the change per adjustment cycle to maxIntervalChange.
-func (c *AdaptiveController) applyGradualChange(current, target time.Duration) time.Duration {
+func (c *AdaptiveController) applyGradualChange(current time.Duration, target time.Duration) time.Duration {
 	diff := target - current
 
 	if diff > maxIntervalChange {

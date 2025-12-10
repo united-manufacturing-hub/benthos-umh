@@ -673,7 +673,7 @@ func (t *TopicBrowserProcessor) Close(_ context.Context) error {
 	return nil
 }
 
-func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, lruSize int, emitInterval time.Duration, maxEventsPerTopic, maxBufferSize int) *TopicBrowserProcessor {
+func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, lruSize int, emitInterval time.Duration, maxEventsPerTopic int, maxBufferSize int) *TopicBrowserProcessor {
 	// Validate LRU size - must be at least 1 for the processor to function properly
 	if lruSize < 1 {
 		panic("lru_size must be greater than 0 - the processor requires a cache to accumulate topic metadata")

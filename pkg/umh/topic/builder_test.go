@@ -412,7 +412,7 @@ func strPtr(s string) *string {
 	return &s
 }
 
-func sliceEqual(a, b []string) bool {
+func sliceEqual(a []string, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -424,7 +424,7 @@ func sliceEqual(a, b []string) bool {
 	return true
 }
 
-func equalStringPtr(a, b *string) bool {
+func equalStringPtr(a *string, b *string) bool {
 	if a == nil && b == nil {
 		return true
 	}

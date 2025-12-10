@@ -2819,7 +2819,7 @@ func newMockMessage() *mockMessage {
 	}
 }
 
-func (m *mockMessage) SetMeta(key, value string) {
+func (m *mockMessage) SetMeta(key string, value string) {
 	m.metadata[key] = value
 }
 

@@ -30,7 +30,7 @@ import (
 // into a *gologix.Controller struct, which is needed for connection
 // - `endpoint` consists of the ip-address and if provided the port
 // otherwise it will just use the default-port 44818
-func parseController(endpoint, pathStr string) (*gologix.Controller, error) {
+func parseController(endpoint string, pathStr string) (*gologix.Controller, error) {
 	host, portStr, err := net.SplitHostPort(endpoint)
 	if err != nil {
 		host = endpoint

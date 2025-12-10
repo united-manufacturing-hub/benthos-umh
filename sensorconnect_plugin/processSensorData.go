@@ -191,7 +191,7 @@ func (s *SensorConnectInput) GetProcessedSensorDataFromRawSensorOutput(rawSensor
 	return payload, nil
 }
 
-func (s *SensorConnectInput) extractByteArrayFromSensorDataMap(key, tag string, sensorDataMap map[string]interface{}) ([]byte, error) {
+func (s *SensorConnectInput) extractByteArrayFromSensorDataMap(key string, tag string, sensorDataMap map[string]interface{}) ([]byte, error) {
 	element, ok := sensorDataMap[key]
 	if !ok {
 		return nil, fmt.Errorf("key %s not in sensorDataMap", key)
@@ -208,7 +208,7 @@ func (s *SensorConnectInput) extractByteArrayFromSensorDataMap(key, tag string, 
 	return []byte(returnValue), nil
 }
 
-func (s *SensorConnectInput) extractIntFromSensorDataMap(key, tag string, sensorDataMap map[string]interface{}) (int, error) {
+func (s *SensorConnectInput) extractIntFromSensorDataMap(key string, tag string, sensorDataMap map[string]interface{}) (int, error) {
 	element, ok := sensorDataMap[key]
 	if !ok {
 		return 0, fmt.Errorf("key %s not in sensorDataMap", key)
@@ -226,7 +226,7 @@ func (s *SensorConnectInput) extractIntFromSensorDataMap(key, tag string, sensor
 
 // ConvertBinaryValue converts a binary string to its corresponding value based on the datatype.
 // It handles both string and numeric data types and logs errors using the Benthos logger.
-func (s *SensorConnectInput) ConvertBinaryValue(binaryValue, datatype string) (interface{}, error) {
+func (s *SensorConnectInput) ConvertBinaryValue(binaryValue string, datatype string) (interface{}, error) {
 	if binaryValue == "" {
 		s.logger.Errorf("binaryValue is empty for datatype %s", datatype)
 		return nil, fmt.Errorf("binaryValue is empty")
@@ -567,7 +567,7 @@ func (s *SensorConnectInput) isEmpty(object interface{}) bool {
 }
 
 // DetermineValueBitLength returns the bit length of a value based on its datatype.
-func (s *SensorConnectInput) DetermineValueBitLength(datatype string, bitLength, fixedLength uint) uint {
+func (s *SensorConnectInput) DetermineValueBitLength(datatype string, bitLength uint, fixedLength uint) uint {
 	switch datatype {
 	case "BooleanT":
 		return 1

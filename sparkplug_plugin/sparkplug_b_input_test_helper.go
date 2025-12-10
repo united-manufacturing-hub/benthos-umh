@@ -83,17 +83,17 @@ func (w *SparkplugInputTestWrapper) GetStateMu() *sync.RWMutex {
 }
 
 // CreateSplitMessages is an exported wrapper for testing the private createSplitMessages method
-func (w *SparkplugInputTestWrapper) CreateSplitMessages(payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (w *SparkplugInputTestWrapper) CreateSplitMessages(payload *sparkplugb.Payload, msgType string, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	return w.input.createSplitMessages(payload, msgType, deviceKey, topicInfo, originalTopic)
 }
 
 // ProcessBirthMessage is an exported wrapper for testing the private processBirthMessage method
-func (w *SparkplugInputTestWrapper) ProcessBirthMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
+func (w *SparkplugInputTestWrapper) ProcessBirthMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
 	w.input.processBirthMessage(deviceKey, msgType, payload)
 }
 
 // ProcessDataMessage is an exported wrapper for testing the private processDataMessage method
-func (w *SparkplugInputTestWrapper) ProcessDataMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
+func (w *SparkplugInputTestWrapper) ProcessDataMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
 	w.input.processDataMessage(deviceKey, msgType, payload)
 }
 
@@ -120,7 +120,7 @@ func (w *SparkplugInputTestWrapper) GetNodeState(deviceKey string) *NodeStateInf
 }
 
 // ProcessDeathMessage is an exported wrapper for testing the private processDeathMessage method
-func (w *SparkplugInputTestWrapper) ProcessDeathMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
+func (w *SparkplugInputTestWrapper) ProcessDeathMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
 	w.input.processDeathMessage(deviceKey, msgType, payload)
 }
 

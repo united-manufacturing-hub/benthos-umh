@@ -67,7 +67,7 @@ type BrowseDetails struct {
 // This function is used to construct hierarchical paths by joining parent and child
 // node names. If the parent string (`a`) is empty, it returns the child string (`b`)
 // without adding a dot, ensuring that paths do not start with an unnecessary separator.
-func join(a, b string) string {
+func join(a string, b string) string {
 	if a == "" {
 		return b
 	}

@@ -231,7 +231,7 @@ func (r *Ioddfinder) Marshal() ([]byte, error) {
 
 // GetBackoffTime calculates the backoff duration based on the attempt number.
 // It uses exponential backoff with jitter, bounded by min and max durations.
-func GetBackoffTime(attempt int64, minDuration, maxDuration time.Duration) time.Duration {
+func GetBackoffTime(attempt int64, minDuration time.Duration, maxDuration time.Duration) time.Duration {
 	exponent := float64(attempt)
 	backoff := time.Duration(float64(minDuration) * math.Pow(2, exponent))
 	if backoff > maxDuration {
