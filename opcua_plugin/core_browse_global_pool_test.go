@@ -2041,7 +2041,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 				Expect(taskExceeded.Level).To(BeNumerically(">", 25))
 			})
 		})
-
 	})
 
 	// Browse Logic in Workers Tests (TDD RED Phase - ENG-3876 Task 9)

@@ -26,7 +26,7 @@ formatters:
         - default
         - prefix(github.com/united-manufacturing-hub/benthos-umh)
     gofumpt:
-      extra-rules: true
+      extra-rules: false
 
 issues:
   max-issues-per-linter: 0

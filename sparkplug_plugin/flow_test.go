@@ -474,16 +474,16 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			// Test sequence validation using the actual ValidateSequenceNumber function
 			// Per Sparkplug B spec: ANY gap should be invalid and trigger rebirth requests
 			messageSequence := []uint8{
-				0, 1, 2, 3,     // Normal start (all valid)
-				5, 6,           // Gap: missing 4 (invalid per spec)
-				10,             // Gap: missing 7, 8, 9 (invalid per spec)
-				11, 12,         // Continue normally (valid)
-				255,            // Jump to boundary (invalid per spec)
-				0, 1,           // Valid wraparound (valid)
-				3,              // Gap after wraparound: missing 2 (invalid per spec)
-				4, 5,           // Continue (valid)
-				100,            // Large jump (invalid per spec)
-				101, 102,       // Continue from jump (valid)
+				0, 1, 2, 3, // Normal start (all valid)
+				5, 6, // Gap: missing 4 (invalid per spec)
+				10,     // Gap: missing 7, 8, 9 (invalid per spec)
+				11, 12, // Continue normally (valid)
+				255,  // Jump to boundary (invalid per spec)
+				0, 1, // Valid wraparound (valid)
+				3,    // Gap after wraparound: missing 2 (invalid per spec)
+				4, 5, // Continue (valid)
+				100,      // Large jump (invalid per spec)
+				101, 102, // Continue from jump (valid)
 				254, 255, 0, 1, // Another wraparound cycle (invalid jump, then valid wraparound, then valid)
 			}
 

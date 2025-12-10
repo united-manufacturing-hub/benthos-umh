@@ -207,8 +207,8 @@ func GenerateCertWithMode(
 	}
 
 	// PEM-encode the results
-	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-	keyPEM = pem.EncodeToMemory(pemBlockForKey(priv))
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	keyPEM := pem.EncodeToMemory(pemBlockForKey(priv))
 
 	return certPEM, keyPEM, clientName, nil
 }
