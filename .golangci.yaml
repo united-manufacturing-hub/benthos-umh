@@ -40,8 +40,10 @@ linters:
     - ginkgolinter
     - govet
     - ineffassign
+    - makezero
     - misspell
     - nolintlint
+    - nonamedreturns
     - predeclared
     - reassign
     - revive
@@ -112,6 +114,9 @@ linters:
           arguments:
             - preserveScope
         - name: empty-block
+        - name: enforce-repeated-arg-type-style
+          arguments:
+            - "full"
         - name: error-naming
         - name: error-return
         - name: error-strings

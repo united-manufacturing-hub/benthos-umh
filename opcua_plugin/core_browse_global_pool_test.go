@@ -2042,39 +2042,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 			})
 		})
 
-		Context("field type correctness", func() {
-			It("should have Ctx as context.Context type", func() {
-				task := GlobalPoolTask{}
-				// Type assertion to verify field type
-				_ = task.Ctx // Will fail if wrong type
-			})
-
-			It("should have Node as NodeBrowser interface type", func() {
-				task := GlobalPoolTask{}
-				// Type assertion to verify field type
-				_ = task.Node // Will fail if wrong type or not defined
-			})
-
-			It("should have Path as string type", func() {
-				task := GlobalPoolTask{}
-				_ = task.Path
-			})
-
-			It("should have Level as int type", func() {
-				task := GlobalPoolTask{}
-				_ = task.Level
-			})
-
-			It("should have ParentNodeID as string type", func() {
-				task := GlobalPoolTask{}
-				_ = task.ParentNodeID
-			})
-
-			It("should have Visited as *sync.Map type", func() {
-				task := GlobalPoolTask{}
-				_ = task.Visited
-			})
-		})
 	})
 
 	// Browse Logic in Workers Tests (TDD RED Phase - ENG-3876 Task 9)

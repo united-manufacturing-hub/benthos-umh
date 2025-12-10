@@ -102,6 +102,7 @@ var _ = Describe("100k Scale Browse Test", Label("100k_scale"), func() {
 			opcuaBrowserConsumerDone := make(chan struct{})
 			go func() {
 				for range opcuaBrowserChan { //nolint:revive
+					// Discard - browse details not needed for this test
 				}
 				close(opcuaBrowserConsumerDone)
 			}()
