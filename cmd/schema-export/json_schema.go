@@ -93,8 +93,33 @@ func convertFieldToJSONSchema(field FieldSpec) map[string]interface{} {
 		schema["x-advanced"] = true
 	}
 
-	// Handle nested object fields
-	if field.Type == "object" && len(field.Children) > 0 {
+	// Handle object arrays with children (e.g., modbus addresses: type="object", kind="array")
+	// Properties go INSIDE items, not at top level
+	if field.Kind == "array" && field.Type == "object" && len(field.Children) > 0 {
+		properties := make(map[string]interface{})
+		for _, child := range field.Children {
+			properties[child.Name] = convertFieldToJSONSchema(child)
+		}
+
+		// Get the items map and add properties to it
+		items := schema["items"].(map[string]interface{})
+		items["properties"] = properties
+
+		// Build required array for the items object
+		required := make([]string, 0)
+		for _, child := range field.Children {
+			if child.Required {
+				required = append(required, child.Name)
+			}
+		}
+		if len(required) > 0 {
+			items["required"] = required
+		}
+		return schema
+	}
+
+	// Handle nested object fields (non-array objects with children)
+	if field.Type == "object" && field.Kind != "array" && len(field.Children) > 0 {
 		properties := make(map[string]interface{})
 		for _, child := range field.Children {
 			properties[child.Name] = convertFieldToJSONSchema(child)
@@ -113,7 +138,7 @@ func convertFieldToJSONSchema(field FieldSpec) map[string]interface{} {
 		}
 	}
 
-	// Handle array fields
+	// Handle array fields where type="array" (not kind="array")
 	if field.Type == "array" && len(field.Children) > 0 {
 		// For arrays, the first child defines the items schema
 		schema["items"] = convertFieldToJSONSchema(field.Children[0])
