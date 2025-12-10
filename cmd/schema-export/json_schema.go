@@ -29,26 +29,43 @@ func validateFormat(format string) error {
 	return nil
 }
 
-// benthosTypeToJSONSchemaType converts a Benthos type to JSON Schema type
+// benthosTypeToJSONSchemaType converts a Benthos type to JSON Schema type.
+// It handles the distinction between "type" (element type) and "kind" (container type).
+// For arrays, Benthos reports kind="array" with type being the element type (e.g., "int", "string", "object").
 func benthosTypeToJSONSchemaType(benthosType, kind string) map[string]interface{} {
 	result := make(map[string]interface{})
 
-	switch benthosType {
-	case "string":
-		result["type"] = "string"
-	case "int", "float", "number":
-		result["type"] = "number"
-	case "bool":
-		result["type"] = "boolean"
-	case "object":
-		result["type"] = "object"
-	case "array":
-		result["type"] = "array"
-	default:
-		// Default to string for unknown types
-		result["type"] = "string"
+	// Map Benthos base type to JSON Schema type
+	mapBaseType := func(t string) string {
+		switch t {
+		case "string":
+			return "string"
+		case "int", "float", "number":
+			return "number"
+		case "bool":
+			return "boolean"
+		case "object":
+			return "object"
+		case "array":
+			return "array"
+		default:
+			// Default to string for unknown types
+			return "string"
+		}
 	}
 
+	// Check if this is an array container
+	if kind == "array" {
+		result["type"] = "array"
+		// Set items type based on the element type
+		result["items"] = map[string]interface{}{
+			"type": mapBaseType(benthosType),
+		}
+		return result
+	}
+
+	// Non-array: use the base type directly
+	result["type"] = mapBaseType(benthosType)
 	return result
 }
 
