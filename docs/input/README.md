@@ -4,6 +4,8 @@ This section covers Benthos input plugins for collecting data from various indus
 
 ## Available Input Plugins
 
+- **[Sparkplug B Input](sparkplug-b-input.md)** - Ingests data from MQTT brokers using the Sparkplug B specification. Acts as a Host (Secondary or Primary) to consume Sparkplug B messages from Edge Nodes and converts them to UMH-Core format with automatic hierarchy mapping.
+
 - **[OPC UA Input](opc-ua-input.md)** - Connects to OPC UA servers to browse and subscribe to nodes. Supports various data types, authentication methods, and provides comprehensive metadata for each message.
 
 - **[Modbus](modbus.md)** - Communicates with Modbus devices supporting coils, discrete inputs, holding registers, and input registers. Features register optimization, device-specific workarounds, and extensive configuration options.
@@ -22,6 +24,7 @@ This section covers Benthos input plugins for collecting data from various indus
 
 ## Choosing the Right Input Plugin
 
+- Use **Sparkplug B Input** when consuming data from existing Sparkplug B Edge Nodes or integrating with Sparkplug B-enabled devices
 - Use **OPC UA Input** for modern industrial systems that support the OPC UA standard
 - Use **Modbus** for legacy industrial devices and PLCs that communicate via Modbus protocol
 - Use **ifm IO-Link Master** when working with ifm electronic's IO-Link infrastructure and sensors
@@ -30,4 +33,3 @@ This section covers Benthos input plugins for collecting data from various indus
 - Use **Ethernet/IP** for CompactLogix, ControlLogix, Micro800er series, that communicate via CIP protocol
 - Use **UNS Input** when working within UMH Core to consume and filter messages from the Unified Namespace
 - Explore **additional input plugins** for other protocols like HTTP, MQTT, databases, file systems, and more
-
