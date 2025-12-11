@@ -330,7 +330,7 @@ var _ = Describe("GenerateCertWithMode Certificate Generation", func() {
 				}
 			},
 			Entry("valid DNS hostname", "example.com", []string{}, []string{"example.com"}, []string{}, false),
-			Entry("DNS hostname with upercase", "Example.COM", []string{}, []string{"example.com"}, []string{}, false),
+			Entry("DNS hostname with uppercase", "Example.COM", []string{}, []string{"example.com"}, []string{}, false),
 			Entry("hardcoded benthos-urn", "urn:benthos-umh:client-predefined-abc123", []string{}, []string{}, []string{"urn:benthos-umh:client-predefined-abc123"}, false),
 			Entry("invalid DNS hostname", "invalid_hostname.com", []string{}, []string{}, []string{}, true),
 			Entry("IPv4 address", "192.168.1.100", []string{"192.168.1.100"}, []string{}, []string{}, false),
