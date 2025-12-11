@@ -328,9 +328,9 @@ var _ = Describe("generateSchemas", func() {
 			Expect(result).NotTo(BeNil())
 			Expect(result.Metadata.BenthosVersion).NotTo(BeEmpty())
 			// Verify maps are populated with actual plugins, not just initialized
-			Expect(len(result.Inputs)).To(BeNumerically(">", 0), "Should have at least one input plugin")
-			Expect(len(result.Processors)).To(BeNumerically(">", 0), "Should have at least one processor plugin")
-			Expect(len(result.Outputs)).To(BeNumerically(">", 0), "Should have at least one output plugin")
+			Expect(result.Inputs).ToNot(BeEmpty(), "Should have at least one input plugin")
+			Expect(result.Processors).ToNot(BeEmpty(), "Should have at least one processor plugin")
+			Expect(result.Outputs).ToNot(BeEmpty(), "Should have at least one output plugin")
 		})
 
 		It("should include UMH plugins in inputs", func() {
@@ -476,7 +476,7 @@ var _ = Describe("JSON Output Contract", func() {
 
 			// Verify nested config fields work correctly
 			config := modbus["config"].(map[string]interface{})
-			Expect(len(config)).To(BeNumerically(">", 0), "Plugin should have config fields")
+			Expect(config).ToNot(BeEmpty(), "Plugin should have config fields")
 		})
 	})
 })

@@ -30,7 +30,7 @@ func validateFormat(format string) error {
 }
 
 // benthosTypeToJSONSchemaType converts a Benthos type to JSON Schema type
-func benthosTypeToJSONSchemaType(benthosType, kind string) map[string]interface{} {
+func benthosTypeToJSONSchemaType(benthosType string, _ string) map[string]interface{} {
 	result := make(map[string]interface{})
 
 	switch benthosType {
@@ -185,7 +185,7 @@ func convertPluginToJSONSchema(plugin PluginSpec) map[string]interface{} {
 // generateSchemaWithFormat routes to the appropriate formatter:
 // - format="benthos": Returns raw SchemaOutput (UI format) for Management Console
 // - format="json-schema": Returns JSON Schema Draft-07 (Monaco format) for editors
-func generateSchemaWithFormat(plugins *SchemaOutput, format, version string) (interface{}, error) {
+func generateSchemaWithFormat(plugins *SchemaOutput, format string, version string) (interface{}, error) {
 	if err := validateFormat(format); err != nil {
 		return nil, err
 	}

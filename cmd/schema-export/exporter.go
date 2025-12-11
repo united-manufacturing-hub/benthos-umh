@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	_ "github.com/united-manufacturing-hub/benthos-umh/cmd/benthos/bundle"
 )
 
@@ -81,7 +82,7 @@ func generateSchemas() (*SchemaOutput, error) {
 }
 
 // extractPluginSpec converts a Benthos ConfigView to our PluginSpec format
-func extractPluginSpec(name, pluginType string, config *service.ConfigView) (PluginSpec, error) {
+func extractPluginSpec(name string, pluginType string, config *service.ConfigView) (PluginSpec, error) {
 	jsonData, err := config.FormatJSON()
 	if err != nil {
 		return PluginSpec{}, fmt.Errorf("failed to format JSON for plugin %s: %w", name, err)
