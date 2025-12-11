@@ -432,106 +432,57 @@ Auto-optimizes Browse workers and Subscribe batch size based on detected server 
 
 ### Plugin Field Classification
 
-All plugin fields must follow a strict required/optional classification rule to ensure consistent UI generation and proper progressive disclosure in the Management Console.
+Plugin fields follow a required/optional rule for consistent UI generation in the Management Console.
 
-#### How Benthos Field Optionality Works
+#### Core Rule
 
-Benthos uses two concepts for field optionality:
+| Field Type | Modifiers | Shows in UI |
+|------------|-----------|-------------|
+| **Basic** | No `.Default()`, no `.Advanced()` | Required (asterisk) |
+| **Advanced** | `.Default().Advanced()` | Optional (collapsed) |
 
-1. **`.Default(value)`** - Sets a fallback value if field is omitted. Makes field **parse-optional** (Benthos config parsing won't fail if missing).
+**Key insight:** `.Default()` alone makes a field not required. `.Optional()` is rarely needed.
 
-2. **`.Optional()`** - Sets the `is_optional` flag in ConfigView. Only needed for fields WITHOUT defaults where you want to detect if user provided a value.
-
-**Key insight:** The schema export treats fields with defaults as NOT required. This means:
-- `.Default()` alone is sufficient for advanced fields
-- `.Optional()` is only needed for optional fields WITHOUT defaults (rare)
-
-#### Required vs Optional Fields (UX Principle)
-
-**Rule**:
-- **Basic fields** (no `.Advanced()`) = **Required** (no `.Default()`)
-- **Advanced fields** (has `.Advanced()`) = **Optional** (needs `.Default()`)
-
-**Rationale**: This creates a visual hierarchy in the Management Console UI where basic fields require explicit user configuration (no sensible system default exists), while advanced fields have sensible system defaults and can be collapsed/hidden from novice users.
-
-**Fluent API Order**: `.Default().Advanced()`
-
-Note: `.Optional()` is no longer required for advanced fields since the schema export treats fields with defaults as not required.
-
-#### Correct Examples
+#### Examples
 
 ```go
-// Basic field - required, no default
-// User MUST configure this (e.g., endpoint URL, device address)
+// Basic field - required, user MUST configure
 Field(service.NewStringField("endpoint").
     Description("OPC UA endpoint URL"))
 
-Field(service.NewStringField("tcpDevice").
-    Description("IP address or hostname of the S7 PLC"))
-
-// Advanced field - optional with default
-// System provides sensible default, user CAN override
+// Advanced field - optional with sensible default
 Field(service.NewIntField("sessionTimeout").
     Description("Session timeout in milliseconds").
     Default(10000).
     Advanced())
-
-Field(service.NewBoolField("securityMode").
-    Description("Enable security for OPC UA connection").
-    Default(false).
-    Advanced())
 ```
 
-#### Incorrect Examples
+#### Field Examples Best Practices
+
+- **Always list all valid options** in `.Examples()` for enum-like fields
+- **Boolean fields**: Include both `true` and `false`
+- **Numeric fields**: Only include the default value unless other values represent meaningful thresholds
+- **String lists**: Show common patterns (single item, multiple items)
 
 ```go
-// ❌ WRONG: Basic field with default
-// Makes it parse-optional, violates required/optional rule
-Field(service.NewStringField("endpoint").
-    Default("opc.tcp://localhost:4840"))  // Basic fields must not have defaults
+// Good: enum-like field with all options
+Field(service.NewStringField("securityMode").
+    Examples("", "None", "Sign", "SignAndEncrypt"))
 
-// ❌ WRONG: Basic field with Optional()
-// Basic fields must be required
-Field(service.NewStringField("tcpDevice").
-    Optional())  // Basic fields must not be optional
+// Good: boolean with both values
+Field(service.NewBoolField("subscribeEnabled").
+    Examples(true, false))
 
-// ❌ WRONG: Advanced field without default
-// All advanced fields must have defaults
-Field(service.NewIntField("sessionTimeout").
-    Advanced())  // Missing .Default()
+// Good: numeric with just default (no arbitrary values)
+Field(service.NewIntField("queueSize").
+    Default(10).
+    Examples(10))
 ```
 
 #### When to Use Basic vs Advanced
 
-**Basic field checklist**:
-- Is this required for the plugin to function at all? (endpoint, device address, credentials)
-- Is there NO sensible default that works in most cases?
-- Would leaving this blank cause immediate failure?
-
-If YES to all → Basic field (required, no default, no `.Advanced()`)
-
-**Advanced field checklist**:
-- Is this an optimization parameter? (timeout, buffer size, retry count)
-- Is this a feature toggle for uncommon use cases? (debug mode, legacy compatibility)
-- Does this have a sensible default that works in 90%+ of deployments?
-
-If YES to any → Advanced field (optional with default, has `.Advanced()`)
-
-#### Examples by Plugin Type
-
-**Protocol Input Plugins** (OPC UA, S7, Modbus, etc.):
-- Basic: `endpoint`, `tcpDevice`, `addresses`, `username`, `password`
-- Advanced: `sessionTimeout`, `keepAliveInterval`, `securityMode`, `requestTimeout`
-
-**Processing Plugins** (tag_processor, stream_processor):
-- Basic: `script`, `defaults` (the actual processing logic)
-- Advanced: `maxBufferSize`, `stateTimeout`, `debugMode`
-
-**Output Plugins** (UNS):
-- Basic: (none - UNS output has no required config)
-- Advanced: `batchSize`, `compressionType`, `validateTopic`
-
-This classification ensures that the Management Console UI presents a clean, focused interface for new users (showing only required fields) while providing access to advanced tuning parameters for expert users through progressive disclosure.
+**Basic**: Required for plugin to function (endpoint, device address, credentials)
+**Advanced**: Optimization parameters with sensible defaults (timeout, buffer size, retry count)
 
 ## Build & Test Commands
 

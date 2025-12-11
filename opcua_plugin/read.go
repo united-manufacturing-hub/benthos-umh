@@ -39,7 +39,12 @@ var OPCUAConfigSpec = OPCUAConnectionConfigSpec.
 	Description("The OPC UA input plugin reads data from an OPC UA server and sends it to Benthos.").
 	Field(service.NewStringListField("nodeIDs").
 		Description("OPC UA node IDs to start browsing from.").
-		Examples([]string{"i=84"}, []string{"ns=2;s=Temperature"}, []string{"ns=2;s=Temperature", "ns=2;s=Pressure"}, []string{"ns=3;i=1001"})).
+		Examples(
+			[]string{"i=84"},
+			[]string{"ns=2;i=1001"},
+			[]string{"ns=2;s=Temperature"},
+			[]string{"ns=2;s=Devices.Motor1.Speed"},
+			[]string{"ns=2;g=550e8400-e29b-41d4-a716-446655440000"})).
 	Field(service.NewBoolField("subscribeEnabled").
 		Description("Set to true to subscribe to OPC UA nodes instead of fetching them every seconds. Default is pulling messages every second (false).").
 		Default(false).
@@ -60,7 +65,7 @@ var OPCUAConfigSpec = OPCUAConnectionConfigSpec.
 		Description("The size of the queue, which will get filled from the OPC UA server when requesting its data via subscription").Default(DefaultQueueSize).
 		Optional().
 		Advanced().
-		Examples(10, 50, 100)).
+		Examples(10)).
 	Field(service.NewFloatField("samplingInterval").Description("The interval for sampling on the OPC UA server - notice 0.0 will get you updates as fast as possible").Default(DefaultSamplingInterval).
 		Optional().
 		Advanced().

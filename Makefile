@@ -177,6 +177,9 @@ proto:
 # Generate UMH plugin list and schema files for ManagementConsole
 .PHONY: generate-schema
 generate-schema:
+ifndef VERSION
+	$(error VERSION is required. Usage: make generate-schema VERSION=0.11.7)
+endif
 	go run ./cmd/tools/generate_plugins .
 	go build -o ./tmp/schema-export ./cmd/schema-export
 	./tmp/schema-export -version $(VERSION) -format benthos

@@ -92,15 +92,15 @@ var S7CommConfigSpec = service.NewConfigSpec().
 		Description("IP address or hostname of the S7 PLC. Format: '192.168.1.100' or 'plc.local'. For S7-1200/1500 PLCs, ensure TSAP settings match controller configuration.").
 		Examples("192.168.1.100", "10.0.0.50", "plc.local")).
 	Field(service.NewIntField("rack").
-		Description("PLC rack number from your hardware configuration. Usually 0 for most S7 systems.").
+		Description("Rack number from hardware configuration, usually 0.").
 		Default(0).
 		Examples(0, 1, 2)).
 	Field(service.NewIntField("slot").
-		Description("PLC slot number from your hardware configuration. Usually 1 for S7-1200/1500, may vary for S7-300/400.").
+		Description("Slot number from hardware configuration, usually 1 for S7-1200/1500.").
 		Default(1).
 		Examples(1, 2, 3)).
 	Field(service.NewIntField("batchMaxSize").
-		Description("Maximum PDU size in bytes for S7 read requests. Default (480) works for most PLCs. Reduce if you get communication errors.").
+		Description("Maximum PDU size in bytes. Default (480) works for most PLCs including S7-1500. Reduce for older PLCs like S7-300 (240).").
 		Default(480).
 		Optional().
 		Advanced().
@@ -118,8 +118,11 @@ var S7CommConfigSpec = service.NewConfigSpec().
 		Advanced().
 		Examples(false, true)).
 	Field(service.NewStringListField("addresses").
-		Description("S7 memory addresses to read. Format: AREA.TYPE<offset> where AREA is DB, MK, PE, PA and TYPE is W, DW, I, DI, R, B, X.").
-		Examples([]string{"DB1.DW20", "DB1.S30.10"}, []string{"DB1.DW0"}, []string{"DB1.W0", "DB3.X270.5"}, []string{"DB5.B3", "DB10.DW20"}))
+		Description("S7 memory addresses to read. Format: AREA.TYPE<offset>[.extra]. "+
+			"Areas: DB (data block), MK (marker), PE (input), PA (output). "+
+			"Types: X (bit), B (byte), W (word), DW (dword), I (int), DI (dint), R (real), S (string). "+
+			"For bits (X), add bit number 0-7. For strings (S), add max length.").
+		Examples([]string{"DB1.DW20"}, []string{"DB1.X5.2"}, []string{"MK0.W0"}, []string{"PE.W0", "PA.W0"}))
 
 // newS7CommInput is the constructor function for S7CommInput. It parses the plugin configuration,
 // establishes a connection with the S7 PLC, and initializes the input plugin instance.

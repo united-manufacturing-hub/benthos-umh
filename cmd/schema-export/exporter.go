@@ -240,7 +240,8 @@ func getBenthosVersion() string {
 	return "unknown"
 }
 
-// getUMHVersion retrieves the benthos-umh version from git or VERSION file
+// getUMHVersion retrieves the benthos-umh version from git tags.
+// Falls back to "dev" if git is unavailable.
 func getUMHVersion() string {
 	// Try to get version from git tag
 	cmd := exec.Command("git", "describe", "--tags", "--always", "--dirty")
