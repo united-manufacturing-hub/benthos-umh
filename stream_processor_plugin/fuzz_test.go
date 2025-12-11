@@ -26,6 +26,7 @@ import (
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/constants"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 )
@@ -281,11 +282,16 @@ func createFuzzConfig(mappingStr string) *service.ParsedConfig {
 
 	// Create configuration
 	configSpec := service.NewConfigSpec().
-		Field(service.NewStringListField("sources")).
+		Field(service.NewStringMapField("sources")).
 		Field(service.NewObjectField("mapping"))
 
 	yamlConfig := fmt.Sprintf(`
-sources: ["press", "temp", "flow", "run", "status"]
+sources:
+  press: "press"
+  temp: "temp"
+  flow: "flow"
+  run: "run"
+  status: "status"
 mapping: %s
 `, mappingStr)
 
@@ -293,7 +299,12 @@ mapping: %s
 	if err != nil {
 		// Return minimal valid config for parsing errors
 		yamlConfig = `
-sources: ["press", "temp", "flow", "run", "status"]
+sources:
+  press: "press"
+  temp: "temp"
+  flow: "flow"
+  run: "run"
+  status: "status"
 mapping: {}
 `
 		parsedConfig, _ = configSpec.ParseYAML(yamlConfig, nil)
@@ -321,10 +332,10 @@ func createFuzzProcessor(config *service.ParsedConfig) (*processor.StreamProcess
 		}
 	}
 
-	streamConfig := StreamProcessorConfig{
+	streamConfig := config.StreamProcessorConfig{
 		Mode:        "timeseries",
 		OutputTopic: "umh.v1.corpA.plant-A.aawd",
-		Model: ModelConfig{
+		Model: config.ModelConfig{
 			Name:    "fuzz",
 			Version: "v1",
 		},

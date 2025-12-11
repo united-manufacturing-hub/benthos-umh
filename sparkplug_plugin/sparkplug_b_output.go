@@ -986,6 +986,7 @@ func (s *sparkplugOutput) createDeathMessage(_ *service.Message) (string, []byte
 		topic = fmt.Sprintf("spBv1.0/%s/NDEATH/%s", s.config.Identity.GroupID, eonNodeID)
 	}
 
+	s.stateMu.RLock()
 	bdSeqMetric := &sparkplugb.Payload_Metric{
 		Name: func() *string { s := "bdSeq"; return &s }(),
 		Value: &sparkplugb.Payload_Metric_LongValue{
@@ -993,6 +994,7 @@ func (s *sparkplugOutput) createDeathMessage(_ *service.Message) (string, []byte
 		},
 		Datatype: func() *uint32 { d := uint32(4); return &d }(),
 	}
+	s.stateMu.RUnlock()
 
 	deathPayload := &sparkplugb.Payload{
 		Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),

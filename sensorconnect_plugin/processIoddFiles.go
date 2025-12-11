@@ -133,13 +133,13 @@ type IoddFilemapKey struct {
 func (s *SensorConnectInput) AddNewDeviceToIoddFilesAndMap(ctx context.Context,
 	ioddFilemapKey IoddFilemapKey,
 ) error {
-	s.logger.Debugf("Requesting IODD file %v -> %s", ioddFilemapKey)
+	s.logger.Debugf("Requesting IODD file %v", ioddFilemapKey)
 	err := s.RequestSaveIoddFile(ctx, ioddFilemapKey)
 	if err != nil {
 		s.logger.Errorf("Error in AddNewDeviceToIoddFilesAndMap: %s", err.Error())
 		return err
 	}
-	s.logger.Debugf("Reading IODD files %v -> %s")
+	s.logger.Debugf("Reading IODD files %v", ioddFilemapKey)
 
 	_, ok := s.IoDeviceMap.Load(ioddFilemapKey)
 	if !ok {
