@@ -38,6 +38,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // GenerateCertWithMode generates a self-signed X.509 certificate for OPC UA
@@ -143,36 +145,9 @@ func GenerateCertWithMode(
 
 	clientName := template.Subject.CommonName
 
-	// Fill in IPAddresses, DNSNames, URIs from the ApplicationURI string (comma-separated)
-	// Each host must go into EXACTLY ONE field to comply with OPC UA certificate requirements:
-	// - IP addresses → IPAddresses
-	// - URNs (urn:*) and URLs (http(s)://*) → URIs
-	// - DNS hostnames → DNSNames
-	hosts := strings.Split(host, ",")
-	for _, h := range hosts {
-		// Trim whitespace from each host entry
-		h = strings.TrimSpace(h)
-
-		// Skip empty strings
-		if h == "" {
-			continue
-		}
-
-		// Check if it's an IP address
-		if ip := net.ParseIP(h); ip != nil {
-			template.IPAddresses = append(template.IPAddresses, ip)
-			continue // Prevent fall-through to other fields
-		}
-
-		// Check if it's a URI with a scheme (urn:, http://, https://)
-		if uri, parseErr := url.Parse(h); parseErr == nil && uri.Scheme != "" && (uri.Scheme == "urn" || uri.Scheme == "http" || uri.Scheme == "https") {
-			template.URIs = append(template.URIs, uri)
-			continue // Prevent fall-through to DNSNames
-		}
-
-		// Fallback: treat as DNS hostname
-		// TODO: validate this is a valid DNS hostname
-		template.DNSNames = append(template.DNSNames, h)
+	template.IPAddresses, template.DNSNames, template.URIs, err = ParseHosts(host)
+	if err != nil {
+		return nil, nil, "", err
 	}
 
 	// Set Key Usage bits according to OPC UA Part 6 specification.
@@ -238,4 +213,44 @@ func pemBlockForKey(priv interface{}) *pem.Block {
 	default:
 		return nil
 	}
+}
+
+// ParseHosts parses comma-separated hosts regarding to x509 specific RFC
+func ParseHosts(hosts string) ([]net.IP, []string, []*url.URL, error) {
+	var (
+		ipAddresses []net.IP
+		dnsNames    []string
+		uris        []*url.URL
+	)
+
+	for _, h := range strings.Split(hosts, ",") {
+		// Trim whitespace from each host entry
+		h = strings.TrimSpace(h)
+
+		// Skip empty strings
+		if h == "" {
+			continue
+		}
+
+		// Check if it's an IP address
+		if ip := net.ParseIP(h); ip != nil {
+			ipAddresses = append(ipAddresses, ip)
+			continue
+		}
+
+		// Check if it's a URI with a scheme (urn:, http://, https://)
+		if uri, parseErr := url.Parse(h); parseErr == nil && uri.Scheme != "" && (uri.Scheme == "urn" || uri.Scheme == "http" || uri.Scheme == "https") {
+			uris = append(uris, uri)
+			continue
+		}
+
+		// Fallback: validate and treat as DNS hostname per RFC 5280 §4.2.1.6
+		lowercaseHost := strings.ToLower(h)
+		dnsErrors := validation.IsDNS1123Subdomain(lowercaseHost)
+		if len(dnsErrors) > 0 {
+			return nil, nil, nil, fmt.Errorf("invalid DNS hostname %q: %s", h, strings.Join(dnsErrors, ", "))
+		}
+		dnsNames = append(dnsNames, lowercaseHost)
+	}
+	return ipAddresses, dnsNames, uris, nil
 }

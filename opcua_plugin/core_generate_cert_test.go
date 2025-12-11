@@ -302,4 +302,39 @@ var _ = Describe("GenerateCertWithMode Certificate Generation", func() {
 			})
 		})
 	})
+
+	Describe("ParseHosts", func() {
+		DescribeTable("should correctly parse hosts",
+			func(input string, expectedIPs []string, expectedDNS []string, expectedURIs []string, expectError bool) {
+				ipAddresses, dnsNames, uris, err := ParseHosts(input)
+
+				if expectError {
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(ContainSubstring("invalid DNS hostname"))
+					return
+				}
+
+				Expect(err).ToNot(HaveOccurred())
+				Expect(ipAddresses).To(HaveLen(len(expectedIPs)))
+				Expect(dnsNames).To(HaveLen(len(expectedDNS)))
+				Expect(uris).To(HaveLen(len(expectedURIs)))
+
+				for i, ip := range expectedIPs {
+					Expect(ipAddresses[i].String()).To(Equal(ip))
+				}
+				for i, dns := range expectedDNS {
+					Expect(dnsNames[i]).To(Equal(dns))
+				}
+				for i, uri := range expectedURIs {
+					Expect(uris[i].String()).To(Equal(uri))
+				}
+			},
+			Entry("valid DNS hostname", "example.com", []string{}, []string{"example.com"}, []string{}, false),
+			Entry("DNS hostname with upercase", "Example.COM", []string{}, []string{"example.com"}, []string{}, false),
+			Entry("hardcoded benthos-urn", "urn:benthos-umh:client-predefined-abc123", []string{}, []string{}, []string{"urn:benthos-umh:client-predefined-abc123"}, false),
+			Entry("invalid DNS hostname", "invalid_hostname.com", []string{}, []string{}, []string{}, true),
+			Entry("IPv4 address", "192.168.1.100", []string{"192.168.1.100"}, []string{}, []string{}, false),
+			Entry("mixed IP, URN, and DNS are separated correctly", "192.168.1.1, urn:test:app, server.local", []string{"192.168.1.1"}, []string{"server.local"}, []string{"urn:test:app"}, false),
+		)
+	})
 })
