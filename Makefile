@@ -174,15 +174,13 @@ proto:
 		pkg/umh/topic/proto/topic_browser_data.proto
 	@echo "Successfully generated topic_browser_data.pb.go"
 
-# Generate UMH plugin list and schema files
-# 1. Scans *_plugin/ directories and extracts plugin names from service.Register* calls
-# 2. Builds and runs schema-export to generate ui.json and monaco.json
-.PHONY: generate
-generate:
-	@go run ./cmd/tools/generate_plugins .
-	@go build -o ./tmp/schema-export ./cmd/schema-export
-	@./tmp/schema-export -version $(VERSION) -format benthos
-	@./tmp/schema-export -version $(VERSION) -format json-schema
+# Generate UMH plugin list and schema files for ManagementConsole
+.PHONY: generate-schema
+generate-schema:
+	go run ./cmd/tools/generate_plugins .
+	go build -o ./tmp/schema-export ./cmd/schema-export
+	./tmp/schema-export -version $(VERSION) -format benthos
+	./tmp/schema-export -version $(VERSION) -format json-schema
 
 .PHONY: serve-pprof
 serve-pprof:
