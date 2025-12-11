@@ -135,10 +135,10 @@ jobs:
         with:
           path: ManagementConsole
           token: ${{ steps.generate-token.outputs.token }}
-          commit-message: "feat(schemas): add benthos-umh schemas for ${{ env.VERSION }}"
-          branch: feat/benthos-schemas-${{ env.VERSION }}
+          commit-message: "chore(schemas): add benthos-umh schemas for ${{ env.VERSION }}"
+          branch: chore/benthos-schemas-${{ env.VERSION }}
           delete-branch: true
-          title: "feat(schemas): add benthos-umh schemas for ${{ env.VERSION }}"
+          title: "chore(schemas): add benthos-umh schemas for ${{ env.VERSION }}"
           body: |
             ## Summary
             Adds benthos-umh schemas for version ${{ env.VERSION }}.
