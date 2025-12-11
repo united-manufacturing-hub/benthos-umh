@@ -129,7 +129,7 @@ func extractFields(configObj map[string]interface{}) map[string]FieldSpec {
 			Type:        getString(fieldMap, "type"),
 			Kind:        getString(fieldMap, "kind"),
 			Description: getString(fieldMap, "description"),
-			Required:    !getBool(fieldMap, "is_optional"),
+			Required:    !getBool(fieldMap, "is_optional") && !hasDefault(fieldMap),
 			Advanced:    getBool(fieldMap, "is_advanced"),
 		}
 
@@ -179,7 +179,7 @@ func extractFieldsArray(childFields []interface{}) []FieldSpec {
 			Type:        getString(fieldMap, "type"),
 			Kind:        getString(fieldMap, "kind"),
 			Description: getString(fieldMap, "description"),
-			Required:    !getBool(fieldMap, "is_optional"),
+			Required:    !getBool(fieldMap, "is_optional") && !hasDefault(fieldMap),
 			Advanced:    getBool(fieldMap, "is_advanced"),
 		}
 
@@ -268,4 +268,11 @@ func getBool(m map[string]interface{}, key string) bool {
 		return val
 	}
 	return false
+}
+
+// hasDefault checks if a field has a default value defined.
+// Fields with defaults are not required since Benthos will use the default if omitted.
+func hasDefault(m map[string]interface{}) bool {
+	_, ok := m["default"]
+	return ok
 }

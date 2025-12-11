@@ -65,7 +65,8 @@ var _ = Describe("extractFields", func() {
 			Expect(fields["controller"].Type).To(Equal("string"))
 			Expect(fields["controller"].Kind).To(Equal("scalar"))
 			Expect(fields["controller"].Description).To(Equal("Controller address"))
-			Expect(fields["controller"].Required).To(BeTrue())
+			// Field has default, so not required (Benthos will use default if omitted)
+			Expect(fields["controller"].Required).To(BeFalse())
 			Expect(fields["controller"].Advanced).To(BeFalse())
 			Expect(fields["controller"].Default).To(Equal("tcp://localhost:502"))
 			Expect(fields["controller"].Children).To(BeEmpty())
@@ -174,6 +175,37 @@ var _ = Describe("extractFields", func() {
 
 			Expect(fields["required_field"].Required).To(BeTrue())
 			Expect(fields["optional_field"].Required).To(BeFalse())
+		})
+
+		It("should treat fields with defaults as not required even without is_optional", func() {
+			configObj := map[string]interface{}{
+				"children": []interface{}{
+					map[string]interface{}{
+						"name":        "field_with_default",
+						"type":        "int",
+						"kind":        "scalar",
+						"description": "Field with default but no .Optional()",
+						"is_optional": false,
+						"is_advanced": true,
+						"default":     10000,
+					},
+					map[string]interface{}{
+						"name":        "field_without_default",
+						"type":        "string",
+						"kind":        "scalar",
+						"description": "Field without default",
+						"is_optional": false,
+						"is_advanced": false,
+					},
+				},
+			}
+
+			fields := extractFields(configObj)
+
+			// Field with default should NOT be required (Benthos won't fail if omitted)
+			Expect(fields["field_with_default"].Required).To(BeFalse())
+			// Field without default and not optional SHOULD be required
+			Expect(fields["field_without_default"].Required).To(BeTrue())
 		})
 
 		It("should set Advanced flag correctly", func() {

@@ -434,17 +434,29 @@ Auto-optimizes Browse workers and Subscribe batch size based on detected server 
 
 All plugin fields must follow a strict required/optional classification rule to ensure consistent UI generation and proper progressive disclosure in the Management Console.
 
+#### How Benthos Field Optionality Works
+
+Benthos uses two concepts for field optionality:
+
+1. **`.Default(value)`** - Sets a fallback value if field is omitted. Makes field **parse-optional** (Benthos config parsing won't fail if missing).
+
+2. **`.Optional()`** - Sets the `is_optional` flag in ConfigView. Only needed for fields WITHOUT defaults where you want to detect if user provided a value.
+
+**Key insight:** The schema export treats fields with defaults as NOT required. This means:
+- `.Default()` alone is sufficient for advanced fields
+- `.Optional()` is only needed for optional fields WITHOUT defaults (rare)
+
 #### Required vs Optional Fields (UX Principle)
 
 **Rule**:
-- **Basic fields** (no `.Advanced()`) = **Required** (no `.Optional()` or `.Default()`)
-- **Advanced fields** (has `.Advanced()`) = **Optional** (needs `.Optional()` AND `.Default()`)
+- **Basic fields** (no `.Advanced()`) = **Required** (no `.Default()`)
+- **Advanced fields** (has `.Advanced()`) = **Optional** (needs `.Default()`)
 
 **Rationale**: This creates a visual hierarchy in the Management Console UI where basic fields require explicit user configuration (no sensible system default exists), while advanced fields have sensible system defaults and can be collapsed/hidden from novice users.
 
-**Fluent API Order**: `.Default().Optional().Advanced()`
+**Fluent API Order**: `.Default().Advanced()`
 
-The `.Optional()` call **must come before** `.Advanced()` because the plugin registration system processes these methods in order. Calling `.Advanced()` after `.Optional()` causes the optional status to be lost.
+Note: `.Optional()` is no longer required for advanced fields since the schema export treats fields with defaults as not required.
 
 #### Correct Examples
 
@@ -462,13 +474,11 @@ Field(service.NewStringField("tcpDevice").
 Field(service.NewIntField("sessionTimeout").
     Description("Session timeout in milliseconds").
     Default(10000).
-    Optional().   // MUST come before Advanced()
     Advanced())
 
 Field(service.NewBoolField("securityMode").
     Description("Enable security for OPC UA connection").
     Default(false).
-    Optional().
     Advanced())
 ```
 
@@ -485,24 +495,9 @@ Field(service.NewStringField("endpoint").
 Field(service.NewStringField("tcpDevice").
     Optional())  // Basic fields must not be optional
 
-// ❌ WRONG: Advanced field without Optional()
-// All advanced fields must be optional with defaults
-Field(service.NewIntField("sessionTimeout").
-    Default(10000).
-    Advanced())  // Missing .Optional()
-
-// ❌ WRONG: Wrong fluent API order
-// Optional() must come before Advanced()
-Field(service.NewIntField("sessionTimeout").
-    Description("Session timeout in milliseconds").
-    Default(10000).
-    Advanced().
-    Optional())  // Too late! Must come before Advanced()
-
 // ❌ WRONG: Advanced field without default
 // All advanced fields must have defaults
 Field(service.NewIntField("sessionTimeout").
-    Optional().
     Advanced())  // Missing .Default()
 ```
 

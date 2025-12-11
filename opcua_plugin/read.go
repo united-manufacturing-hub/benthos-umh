@@ -38,7 +38,7 @@ var OPCUAConfigSpec = OPCUAConnectionConfigSpec.
 	Summary("OPC UA input plugin").
 	Description("The OPC UA input plugin reads data from an OPC UA server and sends it to Benthos.").
 	Field(service.NewStringListField("nodeIDs").
-		Description("OPC UA node IDs to start browsing from. Common formats:\n• i=84 (Objects folder - standard starting point)\n• ns=2;s=DeviceName (string identifier with namespace)\n• ns=3;i=1001 (numeric identifier with namespace)").
+		Description("OPC UA node IDs to start browsing from.").
 		Examples([]string{"i=84"}, []string{"ns=2;s=Temperature"}, []string{"ns=2;s=Temperature", "ns=2;s=Pressure"}, []string{"ns=3;i=1001"})).
 	Field(service.NewBoolField("subscribeEnabled").
 		Description("Set to true to subscribe to OPC UA nodes instead of fetching them every seconds. Default is pulling messages every second (false).").

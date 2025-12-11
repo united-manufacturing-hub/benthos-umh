@@ -53,9 +53,7 @@ func ConfigSpec() *service.ConfigSpec {
 		Field(
 			service.NewStringField("iodd_api").
 				Description("URL of the IODD API").
-				Default("https://management.umh.app/iodd").
-				Optional().
-				Advanced(),
+				Default("https://management.umh.app/iodd"),
 		).
 		// New configuration for device-specific settings
 		Field(

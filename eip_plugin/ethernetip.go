@@ -40,9 +40,6 @@ type EIPInput struct {
 	ListAllTags  bool
 	UseMultiRead bool
 
-	// advanced connection settings
-	SocketTimeoutMs int
-
 	// addresses for readable data either as an attribute or as a tag
 	Items   []*CIPReadItem
 	ItemMap map[string]any
@@ -85,27 +82,21 @@ var EthernetIPConfigSpec = service.NewConfigSpec().
 	Description("This input plugin enables Benthos to read data directly from Ethernet/IP-Devices using the CIP protocol. " +
 		"Configure the plugin by specifying the PLC's IP address, path and pollRate, and the data blocks to read.").
 	Field(service.NewStringField("endpoint").Description("IP address of the Ethernet/IP-Device.")).
-	Field(service.NewStringField("path").Description("Route to the controller in backplane/slot notation. Default '1,0' means backplane 1, slot 0 (typical for CompactLogix/ControlLogix). Format: 'backplane,slot' or '1,0' for direct Ethernet connection.\n\nFor path format reference, see: https://docs.umh.app/benthos-umh/input/ethernetip").Default("1,0")).
+	Field(service.NewStringField("path").Description("").Default("1,0")).
 	Field(service.NewIntField("pollRate").Description("The rate in milliseconds on which we try to read data out of the plc.").Default(1000)).
-	Field(service.NewBoolField("listAllTags").Description("Discover all available tags from the controller (for diagnostics). Supported by ControlLogix, CompactLogix. Not supported by older controllers or when using attributes.\n\nDefault: false (set true for tag discovery)").Default(false)).
-	Field(service.NewBoolField("useMultiRead").Description("Enable batch reading of multiple tags in a single request (improves performance). Supported by ControlLogix, CompactLogix. Not supported by older SLC/MicroLogix controllers.\n\nDefault: true (recommended for modern controllers)").Default(true)).
-	Field(service.NewIntField("socketTimeoutMs").
-		Description("The timeout in milliseconds for socket operations (connection establishment, reads, and writes).").
-		Default(10000).
-		Examples(5000, 10000, 30000).
-		Optional().
-		Advanced()).
+	Field(service.NewBoolField("listAllTags").Description("You can use this option to list all available Tags, but only specific controllers support this method.").Default(false)).
+	Field(service.NewBoolField("useMultiRead").Description("You can use this option to increase the reading time, but be aware that only specific controllers support this method.").Default(true)).
 	Field(service.NewObjectListField("attributes",
 		service.NewStringField("path").Description("The Path consists of the following: CIP-Class - CIP-Instance - CIP-Attribute, e.g. 1-1-1. They might vary based on which controller you're using."),
 		service.NewStringField("type").Description("The type of the attribute you want to read: e.g. 'bool', 'int16', 'byte'."),
 		service.NewStringField("alias").Description("You can set an alias so the data will be stored with this alias set as name via metadata.").Optional()).
-		Description("CIP (Common Industrial Protocol) attributes to read using explicit messaging. Attributes are accessed via Class/Instance/Attribute path (e.g., 1-1-1 for device identity).\n\nFor CIP path reference, see: https://docs.umh.app/benthos-umh/input/ethernetip")).
+		Description("")).
 	Field(service.NewObjectListField("tags",
 		service.NewStringField("name").Description("The tag name is usually provided by something like this: `Program:Gologix.MyTagSet.TestBool`"),
 		service.NewStringField("type").Description("The type of the tag you want to read: e.g. 'bool', 'int16', 'byte'."),
 		service.NewIntField("length").Description("The Length of the array, when specified as 'arrayof...'").Default(1),
 		service.NewStringField("alias").Description("You can set an alias so the data will be stored with this alias set as name via metadata.").Optional()).
-		Description("Controller-level tags to read using tag-based messaging. Tags are defined in the controller program (e.g., 'Program:MainProgram.Temperature').\n\nFor tag naming conventions, see: https://docs.umh.app/benthos-umh/input/ethernetip"))
+		Description(""))
 
 // NewEthernetIPInput is the constructor function for EthernetIPInput. It parses the plugin configuration,
 // establishes a connection with the Ethernet/IP device, and initializes the input plugin instance.
@@ -131,11 +122,6 @@ func NewEthernetIPInput(conf *service.ParsedConfig, mgr *service.Resources) (ser
 	}
 
 	useMultiRead, err := conf.FieldBool("useMultiRead")
-	if err != nil {
-		return nil, err
-	}
-
-	socketTimeoutMs, err := conf.FieldInt("socketTimeoutMs")
 	if err != nil {
 		return nil, err
 	}
@@ -190,9 +176,6 @@ func NewEthernetIPInput(conf *service.ParsedConfig, mgr *service.Resources) (ser
 		UseMultiRead: useMultiRead,
 		Log:          mgr.Logger(),
 
-		// advanced connection settings
-		SocketTimeoutMs: socketTimeoutMs,
-
 		// addresses to read data
 		Items:   allItems,
 		ItemMap: itemMap,
@@ -224,7 +207,7 @@ func (g *EIPInput) Connect(_ context.Context) error {
 			KeepAliveProps:     []gologix.CIPAttribute{1, 2, 3, 4, 10},
 			// this is the Request Packet Interval
 			RPI:           g.PollRate,
-			SocketTimeout: time.Duration(g.SocketTimeoutMs) * time.Millisecond,
+			SocketTimeout: socketTimeoutDefault,
 			KnownTags:     make(map[string]gologix.KnownTag),
 			// NOTE:
 			// we only want to use our logs not the gologix-logs here

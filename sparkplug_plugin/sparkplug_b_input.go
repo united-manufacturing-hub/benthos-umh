@@ -88,22 +88,18 @@ Key features:
 				Description("MQTT authentication credentials").
 				Optional(),
 			service.NewIntField("qos").
-				Description("MQTT Quality of Service level:\n\n- 0: At most once (fastest, may lose messages)\n- 1: At least once (recommended, guaranteed delivery)\n- 2: Exactly once (slowest, prevents duplicates)\n\nSparkplug B specification recommends QoS 1.").
+				Description("QoS level for MQTT operations (0, 1, or 2)").
 				Default(1).
-				Optional().
 				Examples(0, 1, 2),
 			service.NewDurationField("keep_alive").
 				Description("MQTT keep alive interval").
-				Default("60s").
-				Optional(),
+				Default("60s"),
 			service.NewDurationField("connect_timeout").
 				Description("MQTT connection timeout").
-				Default("30s").
-				Optional(),
+				Default("30s"),
 			service.NewBoolField("clean_session").
 				Description("MQTT clean session flag").
-				Default(true).
-				Optional()).
+				Default(true)).
 			Description("MQTT transport configuration")).
 		// Sparkplug Identity Configuration
 		Field(service.NewObjectField("identity",
@@ -118,12 +114,11 @@ Key features:
 				Description("Device ID under the edge node (optional, if not specified acts as node-level)").
 				Default("").
 				Optional()).
-			Description("Sparkplug B namespace identity. Defines where this host/consumer appears in the Sparkplug topic hierarchy (spBv1.0/<group_id>/<edge_node_id>/<device_id>).\n\nFor Sparkplug namespace reference, see: https://docs.umh.app/benthos-umh/input/sparkplug_b")).
+			Description("Sparkplug identity configuration")).
 		// Role Configuration
 		Field(service.NewStringField("role").
-			Description("Sparkplug Host operating mode:\n\n- secondary_passive (default): Read-only consumer, no rebirth commands. Safe for brownfield deployments.\n- secondary_active: Active consumer, sends rebirth commands to edge nodes. No STATE publishing.\n- primary: Full Primary Host with STATE publishing and session management. Only ONE per group!\n\nFor mode comparison, see: https://docs.umh.app/benthos-umh/input/sparkplug_b").
-			Default("secondary_passive").
-			Optional()).
+			Description("Sparkplug Host mode: 'secondary_passive' (default), 'secondary_active', or 'primary'").
+			Default("secondary_passive")).
 		// Discovery REBIRTH Configuration
 		Field(service.NewBoolField("request_birth_on_connect").
 			Description("Send REBIRTH requests to newly discovered nodes on connection (secondary_active/primary only). Enables complete tag discovery by requesting BIRTH messages when nodes are first seen.").
@@ -870,7 +865,7 @@ func (s *sparkplugInput) processStateMessage(deviceKey string, msgType string, t
 	if topicInfo.Device != "" {
 		msg.MetaSet("spb_device_id", topicInfo.Device)
 	}
-
+	
 	// Add pre-sanitized versions for state messages
 	msg.MetaSet("spb_group_id_sanitized", s.sanitizeForTopic(topicInfo.Group))
 	msg.MetaSet("spb_edge_node_id_sanitized", s.sanitizeForTopic(topicInfo.EdgeNode))
@@ -1096,7 +1091,7 @@ func (s *sparkplugInput) createDeathEventMessage(msgType string, deviceKey strin
 	if topicInfo.Device != "" {
 		msg.MetaSet("spb_device_id", topicInfo.Device)
 	}
-
+	
 	// Add pre-sanitized versions for death events
 	msg.MetaSet("spb_group_id_sanitized", s.sanitizeForTopic(topicInfo.Group))
 	msg.MetaSet("spb_edge_node_id_sanitized", s.sanitizeForTopic(topicInfo.EdgeNode))
@@ -1163,21 +1158,21 @@ func (s *sparkplugInput) sanitizeForTopic(input string) string {
 	if input == "" {
 		return ""
 	}
-
+	
 	var result strings.Builder
 	result.Grow(len(input))
-
+	
 	for _, char := range input {
 		if (char >= 'a' && char <= 'z') ||
-			(char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') ||
-			char == '.' {
+		   (char >= 'A' && char <= 'Z') ||
+		   (char >= '0' && char <= '9') ||
+		   char == '.' {
 			result.WriteRune(char)
 		} else {
 			result.WriteRune('_')
 		}
 	}
-
+	
 	return result.String()
 }
 
@@ -1224,7 +1219,7 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 		s.rebirthsSuppressed.Incr(1)
 		return
 	}
-
+	
 	if s.client == nil || !s.client.IsConnected() {
 		return
 	}
@@ -1448,14 +1443,14 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	// Store original values before any sanitization
 	originalMetricName := sparkplugMsg.MetricName
 	originalDeviceID := sparkplugMsg.DeviceID
-
+	
 	// Try UMH conversion - the converter will handle any necessary sanitization
 	umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
 	if err != nil {
 		msg.MetaSet("umh_conversion_status", "failed")
 		msg.MetaSet("umh_conversion_error", err.Error())
 		s.logger.Debugf("UMH conversion failed for metric %s: %v", sparkplugMsg.MetricName, err)
-
+		
 		// Provide original values as fallback metadata
 		msg.MetaSet("spb_device_id", originalDeviceID)
 		msg.MetaSet("spb_metric_name", originalMetricName)
@@ -1464,25 +1459,25 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 
 	// Conversion successful - add UMH metadata
 	msg.MetaSet("umh_conversion_status", "success")
-
+	
 	// Build location path without trailing dots when LocationSublevels is empty
 	locationPath := umhMsg.TopicInfo.Level0
 	if len(umhMsg.TopicInfo.LocationSublevels) > 0 {
 		locationPath = locationPath + "." + strings.Join(umhMsg.TopicInfo.LocationSublevels, ".")
 	}
-
+	
 	// The converter has already sanitized all fields, so we can use them directly
 	msg.MetaSet("umh_location_path", locationPath)
 	msg.MetaSet("umh_tag_name", umhMsg.TopicInfo.Name)
 	msg.MetaSet("umh_data_contract", umhMsg.TopicInfo.DataContract)
-
+	
 	// Add virtual path if present
 	// Note: Benthos metadata cannot store empty strings (they become unset)
 	// YAML configs must use .or("") to handle missing virtual_path metadata
 	if umhMsg.TopicInfo.VirtualPath != nil {
 		msg.MetaSet("umh_virtual_path", *umhMsg.TopicInfo.VirtualPath)
 	}
-
+	
 	// Add debug metadata for traceability
 	if originalMetricName != sparkplugMsg.MetricName {
 		msg.MetaSet("spb_original_metric_name", originalMetricName)

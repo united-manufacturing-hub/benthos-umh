@@ -126,22 +126,22 @@ and then publishes DATA messages as Benthos messages flow through the pipeline.`
 			service.NewStringField("name").
 				Description("Metric name as it will appear in BIRTH messages"),
 			service.NewIntField("alias").
-				Description("Unique numeric identifier (1-65535) for this metric within the edge node. Aliases allow DATA messages to use numbers instead of full metric names.\n\nMust be unique across all metrics in this edge node."),
+				Description("Numeric alias for this metric (1-65535)"),
 			service.NewStringField("type").
 				Description("Data type: int8, int16, int32, int64, uint8, uint16, uint32, uint64, float, double, boolean, string").
 				Default("double"),
 			service.NewStringField("value_from").
 				Description("JSONPath or field name in the message to extract value from").
 				Default("value")).
-			Description("Define metrics that will be published in NBIRTH/DBIRTH messages. Each metric gets a numeric alias for bandwidth efficiency in DATA messages.\n\nRequired if auto_extract_tag_name is false.").
+			Description("Metric definitions for BIRTH messages and alias mapping").
 			Optional()).
 		// Behavior Configuration
 		Field(service.NewObjectField("behavior",
 			service.NewBoolField("auto_extract_tag_name").
-				Description("Automatically extract metric name from 'tag_name' metadata field. If false, you must configure metrics array explicitly.\n\nDefault: true (recommended for UMH data flows)").
+				Description("Whether to automatically extract tag_name from message metadata").
 				Default(true),
 			service.NewBoolField("retain_last_values").
-				Description("Remember last known values in memory and include them in BIRTH messages after reconnection. Ensures hosts receive current state immediately.\n\nDefault: true (recommended for reliable BIRTH messages)").
+				Description("Whether to retain last known values for BIRTH messages after reconnection").
 				Default(true)).
 			Description("Processing behavior configuration").
 			Optional())
