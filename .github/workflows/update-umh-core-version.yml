@@ -108,14 +108,10 @@ jobs:
         with:
           go-version: '1.23'
 
-      - name: Build schema exporter
-        run: go build -o schema-exporter ./cmd/schema-export
-
       - name: Generate schemas
         run: |
           VERSION_CLEAN="${VERSION#v}"
-          ./schema-exporter -version "${VERSION_CLEAN}" -format benthos
-          ./schema-exporter -version "${VERSION_CLEAN}" -format json-schema
+          make generate-schema VERSION="${VERSION_CLEAN}"
 
       - name: Checkout ManagementConsole
         uses: actions/checkout@v4
