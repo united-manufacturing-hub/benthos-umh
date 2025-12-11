@@ -117,7 +117,7 @@ func GenerateCertWithMode(
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 127)
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("failed togenerate serial number: %w", err)
+		return nil, nil, "", fmt.Errorf("failed to generate serial number: %w", err)
 	}
 
 	// Prepare the certificate template

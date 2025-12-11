@@ -216,8 +216,11 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 // 1. **Browse Nodes:** Iterates through `NodeIDs` and concurrently browses each node to detect available nodes.
 // 2. **Add Heartbeat Node:** If heartbeats are enabled, ensures the heartbeat node (`HeartbeatNodeId`) is included in the node list.
 // 3. **Subscribe to Nodes:** If subscriptions are enabled, creates a subscription and sets up monitoring for the detected nodes.
-func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error) {
-	var nodeList []NodeDef
+func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
+	var (
+		nodeList []NodeDef
+		err      error
+	)
 
 	// if all nodeIDs are fresh and fully discovered we can avoid spawning any
 	// goroutines here
@@ -254,8 +257,9 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 
 			heartbeatPool := NewGlobalWorkerPool(g.ServerProfile, g.Log)
 			defer func() {
-				if err = heartbeatPool.Shutdown(DefaultPoolShutdownTimeout); err != nil {
-					g.Log.Warnf("Heartbeat pool shutdown timeout: %v", err)
+				shutdownErr := heartbeatPool.Shutdown(DefaultPoolShutdownTimeout)
+				if shutdownErr != nil {
+					g.Log.Warnf("Heartbeat pool shutdown timeout: %v", shutdownErr)
 				}
 			}()
 
@@ -279,11 +283,13 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 				ProgressChan: nil, // No progress reporting in production
 			}
 
-			if err = heartbeatPool.SubmitTask(task); err != nil {
+			err = heartbeatPool.SubmitTask(task)
+			if err != nil {
 				g.Log.Warnf("Failed to submit heartbeat task: %v", err)
 			} else {
 				// Wait for heartbeat task to complete
-				if err = heartbeatPool.WaitForCompletion(DefaultPoolShutdownTimeout); err != nil {
+				err = heartbeatPool.WaitForCompletion(DefaultPoolShutdownTimeout)
+				if err != nil {
 					g.Log.Warnf("Heartbeat pool completion wait error: %v", err)
 				}
 			}
