@@ -49,12 +49,12 @@ var OPCUAConnectionConfigSpec = service.NewConfigSpec().
 		Examples(10000, 30000, 60000).
 		Advanced()).
 	Field(service.NewStringField("securityMode").
-		Description("The security mode to use. Options: None, Sign, SignAndEncrypt").
+		Description("The security mode to use.").
 		Default("").
 		Examples("", "None", "Sign", "SignAndEncrypt").
 		Advanced()).
 	Field(service.NewStringField("securityPolicy").
-		Description("The security policy to use. Options: None, Basic128Rsa15, Basic256, Basic256Sha256").
+		Description("The security policy to use.").
 		Default("").
 		Examples("", "None", "Basic256", "Basic256Sha256").
 		Advanced()).
@@ -95,8 +95,9 @@ var OPCUAConnectionConfigSpec = service.NewConfigSpec().
 		Examples(5, 10, 30).
 		Advanced()).
 	Field(service.NewStringField("profile").
-		Description("Server profile for performance tuning. Leave empty for automatic detection (recommended). Manual options: auto, high-performance, ignition, kepware, siemens-s7-1200, siemens-s7-1500, prosys.").
+		Description("Server profile for performance tuning. Leave empty for automatic detection (recommended).").
 		Default("").
+		Examples("", "auto", "high-performance", "ignition", "kepware", "siemens-s7-1200", "siemens-s7-1500", "prosys").
 		Advanced())
 
 // OPCUAConnection represents the common connection configuration for OPC UA plugins
