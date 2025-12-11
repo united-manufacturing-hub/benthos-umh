@@ -49,12 +49,12 @@ var OPCUAConnectionConfigSpec = service.NewConfigSpec().
 		Examples(10000, 30000, 60000).
 		Advanced()).
 	Field(service.NewStringField("securityMode").
-		Description("The security mode to use.").
+		Description("The security mode to use. Leave empty to connect without encryption (only if server supports 'None').").
 		Default("").
 		Examples("", "None", "Sign", "SignAndEncrypt").
 		Advanced()).
 	Field(service.NewStringField("securityPolicy").
-		Description("The security policy to use.").
+		Description("The security policy to use. Leave empty to connect without encryption (only if server supports 'None').").
 		Default("").
 		Examples("", "None", "Basic256", "Basic256Sha256").
 		Advanced()).
